@@ -202,15 +202,6 @@ pub const CLASS_SHIFT: u32 = 19;
 /// The most supertype classes a writer's keys name.
 pub const MAX_CLASSES: usize = 4;
 
-/// A tape written as a parser parses: each node's columns at their final widths, at its place,
-/// as it is made. The parser gives each node in preorder (`push`), its end and so its size at
-/// its close (`close`), and edits only the nodes it made last: a code changed (`set_key`), a
-/// node put before the ones from a place on (`insert`), the nodes from a place on taken back
-/// (`truncate`). Each edit rewrites only the nodes from its place on. At the end (`finish`) the
-/// columns are moved into place after the code column, and the header and code table written.
-///
-/// A node's key is its code: `kf | flags << 16`, and a bit for each supertype class it is in
-
 /// `v[from..to]` moved up by `by` cells (an insert's room). A span that fits a fixed window of
 /// `W` cells, with room for the window past it, moves as one fixed-size copy: a vector load and
 /// store, not a call of `memmove` (most wraps move a few nodes). The writer's windows are 16 nodes
@@ -227,6 +218,14 @@ fn shift_up<T: Copy + Default, const W: usize>(v: &mut [T], from: usize, to: usi
     }
 }
 
+/// A tape written as a parser parses: each node's columns at their final widths, at its place,
+/// as it is made. The parser gives each node in preorder (`push`), its end and so its size at
+/// its close (`close`), and edits only the nodes it made last: a code changed (`set_key`), a
+/// node put before the ones from a place on (`insert`), the nodes from a place on taken back
+/// (`truncate`). Each edit rewrites only the nodes from its place on. At the end (`finish`) the
+/// columns are moved into place after the code column, and the header and code table written.
+///
+/// A node's key is its code: `kf | flags << 16`, and a bit for each supertype class it is in
 /// (`classes`, from `CLASS_SHIFT`).
 pub struct Writer<L: Layout = Widths> {
     /// The header, then the code column: the image's start, as it will be. Reserved for the

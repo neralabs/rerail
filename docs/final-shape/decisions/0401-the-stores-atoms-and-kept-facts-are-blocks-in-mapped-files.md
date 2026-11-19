@@ -3,7 +3,9 @@
 Status: decided by the user (2026-11-18: "everything should be in blocks all the time"; "these should be blocks …
 I would prefer memory-mappable files than blobs"). Builds 0266's `Atoms` and `Facts` as what the store keeps.
 Replaces the atoms' segment rows and key (0049, 0111) and the cross part's frames (0104, 0295 §4) as storage.
-Steps 1–3 (atoms) built and 4 measured; 5 (the kept block) and 6 (the keep, beside the frames) built; 7–10 next.
+Steps 1–3 (atoms) built and 4 measured; 5 (the kept block) and 6 (the keep, beside the frames) built. **0442
+replaces F1, F2 and F6's copy** (the kept relation as a copy of the run's, a base and one cumulative delta): kept
+facts are packed chunks appended to a chain; steps 7–10 continue as 0442's 4–7.
 
 ## Intro
 
@@ -311,7 +313,7 @@ Facts:
    a space's delta, beside the frames.
 7. (built, 0438) The read (`preload_frames_live`, `kept_inputs`, the clean relations) binds views; F-R1–F-R3.
 8. Collection as a roll-up; F-R4.
-9. (built, 0439) The virtual tables (`kept_entries`, `kept_rows`); F-R5. The frames retired: the engine writes and
+9. (built, 0439, 0442) The virtual tables (`kept_entries`, `kept_facts`); F-R5. The frames retired: the engine writes and
    reads none, the store's frame machinery is gone, and an old store's frame tables are dropped when it is opened.
    The blocks are still larger than the frames were (0439, "Open").
 10. Measured on ep2 (the kept frames 0.064 s, the cross space's size).

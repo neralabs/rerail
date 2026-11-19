@@ -9,10 +9,11 @@ const KEY: [u8; 32] = [17; 32];
 fn pl(p: &front::Program) -> crate::code_rule_dsl::logic::plan::body::Placed { crate::code_rule_dsl::logic::plan::body::Placed::of_program(p).unwrap() }
 fn st(p: &front::Program) -> Vec<BTreeSet<String>> { front::strata(p).unwrap().0 }
 
-/// An entry of `rows`, flat, of `types`' columns, at partition `part`.
+/// An entry of `rows`, flat, of `types`' columns, at partition `part`: a relation's (part 0) in canonical order, a
+/// granule's or statistics' words as given (`retain::kept_flat`).
 fn put(rel: &KeptRel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Vec<i64>) -> KeptPut {
     let n = if types.is_empty() { 0 } else { rows.len() / types.len() };
-    KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest, reads, what: crate::content_store::kept_facts::KeptWhat::Flat { widths: vec![8; types.len()], rows, n }, types }
+    KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest, reads, what: crate::content_store::kept_facts::KeptWhat::Flat { widths: vec![8; types.len()], rows, n, levels: None, given: part != DOCS_PART }, types }
 }
 fn gone(rel: &KeptRel, part: i64) -> KeptPut {
     KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest: 0, reads: vec![], types: vec![], what: crate::content_store::kept_facts::KeptWhat::Gone }

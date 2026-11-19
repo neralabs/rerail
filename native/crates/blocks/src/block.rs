@@ -363,32 +363,6 @@ impl Block {
         b
     }
 
-    /// This frozen block again, over the same memory, read-only: a second handle that never unmaps it, the memory kept
-    /// alive by `keep` (its owner) while the handle lives. A reader that binds blocks by value (a relation's part)
-    /// reads a mapped block where it lies (decision 0401 F3): nothing is copied. Allocating in it refuses.
-    pub fn share(&self, keep: std::sync::Arc<dyn Send + Sync>) -> Block {
-        struct Kept {
-            base: *mut u8,
-            len: usize,
-            _keep: std::sync::Arc<dyn Send + Sync>,
-        }
-        // SAFETY: memory that `_keep` keeps mapped, read only.
-        unsafe impl Send for Kept {}
-        unsafe impl Sync for Kept {}
-        impl Backing for Kept {
-            fn base(&self) -> *mut u8 {
-                self.base
-            }
-            fn len(&self) -> usize {
-                self.len
-            }
-        }
-        let top = self.used();
-        let mut b = Block::make(self.base, self.reserved, top, None, false, Some(Box::new(Kept { base: self.base, len: self.reserved, _keep: keep })));
-        b.dirty = false;
-        b
-    }
-
     /// Moves this open block into `backing`: its bytes copied whole, which is the whole move, since every
     /// reference inside it is self-relative. Nothing may hold a reference into this block, and no command read it.
     pub fn relocate(self, backing: Box<dyn Backing>) -> Block {

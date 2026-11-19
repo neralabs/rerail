@@ -11,11 +11,11 @@
 //! that ran and came out different), and a stratum that comes out the same leaves its readers clean (early cutoff).
 //! On the pack that is 351 strata run, 16.6 s.
 //!
-//! Kept as the store's frames (`content_store::frames`, decision 0104), in the corpus root's cross-file fact space:
-//! each derived relation under its identity (`plan::identities`: its rules, and what they read, down to the
-//! inputs), with its digest, its rows and the digest each relation its stratum read had then. A stratum is clean
+//! Kept as the store's kept facts (`content_store::kept_facts`, decisions 0104, 0442), in the corpus root's cross-file
+//! fact space: each derived relation under its identity (`plan::identities`: its rules, and what they read, down to
+//! the inputs), with its digest, its rows and the digest each relation its stratum read had then. A stratum is clean
 //! when its relations are kept under their identities and each read has the digest it had. So a relation two
-//! programs share is one frame, whichever ran last, and a rule edit makes only the relations it reaches new. A clean
+//! programs share is one entry, whichever ran last, and a rule edit makes only the relations it reaches new. A clean
 //! relation's rows are read back only when a stratum that runs reads it, or the run's end keeps it (an output): on
 //! the pack, 68 k rows of 695 relations, against 3.0 M rows derived. A run writes the relations whose rows changed.
 
@@ -68,7 +68,7 @@ fn stored_of(bound: Option<&Arc<Bound>>, rels: &[KeptRel], part: i64) -> HashMap
 
 /// An entry of `n` rows, flat, of `types`' columns.
 fn flat_put(rel: &KeptRel, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Vec<i64>, n: usize) -> KeptPut {
-    KeptPut { rel: rel.name.clone(), ident: rel.ident, part: 0, digest, reads, what: KeptWhat::Flat { widths: vec![8; types.len()], rows, n }, types }
+    KeptPut { rel: rel.name.clone(), ident: rel.ident, part: 0, digest, reads, what: KeptWhat::Flat { widths: vec![8; types.len()], rows, n, levels: None, given: false }, types }
 }
 
 pub(in crate::code_rule_dsl) struct Kept<'s> {

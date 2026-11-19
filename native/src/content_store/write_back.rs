@@ -104,7 +104,7 @@ pub(super) enum Kind {
     Record { text: String, bytes: Vec<u8> },
     /// A space's memo entries in their segments (`queue_memo_segments`).
     Memo(Box<super::held::memo_pack::MemoWrite>),
-    /// A space's next kept block (`queue_kept`, decision 0401 F6).
+    /// A space's next kept file (`queue_kept`, decisions 0401 F6, 0442 K4).
     Kept(Box<super::kept_facts::KeptWrite>),
     /// Sources and tapes gathered into segments, or each in its own rows where no segment could be placed.
     Objects(Box<super::object_segments::ObjectsWrite>),

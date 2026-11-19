@@ -1,7 +1,7 @@
 # 0335: A prefix is outside the stream
 
 Status: decided (2026-11-17); landed on the CPU and in `bitlex`'s evaluator.
-Metal refuses a program with a prefix for now. Follows 0330.
+Metal runs it too (2026-11-18). Follows 0330.
 
 ## Intro
 
@@ -98,8 +98,14 @@ Both evaluators call it.
   - The CPU's loop starts its state's "end of the token before" there
     (`stream_start`): once a file, an 8-byte load and a compare, as the lean
     lexer's prologue.
-- **Metal** refuses records with a prefix, as it refuses an `early`
-  (`block_program::starts_late`).
+- **Metal** (2026-11-18) makes `P` in the file's first word: its first
+  chunk's low `n` bytes compared with the prefix, where the word's offset is
+  0 and the file is at least `n` bytes (`block_program::emit`; op 18 in the
+  interpreter). Its records need nothing more: their token starts are the
+  masks' (`within` is the stream), so none is at a prefix byte. Tested by
+  `parser_tests`' `a_files_start_on_metal_is_the_interpreters` (14-json,
+  15-jsonc and a grammar with an `early`; every lane width, both executors,
+  and the serial runs).
 
 ## Measured
 

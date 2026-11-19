@@ -1,0 +1,1 @@
+The content store's file is now `content-v7.sqlite`. What it keeps lies in folders beside it: names and strings (`.atoms`), read in place by every Rerail process, and facts (`.facts`, `.memo`), kept compactly. Several policies over one repository keep each one's work. Older `content-v*.sqlite` files are no longer read and are safe to delete.

@@ -43,10 +43,10 @@ struct Snapshot {
     admitted: HashSet<[u8; 32]>,
     /// The memo entries admitted (`admit_memo_entries`) and written since, by space and part (decision 0240 §4).
     memo: HashMap<[u8; 32], HashMap<i64, Arc<MemoBlob>>>,
-    /// Each space's kept blocks (decision 0401) as their `facts_blocks` row names them: read before a run's first
+    /// Each space's chain of kept files (decision 0442) as its `facts_chain` rows name it: read before a run's first
     /// wave (`ContentStore::preload_kept`, decision 0104), and replaced by this process's writer as it commits a
     /// space's next block. `None` until read. A run binding a space inside its waves asks no SQL (`kept_row`).
-    kept: Option<HashMap<[u8; 32], super::kept_facts::SpaceRow>>,
+    kept: Option<HashMap<[u8; 32], super::kept_facts::ChainRows>>,
 }
 
 fn snapshots() -> &'static std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std::sync::Mutex<Snapshot>>>> {
@@ -56,7 +56,7 @@ fn snapshots() -> &'static std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std:
 
 /// `f` over the kept blocks' rows this process holds of the store at `path` (`Snapshot::kept`); `None` when no
 /// snapshot of it is installed.
-pub(super) fn snapshot_kept<T>(path: &std::path::Path, f: impl FnOnce(&mut Option<HashMap<[u8; 32], super::kept_facts::SpaceRow>>) -> T) -> Option<T> {
+pub(super) fn snapshot_kept<T>(path: &std::path::Path, f: impl FnOnce(&mut Option<HashMap<[u8; 32], super::kept_facts::ChainRows>>) -> T) -> Option<T> {
     let snapshot = snapshots().lock().expect("the store's snapshots").get(&super::atoms::key(path)).cloned()?;
     let mut snapshot = snapshot.lock().expect("the store's snapshot");
     Some(f(&mut snapshot.kept))

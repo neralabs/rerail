@@ -542,7 +542,7 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("edge_freq", &["pkind", "ckind", "field", "n"]),
     ("fact_stats", &["rows", "ndv", "sq", "sqd"]),
     ("fact_value_stats", &["val", "n", "docs", "sqd"]),
-    ("facts_blocks", &["space", "base_tag", "delta_tag"]),
+    ("facts_chain", &["space", "seq", "tag"]),
     ("facts_completions", &["source_id", "fact_schema", "set_digest", "words", "codec_id", "raw_length", "counts"]),
     ("facts_plan_sets", &["set_digest", "ordinal", "plan_digest"]),
     ("facts_results", &["source_id", "fact_schema", "plan_digest", "codec_id", "raw_length", "frame"]),

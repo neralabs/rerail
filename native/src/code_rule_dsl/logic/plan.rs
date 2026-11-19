@@ -8917,6 +8917,11 @@ impl<'a> Run<'a, '_> {
         if !kept_rows.is_empty() {
             rel_lines.push(SpecLine::KeptRows(kept_rows));
         }
+        // The relations declared sorted (decision 0442 K7): laid out in canonical order when done.
+        let sorted: Vec<usize> = rels.iter().filter(|r| f.qualified(r, "sorted")).map(|r| ri[*r]).collect();
+        if !sorted.is_empty() {
+            rel_lines.push(SpecLine::Sorted(sorted));
+        }
         lines.splice(rel_at..rel_at, rel_lines);
         let nseeds = orders.len();
         for r in &rels {

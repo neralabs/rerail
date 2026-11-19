@@ -1351,7 +1351,7 @@ y = x{i} + 2
         }
         let output = child.output().unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(2).collect();
+        let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(200).collect();
         assert!(output.status.success(), "the run's process: {}; {}", output.status, fault.join(" "));
     };
     run(&before, false);

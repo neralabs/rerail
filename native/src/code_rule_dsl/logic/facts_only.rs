@@ -46,8 +46,8 @@ const FACT_STORE: &[&str] = &[
     "node",
     "tape",
     "node_type",
-    // A space's kept facts as blocks (decision 0401): which base and delta files it has.
-    "facts_blocks",
+    // A space's kept facts (decisions 0401, 0442): which files its chain has.
+    "facts_chain",
     // The per-file memo's entries (decision 0240 §4): where each one's bytes are in the pack beside the store, and the
     // packs. They replace the memo's frames (`local`, `local_out`): the same entries, no new cache.
     "memo_entries",
@@ -222,11 +222,17 @@ const STATE: &[(&str, &str)] = &[
     // The SQL lane's executor, and the work a thread's device wave runs when flushed (`lanes::wave`).
     ("code_rule_dsl/logic/lanes.rs", "SQL"),
     ("code_rule_dsl/logic/lanes.rs", "DEFERRED"),
-    // The device's wave on this thread (decision 0113 §3): its open command buffer, the waves flushed, the strata
-    // waiting for theirs; and the rule being compiled's arena-text slots. State of the run, not a result kept.
+    // The device's waves on this thread (decision 0113 §3; the open one is the job's, `lanes::OPEN`): the waves
+    // flushed, the strata waiting for theirs; and the rule being compiled's arena-text slots. State of the run, not a
+    // result kept.
     ("code_rule_dsl/logic/native/setfix/device.rs", "FLUSHED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "ARENA"),
+    // The component being compiled's own columns of arena texts (decision 0307), set around its plans' compile
+    // (`own_texts`): a call's context, as `BINDER` and `ARENA`.
+    ("code_rule_dsl/logic/native/setfix/device.rs", "OWN_TEXTS"),
+    // The job's open device submission its strata share (`lanes::open`): an open thing, as `WAVE`.
+    ("code_rule_dsl/logic/lanes.rs", "OPEN"),
     // Which connections hold tables or views a run left in SQL: state of the connections, not a result kept.
     ("code_rule_dsl/logic/plan.rs", "TEMP_LEFT"),
     // Each live connection's path and symbols, by its scope; dropped when it closes (`setfix::forget_scope`).
@@ -257,14 +263,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "STORED"),
     ("code_rule_dsl/logic/native/setfix.rs", "SYMS"),
     // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
     ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
-    // A live connection's file and symbol table, by its handle (dropped as it closes, `forget_scope`): state of the
-    // connections, not a result kept.
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114 §4): which
     // pending atoms no committed row may hold yet, not a result kept.
@@ -319,6 +319,18 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
+    // Debugging aids, each under its switch, and the switches read once: `RERAIL_HEAP_AT`'s text; the trees a thread
+    // decoded from versions (a count and the last's place); `RERAIL_KEPT_DOCS`'s exports, the rows it counted in and
+    // out by document and by file, and the file being counted. Records of a run, no result read back.
+    ("code_rule_dsl/logic/profile/memory.rs", "AT"),
+    ("code_rule_dsl/logic/program_image/version.rs", "DECODED"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "LISTED"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_DOCS"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_ROWS"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "COUNTING"),
+    // The world's rows (`rr::lower::World`), made once the languages are installed: a registry of what is
+    // installed, as `FUNCTORS`.
+    ("code_rule_dsl/logic/rr/lower.rs", "ALL"),
     ("code_rule_dsl/logic/profile/roofline.rs", "ROOFS"),
     ("code_rule_dsl/logic/rr.rs", "CORE"),
     ("code_rule_dsl/logic/rr.rs", "READS"),
@@ -386,29 +398,14 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/write_back.rs", "WRITERS"),
     // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND"),
-    // The open submission a thread's device wave shares (decision 0386), taken back when the wave is committed.
-    ("code_rule_dsl/logic/lanes.rs", "OPEN"),
     // A run's changed reads' given versions (decision 0364 step 3), by the run's scope, removed with its tables.
     ("code_rule_dsl/logic/native/setfix.rs", "GIVEN"),
-    // The rule being compiled: its component's arena-text columns (decision 0307), as `BINDER`.
-    ("code_rule_dsl/logic/native/setfix/device.rs", "OWN_TEXTS"),
-    // `RERAIL_KEPT_DOCS`, a debugging aid (Q20): the rows this process counted, the file counting, the switch read.
-    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_DOCS"),
-    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_ROWS"),
-    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "COUNTING"),
-    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "LISTED"),
     // The kept facts as this process holds them (decision 0401 F3, 0438): each space's blocks mapped, by store, space
     // and the row naming the files, read in place and mapped again when a commit changes the row. The facts
     // themselves, as `SNAPSHOTS` holds their rows, not a cache of anything else.
     ("code_rule_dsl/logic/plan/corpus/retain/kept_read.rs", "BOUND"),
-    // Profiling: `RERAIL_HEAP_AT`'s text, and the trees a thread decoded from versions (a count).
-    ("code_rule_dsl/logic/profile/memory.rs", "AT"),
-    ("code_rule_dsl/logic/program_image/version.rs", "DECODED"),
-    // The world's answerers, the file system's and those the language crates register at load.
-    ("code_rule_dsl/logic/rr/lower.rs", "ALL"),
-    // The record kinds' applies, registered at load; a test's log of them.
+    // The record kinds' applies, registered at load.
     ("content_store/record.rs", "KINDS"),
-    ("content_store/record.rs", "LOG"),
     // The stores forgotten in this process (a test's store removed), by path and file: a registry of closed things.
     ("content_store/upkeep.rs", "GONE"),
 ];
@@ -512,7 +509,26 @@ fn maps() -> BTreeSet<(String, String)> {
     let mut out = BTreeSet::new();
     for f in fs {
         let text = std::fs::read_to_string(&f).unwrap_or_default();
-        let lines: Vec<&str> = text.lines().collect();
+        let mut lines: Vec<&str> = text.lines().collect();
+        // A file's inline tests (`#[cfg(test)] mod … {`, to its closing brace) are tests, as a test file is: blanked.
+        let mut i = 0;
+        while i + 1 < lines.len() {
+            if lines[i].trim() == "#[cfg(test)]" && lines[i + 1].trim_start().starts_with("mod ") && lines[i + 1].trim_end().ends_with('{') {
+                let mut depth = 0i64;
+                let mut j = i + 1;
+                while j < lines.len() {
+                    depth += lines[j].matches('{').count() as i64 - lines[j].matches('}').count() as i64;
+                    lines[j] = "";
+                    j += 1;
+                    if depth <= 0 {
+                        break;
+                    }
+                }
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
         for (i, l) in lines.iter().enumerate() {
             let Some(c) = head.captures(l) else { continue };
             // The declaration up to its `=`, over a few lines.

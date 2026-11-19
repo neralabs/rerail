@@ -587,8 +587,10 @@ pub(in crate::code_rule_dsl) fn after(
         // An index's relation (the reach index, decision 0119), or a view of an input's columns (Q37, 0329), is made
         // again in less than reading it back costs: not kept, so it never takes the budget from the relations whose
         // rows are work. An index's relation is kept where the part stays in memory (`indexes`: a chunk's guest
-        // rounds, decision 0331), so its next run's delta is made against it and its readers are maintained.
-        if (held.view.is_some() || held.viewed) && !(indexes && held.held_source().is_some()) {
+        // rounds, decision 0331), so its next run's delta is made against it and its readers are maintained. A kept
+        // relation read where it lies (decision 0442 step 6b), which a round's maintain mode passes on unchanged, is
+        // a relation's rows: kept (dropped, it was neither held nor current, and the next round gave up, "not kept").
+        if (held.view.is_some() || held.viewed) && !held.kept_in_place() && !(indexes && held.held_source().is_some()) {
             continue;
         }
         let k = Kept { rel: held, width, output: outputs.get(&rel).cloned() };
@@ -1083,6 +1085,12 @@ impl Source for Renamed {
     }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.0.expect_lookups(column, keys);
+    }
+    fn failure(&self) -> Option<String> {
+        self.0.failure()
+    }
+    fn failed(&self) -> Option<String> {
+        self.0.failed()
     }
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         let names = self.0.columns();
@@ -1952,6 +1960,9 @@ impl Source for Traced {
     fn failure(&self) -> Option<String> {
         self.inner.failure()
     }
+    fn failed(&self) -> Option<String> {
+        self.inner.failed()
+    }
     fn indexed(&self, column: usize) -> bool {
         self.inner.indexed(column)
     }
@@ -2741,13 +2752,13 @@ pub(in crate::code_rule_dsl) fn kept_put(name: &KeptRel, digest: u64, reads: Vec
     let n = rel.rows();
     // copy: not block data: a relation with no block of its rows (a view's rows read from its source, or none).
     let rows = rel.live_rows().unwrap_or_default();
-    KeptPut { rel: name.name.clone(), ident: name.ident, part: DOCS_PART, digest, reads, what: KeptWhat::Flat { widths: vec![8; types.len()], rows, n }, types }
+    KeptPut { rel: name.name.clone(), ident: name.ident, part: DOCS_PART, digest, reads, what: KeptWhat::Flat { widths: vec![8; types.len()], rows, n, levels: rel.live_levels(), given: false }, types }
 }
 
 /// Rows not held as a relation, as an entry of their own (an input's granule or documents, statistics' words): `n`
-/// rows of `types.len()` columns, flat.
+/// rows of `types.len()` columns, flat, kept as given (decision 0442): read by position, in their order, every row.
 fn kept_flat(name: &KeptRel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Vec<i64>, n: usize) -> KeptPut {
-    KeptPut { rel: name.name.clone(), ident: name.ident, part, digest, reads, what: KeptWhat::Flat { widths: vec![8; types.len()], rows, n }, types }
+    KeptPut { rel: name.name.clone(), ident: name.ident, part, digest, reads, what: KeptWhat::Flat { widths: vec![8; types.len()], rows, n, levels: None, given: true }, types }
 }
 
 /// The entry's rows as they are, with `reads` (a frame's retag).
@@ -2838,6 +2849,7 @@ impl Retained {
     }
 }
 
+mod kept_source;
 mod kept_stats;
 pub(in crate::code_rule_dsl) mod kept_read;
 
@@ -2845,9 +2857,8 @@ pub(in crate::code_rule_dsl) mod kept_read;
 pub mod kept_tests;
 
 /// The frame digest of `held`'s live rows (`rows_digest`), read where they lie a batch at a time: no copy of the
-/// relation (it was copied whole for each frame written, 460 MB of a 300-file run's peak). `None` for a view.
+/// relation (it was copied whole for each frame written, 460 MB of a 300-file run's peak); a view's through it.
 pub(in crate::code_rule_dsl) fn held_digest(cells: &Cells, held: &InRel) -> Option<u64> {
-    held.each_live_batch(0, 0, |_| {})?;
     Some(cells.digest_batches(held.len(), held.rows(), &|lo, hi, f| {
         held.each_live_batch(lo, hi, |rows| f(rows));
     }))

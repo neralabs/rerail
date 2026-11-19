@@ -17,7 +17,7 @@ every run still wrote them.
 before                                   after
 run end   -> frames rows + kept blocks   run end   -> kept blocks only
 next run  -> binds the blocks            next run  -> binds the blocks
-SQL       -> SELECT ... FROM frames      SQL       -> SELECT ... FROM kept_rows(space, rel, ident, part)
+SQL       -> SELECT ... FROM frames      SQL       -> SELECT ... FROM kept_facts WHERE space = ? AND rel = ?
 ```
 
 ## Decision
@@ -41,19 +41,24 @@ SQL       -> SELECT ... FROM frames      SQL       -> SELECT ... FROM kept_rows(
    `atoms`:
    - `kept_entries(space, rel, ident, part, digest, rows, types, reads)` is each space's directory (or one space's,
      with `space = ?`). `rows` is the live rows' count.
-   - `kept_rows(space, rel, ident, part)` gives one entry's live rows: `id`, `level`, `c0` … `c31` (NULL past its
-     width).
+   - `kept_facts` gives the entries' rows, one table over every space: `space`, `rel`, `ident`, `part`, `level`,
+     `id` (the row's place in its entry), `c0` … `c15` (NULL past its width). `space = ?`, `rel = ?` and `part = ?`
+     choose the entries; `c0 = ?` is a binary search where `c0` leads an entry's order.
 
-   A cursor steps over the live ids in the mapping and reads each value where it lies (`View::get`). Nothing is
-   collected into rows (0353). A row is left out when the run killed it (the entry's dead bits) or its relation
-   dropped it. The space rows come from this process's snapshot, else from the store's last commit. An `s` column
+   Merged with 0442 (2026-11-19): this was `kept_rows(space, rel, ident, part)`, a table-valued function over one
+   entry, its key required. 0442's `kept_facts` asks the same with constraints, and also across entries and spaces,
+   so it joins as a relation does; `kept_rows` went, and `kept_facts` took its `id`.
+
+   A cursor steps over an entry's rows in the mapping and reads each value where it lies (`Packed::get`). Nothing is
+   collected into rows (0353). An entry holds its live rows only (0442 K3: a killed or dropped row is not packed). An `s` column
    holds the store's atom ids, as `atoms` answers them, so the two join.
 
 ## Required behavior, asserted
 
-- F-R5: `the_kept_relations_read_through_sql_equal_their_views`: entries, digests, types, reads and live rows'
-  counts equal the view's; each entry's rows equal its live rows; a killed row is left out; a column past the width
-  is NULL; an entry not kept has no rows.
+- F-R5: `the_kept_relations_read_through_sql_equal_their_entries`: entries, digests, types, reads and rows' counts
+  equal the chain's; each entry's rows through `kept_facts` equal its rows; a killed row is left out; a column past
+  the width is NULL; an entry not kept has no rows. `kept_facts_are_a_virtual_table` (0442 K-R10): the constraints,
+  `level`, `id`, and the range `c0 = ?` reads.
 - `a_store_of_before_loses_the_retired_tables_and_their_segments` (item 3).
 - `a_run_that_begins_stops_a_sweep_of_many_small_deletes`, now over 3,000 memo entries (item 4).
 - `atoms_another_process_stored_past_this_ones_end_are_mapped_after_a_fork`: a kept entry written after a fork holds
@@ -62,7 +67,7 @@ SQL       -> SELECT ... FROM frames      SQL       -> SELECT ... FROM kept_rows(
 
 ## Not copies (0353)
 
-- `kept_rows` reads each value in the mapping. Its cursor holds its space's mapping and its place, not the rows.
+- `kept_facts` reads each value in the mapping. Its cursor holds its entries' spaces mapped and its place, not the rows.
 - `kept_entries` holds each entry's key and counts, which are metadata, not rows.
 
 ## Measured

@@ -1,105 +1,52 @@
-//! A space's kept facts bound where they lie (decision 0401 F3, step 7). A process maps a space's two blocks once
-//! for each commit of them (`Bound::of`), and a kept entry it binds (a clean derived relation, a kept input's
-//! granules, a delta's old rows) is an engine relation over the mapping: its rows the entry's relation, its dead
-//! bits and levels the entry's. No row is decoded or copied (0353).
+//! A space's kept facts bound where they lie (decisions 0401 F3, 0442 K6, 0438). A process maps a space's chain of
+//! packed files once for each commit of it (`Bound::of`), and a kept entry it binds (a clean derived relation, a kept
+//! input's granules, a delta's old rows) is an engine relation over the mapping: a view of the entry's `Packed`
+//! (`KeptSource`), its values read where they lie. No row is decoded or copied (0353), but for a relation whose levels
+//! the entry keeps (decision 0090): those are packed beside its rows, and the relation is read in with them.
 
-use crate::code_rule_dsl::facts::rows::{Facts, Life, Part, Rows, Shared};
+use super::kept_source::KeptSource;
 use crate::code_rule_dsl::logic::native::component::InRel;
-use crate::content_store::kept_facts::{KeptSpace, SpaceRow};
-use crate::content_store::{ContentStore, StoreResult};
 use crate::content_store::atoms::Atoms;
-use rerail_blocks::kept::{FactKey, Kept, KeptFacts, KeptRead, KeptView};
-use rerail_blocks::relation::Relation;
+use crate::content_store::kept_facts::{ChainRows, KeptSpace};
+use crate::content_store::{ContentStore, StoreResult};
+use rerail_blocks::kept::{FactKey, Kept, KeptChain, KeptRead};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// A space's blocks as a commit left them, mapped, each shared for the engine's relations (`Facts::over`).
+/// A space's chain as a commit left it, mapped: every view of one of its entries holds it.
 pub(in crate::code_rule_dsl) struct Bound {
     space: KeptSpace,
-    /// The base's and the delta's blocks, as the engine's parts hold them.
-    facts: [Option<(Arc<KeptFacts>, Arc<Facts>)>; 2],
 }
 
-/// Each space's blocks this process mapped, by the store's file and the space, with the row that named them: mapped
-/// again only when a commit changed the row.
-static BOUND: Mutex<Option<HashMap<(String, [u8; 32]), (SpaceRow, Arc<Bound>)>>> = Mutex::new(None);
+/// Each space's chain this process mapped, by the store's file and the space, with the rows that named its files:
+/// mapped again only when a commit changed them.
+static BOUND: Mutex<Option<HashMap<(String, [u8; 32]), (ChainRows, Arc<Bound>)>>> = Mutex::new(None);
 
 impl Bound {
-    /// `space`'s blocks as the store's last commit has them (this process's queued writes to it written first);
+    /// `space`'s chain as the store's last commit has it (this process's queued writes to it written first);
     /// `None` when it keeps none. Read before a run's first wave.
     pub(in crate::code_rule_dsl) fn of(store: &ContentStore, space: &[u8; 32]) -> StoreResult<Option<Arc<Bound>>> {
-        let Some(row) = store.kept_row(space)? else { return Ok(None) };
+        let Some(rows) = store.kept_row(space)? else { return Ok(None) };
         let key = (store.database_path().to_string_lossy().into_owned(), *space);
         if let Some((was, bound)) = BOUND.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&key))
-            && *was == row
+            && *was == rows
         {
             return Ok(Some(Arc::clone(bound)));
         }
-        let space_blocks = store.open_kept(space, &row)?;
-        let share = |f: &Option<Arc<KeptFacts>>| {
-            f.as_ref().map(|f| {
-                let keep: Arc<dyn Send + Sync> = Arc::clone(f) as Arc<dyn Send + Sync>;
-                (Arc::clone(f), Facts::over(f.block().share(keep)))
-            })
-        };
-        let bound = Arc::new(Bound { facts: [share(&space_blocks.base), share(&space_blocks.delta)], space: space_blocks });
-        BOUND.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(key, (row, Arc::clone(&bound)));
+        let bound = Arc::new(Bound { space: store.open_kept(space, &rows)? });
+        BOUND.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(key, (rows, Arc::clone(&bound)));
         Ok(Some(bound))
     }
 
-    /// The space as one: the delta's entry for a key in place of the base's.
-    pub(in crate::code_rule_dsl) fn view(&self) -> KeptView<'_> {
+    /// The chain as one: a key's newest entry.
+    pub(in crate::code_rule_dsl) fn view(&self) -> KeptChain<'_> {
         self.space.view()
     }
 
-    /// The block holding `rows`, and its engine handle.
-    fn holder(&self, rows: &Relation) -> Option<&(Arc<KeptFacts>, Arc<Facts>)> {
-        self.facts.iter().flatten().find(|(k, _)| k.holds(rows))
-    }
-
-    /// `kept`'s rows as a part, where they lie.
-    pub(in crate::code_rule_dsl) fn part(&self, kept: &Kept<'_>) -> Option<Part> {
-        let (_, facts) = self.holder(kept.rows)?;
-        Some(Part::over_mapped(Arc::clone(facts), kept.rows))
-    }
-
-    /// `kept` as an engine relation of types `types` (the engine's codes): its rows, dead bits and levels where they
-    /// lie.
-    pub(in crate::code_rule_dsl) fn rel(&self, kept: &Kept<'_>, types: Vec<u8>) -> Option<Arc<InRel>> {
-        let (block, facts) = self.holder(kept.rows)?;
-        let k = kept.rows.arity as usize;
-        if types.len() != k {
-            return None;
-        }
-        let n = kept.rows.rows.len() as usize;
-        if !kept.levels.is_empty() && kept.levels.len() != n {
-            return None;
-        }
-        let mut rows = Rows::living(k, Life::Kept);
-        if n > 0 {
-            rows.append_part(Part::over_mapped(Arc::clone(facts), kept.rows));
-        }
-        let keep: Arc<dyn Send + Sync> = Arc::clone(block) as Arc<dyn Send + Sync>;
-        Some(InRel::held_shared(rows.sealed(), n, types, Shared::mapped(Arc::clone(&keep), kept.dead), Shared::mapped(keep, kept.levels)))
-    }
-
-    /// Entries `parts` (a kept input's granules, in their order) as one engine relation of types `types`: each
-    /// granule's rows a segment, where they lie (as a chunk's exports are gathered, `Rows::append_part`).
-    pub(in crate::code_rule_dsl) fn gathered(&self, parts: &[Kept<'_>], types: Vec<u8>) -> Option<Arc<InRel>> {
-        let k = types.len();
-        let mut rows = Rows::living(k, Life::Kept);
-        let mut n = 0usize;
-        for p in parts {
-            if p.rows.arity as usize != k {
-                return None;
-            }
-            let len = p.rows.rows.len() as usize;
-            if len > 0 {
-                rows.append_part(self.part(p)?);
-            }
-            n += len;
-        }
-        Some(InRel::held(rows.sealed(), n, types, Vec::new()))
+    /// The entry of `rel` (its name and identity) at partition `part`, if the space keeps one.
+    pub(in crate::code_rule_dsl) fn entry(self: &Arc<Self>, rel: &str, ident: &[u8; 32], part: i64) -> Option<Entry> {
+        let rows: *const rerail_blocks::packed::Packed = self.view().get(&FactKey { rel, ident, part })?.rows;
+        Some(Entry { bound: Arc::clone(self), rel: rel.to_owned(), ident: *ident, part, rows })
     }
 }
 
@@ -111,19 +58,22 @@ pub(in crate::code_rule_dsl) struct Entry {
     rel: String,
     ident: [u8; 32],
     part: i64,
+    /// Its rows, in `bound`'s mapping.
+    rows: *const rerail_blocks::packed::Packed,
 }
 
-impl Bound {
-    /// The entry of `rel` (its name and identity) at partition `part`, if the space keeps one.
-    pub(in crate::code_rule_dsl) fn entry(self: &Arc<Self>, rel: &str, ident: &[u8; 32], part: i64) -> Option<Entry> {
-        self.view().find(&FactKey { rel, ident, part })?;
-        Some(Entry { bound: Arc::clone(self), rel: rel.to_owned(), ident: *ident, part })
-    }
-}
+// SAFETY: `rows` lies in a read-only mapping `bound` holds, shared by every thread that reads it.
+unsafe impl Send for Entry {}
+unsafe impl Sync for Entry {}
 
 impl Entry {
     fn kept(&self) -> Kept<'_> {
-        self.bound.view().find(&FactKey { rel: &self.rel, ident: &self.ident, part: self.part }).expect("an entry of its space")
+        self.bound.view().entry(&FactKey { rel: &self.rel, ident: &self.ident, part: self.part }).expect("an entry of its space")
+    }
+    /// Its rows where they lie.
+    pub(in crate::code_rule_dsl) fn packed(&self) -> &rerail_blocks::packed::Packed {
+        // SAFETY: as above: the mapping lives as long as `bound`, which this holds.
+        unsafe { &*self.rows }
     }
     pub(in crate::code_rule_dsl) fn digest(&self) -> u64 {
         self.kept().digest
@@ -136,38 +86,47 @@ impl Entry {
         self.kept().types.to_vec()
     }
     pub(in crate::code_rule_dsl) fn len(&self) -> usize {
-        self.kept().rows.rows.len() as usize
+        self.packed().len()
     }
     pub(in crate::code_rule_dsl) fn width(&self) -> usize {
-        self.kept().rows.arity as usize
+        self.packed().arity as usize
     }
-    /// Its rows as an engine relation (`Bound::rel`), its types the engine's (an atom an integer); `None` when its
-    /// atoms are not this process's numbering (`readable`).
+    /// Its rows as an engine relation, its types the engine's (an atom an integer); `None` when its atoms are not
+    /// this process's numbering (`readable`).
     pub(in crate::code_rule_dsl) fn rel(&self, atoms: &Atoms) -> Option<Arc<InRel>> {
-        let kept = self.kept();
-        if !readable(&kept, atoms) {
-            return None;
-        }
-        self.bound.rel(&kept, kept.types.iter().map(|&t| if t == b's' { b'i' } else { t }).collect())
+        let types = self.kept().types.iter().map(|&t| if t == b's' { b'i' } else { t }).collect();
+        self.rel_as(types, atoms)
     }
-    /// `rel`, held under the engine's `types` (its own, of the entry's width).
+    /// `rel`, held under the engine's `types` (its own, of the entry's width): a view of the entry where it lies
+    /// (decision 0442 step 6b), or, when the entry keeps its rows' levels, its rows read in with them.
     pub(in crate::code_rule_dsl) fn rel_as(&self, types: Vec<u8>, atoms: &Atoms) -> Option<Arc<InRel>> {
-        let kept = self.kept();
-        if !readable(&kept, atoms) {
+        let rows = self.packed();
+        let k = rows.arity as usize;
+        if types.len() != k || !readable(&self.kept(), atoms) {
             return None;
         }
-        self.bound.rel(&kept, types)
+        let Some(levels) = rows.levels() else {
+            return Some(InRel::over_source(Arc::new(KeptSource::new(Arc::clone(&self.bound), vec![self.rows])), types));
+        };
+        // copy: load: the rows and their levels into the run's relation, which maintains a recursive stratum by them.
+        let n = rows.len();
+        let mut flat = Vec::with_capacity(n * k);
+        for i in 0..n {
+            flat.extend((0..k).map(|c| rows.get(i, c)));
+        }
+        let mut level = Vec::with_capacity(n);
+        levels.for_each(|v| level.push(v as u32));
+        InRel::from_flat_levels(flat, n, types, level)
     }
     /// Its rows, `each` called with a batch of them at a time (row-major), read where they lie: for the small
     /// entries a run reads values of (an input's documents, statistics' words), and for readers that take rows.
     pub(in crate::code_rule_dsl) fn each_rows(&self, each: &mut dyn FnMut(&[i64])) {
-        let kept = self.kept();
-        let (k, n) = (kept.rows.arity as usize, kept.rows.rows.len());
-        let mut buf: Vec<i64> = Vec::with_capacity(4096.min(n as usize) * k);
+        let rows = self.packed();
+        let (k, n) = (rows.arity as usize, rows.len());
+        // copy: not block data: a batch of decoded values handed to the reader, never kept.
+        let mut buf: Vec<i64> = Vec::with_capacity(4096.min(n) * k);
         for i in 0..n {
-            for c in 0..k {
-                buf.push(kept.rows.rows.get(i, c));
-            }
+            buf.extend((0..k).map(|c| rows.get(i, c)));
             if buf.len() >= 4096 * k.max(1) {
                 each(&buf);
                 buf.clear();
@@ -183,34 +142,32 @@ impl Entry {
     }
 }
 
-/// Entries `parts` of one bound space (a kept input's granules, in their order) as one engine relation
-/// (`Bound::gathered`), its types the engine's; `None` when one's atoms are not this process's numbering.
+/// Entries `parts` of one bound space (a kept input's granules, in their order, each kept as given) as one engine
+/// relation, its types the engine's: a view of the granules where they lie, one after another; `None` when one's
+/// atoms are not this process's numbering.
 pub(in crate::code_rule_dsl) fn gathered(parts: &[Entry], width: usize, atoms: &Atoms) -> Option<Arc<InRel>> {
-    let bound = parts.first().map(|p| Arc::clone(&p.bound));
-    let Some(bound) = bound else { return Some(InRel::held(Rows::living(width, Life::Kept), 0, vec![b'i'; width], Vec::new())) };
-    let view = bound.view();
-    let kept: Vec<Kept<'_>> = parts.iter().map(|p| view.find(&FactKey { rel: &p.rel, ident: &p.ident, part: p.part })).collect::<Option<_>>()?;
-    if !kept.iter().all(|k| readable(k, atoms)) {
+    let Some(first) = parts.first() else { return Some(InRel::from_flat(Vec::new(), 0, vec![b'i'; width])) };
+    if parts.iter().any(|p| p.width() != width || !Arc::ptr_eq(&p.bound, &first.bound) || !readable(&p.kept(), atoms)) {
         return None;
     }
-    bound.gathered(&kept, vec![b'i'; width])
+    let source = KeptSource::new(Arc::clone(&first.bound), parts.iter().map(|p| p.rows).collect());
+    Some(InRel::over_source(Arc::new(source), vec![b'i'; width]))
 }
 
 /// Whether `kept`'s atoms (its `s` columns' values, as the store numbers them) read as this process numbers them:
-/// always, but past a fork (`Atoms::reads_in_place`), where they are not read in place and the entry is derived again.
+/// always where this process's ids are the store's (`Atoms::holds_by_reading`: not forked, and leased); else held to
+/// their greatest (`reads_in_place`), and past a fork (decision 0170) not read in place, the entry derived again.
 fn readable(kept: &Kept<'_>, atoms: &Atoms) -> bool {
+    if !atoms.holds_by_reading() {
+        return true;
+    }
     let rel = kept.rows;
-    let n = rel.rows.len();
     let mut max: Option<i64> = None;
     for (c, _) in kept.types.iter().enumerate().filter(|(_, t)| **t == b's') {
-        if c >= rel.arity as usize || n == 0 {
+        if c >= rel.arity as usize {
             continue;
         }
-        let m = match rel.stats.as_slice().get(c) {
-            Some(s) => s.max,
-            None => (0..n).map(|i| rel.rows.get(i, c)).max().unwrap_or(0),
-        };
-        max = Some(max.map_or(m, |x| x.max(m)));
+        rel.col(c).for_each(|v| max = Some(max.map_or(v, |m| m.max(v))));
     }
     let Some(max) = max else { return true };
     match atoms.reads_in_place(max) {

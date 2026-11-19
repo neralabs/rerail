@@ -585,16 +585,16 @@ fn atoms_another_process_stored_past_this_ones_end_are_mapped_after_a_fork() {
         digest: 9,
         reads: Vec::new(),
         types: vec![b's', b'i'],
-        what: crate::content_store::kept_facts::KeptWhat::Flat { widths: vec![8, 8], rows: vec![2, 2, 3, 3, 1, 1], n: 3 },
+        what: crate::content_store::kept_facts::KeptWhat::Flat { widths: vec![8, 8], rows: vec![2, 2, 3, 3, 1, 1], n: 3, levels: None, given: false },
     };
     super::mapped(|| store.queue_kept(space, vec![put]));
     let row = store.kept_row(&space).unwrap().expect("written");
     let kept = store.open_kept(&space, &row).unwrap();
     let view = kept.view();
     let entry = rerail_blocks::kept::KeptRead::get(&view, &rerail_blocks::kept::FactKey { rel: "r", ident: &[1; 32], part: 0 }).expect("the entry");
-    let rows: Vec<Vec<i64>> = (0..3).map(|id| entry.view().row(id)).collect();
-    assert_eq!(rows.iter().map(|r| r[0]).collect::<Vec<_>>(), [4, 3, 1], "the store's ids");
-    assert_eq!(rows.iter().map(|r| r[1]).collect::<Vec<_>>(), [2, 3, 1], "an integer column is as it was");
+    // In canonical order (decision 0442 K3): by the store's ids.
+    let rows: Vec<Vec<i64>> = (0..3).map(|id| entry.row(id)).collect();
+    assert_eq!(rows, [vec![1, 1], vec![3, 3], vec![4, 2]], "the store's ids (b 4, y 3, a 1), each integer with its row");
     // The other process's `z` is held here under an id of this process's.
     let mut z = [2i64];
     handle.to_local(StoreIds::as_stored(&mut z)).unwrap();

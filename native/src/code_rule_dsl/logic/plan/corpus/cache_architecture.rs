@@ -44,13 +44,16 @@ const NOT_CACHES: &[&str] = &[
     "push_pending", "snapshots", "snapshot_files", "workspaces", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
     "corpus_decided", "corpus_swept", "corpus_state",
+    // Each guest's key by its identity (decision 0391): a name, as `strings`. The observer's journal of what it saw
+    // change (decision 0400): bookkeeping of observations.
+    "guest_keys", "observed_changes",
     "x", "rows", "facts", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
 ];
 
-/// The relations' own storage between runs: every kept relation's rows as blocks beside the store, named by
-/// `facts_blocks` (decision 0401). A per-file memo entry is its file's rows as one image in a segment (`memo_entries`,
+/// The relations' own storage between runs: every kept relation's rows as a chain of packed files beside the store,
+/// named by `facts_chain` (decisions 0401, 0442). A per-file memo entry is its file's rows as one image in a segment (`memo_entries`,
 /// `memo_packs`: decision 0240 §4). A cache's rows are kept here as any relation's are, never in a table of their own.
-const RELATIONS: &[&str] = &["facts_blocks", "memo_entries", "memo_packs"];
+const RELATIONS: &[&str] = &["facts_chain", "memo_entries", "memo_packs"];
 
 /// Caches made before decision 0103, each to move to the two rules (§7 lists each one's). This list may only shrink.
 const NOT_YET_MOVED: &[&str] = &[
