@@ -379,5 +379,6 @@ before), the edited tree cold 8.4 s. Its 589 outputs equal across the edit, the 
 
 Decision 0439. The same 50 files with the profiling build, at load 36 on the M5: cold 7.5 s and 212.4 G
 instructions (231.0 G with the frames), warm 0.1 s, the edit 1.7 s and 32.8 G (34.6 G) at a 547 MB peak (765 MB), the
-edited tree cold 7.3 s. Its 589 outputs are equal (F-R2), with 48 findings. The kept blocks take 211 MB on disk, where
-the frames took 39 MB (0439, "Open").
+edited tree cold 7.3 s. Its 589 outputs are equal (F-R2), with 48 findings. The kept blocks took 211 MB on disk, where
+the frames took 39 MB; merged with 0442's chain (dc113d27e), the same runs keep 38.9 MB, 31.6 MB after a cold run
+alone (0439, "Met").

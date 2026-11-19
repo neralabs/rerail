@@ -86,16 +86,17 @@ M5:
 All 589 outputs are equal across the edit, the warm run after it and the edited tree's cold run, with 48 findings
 each. The store holds no frame table and no `.frames` (18,687 frames and 39 MB before).
 
-## Open: the blocks are larger than the frames were
+## Met: the chain is no larger than the frames were (2026-11-19)
 
 0401's step-6 measurements set a condition: before the frames are retired, the copies must be no larger than the
-frames. In this tree they are not. The kept blocks take 211 MB on disk over 20 spaces, against the frames' 39 MB. A
-block's columns are 8-byte words with their indexes, where a frame's were varints, and one space's base is 121 MB of
-it. A space also keeps the delta it replaced until its next write, which sweeps it (0401 F2), because a process still
-reading the previous commit can open its files: one replaced delta per space at most, 28 MB here.
+frames. With the blocks this tree first kept, they were not: 211 MB on disk over 20 spaces, against the frames' 39
+MB (a block's columns were 8-byte words with their indexes, where a frame's were varints; one space's base was 121
+MB of it, and each space kept the delta it replaced until its next write, 28 MB).
 
-The format that meets the condition is built on a sibling branch: the user's "kept facts are packed chunks, appended
-to a chain of mapped files" (numbered 0402 there, decided 2026-11-18, steps 1–7 built). It replaces 0401 F1, F2 and
-F6's copy and keeps F3–F5. This tree retires the frames ahead of it, because no reader was left (0438) and writing
-them cost 18 G instructions a cold run. Merging that work here is what meets the condition. Its kept-relation reads
-take this decision's tables (F5) as they are.
+Merging decision 0442 (the user's "kept facts are packed chunks, appended to a chain of mapped files", built on a
+sibling branch as 0402; merge dc113d27e) meets it. The same 50 files with the profiling build, at load 18 on the M5:
+a cold run's chain takes 31.6 MB over 7 spaces in 14 files; after the cold run, a warm one, the edit adding a
+function and a warm one after it, 38.9 MB over 20 spaces in 35 files, of which 5.0 MB are 7 files a merge replaced,
+removed by their space's next write (0442 K4), so 33.9 MB the chain names. The biggest space is 26.2 MB after the
+cold run. Cold 7.9 s and 215.8 G instructions, the edit 2.5 s and 37.3 G at a 526 MB peak (load 18, where the
+numbers above were at load 36), the edited tree cold 7.6 s; all 589 outputs equal, with 48 findings.

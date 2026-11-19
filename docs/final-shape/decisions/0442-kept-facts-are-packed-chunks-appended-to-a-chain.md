@@ -382,3 +382,9 @@ What 0439 supersedes, and how each step's intent is kept:
   and went with them (its measurement stands, above); the encodings' report (`chain_columns_by_candidate`) stays an
   `#[ignore]`d report over a store.
 - **The lazy input (`Lazy`, a granule decoded where read).** Gone with the frames: a granule is a view where it lies.
+- **Merged with 0439 (dc113d27e, 2026-11-19).** The 50 data-layer files, profiling build, load 18 on the M5: the
+  chain takes 31.6 MB after a cold run and 38.9 MB after the edit's legs (5.0 MB of it files a merge replaced, which
+  the next write removes), where 0401's blocks took 211 MB and the frames 39 MB (0439 "Met"); 589 outputs equal.
+  Two faults the merge found: a fact relation's rows hashed in order, so a phase export maintained from kept rows
+  (canonical order) renamed the cone's rounds' space (`facts_in_another_order_are_the_same_program`); and a round
+  dropped a kept relation read in place as a view (`Source::kept`, `InRel::kept_in_place`).

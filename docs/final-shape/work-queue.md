@@ -4459,8 +4459,10 @@ Found 2026-11-18, the 57 data-layer rules over corpus0's first 50 files, the pro
   load 36 (34.6 G with the frames), cold 212.4 G (231.0 G), 589 outputs equal. On the way: two strings tests that
   still expected rule-order test numbers, three thread-locals listed but gone, and a write-back test that removed its
   directory while a handle's checkpoint was still writing.
-- **Open:** the kept blocks take 211 MB against the frames' 39 MB (0401's condition for step 9, 0439 "Open"). Met by
-  merging the packed kept format from its sibling branch.
+- **Met** (2026-11-19, merge dc113d27e of 0442's chain): the kept blocks took 211 MB against the frames' 39 MB
+  (0401's condition for step 9). The chain takes 31.6 MB after a cold run and 38.9 MB after the edit's legs (5.0 MB
+  of it replaced files the next write removes), load 18: cold 7.9 s, 215.8 G; the edit 2.5 s, 37.3 G; 589 outputs
+  equal (0439 "Met").
 - **Next:** the tape views as reads of the tape, not framed inputs (0353), and the per-chunk fixed cost of a
   one-file chunk.
 
