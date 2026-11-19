@@ -2078,9 +2078,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return evaluation;
   }
   /**
-   * Publishes the findings of each revision whose edits have all been checked, as soon as the last of them is recorded:
-   * a tool call's edits go out together, and an edit of another call or a walk still queued holds back none of them, so
-   * a recorded finding rides the session's next boundary.
+   * Publishes the findings of each revision none of whose edits is still queued, as soon as the last of them is
+   * recorded: an edit of another call or a walk still queued holds back none of them, so a recorded finding rides the
+   * session's next boundary. A tool call's edits go out together, except one still being stored (`#store` spools it to
+   * disk) when the evaluator ends the others: its findings follow in a steer of their own.
    */
   async #publishReady(): Promise<void> {
     for (const [revision, byPath] of this.#takeReady()) {
