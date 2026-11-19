@@ -138,9 +138,9 @@ pub(crate) fn compress_source(bytes: &[u8], level: i32, tag: Option<u8>) -> io::
     compress_as(bytes, level, tag.and_then(|tag| dictionary_for(tag, Content::Source)))
 }
 
-/// A tape's frame: its language is in its own header. A tape whose format compresses its own blocks (16z, decision
-/// 0353 step 4b) is its frame as it is (`CODEC_RAW`, [`tape_codec`]): a load is its bytes, and a reader decodes the
-/// blocks it reads, never the whole tape.
+/// A tape's frame: its language is in its own header. A tape of a format read in place (16 and 16z, decision 0353
+/// step 4b) is its frame as it is (`CODEC_RAW`, [`tape_codec`]): a load is its bytes, and a reader reads them where
+/// they lie (16z decodes the blocks it reads, never the whole tape).
 pub(crate) fn compress_tape(bytes: &[u8], level: i32) -> io::Result<Vec<u8>> {
     if KEPT_AS_IS.get().is_some_and(|kept| kept(bytes)) {
         return Ok(bytes.to_vec());

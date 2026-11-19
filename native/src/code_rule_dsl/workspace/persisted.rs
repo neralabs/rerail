@@ -396,8 +396,8 @@ pub(super) fn restore_persisted_file(
 /// frame by the tape's read (`tape_has_kind`, the kernels' too), rules out every candidate clause: none of a clause's
 /// root kinds is in the tape, as the search index's `Absent` says. A tape with an error node (its kind `ERROR_CODE`'s
 /// bit) rules out none, as the index's syntax errors do not. `None` where the presence cannot tell and the search index
-/// is asked: a frame that holds no presence or holds it compressed (a decompression is a load of the tape), a clause
-/// over a derived document, a clause with project evidence, or one with no root kinds.
+/// is asked: a tape that holds none (format 15's, or a store's from before layout 5), a clause over a derived
+/// document, a clause with project evidence, or one with no root kinds.
 fn presence_selects(store: &crate::content_store::ContentStore, source: crate::content_store::SourceId, grammar_id: i64, file: &FileState, code_rules: &[Arc<CompiledCodeRule>]) -> Option<bool> {
     let frames = store.tape_frames_for(&[source], grammar_id, grammar_version(), i64::from(tape::formats::stored_version())).ok()?;
     let frame = frames.into_iter().next()??;

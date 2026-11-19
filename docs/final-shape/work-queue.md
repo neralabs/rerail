@@ -2399,7 +2399,9 @@ holds the design, its requirements (R1–R12) and its steps.
     device count.
 - **Done** (2026-11-19, step 6, the one home): P1–P4 in 51624c270. A tape's stored bytes are its home, tape then
   presence, one frame (layout 5): the room, the residency and a warm load carry it with no second structure; the
-  selector reads it in place in a raw or plain frame (16z's), a zstd frame (format 16's) asks the search index.
+  selector reads it in place in the stored frame. Format 16 and 16z alike: both are stored as they are (the store
+  had kept only 16z so and wrapped format 16 in zstd at rest, against the load "as stored" of 0353 step 4; fixed
+  with this), so nothing but the tape's own reads tells them apart.
   P5 here: the kernels' `root_mask_in` tests `rule_may_in` (the rule's kinds and KIND tests by `tape_has_kind`) once
   a group, before any code; the host's `Roots::nodes` (`Roots::may_in`, `match_groups_in`: a block left out is not
   read, in 16z not decompressed) and `nodes_of_kinds` read the same words; an ERROR root's kind is `ERROR_CODE` in

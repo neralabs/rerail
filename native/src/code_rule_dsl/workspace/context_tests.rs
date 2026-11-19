@@ -4126,12 +4126,11 @@ fn selector_indexes_skip_only_error_free_tapes_that_cannot_match() {
 }
 
 /// Decision 0434 §4, step 6: with no search index built, a stored file is skipped by the presence stored with its
-/// tape, read in place in the tape's frame (16z's: its bytes as they are): `plain.py` has no lambda and no error node;
+/// tape, read in place in the tape's frame (its bytes as they are): `plain.py` has no lambda and no error node;
 /// `broken.py`'s error node keeps it decoded, as the index's syntax errors do; the results are a fresh workspace's.
 #[test]
 fn stored_presences_skip_only_error_free_tapes_that_cannot_match() {
     let _slot = WORKSPACE_TEST_SLOT.lock();
-    crate::code_rule_dsl::tape::formats::this_thread_stores(crate::code_rule_dsl::tape::formats::Format::F16Z);
     let directory = TempDir::new("presences");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let file =

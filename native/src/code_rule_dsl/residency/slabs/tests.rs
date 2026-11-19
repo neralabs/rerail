@@ -248,9 +248,10 @@ kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device con
             store.put_tape(source_id, i64::from(language::tape_tag(*lang).unwrap()), 1, i64::from(format.store_version()), &bytes).unwrap();
             digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
         }
-        // A 16z tape is stored as it is (its blocks are compressed; a load decodes none), the others in zstd frames.
+        // A format 16 or 16z tape is stored as it is (a load is its bytes, read in place; 16z decodes none of its
+        // blocks), its presence with it; format 15 in zstd frames.
         let codecs: Vec<i64> = rusqlite::Connection::open(&path).unwrap().prepare("SELECT codec_id FROM tape_objects").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
-        assert!(!codecs.is_empty() && codecs.iter().all(|&c| c == i64::from(format != Format::F16Z)), "{format:?} stored with codecs {codecs:?}");
+        assert!(!codecs.is_empty() && codecs.iter().all(|&c| c == i64::from(format == Format::F15)), "{format:?} stored with codecs {codecs:?}");
         let table = DocTable::one_block(admit(&store, &digests, &grammar).unwrap()).unwrap();
         let expected_format = match format {
             Format::F15 => 15,
@@ -258,6 +259,8 @@ kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device con
             _ => rerail_clif::view::F16Z_FORMAT,
         };
         assert!(table.views.iter().all(|view| view.format == expected_format), "{format:?} placed as format {expected_format}");
+        // The device reads the presence where the tape's home holds it (decision 0434 §4, step 6), 16 and 16z alike.
+        assert!(table.views.iter().all(|view| (view.presence != 0) == (format != Format::F15)), "{format:?}: the views name the presence");
         assert_eq!(table.cache.is_some(), format == Format::F16Z, "a cache for 16z tapes alone");
         if format != Format::F15 {
             // One code table a language in the block (decision 0336 §7): documents of a language read the same one.

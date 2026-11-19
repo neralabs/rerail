@@ -442,7 +442,9 @@ kinds a mask over the presence's words) read the same words. No host-made answer
 
 **Built (2026-11-19).** The home, as stored: a format 16 or 16z tape's stored bytes are its home (`emit` gives the
 extent), so the presence is in the same frame as the tape, placed, admitted and loaded with it; nothing else holds
-it (the kept-facts entry of part 3 went). `F16_LAYOUT` 5. The read: `tape_has_kind(block, kind)` (CLIF; block
+it (the kept-facts entry of part 3 went). Format 16 and 16z are both stored as they are (`set_tapes_kept_as_is`;
+the store had wrapped format 16 in zstd at rest), so the presence is read the same way in both, in the stored
+frame; only format 15, which has none, is zstd's at rest. `F16_LAYOUT` 5. The read: `tape_has_kind(block, kind)` (CLIF; block
 `NONE`, or one past those held, reads the document's; a tape without a presence answers 1). Its readers: the host's
 `Tape::has_kind` (`may_have_kind`, `block_may_have_kind`, the selector's `StoredPresence` over an unloaded frame,
 `Roots::may_in` for the CPU's root walk, which then reads no code of a block left out) and the kernels'
