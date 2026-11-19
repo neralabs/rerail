@@ -1036,9 +1036,16 @@ mod tests {
                 notices.start(root);
             }
             assert!(backend.watch(&worktree, &folders));
-            assert_eq!(backend.watch_spare(&registry, &entries), watched, "budget {budget}");
+            assert_eq!(
+                backend.watch_spare(&registry, &entries),
+                watched,
+                "budget {budget}"
+            );
             assert!(backend.shared.watches().owners.len() <= budget);
-            assert!(backend.watch(&worktree, &folders), "the worktree is watched again");
+            assert!(
+                backend.watch(&worktree, &folders),
+                "the worktree is watched again"
+            );
             assert!(notices.take().is_empty(), "no watch ended");
             backend.close();
         }
@@ -1074,7 +1081,10 @@ mod tests {
         assert!(backend.watch_spare(&root, &[String::new()]));
         let grown = ["", "a"].map(str::to_owned);
         assert!(!backend.watch(&root, &grown), "it does not fit");
-        assert!(notices.take().is_empty(), "no notice of its own watch ending");
+        assert!(
+            notices.take().is_empty(),
+            "no notice of its own watch ending"
+        );
         backend.close();
     }
 
