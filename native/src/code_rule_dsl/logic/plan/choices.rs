@@ -164,7 +164,12 @@ impl Drop for Durable {
             let notes = super::joins::to_store().map(note_rows);
             // And the prepared plans (decision 0361 step 5, Q228), where the run made any.
             let ready = super::prepared_to_store();
-            let Some(plans) = super::plans_to_store().or_else(|| (notes.is_some() || ready.is_some()).then(super::stored_plans).flatten()) else { return };
+            let changed = super::plans_to_store();
+            // A warm run changes none of them: which did, named.
+            if changed.is_some() || notes.is_some() || ready.is_some() {
+                super::super::profile::warm_fault("the kept plans changed", || format!("plans: {}, join notes: {}, prepared plans: {}", changed.as_ref().map_or(0, |p| p.len()), notes.as_ref().map_or(0, |n| n.0.len()), ready.as_ref().map_or(0, |r| r.len())));
+            }
+            let Some(plans) = changed.or_else(|| (notes.is_some() || ready.is_some()).then(super::stored_plans).flatten()) else { return };
             let notes = notes.unwrap_or_default();
             let ready = super::prepared::store_rows(&ready.unwrap_or_else(super::prepared_held));
             let _span = super::super::profile::span(|| "kept plans, queued for the store".into());
