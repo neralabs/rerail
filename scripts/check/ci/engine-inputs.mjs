@@ -38,7 +38,8 @@ export const ENGINE_FILES = [
 ];
 const LOCKED_PACKAGES = ["node_modules/@napi-rs/cli", "node_modules/@napi-rs/cross-toolchain"];
 const EMBED = /include_(?:str|bytes)!\s*\(\s*"([^"]+)"\s*\)/gu;
-const PATH_KEY = /\bpath\s*=\s*"([^"]+)"/gu;
+// TOML's basic and literal strings both: `path = "../forest"`, `path = '../forest'`.
+const PATH_KEY = /\bpath\s*=\s*(?:"([^"]+)"|'([^']+)')/gu;
 
 /** Every tracked file's blob id, by repository-relative path. */
 function trackedBlobs(root) {
@@ -57,8 +58,9 @@ function trackedBlobs(root) {
 function pathCrates(root, manifest, blobs) {
   const dir = posix.dirname(manifest);
   const crates = [];
-  for (const [, target] of readFileSync(`${root}/${manifest}`, "utf8").matchAll(PATH_KEY)) {
-    const crate = posix.normalize(posix.join(dir, target));
+  for (const [, basic, literal] of readFileSync(`${root}/${manifest}`, "utf8").matchAll(PATH_KEY)) {
+    // A trailing slash (`path = "../forest/"`) names the same directory.
+    const crate = posix.normalize(posix.join(dir, basic ?? literal)).replace(/\/+$/u, "");
     if (blobs.has(`${crate}/Cargo.toml`)) crates.push(`${crate}/`);
   }
   return crates;
