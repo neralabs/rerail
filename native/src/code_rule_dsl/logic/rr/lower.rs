@@ -309,9 +309,20 @@ pub struct Written {
 impl Written {
     /// `rule` written onto `b`, the lowerer's header; once, when `once`.
     fn write(&mut self, b: &mut crate::code_rule_dsl::logic::program_image::Builder<'static>, rule: &Rule, once: bool) {
-        match put_rule(b, rule, once.then_some(&mut self.seen)) {
-            Ok(true) => self.n += 1,
-            Ok(false) => {}
+        match put_rule(b, rule) {
+            Ok(o) => self.close(b, o, once),
+            Err(e) => {
+                self.error.get_or_insert(e);
+            }
+        }
+    }
+
+    /// Ends rule `o` open on `b`; once, when `once` (left out when a rule of its hash was written once before).
+    fn close(&mut self, b: &mut crate::code_rule_dsl::logic::program_image::Builder<'static>, o: crate::code_rule_dsl::logic::program_image::Open, once: bool) {
+        let closed = if once { b.close_rule_once(o, &mut self.seen) } else { b.close_rule(o).map(Some) };
+        match closed {
+            Ok(Some(_)) => self.n += 1,
+            Ok(None) => {}
             Err(e) => {
                 self.error.get_or_insert(e);
             }
@@ -328,9 +339,9 @@ impl Written {
     }
 }
 
-/// `rule` written on `b` literal by literal (`Builder::open_rule`); left out when `seen` holds its hash. Whether it
-/// was written. (Until each lowering writes its literals itself, decision 0276 A3.)
-fn put_rule(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'static>, rule: &Rule, seen: Option<&mut std::collections::HashSet<u64>>) -> Result<bool, String> {
+/// `rule` put on `b` literal by literal (`Builder::open_rule`), open for `Written::close`. (Until each lowering
+/// writes its literals itself, decision 0276 A3.)
+fn put_rule(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'static>, rule: &Rule) -> Result<crate::code_rule_dsl::logic::program_image::Open, String> {
     use crate::code_rule_dsl::logic::program_image::{CmpOp, T};
     fn t(x: &Term) -> T<'_> {
         match x {
@@ -366,10 +377,7 @@ fn put_rule(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'static>
             }
         }
     }
-    match seen {
-        Some(seen) => b.close_rule_once(o, seen).map(|id| id.is_some()),
-        None => b.close_rule(o).map(|_| true),
-    }
+    Ok(o)
 }
 
 /// A helper relation's stem, column types and rules (their templates: variables numbered in order, so the fresh
@@ -1962,6 +1970,11 @@ impl Lowerer {
         self.out.n
     }
 
+    /// Ends rule `o`, open on the header (`Builder::open_rule`), as one the walk wrote.
+    fn close(&mut self, o: crate::code_rule_dsl::logic::program_image::Open) {
+        self.out.close(&mut self.prog, o, false);
+    }
+
     /// A helper relation named `name` (a `fresh` one of `stem`), with these columns and rules; or, when one made
     /// before has the same stem, columns and rules, that relation. Each occurrence made its own: the two contexts of
     /// a rule's two aggregates over the same variables were `rr_ctx7` and `rr_ctx8` in most of dl1's 44 policies, and
@@ -3433,16 +3446,19 @@ impl Lowerer {
     /// makes them before the candidates; its node atoms are a locality proof only (the native contract emits nodes
     /// from these documents).
     fn python_candidates_native(&mut self, name: &str, native: Native) {
+        use crate::code_rule_dsl::logic::program_image::T;
         let Native::PythonCandidates { input, targets, .. } = &native else { unreachable!("python candidates") };
-        let v = |s: &str| Term::Var(s.to_owned().into());
-        let a = |r: &str, args: Vec<Term>| Literal::Atom(Atom { rel: r.into(), args: args.into(), neg: false, gated: false });
-        let mut body = vec![a(input, vec![v("d")]), a(targets, vec![v("q")])];
-        for n in ["c", "f", "r", "o"] {
-            body.push(a("node", vec![v("d"), v(n), Term::Wild, Term::Wild, Term::Wild]));
-        }
         self.prog.declare_cols(name, ["c", "f", "r", "o"].map(|n| (n, "node")));
-        self.write(Rule { head: Atom { rel: name.to_owned().into(), args: ["c", "f", "r", "o"].into_iter().map(v).collect(), neg: false, gated: false }, body: body.into() });
-        self.prog.set_native(&name, native);
+        let p = &mut self.prog;
+        let mut o = p.open_rule();
+        p.put_head(&mut o, name, &["c", "f", "r", "o"].map(T::Var));
+        p.put_atom(&mut o, input.as_str(), &[T::Var("d")], false, false);
+        p.put_atom(&mut o, targets.as_str(), &[T::Var("q")], false, false);
+        for n in ["c", "f", "r", "o"] {
+            p.put_atom(&mut o, "node", &[T::Var("d"), T::Var(n), T::Wild, T::Wild, T::Wild], false, false);
+        }
+        self.close(o);
+        self.prog.set_native(name, native);
     }
 
     fn python_producer(&mut self, kind:&str, input:&str, targets:Option<&str>)->String {
@@ -3457,20 +3473,24 @@ impl Lowerer {
             rel = format!("{base}__{collision}");
         }
         let vars=if kind=="arguments" {vec![("n","node"),("i","int"),("keyword","sym"),("spread","sym"),("value","node")]}else if kind=="qualified"{vec![("n","node"),("q","sym")]}else{vec![("n","node"),("value","node")]};
-        let v=|s:&str|Term::Var(s.to_owned().into());
-        let atom=|r:&str,args:Vec<Term>|Literal::Atom(Atom{rel:r.into(),args: args.into(),neg:false,gated:false});
-        let mut body=vec![atom(input,vec![v("n")]),atom("node",vec![v("d"),v("n"),Term::Wild,Term::Wild,Term::Wild])];
-        if let Some(t)=targets {body.push(atom(t,vec![v("q")]));}
-        else {
-            body.push(atom("node",vec![v("d"),v("value"),Term::Wild,Term::Wild,Term::Wild]));
-            if kind=="arguments" {
-                for (name,value) in [("i",Term::Int(0)),("keyword",Term::Str(String::new().into())),("spread",Term::Str(String::new().into()))] {
-                    body.push(Literal::Cmp{l:v(name),op:"=",r:value});
+        use crate::code_rule_dsl::logic::program_image::{CmpOp, T};
+        self.prog.declare_cols(&rel, vars.iter().map(|(n, t)| (n.to_string(), t.to_string())));
+        let p = &mut self.prog;
+        let mut o = p.open_rule();
+        p.put_head(&mut o, rel.as_str(), &vars.iter().map(|(n, _)| T::Var(n)).collect::<Vec<_>>());
+        p.put_atom(&mut o, input, &[T::Var("n")], false, false);
+        p.put_atom(&mut o, "node", &[T::Var("d"), T::Var("n"), T::Wild, T::Wild, T::Wild], false, false);
+        if let Some(t) = targets {
+            p.put_atom(&mut o, t, &[T::Var("q")], false, false);
+        } else {
+            p.put_atom(&mut o, "node", &[T::Var("d"), T::Var("value"), T::Wild, T::Wild, T::Wild], false, false);
+            if kind == "arguments" {
+                for (name, value) in [("i", T::Int(0)), ("keyword", T::Str("")), ("spread", T::Str(""))] {
+                    p.put_cmp(&mut o, T::Var(name), CmpOp::Eq, value);
                 }
             }
         }
-        self.prog.declare_cols(&rel, vars.iter().map(|(n, t)| (n.to_string(), t.to_string())));
-        self.write(Rule{head:Atom{rel:rel.clone().into(),args:vars.iter().map(|(n,_)|v(n)).collect(),neg:false,gated:false},body: body.into()});
+        self.close(o);
         self.prog.set_native(&rel, native);
         rel
     }
@@ -3486,13 +3506,16 @@ impl Lowerer {
         if self.prog.natives().contains_key(rel.as_str()) {
             return rel;
         }
-        let v = |n: &str| Term::Var(n.to_owned().into());
-        let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false });
-        let mut body = vec![atom(edge, vec![v("r"), v("hit"), v("first")]), atom(target, vec![v("hit")])];
+        use crate::code_rule_dsl::logic::program_image::T;
+        let p = &mut self.prog;
+        let mut o = p.open_rule();
+        p.put_head(&mut o, rel.as_str(), &[T::Var("r"), T::Var("hit"), T::Var("first")]);
+        p.put_atom(&mut o, edge, &[T::Var("r"), T::Var("hit"), T::Var("first")], false, false);
+        p.put_atom(&mut o, target, &[T::Var("hit")], false, false);
         if let Some(roots) = roots {
-            body.push(atom(roots, vec![v("r"), Term::Wild]));
+            p.put_atom(&mut o, roots, &[T::Var("r"), T::Wild], false, false);
         }
-        self.write(Rule { head: Atom { rel: rel.clone().into(), args: [v("r"), v("hit"), v("first")].into(), neg: false, gated: false }, body: body.into() });
+        self.close(o);
         // The edge relation's column types (a node, a number, a symbol); nodes where it is declared later.
         let edge_cols = self.prog.columns_of(edge);
         let ty = |c: usize, or: &str| edge_cols.as_ref().and_then(|cols| cols.get(c)).map_or_else(|| or.to_owned(), |(_, t)| t.clone());
@@ -3510,10 +3533,14 @@ impl Lowerer {
         if self.prog.natives().contains_key(rel.as_str()) {
             return rel;
         }
-        let v = |n: &str| Term::Var(n.to_owned().into());
-        let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false });
-        let body = vec![atom(own, vec![v("d"), v("k")]), atom(edge, vec![v("d"), v("e")]), atom(own, vec![v("e"), Term::Wild])];
-        self.write(Rule { head: Atom { rel: rel.clone().into(), args: [v("d"), v("e"), v("k")].into(), neg: false, gated: false }, body: body.into() });
+        use crate::code_rule_dsl::logic::program_image::T;
+        let p = &mut self.prog;
+        let mut o = p.open_rule();
+        p.put_head(&mut o, rel.as_str(), &[T::Var("d"), T::Var("e"), T::Var("k")]);
+        p.put_atom(&mut o, own, &[T::Var("d"), T::Var("k")], false, false);
+        p.put_atom(&mut o, edge, &[T::Var("d"), T::Var("e")], false, false);
+        p.put_atom(&mut o, own, &[T::Var("e"), T::Wild], false, false);
+        self.close(o);
         let cols = vec![("d".to_owned(), "int".to_owned()), ("c".to_owned(), "int".to_owned()), ("k".to_owned(), "sym".to_owned())];
         self.prog.declare_cols(&rel, cols.iter().map(|(c, t)| (c.to_string(), t.to_string())));
         self.prog.set_native(&rel, Native::Components { edge: edge.to_owned(), own: own.to_owned() });
