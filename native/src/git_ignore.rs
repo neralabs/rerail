@@ -4,14 +4,14 @@
 //! is a folder that holds a tracked path. Hosts that follow `.gitignore` skip what this ignores,
 //! and can name the pattern that ignored a path, with its file and line (`git check-ignore -v`).
 //!
-//! The index is re-read whenever it changes on disk, so `git add` of an ignored file brings it back;
-//! a `.gitignore` is read when the walk first enters its folder.
+//! The index is re-read whenever its file changes on disk, so `git add` of an ignored file brings it
+//! back; a `.gitignore` is read when the walk first enters its folder.
 
 use gix::bstr::{BStr, ByteSlice};
 use gix::index::entry::Mode;
 use napi::{Error, Result, Status};
 use napi_derive::napi;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 pub struct GitIgnore {
@@ -19,6 +19,8 @@ pub struct GitIgnore {
     stack: gix::worktree::Stack,
     /// Where the opened root sits below the worktree root: empty, or `/`-joined components.
     prefix: Vec<String>,
+    /// The index the questions read, read again once its file changes.
+    index: IndexFile,
 }
 
 impl GitIgnore {
@@ -46,21 +48,12 @@ impl GitIgnore {
             .components()
             .map(|component| component.as_os_str().to_string_lossy().into_owned())
             .collect();
-        let index = repository
-            .index_or_empty()
-            .map_err(|error| format!("cannot read Git index: {error}"))?;
-        let stack = repository
-            .excludes(
-                &index,
-                None,
-                gix::worktree::stack::state::ignore::Source::WorktreeThenIdMappingIfNotSkipped,
-            )
-            .map_err(|error| format!("cannot read Git excludes: {error}"))?
-            .detach();
+        let (index, stack) = index_and_exclude_stack(&repository)?;
         Ok(Some(Self {
             repository,
             stack,
             prefix,
+            index,
         }))
     }
 
@@ -88,11 +81,8 @@ impl GitIgnore {
         if path.is_empty() {
             return Ok(None);
         }
-        let index = self
-            .repository
-            .index_or_empty()
-            .map_err(|error| format!("cannot read Git index: {error}"))?;
-        if tracked(&index, path.as_bytes().as_bstr(), is_directory) {
+        self.index.refresh(&self.repository)?;
+        if tracked(&self.index.file, path.as_bytes().as_bstr(), is_directory) {
             return Ok(None);
         }
         let platform = self
@@ -145,6 +135,121 @@ fn tracked(index: &gix::index::State, path: &BStr, is_directory: bool) -> bool {
     index
         .prefixed_entries(folder.as_bstr())
         .is_some_and(|entries| !entries.is_empty())
+}
+
+/// `repository`'s index as it is now, and the exclude stack read with it: Git reads the
+/// `.gitignore` of a folder the worktree lacks from that index.
+fn index_and_exclude_stack(
+    repository: &gix::Repository,
+) -> std::result::Result<(IndexFile, gix::worktree::Stack), String> {
+    let index = IndexFile::read(repository)?;
+    let stack = repository
+        .excludes(
+            &index.file,
+            None,
+            gix::worktree::stack::state::ignore::Source::WorktreeThenIdMappingIfNotSkipped,
+        )
+        .map_err(|error| format!("cannot read Git excludes: {error}"))?
+        .detach();
+    Ok((index, stack))
+}
+
+/// The index as a matcher last read it, with its file's stamp then. gix's shared index is read
+/// again only once the file's modification time is later, but Git writes the index to a new file
+/// and renames it over the old one, and a second write within one step of the file system's clock
+/// keeps the first one's time: the stamp tells that new file from the one read.
+struct IndexFile {
+    path: PathBuf,
+    stamp: Option<FileStamp>,
+    file: gix::index::File,
+}
+
+impl IndexFile {
+    /// `repository`'s index as it is now; an empty one where it has none.
+    fn read(repository: &gix::Repository) -> std::result::Result<Self, String> {
+        let path = repository.index_path();
+        // Stamped before it is read, so a write that lands meanwhile reads as a change at the
+        // next question.
+        let stamp = FileStamp::of(&path);
+        let file = match repository.open_index() {
+            Ok(file) => file,
+            Err(_) if !path.exists() => gix::index::File::from_state(
+                gix::index::State::new(repository.object_hash()),
+                path.clone(),
+            ),
+            Err(error) => return Err(format!("cannot read Git index: {error}")),
+        };
+        Ok(Self { path, stamp, file })
+    }
+
+    /// Reads the index again once its file's stamp differs from the one it was read with.
+    fn refresh(&mut self, repository: &gix::Repository) -> std::result::Result<(), String> {
+        if FileStamp::of(&self.path) != self.stamp {
+            *self = Self::read(repository)?;
+        }
+        Ok(())
+    }
+}
+
+/// What tells one index file from another and from itself rewritten: the file's identity (device
+/// and inode on Unix; volume and file id on Windows, as the tree watch reads a folder's), which
+/// every write of Git's changes, and its modification time and size, which a write in place
+/// changes. The change time is left out: only a write in place that keeps the size and sets the
+/// time back would need it, and Git never writes the index in place.
+#[derive(Debug, PartialEq, Eq)]
+struct FileStamp {
+    identity: (u64, u128),
+    modified: Option<std::time::SystemTime>,
+    len: u64,
+}
+
+impl FileStamp {
+    /// `path`'s stamp; `None` when it is absent or cannot be read.
+    #[cfg(unix)]
+    fn of(path: &Path) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = std::fs::metadata(path).ok()?;
+        Some(Self {
+            identity: (metadata.dev(), u128::from(metadata.ino())),
+            modified: metadata.modified().ok(),
+            len: metadata.len(),
+        })
+    }
+
+    /// `path`'s stamp; `None` when it is absent or cannot be read.
+    #[cfg(windows)]
+    fn of(path: &Path) -> Option<Self> {
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+        };
+        // No access, as `std::fs::metadata` opens it, and every share mode: Git may rename meanwhile.
+        let file = std::fs::OpenOptions::new()
+            .access_mode(0)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)
+            .ok()?;
+        let metadata = file.metadata().ok()?;
+        let mut info = FILE_ID_INFO::default();
+        // SAFETY: an open handle and a buffer of the size passed.
+        let identified = unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FileIdInfo,
+                (&raw mut info).cast(),
+                size_of::<FILE_ID_INFO>() as u32,
+            )
+        } != 0;
+        identified.then(|| Self {
+            identity: (
+                info.VolumeSerialNumber,
+                u128::from_le_bytes(info.FileId.Identifier),
+            ),
+            modified: metadata.modified().ok(),
+            len: metadata.len(),
+        })
+    }
 }
 
 /// The pattern that ignores a path: the file Git read it from (absolute; `None` when it came from
@@ -211,10 +316,21 @@ pub fn open_git_ignore_matcher(root: String) -> Result<Option<GitIgnoreMatcher>>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::time::{Duration, SystemTime};
 
     fn git(directory: &Path, arguments: &[&str]) {
-        let output = std::process::Command::new("git")
+        run_git(std::process::Command::new("git"), directory, arguments);
+    }
+
+    /// `git` with `index` as its index file in place of the worktree's.
+    fn git_with_index(directory: &Path, index: &Path, arguments: &[&str]) {
+        let mut command = std::process::Command::new("git");
+        command.env("GIT_INDEX_FILE", index);
+        run_git(command, directory, arguments);
+    }
+
+    fn run_git(mut command: std::process::Command, directory: &Path, arguments: &[&str]) {
+        let output = command
             .arg("-C")
             .arg(directory)
             .args(arguments)
@@ -226,6 +342,21 @@ mod tests {
             arguments.join(" "),
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    fn modified(file: &Path) -> SystemTime {
+        std::fs::metadata(file).unwrap().modified().unwrap()
+    }
+
+    /// Gives `file` the modification time `time`, as Git's second write of a file within one step
+    /// of the file system's clock leaves it.
+    fn set_modified(file: &Path, time: SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(file)
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
     }
 
     fn fixture(name: &str, files: &[(&str, &str)]) -> PathBuf {
@@ -301,6 +432,95 @@ mod tests {
         assert!(
             !ignore.ignored("api/e.py", false).unwrap(),
             "the index is re-read once it changes"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reads_the_index_again_when_git_rewrites_it_within_one_clock_step() {
+        let root = fixture(
+            "step",
+            &[(".gitignore", "gen/\n"), ("gen/a.py", ""), ("b.py", "")],
+        );
+        git(&root, &["init", "--initial-branch=main"]);
+        git(&root, &["add", "b.py"]);
+        let index = root.join(".git/index");
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert!(ignore.ignored("gen/a.py", false).unwrap());
+
+        let read = modified(&index);
+        git(&root, &["add", "-f", "gen/a.py"]);
+        set_modified(&index, read);
+        assert!(
+            !ignore.ignored("gen/a.py", false).unwrap(),
+            "a file Git just made tracked is not ignored, though the index kept its time"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reads_the_index_again_when_its_file_identity_time_or_size_alone_changes() {
+        let root = fixture(
+            "stamp",
+            &[(".gitignore", "e.py\n"), ("d.py", ""), ("e.py", "")],
+        );
+        git(&root, &["init", "--initial-branch=main"]);
+        git(&root, &["add", "d.py"]);
+        let index = root.join(".git/index");
+        let tracking_e = root.join(".git/tracking-e");
+        git_with_index(&root, &tracking_e, &["add", "-f", "e.py"]);
+        let tracking_both = root.join(".git/tracking-both");
+        git_with_index(&root, &tracking_both, &["add", "-f", "d.py", "e.py"]);
+        let tracking_d = std::fs::read(&index).unwrap();
+        assert_eq!(
+            tracking_d.len(),
+            std::fs::read(&tracking_e).unwrap().len(),
+            "two indexes of one entry each, whose paths differ in one letter"
+        );
+        let time = modified(&index);
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert!(ignore.ignored("e.py", false).unwrap());
+
+        // Another file of the same size and time, renamed over the index as Git writes it.
+        set_modified(&tracking_e, time);
+        std::fs::rename(&tracking_e, &index).unwrap();
+        assert!(!ignore.ignored("e.py", false).unwrap(), "another file");
+
+        // The same file and size at another time.
+        std::fs::write(&index, &tracking_d).unwrap();
+        let later = time + Duration::from_secs(1);
+        set_modified(&index, later);
+        assert!(ignore.ignored("e.py", false).unwrap(), "another time");
+
+        // The same file and time at another size.
+        std::fs::write(&index, std::fs::read(&tracking_both).unwrap()).unwrap();
+        set_modified(&index, later);
+        assert!(!ignore.ignored("e.py", false).unwrap(), "another size");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reads_no_index_while_its_file_is_unchanged() {
+        let root = fixture("kept", &[(".gitignore", "e.py\n"), ("e.py", "")]);
+        git(&root, &["init", "--initial-branch=main"]);
+        git(&root, &["add", ".gitignore"]);
+        let index = root.join(".git/index");
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert!(ignore.ignored("e.py", false).unwrap());
+
+        // Bytes no index holds, in the same file at the same size and time: only a read sees them.
+        let time = modified(&index);
+        let len = std::fs::metadata(&index).unwrap().len();
+        std::fs::write(&index, vec![0; usize::try_from(len).unwrap()]).unwrap();
+        set_modified(&index, time);
+        assert!(
+            ignore.ignored("e.py", false).unwrap(),
+            "answered from the index read before, with one stat of its file"
+        );
+        set_modified(&index, time + Duration::from_secs(1));
+        assert!(
+            ignore.ignored("e.py", false).is_err(),
+            "read again once its time moves, and said to be unreadable"
         );
         std::fs::remove_dir_all(root).unwrap();
     }
