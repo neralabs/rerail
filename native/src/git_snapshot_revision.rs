@@ -94,6 +94,19 @@ pub(super) fn peel_object<'repo>(
 }
 
 pub(super) fn selection(repo: &Repository, expression: &str, path_base: Option<&Path>) -> Result<(ObjectId, bool)> {
+    // rev-parse tries the first pair of dots as a range even inside a tree path.
+    // If an endpoint does not resolve, the full path can still name a single object.
+    if let Some((from, to)) = expression.split_once("..") {
+        let to = to.strip_prefix('.').unwrap_or(to);
+        let endpoint = |s: &str| parse_object(repo, if s.is_empty() { "HEAD" } else { s }, path_base).is_ok();
+        if expression != ".." && endpoint(to) && endpoint(from) {
+            return Err(lookup_error("invalid-revision", "Git revision expressions must resolve to a single object"));
+        }
+    }
+    parse_object(repo, expression, path_base)
+}
+
+fn parse_object(repo: &Repository, expression: &str, path_base: Option<&Path>) -> Result<(ObjectId, bool)> {
     let mut revision = Revision {
         anchor_name: expression.split(['^', '~', ':']).next().unwrap_or_default().split("@{").next().unwrap_or_default(),
         selects_path: false,
@@ -103,7 +116,8 @@ pub(super) fn selection(repo: &Repository, expression: &str, path_base: Option<&
         candidates: Vec::new(),
         read_failure: RefCell::new(None),
     };
-    let parsed = spec::parse(expression.as_bytes().as_bstr(), &mut revision);
+    let spelling = previous_branch_suffix(repo, expression)?;
+    let parsed = spec::parse(spelling.as_ref().as_bstr(), &mut revision);
     // A checksum failure while narrowing an ambiguous prefix must not select a
     // different candidate. The parser can also wrap errors with syntax context.
     if let Some(failure) = revision.read_failure.into_inner() {
@@ -115,6 +129,34 @@ pub(super) fn selection(repo: &Repository, expression: &str, path_base: Option<&
         [] => Err(lookup_error("missing-revision", "No Git revision matched")),
         _ => Err(lookup_error("ambiguous-revision", format_args!("Ambiguous Git revision {expression:?}"))),
     }
+}
+
+/// Gix parses one reflog suffix per anchor. Git first substitutes the branch selected by @{-n}.
+fn previous_branch_suffix<'a>(repo: &Repository, expression: &'a str) -> Result<std::borrow::Cow<'a, [u8]>> {
+    let literal = std::borrow::Cow::Borrowed(expression.as_bytes());
+    let Some((number, suffix)) = expression.strip_prefix("@{-").and_then(|rest| rest.split_once('}')) else { return Ok(literal) };
+    if !suffix.starts_with("@{") || !number.bytes().all(|b| b.is_ascii_digit()) { return Ok(literal); }
+    let Some(number) = number.parse::<usize>().ok().filter(|n| *n > 0) else { return Ok(literal) };
+    let previous = previous_checkout(repo, number)?;
+    let reference = repo.try_find_reference(previous.as_bstr())?
+        .ok_or_else(|| lookup_error("invalid-revision", "Previous checkout has no branch reflog"))?;
+    let mut expanded = reference.name().as_bstr().to_vec();
+    expanded.extend_from_slice(suffix.as_bytes());
+    Ok(std::borrow::Cow::Owned(expanded))
+}
+
+fn previous_checkout(repo: &Repository, number: usize) -> Result<gix::bstr::BString> {
+    let mut log = repo.head()?.log_iter();
+    let entries = log.rev().map_err(ErrorExt::raise)?
+        .ok_or_else(|| message("HEAD has no checkout history").raise())?;
+    entries
+        .filter_map(std::result::Result::ok)
+        .filter_map(|entry| {
+            let from = entry.message.strip_prefix(b"checkout: moving from ")?;
+            Some(from[..from.find(" to ")?].as_bstr().to_owned())
+        })
+        .nth(number.saturating_sub(1))
+        .ok_or_else(|| message("No matching prior checkout").raise())
 }
 
 struct Revision<'repo> {
@@ -387,19 +429,7 @@ impl delegate::Revision for Revision<'_> {
     }
 
     fn nth_checked_out_branch(&mut self, number: usize) -> Result<()> {
-        let mut log = self.repo.head()?.log_iter();
-        let entries = log
-            .rev()
-            .map_err(ErrorExt::raise)?
-            .ok_or_else(|| message("HEAD has no checkout history").raise())?;
-        let name = entries
-            .filter_map(std::result::Result::ok)
-            .filter_map(|entry| {
-                let from = entry.message.strip_prefix(b"checkout: moving from ")?;
-                Some(from[..from.find(" to ")?].as_bstr().to_owned())
-            })
-            .nth(number.saturating_sub(1))
-            .ok_or_else(|| message("No matching prior checkout").raise())?;
+        let name = previous_checkout(self.repo, number)?;
         if let Some(reference) = self.repo.try_find_reference(name.as_bstr())? {
             let target = reference.clone().follow_to_object()?.detach();
             self.candidates = vec![self.peel(target, None)?.id];

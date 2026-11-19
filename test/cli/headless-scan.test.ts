@@ -1044,6 +1044,60 @@ Resolved(@place("git", 1), e, o) :- git_revision(_, e, o).
     expect(new (loadNativeBinding().GitRevisionSource)(root, ":/second", "expressions").commit).toBe(expected);
   }, 30_000);
 
+  it("compares previous-branch reflogs and ambiguous tree paths with Git", async () => {
+    const root = checkout();
+    mkdirSync(join(root, "src", "two..dots"), { recursive: true });
+    writeFileSync(join(root, "src", "two..dots", "a.py"), "a = 1\n");
+    git(root, "add", "src");
+    git(root, "commit", "-qm", "tree paths");
+    git(root, "checkout", "-qb", "other");
+    git(root, "commit", "--allow-empty", "-qm", "other branch");
+    const expressions = ["@{-1}@{0}", "@{-1}@{1}", "@{-1}@{0}^", "@{-1}@{0}@{0}",
+      "HEAD:./src/..", "HEAD:./src/../", "HEAD:./absent/..", "HEAD:src/two..dots"];
+    const expected = (cwd: string, expr: string): string | null => {
+      const result = spawnSync("git", ["rev-parse", "--verify", "--quiet", expr], { cwd, encoding: "utf8" });
+      expect(result.error).toBeUndefined();
+      expect([0, 1, 128]).toContain(result.status);
+      return result.status === 0 ? result.stdout.trim() : null;
+    };
+    const Source = loadNativeBinding().GitRevisionSource;
+    const policy = join(root, "selectors.rr");
+    writeFileSync(policy, `
+#include "git.rr"
+.policy "selectors" revision 1
+.violation Selected(at: span, expression: symbol, result: symbol) "{expression} {result}"
+${expressions.map(expr => `git_revision_request(r, "${expr}") :- git_root_repo(r).`).join("\n")}
+Selected(@place("git", 1), e, o) :- git_revision(_, e, o).
+Selected(@place("git", 1), e, "error") :- git_revision_error(_, e, _).
+`);
+    const check = async () => {
+      const report = await scan(root, { rr: [policy] });
+      expect(report.status).toBe("completed");
+      expect(report.violations.map(v => v.message).sort()).toEqual(
+        expressions.map(expr => `${expr} ${expected(root, expr) ?? "error"}`).sort(),
+      );
+      for (const cwd of [root, join(root, "src")]) {
+        for (const expr of expressions) {
+          const wanted = expected(cwd, expr);
+          const select = () => new Source(root, expr, "selectors", cwd);
+          if (wanted === null) expect(select, expr).toThrow();
+          else {
+            const view = select();
+            expect(view.commit ?? view.tree, expr).toBe(wanted);
+          }
+        }
+      }
+    };
+    expect(expected(root, "@{-1}@{0}")).toBe(git(root, "rev-parse", "main"));
+    expect(expected(root, "HEAD:./src/..")).toBeNull();
+    expect(expected(join(root, "src"), "HEAD:./src/..")).toBe(git(root, "rev-parse", "HEAD:src"));
+    await check();
+    git(root, "checkout", "--quiet", "--detach", "HEAD^");
+    git(root, "checkout", "--quiet", "other");
+    expect(expected(root, "@{-1}@{0}")).toBeNull();
+    await check();
+  }, 30_000);
+
   it("reads physical objects and explicitly addresses replacements in both interfaces", async () => {
     const root = checkout();
     const original = git(root, "rev-parse", "HEAD");

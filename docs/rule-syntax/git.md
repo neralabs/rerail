@@ -57,6 +57,10 @@ To query `HEAD` when scanning yesterday's source, request `"HEAD"` as above.
 The selected source has no effect on what that expression resolves to.
 Explicit relative paths in rule expressions start at the worktree root of the named repository.
 Paths in a bare repository can name tree entries from the tree root.
+After a branch switch, `@{-1}@{0}` selects the previous branch's latest reflog entry.
+A detached previous checkout supplies a commit ID and has no branch reflog for this suffix.
+Rerail accepts a single object wherever a revision is required. Git can interpret two dots in a path expression as a revision range.
+For example, if `HEAD:./src/` exists, `HEAD:./src/..` names a range. Use `HEAD:./src/../` to select the parent tree.
 Commit message searches accept POSIX extended regular expressions.
 For example, `:/^release [[:digit:]]+` selects a commit by its message.
 The package tests compare message selectors with the installed Git on each host platform.
