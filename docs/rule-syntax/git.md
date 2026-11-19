@@ -39,6 +39,20 @@ selected_message(r, c, msg) :- git_source_commit(r, c), git_message(r, c, msg).
 `git_source_tree` holds the root tree for a commit or tree snapshot.
 For a tree snapshot, `git_source_commit` has zero rows.
 
+Request the object before using the absence of a metadata row. For example, a root commit has a readable commit record and zero parents.
+
+```rr
+#include "git.rr"
+
+.decl parentless_commit(repo: symbol, commit: symbol)
+git_object_request(r, c) :- git_source_commit(r, c).
+parentless_commit(r, c) :- git_source_commit(r, c), git_commit(r, c, _), !git_parent(r, c, _, _).
+.output parentless_commit
+```
+
+The `git_commit` join checks that decoding succeeded. A failed object request has a `git_object_error` row.
+Without an object request, the parent relation can be empty even for a commit with parents.
+
 ### Standalone command results
 
 `rerail-engine run-policies` writes one JSON report to stdout. Its `runs` array follows the policy argument order.

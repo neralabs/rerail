@@ -2,11 +2,37 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners. The experiments ran on macOS.
 
-## Current open findings at `33d7acd50`
+## Current findings at `ba58532ee`
 
-There are 24 open items. The first twelve entries continue earlier observations on this branch. The following four come from new catalog fixtures on macOS.
-Two concern the cache architecture checks. The last six concern the rule interface. The final three compare the proposed contract with the compiler.
-This list counts the two manifestations of the remote-adoption failure once.
+**28 items remain open.** Cases 92 and 93 from the previous review now pass their acceptance checks.
+The other 22 remain open. They include six rule-interface gaps and one unexplained timing difference.
+Four more failures affect checkout pruning and long-running filesystem watches. One drops a rule's exported rows. One prevents reuse across identical revision scans.
+The Git-for-Windows, NTFS, and raw Unix directory checks still lack results.
+
+### Six more failures
+
+| Case | Observed result | Repair and acceptance check |
+| --- | --- | --- |
+| 94. Pruning deletes a newly registered checkout | A prune saw an absent checkout. A second connection registered a new clone and added a rule setting at the same path before the delete transaction. The prune removed both new rows. Git could still read the new HEAD. | Carry the observed registration into the write transaction. Recheck the checkout and its identity under the writer lock. Delete settings only for confirmed removals. Repeat with a new clone and a restored original. |
+| 95. A watch routes a path to a removed nested checkout | A router first returned the registered inner checkout for `inner/a.py`. After moving its `.git` directory away, the same router still returned the inner checkout. A new router returned the parent. | Validate cached owning directories against the observed `.git` entries. Exercise removal, creation and restoration during the same session, including an unregistered nested repository. |
+| 96. A watch misses a new submodule | An unregistered nested checkout initially belonged to the parent for rule routing. Adding its entry to `.gitmodules` and its gitlink to the index made a fresh router choose the child. The existing router still chose the parent. | Observe the enclosing checkout's effective index and its `.gitmodules` content when caching the submodule decision. Test adding and removing each input under a live router. |
+| 97. A plain directory keeps its old owner after pruning | The catalog removed a moved non-Git checkout. A new ordinary directory took its old path. The existing owner resolver still claimed a file there. A new resolver had no owner. | Rebuild or invalidate the set of plain roots from committed registrations when they change. Keep a second, still registered plain root in the regression. |
+| 100. A declared output loses constant rows | A revision contained a Python file and a file named `marker` with the line `selected`. Directly exporting a relation with a literal fact and a row derived from `file_line` wrote an empty CSV. Joining that relation to an identifier in the same tree returned both rows. Even a program exporting only its literal fact wrote an empty CSV. | Trace requested outputs through planning and export. Emit the full relation when its rows come from program facts or constant folding. Compare direct and document-dependent outputs, including a run over an empty tree. |
+| 101. Repeated scans of one commit recompute a constant relation | Three scans of the same commit read the same line through `file_line`. Each returned `selected`. Each derived the relation again. The observer store held one, two, then three distinct constants records. The first two scans even used the same scope. | Key the derivation by its program, inputs, and observations. Validate the requested path and blob against the current view. Record scope ownership separately. Test repeated scans, a second scope, an unrelated edit, an edit to the requested blob, and deletion of the last owner. |
+
+Cases 95 and 96 use the router's `sourceRoot` method. Case 97 uses its underlying owner resolver.
+Case 94 used two actual SQLite connections. The fixture scheduled the registration between enumeration and the delete transaction.
+[Router](../../../../src/engine/code-rule/checkout-code-rule-router.ts) · [Owner resolver](../../../../src/engine/catalog/checkout-owner.ts) · [Catalog pruning](../../../../src/engine/catalog/repository-registry.ts)
+
+For case 101, create a commit with `x = 1` in `a.py` and one line, `selected`, in `marker`.
+Define `marker(s) :- file_line("marker", _, s).` in a Python policy. Report `s` where `marker(s)` joins `kind(n,"identifier")`.
+In one process, scan HEAD three times using one store and scopes `one`, `one`, and `two`.
+The profile recorded `derived first` in all three runs. The observer database confirmed the extra records independently.
+Two filesystem scans of the same checkout kept one constants record. The next three revision scans added one record each.
+The constants key includes the canonical root. A scoped Git view puts the scope hash and invocation number in that root.
+[Constants key](../../../../native/src/code_rule_dsl/logic/plan/corpus/constants.rs) · [Git view](../../../../native/src/git_snapshot.rs)
+
+### The other 22 open items
 
 | Case | Evidence | Repair and acceptance check |
 | --- | --- | --- |
@@ -16,7 +42,7 @@ This list counts the two manifestations of the remote-adoption failure once.
 | 75. Two names become one report path | An invalid-byte Git name and the literal name `[hex:ff2e7079]` have the same JSON path. | Carry an explicit encoding and lossless path through findings and failures. Join both report rows to the correct tree entries. |
 | 46. A valid filesystem spelling misses a finding | On a case-insensitive volume, selecting `SRC/A.PY` omitted a finding in `src/a.py`. | Match selections against actual filesystem names. Test case-sensitive siblings and exact Git tree names. |
 | 11. A large binary fails the revision scan | A 32,000,001-byte binary produced a budget failure. The filesystem scan skipped it. | Check a bounded blob prefix before applying the text limit. Test a binary, large text, and an unreadable blob with the same policy. |
-| 28. Source reads hide failures | The public native read returns the same nullable result for a missing path, an unavailable blob, and the size limit. | Expose distinct checked outcomes. Verify each and retry the same view after the blob returns. |
+| 28. Source reads hide failures | The native convenience method `readSource` returns the same nullable result for a missing path, an unavailable blob, and the size limit. | Route callers through a checked API. The existing `readFile(path, limit)` throws on read errors and returns null at the size limit. Verify each outcome and retry the same view after the blob returns. |
 | 47. Skipped paths lose their reasons | A selected symlink, gitlink, and absent path all appear as skipped. | Keep the entry kind and reason through report generation. Select all three in one invocation. |
 | 61. A history lookup depends on unrelated scopes | After 64 unrelated publications, a query about one run read and hashed 65 rows. | Request history by scope and observe only those rows. Check read counts and cache hits after related and unrelated changes. |
 | 18. One view retains every decoded subtree | Changing the selection leaves previously visited entries in the view's native map. | Bound decoded bytes. Measure eviction and re-decoding on repeated disjoint selections and on one tree larger than the limit. |
@@ -26,8 +52,6 @@ This list counts the two manifestations of the remote-adoption failure once.
 | 89. Access denial deletes settings | Removing search permission from a checkout's parent made pruning delete its row and setting. Restoring permission made the checkout readable again. | Use a filesystem operation that distinguishes absence from access denial. Preserve the row on uncertain reads. Test denial, recovery, and actual removal. |
 | 90. A replacement directory inherits the former Git checkout | After moving a recorded repository and creating an ordinary directory at its old path, public lookup returned the old repository key with `git=false`. | Require identity evidence before matching a recorded Git checkout at a reused path. Test non-Git replacement, temporary absence, and restoration. |
 | 91. Remote adoption can stop permanently in a process | Two databases recorded a clone before it gained an origin. Only the first adopted the remote. In a separate fixture, a failed adoption still suppressed the retry after the database recovered. | Use the committed catalog state to decide whether adoption is due. Test both catalogs in each order and retry an aborted transaction in the same process. |
-| 92. The scope schema fails the facts-only check | Seven tables fail the schema inventory. Five hold pending acquisitions, scope history, ancestor membership, completed runs, or their snapshots. The other two track store segments. | Check each table against its writer and deletion rules. Record primary facts and store bookkeeping in the inventory. Keep a single owner for derived membership and verify it through publication, rollback, and deletion. |
-| 93. Retained results still use process-local storage | The companion check reports nine unclassified statics. These include a parsed embedded program, a memoized grammar registry digest, and the thread's current Git evaluation. | Generate immutable program and registry data at build time or retain results through keyed facts. Classify per-evaluation handles and genuine process state separately. Run both facts-only checks without raising the cache limits. |
 | Bound metadata demand | Joining a bound selected commit to `git_message` returns no row until the policy explicitly requests the object. | Propagate the repository and object ID through the library to the existing provider. Compare direct and explicit requests, missing objects, and read counts. |
 | Commit trailers | A policy reading `git_trailer` fails to compile. | Derive ordered trailers in the library. Compare duplicate keys, continuations, and ordinary message text with Git. |
 | Commit diagnostic locations | A metadata violation at `@place("git",1)` reports a file called `git`. The finding has no commit location. | Add a repository, commit, and optional field to the finding location. Test a message violation alongside a real file named `git`. |
@@ -37,6 +61,44 @@ This list counts the two manifestations of the remote-adoption failure once.
 
 The last three rows are proposed rule capabilities. A missing proposed name alone does not establish incorrect scan output.
 The [implemented Git reference](../../../rule-syntax/git.md), [proposed library](library.md), [catalog lookup](../../../../src/engine/catalog/repository-registry.ts), and [scope contracts](analysis-scopes.md) give their respective interfaces.
+
+### A direct rule can produce a false finding
+
+The existing bound-demand issue also affects negation.
+In a two-commit repository, the following clause reported both commits as roots. Both scans completed without an error.
+
+```rr
+Root(@place("git", 1)) :- git_source_commit(r, c), !git_parent(r, c, _, _).
+```
+
+Adding `git_object_request(r,c) :- git_source_commit(r,c).` made the policy report only the actual root.
+A fix must establish a complete parent family before evaluating absence. Test a root, a child, and an unavailable commit.
+The unavailable commit must produce an explicit incomplete outcome. [Rule library](../../../rule-syntax/lib/git.rr)
+
+### Repairs verified during this review
+
+| Case | Before | After |
+| --- | --- | --- |
+| 92. Scope publication and table accounting | The storage architecture check rejected seven tables. | `e52252593` identifies their writers and lifetimes. An injected failure rolled back a partial publication. A retry published one run. Deletion removed its history and ancestor rows. |
+| 93. Process-local retention | The registry digest and embedded programs used process-local storage. | `f1b4873ed` generates the digest from the actual suffix registry. `abfab008a` retains each program in the store under the consuming phase. Across five processes, a second scope reused three programs. After deletion of its last owner, a fresh process compiled all three again. [Counts](analysis-scopes.md) |
+| 98. A policy change could produce a clean revision report | Two committed configurations each reported a violation. A scan that read the old attachment and the new library table completed with zero findings and zero failures. | `d2da2ef3b` reads eligibility and all home policy tables in one transaction. With the same interleaving, the scan reported the old policy's finding and the next scan reported the new one. [Headless regression](../../../../test/cli/headless-scan.test.ts) |
+| 99. A nested evaluation deleted existing files | A headless revision scan deleted a sentinel in the invocation directory's `constants/`. In a standalone run, constant folding and the typing bridge removed sentinels in the output directory's `constants/` and `typing-calls/`. | `ba58532ee` evaluates both phases in memory. The standalone run returned the same row and kept both files. The headless run preserved its file. Three concurrent cache tests completed three repetitions after failing one test in each repetition before the fix. [Standalone regression](../../../../native/tests/git_revision_cli.rs) |
+
+The Datalog suite passed 399 tests and skipped 13. All six standalone Git revision tests passed.
+The three concurrent engine tests passed each of three repetitions. TypeScript passed its type check.
+Two integration tests exceeded five seconds in a parallel run. Both passed on retry with the same timeout.
+All 200 tests in the five headless and checkout suites then passed with one worker.
+
+### Language coverage and open design choices
+
+The shared classifier uses exact names and suffixes. Two executables had identical bytes, including a Python shebang.
+The same Python rule found a call in `check.py` and skipped `check` in both filesystem and Git scans.
+The cache design proposes shebang detection and configurable parser profiles. Those are additional capabilities.
+For shebang support, request a bounded prefix only for unresolved names and key the decision by that content and classifier version.
+For parser profiles, first specify which entry points and settings a policy can select. Test the same bytes under two effective profiles.
+[Classifier](../../../rule-syntax/lib/source-language.rr) · [Cache contract](cache-contracts.md#4-language-selection)
+
+## Earlier catalog fixtures and verification at `33d7acd50`
 
 ### Reproduce the new catalog findings
 
@@ -75,7 +137,7 @@ Five standalone CLI tests and eight targeted Datalog cache tests passed.
 The store gate passed 263 tests with four skipped.
 The first 399-test logic run found both facts-only failures above and a fixture that failed while making a Git commit.
 Commit `33d7acd50` isolates the fixture from machine Git config. The rerun passed 397 tests and failed the two facts-only checks. The quick tier skipped 13.
-Of three additional engine cache tests, one first failed with a missing file. It passed on its own. The cause remains open.
+Of three additional engine cache tests, one first failed with a missing file. It passed on its own. Case 99 above describes the subsequent stress test and repair.
 Of 260 integration tests, three exceeded the five-second timeout on the first run. All 260 passed with two workers and the original timeout.
 The timeouts affected the first headless scan, the first repository startup, and the read-only database migration fixture.
 
