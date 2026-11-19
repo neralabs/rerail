@@ -184,12 +184,14 @@ const AUTOMOUNTED_HOST = new RegExp(String.raw`^/net/([^/]+)`, process.platform 
 const CERTAIN_SCHEME = /^(?:\d+\.)?(?![~.])[^a-z\d\\/]*(?:https?|wss?|ftps?)$/iu;
 
 /**
- * Whether an absolute `path` lands under the automount root on another machine ({@link onAnotherMachine}) once
- * `path.resolve` normalizes it, as the lookup does: `//net/<host>/x`, and `//a.example/../net/<host>/x`,
- * `//./net/<host>/x` and `///net/<host>/x` too. Only a path that holds `net` is normalized.
+ * Whether a `path` that starts with a URL's `//` lands under the automount root on another machine
+ * ({@link onAnotherMachine}) once `path.resolve` normalizes it, as the lookup does: `//net/<host>/x`, and
+ * `//a.example/../net/<host>/x`, `//./net/<host>/x` and `///net/<host>/x` too. With one slash (`https:/net/<host>/x`)
+ * it is no URL's host and path but a list's next entry, as in `PATH=https:/net/<host>/bin`. Only a path that holds
+ * `net` is normalized.
  */
 const automounted = (path: string): boolean =>
-  path.startsWith("/") && /net/iu.test(path) && onAnotherMachine(AUTOMOUNTED_HOST.exec(posix.normalize(path))?.[1]);
+  path.startsWith("//") && /net/iu.test(path) && onAnotherMachine(AUTOMOUNTED_HOST.exec(posix.normalize(path))?.[1]);
 
 /**
  * On Linux and macOS, what `path`, after the run of `delimiters` and the token `before` them, is looked up as: a `//`
