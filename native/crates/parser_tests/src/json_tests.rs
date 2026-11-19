@@ -249,7 +249,10 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // One dispatch a value, as `walk_document`'s `switch (*value)`: no variable saying which
     // place a loop was entered at (the array's first value goes to the one value switch), and a
     // switch on the kind only where a call's return switches on its token again (`again`).
-    assert!(!src.contains("match d {"), "a loop entered at one place");
+    // One function, as `walk_document`: the nesting on a stack of its own (`s.ret`, as
+    // `is_array[depth]`), not the machine's; the loops a value is entered at from an array, an
+    // object and the document are dispatched (`match d`), as simdjson's `goto`s into them.
+    assert!(src.matches("\nfn r").count() == 1 && src.contains("match s.ret[s.depth as usize] {"), "one function, an explicit stack");
     let again: std::collections::BTreeSet<usize> = native
         .structural
         .iter()

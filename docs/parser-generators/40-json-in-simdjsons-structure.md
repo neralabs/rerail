@@ -593,6 +593,28 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 18, done: one function, the nesting on a stack of its own, in the generated Rust
+
+Each rule was a Rust function: a value inside an array was a call (`r46(s)?`). It came back with
+`Ok(again)`, and the caller then switched on the token again. Where tier 2 makes the records,
+`rust_stream` now writes the whole program as one function, as simdjson's `walk_document`
+(`OneFn`):
+- a `PUSH` stores a number on `s.ret[depth]`, then goes on at the rule's first word;
+- a `RETURN` takes the number off, and its `match` goes on at the place that call returns to.
+
+Calls that every `RETURN` sends to the same place store one number. JSON has three: the document,
+an array's value and an object's value. In simdjson that is `is_array[depth]` and the test of
+depth 0.
+
+The graph's loops for a value are now entered from three places. `Shape` gives each such loop a
+dispatch on `d`, three in all. Copying the nodes doesn't remove them: a budget of 64 times the
+graph's size left the same three. They are what simdjson's `goto object_continue` /
+`goto array_continue` are, in a language without `goto`. One step is still too many: an arm of
+a dispatch that only sets `d` again (item 6 below).
+
+The Rust trees test asserts one function and the stack's `match`. Storing a wrong number (`k + 1`
+mod 3) fails it.
+
 ## The generated Rust next to simdjson's stage 2
 
 The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` writes it as
@@ -602,7 +624,7 @@ The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` write
 | simdjson | the generated Rust | the same? |
 |---|---|---|
 | `walk_document`: one function, its states labels (`object_begin`, `object_continue`, `scope_end`) | a function per grammar rule (`r0`, the document; `r32`, the object; `r46`, the array) | no |
-| nesting on a stack of its own (`is_array[depth]`); `scope_end` goes back to the state of the scope it returns to | nesting by recursion (`r46(s)?`, `s.depth`). A call returns `Ok(again)`, and the caller then switches on the same token again | no |
+| nesting on a stack of its own (`is_array[depth]`); `scope_end` goes back to the state of the scope it returns to | one function, `r0`: a call stores its kind of scope on `s.ret[depth]` (the document, an array's value, an object's value: three numbers); a `RETURN` matches on it and goes on at that scope's place. The loops a value is entered at from those three are a `match d` each: Rust has no `goto` | yes, since step 18; the dispatches are the `goto`s |
 | `advance()`: the next index | `token_all()`: the end's test, the next start, `last_end` | yes, since step 17 (no room check: the tape sized from the input once) |
 | `switch (*value)` | `match s.byte(s.start)`, the record made in the arm | yes |
 | one switch a value; `case '['`: `]` peeked for, then `array_begin` and the one value switch | the array's loop was entered at each value's place from two switches (the first value's, which also takes `]`, and the one after `,`), so the arms set `d` and the loop's `match d` took them apart again; every switch also had a path on the kind | yes, since step 15: the first value's switch takes `]`, then sends every other byte to the one value switch; the kind path only where a call returns to switch on its token again |
@@ -620,7 +642,9 @@ the Rust it writes:
 2. Done in step 15.
 3. Done in step 16.
 4. Done in step 17.
-5. One function, the nesting on a stack of its own, as `walk_document`.
+5. Done in step 18.
+6. Thread the dispatch's arms that only set `d` again (`1 => { d = 3; continue 'b151; }`) into
+   their target, so a return is one `match` on `s.ret`, then one jump: `Shape`, in the compiler.
 
 ## Order
 

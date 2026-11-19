@@ -71,6 +71,65 @@ struct Facts<'a> {
     classes: Vec<u16>,
     /// The tape sized from the input once (`Bounds::unchecked`): no room check a token.
     unchecked: bool,
+    /// Where the program is one function, as `walk_document` (`OneFn`): its calls and returns.
+    one: Option<OneFn>,
+}
+
+/// A program written as one function, as simdjson's `walk_document`: a call (`PUSH`) stores its
+/// site's number on a stack of its own (`S::ret`, as `is_array[depth]`) and goes on at the rule's
+/// first word; a `RETURN` takes the number off and goes on at that site's place, as `scope_end`
+/// goes back to the state of the scope it returns to.
+struct OneFn {
+    /// Each call's place, and the number it stores: calls that every `RETURN` sends to the same
+    /// place store one number, as `is_array` is one bit for a scope's two states.
+    sites: Vec<(usize, usize)>,
+    /// Each `RETURN`'s numbers (those of the calls whose rule holds it), each with its place.
+    returns: HashMap<usize, Vec<(usize, usize)>>,
+}
+
+impl OneFn {
+    fn of(native: &Structure, x: &dyn Fn(usize) -> Vec<usize>) -> OneFn {
+        let words = &native.structural;
+        let sites: Vec<usize> = (0..words.len()).filter(|&pc| matches!(words[pc].operation, Op::Push { .. })).collect();
+        let mut returns: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
+        for (k, &pc) in sites.iter().enumerate() {
+            let Op::Push { target, .. } = words[pc].operation else { unreachable!() };
+            // The rule's words: from its first, its calls not followed (`plain_succ`).
+            let mut seen = vec![false; words.len()];
+            let mut work = vec![crate::native_cpu_stream::callee(native, pc)];
+            while let Some(w) = work.pop() {
+                if std::mem::replace(&mut seen[w], true) {
+                    continue;
+                }
+                if let Op::Return { again } = words[w].operation {
+                    returns.entry(w).or_default().push((k, usize::from(target) + usize::from(again)));
+                }
+                work.extend(x(w));
+            }
+        }
+        // A call's number: the places every return sends it to, numbered as they first come.
+        let mut rets: Vec<usize> = returns.keys().copied().collect();
+        rets.sort_unstable();
+        let place = |k: usize| -> Vec<Option<usize>> { rets.iter().map(|r| returns[r].iter().find(|&&(s, _)| s == k).map(|&(_, t)| t)).collect() };
+        let mut kinds: Vec<Vec<Option<usize>>> = Vec::new();
+        let number: Vec<usize> = (0..sites.len())
+            .map(|k| {
+                let p = place(k);
+                kinds.iter().position(|q| *q == p).unwrap_or_else(|| {
+                    kinds.push(p);
+                    kinds.len() - 1
+                })
+            })
+            .collect();
+        for arms in returns.values_mut() {
+            for a in arms.iter_mut() {
+                a.0 = number[a.0];
+            }
+            arms.sort_unstable();
+            arms.dedup();
+        }
+        OneFn { sites: sites.into_iter().zip(number).collect(), returns }
+    }
 }
 
 /// The facts of a program whose tier 2 makes the records (`Records::fetched_in_tier2`).
@@ -148,7 +207,13 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
         return Err("records made in tier 2, with a token's taking flagged or extras: not yet ahead of time".into());
     }
     let unchecked = crate::native_cpu_stream::bounds(native).unchecked(crate::native_cpu_stream::marks_of(words));
-    let facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked };
+    let mut facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None };
+    // Where tier 2 makes the records, the program is one function, as `walk_document`.
+    if facts.fetch.is_some() && !facts.context {
+        let one = OneFn::of(native, &|w| plain_succ(&facts, w));
+        facts.one = Some(one);
+        facts.entries = vec![0];
+    }
     if let Some(fx) = &facts.fetch {
         for pc in 0..words.len() {
             if matches!(words[pc].operation, Op::Token { .. }) && fx.seen[pc] == [true, true] {
@@ -204,7 +269,7 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
         room_nodes: c.room_nodes as usize, room_supers: c.room_supers as usize,
         next: 0, start: 0, end: 0, rec_end: 0, code: 0, last_end: 0, at_end: false, need: true, part_at: 0, live: 0,
         nodes: 0, nopen: 0, pending: 0, keep: 0, supers: 0, last_made: 0, moved: 0,
-        counts: [0; COUNTS], depth: 0,
+        counts: [0; COUNTS], depth: 0, ret: [0; DEPTH as usize],
     };
 ",
     );
@@ -444,6 +509,8 @@ struct S {
     counts: [u32; COUNTS],
     /// The calls open.
     depth: u32,
+    /// Where the program is one function (`OneFn`): each open call's site.
+    ret: [u16; DEPTH as usize],
 }
 
 impl S {
@@ -1479,6 +1546,13 @@ fn succ(x: &Facts<'_>, pc: usize) -> Vec<usize> {
     if let Some(fx) = x.fetch.as_ref().filter(|fx| fx.part_at(x, pc)) {
         return part_plan(x, fx, pc).refs.into_iter().map(usize::from).filter(|&t| t < n).collect();
     }
+    if let Some(one) = &x.one {
+        match x.native.structural[pc].operation {
+            Op::Push { .. } => return vec![crate::native_cpu_stream::callee(x.native, pc)],
+            Op::Return { .. } => return one.returns.get(&pc).map_or(Vec::new(), |r| r.iter().map(|&(_, t)| t).collect()),
+            _ => {}
+        }
+    }
     let v = match x.native.structural[pc].operation {
         // A node's field set by the next word, stored with its kind: on past that word.
         Op::Open { .. } | Op::Leaf { .. } if field_after(x, pc).is_some() => vec![pc + 2],
@@ -1669,6 +1743,28 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
     };
     if let Some(fx) = x.fetch.as_ref().filter(|fx| fx.part_at(x, pc)) {
         return part_plan(x, fx, pc).fill(jump);
+    }
+    if let Some(one) = &x.one {
+        match n.structural[pc].operation {
+            // A call: its site on the stack, then the rule's first word (`object_begin`'s
+            // `depth++`).
+            Op::Push { .. } => {
+                let k = one.sites.iter().find(|&&(p, _)| p == pc).expect("a site").1;
+                return Ok(format!("if s.depth == DEPTH {{ return Err(false); }}\ns.ret[s.depth as usize] = {k};\ns.depth += 1;\n{}", jump(0)?));
+            }
+            // A return: the site off the stack, then its place (`scope_end`).
+            Op::Return { .. } => {
+                let arms = one.returns.get(&pc).map_or(&[][..], Vec::as_slice);
+                let mut m = String::from("s.depth -= 1;\nmatch s.ret[s.depth as usize] {\n");
+                for (i, &(k, _)) in arms.iter().enumerate() {
+                    writeln!(m, "{k} => {{ {} }}", jump(i)?).unwrap();
+                }
+                // Every open call's site is one of these (`OneFn`).
+                m.push_str("_ => return Err(false),\n}\n");
+                return Ok(m);
+            }
+            _ => {}
+        }
     }
     Ok(match n.structural[pc].operation {
         Op::Token { any, extras, .. } if x.flagged || taken => format!("s.{}()?;\n{}", token_name(any, extras), jump(0)?),
