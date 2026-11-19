@@ -544,6 +544,16 @@ Progress (2026-11-18):
       message placeholder's read a `Reads`); `findings_write` says from the settings alone whether there are rules,
       and without them the fields' edit is all. `projections` names the projected relations and `write_projection`
       writes each one's rule. Neither hands `lowering_tail` a `front::Rule`.
+    - *Done (C: the rank plan, coverage, the literal roof).* `rank_form::plan` reads image rules (its shapes are
+      slots and literal indices) and `write` writes the readers and the four rank rules through the rule builder.
+      Coverage's literal census matches `program_image::Lit` over a one-rule image; the roofline's literal unit
+      measures a rewrite of image nodes (`rerail-prof` sits below the builder, so it copies the node layout).
+    - *Done (C: the product bound).* `product_demand` reads the version in place: each step (the products' guards
+      and demands, each reader's restriction, the order and present witnesses) is a derivation of the version so
+      far, a rule it rewrites written through the rule builder with its input rule as source, and a refused step
+      a dropped version, so there is no rollback. `BoundProducts` copies the rules that changed into its edit
+      (`Builder::copy_from`), and now carries a restriction's dropped `.demand` too, which the decoded copy lost.
+      `Decoded` and its `Tree::rule` decode are gone.
   - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
     (`Tree::rule`) goes.
   - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,

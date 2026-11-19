@@ -293,6 +293,13 @@ impl<'p> Builder<'p> {
         }
         id
     }
+    /// Adds a copy of `rule`, one of `from`'s, recording `source` as its source: a rule a pass rewrote elsewhere (a
+    /// derivation of its own), replacing its input's rule `source` in an edit (`product_demand`).
+    pub fn copy_from(&mut self, from: &Version, rule: RuleRef<'_>, source: RuleId) -> RuleId {
+        let id = self.copy(from, rule);
+        self.enc.set_from(id.0 - self.enc.rule_base(), source);
+        id
+    }
     fn same(&self, rule: RuleRef<'_>) -> bool {
         self.ids.is_some_and(|v| v.holds_image(rule.image()))
     }
