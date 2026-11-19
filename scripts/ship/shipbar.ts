@@ -38,7 +38,7 @@
 //   node --import tsx scripts/ship/shipbar.ts fanout --hosts nera-port-1,nera-port-4 --baseline <release:version | ref | dir>
 //       --out <dir> [--candidate <dir>] [--corpora <dir>] [--packs a,b] [--name <work dir on the hosts>]
 //       [--workers 0-3/4-7/8-11/12-15] [--stores /dev/shm/shipbar-<name>] [--runs 3] [--rule-runs 2] [--file-runs 3]
-//       [--confirm 3] [--mem-cap 24G] [--time-cap 2700] [--pack-cap <pack>=<memory>,<seconds>]... [--poll 180]
+//       [--confirm 3] [--mem-cap 24G] [--time-cap 2700] [--pack-cap <pack>=<memory>,<seconds>]... [--poll 180] [--from <phase>]
 //       From the Mac, the whole bar over nera-cloud hosts (fanout.ts): prepare (as `prepare`); plan every unit (A by
 //       repetition, B by chunks of rules, C by file, none longer than about fanout.ts UNIT_BUDGET_S) and assign them to
 //       the hosts longest first; sync the baseline, the candidate, the corpora and this harness to ~/work/<name>/ on
@@ -46,7 +46,8 @@
 //       run build:native`); copy the two engines to the others (sha256 checked) and `npm ci` there; on each host one
 //       detached `host` process measures (then confirms) with a worker per CPU set; pull every host's out/ and merge it
 //       into <out>/runs; report. Each phase's start and end are in <out>/fanout/state.json, and a finished phase is not
-//       made again when the command is run again. Linux hosts only; the Mac runs prepare and the report, and polls.
+//       made again when the command is run again (--from <phase> makes it and every later one again). Both checkouts
+//       must hold their Git LFS files. Linux hosts only; the Mac runs prepare and the report, and polls.
 //   node --import tsx scripts/ship/shipbar.ts host --plan <plan.json> --host <name> --workers 0-3/4-7 (and run's options)
 //   node --import tsx scripts/ship/shipbar.ts work --plan <plan.json> --host <name> --worker <i> --cpus 0-3 --phase measure|confirm
 //       A fan-out's processes on a host: `host` verifies the corpora once, then starts a `work` process per CPU set
@@ -1750,8 +1751,13 @@ interface FanoutOptions {
   packCaps: string[];
   stores: string;
   pollS: number;
+  /** Make this phase and every later one again (`--from sync` after a checkout changed, say). */
+  from: string | undefined;
   command: string;
 }
+
+/** A fan-out's phases, in order. */
+const FANOUT_PHASES = ["prepare", "plan", "sync", "build", "distribute", "measure", "merge"];
 
 /** What a checkout's sync leaves out: history, dependencies and builds (each host installs and builds its own). */
 const CHECKOUT_EXCLUDES = ["--exclude=/.git", "--exclude=/node_modules", "--exclude=/target", "--exclude=/native/target", "--exclude=/native/*.node", "--exclude=/dist", "--exclude=/.rerail/pack-data", "--exclude=/.worktrees"];
@@ -1779,6 +1785,12 @@ async function fanoutRun(o: FanoutOptions): Promise<number> {
   mkdirSync(root, { recursive: true });
   const statePath = join(root, "state.json");
   const state: { phases: Record<string, { start: string; end?: string; seconds?: number }> } = existsSync(statePath) ? readJson(statePath) : { phases: {} };
+  // --from <phase>: that phase and every later one made again.
+  if (o.from !== undefined) {
+    const at = FANOUT_PHASES.indexOf(o.from);
+    if (at < 0) fail(`--from ${o.from}: one of ${FANOUT_PHASES.join(", ")}`);
+    for (const name of FANOUT_PHASES.slice(at)) delete state.phases[name];
+  }
   const save = (): void => writeFileSync(statePath, JSON.stringify(state, null, 1));
   const log = (line: string): void => console.log(`shipbar fanout ${new Date().toISOString().slice(11, 19)}: ${line}`);
   const phase = async (name: string, body: () => Promise<void> | void): Promise<void> => {
@@ -1839,6 +1851,12 @@ async function fanoutRun(o: FanoutOptions): Promise<number> {
   let baseline: Checkout | undefined;
   await phase("prepare", () => {
     baseline = resolveBaseline(o.baselineSpec, o.out, o.packDataCache);
+    // Both sides build on the hosts: neither may hold Git LFS pointers in place of the files (scripts/build/require-lfs.mjs).
+    for (const dir of [baseline.dir, o.candidate.dir]) {
+      const check = join(dir, "scripts", "build", "require-lfs.mjs");
+      const lfs = existsSync(check) ? run("node", [check], { cwd: dir }) : { status: 0, stderr: "" };
+      if (lfs.status !== 0) fail(`${dir}: ${lastLine(lfs.stderr)}`);
+    }
     mkdirSync(join(o.candidate.dir, ".rerail"), { recursive: true });
     writeFileSync(join(o.candidate.dir, SOURCE_FILE), JSON.stringify({ sha: o.candidate.sha }));
     prepareCorpora(baseline, discoverPacks(baseline.dir, o.candidate.dir).packs, o.corpora, false);
@@ -1981,6 +1999,7 @@ function main(): void {
       workers: { type: "string", default: "0-3/4-7/8-11/12-15" },
       stores: { type: "string" },
       poll: { type: "string", default: "180" },
+      from: { type: "string" },
       plan: { type: "string" },
       host: { type: "string" },
       worker: { type: "string" },
@@ -2034,7 +2053,7 @@ function main(): void {
       hosts, name, workers, baselineSpec: values.baseline!, packDataCache: values["pack-data-cache"], candidate: { dir: candidateDir, sha: checkoutSha(candidateDir) }, out,
       corpora: resolve(values.corpora ?? join(out, "corpora")), requested: values.packs?.split(",").map((p) => p.trim()), runs, confirm, ruleRuns, fileRuns,
       memCap: values["mem-cap"], timeCapS: Number(values["time-cap"]), packCaps: values["pack-cap"], stores: values.stores ?? `/dev/shm/shipbar-${name}`,
-      pollS: count("poll", values.poll, 10), command: ["npm run bench:ship --", ...process.argv.slice(2)].join(" "),
+      pollS: count("poll", values.poll, 10), from: values.from, command: ["npm run bench:ship --", ...process.argv.slice(2)].join(" "),
     }).then((code) => {
       process.exitCode = code;
     });
