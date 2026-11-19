@@ -181,6 +181,7 @@ A reused source view can supply their verified tree entries. The programs publis
 Repeated inventory requests within that evaluation can use the same materialized result.
 After scope deletion, a new acquisition must retain the same plans as a fresh view of that source.
 Each store that consumes a compiled policy needs its input record and the graph of its includes.
+Policy includes use forward slashes on Windows and Unix. The reader checks each included file and missing candidate through a native filesystem path.
 When the process already holds a validated local policy, it checks the destination store's recorded inputs and compiled program.
 Matching inputs and an available program let it reuse the policy in memory. If collection removed either entry, it records the policy again.
 Repeated inspection in one catalog checks the files again. A fresh catalog also checks the store, even when another catalog loaded the same program.

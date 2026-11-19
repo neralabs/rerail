@@ -13,6 +13,12 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 fn main() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        // A debug CLI run compiling sources.rr exhausts the default 1 MiB main-thread stack.
+        println!("cargo:rustc-link-arg-bin=rerail-engine=/STACK:8388608");
+    }
     check_compiler_cache();
     // The browser build (wasm32-wasip1) is no Node addon: napi-build would want emnapi.
     if !std::env::var("TARGET").unwrap_or_default().starts_with("wasm32") {

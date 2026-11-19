@@ -274,7 +274,10 @@ fn git_location_rules_identify_the_common_directory_and_each_open_worktree() {
     f.git(&["clone", "-q", "--bare", ".", bare.to_str().unwrap()]);
     let rules = f.area.path().join("locations.rr");
     let out = f.area.path().join("locations");
-    fs::write(&rules, r#"#include "git.rr"
+    fs::create_dir(f.area.path().join("includes")).unwrap();
+    fs::write(f.area.path().join("includes/local.rr"), "#include \"../common.rr\"\n").unwrap();
+    fs::write(f.area.path().join("common.rr"), "#include \"git.rr\"\n").unwrap();
+    fs::write(&rules, r#"#include "includes/local.rr"
 .decl dir(path: symbol)
 dir(p) :- git_root_repo(r), git_repository_dir(r, p).
 .decl work(path: symbol)
@@ -287,7 +290,7 @@ view(v) :- git_root_view(_, v).
 "#).unwrap();
     let read = |root: &Path, revision: bool| {
         let result = f.run("logic", &[&rules, root, &out], revision.then_some("locations"));
-        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        assert!(result.status.success(), "{} (revision={revision}): {}", root.display(), String::from_utf8_lossy(&result.stderr));
         assert!(f.run("csv", &[&out], None).status.success());
         ["dir", "work", "repo", "view"].map(|name| fs::read_to_string(out.join(format!("{name}.csv"))).unwrap().trim_end().to_owned())
     };

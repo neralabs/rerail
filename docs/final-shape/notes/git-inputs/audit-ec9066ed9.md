@@ -4,6 +4,20 @@ The original [twenty cases and their regression tests](audit-c1b588f91.md) cover
 
 Seventeen of the 28 follow-up findings have verified results. Eleven remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
 
+| Open finding | What still needs to pass |
+| --- | --- |
+| 11. Large Git blobs | Skip a binary after a bounded prefix read. Distinguish large text from an unreadable blob for loose and packed objects. |
+| 23. Scope stop after restore | Recover the committed stop, acquisition cutoff and affected store identities after restoring the control database. Exercise crashes on both sides of acknowledgement. |
+| 42. Removed stores | Retire a route by store identity. Apply its outstanding stop if that store returns. Preserve a different store at the same path. |
+| 52. Git-backed policies | Reopen a compiled policy after restart. Count lowerings when its blobs stay the same and when an include changes. |
+| 61. History by scope | Read only the requested scope's records. Check reuse after an unrelated publication and invalidation after a relevant one. |
+| 101. Constant relations | Reuse a derivation across revisions and scopes while its observed inputs match. Collect it after the last owner releases it. |
+| Bound commit metadata | Request the bound commit when a rule reads its metadata. Verify root commits, non-root commits and unavailable objects under negation. |
+| Commit trailers | Compare ordered trailer facts with Git for duplicate keys, continuation lines and ordinary message text. |
+| Commit diagnostic locations | Identify the repository, commit and optional field in the report. Distinguish a commit finding from a finding in a file named `git`. |
+| Content handles | Read verified content through a rule-visible handle. Check reuse across revisions and the result for a missing object. |
+| Selected document provenance | Join the selected path, blob, grammar, tape and document. Test two paths with identical bytes and a scan that excludes one. |
+
 ## Windows test execution and store lifetime
 
 The Windows 11 ARM64 guest in Parallels built the native store tests and the Node addon with test hooks.
@@ -14,6 +28,23 @@ The six headless Git tests passed together in 42.58 seconds. They covered messag
 The selector comparison starts Git 38 times and now allows 30 seconds. Earlier runs exceeded five seconds.
 The test runner now removes its Windows store directories after the worker processes close their SQLite handles. The successful run left zero store directories.
 The standalone rule loader has a separate regression for its library paths. [Store tests](../../../../native/src/content_store/collection_guard/tests.rs) · [Headless tests](../../../../test/cli/headless-scan.test.ts)
+
+The standalone Windows CLI failed to open `git.rr` when the loader appended a forward slash to a native verbatim path.
+A nested local include also lost its outgoing edge on macOS when its requested name contained `..`.
+The rule library now records the requested and canonical spellings of each document. The loader converts rule paths to native paths at the filesystem boundary.
+
+After the path repair, the standalone Windows CLI still exhausted its default stack while compiling `sources.rr` for a working-tree scan.
+Changing only the stack reservation on a copy of that executable let it complete the same scan. The MSVC CLI now reserves 8 MiB.
+The rebuilt CLI passed the location regression in 13.49 seconds. Its rule included a local file through `..` and then loaded the shipped `git.rr`.
+It returned the expected repository and view identities for the main checkout, two linked worktrees, a bare repository and that repository after a rename.
+Five related tests passed on macOS, including the comparisons with the builtin include reader. [Standalone CLI tests](../../../../native/tests/git_revision_cli.rs)
+
+On the Windows guest, all 100 warm policy inspections returned the expected metadata and include graph. They decoded zero compiled programs.
+Median wall time was 1.99 ms in an existing catalog and 11.61 ms in a new catalog. [Catalog regression](../../../../native/tests/git_revision_cli.rs)
+
+The rebuilt addon passed all eight selected headless tests on NTFS in 86.38 seconds. The suite left zero test store directories.
+The two additional tests checked byte-name selection and joined findings and failures to four distinct Git tree entries at two directory depths.
+The trees came from Git objects, including names that Windows cannot check out. [Headless tests](../../../../test/cli/headless-scan.test.ts)
 
 ## Paths that share a display label
 
