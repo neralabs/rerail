@@ -25,6 +25,76 @@ use std::path::{Path, PathBuf};
 
 
 
+/// JSON in simdjson's structure (`json_parser/json-simdjson.bitlex`, page 40), compiled.
+fn simdjson_form() -> Compiled {
+    let source = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../json_parser/json-simdjson.bitlex")).expect("reads");
+    compile_step("json-simdjson", &source)
+}
+
+/// Page 40, stage 1: the simdjson form's tier 1 records a token where simdjson's stage 1 writes a
+/// structural index, and nowhere else: its starts are simdjson's indexes, by count and by hash
+/// (`fixtures/simdjson-stage1/expected.txt`, from `stage1_indexes.cpp`), on each file there.
+#[test]
+fn simdjson_forms_starts_are_simdjsons_indexes() {
+    let c = simdjson_form();
+    let block = &c.program.block_programs[0];
+    let r = block.records.as_ref().expect("records");
+    assert!(r.skip.is_none(), "tier 1 is the block of masks, not a token loop");
+    for line in crate::block_tests::STAGE1_EXPECTED.lines() {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        let (path, len, n, hash) = (f[0], f[1].parse::<usize>().unwrap(), f[2].parse::<usize>().unwrap(), u64::from_str_radix(f[3], 16).unwrap());
+        if len > 200_000 {
+            continue;
+        }
+        let bytes = crate::block_tests::repo_file(path);
+        let run = block.run(&bytes);
+        // A file stage 1's edges hold need not be valid JSON: its starts are compared all the same.
+        eprintln!("{path}: tier 1 {}", if run.totals.iter().any(|&t| t != 0) { "refuses it" } else { "accepts it" });
+        let starts = &run.positions[usize::from(r.starts)];
+        assert_eq!((starts.len(), crate::block_tests::fnv(starts)), (n, hash), "{path}: tier 1's starts against simdjson's indexes");
+    }
+}
+
+/// Page 40, stage 2: the simdjson form's trees are `14-json`'s, by the interpreter and by
+/// Cranelift, though its tier 1 records only simdjson's structurals and tier 2 reads each
+/// string's parts. Strings with escapes at every offset of a block's edge, invalid documents,
+/// and the corpus (`RERAIL_JSON_CORPUS`, where set).
+#[test]
+fn simdjson_forms_trees_are_14_jsons() {
+    let (sj, j14) = (simdjson_form(), form("14-json"));
+    let mut inputs: Vec<Vec<u8>> = vec![
+        br#"{"a": [1, -2.5e3, true, null], "b\n": {"c": "dAx"}}"#.to_vec(),
+        br#"["", "\\", "a\"b", "\\\"", "x", "\n\t", "true", "\u00e9\ud83d\ude00"]"#.to_vec(),
+        br#""open"#.to_vec(),
+        br#"["\q"]"#.to_vec(),
+        br#"[1 2]"#.to_vec(),
+        br#"{"a" 1}"#.to_vec(),
+        br#"[tru]"#.to_vec(),
+        br#"[01]"#.to_vec(),
+        br#"  "s"  "#.to_vec(),
+        b"\xef\xbb\xbf[1]".to_vec(),
+    ];
+    for pad in [0usize, 1, 61, 62, 63, 64, 65, 127] {
+        for n in [0usize, 1, 62, 63, 64, 130] {
+            inputs.push(format!("{}[\"{}\\n{}\", \"\\\\\\\"{}\", {}]", " ".repeat(pad), "s".repeat(n), "t".repeat(n), "u".repeat(n), "9".repeat(n.max(1))).into_bytes());
+        }
+    }
+    if std::env::var("RERAIL_JSON_CORPUS").is_ok() {
+        inputs.extend(files_in("RERAIL_JSON_CORPUS").iter().map(|p| std::fs::read(p).expect("reads")));
+    }
+    let (mut parsed, mut refused) = (0, 0);
+    for (k, f) in inputs.iter().enumerate() {
+        let show = || String::from_utf8_lossy(&f[..f.len().min(80)]).into_owned();
+        let want = ours(&j14, f);
+        let by_interp = stream::run(&sj.program, f, &sj.program.block_programs[0].run(f)).ok().map(|n| n.iter().map(|x| (x.kind, x.start, x.end)).collect::<Vec<_>>());
+        let want_interp = stream::run(&j14.program, f, &j14.program.block_programs[0].run(f)).ok().map(|n| n.iter().map(|x| (x.kind, x.start, x.end)).collect::<Vec<_>>());
+        assert_eq!(by_interp.is_some(), want_interp.is_some(), "file {k} ({:?}): the interpreter's verdict", show());
+        assert_eq!(ours(&sj, f), want, "file {k} ({:?}): Cranelift's nodes", show());
+        if want.is_some() { parsed += 1 } else { refused += 1 }
+    }
+    eprintln!("{} files: {parsed} parsed, {refused} refused, by both forms alike", inputs.len());
+}
+
 fn ours(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
     c.parser.parse(bytes).ok().map(as_ids)
 }
@@ -302,6 +372,48 @@ fn json_bench() {
             }
             println!("{}\t{}\t{name}\t{:.0}\t{:.0}\t{t_ts:.0}", base(path), f.len(), median(one), median(two));
         }
+    }
+}
+
+/// Where JSON's tier 2 instructions go: each word's Cranelift instructions (`word_insts`) times
+/// how often the files run it (the interpreter's steps, `native_cpu_clusters::traffic`), by the
+/// word's operation, per token. As `rr_parser`'s for `.rr`. `RERAIL_JSON_CORPUS`, `RERAIL_FORM`.
+#[test]
+#[ignore = "a measurement: run by name with RERAIL_JSON_CORPUS and --nocapture"]
+fn json_tier2_by_word() {
+    let name = std::env::var("RERAIL_FORM").unwrap_or_else(|_| "14-json".to_owned());
+    let c = if name == "simdjson" { simdjson_form() } else { form(&name) };
+    let paths = files_in("RERAIL_JSON_CORPUS");
+    let files: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).expect("reads")).collect();
+    let all: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    let native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
+    let traffic = rerail_compiler::native_cpu_clusters::traffic(&c.program, &all);
+    let mut runs = vec![0u64; native.structural.len()];
+    for (&(_, b), &w) in &traffic {
+        runs[b as usize] += w;
+    }
+    let insts = &c.parser.tier2.word_insts;
+    let tokens: u64 = (0..runs.len()).filter(|&pc| matches!(native.structural[pc].operation, rerail_compiler::native_ir::StructuralOperation::Token { .. })).map(|pc| runs[pc]).sum();
+    let mut by: std::collections::BTreeMap<String, (u64, u64)> = Default::default();
+    for pc in 0..runs.len() {
+        let op = format!("{:?}", native.structural[pc].operation);
+        let e = by.entry(op.split([' ', '{', '(']).next().unwrap_or("").to_owned()).or_default();
+        e.0 += runs[pc];
+        e.1 += runs[pc] * u64::from(insts.get(pc).copied().unwrap_or(0));
+    }
+    let mut v: Vec<_> = by.into_iter().collect();
+    v.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+    let total: u64 = v.iter().map(|x| x.1.1).sum();
+    if let Ok(dir) = std::env::var("RERAIL_DUMP_TIER2") {
+        // Its CLIF (each instruction's source location its word's place + 1), and each word's
+        // operation and runs, for reading a word's code.
+        std::fs::write(format!("{dir}/{name}.clif"), &c.parser.tier2.clif).expect("writes");
+        let words: String = (0..runs.len()).map(|pc| format!("{pc}\t{}\t{}\t{:?}\n", runs[pc], insts.get(pc).copied().unwrap_or(0), native.structural[pc].operation)).collect();
+        std::fs::write(format!("{dir}/{name}.words"), words).expect("writes");
+    }
+    eprintln!("{name}: tier 2's IR instructions run, {:.0} a token ({tokens} tokens), by word:", total as f64 / tokens.max(1) as f64);
+    for (k, (n, i)) in &v {
+        eprintln!("  {k:>12}: {:5.2} words a token, {:6.1} instructions each, {:6.1} a token", *n as f64 / tokens.max(1) as f64, *i as f64 / (*n).max(1) as f64, *i as f64 / tokens.max(1) as f64);
     }
 }
 

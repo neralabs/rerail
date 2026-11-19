@@ -533,13 +533,18 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     // The records tier 2 reads (`records`): every token's first byte and every token's last
     // byte, two extracts zipped by index, as simdjson's structural indexes.
     let mut stream = None;
-    if let Some((_, _, _, mark_masks, _)) = &tier2 {
-        let mut starts = token_rows[0].1;
-        for (_, s, _) in &token_rows[1..] {
+    if let Some((_, _, _, mark_masks, records)) = &tier2 {
+        // The rows tier 1 records (page 40): every row, but where tier 2 reads a region in parts
+        // (`Split::Tier2`), its parts' rows (`Inside`) are tier 2's, found from the region's
+        // opener, and tier 1 records the region's opener alone.
+        let late = records.readers.iter().any(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2);
+        let recorded: Vec<&(String, Val, Val)> = token_rows.iter().enumerate().filter(|&(r, _)| !(late && low.inside.get(r).copied().unwrap_or(false))).map(|(_, t)| t).collect();
+        let mut starts = recorded[0].1;
+        for (_, s, _) in &recorded[1..] {
             starts = low.or(starts, *s)?;
         }
-        let mut lasts = token_rows[0].2;
-        for (_, _, l) in &token_rows[1..] {
+        let mut lasts = recorded[0].2;
+        for (_, _, l) in &recorded[1..] {
             lasts = low.or(lasts, *l)?;
         }
         vals.push((STREAM_START.to_owned(), starts));
@@ -3742,7 +3747,12 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     Some(ps) => ps.into_iter().map(|(v, bytes)| crate::records::ReadPart { start: mask_of(low, v, &mut mark_masks), bytes }).collect(),
                     None => Vec::new(),
                 };
-                let reader = crate::records::Reader { arms, other, retag, parts, split: crate::records::Split::Tier1 };
+                // Where tier 1 is the block of masks (no `skip`: no token loop), its parts are tier
+                // 2's (page 40): tier 1 records where the region opens, and tier 2 reads its parts
+                // from there, as simdjson's stage 2 reads a string. In a token loop, tier 1's
+                // (decision 0323's lowering A; B is a compile option).
+                let split = if low.skip.is_none() && !parts.is_empty() { crate::records::Split::Tier2 } else { crate::records::Split::Tier1 };
+                let reader = crate::records::Reader { arms, other, retag, parts, split };
                 let at = match readers.iter().position(|x| *x == reader) {
                     Some(at) => at,
                     None => {

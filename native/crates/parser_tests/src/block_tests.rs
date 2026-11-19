@@ -960,9 +960,9 @@ pub const STAGE1: &str = include_str!("../../../../fixtures/simdjson-stage1/stag
 
 /// simdjson's own stage 1 on each file (`fixtures/simdjson-stage1/stage1_indexes.cpp`): path,
 /// length, number of structural indexes, FNV-1a of the indexes as little-endian u32s.
-const STAGE1_EXPECTED: &str = include_str!("../../../../fixtures/simdjson-stage1/expected.txt");
+pub(crate) const STAGE1_EXPECTED: &str = include_str!("../../../../fixtures/simdjson-stage1/expected.txt");
 
-fn repo_file(path: &str) -> Vec<u8> {
+pub(crate) fn repo_file(path: &str) -> Vec<u8> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     std::fs::read(root.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
@@ -980,7 +980,7 @@ fn indexes(words: &[u64]) -> Vec<u32> {
     out
 }
 
-fn fnv(indexes: &[u32]) -> u64 {
+pub(crate) fn fnv(indexes: &[u32]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
     for v in indexes {
         for b in v.to_le_bytes() {

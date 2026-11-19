@@ -1178,14 +1178,15 @@ fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::
 /// bytes. The file is readable 64 bytes past its end (`local_classes`), and the places past the
 /// token are cut from the test; they reach no earlier place. A token of 16 bytes or fewer is
 /// checked in its arm (`token_check_short`); this is the rest.
-fn token_check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, start: Value, limit: Value, heads: &mut Vec<(Block, Step)>) -> Value {
+#[allow(clippy::too_many_arguments)]
+fn token_check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, start: Value, limit: Value, next: Value, heads: &mut Vec<(Block, Step)>) -> Value {
     use crate::program::LocalOp as L;
     let bytes = (e.ctx)(f, BYTES);
     let consts = crate::native_cpu_block::Consts::make(f);
     let n = f.ins().isub(limit, start);
     // The tokens' ends before it, once (decision 0428).
     let ended = (c.back != 0).then(|| {
-        let (lasts, stride, next) = ((e.ctx)(f, LASTS), (e.ctx)(f, RECORD_STRIDE), (e.get)(f, Mem::Next));
+        let (lasts, stride) = ((e.ctx)(f, LASTS), (e.ctx)(f, RECORD_STRIDE));
         ended_word(f, lasts, stride, next, start, c.back)
     });
     // The carried words: each `prev`'s operand, the window before's; each `fill`'s carry.
@@ -4642,21 +4643,24 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         let key = WordFn::Check { index: check };
                         if !word_fns.contains_key(&key) {
                             let name = format!("tempo_word_{}", word_fns.len());
-                            let made = outline(&mut module, &name, 3, 1, pinned_ctx, &[], |g, q, hs| {
+                            let made = outline(&mut module, &name, 4, 1, pinned_ctx, &[], |g, q, hs| {
                                 let ctx = q[0];
                                 let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
                                 let set = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| field_set(f, ctx, k, x);
                                 let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
                                 let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a check returns whether it holds");
                                 let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
-                                let v = if c.token { token_check_word(g, &env, &c, &form, q[1], q[2], hs) } else { check_word(g, &env, &c, &form, output, bytewise.as_ref(), q[1], q[2], hs) };
+                                let v = if c.token { token_check_word(g, &env, &c, &form, q[1], q[2], q[3], hs) } else { check_word(g, &env, &c, &form, output, bytewise.as_ref(), q[1], q[2], hs) };
                                 g.ins().return_(&[v]);
                             })?;
                             word_fns.insert(key, made);
                         }
                         let (id, sig, _) = &word_fns[&key];
                         let cv = pinned(&mut f);
-                        call_word(&mut f, *id, sig, pinned_ctx, cv, &[start, limit])[0]
+                        // The token's index past it: the state's `Next` is in this function's
+                        // frame, not `ctx`, where it is one function (decision 0428).
+                        let next = mget(&mut f, Mem::Next);
+                        call_word(&mut f, *id, sig, pinned_ctx, cv, &[start, limit, next])[0]
                     };
                     guard(&mut f, r, pc);
                     f.ins().jump(fall, &[]);

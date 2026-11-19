@@ -504,6 +504,11 @@ pub fn lasts(records: &Records, bytes: &[u8], starts: &[u32], outputs: &[Vec<u64
         .map(|&s| {
             let first = bytes.get(s as usize).copied().unwrap_or(0);
             match records.rules.get(usize::from(records.ends[usize::from(first)])) {
+                // A region's token: to its closer (`read_last`), a region tier 2 reads in parts
+                // whole (`Split::Tier2`).
+                // Split in tier 1, its parts are rows of their own, and its opener is a byte.
+                Some(&EndRule::Read(i)) if records.readers[usize::from(i)].parts_in_tier1() => Some(s),
+                Some(&EndRule::Read(i)) => read_last(records, &records.readers[usize::from(i)], s as usize, bytes, outputs).ok().map(|l| l.max(s as usize) as u32),
                 Some(&rule) => last_by_rule(records, rule, s as usize, bytes, outputs).map(|l| l as u32),
                 None => Some(s),
             }
