@@ -1,11 +1,12 @@
 /**
- * A pack page's rule table (`#pack/<id>`, `#created`): the column labels Rule · Violations · On/off, then one row per
+ * A pack page's rule table (`#pack/<id>`, `#created`): the column labels Rule · Violations · Enforcement · On/off, then one row per
  * rule, reconciled in place on every poll. A row opens the rule's sheet; its switch turns the rule on or off.
  */
 import { h, setAttr, setText, setClass, syncChildren } from "../dom.js";
 import { fmt, plural, whenLabel } from "../format.js";
 import { INTERNAL_TESTING, isInternalTesting, isLog, isRunning } from "../derive.js";
 import { data, isMeasured, isAudited, fires, allFires, activityOf, activityAllOf, rangeLabel, titleOf, panelRuleId } from "../state.js";
+import { enforcementTag, ruleTableHead, updateEnforcementTag } from "./enforcement.js";
 
 export const CREATE_COMMAND = "/rerail-create";
 
@@ -16,14 +17,15 @@ function createRow(stored) {
   const title = h("button.t", { "data-act": "detail", "data-i": id });
   const count = h("span.count.num", null, h("b"));
   const sw = h("button.sw", { role: "switch", "aria-checked": "false", "data-act": "toggle", "data-i": id });
+  const enforcement = enforcementTag();
   const stopped = h("span.badge", { hidden: true }, "Not running");
   const internal = h("span.badge", { hidden: true, title: "Not in this release." }, INTERNAL_TESTING);
   const folder = h("span.mono", { title: "Added at" });
   const last = h("span");
   const row = h("div.row", { "data-act": "detail", "data-i": id },
-    h("div.rmain", null, h("div.rtitle", null, title), h("div.rside", null, count, sw),
+    h("div.rmain", null, h("div.rtitle", null, title), h("div.rside", null, count, enforcement, sw),
       h("div.rmeta", null, internal, stopped, h("span.mono", null, id), folder, last)));
-  row._r = { title, count, sw, internal, stopped, folder, last };
+  row._r = { title, count, sw, enforcement, internal, stopped, folder, last };
   return row;
 }
 
@@ -62,6 +64,7 @@ function updateRow(row, stored) {
   setText(b, count.text);
   setClass(b, "zero", count.zero);
   setAttr(r.count, "title", count.tip);
+  updateEnforcementTag(r.enforcement, stored);
   setAttr(r.sw, "aria-checked", String(stored.enabled));
   setAttr(r.sw, "aria-label", `Turn ${title} ${stored.enabled ? "off" : "on"}`);
   setAttr(r.internal, "hidden", !isInternalTesting(stored));
@@ -81,7 +84,7 @@ let table = null;
 function build() {
   const list = h("div.list");
   const noMatch = h("div.list", { hidden: true }, h("div.empty", null, h("h3", null, "No matches."), h("p", null, "Try a different search or filter.")));
-  const head = h("div.colhead", { "aria-hidden": "true" }, h("span", null, "Rule"), h("span", null, "Violations"), h("span", null, "On/off"));
+  const head = ruleTableHead();
   table = { root: h("div.rtable", null, head, list, noMatch), head, list, noMatch };
 }
 

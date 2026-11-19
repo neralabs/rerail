@@ -66,5 +66,4 @@ export const ruleSheetActions = {
   delcancel: () => { sheetState.delConfirm = false; invalidate(); },
   delgo: id => { sheetState.delConfirm = false; invalidate(); return removeRule(id); },
   /** A mode button, read-only in this release: its title says why, and so does the toast. */
-  modeinfo: (_, b) => toast(`${b.title}.`),
 };

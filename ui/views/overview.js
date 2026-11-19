@@ -12,6 +12,7 @@ import { invalidate } from "../shell.js";
 import { approveMany } from "../actions.js";
 import { rangeControl, syncRange } from "../render/range.js";
 import { loggedTip } from "../render/rules.js";
+import { enforcementTag, ruleTableHead, updateEnforcementTag } from "../render/enforcement.js";
 import { bannerFor, firstOpenState, liveState, overviewBody, rulesOnSource, steeredTally, topRules } from "../first-open.js";
 
 export const needs = ["rules", "packs", "activity", "recentSessions"];
@@ -199,7 +200,7 @@ function renderTiles(tiles, sources, ruleCount, sessionsEver) {
 
 /* ---------- Most violations logged ---------- */
 
-const colhead = () => h("div.colhead", { "aria-hidden": "true" }, h("span", null, "Rule"), h("span", null, "Violations"), h("span", null, "On/off"));
+const colhead = ruleTableHead;
 
 function ruleRow(item) {
   return h("div.row", { "data-act": "detail", "data-i": item.id },
@@ -207,6 +208,7 @@ function ruleRow(item) {
       h("div.rtitle", null, h("button.t", { "data-act": "detail", "data-i": item.id })),
       h("div.rside", null,
         h("span.count.num", null, h("b")),
+        enforcementTag(),
         h("button.sw", { role: "switch", "data-act": "toggle", "data-i": item.id })),
       h("div.rmeta", null, h("span.mono", null, item.id), h("span.last"))));
 }
@@ -218,6 +220,7 @@ function updateRuleRow(row, item) {
   setClass(row, "off", !isRunning(item.stored));
   setText(row.querySelector(".count b"), fmt(item.fires));
   setAttr(row.querySelector(".count"), "title", loggedTip(item.stored, item.fires));
+  updateEnforcementTag(row.querySelector(".enftag"), item.stored);
   const sw = row.querySelector(".sw");
   setAttr(sw, "aria-checked", String(item.stored.enabled));
   setAttr(sw, "aria-label", `Toggle ${item.title}`);

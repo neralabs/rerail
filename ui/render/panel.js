@@ -9,11 +9,11 @@ import { fmt, whenLabel, clock, shortSessionId } from "../format.js";
 import { ruleMode, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
 import { data, ui, rangeLabel, fires, allFires, isMeasured, activityAllOf, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
+import { MODE_READ_ONLY, enforcementTag, updateEnforcementTag } from "./enforcement.js";
 import { ASK, ASK_OPEN, LOG_NOTE, askPrompt, agentSeesHint, askHint, fmtDay, canDelete, deleteConsequences, splitPath } from "./rule-sheet-model.js";
 import { sheetState, syncSheetState, askRule } from "./rule-sheet-actions.js";
 
 const kv = rows => rows.flatMap(([k, v, cls]) => [h("dt", null, k), h("dd", { class: cls }, v)]);
-const MODES = [["log", "Log", "logged"], ["steer", "Steer", "steered"], ["block", "Block", "blocked"]];
 const RECENT_SHOWN = 3;
 
 /** At most two sentences of a description; the pack copy keeps them short upstream too. */
@@ -48,9 +48,7 @@ function buildRule() {
     h("p.lbl", null, "Edit with coding agent"), el.askWhere, el.askChips,
     h("div.cmd", null, el.askText, h("button.btn.sm.solid", { "data-act": "askcopy" }, icon("copy"), "Copy")),
     el.askWhy);
-  // Read-only in this release: the buttons say why when clicked (a toast) or hovered (their title), not the description.
-  el.modes = h("div.rangectl.modes", { role: "group", "aria-label": "What Rerail does on a violation" },
-    MODES.map(([v, l, o]) => h("button", { "data-v": v, "aria-disabled": "true", "aria-pressed": "false" }, icon(o, 14), l)));
+  el.enforcement = enforcementTag();
   el.modeText = h("p");
   el.stats = h("div.pstats", null, h("div", null, h("b.num"), h("span")), h("div", null, h("b"), h("span", null, "last logged")), h("div", null, h("b.num"), h("span", null, "since install")));
   el.statsNone = h("p.pstats-none");
@@ -62,7 +60,7 @@ function buildRule() {
   el.foot = h("div.pfoot");
   el.approval = h("div");
   el.body = h("div.pbody", null, el.pask, el.approval,
-    h("div.enf", null, h("div.lbl", null, "On a violation"), el.modes, el.modeText),
+    h("div.enf", null, h("div.enfhead", null, h("div.lbl", null, "On a violation"), el.enforcement), el.modeText, h("p.enfhint", null, MODE_READ_ONLY)),
     el.stats, el.statsNone,
     h("section.psec", null, h("h3", null, "Description"), el.description),
     h("section.psec", null, h("h3", null, "Source"), el.source),
@@ -93,27 +91,10 @@ function renderAsk(stored) {
     : askHint({ fromPack: isFromPack(stored) })}`);
 }
 
-/** Why a mode button does nothing when clicked: its title and its toast. */
-const BLOCK_NOT_LIVE = "Block is not in this release";
-const MODE_READ_ONLY = "Use Edit with coding agent to change this";
-
-/**
- * Whether the Block button shows: while the daemon runs Block mode's experiment (internal testing), or for a rule
- * already on Block, which keeps it.
- */
-const showsBlock = mode => mode === "block" || (data.health?.experiments ?? []).includes("BLOCK_MODE");
-
+/** What the rule does on a violation: the tag on the "On a violation" line, and the sentence that says what that means. */
 function renderModes(stored) {
-  const mode = ruleMode(stored);
-  for (const b of p.modes.children) {
-    if (b.dataset.v === "block") setAttr(b, "hidden", !showsBlock(mode));
-    const pressed = b.dataset.v === mode, why = b.dataset.v === "block" ? BLOCK_NOT_LIVE : MODE_READ_ONLY;
-    setAttr(b, "aria-pressed", String(pressed));
-    setAttr(b, "title", pressed ? null : why);
-    setAttr(b, "data-act", pressed ? null : "modeinfo");
-  }
-  // What the chosen mode does; a rule on Block reads that Block is not in this release and it steers instead.
-  setText(p.modeText, MODE_PLAIN[mode] ?? "");
+  updateEnforcementTag(p.enforcement, stored);
+  setText(p.modeText, MODE_PLAIN[ruleMode(stored)] ?? "");
 }
 
 function renderStats(stored, id) {
