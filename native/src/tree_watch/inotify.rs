@@ -8,9 +8,9 @@
 //! engine takes at most a quarter of it, and at most 131,072: a root past that is not watched. The
 //! folders above the roots, a handful each and shared between them, are watched past the budget,
 //! and count toward a later root's. A spare root (`watch_spare`) takes only room the budget has
-//! left, and gives it up to a root watched with `watch` that needs it: its watch ends, so each
-//! such root fits as it would with no spare root watched. A root on a file system inotify cannot
-//! see others' writes on (NFS, SMB, FUSE, 9p) is not watched either.
+//! left, the folders above it included, and gives it up to a root watched with `watch` that needs
+//! it: its watch ends, so each such root fits as it would with no spare root watched. A root on a
+//! file system inotify cannot see others' writes on (NFS, SMB, FUSE, 9p) is not watched either.
 //!
 //! A watch follows its folder, not its path. The root's own delete, move or unmount ends its
 //! watch, and so does that of any folder above it up to `/`: each is watched for its own going
@@ -143,6 +143,18 @@ impl Watches {
             // SAFETY: a descriptor of this instance; a watch the kernel already dropped fails harmlessly.
             unsafe { libc::inotify_rm_watch(instance, descriptor) };
         }
+    }
+
+    /// Marks `root`, just watched, spare or not. False for a spare root that takes the watches
+    /// past `budget`: the room check before its watch counts its own folders, and the folders
+    /// above it that no other root holds come only with the watch.
+    fn settle(&mut self, root: &str, spare: bool, budget: usize) -> bool {
+        if !spare {
+            self.spare.remove(root);
+            return true;
+        }
+        self.spare.insert(root.to_owned());
+        self.owners.len() <= budget
     }
 
     /// Releases every watch of `root`.
@@ -503,8 +515,9 @@ impl Inotify {
         {
             self.drop_unwanted(&mut watches, root, &wanted);
             self.watch_above(&mut watches, root);
-            watches.spare.extend(spare.then(|| root.to_owned()));
-            return true;
+            if watches.settle(root, spare, self.budget) {
+                return true;
+            }
         }
         watches.release_root(self.shared.instance.as_raw_fd(), root);
         false
@@ -1004,6 +1017,65 @@ mod tests {
             "{taken:?}"
         );
         watcher.close().expect("close");
+    }
+
+    #[test]
+    fn a_spare_root_counts_the_folders_above_it_that_no_other_root_holds() {
+        let scratch = Scratch::new("spare-above");
+        let [worktree, registry] = folders_of(&scratch, ["w1", "git/worktrees"]);
+        folders_of(&scratch, ["git/worktrees/e1"]);
+        let folders = vec![String::new()];
+        let entries = ["", "e1"].map(str::to_owned).to_vec();
+        // The worktree and the registry's two folders; `git`, above the registry, is one more.
+        let room = just_fits(&[(&worktree, folders.clone())]) + entries.len();
+        for (budget, watched) in [(room, false), (room + 1, true)] {
+            let notices = Arc::new(Notices::default());
+            let mut backend =
+                Inotify::open_with_budget(Arc::clone(&notices), budget).expect("opens");
+            for root in [&worktree, &registry] {
+                notices.start(root);
+            }
+            assert!(backend.watch(&worktree, &folders));
+            assert_eq!(backend.watch_spare(&registry, &entries), watched, "budget {budget}");
+            assert!(backend.shared.watches().owners.len() <= budget);
+            assert!(backend.watch(&worktree, &folders), "the worktree is watched again");
+            assert!(notices.take().is_empty(), "no watch ended");
+            backend.close();
+        }
+    }
+
+    #[test]
+    fn a_spare_root_watched_again_with_watch_gives_its_room_to_no_root() {
+        let scratch = Scratch::new("spare-then-not");
+        let [first, other] = folders_of(&scratch, ["first", "other"]);
+        let folders = vec![String::new()];
+        let notices = Arc::new(Notices::default());
+        let budget = just_fits(&[(&first, folders.clone())]);
+        let mut backend = Inotify::open_with_budget(Arc::clone(&notices), budget).expect("opens");
+        for root in [&first, &other] {
+            notices.start(root);
+        }
+        assert!(backend.watch_spare(&first, &folders));
+        assert!(backend.watch(&first, &folders));
+        assert!(!backend.watch(&other, &folders), "no room is left");
+        assert!(notices.take().is_empty(), "the first root's watch goes on");
+        backend.close();
+    }
+
+    #[test]
+    fn a_spare_root_watched_with_watch_past_the_budget_ends_no_watch_of_its_own() {
+        let scratch = Scratch::new("spare-grows");
+        let [root] = folders_of(&scratch, ["root"]);
+        folders_of(&scratch, ["root/a"]);
+        let notices = Arc::new(Notices::default());
+        let budget = just_fits(&[(&root, vec![String::new()])]);
+        let mut backend = Inotify::open_with_budget(Arc::clone(&notices), budget).expect("opens");
+        notices.start(&root);
+        assert!(backend.watch_spare(&root, &[String::new()]));
+        let grown = ["", "a"].map(str::to_owned);
+        assert!(!backend.watch(&root, &grown), "it does not fit");
+        assert!(notices.take().is_empty(), "no notice of its own watch ending");
+        backend.close();
     }
 
     #[test]

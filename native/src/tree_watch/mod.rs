@@ -53,8 +53,8 @@ pub(crate) trait Backend {
     fn watch(&mut self, root: &str, folders: &[String]) -> bool;
     /// Watches `root` as [`Backend::watch`] does, but only with room a watch budget has left
     /// (Linux), giving that room up, its watch ended, to any root watched with `watch` that
-    /// needs it; it stays spare until it is let go of. Adapters with no budget watch it as any
-    /// root.
+    /// needs it; it stays spare until it is let go of or watched with `watch`. Adapters with no
+    /// budget watch it as any root.
     fn watch_spare(&mut self, root: &str, folders: &[String]) -> bool {
         self.watch(root, folders)
     }
@@ -124,7 +124,8 @@ impl TreeWatcher {
 
     /// Watches `root` as `watch` does, but only with room the watch budget has left (Linux): a
     /// root watched with `watch` that needs that room takes it, and this root's watch ends
-    /// ([`Backend::watch_spare`]). A root watched so stays spare until it is let go of.
+    /// ([`Backend::watch_spare`]). A root watched so stays spare until it is let go of or watched
+    /// with `watch`.
     #[napi(catch_unwind)]
     pub fn watch_spare(&mut self, root: String, folders: Vec<String>) -> Result<bool> {
         Ok(self.watch_as(&root, &folders, true))

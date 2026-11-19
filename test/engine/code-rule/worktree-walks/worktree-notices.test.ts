@@ -360,6 +360,16 @@ describe("SharedTreeWatch", () => {
     expect(watch.calls).toEqual(["watch /r [] spare", "watch /r [,x] spare", "watch /r [] spare", "watch /w []"]);
   });
 
+  it("watches a root without spare while any walk on it watches it so, and spare again once that walk lets go", () => {
+    const watch = new ScriptedWatch();
+    const shared = new SharedTreeWatch(watch);
+    const [first, second] = [shared.user(), shared.user()];
+    first.watch("/r", [""], true);
+    second.watch("/r", ["", "x"]);
+    second.unwatch("/r");
+    expect(watch.calls).toEqual(["watch /r [] spare", "watch /r [,x]", "watch /r [] spare"]);
+  });
+
   it("lets go of a root a walk was refused, so another walk's watch of it ends as that walk lets go", () => {
     const watch = new ScriptedWatch();
     const shared = new SharedTreeWatch(watch);
