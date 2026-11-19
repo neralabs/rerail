@@ -72,7 +72,8 @@ pub(super) struct World {
     roots: Vec<PathBuf>,
     root: PathBuf,
     dirs: BTreeMap<String, Vec<(String, bool)>>,
-    files: BTreeMap<String, Vec<String>>,
+    files: BTreeMap<String, (Vec<String>, String)>,
+    git_file_storage: BTreeMap<String, String>,
     digests: BTreeMap<String, String>,
     loads: BTreeMap<String, Loaded>,
     refused: BTreeSet<String>,
@@ -185,18 +186,33 @@ impl World {
         entries
     }
 
+    /// A Git blob needs a checked read between matching storage observations. An empty stamp
+    /// makes an incomplete read ineligible for reuse, even when the tree still names the blob.
+    fn read_file(&mut self, asked: &str, path: &Path) -> Option<(Vec<u8>, [u8; 32])> {
+        use crate::git_workspace::snapshot;
+        if !snapshot::contains(path) {
+            return super::observe(|o| o.read(path));
+        }
+        let before = snapshot::file_stamp(path);
+        let result = super::observe(|o| o.read(path));
+        let stamp = before.filter(|s| result.is_some() && snapshot::file_stamp(path).as_ref() == Some(s));
+        self.git_file_storage.insert(asked.to_owned(), stamp.unwrap_or_default());
+        result
+    }
+
     /// A file's lines (none when it is refused or missing).
     pub(super) fn file(&mut self, asked: &str) -> Vec<String> {
-        if let Some(lines) = self.files.get(asked) {
+        if let Some((lines, _)) = self.files.get(asked) {
             return lines.clone();
         }
-        let Some(text) = self.allowed(asked).and_then(|p| super::observe(|o| o.read(&p))).and_then(|(bytes, _)| String::from_utf8(bytes).ok()) else {
+        let read = self.allowed(asked).and_then(|p| self.read_file(asked, &p));
+        let Some((text, digest)) = read.and_then(|(bytes, digest)| String::from_utf8(bytes).ok().map(|text| (text, digest))) else {
             self.refused.insert(asked.to_owned());
             return Vec::new();
         };
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
         let lines: Vec<String> = text.split_terminator('\n').map(str::to_owned).collect();
-        self.files.insert(asked.to_owned(), lines.clone());
+        self.files.insert(asked.to_owned(), (lines.clone(), hex(&digest)));
         lines
     }
 
@@ -206,7 +222,14 @@ impl World {
         if let Some(d) = self.digests.get(asked) {
             return Some(d.clone());
         }
-        let Some(d) = self.allowed(asked).filter(|p| crate::git_workspace::snapshot::is_file(p)).map(|p| bytes_digest(&p)).filter(|d| !d.is_empty()) else {
+        let read = self.allowed(asked).filter(|p| crate::git_workspace::snapshot::is_file(p)).and_then(|path| {
+            if crate::git_workspace::snapshot::contains(&path) {
+                if let Some((_, digest)) = self.files.get(asked) { return Some(digest.clone()); }
+                return self.read_file(asked, &path).map(|(_, digest)| hex(&digest));
+            }
+            Some(bytes_digest(&path)).filter(|digest| !digest.is_empty())
+        });
+        let Some(d) = read else {
             self.refused.insert(asked.to_owned());
             return None;
         };
@@ -340,8 +363,11 @@ impl World {
         for (asked, entries) in &self.dirs {
             out.push(("dir".to_owned(), asked.clone(), listing_digest(entries)));
         }
-        for asked in self.files.keys() {
-            out.push(("file".to_owned(), asked.clone(), self.allowed(asked).map(|p| bytes_digest(&p)).unwrap_or_default()));
+        for (asked, (_, digest)) in &self.files {
+            out.push(("file".to_owned(), asked.clone(), digest.clone()));
+        }
+        for (asked, stamp) in &self.git_file_storage {
+            out.push(("git_file_storage".to_owned(), asked.clone(), stamp.clone()));
         }
         for (asked, d) in &self.digests {
             out.push(("digest".to_owned(), asked.clone(), d.clone()));
@@ -365,21 +391,23 @@ impl World {
     /// request no longer asked).
     pub(super) fn changed<'c>(&mut self, consulted: &'c [(String, String, String)]) -> Option<(&'c (String, String, String), Option<String>)> {
         consulted.iter().find_map(|c| {
-            let (what, path, digest) = c;
-            let now = match what.as_str() {
-                "dir" => listing_digest(&self.dir(path)),
-                "file" | "digest" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
-                "load" => bytes_digest(Path::new(path)),
-                "refused" => self.probe(path),
-                super::git::REVISION | super::git::REPO_REVISION | super::git::OBJECT => {
-                    let Ok((repo, arg)) = serde_json::from_str::<(String, String)>(path) else {
-                        return Some((c, None));
-                    };
-                    self.git().observation(what, &repo, &arg)?
-                }
-                _ => return Some((c, None)),
-            };
-            (now != *digest).then_some((c, Some(now)))
+            let now = self.observation(&c.0, &c.1);
+            (now.as_ref() != Some(&c.2)).then_some((c, now))
+        })
+    }
+
+    pub(super) fn observation(&mut self, what: &str, path: &str) -> Option<String> {
+        Some(match what {
+            "dir" => listing_digest(&self.dir(path)),
+            "file" | "digest" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
+            "git_file_storage" => crate::git_workspace::snapshot::file_stamp(&self.allowed(path)?)?,
+            "load" => bytes_digest(Path::new(path)),
+            "refused" => self.probe(path),
+            super::git::REVISION | super::git::REPO_REVISION | super::git::OBJECT => {
+                let (repo, arg) = serde_json::from_str::<(String, String)>(path).ok()?;
+                self.git().observation(what, &repo, &arg)?
+            }
+            _ => return None,
         })
     }
 
@@ -397,7 +425,7 @@ impl World {
 
     pub(super) fn summary(&self, pauses: usize) -> String {
         let entries: usize = self.dirs.values().map(Vec::len).sum();
-        let lines: usize = self.files.values().map(Vec::len).sum();
+        let lines: usize = self.files.values().map(|(lines, _)| lines.len()).sum();
         format!(
             "requests answered in {pauses} pauses of the fixpoint: {} directories ({entries} entries), {} files ({lines} lines), {} documents loaded; {} paths refused or missing, {} loads not taken",
             self.dirs.len(),

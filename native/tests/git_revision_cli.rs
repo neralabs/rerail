@@ -263,6 +263,92 @@ fn standalone_logic_publishes_each_source_after_its_history_query_finishes() {
 }
 
 #[test]
+fn revision_constant_records_follow_their_inputs_and_published_owners() {
+    use rerail_engine::content_store::{self, ContentStore, CorpusPolicy};
+
+    let f = Checkout::new();
+    let marker = f.repo.join("marker");
+    fs::write(&marker, "selected\n").unwrap();
+    f.git(&["add", "marker"]);
+    f.git(&["commit", "-qm", "marker"]);
+    let first = f.git(&["rev-parse", "HEAD"]);
+    let database = f.area.path().join("store.sqlite");
+    let profile = f.area.path().join("profile");
+    let policy = f.area.path().join("marker.rr");
+    fs::write(&policy, r#".policy "marker" revision 1
+.language python
+.violation Seen(at: node, s: symbol) "got {s}"
+.decl marker(s: symbol)
+marker(s) :- file_line("marker", _, s).
+Seen(n, s) :- marker(s), kind(n, "identifier").
+"#).unwrap();
+    let scan = |revision: &str, scope: &str, value: &str, reused: bool| {
+        let output = Command::new(env!("CARGO_BIN_EXE_rerail-engine"))
+            .env("RERAIL_PROFILE", &profile).env("RERAIL_TAPE_CACHE", &database)
+            .arg("run-rr").arg(&policy).arg(&f.repo).arg(f.area.path().join("out"))
+            .args(["--revision", revision, "--analysis-scope", scope]).output().unwrap();
+        let report = json(output, 0);
+        let findings = report["diagnostics"].as_array().unwrap();
+        assert_eq!(findings.len(), 2);
+        assert!(findings.iter().all(|row| row["parameters"]["s"] == value), "{findings:?}");
+        let decisions = fs::read_to_string(profile.join("profile.txt")).unwrap();
+        let marker = decisions.lines().find(|line| line.contains("given as facts: marker")).unwrap();
+        assert_eq!(marker.contains("kept from an earlier run"), reused, "{marker}");
+    };
+    let versions = || {
+        let observer = rusqlite::Connection::open_with_flags(content_store::observe::store_beside(&database), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        observer.query_row("SELECT count(*) FROM run_record WHERE key GLOB 'constants:*:*:*'", [], |r| r.get::<_, u32>(0)).unwrap()
+    };
+    scan(&first, "one", "selected", false);
+    scan(&first, "one", "selected", true);
+    scan(&first, "two", "selected", true);
+    fs::write(f.repo.join("other"), "unrelated").unwrap();
+    f.git(&["add", "other"]);
+    f.git(&["commit", "-qm", "unrelated edit"]);
+    scan("HEAD", "two", "selected", true);
+    assert_eq!(versions(), 1);
+    fs::write(&marker, "changed\n").unwrap();
+    f.git(&["add", "marker"]);
+    f.git(&["commit", "-qm", "changed marker"]);
+    scan("HEAD", "one", "changed", false);
+    scan(&first, "two", "selected", true);
+    assert_eq!(versions(), 2);
+
+    let oid = f.git(&["rev-parse", "HEAD:marker"]);
+    let object = f.repo.join(".git/objects").join(&oid[..2]).join(&oid[2..]);
+    let held = f.area.path().join("held-marker");
+    fs::rename(&object, &held).unwrap();
+    let unreadable = json(f.run("run-rr", &[&policy, &f.repo, &f.area.path().join("out")], Some("one")), 0);
+    assert_eq!(unreadable["diagnostics"].as_array().unwrap().len(), 0);
+    assert_eq!(versions(), 2);
+    fs::rename(&held, &object).unwrap();
+    scan("HEAD", "one", "changed", true);
+    f.git(&["repack", "-ad"]);
+    scan(&first, "two", "selected", true);
+    scan("HEAD", "one", "changed", true);
+    assert_eq!(versions(), 2);
+
+    let release = |scope: &str| {
+        let (id, members) = content_store::analysis_scope::release_named_scope(&database, scope, &[]).unwrap();
+        assert!(members);
+        let store = ContentStore::open_for_collection(&database, &[id]).unwrap();
+        let now = content_store::unix_seconds().unwrap();
+        let policy = CorpusPolicy::default();
+        for _ in 0..64 {
+            if !store.corpus_pass_wanted(&policy, now).unwrap() { return; }
+            store.collect_corpus_pass(&policy, now).unwrap();
+        }
+        panic!("scope collection did not finish");
+    };
+    release("one");
+    assert_eq!(versions(), 1);
+    scan(&first, "two", "selected", true);
+    release("two");
+    assert_eq!(versions(), 0);
+    scan(&first, "three", "selected", false);
+}
+
+#[test]
 fn ordered_commit_trailers_match_git_for_each_requested_message() {
     let f = Checkout::new();
     let message = f.area.path().join("message.txt");

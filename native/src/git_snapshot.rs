@@ -1062,6 +1062,16 @@ pub fn blob(path: &Path) -> Option<HashKey> {
     super::hash_key(id.as_ref()).ok()
 }
 
+/// Both the selected path's blob and the storage observation that covers its bytes.
+pub fn file_stamp(path: &Path) -> Option<String> {
+    let v = view(path)?;
+    let Entry::File(id) = v.entry(path).ok()? else { return None };
+    v.with_repo(|repo, storage, _| {
+        if !repo.has_object(id) { return None; }
+        storage?.object(id).map(|stamp| format!("{id}:{stamp}"))
+    }).ok()?
+}
+
 pub fn source_object(root: &Path, path: &str) -> Option<gix::ObjectId> {
     let view = view(root)?;
     match view.entry(&root.join(path)).ok()? {

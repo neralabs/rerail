@@ -2,7 +2,7 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Eighteen of the 28 follow-up findings have verified results. Ten remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+Nineteen of the 28 follow-up findings have verified results. Nine remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
 
 | Open finding | What still needs to pass |
 | --- | --- |
@@ -11,11 +11,26 @@ Eighteen of the 28 follow-up findings have verified results. Ten remain open. Th
 | 42. Removed stores | Retire a route by store identity. Apply its outstanding stop if that store returns. Preserve a different store at the same path. |
 | 52. Git-backed policies | Reopen a compiled policy after restart. Count lowerings when its blobs stay the same and when an include changes. |
 | 61. History by scope | Read only the requested scope's records. Check reuse after an unrelated publication and invalidation after a relevant one. |
-| 101. Constant relations | Reuse a derivation across revisions and scopes while its observed inputs match. Collect it after the last owner releases it. |
 | Bound commit metadata | Request the bound commit when a rule reads its metadata. Verify root commits, non-root commits and unavailable objects under negation. |
 | Commit diagnostic locations | Identify the repository, commit and optional field in the report. Distinguish a commit finding from a finding in a file named `git`. |
 | Content handles | Read verified content through a rule-visible handle. Check reuse across revisions and the result for a missing object. |
 | Selected document provenance | Join the selected path, blob, grammar, tape and document. Test two paths with identical bytes and a scan that excludes one. |
+
+## Constant relations across revisions and scopes
+
+In case 101, a policy joined two Python identifiers to a line from a file named `marker`.
+Each scan started a new CLI process. The profiles and the observer database agreed on when a derivation ran.
+
+| Change | Result |
+| --- | --- |
+| Scan the same commit again, add another scope, then edit an unrelated file | Both findings kept the original value. All three scans reused the first derivation. The store held one version. |
+| Change `marker`, then scan the original commit | The new line required one derivation. The earlier commit reused its original result. The store held two versions. |
+| Remove the new blob from Git, then restore it | The unreadable input contributed zero findings. Restoring the blob verified its bytes and reused the existing result. |
+| Repack the repository, then scan both commits | Both scans reused their results after checking the packed bytes. The store still held two versions. |
+| Release the scopes one at a time | Collection kept the version the other scope owned. Releasing the last owner removed the remaining version. A new scope derived it again. |
+
+The public `rerail scope delete` command reproduced the same two-to-one-to-zero count on macOS with a fresh store and two scopes.
+All 11 Git revision CLI tests and 52 related store tests passed on Linux. [CLI regression](../../../../native/tests/git_revision_cli.rs) · [Cache contract](analysis-scopes.md)
 
 ## Ordered commit trailers
 

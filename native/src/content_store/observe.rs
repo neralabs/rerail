@@ -1276,10 +1276,42 @@ impl Observer {
         found
     }
 
+    /// One dependency list per shape in a family of immutable records named
+    /// `family:<shape hash>:<result key>`. Each seek skips the other values of that shape.
+    pub fn run_record_samples(&self, family: &str) -> Vec<Vec<u8>> {
+        if !super::hazards::may_read_store() { return Vec::new(); }
+        let Some(db) = self.db.as_ref().and_then(|k| k.reader.as_ref()) else { return Vec::new() };
+        let Ok(mut seek) = db.prepare_cached("SELECT key,consulted FROM run_record WHERE key >= ?1 AND key < ?2 ORDER BY key LIMIT 1")
+            else { return Vec::new() };
+        let mut lower = format!("{family}:");
+        let upper = format!("{family};");
+        let mut lists = Vec::new();
+        while let Ok((key, list)) = seek.query_row((&lower, &upper), |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))) {
+            let Some((group, _)) = key.rsplit_once(':') else { break };
+            lower = format!("{group};");
+            lists.push(list);
+        }
+        lists
+    }
+
+    /// Read an immutable result even if another process published it after an earlier miss.
+    pub fn stored_run_record(&self, key: &str) -> Option<(Vec<u8>, Vec<u8>)> {
+        if !super::hazards::may_read_store() { return None; }
+        self.db.as_ref()?.reader.as_ref()?.prepare_cached("SELECT consulted,outputs FROM run_record WHERE key=?1").ok()?
+            .query_row([key], |r| Ok((r.get(0)?, r.get(1)?))).ok()
+    }
+
     /// Keeps a run's record under `key`, replacing the last: in memory now, in the store behind the run.
     pub fn put_run_record(&mut self, key: &str, consulted: &[u8], outputs: &[u8]) {
         if let Some(k) = self.db.as_mut() {
             k.records.insert(key.to_owned(), (consulted.to_owned(), outputs.to_owned()));
+        }
+        self.store_run_record(key, consulted, outputs);
+    }
+
+    /// Queue a durable result. The store controls the lifetime of versioned results.
+    pub fn store_run_record(&self, key: &str, consulted: &[u8], outputs: &[u8]) {
+        if let Some(k) = self.db.as_ref() {
             let (key, consulted, outputs) = (key.to_owned(), consulted.to_owned(), outputs.to_owned());
             k.writer.send(move |db| {
                 let _ = db.execute_cached("INSERT OR REPLACE INTO run_record VALUES (?1, ?2, ?3)", params![key, consulted, outputs]);
@@ -1682,10 +1714,10 @@ pub struct Swept {
 ///   names of one directory (`/var/…`, `/private/var/…`), all but the one with the newest cursor;
 /// - an answer, a canonical form or a Git file list under no root kept: every path the observer reads is under a
 ///   root (`watch_above`), so one under none is of a name no run uses;
-/// - a whole-run cutoff's record (`reuse::CUTOFF`) that names no plan `live` says is live (a run of another build,
-///   whose manifests the content store no longer keeps), and one from before records named their plans.
+/// - a revision constant after the last manifest that owns its derivation goes away;
+/// - other planned records (including constants, cone rounds and cutoffs) once none of their plans is live.
 ///
-/// Then the WAL is folded into the database and truncated. Other records (`constants:`, `cone-rounds:`) stay.
+/// Then the WAL is folded into the database and truncated.
 pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Result<Swept> {
     let mut swept = Swept::default();
     if !path.exists() {
@@ -1750,6 +1782,9 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
                 // before they did.
                 if key.starts_with(CUTOFF) || PLANNED.iter().any(|p| key.starts_with(p)) {
                     let lists = decode_lists(consulted).unwrap_or_default();
+                    if key.starts_with("constants:") && let Some(owner) = lists.iter().flat_map(|l| l.chunks_exact(3)).find(|c| c[0] == "constants-owner") {
+                        return !unhex(&owner[2]).is_some_and(|plan| live(&plan));
+                    }
                     return !lists.iter().flat_map(|l| l.chunks_exact(3)).filter(|c| c[0] == "plan" && c[1].is_empty()).filter_map(|c| unhex(&c[2])).any(|plan| live(&plan));
                 }
                 // A cutoff's record from before they were prefixed: its key alone, a digest.

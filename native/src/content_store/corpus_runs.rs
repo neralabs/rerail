@@ -88,6 +88,7 @@ pub struct CorpusPass {
     pub kept: Option<CorpusKept>,
     pub plan_rows: usize,
     pub collection: CollectionReport,
+    pub observer: Option<super::observe::Swept>,
 }
 
 impl CorpusPass {
@@ -923,7 +924,11 @@ impl ContentStore {
         pass.plan_rows += usize::from(self.compact_frame_segments(MEMO_PACK_FLOOR)? > 0);
         // The tapes' and sources' segments, once files stored again or collected left most of them unnamed (0295 step 5).
         pass.plan_rows += usize::from(self.compact_object_segments(MEMO_PACK_FLOOR)? > 0);
-        if !pass.did_work() {
+        if !pass.did_work() && self.corpus_due()? == 2 {
+            // The same lease protects the live-plan snapshot and the observer sweep. Leave the
+            // pass due until both stores have completed it, including after an interrupted pass.
+            let live = self.live_plans()?;
+            pass.observer = Some(super::observe::collect(&super::observe::store_beside(self.database_path()), |plan| live.contains(plan))?);
             self.immediate_transaction(|tx| Ok(tx.execute_cached("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=2", [])?))?;
         }
         Ok(pass)

@@ -179,6 +179,11 @@ Finishing the run closes that key. Its workers can no longer add memberships.
 Each evaluation that uses a Git inventory records the root and inventory programs in its selected store.
 A reused source view can supply their verified tree entries. The programs publish their manifests under the current acquisition.
 Repeated inventory requests within that evaluation can use the same materialized result.
+When a rule derives a constant from a file in a revision, its cache entry follows the program and the file it read.
+Another revision or scope can reuse the result when the path still supplies the same content. Changing the file requires a new derivation.
+Each scope that publishes a run retains the constant that run used. Collection can reclaim it after the last owner releases it.
+For a Git file, the reader records the blob ID, the digest of its bytes and an observation of its storage.
+After a repack, the reader verifies the bytes before reusing the result. A missing blob supplies no cached lines or digest.
 After scope deletion, a new acquisition must retain the same plans as a fresh view of that source.
 Each store that consumes a compiled policy needs its input record and the graph of its includes.
 Policy includes use forward slashes on Windows and Unix. The reader checks each included file and missing candidate through a native filesystem path.

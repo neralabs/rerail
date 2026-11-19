@@ -2135,17 +2135,16 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
         let outcome = (|| -> std::result::Result<String, crate::content_store::StoreError> {
             let store = ContentStore::open(&path)?;
             let (mut idle, mut kept, mut plan_rows, mut tapes, mut sources) = (0, None, 0, 0, 0);
+            let mut observer = None;
             while idle < 2 && started.elapsed() < std::time::Duration::from_millis(200) {
                 let pass = store.collect_corpus_pass(&policy, now)?;
                 passes += 1;
                 idle = if pass.did_work() { 0 } else { idle + 1 };
                 kept = pass.kept.or(kept);
+                observer = pass.observer.or(observer);
                 (plan_rows, tapes, sources) = (plan_rows + pass.plan_rows, tapes + pass.collection.tapes, sources + pass.collection.sources);
             }
-            // The observer's store, with what the passes left live (`observe::collect`).
-            let live = store.live_plans()?;
-            let swept = crate::content_store::observe::collect(&crate::content_store::observe::store_beside(&path), |plan| live.contains(plan)).map_err(crate::content_store::StoreError::from)?;
-            let swept = format!("; the observer's store: {} cursors, {} answers, {} records and {} output directories dropped", swept.cursors, swept.answers, swept.records, swept.outputs);
+            let swept = observer.map(|s| format!("; the observer's store: {} cursors, {} answers, {} records and {} output directories dropped", s.cursors, s.answers, s.records, s.outputs)).unwrap_or_default();
             Ok(match kept {
                 Some(k) => format!(
                     "{} manifests kept, {} evicted; history {:.1} MB (high water {} MB), protected {:.1} MB; {tapes} tapes, {sources} sources and {plan_rows} memo rows of dead plans deleted{}",
