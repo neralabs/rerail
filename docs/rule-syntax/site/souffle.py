@@ -639,6 +639,10 @@ def _literal(l, bound, force=False):
         args = _split_top(l[2:-1], ",")
         groups = set(re.findall(r"\(\?P?<([A-Za-z_]\w*)>", l[2]))
         subj = _vars(args[1]) if len(args) > 1 else set()
+        # match_all("re", sp, m) binds the match m; over a symbol, match_all("re", s, ordinal, start, end) binds the rest.
+        if l[0] == "match_all":
+            for a in args[2:]:
+                groups |= _vars(a)
         ready = force or subj <= bound
         return groups, subj, ready
     if "count" in l or "min" in l or "max" in l or "sum" in l or "join" in l:
