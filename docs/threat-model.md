@@ -316,8 +316,10 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
 - Session directories are created 0700 and explicitly chmod 0700; ledgers append 0600 (`src/runtime/runtime.ts`).
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
-  everything written in it inherits; a home an earlier release made gets it at the next daemon launch
-  (`src/engine/storage/windows-acl.ts`). A daemon TLS key whose ACL lets anyone else read it, or that has no DACL
+  everything written in it inherits; a home an earlier release made gets it at the next daemon launch, and a
+  `.rerail\sessions` folder Rerail did not make (Git, a person, Rerail 0.1.4) when the daemon first opens a session
+  there, before it writes, the records already in it included (`src/engine/storage/windows-acl.ts`,
+  `src/engine/storage/ledger-paths.ts`). A daemon TLS key whose ACL lets anyone else read it, or that has no DACL
   (everyone has full control), is never served with: when this account reads it as a private key, the daemon then
   serves this computer alone, on loopback, on T9's three conditions.
 - The repository identity file is read without following a symlink (`openNoFollowSync`) plus size and format checks,
@@ -645,8 +647,8 @@ code runs. No Nera-held signature is verified ([distribution-model.md](distribut
 
 ### T8: Repo-planted `.rerail/` redirects or exposes ledgers
 
-A repository could commit a `.rerail/` folder to redirect or expose session ledgers. Rerail refuses symlinks there
-and keeps its own `.gitignore`.
+A repository could commit a `.rerail/` folder to redirect or expose session ledgers. Rerail refuses symlinks there,
+keeps its own `.gitignore`, and on Windows gives the records folder the owner-only ACL whoever made it.
 
 <details>
 <summary>Mitigations and what remains</summary>
@@ -658,6 +660,9 @@ and keeps its own `.gitignore`.
 - A refusal names the path in the daemon log, and the hook fails open.
 - `ignoreInGit` rewrites `.gitignore` whenever it is not Rerail's own `*` file, so a planted `!*` cannot expose ledgers
   to `git add -A`.
+- A `.rerail/sessions` the repository's own commit makes, which on Windows outside the profile folder takes its
+  parent's ACL, is given the owner-only ACL when the daemon first opens a session there, before it writes
+  (`makeLedgerFolder` with `repair`); elsewhere it is made `0700`. One Rerail cannot change is named in the daemon log.
 
 **What remains:** a `RERAIL_STORAGE_ROOT` outside any `.rerail` folder is not checked. Replayed ledgers are still
 trusted state; planting one needs the session id, whose hash names the folder.
@@ -711,8 +716,8 @@ capability.
 ### T10: Files and directories not kept private
 
 On Unix, Rerail creates its files private and tightens existing ones. On Windows, which ignores modes, a Rerail home or
-`.rerail\sessions` folder made outside the profile folder gets an ACL for the person, SYSTEM and Administrators alone
-([B6](#b6-data-at-rest)).
+`.rerail\sessions` folder outside the profile folder gets an ACL for the person, SYSTEM and Administrators alone, the
+records folder whoever made it ([B6](#b6-data-at-rest)).
 
 <details>
 <summary>Mitigations and what remains</summary>

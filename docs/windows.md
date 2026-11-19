@@ -614,9 +614,13 @@ preimages and held steers.
 - The person's SID comes from `whoami /user`, whatever the account: `S-1-5-21-...` for a local or domain account,
   `S-1-12-1-...` for a Microsoft Entra ID (Azure AD) account, as on most company laptops.
 - A Rerail home or `.rerail\sessions` folder Rerail makes outside the profile gets the ACL when it is made, and a home
-  an earlier release made gets it at the next daemon launch. `rerail remote add` gives the `remote-tokens` folder the
-  ACL before it writes a token there, so a remote's token is private before any daemon launch. A failure is reported on
-  stderr and never fails the caller.
+  an earlier release made gets it at the next daemon launch. A `.rerail\sessions` Rerail did not make (Git makes one
+  for a repository that commits a file in it; a person, or Rerail 0.1.4, may have made it) gets it when the daemon
+  first opens a session there, before it writes: the daemon reads the folder's ACL with `icacls` once per folder in its
+  life and sets it when the folder still inherits its parent's, and every record already in it inherits the new one.
+  `rerail remote add` gives the `remote-tokens` folder the ACL before it writes a token there, so a remote's token is
+  private before any daemon launch. A failure is reported on stderr, a daemon's log, with `icacls`'s reason, and never
+  fails the caller.
 - `loadDaemonTls` refuses a TLS private key that `openToOthers` finds other accounts can read, naming those accounts
   and the `icacls` command that fixes it. When this account reads that key, the daemon then serves this computer alone,
   on loopback, and says why (`serveRerailDaemon`), so hooks keep recording while the key is fixed. A key whose ACL it

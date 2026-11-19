@@ -1,0 +1,1 @@
+On Windows, a checkout's session records outside your profile folder are now private to you even when `.rerail\sessions` was made before Rerail wrote there: by Git from a repository that commits a file in it, by hand, or by Rerail 0.1.4. The daemon fixes the folder when it next opens a session there, records already in it included.
