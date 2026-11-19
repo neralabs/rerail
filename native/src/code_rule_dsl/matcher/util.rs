@@ -557,7 +557,9 @@ impl UtilRef {
 
 /// Whether `matcher` holds only terms that read nothing of the environment but the captures they
 /// name (`UtilRef::scope`, for a utility): no Rerail predicate (a `parse`'s `host` rules read
-/// the host's captures, `binds` its own) and no comparison of values or of a transform's text.
+/// the host's captures, `binds` its own) and no comparison of values or of a transform's text. A
+/// gap test (t31) is the relation it stands for, read off the parent's gaps: it reads the tree and
+/// the grammar alone, and its stop rule where it has one.
 /// `read`: the utilities read so far (`UtilRef::context_free_within`).
 fn context_free(matcher: &AstMatcher, read: &mut BTreeMap<(usize, usize), Option<bool>>) -> bool {
     let stop = |by: &super::StopBy, read: &mut BTreeMap<(usize, usize), Option<bool>>| match by {
@@ -598,6 +600,10 @@ fn context_free(matcher: &AstMatcher, read: &mut BTreeMap<(usize, usize), Option
         }
         AstMatcher::Util(util) => util.context_free_within(read),
         AstMatcher::Call(call) => call.util.context_free_within(read),
+        AstMatcher::Semantic(super::Semantic::Gap(test)) => test
+            .past
+            .as_deref()
+            .is_none_or(|past| context_free(past, read)),
         AstMatcher::Semantic(_) => false,
         AstMatcher::TestUnknown(_) => false,
     }
