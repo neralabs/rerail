@@ -79,6 +79,10 @@ Library rules that read a typing program's outputs use the same in-memory interf
 They must preserve existing files in the invocation directory and in the caller's output directory.
 The stored result contains only the requested constant relations.
 
+Several evaluations can request Git facts at the same time. Each evaluation keeps its own repository and answers.
+While a worker waits for an answer, it must allow queued work that produces that answer to run.
+This applies even when simultaneous evaluations outnumber the CPU workers.
+
 A policy can read a Git revision and a later policy can use that same answer to request a commit.
 When the engine saves an answer for reuse, it saves the rows even if the first policy uses them only in its output.
 On upgrade, the engine rechecks entries written with the earlier native-answer format before it reuses them.

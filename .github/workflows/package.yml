@@ -179,9 +179,11 @@ jobs:
           [System.IO.DriveInfo]::new($drive).DriveFormat
           ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "same-size rewrite" --reporter=verbose
 
-      - name: Check directory scope identity on Linux
+      - name: Check directory scope identity and concurrent Git evaluations on Linux
         if: runner.os == 'Linux'
-        run: ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "two symlink targets differ in raw bytes" --reporter=verbose
+        env:
+          RERAIL_THREADS: "2"
+        run: ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "two symlink targets differ in raw bytes|isolates concurrent evaluations" --reporter=verbose
 
       - name: Smoke Windows junction lifecycle
         if: matrix.windows_runtime_smoke

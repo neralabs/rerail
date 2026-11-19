@@ -11432,7 +11432,10 @@ impl Asks {
         if self.early.is_empty() && !wait.is_zero() {
             match self.rx.recv_timeout(wait) {
                 Ok((t, r)) => self.came(t, r)?,
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    // Every pool worker can be waiting here while the callers need a queued chunk to answer them.
+                    if rerail_accel::exec::on_pool() { rerail_accel::exec::help_once(); }
+                }
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Err(Error::Plan("the answer channel closed".to_owned())),
             }
         }
