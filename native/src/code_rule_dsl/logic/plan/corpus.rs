@@ -1797,7 +1797,7 @@ fn bound(prog: &front::Program) -> Result<()> {
     // `env` is the run's settings (`tools::with_settings`): facts when there are any, else empty. The world's
     // relations (`dir_entry`, `file_line`, …, and `loaded`) are answered by the runner (`world`).
     let world = |rel: &str| rel == world::LOADED || crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel);
-    let given = |rel: &str| GIVEN.contains(&rel) || git::INPUTS.contains(&rel) || rel == analysis_history::INPUT
+    let given = |rel: &str| GIVEN.contains(&rel) || git::INPUTS.contains(&rel) || analysis_history::is_input(rel)
         || matches!(rel, "env" | "source_grammar_suffix" | "source_grammar_registry" | "source_tape_version")
         || world(rel) || NOT_MADE.iter().any(|(r, _)| *r == rel);
     // core.rr's literal parts are made in core.rr's shape only (`syntax::core_rr`): a program that declares its base
@@ -3145,10 +3145,10 @@ fn run_observed(
         phases::facts(&prog, root, modes, binding, chunk_nodes, typing, options)?
     };
     phased.extend(git::inputs(&prog, root, options));
-    if analysis_history::reads(&prog) {
-        let (rows, digest) = analysis_history::records()?;
-        phased.insert(analysis_history::INPUT.to_owned(), rows);
-        source_checks.push((analysis_history::INPUT.to_owned(), String::new(), digest));
+    if let Some(history) = analysis_history::Read::needed(&prog) {
+        let (rows, digest) = history.records()?;
+        phased.extend(rows);
+        source_checks.push((analysis_history::INPUT.to_owned(), history.key().to_owned(), digest));
     }
     phased.extend(source_languages::inputs(&prog, root, options));
     let reference_sources = match given.reference_inputs {

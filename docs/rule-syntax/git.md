@@ -94,6 +94,8 @@ If the readable history has no match, the search reports its read failure.
 ## Relations
 
 Include `analysis.rr` to look up completed scans in the active content store.
+Named and directory scope facts also include scopes with published cache ownership from an older store.
+Those scopes can have zero recorded runs. A pending scan alone does not create a published scope fact.
 A rule that reads run history requires a readable store. If the store is unavailable, that rule reports an error.
 Other policies in the scan can still report findings. A readable store with no matching runs supplies zero rows.
 This query returns the commits scanned under `release` in the current repository.

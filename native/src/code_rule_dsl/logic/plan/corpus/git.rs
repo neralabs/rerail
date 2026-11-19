@@ -411,7 +411,7 @@ pub(super) fn metadata_only(program: &Program) -> bool {
         if requests.is_empty() { break needed; }
         roots.extend(requests);
     };
-    if !needed.iter().any(|rel| INPUTS.contains(&rel.as_str()) || rel == super::analysis_history::INPUT) {
+    if !needed.iter().any(|rel| INPUTS.contains(&rel.as_str()) || super::analysis_history::is_input(rel)) {
         return false;
     }
     let heads: std::collections::BTreeSet<_> = program.rules.iter().map(|rule| rule.head.rel.as_str()).collect();
@@ -420,7 +420,7 @@ pub(super) fn metadata_only(program: &Program) -> bool {
             && (heads.contains(rel.as_str())
                 || program.facts.contains_key(rel.as_str())
                 || INPUTS.contains(&rel.as_str())
-                || rel == super::analysis_history::INPUT
+                || super::analysis_history::is_input(rel)
                 || super::source_languages::is_input(rel)
                 // A declared relation with no producers is empty, unless a phase can supply it.
                 || (program.decls.contains_key(rel.as_str()) && !rel.contains("__") && !program.inputs.contains(rel))

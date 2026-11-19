@@ -1472,6 +1472,46 @@ process.stdout.write(JSON.stringify(visited));`,
     } finally { stop.mockRestore(); vi.unstubAllEnvs(); }
   }, 30_000);
 
+  it("exposes legacy directory and named owners without completed runs and retracts deleted owners", async () => {
+    const root = checkout(), home = root + "-home", store = join(home, "owners.sqlite");
+    const engine = loadNativeBinding();
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+    try {
+      for (const report of [await scan(root), await scan(root, { revision: "HEAD", analysisScope: "legacy" })]) {
+        expect(report.cache.publication).toBe("published");
+      }
+      // Older stores retained snapshot and manifest memberships before recording run history.
+      const removed = execFileSync(process.execPath, ["--input-type=module", "-e", `
+        import Database from "better-sqlite3";
+        const db = new Database(process.argv[1], { fileMustExist: true });
+        try { console.log(db.prepare("DELETE FROM analysis_scope_run").run().changes); }
+        finally { db.close(); }
+      `, "--", store], { encoding: "utf8" });
+      expect(Number(removed)).toBe(2);
+      expect(queryContentStore(store, "SELECT scope FROM analysis_history_scope")).toEqual([]);
+      const view = new engine.GitRevisionSource(root, "HEAD", "pending-only");
+      const query = join(home, "owners.rr");
+      writeFileSync(query, `#include "analysis.rr"
+.policy "owners" revision 1
+.violation Seen(at: span, value: symbol) "{value}"
+Seen(@place("git",1), path) :- analysis_directory_scope(path,_).
+Seen(@place("git",1), name) :- analysis_named_scope(name,_).
+Seen(@place("git",1), "unexpected run") :- analysis_scope_run(_,_).
+`);
+      const pending = new engine.AnalysisScopeRun(store, "pending-only", false, "unpublished", 0);
+      const read = async () => {
+        const [report] = JSON.parse(await engine.scanRrPoliciesAsync([query], root, store, "", pending, undefined, view));
+        expect(report.error).toBeUndefined();
+        return (report.diagnostics as { message: string }[]).map(row => row.message).sort();
+      };
+      try {
+        expect(await read()).toEqual([toNamespacedPath(root), "legacy"].sort());
+        engine.deleteAnalysisScope(store, "legacy", false);
+        expect(await read()).toEqual([toNamespacedPath(root)]);
+      } finally { pending.finish(false); }
+    } finally { vi.unstubAllEnvs(); }
+  }, 30_000);
+
   it("joins published scan IDs to their actual directory, commit, tree and retained snapshot", async () => {
     const root = checkout(), home = root + "-home", store = join(home, "runs.sqlite"), databasePath = join(home, "rerail.sqlite");
     vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);

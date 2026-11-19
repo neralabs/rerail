@@ -65,6 +65,8 @@ The scan still checks other requested paths whose trees it can read.
 ## Retention and invalidation
 
 Include `analysis.rr` to query completed scans in the selected content store.
+Scope presence comes from published ownership or recorded history. A scope imported from an older store can own manifests or snapshots without a recorded scan.
+The engine reads the requested scope and run relations from one SQLite snapshot.
 A run has an opaque key. Its scan ID is the value that the caller supplied or the standalone command assigned.
 Use the run key to join facts. Two calls can supply the same scan ID.
 

@@ -253,17 +253,26 @@ fn completed_analysis_runs_survive_restart_and_scope_deletion_preserves_shared_s
 #[test]
 fn adding_analysis_history_preserves_previous_manifest_owners_without_fabricating_runs() {
     let (path, store) = store("scope-history-upgrade");
-    let owner = store.begin_analysis_scope("named:legacy").unwrap();
-    assert!(store.record_corpus_run_retaining("/repo", &[], 1, 1, [1; 32], &[], None, None, 100, None, Some(&owner)).unwrap());
+    for scope in ["named:legacy", "cwd:/repo:one", "cwd:home:/repo:two", r"cwd:C:\checkout"] {
+        let owner = store.begin_analysis_scope(scope).unwrap();
+        store.record_corpus_run_retaining("/repo", &[], 1, 1, [1; 32], &[], None, None, 100, None, Some(&owner)).unwrap();
+    }
     drop(store);
     let db = rusqlite::Connection::open(&path).unwrap();
     db.execute_batch("DROP TRIGGER analysis_runs_end_generation; DROP TRIGGER analysis_runs_stop_directory;
         DROP TABLE analysis_run_workspace_snapshot; DROP TABLE analysis_scope_run; DROP TABLE analysis_history_scope;").unwrap();
     drop(db);
     let upgraded = ContentStore::open(&path).unwrap();
-    assert!(upgraded.completed_analysis_runs().unwrap().is_empty());
-    let db = upgraded.connection.lock().unwrap();
-    assert_eq!(db.query_row("SELECT count(*) FROM analysis_scope_manifest WHERE scope='named:legacy'", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+    let pending = crate::content_store::analysis_scope::AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:pending-only", "live").unwrap();
+    let records = upgraded.analysis_records(true, true).unwrap();
+    assert!(records.runs.is_empty());
+    assert_eq!(records.scopes.iter().map(|(s,v)| (s.as_str(), v.as_str())).collect::<Vec<_>>(), [
+        ("cwd:/repo:one", "/repo:one"), (r"cwd:C:\checkout", r"C:\checkout"),
+        ("cwd:home:/repo:two", "/repo:two"), ("named:legacy", "legacy"),
+    ]);
+    drop(pending);
+    upgraded.delete_analysis_scope("named:legacy").unwrap();
+    assert_eq!(upgraded.analysis_records(true, false).unwrap().scopes.len(), 3);
 }
 
 #[test]

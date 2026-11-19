@@ -109,6 +109,12 @@ impl RunSource {
     }
 }
 
+#[derive(Default)]
+pub struct AnalysisRecords {
+    pub scopes: Vec<(String, String)>,
+    pub runs: Vec<CompletedRun>,
+}
+
 pub struct CompletedRun {
     pub scope: String,
     pub value: String,
@@ -297,19 +303,59 @@ pub(super) fn next_acquisition(tx: &rusqlite::Connection) -> rusqlite::Result<i6
         WHERE singleton=1 RETURNING analysis_acquisitions", [], |row| row.get(0))
 }
 
+// Older memberships have only the scope key. An absolute directory can itself contain a colon.
+fn legacy_scope_value(scope: &str) -> &str {
+    if let Some(name) = scope.strip_prefix("named:") { return name; }
+    let value = scope.strip_prefix("cwd:").unwrap_or(scope);
+    if value.starts_with(['/', '\\']) { return value; }
+    match value.split_once(':') {
+        Some((drive, path)) if drive.len() == 1 && drive.as_bytes()[0].is_ascii_alphabetic() && path.starts_with('\\') => value,
+        Some((_, path)) => path,
+        None => value,
+    }
+}
+
+fn completed_runs(db: &rusqlite::Connection) -> StoreResult<Vec<CompletedRun>> {
+    let mut statement = db.prepare_cached("SELECT r.scope,h.value,r.acquisition,r.scan_id,r.directory,r.repository,r.tree,r.git_commit,s.snapshot_id
+        FROM analysis_scope_run r JOIN analysis_history_scope h USING(scope)
+        LEFT JOIN analysis_run_workspace_snapshot s USING(scope,acquisition) ORDER BY r.scope,r.acquisition,s.snapshot_id")?;
+    let rows = statement.query_map([], |r| Ok(CompletedRun {
+        scope: r.get(0)?, value: r.get(1)?, acquisition: r.get(2)?, scan_id: r.get(3)?,
+        directory: r.get(4)?, repository: r.get(5)?, tree: r.get(6)?, commit: r.get(7)?, snapshot: r.get(8)?,
+    }))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
 impl ContentStore {
     pub fn completed_analysis_runs(&self) -> StoreResult<Vec<CompletedRun>> {
-        let db = self.connection.lock().map_err(super::StoreError::Invalid)?;
-        self.check_scope_store(&db)?;
-        let mut statement = db.prepare_cached("SELECT r.scope,h.value,r.acquisition,r.scan_id,r.directory,r.repository,r.tree,r.git_commit,s.snapshot_id
-            FROM analysis_scope_run r JOIN analysis_history_scope h USING(scope)
-            LEFT JOIN analysis_run_workspace_snapshot s USING(scope,acquisition) ORDER BY r.scope,r.acquisition,s.snapshot_id")?;
-        let rows = statement.query_map([], |r| Ok(CompletedRun {
-            scope: r.get(0)?, value: r.get(1)?, acquisition: r.get(2)?, scan_id: r.get(3)?,
-            directory: r.get(4)?, repository: r.get(5)?, tree: r.get(6)?, commit: r.get(7)?, snapshot: r.get(8)?,
-        }))?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
+        Ok(self.analysis_records(false, true)?.runs)
     }
+
+    pub fn analysis_records(&self, scopes: bool, runs: bool) -> StoreResult<AnalysisRecords> {
+        let mut db = self.connection.lock().map_err(super::StoreError::Invalid)?;
+        let tx = db.transaction()?;
+        self.check_scope_store(&tx)?;
+        let mut records = AnalysisRecords::default();
+        if scopes {
+            let mut statement = tx.prepare_cached("WITH owners(scope) AS (
+                SELECT scope FROM analysis_history_scope
+                UNION SELECT scope FROM analysis_scope_manifest WHERE scope GLOB 'named:*' OR scope GLOB 'cwd:*'
+                UNION SELECT scope FROM analysis_scope_snapshot WHERE scope GLOB 'named:*' OR scope GLOB 'cwd:*'
+                UNION SELECT scope FROM analysis_scope_workspace_snapshot WHERE scope GLOB 'named:*' OR scope GLOB 'cwd:*'
+            ) SELECT o.scope,h.value FROM owners o LEFT JOIN analysis_history_scope h USING(scope) ORDER BY o.scope")?;
+            records.scopes = statement.query_map([], |row| {
+                let scope: String = row.get(0)?;
+                let value = row.get::<_, Option<String>>(1)?.unwrap_or_else(|| legacy_scope_value(&scope).to_owned());
+                Ok((scope, value))
+            })?.collect::<rusqlite::Result<_>>()?;
+        }
+        if runs {
+            records.runs = completed_runs(&tx)?;
+        }
+        tx.commit()?;
+        Ok(records)
+    }
+
     pub(super) fn check_scope_store(&self, db: &rusqlite::Connection) -> StoreResult<()> {
         let actual: i64 = db.query_row_cached("SELECT id FROM store_identity WHERE singleton=1", [], |row| row.get(0))?;
         if actual != self.identity() {

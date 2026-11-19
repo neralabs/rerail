@@ -1,12 +1,15 @@
-// Completed scans in the content store selected for this invocation.
+// Published owners and completed scans in the selected content store.
+.decl analysis_scope_record(scope: symbol, kind: symbol, value: symbol)
+.input analysis_scope_record
+
 .decl analysis_run_record(scope: symbol, kind: symbol, value: symbol, run: symbol, scan: symbol, directory: symbol, repo: symbol, tree: symbol, commit: symbol, snapshot: symbol)
 .input analysis_run_record
 
 .decl analysis_named_scope(name: symbol, scope: symbol)
-analysis_named_scope(name, s) :- analysis_run_record(s, "named", name, _, _, _, _, _, _, _).
+analysis_named_scope(name, s) :- analysis_scope_record(s, "named", name).
 
 .decl analysis_directory_scope(path: symbol, scope: symbol)
-analysis_directory_scope(path, s) :- analysis_run_record(s, "directory", path, _, _, _, _, _, _, _).
+analysis_directory_scope(path, s) :- analysis_scope_record(s, "directory", path).
 
 .decl analysis_scope_run(scope: symbol, run: symbol)
 analysis_scope_run(s, r) :- analysis_run_record(s, _, _, r, _, _, _, _, _, _).
