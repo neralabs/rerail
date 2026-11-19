@@ -36,6 +36,8 @@ pub mod cache_architecture;
 // engine registers as it loads (the languages, their `.rr` libraries).
 pub use hiding::qualified;
 pub mod memo;
+/// A chunk's size from measures alone (decision 0435 §4).
+pub mod sizing;
 pub mod kept_strata;
 pub mod maintained;
 pub mod cone_rounds;
@@ -2883,24 +2885,6 @@ pub fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, out: &P
 /// they run on the lazy DFA, whose states are built as its strings reach them.
 const DENSE_TEXT_DOCS: usize = 64;
 
-/// The first chunk's nodes, at most: what it adds per node sizes the rest.
-const PROBE_NODES: usize = 65_536;
-/// SPIKE: the first chunk's nodes when chunks grow (`RERAIL_CHUNK_GROW=double`).
-const GROW_FIRST_NODES: usize = 4_096;
-/// What a chunk's file-local run may add to the footprint (`RERAIL_CHUNK_MB`).
-const CHUNK_MB: f64 = 384.0;
-/// The run's whole footprint budget (`RERAIL_RUN_MB`): a chunk adds at most three quarters of what is left of it
-/// above the footprint the chunk starts at (the program, its plans, the cross part's rows), so the run stays within
-/// it however large the program is.
-const RUN_MB: f64 = 1024.0;
-/// The fewest nodes a chunk is sized to: a smaller one costs more in each chunk's fixed work than it saves.
-const MIN_CHUNK_NODES: usize = 8_192;
-/// The least a chunk evaluating beside others is sized to (`RERAIL_CHUNK_FLOOR_MB`): fewer chunks at once, not
-/// smaller ones, below it (Q74).
-const CHUNK_FLOOR_MB: f64 = 64.0;
-/// A chunk's growth that sizes the next (Q74): a smaller one is within the pages freed before it, which it reused.
-const CHUNK_CREDIBLE_MB: usize = 16;
-
 #[allow(clippy::too_many_arguments)]
 pub fn run_with_options(
     programs: &[&str],
@@ -4853,13 +4837,10 @@ fn run_observed(
         crate::content_store::StatIndex::default()
     };
     let stat_index = &stat_index;
-    // The chunks' size: the caller's, at most, but sized to what a chunk's run holds (`CHUNK_MB`): the first chunk is
-    // `PROBE_NODES` nodes, and each run measures the footprint it adds per node. 64 data-layer rules hold about
-    // 5 KB a node at their peak, so the caller's 262,144 nodes took 1.3 GB; the converted rules hold much less.
-    // SPIKE (`RERAIL_CHUNK_GROW=double`): the first chunk is small, and each next twice the last, held to what the
-    // latest chunk added a node, in the host's footprint and the device's, against the headroom and the Metal budget.
-    let grow = std::env::var("RERAIL_CHUNK_GROW").is_ok_and(|v| v == "double");
-    let chunk_target = Arc::new(std::sync::atomic::AtomicUsize::new(chunk_nodes.min(if grow { GROW_FIRST_NODES } else { PROBE_NODES })));
+    // The chunks' size (decision 0435 §4): the first small, each next from what the latest added to what the run
+    // wrote (`sizing`); at most the caller's.
+    rerail_accel::budget::set_heap_reader(crate::code_rule_dsl::logic::profile::memory::heap_live);
+    let chunk_target = Arc::new(std::sync::atomic::AtomicUsize::new(chunk_nodes.min(sizing::FIRST_NODES)));
     let worker_target = Arc::clone(&chunk_target);
     // The documents the builder reads, in batches, each ended by `None` on the chunks' channel: the corpus's, then
     // each load's (decision 0065 §2a). A run that loads nothing closes the channel after the corpus's, so the
@@ -6116,14 +6097,11 @@ fn run_observed(
     let plan_window = crate::code_rule_dsl::logic::plan::PLAN_WINDOW.max(chunks_at_once);
     // The chunks begun, numbered in the order they are filed.
     let chunk_seq = std::cell::Cell::new(0usize);
-    crate::code_rule_dsl::logic::profile::decision("chunks at once (decision 0254)", || format!("up to {chunks_at_once} chunks evaluate at once, each on a connection of its own, as many as the run's headroom holds (Q74); the main thread files them in order"));
-    // How many may be in flight now (Q74): one until a chunk's measured growth sizes the rest, then as many as share
-    // the run's headroom at `CHUNK_FLOOR_MB` or more each (the chunk-size decision sets it). The chunks in flight
-    // together stay within it: 8 chunks each sized to the whole headroom took a cold run at 300 files to 2.3 GB.
+    crate::code_rule_dsl::logic::profile::decision("chunks at once (decision 0254)", || format!("up to {chunks_at_once} chunks evaluate at once, each on a connection of its own, as many as the room holds at the size reached (Q74, decision 0435); the main thread files them in order"));
+    // How many may be in flight now (Q74): one while chunks grow, then as many as the room holds at the size reached
+    // (`sizing`, decision 0435 §4). The chunks in flight together stay within it: 8 chunks each sized to the whole
+    // headroom took a cold run at 300 files to 2.3 GB.
     let at_once_allowed = std::sync::atomic::AtomicUsize::new(1);
-    // The most a node was measured to add this run: a chunk whose growth the pages freed before it hid (22 bytes a
-    // node, beside 9 KB measured next) sizes no chunk.
-    let per_node_most = std::cell::Cell::new(0.0f64);
     let builders = crate::threads::max().max(2);
     let builder = Builder {
         cut: parking_lot::Mutex::new(Cut {
@@ -6205,10 +6183,9 @@ fn run_observed(
         chunk_nodes_built: usize,
         chunk_docs: Vec<(i64, String, Option<memo::Content>, u64, usize, Option<[u8; 32]>)>,
         chunk_own: Option<Own>,
-        start_mb: usize,
-        device_start: usize,
-        start_max_mb: usize,
-        /// Chunks evaluating when it began, itself included: the footprint it saw grow was theirs.
+        /// What the run wrote when it began (decision 0435 §3).
+        count_start: usize,
+        /// Chunks evaluating when it began, itself included: the count's growth it saw was theirs.
         at_once: usize,
         /// Its documents' entries, where every one is a partial hit, and the relations it derives (decision 0225 §2).
         chunk_partials: HashMap<i64, memo::Entry>,
@@ -6568,11 +6545,9 @@ fn run_observed(
                 }
                 phase("wait", statements.count());
                 statements.enter("local");
-                let (start_mb, start_max_mb) = (crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb());
-                #[cfg(target_os = "macos")]
-                let device_start = rerail_accel::gpu::shared::take_driver_peak().1;
-                #[cfg(not(target_os = "macos"))]
-                let device_start = 0usize;
+                // The count now, and its most since starts here (the sampler keeps it, decision 0435 §4).
+                let _ = rerail_accel::budget::take_most();
+                let count_start = rerail_accel::budget::written().total();
                 // Memo hits: their rows go to `x` and their lines to the outputs as an evaluated chunk's would.
                 if !hits.is_empty() {
                     let _replay = crate::code_rule_dsl::logic::profile::span(|| "memo replay".into());
@@ -6748,12 +6723,12 @@ fn run_observed(
                 phase("local", statements.count());
                 statements.enter("wait");
                 let task = Task { chunk_nodes_built, sources, documents, stats, mix, cone: cone.clone(), replay, seq: 0, view: None };
-                return Ok(Some((task, Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, device_start, start_max_mb, at_once, chunk_partials, cone })));
+                return Ok(Some((task, Ctx { chunk_nodes_built, chunk_docs, chunk_own, count_start, at_once, chunk_partials, cone })));
             }
         };
         phase("wait", statements.count());
         statements.enter("local");
-        let Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, device_start, start_max_mb, at_once, mut chunk_partials, cone } = ctx;
+        let Ctx { chunk_nodes_built, chunk_docs, chunk_own, count_start, at_once, mut chunk_partials, cone } = ctx;
         let Evaluated { got, host_of, askers, text_sources, stored_bound, totals_add, export_rows, mut mentioned, slice_rounds } = ev;
         for (rel, rows, measured) in &totals_add {
             totals.add(rel, *rows, measured);
@@ -6811,55 +6786,25 @@ fn run_observed(
             }
         }
         if chunk_nodes_built > 0 {
-            // What this chunk added at its peak (the lifetime peak, when it rose here; else the footprint now).
-            let (now, max) = (crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb());
-            let added = if max > start_max_mb { max } else { now }.saturating_sub(start_mb).max(1);
-            let measured = added as f64 * 1048576.0 / (chunk_nodes_built * at_once) as f64;
-            // Credible only above the noise of pages reused: until one is, one chunk at a time, of the probe's size.
-            let credible = added >= CHUNK_CREDIBLE_MB;
-            if credible {
-                per_node_most.set(per_node_most.get().max(measured));
-            }
-            let per_node = per_node_most.get();
-            let env = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(d);
-            // Three quarters of what is left of the run's budget, shared by the chunks in flight together.
-            let headroom = (env("RERAIL_RUN_MB", RUN_MB) - start_mb as f64).max(0.0) * 0.75;
-            let chunk = env("RERAIL_CHUNK_MB", CHUNK_MB);
-            let allowed = if per_node > 0.0 { ((headroom / env("RERAIL_CHUNK_FLOOR_MB", CHUNK_FLOOR_MB)).floor() as usize).clamp(1, chunks_at_once) } else { 1 };
-            let budget = chunk.min(headroom / allowed as f64).round();
-            let next = if per_node > 0.0 { ((budget * 1048576.0 / per_node) as usize).clamp(MIN_CHUNK_NODES.min(chunk_nodes), chunk_nodes) } else { chunk_nodes.min(PROBE_NODES) };
+            // What the chunk added to what the run wrote at its peak (decision 0435 §3): the count's most since it began,
+            // kept by the sampler (its relations are given back by now).
+            let count_end = rerail_accel::budget::take_most();
+            // `RERAIL_RUN_MB` (a measurement aid: "the memory line lifted") replaces the limit.
+            let limit = std::env::var("RERAIL_RUN_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or_else(rerail_accel::budget::limit, |mb| mb << 20);
+            let measured = sizing::Measured { nodes: chunk_nodes_built, at_once, start: count_start, end: count_end };
+            let sized = sizing::next(&measured, limit, sizing::FIRST_NODES, chunk_nodes, chunks_at_once);
             // `RERAIL_CHUNK_NODES` (a measurement aid): every chunk after the first of this many nodes (at most
-            // `chunk_nodes`), whatever the footprint measured, so two runs cut the corpus alike (Q88).
-            let next = std::env::var("RERAIL_CHUNK_NODES").ok().and_then(|v| v.parse::<usize>().ok()).map_or(next, |n| n.clamp(1, chunk_nodes));
-            // SPIKE: twice the last, held to the latest chunk's own measures (host and device), one chunk at a time.
-            let (next, allowed) = if grow {
-                #[cfg(target_os = "macos")]
-                let (device_peak, _) = rerail_accel::gpu::shared::take_driver_peak();
-                #[cfg(not(target_os = "macos"))]
-                let device_peak = 0usize;
-                let device_added = device_peak.saturating_sub(device_start).max(1 << 20);
-                let device_per_node = device_added as f64 / chunk_nodes_built as f64;
-                let host_per_node = (added as f64 * 1048576.0 / chunk_nodes_built as f64).max(1.0);
-                let host_fit = (headroom * 1048576.0 / host_per_node) as usize;
-                let metal = rerail_accel::budget::metal() as f64 * 0.75;
-                let device_fit = ((metal - device_start as f64).max(0.0) / device_per_node) as usize;
-                let next = (2 * chunk_nodes_built).min(host_fit).min(device_fit).clamp(GROW_FIRST_NODES.min(chunk_nodes), chunk_nodes);
-                crate::code_rule_dsl::logic::profile::decision("chunk grows", || format!(
-                    "a chunk of {chunk_nodes_built} nodes added {added} MB on the host ({host_per_node:.0} B a node) and {} MB on the device from {} MB ({device_per_node:.0} B a node); next {next} nodes (twice {}, host fit {host_fit}, device fit {device_fit})",
-                    device_added >> 20, device_start >> 20, 2 * chunk_nodes_built));
-                (next, 1)
-            } else {
-                (next, allowed)
-            };
+            // `chunk_nodes`), whatever was measured, so two runs cut the corpus alike (Q88).
+            let next = std::env::var("RERAIL_CHUNK_NODES").ok().and_then(|v| v.parse::<usize>().ok()).map_or(sized.nodes, |n| n.clamp(1, chunk_nodes));
             chunk_target.store(next, std::sync::atomic::Ordering::Relaxed);
-            at_once_allowed.store(allowed, std::sync::atomic::Ordering::Relaxed);
-            // The device pool's share of the footprint the chunk was sized under: its blocks leased and idle.
+            at_once_allowed.store(sized.at_once, std::sync::atomic::Ordering::Relaxed);
+            // The device pool's share of what the chunk was sized under: its blocks leased and idle, the rows' blocks.
             #[cfg(target_os = "macos")]
             crate::code_rule_dsl::logic::profile::decision("chunk size: the device pool", || {
                 let (live, idle) = rerail_accel::gpu::shared::held_bytes();
                 let h = crate::code_rule_dsl::facts::rows::held();
                 format!(
-                    "{} MB leased, {} MB idle; rows' blocks: a run's {} ({} MB written of {} MB), sources' {} ({} MB of {} MB), kept rows' {} ({} MB of {} MB); {} MB of dead relations' pages given back; {} relations of many parts merged into one ({} MB copied); under a footprint of {start_mb} MB",
+                    "{} MB leased, {} MB idle; rows' blocks: a run's {} ({} MB written of {} MB), sources' {} ({} MB of {} MB), kept rows' {} ({} MB of {} MB); {} MB of dead relations' pages given back; {} relations of many parts merged into one ({} MB copied); the footprint {} MB",
                     live >> 20,
                     idle >> 20,
                     h[0].0, h[0].1 >> 20, h[0].2 >> 20,
@@ -6868,17 +6813,29 @@ fn run_observed(
                     crate::code_rule_dsl::facts::rows::given_back() >> 20,
                     crate::code_rule_dsl::facts::rows::merged().0,
                     crate::code_rule_dsl::facts::rows::merged().1 >> 20,
+                    crate::code_rule_dsl::prof::footprint_mb(),
                 )
             });
-            crate::code_rule_dsl::logic::profile::decision("chunk size", || if credible {
-                format!("a chunk of {chunk_nodes_built} nodes added {added} MB ({measured:.0} bytes a node, {per_node:.0} the most this run); the next are about {next} nodes, {allowed} at once ({budget} MB a chunk: the least of {chunk} MB and three quarters of the run's headroom above {start_mb} MB shared by the chunks at once; at most {chunk_nodes})")
-            } else {
-                format!("a chunk of {chunk_nodes_built} nodes added {added} MB, under {CHUNK_CREDIBLE_MB} MB (pages freed before it reused): it sizes nothing; the next are about {next} nodes, {allowed} at once")
+            crate::code_rule_dsl::logic::profile::decision("chunk size", || {
+                let by = match sized.by {
+                    sizing::By::Grown => "grown from the last",
+                    sizing::By::Most => "the caller's most",
+                    sizing::By::Room => "what the room holds",
+                };
+                format!(
+                    "a chunk of {chunk_nodes_built} nodes ({at_once} at once) added {} MB to what the run wrote ({:.0} bytes a node), from {} MB of a limit of {} MB; the next are {next} nodes ({by}; the room holds {}), {} at once",
+                    count_end.saturating_sub(count_start) >> 20,
+                    sized.per_node,
+                    count_start >> 20,
+                    limit >> 20,
+                    sized.fit,
+                    sized.at_once
+                )
             });
-            // The memory line, not the chunk's own size, set it: every stratum and matcher launch runs per chunk, so
-            // a cut chunk is a smaller grain for the device and more runs for the same work (the profile's warnings).
-            if headroom < chunk / 4.0 {
-                crate::code_rule_dsl::logic::profile::decision("chunk cut by the run's memory line", || format!("under a quarter of {chunk} MB left by RERAIL_RUN_MB ({} MB)", env("RERAIL_RUN_MB", RUN_MB)));
+            // The memory limit, not the caller's most, set it: every stratum and matcher launch runs per chunk, so a
+            // held chunk is a smaller grain for the device and more runs for the same work (the profile's warnings).
+            if sized.by == sizing::By::Room {
+                crate::code_rule_dsl::logic::profile::decision("chunk cut by the run's memory line", || format!("held to {} nodes by what {} MB leaves past {} MB written", sized.nodes, limit >> 20, count_start >> 20));
             }
         }
         let outputs_of = |rel: &str| head_outputs.iter().any(|o| o == rel);

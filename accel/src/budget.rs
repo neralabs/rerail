@@ -79,9 +79,101 @@ pub fn metal_share(at_default: usize) -> usize {
     (at_default as u128 * metal() as u128 / (MEMORY_DEFAULT / 2) as u128) as usize
 }
 
+/// The heap's live bytes, from the process's allocator (`set_heap_reader`: the engine's jemalloc); 0 until one is set.
+static HEAP: std::sync::OnceLock<fn() -> usize> = std::sync::OnceLock::new();
+
+/// Sets the reader of the heap's live bytes (once per process; a second call is ignored), and starts the sampler that
+/// keeps the count's most (`take_most`): every `SAMPLE` while the process lives.
+pub fn set_heap_reader(f: fn() -> usize) {
+    if HEAP.set(f).is_ok() {
+        let _ = std::thread::Builder::new().name("rerail-budget-sampler".into()).spawn(|| loop {
+            let _ = written();
+            std::thread::sleep(SAMPLE);
+        });
+    }
+}
+
+/// How often the sampler reads the count: a chunk's peak between two reads is missed by at most what 10 ms writes.
+const SAMPLE: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// What the run has written, by where it lies (decision 0435 §3): the one count its memory is weighed by.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Written {
+    /// The heap's live bytes.
+    pub heap: usize,
+    /// Host blocks' used bytes (`crate::blocks::host_held`): resident only where written.
+    pub host_blocks: usize,
+    /// The GPU pool's leases, and its idle buffers.
+    pub leased: usize,
+    pub idle: usize,
+    /// `rerail-metal`'s ledger (its reservations).
+    pub ledger: usize,
+}
+
+impl Written {
+    pub fn total(&self) -> usize {
+        self.heap + self.host_blocks + self.leased + self.idle + self.ledger
+    }
+}
+
+/// The run's count now (decision 0435 §3). Not the footprint, which misses pages the GPU writes into a no-copy wrap,
+/// and not the driver's count, which counts a wrap of host memory again.
+pub fn written() -> Written {
+    let heap = HEAP.get().map_or(0, |f| f());
+    let host_blocks = crate::blocks::host_held().0;
+    #[cfg(all(feature = "gpu", target_os = "macos"))]
+    let ((leased, idle), ledger) = (crate::gpu::shared::held_bytes(), crate::gpu::shared::ledger_bytes());
+    #[cfg(not(all(feature = "gpu", target_os = "macos")))]
+    let ((leased, idle), ledger) = ((0, 0), 0);
+    let w = Written { heap, host_blocks, leased, idle, ledger };
+    MOST.fetch_max(w.total(), Ordering::Relaxed);
+    LATEST.fetch_max(w.total(), Ordering::Relaxed);
+    w
+}
+
+/// The most the count has been when read (`written`), for the profile.
+static MOST: AtomicUsize = AtomicUsize::new(0);
+
+/// The most the count has been when read.
+pub fn written_most() -> usize {
+    MOST.load(Ordering::Relaxed)
+}
+
+/// The most the count has been since the last call (read now too), and starts the next span from the count now: a
+/// chunk's peak, when it takes this at its start and at its end (decision 0435 §4).
+pub fn take_most() -> usize {
+    let now = written().total();
+    LATEST.swap(now, Ordering::Relaxed).max(now)
+}
+
+/// The most since the last `take_most`, beside the run's most (`MOST`).
+static LATEST: AtomicUsize = AtomicUsize::new(0);
+
+/// What the count is weighed against: the overall budget and Metal's together (decision 0435 §3; 0126's two numbers,
+/// one memory on a machine whose device shares it).
+pub fn limit() -> usize {
+    memory() + metal()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The count rises by what a host block has written, not by its reservation (decision 0435 R3).
+    #[test]
+    fn the_count_is_what_a_block_wrote_not_what_it_reserved() {
+        use rerail_blocks::alloc::{Device, Need, Writes};
+        let before = written().host_blocks;
+        let b = crate::blocks::policy(&Need { kind: rerail_blocks::block::kind::FACTS, bytes: 64 << 20, writes: Writes::Churn, device: Device::May, ..Need::SLAB }).unwrap();
+        assert!(b.reserved() >= 64 << 20);
+        let untouched = written().host_blocks - before;
+        assert!(untouched < 1 << 20, "a 64 MB reservation counts {untouched} bytes untouched");
+        b.try_alloc_chunk(8 << 20, 1 << 14).unwrap();
+        let after = written().host_blocks - before;
+        assert!(after >= 8 << 20 && after < 9 << 20, "8 MB written counts {after} bytes");
+        assert!(limit() == memory() + metal());
+        drop(b);
+    }
 
     /// One test owns the process's budgets (they are process-wide).
     #[test]

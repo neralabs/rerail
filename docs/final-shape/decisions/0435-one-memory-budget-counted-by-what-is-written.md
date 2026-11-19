@@ -34,9 +34,11 @@ This decision makes the budget one, counted by what the engine wrote, and lets c
    used bytes (`rerail_accel::blocks::host_held`), plus the GPU pool's leases and idle buffers, plus `rerail-metal`'s
    ledger (`rerail_accel::budget::written`). Its limit is the run's budget and Metal's together (0126's two numbers,
    summed). The Metal budget stays a bound on the device's own buffers within it.
-4. **Chunks grow from small.** The first chunk is small. Each next is twice the last, held to what the latest chunk
-   added a node in §3's count, against what the limit leaves. Nothing is sized from a prior or from the run's worst
-   measure. A wave that does not fit the device splits by documents (0334).
+4. **Chunks grow from small.** The first chunk is 65,536 nodes (at most the caller's). Each next is up to eight times
+   the last, held to what the latest chunk added a node to §3's count at its peak (sampled every 10 ms), against three
+   quarters of what the limit leaves. While chunks grow, one evaluates at a time; once the size holds, as many as the
+   room holds at it. Nothing is sized from a prior or from the run's worst measure. A wave that does not fit the
+   device splits by documents (0334). (`plan/corpus/sizing.rs`.)
 5. **The footprint stays a report.** The profile prints the count and the footprint side by side, so a part of
    memory the count misses (a C library's own allocator) shows as their gap.
 
@@ -48,7 +50,7 @@ This decision makes the budget one, counted by what the engine wrote, and lets c
   fits after.
 - **R3** The count rises by what a host block has written, not by its reservation: an untouched reservation of
   64 MB adds less than 1 MB.
-- **R4** The chunk sizing is a function of measures alone: from a first chunk it doubles while the latest chunk's
+- **R4** The chunk sizing is a function of measures alone: from a first chunk it grows while the latest chunk's
   growth a node fits what the limit leaves, holds when it does not, and never passes the caller's most.
 - **R5** hogql gives its 1,629 findings at the default sizing and with chunks growing, on the CPU and Metal bindings.
 
@@ -58,6 +60,26 @@ This decision makes the budget one, counted by what the engine wrote, and lets c
 2. R3 (the count) and §5's report.
 3. R4 (the sizing), replacing 47785e475's worst-of-run rule and the spike's switch. Measure hogql: chunks,
    instructions, peak.
+
+## Measured (2026-11-18, step 3)
+
+posthog/hogql cold, profiling builds, format 15, an M-series Mac at load 20-90, two runs each, interleaved; 1,629
+findings in every run, no Metal stop:
+
+| | Instructions | Peak footprint | Chunks |
+|---|---|---|---|
+| Metal, step 1 (47785e475's sizing) | 79-82 B | 843-864 MB | 63-67 |
+| Metal, step 3 | 72-73 B | 1,358-1,472 MB | 16-19 |
+| CPU, step 1 | 87 B | 310-324 MB | 27 |
+| CPU, step 3 | 87 B | 313-324 MB | 16-17 |
+
+- Metal reaches the 262,144-node chunks t49 measured at 71-72 B. The count's most was 1,148 MB of the 1,536 MB limit
+  (462 MB of it the GPU pool's leases); the footprint's rise past it is the first command buffer and GPU-written pages.
+- Choices the measures made:
+  - a first chunk of 4,096 nodes planned the strata from an unlike sample (twice the stratum variants, 2-3 B more on
+    the CPU), so the first is 65,536;
+  - doubling took six chunks a phase to climb (8 B on Metal), so growth is up to eight times;
+  - the count read at a chunk's end missed its peak (its relations already given back), so a sampler keeps its most.
 
 ## Supersedes
 

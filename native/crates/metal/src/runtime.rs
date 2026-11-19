@@ -537,7 +537,6 @@ impl MappedBuffer {
             rerail_prof::count_named(format!("alloc_kb.{}", std::panic::Location::caller()), length >> 10);
         }
         let buffer = device.new_buffer(length as u64, storage);
-        rerail_accel::gpu::shared::note_driver();
         // Private buffers have no bytes-no-copy deallocator. An associated copied Objective-C
         // block holds the reservation until the Metal object loses its final reference.
         retain_buffer_owner(&buffer, reservation);

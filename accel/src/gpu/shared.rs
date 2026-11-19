@@ -74,28 +74,16 @@ pub fn set_lease_hook(hook: fn(usize, usize)) {
     let _ = LEASE_HOOK.set(hook);
 }
 
-/// SPIKE (chunks that grow): the most the driver held at a lease or allocation since the last `take_driver_peak`.
-static DRIVER_PEAK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// SPIKE: notes the driver's count now (an allocation made outside the pool calls it too).
-pub fn note_driver() {
-    if let Some(s) = get() {
-        DRIVER_PEAK.fetch_max(s.device.current_allocated_size() as usize, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-/// SPIKE: the driver's peak since the last call, and starts the next from its count now.
-pub fn take_driver_peak() -> (usize, usize) {
-    let now = get().map_or(0, |s| s.device.current_allocated_size() as usize);
-    (DRIVER_PEAK.swap(now, std::sync::atomic::Ordering::Relaxed).max(now), now)
-}
-
 fn leased(b: &Buffer) {
-    note_driver();
     LIVE.fetch_add(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
     if let Some(hook) = LEASE_HOOK.get() {
         hook(b.contents() as usize, b.length() as usize);
     }
+}
+
+/// What `rerail-metal`'s ledger reserves now (0 until its reader is set): the count's last part (decision 0435 §3).
+pub fn ledger_bytes() -> usize {
+    other()
 }
 
 /// The bytes leased now, and the bytes the pool keeps idle: relational work's share of the device's memory.
