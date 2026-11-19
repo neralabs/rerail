@@ -54,6 +54,8 @@ const SIZE_PRESERVING_CONVERSIONS: [&str; 3] = ["filter", "ident", "working-tree
 mod worktree_stat;
 
 pub use worktree_stat::VerifiedFiles;
+#[cfg(windows)]
+pub(crate) use worktree_stat::recalls_data;
 use worktree_stat::{ChangeStamp, Proof, WorktreeStat, stat_decides};
 
 #[cfg(test)]
@@ -140,6 +142,20 @@ fn set_basic_info(
         )
     };
     assert_ne!(set, 0, "{}", std::io::Error::last_os_error());
+}
+
+/// Sets `path`'s attributes to `attributes`, as a provider that moves a file's data off this disk
+/// sets them; this moves its change time. `FILE_ATTRIBUTE_NORMAL` clears them.
+#[cfg(all(test, windows))]
+pub(crate) fn set_attributes(path: &Path, attributes: u32) {
+    let file = std::fs::File::options().write(true).open(path).unwrap();
+    set_basic_info(
+        &file,
+        windows_sys::Win32::Storage::FileSystem::FILE_BASIC_INFO {
+            FileAttributes: attributes,
+            ..Default::default()
+        },
+    );
 }
 
 /// While it lives, everyone is denied the read of a file, as a person denies it with `icacls`:
@@ -1430,6 +1446,47 @@ mod tests {
             "bytes written through the other name are not the blob's"
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A clean file whose change time moved and whose attributes say its data is not all on this
+    /// disk is taken by its stat with no query beyond the stat's own call and no read: a read
+    /// would make its provider download its data. The same file with its data on disk is read.
+    #[cfg(windows)]
+    fn not_all_on_disk_is_taken_by_its_stat(name: &str, attributes: u32) {
+        let (root, path, _) = committed_long_ago(name, b"print(1)\n");
+        let blob = HashKey::git_sha1([7; 20]);
+        let mut memory = VerifiedFiles::new(None, &root);
+        let on_disk = WorktreeStat::as_if(&path, Some((2, 1)), 0);
+        assert!(
+            matches!(memory.proof("a.py", blob, &on_disk), Proof::Read(Some(_))),
+            "a file whose change time moved is read"
+        );
+        let recalled = WorktreeStat::as_if(&path, Some((2, 1)), attributes);
+        worktree_stat::queries_made();
+        assert!(
+            matches!(memory.proof("a.py", blob, &recalled), Proof::Held),
+            "a file with attributes {attributes:#x} is taken by its stat"
+        );
+        assert_eq!(worktree_stat::queries_made(), 0, "no query: {attributes:#x}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_cloud_file_recalled_on_data_access_is_taken_by_its_stat() {
+        not_all_on_disk_is_taken_by_its_stat("stat-recall-data", 0x0040_0000);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_cloud_file_recalled_on_open_is_taken_by_its_stat() {
+        not_all_on_disk_is_taken_by_its_stat("stat-recall-open", 0x0004_0000);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_offline_file_is_taken_by_its_stat() {
+        not_all_on_disk_is_taken_by_its_stat("stat-offline", 0x0000_1000);
     }
 
     /// A change time not older than the read that hashed the file is not remembered: a write

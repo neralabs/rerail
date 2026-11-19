@@ -4136,6 +4136,53 @@ fn a_warm_index_reads_a_file_whose_change_time_moved_once_until_it_is_written() 
     last.close();
 }
 
+/// A clean tracked file whose data a provider moved off this disk while no workspace ran (a cloud
+/// file placeholder freed, a file moved to offline storage) keeps its stored results with no read:
+/// the attribute moves its change time, a read would make the provider download it, and its stat,
+/// equal to the one Git recorded, decides. Once the data is back, the next warm index reads the
+/// file once and the one after it restores the file with no read.
+#[cfg(windows)]
+#[test]
+fn a_warm_index_restores_a_file_whose_data_is_offline_with_no_read() {
+    use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_OFFLINE};
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = backdated_repository(
+        "restore-offline",
+        &[("api/a.py", b"print(1)\n"), ("lib/b.py", b"x = 2\n")],
+    );
+    let root = directory.0.join("repo");
+    let code_rule = print_code_rule();
+    let found = vec![("api/a.py".to_owned(), "print".to_owned(), 0)];
+    let mut first = storage_workspace(&root, directory.store());
+    first.add_code_rule(&code_rule, None).unwrap();
+    index_workspace(&first);
+    assert_eq!(located(&all_pages(&first, MAXIMUM_PAGE_BYTES)), found);
+    first.completion_task().compute().unwrap();
+    first.close();
+
+    let offline = root.join("api/a.py");
+    git_workspace::set_attributes(&offline, FILE_ATTRIBUTE_OFFLINE);
+    let warm_index = |hashed: usize, why: &str| {
+        let mut warm = storage_workspace(&root, directory.store());
+        warm.add_code_rule(&code_rule, None).unwrap();
+        git_workspace::reset_source_alias_hashes();
+        let indexed = index_workspace(&warm);
+        assert_eq!(indexed["restoredFiles"], json!(2), "{indexed}");
+        assert_eq!(git_workspace::source_alias_hashes(), hashed, "{why}: {indexed}");
+        assert_eq!(located(&all_pages(&warm, MAXIMUM_PAGE_BYTES)), found);
+        warm.close();
+    };
+    warm_index(0, "the offline file is not read");
+    warm_index(0, "nor on the next index");
+
+    git_workspace::set_attributes(&offline, FILE_ATTRIBUTE_NORMAL);
+    // The change time the clearing gave, as a later index sees it: more than a second old.
+    let hour = std::time::Duration::from_secs(3_600);
+    git_workspace::set_change_time(&offline, written_long_ago() + hour);
+    warm_index(1, "the file back on disk is read once");
+    warm_index(0, "and then restored with no read");
+}
+
 /// Three checkouts of one commit share a content store. `lf` checks out the committed bytes;
 /// `crlf` converts line endings (`core.autocrlf`), which changes the size; `swap` runs a
 /// size-preserving filter driver (`p`↔`q`). A blob alias the `lf` checkout stored names bytes

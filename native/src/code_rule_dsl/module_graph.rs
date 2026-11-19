@@ -583,6 +583,9 @@ struct Stamp {
     changed: i64,
     #[cfg(windows)]
     file: i64,
+    /// Whether the file's data is not all on this disk (`git_workspace::recalls_data`).
+    #[cfg(windows)]
+    recalls: bool,
 }
 
 #[cfg(windows)]
@@ -624,6 +627,22 @@ impl Stamp {
     /// to the file's permissions moves the status-change time as a write does.
     #[cfg(not(windows))]
     fn same_write(&self, cached: &Self) -> bool {
+        self == cached
+    }
+
+    /// Whether the summary cached at `cached` stands for the file this stamp shows: the whole
+    /// stamp is the same or, where the file's data is not all on this disk, its last write is
+    /// (`same_write`). Freeing a cloud file placeholder moves its change time alone, and a read
+    /// would make its provider download it.
+    #[cfg(windows)]
+    fn stands_for(&self, cached: &Self) -> bool {
+        self == cached || self.recalls && self.same_write(cached)
+    }
+
+    /// Whether the summary cached at `cached` stands for the file this stamp shows: the whole
+    /// stamp is the same.
+    #[cfg(not(windows))]
+    fn stands_for(&self, cached: &Self) -> bool {
         self == cached
     }
 }
@@ -746,7 +765,7 @@ fn cached_summaries(
             }
             let stamp = Stamp::of(&facts);
             match (stamp, cache.get(&absolute)) {
-                (Some(stamp), Some((cached, summary))) if stamp == *cached => {
+                (Some(stamp), Some((cached, summary))) if stamp.stands_for(cached) => {
                     hits.push((path, Arc::clone(summary)));
                 }
                 (_, cached) => misses.push(Miss {

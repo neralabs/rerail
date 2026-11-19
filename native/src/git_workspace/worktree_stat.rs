@@ -46,6 +46,22 @@ impl WorktreeStat {
     pub(super) fn stamp(&self) -> Option<ChangeStamp> {
         self.change.stamp()
     }
+
+    /// The stat of the file at `path`, with `times` (change, then modification) and `attributes`
+    /// in place of its own: what a volume or a provider these cases cannot make gives.
+    #[cfg(all(test, windows))]
+    pub(super) fn as_if(path: &Path, times: Option<(i64, i64)>, attributes: u32) -> Self {
+        let (metadata, change) = platform::read(path).unwrap();
+        let change = change.as_if(times, attributes);
+        Self { metadata, change }
+    }
+}
+
+/// How many queries beyond the stat's own call this thread's proofs made since the last call: the
+/// file id, the volume's protocol and its file system.
+#[cfg(all(test, windows))]
+pub(super) fn queries_made() -> usize {
+    platform::QUERIES.replace(0)
 }
 
 /// A file's identity and change time: every write through any of its names, every time set and
@@ -117,10 +133,11 @@ impl<'a> VerifiedFiles<'a> {
 
     /// How a file whose stat equals the stat Git recorded is shown to hold `blob`'s bytes. Where
     /// the volume keeps no change time to trust (FAT, exFAT, a network share, a file that refused
-    /// the handle), the stat decides, as it does for Git.
+    /// the handle), or the file's data is not all on this disk, the stat decides, as it does for
+    /// Git.
     pub(super) fn proof(&mut self, path: &str, blob: HashKey, current: &WorktreeStat) -> Proof {
         let change = &current.change;
-        if change.unchanged_since_written() {
+        if change.unchanged_since_written() || change.leaves_the_stat_to_decide() {
             return Proof::Held;
         }
         let Some(stamp) = change.stamp() else {
@@ -225,6 +242,21 @@ fn keeps_change_times(name: &str) -> bool {
     matches!(name, "NTFS" | "ReFS")
 }
 
+/// The attributes of a file whose data is not all on this disk: a cloud file placeholder, whose
+/// provider downloads its data when it is read (`FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS`) or opened
+/// (`FILE_ATTRIBUTE_RECALL_ON_OPEN`), and a file moved to offline storage
+/// (`FILE_ATTRIBUTE_OFFLINE`).
+#[cfg(windows)]
+const NOT_ALL_ON_DISK: u32 = 0x0040_0000 | 0x0004_0000 | 0x0000_1000;
+
+/// Whether a file with these attributes has data a read would bring back to this disk. Freeing a
+/// placeholder's space moves its change time and keeps its stat, so its stat decides, as it does
+/// for Git: a read would download every freed file.
+#[cfg(windows)]
+pub(crate) fn recalls_data(attributes: u32) -> bool {
+    attributes & NOT_ALL_ON_DISK != 0
+}
+
 #[cfg(not(windows))]
 mod platform {
     use super::ChangeStamp;
@@ -242,6 +274,10 @@ mod platform {
 
     impl Change {
         pub(super) fn unchanged_since_written(&self) -> bool {
+            true
+        }
+
+        pub(super) fn leaves_the_stat_to_decide(&self) -> bool {
             true
         }
 
@@ -275,6 +311,8 @@ mod platform {
         file: Option<File>,
         /// The change time and the modification time, where the handle answered them.
         times: Option<(i64, i64)>,
+        /// The file's attributes, as the same call answered them; none where it did not.
+        attributes: u32,
     }
 
     /// One handle answers the stat and the change time, opened as `lstat` opens a file: a link is
@@ -295,13 +333,23 @@ mod platform {
             let change = Change {
                 file: None,
                 times: None,
+                attributes: 0,
             };
             return Some((metadata, change));
         };
         let metadata = gix::index::fs::Metadata::from_file(&file).ok()?;
-        let times = basic_times(&file);
+        let basic = basic_info(&file);
+        let times = basic.map(|info| (info.ChangeTime, info.LastWriteTime));
+        let attributes = basic.map_or(0, |info| info.FileAttributes);
         let file = Some(file);
-        Some((metadata, Change { file, times }))
+        Some((
+            metadata,
+            Change {
+                file,
+                times,
+                attributes,
+            },
+        ))
     }
 
     impl Change {
@@ -311,6 +359,12 @@ mod platform {
         pub(super) fn unchanged_since_written(&self) -> bool {
             self.times
                 .is_some_and(|(changed, written)| changed == written)
+        }
+
+        /// Whether what the stat's own call answered leaves the stat to decide, with no other
+        /// query: the file's data is not all on this disk (`recalls_data`).
+        pub(super) fn leaves_the_stat_to_decide(&self) -> bool {
+            super::recalls_data(self.attributes)
         }
 
         /// Whether the file's volume is on this machine and keeps a change time every write
@@ -334,8 +388,31 @@ mod platform {
         }
     }
 
-    /// The change time and the modification time NTFS keeps for `file`.
-    fn basic_times(file: &File) -> Option<(i64, i64)> {
+    #[cfg(test)]
+    impl Change {
+        /// This change with `times` and `attributes` in place of what the file gave.
+        pub(super) fn as_if(self, times: Option<(i64, i64)>, attributes: u32) -> Self {
+            Self {
+                times,
+                attributes,
+                ..self
+            }
+        }
+    }
+
+    #[cfg(test)]
+    thread_local! {
+        /// The queries beyond the stat's own call this thread made (`super::queries_made`).
+        pub(super) static QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    #[cfg(test)]
+    fn queried() {
+        QUERIES.set(QUERIES.get() + 1);
+    }
+
+    /// The times and attributes NTFS keeps for `file`.
+    fn basic_info(file: &File) -> Option<FILE_BASIC_INFO> {
         let mut info = FILE_BASIC_INFO::default();
         // SAFETY: an open handle, and a buffer of the size given that lives across the call.
         let read = unsafe {
@@ -346,11 +423,13 @@ mod platform {
                 std::mem::size_of::<FILE_BASIC_INFO>() as u32,
             )
         };
-        (read != 0).then_some((info.ChangeTime, info.LastWriteTime))
+        (read != 0).then_some(info)
     }
 
     /// The serial number of `file`'s volume and its 128-bit id there, as NTFS and ReFS give them.
     fn identity(file: &File) -> Option<(u64, [u8; 16])> {
+        #[cfg(test)]
+        queried();
         let mut info = FILE_ID_INFO::default();
         // SAFETY: an open handle, and a buffer of the size given that lives across the call.
         let read = unsafe {
@@ -367,6 +446,8 @@ mod platform {
     /// Whether `file` is on this machine: only a file on a network share answers the protocol it
     /// is reached by.
     fn is_local(file: &File) -> bool {
+        #[cfg(test)]
+        queried();
         // Larger than `FILE_REMOTE_PROTOCOL_INFO`, and aligned as it is.
         let mut info = [0_u64; 32];
         // SAFETY: an open handle, and a buffer of the size given that lives across the call.
@@ -383,6 +464,8 @@ mod platform {
 
     /// The name of the file system that holds `file`, such as `NTFS`; empty where it is not told.
     fn file_system(file: &File) -> String {
+        #[cfg(test)]
+        queried();
         let mut name = [0_u16; 32];
         // SAFETY: an open handle; every other out-parameter is null, and the name buffer has the
         // length given.

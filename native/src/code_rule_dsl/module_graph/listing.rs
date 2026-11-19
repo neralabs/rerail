@@ -290,6 +290,7 @@ mod windows {
             length,
             changed: info.ChangeTime,
             file: info.FileId,
+            recalls: crate::git_workspace::recalls_data(info.FileAttributes),
         });
         Entry {
             name,
@@ -319,7 +320,7 @@ mod windows {
 
     /// An entry `read_dir` gives, for a file system that cannot list a folder by
     /// `FileIdBothDirectoryInfo`: its stamp holds no change time or file id, as `read_dir` gives
-    /// none.
+    /// none, so freeing a cloud file placeholder leaves it as it was and no attribute need say so.
     fn from_dir_entry(entry: &std::fs::DirEntry) -> io::Result<Entry> {
         let kind = entry.file_type()?;
         let metadata = entry.metadata()?;
@@ -328,6 +329,7 @@ mod windows {
             length: metadata.len(),
             changed: 0,
             file: 0,
+            recalls: false,
         });
         Ok(Entry {
             name: entry.file_name(),

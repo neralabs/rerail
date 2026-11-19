@@ -884,6 +884,41 @@ fn a_source_whose_read_is_denied_keeps_the_summary_of_its_last_write() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+/// A source whose data a provider moved off this disk after the walk cached its summary (a cloud
+/// file placeholder freed, a file moved to offline storage) keeps the summary of its last write
+/// with no read: the attribute moves NTFS's change time, and a read would make the provider
+/// download it. Once its data is back, the walk reads it once.
+#[cfg(windows)]
+#[test]
+fn a_source_whose_data_is_offline_keeps_the_summary_of_its_last_write_with_no_read() {
+    use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_OFFLINE};
+    let root = temp_root("offline");
+    write_file(&root, "package.json", NEXT_MANIFEST);
+    let settled = SystemTime::now() - Duration::from_secs(3600);
+    for (path, text) in [
+        ("app/page.tsx", "import './a';\nexport default 1;\n"),
+        ("app/a.ts", "'use server';\nimport './b';\n"),
+        ("app/b.ts", ""),
+    ] {
+        write_file(&root, path, text);
+        crate::git_workspace::backdate(&root.join(path), settled);
+    }
+    let source = root.join("app/a.ts");
+    let server = ["app/a.ts", "app/b.ts", "app/page.tsx"];
+    let parsed = |why: &str, sources: usize| {
+        SUMMARIES.set(0);
+        assert_eq!(disk_graph(&root, "").unwrap(), server, "{why}");
+        assert_eq!(SUMMARIES.get(), sources, "{why}");
+    };
+    parsed("the first walk reads every source", 3);
+    crate::git_workspace::set_attributes(&source, FILE_ATTRIBUTE_OFFLINE);
+    parsed("the offline source is not read", 0);
+    crate::git_workspace::set_attributes(&source, FILE_ATTRIBUTE_NORMAL);
+    parsed("the source back on disk is read once", 1);
+    parsed("and then taken from the cache", 0);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
 /// On unix a change to a source's permissions moves its status-change time as a write does, so no
 /// cached summary stands for a source that can no longer be read: the package has no graph.
 #[cfg(unix)]
