@@ -142,3 +142,44 @@ measurements behind the table:
 | The class header's context (`class_head`, `head_stop`, `class_kw`, `ctor_w`, `vis_w`, `line_mod`, `ctor_stop`) | about 250 | `semi` split no more. The class rule takes a hidden mark before `[primary_constructor]`, as the lean parser asks once after the name. `class A⏎private⏎constructor()` (the lean lexer reads a modifier and `constructor` on one line) still needs a refusal, so a token pattern needs a test for a line break between two tokens |
 | The comments that go on the line (`goes_now`, `ann_blk`, `ann_ctor`, `else_next`) | about 65 | a mark clause that makes the pending comment zero-width at the token where the mark is tested and not taken, as the lean lexer's `lost` does. No corpus file hits the escape now |
 | The regions and strings (`regions hidden`, `string_content`, the template's tokens) | about 250 | already walked (`Walk`). What remains is the masks the readers' parts read; not yet looked at |
+
+## The generated Rust beside the lean parser's (2026-11-18)
+
+This section replaces the operation counts above as the measure of the work (the user: the
+goal is generated Rust shaped like the lean parser's, "not operations, not instructions, not
+cycles, not time, not MB/s"). Read side by side: `kotlin_aot`'s `out/tier1_aot.rs` and
+`out/tier2_aot.rs` against `kotlin_lean/src/lex.rs` and `parse.rs`.
+
+The lexer:
+
+1. **Passes.** `lex.rs` is one loop, a token at a time. A switch on the token's first byte
+   picks its reader (`word_end`, a number's, a string's, a comment's). The generated tier 1 has
+   three parts. First, a body for each 64-byte block that computes every mask of the grammar at
+   every byte. Then the token loop, which jumps on the record's kind and reads ends from those
+   masks. Last, a pass over every block's outputs that sets the marks' bits on the tokens
+   (`late_marks`).
+2. **Keywords.** `lex.rs` reads a word and looks it up once (`w::…`). The generated body spells
+   each keyword the context needs as byte compares and shifts (`text("private")`, `vis_w`,
+   `head_stop`, …), beside the record's word.
+3. **Automatic semicolons.** The lean parser calls `asi()` where its state takes one, and that
+   reads the bytes after the token then. Tier 1 computes the semicolon's mask at every line
+   break, its comment cases and the class header's context (`class_head`) included, before
+   the parser runs.
+4. **`return@`, `as?`.** The lean lexer's word reader decides them. Tier 1 decides them by the
+   end mask `name_last`.
+
+The parser:
+
+5. **Rules.** Both are a function a rule (`r<pc>` against `import_header`, `class_rest`, …).
+6. **Marks at every token.** At a token, the generated rule tests each live mark in turn, each
+   by its pattern function (`patterns_9`, `patterns_13`, …). The refusing ones come first, then
+   the rest. The lean parser asks nothing it does not need. It asks `semi()` or `ends()` where
+   it takes a semicolon, and peeks where a rule chooses (`peek() == T::Dot`, `is_word(w::AS)`).
+7. **A name.** Where the lean parser calls `simple_identifier()`, one function (`t.kind ==
+   Name`, `soft(t.word)`), the generated rule inlines a `match kind { … match word { … } }` over
+   the word-bearing kinds (34 to 48) and their words, at each place a name may come.
+
+What unblocks what: 6 and 3 are the same change seen from the two tiers. Where tier 2 asks for a
+semicolon as `asi()` does, tier 1 needs no gap marks, and no `class_head` or comment context
+under them. Without those, tier 1's body keeps the readers' masks (1, 2). Then 7: a name as one
+call.
