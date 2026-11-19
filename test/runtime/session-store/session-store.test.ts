@@ -239,13 +239,14 @@ describe("SQLite session persistence", () => {
     expect(await readFile(join(storageRoot, sessionFolder, "events.jsonl"), "utf8")).not.toContain(secret);
   });
 
-  it("stores a call that names a web URL, looking its host and path up as no network share", async () => {
+  it("stores a call that names a web URL without looking its host and path up on another machine", async () => {
     const root = await temporaryDirectory();
     const databasePath = defaultRerailDatabasePath();
     const runtime = new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, embedder: testEmbedder });
     const session = { host: "claude-code" as const, sessionId: "url-session", cwd: root };
-    // 192.0.2.1 is a documentation address (RFC 5737). On Windows `//192.0.2.1/api/v1`, cut from the URL at its `:`,
-    // names the share `\\192.0.2.1\api\v1`, whose lookup opens a connection to that host. Each lookup of a share is
+    // 192.0.2.1 is a documentation address (RFC 5737). `//net/192.0.2.1/api/v1`, cut from the URL at its `:`, names the
+    // share `\\net\192.0.2.1\api\v1` on Windows, whose lookup opens a connection to the host `net`, and on Linux and
+    // macOS a path under the automount root `/net`, which an automounter may mount from 192.0.2.1. Each such lookup is
     // recorded and refused here, not made, so the test reaches no host.
     const lookUp = realpathSync.native;
     const shares: string[] = [];
@@ -253,11 +254,11 @@ describe("SQLite session persistence", () => {
       vi.restoreAllMocks();
     });
     vi.spyOn(realpathSync, "native").mockImplementation((path: PathLike, options?: EncodingOption) => {
-      if (!/^\\\\[^.?\\]/u.test(String(path))) return lookUp(path, options);
+      if (!/^(?:\\\\[^.?\\]|\/net\/)/u.test(String(path))) return lookUp(path, options);
       shares.push(String(path));
       throw Object.assign(new Error(`ENOENT: no such file or directory, realpath '${String(path)}'`), { code: "ENOENT" });
     });
-    const command = "curl -s https://192.0.2.1/api/v1 | jq .";
+    const command = "curl -s https://net/192.0.2.1/api/v1 | jq .";
     await runtime.ingest({ kind: "session-start", eventId: "start", session });
     await runtime.ingest({ kind: "call", eventId: "url-call", toolCallId: "url", sessionId: session.sessionId, toolName: "Bash", input: { command } });
     await runtime.ingest({ kind: "result", eventId: "url-result", toolCallId: "url", sessionId: session.sessionId, toolName: "Bash", output: "{\"ok\":true}" });

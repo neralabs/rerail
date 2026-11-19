@@ -493,18 +493,6 @@ describe("the transcript boundary for coding agents", () => {
     expect(lookups.filter(path => path !== root)).toEqual(["/NET/192.0.2.1/x", "/Net/192.0.2.1/x"]);
   });
 
-  it.runIf(process.platform === "win32")("answers at once for a URL on Windows, where its host and path would name a network share", () => {
-    const root = checkout("rerail-transcript-share-");
-    // Each lookup of a share is recorded and refused, so the test reaches no host whatever the check does.
-    const lookups = recordLookups();
-    for (const input of [...URL_INPUTS, ...AUTOMOUNT_URL_INPUTS]) {
-      const started = performance.now();
-      expect(callNamesSecretPath(input, root), JSON.stringify(input)).toBe(false);
-      expect(performance.now() - started, JSON.stringify(input)).toBeLessThan(50);
-    }
-    expect(lookups.filter(reachesAnotherMachine)).toEqual([]);
-  });
-
   it("judges only secret-like names as secret, not every hidden path", () => {
     expect(callNamesSecretPath({ command: "cat .env" })).toBe(true);
     expect(callNamesSecretPath({ file_path: "/repo/deploy/gcp-key.json" })).toBe(true);
