@@ -2,17 +2,26 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Twenty-one of the 28 follow-up findings have verified results. Seven remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+Twenty-two of the 28 follow-up findings have verified results. Six remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
 
 | Open finding | What still needs to pass |
 | --- | --- |
 | 11. Large Git blobs | Skip a binary after a bounded prefix read. Distinguish large text from an unreadable blob for loose and packed objects. |
-| 23. Scope stop after restore | Recover the committed stop, acquisition cutoff and affected store identities after restoring the control database. Exercise crashes on both sides of acknowledgement. |
 | 42. Removed stores | Retire a route by store identity. Apply its outstanding stop if that store returns. Preserve a different store at the same path. |
 | Bound commit metadata | Request the bound commit when a rule reads its metadata. Verify root commits, non-root commits and unavailable objects under negation. |
 | Commit diagnostic locations | Identify the repository, commit and optional field in the report. Distinguish a commit finding from a finding in a file named `git`. |
 | Content handles | Read verified content through a rule-visible handle. Check reuse across revisions and the result for a missing object. |
 | Selected document provenance | Join the selected path, blob, grammar, tape and document. Test two paths with identical bytes and a scan that excludes one. |
+
+## Recovery of a committed directory stop
+
+In case 23, two stores owned the same directory. Before the repair, restoring the control backup after commit left the worker with no release to deliver.
+The regression now terminates separate processes before commit, after commit, and immediately after the first store acknowledges the release.
+An ordinary transaction rollback and termination before commit both preserved the two owners.
+After commit, the journal retained both original store identities even when their live routes were removed.
+Restoring the control backup then delivered the outstanding release. A new run in the first store survived replay of the original cutoff.
+Restoring a backup that still listed the completed release preserved both newer runs. The journal retained zero releases and zero targets.
+[Public recovery regression](../../../../test/cli/headless-scan.test.ts) · [Backup and restore contract](analysis-scopes.md#recovery-contract-for-a-stopped-directory)
 
 ## Compiled Git policies
 

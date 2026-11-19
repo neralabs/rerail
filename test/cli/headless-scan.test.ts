@@ -2462,6 +2462,99 @@ Seen(@place("git",1), id, "snapshot", s) :- analysis_run_snapshot(r,s), analysis
     } finally { vi.unstubAllEnvs(); }
   });
 
+  it("recovers committed directory stops after restoring the control database across worker crashes", async () => {
+    const root = checkout(), home = root + "-home", control = join(home, "rerail.sqlite"), backup = control + ".backup", pending = control + ".pending";
+    const stores = ["first", "second"].map(name => join(home, name + ".sqlite"));
+    const publish = async (store: string) => {
+      vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+      const report = await scan(root, { databasePath: control });
+      expect(report.status).toBe("completed");
+      expect(report.cacheWarnings).toBeUndefined();
+      expect(directoryOwnerCount(store)).toBe(1);
+    };
+    const script = `import { writeSync } from "node:fs";
+import { loadNativeBinding, openRerailDatabase, queueAnalysisScopeReleases, settleAnalysisScopeReleases } from "./src/engine/index.ts";
+const [phase, control, root] = process.argv.slice(2);
+function crash() { writeSync(1, phase); process.kill(process.pid, "SIGKILL"); }
+if (phase === "after-store-ack") {
+  const engine = loadNativeBinding(), remove = engine.deleteAnalysisScope;
+  engine.deleteAnalysisScope = (...args) => { const result = remove(...args); crash(); return result; };
+  settleAnalysisScopeReleases(control, -1);
+} else {
+  const db = openRerailDatabase(control);
+  db.transaction(tx => {
+    queueAnalysisScopeReleases(tx, [root], control);
+    if (phase === "before-commit") crash();
+  }, { behavior: "immediate" });
+  crash();
+}`;
+    const crash = (phase: string) => {
+      const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", phase, control, root],
+        { input: script, encoding: "utf8" });
+      expect(result.stdout, result.stderr).toBe(phase);
+      expect(result.status).not.toBe(0);
+    };
+    const save = async (file: string) => {
+      const db = openRerailDatabase(control);
+      try { await db.$client.backup(file); } finally { db.$client.close(); }
+    };
+    const restore = (file = backup) => {
+      // The child has exited. Replace the entire control database with the closed backup.
+      for (const suffix of ["-wal", "-shm"]) rmSync(control + suffix, { force: true });
+      cpSync(file, control);
+    };
+    try {
+      for (const store of stores) await publish(store);
+      await save(backup);
+      const initial = readAnalysisScopeGeneration(control);
+      const db = openRerailDatabase(control);
+      try {
+        expect(() => db.transaction(tx => {
+          queueAnalysisScopeReleases(tx, [root], control);
+          expect(db.$client.pragma("release_journal.journal_mode", { simple: true })).toBe("delete");
+          expect(db.$client.pragma("release_journal.synchronous", { simple: true })).toBe(2);
+          throw new Error("cancel this stop");
+        })).toThrow("cancel this stop");
+      } finally { db.$client.close(); }
+      settleAnalysisScopeReleases(control, -1);
+      expect(stores.map(directoryOwnerCount)).toEqual([1, 1]);
+      crash("before-commit");
+      restore();
+      settleAnalysisScopeReleases(control, -1);
+      expect(stores.map(directoryOwnerCount)).toEqual([1, 1]);
+      crash("after-commit");
+      await save(pending);
+      const registry = new Database(control + ".analysis-stores.sqlite");
+      const decisions = new Database(control + ".analysis-releases.sqlite", { readonly: true });
+      try {
+        const targets = decisions.prepare("SELECT path,identity FROM analysis_journal_target WHERE probe=0 ORDER BY path").all();
+        expect(targets).toHaveLength(2);
+        expect(targets).toEqual(registry.prepare("SELECT path,identity FROM analysis_directory_store_identity ORDER BY path").all());
+        // Delivery must also find a target whose live discovery route has gone.
+        registry.prepare("DELETE FROM analysis_directory_store").run();
+      } finally { decisions.close(); registry.close(); }
+      restore();
+      expect(readAnalysisScopeGeneration(control)).toBeGreaterThan(initial);
+      crash("after-store-ack");
+      const afterAck = stores.map(directoryOwnerCount);
+      expect(afterAck.slice().sort()).toEqual([0, 1]);
+      const restarted = afterAck.indexOf(0);
+      await publish(stores[restarted]!);
+      restore();
+      settleAnalysisScopeReleases(control, -1);
+      expect(stores.map(directoryOwnerCount)).toEqual(stores.map((_, index) => Number(index === restarted)));
+      for (const store of stores) await publish(store);
+      restore(pending);
+      settleAnalysisScopeReleases(control, -1);
+      expect(stores.map(directoryOwnerCount)).toEqual([1, 1]);
+      const journal = new Database(control + ".analysis-releases.sqlite", { readonly: true });
+      try {
+        expect(journal.prepare("SELECT count(*) FROM analysis_journal_release").pluck().get()).toBe(0);
+        expect(journal.prepare("SELECT count(*) FROM analysis_journal_target").pluck().get()).toBe(0);
+      } finally { journal.close(); }
+    } finally { vi.unstubAllEnvs(); }
+  }, 90_000);
+
   it("drops all staged ownership when one audit cannot retain its snapshot", async () => {
     const root = checkout();
     const databasePath = join(`${root}-home`, "rerail.sqlite");

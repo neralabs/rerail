@@ -1,13 +1,14 @@
 import { dirname, join, sep, toNamespacedPath } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { and, eq, lte } from "drizzle-orm";
+import { and, eq, lte, sql } from "drizzle-orm";
 import { analysisScopeGeneration, analysisScopeReleaseProbes, analysisScopeReleases } from "../storage/schema.js";
 import { openRerailDatabase, openSqliteDatabase, type RerailDatabase } from "../storage/database.js";
 import { loadNativeBinding, type NativeAnalysisScopeRun } from "./native.js";
 import { contentStoreOverride, contentStorePath } from "./rerail-build.js";
 import { assertContentStoreOwner } from "./main-instance.js";
 import { storedPath, storedScopeDirectory } from "../catalog/checkout-control.js";
+import { attachReleaseJournal, journalHasWork, recoverReleaseJournal } from "./analysis-release-journal.js";
 
 export function scanContentStore(databasePath: string): string {
   return contentStoreOverride() ?? defaultScanStore(databasePath);
@@ -44,6 +45,10 @@ function readControlGeneration(databasePath: string): number {
 
 function storeRegistryPath(databasePath: string): string {
   return `${storedPath(databasePath)}.analysis-stores.sqlite`;
+}
+
+function releaseJournalPath(databasePath: string): string {
+  return `${storedPath(databasePath)}.analysis-releases.sqlite`;
 }
 
 export function readAnalysisScopeGeneration(databasePath: string): number {
@@ -273,7 +278,8 @@ function analysisStores(databasePath: string, root?: string, cutoff = Number.MAX
 }
 
 /** Advance only routes this delivery covered. A concurrent new acquisition keeps its registration. */
-function acknowledgeRoutes(databasePath: string, routes: StoreRoute[], cutoff: number | undefined): void {
+function acknowledgeRoutes(databasePath: string, routes: StoreRoute[], id: string): void {
+  const cutoff = releaseCutoff(id);
   if (cutoff === undefined || routes.length === 0) return;
   const index = openSqliteDatabase(storeRegistryPath(databasePath));
   try {
@@ -310,12 +316,14 @@ function discoverReleaseRoute(databasePath: string, directory: string, store: st
   return [{ directory, path: store, identity }];
 }
 
-function deliverRelease(databasePath: string, root: string, store: string, id: string, routes: StoreRoute[]): void {
+function deliverRelease(database: RerailDatabase, root: string, store: string, id: string, routes: StoreRoute[]): void {
   let failure: unknown;
   for (const identity of new Set(routes.map(route => route.identity))) {
     try {
       loadNativeBinding().deleteAnalysisScope(store, toNamespacedPath(root), true, id, identity || undefined, true);
-      acknowledgeRoutes(databasePath, routes.filter(route => route.identity === identity), releaseCutoff(id));
+      acknowledgeRoutes(database.$client.name, routes.filter(route => route.identity === identity), id);
+      database.run(sql`DELETE FROM release_journal.analysis_journal_target
+        WHERE release_id=${id} AND path=${store} AND identity=${identity ?? ""}`);
     } catch (error) { failure = error; }
   }
   if (failure !== undefined) throw failure;
@@ -326,7 +334,7 @@ type Transaction = Parameters<Parameters<RerailDatabase["transaction"]>[0]>[0];
 /** Advance the acquisition generation in the same transaction as the stop. */
 export function queueAnalysisScopeReleases(tx: Transaction, directories: readonly string[], databasePath: string): void {
   if (directories.length === 0) return;
-  // Serialize stops on the control writer before reserving a generation in the registry.
+  // Hold the control writer before taking the registry writer. Acquisitions register in this same registry.
   tx.insert(analysisScopeGeneration).values({ singleton: 1, generation: INITIAL_GENERATION }).onConflictDoNothing().run();
   const current = tx.select().from(analysisScopeGeneration).get()!.generation;
   const index = openSqliteDatabase(storeRegistryPath(databasePath));
@@ -334,11 +342,22 @@ export function queueAnalysisScopeReleases(tx: Transaction, directories: readonl
   try {
     generation = index.$client.transaction(() => recordRegistryGeneration(index, current, 1)).immediate();
   } finally { index.$client.close(); }
+  attachReleaseJournal(tx, releaseJournalPath(databasePath));
+  tx.run(sql`INSERT INTO release_journal.analysis_journal_generation VALUES (1,${generation})
+    ON CONFLICT(singleton) DO UPDATE SET generation=max(generation,excluded.generation)`);
   tx.update(analysisScopeGeneration).set({ generation }).where(eq(analysisScopeGeneration.singleton, 1)).run();
   const home = analysisScopeHome(databasePath);
   const nextAttemptAt = Date.now();
   for (const directory of directories) {
-    tx.insert(analysisScopeReleases).values({ id: `${generation - 1}:${randomUUID()}:${home}`, directory: storedScopeDirectory(directory), nextAttemptAt }).run();
+    const root = storedScopeDirectory(directory), id = `${generation - 1}:j-${randomUUID()}:${home}`;
+    tx.insert(analysisScopeReleases).values({ id, directory: root, nextAttemptAt }).run();
+    const { registered, fallback } = analysisStores(databasePath, root, generation - 1);
+    for (const route of registered) tx.run(sql`INSERT INTO release_journal.analysis_journal_target VALUES
+      (${id},${route.directory},${route.path},${route.identity ?? ""},0)`);
+    const known = new Set(registered.map(route => route.path));
+    for (const path of fallback) {
+      if (!known.has(path)) tx.run(sql`INSERT INTO release_journal.analysis_journal_target VALUES (${id},${root},${path},'',1)`);
+    }
   }
 }
 
@@ -382,7 +401,7 @@ function settleAnalysisScopeReleaseProbes(database: RerailDatabase, home: string
       assertContentStoreOwner(store);
       let routes = analysisStores(databasePath, directory, releaseCutoff(releaseId)).registered.filter(route => route.path === store);
       if (routes.length === 0) routes = discoverReleaseRoute(databasePath, directory, store, home);
-      deliverRelease(databasePath, directory, store, releaseId, routes);
+      deliverRelease(database, directory, store, releaseId, routes);
     } catch (error) {
       database.update(analysisScopeReleaseProbes).set(failedProbe(attempts, error))
         .where(and(row, eq(analysisScopeReleaseProbes.attempts, attempts))).run();
@@ -392,11 +411,19 @@ function settleAnalysisScopeReleaseProbes(database: RerailDatabase, home: string
   }
 }
 
+function releaseTargets(database: RerailDatabase, databasePath: string, root: string, id: string) {
+  if (!/^\d+:j-/u.test(id)) return analysisStores(databasePath, root, releaseCutoff(id));
+  const rows = database.all<StoreRoute & { probe: number }>(sql`SELECT directory,path,nullif(identity,'') AS identity,probe
+    FROM release_journal.analysis_journal_target WHERE release_id=${id}`);
+  return { registered: rows.filter(row => !row.probe), fallback: new Set(rows.filter(row => row.probe).map(row => row.path)) };
+}
+
 /** The daemon owns the content store even if the checkout has no active session. */
 export function settleAnalysisScopeReleases(databasePath: string, limit = 32): void {
-  if (!existsSync(databasePath)) return;
-  const reader = openSqliteDatabase(databasePath, { readonly: true });
+  const journal = releaseJournalPath(databasePath);
   const queued = (() => {
+    if (!existsSync(databasePath)) return false;
+    const reader = openSqliteDatabase(databasePath, { readonly: true });
     try {
       const tables = reader.$client.prepare("SELECT name FROM sqlite_schema WHERE name IN ('analysis_scope_releases', 'analysis_scope_release_probes')").pluck().all();
       return (tables.includes("analysis_scope_releases") && reader.select({ id: analysisScopeReleases.id }).from(analysisScopeReleases).limit(1).get())
@@ -404,9 +431,13 @@ export function settleAnalysisScopeReleases(databasePath: string, limit = 32): v
     }
     finally { reader.$client.close(); }
   })();
-  if (!queued) return;
+  if (!queued && !journalHasWork(journal)) return;
   const database = openRerailDatabase(databasePath);
   try {
+    database.transaction(tx => {
+      attachReleaseJournal(tx, journal);
+      recoverReleaseJournal(tx);
+    }, { behavior: "immediate" });
     const home = analysisScopeHome(databasePath);
     settleAnalysisScopeReleaseProbes(database, home, limit);
     const pending = database.select().from(analysisScopeReleases)
@@ -415,7 +446,7 @@ export function settleAnalysisScopeReleases(databasePath: string, limit = 32): v
     if (pending.length === 0) return;
     const failed = new Map<string, unknown>();
     for (const { id, directory: root } of pending) {
-      const { fallback, registered } = analysisStores(databasePath, root, releaseCutoff(id));
+      const { fallback, registered } = releaseTargets(database, databasePath, root, id);
       const routes = new Set(registered.map(row => row.path));
       let acknowledged = true;
       for (const store of new Set([...routes, ...fallback])) {
@@ -423,8 +454,12 @@ export function settleAnalysisScopeReleases(databasePath: string, limit = 32): v
         try {
           assertContentStoreOwner(store);
           const targets = deliveryTarget ? registered.filter(row => row.path === store) : discoverReleaseRoute(databasePath, root, store, home);
+          if (!deliveryTarget && targets[0]?.identity) {
+            database.run(sql`UPDATE release_journal.analysis_journal_target SET identity=${targets[0].identity},probe=0
+              WHERE release_id=${id} AND path=${store} AND probe=1`);
+          }
           deliveryTarget = targets.length > 0;
-          deliverRelease(databasePath, root, store, id, targets);
+          deliverRelease(database, root, store, id, targets);
         } catch (error) {
           if (!deliveryTarget) {
             database.insert(analysisScopeReleaseProbes).values({
