@@ -714,9 +714,9 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
   });
 
   it.each([
-    ["the `closed` events of scans that found the conflicts gone within the stop's wait", true],
-    ["the `closed` of each conflict still open", false],
-  ] as const)("keeps in two checkouts %s when a stop lands while turning Merge Assist off reads their branches, and the next turn-off hands them to the hook", async (_, gone) => {
+    ["the `closed` events of scans that found the conflicts gone within the stop's wait", "with no wait", true, 0],
+    ["the `closed` of each conflict still open", "with a wait", false, UNREACHED_MS],
+  ] as const)("keeps in two checkouts %s when a stop %s lands while turning Merge Assist off reads the first one's branches, and the next turn-off hands each to the hook once", async (_, _wait, gone, waitMs) => {
     const ws = await workspace();
     // A second checkout with the main checkout's work: every peer conflicts with it too.
     const checkouts = [ws.repo, addCheckout(ws, "mine-too", "mine")];
@@ -730,10 +730,17 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
       peersElsewhere(ws);
       for (const checkout of checkouts) await scanEndingWithinStop(ws, "--name-only", [], checkout);
     }
-    const service = ws.service();
+    const { service, close } = ownConnection(ws, new FakeGithub());
+    // Once the stop has resolved: a second stop with no wait, as a runtime's stores give as they close, and the close.
+    const stopAgainAndClose = (): void => {
+      void service.stop(0);
+      close();
+    };
 
-    // The first branch read answers only once the stop has resolved.
-    await stopDuring(service, () => service.setEnabled(ws.repo, false), { at: "symbolic-ref", waitMs: 0, held: true });
+    // The first branch read answers only once the database has closed. The turn-off's answer, read after, meets the
+    // closed database, as before.
+    const turnOff = (): Promise<unknown> => service.setEnabled(ws.repo, false).catch(() => undefined);
+    await stopDuring(service, turnOff, { at: "symbolic-ref", waitMs, held: true, afterStop: stopAgainAndClose });
 
     const kept = (): number[] => checkouts.map(checkout => keptRows(ws, checkout));
     expect({ heard: heard().length, kept: kept() }).toEqual({ heard: 2 * PEERS, kept: [1, 1] });
@@ -741,7 +748,47 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     await next.setEnabled(ws.repo, true);
     await next.setEnabled(ws.repo, false);
     await next.settled();
+    await next.stop();
     expect({ closed: heard().filter(({ event }) => event === "closed").length, kept: kept() }).toEqual({ closed: 2 * PEERS, kept: [0, 0] });
+  });
+
+  it("goes on with a stop with no wait that meets another process's write lock as it keeps the events turning Merge Assist off has not handed yet, and says they are not kept", async () => {
+    const ws = await workspace();
+    const heard = await loggedHook(ws);
+    await conflictsStored(ws);
+    const { service, close } = ownConnection(ws, new FakeGithub());
+    const reading = Promise.withResolvers<ChildProcess>();
+    let held = false;
+    // The turn-off's first branch read is held until the test ends it.
+    vi.mocked(spawn).mockImplementation((...args: Parameters<typeof spawn>) => {
+      if (held || !commandLine(args).includes("symbolic-ref")) return actualSpawn(...args);
+      held = true;
+      const child = actualSpawn(process.execPath, HELD_READ, { stdio: ["pipe", "pipe", "pipe"] });
+      reading.resolve(child);
+      return child;
+    });
+    try {
+      const turnOff = service.setEnabled(ws.repo, false).catch(() => undefined);
+      const read = await reading.promise;
+      const holder = holdWriteLock(ws.databasePath, ws.folder);
+      await holder.held;
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      // As `DatabaseApiStores.close()` does. A stop that waited for the lock would hold this thread until the other
+      // process's bound is over, then get the lock and keep the events.
+      const stopped = service.stop(0);
+      close();
+      const written = stderr.mock.calls.map(([text]) => String(text));
+      stderr.mockRestore();
+      await holder.release();
+      read.kill("SIGKILL");
+      await turnOff;
+
+      await expect(stopped).resolves.toBeUndefined();
+      const lost = "rerail: Merge Assist could not keep the conflict events it had not handed: database is locked\n";
+      expect({ written, kept: keptRows(ws), closed: heard().filter(({ event }) => event === "closed") }).toEqual({ written: [lost], kept: 0, closed: [] });
+    } finally {
+      vi.mocked(spawn).mockImplementation(actualSpawn);
+    }
   });
 
   it("hands the `closed` of conflicts another pass stores in a checkout as Merge Assist is being turned off, as it hands those of the other checkouts", async () => {

@@ -107,7 +107,8 @@ export interface MergeAssistRuntime extends MergeAssistService {
    * hook command still running gets SIGTERM on its process group, then SIGKILL after a short grace. Waits at most
    * `waitMs` in all for the handlers, scans and detection passes running now: a pass that ends meanwhile stores what it
    * found, as one that ended before the stop did. The events of what is stored from the stop on (a pass, a dismissal,
-   * Merge Assist turned off) are kept in the database, and the next change in that checkout, in this process or
+   * Merge Assist turned off), and those a turn-off took and had not handed yet, are kept in the database (by a stop with
+   * no wait, while no other process holds its write lock), and the next change in that checkout, in this process or
    * another, hands them to the hook before its own. A pass still running after the wait ends at its next Git read and
    * stores nothing, and the stop resolves once the Git it ended has exited, so none runs on in the checkout. It does not
    * wait for a pass's other work, such as a file read on a drive that stopped answering: that pass ends by itself later,
@@ -217,6 +218,8 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
    * checkout included: {@link stop} waits for them.
    */
   readonly #hookWork = new Set<Promise<unknown>>();
+  /** The events of each checkout a turn-off took from the store and has not handed to the hook yet. */
+  readonly #taken = new Set<{ path: string; fires: ConflictFire[] }>();
 
   constructor(options: MergeAssistServiceOptions) {
     this.#options = options;
@@ -537,10 +540,14 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
       return enabled ? [] : this.#clearRepository(tx, repositoryKey);
     }, { behavior: "immediate" });
     this.#pulls.delete(repositoryKey);
-    // Every conflict open when Merge Assist went off is closed: the hook hears it once, as for one no longer found.
-    for (const { path, fires } of cleared) {
-      if (fires.length === 0) continue;
-      this.#fire({ checkoutPath: path, repositoryKey }, fires, null, await this.#branches(path));
+    // Every conflict open when Merge Assist went off is closed: the hook hears it once, as for one no longer found. A
+    // stop that comes while the branches are read keeps the events not handed yet (`#keepTaken`).
+    const taken = cleared.filter(({ fires }) => fires.length > 0);
+    for (const entry of taken) this.#taken.add(entry);
+    for (const entry of taken) {
+      const branches = await this.#branches(entry.path);
+      this.#taken.delete(entry);
+      this.#fire({ checkoutPath: entry.path, repositoryKey }, entry.fires, null, branches);
     }
     return await this.status(checkout.checkoutPath);
   }
@@ -647,6 +654,8 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     this.#listeners.clear();
     // No queued handler starts from now on, so none starts a command after the running ones are ended.
     this.#hook.stop();
+    // The hook hears no event from now on: those a turn-off has not handed yet are kept, before anything is awaited.
+    this.#keepTaken(waitMs > 0);
     // With no wait, the passes end in this call, before it awaits anything: its caller may close the database as soon
     // as it returns, as `DatabaseApiStores.close()` does. Nor does it wait for another process's write lock.
     if (waitMs <= 0) void this.#endPasses(false);
@@ -662,6 +671,26 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
       clearTimeout(timeout);
     }
     await this.#endPasses(waitMs > 0);
+  }
+
+  /**
+   * Keeps the events turn-offs took and have not handed under each checkout's `unheard` key, for the next change there,
+   * once, waiting for another connection's write lock only if `waitForLock`. While another connection holds the lock
+   * past the busy wait, or at all with none, they are not kept, and the stop says so.
+   */
+  #keepTaken(waitForLock: boolean): void {
+    const taken = [...this.#taken];
+    this.#taken.clear();
+    if (taken.length === 0) return;
+    const keep = (): void => this.#db.transaction(tx => {
+      for (const { path, fires } of taken) handedEvents(tx, { checkoutPath: path, before: readConflicts(tx, path), fires, muted: true, now: this.#now() });
+    }, { behavior: "immediate" });
+    try {
+      if (waitForLock) keep();
+      else withoutBusyWait(this.#db, keep);
+    } catch (error) {
+      process.stderr.write(`rerail: Merge Assist could not keep the conflict events it had not handed: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
   }
 
   /**
