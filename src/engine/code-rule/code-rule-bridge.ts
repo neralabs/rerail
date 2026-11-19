@@ -47,8 +47,8 @@ import { ToolCallWindows } from "./tool-call-windows.js";
 import { capturedOtherThanMade, placesBeforeWrite, type ReportedPreimage, reportedText, textBeforeWrite, unprovenCaptureBefore } from "./tool-result/reported-preimage.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
-  type WatcherWalk, type WorktreeFindings, type WorktreeScan, type WorktreeScanned, type WorktreeSnapshot, WorktreeView, type WorktreeWalk, WorktreeWalks,
-  type WorktreeWatch,
+  missedReads, type WatcherWalk, type WorktreeFindings, type WorktreeScan, type WorktreeScanned, type WorktreeSnapshot, WorktreeView, type WorktreeWalk,
+  WorktreeWalks, type WorktreeWatch,
 } from "./worktree-walks.js";
 
 export { WORKTREE_WALK_GAP_MS } from "./worktree-walks.js";
@@ -2615,8 +2615,9 @@ export class CodeRuleBridge {
     discovery.error = scanErrors(scan.errors);
     discovery.unread = scan.unread;
     discovery.passedCheckouts = scan.checkouts;
-    // A subtree it could not read may still hold writes made since the session opened, which its next walk judges.
-    if (scan.failedRoots.size === 0) discovery.toolCalls.answered(walk.callsEnded);
+    // A subtree or a file it could not read may still hold writes of the calls that ended before it: the next walk that
+    // reads them judges each by its stamp, so those calls stay until a walk has read everything it met.
+    if (!missedReads(scan)) discovery.toolCalls.answered(walk.callsEnded);
     this.#listLateAgain(discovery, scan.lateListings);
   }
 

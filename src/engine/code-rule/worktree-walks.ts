@@ -324,8 +324,11 @@ function skippedIn(root: string, skip: ReadonlySet<string>): string {
   return [...skip].filter(folder => folder.startsWith(`${root}${sep}`)).sort().join("\n");
 }
 
-/** Whether a read must be tried again: a folder it could not list, or a file whose read failed (an error with no stamp). */
-function retried(scan: SourceScan): boolean {
+/**
+ * Whether a walk missed a read, which must be tried again: a folder it could not list, or a file whose read failed (an
+ * error with no stamp). What was written there is not yet seen.
+ */
+export function missedReads(scan: SourceScan): boolean {
   if (scan.failedRoots.size > 0) return true;
   for (const source of scan.sources.values()) if (source.readError !== undefined && source.stamp === undefined) return true;
   return false;
@@ -787,7 +790,7 @@ export class WorktreeWalks {
     const { texts: _texts, listed: _listed, ...findings } = result.findings;
     if (this.#watched(root)) {
       this.#kept.set(root, {
-        findings, retry: retried(result.scan), skipped: state.skipped, look: state.look, readAt, trackedIgnored: state.trackedIgnored,
+        findings, retry: missedReads(result.scan), skipped: state.skipped, look: state.look, readAt, trackedIgnored: state.trackedIgnored,
       });
       this.#owed.delete(root);
     }
