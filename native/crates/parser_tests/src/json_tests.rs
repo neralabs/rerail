@@ -210,6 +210,12 @@ fn tree_inputs() -> Vec<Vec<u8>> {
         br#"[1234567890123456,12345678901234567]"#.to_vec(),
         br#"[1.234567890123456e+10]"#.to_vec(),
         br#"[1.23456789012345.6]"#.to_vec(),
+        // `\u` escapes that fail its checks, beside the other escapes, which skip them.
+        br#"["\u12g4"]"#.to_vec(),
+        br#"["\ud800"]"#.to_vec(),
+        br#"["\ud800\u0041"]"#.to_vec(),
+        br#"["\n\ud83d\ude00\t", "\u004"]"#.to_vec(),
+        br#"["\n\ud83d\ude00\t\\", "\/\u00e9\"\b"]"#.to_vec(),
     ];
     for pad in [0usize, 1, 61, 62, 63, 64, 65, 127] {
         for n in [0usize, 1, 62, 63, 64, 130] {
@@ -251,6 +257,12 @@ fn simdjson_forms_rust_trees_are_the_jits() {
         .filter(|&t| matches!(native.structural.get(t).map(|w| w.operation), Some(rerail_compiler::native_ir::StructuralOperation::Switch { .. })))
         .collect();
     assert_eq!(src.matches("if s.rec_end == 0 && !s.at_end {").count(), again.len(), "the kind path only where a call returns: {again:?}");
+    // The `\u` checks only after a `u`, as simdjson's `\u` work: every call of them in the arm of
+    // the escape `\u`; every other escape goes past them.
+    let words = &aot.program.block_programs[0].records.as_ref().expect("records").words;
+    let u = words.iter().position(|w| w.as_slice() == b"\\u").expect("the escape \\u") + 1;
+    let calls = src.matches("s.check_1()?;").count();
+    assert!(calls > 0 && src.matches(&format!("{u} => {{ s.check_1()?;")).count() == calls, "the \\u checks in the \\u arm alone");
     let entry = aot_entry(&src);
     // SAFETY: the source is this program's tier 2 (from its own native IR), reading and writing
     // `Ctx` as the JIT's does; it counts its calls open itself.

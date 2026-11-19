@@ -568,6 +568,24 @@ and the loop's head took the arms apart again with `match d`. Each value was dis
 The trees test with the Rust asserts both: no `match d`, and the path on the kind only at the
 switches a call returns to. Sending the empty array's `]` on to the value switch fails it.
 
+## Step 16, done: the `\u` checks only after a `u`, in the generated Rust
+
+Every escape ran both `\u` checks: their masks are tier 1's (`unicode`, and `high`, which holds
+at a high surrogate's `u`). The escape's word is known in its arm, and so are its bytes. So when
+tier 2 compiles, an escape word goes past each check whose mask can't hold at its bytes
+(`past_void_checks`):
+- `may_bytes` gives the bytes a block's value can hold at, a superset: a value of its own byte
+  at its byte, an `and` where both sides can, a `prev` by `k` at the byte `k` back;
+- a mask of delay `d` at a place is its value `d` places on.
+
+`\u` goes to its two checks. The other eight escapes are one range (`1..=8`), straight to the
+leaf, as simdjson does the `\u` work only after a `u`. The closer's arm no longer tests its
+span's length, since it is one byte by construction (`past_span`).
+
+The trees test gained bad `\u` escapes, and a file of every other escape beside a surrogate
+pair. The Rust trees test asserts that the checks are called in the `\u` arm alone. Voiding
+every check fails it, at `"\u12g4"`.
+
 ## The generated Rust next to simdjson's stage 2
 
 The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` writes it as
@@ -585,15 +603,15 @@ The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` write
 | atoms: `str4ncmp(src, "true")`, then the byte after not structural or white space | the same test, a word load | yes |
 | `parse_number`: the digits read once, validated as they are read | `run_0_check_0`: one read of 16 bytes, the end and the check from it, then on past the check | yes, since step 14 (a number past 15 bytes: as before) |
 | `parse_string`: `copy_and_find`, then one branch: quote, backslash or neither | `part_stop`, then one branch: closer, escape or content | yes |
-| an escape: `escape_map[c]`, the `\u` work only after a `u` | `CODES2[c]`, then a `match` of nine words that all go to one place, then both `\u` checks at every escape | no |
-| the closing quote ends the string | the closer's arm tests its span's length again | no |
+| an escape: `escape_map[c]`, the `\u` work only after a `u` | `CODES2[c]`, then `\u` to its two checks and the eight others, one range, past them | yes, since step 16 |
+| the closing quote ends the string | the closer's arm goes on at once | yes, since step 16 |
 | the tape: a word a value | the node rows (`open`, `leaf`, `close`, the supertype's record), committed to the tape's columns | the output's form, not a difference to remove |
 
 What follows, in order, each change made in `rust_stream` or in the compiler, and judged on
 the Rust it writes:
 1. Done in step 14.
 2. Done in step 15.
-3. The `\u` checks only after a `u`; one test for the escape's words.
+3. Done in step 16.
 4. No room check a token: the tape sized from the input once, as the JIT's.
 5. One function, the nesting on a stack of its own, as `walk_document`.
 

@@ -2293,14 +2293,19 @@ fn part_plan(x: &Facts<'_>, fx: &Fetched, pc: usize) -> Plan {
     let xs: Vec<u8> = (0..=255u8).filter(|&b| q.xs[usize::from(b) / 64] >> (b % 64) & 1 == 1).collect();
     let is_closer = xs.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(" | ");
     let content = p.to(pf.content);
-    let closer = p.to(pf.closer);
-    let mut by_word = String::from("match s.word() {\n");
+    // The closer is one byte: its place's test of that (`SPAN`) holds, and is not made again.
+    let closer = p.to(past_span(x, pf.closer, 1));
+    // Each escape's word to its place, past the checks its bytes cannot hold at (as simdjson's
+    // `\u` work only after a `u`), the words of one place a range, as `escape_map`'s one load.
+    let mut to: Vec<u16> = vec![pf.part; 256];
     for &(w, t) in &pf.words {
-        let j = p.to(t);
-        writeln!(by_word, "{} => {{ {j} }}", u32::from(w) + 1).unwrap();
+        let bytes = fx.ft.words.get(usize::from(w)).map(|(b, _)| b.as_slice()).unwrap_or(&[]);
+        if let Some(slot) = to.get_mut(usize::from(w) + 1) {
+            *slot = past_void_checks(x, past_span(x, t, 2), bytes);
+        }
     }
-    let j = p.to(pf.part);
-    writeln!(by_word, "_ => {{ {j} }}\n}}").unwrap();
+    to[0] = pf.part;
+    let by_word = arms(&mut p, "s.word()", &to);
     p.code = format!(
         "s.room()?;
 s.last_end = s.rec_end;
@@ -2331,6 +2336,70 @@ s.part_at = i + 2;
         pf.closer_code
     );
     p
+}
+
+/// Place `t` past its `SPAN` of `len` bytes, where the token is known to be that long.
+fn past_span(x: &Facts<'_>, t: u16, len: u16) -> u16 {
+    match x.native.structural.get(usize::from(t)).map(|w| w.operation) {
+        Some(Op::Span { last: false, len: l }) if l == len && !x.flagged => t + 1,
+        _ => t,
+    }
+}
+
+/// Place `t` past the `SPAN`s and the mask checks at it that a token of bytes `bytes` cannot
+/// hold at: each check's mask holds only at bytes none of them is (`may_bytes`), so it has no
+/// bit in the token and the check holds. As simdjson does the `\u` work only after a `u`.
+fn past_void_checks(x: &Facts<'_>, t: u16, bytes: &[u8]) -> u16 {
+    let Some(block) = x.native.block_programs.first() else { return t };
+    let (words, mut q) = (&x.native.structural, usize::from(t));
+    let mut past = t;
+    if bytes.is_empty() {
+        return t;
+    }
+    loop {
+        match words.get(q).map(|w| w.operation) {
+            Some(Op::Span { last: true, .. }) if !x.flagged => q += 1,
+            Some(Op::Check { check }) => {
+                let c = &x.native.local_checks[usize::from(check)];
+                let Some(&o) = block.masks.get(usize::from(c.mask)).filter(|_| !c.token && c.back == 0) else { return past };
+                // The mask's bit at a place is its value's `delay` places on: the byte there is
+                // `delay` back from the value's.
+                let may = may_bytes(block, usize::from(block.outputs[o]), u32::from(block.output_delays[o]));
+                if bytes.iter().any(|&b| may[usize::from(b) / 64] >> (b % 64) & 1 == 1) {
+                    return past;
+                }
+                q += 1;
+                past = q as u16;
+            }
+            _ => return past,
+        }
+    }
+}
+
+/// The bytes, `back` places before where value `x` of a block holds, that can be there: a
+/// superset. A value of its own byte (`native_cpu_lanes::byte_set`) at its own place; a `prev` by
+/// `k` the same `k` places further back; an `and` only where both can, an `or` where either; any
+/// other value at any byte.
+fn may_bytes(b: &crate::block_native::BlockNative, x: usize, back: u32) -> [u64; 4] {
+    use crate::block_native::BlockInst as I;
+    const ALL: [u64; 4] = [!0; 4];
+    if let Some(set) = crate::native_cpu_lanes::byte_set(b, x) {
+        return if back == 0 { set } else if set == [0; 4] { set } else { ALL };
+    }
+    match b.insts[x] {
+        I::And(p, q) => {
+            let (p, q) = (may_bytes(b, usize::from(p), back), may_bytes(b, usize::from(q), back));
+            std::array::from_fn(|k| p[k] & q[k])
+        }
+        I::Or(p, q) => {
+            let (p, q) = (may_bytes(b, usize::from(p), back), may_bytes(b, usize::from(q), back));
+            std::array::from_fn(|k| p[k] | q[k])
+        }
+        I::AndNot(p, _) => may_bytes(b, usize::from(p), back),
+        I::Prev(a, k) if back >= u32::from(k) => may_bytes(b, usize::from(a), back - u32::from(k)),
+        I::Const(0) => [0; 4],
+        _ => ALL,
+    }
 }
 
 /// A token's check that this backend writes (`program::token_value`): none back, no `ended`.
