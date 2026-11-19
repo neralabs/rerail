@@ -33,6 +33,8 @@ rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--revis
 | `--rules-ref <ref>` | Run `.rerail/rules/` **at that Git ref**, so a change cannot edit the rules judging it. |
 | `--pack <id>` | Also run an installed pack. Repeatable. |
 | `--rr <file>` | Run this local `.rr` policy. Repeatable. |
+| `--path <path>` | Select a repository-relative path. Repeat for multiple paths. Use `--path=--alpha.py` for a name that starts with two dashes. |
+| `--paths-from <file>` | Read one UTF-8 path per line. |
 | `--json` | Print the report. |
 | `--fail-on-violations` | Exit 3 on violations. |
 | `--no-send` | Do not queue the report for this machine's [remotes](remote-sink.md). |

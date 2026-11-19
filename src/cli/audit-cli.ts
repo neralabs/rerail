@@ -244,6 +244,13 @@ function parseScanArguments(args: readonly string[]): ScanArguments {
   const flags = new Set<string>();
   for (let index = 0; index < args.length;) {
     const argument = args[index]!;
+    if (argument.startsWith("--path=")) {
+      const path = argument.slice("--path=".length);
+      if (path.length === 0) throw new Error("--path requires a value");
+      (paths ??= []).push(path);
+      index++;
+      continue;
+    }
     switch (argument) {
       case "--json":
       case "--fail-on-violations":
@@ -260,7 +267,7 @@ function parseScanArguments(args: readonly string[]): ScanArguments {
         index += 2;
         break;
       case "--path":
-        paths = [...(paths ?? []), requireValue(args, index, argument)];
+        (paths ??= []).push(requireValue(args, index, argument));
         index += 2;
         break;
       case "--paths-from": {

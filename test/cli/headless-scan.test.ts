@@ -174,6 +174,25 @@ Seen(@place("git",1), oid) :- git_revision(r, "HEAD", oid), git_revision(r, ":a.
     expect(detached.checkout).toEqual({ path: root, head, ref: null });
   }, 30_000);
 
+  it("selects a name starting with two dashes from the command line and a path list", async () => {
+    const root = checkout(), home = root + "-home", path = "--alpha.py";
+    writeFileSync(join(root, path), "NEEDLE\n");
+    git(root, "add", "--", path);
+    git(root, "commit", "-qm", "leading dashes");
+    const list = join(root, "paths.txt");
+    writeFileSync(list, path + "\n");
+    const args = ["--repo", root, "--revision", "HEAD", "--analysis-scope", "literal", "--fail-on-violations", "--no-send", "--json"];
+    for (const selection of [[`--path=${path}`], ["--paths-from", list]]) {
+      let output = "";
+      const stdout = { write: (text: string) => { output += text; return true; } };
+      expect(await runAuditCommand("scan", [...args, ...selection], { home, stdout })).toBe(SCAN_VIOLATIONS_EXIT);
+      expect(JSON.parse(output)).toMatchObject({ paths: [path], requestedPaths: [path], skippedPaths: [], violations: [{ path }] });
+    }
+    for (const missing of [["--path="], ["--path", "--json"]]) {
+      await expect(runAuditCommand("scan", [...args, ...missing], { home })).rejects.toThrow("--path requires a value");
+    }
+  }, 30_000);
+
   it("rejects an invalid UTF-8 path list before it can select a replacement-character name", async () => {
     const root = checkout();
     writeFileSync(join(root, "f�.py"), "NEEDLE");
