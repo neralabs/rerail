@@ -17,15 +17,20 @@ translation is checked against its JSON original by the translation suite (`docs
   grammar is a text-only policy (`.scope text`, no `.language`).
 - Each file carries its tests: the pack's caught and passing examples (`packs/rerail/pack.json`), a violating and a
   clean case per clause, and a file the scope leaves out.
+- A tool-call rule (`sample.boundary: "tool-call"`) is a `.scope tool_calls` policy over the call's arguments
+  (`tool_input(c, "command", s)`); each of the JSON's regexes, a search, is `match("(?s:.*)(?:R)(?s:.*)", s)`. The
+  finding is at the call, its code the rule's id, as `translate-json` gives it; its tests feed calls (`.tool_call`).
 
-## The 31 translated rules
+## The 34 translated rules
 
-Each rule's tests pass (`rerail-engine test-rr`, 125 tests), and its findings are the same set as its JSON original's,
-every rule run together on each side, on three corpora: the pack's caught examples, its passing examples (no finding
-on either side for any rule), and this repository at 7efcac9c67 (the scopes' directories: `.github`, `conformance`,
-`integration`, `native` (Rust files), `packs`, `scripts`, `src`, `test`, `ui`, and `package.json`). The counts are
-findings both sides report (keys: rule, path, line, code); no rule has a finding on one side only. Files: the rule's
-policies, `.rerail` for `<rule-id>.rerail` and the language part for `<rule-id>.<part>.rerail`.
+Each rule's tests pass (`rerail-engine test-rr`, 162 tests), and its findings are the same set as its JSON original's,
+every rule run together on each side by the translation suite (`npm run translations:check -- --pack rerail`), on
+three corpora: the pack's caught and passing examples (no finding on either side for a passing one), and this
+repository at 7efcac9c67 (the scopes' directories: `.github`, `conformance`, `integration`, `native/crates`,
+`native/src`, `packs`, `scripts`, `src`, `test`, `ui`, `package.json` and `tsconfig.json`); the tool-call rule on its
+examples as tool calls instead. The counts are findings both sides report (keys: rule, path, line, code; rule and call
+for the tool-call rule); no rule has a finding on one side only. Files: the rule's policies, `.rerail` for
+`<rule-id>.rerail` and the language part for `<rule-id>.<part>.rerail`.
 
 | Rule | Files | Tests | Caught example | Repository | Notes |
 |---|---|---|---|---|---|
@@ -34,7 +39,7 @@ policies, `.rerail` for `<rule-id>.rerail` and the language part for `<rule-id>.
 | `rerail-conformance-pinned-data` | `.rerail` | 3 | same (1) | same (0) | [b](NOTES-rerail-b.md) |
 | `rerail-fixed-value-lists` | `.rerail` | 4 | same (1) | same (0) | [a](NOTES-rerail-a.md) |
 | `rerail-fixtures-root` | `.rerail` | 3 | same (1) | same (21) | below |
-| `rerail-generator-placement` | `php`, `python`, `.rerail`, `shell` | 10 | same (1) | same (0) | [e](NOTES-rerail-e.md) |
+| `rerail-generator-placement` | `php`, `python`, `.rerail`, `shell` | 10 | same (1) | same (4) | [e](NOTES-rerail-e.md) |
 | `rerail-git-no-lazy-fetch` | `.rerail` | 6 | same (1) | same (0) | [c](NOTES-rerail-c.md) |
 | `rerail-grammar-node-kinds` | `.rerail` | 4 | same (1) | same (89) | [d](NOTES-rerail-d.md) |
 | `rerail-home-file-names` | `.rerail` | 3 | same (1) | same (0) | [a](NOTES-rerail-a.md) |
@@ -47,10 +52,11 @@ policies, `.rerail` for `<rule-id>.rerail` and the language part for `<rule-id>.
 | `rerail-origin-ranges` | `.rerail` | 2 | same (1) | same (2) | [d](NOTES-rerail-d.md) |
 | `rerail-pack-data-helper-copies` | `.rerail` | 3 | same (1) | same (0) | [c](NOTES-rerail-c.md) |
 | `rerail-pack-data-runtime-names` | `.rerail` | 3 | same (1) | same (0) | [c](NOTES-rerail-c.md) |
+| `rerail-pack-data-through-publish` | `.rerail` | 23 | same (1) | tool calls only | below |
 | `rerail-pack-package-names` | `.rerail` | 3 | same (1) | same (0) | [a](NOTES-rerail-a.md) |
 | `rerail-pack-rule-test-placement` | `.rerail` | 3 | same (1) | same (0) | [a](NOTES-rerail-a.md) |
 | `rerail-provenance-writers` | `.rerail`, `typescript` | 6 | same (1) | same (1) | [c](NOTES-rerail-c.md) |
-| `rerail-rule-documents-in-packs` | `.rerail` | 3 | same (1) | same (537) | [c](NOTES-rerail-c.md) |
+| `rerail-rule-documents-in-packs` | `.rerail` | 3 | same (1) | same (0) | [c](NOTES-rerail-c.md) |
 | `rerail-session-paths` | `.rerail` | 4 | same (1) | same (2) | [b](NOTES-rerail-b.md) |
 | `rerail-start-state` | `.rerail` | 3 | same (1) | same (0) | below |
 | `rerail-store-reads-in-documents` | `.rerail` | 2 | same (1) | same (11) | below |
@@ -60,14 +66,17 @@ policies, `.rerail` for `<rule-id>.rerail` and the language part for `<rule-id>.
 | `rerail-ui-pure-modules` | `.rerail` | 4 | same (2) | same (0) | [e](NOTES-rerail-e.md) |
 | `rerail-walk-limits` | `.rerail` | 3 | same (2) | same (2) | below |
 | `rerail-walk-limits-native` | `.rerail` | 3 | same (1) | same (8) | below |
+| `rerail-workflow-script-facts` | `.rerail` | 9 | same (1) | same (0) | below |
+| `rerail-workflow-shared-conditions` | `.rerail` | 5 | same (1) | same (0) | below |
 
 Where the repository has no finding, the batches also ran each test's fixtures through the original: all agree. Two
 rules follow the JSON where it reports more than its intent (both sides report; the tests pin it):
 `rerail-language-branching` reports `EMBEDDING_BRANCH` beside `LANGUAGE_BRANCH` on a dialect comparison outside
 `embed/` ([d](NOTES-rerail-d.md)), and `rerail-ui-pure-modules` reports `window` read from a destructured parameter
 ([e](NOTES-rerail-e.md)). Per-rule detail: the batch notes [a](NOTES-rerail-a.md), [b](NOTES-rerail-b.md),
-[c](NOTES-rerail-c.md), [d](NOTES-rerail-d.md), [e](NOTES-rerail-e.md); the first five rules are below. New
-libraries: `lib/tsx/rerail-module-loads.rerail` (b), `lib/rust/rerail-native.rerail` (d), `lib/rr/rerail-ui-colours.rerail` (e).
+[c](NOTES-rerail-c.md), [d](NOTES-rerail-d.md), [e](NOTES-rerail-e.md); the first five rules and the last three are
+below. New libraries: `lib/tsx/rerail-module-loads.rerail` (b), `lib/rust/rerail-native.rerail` (d),
+`lib/rr/rerail-ui-colours.rerail` (e).
 
 ### The first five
 
@@ -82,6 +91,17 @@ libraries: `lib/tsx/rerail-module-loads.rerail` (b), `lib/rust/rerail-native.rer
 `site/check_rr.py` learned that `match_all` binds its match (`match_all("re", sp, m)` binds `m`; over a symbol, the
 ordinal and offsets): it reported every regex rule here as ungrounded, and three earlier files too.
 
+### The last three
+
+They waited on two engine changes: a run lists the files under `.github/` (it skips only the host's ignored
+directories), and a policy reads a coding agent's tool calls (`.scope tool_calls`, `docs/rule-syntax/tool-calls.md`).
+
+| Rule | Differs from the JSON |
+|---|---|
+| `rerail-workflow-script-facts` | No: five regex clauses over workflow and action YAML, read as text. |
+| `rerail-workflow-shared-conditions` | No. The JSON's eleven clauses `release-skip-2` … `release-skip-12` each report the n-th line holding the release pull request skip; here one rule reports each line's first test when 1 to 11 earlier lines hold one, so a 13th repeat is not reported, as in the JSON (a test pins it). |
+| `rerail-pack-data-through-publish` | No: the JSON's five alternatives and two exemptions, its dry-run exemption said once over the two script forms it guards. Both sides agree on its two examples as calls (the suite), and on the tests' 33 calls, each alternative and exemption, run once through the runtime's matcher. Not checked: a command with a non-ASCII letter beside a `\b` (`match` reads `\b` as ASCII, `lib/core.rerail`; the product's regex as Unicode). |
+
 ### Engine faults met on the way (worked around, not changed)
 
 - `run-policies` panics with `no declaration of within` (`native/src/code_rule_dsl/logic/plan/fields.rs`, `width`)
@@ -89,11 +109,4 @@ ordinal and offsets): it reported every regex rule here as ungrounded, and three
   (`rerail-ui-api-precedence` or `rerail-ui-color-tokens.javascript`); each ran alone. The rule now reads the binders
   through `inside` with their kinds.
 - `test-rr` over the whole directory fails tests with `unable to open database file` under the default limit of
-  1,024 open files; with `ulimit -n 65536` all 125 pass.
-
-## Not translated: what the engine lacks
-
-| Rule | The gap | Smallest example | Kind of change |
-|---|---|---|---|
-| `rerail-workflow-script-facts`, `rerail-workflow-shared-conditions` | Every scope is under `.github/`, and the engine's corpus never lists a file under a directory whose name starts with `.`: `corpus_files` in `native/src/code_rule_dsl/logic/plan/corpus.rs` skips them (both the Git listing and the walk). A policy with `.scope include ".github/workflows/**/*.yml"` and `.scope text` the same reads 0 files; the same test with its fixture at `wf/a.yml` passes, at `.github/workflows/a.yml` it fails: `.expect PROBE at ".github/workflows/a.yml":2: no findings`. | `.github/workflows/a.yml` holding `uses: ./.github/actions/php`, a rule matching `uses:` | A design question for the engine's owner, not made here: three definitions disagree. The product's walk skips only `IGNORED_DIRECTORIES` (`src/engine/code-rule/ignored-directories.ts`: `.git`, `.hg`, `.svn`, `.rerail`, `.venv`, `.next`, `.turbo`, `__pycache__`, `node_modules`, `dist`, `build`, `coverage`, `target`, `vendor`); `lib/core.rerail` documents `.git`, `.venv`, `venv`, `__pycache__` and `tmp`; the engine skips every hidden directory and `target`. Which set the engine follows changes the files of every run. |
-| `rerail-pack-data-through-publish` | Not a code rule: it matches a coding agent's tool call (`match` on `input.command`, `sample: { source: "tool:*", boundary: "tool-call" }`), and `.rerail` has no relation for a tool call's input. `rerail-engine translate-json` makes a policy with no rule, which `run-policies` refuses: `no .violation declarations`. | the Bash command `npm run fixtures:push -- --pack react --tool eslint-plugin-react` | A design question: tool-call events as an input of the rule language (a relation per event field) are not part of the engine's model. |
+  1,024 open files; with `ulimit -n 65536` all 162 pass.
