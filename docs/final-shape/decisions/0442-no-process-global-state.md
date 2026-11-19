@@ -128,7 +128,11 @@ by any caller in the process, so two callers of different trust could not be kep
     share one pool, one CPU slot and one learned model. A worker thread's environment has its own. A Rust caller with
     no environment (`CodeRuleDslWorkspace::new`) takes `default_shared`.
   - The strict run (`RERAIL_STRICT_RUN=1`) logs each read outside any run once, by type, with its backtrace, to the
-    engine's stderr.
+    engine's stderr. The B-now policy run (corpus0) logs none, with its 463 findings unchanged (2026-11-19, a Linux
+    profiling build; the Metal path is still to be run so). The last reads were the ones on threads that took a job
+    without its run: a stream's queued job (`accel::stream`, from its start to its finish on the scoreboard), the
+    cores' launches (`exec`'s pool threads), the keeps' per-relation pricing (`plan::keeps`, a `par_iter`), and the
+    services' list of a service started outside any run (the signal watcher, which is now listed in no machine).
 - Step 5, the departures:
   - A read outside any run is not refused, as Decision 2 says. In a product build it takes an object of its own that
     nothing keeps; in a test build, the tests' one. The strict run names each such read.

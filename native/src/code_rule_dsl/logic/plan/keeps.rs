@@ -1436,7 +1436,10 @@ fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTreeMa
             !built.contains(rel.as_str()) && (model.stats.card.contains_key(rel) || observed_rows(rel, nodes).is_some())
         }).collect();
         let model_now: &Model = model;
+        // In the run, on whichever thread prices a relation: its plans read the run's and the object's statistics.
+        let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
         let sums: Vec<(f64, f64)> = each.par_iter().zip(&measured_only).map(|(&i, &measured_only)| {
+            let _in = carry.enter();
             let (mut rows, mut work) = (0.0, 0.0);
             for &k in order[i].1.iter().filter(|_| !measured_only) {
                 if let Some((w, n)) = calibrated_rows(f, model_now, &base.body(k)) {

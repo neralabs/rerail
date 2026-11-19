@@ -626,8 +626,9 @@ pub fn service<T: Send + 'static>(name: &str, stack: Option<usize>, f: impl FnOn
     // may outlive it. One started outside any run (the process's signal watcher, from `main`) has none to carry.
     let shared = rerail_context::shared_object();
     b.spawn(move || {
+        // Listed in its machine's services (one with no object has no machine, and is listed in none).
+        let pools = shared.as_ref().map(|s| s.machine().get::<Pools>());
         let _within = shared.map(rerail_context::within);
-        let pools = pools();
         struct Listed(String, Arc<Pools>);
         impl Drop for Listed {
             fn drop(&mut self) {
@@ -637,8 +638,10 @@ pub fn service<T: Send + 'static>(name: &str, stack: Option<usize>, f: impl FnOn
                 }
             }
         }
-        pools.services.lock().unwrap_or_else(|e| e.into_inner()).push(named.clone());
-        let _listed = Listed(named, pools);
+        let _listed = pools.map(|pools| {
+            pools.services.lock().unwrap_or_else(|e| e.into_inner()).push(named.clone());
+            Listed(named, pools)
+        });
         f()
     })
 }
@@ -1349,7 +1352,12 @@ impl Executor {
                     hosts.push(Arc::clone(b));
                     for _ in 0..per_lane[lane.index()].min(threads()) {
                         let (claims, backend) = (Arc::clone(&claims), Arc::clone(b));
-                        rayon::spawn_fifo(move || as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend)));
+                        // The launches run in their submitter's run, on whichever pool thread takes them.
+                        let run = rerail_context::run_own();
+                        rayon::spawn_fifo(move || {
+                            let _run = rerail_context::enter(run);
+                            as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend))
+                        });
                     }
                 }
                 // A device lane: its worker claims its share when it reaches the batch, and a device with nothing
