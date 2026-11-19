@@ -5,7 +5,8 @@ data"; "parsed strings are only for annotations and maybe format strings, not al
 "if the rules say 'here is an embedded string, here is its sha and here is its tape', then why can't that be kept in
 the facts that the program produces and not changed next time it's run?". On a guest's node ids: (a), a node of a
 parsed string is named by its tape ("do a"); and the split below ("okay, I agree with that"). Supersedes 0055's guest
-documents (§4, "What was built" 3–4) and 0391 (guest keys). Keeps 0055's model of a tape as content, 0058 (hiding,
+documents (§4, "What was built" 3–4) and 0391 (guest keys) but for a file's programs (§4). On a program's node ids,
+§4's second choice, a key of its own from 0391's registry (2026-11-19, the user: "okay, let's try b"). Keeps 0055's model of a tape as content, 0058 (hiding,
 normalized strings, `@parse`), 0104 (no SQL in the waves), 0353 (blocks never copied), 0426 (format 16, unchanged).
 Work queue Q261.
 
@@ -46,8 +47,8 @@ code may be named by which rules asked for it, or in what order.
 
 ## Decision
 
-1. **There are no guest documents.** No document key range for guests, no guest key registry (0391), no embed slice,
-   no rounds outside the engine, no batch built again.
+1. **There are no guest documents.** No document key range for guests, no guest key registry (0391) but for a file's
+   programs (§4: each one's key), no embed slice, no rounds outside the engine, no batch built again.
 2. **A string a rule parses is a tape value.** `@parse(grammar, text)` gives a tape keyed by the sha256 of its text,
    grammar and tape format (0055's key); equal texts anywhere share one. `parsed(s, g, r)` and `sub_tape(s, g, t)` are
    derived by the program's own rules, the parse a functor inside the fixpoint: a rule that reads the tape's nodes is
@@ -69,7 +70,11 @@ code may be named by which rules asked for it, or in what order.
    nodes are numbered in the file's id space after the file's own, in the order the parse found them, so `docof`,
    `line` and `col` are the file's and findings land at its lines. The libraries' structural `embed` rules (`html`,
    `vue`, `blade`, `markdown`, `rr` patterns) become the languages' declarations of what they embed.
-   **How a program is numbered is open** (2026-11-18, the user: "Step 4 first, then decide"). A first scheme put its
+   **A program is numbered by a key of its own** (decided 2026-11-19, the user: "okay, let's try b", the second
+   choice below; step 4 came first, as the user asked on 2026-11-18). Hiding keeps one comparison on a node's key
+   (0058, Tim's 0168), and order keys and the batch are unchanged; the `docof` and `node` views map the program's key
+   to its file. The choice was made so:
+   A first scheme put its
    nodes in the file's key, as granules in a reserved slot range. It met 0058's hiding, which shows a node by one
    comparison on its document's key (and on document columns), and Tim's 0168 (PR #508), which keeps that one
    comparison and rejected per-asker keys as "a join on every bounded atom". The choices, from a survey of the
@@ -199,7 +204,7 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
    packs' `docof(n, d), guest(d, _, s, _)` over parsed strings rewritten (14 uses in 2 files; the `guest` rows left
    are the grammar's programs, step 3's).
 3. Programs as the file's (3a done: HTML declares its embeds, an embedder builds a program per place). The rest
-   waits on the numbering above, decided after step 4: made by the host's parse at load, `with_matchers` once a chunk,
+   waits on the numbering above (decided: a key of its own, §4): made by the host's parse at load, `with_matchers` once a chunk,
    guest documents go (R1, R5, R8).
 4. (Before 3's rest.) 4a, done: a tape value is found by its text's sha and grammar among the tapes the root's last
    runs named, read before the first wave (the run's grammar's with the files', the others' by the tags the program's
