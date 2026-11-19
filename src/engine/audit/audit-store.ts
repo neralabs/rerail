@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, count, desc, eq, getTableColumns, inArray, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, getTableColumns, sql, type SQL } from "drizzle-orm";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../storage/database.js";
@@ -647,9 +647,9 @@ function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQ
 }
 
 function workspaceRoots(database: RerailDatabase, auditIds: readonly string[]): Map<string, string> {
-  if (auditIds.length === 0) return new Map();
+  // The ids go in as one JSON array, so a page of any size is one statement with one bound value.
   const rows = database.select({ auditId: audits.auditId, workspaceRoot: audits.workspaceRoot }).from(audits)
-    .where(inArray(audits.auditId, [...auditIds])).all();
+    .where(sql`${audits.auditId} IN (SELECT value FROM json_each(${JSON.stringify(auditIds)}))`).all();
   return new Map(rows.map(row => [row.auditId, row.workspaceRoot]));
 }
 
