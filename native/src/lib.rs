@@ -476,6 +476,28 @@ impl napi::Task for PrepareAnalysisStore {
 }
 
 #[napi]
+pub fn prepare_directory_analysis_store_async(store: String, directory: String, home: String) -> napi::bindgen_prelude::AsyncTask<PrepareDirectoryAnalysisStore> {
+    napi::bindgen_prelude::AsyncTask::new(PrepareDirectoryAnalysisStore { store, directory, home })
+}
+
+pub struct PrepareDirectoryAnalysisStore { store: String, directory: String, home: String }
+
+impl napi::Task for PrepareDirectoryAnalysisStore {
+    type Output = Option<i64>;
+    type JsValue = Option<f64>;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        content_store::ContentStore::open(Path::new(&self.store))
+            .and_then(|store| store.directory_release_cutoff(Path::new(&self.directory), &self.home))
+            .map_err(|error| Error::from_reason(error.to_string()))
+    }
+
+    fn resolve(&mut self, _env: napi::Env, cutoff: Self::Output) -> Result<Self::JsValue> {
+        Ok(cutoff.map(|value| value as f64))
+    }
+}
+
+#[napi]
 pub fn collect_analysis_cache_async(store_path: String) -> napi::bindgen_prelude::AsyncTask<CollectAnalysisCache> {
     napi::bindgen_prelude::AsyncTask::new(CollectAnalysisCache(store_path))
 }

@@ -101,7 +101,13 @@ Deleting a named scope releases its memberships. The store retains a generation 
 The home also keeps directory-to-store registrations after a stop. One-time scope names and directories can accumulate these bookkeeping rows.
 
 The home records each directory and its analysis stores in a separate SQLite database.
-A scan or watch opens the store, registers it, and then reads the generation.
+A scan or watch opens the store and registers it before acquiring a generation.
+The registry remembers the highest generation issued for this home. Each stop reserves
+the next generation there while it holds the control database's write transaction.
+Rolling back that transaction can leave a gap between generations.
+Acquisition also checks the store's numbered release receipts. A scan after restoration
+of an older control database must acquire a generation above those cutoffs.
+Already running scans keep their original generations.
 It must register the store before it can publish ownership.
 This order lets a stop find every store that can hold an ended generation.
 If the store fails to open, the run uses memory and adds no registration.

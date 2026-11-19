@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { and, eq, lte, sql } from "drizzle-orm";
+import { and, eq, lte } from "drizzle-orm";
 import { analysisScopeGeneration, analysisScopeReleaseProbes, analysisScopeReleases } from "../storage/schema.js";
 import { openRerailDatabase, openSqliteDatabase, type RerailDatabase } from "../storage/database.js";
 import { loadNativeBinding } from "./native.js";
@@ -25,7 +25,7 @@ export function analysisScopeHome(databasePath: string): string {
   return createHash("sha256").update(storedPath(databasePath)).digest("hex");
 }
 
-export function readAnalysisScopeGeneration(databasePath: string): number {
+function readControlGeneration(databasePath: string): number {
   if (!existsSync(databasePath)) return INITIAL_GENERATION;
   const reader = openSqliteDatabase(databasePath, { readonly: true });
   try {
@@ -40,18 +40,42 @@ function storeRegistryPath(databasePath: string): string {
   return `${storedPath(databasePath)}.analysis-stores.sqlite`;
 }
 
-/** Open the store before registering it. Register it before reading the generation. */
-export async function acquireDirectoryAnalysisGeneration(databasePath: string, directory: string, store: string): Promise<number> {
-  await loadNativeBinding().prepareAnalysisStoreAsync(store);
-  registerDirectoryAnalysisStore(databasePath, directory, store);
-  return readAnalysisScopeGeneration(databasePath);
+export function readAnalysisScopeGeneration(databasePath: string): number {
+  const current = readControlGeneration(databasePath);
+  const path = storeRegistryPath(databasePath);
+  if (!existsSync(path)) return current;
+  const index = openSqliteDatabase(path, { readonly: true });
+  try {
+    if (!index.$client.prepare("SELECT 1 FROM sqlite_schema WHERE name='analysis_registry_generation'").get()) return current;
+    const generation = index.$client.prepare("SELECT generation FROM analysis_registry_generation WHERE singleton=1").pluck().get() as number | undefined;
+    return Math.max(current, generation ?? INITIAL_GENERATION);
+  } finally { index.$client.close(); }
 }
 
-function registerDirectoryAnalysisStore(databasePath: string, directory: string, store: string): void {
+/** Register the route and obtain its generation in one transaction of the registry. */
+export async function acquireDirectoryAnalysisGeneration(databasePath: string, directory: string, store: string): Promise<number> {
+  const cutoff = await loadNativeBinding().prepareDirectoryAnalysisStoreAsync(store, directory, analysisScopeHome(databasePath));
+  const floor = Math.max(readControlGeneration(databasePath), (cutoff ?? 0) + 1);
+  return registerDirectoryAnalysisStore(databasePath, directory, store, floor);
+}
+
+function recordRegistryGeneration(index: RerailDatabase, floor: number, increment: 0 | 1): number {
+  index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_registry_generation (singleton INTEGER PRIMARY KEY CHECK(singleton=1), generation INTEGER NOT NULL) STRICT");
+  const generation = index.$client.prepare(`INSERT INTO analysis_registry_generation VALUES (1,?+?)
+    ON CONFLICT(singleton) DO UPDATE SET generation=max(generation,?)+? RETURNING generation`)
+    .pluck().get(floor, increment, floor, increment) as number;
+  if (!Number.isSafeInteger(generation)) throw new Error("Analysis scope generation exceeds the supported integer range");
+  return generation;
+}
+
+function registerDirectoryAnalysisStore(databasePath: string, directory: string, store: string, floor = INITIAL_GENERATION): number {
   const index = openSqliteDatabase(storeRegistryPath(databasePath));
   try {
-    index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_directory_store (directory TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY(directory,path)) STRICT");
-    index.$client.prepare("INSERT OR IGNORE INTO analysis_directory_store VALUES (?,?)").run(storedPath(directory), storedPath(store));
+    return index.$client.transaction(() => {
+      index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_directory_store (directory TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY(directory,path)) STRICT");
+      index.$client.prepare("INSERT OR IGNORE INTO analysis_directory_store VALUES (?,?)").run(storedPath(directory), storedPath(store));
+      return recordRegistryGeneration(index, floor, 0);
+    }).immediate();
   } finally {
     index.$client.close();
   }
@@ -87,9 +111,15 @@ type Transaction = Parameters<Parameters<RerailDatabase["transaction"]>[0]>[0];
 /** Advance the acquisition generation in the same transaction as the stop. */
 export function queueAnalysisScopeReleases(tx: Transaction, directories: readonly string[], databasePath: string): void {
   if (directories.length === 0) return;
-  const { generation } = tx.insert(analysisScopeGeneration).values({ singleton: 1, generation: INITIAL_GENERATION + 1 })
-    .onConflictDoUpdate({ target: analysisScopeGeneration.singleton, set: { generation: sql`${analysisScopeGeneration.generation} + 1` } })
-    .returning({ generation: analysisScopeGeneration.generation }).get();
+  // Serialize stops on the control writer before reserving a generation in the registry.
+  tx.insert(analysisScopeGeneration).values({ singleton: 1, generation: INITIAL_GENERATION }).onConflictDoNothing().run();
+  const current = tx.select().from(analysisScopeGeneration).get()!.generation;
+  const index = openSqliteDatabase(storeRegistryPath(databasePath));
+  let generation: number;
+  try {
+    generation = index.$client.transaction(() => recordRegistryGeneration(index, current, 1)).immediate();
+  } finally { index.$client.close(); }
+  tx.update(analysisScopeGeneration).set({ generation }).where(eq(analysisScopeGeneration.singleton, 1)).run();
   const home = analysisScopeHome(databasePath);
   const nextAttemptAt = Date.now();
   for (const directory of directories) {

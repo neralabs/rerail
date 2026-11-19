@@ -39,21 +39,25 @@ impl AnalysisOwner {
     }
 
     pub(super) fn current(&self, tx: &rusqlite::Connection) -> rusqlite::Result<bool> {
-        // Receipt keys are the exact directory and its ancestors, including a volume root.
-        let mut ancestors = Vec::new();
-        if self.scope.starts_with("cwd:") {
-            ancestors.push(self.scope.as_str());
-            for (at, sep) in self.scope.match_indices(std::path::MAIN_SEPARATOR) {
-                ancestors.extend([&self.scope[..at], &self.scope[..at + sep.len()]]);
-            }
-        }
         tx.query_row_cached(
             "SELECT EXISTS (SELECT 1 FROM analysis_scope_generation WHERE scope=?1 AND generation=?2) \
                 AND (?5 IS NULL OR EXISTS (SELECT 1 FROM analysis_scope_pending WHERE id=?5)) \
                 AND NOT EXISTS (SELECT 1 FROM analysis_scope_release WHERE scope IN (SELECT value FROM json_each(?4)) AND before>=?3)",
-            (&self.scope, self.generation, self.acquired_at, serde_json::to_string(&ancestors).expect("string list"), self.pending.as_deref()), |row| row.get(0),
+            (&self.scope, self.generation, self.acquired_at, receipt_scopes(&self.scope), self.pending.as_deref()), |row| row.get(0),
         )
     }
+}
+
+// A stop covers its directory and descendants, including stops at a volume root.
+fn receipt_scopes(scope: &str) -> String {
+    let mut ancestors = Vec::new();
+    if scope.starts_with("cwd:") {
+        ancestors.push(scope);
+        for (at, sep) in scope.match_indices(std::path::MAIN_SEPARATOR) {
+            ancestors.extend([&scope[..at], &scope[..at + sep.len()]]);
+        }
+    }
+    serde_json::to_string(&ancestors).expect("string list")
 }
 
 /// Keep a scan's unpublished memberships live until it reports an outcome. A process
@@ -181,6 +185,13 @@ pub(super) fn next_acquisition(tx: &rusqlite::Connection) -> rusqlite::Result<i6
 }
 
 impl ContentStore {
+    pub fn directory_release_cutoff(&self, path: &Path, home: &str) -> StoreResult<Option<i64>> {
+        let scope = directory_in(path, Some(home));
+        let db = self.connection.lock().expect("content store connection unavailable");
+        Ok(db.query_row_cached("SELECT max(before) FROM analysis_scope_release
+            WHERE scope IN (SELECT value FROM json_each(?1))", [receipt_scopes(&scope)], |row| row.get(0))?)
+    }
+
     pub fn begin_analysis_scope(&self, scope: &str) -> StoreResult<AnalysisOwner> {
         self.begin_analysis_scope_at(scope, 0)
     }

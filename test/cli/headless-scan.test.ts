@@ -1031,6 +1031,56 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
     } finally { vi.unstubAllEnvs(); }
   });
 
+  it("publishes after a control reset or rollback and honors a stop before the next scan", async () => {
+    const root = checkout(), home = root + "-home";
+    const databasePath = join(home, "rerail.sqlite"), store = join(home, "content.sqlite");
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+    const stop = () => {
+      const db = openRerailDatabase(databasePath);
+      try { db.transaction(tx => queueAnalysisScopeReleases(tx, [root], databasePath)); }
+      finally { db.$client.close(); }
+      settleAnalysisScopeReleases(databasePath);
+    };
+    const run = async () => {
+      const report = await scan(root, { databasePath });
+      expect(report.status).toBe("completed");
+      expect(report.cacheWarnings).toBeUndefined();
+      expect(directoryOwnerCount(store)).toBe(1);
+    };
+    try {
+      await run();
+      const db = openRerailDatabase(databasePath);
+      try { await db.$client.backup(databasePath + ".backup"); }
+      finally { db.$client.close(); }
+      const aborted = openRerailDatabase(databasePath);
+      try {
+        expect(() => aborted.transaction(tx => {
+          queueAnalysisScopeReleases(tx, [root], databasePath);
+          throw new Error("abort stop");
+        })).toThrow("abort stop");
+      } finally { aborted.$client.close(); }
+      settleAnalysisScopeReleases(databasePath);
+      expect(directoryOwnerCount(store)).toBe(1);
+      stop();
+      expect(directoryOwnerCount(store)).toBe(0);
+      rmSync(databasePath);
+      // Model an older registry. The ancestor receipt in the store must protect a child scan.
+      const registry = new Database(databasePath + ".analysis-stores.sqlite");
+      try { registry.exec("DROP TABLE analysis_registry_generation"); } finally { registry.close(); }
+      const child = join(root, "sub");
+      mkdirSync(child);
+      const generation = await acquireDirectoryAnalysisGeneration(databasePath, child, store);
+      const [{ before }] = queryContentStore<{ before: number }>(store, "SELECT before FROM analysis_scope_release");
+      expect(generation).toBeGreaterThan(before);
+      await run();
+      renameSync(databasePath + ".backup", databasePath);
+      stop();
+      expect(directoryOwnerCount(store)).toBe(0);
+      expect(readAnalysisScopeGeneration(databasePath)).toBeGreaterThan(generation);
+      await run();
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it("drops all staged ownership when one audit cannot retain its snapshot", async () => {
     const root = checkout();
     const databasePath = join(`${root}-home`, "rerail.sqlite");
