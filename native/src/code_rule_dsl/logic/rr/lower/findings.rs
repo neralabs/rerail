@@ -21,6 +21,9 @@ pub const HOLE: &str = "hole";
 /// The index of `message` in a finding's row (`HEAD`).
 pub const MESSAGE_COLUMN: usize = 6;
 
+/// Decision 0431 R9: the clauses whose findings are placed at a node no file holds (`corpus::refuse_unplaced`).
+pub const UNPLACED: &str = "rr_unplaced";
+
 /// Whether `rel` is a finding's relation.
 pub fn is_diagnostic(rel: &str) -> bool {
     rel.starts_with(PREFIX)
@@ -306,6 +309,19 @@ impl<'p> Findings<'_, 'p> {
             self.put(&mut o, "col", &[v0.clone(), c.clone()], false);
             self.scope(&mut o, scoped);
             self.close(o)?;
+            // Decision 0431 R9: a finding at a node whose document is no file's (a tape value's) is refused by the run.
+            self.b.declare_absent(UNPLACED, &[("clause", "sym")]);
+            self.b.add_output(UNPLACED);
+            let clause = self.s(&f.name);
+            let mut o = self.open(UNPLACED, &[clause]);
+            self.put(&mut o, &f.name, &cols, false);
+            if f.node {
+                self.put(&mut o, "node", &[d.clone(), v0.clone(), w(), w(), w()], false);
+            } else {
+                self.put(&mut o, "docof", &[v0.clone(), d.clone()], false);
+            }
+            self.put(&mut o, "doc", &[d.clone(), w(), w()], true);
+            self.close(o)?;
             if !f.node && place_values {
                 let path = self.call(PLACE_PATH, vec![v0.clone()]);
                 let line = self.call(PLACE_LINE, vec![v0.clone()]);
@@ -390,6 +406,29 @@ impl<'p> Findings<'_, 'p> {
             let mut o = self.open("violation", &head);
             body(self, &mut o);
             self.close(o)?;
+            // A string a rule parses is a tape value (decision 0431): no file's, its lines its own text's. It is
+            // reported at each string holding its text, at the string's line in the string's file. Where the
+            // program has tape values (`tape_of`, `sub_tape`).
+            if ["tape_of", "sub_tape"].iter().all(|r| self.b.declares(r)) {
+                for rel in ["tape_of", "sub_tape"] {
+                    self.b.add_input(rel);
+                }
+                let at_string = |me: &mut Self, o: &mut Open| {
+                    let (p, l, d) = (me.v("rr_p"), me.v("rr_l"), me.v("rr_d"));
+                    let (t, s, h) = (me.v("rr_t"), me.v("rr_s"), me.v("rr_h"));
+                    let g = grammar.as_deref().map_or(Tm::Wild, |g| me.s(g));
+                    me.put(o, "syntax_error", &[d.clone(), Tm::Wild, Tm::Wild], false);
+                    me.put(o, "tape_of", &[d, t.clone()], false);
+                    me.put(o, "sub_tape", &[s.clone(), g, t], false);
+                    me.put(o, "docof", &[s.clone(), h.clone()], false);
+                    me.put(o, "doc", &[h, p, Tm::Wild], false);
+                    me.put(o, "line", &[s, l], false);
+                };
+                self.error_diagnostic(&policy, "guest_error", &code, &at_string)?;
+                let mut o = self.open("violation", &head);
+                at_string(self, &mut o);
+                self.close(o)?;
+            }
         }
         Ok(true)
     }

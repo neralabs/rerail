@@ -1946,3 +1946,62 @@ fn a_message_edit_finds_the_program_prepared_and_a_rule_edit_does_not() {
     assert_eq!(edited.difference(&first).count(), 1, "a rule edit prepares another program");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Decision 0431 R9 (django-bugs' 2e9d16bc8, ported): a finding's lowering derives `rr_unplaced(clause)` for a finding
+/// at a node whose document is no file's, an output; a run whose `rr_unplaced` holds rows is refused, naming the
+/// clauses. A finding at a file's node derives none, and its run is not refused.
+#[test]
+fn a_finding_no_file_holds_is_refused_naming_its_clause() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("unplaced");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("ws")).unwrap();
+    std::fs::write(dir.join("ws/a.py"), "assert x\n").unwrap();
+    let text = ".policy \"p\" revision 1\n.language python\n.violation Assert(at: node) \"an assert\"\nAssert(n) :- kind(n, \"assert_statement\").\n";
+    let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
+    let shown = v.show();
+    assert!(shown.contains("rr_unplaced(\"Assert\") :- Assert(") && shown.contains("!doc("), "the lowering writes R9's rule:\n{shown}");
+    assert!(v.output_names().iter().any(|o| o == crate::code_rule_dsl::logic::rr::UNPLACED));
+    let out = dir.join("out");
+    let run = |text: &str, out: &std::path::Path| super::run(text, &dir.join("ws"), None, out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    run(text, &out).unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap().len(), 1, "a file's node: found");
+    assert!(crate::code_rule_dsl::logic::plan::output::shown(&out, crate::code_rule_dsl::logic::rr::UNPLACED).unwrap().is_empty(), "and placed");
+    // A run whose `rr_unplaced` holds a row (here derived outright) is refused, naming the clause.
+    // Its rule reads `kind(_, "assert_statement")`, merged into `Assert`: an export now, the first run's output alone.
+    // The file's memo entry holds no exported rows of it, so the file is a miss, not a hit with none.
+    let second = format!("{text}rr_unplaced(\"Assert\") :- kind(_, \"assert_statement\").\n");
+    let out2 = dir.join("out2");
+    let err = run(&second, &out2).err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(err.contains("Assert") && err.contains("tape value"), "{err:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A rule whose head holds no variable, over a file's nodes (`zz("A") :- kind(_, "assert_statement")`), holds its row
+/// when a node matches, as one with a variable does, in a language's run (its program split by file).
+#[test]
+fn a_constant_head_over_a_files_nodes_holds_its_row() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("constant-head");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("ws")).unwrap();
+    std::fs::write(dir.join("ws/a.py"), "assert x\n").unwrap();
+    let text = "\
+.policy \"p\" revision 1
+.language python
+.violation Assert(at: node) \"an assert\"
+Assert(n) :- kind(n, \"assert_statement\").
+.decl c1(c: symbol)
+c1(\"A\") :- kind(_, \"assert_statement\").
+.decl c2(c: symbol)
+c2(c) :- kind(_, \"assert_statement\"), c = \"A\".
+.decl c3(c: symbol)
+c3(\"A\") :- kind(n, \"assert_statement\"), n = n.
+.decl v(n: node)
+v(n) :- kind(n, \"assert_statement\").
+.output c1, c2, c3, v
+";
+    let out = dir.join("out");
+    super::run(text, &dir.join("ws"), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let got: Vec<(String, usize)> = ["c1", "c2", "c3", "v"].iter().map(|r| (r.to_string(), crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap().len())).collect();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(got, [("c1".to_owned(), 1), ("c2".to_owned(), 1), ("c3".to_owned(), 1), ("v".to_owned(), 1)]);
+}

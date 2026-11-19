@@ -604,6 +604,12 @@ Progress (2026-11-18):
     5.7 G then 3.3 G. The last number recorded before stage 6 (t36, 2026-11-15: 171-179 G cold, 4.5-5 G warm) spans
     many other commits and another host, so the difference is not stage 6's alone. The outputs are no longer `.csv`,
     so t36's digest of them does not carry over; the findings count is the comparison.
+- **Convergence with django-bugs (2026-11-19).** Its 0431 step 2 changed the findings writer in the tree forms this
+  branch deleted (2e9d16bc8). Its findings semantics are ported onto the writer here, so its merge keeps one writer:
+  R9's `rr_unplaced(clause)` for a finding at a node whose document is no file's, the run's refusal naming the
+  clauses (`corpus::refuse_unplaced`), `rr_unplaced` shared across a batch's programs, and a guest error reported at
+  each string holding a tape value's text (written only where the program has `tape_of` and `sub_tape`, which come
+  with that branch). Locked by `a_finding_no_file_holds_is_refused_naming_its_clause`.
 
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 
