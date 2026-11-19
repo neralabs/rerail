@@ -287,13 +287,13 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
     // A test's own store, the template's path and the threads said to ask off a test's (`test_store`): which files
     // the tests' stores are, not results.
+    // The caller's options for its runs' inputs (`--facts`, `--require-facts`, `--base`; decision 0442).
+    ("code_rule_dsl/logic/plan/corpus/inputs.rs", "OPTIONS"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "HANDED"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "PATH"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "SAID"),
     // Profiling totals, consumed and cleared by each report; no reusable results.
-    ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
-    ("code_rule_dsl/logic/plan/corpus/inputs.rs", "FACTS_DIR"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN"),
     // Phase 1's exports while the run that ran it is under way: the run's own facts, gone when it ends.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "PHASE_ONE"),

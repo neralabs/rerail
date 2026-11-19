@@ -195,16 +195,12 @@ native/src/code_rule_dsl/logic/plan/corpus.rs::OFF	review
 native/src/code_rule_dsl/logic/plan/corpus.rs::PATH	review	
 native/src/code_rule_dsl/logic/plan/corpus.rs::PREPARED	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/logic/plan/corpus.rs::RUNS_STARTED	review	
-native/src/code_rule_dsl/logic/plan/corpus/inputs.rs::BASE	review	
-native/src/code_rule_dsl/logic/plan/corpus/inputs.rs::FACTS_DIR	review	
-native/src/code_rule_dsl/logic/plan/corpus/inputs.rs::REQUIRE_FACTS	review	
 native/src/code_rule_dsl/logic/plan/corpus/phase0.rs::KEPT	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/logic/plan/corpus/phase0.rs::RUNS	review	
 native/src/code_rule_dsl/logic/plan/corpus/session.rs::GENERATION	review	
 native/src/code_rule_dsl/logic/plan/corpus/switches.rs::CHANGED	review	
 native/src/code_rule_dsl/logic/plan/corpus/switches.rs::STATE	run	the RERAIL_* switches' gate: a setting is the run's, read as it starts
 native/src/code_rule_dsl/logic/plan/coverage.rs::CENSUS	review	
-native/src/code_rule_dsl/logic/plan/joins.rs::DRAIN	review	
 native/src/code_rule_dsl/logic/plan/joins.rs::EXACT	review	
 native/src/code_rule_dsl/logic/plan/joins.rs::JOB	shared	shared by design: a learned model, its queue or its job
 native/src/code_rule_dsl/logic/plan/joins.rs::MEMO	shared	shared by design: a learned model, its queue or its job
@@ -216,8 +212,6 @@ native/src/code_rule_dsl/logic/plan/joins.rs::RAISED	review
 native/src/code_rule_dsl/logic/plan/joins.rs::REQUESTS	shared	shared by design: a learned model, its queue or its job
 native/src/code_rule_dsl/logic/plan/keeps.rs::OBSERVED	review	
 native/src/code_rule_dsl/logic/plan/output.rs::WRITES	review	
-native/src/code_rule_dsl/logic/plan/placement.rs::RECORDED	run	a run's measurement: two runs at once mix their numbers
-native/src/code_rule_dsl/logic/plan/placement.rs::RECORDING	review	
 native/src/code_rule_dsl/logic/plan/table.rs::BATCHES	review	
 native/src/code_rule_dsl/logic/plan/table.rs::IN_PLACE	review	
 native/src/code_rule_dsl/logic/plan/table.rs::NAMES	shared	shared by design: an interner (names are visible to every caller holding it)
@@ -425,7 +419,7 @@ native/src/content_store/connection.rs::ALL_CONNECTIONS	shared	shared by design:
 native/src/content_store/connection.rs::CONNECTION_FUNCTIONS	stays	code a crate above registers at load
 native/src/content_store/connection.rs::HANDLES	shared	shared by design: one per store file
 native/src/content_store/connection.rs::ONCE	review	
-native/src/content_store/frames.rs::COUNTED	run	a run's own results or batch: two runs at once collide
+native/src/content_store/frames.rs::COUNTED	shared	the store's: which run token last counted each space, on the store's writer connection (batch 5)
 native/src/content_store/frames.rs::SNAPSHOTS	shared	shared by design: one per store file
 native/src/content_store/journal.rs::COUNTER	review	
 native/src/content_store/journal.rs::EPOCH	review	
