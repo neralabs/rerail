@@ -593,6 +593,33 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 27, done: no working rows in the format 16 run, only a stack of open nodes, in the generated Rust
+
+After step 26, each node still wrote a working row of 12 bytes (its kind and field, start, end):
+- the open stack held node numbers, and a call's number was kept in its container's row;
+- a `CLOSE` wrote its node's end there, and `ACCEPT` the root's;
+- a `NODE_SUPER` wrote a supertype record, and a `NODE_FIELD` the row's field;
+- a leaf's row was read once, by `leaf16`, right after it was written.
+
+In a format 16 run none of that is read: each node's field and supertypes are in its number,
+taken at its word (`key_after`), and the ops hold the nodes. So the format 16 source has:
+- `open16`: the number, `w_open` at the token's start, `w_commit`, and a slot pushed on the stack
+  of open nodes, which then holds the call number (`keep_ret`, `taken_ret`), as simdjson's
+  stack holds a container's kind alone;
+- `leaf16`: the number, `w_leaf` with the token's bytes, `w_commit`;
+- `close`: the end, `w_close`, the stack popped;
+- no code at a `NODE_SUPER` or a `NODE_FIELD`, and no row at `ACCEPT`.
+
+`rust_source_16` refuses a deferred or extra leaf and provisional fields, which read rows; JSON
+has neither.
+
+**The check:** the rule function reads no row and makes no supertype record; `open16`, `leaf16`,
+`close`, `accept`, `keep_ret` and `taken_ret` touch no row and no format 15 cell; and the bytes
+are still the JIT's on all 82 files. `taken_ret` reading the wrong slot fails it.
+
+Left: the harness still sizes the rows for the bound (`CompiledStream::tape`) though this run
+writes none; that is the host's allocation, not the parse's work.
+
 ## Step 26, done: no format 15 cells in the format 16 run, in the generated Rust
 
 After step 25, each node's word still wrote format 15's cells beside the ops' own: its offset
@@ -844,6 +871,7 @@ The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` write
 | an escape: `escape_map[c]`, the `\u` work only after a `u` | `CODES2[c]`, then `\u` to its two checks and the eight others, one range, past them | yes, since step 16 |
 | the closing quote ends the string | the closer's arm goes on at once | yes, since step 16 |
 | the tape: a word a value, written once, in place | format 16 (decision 0434): each node passed to the writer's ops at its word, as it is made (`open16`, `leaf16`, `w_close`), each cell at its final place; the ops' `finish` moves the last block down and lays the tail | since step 25 |
+| the stack: open containers only (`is_array[depth]`) | format 16 run: a slot an open node, its call number; no row a node | since step 27 |
 
 What follows, in order, each change made in `rust_stream` or in the compiler, and judged on
 the Rust it writes:

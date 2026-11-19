@@ -344,6 +344,10 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     let (widths16, tag16) = jit.parser.sixteen().expect("a format 16 tier 2").widths_tag();
     let src16 = rerail_compiler::rust_stream::rust_source_16(&native, widths16, tag16).expect("tier 2 writing format 16, as Rust");
     let made16 = src16.matches("s.open16(").count() + src16.matches("s.leaf16(").count();
+    // No working row: the rule touches neither rows nor supertype records, only the stack of open
+    // nodes (a call's number in each) and the ops.
+    let rule16 = src16.split("\nfn r0(").nth(1).expect("the rule");
+    assert!(!rule16.contains("s.row(") && !rule16.contains("s.open(") && !rule16.contains("s.leaf::<") && !rule16.contains("s.node_super("), "no row in a format 16 run");
     assert!(made16 == made && src16.contains("mod w {") && !src16.contains("self.finish(") && !src16.contains("s.code_now("), "each node to the ops as it is made, no image");
     if let Ok(dir) = std::env::var("RERAIL_DUMP_TIER2") {
         std::fs::write(std::path::Path::new(&dir).join("simdjson16.rs"), &src16).expect("writes the source");
@@ -351,9 +355,9 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // Written once: no format 15 cell (an offset, a block's base, a size, a tail) beside the ops' cells.
     // (The edits' methods, which no word of this program calls, keep theirs.)
     let body = |name: &str| src16.split(name).nth(1).and_then(|rest| rest.split("\n    }\n").next()).unwrap_or_else(|| panic!("{name}")).to_string();
-    for name in ["    fn open(", "    fn leaf<", "    fn close<", "    fn accept("] {
+    for name in ["    fn open16(", "    fn leaf16(", "    fn close<", "    fn accept(", "    fn keep_ret(", "    fn taken_ret("] {
         let b = body(name);
-        assert!(!b.contains("self.push_off(") && !b.contains("self.close_cells(") && !b.contains("_c.add("), "no format 15 cells in a format 16 run's {name}");
+        assert!(!b.contains("self.push_off(") && !b.contains("self.close_cells(") && !b.contains("_c.add(") && !b.contains("self.row("), "no format 15 cells or rows in a format 16 run's {name}");
     }
     let entry16 = aot_entry(&src16);
     // SAFETY: as the format 15 entry's, on the format 16 run's harness (`write16`: the writer and numbers set).

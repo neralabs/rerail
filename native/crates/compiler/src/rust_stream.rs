@@ -423,6 +423,9 @@ fn source(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixte
     if sixteen && !facts.coded {
         return Err("format 16 ahead of time: a node's key not known at its word (`coded`)".into());
     }
+    if sixteen && !native.readings.provisional.is_empty() {
+        return Err("format 16 ahead of time: provisional fields, which `ACCEPT` reads from the rows".into());
+    }
     if let Some(fx) = &facts.fetch {
         for pc in 0..words.len() {
             if matches!(words[pc].operation, Op::Token { .. }) && fx.seen[pc] == [true, true] {
@@ -1043,8 +1046,8 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
         self.nodes = n + 1;
     }
 
-    /// A call's number, kept in its container's row (the node open last), whose end the `CLOSE`
-    /// writes (`OneFn::stacked`).
+    /// A call's number, kept in its container's place (the node open last): its row, whose end the
+    /// `CLOSE` writes (`OneFn::stacked`), or in a format 16 run its slot on the stack (`open16`).
     #[inline(always)]
     fn keep_ret(&mut self, k: u32) {
         unsafe { (*self.row(*Self::col(self.open, self.nopen - 1))).end = k };
@@ -1422,29 +1425,38 @@ $COMMIT_CLOSE        Ok(())
         Ok(number)
     }
 
-    /// The node `OPEN` made, passed to the writer's ops (`Facts::sixteen`): opened by its number at its
-    /// start, then committed, as `native_cpu_tape::pass` passes a node.
+    /// `OPEN` in a format 16 run (`Facts::sixteen`): the node passed to the writer's ops, opened by its
+    /// number at the token's start, then committed, as `native_cpu_tape::pass` passes a node. Tier 2
+    /// keeps no row of it: its slot on the stack of open nodes holds the call number `keep_ret` puts
+    /// there, as simdjson's stack holds a container's kind alone.
     #[inline(always)]
     fn open16(&mut self, kf: u32, classes: u32) -> R {
         let number = self.number16(kf, classes)?;
-        // SAFETY: the writer's state, its room reserved for the run (`f16::Writer::reserve_run`).
+        self.pending = 0;
+        // SAFETY: the writer's state, its room reserved for the run (`f16::Writer::reserve_run`); the
+        // stack's room is the bound's.
         unsafe {
-            w::w_open(self.writer, number, u64::from((*self.row(self.nodes - 1)).start));
+            w::w_open(self.writer, number, u64::from(self.start));
             w::w_commit(self.writer);
+            *Self::col(self.open, self.nopen) = 0;
         }
+        self.nopen += 1;
+        self.nodes += 1;
         Ok(())
     }
 
-    /// The node `LEAF` made, passed to the writer's ops: its number, its bytes, then committed.
+    /// `LEAF` in a format 16 run: the node passed to the writer's ops, its number and its bytes, then
+    /// committed. No row.
     #[inline(always)]
-    fn leaf16(&mut self, kf: u32, classes: u32) -> R {
+    fn leaf16(&mut self, kf: u32, classes: u32, end: u32) -> R {
         let number = self.number16(kf, classes)?;
+        self.pending = 0;
         // SAFETY: as `open16`'s.
         unsafe {
-            let r = self.row(self.nodes - 1);
-            w::w_leaf(self.writer, number, u64::from((*r).start), u64::from((*r).end));
+            w::w_leaf(self.writer, number, u64::from(self.start), u64::from(end));
             w::w_commit(self.writer);
         }
+        self.nodes += 1;
         Ok(())
     }
 ",
@@ -1611,10 +1623,19 @@ fn cells16(x: &Facts<'_>, t: &str) -> String {
         "        let kept = self.nodes - self.pending;\n        self.close_cells(at, kept - at, kept - 1, end);\n",
         "        self.close_cells(n, 1, n, end);\n",
         "        self.close_cells(root, nodes - root, nodes - 1, self.len);\n",
+        // No rows (`open16`): a close and the root's end touch only the stack and the ops.
+        "        let at = unsafe { *Self::col(self.open, self.nopen) };\n",
+        "        unsafe { (*self.row(at)).end = end };\n",
+        "        let root = unsafe { *self.open };\n        unsafe { (*self.row(root)).end = self.len };\n",
     ] {
         out = out.replace(line, "");
     }
-    out
+    // A call's number in its container's slot on the stack, not in a row.
+    out.replace(
+        "unsafe { (*self.row(*Self::col(self.open, self.nopen - 1))).end = k };",
+        "unsafe { *Self::col(self.open, self.nopen - 1) = k };",
+    )
+    .replace("unsafe { (*self.row(*Self::col(self.open, self.nopen - 1))).end }", "unsafe { *Self::col(self.open, self.nopen - 1) }")
 }
 
 /// `RETAG m=3`: reading `i` over the node made last at the innermost level and the nodes inside
@@ -2176,7 +2197,11 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
             let code = if x.coded {
                 let (field, classes) = key_after(x, pc);
                 let kf = if field != 0 { kf & 0xffff | field } else { kf };
-                if x.sixteen { format!("s.open16({kf}, {classes:#x})?;\n") } else { format!("s.code_now({kf}, {classes:#x});\n") }
+                if x.sixteen {
+                    // The node is the ops' alone: no row, its container's slot on the stack.
+                    return Ok(format!("s.open16({kf}, {classes:#x})?;\n{}", jump(0)?));
+                }
+                format!("s.code_now({kf}, {classes:#x});\n")
             } else {
                 String::new()
             };
@@ -2202,7 +2227,13 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
             if x.coded {
                 let (field, classes) = key_after(x, pc);
                 let kf = if field != 0 { format!("kf & 0xffff | {field}") } else { "kf".into() };
-                let now = if x.sixteen { format!("s.leaf16({kf}, {classes:#x})?;") } else { format!("s.code_now({kf}, {classes:#x});") };
+                if x.sixteen {
+                    if deferred || extra {
+                        return Err(format!("word {pc}: a deferred or extra leaf in a format 16 run"));
+                    }
+                    return Ok(format!("let kf = {k};\ns.leaf16({kf}, {classes:#x}, {end})?;\n{}", jump(0)?));
+                }
+                let now = format!("s.code_now({kf}, {classes:#x});");
                 return Ok(format!("let kf = {k};\ns.leaf::<{deferred}, {extra}>(kf, {end});\n{now}\n{}", jump(0)?));
             }
             format!("s.leaf::<{deferred}, {extra}>({k}, {end});\n{}", jump(0)?)
@@ -2237,6 +2268,8 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
         Op::Wrap { kind } => format!("s.wrap({kind})?;\n{}", jump(0)?),
         Op::Merge { kind, fold: true } => format!("s.fold({kind})?;\n{}", jump(0)?),
         Op::Merge { kind, fold: false } => format!("s.merge({kind}, {end})?;\n{}", jump(0)?),
+        // In a format 16 run the node's field and supertypes are in its number, taken at its word (`key_after`).
+        Op::NodeField { on: On::Here, .. } | Op::NodeSuper { .. } if x.sixteen => jump(0)?,
         Op::NodeField { field, on: On::Here } => format!("unsafe {{ (*s.row(s.nodes - 1)).field = {field} }};\n{}", jump(0)?),
         Op::NodeField { field, on: On::Moved } => format!("unsafe {{ (*s.row(s.moved)).field = {field} }};\n{}", jump(0)?),
         Op::NodeField { field, on: On::Made } => format!("s.made_field::<false>({field})?;\n{}", jump(0)?),
