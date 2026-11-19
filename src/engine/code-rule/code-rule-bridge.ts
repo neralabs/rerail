@@ -16,7 +16,7 @@ import type {
   WalkView,
 } from "./code-rule.js";
 import type { AuditMode } from "../audit/audit.js";
-import { fileStamp } from "../file-stamp.js";
+import { fileStamp, stampTime } from "../file-stamp.js";
 import {
   gitBranchTips,
   gitCommitsBetween,
@@ -375,12 +375,22 @@ async function modifiedSince(absolute: string, modifiedAt: number): Promise<numb
  * for as its read ends (`#toolChanges`): the command may have begun after the walk looked, and be part way through what
  * the walk read. With none, none the walk holds sources back for began before the bytes were read. The original `stamp`
  * is kept either way, so the next walk reads the file again. A file such a walk cannot stamp after its read (gone, as
- * when the command emptied and then removed it) is stamped now, so the command holds it back too.
+ * when the command emptied and then removed it) is stamped now, so the command holds it back too. So is one whose times
+ * after the read do not date the bytes it read (`undated`, `undatedRead`).
  */
-async function stampOfRead(walk: SourceWalk, absolute: string, modifiedAt: number): Promise<number> {
+async function stampOfRead(walk: SourceWalk, absolute: string, modifiedAt: number, undated: (at: number) => boolean): Promise<number> {
   if (!walk.captureChanges) return await modifiedSince(absolute, modifiedAt);
   if (walk.commandRuns?.() !== true) return modifiedAt;
-  return await modifiedSince(absolute, modifiedAt).catch(async () => Math.max(modifiedAt, await filesystemClock()));
+  const after = await modifiedSince(absolute, modifiedAt).catch(() => undefined);
+  return after === undefined || undated(after) ? Math.max(modifiedAt, await filesystemClock()) : after;
+}
+/**
+ * Whether a walk read other bytes than those the session last observed of the file, `previous`, though the file's times,
+ * `at`, have not moved past that observation's. Those times do not say when the bytes were written: a file system can
+ * show a change before it stamps it, as Linux empties a file it truncates before it gives the file its new times.
+ */
+function undatedRead(previous: ObservedSource | undefined, bytes: Buffer, at: number): boolean {
+  return previous?.stamp !== undefined && at <= stampTime(previous.stamp) && previous.digest !== sha256(bytes);
 }
 /**
  * A text file as a walk observes it, with its text only when it may be an edit (`#discoveredEdit`): its digest is not
@@ -3128,7 +3138,7 @@ export class CodeRuleBridge {
     read: LentBytes,
   ): Promise<Source | undefined> {
     if (walk.discovery.cancelled) return undefined;
-    const modifiedAt = await stampOfRead(walk, location.absolute, stamped.modifiedAt);
+    const modifiedAt = await stampOfRead(walk, location.absolute, stamped.modifiedAt, at => undatedRead(previous, read.bytes, at));
     if (walk.discovery.cancelled) return undefined;
     const content = nonText(location, read.bytes);
     return content === undefined ? observedText(walk, { ...stamped, modifiedAt }, previous, read) : { ...stamped, modifiedAt, ...content };

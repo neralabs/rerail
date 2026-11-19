@@ -59,6 +59,8 @@ const listings = vi.hoisted(() => ({
 }));
 /** For each path in it, the next file handles opened there call these, in turn, once closed (`readEnded`). */
 const closedReads = vi.hoisted(() => new Map<string, Array<() => void>>());
+/** For each path in it, the times every `lstat` there reports in place of the file's own (`holdTimes`). */
+const heldTimes = vi.hoisted(() => new Map<string, { mtimeMs: number; ctimeMs: number; mtime: Date; ctime: Date }>());
 /** How many of the next Git reads run, in Git's place, a program that stays until it is ended, as a Git still at work does. */
 const heldGit = vi.hoisted(() => ({ reads: 0 }));
 /** How many of the files a walk read were made into text (`LentBytes.text`), for the tests that pin what a walk keeps. */
@@ -123,6 +125,11 @@ vi.mock("node:fs/promises", async importOriginal => {
     opendir: async (...args: Parameters<typeof actual.opendir>) => {
       await discovery.directories.get(String(args[0]))?.shift()?.();
       return await actual.opendir(...args);
+    },
+    lstat: async (...args: Parameters<typeof actual.lstat>) => {
+      const info = await actual.lstat(...args);
+      const times = heldTimes.get(String(args[0]));
+      return times === undefined ? info : Object.assign(Object.create(Object.getPrototypeOf(info) as object) as typeof info, info, times);
     },
     // A test can make Windows hold a folder for a moment (holdRemovals).
     rm: vi.fn(actual.rm),
@@ -247,6 +254,18 @@ function mostHoldingSlots(asked: typeof listings.asked): number {
   return Math.max(0, ...holding);
 }
 
+/**
+ * Makes every `lstat` of `path` report the times of `earlier`, an `lstat` of it taken before, until `release`, which the
+ * clean-up calls too: Linux shows a file it truncates emptied before it gives the file its new times.
+ */
+function holdTimes(path: string, earlier: { mtimeMs: number; ctimeMs: number; mtime: Date; ctime: Date }): { release(): void } {
+  const { mtimeMs, ctimeMs, mtime, ctime } = earlier;
+  heldTimes.set(path, { mtimeMs, ctimeMs, mtime, ctime });
+  const release = () => { heldTimes.delete(path); };
+  releases.push(release);
+  return { release };
+}
+
 /** Resolves once the next file handle opened at `path` is closed: a read of the file has ended. */
 function readEnded(path: string): Promise<void> {
   const ended = Promise.withResolvers<void>();
@@ -299,6 +318,7 @@ afterEach(async () => {
   listings.calls.length = 0;
   closedReads.clear();
   releases.splice(0).forEach(release => release());
+  heldTimes.clear();
   discovery.reads.clear();
   discovery.directories.clear();
   discovery.opens.clear();
@@ -1401,6 +1421,79 @@ describe("CodeRuleBridge", () => {
       { generatedText: "x = 2\n", previousText: "x = 1\n" },
       { generatedText: "x = 3\ny = 4\n", previousText: "x = 2\n" },
     ]);
+  });
+
+  // Linux empties a file it truncates before it gives the file its new times. A walk that read the file between the two
+  // found it empty, with the times of the write before, which came before the command that empties it began, and took
+  // the empty file as the session's edit. Here the file keeps those times while the walk at the other command's result
+  // reads it, as it did in the walk the session's open leaves running.
+  it("leaves a file a command empties to the walk after it ends, though the file's times still say it changed before the command began", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "x = 1\n");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    await bridge.begin("write-1", "write", { path: ["src/a.py"] });
+    await writeFile(path, "x = 2\n");
+    await bridge.finish("write-1");
+    // Every walk so far has run, so the walk below is the one at shell-2's result.
+    await bridge.checkpoint("turn");
+    const written = await lstat(path);
+    await awaitClockAfter(path);
+
+    await bridge.begin("shell-1", "Bash", { command: "python3 generate.py" });
+    await bridge.begin("shell-2", "Bash", { command: "ls" });
+    const stamping = holdTimes(path, written);
+    await writeFile(path, "");
+    await bridge.finish("shell-2");
+    stamping.release();
+    await writeFile(path, "x = 2\ny = 3\n");
+    await bridge.finish("shell-1");
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ generatedText, previousText }) => ({ generatedText, previousText }))).toEqual([
+      { generatedText: "x = 2\n", previousText: "x = 1\n" },
+      { generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n" },
+    ]);
+  });
+
+  // A command still running holds back only what changed once it had begun: a change made before is checked at the walk
+  // that finds it, and a file the walk finds as the session last saw it is kept as that walk saw it, as before.
+  it("checks a file a command changed before another command began at that command's result, while the other still runs", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    const kept = join(root, "src", "b.py");
+    await writeFile(path, "x = 1\n");
+    await writeFile(kept, "y = 1\n");
+    // Written before the session's start, so its first walk takes both files as they are.
+    await awaitClockAfter(path, kept);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const observations: SourceObservationCache = new Map();
+    const bridge = createBridge(root, auditor(auditGeneratedEdits), { observations });
+    await bridge.openWorkspace("session-1");
+    await bridge.begin("write-1", "write", { path: ["src/a.py"] });
+    await writeFile(path, "x = 2\n");
+    await bridge.finish("write-1");
+    await bridge.checkpoint("turn");
+    // An edit tool's own read of what it wrote is the session's last sight of the file, until a walk reads it again.
+    await bridge.begin("write-2", "write", { path: ["src/b.py"] });
+    await writeFile(kept, "y = 2\n");
+    await bridge.finish("write-2");
+    await awaitClockAfter(path, kept);
+
+    await bridge.begin("shell-2", "Bash", { command: "python3 generate.py" });
+    await writeFile(path, "x = 3\n");
+    await awaitClockAfter(path);
+    await bridge.begin("shell-1", "Bash", { command: "sleep 60" });
+    await bridge.finish("shell-2");
+    const edits = () => auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ path: edited, generatedText, previousText }) => ({ path: edited, generatedText, previousText }));
+    expect(edits()).toEqual([
+      { path: "src/a.py", generatedText: "x = 2\n", previousText: "x = 1\n" },
+      { path: "src/b.py", generatedText: "y = 2\n", previousText: "y = 1\n" },
+      { path: "src/a.py", generatedText: "x = 3\n", previousText: "x = 2\n" },
+    ]);
+    expect(observations.get(root)?.get("src/b.py")?.observedAt).toEqual(expect.any(Number));
+    await bridge.finish("shell-1");
+    expect(edits()).toHaveLength(3);
   });
 
   it("delivers committed full-file snapshots in deterministic batches", async () => {
