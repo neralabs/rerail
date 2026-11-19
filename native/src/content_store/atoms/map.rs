@@ -595,6 +595,7 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("text_matcher", &["lang", "upto"]),
     ("text_pending", &["seq", "lang"]),
     ("text_term", &["lang"]),
+    ("tree_pages_pending", &["digest", "pid"]),
     ("tree_pages", &["page_key", "page_index", "page_count", "digest", "file_count", "seg", "seg_at", "seg_len"]),
     ("vocabulary_literal", &["lang"]),
     ("vocabulary_pending", &["lang"]),

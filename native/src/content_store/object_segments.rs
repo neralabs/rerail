@@ -26,6 +26,23 @@ pub(super) fn object_dir(database: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// What the store at `from` keeps beside its file, copied beside the store at `to` (in place of any there): its atoms
+/// blocks and its object segments. For a store file copied whole (a capture's, a replay's copy of it): without them
+/// its rows name blocks and segments that are not there.
+pub fn copy_beside(from: &Path, to: &Path) -> std::io::Result<()> {
+    super::atoms::copy_blocks(from, to)?;
+    let (segments, into) = (object_dir(from), object_dir(to));
+    if into.exists() {
+        std::fs::remove_dir_all(&into)?;
+    }
+    let Ok(entries) = std::fs::read_dir(&segments) else { return Ok(()) };
+    std::fs::create_dir_all(&into)?;
+    for e in entries.flatten() {
+        super::atoms::clone_file(&e.path(), &into.join(e.file_name()))?;
+    }
+    Ok(())
+}
+
 /// A tape's bytes where they live, which the writer takes as they are (decision 0353 step 4a: a tape's home, a
 /// slab's room).
 pub type TapeBytes = Arc<dyn TapeHeld>;

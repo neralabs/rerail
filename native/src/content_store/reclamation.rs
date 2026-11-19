@@ -536,14 +536,32 @@ impl ContentStore {
              ORDER BY p.set_digest LIMIT ?1)",
             [limit],
         )?;
-        // Pages no name binds: no scope's page derivation outputs them (tree_pages.rs). A page set
-        // whose binding is still in an unwritten overlay layer can be collected; its next lookup
-        // misses and recomputes it.
+        // Pages no name binds: no scope's page derivation outputs them (tree_pages.rs). A set whose binding is still
+        // in an overlay layer not yet written is pending (`tree_pages_pending`), held by the process that put it: it
+        // stays until its binding is seen here, or that process is gone.
+        execute_collect(
+            &transaction,
+            "DELETE FROM tree_pages_pending WHERE EXISTS (SELECT 1 FROM name_bindings b WHERE b.digest=tree_pages_pending.digest)",
+            [],
+        )?;
+        let holders: Vec<i64> = transaction
+            .prepare_cached(collect_sql("SELECT DISTINCT pid FROM tree_pages_pending"))?
+            .query_map([], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
+        let gone: Vec<i64> = holders.into_iter().filter(|&pid| i32::try_from(pid).is_ok_and(super::corpus_runs::process_gone)).collect();
+        if !gone.is_empty() {
+            execute_collect(
+                &transaction,
+                "DELETE FROM tree_pages_pending WHERE pid IN (SELECT value FROM json_each(?1))",
+                [serde_json::to_string(&gone).expect("integers")],
+            )?;
+        }
         execute_collect(
             &transaction,
             "DELETE FROM tree_pages WHERE page_key IN (\
              SELECT DISTINCT p.page_key FROM tree_pages p \
              WHERE NOT EXISTS (SELECT 1 FROM name_bindings b WHERE b.digest=p.digest) \
+             AND NOT EXISTS (SELECT 1 FROM tree_pages_pending q WHERE q.digest=p.digest) \
              ORDER BY p.page_key LIMIT ?1)",
             [limit],
         )?;

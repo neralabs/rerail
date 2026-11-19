@@ -44,6 +44,8 @@ const FACT_STORE: &[&str] = &[
     "workspaces",
     // A store session per durable owner (decision 0450 §2): which data the store keeps.
     "store_sessions",
+    // Page sets put and not yet bound (decision 0450): which a collection keeps.
+    "tree_pages_pending",
     // The archive of aged sources and tapes (decision 0450 step 4): their bytes, compressed.
     "object_archive",
     "workspace_overlay",

@@ -137,7 +137,7 @@ fn orphaned_holds(connection: &rusqlite::Connection) -> StoreResult<Vec<String>>
 }
 
 /// Whether no process `pid` exists on this host.
-fn process_gone(pid: i32) -> bool {
+pub(super) fn process_gone(pid: i32) -> bool {
     if pid <= 0 || pid as u32 == std::process::id() {
         return false;
     }

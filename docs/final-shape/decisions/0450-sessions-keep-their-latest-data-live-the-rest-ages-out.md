@@ -206,5 +206,11 @@ it: the `cross_rows` store" and 0083's "the mechanism stays for any program that
      placed back, not made again. Results and pages are not archived, and they are not dropped for being aged
      either: they stay in their segments while their source (results) or name binding (pages) is kept, and
      compaction copies them. They go only with their source or binding, or if their segment file is gone.
+   - **Pages put and not yet bound** (2026-11-19). A page derivation's name binding is written with its overlay
+     layer, after the pages, and collection took a set no name bound: one put by a run whose layer was not yet written
+     was collected, and its next lookup recomputed it. A put now writes `tree_pages_pending(digest, pid)` in its
+     transaction. Collection keeps a pending set, drops the mark once a binding of its digest is written, and drops
+     the mark of a process that is gone, which no binding will follow (`process_gone`, as for a run's holds). Test:
+     `collection_keeps_pages_a_name_binds`.
    - **Archive rows** whose object went or was placed again are removed at the start of each archive pass.
    - Test: `aged_objects_are_archived_and_placed_back_in_a_segment_when_read`.

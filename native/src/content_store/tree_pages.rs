@@ -135,6 +135,11 @@ impl ContentStore {
                 }
             }
             transaction.execute("UPDATE tree_pages SET seg=?2 WHERE page_key=?1 AND seg=0", rusqlite::params![&page_key[..], seg])?;
+            // Held until its binding, written with a later overlay layer, is seen (`tree_pages_pending`).
+            transaction.execute(
+                "INSERT OR REPLACE INTO tree_pages_pending(digest,pid) VALUES (?1,?2)",
+                rusqlite::params![&digest[..], i64::from(std::process::id())],
+            )?;
             Ok(seg)
         })?;
         placing.name(seg)?;

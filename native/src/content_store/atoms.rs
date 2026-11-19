@@ -34,6 +34,7 @@ use std::time::{Duration, Instant};
 mod map;
 pub(crate) mod stored;
 pub use stored::{atoms_dir, copy_blocks, freeze_blocks};
+pub(crate) use stored::clone_file;
 mod vtab;
 pub use map::{ProcessIds, StoreIds, map_columns, mapped};
 

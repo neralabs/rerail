@@ -522,6 +522,13 @@ CREATE TABLE IF NOT EXISTS tree_pages (
     PRIMARY KEY (page_key, page_index)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS tree_pages_by_digest ON tree_pages(digest);
+-- Page sets put and not yet bound: the name binding a page derivation records is written with its overlay layer,
+-- later (facts/overlay.rs), and a set no name binds is collected. A set stays here, kept, while the process that put
+-- it lives (`pid`), until collection sees a binding of its digest.
+CREATE TABLE IF NOT EXISTS tree_pages_pending (
+    digest BLOB PRIMARY KEY CHECK(length(digest) = 32),
+    pid INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
 
 -- The prefilter's per-tape access paths (prefilter.rs, from Pulling-it-all-together's anchor
 -- store): kind positions, case-exact term postings and the nodes terms do not cover, each keyed by
