@@ -10,7 +10,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../src/engine/child-process.js", { spy: true });
 
 import { spawn, spawnSync } from "../../src/engine/child-process.js";
-import { findGit, gitCrlfPaths, gitHead, gitModifiedOrUntrackedPaths, readGitBlobIds, readGitBlobs, runGit, runGitAsync } from "../../src/engine/git.js";
+import { findGit, gitCrlfPaths, gitHead, gitModifiedOrUntrackedPaths, readGitBlobIds, readGitBlobs, runGit, runGitAsync, type RunGitOptions } from "../../src/engine/git.js";
 import {
   runGitSync,
   startGit,
@@ -23,6 +23,7 @@ import {
   type GitRunLimits,
   type GitRunResult,
 } from "../../src/engine/git-start.js";
+import { readGitInstallation } from "../../src/engine/native/git-access.js";
 import { loadNativeBinding } from "../../src/engine/native/native.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { blockingRuns, blockingRunsThroughEngine, lacksPrlimit } from "./support/blocking-git-runs.js";
@@ -219,6 +220,30 @@ describe.runIf(LINUX)("Git started through the engine, on Linux", () => {
     expect(refusals()).toEqual(throughNode);
     expect(throughNode).toEqual([{ code: "ERR_INVALID_ARG_VALUE" }, { code: "ERR_INVALID_ARG_VALUE" }]);
   });
+
+  it("runs a blocking Git with the variables its call sets over the process's, as the asks for the engine's Git reads need", async () => {
+    // A system and a global file of the process's own, which each ask for the engine's Git reads sets aside (it removes
+    // GIT_CONFIG_SYSTEM and reads the global file from the null device), so that Git names the files it was built to read.
+    const files = await folder("installation");
+    await writeFile(join(files, "system"), "[probe]\n\tsystem = yes\n");
+    await writeFile(join(files, "global"), "[probe]\n\tglobal = yes\n");
+    const root = await repository();
+    const starts = engineStarts();
+    let runs = 0;
+    expect(startGitWithoutCopying(() => ({ ...starts, runGit: (...call) => { runs += 1; return starts.runGit(...call); } }))).toBe(true);
+    const unset = readGitInstallation();
+    try {
+      vi.stubEnv("GIT_CONFIG_SYSTEM", join(files, "system"));
+      vi.stubEnv("GIT_CONFIG_GLOBAL", join(files, "global"));
+      expect(readGitInstallation()).toEqual(unset);
+      const read = (env?: RunGitOptions["env"]): unknown => runGit(root, ["config", "--get", "probe.global"], env === undefined ? {} : { env }).stdout;
+      expect([read(), read({ GIT_CONFIG_GLOBAL: "/dev/null" })]).toEqual(["yes\n", ""]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(unset).toMatchObject({ settled: true, installation: { configOrigins: expect.any(String) } });
+    expect([runs, vi.mocked(spawnSync).mock.calls.length]).toEqual([6, 0]);
+  }, 30_000);
 });
 
 /** The engine's three calls, for a case to wrap one of them. */
