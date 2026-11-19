@@ -114,18 +114,23 @@ fn an_evaluation_is_one_command_buffer() {
 #[ignore = "a measurement"]
 fn the_grid_sort_alone_is_fast() {
     let dev = crate::device().unwrap();
-    for (n, bits) in [(3usize, 32u32), (31, 64), (31, 32), (3, 64), (1000, 32)] {
-        let keys: Vec<u64> = (0..n as u64).map(|k| k.wrapping_mul(0x9e37_79b9) & 0xffff_ffff).collect();
-        let z32 = |k: usize| MappedBuffer::zeroed::<u32>(&dev, k).unwrap();
-        let (ctl, kb, va, k2, v2, hist, sums) = (z32(8), buf(&keys), z32(n), MappedBuffer::zeroed::<u64>(&dev, n).unwrap(), z32(n), z32(256 * n.div_ceil(1024) + 1), z32(8));
-        let t = (0..5)
-            .map(|_| {
-                crate::pp_eval::run_timed(|e| e.run("pb_sort_alone", None, &[&ctl.buffer, &kb.buffer, &va.buffer, &k2.buffer, &v2.buffer, &hist.buffer, &sums.buffer], &[n as u32, bits], Grid::Groups(1)))
-                    .unwrap()
-                    .1
-            })
-            .fold(f64::MAX, f64::min);
-        eprintln!("sort alone: {n} keys, {bits} bits: {:.1} us", t * 1e6);
+    // Hashed keys (a definitions' rows), and the closes' (a depth by 2^15 over a position).
+    let hashed = |n: usize| (0..n as u64).map(|k| k.wrapping_mul(0x9e37_79b9_7f4a_7c15)).collect::<Vec<u64>>();
+    let closes = |n: usize| (0..n as u64).map(|k| ((32767 + k % 5) << 24) | (k * 7)).collect::<Vec<u64>>();
+    for (what, n, low, bits) in [("hashed", 500usize, 0u32, 64u32), ("hashed", 1000, 0, 64), ("closes", 1600, 0, 40), ("closes", 1600, 24, 40), ("closes", 6000, 24, 40)] {
+        let keys = if what == "hashed" { hashed(n) } else { closes(n) };
+        for groups in [1u64, 32] {
+            let z32 = |k: usize| MappedBuffer::zeroed::<u32>(&dev, k).unwrap();
+            let t = (0..5)
+                .map(|_| {
+                    let (ctl, kb, va, k2, v2, hist, sums) = (z32(8), buf(&keys), z32(n), MappedBuffer::zeroed::<u64>(&dev, n).unwrap(), z32(n), z32(256 * n.div_ceil(1024) + 1), z32(4 * groups as usize + 4));
+                    crate::pp_eval::run_timed(|e| e.run("pb_sort_alone", None, &[&ctl.buffer, &kb.buffer, &va.buffer, &k2.buffer, &v2.buffer, &hist.buffer, &sums.buffer], &[n as u32, bits, low], Grid::Groups(groups)))
+                        .unwrap()
+                        .1
+                })
+                .fold(f64::MAX, f64::min);
+            eprintln!("sort alone: {n} {what} keys, bits {low}..{bits}, {groups} groups: {:.1} us", t * 1e6);
+        }
     }
 }
 

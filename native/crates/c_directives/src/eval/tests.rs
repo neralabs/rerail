@@ -39,7 +39,7 @@ fn place(files: &[(&[u8], bool)]) -> Unit {
 
 /// `corpus`'s files, each with whether it is C++.
 fn corpus_in() -> Vec<(Vec<u8>, Vec<u8>, bool)> {
-    let root = std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus");
+    let root = corpus_root();
     let count = std::env::var("RERAIL_PP_COUNT").ok().and_then(|n| n.parse().ok()).unwrap_or(40);
     let mut out = Vec::new();
     for (dir, cpp) in [("c", false), ("cpp", true)] {
@@ -380,7 +380,7 @@ fn every_name_sees_the_spikes_definition() {
             add(lookups_agree(Config::new(crate::pp::options(cpp)), &mut io, "main.c", cpp, &format!("shape {k}")).unwrap());
         }
     }
-    let root = std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus");
+    let root = corpus_root();
     let count = std::env::var("RERAIL_PP_COUNT").ok().and_then(|n| n.parse().ok()).unwrap_or(40);
     let first = std::env::var("RERAIL_PP_FIRST").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
     let (mut units, mut refused) = (0, std::collections::BTreeMap::<&str, usize>::new());
@@ -705,17 +705,41 @@ fn va_opt_is_the_serial_passes() {
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
 }
 
+/// The lean corpus: `RERAIL_PP_CORPUS` (a copy sent with a run to a farm host), else the shared one.
+fn corpus_root() -> std::path::PathBuf {
+    std::env::var("RERAIL_PP_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"))
+}
+
+/// A batch's GPU time by stage and by phase, as `where_an_evaluations_gpu_time_goes` gives a
+/// unit's: each the best of 5, at 32 groups.
+fn batch_stages(units: &[(&rerail_metal::pp_eval::Unit, &rerail_metal::pp_expand::Layout)]) {
+    use rerail_metal::pp_eval::{TO_ALL, TO_DEFS, TO_FRONT, TO_VIS, Unit};
+    use rerail_metal::pp_expand::{Layout, stage_seconds};
+    let Some(unit) = Unit::batch(&units.iter().map(|(u, _)| *u).collect::<Vec<_>>()) else { return eprintln!("no batch: slabs differ") };
+    let joined: Vec<(&Layout, usize)> = units.iter().map(|(u, l)| (*l, u.len())).collect();
+    let lay = Layout::join(&joined).unwrap();
+    let best = |f: &dyn Fn() -> f64| (0..5).map(|_| f()).fold(f64::MAX, f64::min) * 1e6;
+    let t: Vec<String> = [("front", TO_FRONT), ("defs", TO_DEFS), ("vis", TO_VIS), ("setup", TO_ALL + 1), ("all", TO_ALL)]
+        .iter()
+        .map(|&(n, last)| format!("{n} {:.0}", best(&|| stage_seconds(&unit, &lay, last, 0, 32).unwrap().unwrap_or(f64::NAN))))
+        .collect();
+    eprintln!("a batch of {} units (us, cumulative): {}", units.len(), t.join(", "));
+    let at: Vec<f64> = (1..=60).map(|k| best(&|| stage_seconds(&unit, &lay, TO_ALL + 1, k, 32).unwrap().unwrap_or(f64::NAN))).collect();
+    let steps: Vec<String> = at.windows(2).enumerate().map(|(k, w)| format!("{}:{:.0}", k + 1, w[1] - w[0])).collect();
+    eprintln!("  stopped before phase 1: {:.0} us; phase k's cost: {}", at[0], steps.join(" "));
+}
+
 /// R10 of decision 0448: the corpus expanded on the device, each file its own unit with empty
 /// stubs for its headers, against the serial pass; every unit the device does not refuse gives
 /// the serial pass's tokens, and the refusals are counted by reason. `RERAIL_PP_FIRST` and
-/// `RERAIL_PP_COUNT` choose the files of each language.
+/// `RERAIL_PP_COUNT` choose the files of each language; `RERAIL_PP_STAGES` measures a batch.
 #[test]
 #[ignore = "the corpus (~/orca/rerail-shared/lean-corpus); run in slices"]
 fn the_corpus_expands_on_the_device() {
     use rerail_c_pp::Config;
     use rerail_c_pp::files::{DirKind, Search};
     use rerail_metal::pp_expand::*;
-    let root = std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus");
+    let root = corpus_root();
     let count = std::env::var("RERAIL_PP_COUNT").ok().and_then(|n| n.parse().ok()).unwrap_or(40);
     let first = std::env::var("RERAIL_PP_FIRST").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
     let reasons = [
@@ -772,6 +796,10 @@ fn the_corpus_expands_on_the_device() {
             entries.push(Entry { path, serial: serial.0, p1, unit, lay, tapes });
         }
         let units: Vec<_> = entries.iter().map(|e| (&e.unit, &e.lay)).collect();
+        // `RERAIL_PP_STAGES`: where a batch's GPU time goes (its first `RERAIL_PP_STAGES` units).
+        if let Some(k) = std::env::var("RERAIL_PP_STAGES").ok().and_then(|k| k.parse::<usize>().ok()) {
+            batch_stages(&units[..k.min(units.len())]);
+        }
         let parts = match expand_many(&units) {
             Ok(parts) => parts,
             Err(e) => panic!("{dir}: {e:?}"),

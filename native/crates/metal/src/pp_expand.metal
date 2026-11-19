@@ -512,8 +512,9 @@ struct PxScratch { uint start, end, kind; };
 constant uint LK_MACRO = 0u, LK_ARG = 1u, LK_JOIN = 2u;
 // The frames an exit reads (its own list's rest and each frame's after it); a chain of exits.
 constant uint MAX_SEGS = 16u, MAX_EXITS = 1u << 20;
-// The close table's keys: a depth (biased) above a top token's position.
-constant uint DEPTH_BIAS = 1u << 15, POS_BITS = 24u;
+// The close table's keys: a depth (biased) above a top token's position. The bias puts the depths
+// near 0 (-128 to 127) in one byte of the 16, so their sort passes one digit (decision 0460).
+constant uint DEPTH_SPAN = 1u << 16, DEPTH_BIAS = (1u << 15) + 128u, POS_BITS = 24u;
 // A chain's lists at most, and an idle worker's polls.
 constant uint MAX_CHAIN = 1024u;
 constant uint POLLS = 4096u;
@@ -656,11 +657,12 @@ inline void px_top_parens(device const PpFile* files, device const uchar* data, 
     close[s] = d == 0xffffffffu ? 1u : 0u;
 }
 
-// Each `)`'s key at its place: its depth after it (biased), its position below.
+// Each `)`'s key at its place: its depth after it (biased), its position below. The places are
+// the `)`s' in position order, so the table's sort passes the depth's digits alone.
 inline void px_close_keys(device const uint* depth, device const uint* close, device const uint* at, device const uint* n_toks, device ulong* keys, device atomic_uint* ctl, uint s) {
     if (s >= n_toks[0] || close[s] == 0u) return;
     uint b = depth[s] + DEPTH_BIAS;
-    if (b >= 2u * DEPTH_BIAS || s >= (1u << POS_BITS)) { px_refuse(ctl, X_DEPTH); return; }
+    if (b >= DEPTH_SPAN || s >= (1u << POS_BITS)) { px_refuse(ctl, X_DEPTH); return; }
     keys[at[s]] = (ulong(b) << POS_BITS) | ulong(s);
 }
 
@@ -669,7 +671,7 @@ inline void px_close_keys(device const uint* depth, device const uint* close, de
 // The first top `)` at or after `from`, before `end`, whose depth after it is `target`: the first
 // time the depth comes back to it.
 inline uint top_close_to(device const ulong* closes, uint n_close, uint target, uint from, uint end) {
-    uint b = (target + DEPTH_BIAS) & (2u * DEPTH_BIAS - 1u);
+    uint b = (target + DEPTH_BIAS) & (DEPTH_SPAN - 1u);
     ulong q = (ulong(b) << POS_BITS) | ulong(from);
     uint c = pb_lower_bound(closes, n_close, q);
     if (c >= n_close || uint(closes[c] >> POS_BITS) != b) return NO_POS;

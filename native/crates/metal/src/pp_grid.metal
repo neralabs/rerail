@@ -32,6 +32,8 @@
 #define SCAN(n, in, out, total) TICK(); if (!ukl_grid_scan_n(g, (n), C32(in), C32(out), C32(total), C32(SUMS), tg.scratch, &tg.flag)) return
 #define SEG(op, n, in, heads, out) TICK(); if (!ukl_grid_seg_scan_n(g, (op), (n), C32(in), C32(heads), C32(out), C32(SUMS), tg.big, tg.big + 256u, &tg.flag)) return
 #define SORT(n, bits, keys, va, kb, vb, hist) TICK(); if (!ukl_grid_sort_u64(g, (n), (bits), true, C64(keys), C32(va), C64(kb), C32(vb), C32(hist), C32(SUMS), sl, tg.scratch, &tg.flag)) return
+// A sort whose rows are already in the order of their low `low` bits: only the digits above pass.
+#define SORT_FROM(n, low, bits, keys, va, kb, vb, hist) TICK(); if (!ukl_grid_sort_u64_from(g, (n), (low), (bits), true, C64(keys), C32(va), C64(kb), C32(vb), C32(hist), C32(SUMS), sl, tg.scratch, &tg.flag)) return
 // A count the passes before wrote.
 #define N(s) AT(const uint, s)[0]
 
@@ -147,7 +149,7 @@ kernel void pp_setup(PP_GRID_PARAMS) {
     SCAN(nt, CLOSE, CLOSE_AT, CLOSE_TOTAL);
     EACH(s, nt) px_close_keys(AT(const uint, DEPTH), AT(const uint, CLOSE), AT(const uint, CLOSE_AT), AT(const uint, GTOTAL), AT(ulong, CLOSE_KEYS), AT(atomic_uint, CTL), s);
     BARRIER();
-    SORT(N(CLOSE_TOTAL), W(CLOSE_BITS), CLOSE_KEYS, CSORT_VA, CSORT_KB, CSORT_VB, CSORT_HIST);
+    SORT_FROM(N(CLOSE_TOTAL), 24u, W(CLOSE_BITS), CLOSE_KEYS, CSORT_VA, CSORT_KB, CSORT_VB, CSORT_HIST);
     device const ulong* closes = ukl_grid_sort_in_input(W(CLOSE_BITS)) ? AT(const ulong, CLOSE_KEYS) : AT(const ulong, CSORT_KB);
     TICK();
     EACH(s, nt) px_top_calls(files, data, AT(const uint, BASES), AT(const PpDef, DEFS), AT(const uint, LOOKUPS), AT(const uint, TEXT_NODES), AT(const uint, GAT), AT(const uint, N_GAPS), AT(const uint, GFIRSTS), AT(const uint, GTOTAL), AT(const uint, DEPTH), closes, AT(const uint, CLOSE_TOTAL), AT(uint, CEND), AT(atomic_uint, CTL), nf, s);

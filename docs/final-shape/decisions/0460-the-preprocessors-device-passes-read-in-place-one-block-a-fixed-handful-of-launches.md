@@ -369,3 +369,37 @@ with the unit, because each primitive's number of levels was chosen by its capac
 
   The large unit's time is now mostly two phases of the top level (phase 32 at 265 µs, phase 21
   at 72 µs), not barriers.
+- **Step 5f: the two slow phases were sorts.** After 5e, a large unit's setup took 539 µs, and
+  two phases held 337 µs of it: the paren closes' sort (264 µs) and the definitions' rows sort
+  (73 µs). Measured alone (`the_grid_sort_alone_is_fast`), the old sort was slow in both of its
+  paths:
+  - the one-tile path ranked every row on group 0 alone, n² compares on 256 threads: 1.5 ms for
+    1,000 keys;
+  - a grid digit gave each group whole tiles of 1,024 rows, so 1,600 rows kept 2 of the 32 groups
+    busy: about 46 µs a digit.
+
+  The changes:
+  - **Few rows rank over the whole grid.** For `n <= UKL_RADIX_TILE` and at most a row a thread,
+    each group holds the rows in threadgroup memory. Each SIMD group ranks a row at a time, its
+    lanes taking a share of the compares each and `ukl_sg_sum` adding them. A row's lane keeps
+    its rank. Where the rows are sorted in place, one grid barrier comes before they are written.
+    1,000 hashed keys: 73 µs at 32 groups, from 1,494 µs.
+  - **`ukl_grid_sort_u64_from(…, low, bits, …)`**: the rows are already in the order of their low
+    `low` bits, so only the digits above them are passed. The closes are placed in position order
+    (their scan), so their sort passes the depth's digits alone (`low` 24).
+  - **The depth's bias is 2^15 + 128,** not 2^15, so the depths near 0 (−128 to 127) differ in
+    one byte, and a closes sort passes one digit, not two.
+
+  The library's sort test adds the few rows' path at 1, 8 and 32 groups (200 keys) and two sorts
+  given `low` (900 keys, low 32; 70,001 keys, low 24).
+
+  On the M3, a large unit at 32 groups now takes 401 µs of setup: the closes sort takes 58 µs, the
+  rows sort 28 µs. On the M5 under load, the setup went from 539 to 230 µs. The corpus is
+  unchanged: 3,132 units equal, the same 3 refused.
+
+  **What is left is the expansion.** It is 3.4 of the large unit's 3.8 ms on the M3, and 9.6 of a
+  250-unit batch's 12.7 ms (`RERAIL_PP_STAGES=250`, sent to the host with its corpus slice:
+  `RERAIL_PP_CORPUS`).
+- **The encoders are labelled.** `Enc::run` set no label, and the launch budget's record reads
+  each dispatch's label, so `nsstring_as_str` was given nil: undefined behaviour that a cargo test
+  catches (Relax's does not). Each encoder now takes its kernel's name.

@@ -300,7 +300,8 @@ DEFINE_KERNEL2(tests, t_grid_seg,
 }
 
 #if UKL_SIMD_WIDTH >= 8
-// ukl/grid.h's sort: `keys`' first `count[0]` by their low `w >> 16` bits, the values their indexes before it.
+// ukl/grid.h's sort: `keys`' first `count[0]` by their low `(w >> 16) & 0xff` bits, those below `w >> 24` known in
+// order already, the values their indexes before it.
 DEFINE_KERNEL2(tests, t_grid_sort,
                ARGS,     TestArgs, args,    ,
                RWBUFFER, uint32_t, ctl,     "[3]",
@@ -327,7 +328,7 @@ DEFINE_KERNEL2(tests, t_grid_sort,
     g.ctl = ctl; g.groups = gsz / lsz; g.group = group; g.lid = lid; g.lsz = lsz;
     UklGridSortLocal l;
     l.h = h; l.counts = counts; l.before = before; l.base = base; l.tile = tile;
-    ukl_grid_sort_u64(g, ukl_atomic_load((UKL_GLOBAL uint32_t*)count), args.w >> 16, true, (UKL_COHERENT uint64_t*)keys,
+    ukl_grid_sort_u64_from(g, ukl_atomic_load((UKL_GLOBAL uint32_t*)count), args.w >> 24, (args.w >> 16) & 0xffu, true, (UKL_COHERENT uint64_t*)keys,
                       (UKL_COHERENT uint32_t*)values, (UKL_COHERENT uint64_t*)keys2, (UKL_COHERENT uint32_t*)values2,
                       (UKL_COHERENT uint32_t*)hist, (UKL_COHERENT uint32_t*)sums, l, scratch, flag __UKL_ARGS);
 }

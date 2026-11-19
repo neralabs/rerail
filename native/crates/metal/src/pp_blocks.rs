@@ -206,6 +206,8 @@ impl Enc<'_> {
     pub fn run(&self, name: &str, constant: Option<u32>, buffers: &[&dyn Bound], words: &[u32], grid: Grid) -> Result<(), Error> {
         let pipe = pipeline_named_constant(self.source, name, constant)?;
         let e = self.command.new_compute_command_encoder();
+        // The launch budget records each dispatch by its encoder's label (an unlabelled one's is nil).
+        e.set_label(name);
         e.set_compute_pipeline_state(&pipe);
         let bound: Vec<(&BufferRef, u64)> = buffers.iter().map(|b| b.bound()).collect();
         e.checked_set_buffers_at(self.command, &bound);

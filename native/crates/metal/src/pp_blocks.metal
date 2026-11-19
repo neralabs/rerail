@@ -47,7 +47,7 @@ kernel void pb_expand(device const uint* offsets [[buffer(0)]], device const uin
 // For measurements: the grid's sort alone (`ukl_grid_sort_u64`), `n` keys by their low `bits`.
 kernel void pb_sort_alone(device uint* ctl [[buffer(0)]], device ulong* keys [[buffer(1)]], device uint* values [[buffer(2)]],
                           device ulong* keys2 [[buffer(3)]], device uint* values2 [[buffer(4)]], device uint* hist [[buffer(5)]],
-                          device uint* sums [[buffer(6)]], constant uint& n [[buffer(7)]], constant uint& bits [[buffer(8)]],
+                          device uint* sums [[buffer(6)]], constant uint& n [[buffer(7)]], constant uint& bits [[buffer(8)]], constant uint& low [[buffer(9)]],
                           uint lid [[thread_position_in_threadgroup]], uint group [[threadgroup_position_in_grid]],
                           uint groups [[threadgroups_per_grid]], uint lsz [[threads_per_threadgroup]]) {
     threadgroup uint flag;
@@ -58,7 +58,7 @@ kernel void pb_sort_alone(device uint* ctl [[buffer(0)]], device ulong* keys [[b
     UklGridSortLocal sl;
     sl.counts = big; sl.h = big + UKL_RADIX_GROUPS * UKL_RADIX_DIGITS;
     sl.before = sl.h + UKL_RADIX_DIGITS; sl.base = sl.before + UKL_RADIX_DIGITS; sl.tile = big;
-    ukl_grid_sort_u64(g, n, bits, true, (UKL_COHERENT uint64_t*)keys, (UKL_COHERENT uint32_t*)values, (UKL_COHERENT uint64_t*)keys2,
+    ukl_grid_sort_u64_from(g, n, low, bits, true, (UKL_COHERENT uint64_t*)keys, (UKL_COHERENT uint32_t*)values, (UKL_COHERENT uint64_t*)keys2,
                       (UKL_COHERENT uint32_t*)values2, (UKL_COHERENT uint32_t*)hist, (UKL_COHERENT uint32_t*)sums, sl, scratch, &flag);
 }
 

@@ -341,52 +341,55 @@ UKL_INLINE bool ukl_sort_before(uint32_t ah, uint32_t al, uint32_t ai, uint32_t 
 // row's index before the sort, written here), as phases of the grid. Groups of `UKL_RADIX_THREADS` threads. `keys2`,
 // `values2` are the other buffers of each pass; `hist` is `256 * tiles + 1` words (`tiles`: `n` in
 // `UKL_RADIX_TILE`s) and `sums` `4 * groups + 4`. The rows end in `keys`, `values` where `ukl_grid_sort_in_input`
-// says, else in `keys2`, `values2`, whatever path the sort takes:
-// - one tile (`n <= UKL_RADIX_TILE`): group 0 ranks each row among them all in threadgroup memory, and one barrier
-//   ends it;
-// - more: the keys' bits that vary (an OR and an AND of the keys, one phase), and a radix pass of each digit that
-//   holds one of them; a digit every key shares orders nothing. A last pass moves the rows where an even or odd
-//   number of passes left them elsewhere than `ukl_grid_sort_in_input` says.
-// Ends with a barrier.
-UKL_INLINE bool ukl_grid_sort_u64(UklGrid g, uint32_t n, uint32_t bits, bool iota, UKL_COHERENT uint64_t* keys, UKL_COHERENT uint32_t* values,
-                                  UKL_COHERENT uint64_t* keys2, UKL_COHERENT uint32_t* values2, UKL_COHERENT uint32_t* hist,
-                                  UKL_COHERENT uint32_t* sums, UklGridSortLocal l, UKL_LOCAL uint32_t* scratch, UKL_LOCAL uint32_t* flag __UKL_PARAMS)
+// says, else in `keys2`, `values2`. `low` (a multiple of 8, at most `bits`): the rows are already in the order of
+// their low `low` bits, so only the digits above are passed (0: none is known).
+// - few rows (`n <= UKL_RADIX_TILE`, and at most a row a thread of the grid): each group holds every row in
+//   threadgroup memory; each SIMD group ranks a row at a time among them all, its lanes taking a share each;
+//   the rows go to their places after a barrier where they are sorted in place;
+// - more: the digits that vary among the rows (a reduction), and only those passed, three barriers each.
+UKL_INLINE bool ukl_grid_sort_u64_from(UklGrid g, uint32_t n, uint32_t low, uint32_t bits, bool iota, UKL_COHERENT uint64_t* keys,
+                                       UKL_COHERENT uint32_t* values, UKL_COHERENT uint64_t* keys2, UKL_COHERENT uint32_t* values2,
+                                       UKL_COHERENT uint32_t* hist, UKL_COHERENT uint32_t* sums, UklGridSortLocal l,
+                                       UKL_LOCAL uint32_t* scratch, UKL_LOCAL uint32_t* flag __UKL_PARAMS)
 {
     uint64_t mask = bits >= 64u ? ~(uint64_t)0 : (((uint64_t)1 << bits) - 1u);
     bool in_input = ukl_grid_sort_in_input(bits);
     UKL_COHERENT uint64_t* kd = in_input ? keys : keys2;
     UKL_COHERENT uint32_t* vd = in_input ? values : values2;
-    if (n <= UKL_RADIX_TILE) {
-        if (g.group == 0u) {
-            UKL_LOCAL uint32_t* hi = l.tile;
-            UKL_LOCAL uint32_t* lo = l.tile + UKL_RADIX_TILE;
-            UKL_LOCAL uint32_t* vs = l.tile + 2u * UKL_RADIX_TILE;
-            for (uint32_t r = g.lid; r < n; r += g.lsz) {
-                uint64_t key = keys[r];
-                hi[r] = (uint32_t)(key >> 32);
-                lo[r] = (uint32_t)key;
-                vs[r] = iota ? r : values[r];
+    if (n <= UKL_RADIX_TILE && n <= g.groups * g.lsz) {
+        UKL_LOCAL uint32_t* hi = l.tile;
+        UKL_LOCAL uint32_t* lo = l.tile + UKL_RADIX_TILE;
+        for (uint32_t r = g.lid; r < n; r += g.lsz) {
+            uint64_t key = keys[r] & mask;
+            hi[r] = (uint32_t)(key >> 32);
+            lo[r] = (uint32_t)key;
+        }
+        ukl_tg_barrier();
+        // SIMD group `sg` of the grid ranks rows `sg`, `sg + sgs`, …: at most a row a lane, which lane `k` keeps.
+        uint32_t lane = g.lid % UKL_SIMD_WIDTH, per = g.lsz / UKL_SIMD_WIDTH;
+        uint32_t sg = g.group * per + g.lid / UKL_SIMD_WIDTH, sgs = g.groups * per;
+        uint32_t row = n, rank = 0u;
+        for (uint32_t k = 0u; k < UKL_SIMD_WIDTH; k++) {
+            uint32_t r = sg + k * sgs;
+            if (r >= n)
+                break;
+            uint32_t rh = hi[r], rl = lo[r], at = 0u;
+            for (uint32_t o = lane; o < n; o += UKL_SIMD_WIDTH)
+                at += ukl_sort_before(hi[o], lo[o], o, rh, rl, r) ? 1u : 0u;
+            at = ukl_sg_sum(at __UKL_ARGS);
+            if (lane == k) {
+                row = r;
+                rank = at;
             }
-            ukl_tg_barrier();
-            uint32_t mh = (uint32_t)(mask >> 32), ml = (uint32_t)mask;
-            uint32_t rank[UKL_RADIX_ROUNDS];
-            for (uint32_t q = 0u; q < UKL_RADIX_ROUNDS; q++) {
-                uint32_t r = g.lid + q * g.lsz, at = 0u;
-                if (r < n) {
-                    uint32_t rh = hi[r] & mh, rl = lo[r] & ml;
-                    for (uint32_t o = 0u; o < n; o++)
-                        at += ukl_sort_before(hi[o] & mh, lo[o] & ml, o, rh, rl, r) ? 1u : 0u;
-                }
-                rank[q] = at;
-            }
-            ukl_tg_barrier();
-            for (uint32_t q = 0u; q < UKL_RADIX_ROUNDS; q++) {
-                uint32_t r = g.lid + q * g.lsz;
-                if (r < n) {
-                    kd[rank[q]] = ((uint64_t)hi[r] << 32) | (uint64_t)lo[r];
-                    vd[rank[q]] = vs[r];
-                }
-            }
+        }
+        uint64_t key = row < n ? keys[row] : 0u;
+        uint32_t value = row < n ? (iota ? row : values[row]) : 0u;
+        // Sorted in place: every group has read its rows before any is written over.
+        if (in_input && !ukl_grid_barrier(g, flag))
+            return false;
+        if (row < n) {
+            kd[rank] = key;
+            vd[rank] = value;
         }
         return ukl_grid_barrier(g, flag);
     }
@@ -428,7 +431,7 @@ UKL_INLINE bool ukl_grid_sort_u64(UklGrid g, uint32_t n, uint32_t bits, bool iot
     if (!ukl_grid_barrier(g, flag))
         return false;
     uint32_t passes = 0u;
-    for (uint32_t p = 0u; p < (bits + 7u) / 8u; p++) {
+    for (uint32_t p = low / 8u; p < (bits + 7u) / 8u; p++) {
         if (((vary >> (8u * p)) & 0xffu) == 0u)
             continue;
         UklRadixArgs args;
@@ -462,6 +465,14 @@ UKL_INLINE bool ukl_grid_sort_u64(UklGrid g, uint32_t n, uint32_t bits, bool iot
         vd[r] = vs[r];
     }
     return ukl_grid_barrier(g, flag);
+}
+
+// `ukl_grid_sort_u64_from` with no order known.
+UKL_INLINE bool ukl_grid_sort_u64(UklGrid g, uint32_t n, uint32_t bits, bool iota, UKL_COHERENT uint64_t* keys, UKL_COHERENT uint32_t* values,
+                                  UKL_COHERENT uint64_t* keys2, UKL_COHERENT uint32_t* values2, UKL_COHERENT uint32_t* hist,
+                                  UKL_COHERENT uint32_t* sums, UklGridSortLocal l, UKL_LOCAL uint32_t* scratch, UKL_LOCAL uint32_t* flag __UKL_PARAMS)
+{
+    return ukl_grid_sort_u64_from(g, n, 0u, bits, iota, keys, values, keys2, values2, hist, sums, l, scratch, flag __UKL_ARGS);
 }
 #endif
 
