@@ -185,8 +185,8 @@ pub struct P1Inst {
 }
 
 /// A unit's P1 state at its fixpoint, as the spike reads it: its files' sources (by the spike's
-/// file id; 0 is the predefines), its instances in the unit's order, and every token of every
-/// active stretch in that order, with what it means where it stands.
+/// file id; 0 is the predefines), its instances in the include tree's preorder, and every token
+/// of every active stretch in the unit's order (by slot), with what it means where it stands.
 pub struct P1 {
     pub files: Vec<Vec<u8>>,
     /// The built-in macros' names: rows at slot 0, before every other.
@@ -225,7 +225,8 @@ pub fn p1_of(cfg: Config, io: &mut dyn Files, path: &str) -> Result<P1, &'static
         }
     }
     let vis = pp.vis.as_ref().ok_or("no positional table")?;
-    let (mut insts, mut lookups) = (Vec::new(), Vec::new());
+    // The active stretches' tokens' meanings, by slot: the unit's order.
+    let (mut insts, mut by_slot) = (Vec::new(), Vec::new());
     for &i in &lay.order {
         let tab = tu.tab_of(i);
         if !state.events[i as usize].is_empty() {
@@ -251,6 +252,7 @@ pub fn p1_of(cfg: Config, io: &mut dyn Files, path: &str) -> Result<P1, &'static
             inst.gap_active.push(active);
             inst.gap_tokens.push((first, end));
             if active {
+                let mut lookups = Vec::new();
                 for t in &tab.text[first as usize..end as usize] {
                     lookups.push(if t.kind != rerail_c_lean::pp::P::Ident {
                         Lookup::NotName
@@ -265,10 +267,13 @@ pub fn p1_of(cfg: Config, io: &mut dyn Files, path: &str) -> Result<P1, &'static
                         }
                     });
                 }
+                by_slot.push((pos, lookups));
             }
         }
         insts.push(inst);
     }
+    by_slot.sort_by_key(|g| g.0);
+    let lookups = by_slot.into_iter().flat_map(|g| g.1).collect();
     let files = pp.files.iter().map(|f| f.src.to_vec()).collect();
     let mut names = Vec::new();
     for &(sym, _, d) in &builtins {

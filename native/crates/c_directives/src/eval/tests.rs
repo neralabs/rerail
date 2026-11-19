@@ -240,12 +240,10 @@ fn the_paste_relexer_is_the_lexers() {
     eprintln!("{} spellings, 5 dialects", texts.len());
 }
 
-/// One unit of R4: its main file read by the spike's P1, then its layout's lookups on the device
-/// against `Vis::at`'s. `None` where P1 refuses it (the reason counted).
-fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, path: &str, cpp: bool, what: &str) -> Result<[usize; 3], &'static str> {
-    use rerail_c_pp::stream::parallel::{Lookup, p1_of};
-    use rerail_metal::pp_expand::{L_BUILTIN, L_NONE, L_NOT_NAME, Layout, PpInst, lookups};
-    let p1 = p1_of(cfg, io, path)?;
+/// A unit read by the spike's P1, on the device: its files with their tapes, and its layout as
+/// test input (0448: until P1's includes and conditionals run on the device).
+fn unit_of(p1: &rerail_c_pp::stream::parallel::P1, cpp: bool) -> (Unit, rerail_metal::pp_expand::Layout, Vec<Vec<u8>>) {
+    use rerail_metal::pp_expand::{Layout, PpInst};
     let tapes: Vec<Vec<u8>> = p1.files.iter().map(|s| image(s, crate::pp::options(cpp))).collect();
     let unit = Unit::load(&p1.files.iter().zip(&tapes).map(|(s, t)| (s.as_slice(), t.as_slice())).collect::<Vec<_>>()).unwrap();
     let mut lay = Layout { insts: Vec::new(), dir_slots: Vec::new(), dir_active: Vec::new(), gap_slots: Vec::new(), gap_active: Vec::new(), builtins: p1.builtins.iter().map(|n| name_key(n)).collect() };
@@ -257,6 +255,16 @@ fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::File
         lay.gap_slots.extend(i.gap_slots.iter().map(|&s| slot(s)));
         lay.gap_active.extend(i.gap_active.iter().map(|&a| u32::from(a)));
     }
+    (unit, lay, tapes)
+}
+
+/// One unit of R4: its main file read by the spike's P1, then its layout's lookups on the device
+/// against `Vis::at`'s. `None` where P1 refuses it (the reason counted).
+fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, path: &str, cpp: bool, what: &str) -> Result<[usize; 3], &'static str> {
+    use rerail_c_pp::stream::parallel::{Lookup, p1_of};
+    use rerail_metal::pp_expand::{L_BUILTIN, L_NONE, L_NOT_NAME, lookups};
+    let p1 = p1_of(cfg, io, path)?;
+    let (unit, lay, _) = unit_of(&p1, cpp);
     let (ev, got) = lookups(&unit, &lay).unwrap();
     same(got.len(), p1.lookups.len(), format!("{what}: the active text's tokens"));
     for (k, (&g, want)) in got.iter().zip(&p1.lookups).enumerate() {
@@ -324,4 +332,93 @@ fn every_name_sees_the_spikes_definition() {
         }
     }
     eprintln!("{} shapes, {units} corpus units: {} tokens, {} of a definition, {} of a built-in; refused {refused:?}", shapes.len() * 2, tokens[0], tokens[1], tokens[2]);
+}
+
+/// The serial pass's output tokens, spelled.
+#[derive(Default)]
+struct Spelled(Vec<Vec<u8>>);
+
+impl rerail_c_pp::sink::Sink for Spelled {
+    fn token(&mut self, _t: &rerail_c_pp::macros::Tk, text: &[u8], _at: Option<rerail_c_pp::sink::At>, _off: u32) {
+        self.0.push(text.to_vec());
+    }
+}
+
+/// The unit of `files` (its main file `main.c`) expanded on the device from rung `rung`: its
+/// output spelled, or its refusal bits; and the serial pass's output. `None` where P1 refuses it.
+fn expanded(files: &[(&str, &str)], cpp: bool, rung: u32) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize) {
+    use rerail_c_pp::files::Search;
+    let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
+    let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+    let mut serial = Spelled::default();
+    let m2 = m.clone();
+    let mut io = Search::new(vec![], move |p: &str| m2.get(p).cloned());
+    let mut pp = rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut serial);
+    assert!(pp.run("main.c"));
+    drop(pp);
+    let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
+    let p1 = rerail_c_pp::stream::parallel::p1_of(cfg, &mut io, "main.c").unwrap();
+    let (unit, lay, tapes) = unit_of(&p1, cpp);
+    let x = rerail_metal::pp_expand::expand_from(&unit, &lay, rung).unwrap();
+    if x.refused != 0 {
+        return (Err(x.refused), serial.0, x.rung, x.launches);
+    }
+    let views: Vec<View> = tapes.iter().map(|t| View::new(t).unwrap()).collect();
+    let spelled = x
+        .out
+        .iter()
+        .map(|&g| {
+            let f = x.ev.bases.partition_point(|&b| b <= g) - 1;
+            let i = (g - x.ev.bases[f]) as usize;
+            p1.files[f][views[f].start(i) as usize..views[f].end(i) as usize].to_vec()
+        })
+        .collect();
+    (Ok(spelled), serial.0, x.rung, x.launches)
+}
+
+fn show(v: &[Vec<u8>]) -> String {
+    v.iter().map(|t| String::from_utf8_lossy(t).into_owned()).collect::<Vec<_>>().join(" ")
+}
+
+/// R5 of decision 0448: object-like calls and calls without arguments, expanded on the device
+/// (the top level's grid passes, then the queue's EXPAND and PLACE items), give the serial
+/// pass's tokens: self and mutual recursion, painting through a chain, empty bodies, a
+/// function-like name with no `(` after it (in its list, or after its list's end in a parent),
+/// redefinitions between stretches, names from an included header, and a doubling chain.
+#[test]
+fn object_like_expansion_is_the_serial_passes() {
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define A 1\nA B A\n")],
+        &[("main.c", "#define A A x\nA\n")],
+        &[("main.c", "#define A B\n#define B A\nA B\n")],
+        &[("main.c", "#define A B C\n#define B C 1\n#define C A\nA C B\n")],
+        &[("main.c", "#define X Y\n#define Y Z\n#define Z X Y Z\nX Y Z\n")],
+        &[("main.c", "#define F() f F\nF() F ( ) F\n")],
+        &[("main.c", "#define G() G()\nG()\n")],
+        &[("main.c", "#define F() x\nF y F\n")],
+        &[("main.c", "#define F() f\n#define A F\nA x\n#define B A\nB y\n")],
+        &[("main.c", "#define F() 1\n#define A F() F()\nA\n")],
+        &[("main.c", "#define E\nE x E E\nE\n")],
+        &[("main.c", "#define A 1\nA\n#undef A\nA\n#define A 2\nA\n")],
+        &[("main.c", "#include \"a.h\"\nH x K\n#define K L\nK\n"), ("a.h", "#define K k H\n#define H(x) x\nK\n")],
+        &[("main.c", "#define A0 x\n#define A1 A0 A0\n#define A2 A1 A1\n#define A3 A2 A2\n#define A4 A3 A3\n#define A5 A4 A4\n#define A6 A5 A5\nA6 A6\n")],
+        &[("main.c", "int main(void) { return 0; }\n")],
+        &[("main.c", "")],
+    ];
+    let (mut tokens, mut launches) = (0, 0);
+    for (k, files) in shapes.iter().enumerate() {
+        for cpp in [false, true] {
+            let (got, want, _, n) = expanded(files, cpp, 0);
+            launches = launches.max(n);
+            let at = format!("shape {k} ({})", if cpp { "C++" } else { "C" });
+            match got {
+                Ok(got) => {
+                    same(show(&got), show(&want), &at);
+                    tokens += got.len();
+                }
+                Err(why) => same(why, 0, format!("{at}: refused")),
+            }
+        }
+    }
+    eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
 }

@@ -161,7 +161,7 @@ outermost call becomes the queue's first items.
 | R1 | The building blocks (scan, segmented scan, radix sort, search, expand) equal a host reference, 1 to 10^6 elements, across group and grid edges. | `pp_expand::the_blocks_equal_the_host` |
 | R2 | Every corpus `#define`'s device definition equals the serial pass's `Def`: parameters, variadic, validity, body tokens and flags. | `the_definitions_are_the_serial_passes` |
 | R3 | The paste relexer equals `PpLexer`: one token or not, and its kind. | `the_paste_relexer_is_the_lexers` |
-| R4 | Every active text identifier's definition is the spike's `Vis::at`. | `every_name_means_what_the_spike_says` |
+| R4 | Every active text identifier's definition is the spike's `Vis::at`. | `every_name_sees_the_spikes_definition` |
 | R5 | Object-like calls and calls without arguments, with recursion and painting, give the serial pass's tokens. | `object_like_expansion_is_the_serial_passes` |
 | R6 | Arguments, `#`, `##`, placemarkers, GNU's comma, `__VA_OPT__`: the serial pass's tokens (C17 §6.10.3.5's examples and a case each). | `calls_with_arguments_are_the_serial_passes` |
 | R7 | A call past its list's end, with rollback: `f(2)(9)`, DEFER/EMPTY/OBSTRUCT, the spike's merges. | `calls_past_an_end_are_the_serial_passes` |
@@ -230,3 +230,32 @@ outermost call becomes the queue's first items.
   with empty stubs for its headers (3,133 units, 6.9 M active text tokens, 25,979 uses of a
   definition, 184 of a built-in), every token's meaning is `Vis::at`'s; 2 units are refused by
   the spike (`#line`). `every_name_sees_the_spikes_definition`.
+
+  The stretches are in the unit's order, their slots', by a 32-bit radix sort of the slots (4
+  passes) before their counts' scan: an included file's text comes between its includer's
+  stretches, whatever order the instances are laid out in.
+- **R5, object-like calls and calls without arguments** (`pp_expand.rs`'s `Exp`,
+  `pp_expand.metal`'s `px_*`), from the lookups, in the same command buffer:
+  - the top level, one thread a top token: its call (an object-like name, or a function-like one
+    followed in its stretch by `(` and `)`), a max scan of the calls' ends (a token an earlier
+    call reaches is inside it), the outermost calls by a scan, a list each, its EXPAND item in
+    the queue's first slots;
+  - the queue's persistent dispatch (64 groups, a worker a SIMD group, 3 launches a phase, each
+    later one ending at once when no item is left): EXPAND writes a list's tokens (refs to its
+    definition's body leaves, one atomic add for all), then classifies them 32 at a time (the
+    lookup at its stretch's slot, a walk of the chain for a disabled macro), each call a child
+    list pushed; a list's last pending child adds its size into it and finishes it, climbing;
+  - the top level's pieces (1 a plain token, a list's size at its call, 0 inside one), a scan,
+    each plain token at its place and each top list's base, its PLACE pushed; PLACE writes a
+    list's plain tokens at its base by a SIMD scan carried across chunks, and pushes its
+    children's PLACE;
+  - every store is sized at a rung before the command buffer (2^(k+1) arena tokens a top token,
+    5 rungs); one past its room sets `X_ROOM` and the unit runs again at the next rung. What
+    later steps handle is refused, counted by reason: arguments (`X_ARGS`), `##` (`X_PASTE`), a
+    function-like name at a list's end whose next raw token is `(` (`X_PAST_END`; the peek climbs
+    the parents), built-ins (`X_BUILTIN`).
+  16 shapes in C and C++ (self and mutual recursion, painting through chains, empty bodies, a
+  function-like name without `(` in its list and after its list's end, redefinitions between
+  stretches, an included header, a doubling chain to 128 tokens) give the serial pass's tokens
+  (`object_like_expansion_is_the_serial_passes`). An evaluation (the front passes, the
+  definitions, the lookups and the expansion) takes at most 119 launches.

@@ -203,7 +203,7 @@ pub struct Vis {
     n_dirs: MappedBuffer,
     gslot: MappedBuffer,
     gactive: MappedBuffer,
-    n_gaps: MappedBuffer,
+    pub(crate) n_gaps: MappedBuffer,
     n_builtin: u32,
     nd: usize,
     ng: usize,
@@ -215,24 +215,34 @@ pub struct Vis {
     tflag: MappedBuffer,
     trank: MappedBuffer,
     tscan: Scan,
-    text_nodes: MappedBuffer,
+    pub(crate) text_nodes: MappedBuffer,
     // The rows: a directive of the layout each, after the built-ins'.
     rflag: MappedBuffer,
     rat: MappedBuffer,
     rscan: Scan,
-    sort_keys: MappedBuffer,
-    name_keys: MappedBuffer,
-    values: MappedBuffer,
-    n_rows: MappedBuffer,
-    sort: Sort,
+    pub(crate) sort_keys: MappedBuffer,
+    pub(crate) name_keys: MappedBuffer,
+    pub(crate) values: MappedBuffer,
+    pub(crate) n_rows: MappedBuffer,
+    pub(crate) sort: Sort,
     // The stretches: a word each, and a lookup a text token.
     gcounts: MappedBuffer,
-    gfirsts: MappedBuffer,
-    gat: MappedBuffer,
-    gscan: Scan,
-    targs: MappedBuffer,
+    pub(crate) gfirsts: MappedBuffer,
+    /// The stretches in the unit's order: their keys (slots), sorted with their places, and
+    /// each one's slot in that order.
+    gkeys: MappedBuffer,
+    gsort: Sort,
+    pub(crate) sslot: MappedBuffer,
+    pub(crate) gat: MappedBuffer,
+    pub(crate) gscan: Scan,
+    pub(crate) targs: MappedBuffer,
     pub lookups: MappedBuffer,
     pub bad: MappedBuffer,
+}
+
+/// The top level's tokens at most: each instance's file's nodes.
+pub fn top_bound(unit: &Unit, lay: &Layout) -> usize {
+    lay.insts.iter().map(|i| unit.file_nodes[i.file as usize] as usize).sum::<usize>().max(1)
 }
 
 const NO_INST: [PpInst; 1] = [PpInst { file: 0, dir_first: 0, gap_first: 0 }];
@@ -243,6 +253,7 @@ impl Vis {
         let words = |v: &[u32]| MappedBuffer::from_slice(&device, if v.is_empty() { &[0] } else { v });
         let zeroed = |k: usize| MappedBuffer::zeroed::<u32>(&device, k.max(1));
         let nodes = unit.node_bound;
+        let top = top_bound(unit, lay);
         let (nd, ng, nb) = (lay.dir_slots.len(), lay.gap_slots.len(), lay.builtins.len());
         let rows = nd + nb;
         // The built-ins' rows, at slot 0: the configuration's, written before the passes.
@@ -284,10 +295,13 @@ impl Vis {
             sort: Sort::new(rows)?,
             gcounts: zeroed(ng)?,
             gfirsts: zeroed(ng)?,
+            gkeys: MappedBuffer::zeroed::<u64>(&device, ng.max(1))?,
+            gsort: Sort::new(ng)?,
+            sslot: zeroed(ng)?,
             gat: zeroed(ng)?,
             gscan: Scan::new(ng)?,
             targs: zeroed(4)?,
-            lookups: zeroed(nodes)?,
+            lookups: zeroed(top)?,
             bad: zeroed(1)?,
         })
     }
@@ -342,6 +356,10 @@ impl Vis {
         enc.run("pe_rows_total", None, &[&self.rscan.total.buffer, &self.n_rows.buffer], &[self.n_builtin], Grid::Groups(1))?;
         self.sort.encode(enc, &self.n_rows.buffer, 0, &self.sort_keys.buffer, 64)?;
         let by_gap = Grid::Groups((self.ng as u64).div_ceil(TG));
+        enc.run("pe_gap_keys", None, &[&self.gslot.buffer, &self.n_gaps.buffer, &self.gkeys.buffer], &[], by_gap)?;
+        // 32 bits sort in an even number of passes: the keys end in place, their places in `vals_a`.
+        debug_assert!(Sort::in_input(32));
+        self.gsort.encode(enc, &self.n_gaps.buffer, 0, &self.gkeys.buffer, 32)?;
         enc.run(
             "pe_gap_counts",
             None,
@@ -359,6 +377,9 @@ impl Vis {
                 &self.tscan.total.buffer,
                 &self.gcounts.buffer,
                 &self.gfirsts.buffer,
+                &self.gsort.vals_a.buffer,
+                &self.gkeys.buffer,
+                &self.sslot.buffer,
             ],
             &[n32],
             by_gap,
@@ -379,7 +400,7 @@ impl Vis {
                 &self.gat.buffer,
                 &self.n_gaps.buffer,
                 &self.gfirsts.buffer,
-                &self.gslot.buffer,
+                &self.sslot.buffer,
                 &self.gscan.total.buffer,
                 &self.sort_keys.buffer,
                 &self.sort.vals_a.buffer,
@@ -405,6 +426,249 @@ impl Vis {
             Ok(std::slice::from_raw_parts(self.lookups.host().cast::<u32>(), n).to_vec())
         }
     }
+}
+
+/// A list (`PxList` in the MSL): 12 words.
+const LIST_WORDS: usize = 12;
+
+/// Why a unit is refused (`pp_expand.metal`'s `X_*`). `X_ROOM` reruns it at the next rung.
+pub const X_BUILTIN: u32 = 1;
+pub const X_ARGS: u32 = 2;
+pub const X_PAST_END: u32 = 4;
+pub const X_PASTE: u32 = 8;
+pub const X_DEPTH: u32 = 16;
+pub const X_ROOM: u32 = 32;
+pub const X_QUEUE: u32 = 64;
+
+/// The expansion's rungs: rung `k`'s arena holds `2^(k+1)` tokens a top token.
+pub const EXP_RUNGS: u32 = 5;
+/// The queue's persistent dispatch: worker groups, and its launches a phase (the first does the
+/// work; the others start where every worker exited with items left, and end at once if none).
+const WORKER_GROUPS: u64 = 64;
+const WORK_LAUNCHES: usize = 3;
+
+/// The expansion's stores (0448 §2), placed before the command buffer, at a rung:
+/// - by top token (`top`): its call's end, the reach's max scan, its state, the outermost flags
+///   and their scan, its piece of the output and that piece's place;
+/// - the arena: tokens (a ref and a child each), lists, the queue (two items a list);
+/// - the output (refs), and the control words (the arena's tops, the refusals).
+pub struct Exp {
+    tok_cap: u32,
+    list_cap: u32,
+    out_cap: u32,
+    q_cap: u32,
+    cend: MappedBuffer,
+    heads: MappedBuffer,
+    reach: MappedBuffer,
+    reach_scan: SegScan,
+    state: MappedBuffer,
+    oflag: MappedBuffer,
+    oid: MappedBuffer,
+    oscan: Scan,
+    v: MappedBuffer,
+    obase: MappedBuffer,
+    vscan: Scan,
+    lists: MappedBuffer,
+    tok: MappedBuffer,
+    tchild: MappedBuffer,
+    slots: MappedBuffer,
+    qctl: MappedBuffer,
+    pub ctl: MappedBuffer,
+    pub out: MappedBuffer,
+}
+
+impl Exp {
+    pub fn new(unit: &Unit, lay: &Layout, rung: u32) -> Result<Exp, Error> {
+        let device = crate::device()?;
+        let zeroed = |k: usize| MappedBuffer::zeroed::<u32>(&device, k.max(1));
+        let top = top_bound(unit, lay);
+        let tok = (top << (rung + 1)) + 4096;
+        let lists = top / 2 + tok / 4 + 256;
+        let out = top + tok;
+        let q = 2 * lists + 64;
+        if tok >= u32::MAX as usize / 2 || q >= u32::MAX as usize / 2 {
+            return Err(Error::BackendCapacity);
+        }
+        Ok(Exp {
+            tok_cap: tok as u32,
+            list_cap: lists as u32,
+            out_cap: out as u32,
+            q_cap: q as u32,
+            cend: zeroed(top)?,
+            heads: zeroed(top)?,
+            reach: zeroed(top)?,
+            reach_scan: SegScan::new(top)?,
+            state: zeroed(top)?,
+            oflag: zeroed(top)?,
+            oid: zeroed(top)?,
+            oscan: Scan::new(top)?,
+            v: zeroed(top)?,
+            obase: zeroed(top)?,
+            vscan: Scan::new(top)?,
+            lists: zeroed(lists * LIST_WORDS)?,
+            tok: zeroed(tok)?,
+            tchild: zeroed(tok)?,
+            slots: zeroed(q)?,
+            qctl: zeroed(4)?,
+            ctl: zeroed(4)?,
+            out: zeroed(out)?,
+        })
+    }
+
+    /// The top level's grid passes (one thread a top token, sized by the lookups' count), the
+    /// queue's first phase (EXPAND items to every list's final), the top level's places (a scan
+    /// of the pieces), the queue's second phase (PLACE items), and the check.
+    pub fn encode(&self, enc: &Enc<'_>, unit: &Unit, front: &Front, defs: &Defs, vis: &Vis) -> Result<(), Error> {
+        let n32 = unit.table.len() as u32;
+        let (u_files, u_data) = (&unit.files.buffer as &BufferRef, &unit.data.buffer as &BufferRef);
+        let n_toks = &vis.gscan.total.buffer;
+        let by_top = Grid::Indirect(&vis.targs.buffer, 0);
+        enc.run(
+            "px_top_calls",
+            None,
+            &[u_files, u_data, &front.bases.buffer, &defs.defs.buffer, &vis.lookups.buffer, &vis.text_nodes.buffer, &vis.gat.buffer, &vis.n_gaps.buffer, &vis.gfirsts.buffer, n_toks, &self.cend.buffer, &self.ctl.buffer],
+            &[n32],
+            by_top,
+        )?;
+        self.reach_scan.encode(enc, SegOp::Max, n_toks, 0, &self.cend.buffer, &self.heads.buffer, &self.reach.buffer)?;
+        enc.run("px_top_outer", None, &[&self.cend.buffer, &self.reach.buffer, n_toks, &self.state.buffer, &self.oflag.buffer], &[], by_top)?;
+        self.oscan.encode(enc, n_toks, 0, &self.oflag.buffer, &self.oid.buffer)?;
+        enc.run(
+            "px_top_lists",
+            None,
+            &[&vis.lookups.buffer, &self.cend.buffer, &self.state.buffer, &self.oid.buffer, n_toks, &vis.sslot.buffer, &vis.gat.buffer, &vis.n_gaps.buffer, &self.lists.buffer, &self.slots.buffer, &self.ctl.buffer],
+            &[self.list_cap],
+            by_top,
+        )?;
+        enc.run("px_seed", None, &[&self.oscan.total.buffer, &self.qctl.buffer, &self.ctl.buffer], &[self.list_cap], Grid::Groups(1))?;
+        self.work(enc, unit, front, defs, vis)?;
+        enc.run("px_top_sizes", None, &[&self.state.buffer, &self.oid.buffer, &self.lists.buffer, n_toks, &self.v.buffer], &[], by_top)?;
+        self.vscan.encode(enc, n_toks, 0, &self.v.buffer, &self.obase.buffer)?;
+        enc.run(
+            "px_top_place",
+            None,
+            &[
+                &self.state.buffer,
+                &self.oid.buffer,
+                &self.lists.buffer,
+                n_toks,
+                &self.obase.buffer,
+                &vis.text_nodes.buffer,
+                &vis.gat.buffer,
+                &vis.n_gaps.buffer,
+                &vis.gfirsts.buffer,
+                &self.out.buffer,
+                &self.slots.buffer,
+                &self.qctl.buffer,
+                &self.ctl.buffer,
+            ],
+            &[self.out_cap, self.q_cap],
+            by_top,
+        )?;
+        self.work(enc, unit, front, defs, vis)?;
+        enc.run("px_check", None, &[&self.qctl.buffer, &self.vscan.total.buffer, &self.ctl.buffer], &[self.out_cap], Grid::Groups(1))
+    }
+
+    /// The queue's persistent dispatch, `WORK_LAUNCHES` times.
+    fn work(&self, enc: &Enc<'_>, unit: &Unit, front: &Front, defs: &Defs, vis: &Vis) -> Result<(), Error> {
+        let n32 = unit.table.len() as u32;
+        for _ in 0..WORK_LAUNCHES {
+            enc.run(
+                "px_work",
+                None,
+                &[
+                    &unit.files.buffer,
+                    &unit.data.buffer,
+                    &front.bases.buffer,
+                    &front.keys.buffer,
+                    &defs.defs.buffer,
+                    &defs.items.buffer,
+                    &vis.sort_keys.buffer,
+                    &vis.sort.vals_a.buffer,
+                    &vis.n_rows.buffer,
+                    &vis.name_keys.buffer,
+                    &vis.values.buffer,
+                    &vis.text_nodes.buffer,
+                    &vis.gat.buffer,
+                    &vis.n_gaps.buffer,
+                    &vis.gfirsts.buffer,
+                    &vis.gscan.total.buffer,
+                    &self.lists.buffer,
+                    &self.tok.buffer,
+                    &self.tchild.buffer,
+                    &self.out.buffer,
+                    &self.slots.buffer,
+                    &self.qctl.buffer,
+                    &self.ctl.buffer,
+                ],
+                &[n32, self.tok_cap, self.list_cap, self.out_cap, self.q_cap],
+                Grid::Groups(WORKER_GROUPS),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// The refusals, and the output's refs where there are none (after the command buffer).
+    pub fn read(&self) -> (u32, Vec<u32>) {
+        // SAFETY: the device finished; `out` holds at least `n_out` words where no room ran out.
+        unsafe {
+            let refused = *self.ctl.host().cast::<u32>().add(2);
+            if refused != 0 {
+                return (refused, Vec::new());
+            }
+            let n = *self.vscan.total.host().cast::<u32>() as usize;
+            (0, std::slice::from_raw_parts(self.out.host().cast::<u32>(), n).to_vec())
+        }
+    }
+}
+
+/// A unit expanded on the device: its output's tokens (refs to its tapes' nodes, in order), or
+/// why it is refused (`X_*` bits), and the rung it ran at.
+pub struct Expanded {
+    pub ev: crate::pp_eval::Evaluated,
+    pub refused: u32,
+    pub out: Vec<u32>,
+    pub rung: u32,
+    /// The command buffer's launches (at most `KERNEL_LAUNCH_LIMIT`).
+    pub launches: usize,
+}
+
+/// The front passes, the definitions, the lookups and the expansion over `unit` laid out as
+/// `lay`, in one command buffer; from rung `rung`, and at the next where a store's room ran out.
+pub fn expand_from(unit: &Unit, lay: &Layout, rung: u32) -> Result<Expanded, Error> {
+    let (mut def_rung, mut rung) = (0, rung);
+    loop {
+        let front = Front::new(unit, false)?;
+        let defs = Defs::new(unit, def_rung)?;
+        let vis = Vis::new(unit, lay)?;
+        let exp = Exp::new(unit, lay, rung)?;
+        let launches = crate::pp_eval::run(|enc| {
+            front.encode(enc, unit)?;
+            defs.encode(enc, unit, &front)?;
+            vis.encode(enc, unit, &front, &defs)?;
+            exp.encode(enc, unit, &front, &defs, &vis)
+        })?;
+        // SAFETY: the device finished writing `room`.
+        if unsafe { *defs.room.host().cast::<u32>() } != 0 {
+            def_rung += 1;
+            if def_rung >= RUNGS {
+                return Err(Error::BackendCapacity);
+            }
+            continue;
+        }
+        vis.read()?;
+        let (refused, out) = exp.read();
+        if refused & X_ROOM != 0 && refused & !X_ROOM == 0 && rung + 1 < EXP_RUNGS {
+            rung += 1;
+            continue;
+        }
+        return Ok(Expanded { ev: front.read()?, refused, out, rung, launches });
+    }
+}
+
+/// `expand_from` rung 0.
+pub fn expand(unit: &Unit, lay: &Layout) -> Result<Expanded, Error> {
+    expand_from(unit, lay, 0)
 }
 
 /// The front passes, the definitions and the lookups over `unit` laid out as `lay`, in one

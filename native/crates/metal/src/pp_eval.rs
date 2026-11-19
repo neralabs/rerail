@@ -39,6 +39,8 @@ pub struct Unit {
     /// At least the unit's directives: a directive is a node over its `#`, so a file has at most
     /// half its nodes.
     pub dir_bound: usize,
+    /// Each file's nodes (its tape's header).
+    pub file_nodes: Vec<u32>,
 }
 
 /// Bytes past the last file, so that a word read at a source's last byte stays in the buffer.
@@ -70,7 +72,8 @@ impl Unit {
         let nodes = |t: &[u8]| t.get(24..28).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize);
         let node_bound = files.iter().map(|f| nodes(f.1)).sum::<usize>().max(1);
         let dir_bound = files.iter().map(|f| nodes(f.1) / 2).sum::<usize>().max(1);
-        Ok(Unit { data, files: MappedBuffer::from_slice(&device, &table)?, table, node_bound, dir_bound })
+        let file_nodes = files.iter().map(|f| nodes(f.1) as u32).collect();
+        Ok(Unit { data, files: MappedBuffer::from_slice(&device, &table)?, table, node_bound, dir_bound, file_nodes })
     }
 }
 
@@ -230,10 +233,10 @@ impl Front {
     }
 }
 
-/// Encodes `f`'s passes in one command buffer, commits it and waits.
-pub fn run(f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<(), Error> {
+/// Encodes `f`'s passes in one command buffer, commits it and waits: the launches it made.
+pub fn run(f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<usize, Error> {
     let device = crate::device()?;
-    let _scope = crate::launch::LaunchScope::enter();
+    let scope = crate::launch::LaunchScope::enter();
     let queue = crate::pool::queue(&device)?;
     let command = queue.new_command_buffer();
     command.set_label("Rerail pp evaluator");
@@ -247,7 +250,8 @@ pub fn run(f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<(), Error> {
         crate::launch::release_refused(command);
         return Err(refused);
     }
-    wait_checked(command)
+    wait_checked(command)?;
+    Ok(scope.snapshot().len())
 }
 
 /// The front passes over `unit`, read back (`nodes`: each node as the device's reader gives it).
