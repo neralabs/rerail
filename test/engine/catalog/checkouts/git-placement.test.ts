@@ -930,27 +930,88 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     for (let use = 0; use < 3; use += 1) expect(worktreeRegistry(outer)?.worktrees).toEqual(gitsRegistry(outer));
   });
 
-  it("keeps the repository above's list once a folder between it and such a checkout becomes a repository and the repository above adds a worktree", async () => {
+  it("lists the folder between's list once a folder between such a checkout and the repository above becomes a repository, before the repository above changes", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    const middle = join(outer, "middle");
+    const inner = join(middle, "inner");
+    const emptied = join(middle, "emptied");
+    mkdirSync(inner, { recursive: true });
+    // An empty Git folder, which Git passes over as it searches up.
+    mkdirSync(join(emptied, ".git"), { recursive: true });
+    for (const checkout of [inner, emptied]) expect(registryPlacements(checkout), checkout).toBe(1);
+    expect(worktreeRegistry(outer)?.worktrees).toEqual(gitsRegistry(outer));
+
+    // Neither checkout's own .git moves; the folder between's does, and Git now lists its registry there.
+    repository(middle);
+    expectGitsRegistries(inner, emptied);
+    expect(gitsRegistry(inner)).toEqual(gitsRegistry(middle));
+
+    // The repository above adds a worktree: its lists follow, and the checkouts keep the folder between's with no Git process.
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    for (let use = 0; use < 3; use += 1) expect(worktreeRegistry(outer)?.worktrees).toEqual(gitsRegistry(outer));
+    const started = vi.mocked(runGit).mock.calls.length;
+    for (const checkout of [inner, emptied]) expect(worktreeRegistry(checkout)?.worktrees, checkout).toEqual(gitsRegistry(checkout));
+    expect(vi.mocked(runGit).mock.calls.length).toBe(started);
+  });
+
+  it("lists as Git does once a folder between such a checkout and the repository above becomes a repository while Git places the checkout", async () => {
     const root = await temporaryRoot();
     const outer = repository(join(root, "outer"));
     const middle = join(outer, "middle");
     const inner = join(middle, "inner");
     mkdirSync(inner, { recursive: true });
-    expect(registryPlacements(inner)).toBe(1);
     expect(worktreeRegistry(outer)?.worktrees).toEqual(gitsRegistry(outer));
 
-    // The checkout's own .git is unchanged, so its acceptance holds until Git lists another repository's registry there.
-    repository(middle);
-    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
-    expect(worktreeRegistry(inner)?.worktrees).toEqual(gitsRegistry(inner));
-    expect(gitsRegistry(inner)).toHaveLength(1);
-    for (let use = 0; use < 3; use += 1) expect(worktreeRegistry(outer)?.worktrees).toEqual(gitsRegistry(outer));
+    // Git places the checkout in the repository above, and the folder between becomes a repository before Git ends.
+    const actual = vi.mocked(runGit).getMockImplementation()!;
+    vi.mocked(runGit).mockImplementationOnce((cwd, args, options) => {
+      const result = actual(cwd, args, options);
+      repository(middle);
+      return result;
+    });
+    worktreeRegistry(inner);
+    expectGitsRegistries(inner);
+    expect(gitsRegistry(inner)).toEqual(gitsRegistry(middle));
+  });
 
-    // The trip dropped the acceptance naming the repository above and Git placed the checkout in the folder between, so
-    // the next ask gives the folder between's list with no Git process.
-    const started = vi.mocked(runGit).mock.calls.length;
-    expect(worktreeRegistry(inner)?.worktrees).toEqual(gitsRegistry(inner));
-    expect(vi.mocked(runGit).mock.calls.length).toBe(started);
+  it("gives no list once a folder between such a checkout and the repository above becomes a bare repository, or the repository above's .git is gone", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    const bare = join(outer, "bare");
+    const inBare = join(bare, "inner");
+    mkdirSync(inBare, { recursive: true });
+    // A repository above that lists no worktree, whose registry reads the same once its .git is gone.
+    const lone = repository(join(root, "lone"));
+    const inLone = join(lone, "inner");
+    mkdirSync(inLone);
+    for (const checkout of [inBare, inLone]) expect(registryPlacements(checkout), checkout).toBe(1);
+
+    // Git takes a folder holding HEAD, objects and refs for a Git folder as it searches up, and gives no top level in it.
+    git(outer, "init", "--quiet", "--bare", bare);
+    await rename(join(lone, ".git"), join(root, "lone.git"));
+    for (const checkout of [inBare, inLone]) {
+      expect(gitsAnswer(checkout).git, checkout).toBe(false);
+      expect(worktreeRegistry(checkout), checkout).toBeUndefined();
+    }
+  });
+
+  it("lists as Git does once a folder between such a checkout and the repository above becomes a repository, where the repository above names another work tree", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    const elsewhere = join(root, "elsewhere");
+    mkdirSync(elsewhere);
+    git(outer, "config", "core.worktree", elsewhere);
+    const middle = join(outer, "middle");
+    const inner = join(middle, "inner");
+    mkdirSync(inner, { recursive: true });
+    // Git names a top level that is not above the checkout.
+    expect(gitsAnswer(inner).workspaceRoot).toBe(elsewhere);
+    expect(registryPlacements(inner)).toBe(1);
+
+    repository(middle);
+    expectGitsRegistries(inner);
+    expect(gitsRegistry(inner)).toEqual(gitsRegistry(middle));
   });
 
   it("lists as Git does a bare repository's worktree, a work tree whose Git folder is kept apart, a submodule, a folder in a checkout and a checkout whose .git is a link", async () => {

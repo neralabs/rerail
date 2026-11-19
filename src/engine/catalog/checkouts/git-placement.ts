@@ -397,7 +397,7 @@ export function gitEntryFacts(folder: string): string | undefined {
 }
 
 /** `path`'s real path, through every link; undefined when it cannot be read (a link whose target is gone, say). */
-function realOf(path: string): string | undefined {
+export function realOf(path: string): string | undefined {
   try {
     return checkoutRealpath(path);
   } catch {
@@ -409,6 +409,11 @@ function realOf(path: string): string | undefined {
 function described(looked: Looked): string {
   if (looked === undefined) return "?";
   return looked === "none" ? "none" : `${looked.mode}:${looked.dev}:${looked.ino}`;
+}
+
+/** {@link described} of the entry at `path`, read now: one lstat. */
+export function entryFacts(path: string): string {
+  return described(look(path));
 }
 
 function linkText(path: string): string {

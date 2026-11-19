@@ -17,11 +17,13 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { checkoutRealpath, physicalPath, storedPath } from "./checkout-control.js";
 import {
+  entryFacts,
   filePlacementInputs,
   gitEntryFacts,
   linkedWorktreeFromFiles,
   lookupEnvironment,
   placementInputs,
+  realOf,
   type PlacementInputs,
 } from "./checkouts/git-placement.js";
 import { openNoFollowSync } from "../no-follow.js";
@@ -110,7 +112,7 @@ function placedFromInputs(requested: string, inputs: PlacementInputs, lastAnswer
   const held = heldTopLevels.get(requested);
   if (held?.stamp === inputs.stamp && (inputs.owned || lastAnswer)) return { ...held.location };
   const fromFiles = linkedLocation(inputs);
-  const located = fromFiles === undefined ? locatedByGit(requested) : { location: fromFiles, byGit: false };
+  const located = fromFiles === undefined ? locatedByGit(requested) : { location: fromFiles, byGit: false, searched: [] };
   holdTopLevel(requested, inputs, located);
   return { ...located.location };
 }
@@ -119,12 +121,42 @@ function placedFromInputs(requested: string, inputs: PlacementInputs, lastAnswer
 interface Located {
   readonly location: RepositoryIdentityLocation;
   readonly byGit: boolean;
+  /** For an answer Git gave, what Git's search reads in each folder it may walk, read before Git ran ({@link searchedUp}). */
+  readonly searched: readonly Searched[];
 }
 
 function locatedByGit(requested: string): Located {
+  const searched = searchedUp(requested);
   const result = locateInGit(requested);
   const location = result === undefined || result.status !== 0 ? nonGitLocation(requested) : gitLocation(requested, result.stdout);
-  return { location, byGit: true };
+  return { location, byGit: true, searched };
+}
+
+/** A folder Git's search walks, and what it holds there ({@link searchedIn}). */
+interface Searched {
+  readonly folder: string;
+  readonly entries: string;
+}
+
+/**
+ * What Git's search for a repository reads in each folder from `requested`'s real path up to its root, as Git walks up
+ * from the folder it changed into; none when the real path cannot be read. Read before Git runs: a folder that becomes
+ * a repository while Git runs, after Git passed it, then moves what the next ask reads.
+ */
+function searchedUp(requested: string): Searched[] {
+  const real = realOf(requested);
+  return real === undefined ? [] : foldersUp(real).map(folder => ({ folder, entries: searchedIn(folder) }));
+}
+
+/** `folder` and every folder above it, up to its root. */
+function foldersUp(folder: string): string[] {
+  const parent = dirname(folder);
+  return parent === folder ? [folder] : [folder, ...foldersUp(parent)];
+}
+
+/** What `folder` holds where Git's search looks ({@link GIT_MARKERS}), as an lstat gives each: two lstats, no Git process. */
+function searchedIn(folder: string): string {
+  return GIT_MARKERS.map(name => entryFacts(join(folder, name))).join(" ");
 }
 
 function linkedLocation(inputs: PlacementInputs): RepositoryIdentityLocation | undefined {
@@ -137,7 +169,8 @@ function linkedLocation(inputs: PlacementInputs): RepositoryIdentityLocation | u
  * Keeps `located` for `folder` under the stamp of `inputs`, read before it was placed, when it names the folder as its
  * own top level ({@link answersInputs}): what makes that so is read at the folder and the Git folders it names, all in
  * the stamp. Any other answer depends on the folders above too, and is not kept for placements; Git's acceptance naming
- * a folder above is kept for the worktree registry under the same stamp ({@link keepAcceptance}). For folders Git does
+ * a folder above is kept for the worktree registry under the same stamp and what Git's search read in the folders up to
+ * that one ({@link keepAcceptance}). For folders Git does
  * not take for the user's, whose answer depends on the `safe.directory` entries of the user's and the system's Git
  * config too, Git's acceptance is kept for the worktree registry alone ({@link placed}).
  */
@@ -146,7 +179,7 @@ function holdTopLevel(folder: string, inputs: PlacementInputs, located: Located)
   gitAcceptances.delete(folder);
   try {
     if (answersInputs(folder, inputs, located)) keepTopLevel(folder, inputs, located);
-    else if (located.byGit && !namesItself(folder, located.location)) keepAcceptance(folder, withLookup(inputs.stamp), located.location);
+    else if (located.byGit && !namesItself(folder, located.location)) keepAcceptance(folder, inputs.stamp, located);
   } catch {
     // A folder whose real path cannot be read now is asked of Git again next time.
   }
@@ -369,30 +402,38 @@ function registryCommonDirectory(checkout: string): string | undefined {
  * Git's acceptances of recorded checkouts that the worktree registry, asked at every tool call, takes in place of asking
  * Git again: of folders the files cannot describe ({@link gitEntryFacts}), of every folder while the environment moves
  * Git's lookup, and of folders Git places in a repository above them. Each is kept under the facts of the folder's own
- * `.git` ({@link acceptanceStamp}), or, when they cannot be read, with no stamp, as the registry kept every checkout's
+ * `.git` and what Git's search reads in each folder from it up to the top level Git named (`searched`, {@link
+ * keepAcceptance}), or, when the folder's own facts cannot be read, with no stamp, as the registry kept every checkout's
  * before: until a placement asks Git again, Git cannot list the registry or the folder is gone. A refusal is not kept.
  */
-const gitAcceptances = new Map<string, { readonly stamp: string | undefined; readonly location: RepositoryIdentityLocation }>();
+const gitAcceptances = new Map<string, {
+  readonly stamp: string | undefined;
+  readonly searched: readonly string[];
+  readonly location: RepositoryIdentityLocation;
+}>();
 
 /** Git's acceptance of `requested` kept for the worktree registry while the facts it was kept under are unchanged. */
 function keptForRegistry(requested: string): RepositoryIdentityLocation | undefined {
   const kept = gitAcceptances.get(requested);
   if (kept === undefined) return undefined;
-  return kept.stamp === undefined || kept.stamp === acceptanceStamp(requested) ? { ...kept.location } : undefined;
+  const now = stampOf(ownFacts(requested), kept.searched.map(searchedIn));
+  return kept.stamp === undefined || kept.stamp === now ? { ...kept.location } : undefined;
 }
 
 /**
- * The facts a kept acceptance of `requested` holds: its placement inputs read from the files ({@link
- * filePlacementInputs}), else the raw facts Git reads there ({@link gitEntryFacts}), with the lookup variables' values,
- * which do not change while the process runs. Undefined when neither can be read.
+ * The facts of `requested`'s own `.git` a kept acceptance holds: its placement inputs read from the files ({@link
+ * filePlacementInputs}), else the raw facts Git reads there ({@link gitEntryFacts}). Undefined when neither can be read.
  */
-function acceptanceStamp(requested: string): string | undefined {
-  return withLookup(filePlacementInputs(requested)?.stamp ?? gitEntryFacts(requested));
+function ownFacts(requested: string): string | undefined {
+  return filePlacementInputs(requested)?.stamp ?? gitEntryFacts(requested);
 }
 
-/** `facts` with the lookup variables' values ({@link acceptanceStamp}); undefined when the facts could not be read. */
-function withLookup(facts: string | undefined): string | undefined {
-  return facts === undefined ? undefined : `${facts}\n${lookupEnvironment() ?? ""}`;
+/**
+ * A kept acceptance's stamp: `facts`, what Git's search reads in each folder it walked (`searched`), and the lookup
+ * variables' values, which do not change while the process runs. Undefined when the facts could not be read.
+ */
+function stampOf(facts: string | undefined, searched: readonly string[]): string | undefined {
+  return facts === undefined ? undefined : [facts, ...searched, lookupEnvironment() ?? ""].join("\n");
 }
 
 /**
@@ -401,20 +442,36 @@ function withLookup(facts: string | undefined): string | undefined {
  */
 function acceptedByGit(requested: string): RepositoryIdentityLocation {
   heldTopLevels.delete(requested);
-  const stamp = acceptanceStamp(requested);
-  const { location } = locatedByGit(requested);
-  keepAcceptance(requested, stamp, location);
-  return { ...location };
+  const facts = ownFacts(requested);
+  const located = locatedByGit(requested);
+  keepAcceptance(requested, facts, located);
+  return { ...located.location };
 }
 
 /**
- * Keeps Git's acceptance `location` of `requested` for the worktree registry under `stamp`, the facts of the folder's own
- * `.git` read before Git ran. One that names a folder above ends once the folder's own `.git` moves (`git init`, a clone
- * or a restore there makes one Git reads first); what the folders above hold is in no stamp. A refusal is not kept.
+ * Keeps Git's acceptance `located` of `requested` for the worktree registry under `facts`, the facts of the folder's own
+ * `.git`, and what Git's search read in each folder from `requested` up to the top level Git named ({@link upToTop}),
+ * all read before Git ran. One that names a folder above ends once the folder's own `.git` moves (`git init`, a clone or
+ * a restore there makes one Git reads first), once a folder between becomes a repository, and once the top level's own
+ * `.git` moves. A refusal is not kept.
  */
-function keepAcceptance(requested: string, stamp: string | undefined, location: RepositoryIdentityLocation): void {
-  if (!location.git) gitAcceptances.delete(requested);
-  else gitAcceptances.set(requested, { stamp, location });
+function keepAcceptance(requested: string, facts: string | undefined, located: Located): void {
+  if (!located.location.git) {
+    gitAcceptances.delete(requested);
+    return;
+  }
+  const searched = upToTop(located.searched, located.location.workspaceRoot);
+  const stamp = stampOf(facts, searched.map(folder => folder.entries));
+  gitAcceptances.set(requested, { stamp, searched: searched.map(folder => folder.folder), location: located.location });
+}
+
+/**
+ * The folders of `searched` from the one asked up to `top`, the top level Git named; all of them, up to the root, when
+ * `top` is not among them (a `core.worktree` naming a folder elsewhere), since Git searched up from the folder asked.
+ */
+function upToTop(searched: readonly Searched[], top: string): readonly Searched[] {
+  const end = searched.findIndex(folder => folder.folder === top);
+  return end === -1 ? searched : searched.slice(0, end + 1);
 }
 
 function listWorktrees(checkout: string, commonDirectory: string, contents: string): WorktreeRegistry & { readonly contents: string } | undefined {
