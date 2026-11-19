@@ -681,6 +681,28 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     expect(opened.mock.calls.filter(([root]) => root === worktree)).toHaveLength(1);
   });
 
+  it("keeps the daemon's matcher its own lane took once a walk's question reaches a worktree with no lane", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const sessionRoot = await realpath(session);
+    for (const checkout of [session, worktree]) await mkdir(join(checkout, "api"), { recursive: true });
+    const matchers = new GitIgnoreMatchers();
+    const opened = vi.spyOn(nativeGitAccess(), "openGitIgnoreMatcher");
+    cleanups.push(async () => { opened.mockRestore(); });
+    const opensIn = (checkout: string) => opened.mock.calls.filter(([root]) => root === checkout).length;
+    const { recorder } = recordingAudits();
+    const first = router(session, databasePath, recorder, undefined, true, undefined, matchers);
+    await first.openWorkspace("lane-first");
+    // The session checkout's own lane answers there and takes the daemon's matcher; then the walk reaches the worktree.
+    expect(first.walkView().ignoresPath("api", true)).toBe(false);
+    expect(first.walkView().ignoresPath(walked(session, worktree, "api"), true)).toBe(false);
+
+    const second = router(session, databasePath, recorder, undefined, true, undefined, matchers);
+    await second.openWorkspace("lane-first-second");
+    expect(second.walkView().ignoresPath("api", true)).toBe(false);
+    // One matcher per checkout for both sessions: the walk's question let go of none the lane took.
+    expect([opensIn(sessionRoot), opensIn(worktree)]).toEqual([1, 1]);
+  });
+
   it("answers a walk's questions about a worktree another lane answers for by that worktree's own Git ignore rules", async () => {
     const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
     // Only the worktree ignores gen/: its .gitignore is not the session checkout's.

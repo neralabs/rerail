@@ -315,15 +315,23 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return matcher;
   }
 
-  /** The exclude stack kept for `root` under the process's Git owner now: a new owner drops every one kept. */
+  /** The exclude stack kept for `root` under the process's Git owner now (`#followGitOwner`). */
   #keptGitIgnore(root: string): NativeGitIgnoreMatcher | null | undefined {
-    const access = nativeGitAccess();
-    if (access !== this.#gitIgnoreAccess) {
-      for (const kept of [...this.#gitIgnore.keys()]) this.#forgetGitIgnore(kept);
-      this.#gitIgnoreReported.clear();
-      this.#gitIgnoreAccess = access;
-    }
+    this.#followGitOwner();
     return this.#gitIgnore.get(root);
+  }
+
+  /**
+   * Drops every exclude stack kept, and lets go of the daemon's, once the process's Git owner is not the one they were
+   * kept under (Git answered at last). A lane's take and a walk's question both look first, so neither drops what the
+   * other kept under the same owner.
+   */
+  #followGitOwner(): void {
+    const access = nativeGitAccess();
+    if (access === this.#gitIgnoreAccess) return;
+    for (const kept of [...this.#gitIgnore.keys()]) this.#forgetGitIgnore(kept);
+    this.#gitIgnoreReported.clear();
+    this.#gitIgnoreAccess = access;
   }
 
   /** Says a failed open once per kind: one that timed out is tried again after GIT_OPEN_AGAIN_MS, one refused is kept as none. */
@@ -340,6 +348,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * holds while its sources are unchanged (`GitIgnoreMatchers`), else one opened now. A failed open throws.
    */
   #takeGitIgnore(root: string): NativeGitIgnoreMatcher | null {
+    this.#followGitOwner();
     const matcher = this.#openGitIgnore(root);
     this.#gitIgnore.set(root, matcher);
     return matcher;
