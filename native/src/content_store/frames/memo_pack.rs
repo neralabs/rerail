@@ -337,12 +337,14 @@ impl ContentStore {
     }
 
     /// Copies every entry (and what is kept over it) to a new segment and removes the others, where the bytes no row
-    /// names are more than half the segments and at least `floor`: one write transaction, so no writer adds one
-    /// meanwhile. Rows of the packs before are forgotten. Returns the bytes freed. A reader of another process that
-    /// found a row before is told of an old segment: it misses (one it mapped stays as it was).
-    pub fn compact_memo_pack(&self, floor: u64) -> StoreResult<u64> {
+    /// names are more than half the segments and at least `floor`, or the segments are more than `budget`
+    /// (`segments::compaction_due`): one write transaction, so no writer adds one meanwhile. Rows of the packs before
+    /// are forgotten. Returns the bytes freed. A reader of another process that found a row before is told of an old
+    /// segment: it misses (one it mapped stays as it was).
+    pub fn compact_memo_pack(&self, floor: u64, budget: usize) -> StoreResult<u64> {
         let (held, named) = self.memo_pack_bytes()?;
-        if held < floor || held.saturating_sub(named) < held / 2 {
+        let count: i64 = self.connection.lock().expect("content store mutex poisoned").query_row_cached("SELECT count(*) FROM memo_packs", [], |r| r.get(0))?;
+        if !super::super::segments::compaction_due(held, named, count as usize, floor, budget) {
             return Ok(0);
         }
         let database = self.database_path.clone();

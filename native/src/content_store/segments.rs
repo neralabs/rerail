@@ -89,6 +89,19 @@ pub(super) fn segment_path(dir: &Path, seg: i64) -> PathBuf {
     dir.join(format!("{seg}.seg"))
 }
 
+/// The segments of a kind (`frame_segments`, `memo_packs`, `object_segments`) the store keeps before compaction copies
+/// them into one, whatever their bytes. A process maps each segment it reads, and the frames a run reads before its
+/// first wave are every frame of the store (decision 0104): a process's mappings are about the store's segments, and
+/// mappings are a bounded resource (Linux allows 65,530 a process). The bytes bound no count: writes whose entries
+/// stay named (a new root's frames, files never parsed again) each left one more segment.
+pub(super) const SEGMENT_BUDGET: usize = 1024;
+
+/// Whether a kind's segments are compacted: `count` of them holding `held` bytes, `named` of which their rows name. The
+/// bytes no row names past half of them and at least `floor`, or more segments than `budget`.
+pub(super) fn compaction_due(held: u64, named: u64, count: usize, floor: u64, budget: usize) -> bool {
+    count > budget || (held >= floor && held.saturating_sub(named) >= held / 2)
+}
+
 /// The segments a read finds by rows, each mapped once: one whose file is not there or does not check is `None`.
 pub(super) struct SegmentMaps {
     dir: PathBuf,

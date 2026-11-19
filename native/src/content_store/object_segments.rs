@@ -373,13 +373,15 @@ impl ContentStore {
     }
 
     /// Copies every placed source's and tape's bytes to one new segment and removes the others, where the bytes no
-    /// row names (objects stored again, collected) are more than half the segments and at least `floor`: one write
-    /// transaction. A row whose segment is not there is marked so (`seg` -1, never a segment's number: no later
-    /// segment is read as its), absent to readers until its file is parsed and stored again; other rows name it, so
-    /// it stays. Returns the bytes freed. A reader that mapped an old segment reads it on.
-    pub fn compact_object_segments(&self, floor: u64) -> StoreResult<u64> {
+    /// row names (objects stored again, collected) are more than half the segments and at least `floor`, or the
+    /// segments are more than `budget` (`segments::compaction_due`): one write transaction. A row whose segment is not
+    /// there is marked so (`seg` -1, never a segment's number: no later segment is read as its), absent to readers
+    /// until its file is parsed and stored again; other rows name it, so it stays. Returns the bytes freed. A reader
+    /// that mapped an old segment reads it on.
+    pub fn compact_object_segments(&self, floor: u64, budget: usize) -> StoreResult<u64> {
         let (held, named) = self.object_segment_bytes()?;
-        if held < floor || held.saturating_sub(named) < held / 2 {
+        let count: i64 = self.connection.lock().expect("content store mutex poisoned").query_row("SELECT count(*) FROM object_segments", [], |r| r.get(0))?;
+        if !super::segments::compaction_due(held, named, count as usize, floor, budget) {
             return Ok(0);
         }
         let dir = object_dir(&self.database_path);
@@ -519,7 +521,7 @@ mod tests {
         // Stored again: the first copy is no row's, and compaction keeps one segment.
         queue();
         store.written().unwrap();
-        assert!(store.compact_object_segments(0).unwrap() > 0);
+        assert!(store.compact_object_segments(0, super::super::segments::SEGMENT_BUDGET).unwrap() > 0);
         assert_eq!(std::fs::read_dir(object_dir(&store.database_path)).unwrap().count(), 1, "one segment left");
         for (id, (source, tape)) in ids.iter().zip(&files) {
             assert_eq!(tape_of(&store, *id).as_deref(), Some(&tape[..]));

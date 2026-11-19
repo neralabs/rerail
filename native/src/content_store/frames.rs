@@ -1038,12 +1038,14 @@ impl ContentStore {
     }
 
     /// Copies every placed frame's bytes to one new segment and removes the others, where the bytes no row names (frames
-    /// written again, forgotten, collected) are more than half the segments and at least `floor`: one write
-    /// transaction. A frame whose segment is not there is forgotten (derived again). Returns the bytes freed. A reader
-    /// that mapped an old segment reads it on; one that finds a row from before misses.
-    pub fn compact_frame_segments(&self, floor: u64) -> StoreResult<u64> {
+    /// written again, forgotten, collected) are more than half the segments and at least `floor`, or the segments are
+    /// more than `budget` (`segments::compaction_due`): one write transaction. A frame whose segment is not there is
+    /// forgotten (derived again). Returns the bytes freed. A reader that mapped an old segment reads it on; one that
+    /// finds a row from before misses.
+    pub fn compact_frame_segments(&self, floor: u64, budget: usize) -> StoreResult<u64> {
         let (held, named) = self.frame_segment_bytes()?;
-        if held < floor || held.saturating_sub(named) < held / 2 {
+        let count: i64 = self.connection.lock().expect("content store mutex poisoned").query_row_cached("SELECT count(*) FROM frame_segments", [], |r| r.get(0))?;
+        if !super::segments::compaction_due(held, named, count as usize, floor, budget) {
             return Ok(0);
         }
         let dir = frame_dir(&self.database_path);
@@ -1674,6 +1676,7 @@ pub fn forget_snapshot(path: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::segments::SEGMENT_BUDGET;
 
 
 
@@ -2073,10 +2076,39 @@ mod tests {
         store.queue_frames(space, vec![put(vec![1; 40_000])], Vec::new(), None);
         store.queue_frames(space, vec![put(big.clone())], Vec::new(), None);
         store.written().unwrap();
-        assert!(store.compact_frame_segments(0).unwrap() > 0);
+        assert!(store.compact_frame_segments(0, SEGMENT_BUDGET).unwrap() > 0);
         assert_eq!(std::fs::read_dir(frame_dir(&store.database_path)).unwrap().count(), 1, "one segment left");
         assert_eq!(from_file(&store).rows, big, "read from the new segment");
         assert_eq!(store.frame_rows(&space, &r, 0).unwrap().unwrap().rows, big, "and from the snapshot");
+    }
+
+    /// Segments are compacted once they are more than a budget, every one of them named: a process maps each segment
+    /// it reads, and the bytes alone never compacted writes that stay named (one segment each, for ever).
+    #[test]
+    fn named_segments_past_the_budget_are_compacted_into_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
+        let space = [6u8; 32];
+        let rels: Vec<Rel> = (0..12).map(|i| rel("r", i)).collect();
+        // Frames of about 8,000 bytes (values no encoding shortens): a segment's header and table are small beside them.
+        let rows = |i: i64| (0..1000).map(|k| (i * 1000 + k).wrapping_mul(0x9E37_79B9_7F4A_7C15_u64 as i64)).collect::<Vec<i64>>();
+        for (i, r) in rels.iter().enumerate() {
+            let put = Put { rel: r.clone(), part: 0, digest: i as u64, reads: Vec::new(), rows: Rows { types: vec![0, 1], n: 500, rows: rows(i as i64) } };
+            store.queue_frames(space, vec![put], Vec::new(), None);
+            store.written().unwrap();
+        }
+        let segments = || std::fs::read_dir(frame_dir(&store.database_path)).unwrap().count();
+        let (held, named) = store.frame_segment_bytes().unwrap();
+        assert_eq!(segments(), 12, "one segment a write");
+        assert!(held - named < held / 2, "most of the bytes named: {held} {named}");
+        assert_eq!(store.compact_frame_segments(0, SEGMENT_BUDGET).unwrap(), 0, "named, and fewer than the budget");
+        assert_eq!(store.compact_frame_segments(u64::MAX, 12).unwrap(), 0, "no more than the budget");
+        store.compact_frame_segments(u64::MAX, 8).unwrap();
+        assert_eq!(segments(), 1, "more than the budget: one segment left");
+        for (i, r) in rels.iter().enumerate() {
+            let read = store.read_frame_parts_from(&space, &[(r.clone(), 0)], true, false).unwrap().remove(&(r.clone(), 0)).expect("read from the store");
+            assert_eq!(read.rows().unwrap().rows, rows(i as i64), "frame {i} read from the new segment");
+        }
     }
 
     #[test]
@@ -2126,13 +2158,14 @@ mod tests {
         let (held, named) = store.memo_pack_bytes().unwrap();
         assert_eq!((named, segments()), (5 * N, 7), "one segment a write");
         assert!(held > 7 * N && held < 7 * N + 7 * 1024, "each segment its entry and a little more: {held}");
-        assert_eq!(store.compact_memo_pack(1 << 40).unwrap(), 0, "below the floor");
-        assert_eq!(store.compact_memo_pack(0).unwrap(), 0, "less than half unnamed");
+        assert_eq!(store.compact_memo_pack(1 << 40, SEGMENT_BUDGET).unwrap(), 0, "below the floor");
+        assert_eq!(store.compact_memo_pack(0, SEGMENT_BUDGET).unwrap(), 0, "less than half unnamed");
+        assert_eq!(store.compact_memo_pack(1 << 40, 7).unwrap(), 0, "no more segments than the budget");
         store.put_memo_entries(&space, (0..6).map(|i| put(200 + i, "c.py")).collect(), 1).unwrap();
         assert_eq!(store.memo_pack_bytes().unwrap().1, 6 * N);
         let before = store.memo_entries(&space, &[2, 5, 100, 205], true).unwrap();
         let (held, _) = store.memo_pack_bytes().unwrap();
-        let freed = store.compact_memo_pack(0).unwrap();
+        let freed = store.compact_memo_pack(0, SEGMENT_BUDGET).unwrap();
         let (now, named) = store.memo_pack_bytes().unwrap();
         assert_eq!((freed, named, segments()), (held - now, 6 * N, 1), "one segment left, of the named entries");
         assert!(now < 6 * N + 1024, "{now}");
@@ -2303,7 +2336,7 @@ mod tests {
         let over = found[&1].over.clone().expect("kept over the entry");
         assert_eq!((found[&1].bytes.bytes(), over.bytes()), (&[7; 50][..], &[8; 10][..]));
         assert_eq!(store.memo_pack_bytes().unwrap().1, 60, "what is kept over it is named; the other is not");
-        assert!(store.compact_memo_pack(0).unwrap() > 4000);
+        assert!(store.compact_memo_pack(0, SEGMENT_BUDGET).unwrap() > 4000);
         let after = store.memo_entries(&space, &[1], true).unwrap();
         assert_eq!((after[&1].bytes.bytes(), after[&1].over.as_ref().map(|o| o.bytes())), (&[7; 50][..], Some(&[8; 10][..])), "moved together");
         store.put_memo_entries(&space, vec![put(1, vec![5; 20], false)], 4).unwrap();
