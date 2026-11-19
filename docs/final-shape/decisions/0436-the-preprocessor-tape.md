@@ -207,6 +207,25 @@ passes' arrays (user, 2026-11-18). The serial pass is the reference for the outp
   (`the_names_pass_reads_the_tapes_in_place`); every directive row, name key, group count and
   guard is the spike's (`the_directives_pass_gives_the_spikes_tables`: 58,301 directives, 89
   guards).
+- **Step 4, the evaluator: macro expansion** (decision 0448; `rerail_metal::pp_expand`,
+  `pp_blocks.metal`, `pp_expand.metal`). Passes 3, 5 and 6 run on the device over a unit whose
+  P1 the spike gives as test input (its instances and their active groups):
+  - the definitions' setup;
+  - the visibility rows, sorted, with a search a use;
+  - the active stretches, in slot order;
+  - the top level's calls (a depth scan, a 40-bit sort of the closes, a max scan);
+  - recursive expansion, run as a work queue of SIMD groups: calls with arguments, `#`, `##`,
+    placemarkers, GNU's comma, `__VA_OPT__`, the paste relexer, calls past a list's end with
+    exact rollback, and the one-token built-ins;
+  - the output.
+
+  The arena is ladder-sized by rung, and a unit past its room runs again larger. Each
+  evaluation is one command buffer, so the host never reads between passes (R5's guard,
+  `an_evaluation_is_one_command_buffer`). Pass 6 is not rounds, as the list above has it, but a
+  tree of lists on a persistent work queue (0448 §1–§3). On every file of both corpora as its
+  own unit, 3,132 give the serial pass's tokens (7.56 M). Three are refused: two by the spike's
+  P1 (`#line`), and one for a call whose arguments run across a directive
+  (`the_corpus_expands_on_the_device`).
   - **Next: P1's rounds** on the device: the instances' layout (sizes bottom-up, bases top-down,
     a scan a depth), the definitions' table (rows sorted by key and position, a search per use,
     `push_macro`/`pop_macro` matched by depth), the tests, the chains' first true arm and the
