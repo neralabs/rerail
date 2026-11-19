@@ -93,6 +93,8 @@ A scan can execute a policy inspected for another store. It retains the program 
 If an include changes after inspection, the scan executes the inspected version. The next inspection reads the new version.
 A native policy catalog can inspect the same relative path in several Git revisions.
 An explicit policy source selects the inspected entry for that repository, revision, and directory.
+Catalog lookup accepts the same file name with repeated separators or a `.` component.
+A Git policy path must name a file inside its selected source. A trailing separator requires a directory and gives a policy path error.
 Without a policy source, evaluation uses the inspected working-tree policy, or the only inspected Git policy for that path.
 If several Git entries match the path, the caller must select a policy source.
 The collection check gives a second scope its own policy and memo rows. After releasing that scope, it checks which rows collection removed.

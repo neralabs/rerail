@@ -56,7 +56,8 @@ impl SelectedPath {
     }
 }
 
-fn requires_directory(path: &Path) -> bool {
+/// Whether the spelling requires the final component to be a directory, before Path normalizes it.
+pub fn requires_directory(path: &Path) -> bool {
     let bytes = path.as_os_str().as_encoded_bytes();
     matches!(bytes.rsplit(|&b| std::path::is_separator(char::from(b))).next(), Some(b"" | b"." | b".."))
 }
