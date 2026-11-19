@@ -31,6 +31,8 @@ structure! {
     /// One document of a batch's chunk.
     pub struct ChunkDoc {
         pub key: u32,
+        /// The key of the file it is part of (decision 0431 §4, `Projected::file`): `docof`'s.
+        pub file: u32,
         pub tag: u32,
         /// Nodes (local ids), and the first row of the document in `node` (also `core_node`'s), `child` and `field`.
         pub nodes: u32,
@@ -43,6 +45,8 @@ structure! {
         /// The `Loc` views' first row of the document, and its rows there (nodes, then spans): `fill_locs`.
         pub loc_row: u32,
         pub locs: u32,
+        /// To the spans' 8-byte alignment.
+        pub pad: u32,
         pub core: Span<u32>,
         pub low: Span<u32>,
         pub ord: Span<u32>,
@@ -444,6 +448,7 @@ fn build_in(batch: &Batch) -> Chunk {
         unsafe {
             let d = docs.add(i);
             (*d).key = p.key;
+            (*d).file = p.file;
             (*d).tag = u32::from(p.tag);
             (*d).nodes = p.len();
             (*d).node_row = batch.nodes[i] as u32;

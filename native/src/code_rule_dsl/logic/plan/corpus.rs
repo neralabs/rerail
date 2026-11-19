@@ -1502,6 +1502,11 @@ fn tail_kept(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: 
 /// (decision 0385): below it, each edit runs again from the kept run, and keeping costs nothing.
 const TAIL_REKEPT: usize = 64;
 
+/// Whether `rules` (each rule's head and the relations it reads) read a guest relation (`guests::READS`).
+fn reads_guests(rules: Vec<(String, Vec<String>)>) -> bool {
+    rules.iter().any(|(_, reads)| reads.iter().any(|r| guests::READS.contains(&r.as_str())))
+}
+
 /// The tail's passes on `p` (`tail_version`), their decisions stated.
 fn tail_passes<'s>(mut p: crate::code_rule_dsl::logic::program_image::manager::Pipeline<'s>, tail: &Tail) -> Result<crate::code_rule_dsl::logic::program_image::manager::Pipeline<'s>> {
     use preparation::{combining, hide, on_request, whole};
@@ -1891,7 +1896,9 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
         let _ = std::fs::write(path, lines);
     }
     drop(parsing);
-    let guests_of: Vec<bool> = parsed.iter().map(|p| guests::REQUESTS.iter().any(|r| p.has_head(r))).collect();
+    // A program makes guests where it asks for one, or reads a guest relation: a file's programs are its grammar's
+    // (decision 0431 §4), made whatever a rule asks.
+    let guests_of: Vec<bool> = parsed.iter().map(|p| guests::REQUESTS.iter().any(|r| p.has_head(r)) || reads_guests(p.rules())).collect();
     let makes_guests = guests_of.iter().any(|&g| g);
     let bounds: Vec<u32> = parsed.iter().map(|p| hiding::bound(p.head())).collect();
     // The libraries once (decision 0089): two or more programs name theirs as modules, and all are read under one
@@ -2010,7 +2017,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
     let core = crate::code_rule_dsl::logic::rr::core_names();
     let mut policies: Vec<scoping::Policy> = Vec::new();
     // A library's rule may ask for guests too (`vue/view.rr`'s view, decision 0222): read once, it is no program's.
-    let makes_guests = makes_guests || library.as_ref().is_some_and(|l| guests::REQUESTS.iter().any(|r| l.has_head(r)));
+    let makes_guests = makes_guests || library.as_ref().is_some_and(|l| guests::REQUESTS.iter().any(|r| l.has_head(r)) || reads_guests(l.rules()));
     // The node attributes answered on request (decision 0174) are the combined program's, made once below over all
     // its readers: a part lowered on its own (a program's own part, without the library's rules) could not see
     // which library relations read an attribute, so its requests read them as they are, not through their widened
@@ -2119,7 +2126,7 @@ fn combine_spliced<P: link::Part>(
         if bound != rec.bound {
             return Ok(None);
         }
-        let guests = guests::REQUESTS.iter().any(|r| part.has_head(r));
+        let guests = guests::REQUESTS.iter().any(|r| part.has_head(r)) || reads_guests(part.rules());
         for name in &modules.declared {
             if let Some(file) = modules.files.iter().find(|(_, _, names)| names.contains(name) && !core.contains(name)) {
                 return Err(Error::Plan(format!("program #{i} declares {name}, which {} it includes declares", file.0.display())));
@@ -5761,7 +5768,14 @@ fn run_observed(
         cone_projections.lock().insert(wanted.clone(), Arc::clone(&narrowed));
         narrowed
     };
-    let project = |docs: Vec<syntax::Document>| -> (Result<Sources>, (f64, f64)) {
+    // What the program sees of guests (`guests::guests_seen`), every part of it: a file's programs it cannot see are not
+    // made.
+    let local_seen = guests::guests_seen(&prepared_placed.v).max(guests::guests_seen(&local.version));
+    // A chunk keeps its documents where its rules read guests: its slice, its fixpoint's parses, or a guest relation
+    // its rules read (a file's programs are made with the batch, and the memo files their rows by their files).
+    let keep_docs = slice.is_some() || parsing || local_seen == guests::Seen::All;
+    // A chunk's projection, and the programs its files hold (made with it), for the documents it keeps.
+    let project = |mut docs: Vec<syntax::Document>| -> (Result<(Sources, Vec<syntax::Document>)>, (f64, f64)) {
         let from = thread_usage();
         // A test's chunk that fails (Q224): one holding a document of this file name.
         #[cfg(any(test, feature = "test-hooks"))]
@@ -5777,6 +5791,30 @@ fn run_observed(
                 let keys: Vec<i64> = docs.iter().map(|d| i64::from(d.key)).collect();
                 (!keys.is_empty() && keys.iter().all(|k| held.contains_key(k))).then(|| keys.iter().flat_map(|k| missing_of(&held[k])).collect::<BTreeSet<String>>())
             };
+            // The programs each file's language declares it holds (decision 0431 §4, step 3), made from its tape at its
+            // load: the batch is built once with them, and no round asks for them. A chunk of partial hits makes those
+            // its cone can see.
+            let seen = match &coned {
+                Some(wanted) => guests::guests_seen(&Arc::clone(cones.lock().entry(wanted.clone()).or_insert_with(|| Arc::new(wanted_cone(&local, wanted)))).version),
+                None => local_seen,
+            };
+            let programs = if keep_docs {
+                let _programs = crate::code_rule_dsl::logic::profile::span(|| "the files' programs".into());
+                let mut made = guests::Guests::new(label, projection.shape, Arc::clone(&guest_keys)).seeing(seen);
+                // Documents projected before (a chunk projected again) hold theirs already.
+                made.seed(&docs);
+                match made.programs(&docs) {
+                    Ok(programs) => programs,
+                    Err(e) => return (Err(Error::Plan(e)), (0.0, 0.0)),
+                }
+            } else {
+                Vec::new()
+            };
+            if !programs.is_empty() {
+                // A batch's documents ascend by key (`Batch::doc` searches them so).
+                docs.extend(programs.iter().cloned());
+                docs.sort_by_key(|d| d.key);
+            }
             let narrowed = coned.map(|wanted| cone_projection(&wanted));
             let projection = narrowed.as_deref().unwrap_or(&projection);
             if slice.is_some() || parsing {
@@ -5784,6 +5822,7 @@ fn run_observed(
             } else {
                 syntax::with_matchers(&store, docs, &sets, &chunk_matchers, &vocabulary, binding, projection).map(|s| (s, None))
             }
+            .map(|sources| (sources, programs))
             .map_err(|e| Error::Plan(e.to_string()))
         };
         let now = thread_usage();
@@ -5849,7 +5888,7 @@ fn run_observed(
         dirty: std::sync::atomic::AtomicBool,
         /// The main thread stopped (its error, or its end): nothing more is started.
         stopped: std::sync::atomic::AtomicBool,
-        projected: parking_lot::Mutex<BTreeMap<usize, std::thread::Result<(Result<Sources>, (f64, f64))>>>,
+        projected: parking_lot::Mutex<BTreeMap<usize, std::thread::Result<(Result<(Sources, Vec<syntax::Document>)>, (f64, f64))>>>,
         /// The documents' and windows' jobs' CPU: parse time.
         jobs_cpu: parking_lot::Mutex<(f64, f64)>,
         build_jobs: std::sync::atomic::AtomicUsize,
@@ -5875,7 +5914,7 @@ fn run_observed(
     impl<'a, B, P, R> Builder<'a, B, P, R>
     where
         B: Fn(&Docs, usize) -> Made + Sync,
-        P: Fn(Vec<syntax::Document>) -> (Result<Sources>, (f64, f64)) + Sync,
+        P: Fn(Vec<syntax::Document>) -> (Result<(Sources, Vec<syntax::Document>)>, (f64, f64)) + Sync,
         R: FnMut(&[(i64, String, Option<Arc<str>>)]) -> Result<Vec<Option<Resolved>>> + Send,
     {
         /// Advances the builder as far as it goes now. A caller that finds another advancing leaves it to them: they
@@ -5974,7 +6013,14 @@ fn run_observed(
                             Ok((built, (user, sys))) => {
                                 c.batch.0 += user;
                                 c.batch.1 += sys;
-                                built.map(|sources| Some((n, sources, docs_of, hits_of, kept)))
+                                // The programs the projection made are the chunk's documents too.
+                                built.map(|(sources, programs)| {
+                                    let mut kept = kept;
+                                    if !kept.is_empty() {
+                                        kept.extend(programs);
+                                    }
+                                    Some((n, sources, docs_of, hits_of, kept))
+                                })
                             }
                             Err(_) => Err(Error::Plan("the chunk builder panicked".to_owned())),
                         });
@@ -6243,7 +6289,7 @@ fn run_observed(
         project: &project,
         run_docs,
         target: &worker_target,
-        keep_docs: slice.is_some() || parsing,
+        keep_docs,
         doing: &worker_doing,
         bell: Default::default(),
     };
@@ -6332,6 +6378,9 @@ fn run_observed(
                 let _guests = crate::code_rule_dsl::logic::profile::span(|| "guests".into());
                 let documents_len = documents.len();
                 let mut made = guests::Guests::new(label, projection.shape, Arc::clone(&guest_keys));
+                // The files' programs, made with the batch (`project`), are made: a library's `embed` of one asks for
+                // nothing more.
+                made.seed(&documents);
                 // A chunk of partial hits runs its cone alone: it makes only the guests the cone can see (a rule that
                 // names no guest sees no annotation or value, `guests::guests_seen`). Before, it made every guest
                 // its entries asked for (on an edit of ep2, 27,373 guests and a second batch, 1.6 s of 12 s).
@@ -6492,8 +6541,15 @@ fn run_observed(
                 }
                 (sources, parsing.then_some((made, docs)))
             }
-            _ if parsing && !documents.is_empty() => (sources, Some((guests::Guests::new(label, projection.shape, Arc::clone(&guest_keys)), documents))),
-            _ => (sources, None),
+            _ if parsing && !documents.is_empty() => {
+                let mut made = guests::Guests::new(label, projection.shape, Arc::clone(&guest_keys));
+                made.seed(&documents);
+                (sources, Some((made, documents)))
+            }
+            _ => {
+                host_of = guests::hosts_of(&documents);
+                (sources, None)
+            }
         };
         // Each source the chunk binds holds the tape values admitted inside its fixpoint, past the batch's rows
         // (decision 0431 §8, `syntax::values`).

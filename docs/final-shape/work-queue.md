@@ -5508,7 +5508,10 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
   product bound.
 - **Also** (2026-11-19, m3, with 0431 step 4c in the tree): `a_call_is_typed_by_the_overloads_its_positional_arguments_fit`
   and `imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order` fail with the same error.
-- **Done when**: all four pass.
+- **Also** (2026-11-19, this machine, with 0431 step 3 in the tree): `python_calls_program_agrees_with_the_runtime` and
+  `rules_read_the_python_program_through_lib_calls` fail with it (`in res`: "the read in `res` has no connected
+  demand"), with or without step 3's widened hiding (checked both ways).
+- **Done when**: all six pass.
 
 ### Q264. `a_request_record_over_an_edit_is_a_run_from_scratchs` fails: "edit 2: a record to carry"
 
@@ -5517,6 +5520,7 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Not 0431's, by its place**: the test builds versions and runs `Pipeline`'s rename pass. It reads no batch, run or
   lowering that 4c changed. To check at 4c's parent, then on decision 0393's carried record (`set_asked`, `rebase`).
 - **Done when**: it passes.
+
 
 ### Q265. The Linux hosts' builds of `rerail-accel` miss `rerail_blocks`
 
@@ -5537,3 +5541,12 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Done when**: R8's test (`cpu_and_metal_read_the_same_tape_values`) allows no upload for `parsed` (its `q266`), and
   its HTML run (whose library, `html/embeds.rr`, filters `child` and `node` by constants) uploads no more than a run
   over a file with no script.
+### Q267. `docof` lowered as `node`'s projection gives a program's own key
+
+- **Seen** (2026-11-19, 0431 step 3): core.rr's `docof(n, d)` of a program's node is its file (`Projected::file`,
+  `ViewDoc::file`, `ChunkDoc::file`), but `node(d, n, …)`'s `d` stays the program's own key, which `doc_role`,
+  `doc_root` and `guest` name it by. Where a program's `docof` is `node`'s projection (T's programs over nodes,
+  `rr::lower::projections`; `whole::Projected` in a combined part), a program's node has its own key for `docof`.
+- **Do**: decide with the guest documents' end (0431 step 3's rest): either the guest relations name a program by its
+  file and place, so `node`'s `d` can be the file, or the projection is not taken where a batch holds programs.
+- **Done when**: `docof` of a program's node is its file in a T program too, with a test.

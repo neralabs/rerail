@@ -76,9 +76,24 @@ code may be named by which rules asked for it, or in what order.
    to its file. The choice was made so:
    As built (step 3, `docof`): a program's document entry carries its file's key (`Guest::file`, `Projected::file`,
    `ViewDoc::file`), which `docof` gives for its nodes and spans, on the CPU and the device; its ids keep its own key.
-   `node`'s document column stays the program's own key, the document underneath: it is the column a batch's
-   lookups keep to one document by (0329's `lookup_in`, SQL's shards, T's per-document typing), and no library rule
-   binds it.
+   `node`'s document column stays the program's own key, the document underneath: the guest relations (`doc_role`,
+   `doc_root`, `guest`) name a program by it, and a batch's lookups keep to one document by it (0329's `lookup_in`).
+   Made the file's, every rule reaching a program through `guest(g, …), node(g, …)` lost it. core.rr's `docof` reads
+   the places' view, the file's; where a program lowers `docof` as `node`'s projection (T's, `rr::lower::projections`),
+   a program's node has its own key there (Q267).
+   As built (step 3, the programs at load): a file's programs are made with its chunk's batch, before any rule runs:
+   each embedding its language declares (`GrammarDialect::embeds`) builds them from the file's tape, read in place
+   where its facts hold it (`Guests::programs`; `embed::host`), so the batch is built once with them, no slice round
+   asks for them and the batch never grows (R5). A program of its own place (`Embedder::per_place`: an HTML file's
+   scripts and styles) stands at the innermost node over its bytes, a whole file's (Vue's view, Blade's compiled view)
+   at its root, as their libraries' `embed` rules name them; a library's request for one finds it made, under its
+   grammar or its embedding's id (`Guests::seed`). The chunk keeps its documents, programs among them, where a rule
+   reads a guest relation, and a program that reads one is bounded as one that asks for guests (hiding, 0058 §1, which
+   qualifies a guest's kinds in its grammar). `html/embeds.rr` derives nothing now: HTML declares its programs
+   (`languages/html.json`, `embed::raw_text`). `program()`, a library's request through an embedding, reads the
+   host's tape where it lies too, not parsing the host again. Left: a program's text is parsed twice, once by its
+   embedder (`Parse::read`) and once for its tape; the libraries' other `embed` rules (Vue, Blade, Markdown, `rr`)
+   and the guest documents underneath (`doc_role`, `doc_root`, `guest`).
    A first scheme put its
    nodes in the file's key, as granules in a reserved slot range. It met 0058's hiding, which shows a node by one
    comparison on its document's key (and on document columns), and Tim's 0168 (PR #508), which keeps that one

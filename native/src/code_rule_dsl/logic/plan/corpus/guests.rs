@@ -648,14 +648,54 @@ impl Guests {
     /// guest's grammar is that dialect's label, as `guest` names what a document is parsed as; its nodes are placed
     /// through the segments (`Placement::Segments`). `None` where the host embeds no program (no script, `lang="coffee"`).
     fn program(&mut self, host: &Document, at: i64, via: crate::code_rule_dsl::language::Via, role: &str) -> Result<Option<Document>, String> {
-        let host_key = (at >> 32) as u32;
-        let Some(dialect) = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts)) else { return Ok(None) };
-        let source = host.facts.source.as_str();
-        // The host's tape, read in place by the embedder (whichever parser wrote it, the same tape).
-        let Ok(grammar) = crate::code_rule_dsl::tape::Grammar::new(dialect) else { return Ok(None) };
-        let Some(Ok(image)) = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, source, &|| false) else { return Ok(None) };
-        let Some(root) = crate::code_rule_dsl::embed::host::Host::new(&image.primary, &grammar).root() else { return Ok(None) };
-        let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source, &|| false) else { return Ok(None) };
+        let Some(program) = embedded(host, &mut |root, source| crate::code_rule_dsl::embed::embedder(via).build(root, source, &|| false).into_iter().collect()).into_iter().next() else { return Ok(None) };
+        self.placed_program(host, Some(at), via, role, program)
+    }
+
+    /// The files' programs among `docs` (made with the batch, `programs`), as made: their places, under their grammar
+    /// and their embeddings' ids, and their files (`host_of`).
+    pub(super) fn seed(&mut self, docs: &[Document]) {
+        let by_key: HashMap<u32, &Document> = docs.iter().map(|d| (d.key, d)).collect();
+        for d in docs {
+            let Some(g) = d.guest.as_ref().filter(|g| g.made == Made::Host && g.file != 0 && g.file != d.key) else { continue };
+            self.made.insert((g.at, g.grammar.clone()));
+            let host = by_key.get(&g.host).and_then(|h| crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&h.facts)));
+            let dialect = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&d.facts));
+            for &(via, of) in host.map_or(&[][..], |h| h.embeds()) {
+                if Some(of) == dialect {
+                    self.made.insert((g.at, via.id().to_owned()));
+                }
+            }
+            self.host_of.insert(i64::from(d.key), i64::from(g.file));
+        }
+    }
+
+    /// The programs each file of `docs` holds that its language declares (decision 0431 §4, step 3): every program
+    /// each of its embeddings' embedders builds (`Embedder::build_all`) from the file's tape, read in place, at its
+    /// load, before any rule runs. Each is at the innermost node of its file over its bytes, made once: a library's
+    /// `embed` of the same place and grammar finds it made.
+    pub(super) fn programs(&mut self, docs: &[Document]) -> Result<Vec<Document>, String> {
+        let mut out = Vec::new();
+        for host in docs.iter().filter(|d| d.guest.is_none()) {
+            let Some(dialect) = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts)) else { continue };
+            let mut vias: Vec<crate::code_rule_dsl::language::Via> = Vec::new();
+            for &(via, _) in dialect.embeds() {
+                if !vias.contains(&via) {
+                    vias.push(via);
+                }
+            }
+            for via in vias {
+                for program in embedded(host, &mut |root, source| crate::code_rule_dsl::embed::embedder(via).build_all(root, source, &|| false)) {
+                    out.extend(self.placed_program(host, None, via, "program", program)?);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The document of `program`, which `via` built from `host`, at host node `at` (else the innermost node over its
+    /// bytes, and made once there); `None` where the run does not see it, or its text does not parse.
+    fn placed_program(&mut self, host: &Document, at: Option<i64>, via: crate::code_rule_dsl::language::Via, role: &str, program: crate::code_rule_dsl::embed::Program) -> Result<Option<Document>, String> {
         let Some(label) = crate::code_rule_dsl::language::label(program.dialect) else { return Ok(None) };
         let range = if label == self.run { Range::Code } else { Range::Hidden };
         if !self.seen.sees(range) {
@@ -663,6 +703,23 @@ impl Guests {
             return Ok(None);
         }
         let place = Placement::Segments(Arc::new(program.segments));
+        let at = match at {
+            Some(at) => at,
+            None => {
+                // A program of its own place stands at the innermost node over its bytes, a whole file's at its root;
+                // made, it is made under its grammar and its embedding both, as a library's `embed` names either.
+                let whole = [0, u32::try_from(host.facts.source.len()).unwrap_or(u32::MAX)];
+                let bytes = if crate::code_rule_dsl::embed::embedder(via).per_place() { place.host([0, u32::try_from(program.text.len()).unwrap_or(u32::MAX)]) } else { whole };
+                let ids = self.numbering(host)?;
+                let Some(at) = (if bytes == whole { ids.root() } else { ids.over(bytes) }) else { return Ok(None) };
+                let (by_grammar, by_via) = (self.made.insert((at, label.to_owned())), self.made.insert((at, via.id().to_owned())));
+                if !(by_grammar && by_via) {
+                    return Ok(None);
+                }
+                at
+            }
+        };
+        let host_key = (at >> 32) as u32;
         let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text)? else { return Ok(None) };
         let key = self.key_for(&[host.path.as_bytes(), &at.to_le_bytes(), via.id().as_bytes()], range, &host.path);
         let file = self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key));
@@ -748,6 +805,21 @@ impl Guests {
         }
         Ok(&self.numbering[&host.key])
     }
+}
+
+/// Each program's file among `docs` (`Guests::host_of`'s, for a chunk that makes no guest of its own).
+pub(super) fn hosts_of(docs: &[Document]) -> HashMap<i64, i64> {
+    docs.iter().filter_map(|d| d.guest.as_ref().filter(|g| g.made == Made::Host && g.file != 0 && g.file != d.key).map(|g| (i64::from(d.key), i64::from(g.file)))).collect()
+}
+
+/// The programs `build` makes from `host`'s tape, read in place where its facts hold it (whichever parser wrote it,
+/// the same tape); none for a host with no tape.
+fn embedded(host: &Document, build: &mut dyn FnMut(crate::code_rule_dsl::embed::host::HostNode<'_>, &str) -> Vec<crate::code_rule_dsl::embed::Program>) -> Vec<crate::code_rule_dsl::embed::Program> {
+    let Some(dialect) = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts)) else { return Vec::new() };
+    let Some(tape) = host.facts.tape.as_ref() else { return Vec::new() };
+    let Ok(grammar) = crate::code_rule_dsl::tape::Grammar::new(dialect) else { return Vec::new() };
+    let Some(root) = crate::code_rule_dsl::embed::host::Host::new(tape.image(), &grammar).root() else { return Vec::new() };
+    build(root, host.facts.source.as_str())
 }
 
 /// A text in its wrapper `( … )`, and its placement one byte on.

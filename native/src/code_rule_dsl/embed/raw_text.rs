@@ -63,6 +63,10 @@ impl Embedder for RawText {
         }
         programs
     }
+
+    fn per_place(&self) -> bool {
+        true
+    }
 }
 
 /// The value of element `element`'s attribute `name` (quoted or not); an empty value (`type=""`) is `""`.

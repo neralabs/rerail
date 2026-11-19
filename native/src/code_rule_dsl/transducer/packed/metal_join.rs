@@ -377,7 +377,7 @@ kernel void view_expand(device const char* B [[buffer(0)]], device uchar* out [[
             if (p[7 + c] == 0u) {
                 v = loc_global(d, l);
             } else if (view == 8u) {
-                v = long(d.key);
+                v = long(d.file);
             } else if (placed) {
                 v = long(view == 5u ? pl[0] : (view == 6u ? pl[1] : pl[2]));
             } else {

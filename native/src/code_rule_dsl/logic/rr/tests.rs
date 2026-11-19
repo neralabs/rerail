@@ -2539,7 +2539,8 @@ counted(c) :- c = count : { kind(_, "sql:object_reference") }.
     assert!(counted.iter().all(|c| c == &["0"]), "{counted:?}");
 }
 
-/// An HTML file's `<script>` and `<style>` are guests (`html/embeds.rr`, decision 0238): a script's text is
+/// An HTML file's `<script>` and `<style>` are its grammar's programs (decision 0238; 0431 §4: `embed::raw_text`, which
+/// `html/embeds.rr` describes): a script's text is
 /// JavaScript, or JSON by its type, and none for a type no grammar reads; a style's text is CSS. Each stands at its
 /// `raw_text`, so its nodes have the file's lines.
 #[test]

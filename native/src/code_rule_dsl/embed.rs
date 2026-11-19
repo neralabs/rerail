@@ -121,6 +121,12 @@ pub trait Embedder: Send + Sync {
     fn build_all(&self, root: HostNode<'_>, source: &str, budget: &dyn Fn() -> bool) -> Vec<Program> {
         self.build(root, source, budget).into_iter().collect()
     }
+
+    /// Whether each program stands at a place of its own (`build_all`'s several: the innermost host node over its
+    /// bytes), else the file's whole (its root, as a Vue component's view or a Blade file's compiled view is).
+    fn per_place(&self) -> bool {
+        false
+    }
 }
 
 static EMBEDDERS: std::sync::OnceLock<Vec<(crate::code_rule_dsl::language::Via, &'static dyn Embedder)>> =
