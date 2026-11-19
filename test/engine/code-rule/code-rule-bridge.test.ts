@@ -2255,6 +2255,38 @@ describe("CodeRuleBridge and a call it takes up only after its tool wrote the fi
     ]);
   });
 
+  // The same late call through `conf`, the file written again after the call's capture took the tool's write (a
+  // formatter, the next edit): what the result says `.aws/config.py` held keeps only its digest, whether the line diff
+  // rebuilds it from that capture or the result gives the text the tool replaced.
+  it.each([
+    {
+      says: "its line diff rebuilds from the capture", tool: "Edit", before: "one\ntwo\nthree\n", atCall: "one\nTWO\nthree\n",
+      then: "one\nTWO\nTHREE\n", input: (path: string) => ({ file_path: path }), output: editResult([" one", "-two", "+TWO", " three"]),
+    },
+    {
+      says: "it gives the text the tool replaced", tool: "Write", before: "one\n", atCall: "one\nmine = 1\n", then: "one\nmine = 1\nx = 2\n",
+      input: (path: string) => ({ file_path: path, content: "one\nmine = 1\n" }),
+      output: (path: string) => ({ type: "update", filePath: path, content: "one\nmine = 1\n", originalFile: "one\n" }),
+    },
+  ])("keeps only the digest of what conf/config.py held, with conf a link to .aws, where $says and the file changed again", async ({ tool, before, atCall, then, input, output }) => {
+    const root = await workspace();
+    const real = join(root, ".aws", "config.py");
+    await mkdir(join(root, ".aws"));
+    await writeFile(real, before);
+    linkFolder(".aws", join(root, "conf"));
+    await awaitClockAfter(real);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await writeFile(real, atCall);
+    const path = join(root, "conf", "config.py");
+    await bridge.begin("edit-1", tool, input(path));
+    await awaitClockAfter(real);
+    await writeFile(real, then);
+    await bridge.finish("edit-1", false, { reported: claudeCodeReportedPreimage(output(path)) });
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
+      { path: "conf/config.py", language: "python", previousReadError: "Rerail keeps no copy of a file holding secrets", generatedText: then },
+    ]);
+  });
+
   // A result with no line diff cannot show that the call's capture is the file before the tool: a capture taken after the
   // tool wrote holds what it wrote, and an edit read against it would show none of the tool's lines. What the result says
   // the file held is read instead: nothing, for a file the tool made where the result does not say what it wrote, or the
