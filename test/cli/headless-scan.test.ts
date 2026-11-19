@@ -14,6 +14,7 @@ import { loadNativeBinding } from "../../src/engine/native/native.js";
 import * as builds from "../../src/engine/native/rerail-build.js";
 import { openRerailDatabase, RERAIL_DATABASE_FILE } from "../../src/engine/storage/database.js";
 import { recordCheckout } from "../../src/engine/catalog/repository-registry.js";
+import { codeRuleSchema } from "../../src/engine/code-rule/code-rule-schema.js";
 import { setCheckoutStarted, stopRerail } from "../../src/runtime/repository-start.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 import { queryContentStore } from "../support/query-content-store.js";
@@ -3906,6 +3907,44 @@ Needle(n) :- kind(n, "identifier"), text(n, "NEEDLE").
     const pending = olderDigest();
     await expect(scan(root, { databasePath: olderPath })).rejects.toThrow(/before (?:this Rerail can read it|it can be read)/u);
     expect(olderDigest()).toBe(pending);
+  });
+
+  it("reads one committed home policy configuration when the policy changes during a revision scan", async () => {
+    const root = checkout(), databasePath = join(root + "-home", "rerail.sqlite");
+    rmSync(join(root, ".rerail/rules/needle.json"));
+    setUpTestRepository(root, {
+      library: ["first", "second"].map(id => ({ kind: "code", rule: codeRuleSchema.parse(needle(id, "NEEDLE", "log")) })),
+    }, databasePath);
+    const writer = new Database(databasePath);
+    const options = { databasePath, revision: "HEAD", analysisScope: "policy-change" };
+    const read = async () => {
+      const report = await scan(root, options);
+      expect(report.status).toBe("completed");
+      expect(report.failures).toEqual([]);
+      return report.violations.map(v => v.ruleId);
+    };
+    try {
+      writer.prepare("DELETE FROM rule_attachments WHERE source_id='second'").run();
+      expect(await read()).toEqual(["first"]);
+      const replacePolicy = writer.transaction(() => {
+        writer.prepare("UPDATE rule_attachments SET source_id='second' WHERE source_id='first'").run();
+        writer.prepare("DELETE FROM library_rules WHERE rule_id='first'").run();
+      });
+      let changed = false;
+      const prepare = Database.prototype.prepare;
+      const hook = vi.spyOn(Database.prototype, "prepare").mockImplementation(function (this: Database.Database, sql: string) {
+        if (!changed && this.readonly && this.name === databasePath && sql.endsWith(" FROM library_rules")) {
+          replacePolicy();
+          changed = true;
+        }
+        return prepare.call(this, sql);
+      });
+      try {
+        expect(await read()).toEqual(["first"]);
+        expect(changed).toBe(true);
+      } finally { hook.mockRestore(); }
+      expect(await read()).toEqual(["second"]);
+    } finally { writer.close(); }
   });
 
   it("loads the rules at --rules-ref as a checkout's own: a broken file or a repeated id is left out, with why, and the rest run", async () => {

@@ -74,6 +74,10 @@ Entering other repositories requires explicit repository values and source reque
 A historical scan uses the rules, packs, settings, and approvals that the normal scan selects today.
 Existing explicit rule-source overrides, such as `--rules-ref`, remain independent of `--revision`.
 Picking a source revision never loads its `.rerail/rules/` as the policy under evaluation.
+
+When a scan uses the home database, it reads eligibility, rule attachments, policy documents, and approvals from one committed SQLite snapshot.
+A policy change during setup takes effect on the next scan.
+The scan releases the read transaction before evaluating the source tree.
 See the existing headless scan’s rule selection. [Headless scan](../../../headless-scan.md#which-rules-run)
 
 Files that describe the source, such as `package.json` for module resolution, come from the selected tree.

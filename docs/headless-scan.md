@@ -76,6 +76,8 @@ Exit codes:
 ## Which rules run
 
 The scan uses your Rerail home's configuration when it can, otherwise a throwaway one.
+It reads the home settings, attachments, library rules, and approvals from one database snapshot.
+A change committed after that read begins applies to a subsequent scan.
 
 - **Home**: the repository's packs, rules, settings and approvals. Used when Rerail is set up here and no `--pack` or
   `--rules-ref` is given.

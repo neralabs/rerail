@@ -426,15 +426,6 @@ function scanRoot(options: HeadlessScanOptions): { root: string; requested: stri
   return { root, requested };
 }
 
-function homeIsScanConfiguration(options: HeadlessScanOptions, home: RerailDatabase | undefined, root: string, packs: readonly string[]): boolean {
-  try {
-    return home !== undefined && options.rulesRef === undefined && packs.length === 0 && homeIsEligible(home, root);
-  } catch (error) {
-    home?.$client.close();
-    throw error;
-  }
-}
-
 /** What the scan covers: the paths asked for, what differs from the base or HEAD, or null for the whole repository. */
 function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGitRevisionSource | undefined): Pick<ScanReport, "base" | "paths" | "requestedPaths" | "skippedPaths"> & { failures?: ScanFailure[] } {
   if (options.paths !== undefined) {
@@ -613,8 +604,8 @@ async function scanRrRules(
 /** Run with a private in-memory copy of the configuration and the selected content store. */
 async function scanReport(
   database: RerailDatabase, options: HeadlessScanOptions,
-  { root, home, useHome, packs, scanId, startedAt, source, analysisStore, analysisRun }: {
-    root: string; home: RerailDatabase | undefined; useHome: boolean; packs: readonly string[];
+  { root, home, packs, scanId, startedAt, source, analysisStore, analysisRun }: {
+    root: string; home: RerailDatabase | undefined; packs: readonly string[];
     scanId: string; startedAt: number; source: NativeGitRevisionSource | undefined;
     analysisStore: string;
     analysisRun: NativeAnalysisScopeRun | undefined;
@@ -637,14 +628,13 @@ async function scanReport(
   };
   const configuredPolicies = catalog?.rrPolicies ?? [];
   const rr = explicitRr ? options.rr! : configuredPolicies.map(policy => policy.path);
-  let refRuleIds: Set<string>;
-  let repository: ScanReport["repository"];
-  try {
-    refRuleIds = explicitRr ? new Set() : prepareScanConfiguration(database, root, home, useHome, packs, refRules, options.ruleDocuments);
-    repository = repositoryOf(explicitRr ? home : database, root);
-  } finally {
-    home?.$client.close();
-  }
+  const readConfiguration = () => {
+    const useHome = home !== undefined && options.rulesRef === undefined && packs.length === 0 && homeIsEligible(home, root);
+    const refRuleIds = explicitRr ? new Set<string>() : prepareScanConfiguration(database, root, home, useHome, packs, refRules, options.ruleDocuments);
+    return { useHome, refRuleIds, repository: repositoryOf(explicitRr ? home : database, root) };
+  };
+  const { useHome, refRuleIds, repository } = home === undefined ? readConfiguration() : home.$client.transaction(readConfiguration)();
+  home?.$client.close();
   const { failures: pathFailures = [], ...target } = scanTarget(options, root, source);
   const { paths } = target;
   if (source !== undefined && paths !== null) source.restrictPaths(paths);
@@ -772,11 +762,10 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
     if (source !== undefined)
       source.setSourceLanguages(JSON.stringify({ suffixes: Object.fromEntries(SOURCE_LANGUAGES), names: Object.fromEntries(SOURCE_NAMES) }));
     const home = openHomeDatabase(homeDatabase);
-    const useHome = homeIsScanConfiguration(options, home, root, packs);
     let configuration: RerailDatabase | undefined;
     try {
       configuration = openRerailDatabase(":memory:");
-      const findings = await scanReport(configuration, options, { root, home, useHome, packs, scanId, startedAt, source, analysisStore, analysisRun });
+      const findings = await scanReport(configuration, options, { root, home, packs, scanId, startedAt, source, analysisStore, analysisRun });
       report = { ...findings, analysisScope, cache };
     } finally {
       configuration?.$client.close();
