@@ -1041,6 +1041,21 @@ stands on:
   row programs' generator in D).
 - Kernel files are `.uglykl` (the user's choice): easy to find and tell from Metal's.
 
+**C: the label passes in UKL (2026-11-19).**
+- **The eight label kernels** (`label_passes.uglykl`, was `metal_label_passes.metal`; the device work queue's Metal
+  copy, `metal_work_queue.metal`, went with it) are UKL, each a `DEFINE_KERNEL2` whose rows keep the old slots'
+  order. They compile on Metal, the CPU and OpenCL (`gpu/examples/ukl_check.rs`, a compile check of a source on every
+  backend this machine has). The tape format is a function constant on Metal and a define elsewhere
+  (`UKL_CONSTANT_U32`).
+- **Still on the Metal runner.** The runner binds the arguments its positional buffers do not reach (the block, the
+  walk statistics, the spill queue) where the kernel's reflection puts them (`LabelKernel`), and a kernel without
+  such a row gets none (`label_round` reads no document: binding the block at a missing slot crashed Metal's
+  encoder). The pattern kernels stay Metal until D and call the shared `simd_roots` with their lane.
+- The engine's Metal tests of the label passes, the sweep, the resident interpreter and the tape reads pass on the
+  M3 (66; two others need the packs' test data, which the host's copy lacked).
+- **Next in C:** the batch runtime and the sweep (with the JIT's generated text), then the runner and the program
+  backend on the lane, so the label passes run on the CPU and OpenCL too.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

@@ -881,13 +881,14 @@ fn scratch_rows(plan: &Plan<'_>) -> usize {
 /// ([`tape_view`]): a pipeline's 16z bodies are compiled though its format makes them dead, and doubled a format
 /// 15 label kernel's compile.
 ///
-/// The batch's tape format is function constant 0 (`tape_format`, 0 for a mixed batch): each view load of the format
-/// field reads it, so a batch of one format runs reads without the other format's branches (t41: label_micro 388 to
-/// about 300 ms at s1000). Every pipeline of these sources is made with a value ([`pipeline_of`]).
-static TAPE_VIEWS: std::sync::LazyLock<[String; 2]> = std::sync::LazyLock::new(|| {
+/// The batch's tape format is the program's specialization constant (`tape_format`, `UKL_CONSTANT_U32`: Metal's
+/// function constant 0, a define elsewhere; 0 for a mixed batch): each view load of the format field reads it, so a
+/// batch of one format runs reads without the other format's branches (t41: label_micro 388 to about 300 ms at
+/// s1000). Every kernel of these sources is made with a value ([`pipeline_of`], [`pipelines`]).
+static VIEW_PIECES: std::sync::LazyLock<[String; 2]> = std::sync::LazyLock::new(|| {
     ["#include <ukl/reads/tape.h>\n", "#include <ukl/reads/tape_z.h>\n"].map(|reads| {
         format!(
-            "#include <metal_stdlib>\nusing namespace metal;\n{}constant uint tape_format [[function_constant(0)]];\n#define clif_view(v,a) ((tape_format!=0u&&(a)=={}u)?tape_format:(v)[(a)/4u])\n{}{}",
+            "{}UKL_CONSTANT_U32(tape_format)\n#define clif_view(v,a) ((tape_format!=0u&&(a)=={}u)?tape_format:(v)[(a)/4u])\n{}{}",
             crate::code_rule_dsl::residency::slabs::msl(),
             std::mem::offset_of!(crate::code_rule_dsl::residency::slabs::DocView, format),
             reads,
@@ -895,6 +896,9 @@ static TAPE_VIEWS: std::sync::LazyLock<[String; 2]> = std::sync::LazyLock::new(|
         )
     })
 });
+/// The view as the pattern kernels read it: Metal's, until step D writes them in UKL (decision 0440).
+static TAPE_VIEWS: std::sync::LazyLock<[String; 2]> =
+    std::sync::LazyLock::new(|| VIEW_PIECES.clone().map(|pieces| format!("#include <metal_stdlib>\nusing namespace metal;\n{pieces}")));
 /// Whether a batch of tapes in `format` (0: mixed) reads 16z ([`TAPE_VIEWS`]).
 fn reads_z(format: u32) -> bool {
     format != 15 && format != 16
@@ -903,12 +907,41 @@ fn reads_z(format: u32) -> bool {
 fn tape_view(format: u32) -> &'static str {
     &TAPE_VIEWS[usize::from(reads_z(format))]
 }
-/// The label kernels over the tape view, for a batch of either kind ([`tape_view`]).
+/// The label kernels (UKL, decision 0440 step C) over the tape view, for a batch of either kind ([`tape_view`]).
 static SOURCES: std::sync::LazyLock<[String; 2]> = std::sync::LazyLock::new(|| {
-    [15, 0].map(|format| format!("{}{}{}", tape_view(format), include_str!("metal_work_queue.metal"), include_str!("metal_label_passes.metal")))
+    [15, 0].map(|format| format!("{}{}", VIEW_PIECES[usize::from(reads_z(format))], include_str!("label_passes.uglykl")))
 });
-/// Where a label kernel binds the batch's chunk block (`DocView`'s `at`): past every other buffer.
+/// Where a pattern kernel binds the batch's chunk block (`DocView`'s `at`): past every other buffer. A label kernel
+/// binds it by its row's name (`LabelKernel`).
 const SLAB_SLOT: u64 = 27;
+
+/// A label kernel as the runner encodes it: its pipeline, and the arguments its positional buffers do not reach
+/// (the batch's block, the walk statistics, the spill queue), where its rows put them (`label_passes.uglykl`); none
+/// where the kernel has no such row (`label_round` reads no document).
+#[derive(Clone)]
+struct LabelKernel {
+    state: ComputePipelineState,
+    chunk: Option<u64>,
+    stats: Option<u64>,
+    spill: [Option<u64>; 3],
+}
+
+impl LabelKernel {
+    fn of(kernel: &rerail_metal::lane::Kernel) -> LabelKernel {
+        let at = |name: &str| kernel.get_argument_info().iter().find(|a| a.name == name).map(|a| a.compute_function_arg_index);
+        LabelKernel {
+            state: kernel.metal().expect("a label kernel on Metal").compute_pipeline_state.clone(),
+            chunk: at("chunk"),
+            stats: at("wstats"),
+            spill: [at("qslots"), at("qcontrol"), at("qitems")],
+        }
+    }
+
+    /// A pattern kernel (Metal's until step D): its fixed slots.
+    fn pattern(state: ComputePipelineState) -> LabelKernel {
+        LabelKernel { state, chunk: Some(SLAB_SLOT), stats: Some(WALK_STATS_SLOT), spill: SPILL_SLOTS.map(Some) }
+    }
+}
 /// A walk's stack tiers are one kernel each (`label_micro`, `label_group`, `root_records`), their frames the dispatch's
 /// shape's (`Shape::frames`), not a template's: an Apple GPU's compiler compiled each tier's copy of the walk on its own,
 /// 8–10 s each for format 16 (work queue Q181).
@@ -1030,7 +1063,7 @@ pub(in crate::code_rule_dsl) fn warm() {
 }
 
 /// The label kernels, compiled once per tape format (until the residency's drop).
-static PIPELINES: LazyLock<Mutex<HashMap<u32, Vec<ComputePipelineState>>>> = LazyLock::new(Default::default);
+static PIPELINES: LazyLock<Mutex<HashMap<u32, Vec<LabelKernel>>>> = LazyLock::new(Default::default);
 /// The clauses' pattern kernels, by source and tape format (until the residency's drop).
 static PATTERN_PIPELINES: LazyLock<Mutex<HashMap<(String, u32), ComputePipelineState>>> = LazyLock::new(Default::default);
 
@@ -1049,7 +1082,7 @@ pub(in crate::code_rule_dsl) fn drop_pipelines() {
     }
 }
 
-fn pipelines(format: u32) -> Result<Vec<ComputePipelineState>, Error> {
+fn pipelines(format: u32) -> Result<Vec<LabelKernel>, Error> {
     let mut cached = PIPELINES.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(pipelines) = cached.get(&format) {
         return Ok(pipelines.clone());
@@ -1060,11 +1093,13 @@ fn pipelines(format: u32) -> Result<Vec<ComputePipelineState>, Error> {
     // and the panic goes on here (decision 0382). A batch of 16z tapes compiles the reads with 16z's bodies
     // (`reads_z`); the others without them.
     let source = &SOURCES[usize::from(reads_z(format))];
-    let first = pipeline_of(source, KERNELS[0], format)?;
+    // From the engine's kernel store, as the device layer's kernels (UKL, decision 0440 step C).
+    let kernel = |name: &str| LabelKernel::of(&rerail_metal::lane::kernel_fixed(source, name, Some(format)));
+    let first = kernel(KERNELS[0]);
     let rest = rerail_accel::exec::scoped(|scope| {
-        let compiles = KERNELS[1..].iter().map(|name| scope.spawn(move || pipeline_of(source, name, format))).collect::<Vec<_>>();
-        compiles.into_iter().map(|compile| compile.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))).collect::<Result<Vec<_>, _>>()
-    })?;
+        let compiles = KERNELS[1..].iter().map(|name| scope.spawn(move || kernel(name))).collect::<Vec<_>>();
+        compiles.into_iter().map(|compile| compile.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))).collect::<Vec<_>>()
+    });
     let pipelines = std::iter::once(first).chain(rest).collect::<Vec<_>>();
     cached.insert(format, pipelines.clone());
     Ok(pipelines)
@@ -1213,7 +1248,7 @@ struct Runner<'a> {
     device: &'a Device,
     queue: metal::CommandQueue,
     engine: Engine,
-    kernels: Vec<ComputePipelineState>,
+    kernels: Vec<LabelKernel>,
     /// `label_sweep`, where a group runs as sweeps.
     sweep: Option<ComputePipelineState>,
     /// By a sweeping group's address: per file the start of its tasks, then their indices by
@@ -1883,8 +1918,10 @@ impl Runner<'_> {
         self.tapes.table.block.as_ref().map_or(&self.flags.buffer, |block| block.buffer())
     }
 
-    fn bind_slabs(&self, encoder: &metal::ComputeCommandEncoderRef) {
-        encoder.set_buffer(SLAB_SLOT, Some(self.block()), 0);
+    /// The block at the kernel's `chunk` row, where it has one (`LabelKernel`).
+    fn bind_slabs(&self, encoder: &metal::ComputeCommandEncoderRef, slot: Option<u64>) {
+        let Some(slot) = slot else { return };
+        encoder.set_buffer(slot, Some(self.block()), 0);
         // The 16z documents' cache, which their reads reach from the block by the views' offsets, and write.
         if let Some(cache) = &self.tapes.table.cache {
             encoder.use_resource(cache, metal::MTLResourceUsage::Read | metal::MTLResourceUsage::Write);
@@ -1991,18 +2028,19 @@ impl Runner<'_> {
 
     /// One label kernel over `threads`, its buffers bound in order and `shape` after them.
     fn kernel(&mut self, pipeline: usize, label: &'static str, buffers: &[(&Buffer, u64)], shape: Shape, threads: usize) {
-        let state = self.kernels[pipeline].clone();
-        self.dispatch(&state, label, buffers, shape, threads);
+        let kernel = self.kernels[pipeline].clone();
+        self.dispatch(&kernel, label, buffers, shape, threads);
     }
 
     /// The clause's pattern kernel over the level's (pattern, root) items.
     fn pattern_kernel(&mut self, group: usize, buffers: &[(&Buffer, u64)], shape: Shape) -> Result<(), Error> {
         let state = self.patterns.as_ref().and_then(|(pipelines, _)| pipelines.get(group)).ok_or(Error::BackendFailure)?.clone();
-        self.dispatch(&state, patterns::KERNEL, buffers, shape, shape.item_count as usize);
+        self.dispatch(&LabelKernel::pattern(state), patterns::KERNEL, buffers, shape, shape.item_count as usize);
         Ok(())
     }
 
-    fn dispatch(&mut self, state: &ComputePipelineState, label: &str, buffers: &[(&Buffer, u64)], shape: Shape, threads: usize) {
+    fn dispatch(&mut self, kernel: &LabelKernel, label: &str, buffers: &[(&Buffer, u64)], shape: Shape, threads: usize) {
+        let state = &kernel.state;
         // The kernels that spread a SIMD group's roots over its lanes (`simd_roots`) run whole SIMD groups of 32: a lane
         // past the items holds no roots. Every tier's pool is a multiple of 32, so this stays inside its stacks.
         let threads = if label.starts_with("label_micro") || label == patterns::KERNEL {
@@ -2026,11 +2064,15 @@ impl Runner<'_> {
         for (index, (buffer, offset)) in buffers.iter().enumerate() {
             encoder.set_buffer(index as u64, Some(buffer), *offset);
         }
-        self.bind_slabs(encoder);
+        self.bind_slabs(encoder, kernel.chunk);
         if label.starts_with("label_micro") {
-            encoder.set_buffer(WALK_STATS_SLOT, Some(self.walk_bind.as_ref().unwrap_or(&self.flags.buffer)), 0);
-            for (slot, buffer) in SPILL_SLOTS.iter().zip(self.spill.iter().flatten().map(|b| &b.buffer).chain(std::iter::repeat(&self.flags.buffer))) {
-                encoder.set_buffer(*slot, Some(buffer), 0);
+            if let Some(slot) = kernel.stats {
+                encoder.set_buffer(slot, Some(self.walk_bind.as_ref().unwrap_or(&self.flags.buffer)), 0);
+            }
+            for (slot, buffer) in kernel.spill.iter().zip(self.spill.iter().flatten().map(|b| &b.buffer).chain(std::iter::repeat(&self.flags.buffer))) {
+                if let Some(slot) = slot {
+                    encoder.set_buffer(*slot, Some(buffer), 0);
+                }
             }
         }
         encoder.set_bytes(
@@ -2537,12 +2579,12 @@ impl Runner<'_> {
         encoder.set_label(KERNELS[LEAVES_KERNEL]);
         crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[LEAVES_KERNEL]), 1);
         crate::code_rule_dsl::prof::count("gpu.anchor_leaves", tests.len());
-        encoder.set_compute_pipeline_state(&self.kernels[LEAVES_KERNEL]);
+        encoder.set_compute_pipeline_state(&self.kernels[LEAVES_KERNEL].state);
         for (index, buffer) in [&docs, &tests_buffer, leaves].into_iter().enumerate() {
             encoder.set_buffer(index as u64, Some(buffer), 0);
         }
         encoder.set_bytes(3, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
-        self.bind_slabs(encoder);
+        self.bind_slabs(encoder, self.kernels[LEAVES_KERNEL].chunk);
         encoder.checked_dispatch_thread_groups(&self.command, MTLSize::new(self.files.len().max(1) as u64, 1, 1), MTLSize::new(FORMULA_WIDTH, 1, 1));
         encoder.end_encoding();
         self.outcome.dispatches += 1;
@@ -2622,7 +2664,7 @@ impl Runner<'_> {
         let docs = self.tapes.docs.buffer.clone();
         let head = self.tapes.supertypes.buffer.clone();
         let base = Shape { round: depth, recursive: region as u32, ..self.shape() };
-        let state = self.kernels[FORMULA_KERNEL].clone();
+        let LabelKernel { state, chunk, .. } = self.kernels[FORMULA_KERNEL].clone();
         let rules = self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
         // Profiling (`RERAIL_PROF`): each step kind's members, the parent and child reads, the (file, formula)s.
         let profile = crate::code_rule_dsl::prof::on();
@@ -2645,7 +2687,7 @@ impl Runner<'_> {
             encoder.set_buffer(10, Some(&self.tapes.supertypes.buffer), self.tapes.scratch_at);
             encoder.set_buffer(11, Some(&rules), 0);
             encoder.set_buffer(12, Some(texts.unwrap_or(&rules)), 0);
-            self.bind_slabs(encoder);
+            self.bind_slabs(encoder, chunk);
             encoder.checked_dispatch_thread_groups(&self.command, MTLSize::new(self.files.len().max(1) as u64, formulas as u64, 1), MTLSize::new(FORMULA_WIDTH, 1, 1));
             encoder.end_encoding();
             self.outcome.dispatches += 1;
@@ -3061,7 +3103,7 @@ impl Runner<'_> {
             self.group_stacks[depth] = Some(MappedBuffer::untouched::<u32>(self.device, self.files.len().max(1) * GROUP_WIDTH as usize * words)?);
         }
         buffers.push(self.group_stacks[depth].as_ref().expect("group stacks").buffer.clone());
-        let state = self.kernels[pipeline].clone();
+        let LabelKernel { state, chunk, .. } = self.kernels[pipeline].clone();
         let encoder = self.command.new_compute_command_encoder();
         encoder.set_label(label);
         crate::code_rule_dsl::prof::count_named(format!("kernel.{label}"), 1);
@@ -3080,7 +3122,7 @@ impl Runner<'_> {
         if let Some(stacks) = buffers.get(11) {
             encoder.set_buffer(12, Some(stacks), 0);
         }
-        self.bind_slabs(encoder);
+        self.bind_slabs(encoder, chunk);
         encoder.checked_dispatch_thread_groups(&self.command, MTLSize::new(self.files.len().max(1) as u64, 1, 1), MTLSize::new(GROUP_WIDTH, 1, 1));
         encoder.end_encoding();
         self.encoded = true;
@@ -3306,7 +3348,7 @@ impl Runner<'_> {
                 let stacks = self.stacks()?;
                 let threads = if tier == 0 { tier_items.len().min(stack_lanes(8, 31)) } else { tier_items.len().min(ROOT_POOL) };
                 let (kernel, label) = (ROOT_KERNEL, ROOT_NAMES[tier.min(1)]);
-                let state = self.kernels[kernel].clone();
+                let LabelKernel { state, chunk, .. } = self.kernels[kernel].clone();
                 let encoder = self.command.new_compute_command_encoder();
                 encoder.set_label(label);
                 encoder.set_compute_pipeline_state(&state);
@@ -3315,7 +3357,7 @@ impl Runner<'_> {
                 }
                 encoder.set_bytes(9, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
                 encoder.set_buffer(10, Some(&stacks), 0);
-                self.bind_slabs(encoder);
+                self.bind_slabs(encoder, chunk);
                 let width = state.thread_execution_width().max(1);
                 encoder.checked_dispatch_threads(&self.command, MTLSize::new(threads as u64, 1, 1), MTLSize::new(width.min(threads as u64), 1, 1));
                 encoder.end_encoding();

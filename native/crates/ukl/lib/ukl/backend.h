@@ -82,6 +82,10 @@ UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t 
 UKL_INLINE void ukl_fence_device() { atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device); }
 // A relaxed add on a threadgroup word.
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomic_fetch_add_explicit((threadgroup atomic_uint*)p, v, memory_order_relaxed); }
+UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return atomic_load_explicit((threadgroup atomic_uint*)p, memory_order_relaxed); }
+UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { atomic_store_explicit((threadgroup atomic_uint*)p, v, memory_order_relaxed); }
+// The specialization constant (`UKL_CONSTANT_U32`, below): Metal's function constant 0.
+#define UKL_CONSTANT_U32(name) constant uint32_t name [[function_constant(0)]];
 
 // Native forms.
 #define UKL_NATIVE_SG_REDUCE 1
@@ -134,6 +138,8 @@ UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v) { return 
 UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t n) { return atomicCAS(p, e, n); }
 UKL_INLINE void ukl_fence_device() { __threadfence(); }
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomicAdd(p, v); }
+UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return *(volatile uint32_t*)p; }
+UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { *(volatile uint32_t*)p = v; }
 
 // The lanes holding the same value as this one (Volta and later).
 #define UKL_NATIVE_SG_MATCH 1
@@ -214,6 +220,8 @@ UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t 
 }
 UKL_INLINE void ukl_fence_device() { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return __atomic_fetch_add(p, v, __ATOMIC_RELAXED); }
+UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
+UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { __atomic_store_n(p, v, __ATOMIC_RELAXED); }
 
 #elif defined(UKL_OPENCL)
 
@@ -329,6 +337,9 @@ UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v) { return 
 UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t n) { return atomic_cmpxchg((volatile __global uint32_t*)p, e, n); }
 UKL_INLINE void ukl_fence_device() { mem_fence(CLK_GLOBAL_MEM_FENCE); }
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomic_add((volatile __local uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return *(volatile __local uint32_t*)p; }
+UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { atomic_xchg((volatile __local uint32_t*)p, v); }
+#define UKL_CONSTANT_U32(name) __constant uint32_t name = (UKL_CONSTANT_0);
 
 #else
 #  error "the UKL library has no intrinsics for this backend (ukl/backend.h)"
@@ -342,4 +353,11 @@ UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { re
 #endif
 #ifndef UKL_STATIC_ASSERT
 #define UKL_STATIC_ASSERT(c, m) static_assert(c, m)
+#endif
+
+// A program's specialization constant (decision 0440 step B): `UKL_CONSTANT_U32(name)` declares `name`, a uint32_t
+// fixed when the program is made, so the compiler folds it (the label passes' tape format). Metal's function constant
+// 0; elsewhere the define `UKL_CONSTANT_0` each value's program is compiled with (`rerail_gpu::kernels::program_with`).
+#ifndef UKL_CONSTANT_U32
+#define UKL_CONSTANT_U32(name) static const uint32_t name = (UKL_CONSTANT_0);
 #endif

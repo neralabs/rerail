@@ -1,5 +1,5 @@
-// ukl/workqueue.h: a device work queue for a persistent dispatch (decisions 0440 §5, 0027; the Metal one is
-// transducer/packed/metal_work_queue.metal, whose protocol this is, on any backend).
+// ukl/workqueue.h: a device work queue for a persistent dispatch (decisions 0440 §5, 0027: the protocol of the engine's
+// Metal queue, `metal_work_queue.metal`, which this replaced, on any backend).
 //
 // A persistent dispatch's workers take items and push the items their work creates; idle workers take those up.
 // The queue is linear: its capacity is the most items the work can push, so no slot is used twice and no taker can

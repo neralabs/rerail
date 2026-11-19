@@ -247,9 +247,14 @@ fn a_label_kernel_costs_footprint() {
     let mb = crate::code_rule_dsl::prof::footprint_mb;
     let source = match std::env::var_os("RERAIL_DIAG_SOURCE") {
         Some(path) => std::fs::read_to_string(path).unwrap(),
-        None => format!("#include <metal_stdlib>\nusing namespace metal;\n{}{TAPE}{}", slabs::msl(), include_str!("metal_label_passes.metal")),
+        None => String::new(),
     };
-    let pipeline = pipeline_named(&source, &name).unwrap();
+    // The label kernels (UKL) through the kernel store, for a mixed batch; a source of one's own as plain Metal.
+    let pipeline = if source.is_empty() {
+        rerail_accel::gpu::kernels::pipeline_fixed(super::label_passes::label_source().0, &name, Some(0))
+    } else {
+        pipeline_named(&source, &name).unwrap()
+    };
     let zero = MappedBuffer::zeroed::<u32>(device, 1 << 18).unwrap();
     let queue = device.new_command_queue();
     let submit = |pipeline: &metal::ComputePipelineState| {

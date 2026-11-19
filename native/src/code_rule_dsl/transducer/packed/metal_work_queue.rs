@@ -2,7 +2,7 @@
 //! 0440 step C). A persistent dispatch's workers take items from a queue and push the items their work creates;
 //! idle workers take those up, across every threadgroup, so the device, not the host, decides what runs next and
 //! how long the loop lasts. A kernel that uses it includes `<ukl/workqueue.h>` (`ukl_wq_take`, `ukl_wq_push`,
-//! `ukl_wq_done`, `ukl_wq_idle`; `metal_work_queue.metal` is its Metal form, which the label passes still read).
+//! `ukl_wq_done`, `ukl_wq_idle`).
 //!
 //! A GPU promises no progress between threadgroups, so no worker waits on another without a
 //! bound (the source says how). The dispatch is sized to what the device keeps resident; a
