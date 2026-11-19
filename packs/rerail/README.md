@@ -331,8 +331,8 @@ budgets with the same number; the message says to leave names not about walking 
 
 Flags Rust in `native/` that reaches the fixtures directory by a relative path (`../fixtures/…`, in `include_str!` and
 the like) or through the oracles variable. It runs on `native/**/*.rs`, leaving out `native/build.rs`,
-`native/src/code_rule_dsl/mod.rs` and `native/target/**`. Use the `fixtures_dir!` and `oracle!` macros, which follow the
-fixtures directory override.
+`native/src/code_rule_dsl/mod.rs`, `native/src/code_rule_dsl/fixtures.rs` (where the two macros read the variable) and
+`native/target/**`. Use the `fixtures_dir!` and `oracle!` macros, which follow the fixtures directory override.
 
 History: Built on #56 and the later breaks it caught in their first drafts (an async oracle, two pre-convention imports
 and others); quiet on their fixes and on 16 recent merged PRs; #56's 18 relative lines stayed on main until they
