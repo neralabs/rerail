@@ -593,9 +593,16 @@ impl B<'_, '_> {
         let some = self.f.ins().icmp_imm(IntCC::NotEqual, before, 0);
         let ok = self.f.ins().band(ours, complete);
         let ok = self.f.ins().band(ok, some);
+        // Its tries spent: read as it is, a failure counted (Q223's sibling: a read taken without one was a wrong read
+        // the cache's counts did not show).
         let spent = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, tries, i64::from(c::TRIES));
-        let go = self.f.ins().bor(ok, spent);
-        self.f.ins().brif(go, read, &[], again, &[]);
+        let (gave_up, not_ok) = (self.f.create_block(), self.f.create_block());
+        self.f.ins().brif(ok, read, &[], not_ok, &[]);
+        self.f.switch_to_block(not_ok);
+        self.f.ins().brif(spent, gave_up, &[], again, &[]);
+        self.f.switch_to_block(gave_up);
+        self.count_failure();
+        self.f.ins().jump(read, &[]);
         self.f.switch_to_block(read);
         let tape = self.f.ins().iadd_imm(entry, i64::from(z::SLOT_BYTES));
         let view = self.f.ins().iadd_imm(entry, i64::from(z::SLOT_VIEW));
@@ -614,13 +621,28 @@ impl B<'_, '_> {
         let after = self.f.ins().atomic_load(I32, MemFlags::trusted(), ready);
         let same = self.f.ins().icmp(IntCC::Equal, before, after);
         let spent = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, tries, i64::from(c::TRIES));
-        let ok = self.f.ins().bor(same, spent);
-        self.f.ins().brif(ok, done, &[value.into()], again, &[]);
+        let (overlapped, kept) = (self.f.create_block(), self.f.create_block());
+        self.f.ins().brif(same, done, &[value.into()], overlapped, &[]);
+        self.f.switch_to_block(overlapped);
+        self.f.ins().brif(spent, kept, &[], again, &[]);
+        // A writer overlapped the last try: its value kept, a failure counted.
+        self.f.switch_to_block(kept);
+        self.count_failure();
+        self.f.ins().jump(done, &[value.into()]);
         self.f.switch_to_block(again);
         let tries = self.f.ins().iadd_imm(tries, 1);
         self.f.ins().jump(head, &[tries.into()]);
         self.f.switch_to_block(done);
         self.f.block_params(done)[0]
+    }
+    /// A failure counted in the cache the view names (`view::cache::FAILED`): a read of a 16z block that found no
+    /// entry it could trust in its tries.
+    fn count_failure(&mut self) {
+        let lo = self.view(at::SIDE);
+        let hi = self.view(at::SIDE + 4);
+        let rel = wide(self, lo, hi);
+        let cache = self.f.ins().iadd(self.tape, rel);
+        cache_count(self, cache, crate::view::cache::FAILED);
     }
     /// The address of an entry's (or the cache's) word at `offset`.
     fn entry_word(&mut self, entry: Value, offset: i32) -> Value {
