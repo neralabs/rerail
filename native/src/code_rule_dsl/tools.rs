@@ -800,7 +800,8 @@ pub fn cli(args: &[String]) -> (Result<String, String>, Option<String>) {
     crate::code_rule_dsl::logic::plan::joins::drain_at_end(true);
     // Decision 0288: the command's clocks, for its time before its run and after it.
     crate::code_rule_dsl::logic::profile::command_begins();
-    let (out, incomplete) = cli_in(args, &mut Default::default());
+    // The process's command, its own caller: what it shares by design is its own (decision 0442).
+    let (out, incomplete) = cli_in(args, &mut Default::default(), &crate::code_rule_dsl::logic::run::Shared::new());
     let (age, after) = crate::code_rule_dsl::logic::profile::command_ends();
     // On stderr: a command's output is its own (`run-rr`'s, `sql`'s: JSON), and a line after it made that unreadable.
     if let (Ok(_), Some(c)) = (&out, after) {
@@ -812,12 +813,13 @@ pub fn cli(args: &[String]) -> (Result<String, String>, Option<String>) {
     (out, incomplete)
 }
 
-/// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
+/// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`), sharing by design what
+/// `shared` holds (decision 0442): the caller owns both.
 ///
 /// The command is one run (decisions 0394, 0441): its limits are read as it starts, its runs share them and one
 /// record, and nothing of them outlives it. Beside the result: the message that it cut a relation, if it did.
-pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> (Result<String, String>, Option<String>) {
-    let own = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept, shared: &std::sync::Arc<crate::code_rule_dsl::logic::run::Shared>) -> (Result<String, String>, Option<String>) {
+    let own = crate::code_rule_dsl::logic::run::scope_in(Some(shared), crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let out = command(args, kept);
     let incomplete = own.finish().and_then(|r| r.width.incomplete());
     (out, incomplete)

@@ -82,3 +82,13 @@ by any caller in the process, so two callers of different trust could not be kep
     reservation of its atoms.
   - setfix's STORED is keyed by database, and every connection on one store shares its tables. So it is the store's,
     shared by design: it moves with the store's resources (step 5).
+- Step 5 (`Shared`), the mechanism:
+  - `profile::Shared` is a typed store of what is shared by design, made by a caller. A run carries the one it is
+    handed (`run::scope_in(Some(&shared), …)`), and code reads it through the run (`run::shared::<T>()`), from any
+    crate. A run handed none has one of its own, as apart from every other run as one in another process (the store
+    is already safe across processes: its lease).
+  - The CLI's command makes one (`tools::cli`), the reactor one per instance, its one caller. A caller of
+    `tools::cli_in` passes its own. Node's entry points have none yet: each run they start has its own.
+  - Outside a run, `shared::<T>()` gives a value nothing keeps. That is wrong for an interner or a per-file registry,
+    whose ids must agree wherever they are read, so those move only once every reader is inside a run or holds the
+    object (each group's move says which).

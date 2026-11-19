@@ -26,6 +26,8 @@ pub struct Run {
     ended: AtomicBool,
     /// Its settings and its own values (`setting`, `local`).
     values: super::profile::RunValues,
+    /// What its caller shares by design (`profile::Shared`, decision 0442).
+    shared: Arc<super::profile::Shared>,
 }
 
 impl super::profile::RunOwn for Run {
@@ -36,14 +38,17 @@ impl super::profile::RunOwn for Run {
     fn values(&self) -> &super::profile::RunValues {
         &self.values
     }
+    fn shared(&self) -> &Arc<super::profile::Shared> {
+        &self.shared
+    }
     fn any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
         self
     }
 }
 
 impl Run {
-    fn new(settings: width::Settings) -> Run {
-        Run { width: width::Width::new(settings), decoded: Default::default(), ended: AtomicBool::new(false), values: Default::default() }
+    fn new(settings: width::Settings, shared: Arc<super::profile::Shared>) -> Run {
+        Run { width: width::Width::new(settings), decoded: Default::default(), ended: AtomicBool::new(false), values: Default::default(), shared }
     }
     /// Whether the run has ended.
     pub fn ended(&self) -> bool {
@@ -56,7 +61,7 @@ impl Run {
     }
 }
 
-pub use super::profile::{local, local_if_any, setting, with_local};
+pub use super::profile::{Shared, local, local_if_any, setting, shared, shared_object, with_local};
 
 /// What a run returns of its own state with its result.
 #[derive(Clone, Debug, Default)]
@@ -88,12 +93,18 @@ pub struct Scope {
 }
 
 /// The scope of a run starting here: the run's own if one is under way on this thread, else a new run with the limits
-/// `settings` gives.
+/// `settings` gives and a shared object of its own (`scope_in`: one its caller hands it).
 pub fn scope(settings: impl FnOnce() -> width::Settings) -> Scope {
+    scope_in(None, settings)
+}
+
+/// `scope`, a new run sharing by design what `shared` holds with every other run handed it (decision 0442). A run
+/// handed none (`None`) has one of its own. A nested scope joins the run under way, whose object it is.
+pub fn scope_in(shared: Option<&Arc<Shared>>, settings: impl FnOnce() -> width::Settings) -> Scope {
     if let Some(run) = current() {
         return Scope { run, outer: false, was: None };
     }
-    let run = Arc::new(Run::new(settings()));
+    let run = Arc::new(Run::new(settings(), shared.map_or_else(Shared::new, Arc::clone)));
     width::watch(&run);
     let was = super::profile::RUN.with(|r| r.replace(Some(Arc::clone(&run) as Arc<dyn super::profile::RunOwn>)));
     Scope { run, outer: true, was }
@@ -147,6 +158,40 @@ mod tests {
         let later = b.finish().expect("a new run");
         assert!(later.width.cuts.is_empty() && later.trees_decoded.0 == 0, "a later run starts with nothing of the last");
         assert!(!width::Limits::here().cutting(), "a walk with no run stops at the cap");
+    }
+
+    /// Decision 0442: what is shared by design reaches only the runs handed the same object. Two runs handed one see
+    /// one value; a run handed another, or none, sees its own; a nested run sees its outer run's.
+    #[test]
+    fn a_shared_value_reaches_only_the_runs_handed_its_object() {
+        #[derive(Default)]
+        struct Model(parking_lot::Mutex<u64>);
+        let one = Shared::new();
+        {
+            let _a = scope_in(Some(&one), cutting(10));
+            *shared::<Model>().0.lock() += 5;
+            let _nested = scope_in(None, || unreachable!("a nested run joins the outer"));
+            assert_eq!(*shared::<Model>().0.lock(), 5, "a nested run shares its outer run's object");
+        }
+        {
+            let _b = scope_in(Some(&one), cutting(10));
+            assert_eq!(*shared::<Model>().0.lock(), 5, "a later run handed the same object sees its value");
+        }
+        {
+            let _c = scope_in(Some(&Shared::new()), cutting(10));
+            assert_eq!(*shared::<Model>().0.lock(), 0, "a run handed another object sees none of it");
+        }
+        {
+            let _d = scope(cutting(10));
+            assert_eq!(*shared::<Model>().0.lock(), 0, "a run handed none has its own");
+        }
+        // On another thread at once, handed another object: apart.
+        let other = std::thread::spawn(|| {
+            let _e = scope_in(Some(&Shared::new()), cutting(10));
+            *shared::<Model>().0.lock()
+        });
+        let _f = scope_in(Some(&one), cutting(10));
+        assert_eq!((other.join().unwrap(), *shared::<Model>().0.lock()), (0, 5));
     }
 
     /// A setting is read once a run, and again by the next run; a local is the run's own.

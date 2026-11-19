@@ -1490,6 +1490,8 @@ pub trait RunOwn: Send + Sync {
     fn decoded(&self, at: &'static std::panic::Location<'static>);
     /// Its settings and its own values (`setting`, `local`).
     fn values(&self) -> &RunValues;
+    /// What its caller shares by design with the other runs it hands the same object (`shared`).
+    fn shared(&self) -> &std::sync::Arc<Shared>;
     /// The run itself, for the crate that defines it.
     fn any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync>;
 }
@@ -1499,13 +1501,64 @@ pub fn run_own() -> Option<std::sync::Arc<dyn RunOwn>> {
     RUN.with(|r| r.borrow().clone())
 }
 
-type Shared = std::sync::Arc<dyn std::any::Any + Send + Sync>;
+type AnyArc = std::sync::Arc<dyn std::any::Any + Send + Sync>;
 
 /// A run's settings, by the place that reads each, and its own values, by type (decision 0442).
 #[derive(Default)]
 pub struct RunValues {
-    settings: parking_lot::Mutex<std::collections::HashMap<(&'static str, u32, u32, std::any::TypeId), Shared>>,
-    locals: parking_lot::Mutex<std::collections::HashMap<std::any::TypeId, Shared>>,
+    settings: parking_lot::Mutex<std::collections::HashMap<(&'static str, u32, u32, std::any::TypeId), AnyArc>>,
+    locals: parking_lot::Mutex<std::collections::HashMap<std::any::TypeId, AnyArc>>,
+}
+
+/// What is shared by design (decision 0442): a store's resources, learned models, executors, interners. A caller makes
+/// it and hands it to the runs it means to share them (`logic::run::scope_in`); a run handed none has one of its own,
+/// and is as apart from every other as a run in another process. Nothing else reaches it: two callers with different
+/// trust hold different objects.
+#[derive(Default)]
+pub struct Shared {
+    values: parking_lot::Mutex<std::collections::HashMap<std::any::TypeId, AnyArc>>,
+}
+
+impl Shared {
+    pub fn new() -> std::sync::Arc<Shared> {
+        std::sync::Arc::default()
+    }
+    /// Its value of type `T`, made the first time it is asked for.
+    pub fn get<T: Default + Send + Sync + 'static>(&self) -> std::sync::Arc<T> {
+        let v = std::sync::Arc::clone(self.values.lock().entry(std::any::TypeId::of::<T>()).or_insert_with(|| std::sync::Arc::new(T::default())));
+        v.downcast::<T>().expect("a shared value's type is its key")
+    }
+    /// Its value of type `T`, if it was made.
+    pub fn get_if_any<T: Send + Sync + 'static>(&self) -> Option<std::sync::Arc<T>> {
+        self.values.lock().get(&std::any::TypeId::of::<T>()).cloned()?.downcast::<T>().ok()
+    }
+}
+
+/// The value of type `T` that the run under way shares by design (`Shared`), made the first time it is asked for.
+/// Outside a run, a value of its own that nothing keeps.
+#[inline]
+pub fn shared<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
+    let held = SEEN.with(|seen| {
+        let seen = seen.borrow();
+        if seen.is_current() { seen.shared.get(&std::any::TypeId::of::<T>()).cloned() } else { None }
+    });
+    match held {
+        Some(v) => v.downcast::<T>().expect("a shared value's type is its key"),
+        None => shared_slow::<T>(),
+    }
+}
+
+#[cold]
+fn shared_slow<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
+    let Some(run) = run_own() else { return std::sync::Arc::new(T::default()) };
+    let v = run.shared().get::<T>();
+    SEEN.with(|seen| seen.borrow_mut().of(&run).shared.insert(std::any::TypeId::of::<T>(), v.clone()));
+    v
+}
+
+/// The shared object of the run under way, if one is (for a caller that hands it on).
+pub fn shared_object() -> Option<std::sync::Arc<Shared>> {
+    run_own().map(|r| std::sync::Arc::clone(r.shared()))
 }
 
 /// A setting of the run under way (decision 0442), by the place that reads it: `read` (the environment, as a rule) runs
@@ -1607,6 +1660,8 @@ struct Seen {
     settings: rustc_hash::FxHashMap<usize, Box<dyn std::any::Any>>,
     /// The run's locals by type.
     locals: rustc_hash::FxHashMap<std::any::TypeId, std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+    /// The run's shared values by type (`shared`).
+    shared: rustc_hash::FxHashMap<std::any::TypeId, std::sync::Arc<dyn std::any::Any + Send + Sync>>,
 }
 
 impl Seen {
@@ -2595,11 +2650,14 @@ pub fn hold_records() -> Option<Holding> {
 /// the profile's records are a run's, so they are kept only inside one. Dropped, the thread's own is back.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn test_run() -> impl Drop {
-    struct Own(RunValues);
+    struct Own(RunValues, std::sync::Arc<Shared>);
     impl RunOwn for Own {
         fn decoded(&self, _: &'static std::panic::Location<'static>) {}
         fn values(&self) -> &RunValues {
             &self.0
+        }
+        fn shared(&self) -> &std::sync::Arc<Shared> {
+            &self.1
         }
         fn any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> {
             self
@@ -2616,7 +2674,7 @@ pub fn test_run() -> impl Drop {
     if run_own().is_some() {
         return Back(None);
     }
-    Back(Some(RUN.with(|r| r.replace(Some(std::sync::Arc::new(Own(RunValues::default())))))))
+    Back(Some(RUN.with(|r| r.replace(Some(std::sync::Arc::new(Own(RunValues::default(), Shared::new())))))))
 }
 
 /// Forgets everything recorded (a run's start).

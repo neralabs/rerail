@@ -135,6 +135,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan/corpus/switches.rs", "DEPTH", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "FILLING", Thread, "this thread fills the test store's template: its own runs take the switches without making it first"),
     ("src/reactor.rs", "KEPT", Outermost, "the reactor's session between its commands, taken by each command (decision 0204)"),
+    ("src/reactor.rs", "SHARED", Outermost, "what the instance's commands share by design (decision 0442): its one caller's object"),
     ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "HANDED", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN", Carried, ""),
     ("src/code_rule_dsl/logic/plan/demand.rs", "WHOLE", Carried, ""),
