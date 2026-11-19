@@ -1125,6 +1125,24 @@ stands on:
   Metal (C's remaining files). On OpenCL two retained-grid tests take 115 and 151 s alone (Apple's OpenCL
   compiler) and time out at 240 s in the full set.
 
+**C: the anchor scan, in UKL and in place; OpenCL's fills (2026-11-19).**
+- **The anchor scan reads the tapes where they are** (`metal_backend::prepare_anchor_scan`): it had copied each
+  file's kinds, spans and source into buffers of its own, a copy of the tapes from before the check (decision 0353,
+  which reads only added lines). Now the files are resident in one block (`DocTable`), and the kernel, in UKL
+  through the lane, finds each node's document among the views (`doc_index`, `device_tape.h`, with `doc_of`,
+  moved there from the label passes) and reads its kind, span and text through the tape view. Hits are pairs in a
+  buffer; a hit's file and ordinal come from the views, so no per-node table is made.
+- **The tape view is written once** for the label passes and the anchor scan (`metal_program_backend::tape_view`,
+  in both crates that build the passes).
+- **OpenCL's fills are a kernel** (`ClComputeQueue::enqueue_fill_array`): Apple's `clEnqueueFillBuffer`, on a
+  buffer over host pages, left garbage that the next kernel read (the scan's hit count, 1,103,694,145 for 25
+  nodes; `a_fill_then_a_kernel_are_in_the_host_pages`, which failed about half its runs). A plain OpenCL C kernel
+  (the device layer is below the UKL preprocessor), compiled at a queue root's first fill, writes the pattern's
+  words; a pattern of 1 or 2 bytes is widened to a word, and one of no whole words is written from the host.
+- On Metal, the CPU and OpenCL, the 409 targeted tests (the anchor tests with them) pass but for the pack-data two
+  and, on the CPU and OpenCL, the block programs' test (C's last file). Three slow tests time out at 240 s at a
+  load average of 55 to 74 and pass alone.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

@@ -22,6 +22,9 @@ UKL_STATIC_ASSERT(sizeof(DeviceCode)==24u,"the code layout");
 #define TAPE_NONE 0xffffffffu
 // A document's first byte in the batch's chunk block: its parts are offsets from it.
 UKL_INLINE UKL_GLOBAL const uint8_t* tape_doc(UKL_GLOBAL const uint8_t* chunk,DocView d){return chunk+d.at;}
+// The document of a batch's global node `node`, of `count` views in node order: its number, and its view.
+UKL_INLINE uint32_t doc_index(UKL_GLOBAL const DocView* docs,uint32_t count,uint32_t node){uint32_t first=0u,last=count;while(last-first>1u){uint32_t middle=(first+last)/2u;if(docs[middle].node_base<=node)first=middle;else last=middle;}return first;}
+UKL_INLINE DocView doc_of(UKL_GLOBAL const DocView* docs,uint32_t count,uint32_t node){return docs[doc_index(docs,count,node)];}
 
 // ---- the reads (decision 0310): `<ukl/reads/tape.h>`, written from the tape's reads in CLIF, which the CPU's
 // JIT and the tape crate read through too; each takes the document's first byte and its view.

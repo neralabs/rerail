@@ -125,7 +125,6 @@ DEFINE_KERNEL2(label_passes, label_round,
 // its node at `node - doc.node_base`. `head` is the label prefix: {label count, words}, then the
 // labels' bits.
 typedef struct Tree { UKL_GLOBAL const uint8_t* s; DocView d; } Tree;
-UKL_INLINE DocView doc_of(UKL_GLOBAL const DocView* docs,uint32_t count,uint32_t node){uint32_t first=0u,last=count;while(last-first>1u){uint32_t middle=(first+last)/2u;if(docs[middle].node_base<=node)first=middle;else last=middle;}return docs[first];}
 UKL_INLINE uint32_t tree_local(Tree t,uint32_t node){return node-t.d.node_base;}
 UKL_INLINE uint32_t tree_global(Tree t,uint32_t here){return here==TAPE_NONE?TAPE_NONE:here+t.d.node_base;}
 UKL_INLINE uint32_t tree_flags(Tree t,uint32_t node){return tape_flags(t.s,t.d,tree_local(t,node));}

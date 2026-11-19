@@ -268,6 +268,37 @@ fn prefix(defines: &str) -> String {
     )
 }
 
+/// The device's tape view (decision 0032), which the label and pattern kernels read: the
+/// document table's entry as generated (`slabs::msl`, decisions 0289 §4 and 0310), the reads written once in CLIF,
+/// then the readers. The reads are format 15's and 16's (`<ukl/reads/tape.h>`), or 16z's too, through the
+/// batch's cache (`<ukl/reads/tape_z.h>`, decision 0353 step 4b) for a batch of 16z or of mixed formats
+/// ([`tape_view`]): a pipeline's 16z bodies are compiled though its format makes them dead, and doubled a format
+/// 15 label kernel's compile.
+///
+/// The batch's tape format is the program's specialization constant (`tape_format`, `UKL_CONSTANT_U32`: Metal's
+/// function constant 0, a define elsewhere; 0 for a mixed batch): each view load of the format field reads it, so a
+/// batch of one format runs reads without the other format's branches (t41: label_micro 388 to about 300 ms at
+/// s1000). Every kernel of these sources is made with a value ([`pipeline_of`], [`pipelines`]).
+pub(super) static VIEW_PIECES: std::sync::LazyLock<[String; 2]> = std::sync::LazyLock::new(|| {
+    ["#include <ukl/reads/tape.h>\n", "#include <ukl/reads/tape_z.h>\n"].map(|reads| {
+        format!(
+            "{}UKL_CONSTANT_U32(tape_format)\n#define clif_view(v,a) ((tape_format!=0u&&(a)=={}u)?tape_format:(v)[(a)/4u])\n{}{}",
+            crate::code_rule_dsl::residency::slabs::msl(),
+            std::mem::offset_of!(crate::code_rule_dsl::residency::slabs::DocView, format),
+            reads,
+            include_str!("device_tape.h")
+        )
+    })
+});
+/// Whether a batch of tapes in `format` (0: mixed) reads 16z ([`VIEW_PIECES`]).
+pub(super) fn reads_z(format: u32) -> bool {
+    format != 15 && format != 16
+}
+/// The tape view for a batch of tapes in `format` (0: mixed).
+pub(super) fn tape_view(format: u32) -> &'static str {
+    &VIEW_PIECES[usize::from(reads_z(format))]
+}
+
 #[derive(Clone, Eq, PartialEq)]
 pub(super) struct ProgramBufferKey {
     programs: Vec<super::metal_batch_abi::MetalProgram>,

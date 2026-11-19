@@ -872,39 +872,9 @@ fn scratch_rows(plan: &Plan<'_>) -> usize {
     plan.steps.iter().flat_map(|(_, levels)| levels).map(Vec::len).max().unwrap_or(0).max(1)
 }
 
-/// The device's tape view (decision 0032), which the label and pattern kernels read: the
-/// document table's entry as generated (`slabs::msl`, decisions 0289 §4 and 0310), the reads written once in CLIF,
-/// then the readers. The reads are format 15's and 16's (`<ukl/reads/tape.h>`), or 16z's too, through the
-/// batch's cache (`<ukl/reads/tape_z.h>`, decision 0353 step 4b) for a batch of 16z or of mixed formats
-/// ([`tape_view`]): a pipeline's 16z bodies are compiled though its format makes them dead, and doubled a format
-/// 15 label kernel's compile.
-///
-/// The batch's tape format is the program's specialization constant (`tape_format`, `UKL_CONSTANT_U32`: Metal's
-/// function constant 0, a define elsewhere; 0 for a mixed batch): each view load of the format field reads it, so a
-/// batch of one format runs reads without the other format's branches (t41: label_micro 388 to about 300 ms at
-/// s1000). Every kernel of these sources is made with a value ([`pipeline_of`], [`pipelines`]).
-static VIEW_PIECES: std::sync::LazyLock<[String; 2]> = std::sync::LazyLock::new(|| {
-    ["#include <ukl/reads/tape.h>\n", "#include <ukl/reads/tape_z.h>\n"].map(|reads| {
-        format!(
-            "{}UKL_CONSTANT_U32(tape_format)\n#define clif_view(v,a) ((tape_format!=0u&&(a)=={}u)?tape_format:(v)[(a)/4u])\n{}{}",
-            crate::code_rule_dsl::residency::slabs::msl(),
-            std::mem::offset_of!(crate::code_rule_dsl::residency::slabs::DocView, format),
-            reads,
-            include_str!("device_tape.h")
-        )
-    })
-});
-/// Whether a batch of tapes in `format` (0: mixed) reads 16z ([`VIEW_PIECES`]).
-fn reads_z(format: u32) -> bool {
-    format != 15 && format != 16
-}
-/// The tape view for a batch of tapes in `format` (0: mixed).
-fn tape_view(format: u32) -> &'static str {
-    &VIEW_PIECES[usize::from(reads_z(format))]
-}
 /// The label kernels (UKL, decision 0440 step C) over the tape view, for a batch of either kind ([`tape_view`]).
 static SOURCES: std::sync::LazyLock<[String; 2]> = std::sync::LazyLock::new(|| {
-    [15, 0].map(|format| format!("{}{}", VIEW_PIECES[usize::from(reads_z(format))], include_str!("label_passes.uglykl")))
+    [15, 0].map(|format| format!("{}{}", super::metal_program_backend::VIEW_PIECES[usize::from(super::metal_program_backend::reads_z(format))], include_str!("label_passes.uglykl")))
 });
 
 /// A label kernel as the runner encodes it: its pipeline, and the arguments its positional buffers do not reach
@@ -1055,7 +1025,7 @@ static PIPELINES: LazyLock<Mutex<HashMap<u32, Vec<LabelKernel>>>> = LazyLock::ne
 /// The clauses' pattern kernels, by source and tape format (until the residency's drop).
 static PATTERN_PIPELINES: LazyLock<Mutex<HashMap<(String, u32), LabelKernel>>> = LazyLock::new(Default::default);
 
-/// A pattern kernel of a source over [`tape_view`] for a batch of tapes in `format` (0: mixed).
+/// A pattern kernel of a source over [`tape_view`](super::metal_program_backend::tape_view) for a batch of tapes in `format` (0: mixed).
 fn pipeline_of(source: &str, name: &str, format: u32) -> Result<LabelKernel, Error> {
     lane::device()?;
     Ok(LabelKernel::of(&lane::kernel_fixed(source, name, Some(format))))
@@ -1081,7 +1051,7 @@ fn pipelines(format: u32) -> Result<Vec<LabelKernel>, Error> {
     // s one after another, 23 s together, on a loaded M3 Max). A kernel that fails to compile panics on its thread,
     // and the panic goes on here (decision 0382). A batch of 16z tapes compiles the reads with 16z's bodies
     // (`reads_z`); the others without them.
-    let source = &SOURCES[usize::from(reads_z(format))];
+    let source = &SOURCES[usize::from(super::metal_program_backend::reads_z(format))];
     // From the engine's kernel store, as the device layer's kernels (UKL, decision 0440 step C).
     let kernel = |name: &str| LabelKernel::of(&rerail_metal::lane::kernel_fixed(source, name, Some(format)));
     let first = kernel(KERNELS[0]);
