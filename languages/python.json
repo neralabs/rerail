@@ -20,5 +20,6 @@
     "calls": "supported",
     "formatArgs": "supported"
   },
-  "suppressions": ["noqa", "nosec"]
+  "suppressions": ["noqa", "nosec"],
+  "fragments": [{ "name": "annotation", "dialect": "python", "start": "expression" }]
 }

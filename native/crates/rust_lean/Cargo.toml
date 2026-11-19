@@ -1,0 +1,15 @@
+[package]
+name = "rerail-rust-lean"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "A lean Rust parser for the tape alone: tree-sitter-rust's tape, written as the parse goes, its lexer in 64-byte blocks."
+
+[dependencies]
+# The engine's tape, which the parser writes.
+rerail-tape-format = { path = "../tape_format" }
+# Names past ASCII (`XID_Start`, `XID_Continue`), as tree-sitter-rust's identifier reads them.
+unicode-ident = "=1.0.27"
+
+[dependencies.rerail-simd8]
+path = "../simd8"

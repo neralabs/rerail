@@ -1,0 +1,182 @@
+{
+ "area": "windows-tests",
+ "machines": [],
+ "runs": [
+  {
+   "id": "wt/P/passed",
+   "system": "Windows 11",
+   "machine": "windows-tests",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "suites",
+   "what": "the engine and daemon test files on Windows 11 (test/engine/native, test/daemon, three daemon start files, test/cli/audit-cli.test.ts), one run, 4 test workers",
+   "state": "",
+   "metric": "tests passed",
+   "unit": "tests",
+   "n": 1,
+   "median": 504,
+   "worst": 504,
+   "values": [
+    504
+   ],
+   "command": "npx vitest run test/engine/native test/daemon test/runtime/daemon-control.test.ts test/runtime/daemon-control/daemon-home.test.ts test/runtime/windows-daemon-launch.test.ts test/cli/audit-cli.test.ts",
+   "at": "2026-11-17 14:10:48"
+  },
+  {
+   "id": "wt/P/failed",
+   "system": "Windows 11",
+   "machine": "windows-tests",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "suites",
+   "what": "the engine and daemon test files on Windows 11 (test/engine/native, test/daemon, three daemon start files, test/cli/audit-cli.test.ts), one run, 4 test workers",
+   "state": "",
+   "metric": "tests failed",
+   "unit": "tests",
+   "n": 1,
+   "median": 5,
+   "worst": 5,
+   "values": [
+    5
+   ],
+   "command": "npx vitest run test/engine/native test/daemon test/runtime/daemon-control.test.ts test/runtime/daemon-control/daemon-home.test.ts test/runtime/windows-daemon-launch.test.ts test/cli/audit-cli.test.ts",
+   "at": "2026-11-17 14:10:48"
+  },
+  {
+   "id": "wt/P/skipped",
+   "system": "Windows 11",
+   "machine": "windows-tests",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "suites",
+   "what": "the engine and daemon test files on Windows 11 (test/engine/native, test/daemon, three daemon start files, test/cli/audit-cli.test.ts), one run, 4 test workers",
+   "state": "",
+   "metric": "tests skipped",
+   "unit": "tests",
+   "n": 1,
+   "median": 12,
+   "worst": 12,
+   "values": [
+    12
+   ],
+   "command": "npx vitest run test/engine/native test/daemon test/runtime/daemon-control.test.ts test/runtime/daemon-control/daemon-home.test.ts test/runtime/windows-daemon-launch.test.ts test/cli/audit-cli.test.ts",
+   "at": "2026-11-17 14:10:48"
+  },
+  {
+   "id": "wt/N/passed",
+   "system": "Windows 11",
+   "machine": "windows-tests",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "suites",
+   "what": "the engine and daemon test files on Windows 11 (test/engine/native, test/daemon, three daemon start files, test/cli/audit-cli.test.ts), one run, 4 test workers",
+   "state": "",
+   "metric": "tests passed",
+   "unit": "tests",
+   "n": 1,
+   "median": 540,
+   "worst": 540,
+   "values": [
+    540
+   ],
+   "command": "npx vitest run test/engine/native test/daemon test/runtime/daemon-control.test.ts test/runtime/daemon-control/daemon-home.test.ts test/runtime/windows-daemon-launch.test.ts test/cli/audit-cli.test.ts",
+   "at": "2026-11-17 15:48:31"
+  },
+  {
+   "id": "wt/N/failed",
+   "system": "Windows 11",
+   "machine": "windows-tests",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "suites",
+   "what": "the engine and daemon test files on Windows 11 (test/engine/native, test/daemon, three daemon start files, test/cli/audit-cli.test.ts), one run, 4 test workers",
+   "state": "",
+   "metric": "tests failed",
+   "unit": "tests",
+   "n": 1,
+   "median": 8,
+   "worst": 8,
+   "values": [
+    8
+   ],
+   "command": "npx vitest run test/engine/native test/daemon test/runtime/daemon-control.test.ts test/runtime/daemon-control/daemon-home.test.ts test/runtime/windows-daemon-launch.test.ts test/cli/audit-cli.test.ts",
+   "at": "2026-11-17 15:48:31"
+  },
+  {
+   "id": "wt/N/skipped",
+   "system": "Windows 11",
+   "machine": "windows-tests",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "suites",
+   "what": "the engine and daemon test files on Windows 11 (test/engine/native, test/daemon, three daemon start files, test/cli/audit-cli.test.ts), one run, 4 test workers",
+   "state": "",
+   "metric": "tests skipped",
+   "unit": "tests",
+   "n": 1,
+   "median": 29,
+   "worst": 29,
+   "values": [
+    29
+   ],
+   "command": "npx vitest run test/engine/native test/daemon test/runtime/daemon-control.test.ts test/runtime/daemon-control/daemon-home.test.ts test/runtime/windows-daemon-launch.test.ts test/cli/audit-cli.test.ts",
+   "at": "2026-11-17 15:48:31"
+  },
+  {
+   "id": "wt/N/only-here",
+   "system": "Windows 11",
+   "machine": "windows-tests",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "suites",
+   "what": "the same test files: tests that fail at this version and pass at the other, one run, 4 test workers",
+   "state": "",
+   "metric": "tests failing at this version only",
+   "unit": "tests",
+   "role": "count",
+   "n": 1,
+   "median": 3,
+   "worst": 3,
+   "values": [
+    3
+   ],
+   "command": "the two runs' failure lists set side by side",
+   "at": null
+  },
+  {
+   "id": "wt/P/only-here",
+   "system": "Windows 11",
+   "machine": "windows-tests",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "suites",
+   "what": "the same test files: tests that fail at this version and pass at the other, one run, 4 test workers",
+   "state": "",
+   "metric": "tests failing at this version only",
+   "unit": "tests",
+   "role": "count",
+   "n": 1,
+   "median": 0,
+   "worst": 0,
+   "values": [
+    0
+   ],
+   "command": "the two runs' failure lists set side by side",
+   "at": null
+  }
+ ],
+ "findings": [
+  {
+   "title": "On Windows 11, 3 engine and daemon tests fail at the new version that pass at 0.1.5",
+   "what": "One run of each version on a shared Windows 11 workstation with a hard disk: test/cli/audit-cli.test.ts: rerail scan and settings CLI > fails a repository scan where a rule finds more than it may report on a file, w (Error: Test timed out in 30000ms. If this is a long-running ); test/daemon/native-session-server.test.ts: NativeSessionServer request boundary > retires an abandoned session and closes its session store resources aft (Error: Test timed out in 30000ms. If this is a long-running ); test/runtime/daemon-control/daemon-home.test.ts: the daemons of a Rerail home > leaves a daemon started beside a busy one to exit, and keeps the record and the (AssertionError: expected undefined to match object { pid: 47). Two are 30-second timeouts and one a daemon-record assertion; none was repeated, so a slow disk may explain the timeouts. No test fails at 0.1.5 only (0).",
+   "severity": "medium: one run each, not repeated",
+   "evidence": [
+    "wt/N/only-here",
+    "wt/P/only-here",
+    "wt/N/failed",
+    "wt/P/failed"
+   ]
+  }
+ ],
+ "not_measured": []
+}

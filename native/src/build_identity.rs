@@ -3,6 +3,16 @@
 
 use sha2::{Digest, Sha256};
 
+/// Parser generation depends on the generator binary, grammar, and version.
+pub fn parser_cache_key(generator: &[u8], grammar: &[u8], version: &str) -> String {
+    let mut hash = Sha256::new();
+    for bytes in [generator, grammar, version.as_bytes()] {
+        hash.update(bytes.len().to_le_bytes());
+        hash.update(bytes);
+    }
+    hex(&hash.finalize())
+}
+
 /// The identity of the parser and grammar versions a stored tape was parsed with, and of the
 /// named sources that also decide a tape (a grammar built from vendored sources, how a tape's view
 /// of its file is built).
@@ -68,7 +78,16 @@ pub fn hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::grammar_build_id;
+    use super::{grammar_build_id, parser_cache_key};
+
+    #[test]
+    fn parser_cache_identity_tracks_generator_grammar_and_version() {
+        let key = parser_cache_key(b"generator", b"grammar", "1");
+        assert_eq!(key, parser_cache_key(b"generator", b"grammar", "1"));
+        assert_ne!(key, parser_cache_key(b"new-generator", b"grammar", "1"));
+        assert_ne!(key, parser_cache_key(b"generator", b"new-grammar", "1"));
+        assert_ne!(key, parser_cache_key(b"generator", b"grammar", "2"));
+    }
 
     const LOCK: &str = "[[package]]\nname = \"ast-grep-core\"\nversion = \"0.45.3\"\n\n\
         [[package]]\nname = \"ast-grep-language\"\nversion = \"0.45.3\"\n\n\

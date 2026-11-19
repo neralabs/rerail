@@ -1,0 +1,3 @@
+#!/bin/sh
+# rrlab: see README.md. Builds rrlab-facts (cargo, offline) and the functor library on first use.
+exec python3 "$(dirname "$0")/rrlab.py" "$@"

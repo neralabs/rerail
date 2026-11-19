@@ -1,0 +1,24 @@
+# Step 6: lists hold values, so they nest, `((vrai); (); nul)`.
+#
+# New: a nested node, which tier 2 runs on a stack (`PUSH`, `RETURN`), and a supertype.
+
+lexer ladder06
+
+class ws    = ' ' '\t' '\n' '\r'
+class alpha = 'a'..'z'
+class op    = '(' ')' ';'
+mask code   = ~empty
+
+token word = start starts(alpha) last lasts(alpha)
+keywords word { "vrai" "fausse" "nul" } required
+token punctuation = start code & op
+keywords punctuation { "(" ")" ";" } required
+
+skip ws
+error "a byte no token takes" when ~ws & ~alpha & ~op
+
+tree ladder {
+  node document = valeur
+  node liste nested = '(' [valeur (';' valeur)*] ')'
+  choice valeur supertype _valeur = liste | vrai | fausse | nul
+}

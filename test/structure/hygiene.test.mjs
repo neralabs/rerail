@@ -36,6 +36,16 @@ describe("#19 large binaries in LFS", () => {
     );
     expect(paths(result)).toEqual(["keep/a.bin"]);
   });
+
+  it("lets through a binary in a tool-pack's publish request, never one elsewhere under packs/", () => {
+    const result = binariesLfs(
+      memoryRepo({
+        "packs/data-layer/upstream/benchmarks/publish/authored/profile.json.gz": binary(150 * 1024),
+        "packs/data-layer/candidates/profile.json.gz": binary(150 * 1024),
+      }),
+    );
+    expect(paths(result)).toEqual(["packs/data-layer/candidates/profile.json.gz"]);
+  });
 });
 
 describe("#20 generated files marked", () => {
