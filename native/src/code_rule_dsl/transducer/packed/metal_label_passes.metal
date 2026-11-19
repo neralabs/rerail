@@ -109,7 +109,7 @@ struct MicroFrame { uint pc,node,resume,named,next,end,cursors[8],capture0,captu
 constant uint MICRO_NONE=0xffffffffu;
 
 // A walk's spill (decision 0125): past `shape.budget` steps a walk gives its lowest move frame
-// with candidates left to the dispatch's work queue (`metal_work_queue.metal`), a descendant
+// with candidates left to the dispatch's work queue (`rerail_metal::work_queue`), a descendant
 // range of at least `2 * MICRO_CHUNK` nodes halved, so a long walk is many threads' work, not
 // one's critical path. An item is `MICRO_ITEM` words of `items` (the frame, its walk's start,
 // pass and document), written and read by atomics (coherent between threadgroups). A queue

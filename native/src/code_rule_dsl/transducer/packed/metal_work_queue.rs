@@ -1,7 +1,7 @@
 //! The device work queue (list step 17, decision 0027): device-side enqueue on Metal. A
 //! persistent dispatch's workers take items from a queue and push the items their work creates;
 //! idle workers take those up, across every threadgroup, so the device, not the host, decides
-//! what runs next and how long the loop lasts. `metal_work_queue.metal` is prepended to a kernel
+//! what runs next and how long the loop lasts. `rerail_metal::work_queue::SOURCE` is prepended to a kernel
 //! that uses it (`wq_take`, `wq_push`, `wq_done`, `wq_idle`).
 //!
 //! Metal promises no progress between threadgroups, so no worker waits on another without a
@@ -11,7 +11,7 @@
 use super::*;
 use metal::{ComputeCommandEncoderRef, MTLSize};
 
-pub(in crate::code_rule_dsl) const SOURCE: &str = include_str!("metal_work_queue.metal");
+pub(in crate::code_rule_dsl) const SOURCE: &str = rerail_metal::work_queue::SOURCE;
 /// A worker group's threads.
 pub(in crate::code_rule_dsl) const WIDTH: u64 = 256;
 /// At most this many worker groups: about what an M-series GPU keeps resident.

@@ -3,7 +3,8 @@ using namespace metal;
 
 // A device work queue (list step 17, decision 0027): a persistent dispatch's workers take items
 // from it and push the items their work creates; idle workers take those up. Prepended to a
-// kernel's source (`metal_work_queue.rs`).
+// kernel's source (`rerail_metal::work_queue::SOURCE`): the engine's lattice and label passes,
+// and the preprocessor's expansion (decision 0448).
 //
 // The queue is linear, its capacity the most items the work can push (a lattice cell is pushed
 // at most once per change of an input), so no slot is used twice and no taker can see a stale

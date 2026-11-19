@@ -1,5 +1,5 @@
 // A flat lattice's fixpoint (`logic::native::lattice_fixpoint`'s graph, list step 17) on the
-// device work queue (`metal_work_queue.metal`, prepended): an item is a cell to evaluate. A
+// device work queue (`rerail_metal::work_queue`, prepended): an item is a cell to evaluate. A
 // worker takes a cell, evaluates it from its inputs' current values, and where its value rose,
 // pushes its dependents, which any idle worker takes up. The system is monotone over a finite
 // lattice, so this chaotic order reaches the one least fixpoint.

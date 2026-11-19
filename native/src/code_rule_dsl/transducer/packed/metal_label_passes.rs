@@ -899,7 +899,7 @@ static TAPE_VIEW: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
 });
 /// The label kernels over the tape view.
 static SOURCE: std::sync::LazyLock<String> =
-    std::sync::LazyLock::new(|| format!("{}{}{}", *TAPE_VIEW, include_str!("metal_work_queue.metal"), include_str!("metal_label_passes.metal")));
+    std::sync::LazyLock::new(|| format!("{}{}{}", *TAPE_VIEW, rerail_metal::work_queue::SOURCE, include_str!("metal_label_passes.metal")));
 /// Where a label kernel binds the batch's chunk block (`DocView`'s `at`): past every other buffer.
 const SLAB_SLOT: u64 = 27;
 /// A walk's stack tiers are one kernel each (`label_micro`, `label_group`, `root_records`), their frames the dispatch's

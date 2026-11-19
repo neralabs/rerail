@@ -13,8 +13,8 @@ use crate::runtime::{MappedBuffer, pipeline_named_constant};
 use metal::{BufferRef, CommandBufferRef, MTLSize};
 
 /// The evaluator's one source: the tape reader and the front passes (`pp_eval.metal`), these
-/// blocks, and the expansion (`pp_expand.metal`).
-pub const SOURCE: &str = concat!(include_str!("pp_eval.metal"), "\n", include_str!("pp_blocks.metal"), "\n", include_str!("pp_expand.metal"));
+/// blocks, the work queue (`work_queue.metal`) and the expansion (`pp_expand.metal`).
+pub const SOURCE: &str = concat!(include_str!("pp_eval.metal"), "\n", include_str!("pp_blocks.metal"), "\n", include_str!("work_queue.metal"), "\n", include_str!("pp_expand.metal"));
 
 /// A dispatch's size: groups known to the host, or indirect arguments at a byte offset.
 #[derive(Clone, Copy)]

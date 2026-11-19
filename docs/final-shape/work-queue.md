@@ -5373,3 +5373,17 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   back at the file's positions on the device.
 - **Done when**: the two JSON steps run on Metal and equal the interpreter, including files that
   start with the mark, and the test passes.
+
+### Q281. The journal's wait bound (Q184) was dropped by a merge: `since_within` ignores `wait`
+
+- **What**: 89f4abfec (Q184) made `journal::fsevents::since_within` answer `Lost` once the
+  journal took longer than the caller's `wait` (the observer's bound, at least 2 ms a root),
+  keeping the stream. A later merge added `settle` and its retry loop, and the body no longer
+  reads `wait` (an unused-variable warning in `rerail-store`, found on 2026-11-19 while
+  checking the engine). So a warm run again waits for the journal's cookie as long as `settle`
+  allows (0.2–2 s a root on the M3, Q184's measurement).
+- **Keep**: Q184's bound (a slower journal answers `Lost` with the latest id the stream was
+  told, and the stream is kept); the merge's `settle` (a replay whose history lacks its marker
+  is started again while `settle` allows).
+- **Done when**: both hold in `since_within`, the warning is gone, and the store's journal and
+  observer tests pass, with Q184's warm-run measurement repeated.

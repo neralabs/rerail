@@ -20,6 +20,11 @@ pub mod pp_blocks;
 pub mod pp_eval;
 /// Macro expansion on the device (decision 0448).
 pub mod pp_expand;
+/// The device work queue (decision 0027): one definition, prepended to each kernel source that
+/// takes and pushes items (`work_queue.metal`).
+pub mod work_queue {
+    pub const SOURCE: &str = include_str!("work_queue.metal");
+}
 /// The preprocessing words on the device (decision 0348, stage 5).
 pub mod pp_on;
 /// Pre-pinned blocks (decision 0039): the device's scratch buffers, made once and reused.
