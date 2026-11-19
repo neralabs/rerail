@@ -404,8 +404,8 @@ fn each_lane_keeps_its_last_runs_plans() {
 }
 
 /// A lane names its policy set (where its programs come from, and the run's options): an edit of the set's programs
-/// is a new lane of the same set, and supersedes the older, which keeps no protection (its plan dies, and the frames
-/// it alone held go with the next sweep, decision 0227). Another set's lane over the root keeps its own, and so does
+/// is a new lane of the same set, and supersedes the older, which keeps no protection (its plan dies, and the memo
+/// entries it alone held go with the next sweep, decision 0227). Another set's lane over the root keeps its own, and so does
 /// a run naming no set, its lane its own set (`record_run`). A run back on the older programs (an edit undone) supersedes the newer.
 /// Q19: each edit had left its predecessor protected, up to `protected_lanes` of them, and the cross part's space,
 /// one per root, grew with every edit.
@@ -463,28 +463,28 @@ fn an_older_binarys_lane_keeps_no_protection_where_sets_are_named() {
     assert_eq!([old_a, old_b, named, alone].map(live), [false, false, true, true], "where sets are named, the older lanes go");
 }
 
-/// Decision 0227: a run that begins stops the frames sweep (its progress handler), rolled back and still due. The
+/// Decision 0227: a run that begins stops the memo sweep (its progress handler), rolled back and still due. The
 /// sweep is many small statements, each a few VM steps: the run must stop it all the same.
 #[test]
 fn a_run_that_begins_stops_a_sweep_of_many_small_deletes() {
-    use crate::content_store::frames::{Put, Rel, Rows};
+    use crate::content_store::MemoPut;
     let (_path, store) = store("corpus-sweep-stops");
     let source = store.put_source(&noise(73, 256), &[]).unwrap();
     store.record_corpus_run_naming("/r", &[source], 1, 1, [5u8; 32], &[], 1).unwrap();
-    // 3,000 frames of a program no manifest names: all unreachable.
-    let space = [9u8; 32];
-    let rels: Vec<Rel> = (0..3000u32).map(|i| Rel { name: format!("r{i}"), ident: [1; 32] }).collect();
-    let puts: Vec<Put> = rels.iter().map(|r| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } }).collect();
-    store.keep_frames(&space, &puts, &[], Some((&rels[..], 0, [7u8; 32]))).unwrap();
+    // 3,000 entries of the live plan's memo whose contents no kept manifest names: all unreachable.
+    let space = crate::content_store::local_space(&[5u8; 32]);
+    let puts: Vec<MemoPut> = (0..3000i64).map(|i| MemoPut { part: i, path: format!("f{i}.py"), digest: [9; 32], key: 1, bytes: vec![1; 8], over: false }).collect();
+    store.put_memo_entries(&space, puts, 1).unwrap();
     store.keep_corpus_runs(&CorpusPolicy::default(), 2).unwrap();
-    assert!(store.frames_sweep_wanted().unwrap());
+    assert!(store.memo_sweep_wanted().unwrap());
     let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let seen = std::sync::Arc::clone(&asked);
-    let out = store.sweep_frames(move || { seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed); true }).unwrap();
+    let out = store.sweep_memo(move || { seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed); true }).unwrap();
     assert!(out.is_none(), "a run began: the sweep stopped (asked {} times)", asked.load(std::sync::atomic::Ordering::Relaxed));
-    assert!(store.frames_sweep_wanted().unwrap(), "rolled back, still due");
-    let n: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM frames WHERE space = ?1", [&space[..]], |r| r.get(0)).unwrap();
-    assert_eq!(n, 3000, "every frame still there");
+    assert!(store.memo_sweep_wanted().unwrap(), "rolled back, still due");
+    let n: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM memo_entries WHERE space = ?1", [&space[..]], |r| r.get(0)).unwrap();
+    assert_eq!(n, 3000, "every entry still there");
+    assert_eq!(store.sweep_memo(|| false).unwrap().map(|(n, _)| n), Some(3000), "unstopped, it collects them");
 }
 
 /// Q22: what a run reads before its first wave is the sources of the root's newest runs, of any lane. A lane is the
@@ -504,40 +504,40 @@ fn a_roots_sources_are_its_newest_runs_of_any_lane() {
     assert!(store.root_sources("/other", 4).unwrap().is_empty(), "by root");
 }
 
-/// Decision 0227: a keep decision leaves the frames it made unreachable to the `frames` upkeep job, which is due
+/// Decision 0227: a keep decision leaves the memo entries it made unreachable to the memo sweep, which is due
 /// until it has swept them, and a utility job: finished by `finish_soon`, with no scheduler.
 #[test]
-fn a_keep_decision_leaves_its_sweep_to_the_frames_job() {
+fn a_keep_decision_leaves_its_sweep_to_the_memo_sweep() {
     use rerail_accel::upkeep::Job as _;
-    let (_path, store) = store("corpus-frames-job");
+    let (_path, store) = store("corpus-memo-sweep");
     let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400, ..CorpusPolicy::default() };
-    let mut job = crate::content_store::upkeep::Frames::new(store.database_path());
+    let mut job = crate::content_store::upkeep::MemoSweep::new(store.database_path());
     assert_eq!(job.qos(), rerail_accel::upkeep::Qos::Utility);
-    assert!(!store.frames_sweep_wanted().unwrap(), "a new store has nothing to sweep");
+    assert!(!store.memo_sweep_wanted().unwrap(), "a new store has nothing to sweep");
     assert_eq!(job.due(), rerail_accel::upkeep::Due::No);
     let source = store.put_source(&noise(7, 256), &[]).unwrap();
     store.put_tape(source, 1, 7, 9, &noise(507, 256)).unwrap();
     assert!(store.record_corpus_run("/repo", &[source], 7, 9, [7u8; 32], 1_000).unwrap());
     store.keep_corpus_runs(&policy, 1_000).unwrap();
-    assert!(store.frames_sweep_wanted().unwrap(), "the decision is past the last sweep");
+    assert!(store.memo_sweep_wanted().unwrap(), "the decision is past the last sweep");
     assert_eq!(job.due(), rerail_accel::upkeep::Due::Urgent);
     let stop = std::sync::atomic::AtomicBool::new(false);
     assert_eq!(job.step(&rerail_accel::upkeep::Slice::for_test(std::time::Duration::from_millis(200), 64 << 20, &stop)).unwrap(), rerail_accel::upkeep::Step::Done);
-    assert!(!store.frames_sweep_wanted().unwrap(), "swept");
+    assert!(!store.memo_sweep_wanted().unwrap(), "swept");
     assert_eq!(job.due(), rerail_accel::upkeep::Due::No);
 }
 
-/// A frames job outlives its store (the process holds it): once the store is gone, the job reads no deleted file
+/// A memo sweep outlives its store (the process holds it): once the store is gone, the job reads no deleted file
 /// and is not due, and its step makes no new store at the path. Its cached connection had read the deleted file's
 /// last decision for ever, each `finish_soon` sweeping a store the step had made anew, a hundred passes over every
 /// gone store of a test process.
 #[test]
-fn a_frames_job_over_a_gone_store_is_not_due_and_makes_no_store() {
+fn a_memo_sweep_over_a_gone_store_is_not_due_and_makes_no_store() {
     use rerail_accel::upkeep::Job as _;
-    let (path, store) = store("corpus-frames-gone");
+    let (path, store) = store("corpus-memo-gone");
     let file = store.database_path().to_path_buf();
     let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400, ..CorpusPolicy::default() };
-    let mut job = crate::content_store::upkeep::Frames::new(&file);
+    let mut job = crate::content_store::upkeep::MemoSweep::new(&file);
     let source = store.put_source(&noise(9, 256), &[]).unwrap();
     store.put_tape(source, 1, 7, 9, &noise(509, 256)).unwrap();
     assert!(store.record_corpus_run("/repo", &[source], 7, 9, [9u8; 32], 1_000).unwrap());
@@ -557,14 +557,14 @@ fn a_frames_job_over_a_gone_store_is_not_due_and_makes_no_store() {
 #[test]
 fn a_sweep_yields_to_a_run_over_its_store() {
     use rerail_accel::upkeep::Job as _;
-    let (_path, store) = store("corpus-frames-yield");
+    let (_path, store) = store("corpus-memo-yield");
     let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400, ..CorpusPolicy::default() };
-    let mut job = crate::content_store::upkeep::Frames::new(store.database_path());
+    let mut job = crate::content_store::upkeep::MemoSweep::new(store.database_path());
     let source = store.put_source(&noise(8, 256), &[]).unwrap();
     store.put_tape(source, 1, 7, 9, &noise(508, 256)).unwrap();
     assert!(store.record_corpus_run("/repo", &[source], 7, 9, [8u8; 32], 1_000).unwrap());
     store.keep_corpus_runs(&policy, 1_000).unwrap();
-    assert!(store.frames_sweep_wanted().unwrap());
+    assert!(store.memo_sweep_wanted().unwrap());
     let mut lock = store.database_path().as_os_str().to_owned();
     lock.push(".runs.lock");
     let run = std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(&lock).unwrap();
@@ -572,12 +572,12 @@ fn a_sweep_yields_to_a_run_over_its_store() {
     let stop = std::sync::atomic::AtomicBool::new(false);
     let slice = || rerail_accel::upkeep::Slice::for_test(std::time::Duration::from_millis(200), 64 << 20, &stop).over_file(store.database_path());
     assert_eq!(job.step(&slice()).unwrap(), rerail_accel::upkeep::Step::More, "the run stops the sweep");
-    assert!(store.frames_sweep_wanted().unwrap(), "still due");
+    assert!(store.memo_sweep_wanted().unwrap(), "still due");
     run.unlock().unwrap();
     // The probe is cached for 25 ms.
     std::thread::sleep(std::time::Duration::from_millis(30));
     assert_eq!(job.step(&slice()).unwrap(), rerail_accel::upkeep::Step::Done);
-    assert!(!store.frames_sweep_wanted().unwrap(), "swept once the run ended");
+    assert!(!store.memo_sweep_wanted().unwrap(), "swept once the run ended");
 }
 
 #[test]

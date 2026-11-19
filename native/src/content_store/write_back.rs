@@ -102,11 +102,9 @@ pub struct Work(pub(super) Kind);
 pub(super) enum Kind {
     /// A record (decision 0306): its string and byte area, applied by its items' registered kinds.
     Record { text: String, bytes: Vec<u8> },
-    /// A space's frames (`queue_frames`).
-    Frames(Box<super::frames::FramesWrite>),
     /// A space's memo entries in their segments (`queue_memo_segments`).
-    Memo(Box<super::frames::memo_pack::MemoWrite>),
-    /// A space's next kept file (`queue_kept`, decisions 0401 F6, 0417 K4).
+    Memo(Box<super::held::memo_pack::MemoWrite>),
+    /// A space's next kept block (`queue_kept`, decision 0401 F6).
     Kept(Box<super::kept_facts::KeptWrite>),
     /// Sources and tapes gathered into segments, or each in its own rows where no segment could be placed.
     Objects(Box<super::object_segments::ObjectsWrite>),
@@ -136,7 +134,6 @@ impl Work {
     fn run(&mut self, store: &ContentStore) -> StoreResult<()> {
         match &mut self.0 {
             Kind::Record { text, bytes } => super::record::apply(store, text, bytes),
-            Kind::Frames(w) => w.run(store),
             Kind::Memo(w) => w.run(store),
             Kind::Kept(w) => w.run(store),
             Kind::Objects(w) => w.run(store),
@@ -1357,8 +1354,11 @@ mod tests {
         go_tx.send(()).unwrap();
         let (done_tx, done_rx) = mpsc::channel();
         let other = ContentStore::open(&store.database_path).unwrap();
-        std::thread::spawn(move || done_tx.send(other.written().is_ok()).unwrap());
+        // The other handle is dropped (its checkpoint written) before the thread ends: joined before the directory
+        // goes, or its checkpoint writes into a directory being removed.
+        let waiter = std::thread::spawn(move || done_tx.send(other.written().is_ok()).unwrap());
         assert_eq!(done_rx.recv_timeout(Duration::from_secs(10)), Ok(true), "every queued job written");
+        waiter.join().unwrap();
         assert!(store.atoms_handle().forked(), "the job forked the batch");
         assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 2, "rolled back and run again");
         assert_eq!(later.load(std::sync::atomic::Ordering::SeqCst), 2, "each wave queued meanwhile written once");

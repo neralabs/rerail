@@ -3256,6 +3256,15 @@ fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
     assert!(taken > 0, "no line was taken from the prepared plans");
 }
 
+/// A version kept with no prepared plan is read back as one (its id alone): else the next process makes it again, and
+/// writes it, every warm run (`the_run_after_a_cold_one_writes_nothing`).
+#[test]
+fn a_version_with_no_prepared_plan_is_read_back() {
+    let by: prepared::ByVersion = [([7u8; 32], std::sync::Arc::new(prepared::Prepared::default()))].into_iter().collect();
+    let back = prepared::of_store_rows(&prepared::store_rows(&by));
+    assert_eq!(back.get(&[7u8; 32]).map(|p| p.0.len()), Some(0), "kept, with no plan");
+}
+
 /// Q228: the prepared plans a run made of a version are kept for the store by its identity, and a later process's run
 /// of the same program (another version, built again) reads them, made none.
 #[test]

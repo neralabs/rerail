@@ -339,12 +339,13 @@ fn point_of(lane: Lane, forms: &str, launches: u32, units: f64, wall: f64, cpu: 
 /// small launches (1e5 units, 10 ms) at 9 times its large ones' rate (s1000, 2026-11-17). Without spread in `x`, the
 /// line is through the origin.
 pub fn line(points: &[(f64, f64)]) -> (f64, f64) {
+    // The middle value by selection, not a sort: the pairs' slopes are n² / 2 of them.
     let median = |mut v: Vec<f64>| -> Option<f64> {
         if v.is_empty() {
             return None;
         }
-        v.sort_by(f64::total_cmp);
-        Some(v[v.len() / 2])
+        let mid = v.len() / 2;
+        Some(*v.select_nth_unstable_by(mid, f64::total_cmp).1)
     };
     let mut slopes = Vec::with_capacity(points.len() * points.len() / 2);
     for (i, &(x0, y0)) in points.iter().enumerate() {
@@ -436,12 +437,21 @@ pub fn learn_from(samples: &[crate::score::Sample]) -> Vec<Learned> {
     fitted
 }
 
-/// [`learn_from`]'s rates, not put in place.
+/// The most points a stored rate is fitted from: its kernel's newest. The line through them is Theil–Sen's, over every
+/// pair, so the fit's cost grows with their square: over a store's 2,000 samples of a kernel (`READ_PER_FORM`) it took
+/// 1.3 s of a process's start, and the first launch that priced a kernel waited for it (2026-11-18).
+pub const FIT_HELD: usize = 256;
+
+/// [`learn_from`]'s rates, not put in place: from each kernel's newest [`FIT_HELD`] points, `samples` being newest
+/// first (as the store reads them).
 pub fn fit_rates(samples: &[crate::score::Sample]) -> Vec<Learned> {
     let mut by: std::collections::BTreeMap<(String, usize), Vec<[f64; 3]>> = Default::default();
     for s in samples {
         if let Some((name, point)) = point_of(s.lane, &s.forms, s.launches, s.units, s.wall, s.cpu, s.load, s.cold, s.ok) {
-            by.entry((name, s.lane.index())).or_default().push(point);
+            let held = by.entry((name, s.lane.index())).or_default();
+            if held.len() < FIT_HELD {
+                held.push(point);
+            }
         }
     }
     by.into_iter().filter(|(_, v)| v.len() >= MIN_SAMPLES).map(|((name, lane), v)| fitted(name, Lane::ALL[lane], &v, false)).collect()

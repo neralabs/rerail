@@ -84,6 +84,22 @@ fn a_relation_naming_no_document_moves_to_the_cross_file_part() {
     assert_eq!(moved(&v), ["aware"]);
 }
 
+/// An earlier phase's export is a run constant, but not placeless (decision 0083 §2.3): a rule that joins it is
+/// cross-file, maintained there by the export's delta, so that an edit's delta of it (a function added) does not
+/// miss every file's memo entry. The run's options stay placeless: a rule that joins them stays file-local.
+#[test]
+fn a_rule_joining_a_phase_export_is_cross_file_and_one_joining_an_option_is_not() {
+    let text = ".decl kind(n: node, k: symbol)\n.input kind\n.decl types__sig(f: symbol, t: symbol)\n.input types__sig\n\
+                .decl option(k: symbol, v: symbol)\n.input option\n\
+                .decl typed(n: node, t: symbol)\ntyped(n, t) :- kind(n, k), types__sig(k, t).\n.output typed\n\
+                .decl opted(n: node)\nopted(n) :- kind(n, k), option(\"x\", k).\n.output opted\n";
+    let v = read(text);
+    let parts = split_of(&v);
+    assert!(parts.local.contains("opted"), "an option is placeless: {:?}", parts.local);
+    assert!(!parts.local.contains("typed"), "a phase's export is every file's rows: {:?}", parts.local);
+    assert_eq!(parts.causes["typed"], "reads types__sig with no location");
+}
+
 /// Two trees in one chunk (kinds 1 = module, 2 = function, 3 = other):
 ///
 /// ```text
@@ -705,7 +721,6 @@ at(f, l) :- uses(f, _), docof(f, d), line(f, l), d > 0.
 
 #[test]
 fn a_local_join_can_export_a_node_bound_by_equality() {
-    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
     let text = r#"
         .decl node(d: number, n: node, k: symbol, start: number, end: number)
         .decl child(p: node, c: node, i: number)

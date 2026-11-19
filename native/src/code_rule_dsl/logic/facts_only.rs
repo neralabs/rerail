@@ -46,27 +46,19 @@ const FACT_STORE: &[&str] = &[
     "node",
     "tape",
     "node_type",
-    "frames",
     // A space's kept facts (decisions 0401, 0417): which files its chain has.
     "facts_chain",
-    // The segments frames, sources and tapes lie in (decision 0295 step 5): where the rows are, as `memo_packs`. (From
-    // PR #508's 5420af2ef and rr-align's 6e917ffec, t47.)
-    "frame_segments",
-    "object_segments",
-    // Each guest's key by its identity (decision 0391): a name, as `strings`.
-    "guest_keys",
-    // The observer's journal of what it saw change (decision 0400): observations, not a result kept for later.
-    "observed_changes",
-    "frame_spaces",
-    // The frames' own bookkeeping (decision 0117 step 5): each space's confirmations, and each run's use of it.
-    "frame_confirmed",
-    "frame_part_used",
-    "frame_program_used",
-    "frame_used",
     // The per-file memo's entries (decision 0240 §4): where each one's bytes are in the pack beside the store, and the
     // packs. They replace the memo's frames (`local`, `local_out`): the same entries, no new cache.
     "memo_entries",
     "memo_packs",
+    // The segments objects (sources, tapes) are in (decision 0295): files of their bytes, mapped.
+    "object_segments",
+    // Each guest's key (decision 0391): an identity interned to its number, as `strings` and `hashes` are.
+    "guest_keys",
+    // The observer's own journal (decision 0433): the paths its listings named changed, by generation. What it
+    // observed, as `samples` are measurements.
+    "observed_changes",
     // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
     "samples",
     // The SQL executor's planning observations (`costs::sql_plans`), its plan model's data: measurements, as `samples`.
@@ -371,11 +363,9 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "OPERATION_WAITED"),
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
-    // The run each frame space last counted in this process, so a run's programs count it once.
-    ("content_store/frames.rs", "COUNTED"),
-    // The store's frames as this process holds them, ahead of SQLite (decision 0104): the facts themselves, read
-    // once before a run's first wave, not a cache of anything else.
-    ("content_store/frames.rs", "SNAPSHOTS"),
+    // The store's state as this process holds it, ahead of SQLite (decision 0104): the kept blocks' rows and the
+    // memo's admitted entries, read once before a run's first wave, not a cache of anything else.
+    ("content_store/held.rs", "SNAPSHOTS"),
     // Each record kind's apply function, registered by its kind (decision 0306): a registry of code. (PR #508's
     // 5420af2ef, t47; a test's own log of the records it applied is in its tests, not listed.)
     ("content_store/record.rs", "KINDS"),
@@ -416,6 +406,10 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND"),
     // A run's given versions of its changed reads (`give_versions`), dropped with its engine: the run's state.
     ("code_rule_dsl/logic/native/setfix.rs", "GIVEN"),
+    // The kept facts as this process holds them (decision 0401 F3, 0438): each space's blocks mapped, by store, space
+    // and the row naming the files, read in place and mapped again when a commit changes the row. The facts
+    // themselves, as `SNAPSHOTS` holds their rows, not a cache of anything else.
+    ("code_rule_dsl/logic/plan/corpus/retain/kept_read.rs", "BOUND"),
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[

@@ -727,7 +727,7 @@ pub(super) fn found_all(store: &ContentStore, program: &Program, docs: &[(Source
 /// content's and path's, and the entry names both. No source is read. Before the waves, from the store (the
 /// snapshot holds a run's entries only for what its waves look up: `admit_memo_entries`); in them, from the
 /// snapshot, in memory. A hit marks nothing (decision 0227): an entry is kept while its plan is live and a kept
-/// manifest names its content (`collect_unreachable_frames`), not by the runs that read it.
+/// manifest names its content (`collect_unreachable_memo`), not by the runs that read it.
 fn by_digest(store: &ContentStore, program: &Program, paths: &[&str], wanted: Vec<(usize, [u8; 32])>) -> StoreResult<Vec<(usize, Found)>> {
     let stored = !crate::code_rule_dsl::logic::profile::inside_waves();
     let space = crate::content_store::local_space(&plan_digest(program));

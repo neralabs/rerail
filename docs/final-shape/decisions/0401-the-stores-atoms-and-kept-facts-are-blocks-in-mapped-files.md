@@ -227,7 +227,7 @@ Each space's kept relations are readable through a virtual table over the mapped
   writes the space's next delta: the previous delta's entries not replaced are carried, and the run's are put. The
   temp name, rename and sweep are the atoms' (A2, A5). `facts_blocks(space, base, base_tag, delta, delta_tag)` is
   replaced in the same transaction. The job holds the run's relations (their blocks' `Arc`s) until the copy.
-- **Alongside the frames until step 9.** Each place a frame is written also puts the entry, so that step 7 can bind
+- **Alongside the frames until step 9** (retired, 0439). Each place a frame is written also puts the entry, so that step 7 can bind
   from the blocks and be checked against the frames (F-R2) before the frames are retired. Every copy is placed
   before any original is removed.
 
@@ -309,10 +309,13 @@ Facts:
 4. (measured, below) ep2: a new process's atoms (0.046 s, 215 MB before), its cold and warm runs.
 5. (built) `rerail_blocks::kept`: the directory, `KeptW`, `KeptRead` over a base and its delta; F-R1 at the block
    (`a_kept_relation_is_read_where_it_lies`), `a_delta_reads_over_its_base`, `a_key_put_twice_is_refused`.
-6. (built) The keep (`retain::write_frames`, `write_input_frames`) writes a space's delta, beside the frames.
-7. The read (`preload_frames_live`, `kept_inputs`, the clean relations) binds views; F-R1–F-R3.
+6. (built) The keep (`retain::write_frames`, `write_input_frames`; `write_kept`, `write_input_kept` since 0439) writes
+   a space's delta, beside the frames.
+7. (built, 0438) The read (`preload_frames_live`, `kept_inputs`, the clean relations) binds views; F-R1–F-R3.
 8. Collection as a roll-up; F-R4.
-9. The virtual table; F-R5. The cross part's `frames` rows retired.
+9. (built, 0439) The virtual tables (`kept_entries`, `kept_rows`); F-R5. The frames retired: the engine writes and
+   reads none, the store's frame machinery is gone, and an old store's frame tables are dropped when it is opened.
+   The blocks are still larger than the frames were (0439, "Open").
 10. Measured on ep2 (the kept frames 0.064 s, the cross space's size).
 
 ## Measured
@@ -364,3 +367,17 @@ instructions rose 11% against `a0`, from writing both. Before the frames are ret
 larger than the frames: a kept relation's columns packed to their widths (0266 §14) when they are copied, and the
 chunk room unwritten left out. A run handed off 0–5 relations before the keep, with their rows dropped; step 7 keeps
 those at the hand-off.
+
+### The reads bound where they lie (step 7, 2026-11-18)
+
+Decision 0438 has the step's faults and fixes. The 57 data-layer rules over corpus0's first 50 files, with the
+profiling build, at load 31 on the M5: cold 9.6 s, warm 0.1 s, an edit adding a function 2.0 s (2.2 s profiled
+before), the edited tree cold 8.4 s. Its 589 outputs equal across the edit, the warm run after it and the cold run
+(F-R2), and a run that changes nothing writes no facts (F-R3).
+
+### The frames retired (step 9, 2026-11-19)
+
+Decision 0439. The same 50 files with the profiling build, at load 36 on the M5: cold 7.5 s and 212.4 G
+instructions (231.0 G with the frames), warm 0.1 s, the edit 1.7 s and 32.8 G (34.6 G) at a 547 MB peak (765 MB), the
+edited tree cold 7.3 s. Its 589 outputs are equal (F-R2), with 48 findings. The kept blocks take 211 MB on disk, where
+the frames took 39 MB (0439, "Open").

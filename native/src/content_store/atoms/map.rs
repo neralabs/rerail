@@ -504,7 +504,6 @@ pub(crate) const ATOM_COLUMNS: &[(&str, &str, &str)] = &[
     ("vocabulary_pending", "term", "a trigger on `term_freq`"),
     ("text_term", "term", "SQL over `term_freq` and the `atoms` table, in the store's ids (vocabulary.rs)"),
     ("text_pending", "term", "a trigger on `term_freq`"),
-    ("frames", "data", "typed columns (`b's'`): mapped as queued (frames.rs `Framed::store_block`; a forked process writes its frames inline, 0295 step 5) and as decoded (`rows_of`)"),
     ("cross_blocks", "data", "the relations' `sym` columns (cross_memo.rs `Plan::syms`): mapped in `put_cross_rows` and `cross_rows`"),
     ("compiled_plans", "program", "a wave plan's SQL in this process's ids: reused only where the names it records intern to the same ids here (matches.rs `Wave::emit`)"),
     ("source_objects", "frame", "content-addressed sources: their makers keep no atom (tapes, program texts, tree counts of integer constants, the planning choices' own string table)"),
@@ -548,14 +547,6 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("facts_plan_sets", &["set_digest", "ordinal", "plan_digest"]),
     ("facts_results", &["source_id", "fact_schema", "plan_digest", "codec_id", "raw_length", "frame"]),
     ("file_documents", &["tape_id", "ordinal", "parent_ordinal", "role_id", "via_id", "document_tape_id", "source_map", "host_errors"]),
-    ("frame_confirmed", &["space", "data"]),
-    ("frame_part_used", &["space", "ident", "part", "used"]),
-    ("frame_program_used", &["space", "program", "run", "rels"]),
-    ("frame_spaces", &["space", "runs"]),
-    ("frame_used", &["space", "run", "rels"]),
-    ("frames", &["space", "ident", "part", "digest", "reads", "width", "rows", "types", "used", "seg", "seg_at", "seg_len"]),
-    // A frame segment's id (0295 step 5); what a frame's bytes hold is `frames.data`'s (above).
-    ("frame_segments", &["seg"]),
     // The per-file memo's entries (decision 0240 §4): their symbols are strings in the pack (memo/image.rs).
     ("memo_entries", &["space", "part", "digest", "doc", "pack", "at", "len", "raw", "over_pack", "over_at", "over_len", "over_raw", "framed"]),
     ("memo_packs", &["pack"]),

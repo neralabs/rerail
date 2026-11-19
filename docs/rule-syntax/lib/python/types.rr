@@ -1,12 +1,10 @@
-// python/types: what class of value an expression holds, from the engine's Python typing program.
+// python/types: what class of value an expression holds (python/points-to, the analysis phase's typing).
 // COPY: Typing-support-final-shape@b193a9209:docs/rule-syntax/lib/python/calls.rr (its type relations).
 //
-// The engine infers Python types once, in one program (typing/programs/calls.rr beside this site). It runs over the
-// repository file by file, then in bounded cross-file rounds. There is no type checker: types come from what the
-// code assigns, returns, constructs and inherits, and every gap is "unknown", never a wrong class.
-// The program's answers arrive as facts keyed by file and span (`typing_calls__*`: a node is its path, kind, start
-// byte and end byte). A rule that reads one of them makes the engine run the program first. The rules below join
-// the spans back to this run's nodes.
+// The types are python/points-to's: the analysis phase's typing (P3 of decision 0083 §1), rules of the including
+// program's own fixpoint over the earlier phases' exports (struct, types). There is no type checker: types come
+// from what the code assigns, returns, constructs and inherits, and from the libraries' declarations, and every gap
+// is "unknown", never a wrong class.
 //
 // Types are answered where the program models a value: callees and receivers, assigned, returned and decorating
 // values, arguments and bases. Three-valued, like call targets:
@@ -23,19 +21,4 @@
 // "pkg.models.Base" and "object". In `def f(y): y.run()` the receiver has type_open(<y>): annotations are not
 // read yet.
 
-.decl typing_calls__type_of(n_path: symbol, n_kind: symbol, n_start: number, n_end: number, t: symbol)
-.decl typing_calls__type_open(n_path: symbol, n_kind: symbol, n_start: number, n_end: number)
-.decl typing_calls__proven_type(n_path: symbol, n_kind: symbol, n_start: number, n_end: number, t: symbol)
-.decl typing_calls__possible_type(n_path: symbol, n_kind: symbol, n_start: number, n_end: number, t: symbol)
-.decl typing_calls__possible_open(n_path: symbol, n_kind: symbol, n_start: number, n_end: number)
-
-.decl type_of(n: node, t: symbol)
-type_of(n, t) :- typing_calls__type_of(p, k, s, e, t), doc(d, p, _), node(d, n, k, s, e).
-.decl type_open(n: node)
-type_open(n) :- typing_calls__type_open(p, k, s, e), doc(d, p, _), node(d, n, k, s, e).
-.decl proven_type(n: node, t: symbol)
-proven_type(n, t) :- typing_calls__proven_type(p, k, s, e, t), doc(d, p, _), node(d, n, k, s, e).
-.decl possible_type(n: node, t: symbol)
-possible_type(n, t) :- typing_calls__possible_type(p, k, s, e, t), doc(d, p, _), node(d, n, k, s, e).
-.decl possible_open(n: node)
-possible_open(n) :- typing_calls__possible_open(p, k, s, e), doc(d, p, _), node(d, n, k, s, e).
+#include "python/points-to.rr"

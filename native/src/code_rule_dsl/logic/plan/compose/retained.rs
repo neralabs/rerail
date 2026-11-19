@@ -31,12 +31,12 @@ pub fn run(p: &Placed, db: &Connection, mut inputs: Inputs, lowered: Option<lowe
     for (root,digests) in &provenance {
         if ks.has_rows(root) && digests.as_ref().is_some_and(|ds|ds.iter().all(|(r,d)|ks.read_was(root,r)==Some(*d))) { clean.insert(root.clone()); }
     }
-    ks.admit(&clean.iter().cloned().collect::<Vec<_>>());
     let mut restored = BTreeMap::new();
     for rel in &clean {
         if ks.has_rows(rel) {
-            if let Some((types,flat,n))=ks.rows(rel) {
-                component::hold_rows(db,rel,types,flat,n);
+            let types = vec![b'i'; f.width(rel)];
+            if let Some((_, held))=ks.rows(rel, &types) {
+                component::hold_bound(db,rel,held);
                 restored.insert(rel.clone(),component::derived(db,rel).expect("held rows"));
             }
         }

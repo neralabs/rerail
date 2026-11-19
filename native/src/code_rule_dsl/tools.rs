@@ -767,8 +767,8 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
             text += &format!("    {phase:<6} {:.2} G instructions\n", *n as f64 / 1e9);
         }
     }
-    for (name, _) in &report.typing_runs {
-        text += &format!("  typing program {name} run first, for the relations it gives\n");
+    for run in &report.phase_runs {
+        text += &format!("  phase {} run first, for the exports it gives\n", run.name);
     }
     for (rel, rows) in &report.rows {
         text += &format!("  {rel}: {rows} rows\n");
@@ -1396,7 +1396,7 @@ fn upkeep_command(args: &[String]) -> Result<String, String> {
         }
         let store = std::sync::Arc::new(ContentStore::open(Path::new(path)).map_err(e)?);
         jobs.push(register(Box::new(Collect::new(&store))));
-        jobs.push(register(Box::new(crate::content_store::upkeep::Frames::new(Path::new(path)))));
+        jobs.push(register(Box::new(crate::content_store::upkeep::MemoSweep::new(Path::new(path)))));
         jobs.push(register(Box::new(crate::code_rule_dsl::workspace::storage::SearchIndex::new(&store))));
         jobs.push(register(Box::new(SqliteFile::new(Path::new(path), Tables::All))));
         held.push(store);

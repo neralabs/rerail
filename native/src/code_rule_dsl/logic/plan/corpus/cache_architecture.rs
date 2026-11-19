@@ -36,6 +36,9 @@ fn relative(path: &Path) -> String {
 /// scratch (in memory or temporary, dropped when the run ends).
 const NOT_CACHES: &[&str] = &[
     "source_objects", "source_aliases", "strings", "atom_blocks", "hashes", "paths", "store_state", "store_identity", "object_pins",
+    // Each guest's key, the store's name for its identity (decisions 0323, 0391), and the observer's journal of the
+    // paths that changed, by the check's generation (decision 0399 step 1): names and sources' bookkeeping.
+    "guest_keys", "observed_changes",
     // The segments sources (and tapes) are in (decision 0295 step 5).
     "object_segments",
     "push_pending", "snapshots", "snapshot_files", "workspaces", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
@@ -47,15 +50,10 @@ const NOT_CACHES: &[&str] = &[
     "x", "rows", "facts", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
 ];
 
-/// The relations' own storage between runs: every relation's rows as frames (notes/t33, K1), with the frames' own
-/// bookkeeping: those found unchanged under new reads (`frame_confirmed`), each run's use of a space (`frame_used`, by program `frame_program_used`,
-/// decision 0117) and each frame's use apart from its rows (`frame_part_used`, decision 0138). A per-file memo entry is
-/// such rows as one image in a pack (`memo_entries`, `memo_packs`: decision 0240 §4, which they replace the memo's
-/// frames for). A cache's rows are kept here as any relation's are, never in a table of their own.
-const RELATIONS: &[&str] = &[
-    "frames", "facts_chain", "frame_spaces", "frame_confirmed", "frame_used", "frame_part_used", "frame_program_used", "memo_entries",
-    "memo_packs", "frame_segments",
-];
+/// The relations' own storage between runs: every kept relation's rows packed in a chain of files beside the store,
+/// named by `facts_chain` (decisions 0401, 0417). A per-file memo entry is its file's rows as one image in a segment
+/// (`memo_entries`, `memo_packs`: decision 0240 §4). A cache's rows are kept here as any relation's are, never in a table of their own.
+const RELATIONS: &[&str] = &["facts_chain", "memo_entries", "memo_packs"];
 
 /// Caches made before decision 0103, each to move to the two rules (§7 lists each one's). This list may only shrink.
 const NOT_YET_MOVED: &[&str] = &[

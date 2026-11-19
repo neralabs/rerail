@@ -4399,6 +4399,137 @@ Test: `an_export_is_one_relation_of_the_chunks_new_rows`, which replaces the tes
 
 Still merged: 157 relations, nearly all of two parts. Steps 2 and 3 of 0384 cover them.
 
+### Q241. Test targets that did not compile at the hub's ffc390de8, and what they show once they do (open)
+
+Found 2026-11-18, merging the hub (ffc390de8) into phased-facts.
+- **Fixed in the merge.** The device crate's, the engine's and the store's lib test targets did not compile:
+  - `typing/file_local/tests.rs` still compared the version's `PushLocalJoins` with the tree's `push_local_joins`
+    (gone in 0276 step 6, 449a8596f). It now asserts what the version pass makes, as that commit ported the others.
+    `push_equal_columns` is `pub`, since the device crate compiles the test through a glob re-export.
+  - `rerail-clif` without `ir` (as the store's tests build it) compiled `view_reads`' CLIF bodies. Those are gated
+    on `ir` now; its entries' layout (`ViewDoc`, `ViewRow`, `ViewDir`) stays ungated for the facts.
+  - Four tests lagged API changes: `in_format` and `DocTape::new` take the document's source;
+    `Version::layouts` is a method; the journal's `since` takes a settle window.
+  - Build warnings: `phases.rs`'s unused `src`, an unused import in `rr/testing.rs`.
+- **Open, the hub's (failing on its own code once compiled):**
+  - `tape::tests::a_placed_tape_reads_as_one_held_in_its_own_bytes`: a placed tape is held as F16 where the test
+    expects F15 ("held as stored").
+  - `logic::rr::tests::layouts_are_carried_with_the_program` fails on the combined program's layouts.
+  - `observe::tests::an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing` fails.
+  - `content_store/kept_facts/tests.rs` is not declared as a module anywhere, so it never compiles.
+  - The FSEvents `since_within` takes `wait` (Q221: a caller bounds the cookie wait) and no longer uses it. The hub's
+    merge of benchmarks-on-integration (afe42e396) took `WAIT.max(settle)`. Restoring
+    `wait.unwrap_or(WAIT.max(settle))` made two `observe` tests fail, so the hub's form stays. Which bound the
+    journal owes its callers is open.
+
+### Q242. The inline pricing (0099) prices a data-layer demand relation at 1e12 rows, and its unfolding never ends (done)
+
+Found 2026-11-18, running the data-layer rules (`docs/rule-syntax/data-layer`, 57) over corpus0's first 50 files
+after the phases went on the run path (0083).
+- **What happens.** The pack does not finish in 590 s, the same without the phases' library (`python/points-to`
+  stubbed out): the hub's, not the phases'. One stratum, `versioned-table-names`' aggregate `last_ev` (the latest
+  reset of a name before a read), runs single-threaded past 98 s. Alone that rule's run takes 14 s.
+- **Why.** In the pack, `choose` inlines the aggregate's demand relation and cover relation into it:
+  `p68_rr_demand_agg_rr_agg1: inlined, readers add -195199017447510 work < 1 x (build 4540180365401 + 4 x
+  2269939777803 rows)`. Each unfolded copy brings existential variables (`$p_i1_1`, `$e_i1_1`) joined as plain
+  atoms, so each row is multiplied by the name's needs and resets in its document.
+- **The estimates are wrong before the observations.** The pricing estimates `p68_write` (three lookups of one
+  assignment) at 985 M rows, where the run's own plan estimates 1,638 and 1,727 are made.
+  `RERAIL_OBSERVED_STEPS=off` does not change it. `RERAIL_INLINE=off` runs the same rules in 29 s.
+- **Bisected:** no subset of the pack with `versioned-table-names` reproduces it below 7 rules
+  (`plan-helpers-allowlist`, `plan-optimizer-v2`, `plan-scope-side-effects`, `post-op-no-internal-dispatch`,
+  `post-op-side-effects`, `public-api-triples`): each part alone finishes in 30–53 s, together past 180 s.
+- **Done** (2026-11-18): two faults in `keeps::estimate`, with a test each.
+  - `calibrated_rows` returned the plan's rows, not its steps'. For a plan taken as prepared (0361 step 5) those
+    are the facts-only model's at its nominal scale: `asgstmt` 0 rows where its steps make 146.
+  - A column's distinct values were the minimum over every rule's binding columns: `assign_chain`'s first column
+    took its base case's 1 value (from `asgstmt`'s 0 rows), `ast_name`'s took `rr_long_text_node`'s 2,068. Now the
+    sum of each rule's, a constant one value, and a recursion passing the column on from the relation adds none.
+  - `p6_write` is now estimated at 28 rows (1,727 made) instead of 985 M; the demand relation is stored, and the 8
+    rules run in 60 s (profiled) instead of past 180 s. All 57 rules run over the 50 files.
+  - `RERAIL_KEEPS_TRACE=<text>` prints the pricing's estimates for relations whose names hold the text.
+
+### Q244. A one-file edit of the data-layer pack costs 1.4–1.5 s: the cross part's fixed costs and the frames (open; the frames retired, 0439)
+
+Found 2026-11-18, the 57 data-layer rules over corpus0's first 50 files, the profiling build (6dd9b1466), load
+13–22 on the M5. Cold 8.6 s (a fresh store; 9.7 s on a new binary's first run), warm 0.05 s, a comment edit of an
+87-line file 1.5 s and 29 G instructions (an edit adding a function 1.7 s before 0432, 2.2 s profiled now).
+- **Fixed on the way** (2026-11-18): the writer's per-put blocks (Q243, 49 s cold to 13.6 s), the cost fit over
+  every sample (2.5 s stall, `FIT_HELD`), phase exports keyed into every file's memo entry (0432, the edit adding a
+  function 5.3 s to 1.7 s), the listings naming a directory (0433), the warm run's kept-plan writes, R7.
+- **Where the edit's 1.42 s go** (main thread, profiled): combine 0.38 s (phases 0–2, their waits), prepare 0.18 s
+  (kept program read; the memo's program 0.03, statistics 0.03), wait 0.30 s (the edited file's chunk: 0.45 s of
+  the pool's CPU for 87 lines, every file-local stratum run for one file), cross 0.38 s, stats 0.08 s, and 0.06–0.12
+  s on the store's collection at the end.
+- **The cross part:** 550 of 1,194 strata run, 226 maintained from deltas: a comment's node changes the tape views'
+  rows (`child`, `node`, `text`, `col`, `docof`, `ast_depth`), which are framed as cross inputs. Each run pays per
+  stratum: an input's frames (2,331 jobs, 0.03 s), an index of a base input (1,090, 0.04 s), a line's join spec
+  (2,902, 0.014 s); and the frames' reads: `retain::load` (0.065 s) decodes a frame into columns, turns them into rows
+  (`frames::rows_of`) and copies them back into columns (`columns_source`), an unlisted copy of 0353; the store's
+  frames read once a process (0.03 s), the cross part's space by identity (0.034 s). The keep writes frames and kept
+  blocks both (0401 step 6).
+- **Step 7 built** (2026-11-18, 0438): the reads bind the kept blocks where they lie. On the way, six faults that
+  made the next run derive again or lose rows, and the alias root's warm-run cursor. The edit adding a function 2.0 s
+  at load 31 (2.2 s before), 589 outputs equal.
+- **Step 9 built** (2026-11-19, 0439): the frames retired, so the decode, the two transposes and the second write
+  go. The kept facts read through SQL (`kept_entries`, `kept_rows`). The edit adding a function 1.7 s and 32.8 G at
+  load 36 (34.6 G with the frames), cold 212.4 G (231.0 G), 589 outputs equal. On the way: two strings tests that
+  still expected rule-order test numbers, three thread-locals listed but gone, and a write-back test that removed its
+  directory while a handle's checkpoint was still writing.
+- **Open:** the kept blocks take 211 MB against the frames' 39 MB (0401's condition for step 9, 0439 "Open"). Met by
+  merging the packed kept format from its sibling branch.
+- **Next:** the tape views as reads of the tape, not framed inputs (0353), and the per-chunk fixed cost of a
+  one-file chunk.
+
+### Q243. A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (done)
+
+Found 2026-11-18, the data-layer rules (56, Q242's rule left out) over corpus0's first 300 files, strict.
+- **What happens.** The run aborts after 97 s: "the writer's queue is full (148.0 MB in 4102 jobs; kept facts
+  brings 49.4 MB)", a wait inside a wave (`retain::write_input_frames` -> `queue_kept`), which strict refuses.
+  Queued then: kept facts 2,405 jobs, 185 MB; the run's record 12 jobs, 123 MB; frames 2,416 jobs, 1.3 MB.
+- **Why** (2026-11-18): each `queue_kept` was its own job, and each job wrote its space's whole next block: every
+  entry of the previous delta copied again, at least 64 MB reserved, the block `msync`ed and its directory fully
+  synced. A cold run over 50 files queued 2,442 of them: 15.7 s of the writer's CPU, 2.1 M page faults, and the run
+  waited 35 s of its 49 s (profiling build) for the writer to drain.
+- **Done:** a run's wave gathers its kept puts by space (`KeptGather`; a later put of a key replaces an earlier one,
+  a retag keeps the wave's rows with its reads) and writes one block a space. The 50 files: 13.6 s wall, 5.5 s
+  system, 31 k page faults, the same outputs; test `a_waves_puts_are_one_block_a_space`.
+
+### Q180. Every fork stays one relation, a chain of continuations: step 8 of decision 0384 (done)
+
+Done 2026-11-18. The user asked to address all of the forking, including a fork of a fork (Q179's leftover).
+- `rel_get` walks a chain of bases: a loop in CLIF, a `while` in MSL. A relation that continues none takes the
+  straight read first. The first form, with only the loop, cost 1.3% more instructions on a cold 300-file CPU run;
+  this form is below step 6's.
+- `Relation::try_continue` takes a continuation as a base.
+- `Rows` keeps one relation or a chain: `Rows::opened` makes every tail past segments a continuation. That covers
+  forks, a clone's first row past the rows it shares, and the device's rows past a fork (`tail_room` past segments,
+  adopted by `claim_tail`). A full block moves the chain's rows (`Part::moved_all`, `copy_reads`).
+- `freeze` past `MAX_SEGMENTS` writes the newest two segments into one continuation, so the chain stays a chain.
+- `append_part` after rows counts the merge it causes. The device no longer makes it.
+
+Tests: `forks_of_forks_stay_one_relation`; `a_continuation_reads_its_bases_rows_where_they_lie`, extended to a
+chain; `the_device_reads_a_fork_through_its_base`, extended to a fork of a fork. Cold 300-file CPU and Metal runs
+equal the reference. A one-line edit's run equals a run from scratch on the edited corpus.
+
+### Q179. A fork goes on in a continuation of its rows' relation: step 7 of decision 0384 (done)
+
+Done 2026-11-18. The user asked to complete 0384, and picked writing the missing read over serializing forks or
+listing the fork's merge as a copy.
+- `Relation::try_continue`: a relation in its base's block whose ids below `base_rows` are its base's rows
+  (`CONTINUES`, `base_off`). `rel_get` reads them there, written once in CLIF; the host's and the kernels' reads
+  regenerated.
+- `Rows::shared` gives a fork a continuation as its tail. `Rows::one` binds a fork (and a frozen fork) as the
+  continuation, of `base_rows + own` rows.
+- Indexes of a continuation, host and device, are of every id it reads. A kills delta of one counts its base's rows.
+- A continuation moved out of a full block takes its base's rows (a growth move) and is a relation of its own.
+
+Tests: `a_continuation_reads_its_bases_rows_where_they_lie` (blocks), `a_fork_goes_on_in_a_continuation_of_its_rows`
+(facts), `the_device_reads_a_fork_through_its_base` (device), and step 2's test updated. Cold 300-file CPU and Metal
+runs: no forks, outputs the reference's.
+
+Left: a fork of a fork was still merged. Done in Q180.
+
 ### Q178. What a relation's block holds goes back to it: step 6 of decision 0384 (done)
 
 Done 2026-11-18. The user asked for Q177's leftover (a forgotten index's room was not given back) and for 0384 to

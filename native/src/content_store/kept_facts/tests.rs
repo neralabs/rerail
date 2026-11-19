@@ -28,6 +28,11 @@ impl KeptRows for Lent {
 }
 
 fn lent(rows: &[(i64, i64)]) -> Box<dyn KeptRows> {
+    lent_dead(rows, &[])
+}
+
+/// `lent`, its rows `dead` killed by the run (the entry's dead bits).
+fn lent_dead(rows: &[(i64, i64)], dead: &[u32]) -> Box<dyn KeptRows> {
     let block = Block::anon(kind::FACTS, 16 << 20);
     let spec = Spec { widths: vec![8, 8], order: vec![0], indexes: vec![vec![0]], min_log: 4 };
     let rel = Relation::create(&block, &spec, None);
@@ -38,7 +43,11 @@ fn lent(rows: &[(i64, i64)]) -> Box<dyn KeptRows> {
     }
     freeze(&block, rel, &spec, None);
     let at = block.offset_of(std::ptr::from_ref(rel));
-    Box::new(Lent { block, at, dead: Vec::new() })
+    let mut bits = vec![0u64; rows.len().div_ceil(64)];
+    for id in dead {
+        bits[*id as usize / 64] |= 1 << (id % 64);
+    }
+    Box::new(Lent { block, at, dead: if dead.is_empty() { Vec::new() } else { bits } })
 }
 
 const SPACE: [u8; 32] = [7; 32];
@@ -158,203 +167,6 @@ fn a_rolled_back_write_is_not_the_spaces() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
-/// K-R8a (decision 0417 step 5): a run binds a relation whose frame its space's chain keeps (the same digest and
-/// types) from the chain: its rows in canonical order, its frame's digest and reads, and its levels as the entry has
-/// them, in its rows' order (not the frame's levels part, in the frame's order); a relation whose entry is stale or
-/// missing (a store from before the chain) from its frame. A frame's levels part whose entry has none is absent
-/// (ep2's k1 panicked on it: the part was bound after its part 0 had removed it).
-#[test]
-fn a_kept_relation_is_bound_from_its_chain() {
-    use crate::content_store::{FRAME_LEVELS_PART, FramePut, FrameRel, FrameRows, FrameStored};
-    let (path, c) = store("bind");
-    let rel = |n: &str| FrameRel { name: n.into(), ident: ID };
-    let (p, q, s) = (rel("p"), rel("q"), rel("s"));
-    let bare: Vec<FrameRel> = (0..8).map(|i| rel(&format!("t{i}"))).collect();
-    let frame = |rel: &FrameRel, part: i64, types: &[u8], v: &[i64]| FramePut { rel: rel.clone(), part, digest: 1, reads: vec![("r".into(), 1)], rows: FrameRows { types: types.to_vec(), rows: v.to_vec(), n: v.len() / types.len() } };
-    {
-        let cs = crate::content_store::ContentStore::open(&path).unwrap();
-        let mut puts = vec![frame(&p, 0, b"ii", &[3, 30, 1, 10]), frame(&p, FRAME_LEVELS_PART, b"i", &[5, 6]), frame(&q, 0, b"ii", &[5, 50]), frame(&s, 0, b"ii", &[7, 70])];
-        // Eight, so the map's order visits some levels part after its part 0.
-        for t in &bare {
-            puts.extend([frame(t, 0, b"ii", &[2, 20]), frame(t, FRAME_LEVELS_PART, b"i", &[4])]);
-        }
-        cs.keep_frames(&SPACE, &puts, &[], None).unwrap();
-    }
-    // p's entry is its frame's, with its levels; q's is stale (another digest); s has none.
-    let mut with_levels = put("p", 0, 1, flat(&[3, 30, 1, 10]));
-    if let KeptWhat::Flat { levels, .. } = &mut with_levels.what {
-        *levels = Some(vec![5, 6]);
-    }
-    let mut entries = vec![with_levels, put("q", 0, 2, flat(&[5, 50]))];
-    entries.extend(bare.iter().map(|t| put(&t.name, 0, 1, flat(&[2, 20]))));
-    write(&path, &c, entries);
-    let cs = crate::content_store::ContentStore::open(&path).unwrap();
-    cs.preload_frames().unwrap();
-    let mut asked = vec![(p.clone(), 0), (p.clone(), FRAME_LEVELS_PART), (q.clone(), 0), (s.clone(), 0)];
-    asked.extend(bare.iter().flat_map(|t| [(t.clone(), 0), (t.clone(), FRAME_LEVELS_PART)]));
-    let got = cs.admit_frame_parts(&SPACE, &asked).unwrap();
-    for t in &bare {
-        assert!(got[&(t.clone(), 0)].from_chain() && !got.contains_key(&(t.clone(), FRAME_LEVELS_PART)), "an entry with no levels: none");
-    }
-    let (rows, levels) = (&got[&(p.clone(), 0)], &got[&(p.clone(), FRAME_LEVELS_PART)]);
-    assert!(rows.from_chain() && levels.from_chain(), "a kept relation and its levels are read from the chain");
-    assert_eq!(rows.stored, FrameStored { digest: 1, reads: vec![("r".into(), 1)] });
-    assert_eq!((rows.rows().unwrap().rows, rows.len()), (vec![1, 10, 3, 30], Some(2)));
-    assert_eq!(levels.rows().unwrap().rows, vec![6, 5], "the levels follow the entry's rows");
-    assert!(!got[&(q.clone(), 0)].from_chain() && !got[&(s.clone(), 0)].from_chain(), "a stale or missing entry: the frame");
-    assert_eq!(got[&(q.clone(), 0)].rows().unwrap().rows, vec![5, 50]);
-    crate::content_store::forget_frames_snapshot(path.to_str().unwrap());
-    let _ = std::fs::remove_dir_all(path.parent().unwrap());
-}
-
-/// K-R9 (decision 0417 step 6): a frame whose kept entry is put beside it (`in_chain`) is written as its relation's
-/// metadata, no rows; read back (from SQL and from the snapshot), its rows are its entry's; with no entry it is
-/// absent, so its relation is derived again; the frames' segments compacted, it stays. An entry put as given (an
-/// input's granule, read by position) is read in its order, every row (ep2's edit runs read a granule's entry in
-/// canonical order, its owners' ranges broken; its kept statistics, words, were sorted and deduplicated).
-#[test]
-fn a_frame_in_the_chain_is_its_metadata() {
-    use crate::content_store::{FramePut, FrameRel, FrameRows};
-    let (path, c) = store("in-chain");
-    let rel = |n: &str| FrameRel { name: n.into(), ident: ID };
-    let (p, q, g) = (rel("p"), rel("q"), rel("g"));
-    let granule_rows = vec![9, 2, 8, 1, 9, 2];
-    let granule = FramePut { rel: g.clone(), part: 0, digest: 0, reads: Vec::new(), rows: FrameRows { types: b"ii".to_vec(), rows: granule_rows.clone(), n: 3 } }.encoded().in_chain();
-    let frame = |r: &FrameRel| FramePut { rel: r.clone(), part: 0, digest: 1, reads: vec![("r".into(), 1)], rows: FrameRows { types: b"ii".to_vec(), rows: vec![3, 30, 1, 10], n: 2 } }.encoded().in_chain();
-    {
-        let cs = crate::content_store::ContentStore::open(&path).unwrap();
-        cs.queue_kept(SPACE, vec![put("p", 0, 1, flat(&[3, 30, 1, 10])), put("g", 0, 0, KeptWhat::Flat { widths: vec![8, 8], rows: granule_rows.clone(), n: 3, levels: None, given: true })]);
-        cs.queue_encoded(SPACE, vec![frame(&p), frame(&q), granule], vec![], None);
-        cs.written().unwrap();
-        // The frames' segments compacted: a frame in the chain names none, and stays (ep2 lost every one so).
-        cs.compact_frame_segments(0).unwrap();
-    }
-    let stored: (i64, i64, i64) = c.query_row("SELECT seg, length(data), rows FROM frames WHERE rel = 'p'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
-    assert_eq!(stored, (-1, 0, 2), "the relation's metadata, its rows in the chain");
-    let cs = crate::content_store::ContentStore::open(&path).unwrap();
-    for snapshot in [false, true] {
-        if snapshot {
-            cs.preload_frames().unwrap();
-        }
-        let got = cs.admit_frames(&SPACE, &[p.clone(), q.clone(), g.clone()], 0).unwrap();
-        assert!(got[&g].from_chain(), "snapshot {snapshot}");
-        assert_eq!(got[&g].rows().unwrap().rows, granule_rows, "a granule in its order, every row (snapshot {snapshot})");
-        assert!(got[&p].from_chain(), "snapshot {snapshot}");
-        assert_eq!(got[&p].rows().unwrap().rows, vec![1, 10, 3, 30]);
-        assert!(!got.contains_key(&q), "a frame in the chain with no entry is absent (snapshot {snapshot})");
-    }
-    crate::content_store::forget_frames_snapshot(path.to_str().unwrap());
-    let _ = std::fs::remove_dir_all(path.parent().unwrap());
-}
-
-/// K-R10 (decision 0417 step 6, 0401 F5): the kept facts are a virtual table: a space's relation's rows by `rel` and
-/// `part`, newest entry only, a gone one absent; `c0 = ?` a range of the entry; columns past the arity NULL.
-#[test]
-fn kept_facts_are_a_virtual_table() {
-    let (path, c) = store("vtab");
-    write(&path, &c, vec![put("p", 0, 1, flat(&[3, 30, 1, 10, 3, 31])), put("q", 0, 2, flat(&[5, 50])), put("g", 0, 3, flat(&[7, 70]))]);
-    write(&path, &c, vec![put("q", 0, 4, flat(&[6, 60])), put("g", 0, 0, KeptWhat::Gone)]);
-    crate::content_store::atoms::Atoms::attach(&c).unwrap();
-    let rows = |sql: &str| -> Vec<Vec<Option<i64>>> {
-        let mut st = c.prepare(sql).unwrap();
-        st.query_map([&SPACE[..]], |r| (0..3).map(|i| r.get::<_, Option<i64>>(i)).collect()).unwrap().map(Result::unwrap).collect()
-    };
-    assert_eq!(rows("SELECT c0, c1, c2 FROM kept_facts WHERE space = ?1 AND rel = 'p' AND part = 0"), [[Some(1), Some(10), None], [Some(3), Some(30), None], [Some(3), Some(31), None]]);
-    assert_eq!(rows("SELECT c0, c1, part FROM kept_facts WHERE space = ?1 AND rel = 'q'"), [[Some(6), Some(60), Some(0)]], "the newest entry");
-    assert!(rows("SELECT c0, c1, part FROM kept_facts WHERE space = ?1 AND rel = 'g'").is_empty(), "gone");
-    assert_eq!(rows("SELECT c0, c1, level FROM kept_facts WHERE space = ?1 AND rel = 'p' AND c0 = 3"), [[Some(3), Some(30), None], [Some(3), Some(31), None]]);
-    let n: i64 = c.query_row("SELECT count(*) FROM kept_facts", [], |r| r.get(0)).unwrap();
-    assert_eq!(n, 4, "every space, every live entry");
-    // `c0 = ?` is a range because the entry records its canonical order (an entry put as given records none).
-    let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
-    let view = space.view();
-    let p = view.all().find(|k| k.key.rel == "p").unwrap();
-    assert!(p.rows.leads(0) && !p.rows.leads(1), "a canonical entry leads by its first column");
-    write(&path, &c, vec![put("r", 0, 5, KeptWhat::Flat { widths: vec![8, 8], rows: vec![2, 0, 1, 0], n: 2, levels: None, given: true })]);
-    let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
-    let view = space.view();
-    let r = view.all().find(|k| k.key.rel == "r").unwrap();
-    assert!(!r.rows.leads(0), "an entry put as given records no order");
-    assert_eq!(rows("SELECT c0, c1, part FROM kept_facts WHERE space = ?1 AND rel = 'r' AND c0 = 1"), [[Some(1), Some(0), Some(0)]], "scanned, not a range");
-    let _ = std::fs::remove_dir_all(path.parent().unwrap());
-}
-
-/// K-R7 (decision 0417 step 4), over a real store (`RERAIL_KEPT_STORE`, a copy no run is writing): every kept entry's
-/// rows equal its frame's as sets, and the chain's bytes against the frames' segments, with what each encoding holds.
-/// Run with `--ignored`; prints its report.
-#[test]
-#[ignore = "reads the store RERAIL_KEPT_STORE names"]
-fn kept_entries_equal_their_frames() {
-    let path = PathBuf::from(std::env::var("RERAIL_KEPT_STORE").expect("RERAIL_KEPT_STORE: a store's file"));
-    let store = crate::content_store::ContentStore::open(&path).unwrap();
-    let c = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    let spaces: Vec<Vec<u8>> = c.prepare("SELECT DISTINCT space FROM facts_chain").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
-    let (mut entries, mut rows, mut differ, mut no_frame, mut chain_bytes, mut files) = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
-    let mut by_tag: std::collections::BTreeMap<String, (usize, usize, usize)> = Default::default();
-    let mut levels_bytes = 0usize;
-    for s in &spaces {
-        let space: [u8; 32] = s.as_slice().try_into().unwrap();
-        let kept = KeptSpace::open(&path, &space, &chain_rows(&c, &space).unwrap()).unwrap();
-        files += kept.files.len();
-        chain_bytes += kept.view().bytes();
-        for k in kept.view().all() {
-            entries += 1;
-            rows += k.rows.len();
-            for col in 0..k.rows.arity as usize {
-                let ic = k.rows.col(col);
-                let e = by_tag.entry(ic.form()).or_default();
-                (e.0, e.1, e.2) = (e.0 + 1, e.1 + ic.len(), e.2 + ic.bytes());
-            }
-            levels_bytes += k.rows.levels().map_or(0, |l| l.bytes());
-            let rel = crate::content_store::FrameRel { name: k.key.rel.to_owned(), ident: *k.key.ident };
-            let Some(frame) = store.frame_rows(&space, &rel, k.key.part).unwrap() else {
-                no_frame += 1;
-                continue;
-            };
-            let w = frame.types.len();
-            // A nullary relation's rows are its count: one row (true) or none.
-            let mut want: Vec<Vec<i64>> = if w == 0 { vec![Vec::new(); frame.n.min(1)] } else { frame.rows.chunks_exact(w).map(<[i64]>::to_vec).collect() };
-            want.sort();
-            want.dedup();
-            let mut got: Vec<Vec<i64>> = (0..k.rows.len()).map(|i| k.row(i)).collect();
-            got.sort();
-            if got != want {
-                differ += 1;
-                if differ <= 5 {
-                    eprintln!("differs: {} part {}: kept {} rows, frame {}", k.key.rel, k.key.part, got.len(), want.len());
-                }
-            }
-        }
-    }
-    // Every frame of a space with a chain has its kept entry (a delta frame, part < 0, is its relation's part 0's).
-    let mut no_kept = 0usize;
-    for s in &spaces {
-        let space: [u8; 32] = s.as_slice().try_into().unwrap();
-        let kept = KeptSpace::open(&path, &space, &chain_rows(&c, &space).unwrap()).unwrap();
-        let view = kept.view();
-        let mut st = c.prepare("SELECT rel, ident, part FROM frames WHERE space = ?1 AND part >= 0 AND rel NOT IN ('local', 'local_out')").unwrap();
-        let keys: Vec<(String, Vec<u8>, i64)> = st.query_map([&space[..]], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().collect::<Result<_, _>>().unwrap();
-        for (rel, ident, part) in keys {
-            let ident: [u8; 32] = ident.as_slice().try_into().unwrap();
-            if view.get(&FactKey { rel: &rel, ident: &ident, part }).is_none() {
-                no_kept += 1;
-                if no_kept <= 5 {
-                    eprintln!("no kept entry: space {:02x}{:02x}{:02x}{:02x} {rel} part {part}", space[0], space[1], space[2], space[3]);
-                }
-            }
-        }
-    }
-    let (held, named) = store.frame_segment_bytes().unwrap();
-    eprintln!("spaces {}  files {files}  entries {entries}  rows {rows}", spaces.len());
-    eprintln!("chain {chain_bytes} bytes; frames' segments {held} bytes ({named} named by rows)");
-    for (tag, (cols, values, bytes)) in &by_tag {
-        eprintln!("  {tag:6} {cols:7} columns {values:11} values {bytes:11} bytes  {:.2} bits a value", *bytes as f64 * 8.0 / (*values).max(1) as f64);
-    }
-    eprintln!("  levels {levels_bytes} bytes");
-    eprintln!("differ {differ}  with no frame {no_frame}  frames with no kept entry {no_kept}");
-    assert_eq!((differ, no_kept), (0, 0));
-}
-
 /// Decision 0417's open question, over a real store (`RERAIL_KEPT_STORE`): what each column of the chain would take
 /// under the candidate encodings. Leading columns and the rest apart; GROUPS' group widths; sample values. Run with
 /// `--ignored --nocapture`; prints its report.
@@ -452,4 +264,125 @@ fn chain_columns_by_candidate() {
     for (name, (values, bytes)) in top.iter().take(25) {
         eprintln!("  {name:40} {values:10} values {bytes:11} bytes {:.1} bits", *bytes as f64 * 8.0 / (*values).max(1) as f64);
     }
+}
+
+/// A wave's puts are gathered by space and written as one file each (Q243): a later put of a key replaces an earlier one, a
+/// retag keeps the rows the wave gave its key with its own reads, and a gone entry stays gone. Two spaces, one
+/// write each.
+#[test]
+fn a_waves_puts_are_one_file_a_space() {
+    let (path, c) = store("gather");
+    const OTHER: [u8; 32] = [9; 32];
+    let mut g = KeptGather::default();
+    g.add(SPACE, vec![put("p", 0, 1, flat(&[1, 1])), put("q", 0, 2, flat(&[2, 2])), put("g", 0, 3, flat(&[3, 3]))]);
+    g.add(OTHER, vec![put("o", 0, 4, flat(&[4, 4]))]);
+    // `p` replaced; `q` retagged (its rows and digest this wave's, its reads the retag's: a retag carries no digest,
+    // `retain::kept_reads`); `g` gone.
+    let mut retag = put("q", 0, 0, KeptWhat::Reads);
+    retag.reads = vec![("r".into(), 77)];
+    g.add(SPACE, vec![put("p", 0, 11, flat(&[5, 5, 6, 6])), retag, put("g", 0, 0, KeptWhat::Gone)]);
+    assert_eq!(g.spaces[&SPACE].0.len(), 3, "each key once");
+    let spaces: Vec<([u8; 32], Vec<KeptPut>)> = g.spaces.into_iter().map(|(s, (p, _))| (s, p)).collect();
+    c.execute_batch("BEGIN IMMEDIATE").unwrap();
+    for (space, puts) in spaces {
+        write_space(&path, &c, &space, puts, None).unwrap();
+    }
+    c.execute_batch("COMMIT").unwrap();
+    let got = read(&path, &c);
+    assert_eq!(
+        got.iter().map(|(r, p, d, rows)| (r.as_str(), *p, *d, rows.clone())).collect::<Vec<_>>(),
+        [("p", 0, 11, vec![vec![5, 5], vec![6, 6]]), ("q", 0, 2, vec![vec![2, 2]])],
+        "p replaced, q retagged with this wave's rows and digest, g gone"
+    );
+    let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
+    let q = space.view().get(&FactKey { rel: "q", ident: &ID, part: 0 }).map(|k| k.reads().map(|(r, d)| (r.to_owned(), d)).collect::<Vec<_>>());
+    assert_eq!(q, Some(vec![("r".to_owned(), 77)]));
+    assert_eq!(files(&path).len(), 1, "one file for the space's wave: {:?}", files(&path));
+    assert!(!chain_rows(&c, &OTHER).unwrap().is_empty(), "the other space written in the same job");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+
+/// A continuation (decision 0384 steps 7-8: a fork goes on in a relation that reads its base's first rows) is kept
+/// with every row it reads, its chain's first, less those it killed (0417 K3: packed from its rows, not copied as a
+/// block). It once put its own rows only, or panicked reading its chain's as a delta's.
+#[test]
+fn a_continuation_is_kept_with_every_row_it_reads() {
+    let (path, c) = store("continuation");
+    let block = Block::anon(kind::FACTS, 16 << 20).with_free_list();
+    let spec = Spec { widths: vec![8, 8], order: vec![0], indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG };
+    let put_rows = |r: &Relation, rows: &[(i64, i64)]| {
+        assert!(r.rows.try_reserve(&block, u64::from(r.rows.len()) + rows.len() as u64));
+        let at = r.rows.len();
+        // SAFETY: the rows reserved above, in this test's block, written by this one writer.
+        unsafe {
+            r.rows.claim_reserved(rows.len() as u32);
+            for (i, &(a, b)) in rows.iter().enumerate() {
+                r.rows.put(at + i as u32, 0, a);
+                r.rows.put(at + i as u32, 1, b);
+            }
+        }
+    };
+    let base = Relation::try_create(&block, &spec, None).unwrap();
+    put_rows(base, &[(3, 30), (1, 10)]);
+    let fork = Relation::try_continue(&block, &spec, base, 2).expect("room");
+    put_rows(fork, &[(2, 20)]);
+    // The base's writer goes on: a row the fork does not read.
+    put_rows(base, &[(9, 90)]);
+    let at = block.offset_of(std::ptr::from_ref(fork));
+    let lent = Box::new(Lent { block, at, dead: vec![0b001] });
+    write(&path, &c, vec![put("f", 0, 1, KeptWhat::Rows(lent))]);
+    assert_eq!(read(&path, &c), [("f".to_owned(), 0, 1, vec![vec![1, 10], vec![2, 20]])], "its chain's rows and its own, the killed one not");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// K-R10, F-R5 (decisions 0417 K8, 0401 F5): the kept relations read through SQL are their entries.
+/// `kept_entries` gives each entry's key, digest, types, reads and rows' count, every space's when unconstrained;
+/// `kept_rows` each row's values where they lie, a column past the entry's width NULL, its level where the entry has
+/// them; the newest entry of a key, a gone one absent; an entry not kept, none. `c0 = ?` is a range of an entry that
+/// records its canonical order, and a scan of one put as given (which records none).
+#[test]
+fn the_kept_relations_read_through_sql_are_their_entries() {
+    let (path, c) = store("vtab");
+    let mut with_levels = put("l", 0, 6, flat(&[4, 40, 2, 20]));
+    if let KeptWhat::Flat { levels, .. } = &mut with_levels.what {
+        *levels = Some(vec![7, 8]);
+    }
+    write(&path, &c, vec![put("p", 0, 1, flat(&[3, 30, 1, 10, 3, 31])), put("q", 0, 2, KeptWhat::Rows(lent_dead(&[(1, 10), (2, 20), (3, 30)], &[1]))), put("g", 0, 3, flat(&[7, 70])), with_levels]);
+    write(&path, &c, vec![put("g", 0, 0, KeptWhat::Gone), put("r", 4, 5, KeptWhat::Flat { widths: vec![8, 8], rows: vec![2, 0, 1, 0], n: 2, levels: None, given: true })]);
+    crate::content_store::atoms::Atoms::attach(&c).unwrap();
+    let entries: Vec<(String, i64, i64, i64, String, String)> = c
+        .prepare("SELECT rel, part, digest, rows, types, reads FROM kept_entries WHERE space = ?1 ORDER BY rel, part")
+        .unwrap()
+        .query_map([SPACE.as_slice()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        entries.iter().map(|e| (e.0.as_str(), e.1, e.2, e.3)).collect::<Vec<_>>(),
+        [("l", 0, 6, 2), ("p", 0, 1, 3), ("q", 0, 2, 2), ("r", 4, 5, 2)],
+        "every live entry, the gone one absent; q's killed row not kept"
+    );
+    assert_eq!((entries[2].4.as_str(), entries[2].5.as_str()), ("ii", "r:0000000000000002"), "q's types and reads");
+    let rows = |sql: &str, rel: &str, part: i64| -> Vec<Vec<Option<i64>>> {
+        let mut st = c.prepare(sql).unwrap();
+        st.query_map(rusqlite::params![SPACE.as_slice(), rel, ID.as_slice(), part], |r| (0..3).map(|i| r.get::<_, Option<i64>>(i)).collect()).unwrap().map(Result::unwrap).collect()
+    };
+    let all = "SELECT c0, c1, c2 FROM kept_rows(?1, ?2, ?3, ?4)";
+    assert_eq!(rows(all, "p", 0), [[Some(1), Some(10), None], [Some(3), Some(30), None], [Some(3), Some(31), None]], "in canonical order, c2 past its width");
+    assert_eq!(rows(all, "q", 0), [[Some(1), Some(10), None], [Some(3), Some(30), None]], "the killed row is left out");
+    assert_eq!(rows(all, "r", 4), [[Some(2), Some(0), None], [Some(1), Some(0), None]], "an entry put as given, in its order");
+    assert!(rows(all, "g", 0).is_empty(), "gone");
+    assert!(rows(all, "nothing", 0).is_empty(), "an entry not kept has no rows");
+    assert_eq!(rows("SELECT c0, c1, level FROM kept_rows(?1, ?2, ?3, ?4)", "l", 0), [[Some(2), Some(20), Some(8)], [Some(4), Some(40), Some(7)]], "levels follow the entry's rows");
+    // `c0 = ?` a range where the entry records its canonical order, else every row checked.
+    let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
+    let view = space.view();
+    let leads = |rel: &str| view.all().find(|k| k.key.rel == rel).unwrap().rows.leads(0);
+    assert!(leads("p") && !leads("r"), "a canonical entry leads by its first column; one put as given does not");
+    assert_eq!(rows("SELECT c0, c1, id FROM kept_rows(?1, ?2, ?3, ?4) WHERE c0 = 3", "p", 0), [[Some(3), Some(30), Some(1)], [Some(3), Some(31), Some(2)]]);
+    assert_eq!(rows("SELECT c0, c1, id FROM kept_rows(?1, ?2, ?3, ?4) WHERE c0 = 1", "r", 4), [[Some(1), Some(0), Some(1)]], "scanned, not a range");
+    let n: i64 = c.query_row("SELECT count(*) FROM kept_entries", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 4, "every space's entries, unconstrained");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
