@@ -2629,18 +2629,18 @@ describe("CodeRuleBridge and a call it takes up only after its tool wrote the fi
 
   // `conf/config.py`, with `conf` a link (a junction on Windows) to `.aws`, is `.aws/config.py`: what the result says
   // that file held keeps only its digest however the call spells the file, so the edit is read as one of `.aws/config.py`.
-  // A spelling named like one holding secrets keeps only the digest wherever it leads: `.aws/config.py` with `.aws` a
-  // link to an ordinary folder.
+  // A spelling named like one holding secrets keeps only the digest wherever it leads: `.aws/config.py` with no link,
+  // and with `.aws` a link to an ordinary folder.
   it.each([
-    { spelled: "conf/config.py", folder: ".aws", link: "conf" },
-    { spelled: ".aws/config.py", folder: ".aws", link: "conf" },
-    { spelled: ".aws/config.py", folder: "plain", link: ".aws" },
-  ])("keeps only the digest of what the result says $spelled held, with $link a link to $folder", async ({ spelled, folder, link }) => {
+    { spelled: "conf/config.py", folder: ".aws", link: "conf", where: "with conf a link to .aws" },
+    { spelled: ".aws/config.py", folder: ".aws", link: undefined, where: "with no link" },
+    { spelled: ".aws/config.py", folder: "plain", link: ".aws", where: "with .aws a link to plain" },
+  ])("keeps only the digest of what the result says $spelled held, $where", async ({ spelled, folder, link }) => {
     const root = await workspace();
     const real = join(root, folder, "config.py");
     await mkdir(join(root, folder));
     await writeFile(real, "one\n");
-    linkFolder(folder, join(root, link));
+    if (link !== undefined) linkFolder(folder, join(root, link));
     await awaitClockAfter(real);
     const { bridge, auditGeneratedEdits } = await opened(root);
     await writeFile(real, "one\nTWO\n");
