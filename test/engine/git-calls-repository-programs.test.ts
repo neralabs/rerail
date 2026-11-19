@@ -150,6 +150,26 @@ describe("Rerail's Git calls start no filter program only a repository's own con
     expect([listed(audit.stdout), firstSeen, listed(scan.stdout)]).toEqual([["notes.txt"], ["notes.txt"], ["notes.txt"]]);
   }, 60_000);
 
+  it("keeps the command-line config the person's environment gives Git, and adds its own after it", async () => {
+    const root = await folder();
+    const marker = join(root, "filter-ran");
+    const work = await repository(root, "work", { ".gitattributes": "*.txt filter=probe\n", "notes.txt": "one\n" });
+    git(work, "config", "filter.probe.clean", recording(marker));
+    await writeFile(join(work, "notes.txt"), "two\n");
+    await writeFile(join(work, "new.log"), "log\n");
+    const excludes = join(root, "person.excludes");
+    await writeFile(excludes, "*.log\n");
+    // The person's own environment names an excludes file through GIT_CONFIG_COUNT, which Git reads after every file.
+    vi.stubEnv("GIT_CONFIG_COUNT", "1");
+    vi.stubEnv("GIT_CONFIG_KEY_0", "core.excludesFile");
+    vi.stubEnv("GIT_CONFIG_VALUE_0", excludes);
+
+    const firstSeen = await gitModifiedOrUntrackedPaths(work);
+
+    expect(runs(marker)).toBe(0);
+    expect(firstSeen).toEqual(["notes.txt"]);
+  }, 60_000);
+
   it.skipIf(process.platform === "win32")("makes no call whose config Git cannot list, and its result holds none of what the listing printed", async () => {
     const root = await folder();
     const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();

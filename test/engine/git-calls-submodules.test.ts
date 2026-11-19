@@ -113,6 +113,22 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect(answers.map(answer => [answer.status, listed(answer.stdout)])).toEqual([[0, ["sub"]], [0, ["sub"]]]);
   }, 60_000);
 
+  it("and answer as Git does when the environment names the checkout's index, as a Git hook's environment does", async () => {
+    const root = await folder();
+    const source = await repository(root, "source", { "inner.txt": "one\n" });
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    git(work, "submodule", "add", "--quiet", source, "sub");
+    git(work, "commit", "--quiet", "-m", "submodule");
+    await writeFile(join(work, "top.txt"), "changed\n");
+    // Git clears GIT_INDEX_FILE for the status it runs in a submodule, which then reads the submodule's own index.
+    vi.stubEnv("GIT_INDEX_FILE", join(work, ".git", "index"));
+
+    const answers = [runGit(work, AUDIT_DIFF), runGit(work, SCAN_DIFF)];
+
+    expect(answers.map(answer => listed(answer.stdout))).toEqual([listed(git(work, ...AUDIT_DIFF)), listed(git(work, ...SCAN_DIFF))]);
+    expect(answers.map(answer => listed(answer.stdout))).toEqual([["top.txt"], ["top.txt"]]);
+  }, 60_000);
+
   it("in a checked-out submodule or one inside it, and list them as Git does", async () => {
     const root = await folder();
     const marker = join(root, "driver-ran");
