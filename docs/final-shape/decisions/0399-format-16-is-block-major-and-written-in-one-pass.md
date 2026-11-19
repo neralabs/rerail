@@ -265,8 +265,11 @@ fills the tape's fresh bytes with 0xa5, so a byte the ops leave unwritten fails 
 zops`): every file of dl-10, dl-50, rerail-5b, rr and sqlite, 6,731 files and 19.6 M nodes in 11 languages,
 written by the ops' Rust and by the reference, gives the same bytes in 16 and in 16z. That check found the one
 difference the tests had not: the tail's padding before the part starts was left as the last block's moved
-columns, not zeros. Time (M5 Max, the lab's opt-level 3, dl-10): 16 by the ops 44.5 ns a node against the
-reference's 37.3 (python), 16z 70.2 against 72.3. The compressor inserts each position into its hash chain, as
+columns, not zeros. Cost (M5 Max, the lab's opt-level 3, dl-10, instructions retired a node, the format 15
+tape's reads included): python 16 by the ops 836 against the reference's 728, 16z 1,189 against 1,081; json
+796 against 699, 1,078 against 985. So the ops' Rust costs 10–15% more than the hand-written writer, once the
+host reserves only where an op can need room (a close only when its node's block is behind the last begun);
+that gap is R16's to close before the host's writer becomes the ops. The compressor inserts each position into its hash chain, as
 liblz4's does: the codec's work, not a scan of the text.
 
 Next: the ops on the JIT and in MSL (R15), the host's `Writer` as the ops (R16), tier 2 (R17).

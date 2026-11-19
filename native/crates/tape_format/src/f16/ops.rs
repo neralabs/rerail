@@ -151,8 +151,26 @@ impl OpsWriter {
     }
 
     fn len_of(&self, k: u32) -> usize {
-        let mut s = *self.state;
-        self.part_mut(&mut s, k as usize).len as usize
+        let s = &self.state;
+        let p = match k {
+            part::KINDS => &s.kinds,
+            part::OPEN => &s.open,
+            part::OUT => &s.out,
+            part::TABLE => &s.table,
+            part::SIDES => &s.sides,
+            part::FREE => &s.free,
+            part::LAID => &s.laid,
+            part::LAID_AT => &s.laid_at,
+            part::PRESENCE => &s.presence,
+            part::LINES => &s.lines,
+            part::ROOMS => &s.rooms,
+            part::ROOM_FREE => &s.room_free,
+            part::PIECES => &s.pieces,
+            part::SEEN => &s.seen,
+            part::CKPT => &s.ckpt,
+            _ => &s.lz,
+        };
+        p.len as usize
     }
 
     /// Part `k` with room for `need` bytes: its buffer grown (the writer's own memory, moved as a `Vec` grows).
@@ -172,6 +190,9 @@ impl OpsWriter {
     /// Room for `blocks` blocks made final: their laid parts, their side areas given back, their entries; in 16z
     /// their pieces and their rooms given back.
     fn reserve_final(&mut self, blocks: usize) {
+        if blocks == 0 {
+            return;
+        }
         let (laid, free) = (self.len_of(part::LAID), self.len_of(part::FREE));
         self.reserve(part::LAID, laid + blocks * LAID_MAX);
         self.reserve(part::FREE, free + 4 * blocks);
@@ -247,7 +268,15 @@ impl OpsWriter {
 
     /// `f16::Writer::close`.
     pub fn close(&mut self, end: u64) {
-        self.reserve_final(1);
+        // A close makes the closing node's block final only once a later block has begun.
+        let open = self.state.open_len as usize;
+        if open > 0 {
+            let at = (open - 1) * OPEN as usize;
+            let node = u32::from_le_bytes(self.parts[part::OPEN as usize][at..at + 4].try_into().expect("4 bytes")) as usize;
+            if node / Z < self.state.n as usize / Z {
+                self.reserve_final(1);
+            }
+        }
         let desc = self.desc();
         // SAFETY: as `open`'s.
         unsafe { ops::w_close(desc, end) };

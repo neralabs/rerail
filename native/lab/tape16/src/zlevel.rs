@@ -128,6 +128,9 @@ pub struct Ops {
     pub first_differs: Option<String>,
     pub ns_ref: [u64; 2],
     pub ns_ops: [u64; 2],
+    /// Retired instructions (`measure::retired`), the same split.
+    pub in_ref: [u64; 2],
+    pub in_ops: [u64; 2],
 }
 
 pub fn ops(files: &[&File]) -> Result<Ops, String> {
@@ -140,12 +143,14 @@ pub fn ops(files: &[&File]) -> Result<Ops, String> {
         r.files += 1;
         r.nodes += t.len() as u64;
         for (k, z) in [false, true].into_iter().enumerate() {
-            let t0 = std::time::Instant::now();
+            let (t0, i0) = (std::time::Instant::now(), crate::measure::retired().0);
             let want = f16::write_from(lang, &t, &number, &f.source, f.tag, z)?;
             r.ns_ref[k] += t0.elapsed().as_nanos() as u64;
-            let t0 = std::time::Instant::now();
+            r.in_ref[k] += crate::measure::retired().0 - i0;
+            let (t0, i0) = (std::time::Instant::now(), crate::measure::retired().0);
             let got = f16::ops::write_from(lang, &t, &number, &f.source, f.tag, z)?;
             r.ns_ops[k] += t0.elapsed().as_nanos() as u64;
+            r.in_ops[k] += crate::measure::retired().0 - i0;
             let bytes = |w: &Written| match w {
                 Written::F16(t) => t.as_bytes().to_vec(),
                 Written::F16Z(t) => t.as_bytes().to_vec(),
@@ -168,5 +173,6 @@ pub fn print_ops(title: &str, r: &Ops) {
     println!("### {title}\n");
     println!("{} files, {} nodes: format 16 the same in {}, 16z in {}; first differing: {}", r.files, r.nodes, r.same[0], r.same[1], r.first_differs.as_deref().unwrap_or("none"));
     let per = |ns: u64| ns as f64 / r.nodes as f64;
-    println!("ns/node: 16 reference {:.1}, ops {:.1}; 16z reference {:.1}, ops {:.1}\n", per(r.ns_ref[0]), per(r.ns_ops[0]), per(r.ns_ref[1]), per(r.ns_ops[1]));
+    println!("ns/node: 16 reference {:.1}, ops {:.1}; 16z reference {:.1}, ops {:.1}", per(r.ns_ref[0]), per(r.ns_ops[0]), per(r.ns_ref[1]), per(r.ns_ops[1]));
+    println!("instructions/node: 16 reference {:.0}, ops {:.0}; 16z reference {:.0}, ops {:.0}\n", per(r.in_ref[0]), per(r.in_ops[0]), per(r.in_ref[1]), per(r.in_ops[1]));
 }
