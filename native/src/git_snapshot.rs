@@ -387,7 +387,8 @@ impl View {
         let mut repository = self.repository.lock().unwrap_or_else(|e| e.into_inner());
         if STORAGE_BATCH.get() != Some((self.id, repository.epoch))
             && !repository.storage.as_deref().is_some_and(storage::Storage::is_current) {
-            let repo = gix::ThreadSafeRepository::open(repository.repo.git_dir()).map_err(error)?;
+            let options = super::checkout_options(Default::default()).open_path_as_is(true);
+            let repo = gix::ThreadSafeRepository::open_opts(repository.repo.git_dir(), options).map_err(error)?;
             repository.storage = storage::Storage::of(&repo.to_thread_local()).map(Arc::new);
             repository.repo = repo;
             repository.epoch += 1;

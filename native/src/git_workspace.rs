@@ -702,14 +702,19 @@ impl GitWorkspace {
 /// for a different repository. Gix applies these overrides even after successful path discovery.
 pub fn discover_repository(root: &Path) -> gix::Result<gix::Repository> {
     let mut options = gix::sec::trust::Mapping::<gix::open::Options>::default();
+    options.full = checkout_options(options.full);
+    options.reduced = checkout_options(options.reduced);
+    gix::ThreadSafeRepository::discover_opts(root, Default::default(), options).map(Into::into)
+}
+
+fn checkout_options(mut options: gix::open::Options) -> gix::open::Options {
+    // Gix groups these repository-local overrides under one environment permission.
     if ["GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_SHALLOW_FILE"].iter()
         .any(|name| std::env::var_os(name).is_some())
     {
-        for level in [&mut options.full, &mut options.reduced] {
-            level.permissions.env.git_prefix = gix::sec::Permission::Deny;
-        }
+        options.permissions.env.git_prefix = gix::sec::Permission::Deny;
     }
-    gix::ThreadSafeRepository::discover_opts(root, Default::default(), options).map(Into::into)
+    options
 }
 
 /// Whether discovery failed because no repository encloses the path, rather than because one could not be read.

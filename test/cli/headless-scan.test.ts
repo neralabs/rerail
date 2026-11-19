@@ -98,6 +98,7 @@ describe("headless rerail scan", () => {
     git(other, "commit", "-qm", "other HEAD");
     const head = git(root, "rev-parse", "HEAD");
     expect(git(other, "rev-parse", "HEAD")).not.toBe(head);
+    const engine = loadNativeBinding(), pinned = new engine.GitRevisionSource(root, "HEAD", "explicit");
     writeFileSync(join(root, ".git", "rerail-repository-id"), "selected-checkout\n");
     const policy = join(root, "which.rr");
     writeFileSync(policy, `#include "git.rr"
@@ -123,6 +124,11 @@ Seen(@place("git",1), oid) :- git_revision(r, "HEAD", oid), git_revision(r, ":a.
           repository: { key: "clone:selected-checkout" }, violations: [{ message: head }],
         });
       }
+      const packDirectory = join(root, ".git", "objects", "pack");
+      const earlier = new Date("2020-01-01T00:00:00Z");
+      utimesSync(packDirectory, earlier, earlier);
+      const rows = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, join(home, "reopened.sqlite"), "", undefined, undefined, pinned));
+      expect(rows[0].diagnostics.map((row: { message: string }) => row.message)).toEqual([head]);
       expect(existsSync(join(other, ".git", "rerail-repository-id"))).toBe(false);
     } finally { vi.unstubAllEnvs(); }
   }, 30_000);
