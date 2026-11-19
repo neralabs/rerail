@@ -1001,6 +1001,11 @@ impl Emit<'_> {
                     let these: Vec<Cand> = cs.iter().filter(|c| c.row == r).cloned().collect();
                     tos.push(self.target(b, 0, these)?);
                 }
+                // Every row it can meet there it takes, to one place: no test tells them apart.
+                if all && tos.iter().all(|&t| t == tos[0]) {
+                    self.switches[t].targets[usize::from(b)] = tos[0];
+                    continue;
+                }
                 let key = (self.rule, taken.clone(), all, default, tos.clone());
                 if let Some(&at) = self.row_chains.get(&key) {
                     self.switches[t].targets[usize::from(b)] = at;

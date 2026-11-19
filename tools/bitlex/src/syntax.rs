@@ -99,8 +99,9 @@ pub enum TokenRule {
     /// strings and raw strings are, at one byte; each closer its own region's length.
     ReadParts(Vec<Region>, Parts),
     /// A token of a region read in parts (`ReadParts`): `last` its last-byte mask. The reader
-    /// starts it, not the token loop: no first byte ends it by a rule.
-    Inside(Expr),
+    /// starts it, not the token loop: no first byte ends it by a rule. With the reader's kind
+    /// (its opener's), and whether it closes the region: its tokens come only between the two.
+    Inside(Expr, String, bool),
 }
 
 /// A region's parts (`TokenRule::ReadParts`): each part's kind, start mask and bytes, and the
@@ -190,16 +191,18 @@ impl Parts {
         let f = Expr::Name(format!("f_{}", r.kind));
         let body = and(f.clone(), not(s.clone()));
         let closer = Self::closer(std::slice::from_ref(r));
-        let token = |kind: &str, start: Expr, last: Expr| Stmt::Token { kind: kind.to_owned(), start, through: None, last: Some(last.clone()), rule: Some(TokenRule::Inside(last)) };
+        let reader = kind;
+        let closing = |kind: &str, start: Expr, last: Expr, closes: bool| Stmt::Token { kind: kind.to_owned(), start, through: None, last: Some(last.clone()), rule: Some(TokenRule::Inside(last, reader.to_owned(), closes)) };
+        let token = |kind: &str, start: Expr, last: Expr| closing(kind, start, last, false);
         // The reader's own row is its token's, the opener; the closer is its kind's too, but
         // where a `closes` mask holds: that one's kind's, its bytes.
         let mut out = vec![];
         for (k, e, n) in &self.closes {
             let c = and(closer.clone(), e.clone());
-            out.push(token(k, c.clone(), prev(c, n - 1)));
+            out.push(closing(k, c.clone(), prev(c, n - 1), true));
         }
         let own = self.own(r);
-        out.insert(0, token(kind, own.clone(), r.closer_last(own)));
+        out.insert(0, closing(kind, own.clone(), r.closer_last(own), true));
         let mut covered: Option<Expr> = None;
         let mut cover = |c: Expr| {
             covered = Some(match covered.take() {
@@ -299,7 +302,7 @@ impl TokenRule {
             }
             // The opener, one byte; the closer and the parts are rows of their own (`Parts::rows`).
             TokenRule::ReadParts(..) => s.clone(),
-            TokenRule::Inside(last) => last.clone(),
+            TokenRule::Inside(last, ..) => last.clone(),
         }
     }
 }

@@ -332,6 +332,9 @@ pub struct Lowering {
     /// Each token row's (`tokens`, in order): read inside a region by its reader (`Inside`),
     /// so no first byte ends it by a rule.
     pub inside: Vec<bool>,
+    /// Each token's reader, where it is a token inside a region read in parts, and whether it
+    /// closes the region (`TokenRule::Inside`): `row_modes`' reader modes.
+    pub inside_of: Vec<Option<(String, bool)>>,
     pub keywords: Vec<(String, Vec<(Vec<u8>, Option<String>)>, bool)>,
     /// Each row's soft keywords: a word's kind where the grammar takes it, the row's elsewhere.
     pub soft: Vec<(String, Vec<Vec<u8>>)>,
@@ -481,6 +484,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         token_fills: HashMap::default(),
         read_fills: HashMap::default(),
         inside: Vec::new(),
+        inside_of: Vec::new(),
         keywords: Vec::new(),
         skip: None,
         prefix: None,
@@ -880,7 +884,7 @@ impl Lowering {
                             let fill = self.expr(&fill)?;
                             self.token_fills.insert(kind.clone(), fill);
                         }
-                        Some(::bitlex::syntax::TokenRule::Inside(_)) => {}
+                        Some(::bitlex::syntax::TokenRule::Inside(..)) => {}
                         Some(::bitlex::syntax::TokenRule::Read(regions)) => {
                             let mut arms = Vec::new();
                             for r in regions {
@@ -917,7 +921,7 @@ impl Lowering {
                                     self.token_pairs.insert(kind.clone(), pairs.clone());
                                     (true, mask)
                                 }
-                                ::bitlex::syntax::TokenRule::Read(_) | ::bitlex::syntax::TokenRule::ReadParts(..) | ::bitlex::syntax::TokenRule::Inside(_) => unreachable!(),
+                                ::bitlex::syntax::TokenRule::Read(_) | ::bitlex::syntax::TokenRule::ReadParts(..) | ::bitlex::syntax::TokenRule::Inside(..) => unreachable!(),
                             };
                             let v = self.ahead(e)?;
                             self.token_rules.insert(kind.clone(), (pair, v));
@@ -933,7 +937,11 @@ impl Lowering {
                         },
                     };
                     self.tokens.push((kind.clone(), start, through));
-                    self.inside.push(matches!(rule, Some(::bitlex::syntax::TokenRule::Inside(_))));
+                    self.inside.push(matches!(rule, Some(::bitlex::syntax::TokenRule::Inside(..))));
+                    self.inside_of.push(match rule {
+                        Some(::bitlex::syntax::TokenRule::Inside(_, reader, closes)) => Some((reader.clone(), *closes)),
+                        _ => None,
+                    });
                 }
                 Stmt::Keywords { kind, words, soft, required } => {
                     self.keywords.push((kind.clone(), words.clone(), *required));
@@ -4389,6 +4397,27 @@ fn row_modes(
         }
         need.push(n);
         flip.push(f);
+    }
+    // A region read in parts is a mode too, the reader's (`TokenRule::Inside`): its opener's
+    // row sets it, a row that closes the region clears it, a row inside needs it set, and every
+    // other row needs it clear. Its tokens come only between the opener and a closer.
+    let mut readers: Vec<String> = low.inside_of.iter().flatten().map(|(k, _)| k.clone()).collect();
+    readers.sort();
+    readers.dedup();
+    for k in readers {
+        if need.first().map_or(0, Vec::len) >= 8 {
+            break;
+        }
+        for r in 0..token_rows.len() {
+            let (n, f) = match low.inside_of.get(r).cloned().flatten() {
+                Some((q, closes)) if q == k => (Some(true), Some(closes)),
+                Some(_) => (Some(false), Some(false)),
+                None if token_rows[r].0 == k => (Some(false), Some(true)),
+                None => (Some(false), Some(false)),
+            };
+            need[r].push(n);
+            flip[r].push(f);
+        }
     }
     let fits = |r: usize, m: u8| need[r].iter().enumerate().all(|(i, n)| n.is_none_or(|n| n == (m >> i & 1 == 1)));
     // The modes after a row's token, from `m`.
