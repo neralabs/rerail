@@ -414,6 +414,7 @@ export interface NativeCodeRuleDslExecution {
 }
 
 export interface NativeAnalysisScopeRun {
+  readonly storeIdentity: string;
   readonly publication: "published" | "released" | "aborted" | "unavailable" | null;
   selectSource(root: string, source?: NativeGitRevisionSource): void;
   finish(succeeded: boolean): string | null;
@@ -475,6 +476,7 @@ export interface NativeBinding {
   /** The content-store file name this binary's store schema owns (`content-v5.sqlite` at store floor 5). */
   contentStoreFileName(): string;
   deleteAnalysisScope(storePath: string, value: string, directory: boolean, release?: string, expectedStore?: string, recorded?: boolean): void;
+  releaseNamedAnalysisScope(store: string, name: string, expectedIdentities: string[]): { identity: string; hadMembers: boolean } | null;
   owningDirectoryAnalysisStore(storePath: string, directory: string, home: string, recorded?: boolean): string | null;
   existingDirectoryAnalysisOwnership(storePath: string, directory: string, home: string): boolean;
   retireUpkeepUnder?(directory: string): void;

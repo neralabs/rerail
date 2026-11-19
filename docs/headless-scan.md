@@ -155,7 +155,10 @@ rerail scan --revision HEAD~1 --analysis-scope review --rr ./commit-policy.rr --
 ```
 
 By default, `rerail scan` keeps its content store beside the Rerail home database.
-If you set `RERAIL_CONTENT_STORE_PATH` for a scan, use the same path for `rerail scope delete`.
+The home remembers which store each named scan used. `rerail scope delete review` releases that scope and prints the target store.
+If two stores registered the same name, select one with `rerail scope delete review --store <file>`.
+Use the same option for a store created by a standalone driver or an older scan without a registration.
+A missing registered store keeps its registration for retry. A different database at the same path cannot acknowledge the original store's release.
 To share this store with `rerail-engine`, set `RERAIL_TAPE_CACHE` to that path for the native command.
 
 A filesystem scan uses its current directory as the analysis scope.

@@ -158,6 +158,26 @@ fn analysis_scope_rejects_finished_and_foreign_run_owners() {
 }
 
 #[test]
+fn named_scope_release_requires_the_registered_store_and_revokes_an_unfinished_run() {
+    use crate::content_store::analysis_scope::{AnalysisRun, RunSource, release_named_scope};
+    let (first_path, first) = store("scope-release-first");
+    let (second_path, second) = store("scope-release-replacement");
+    let mut unfinished = AnalysisRun::begin(ContentStore::open(&first_path).unwrap(), "named:test", "pending").unwrap();
+    unfinished.select_source(RunSource::directory(std::path::Path::new("/repo"))).unwrap();
+    let mut published = AnalysisRun::begin(ContentStore::open(&second_path).unwrap(), "named:test", "keep").unwrap();
+    published.select_source(RunSource::directory(std::path::Path::new("/repo"))).unwrap();
+    published.finish(true).unwrap();
+    assert!(release_named_scope(&second_path, "test", &[first.identity()]).is_err());
+    assert_eq!(second.completed_analysis_runs().unwrap().len(), 1);
+    assert_eq!(release_named_scope(&first_path, "test", &[first.identity()]).unwrap(), (first.identity(), false));
+    unfinished.finish(true).unwrap();
+    assert_eq!(unfinished.publication.unwrap().as_str(), "released");
+    assert!(first.completed_analysis_runs().unwrap().is_empty());
+    assert_eq!(release_named_scope(&second_path, "test", &[second.identity()]).unwrap(), (second.identity(), true));
+    assert_eq!(release_named_scope(&second_path, "test", &[]).unwrap(), (second.identity(), false));
+}
+
+#[test]
 fn completed_analysis_runs_survive_restart_and_scope_deletion_preserves_shared_snapshots() {
     use crate::content_store::{analysis_scope::{AnalysisRun, RunSource}, GitTree, HashKey};
     let (path, store) = store("scope-run-history");

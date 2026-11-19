@@ -12,7 +12,7 @@ import { describeScan, runHeadlessScan, type ScanReport } from "../../src/cli/he
 import { acquireDirectoryAnalysisGeneration, analysisScopeHome, collectAnalysisCaches, queueAnalysisScopeReleases, readAnalysisScopeGeneration, scanContentStore, settleAnalysisScopeReleases } from "../../src/engine/native/analysis-scope.js";
 import { loadNativeBinding } from "../../src/engine/native/native.js";
 import * as builds from "../../src/engine/native/rerail-build.js";
-import { openRerailDatabase } from "../../src/engine/storage/database.js";
+import { openRerailDatabase, RERAIL_DATABASE_FILE } from "../../src/engine/storage/database.js";
 import { recordCheckout } from "../../src/engine/catalog/repository-registry.js";
 import { setCheckoutStarted, stopRerail } from "../../src/runtime/repository-start.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
@@ -1336,6 +1336,49 @@ process.stdout.write(JSON.stringify(visited));`,
     loadNativeBinding().deleteAnalysisScope(store, "review", false);
     expect(queryContentStore(store, "SELECT scope FROM analysis_scope_snapshot")).toEqual([]);
     expect(collect()).toContain(store);
+  }, 30_000);
+
+  it("routes named scope deletion across override changes and requires a store for duplicate names", async () => {
+    const root = checkout(), home = root + "-home", databasePath = join(home, RERAIL_DATABASE_FILE);
+    const mount = join(home, "mounted"), offline = join(home, "offline");
+    mkdirSync(mount, { recursive: true });
+    const original = join(mount, "first.sqlite"), second = join(home, "second.sqlite"), unrelated = join(home, "unused.sqlite");
+    const members = (store: string) => queryContentStore(store, "SELECT scan_id FROM analysis_scope_run WHERE scope='named:review'");
+    const remove = (...args: string[]) => spawnSync(process.execPath, ["--import", "tsx", "src/cli/cli.ts", "--rerail-managed-child", "scope", "delete", "review", ...args], {
+      env: { ...process.env, RERAIL_HOME: home, RERAIL_CONTENT_STORE_PATH: unrelated }, encoding: "utf8",
+    });
+    for (const store of [original, second]) {
+      vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+      try { expect((await scan(root, { databasePath, revision: "HEAD", analysisScope: "review" })).cache.publication).toBe("published"); }
+      finally { vi.unstubAllEnvs(); }
+    }
+    const ambiguous = remove();
+    expect(ambiguous.status).not.toBe(0);
+    expect(ambiguous.stderr).toContain("--store");
+    for (const store of [original, second]) {
+      expect(ambiguous.stderr).toContain(store);
+      expect(members(store)).toHaveLength(1);
+    }
+    const selected = remove("--store", second);
+    expect(selected.status, selected.stderr).toBe(0);
+    expect(selected.stdout).toContain(second);
+    expect(members(original)).toHaveLength(1);
+    expect(members(second)).toEqual([]);
+    loadNativeBinding().retireUpkeepUnder?.(mount);
+    renameSync(mount, offline);
+    const missing = remove();
+    expect(missing.status).not.toBe(0);
+    expect(missing.stderr).toContain(original);
+    expect(existsSync(mount)).toBe(false);
+    renameSync(offline, mount);
+    const routed = remove();
+    expect(routed.status, routed.stderr).toBe(0);
+    expect(routed.stdout).toContain(original);
+    expect(members(original)).toEqual([]);
+    const repeated = remove("--store", original);
+    expect(repeated.status, repeated.stderr).toBe(0);
+    expect(repeated.stdout).toContain("No published ownership");
+    expect(existsSync(unrelated)).toBe(false);
   }, 30_000);
 
   it("reports a release between evaluation and publication and preserves the findings", async () => {

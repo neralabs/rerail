@@ -4,7 +4,7 @@ import { existsSync, statSync } from "node:fs";
 import { and, eq, lte } from "drizzle-orm";
 import { analysisScopeGeneration, analysisScopeReleaseProbes, analysisScopeReleases } from "../storage/schema.js";
 import { openRerailDatabase, openSqliteDatabase, type RerailDatabase } from "../storage/database.js";
-import { loadNativeBinding } from "./native.js";
+import { loadNativeBinding, type NativeAnalysisScopeRun } from "./native.js";
 import { contentStoreOverride, contentStorePath } from "./rerail-build.js";
 import { assertContentStoreOwner } from "./main-instance.js";
 import { storedPath } from "../catalog/checkout-control.js";
@@ -83,16 +83,55 @@ function maintenanceRegistration(index: RerailDatabase) {
 }
 
 export function acquireNamedAnalysisRun(databasePath: string, name: string, store: string, scanId: string) {
-  const run = new (loadNativeBinding().AnalysisScopeRun)(store, name, false, scanId, 0);
+  const index = openSqliteDatabase(storeRegistryPath(databasePath));
+  let run: NativeAnalysisScopeRun | undefined;
   try {
-    const index = openSqliteDatabase(storeRegistryPath(databasePath));
-    try { maintenanceRegistration(index).run(storedPath(store)); }
-    finally { index.$client.close(); }
-    return run;
+    return index.$client.transaction(() => {
+      ensureNamedRoutes(index);
+      run = new (loadNativeBinding().AnalysisScopeRun)(store, name, false, scanId, 0);
+      const path = storedPath(store);
+      maintenanceRegistration(index).run(path);
+      index.$client.prepare("INSERT OR IGNORE INTO analysis_named_store(name,path,identity) VALUES (?,?,?)").run(name, path, run.storeIdentity);
+      return run;
+    }).immediate();
   } catch (error) {
-    run.finish(false);
+    run?.finish(false);
     throw error;
+  } finally { index.$client.close(); }
+}
+
+function ensureNamedRoutes(index: RerailDatabase): void {
+  index.$client.exec(`CREATE TABLE IF NOT EXISTS analysis_named_store (
+    name TEXT NOT NULL, path TEXT NOT NULL, identity TEXT NOT NULL, PRIMARY KEY(name,path,identity)) STRICT`);
+}
+
+export async function deleteNamedAnalysisScope(databasePath: string, name: string, requested?: string): Promise<{ store: string; hadMembers: boolean }> {
+  const index = openSqliteDatabase(storeRegistryPath(databasePath));
+  const binding = loadNativeBinding();
+  let released;
+  try {
+    // Acquisition and release take the registry's writer before touching the content store.
+    released = index.$client.transaction(() => {
+      ensureNamedRoutes(index);
+      const routes = index.$client.prepare("SELECT path,identity FROM analysis_named_store WHERE name=? ORDER BY path,identity")
+        .all(name) as { path: string; identity: string }[];
+      const paths = [...new Set(routes.map(route => route.path))];
+      if (requested === undefined && paths.length > 1) {
+        throw new Error(`Scope ${JSON.stringify(name)} has multiple stores. Select one with --store <file>.\n${paths.join("\n")}`);
+      }
+      const store = requested === undefined ? paths[0] ?? storedPath(scanContentStore(databasePath)) : storedPath(requested);
+      assertContentStoreOwner(store);
+      const identities = routes.filter(route => route.path === store).map(route => route.identity);
+      const result = binding.releaseNamedAnalysisScope(store, name, identities);
+      if (result) index.$client.prepare("DELETE FROM analysis_named_store WHERE name=? AND path=? AND identity=?").run(name, store, result.identity);
+      return { store, result };
+    }).immediate();
+  } finally { index.$client.close(); }
+  if (released.result) {
+    try { await binding.collectAnalysisCacheAsync(released.store); }
+    catch (error) { throw new Error(`Scope release completed in ${released.store}. Cache collection failed. ${String(error)}`); }
   }
+  return { store: released.store, hadMembers: released.result?.hadMembers ?? false };
 }
 
 function registerDirectoryAnalysisStore(databasePath: string, root: string, store: string, identity: string, floor?: number): number {

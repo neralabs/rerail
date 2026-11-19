@@ -654,6 +654,22 @@ pub fn delete_analysis_scope(store_path: String, value: String, directory: bool,
     Ok(())
 }
 
+#[cfg(not(feature = "headless"))]
+#[napi(object)]
+pub struct NamedScopeRelease { pub identity: String, pub had_members: bool }
+
+#[cfg(not(feature = "headless"))]
+#[napi]
+pub fn release_named_analysis_scope(store: String, name: String, identities: Vec<String>) -> Result<Option<NamedScopeRelease>> {
+    let file = Path::new(&store);
+    if identities.is_empty() && !file.try_exists().map_err(|e| Error::from_reason(e.to_string()))? { return Ok(None); }
+    let expected = identities.iter().map(|id| id.parse::<i64>()).collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|_| Error::new(Status::InvalidArg, "invalid analysis store identity"))?;
+    let (identity, had_members) = content_store::analysis_scope::release_named_scope(file, &name, &expected)
+        .map_err(|e| Error::from_reason(format!("could not release scope {name} in {store}: {e}")))?;
+    Ok(Some(NamedScopeRelease { identity: identity.to_string(), had_members }))
+}
+
 /// Inspect real POSIX session identity; allocator-backed ps tokens are not ownership.
 #[napi]
 pub fn process_session_id(pid: i32) -> Result<Option<i32>> {

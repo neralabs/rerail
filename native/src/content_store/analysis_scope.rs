@@ -115,6 +115,7 @@ pub struct CompletedRun {
 
 impl AnalysisRun {
     pub fn store_path(&self) -> &Path { self.store.database_path() }
+    pub fn store_identity(&self) -> i64 { self.store.identity() }
 
     pub fn is_open(&self) -> bool { self.lease.is_some() }
 
@@ -407,28 +408,42 @@ impl<'a> DirectoryRelease<'a> {
     }
 
     pub fn deliver_recorded(&self, file: &Path, directory: &Path, expected: Option<i64>) -> StoreResult<usize> {
-        let mut db = rusqlite::Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-        super::connection::retry_busy(&mut super::BusyRetries::default(), || {
-            if let Some(expected) = expected {
-                let actual: i64 = db.query_row_cached("SELECT id FROM store_identity WHERE singleton=1", [], |row| row.get(0))?;
-                if actual != expected {
-                    return Err(super::StoreError::Invalid(format!("analysis store identity changed at {}", file.display())));
-                }
-            } else {
-                let known: bool = db.query_row_cached("SELECT EXISTS (SELECT 1 FROM sqlite_schema
-                    WHERE type='table' AND name IN ('store_identity','analysis_scope_manifest'))", [], |row| row.get(0))?;
-                if !known { return Err(super::StoreError::Invalid("expected an existing analysis store".into())); }
-            }
-            let identity = ContentStore::initialize(&mut db)?;
-            let atoms = super::atoms::Atoms::for_database(file, Some(identity));
-            let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            let count = self.apply_to(&tx, directory)?;
-            let upto = atoms.write_pending(&tx)?;
-            tx.commit()?;
-            atoms.committed(upto);
-            Ok(count)
-        })
+        with_existing_release_store(file, expected.as_slice(), |tx, _| self.apply_to(tx, directory))
     }
+}
+
+pub fn release_named_scope(file: &Path, name: &str, expected: &[i64]) -> StoreResult<(i64, bool)> {
+    let scope = named(name).ok_or_else(|| super::StoreError::Invalid("analysis scope name must not be empty".into()))?;
+    with_existing_release_store(file, expected, |tx, identity| {
+        let history: bool = tx.query_row_cached("SELECT EXISTS (SELECT 1 FROM analysis_scope_run WHERE scope=?1)", [&scope], |row| row.get(0))?;
+        let memberships = release_analysis_scopes(tx, &scope, None, None, None, None)?;
+        Ok((identity, history || memberships > 0))
+    })
+}
+
+// Validate and modify the same open database throughout release, even if another file replaces it.
+fn with_existing_release_store<T>(file: &Path, expected: &[i64], release: impl Fn(&rusqlite::Connection, i64) -> StoreResult<T>) -> StoreResult<T> {
+    let mut db = rusqlite::Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    super::connection::retry_busy(&mut super::BusyRetries::default(), || {
+        if !expected.is_empty() {
+            let actual: i64 = db.query_row_cached("SELECT id FROM store_identity WHERE singleton=1", [], |row| row.get(0))?;
+            if !expected.contains(&actual) {
+                return Err(super::StoreError::Invalid(format!("analysis store identity changed at {}", file.display())));
+            }
+        } else {
+            let known: bool = db.query_row_cached("SELECT EXISTS (SELECT 1 FROM sqlite_schema
+                WHERE type='table' AND name IN ('store_identity','analysis_scope_manifest'))", [], |row| row.get(0))?;
+            if !known { return Err(super::StoreError::Invalid("expected an existing analysis store".into())); }
+        }
+        let identity = ContentStore::initialize(&mut db)?;
+        let atoms = super::atoms::Atoms::for_database(file, Some(identity));
+        let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let result = release(&tx, identity)?;
+        let upto = atoms.write_pending(&tx)?;
+        tx.commit()?;
+        atoms.committed(upto);
+        Ok(result)
+    })
 }
 
 impl ContentStore {

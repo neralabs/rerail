@@ -62,9 +62,7 @@ import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-con
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
-import { scanContentStore } from "../engine/native/analysis-scope.js";
-import { assertContentStoreOwner } from "../engine/native/main-instance.js";
-import { loadNativeBinding } from "../engine/native/native.js";
+import { deleteNamedAnalysisScope } from "../engine/native/analysis-scope.js";
 import { describeRemoteStatus, runRemoteCommand } from "./remote-cli.js";
 import { RemoteOutbox } from "../runtime/remote-outbox.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
@@ -193,7 +191,7 @@ function usage(): string {
     internalTesting(`Not part of the ${packageManifest(packageRoot).version} release:`),
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
     "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--revision <commit-or-tree> --analysis-scope <name>] [--rules-ref <ref>] [--pack <id>]... [--rr <file>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations] [--no-send]",
-    "  rerail scope delete <name>",
+    "  rerail scope delete <name> [--store <file>]",
     "  rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content]",
     "  rerail remote list|status [--json]",
     "  rerail remote remove <name|url>",
@@ -785,12 +783,12 @@ async function runProjectCommand(command: string, args: readonly string[], { hom
       return await runRepositoryCommand(command, args, { home, packageRoot, updater });
     case "state": return runStateCommand(args);
     case "scope": {
-      const [action, name] = args;
-      if (action !== "delete" || !name?.trim() || args.length !== 2) throw new Error("Usage: rerail scope delete <name>");
-      const store = scanContentStore(defaultRerailDatabasePath());
-      assertContentStoreOwner(store);
-      loadNativeBinding().deleteAnalysisScope(store, name, false);
-      await loadNativeBinding().collectAnalysisCacheAsync(store);
+      const [action, name, flag, path] = args;
+      if (action !== "delete" || !name?.trim() || (args.length !== 2 && !(args.length === 4 && flag === "--store" && path))) {
+        throw new Error("Usage: rerail scope delete <name> [--store <file>]");
+      }
+      const { store, hadMembers } = await deleteNamedAnalysisScope(defaultRerailDatabasePath(), name, path);
+      process.stdout.write(hadMembers ? `Released scope ${JSON.stringify(name)} in ${store}.\n` : `No published ownership for scope ${JSON.stringify(name)} in ${store}.\n`);
       return 0;
     }
     // Internal testing: `scan`, explicit full-repository and git-diff audits. Whether `settings` ships is still open.
