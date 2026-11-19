@@ -2,6 +2,23 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
+## Checks repeated at `e7e4bf393`
+
+The review still has 28 open items. That count excludes the two Windows runtime checks and the optional language features below.
+Six fixtures ran again on macOS with the current TypeScript code and the native addon from `6507e1a65`. The intervening commit changed tests and notes.
+
+| Case | Input and observation |
+| --- | --- |
+| Bound commit metadata | Git reported zero parents for the initial commit and one for its child. The [root policy](#a-direct-rule-can-produce-a-false-finding) reported both. Adding the explicit object request made it report only the initial commit. |
+| 88 | Git read HEAD from a main checkout with a separate Git directory. Pruning removed the registration and its only rule setting. |
+| 89 | An unprivileged process lost search permission on the checkout's parent. Pruning removed the only setting before the parent became readable again. |
+| 90 | An ordinary directory replaced a Git checkout at the same path. Lookup returned the former repository key together with `git: false`. |
+| 91 | Two catalogs recorded the same checkout before it gained an origin. After registration ran again in each catalog, the first returned a remote key and the second returned a clone key. |
+| 102 | Opening a store changed an existing parent from `0755` to `0700`. It also changed a separate parent from `1777` to `0700`. Both new databases had mode `0600`. |
+
+The [checkout and cache fixtures](#six-more-failures), [remaining cases and rule interfaces](#the-other-22-open-items), and [permission fixture](#102-opening-a-scope-store-changes-permissions-on-its-parent) give the repair checks.
+Case 68 has since passed for writers that record their control generation. The next section describes the remaining limitation for older writers.
+
 ## Directory generation cleanup after `9fd0a64ff`
 
 Case 68 now passes for directory acquisitions whose control generations the store observes.
