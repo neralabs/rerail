@@ -153,10 +153,10 @@ fn frame_kind(dir: &std::path::Path) -> super::segments::SegmentKind<'_> {
 /// A placed frame's row, as compaction moves it: its space, relation, identity and part.
 type FrameRow = (Vec<u8>, String, Vec<u8>, i64);
 
-/// The frames placed in segments numbered up to `upto`, in their order there.
-fn placed_frames(t: &Connection, upto: i64) -> rusqlite::Result<Vec<super::segments::Moved<FrameRow>>> {
-    let mut st = t.prepare_cached("SELECT space, rel, ident, part, seg, seg_at, seg_len FROM frames WHERE seg != 0 AND seg <= ?1 ORDER BY seg, seg_at")?;
-    let rows = st.query_map([upto], |r| <(Vec<u8>, String, Vec<u8>, i64, i64, i64, i64)>::try_from(r))?;
+/// The frames placed in segments numbered `from` and after, in their order there.
+fn placed_frames(t: &Connection, from: i64) -> rusqlite::Result<Vec<super::segments::Moved<FrameRow>>> {
+    let mut st = t.prepare_cached("SELECT space, rel, ident, part, seg, seg_at, seg_len FROM frames WHERE seg != 0 AND seg >= ?1 ORDER BY seg, seg_at")?;
+    let rows = st.query_map([from], |r| <(Vec<u8>, String, Vec<u8>, i64, i64, i64, i64)>::try_from(r))?;
     let place = |seg, at: i64, len: i64| super::segments::Place { seg, at: at as u64, len: len as usize };
     rows.map(|r| r.map(|(space, rel, ident, part, seg, at, len)| super::segments::Moved { key: (space, rel, ident, part), doc: part, digest: [0; 32], place: place(seg, at, len) })).collect()
 }
@@ -1068,10 +1068,10 @@ impl ContentStore {
     }
 
     /// Merges the frame segments compaction retires (`segments::retired`): every one where the bytes no row names
-    /// (frames written again, forgotten, collected) are more than half the segments and at least `floor`, else the
-    /// oldest past `segments::SEGMENT_BUDGET` of them; one write transaction. A frame whose segment is not there is
-    /// forgotten (derived again). Returns the bytes freed. A reader that mapped an old segment reads it on; one that
-    /// finds a row from before misses.
+    /// (frames written again, forgotten, collected) are more than half the segments and at least `floor`, else, past
+    /// `segments::SEGMENT_BUDGET` of them, all but the oldest half of it; one write transaction. A frame whose segment
+    /// is not there is forgotten (derived again). Returns the bytes freed. A reader that mapped an old segment reads
+    /// it on; one that finds a row from before misses.
     pub fn compact_frame_segments(&self, floor: u64) -> StoreResult<u64> {
         self.compact_frame_segments_within(floor, super::segments::SEGMENT_BUDGET)
     }
@@ -1079,10 +1079,10 @@ impl ContentStore {
     /// `compact_frame_segments`, keeping at most `budget` segments.
     fn compact_frame_segments_within(&self, floor: u64, budget: usize) -> StoreResult<u64> {
         let (held, named, numbers) = self.frame_segment_use()?;
-        let Some(upto) = super::segments::retired(held, named, &numbers, floor, budget) else { return Ok(0) };
+        let Some(from) = super::segments::retired(held, named, &numbers, floor, budget) else { return Ok(0) };
         let dir = frame_dir(&self.database_path);
         let kind = frame_kind(&dir);
-        let retired = self.immediate_transaction_once(|t| super::segments::merge(t, &kind, upto, placed_frames(t, upto)?, |f| forget_placed(t, f), |f, seg, at| move_placed(t, f, seg, at)))?;
+        let retired = self.immediate_transaction_once(|t| super::segments::merge(t, &kind, from, placed_frames(t, from)?, |f| forget_placed(t, f), |f, seg, at| move_placed(t, f, seg, at)))?;
         kind.remove(&retired);
         Ok(held.saturating_sub(self.frame_segment_bytes()?.0))
     }
@@ -2074,10 +2074,10 @@ mod tests {
         assert_eq!(store.frame_rows(&space, &r, 0).unwrap().unwrap().rows, big, "and from the snapshot");
     }
 
-    /// Segments past a budget are merged, every one of them named, the oldest down to half the budget: a process maps
-    /// each segment it reads, and the bytes alone never compacted writes that stay named (one segment each, for ever).
+    /// Segments past a budget are merged, every one of them named, all but the oldest half of the budget: a process
+    /// maps each segment it reads, and the bytes alone never compacted writes that stay named (one segment each).
     #[test]
-    fn the_oldest_segments_past_the_budget_are_merged() {
+    fn segments_past_the_budget_are_merged() {
         let dir = tempfile::tempdir().unwrap();
         let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
         let space = [6u8; 32];
@@ -2102,8 +2102,8 @@ mod tests {
         assert_eq!(store.compact_frame_segments(0).unwrap(), 0, "named, and fewer than the budget");
         assert_eq!(store.compact_frame_segments_within(u64::MAX, 12).unwrap(), 0, "no more than the budget");
         store.compact_frame_segments_within(u64::MAX, 8).unwrap();
-        let merged = [&before[8..], &[before[11] + 1]].concat();
-        assert_eq!(segments(), merged, "the oldest eight merged into one, the newest four left");
+        let merged = [&before[..4], &[before[11] + 1]].concat();
+        assert_eq!(segments(), merged, "the oldest four left, the newer eight merged into one after them");
         assert_eq!(store.compact_frame_segments_within(u64::MAX, 8).unwrap(), 0, "within the budget now");
         for (i, r) in rels.iter().enumerate() {
             let read = store.read_frame_parts_from(&space, &[(r.clone(), 0)], true, false).unwrap().remove(&(r.clone(), 0)).expect("read from the store");
@@ -2179,31 +2179,36 @@ mod tests {
         assert_eq!(frames, 0, "no memo entry is a frame");
     }
 
-    /// A memo's segments past a budget are merged, the oldest down to half the budget, though their bytes are named:
-    /// every entry, and what is kept over one, reads the same from where it is now.
+    /// A memo's segments past a budget are merged though their bytes are named, all but the oldest half of the budget,
+    /// into one numbered after them: a path's entries keep their order (its newest the one in the newest segment), so
+    /// what is kept of a path is its newest; every entry, and what is kept over one, reads the same.
     #[test]
-    fn a_memos_oldest_segments_past_the_budget_are_merged() {
+    fn a_memos_segments_past_the_budget_are_merged_in_their_order() {
         let dir = tempfile::tempdir().unwrap();
         let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
         let space = local_space(&[5u8; 32]);
-        let put = |part: i64, over: bool| MemoPut { part, path: format!("{part}.py"), digest: [part as u8; 32], key: 1, bytes: vec![part as u8 + u8::from(over); 4000], over };
+        let put = |part: i64, over: bool| MemoPut { part, path: "a.py".into(), digest: [part as u8; 32], key: 1, bytes: vec![part as u8 + u8::from(over); 4000], over };
         let segments = || std::fs::read_dir(dir.path().join("store.sqlite.memo")).unwrap().count();
-        // Seven entries, one batch each, and what is kept over the first, in an eighth.
+        // Seven contents of a.py, one batch each, all kept, and what is kept over the newest, in an eighth.
         for part in 0..7 {
-            store.put_memo_entries(&space, vec![put(part, false)], 4).unwrap();
+            store.put_memo_entries(&space, vec![put(part, false)], 8).unwrap();
         }
-        store.put_memo_entries(&space, vec![put(0, true)], 4).unwrap();
+        store.put_memo_entries(&space, vec![put(6, true)], 8).unwrap();
         let read = || -> std::collections::BTreeMap<i64, (Vec<u8>, Option<Vec<u8>>)> {
             let found = store.memo_entries(&space, &[0, 1, 2, 3, 4, 5, 6], true).unwrap();
             found.into_iter().map(|(part, blob)| (part, (blob.bytes.bytes().to_vec(), blob.over.as_ref().map(|o| o.bytes().to_vec())))).collect()
         };
         let unmerged = read();
-        assert_eq!((segments(), unmerged.len(), unmerged[&0].1.is_some()), (8, 7, true));
+        assert_eq!((segments(), unmerged.len(), unmerged[&6].1.is_some()), (8, 7, true));
         assert_eq!(store.compact_memo_pack(0).unwrap(), 0, "named, and fewer than the budget");
         assert_eq!(store.compact_memo_pack_within(1 << 40, 8).unwrap(), 0, "no more than the budget");
         store.compact_memo_pack_within(1 << 40, 4).unwrap();
-        assert_eq!(segments(), 3, "the oldest six merged into one, the newest two left");
+        assert_eq!(segments(), 3, "the oldest two left, the newer six merged into one after them");
         assert_eq!(read(), unmerged, "every entry reads the same");
+        // An eighth content, keeping three: a.py's newest three are kept, as before the merge.
+        store.put_memo_entries(&space, vec![put(7, false)], 3).unwrap();
+        let parts: Vec<i64> = store.connection.lock().unwrap().prepare("SELECT part FROM memo_entries WHERE space = ?1 ORDER BY part").unwrap().query_map([&space[..]], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(parts, [5, 6, 7], "the newest three contents");
     }
 
     /// A store's file copied without its packs (a test's store, cloned from its template's file alone) has rows naming

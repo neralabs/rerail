@@ -90,24 +90,24 @@ pub(super) fn segment_path(dir: &Path, seg: i64) -> PathBuf {
 }
 
 /// The segments of a kind (`frame_segments`, `memo_packs`, `object_segments`) the store keeps before compaction merges
-/// the oldest, whatever their bytes. A process maps each segment it reads, and the frames a run reads before its first
-/// wave are every frame of the store (decision 0104): a process's mappings are about the store's segments, and
-/// mappings are a bounded resource (Linux allows 65,530 a process). The bytes bound no count: writes whose entries
-/// stay named (a new root's frames, files never parsed again) each left one more segment. A merge past the budget
-/// copies the oldest segments' named bytes down to half the budget (`retired`), so its cost is about half the kind's
-/// live bytes, in one write transaction, once every half budget of writes.
+/// them, whatever their bytes. A process maps each segment it reads, and the frames a run reads before its first wave
+/// are every frame of the store (decision 0104): a process's mappings are about the store's segments, and mappings are
+/// a bounded resource (Linux allows 65,530 a process). The bytes bound no count: writes whose entries stay named (a new
+/// root's frames, files never parsed again) each left one more segment. Past the budget, the next collection pass that
+/// compacts (the passes that compact by bytes) merges all but the oldest half of the budget (`retired`): its cost is
+/// the named bytes of those segments, about half the kind's, in one write transaction.
 pub(super) const SEGMENT_BUDGET: usize = 1024;
 
-/// The newest of the segments compaction retires, of `numbers` (a kind's, oldest first) holding `held` bytes,
-/// `named` of which their rows name: every one where the bytes no row names are at least `floor` and half of `held`
-/// (the space freed pays for the copy); else, past `budget` segments, the oldest down to half the budget. `None`: no
-/// compaction is due.
+/// The oldest of the segments compaction retires, of `numbers` (a kind's, oldest first) holding `held` bytes, `named`
+/// of which their rows name: that one and every newer one are merged into one numbered after them all, so the order
+/// of the kind's entries, which the memo reads from their segments' numbers (its newest first), is kept. Every one
+/// where the bytes no row names are at least `floor` and half of `held` (the space freed pays for the copy); else,
+/// past `budget` segments, all but the oldest half of the budget. `None`: no compaction is due.
 pub(super) fn retired(held: u64, named: u64, numbers: &[i64], floor: u64, budget: usize) -> Option<i64> {
     if held >= floor && held.saturating_sub(named) >= held / 2 {
-        return numbers.last().copied();
+        return numbers.first().copied();
     }
-    let past = numbers.len().checked_sub(budget / 2 + 1).filter(|_| numbers.len() > budget);
-    past.map(|k| numbers[k])
+    numbers.get(budget / 2).copied().filter(|_| numbers.len() > budget)
 }
 
 /// A kind of segment, as compaction finds and merges it: the table that numbers its segments and the column, and the
@@ -146,25 +146,25 @@ pub(super) struct Moved<K> {
     pub(super) place: Place,
 }
 
-/// Merges `kind`'s segments numbered up to `upto` in its write transaction `t` (decision 0295 §4): each of `entries`
-/// (theirs) is copied into one new segment numbered after the kind's last, and `moved` points its row there (the
-/// segment and the offset); one whose bytes are not there is `lost`. Returns the retired segments, whose files go once
-/// `t` commits (`SegmentKind::remove`).
+/// Merges `kind`'s segments numbered `from` and after in its write transaction `t` (decision 0295 §4): each of
+/// `entries` (theirs, in their order) is copied, in that order, into one new segment numbered after the kind's last,
+/// and `moved` points its row there (the segment and the offset); one whose bytes are not there is `lost`. Returns the
+/// retired segments, whose files go once `t` commits (`SegmentKind::remove`).
 pub(super) fn merge<K>(
     t: &rusqlite::Connection,
     kind: &SegmentKind<'_>,
-    upto: i64,
+    from: i64,
     entries: Vec<Moved<K>>,
     lost: impl FnMut(&K) -> rusqlite::Result<()>,
     moved: impl FnMut(&K, i64, i64) -> rusqlite::Result<()>,
 ) -> StoreResult<Vec<i64>> {
     let numbers = kind.numbers(t)?;
     let kept = mapped(kind.dir, entries, lost)?;
-    t.execute(&format!("DELETE FROM {} WHERE {} <= ?1", kind.table, kind.column), [upto])?;
+    t.execute(&format!("DELETE FROM {} WHERE {} >= ?1", kind.table, kind.column), [from])?;
     if !kept.is_empty() {
         install(t, kind, numbers.last().copied().unwrap_or(0) + 1, &kept, moved)?;
     }
-    Ok(numbers.into_iter().filter(|&n| n <= upto).collect())
+    Ok(numbers.into_iter().filter(|&n| n >= from).collect())
 }
 
 /// Each entry's bytes, where they are: one whose segment is not there, or holds no such range, is `lost`.

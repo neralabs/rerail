@@ -376,10 +376,11 @@ impl ContentStore {
     }
 
     /// Merges the tape and source segments compaction retires (`segments::retired`): every one where the bytes no row
-    /// names (objects stored again, collected) are more than half of them and at least `floor`, else the oldest past
-    /// `segments::SEGMENT_BUDGET`; one write transaction. A row whose segment is not there is marked so (`seg` -1, never
-    /// a segment's number: no later segment is read as its), absent to readers until its file is parsed and stored
-    /// again; other rows name it, so it stays. Returns the bytes freed. A reader that mapped an old segment reads it on.
+    /// names (objects stored again, collected) are more than half of them and at least `floor`, else, past
+    /// `segments::SEGMENT_BUDGET` of them, all but the oldest half of it; one write transaction. A row whose segment
+    /// is not there is marked so (`seg` -1, never a segment's number: no later segment is read as its), absent to
+    /// readers until its file is parsed and stored again; other rows name it, so it stays. Returns the bytes freed. A
+    /// reader that mapped an old segment reads it on.
     pub fn compact_object_segments(&self, floor: u64) -> StoreResult<u64> {
         self.compact_object_segments_within(floor, super::segments::SEGMENT_BUDGET)
     }
@@ -387,10 +388,10 @@ impl ContentStore {
     /// `compact_object_segments`, keeping at most `budget` segments.
     fn compact_object_segments_within(&self, floor: u64, budget: usize) -> StoreResult<u64> {
         let (held, named, numbers) = self.object_segment_use()?;
-        let Some(upto) = super::segments::retired(held, named, &numbers, floor, budget) else { return Ok(0) };
+        let Some(from) = super::segments::retired(held, named, &numbers, floor, budget) else { return Ok(0) };
         let dir = object_dir(&self.database_path);
         let kind = object_kind(&dir);
-        let retired = self.immediate_transaction_once(|t| super::segments::merge(t, &kind, upto, placed_objects(t, upto)?, |o| lose_object(t, o), |o, seg, at| move_object(t, o, seg, at)))?;
+        let retired = self.immediate_transaction_once(|t| super::segments::merge(t, &kind, from, placed_objects(t, from)?, |o| lose_object(t, o), |o, seg, at| move_object(t, o, seg, at)))?;
         kind.remove(&retired);
         Ok(held.saturating_sub(self.object_segment_bytes()?.0))
     }
@@ -407,12 +408,12 @@ type ObjectRow = (&'static str, &'static str, i64);
 /// The tapes' and sources' tables, each with its id column.
 const OBJECT_TABLES: [(&str, &str); 2] = [("tape_objects", "tape_id"), ("source_objects", "source_id")];
 
-/// The tapes and sources placed in segments numbered up to `upto`, each table's in their order there.
-fn placed_objects(t: &Connection, upto: i64) -> rusqlite::Result<Vec<super::segments::Moved<ObjectRow>>> {
+/// The tapes and sources placed in segments numbered `from` and after, each table's in their order there.
+fn placed_objects(t: &Connection, from: i64) -> rusqlite::Result<Vec<super::segments::Moved<ObjectRow>>> {
     let mut out = Vec::new();
     for (table, id) in OBJECT_TABLES {
-        let mut st = t.prepare(&format!("SELECT {id}, seg, seg_at, seg_len FROM {table} WHERE seg > 0 AND seg <= ?1 ORDER BY seg, seg_at"))?;
-        for row in st.query_map([upto], |r| <(i64, i64, i64, i64)>::try_from(r))? {
+        let mut st = t.prepare(&format!("SELECT {id}, seg, seg_at, seg_len FROM {table} WHERE seg > 0 AND seg >= ?1 ORDER BY seg, seg_at"))?;
+        for row in st.query_map([from], |r| <(i64, i64, i64, i64)>::try_from(r))? {
             let (rowid, seg, at, len) = row?;
             out.push(super::segments::Moved { key: (table, id, rowid), doc: rowid, digest: [0; 32], place: Place { seg, at: at as u64, len: len as usize } });
         }

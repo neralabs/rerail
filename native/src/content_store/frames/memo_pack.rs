@@ -329,10 +329,11 @@ impl ContentStore {
     }
 
     /// Merges the segments compaction retires (`segments::retired`): every one where the bytes no row names are more
-    /// than half of them and at least `floor`, else the oldest past `segments::SEGMENT_BUDGET`. Each entry there, and
-    /// what is kept over it, is copied to a new segment in one write transaction, so no writer adds one meanwhile. Rows
-    /// of the packs before are forgotten. Returns the bytes freed. A reader of another process that found a row before
-    /// is told of an old segment: it misses (one it mapped stays as it was).
+    /// than half of them and at least `floor`, else, past `segments::SEGMENT_BUDGET` of them, all but the oldest half
+    /// of it. Each entry there, and what is kept over it, is copied in their order to a new segment numbered after
+    /// them, so a path's newest entry is still the one in the newest segment; one write transaction, so no writer
+    /// adds one meanwhile. Rows of the packs before are forgotten. Returns the bytes freed. A reader of another
+    /// process that found a row before is told of an old segment: it misses (one it mapped stays as it was).
     pub fn compact_memo_pack(&self, floor: u64) -> StoreResult<u64> {
         self.compact_memo_pack_within(floor, SEGMENT_BUDGET)
     }
@@ -340,13 +341,13 @@ impl ContentStore {
     /// `compact_memo_pack`, keeping at most `budget` segments.
     pub(in crate::content_store) fn compact_memo_pack_within(&self, floor: u64, budget: usize) -> StoreResult<u64> {
         let (held, named, packs) = self.memo_pack_use()?;
-        let Some(upto) = retired(held, named, &packs, floor, budget) else { return Ok(0) };
+        let Some(from) = retired(held, named, &packs, floor, budget) else { return Ok(0) };
         let dir = pack_dir(&self.database_path);
         let kind = memo_kind(&dir);
         let retired = self.immediate_transaction_once(|t| {
             // The packs' of before, and a row whose digest is not one (`Moved::digest`), are forgotten.
             t.execute_cached("DELETE FROM memo_entries WHERE framed = 0 OR length(digest) != 32", [])?;
-            merge(t, &kind, upto, placed_entries(t, upto)?, |e| lose_entry(t, e), |e, seg, at| move_entry(t, e, seg, at))
+            merge(t, &kind, from, placed_entries(t, from)?, |e| lose_entry(t, e), |e, seg, at| move_entry(t, e, seg, at))
         })?;
         kind.remove(&retired);
         remove_old_packs(&self.database_path, &retired);
@@ -373,28 +374,28 @@ type EntryBytes = (Vec<u8>, i64, bool);
 /// kept over it are (pack, offset, length; `over_len` 0: nothing).
 type PlacedEntry = (Vec<u8>, i64, i64, Vec<u8>, i64, i64, i64, i64, i64, i64);
 
-/// The entries, and what is kept over them, in segments numbered up to `upto`, in their order there.
-fn placed_entries(t: &rusqlite::Connection, upto: i64) -> rusqlite::Result<Vec<Moved<EntryBytes>>> {
+/// The entries, and what is kept over them, in segments numbered `from` and after, in their order there.
+fn placed_entries(t: &rusqlite::Connection, from: i64) -> rusqlite::Result<Vec<Moved<EntryBytes>>> {
     let mut st = t.prepare_cached(
         "SELECT space, part, doc, digest, pack, at, len, over_pack, over_at, over_len FROM memo_entries \
-         WHERE pack <= ?1 OR (over_len > 0 AND over_pack <= ?1) ORDER BY pack, at",
+         WHERE pack >= ?1 OR (over_len > 0 AND over_pack >= ?1) ORDER BY pack, at",
     )?;
     let mut out = Vec::new();
-    for row in st.query_map([upto], |r| PlacedEntry::try_from(r))? {
-        entry_places(row?, upto, &mut out);
+    for row in st.query_map([from], |r| PlacedEntry::try_from(r))? {
+        entry_places(row?, from, &mut out);
     }
     Ok(out)
 }
 
-/// An entry's bytes, and what is kept over it, where they are in segments numbered up to `upto`.
-fn entry_places((space, part, doc, digest, pack, at, len, over_pack, over_at, over_len): PlacedEntry, upto: i64, out: &mut Vec<Moved<EntryBytes>>) {
+/// An entry's bytes, and what is kept over it, where they are in segments numbered `from` and after.
+fn entry_places((space, part, doc, digest, pack, at, len, over_pack, over_at, over_len): PlacedEntry, from: i64, out: &mut Vec<Moved<EntryBytes>>) {
     // Every row's digest is 32 bytes here (`compact_memo_pack_within` forgot the others).
     let digest: [u8; 32] = digest.try_into().unwrap_or_default();
     let place = |seg, at: i64, len: i64| Place { seg, at: at as u64, len: len as usize };
-    if pack <= upto {
+    if pack >= from {
         out.push(Moved { key: (space.clone(), part, false), doc, digest, place: place(pack, at, len) });
     }
-    if over_len > 0 && over_pack <= upto {
+    if over_len > 0 && over_pack >= from {
         out.push(Moved { key: (space, part, true), doc, digest, place: place(over_pack, over_at, over_len) });
     }
 }
