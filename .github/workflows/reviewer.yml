@@ -112,11 +112,10 @@ jobs:
       # so a pull request can't change the rules it is judged by; packs/rerail is approved there. It marks each
       # violation new or existing. A separate rules pass recommends which new violations to post; a new violation of
       # a steer rule can be a blocker that names its rule. The review itself never sees the scan. Rerail is the
-      # published npm release, one that reads .rerail/packs.json; the scan result is sent to the Rerail remote
-      # (send_results), in a job that holds only the remote's URL and token. To turn it off, remove these three
+      # release the reviewer pins by default (rerail_package, left unset here); the scan result is sent to the Rerail
+      # remote (send_results), in a job that holds only the remote's URL and token. To turn it off, remove these two
       # inputs and the two RESULTS_SINK secrets.
       modules: rerail
-      rerail_package: "@neralabs/rerail@0.1.5"
       send_results: true
     # Named, not `secrets: inherit`: the reviewer gets these and nothing else this repo can see.
     secrets:
