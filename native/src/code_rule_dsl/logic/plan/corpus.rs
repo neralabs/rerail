@@ -455,7 +455,7 @@ fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&fron
         return Ok(None);
     }
     let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
-    let found = scoped(corpus_files(root)?, &prog, options);
+    let found = scoped(run_files(root, typing)?, &prog, options);
     let label = corpus_language(language.as_deref(), typing, &found);
     let files = if none_named { Default::default() } else { found.of(label) };
     let docs: Vec<&(String, String, String)> = consulted.iter().filter(|c| c.0 == "doc").collect();
@@ -2980,7 +2980,7 @@ fn run_observed(
             && options.get(constants::OWN).is_none()
             && std::env::var("RERAIL_SOURCES_PHASE").map_or(true, |v| v != "off")
         {
-            let found = scoped(corpus_files(root)?, prog, options);
+            let found = scoped(run_files(root, typing)?, prog, options);
             let label = corpus_language(language.as_deref(), typing, &found);
             let files = found.of(label);
             // The observer's facts: each source file of the run's grammar, its module, and its content's digest (read
@@ -3087,7 +3087,7 @@ fn run_observed(
                 let (files, label) = match listing.take() {
                     Some(listed) => listed,
                     None => {
-                        let found = scoped(corpus_files(root)?, &prog, options);
+                        let found = scoped(run_files(root, typing)?, &prog, options);
                         let label = corpus_language(language.as_deref(), typing, &found);
                         (found.of(label), label)
                     }
@@ -10345,6 +10345,18 @@ fn listed_directory(name: &str) -> bool {
 /// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files
 /// (`.rerail`), skipping the directories `listed_directory` refuses.
 pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
+    files_under(root, listed_directory)
+}
+
+/// The files a run reads under `root`: a repository's (`corpus_files`), or, where it summarizes a site directory
+/// (`Typing::summarize`), every installed file. The host's ignored directories are a repository's; an installed
+/// package may be named `vendor`, `build` or `coverage`, and Python imports it, as `deps::Installed` reads it.
+fn run_files(root: &Path, typing: &Typing) -> Result<CorpusFiles> {
+    if typing.summarize.is_some() { files_under(root, |_| true) } else { corpus_files(root) }
+}
+
+/// The files under `root` outside the directories `enters` refuses, as `corpus_files` lists them.
+fn files_under(root: &Path, enters: fn(&str) -> bool) -> Result<CorpusFiles> {
     let (mut by_label, mut text): (BTreeMap<&'static str, Vec<String>>, Vec<String>) = (BTreeMap::new(), Vec::new());
     let mut classify = |relative: String| match crate::code_rule_dsl::language::label_of_path(&relative) {
         Some(label) => by_label.entry(label).or_default().push(relative),
@@ -10361,7 +10373,7 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
         for relative in &under {
             let relative = relative.as_str();
             let dirs: Vec<&str> = relative.split('/').collect();
-            if !dirs[..dirs.len() - 1].iter().all(|d| listed_directory(d)) {
+            if !dirs[..dirs.len() - 1].iter().all(|d| enters(d)) {
                 continue;
             }
             listed += 1;
@@ -10386,7 +10398,7 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
         for (name, is_dir) in listing.iter() {
             let path = dir.join(name);
             if *is_dir {
-                if listed_directory(name) {
+                if enters(name) {
                     pending.push(path);
                 }
                 continue;
