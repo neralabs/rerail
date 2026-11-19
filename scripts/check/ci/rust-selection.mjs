@@ -197,13 +197,23 @@ function rootMentions(path, add) {
   }
 }
 
-/** A string literal without whitespace: the data roots it names, or itself when it is made of `..` alone. */
+/** Whether the literal at token `i` is compared or matched (`c == ".."`, `".." != c`, `".." =>`): a value, not a path. */
+function isOperand(t, i) {
+  const before = `${t[i - 2]?.punct ?? ""}${t[i - 1]?.punct ?? ""}`;
+  const after = `${t[i + 1]?.punct ?? ""}${t[i + 2]?.punct ?? ""}`;
+  return ["==", "!="].includes(before) || ["==", "!=", "=>"].includes(after);
+}
+
+/**
+ * A string literal without whitespace: the data roots it names, or itself when it is made of `..` alone and used as a
+ * path, not compared with a path's components.
+ */
 function literalMention(t, i, add) {
   const { string } = t[i];
   if (string === undefined || /\s/u.test(string)) return false;
   const path = string.replaceAll("\\", "/");
   rootMentions(path, add);
-  if (PARENTS_PATTERN.test(path)) add(PARENTS, path.replace(/^\//u, ""));
+  if (PARENTS_PATTERN.test(path) && !isOperand(t, i)) add(PARENTS, path.replace(/^\//u, ""));
   return true;
 }
 

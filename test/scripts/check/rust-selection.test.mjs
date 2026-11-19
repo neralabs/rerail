@@ -154,6 +154,23 @@ it("a crate joining its directory up to the repository root reads every data roo
   write({ "native/crates/low/src/lib.rs": "", "native/crates/other/src/lib.rs": "" });
 });
 
+it("a `..` compared or matched is a path component, not a walk to the repository root", () => {
+  const meta = metadata();
+  meta.packages.push({ name: "top", manifest_path: join(root, "top", "Cargo.toml"), targets: [{ src_path: join(root, "top", "src", "lib.rs") }], dependencies: [] });
+  const components = [
+    "fn safe(path: &str) -> bool { !path.split('/').any(|c| c == \"..\" || c.is_empty()) }",
+    'fn arm(c: &str) -> u8 { match c { ".." => 1, _ => 0 } }',
+    'fn back(c: &str) -> bool { ".." != c }',
+  ].join("\n");
+  write({ "top/src/lib.rs": components });
+  expect(dataMentions(components)[".."]).toBeUndefined();
+  expect(select(root, meta, ["fixtures/php/a.php"]).packages).toEqual([]);
+  // The same crate joining its directory to `..` reaches the root, one level up.
+  write({ "top/src/lib.rs": 'fn corpus() { PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".."); }\n' });
+  expect(select(root, meta, ["fixtures/php/a.php"]).packages).toEqual(["top"]);
+  write({ "top/src/lib.rs": "" });
+});
+
 it("package.json reaches the crates through napi's configuration and the scripts that run cargo", () => {
   const json = (scripts, extra = {}) => JSON.stringify({ scripts, dependencies: extra, napi: { binaryName: "e" } });
   expect(cargoInputs(json({ "test:native": "cargo test", lint: "eslint" }, { a: "1" }))).toBe(cargoInputs(json({ "test:native": "cargo test", lint: "biome" }, { a: "2" })));
