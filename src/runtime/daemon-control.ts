@@ -1366,9 +1366,10 @@ async function unansweredLaunch(launched: LaunchedDaemon, records: LaunchRecords
 
 /**
  * What a start says of the daemon `pid` it launched that has not answered within its wait: it may still be starting,
- * the start leaves it running, and `rerail status` shows it running once it answers. It names no second start, which waits again only for a daemon that holds the home, has not written
- * daemon.json and, on Windows, has its engine pipe listed: one that has written daemon.json and does not answer is
- * named to stop, and on Windows a start beside one whose pipe is not listed yet launches a second daemon, which exits.
+ * the start leaves it running, and `rerail status` shows it running once it answers. It names no second start, which
+ * waits again only for a daemon that holds the home, has not written daemon.json and, on Windows, has its engine pipe
+ * listed: one that has written daemon.json and does not answer is named to stop, and on Windows a start beside one
+ * whose pipe is not listed yet launches a second daemon, which exits.
  */
 function mayStillStart(pid: number | undefined, logFile: string): string {
   return `Rerail daemon${pid === undefined ? "" : ` (pid ${pid})`} has not answered within ${START_TIMEOUT_MS / 1_000}s `
