@@ -905,7 +905,10 @@ interface WalkStart {
   readonly versions: ReadonlyMap<string, number>;
   readonly heads: ReadonlyMap<string, string>;
   readonly unmerged: ReadonlyMap<string, ReadonlyMap<string, string>>;
-  /** `ToolCallWindows.ends` as the walk started: a command that ended since may have been writing what the walk read. */
+  /**
+   * `ToolCallWindows.ends` as the walk started: a command that ended since may have been writing what the walk read, and
+   * only the calls that ended before are those the walk answers for (`ToolCallWindows.answered`).
+   */
   readonly callsEnded: number;
   /** Filesystem-clock reading taken as the walk started. */
   readonly observedAt: number;
@@ -2644,7 +2647,7 @@ export class CodeRuleBridge {
     discovery.unread = scan.unread;
     discovery.passedCheckouts = scan.checkouts;
     // A subtree it could not read may still hold writes made since the session opened, which its next walk judges.
-    if (scan.failedRoots.size === 0) discovery.toolCalls.answered(walk.observedAt);
+    if (scan.failedRoots.size === 0) discovery.toolCalls.answered(walk.callsEnded);
     this.#listLateAgain(discovery, scan.lateListings);
   }
 
