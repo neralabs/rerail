@@ -13,7 +13,9 @@
  *
  * Two cases go red on causes that left a person's sessions with "rules unavailable" or edits unchecked: a session opened
  * from VS Code, which spells the drive letter `c:` (Windows), and subagents whose hooks run at once while the daemon is
- * slow to answer. The last case checks that a session's edits are still checked after its daemon restarts.
+ * slow to answer. The last case checks that a session's edits are still checked after its daemon restarts. One more
+ * writes the file through a Bash command while another process keeps it from being read until the check at the
+ * command's result is over: the agent's next command is steered on it.
  */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
@@ -139,6 +141,61 @@ async function endTurn(session: Session): Promise<HookAnswer> {
   return await hook({ ...common, hook_event_name: "Stop", prompt_id: "prompt-1", last_assistant_message: "Done." }, session.projectDir, session.env);
 }
 
+/** A Bash command of the session: PreToolUse, what it does (`run`), PostToolUse; the PostToolUse answer. */
+async function runCommand(session: Session, toolUseId: string, run: () => Promise<void>): Promise<HookAnswer> {
+  const tool = { tool_name: "Bash", tool_use_id: toolUseId, tool_input: { command: "python3 scripts/generate.py" } };
+  const common = { session_id: session.id, cwd: session.projectDir, ...tool };
+  expect((await hook({ ...common, hook_event_name: "PreToolUse" }, session.projectDir, session.env)).stderr).toBe("");
+  await run();
+  const tool_response = { stdout: "", stderr: "", interrupted: false, isImage: false };
+  return await hook({ ...common, hook_event_name: "PostToolUse", tool_response }, session.projectDir, session.env);
+}
+
+/**
+ * Another process that keeps the file at `HOLD_PATH` from being read until its input ends, saying `held` once it does
+ * and `released` once it let go. On Windows it opens the file with no sharing, as a program that scans or copies a file
+ * may: libuv's UV_FS_O_EXLOCK flag, which `fs.constants` does not name. Elsewhere no process can hold a file from reads
+ * without changing its times, so it takes the search permission off the file's folder.
+ */
+const HOLDER = `
+import { chmodSync, closeSync, constants, openSync, statSync } from "node:fs";
+import { dirname } from "node:path";
+const path = process.env.HOLD_PATH;
+let release;
+if (process.platform === "win32") {
+  const fd = openSync(path, constants.O_RDONLY | 0x10000000);
+  release = () => closeSync(fd);
+} else {
+  const folder = dirname(path);
+  const mode = statSync(folder).mode & 0o777;
+  chmodSync(folder, mode & ~0o111);
+  release = () => chmodSync(folder, mode);
+}
+process.stdout.write("held\\n");
+process.stdin.resume();
+process.stdin.on("end", () => { release(); process.stdout.write("released\\n"); });
+`;
+
+/** Starts `HOLDER` on `file` and returns once nothing can read the file, with what lets it go. */
+async function holdFromReads(file: string): Promise<() => Promise<void>> {
+  const child = spawn(process.execPath, ["--input-type=module", "-e", HOLDER], {
+    env: environment({ HOLD_PATH: file }), stdio: ["pipe", "pipe", "inherit"], windowsHide: true,
+  });
+  let said = "";
+  child.stdout.setEncoding("utf8");
+  const closed = once(child, "close");
+  await new Promise<void>((held, failed) => {
+    child.stdout.on("data", (chunk: string) => { said += chunk; if (said.includes("held\n")) held(); });
+    void closed.then(([code]) => { failed(new Error(`the holder ended before it held ${file}, code ${String(code)}`)); });
+  });
+  await expect(readFile(file)).rejects.toThrow();
+  return async () => {
+    child.stdin.end();
+    expect((await closed)[0]).toBe(0);
+    expect(said).toContain("released\n");
+  };
+}
+
 /** The steer reached the coding agent in the hook's answer: it names the rule and the file. */
 function expectSteered(answer: HookAnswer, file: string): void {
   expect(answer.stderr).toBe("");
@@ -216,6 +273,22 @@ describe("the Claude Code hook against a daemon of this build", () => {
     expectSteered(await writeTooComplex(session, files[2]!), files[2]!);
     await endTurn(session);
     await expectRulesFired(session, files);
+  }, 120_000);
+
+  it("steers and logs a Bash command's write at the next command when another program held the file through the check at its result", async () => {
+    const session: Session = { id: "held-write-session", projectDir: repo };
+    const file = join(repo, "src", "app", "held", "held_write.py");
+    await startSession(session);
+    let release = async (): Promise<void> => undefined;
+    await runCommand(session, "toolu_held_write", async () => {
+      await mkdir(dirname(file), { recursive: true });
+      await writeFile(file, tooComplex("held_write"));
+      release = await holdFromReads(file);
+    });
+    await release();
+    expectSteered(await runCommand(session, "toolu_after_held_write", async () => undefined), file);
+    await endTurn(session);
+    await expectRulesFired(session, [file]);
   }, 120_000);
 
   it.runIf(process.platform === "win32")("steers and logs it in a session opened from VS Code, which spells the drive letter in lower case", async () => {
