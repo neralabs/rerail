@@ -3271,6 +3271,62 @@ reach(a, c) :- reach(a, b), edge(b, c).
     ]);
 }
 
+/// A tool call is a test's input (`.tool_call`, `docs/rule-syntax/tool-calls.md`): the run is given the test's calls,
+/// "1", "2", … in order, and a `.scope tool_calls` policy's finding is at the call (path "", line 0, `at` its id). A
+/// call of another tool, a `--dry-run`, or the command in another argument is no finding.
+#[test]
+fn a_tests_tool_calls_are_its_runs_and_a_finding_is_at_the_call() {
+    let policy = r#".policy "t:tool-calls" revision 1
+.mode steer
+.scope tool_calls
+.violation Push(at: symbol) code "no-push" "a push from call {at}"
+Push(c) :- tool_call(c, "Bash"), tool_input(c, "command", s), match("(?s:.*)(?:\\bgit\\s+push\\b)(?s:.*)", s), !match("(?s:.*)(?:--dry-run)(?s:.*)", s).
+.test caught exactly
+    .tool_call "Bash" `{"command": "cd x &&\ngit push origin main"}`
+    .tool_call "Bash" `{"command": "git status"}`
+    .expect "no-push"
+.end
+.test passes
+    .tool_call "Bash" `{"command": "git push --dry-run"}`
+    .tool_call "Read" `{"command": "git push"}`
+    .tool_call "Bash" `{"description": "git push"}`
+    .expect no "no-push"
+.end
+.test says_which_call
+    .tool_call "Bash" `{"command": "ls"}`
+    .tool_call "Bash" `{"command": "git push"}`
+    .expect no "no-push"
+.end
+"#;
+    assert_eq!(run_tests_of("rr-tool-calls", policy), [
+        ("caught".to_owned(), Ok(vec![])),
+        ("passes".to_owned(), Ok(vec![])),
+        ("says_which_call".to_owned(), Ok(vec!["line 20: .expect no no-push: reported no-push at call \"2\"".to_owned()])),
+    ]);
+    let refused = run_tests_of("rr-tool-call-bad", ".decl r(x: symbol)\n.test t\n    .tool_call \"Bash\" `[1]`\n.end\n");
+    assert!(matches!(&refused[..], [(_, Err(e))] if e.contains(":3: `.tool_call \"<tool>\"`")), "{refused:?}");
+}
+
+/// A policy reads tool calls when it says so, `.scope tool_calls` (as a JSON rule that reads `input` samples tool
+/// calls), and then reads no file, its findings at a call (`at: symbol`).
+#[test]
+fn a_policy_reads_tool_calls_only_under_scope_tool_calls() {
+    let head = ".policy \"t\" revision 1\n";
+    let reads = "V(c) :- tool_input(c, \"command\", s), match(\"ls\", s).\n";
+    let program = super::read_text(&format!("{head}.scope tool_calls\n.violation V(at: symbol) \"v\"\n{reads}")).unwrap().lower(false).unwrap();
+    assert_eq!(program.doc_scopes, Some(Vec::new()), "a policy of tool calls reads no document");
+    for (text, why) in [
+        (format!("{head}.decl r(s: symbol)\nr(s) :- tool_input(_, \"command\", s).\n.output r\n"), "a policy that reads tool calls says `.scope tool_calls`"),
+        (format!("{head}.scope tool_calls\n.violation V(at: node) \"v\"\nV(n) :- kind(n, \"call\").\n"), "findings are at a tool call, `at: symbol`"),
+        (format!("{head}.violation V(at: symbol) \"v\"\nV(s) :- tool_input(_, \"command\", s).\n"), "says `.scope tool_calls`"),
+        (format!("{head}.violation V(at: symbol) \"v\"\n.decl w(s: symbol)\nw(\"a\").\nV(s) :- w(s).\n"), "only in a `.scope tool_calls` policy"),
+        (format!("{head}.scope tool_calls\n.scope include \"**/*.py\"\n.violation V(at: symbol) \"v\"\n{reads}"), "no `.scope include \"**/*.py\"` beside it"),
+    ] {
+        let error = super::read_text(&text).unwrap().lower(false).unwrap_err().to_string();
+        assert!(error.contains(why), "{text}: {error}");
+    }
+}
+
 /// What a test may not do is refused with its line: give a core relation, give one no rule declares, use a set that
 /// is not there, or have two fixtures at one path.
 #[test]

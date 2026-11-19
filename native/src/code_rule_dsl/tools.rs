@@ -867,10 +867,29 @@ pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::cor
             let options = if args.len() == 5 { serde_json::from_str(&read(&args[4])?).map_err(|e| e.to_string())? } else { serde_json::Value::Null };
             serde_json::to_string(&crate::tools::run_rr(Path::new(&args[1]), Path::new(&args[2]), Path::new(&args[3]), &options)?).map_err(|e| e.to_string())
         }
-        // Several policies over one repository, each over its own language's files (O105).
-        Some("run-policies") if args.len() > 3 => {
-            let paths = args[3..].iter().map(std::path::PathBuf::from).collect::<Vec<_>>();
-            serde_json::to_string(&crate::tools::run_policies(&paths, Path::new(&args[1]), Path::new(&args[2]), &serde_json::Value::Null)?).map_err(|e| e.to_string())
+        // Several policies over one repository, each over its own language's files (O105). `--tool-calls <calls.json>`:
+        // the tool calls the run is given (`[{"id", "tool", "input"}]`, the `toolCalls` option: `corpus::added`), which
+        // `.scope tool_calls` policies read.
+        Some("run-policies") => {
+            let usage = "usage: rerail-engine run-policies [--tool-calls <calls.json>] <root> <out> <policy.rerail>...";
+            let (mut positional, mut options) = (Vec::new(), serde_json::Value::Null);
+            let mut rest = args[1..].iter();
+            while let Some(a) = rest.next() {
+                if a == "--tool-calls" {
+                    let file = rest.next().ok_or(usage)?;
+                    let calls: serde_json::Value = serde_json::from_str(&read(file)?).map_err(|e| format!("{file}: {e}"))?;
+                    crate::code_rule_dsl::logic::plan::corpus::added::tool_call_rows(&calls).map_err(|e| format!("{file}: {e}"))?;
+                    options = serde_json::json!({ "toolCalls": calls });
+                } else {
+                    positional.push(a);
+                }
+            }
+            let [root, out, policies @ ..] = positional.as_slice() else { return Err(usage.into()) };
+            if policies.is_empty() {
+                return Err(usage.into());
+            }
+            let paths = policies.iter().map(|p| std::path::PathBuf::from(p.as_str())).collect::<Vec<_>>();
+            serde_json::to_string(&crate::tools::run_policies(&paths, Path::new(root), Path::new(out), &options)?).map_err(|e| e.to_string())
         }
         Some("check-rr") if args.len() > 1 => {
             let paths = args[1..].iter().map(std::path::PathBuf::from).collect::<Vec<_>>();

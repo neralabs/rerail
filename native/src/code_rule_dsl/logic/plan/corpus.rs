@@ -420,7 +420,8 @@ fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: 
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
     let masked = masked(programs);
-    Ok(combine_keyed(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), graphs, &added::Added::of(&settings, options), read, &front::Lists::default())?.0)
+    let added = added::Added::of(&settings, options).map_err(Error::Plan)?;
+    Ok(combine_keyed(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), graphs, &added, read, &front::Lists::default())?.0)
 }
 
 /// The workspace documents whose bytes changed since a run that consulted `consulted`, when nothing else it
@@ -1783,10 +1784,11 @@ pub const GIVEN: [&str; 8] = ["in_scope", "out_scope", "report_when_gt", "option
 fn bound(prog: &front::Program) -> Result<()> {
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).chain(prog.facts.keys().map(String::as_str)).collect();
     let cpython = "CPython (core.rerail: the isolated `ast.parse` worker), which the corpus runner does not run";
-    // `env` is the run's settings (`tools::with_settings`): facts when there are any, else empty. The world's
-    // relations (`dir_entry`, `file_line`, …, and `loaded`) are answered by the runner (`world`).
+    // `env` is the run's settings (`tools::with_settings`), and `tool_call` and `tool_input` the tool calls it is given
+    // (`corpus::added`, `rr::lower::TOOL_CALLS`): facts when there are any, else empty. The world's relations
+    // (`dir_entry`, `file_line`, …, and `loaded`) are answered by the runner (`world`).
     let world = |rel: &str| rel == world::LOADED || crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel);
-    let given = |rel: &str| GIVEN.contains(&rel) || rel == "env" || world(rel) || NOT_MADE.iter().any(|(r, _)| *r == rel);
+    let given = |rel: &str| GIVEN.contains(&rel) || rel == "env" || crate::code_rule_dsl::logic::rr::lower::TOOL_CALLS.contains(&rel) || world(rel) || NOT_MADE.iter().any(|(r, _)| *r == rel);
     // core.rerail's literal parts are made in core.rerail's shape only (`syntax::core_rr`): a program that declares its base
     // relations itself (T's shape) has none.
     let t_shape = syntax::Projection::of(prog, BTreeSet::new()).shape == syntax::Shape::T;
@@ -2811,7 +2813,7 @@ fn run_observed(
     let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
     // The settings are `env` rows, given to each program that declares `env` once it is read (decision 0249): the
     // program read stays the program, and the texts are the files' own.
-    let mut added = added::Added::of(&settings, options);
+    let mut added = added::Added::of(&settings, options).map_err(Error::Plan)?;
     let read = given.read;
     // The texts as the run's keys read them, messages masked (`texts_digest`, decision 0225 §3), each masked once.
     let masked_texts = masked(programs);

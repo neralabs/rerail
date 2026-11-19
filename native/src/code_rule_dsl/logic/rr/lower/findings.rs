@@ -129,6 +129,13 @@ impl Lowerer {
     pub(super) fn diagnostics(&mut self, policy: &str, finding: &Violation) -> Result<(), Error> {
         let cols: Vec<Term> = (0..finding.arity).map(|i| v(&format!("rr_v{i}"))).collect();
         let mut body = vec![atom(&finding.name, cols.clone())];
+        if finding.call() {
+            // At a tool call (`.scope tool_calls`): no path, line 0, and the call's id its `at`.
+            body.push(atom(TOOL_CALLS[0], vec![cols[0].clone(), Term::Wild]));
+            body.push(Literal::Cmp { l: v("rr_p"), op: "=", r: s("") });
+            body.push(Literal::Cmp { l: v("rr_l"), op: "=", r: Term::Int(0) });
+            return self.diagnostic_rule(policy, finding, &cols, cols[0].clone(), body, false);
+        }
         if finding.node {
             body.push(atom("node", vec![v("rr_d"), cols[0].clone(), Term::Wild, Term::Wild, Term::Wild]));
         } else {
@@ -164,7 +171,7 @@ impl Lowerer {
                     "line" if i == 0 => number(v("rr_l")),
                     "line" => { body.push(atom("line", vec![cols[i].clone(), v(&value)])); number(v(&value)) }
                     "name" => {
-                        if i == 0 && place { return Err(Error::Syntax(format!(".violation {} message: a place has no name", finding.name))); }
+                        if i == 0 && (place || finding.call()) { return Err(Error::Syntax(format!(".violation {} message: a place or a tool call has no name", finding.name))); }
                         let child = self.fresh("message_name");
                         body.push(atom("field", vec![cols[i].clone(), s("name"), v(&child)]));
                         body.push(atom("text", vec![v(&child), v(&value)]));
