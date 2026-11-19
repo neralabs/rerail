@@ -23,7 +23,7 @@ use rerail_accel::kernel::{JoinBy, Keys};
 use rerail_accel::{Batch, Kernel, Launch, Pairs};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// A relation's id for the run: what the executor's space keeps its forms by.
 #[derive(Debug)]
@@ -75,8 +75,14 @@ struct Pending {
     lids: Vec<u32>,
 }
 
-/// Pending pairs by the seed's spec.
-static PENDING: LazyLock<Mutex<HashMap<u64, Pending>>> = LazyLock::new(Default::default);
+/// Pending pairs by the seed's spec: the run's own (decision 0442).
+#[derive(Default)]
+struct Pendings(Mutex<HashMap<u64, Pending>>);
+
+/// The run's pending pairs.
+fn pendings() -> std::sync::Arc<Pendings> {
+    crate::code_rule_dsl::logic::run::local::<Pendings>()
+}
 
 /// A seed's pairs, taken: its first atom's row ids, and the pairs (an index into them, the second atom's row id).
 pub struct Paired {
@@ -147,7 +153,7 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<
         }
         let key = digest(spec);
         // Sent already: twice in this batch, or by the level before (a chained join, decision 0100 §11).
-        if pending.iter().any(|(k, _): &(u64, Pending)| *k == key) || PENDING.lock().unwrap().contains_key(&key) {
+        if pending.iter().any(|(k, _): &(u64, Pending)| *k == key) || pendings().0.lock().unwrap().contains_key(&key) {
             continue;
         }
         let Ok(j) = super::join_rule(conn, spec, &mut syms) else { continue };
@@ -202,7 +208,8 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<
     drop(fills);
     opener.open();
     let batch = Arc::new(LevelBatch { each: Some(running.each()) });
-    let mut all = PENDING.lock().unwrap();
+    let all = pendings();
+    let mut all = all.0.lock().unwrap();
     for (key, mut p) in pending {
         p.batch = Arc::clone(&batch);
         all.insert(key, p);
@@ -220,7 +227,7 @@ struct Fill {
 
 /// The pairs of `j`, if a level's batch made them from the relations it reads now.
 pub fn take(j: &super::JoinRule) -> Result<Option<Paired>> {
-    let Some(p) = PENDING.lock().unwrap().remove(&j.spec) else { return Ok(None) };
+    let Some(p) = pendings().0.lock().unwrap().remove(&j.spec) else { return Ok(None) };
     let Some((r0, r1, ..)) = qualifies(j) else { return Ok(None) };
     let pairs = p.batch.out(p.at)?;
     if ident(r0) != p.left || ident(r1) != p.right {
@@ -231,7 +238,7 @@ pub fn take(j: &super::JoinRule) -> Result<Option<Paired>> {
 
 /// Drops pairs no seed took (a stratum that ran in SQL, or declined), and what the lanes keep: the chunk's end.
 pub fn clear() {
-    let gone: Vec<Pending> = PENDING.lock().unwrap().drain().map(|(_, p)| p).collect();
+    let gone: Vec<Pending> = crate::code_rule_dsl::logic::run::local_if_any::<Pendings>().map(|p| p.0.lock().unwrap().drain().map(|(_, p)| p).collect()).unwrap_or_default();
     // A batch still running is waited for, so its lanes' buffers are not freed under it.
     for p in &gone {
         let _ = p.batch.out(p.at);

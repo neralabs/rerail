@@ -274,8 +274,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
-    ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
-    ("code_rule_dsl/logic/native/setfix/table.rs", "BUILT"),
     // core.rr's declarations (RER-131), read once from the engine's own library text: not a result kept.
     ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
     // This thread's zstd contexts by dictionary (RER-131): open things, not results.
@@ -357,8 +355,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "STORE"),
     // Phase 1's runs within one batch of policies over one tree, dropped with it: nothing kept past the batch.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "BATCH"),
-    // With them, the memo plans of the batch's runs so far, by root (O-store-single-program): dropped with the batch.
-    ("code_rule_dsl/logic/plan/corpus/phases.rs", "BATCH_PLANS"),
     // A registry of an open thing: the holders of the rule files' shared tape-cache handle, and the handle.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "READING"),
     ("content_store/observe.rs", "OBSERVERS"),
@@ -402,7 +398,6 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/derived.rs", "SESSION_MEMO", "6"),
     // The observed keeps, a handle a strand enters (decision 0113 §4).
     ("code_rule_dsl/logic/plan/keeps.rs", "OBSERVED_AT", "6"),
-    ("code_rule_dsl/logic/native/setfix/table.rs", "PAID", "6"),
     ("code_rule_dsl/logic/strings.rs", "MATCHERS", "7"),
     // RER-131's compiled group patterns, where `GROUPS` was.
     ("code_rule_dsl/logic/strings.rs", "GROUP_REGEXES", "7"),
@@ -411,7 +406,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/text.rs", "NAMES", "7"),
 ];
 /// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised.
-const NOT_YET_MAPS_PIN: usize = 21;
+const NOT_YET_MAPS_PIN: usize = 20;
 
 fn src() -> PathBuf {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")

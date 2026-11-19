@@ -2734,13 +2734,16 @@ pub fn closes_done() {
     }
 }
 
-/// The store the process's runs use instead of the machine's while one is set (`use_store`): testing mode's
-/// (decision 0130), whose runs must not read what other runs left, nor wait behind their writes.
-static STORE: std::sync::RwLock<Option<std::path::PathBuf>> = std::sync::RwLock::new(None);
+thread_local! {
+    /// The store this thread's runs use instead of the machine's while one is set (`use_store`): testing mode's
+    /// (decision 0130), whose runs must not read what other runs left, nor wait behind their writes. Its caller's
+    /// (decision 0442), carried to its runs' jobs (`carried`).
+    static STORE: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) };
+}
 
-/// While the guard lives, every run of the process (without `RERAIL_TAPE_CACHE`) uses the store at `path`.
+/// While the guard lives, every run of this thread (without `RERAIL_TAPE_CACHE`) uses the store at `path`.
 pub fn use_store(path: std::path::PathBuf) -> UsedStore {
-    let was = STORE.write().expect("the process's store").replace(path);
+    let was = STORE.with(|s| s.borrow_mut().replace(path));
     UsedStore(was)
 }
 
@@ -2749,15 +2752,16 @@ pub struct UsedStore(Option<std::path::PathBuf>);
 
 impl Drop for UsedStore {
     fn drop(&mut self) {
-        *STORE.write().expect("the process's store") = self.0.take();
+        let was = self.0.take();
+        STORE.with(|s| *s.borrow_mut() = was);
     }
 }
 
-/// Whether the process names the store its runs use (`RERAIL_TAPE_CACHE`, `use_store`), so a test's runs use that
+/// Whether the caller names the store its runs use (`RERAIL_TAPE_CACHE`, `use_store`), so a test's runs use that
 /// one and not their own copy (`test_store::carried`).
 #[cfg(any(test, feature = "test-hooks"))]
 fn names_its_store() -> bool {
-    std::env::var_os("RERAIL_TAPE_CACHE").is_some() || STORE.read().expect("the process's store").is_some()
+    std::env::var_os("RERAIL_TAPE_CACHE").is_some() || STORE.with(|s| s.borrow().is_some())
 }
 
 /// The path `tape_cache` opens (`None`: `RERAIL_TAPE_CACHE=off`).
@@ -2767,7 +2771,7 @@ pub fn tape_cache_path() -> Option<std::path::PathBuf> {
         return Some(path);
     }
     if std::env::var_os("RERAIL_TAPE_CACHE").is_none()
-        && let Some(path) = STORE.read().expect("the process's store").clone()
+        && let Some(path) = STORE.with(|s| s.borrow().clone())
     {
         return Some(path);
     }
@@ -3127,6 +3131,7 @@ thread_local! {
 pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
     c.copy(&["RUNS_UNDER_WAY"], &RUNS_UNDER_WAY);
     c.copy(&["RUN_TOKEN"], &RUN_TOKEN);
+    c.cloned(&["STORE"], &STORE);
 }
 
 /// The outermost runs of the process, numbered from 1.

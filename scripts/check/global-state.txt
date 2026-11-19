@@ -174,19 +174,16 @@ native/src/code_rule_dsl/logic/native/setfix.rs::INPUTS	connection	a connection'
 native/src/code_rule_dsl/logic/native/setfix.rs::ONCE	review	
 native/src/code_rule_dsl/logic/native/setfix.rs::SCOPE_PATHS	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/native/setfix.rs::SCOPE_SYMS	connection	a connection's own state, keyed by connection in a process map
-native/src/code_rule_dsl/logic/native/setfix.rs::STORED	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/native/setfix.rs::STORED	connection	the stored tables read, by database: kept across runs with the connection's inputs (INPUTS, batch 4)
 native/src/code_rule_dsl/logic/native/setfix.rs::SYMS	shared	shared by design: one per store file
 native/src/code_rule_dsl/logic/native/setfix/device.rs::TICKETS	review	
 native/src/code_rule_dsl/logic/native/setfix/device.rs::WAVES	review	
 native/src/code_rule_dsl/logic/native/setfix/lab.rs::STORED	review	
 native/src/code_rule_dsl/logic/native/setfix/lab.rs::WRITTEN	review	
 native/src/code_rule_dsl/logic/native/setfix/level.rs::NEXT	review	
-native/src/code_rule_dsl/logic/native/setfix/level.rs::PENDING	run	a run's own results or batch: two runs at once collide
 native/src/code_rule_dsl/logic/native/setfix/runs.rs::COUNTS	review	
 native/src/code_rule_dsl/logic/native/setfix/runs.rs::SITES	review	
-native/src/code_rule_dsl/logic/native/setfix/table.rs::BUILT	run	a run's own results or batch: two runs at once collide
-native/src/code_rule_dsl/logic/native/setfix/table.rs::PAID	run	a run's own results or batch: two runs at once collide
-native/src/code_rule_dsl/logic/plan.rs::KEPT	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/plan.rs::KEPT	shared	program analyses kept across a session's runs: the session's or the shared object's (batch 5)
 native/src/code_rule_dsl/logic/plan.rs::RUNS	review	
 native/src/code_rule_dsl/logic/plan.rs::SHOWN	review	
 native/src/code_rule_dsl/logic/plan.rs::TEMP_LEFT	connection	a connection's own state, keyed by connection in a process map
@@ -198,15 +195,11 @@ native/src/code_rule_dsl/logic/plan/corpus.rs::OFF	review
 native/src/code_rule_dsl/logic/plan/corpus.rs::PATH	review	
 native/src/code_rule_dsl/logic/plan/corpus.rs::PREPARED	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/logic/plan/corpus.rs::RUNS_STARTED	review	
-native/src/code_rule_dsl/logic/plan/corpus.rs::STORE	run	a run's own results or batch: two runs at once collide
 native/src/code_rule_dsl/logic/plan/corpus/inputs.rs::BASE	review	
 native/src/code_rule_dsl/logic/plan/corpus/inputs.rs::FACTS_DIR	review	
 native/src/code_rule_dsl/logic/plan/corpus/inputs.rs::REQUIRE_FACTS	review	
 native/src/code_rule_dsl/logic/plan/corpus/phase0.rs::KEPT	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/logic/plan/corpus/phase0.rs::RUNS	review	
-native/src/code_rule_dsl/logic/plan/corpus/phases.rs::BATCH	run	a run's own results or batch: two runs at once collide
-native/src/code_rule_dsl/logic/plan/corpus/phases.rs::BATCH_PLANS	run	a run's own results or batch: two runs at once collide
-native/src/code_rule_dsl/logic/plan/corpus/phases.rs::READING	run	a run's own results or batch: two runs at once collide
 native/src/code_rule_dsl/logic/plan/corpus/session.rs::GENERATION	review	
 native/src/code_rule_dsl/logic/plan/corpus/switches.rs::CHANGED	review	
 native/src/code_rule_dsl/logic/plan/corpus/switches.rs::STATE	run	the RERAIL_* switches' gate: a setting is the run's, read as it starts
