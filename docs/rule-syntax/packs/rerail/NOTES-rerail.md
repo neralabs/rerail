@@ -82,12 +82,14 @@ libraries: `lib/tsx/rerail-module-loads.rerail` (b), `lib/rust/rerail-native.rer
 `site/check_rr.py` learned that `match_all` binds its match (`match_all("re", sp, m)` binds `m`; over a symbol, the
 ordinal and offsets): it reported every regex rule here as ungrounded, and three earlier files too.
 
-### Engine faults met on the way (worked around, not changed)
+### Engine faults met on the way (fixed in the engine, no workaround left)
 
-- `run-policies` panics with `no declaration of within` (`native/src/code_rule_dsl/logic/plan/fields.rs`, `width`)
-  when `rerail-ui-pure-modules` read `within(n, a)` and ran together with another JavaScript policy
-  (`rerail-ui-api-precedence` or `rerail-ui-color-tokens.javascript`); each ran alone. The rule now reads the binders
-  through `inside` with their kinds.
+- A run of two or more policies lost the declaration of `within`, which `core.rerail` declares, and panicked with
+  `no declaration of within`. Fixed in the lowering (`logic/rr/lower.rs`, `link_seeded`); `rerail-ui-pure-modules`
+  reads `within(n, a)` as first written.
+- A store held one open file per segment it had read, so `test-rr` over this directory reached the default limit of
+  1,024 open files on a store kept between runs. Fixed in `rerail_blocks`: a mapped segment's file is closed once it
+  is mapped. The 125 tests pass at the default limit.
 
 ## Not translated: what the engine lacks
 
