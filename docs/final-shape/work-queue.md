@@ -2704,8 +2704,15 @@ submitted" now hold device memory at once.
   made every block through one policy that gives a `Device::May` block a slab while half the budget is spare (0342,
   9e08ed961), and kept each job's device work apart (0386). The budget is the user's (half the memory limit, row
   blocks inside it); the bench lifts `RERAIL_RUN_MB`, the chunks' line, not `RERAIL_MEMORY_MB`, which sets it.
-  Options for the user: the Metal allowance follows the lifted line; `May` blocks leave the device's half alone
-  when a wave is under way; or a refused stratum waits for the wave's leases to come back before it runs on the CPU.
+  The user's answer (2026-11-18): plan the device's memory rather than give up greedily; raising the limit is fine
+  for now. With a 2 GB budget (metal4g-t54.txt) both refuse none, and t54 cuts 14-19 chunks where t41 cuts 7.
+- **Built** (2026-11-18): (1) 3524ec47e: a stage's table is sized by the planner's estimate of its rows
+  (`StepPlan::all` through `JoinSpec::est`), twice it, not its input doubled; the "large tables" were guesses
+  (rr_token_req's 730 k-row tables held 7,453). (2) 68674305a: admission (`gpu::shared::admit`): a stratum reserves
+  its tables' room whole before it encodes and waits, helping the pool, for leases other threads hold; it goes to
+  the CPU past the budget, when threads that go on hold less than it lacks (no deadlock), or past
+  `placement::worth_waiting` (at most 0.5 s). (3) cb55e0b5a: a chunk is sized by the host memory it added, the
+  device's slabs and buffers (Metal's own budget, 0126) left out.
 - **Record**: —
 
 ### Q189. (bend's Q117, benchmarks-on-integration's Q54, then Q179 there) The journal's answer across processes is not a guarantee FSEvents makes
