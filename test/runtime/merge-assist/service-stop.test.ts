@@ -480,6 +480,24 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     expect(heard()).toEqual([]);
   });
 
+  it("hands a conflict that three stopped scans found gone, found again and found gone as `closed`, then the `detected` of the pass that finds it once more: never one event twice in a row", async () => {
+    const ws = await workspace();
+    const heard = await loggedHook(ws);
+    await conflictsStored(ws);
+    for (const move of [peersElsewhere, peersBack, peersElsewhere]) {
+      move(ws);
+      await scanEndingWithinStop(ws, "--name-only", []);
+    }
+    expect(await openConflicts(ws)).toBe(0);
+    peersBack(ws);
+
+    await nextPass(ws, []);
+
+    const events = byConflict(heard());
+    expect({ conflicts: events.size, open: await openConflicts(ws) }).toEqual({ conflicts: PEERS, open: PEERS });
+    for (const sequence of events.values()) expect(sequence).toEqual(["detected", "closed", "detected"]);
+  });
+
   it.each([
     ["new", "gone", peersElsewhere],
     ["gone", "open again", peersBack],
