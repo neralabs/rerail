@@ -2,6 +2,77 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners. The experiments ran on macOS.
 
+## Status at `87d18d609` and in the identity draft
+
+The previous review listed 20 follow-up cases. Three have committed repairs. Seventeen still lack a committed repair, including one performance measurement.
+This review adds eight reproduced problems and three differences between the library design and the public rules.
+Case numbers below belong to this follow-up audit. The original audit has separate numbers.
+
+### Eight new reproductions
+
+| Case | How to see it | Observable result | Repair and acceptance check |
+| --- | --- | --- | --- |
+| 78. An open view reads another checkout's HEAD | Open a named `GitRevisionSource` on A. Rename A and put an independently initialized checkout B at its old path. Query both `git_source_commit` and `git_revision` for HEAD in the original view. | One policy reported A's pinned commit and B's HEAD. The same result occurred with the preceding native addon and with the draft. | Verify the clone and worktree identities before reading mutable refs or reopening storage. Return a source error if the view can no longer open its own repository. Check a real ref update in A as a positive control. |
+| 79. The catalog accepts part of an oversized ID | Write `short-id`, pad it with spaces to 128 bytes, then append `trailing-content` to the repository marker. Call `resolveCloneId`. | The 144-byte file identifies the clone as `short-id`. The draft native reader rejects the same file. | Check the file size and read one byte past the limit. Apply the same acceptance rules in both readers. Test 128 bytes, 129 bytes, and a valid prefix with a suffix. |
+| 80. A repository identity lookup hangs | On Unix, use a named pipe for the common directory's ID file. Call `resolveCloneId` in a child with no pipe writer. | The child entered the call and was still blocked when the 2.2-second deadline expired. | Open nonblocking on Unix and check the open descriptor for a regular file. Check that an ordinary file still works and a pipe returns an error without a writer. |
+| 81. A worktree name loses its final component after a newline | Register a linked worktree with a literal newline inside its directory name. Compare `worktreeRegistry(main)` with `git worktree list --porcelain -z`. | Git returned the full path. The catalog returned only the characters before the newline. | Read NUL-delimited paths on supported Git versions. On older versions, use structured worktree data or read the administrative path records. Exercise the automatic registration entry point on both paths. |
+| 82. The registry associates worktrees with the wrong common directory | Read A's registry from a linked checkout. Move it with Git. Add a linked checkout from B at the vacated path. Read its registry in the same process. | The returned list belonged to B, but its reported common directory still belonged to A. | Revalidate the checkout's Git directory and common directory before reusing the registry. Repeat the replacement with separate registries and an unchanged-checkout control. |
+| 83. A local upstream disappears | Set `branch.main.remote=.` and `branch.main.merge=refs/heads/local`. Compare `@{u}` and the applicable `@{push}` modes with Git. | Git returned the local branch. Rerail rejected it. The extended matrix had 32 such mismatches. | Resolve the local merge ref in the current repository. Check both names, two distinct tips, and local and named push remotes. |
+| 84. Invalid push configuration still produces an upstream answer | Configure a named upstream and set `push.default` to `CURRENT` or `SIMPLE`. Resolve `@{u}`. | Git 2.50.1 rejected the configuration. Rerail returned an object ID in eight comparisons. | Validate the configuration that Git loads for this selector. Compare valid values, invalid values, and ordinary ref lookups before setting the validation boundary. |
+| 85. Passive catalog lookup gives another checkout the old repository key | Record read-only A with no marker. Move A, create unrelated read-only B at the old path, and call `lookupCheckout` at both locations. | In the draft, lookup lost A and gave B the recorded key for A. Active identity resolution distinguished B. | Use the same read-only identity evidence for passive catalog lookup and recording. Check that A finds its settings after the move and B finds none of A's settings. |
+
+Cases 78 and 65 exercise different lifetimes. Case 65 starts a new scan after a move. Case 78 keeps the old view alive through replacement.
+Case 85 reads the settings catalog. Its result can differ even when completed-run facts name the correct repository.
+[Snapshot and mutable repository access](../../../../native/src/git_snapshot.rs) · [Catalog identity and registry](../../../../src/engine/catalog/repository-identity.ts) · [Passive checkout lookup](../../../../src/engine/catalog/repository-registry.ts)
+
+The selector comparison used two branch tips and local refs only. It varied fetch remote, push remote, merge target, push mode, and expression.
+Of 128 comparisons, 88 agreed. Cases 83 and 84 account for all 40 differences. The previous 60 comparisons used named remotes and valid modes.
+[Revision resolver](../../../../native/src/git_snapshot_revision.rs)
+
+### What a rule author encounters
+
+| Design expectation | Result from an actual policy | Proposed change and check |
+| --- | --- | --- |
+| A bound commit can supply its message | Joining `git_source_commit(r,c)` to `git_message(r,c,m)` completed with zero findings. The commit had a UTF-8 message. Adding `git_object_request(r,c) :- git_source_commit(r,c).` returned the full text. | Propagate a bound repository and object ID through the library lookup. Keep explicit requests for batch enumeration. Check direct and explicit queries, missing objects, and the number of objects read. |
+| The design's HEAD example uses `git_ref` | The compiler reported an undeclared relation. The implemented API uses an explicit revision request. | Make the contract example executable. Use the existing revision API if the example requires revision semantics. If it requires a ref name, define that narrower operation and test a ref, a tag, and a revision expression. |
+| A rule can ask for commit trailers | A commit contained a `Signed-off-by` trailer. A policy reading `git_trailer` failed at compilation. | Define ordered trailer facts in the library. Specify continuations, duplicate names, and the end of the trailer block. Compare the fixture with Git's trailer parser. |
+
+These are design gaps. The implemented reference already shows an explicit object request. The two other relation names come from the design document.
+[Design contract](library.md) · [Implemented reference](../../../rule-syntax/git.md) · [Git rule library](../../../rule-syntax/lib/git.rr)
+
+### Seventeen earlier cases without a committed repair
+
+| Case | Last observed result | Repair and check |
+| --- | --- | --- |
+| 23 | Restoring an older control database lost a committed stop. Three memberships survived. | Keep durable evidence of the commit, routes and acquisition cutoff through control-database restore. Test rollback, committed stop, crash before delivery and replay after delivery. |
+| 74 | One failed optional-handle native batch published six memberships and zero runs. An explicit aborted run published neither. | Acquire one run for the whole durable batch. Publish after all policies and required reads succeed. Check both policy orders and a scope with earlier owners. |
+| 65 | Committed history uses the Git directory pathname. A linked worktree or rename loses the history. A replacement at the old path can inherit it. | Persist a clone ID for history and a worktree ID for HEAD and index. Test independent scans and case 78. Keep older path-only history enumerable by scope. Its original clone cannot be inferred from the pathname. |
+| 44 | First use of a read-only Git directory without an ID fails in the committed code. | Use stable directory identity when available. The draft passed the restart check below. Specify behavior when the filesystem supplies neither a marker nor a stable directory identity. |
+| 67 | Three invalid revision scans left three routes and three generations. Later deletion of the name was ambiguous. | Resolve the revision before acquisition. Remove unused routes after abort. Test simultaneous successful and failed acquisitions. |
+| 68 | Stopping a parent removed 30 child runs and left 30 generation rows. | Retire generations once the stop cutoff covers older writers. Check delayed publication, restart, and a new watch. |
+| 17 | A failed legacy-store probe retries every five seconds without retaining its failure reason. | Store the reason and retry count. Cap increasing delays and deliver the original cutoff after recovery. |
+| 42 | The store registry has no operation for retiring a permanently removed store. | Add explicit retirement after resolving outstanding ownership and deliveries. Check that a temporarily offline store can still return. |
+| 75 | A byte path and the literal name `[hex:ff2e7079]` have the same report path. | Preserve raw path bytes in machine-readable findings and failures. Check both names at the root and below a directory. |
+| 46 | On a case-insensitive volume, selecting `SRC/A.PY` can miss a finding in `src/a.py`. | Match filesystem requests to inventory spelling. Test both volume types and keep exact Git tree selection. |
+| 11 | A 32,000,001-byte binary failed a revision scan. The filesystem scan skipped it. | Determine binary status from a bounded prefix before applying the text limit. Check large text and absent objects as controls. |
+| 28 | The nullable native source reader conceals absence, an unavailable tracked blob, and the byte limit. | Return distinct read outcomes and preserve the compatibility wrapper as needed. Remove and restore a blob in the same view. |
+| 47 | Historical reports group excluded symlinks and gitlinks with absent entries. | Preserve the Git mode and skip reason. Select a link, a gitlink, and a missing path together. |
+| 61 | Asking for one scope read and hashed 65 records after 64 unrelated publications. | Add a scope-keyed request and observation. An unrelated publication must preserve the hit. Keep whole-store enumeration available. |
+| 18 | A long-lived view retains decoded entries for every subtree it visited. | Bound decoded bytes. Measure retained memory and decodes for disjoint selections and for one oversized tree. |
+| 52 | Repeated inspection of a policy from Git reads and lowers its include graph again. | Retain the compiled program by policy blob, resolved includes, and engine inputs. Count lowerings after restart and after one included file changes. |
+| 53 | Median warm inspection took 1.677 ms with a fresh catalog and 0.073 ms with the existing catalog. | Measure store opening, validation and decoding separately. Check alternating stores and eviction before changing validation. The timing alone does not identify redundant work. |
+
+### What passed and what still needs a host
+
+* `a4d536b8b` fixed equal-time message selection in case 77. All 15 branch, tag and detached-HEAD comparisons agreed with Git.
+* `da05181a9` fixed the named-remote push destination in case 76. All 60 original comparisons agreed. Cases 83 and 84 use different configurations.
+* `87d18d609` fixed bare and linked discovery in case 45. The catalog tests exercised both discovery orders and preserved earlier bare-checkout settings.
+* In the identity draft, fresh scans found the original run after an on-volume move and in a linked worktree. A fresh clone at the old path found no such run. A filesystem copy with the marker shared history and had a different worktree ID. This is the draft's copy behavior.
+* The draft published a first scan without writing to its read-only Git directory. After the directory became writable, a fresh process published its marker and found the first commit under the same clone ID. Case 85 still fails.
+* The six headless, CLI, Git, and catalog suites passed 196 tests. All four standalone revision CLI tests passed. The store gate passed 263 tests with four skipped. Six cache and combined-program tests passed.
+* NTFS still needs the same-length object rewrite with restored modification time. Git for Windows still needs the message-selector comparison. A Unix volume that accepts invalid filename bytes still needs the independent directory-scope release test.
+* Earlier runs sometimes exceeded the first scan's five-second test timeout after an addon rebuild. The 196-test run passed. Native load time and first scan time still need separate cold-process measurements.
+
 ## Status at `f0a2f43c9`
 
 Twenty implementation findings remain. Five of the previous 21 have verified repairs. Four more have new reproductions below.
