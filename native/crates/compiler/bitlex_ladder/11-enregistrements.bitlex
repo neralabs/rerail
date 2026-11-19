@@ -1,0 +1,51 @@
+# Step 11: records in angle brackets, `<#a# = (1; vrai); #b# = <>>`.
+#
+# New: entries with fields, `cle` (a text) and `valeur`. The language is now whole.
+
+lexer ladder11
+
+class ws    = ' ' '\t' '\n' '\r'
+class op    = '(' ')' ';' '<' '>' '='
+class quote = '#'
+class lf    = '\n'
+class caret = '^'
+class digit   = '0'..'9'
+class nonzero = '1'..'9'
+class expo    = 'e' 'E'
+
+mask escaped  = escaped(caret)
+mask q        = quote & ~escaped
+mask inside   = toggle(q)
+mask opening  = q & inside
+mask closing  = q & ~inside
+mask body     = inside & ~opening
+mask esc      = caret & body & ~escaped     # an escape's caret
+mask esc_last = escaped & body              # the byte it escapes
+mask content  = body & ~esc & ~esc_last
+mask code     = ~inside & ~closing
+
+token '#'          = start q
+token contenu      = start starts(content) last lasts(content)
+token echappement  = start esc last esc_last
+keywords echappement {
+  "^#" -> echappement  "^^" -> echappement  "^n" -> echappement  "^t" -> echappement
+} required
+mask word          = code & ~ws & ~op
+token nombre       = start starts(word) last lasts(word)
+keywords nombre { "vrai" -> vrai  "fausse" -> fausse  "nul" -> nul }
+token punctuation = start code & op
+keywords punctuation { "<" ">" "(" ")" ";" "=" } required
+
+skip code & ws
+error "a newline in a text"   when body & lf
+
+check nombre = ['~'] ('0' | nonzero digit*) [',' digit+] [expo ['~'] digit+]
+
+tree ladder {
+  node document = valeur
+  node enregistrement nested = '<' [entree (';' entree)*] '>'
+  node entree = cle: texte '=' valeur: valeur
+  node liste nested = '(' [valeur (';' valeur)*] ')'
+  node texte = '#' (contenu | echappement)* '#'
+  choice valeur supertype _valeur = enregistrement | liste | texte | nombre | vrai | fausse | nul
+}

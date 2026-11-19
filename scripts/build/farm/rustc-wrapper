@@ -1,0 +1,6 @@
+#!/usr/bin/python3
+"""cargo's RUSTC_WRAPPER in Rerail's worktrees: every compile goes through the farm (README.md)."""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import farm
+farm.wrapper(sys.argv[1], sys.argv[2:])

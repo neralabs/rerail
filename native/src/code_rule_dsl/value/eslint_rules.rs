@@ -2,7 +2,7 @@
 //! where ESLint 10.11.0 itself reports them on the fixtures in `fixtures/ecma/value/eslint`
 //! (`fixtures/ecma/value/generate_eslint.mjs`).
 
-use crate::code_rule_dsl::oracle;
+use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 

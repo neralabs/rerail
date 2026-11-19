@@ -1,0 +1,512 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-perf101-unnecessary-list-cast",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Iterate over a list, tuple or set directly in a for loop instead of first copying it into a new list, unless the loop changes it; the copy only costs time.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "literal": {
+            "any": [
+              {
+                "kind": "tuple"
+              },
+              {
+                "kind": "list"
+              },
+              {
+                "kind": "set"
+              },
+              {
+                "kind": "expression_list"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "literal"
+                }
+              }
+            ]
+          },
+          "name-arg": {
+            "any": [
+              {
+                "kind": "identifier",
+                "pattern": "$NAME"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "name-arg"
+                }
+              }
+            ]
+          },
+          "positional": {
+            "not": {
+              "any": [
+                {
+                  "regex": "^[(),]$"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "kind": "keyword_argument"
+                },
+                {
+                  "kind": "dictionary_splat"
+                }
+              ]
+            }
+          },
+          "list-callee": {
+            "has": {
+              "stopBy": "neighbor",
+              "field": "function",
+              "resolves": {
+                "global": [
+                  "list"
+                ],
+                "import": [
+                  "builtins.list"
+                ]
+              }
+            }
+          },
+          "sole-arg": {
+            "kind": "argument_list",
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "positional"
+              },
+              "min": 1,
+              "max": 1
+            }
+          },
+          "del-target": {
+            "any": [
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "name-arg"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "expression_list"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "del-target"
+                }
+              }
+            ]
+          },
+          "mutation": {
+            "any": [
+              {
+                "kind": "expression_statement",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "mutating-call"
+                }
+              },
+              {
+                "kind": "assignment",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "name-arg"
+                  }
+                }
+              },
+              {
+                "kind": "augmented_assignment",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "kind": "identifier",
+                  "pattern": "$NAME"
+                }
+              },
+              {
+                "kind": "delete_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "del-target"
+                }
+              }
+            ]
+          },
+          "mutating-call": {
+            "any": [
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "matches": "name-arg"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "attribute",
+                        "regex": "^(append|insert|extend|remove|pop|clear|reverse|sort)$"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "mutating-call"
+                }
+              }
+            ]
+          },
+          "rebinding": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "dotted_name"
+                  }
+                ],
+                "pattern": "$NAME",
+                "binds": {
+                  "form": [
+                    "for",
+                    "with",
+                    "import",
+                    "definition",
+                    "deletion",
+                    "match",
+                    "assignment",
+                    "annotated",
+                    "augmented",
+                    "named"
+                  ]
+                },
+                "not": {
+                  "binds": {
+                    "form": [
+                      "assignment",
+                      "annotated",
+                      "named"
+                    ],
+                    "value": {
+                      "matches": "literal"
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "kind": "class_definition"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "pattern": "$NAME"
+                }
+              },
+              {
+                "kind": "dotted_name",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "import_statement"
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "nthChild": 1,
+                  "pattern": "$NAME"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": {
+                    "not": {
+                      "matches": "comprehension"
+                    },
+                    "matches": "new-scope"
+                  },
+                  "kind": "named_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "pattern": "$NAME"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "value",
+                      "matches": "literal"
+                    }
+                  }
+                },
+                "matches": "comprehension"
+              }
+            ]
+          },
+          "comprehension": {
+            "any": [
+              {
+                "kind": "list_comprehension"
+              },
+              {
+                "kind": "set_comprehension"
+              },
+              {
+                "kind": "dictionary_comprehension"
+              },
+              {
+                "kind": "generator_expression"
+              }
+            ]
+          },
+          "new-scope": {
+            "any": [
+              {
+                "kind": "function_definition"
+              },
+              {
+                "kind": "class_definition"
+              },
+              {
+                "kind": "lambda"
+              },
+              {
+                "matches": "comprehension"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "literal-list-cast",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "matches": "list-callee",
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "field": "right",
+              "kind": "for_statement"
+            },
+            "has": {
+              "stopBy": "neighbor",
+              "field": "arguments",
+              "matches": "sole-arg",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "literal"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PERF101",
+        "message": "Loop over the list, tuple or set directly instead of copying it with `list(...)`; the copy changes nothing here.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PERF101"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "name-list-cast",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "matches": "list-callee",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "arguments",
+              "matches": "sole-arg",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "name-arg",
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "stopAtGlobal": true,
+                        "value": {
+                          "matches": "literal"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "stopAtGlobal": true,
+                        "form": "with",
+                        "site": {
+                          "kind": "as_pattern",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "literal"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "field": "right",
+              "kind": "for_statement",
+              "not": {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "body",
+                      "kind": "block",
+                      "has": {
+                        "stopBy": "end",
+                        "matches": "mutation"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": {
+                        "matches": "new-scope"
+                      },
+                      "matches": "rebinding"
+                    }
+                  }
+                ]
+              }
+            },
+            "not": {
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                },
+                "any": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "kind": "class_definition"
+                  }
+                ],
+                "has": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  },
+                  "kind": "nonlocal_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "pattern": "$NAME"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PERF101",
+        "message": "Loop over `$NAME` directly instead of `list($NAME)`. Keep the copy if the loop body changes `$NAME` in a way the rule cannot see, such as through a helper call.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PERF101"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

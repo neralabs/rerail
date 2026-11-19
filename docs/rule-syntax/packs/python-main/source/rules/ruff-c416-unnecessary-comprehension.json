@@ -1,0 +1,1794 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-c416-unnecessary-comprehension",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass the iterable to list, set or dict directly instead of a comprehension that rebuilds it unchanged.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "dict-expr": {
+            "any": [
+              {
+                "kind": "dictionary"
+              },
+              {
+                "kind": "dictionary_comprehension"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "dict-expr"
+                }
+              },
+              {
+                "kind": "named_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^:=$"
+                  },
+                  "matches": "dict-expr"
+                }
+              },
+              {
+                "kind": "conditional_expression",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "precedes": {
+                        "stopBy": "neighbor",
+                        "regex": "^if$"
+                      },
+                      "matches": "dict-expr"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "^else$"
+                      },
+                      "matches": "dict-expr"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "boolean_operator",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^(and|or)$"
+                        },
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "matches": "dict-expr"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "dict-callee": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "dict"
+                  ],
+                  "import": [
+                    "builtins.dict"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "dict-callee"
+                }
+              }
+            ]
+          },
+          "dict-init": {
+            "any": [
+              {
+                "matches": "dict-expr"
+              },
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "dict-callee",
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "argument_list"
+                      },
+                      {
+                        "kind": "generator_expression"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "dict-ann": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "dict"
+                  ],
+                  "import": [
+                    "builtins.dict"
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.Dict",
+                    "_typeshed.Dict",
+                    "typing_extensions.Dict"
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "subscript"
+                  },
+                  {
+                    "kind": "generic_type"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "matches": "dict-ann"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "dict-ann"
+                }
+              }
+            ]
+          },
+          "plain-target": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "plain-target"
+                }
+              }
+            ]
+          },
+          "dict-bound": {
+            "kind": "identifier",
+            "any": [
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "any": [
+                        {
+                          "kind": "dictionary_splat_pattern",
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "parameters"
+                          }
+                        },
+                        {
+                          "kind": "typed_parameter",
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "parameters"
+                          },
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "dictionary_splat_pattern"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "value": {
+                      "matches": "dict-init"
+                    },
+                    "site": {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "as_pattern",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "with_item"
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "dict-init",
+                            "precedes": {
+                              "stopBy": "end",
+                              "regex": "^as$"
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "as_pattern_target",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "plain-target"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "annotation": {
+                      "matches": "dict-ann"
+                    },
+                    "site": {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "list_splat_pattern"
+                            },
+                            {
+                              "kind": "dictionary_splat_pattern"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "function_definition",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "type",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "dict-ann"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "receiver-name": {
+            "any": [
+              {
+                "matches": "dict-bound"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "receiver-name"
+                }
+              }
+            ]
+          },
+          "any-xname": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "any-xname"
+                }
+              }
+            ]
+          },
+          "name-elt": {
+            "any": [
+              {
+                "kind": "identifier",
+                "pattern": "$E"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "name-elt"
+                }
+              }
+            ]
+          },
+          "name-key": {
+            "any": [
+              {
+                "kind": "identifier",
+                "pattern": "$EK"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "name-key"
+                }
+              }
+            ]
+          },
+          "name-value": {
+            "any": [
+              {
+                "kind": "identifier",
+                "pattern": "$EV"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "name-value"
+                }
+              }
+            ]
+          },
+          "any-pname": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "tuple_pattern",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "any-pname"
+                }
+              }
+            ]
+          },
+          "name-tgt": {
+            "any": [
+              {
+                "kind": "identifier",
+                "pattern": "$T"
+              },
+              {
+                "kind": "tuple_pattern",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "name-tgt"
+                }
+              }
+            ]
+          },
+          "tgt-key": {
+            "any": [
+              {
+                "kind": "identifier",
+                "pattern": "$TK"
+              },
+              {
+                "kind": "tuple_pattern",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tgt-key"
+                }
+              }
+            ]
+          },
+          "tgt-value": {
+            "any": [
+              {
+                "kind": "identifier",
+                "pattern": "$TV"
+              },
+              {
+                "kind": "tuple_pattern",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tgt-value"
+                }
+              }
+            ]
+          },
+          "target-pair": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "pattern_list"
+                  },
+                  {
+                    "kind": "tuple_pattern"
+                  },
+                  {
+                    "kind": "list_pattern"
+                  }
+                ],
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^[(),\\[\\]]$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    }
+                  },
+                  "min": 2,
+                  "max": 2
+                },
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "matches": "any-pname"
+                        },
+                        {
+                          "regex": "^[(),\\[\\]]$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tgt-key",
+                  "precedes": {
+                    "stopBy": "end",
+                    "matches": "tgt-value"
+                  }
+                }
+              },
+              {
+                "kind": "tuple_pattern",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "target-pair"
+                }
+              }
+            ]
+          },
+          "target-tuple-pair": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "pattern_list"
+                  },
+                  {
+                    "kind": "tuple_pattern"
+                  }
+                ],
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^[(),\\[\\]]$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    }
+                  },
+                  "min": 2,
+                  "max": 2
+                },
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "matches": "any-pname"
+                        },
+                        {
+                          "regex": "^[(),\\[\\]]$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tgt-key",
+                  "precedes": {
+                    "stopBy": "end",
+                    "matches": "tgt-value"
+                  }
+                }
+              },
+              {
+                "kind": "tuple_pattern",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "target-tuple-pair"
+                }
+              }
+            ]
+          },
+          "tuple-pair": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "tuple"
+                  }
+                ],
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^[(),\\[\\]]$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    }
+                  },
+                  "min": 2,
+                  "max": 2
+                },
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "matches": "any-xname"
+                        },
+                        {
+                          "regex": "^[(),\\[\\]]$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "name-key",
+                  "precedes": {
+                    "stopBy": "end",
+                    "matches": "name-value"
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tuple-pair"
+                }
+              }
+            ]
+          },
+          "single-for": {
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "for_in_clause"
+              },
+              "min": 1,
+              "max": 1
+            },
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "if_clause"
+                  },
+                  {
+                    "kind": "for_in_clause",
+                    "regex": "^async\\b"
+                  }
+                ]
+              }
+            },
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "for_in_clause",
+              "has": {
+                "field": "right",
+                "pattern": "$IT"
+              }
+            }
+          },
+          "items-call": {
+            "any": [
+              {
+                "kind": "call",
+                "has": {
+                  "field": "function",
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "matches": "receiver-name"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "attribute",
+                        "regex": "^items$"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "items-call"
+                }
+              }
+            ]
+          },
+          "kind-name": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "dotted_name"
+              }
+            ],
+            "pattern": "$BN",
+            "compare": {
+              "left": "BN",
+              "op": "eq",
+              "right": "KN"
+            }
+          },
+          "fn-body": {
+            "inside": {
+              "stopBy": "end",
+              "field": "body",
+              "any": [
+                {
+                  "kind": "function_definition"
+                },
+                {
+                  "kind": "lambda"
+                }
+              ]
+            }
+          },
+          "comp": {
+            "any": [
+              {
+                "kind": "list_comprehension"
+              },
+              {
+                "kind": "set_comprehension"
+              },
+              {
+                "kind": "dictionary_comprehension"
+              },
+              {
+                "kind": "generator_expression"
+              }
+            ]
+          },
+          "not-first-iter": {
+            "any": [
+              {
+                "not": {
+                  "kind": "for_in_clause"
+                }
+              },
+              {
+                "kind": "for_in_clause",
+                "follows": {
+                  "stopBy": "end",
+                  "kind": "for_in_clause"
+                }
+              }
+            ]
+          },
+          "comp-binds": {
+            "matches": "comp",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "for_in_clause",
+              "has": {
+                "field": "left",
+                "stopBy": "end",
+                "matches": "kind-name"
+              }
+            }
+          },
+          "shadowed": {
+            "any": [
+              {
+                "matches": "fn-body",
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "module",
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "kind-name",
+                    "not": {
+                      "binds": {
+                        "form": [
+                          "except",
+                          "annotation"
+                        ]
+                      }
+                    },
+                    "binds": {
+                      "scope": [
+                        "module"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "follows": {
+                      "stopBy": "end",
+                      "has": {
+                        "stopBy": "end",
+                        "matches": "kind-name",
+                        "not": {
+                          "binds": {
+                            "form": [
+                              "except",
+                              "annotation"
+                            ]
+                          }
+                        },
+                        "binds": {
+                          "scope": [
+                            "module"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "follows": {
+                        "stopBy": "end",
+                        "has": {
+                          "stopBy": "end",
+                          "matches": "kind-name",
+                          "not": {
+                            "binds": {
+                              "form": [
+                                "except",
+                                "annotation"
+                              ]
+                            }
+                          },
+                          "binds": {
+                            "scope": [
+                              "module"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "field": "body",
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "lambda"
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": "end",
+                    "field": "body",
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ],
+                    "pattern": "$F",
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "kind-name",
+                      "not": {
+                        "binds": {
+                          "form": [
+                            "except",
+                            "annotation"
+                          ]
+                        }
+                      },
+                      "binds": {
+                        "scope": [
+                          "function",
+                          "lambda"
+                        ],
+                        "site": {
+                          "inside": {
+                            "stopBy": "end",
+                            "any": [
+                              {
+                                "kind": "function_definition"
+                              },
+                              {
+                                "kind": "lambda"
+                              }
+                            ],
+                            "pattern": "$G"
+                          }
+                        }
+                      },
+                      "compare": {
+                        "left": "G",
+                        "op": "eq",
+                        "right": "F",
+                        "text": "node"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "field": "body",
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "lambda"
+                        }
+                      ],
+                      "pattern": "$F"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "follows": {
+                          "stopBy": "end",
+                          "has": {
+                            "stopBy": "end",
+                            "matches": "kind-name",
+                            "not": {
+                              "binds": {
+                                "form": [
+                                  "except",
+                                  "annotation"
+                                ]
+                              }
+                            },
+                            "binds": {
+                              "scope": [
+                                "function",
+                                "lambda"
+                              ],
+                              "site": {
+                                "inside": {
+                                  "stopBy": "end",
+                                  "any": [
+                                    {
+                                      "kind": "function_definition"
+                                    },
+                                    {
+                                      "kind": "lambda"
+                                    }
+                                  ],
+                                  "pattern": "$G"
+                                }
+                              }
+                            },
+                            "compare": {
+                              "left": "G",
+                              "op": "eq",
+                              "right": "F",
+                              "text": "node"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "follows": {
+                            "stopBy": "end",
+                            "has": {
+                              "stopBy": "end",
+                              "matches": "kind-name",
+                              "not": {
+                                "binds": {
+                                  "form": [
+                                    "except",
+                                    "annotation"
+                                  ]
+                                }
+                              },
+                              "binds": {
+                                "scope": [
+                                  "function",
+                                  "lambda"
+                                ],
+                                "site": {
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "any": [
+                                      {
+                                        "kind": "function_definition"
+                                      },
+                                      {
+                                        "kind": "lambda"
+                                      }
+                                    ],
+                                    "pattern": "$G"
+                                  }
+                                }
+                              },
+                              "compare": {
+                                "left": "G",
+                                "op": "eq",
+                                "right": "F",
+                                "text": "node"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "field": "body",
+                  "kind": "lambda",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "lambda_parameters",
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "kind-name",
+                      "binds": {
+                        "scope": [
+                          "lambda"
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "field": "body",
+                      "kind": "class_definition",
+                      "pattern": "$F"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "stopBy": {
+                          "kind": "class_definition"
+                        },
+                        "field": "body",
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "lambda"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "matches": "comp"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "stopBy": {
+                          "kind": "class_definition"
+                        },
+                        "matches": "not-first-iter",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "matches": "comp"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "follows": {
+                          "stopBy": "end",
+                          "has": {
+                            "stopBy": "end",
+                            "matches": "kind-name",
+                            "not": {
+                              "binds": {
+                                "form": [
+                                  "except",
+                                  "annotation"
+                                ]
+                              }
+                            },
+                            "binds": {
+                              "scope": [
+                                "class"
+                              ],
+                              "site": {
+                                "inside": {
+                                  "stopBy": "end",
+                                  "kind": "class_definition",
+                                  "pattern": "$G"
+                                }
+                              }
+                            },
+                            "compare": {
+                              "left": "G",
+                              "op": "eq",
+                              "right": "F",
+                              "text": "node"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "follows": {
+                            "stopBy": "end",
+                            "has": {
+                              "stopBy": "end",
+                              "matches": "kind-name",
+                              "not": {
+                                "binds": {
+                                  "form": [
+                                    "except",
+                                    "annotation"
+                                  ]
+                                }
+                              },
+                              "binds": {
+                                "scope": [
+                                  "class"
+                                ],
+                                "site": {
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "kind": "class_definition",
+                                    "pattern": "$G"
+                                  }
+                                }
+                              },
+                              "compare": {
+                                "left": "G",
+                                "op": "eq",
+                                "right": "F",
+                                "text": "node"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "for_in_clause",
+                  "has": {
+                    "field": "right",
+                    "stopBy": "end",
+                    "kind": "named_expression",
+                    "has": {
+                      "field": "name",
+                      "matches": "kind-name"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "comp-binds"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "matches": "not-first-iter",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "comp-binds"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  },
+                  "kind": "block",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "except_clause",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "as_pattern",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "as_pattern_target",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "kind-name"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "field": "body",
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ],
+                  "has": {
+                    "field": "type_parameters",
+                    "stopBy": "end",
+                    "matches": "kind-name"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "field": "right",
+                  "kind": "type_alias_statement",
+                  "has": {
+                    "field": "left",
+                    "stopBy": "end",
+                    "matches": "kind-name",
+                    "binds": {
+                      "form": "typeParameter"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "list-comprehension-node": {
+            "kind": "list_comprehension",
+            "matches": "single-for",
+            "any": [
+              {
+                "all": [
+                  {
+                    "has": {
+                      "field": "body",
+                      "matches": "name-elt"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "for_in_clause",
+                      "has": {
+                        "field": "left",
+                        "matches": "name-tgt"
+                      }
+                    }
+                  },
+                  {
+                    "compare": {
+                      "left": "E",
+                      "op": "eq",
+                      "right": "T"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "for_in_clause",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "right",
+                            "matches": "items-call"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "left",
+                            "matches": "target-pair"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "body",
+                      "matches": "tuple-pair"
+                    }
+                  },
+                  {
+                    "compare": {
+                      "left": "EK",
+                      "op": "eq",
+                      "right": "TK"
+                    }
+                  },
+                  {
+                    "compare": {
+                      "left": "EV",
+                      "op": "eq",
+                      "right": "TV"
+                    }
+                  }
+                ]
+              }
+            ],
+            "not": {
+              "matches": "shadowed"
+            },
+            "pattern": "$COMP"
+          },
+          "list-comprehension-in-annotation": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ],
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "matches": "list-comprehension-node"
+                      },
+                      {
+                        "matches": "list-comprehension-in-annotation"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "matches": "shadowed"
+                }
+              }
+            ]
+          },
+          "set-comprehension-node": {
+            "kind": "set_comprehension",
+            "matches": "single-for",
+            "any": [
+              {
+                "all": [
+                  {
+                    "has": {
+                      "field": "body",
+                      "matches": "name-elt"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "for_in_clause",
+                      "has": {
+                        "field": "left",
+                        "matches": "name-tgt"
+                      }
+                    }
+                  },
+                  {
+                    "compare": {
+                      "left": "E",
+                      "op": "eq",
+                      "right": "T"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "for_in_clause",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "right",
+                            "matches": "items-call"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "left",
+                            "matches": "target-pair"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "body",
+                      "matches": "tuple-pair"
+                    }
+                  },
+                  {
+                    "compare": {
+                      "left": "EK",
+                      "op": "eq",
+                      "right": "TK"
+                    }
+                  },
+                  {
+                    "compare": {
+                      "left": "EV",
+                      "op": "eq",
+                      "right": "TV"
+                    }
+                  }
+                ]
+              }
+            ],
+            "not": {
+              "matches": "shadowed"
+            },
+            "pattern": "$COMP"
+          },
+          "set-comprehension-in-annotation": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ],
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "matches": "set-comprehension-node"
+                      },
+                      {
+                        "matches": "set-comprehension-in-annotation"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "matches": "shadowed"
+                }
+              }
+            ]
+          },
+          "dict-comprehension-node": {
+            "kind": "dictionary_comprehension",
+            "matches": "single-for",
+            "all": [
+              {
+                "has": {
+                  "field": "body",
+                  "kind": "pair",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "key",
+                        "matches": "name-key"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "value",
+                        "matches": "name-value"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "for_in_clause",
+                  "has": {
+                    "field": "left",
+                    "matches": "target-tuple-pair"
+                  }
+                }
+              },
+              {
+                "compare": {
+                  "left": "EK",
+                  "op": "eq",
+                  "right": "TK"
+                }
+              },
+              {
+                "compare": {
+                  "left": "EV",
+                  "op": "eq",
+                  "right": "TV"
+                }
+              }
+            ],
+            "not": {
+              "matches": "shadowed"
+            },
+            "pattern": "$COMP"
+          },
+          "dict-comprehension-in-annotation": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ],
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "matches": "dict-comprehension-node"
+                      },
+                      {
+                        "matches": "dict-comprehension-in-annotation"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "matches": "shadowed"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "list-comprehension",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$W",
+            "any": [
+              {
+                "matches": "list-comprehension-node"
+              },
+              {
+                "matches": "list-comprehension-in-annotation"
+              }
+            ]
+          },
+          "transform": {
+            "KN": {
+              "replace": {
+                "source": "$W",
+                "replace": "(?s)^.*$",
+                "by": "list"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.COMP",
+        "code": "C416",
+        "message": "Replace this comprehension with `list($IT)`, which copies the same items; keep it inside `__len__`, where `list()` can recurse.",
+        "each": "COMP",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C416"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "set-comprehension",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$W",
+            "any": [
+              {
+                "matches": "set-comprehension-node"
+              },
+              {
+                "matches": "set-comprehension-in-annotation"
+              }
+            ]
+          },
+          "transform": {
+            "KN": {
+              "replace": {
+                "source": "$W",
+                "replace": "(?s)^.*$",
+                "by": "set"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.COMP",
+        "code": "C416",
+        "message": "Replace this comprehension with `set($IT)`, which copies the same items; keep it inside `__len__`, where `set()` can recurse.",
+        "each": "COMP",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C416"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "dict-comprehension",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$W",
+            "any": [
+              {
+                "matches": "dict-comprehension-node"
+              },
+              {
+                "matches": "dict-comprehension-in-annotation"
+              }
+            ]
+          },
+          "transform": {
+            "KN": {
+              "replace": {
+                "source": "$W",
+                "replace": "(?s)^.*$",
+                "by": "dict"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.COMP",
+        "code": "C416",
+        "message": "Replace this comprehension with `dict($IT)`; if `$IT` is a mapping whose keys are pairs, use `dict($IT.keys())`; keep it inside `__len__`, where `dict()` can recurse.",
+        "each": "COMP",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C416"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

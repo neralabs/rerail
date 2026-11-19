@@ -1,0 +1,27 @@
+// Shared conservative screen. Each rule still requests exact qualification for its own targets.
+.decl async_http(q: symbol)
+async_http("urllib.request.urlopen"). async_http("urllib3.request").
+async_http(cat(cat(m, "."), x)) :- (m = "requests" ; m = "httpx"), async_http_verb(x).
+.decl async_http_verb(x: symbol)
+async_http_verb("request"). async_http_verb("get"). async_http_verb("post"). async_http_verb("delete").
+async_http_verb("patch"). async_http_verb("put"). async_http_verb("head"). async_http_verb("connect").
+async_http_verb("options"). async_http_verb("trace").
+
+.decl async_runs(q: symbol)
+async_runs("os.system"). async_runs("os.posix_spawn"). async_runs("os.posix_spawnp").
+async_runs(cat("subprocess.", x)) :-
+    (x = "run" ; x = "call" ; x = "check_call" ; x = "check_output" ; x = "getoutput" ; x = "getstatusoutput").
+.decl async_spawn(q: symbol)
+async_spawn(cat("os.spawn", x)) :-
+    (x = "l" ; x = "le" ; x = "lp" ; x = "lpe" ; x = "v" ; x = "ve" ; x = "vp" ; x = "vpe").
+
+.decl async_wait(q:symbol)
+async_wait(cat("os.",x)) :- (x="wait" ; x="wait3" ; x="wait4" ; x="waitid" ; x="waitpid").
+.decl async_open_target(q:symbol)
+async_open_target("builtins.open"). async_open_target("io.open"). async_open_target("io.open_code").
+.decl async_candidate_target(q:symbol)
+async_candidate_target(q) :- async_http(q).
+async_candidate_target(q) :- async_runs(q).
+async_candidate_target(q) :- async_spawn(q).
+async_candidate_target(q) :- async_wait(q).
+async_candidate_target(q) :- async_open_target(q).

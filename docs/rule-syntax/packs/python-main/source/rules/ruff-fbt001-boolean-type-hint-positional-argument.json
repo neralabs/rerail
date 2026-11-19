@@ -1,0 +1,500 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-fbt001-boolean-type-hint-positional-argument",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Make Python function parameters annotated as bool keyword-only; a bare True or False passed by position hides what it switches.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "boolean-type-hint-positional-argument",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "override": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                },
+                {
+                  "kind": "parenthesized_expression"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.override",
+                  "typing_extensions.override",
+                  "_typeshed.override"
+                ]
+              }
+            },
+            "fn-ref": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$FN"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fn-ref"
+                  }
+                }
+              ]
+            },
+            "setter": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "attribute",
+                        "regex": "^setter$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "matches": "fn-ref"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "setter"
+                  }
+                }
+              ]
+            },
+            "checked-function": {
+              "kind": "function_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "name",
+                "pattern": "$FN",
+                "not": {
+                  "regex": "^(bool|__post_init__|__contains__|__getitem__|__setitem__|__delitem__|__add__|__radd__|__iadd__|__sub__|__rsub__|__isub__|__mul__|__rmul__|__imul__|__truediv__|__rtruediv__|__itruediv__|__floordiv__|__rfloordiv__|__ifloordiv__|__mod__|__rmod__|__imod__|__pow__|__rpow__|__ipow__|__lshift__|__rlshift__|__ilshift__|__rshift__|__rrshift__|__irshift__|__matmul__|__rmatmul__|__imatmul__|__and__|__rand__|__iand__|__or__|__ror__|__ior__|__xor__|__rxor__|__ixor__|__gt__|__lt__|__ge__|__le__|__eq__|__ne__|__pos__|__neg__|__invert__)$"
+                }
+              },
+              "not": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "decorated_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "decorator",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "matches": "override"
+                        },
+                        {
+                          "matches": "setter"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "typing-union": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.Union",
+                  "typing_extensions.Union",
+                  "_typeshed.Union"
+                ]
+              }
+            },
+            "typing-optional": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.Optional",
+                  "typing_extensions.Optional",
+                  "_typeshed.Optional"
+                ]
+              }
+            },
+            "generic-head": {
+              "any": [
+                {
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\[$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "subscript"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "generic_type"
+                  }
+                }
+              ]
+            },
+            "slice-item": {
+              "not": {
+                "regex": "^[\\[\\],]$"
+              },
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "regex": "^\\[$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "subscript"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type_parameter"
+                  }
+                }
+              ]
+            },
+            "slice-comma": {
+              "has": {
+                "stopBy": {
+                  "not": {
+                    "kind": "type_parameter"
+                  }
+                },
+                "regex": "^,$",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "subscript"
+                    },
+                    {
+                      "kind": "type_parameter"
+                    }
+                  ]
+                }
+              }
+            },
+            "bool-tuple": {
+              "any": [
+                {
+                  "kind": "tuple",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "bool-annotation"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "type"
+                    },
+                    {
+                      "kind": "parenthesized_expression"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "bool-tuple"
+                  }
+                }
+              ]
+            },
+            "bool-annotation": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^bool$",
+                  "resolves": {
+                    "global": [
+                      "bool"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "string"
+                    },
+                    {
+                      "kind": "concatenated_string"
+                    }
+                  ],
+                  "value": {
+                    "eq": "bool"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "string_start",
+                      "regex": "[fFtT]"
+                    }
+                  },
+                  "parse": {
+                    "grammar": "annotation",
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "identifier",
+                      "resolves": {
+                        "global": [
+                          "bool"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "type"
+                    },
+                    {
+                      "kind": "parenthesized_expression"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "bool-annotation"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "binary_operator"
+                    },
+                    {
+                      "kind": "union_type"
+                    }
+                  ],
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^\\|$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "bool-annotation"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "generic-head",
+                        "all": [
+                          {
+                            "matches": "typing-union"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "matches": "slice-comma"
+                            },
+                            {
+                              "has": {
+                                "stopBy": {
+                                  "not": {
+                                    "kind": "type_parameter"
+                                  }
+                                },
+                                "matches": "slice-item",
+                                "all": [
+                                  {
+                                    "matches": "bool-annotation"
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "not": {
+                                "matches": "slice-comma"
+                              }
+                            },
+                            {
+                              "has": {
+                                "stopBy": {
+                                  "not": {
+                                    "kind": "type_parameter"
+                                  }
+                                },
+                                "matches": "slice-item",
+                                "all": [
+                                  {
+                                    "matches": "bool-tuple"
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "generic-head",
+                        "all": [
+                          {
+                            "matches": "typing-optional"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "not": {
+                        "matches": "slice-comma"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": {
+                          "not": {
+                            "kind": "type_parameter"
+                          }
+                        },
+                        "matches": "slice-item",
+                        "all": [
+                          {
+                            "matches": "bool-annotation"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "regex": "^[=:]$"
+              }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "typed_parameter"
+                },
+                {
+                  "kind": "typed_default_parameter"
+                }
+              ],
+              "has": {
+                "stopBy": "neighbor",
+                "field": "type",
+                "matches": "bool-annotation"
+              },
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "keyword_separator"
+                    },
+                    {
+                      "kind": "list_splat_pattern"
+                    },
+                    {
+                      "kind": "typed_parameter",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "list_splat_pattern"
+                      }
+                    }
+                  ]
+                }
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "parameters",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "checked-function"
+                }
+              }
+            }
+          },
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "FBT001",
+        "message": "Make the boolean parameter `$NAME` keyword-only by moving it after `*` and update positional callers; keep it positional only when a parent signature or callback protocol requires it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "FBT001"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,369 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-c413-unnecessary-call-around-sorted",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove a list or reversed call wrapped around sorted; sorted already returns a new list and can sort in reverse order itself.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "list-call-around-sorted",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "outer": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "list"
+                    ],
+                    "import": [
+                      "builtins.list"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "outer"
+                  }
+                }
+              ]
+            },
+            "sorted": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "sorted"
+                    ],
+                    "import": [
+                      "builtins.sorted"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "sorted"
+                  }
+                }
+              ]
+            },
+            "sorted-call": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "sorted"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "sorted-call"
+                  }
+                }
+              ]
+            },
+            "lead": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^[(]$"
+                }
+              ]
+            },
+            "target": {
+              "kind": "call",
+              "all": [
+                {
+                  "has": {
+                    "field": "function",
+                    "matches": "outer"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "arguments",
+                    "kind": "argument_list",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "sorted-call",
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "not": {
+                            "matches": "lead"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "in-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "CALL"
+                    },
+                    {
+                      "matches": "in-annotation"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$CALL"
+              },
+              {
+                "matches": "in-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "C413",
+        "message": "Remove the `list()` call around `sorted()`; `sorted()` already returns a new list.",
+        "each": "CALL",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C413"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "reversed-call-around-sorted",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "outer": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "reversed"
+                    ],
+                    "import": [
+                      "builtins.reversed"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "outer"
+                  }
+                }
+              ]
+            },
+            "sorted": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "sorted"
+                    ],
+                    "import": [
+                      "builtins.sorted"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "sorted"
+                  }
+                }
+              ]
+            },
+            "sorted-call": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "sorted"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "sorted-call"
+                  }
+                }
+              ]
+            },
+            "lead": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^[(]$"
+                }
+              ]
+            },
+            "target": {
+              "kind": "call",
+              "all": [
+                {
+                  "has": {
+                    "field": "function",
+                    "matches": "outer"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "arguments",
+                    "kind": "argument_list",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "sorted-call",
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "not": {
+                            "matches": "lead"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "in-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "CALL"
+                    },
+                    {
+                      "matches": "in-annotation"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$CALL"
+              },
+              {
+                "matches": "in-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "C413",
+        "message": "Pass `reverse=True` (or flip the existing `reverse=`) to `sorted()` instead of wrapping it in `reversed()`; keep `reversed()` if equal elements must come out in reverse input order.",
+        "each": "CALL",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C413"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

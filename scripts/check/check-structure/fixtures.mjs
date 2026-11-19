@@ -13,6 +13,10 @@
 // `conformance/languages/pending.json`, the not-gated rules and pending tool-packs it reads; and
 // `scripts/pack-data/runtimes/**`, the manifests that pin each runtime the derivation runs upstream on) and, for
 // code-rule documents only, the shipped rule directories `packs/<id>/rules/` and `code-rule-dsl/rules/`.
+// Two more declared exemptions list each path with its reason (KEPT below): `kept-records`, the `.rerail` workbench's and
+// the design notes' records, kept in git as they are (docs/repository-structure.md, "Kept as they are"), and
+// `engine-layout`, the engine line's test inputs beside the code that reads them, until that layout is settled with
+// its owner.
 //
 // #10: every directory fixtures/<family>/<feature>/ names a top-level module of the engine
 // (native/src/code_rule_dsl/<feature>.rs or <feature>/), or a documented non-engine group: `upstream` (a language's
@@ -74,6 +78,22 @@ function fixtureKind(repo, path) {
   return undefined;
 }
 
+/** Exemptions `kept-records` and `engine-layout`: a directory (ending in `/`) or file, and why it stays where it is. */
+const KEPT = new Map([
+  // kept-records
+  ["docs/rule-syntax/packs/python-main/source/", "main's 537 Python rules as the workbench translated them: the source of each `.rerail` rule beside it"],
+  ["docs/rule-syntax/nested-routers.json", "the source rule of the workbench's nested-routers drafts beside it (nested-routers.b1.rerail, .b2.rerail)"],
+  ["docs/rule-engine-direction/experiments/m2m7/", "an experiment record: the rules its measurements were taken on, as they were"],
+  // engine-layout
+  ["accel/src/ane/fixtures/", "the 2 KB coremltools outputs the Neural Engine writer's test embeds (`include_bytes!`), and the script that wrote them"],
+  ["native/src/code_rule_dsl/logic/profile/fixtures/outer-binding.tsv", "the profile analysis's test table, embedded by `include_str!` beside its test"],
+  ["benchmark/sql-executor.py", "the SQL execution benchmark's harness (benchmark/README.md): Python code, not data"],
+]);
+
+function isKept(path) {
+  return [...KEPT.keys()].some((kept) => (kept.endsWith("/") ? path.startsWith(kept) : path === kept));
+}
+
 /** Exemption `gate-pins`: the conformance gate's lists and the derivation's runtimes (see the header). */
 function isGatePin(path) {
   if (path === "conformance/languages/ungated-rules.json" || path === "conformance/languages/pending.json") return true;
@@ -84,6 +104,7 @@ function allowed(path, kind) {
   const segments = path.split("/");
   if (segments[0] === "fixtures") return true;
   if (kind === "test-root data" && isGatePin(path)) return true;
+  if (isKept(path)) return true;
   if (segments[0] === "packs" && segments.length > 3 && (segments[2] === "upstream" || segments[2] === "candidates")) return true;
   if (kind !== "rule") return false;
   return (segments[0] === "packs" && segments[2] === "rules") || path.startsWith("code-rule-dsl/rules/");
