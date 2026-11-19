@@ -1913,18 +1913,22 @@ pub mod tests {
 
     /// A time is left once the clock reads later than the next step its digits show: a nanosecond
     /// time a nanosecond on, a time of 100 ns steps (NTFS) or of 10 ms steps (exFAT) a step on, and
-    /// a whole second, which a file system of one or two seconds a step gives, two seconds on.
+    /// a whole second, which a file system of one or two seconds a step gives, two seconds on. The
+    /// later readings are a 100 ns count on, the finest time Windows holds.
     #[test]
     fn says_when_the_file_clock_has_left_a_files_time() {
         let at = |seconds: u64, nanos: u32| std::time::UNIX_EPOCH + Duration::new(seconds, nanos);
-        assert!(!past_step(at(10, 501), at(10, 502)));
-        assert!(past_step(at(10, 501), at(10, 503)));
+        #[cfg(unix)]
+        {
+            assert!(!past_step(at(10, 501), at(10, 502)));
+            assert!(past_step(at(10, 501), at(10, 503)));
+        }
         assert!(!past_step(at(10, 234_567_800), at(10, 234_567_900)));
-        assert!(past_step(at(10, 234_567_800), at(10, 234_567_901)));
+        assert!(past_step(at(10, 234_567_800), at(10, 234_568_000)));
         assert!(!past_step(at(10, 10_000_000), at(10, 20_000_000)));
-        assert!(past_step(at(10, 10_000_000), at(10, 20_000_001)));
+        assert!(past_step(at(10, 10_000_000), at(10, 20_000_100)));
         assert!(!past_step(at(10, 0), at(12, 0)));
-        assert!(past_step(at(10, 0), at(12, 1)));
+        assert!(past_step(at(10, 0), at(12, 100)));
     }
 
     /// A checkout ignoring `gen/`, whose index tracks `.gitignore` and `z/m.py`; its index file.
