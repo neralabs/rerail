@@ -2,6 +2,107 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners. The experiments ran on macOS.
 
+## Status at `183e7f6b1`
+
+Twenty-one implementation findings remain. Eight have new reproductions below. Thirteen have earlier reproductions or measurements and still have open repairs.
+Two Windows checks and one Unix filename check need runtime evidence.
+
+### Eight more open findings
+
+| Case | Observed result | Repair and acceptance check |
+| --- | --- | --- |
+| 65. History identifies a repository by its Git directory path | A rule joined `git_root_repo` to the commit of a completed run. Moving the checkout removed the result. An unrelated checkout at its old path returned the original commit. | Give stored history a durable clone identity. Keep a separate worktree identity for requests that depend on HEAD. Repeat both moves and check the commit in each result. |
+| 66. Changing the rule library can select yesterday's policy | I inspected one local policy with two different `RERAIL_RR_LIB` directories. Each provided a different `audit-lib.rr`. The second inspection still reported the first directory. A fresh process with the warm store did the same. An empty store selected the second directory. | Include the library search root in the process and durable program keys. Check rule diagnostics and input paths in both orders. Keep the first directory readable throughout the test. |
+| 67. Failed revisions register named scopes | Three invalid revision scans left three routes and three generations, with zero completed runs. After a successful scan in another store, deleting its name required choosing between the two stores. | Resolve the revision before acquisition. Retire a failed scan's new route when no published owner or other pending acquisition needs it. Repeat with a concurrent successful scan. |
+| 68. Directory generations survive a stop | I published one run under each of 30 directory scopes. A single parent stop removed all 30 runs. It left 30 generation rows and one receipt. | Retire unused directory generations once the receipt covers earlier writers. Check an old pending writer, a later watch, and repeated use of one-time directories. |
+| 69. A directory stop scans unrelated history | I executed the history deletion from the stop trigger against its two input tables. With zero or 1,000 unrelated named scopes, it deleted the same one run. The SQLite VM executed 47 and 5,048 instructions respectively. The plan scanned `analysis_history_scope` in both cases. | Index the mapping from stopped directory to owned scopes, or use indexed directory ranges. Check descendants, home boundaries and the query plan with unrelated names. |
+| 70. A completed native run can change its warning | `finish(true)` returned null and the publication was `published`. After `warn("late warning")`, a second finish returned that warning for the same published run. | Seal the warning together with the publication result. Repeated finishes must return the first result. A warning recorded before publication must still prevent it. |
+| 71. Existing cache ownership can be invisible to rules | An older addon evaluated a Python policy under `legacy`. After upgrade, SQLite had five manifest memberships. A current policy querying `analysis_named_scope("legacy", _)` returned no rows. The old store had no completed run records. | Derive scope presence from live ownership as well as completed runs. Keep unavailable scan IDs absent. Check rule-visible presence before and after deletion. |
+| 73. A collector can acquire the wrong lock after a directory moves | A reader held the original store's shared lease. I opened a collector, moved the containing directory, and put another database at the old path. The collector obtained an exclusive lease while the original reader still held its lease. The fixture checked lock acquisition only. | Bind the lock file and verified database to the same directory identity. Abort or defer collection if the pair changes during acquisition. Check the active reader before and after the move, then release it and retry. |
+
+[Repository keys](../../../../native/src/git_snapshot.rs) · [Policy reader](../../../../native/src/code_rule_dsl/logic/rr.rs) · [Scope acquisition](../../../../src/cli/headless-scan.ts) · [Store publication](../../../../native/src/content_store/analysis_scope.rs) · [Stop trigger](../../../../native/src/content_store/schema.rs) · [Public scope facts](../../../rule-syntax/lib/analysis.rr)
+
+For case 65, publish a scan of checkout A under the name `old`. Use this policy for three subsequent scans in the same store.
+Keep the query policy outside both checkouts. Give its own scans a different scope.
+
+```rr
+#include "analysis.rr"
+#include "git.rr"
+.policy "history" revision 1
+.violation Seen(at: span, id: symbol) "{id}"
+Seen(@place("x", 1), c) :- git_root_repo(repo), analysis_named_scope("old", s),
+    analysis_scope_run(s, r), analysis_run_commit(r, repo, c).
+```
+
+| Location of the query | Finding |
+| --- | --- |
+| Original checkout A | A's commit |
+| Same checkout after a rename | Zero findings |
+| Unrelated checkout B at A's former location | A's commit |
+
+For case 66, put different definitions of the same include file in two copies of the rule library.
+Keep the policy file and both library copies in place. Inspect the policy through `LoadedRrPolicies.load` and read the included path from `programInputs`.
+
+| Library requested | Process and store | Include reported |
+| --- | --- | --- |
+| A | First inspection | A |
+| B | Existing process and warm store | A |
+| B | Fresh process and warm store | A |
+| B | Fresh process and empty store | B |
+
+For case 73, extend the Unix store fixture `collection_keeps_the_database_it_verified_after_its_path_changes`.
+Keep the reader and shared lease alive before opening the collector.
+
+```rust
+let reader = ContentStore::open(&file).unwrap();
+let _reading = reader.hold_collection().unwrap();
+let id = reader.identity();
+```
+
+After the fixture creates the replacement, check `collector.try_collect().unwrap().is_none()`.
+At this commit the assertion fails. The existing fixture confirms that the database connection still points to the original database.
+The exclusive lock uses the current pathname. [Collection lease](../../../../native/src/content_store/collection_guard.rs) · [Store fixture](../../../../native/src/content_store/corpus_runs/tests.rs)
+
+### Thirteen earlier findings still open
+
+| Case | Current gap | Repair and acceptance check |
+| --- | --- | --- |
+| 23 | Restoring an older control database can lose a committed stop. Three memberships survived the recorded fixture. | Make committed release routes and cutoffs recoverable. Restore on both sides of commit and delivery. Check that rollback releases nothing. |
+| 44 | A readable checkout with no clone ID fails its first scan when its Git directory is read-only. | Store the initial identity in the Rerail home when necessary. Reopen the checkout and make it writable. Check that its identity stays stable. |
+| 45 | A bare repository and its linked worktree receive different clone IDs. | Identify the common Git directory, reconcile existing IDs, and check both discovery orders. |
+| 46 | A filesystem scan accepts a case variant such as `SRC/A.PY` and can return zero findings for a file with a violation. | Resolve selected source paths to inventory spelling on the host volume. Compare findings on case-sensitive and case-insensitive volumes. |
+| 11 | A revision scan fails on a 32,000,001-byte NUL-filled file selected by a broad policy. The filesystem scan skips it. | Classify from a bounded Git blob prefix. Compare large text, large binary and unreadable inputs across providers. |
+| 28 | The nullable native source read conflates absence, size limit and object failure. | Publish the checked outcomes to source consumers. Remove and restore a tracked blob on the same view. |
+| 47 | The revision report groups excluded symlinks with absent paths. | Preserve entry mode and exclusion reason. Select a symlink, gitlink and missing path together. |
+| 61 | A query for one scope read and hashed 65 history records after 64 unrelated publications. | Add a scope-keyed history request and observation. Verify a cache hit after another scope publishes or disappears. Preserve explicit enumeration. |
+| 17 | A failing legacy-store probe retries after five seconds without a stored diagnosis. | Persist its reason and retry count. Use capped backoff and keep the original stop cutoff through recovery. |
+| 42 | Maintenance has no way to retire a permanently removed store path. | Retire the route after resolving owners and deliveries. Keep temporarily offline stores eligible. |
+| 18 | A long-lived Git view retains decoded entries from each subtree it visited. | Bound the decoded buffer. Move through disjoint selections and measure retained bytes and decodes. |
+| 52 | Inspecting a Git-backed policy repeatedly reads and lowers its include graph. | Cache the lowered program by blob, resolved includes and engine version. Count compilations after restart and after one include changes. |
+| 53 | A fresh catalog still pays to open and check the selected store. A repeated inspection in one catalog took 0.073 ms median. A fresh catalog took 1.677 ms in the paired run. | Profile store opening and query costs. Compare same-store and alternating-store loads, including after collection. |
+
+The [earlier fixtures](#status-at-6e3f1618e) and [history query](#an-unrelated-scope-changes-the-input-to-a-history-query-case-61) give the original test conditions.
+
+### Repairs verified since the run history audit
+
+| Cases | Change and evidence |
+| --- | --- |
+| 13, 59, 62 | `61e46aa9e` binds the evaluated source to its publication. `d9bc3616f` fences earlier legacy writers. `2e307808c` delivers a stop to its recorded directory after replacement or disappearance. Existing stores lack the original acquisition cutoff for older receipts. Upgrade fences outstanding legacy writers at the acquisition count during upgrade. |
+| 14, 15, 41 | `2e25c3719` routes named deletion to the registered store. `91a8fe16e` registers named stores for collection. `0136dcf40` retired 100 deleted names' generations and rejected an old permit after name reuse. Case 67 covers acquisitions that never published. |
+| 29, 30, 60 | `ee40d56d5` reports the scan scope and separates publication, prior release and collection outcomes. |
+| Cache architecture | The guard found two independent catalog freshness checks and an unclassified lease table. `3d37f7262` uses the shared program reader and identifies pending runs as leases. All six architecture and combined-program checks passed. |
+| 63. Collection of a replacement file | A scheduled collector added 94 tables to an unrelated SQLite file and changed its mode from 0644 to 0600. `31d317e69` verifies the existing database and pins that connection during collection. The regression checks the unrelated file's bytes and mode, rejects a different Rerail store, and restores the original. Older path-only registrations can validate a store schema but cannot identify the original database. |
+| 64. History without a readable store | A readable store supplied one history finding. When access failed, the history policy silently returned zero and the scan completed. `448b10170` reports a policy failure, preserves independent findings, and reads the original history after access returns. |
+| 72. Case of the reported scope directory | On a case-insensitive volume the JSON scope was `../PROJECT/PKG`; SQLite owned `project/pkg`. `183e7f6b1` reports the stored spelling. Case 46 concerns selected source files. |
+
+Windows execution of the NTFS rewrite and Git message-selector comparisons is still pending.
+The filesystem for the macOS tests rejected the invalid-byte directory fixture during setup. It needs a byte-preserving Unix filesystem.
+
+The final headless, Git and CLI usage suites passed all 158 tests. The store gate passed 262 tests with four skipped.
+All six cache architecture and combined-program checks passed. The four standalone revision command tests and TypeScript checking passed.
+Some earlier runs exceeded the first native scan's five-second timeout after relinking. They passed on repeat with the same timeout.
+Measure native loading and scan execution separately on a cold process to locate that variance.
+
 ## Run history audit from `757d01c18`
 
 The fixtures used the macOS addon and executable built from the checkout with the unfinished run history changes.
