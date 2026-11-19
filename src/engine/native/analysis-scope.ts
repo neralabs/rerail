@@ -113,16 +113,18 @@ function analysisStores(databasePath: string, root?: string, cutoff = Number.MAX
     if (tables.includes("analysis_store")) {
       for (const path of index.$client.prepare("SELECT path FROM analysis_store").pluck().all() as string[]) fallback.add(path);
     }
-    if (tables.includes("analysis_directory_store")) {
+    if (root === undefined && tables.includes("analysis_directory_store")) {
+      for (const path of index.$client.prepare("SELECT DISTINCT path FROM analysis_directory_store").pluck().iterate()) fallback.add(path as string);
+    } else if (root !== undefined && tables.includes("analysis_directory_store")) {
       const identified = tables.includes("analysis_directory_store_identity");
       const query = identified ? "SELECT d.directory,d.path,i.identity FROM analysis_directory_store d LEFT JOIN analysis_directory_store_identity i USING(directory,path)"
         : "SELECT d.directory,d.path,NULL AS identity FROM analysis_directory_store d";
-      const prefix = root === undefined ? "" : root.endsWith(sep) ? root : root + sep;
+      const prefix = root.endsWith(sep) ? root : root + sep;
       // All descendants share this byte prefix. The next character after the separator is its exclusive upper bound.
       const end = prefix.slice(0, -1) + String.fromCharCode(sep.charCodeAt(0) + 1);
-      const conditions = root === undefined ? "" : " WHERE (d.directory=? OR (d.directory>=? AND d.directory<?))"
+      const conditions = " WHERE (d.directory=? OR (d.directory>=? AND d.directory<?))"
         + (identified ? " AND (i.first_generation IS NULL OR i.first_generation<=?)" : "");
-      const args = root === undefined ? [] : [root, prefix, end, ...(identified ? [cutoff] : [])];
+      const args = [root, prefix, end, ...(identified ? [cutoff] : [])];
       for (const row of index.$client.prepare(query + conditions).iterate(...args)) registered.push(row as StoreRoute);
     }
     if (root === undefined && tables.includes("analysis_maintenance_store")) {
@@ -206,8 +208,8 @@ export function queueAnalysisScopeReleases(tx: Transaction, directories: readonl
 
 export async function collectAnalysisCaches(databasePath: string): Promise<void> {
   const failures: string[] = [];
-  const { fallback, registered } = analysisStores(databasePath);
-  for (const store of new Set([...fallback, ...registered.map(row => row.path)])) {
+  const { fallback: stores } = analysisStores(databasePath);
+  for (const store of stores) {
     try {
       if (statSync(store, { throwIfNoEntry: false }) === undefined) continue;
       assertContentStoreOwner(store);

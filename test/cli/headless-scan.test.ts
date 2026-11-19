@@ -9,7 +9,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { runAuditCommand, SCAN_VIOLATIONS_EXIT } from "../../src/cli/audit-cli.js";
 import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import { runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
-import { acquireDirectoryAnalysisGeneration, analysisScopeHome, queueAnalysisScopeReleases, readAnalysisScopeGeneration, scanContentStore, settleAnalysisScopeReleases } from "../../src/engine/native/analysis-scope.js";
+import { acquireDirectoryAnalysisGeneration, analysisScopeHome, collectAnalysisCaches, queueAnalysisScopeReleases, readAnalysisScopeGeneration, scanContentStore, settleAnalysisScopeReleases } from "../../src/engine/native/analysis-scope.js";
 import { loadNativeBinding } from "../../src/engine/native/native.js";
 import * as builds from "../../src/engine/native/rerail-build.js";
 import { openRerailDatabase } from "../../src/engine/storage/database.js";
@@ -1135,6 +1135,12 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
         expect(index.prepare("SELECT count(*) FROM analysis_directory_store").pluck().get()).toBe(0);
         expect(index.prepare("SELECT path FROM analysis_maintenance_store").pluck().all()).toEqual([store]);
       } finally { index.close(); }
+      vi.unstubAllEnvs();
+      const collect = vi.spyOn(binding, "collectAnalysisCacheAsync").mockResolvedValue(undefined);
+      try {
+        await collectAnalysisCaches(databasePath);
+        expect(collect.mock.calls.filter(([path]) => path === store)).toHaveLength(1);
+      } finally { collect.mockRestore(); }
     } finally { vi.unstubAllEnvs(); }
   });
 
