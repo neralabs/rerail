@@ -246,7 +246,10 @@ fn unit_of(p1: &rerail_c_pp::stream::parallel::P1, cpp: bool) -> (Unit, rerail_m
     use rerail_metal::pp_expand::{Layout, PpInst};
     let tapes: Vec<Vec<u8>> = p1.files.iter().map(|s| image(s, crate::pp::options(cpp))).collect();
     let unit = Unit::load(&p1.files.iter().zip(&tapes).map(|(s, t)| (s.as_slice(), t.as_slice())).collect::<Vec<_>>()).unwrap();
-    let mut lay = Layout { insts: Vec::new(), dir_slots: Vec::new(), dir_active: Vec::new(), gap_slots: Vec::new(), gap_active: Vec::new(), builtins: p1.builtins.iter().map(|n| name_key(n)).collect() };
+    let mut lay = Layout { insts: Vec::new(), dir_slots: Vec::new(), dir_active: Vec::new(), gap_slots: Vec::new(), gap_active: Vec::new(), builtins: p1.builtins.iter().map(|n| name_key(n)).collect(), relex_options: {
+        let o = crate::pp::options(cpp);
+        rerail_metal::pp_expand::relex_options(o.cpp, o.colons, o.digit_separators, o.raw_strings)
+    } };
     for i in &p1.insts {
         lay.insts.push(PpInst { file: i.file, dir_first: lay.dir_slots.len() as u32, gap_first: lay.gap_slots.len() as u32 });
         let slot = |s: u64| u32::try_from(s).expect("a slot in 32 bits");
@@ -488,6 +491,26 @@ fn stringizing_is_the_serial_passes() {
         &[("main.c", "#define V(...) #__VA_ARGS__\nV() V(a,b , c) V( a )\n")],
         &[("main.c", "#define S(x) #x\nS(a/**/b) S(a/**/ b) S('\\'' \"\\\\\")\n")],
         &[("main.c", "#define S(x) #x\n#define F(x) [x]\nF(S(1)) F( S( 1 ) )\n")],
+    ];
+    let (tokens, launches) = shapes_agree(shapes);
+    eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
+}
+
+/// R6 of decision 0448, its third part: `##`, chains of it left to right, a paste that spells no
+/// one token (both kept, the right one starting the next), placemarkers (an empty argument beside
+/// it), pastes that make names (rescanned), numbers, punctuators and digraphs, `#` beside `##`,
+/// and GNU's `, ## __VA_ARGS__` (the comma gone with no variadic arguments, kept with some).
+#[test]
+fn pasting_is_the_serial_passes() {
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define C(a, b) a ## b\nC(x, y) C(1, 2) C(+, =) C(<, :) C(, b) C(a, ) C(,) C(x y, z w)\n")],
+        &[("main.c", "#define C3(a, b, c) a ## b ## c\nC3(1, 2, 3) C3(, , c) C3(a, , ) C3(+, +, +) C3(x, ., y)\n")],
+        &[("main.c", "#define C(a, b) a ## b\n#define xy done\n#define AB C(x, y)\nC(x, y) AB C(C, (x, y))\n")],
+        &[("main.c", "#define H(a) #a ## x\n#define K(a) a ## #a\nH(1) K(y)\n")],
+        &[("main.c", "#define E(fmt, ...) f(fmt, ## __VA_ARGS__)\nE(1) E(1, 2) E(1, 2, 3) E(1,)\n")],
+        &[("main.c", "#define G(...) g(0, ## __VA_ARGS__)\nG() G(a) G(a, b)\n")],
+        &[("main.c", "#define P(x) x ## _t\n#define Q(x) P(x)\n#define N 9\nP(N) Q(N) P(int)\n")],
+        &[("main.c", "#define L(x) x ## L\n#define U(x) u ## x\nL(1) L(0x1) U(8) U(\"s\")\n")],
     ];
     let (tokens, launches) = shapes_agree(shapes);
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);

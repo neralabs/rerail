@@ -185,6 +185,8 @@ pub struct Layout {
     pub gap_active: Vec<u32>,
     /// The built-in macros' names' keys: rows at slot 0.
     pub builtins: Vec<u64>,
+    /// The dialect's options as the paste relexer reads them (`relex_options`).
+    pub relex_options: u32,
 }
 
 /// What a lookup answers where it is no definition's row (`pp_expand.metal`'s `L_*`).
@@ -442,6 +444,7 @@ pub const X_QUEUE: u32 = 64;
 pub const X_HASH: u32 = 128;
 pub const X_ACROSS: u32 = 256;
 pub const X_VA_OPT: u32 = 512;
+pub const X_RELEX: u32 = 1024;
 
 /// The expansion's rungs: rung `k`'s arena holds `2^(k+1)` tokens a top token.
 pub const EXP_RUNGS: u32 = 5;
@@ -516,14 +519,15 @@ impl Exp {
         let va_opt = name_key(b"__VA_OPT__");
         // The scratch: bytes (64 KB at rung 0, doubling) and tokens.
         let (sb, st) = ((64usize << 10) << rung, tok / 4 + 256);
-        let words = [unit.table.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32];
+        let words = [unit.table.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32, lay.relex_options];
         Ok(Exp {
             tok_cap: tok as u32,
             list_cap: lists as u32,
             out_cap: out as u32,
             q_cap: q as u32,
             words: MappedBuffer::from_slice(&device, &words)?,
-            sbytes: MappedBuffer::zeroed::<u8>(&device, sb)?,
+            // Slack past the last byte: a name's key reads 8 bytes at a time.
+            sbytes: MappedBuffer::zeroed::<u8>(&device, sb + 16)?,
             stoks: zeroed(st * 3)?,
             theads: zeroed(top)?,
             delta: zeroed(top)?,

@@ -292,3 +292,15 @@ outermost call becomes the queue's first items.
   Every shuffle runs with all 32 lanes active: one inside a lane's branch reads an idle lane
   (found by the second `#` of `# x # y`). 6 shapes in C and C++ give the serial pass's tokens
   (`stringizing_is_the_serial_passes`).
+- **R6, its third part: `##`.** SUBST writes the sequence the serial `substitute` makes before
+  its pastes: a body's `##` flagged as an operator, a parameter beside it as its raw argument
+  (an empty one a placemarker), GNU's `, ## __VA_ARGS__` without its comma where the variadic
+  arguments are empty and without its `##` where they are not. Each chain `x ## y ## …` is folded
+  left to right by the lane at its head, chains in parallel: a paste joins the two spellings in
+  the scratch bytes and asks R3's relexer; one token is a scratch token of its kind with the left
+  one's space (no paint: a pasted name is a new token); none keeps both, the right starting the
+  next paste; a placemarker gives the other. One compaction in place (a carried SIMD scan) drops
+  the pasted-away tokens and the placemarkers. A scratch name's key is its bytes'. Two `##` in a
+  row (`X_PASTE`) and a paste across a line splice (`X_RELEX`) are refused, as are spellings the
+  relexer refuses. 8 shapes in C and C++ give the serial pass's tokens
+  (`pasting_is_the_serial_passes`).

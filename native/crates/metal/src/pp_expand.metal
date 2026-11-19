@@ -540,9 +540,13 @@ constant uint TOP = 0x80000000u, NO_DEF = 0xffffffffu;
 constant uint IT_SUBST = 0u, IT_PLACE = 1u << 30, IT_CALL = 2u << 30, IT_SCAN = 3u << 30, IT_KIND = 3u << 30;
 // Why a unit is refused (`ctl[2]`); `X_ROOM` reruns it at the next rung.
 constant uint X_BUILTIN = 1u, X_PAST_END = 4u, X_PASTE = 8u, X_DEPTH = 16u, X_ROOM = 32u, X_QUEUE = 64u;
-constant uint X_HASH = 128u, X_ACROSS = 256u, X_VA_OPT = 512u;
+constant uint X_HASH = 128u, X_ACROSS = 256u, X_VA_OPT = 512u, X_RELEX = 1024u;
 // A token's flags: painted (never a candidate again); space before it (or a line's start).
 constant uint T_NOEXP = 1u, T_SPACE = 2u;
+// Before the pastes: a body's `##` (an operator), and a token a paste consumed.
+constant uint T_PASTE = 4u, T_DROP = 8u;
+// A placemarker (an empty argument beside `##`), before the pastes.
+constant uint PLACEMARKER = 0xffffffffu;
 // A ref to a scratch token (made by `#`, `##`), not a tape node.
 constant uint SCRATCH = 0x80000000u;
 struct PxScratch { uint start, end, kind; };
@@ -614,7 +618,7 @@ struct Ux {
     device const ulong* sorted; device const uint* perm; uint n_rows; device const ulong* name_keys; device const uint* values;
     device const uint* text_nodes; device const uint* gat; uint n_gaps; device const uint* firsts; uint n_toks;
     device const uint* tdepth; ulong va_opt;
-    device const uchar* sbytes; device const PxScratch* stoks;
+    device const uchar* sbytes; device const PxScratch* stoks; uint relex_options;
 };
 
 // A token's bytes and kind: a tape node's in its file's source, a scratch token's in the scratch
@@ -631,6 +635,13 @@ inline Span ref_span(Ux u, uint g) {
     uint st = node_start(a.t, a.i);
     r.p = u.data + a.f.src + st; r.len = node_end(a.t, a.i) - st; r.kind = node_kind(a.t, a.i);
     return r;
+}
+
+// A name's key: a tape node's, or a scratch token's bytes' (a paste's).
+inline ulong ref_key(Ux u, uint g) {
+    if ((g & SCRATCH) == 0u) return u.keys[g];
+    PxScratch t = u.stoks[g & ~SCRATCH];
+    return name_key((device const ulong*)u.sbytes, t.start, t.end - t.start);
 }
 
 // Whether a text token of the tape has space before it: a line's first (its `code` node just
@@ -888,7 +899,7 @@ inline void px_scan(Ux u, Ar a, uint l, uint lane) {
         if (j < n && (a.tflag[first + j] & T_NOEXP) == 0u) {
             uint g = a.tok[first + j];
             if (ref_kind(u, g) == K_IDENTIFIER) {
-                m = visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, u.keys[g], L.slot, a.ctl + 2);
+                m = visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, ref_key(u, g), L.slot, a.ctl + 2);
                 if (m == L_BUILTIN) {
                     px_refuse(a.ctl, X_BUILTIN);
                 } else if (m < L_BUILTIN) {
@@ -1041,19 +1052,19 @@ inline void px_call(Ux u, Ar a, uint l, uint lane) {
     if (lane == 0u && np > 0u) a.args[ab + (fill ? np - 2u : np - 1u)].hi = close;
     px_fence();
     simdgroup_barrier(mem_flags::mem_device);
-    // The body's uses of parameters: `##` is a later step's (refused); a parameter after `#` is
-    // read raw; each parameter used otherwise, with an argument, gets its list once.
+    // The body's uses of parameters: one after `#` or beside `##` is read raw; each parameter used
+    // otherwise, with an argument, gets its list once.
     uint n = d.n_body;
     for (uint c0 = 0u; c0 < n; c0 += 32u) {
         uint i = c0 + lane;
         uint q = 0xffffu;
         if (i < n) {
             uint it = u.items[d.ifirst + i];
-            if ((it & I_PASTE) != 0u) px_refuse(a.ctl, X_PASTE);
             uint kind = ref_kind(u, d.body + i);
             if (va && kind == K_IDENTIFIER && u.keys[d.body + i] == u.va_opt) px_refuse(a.ctl, X_VA_OPT);
             q = it & 0xffffu;
             if (i > 0u && ref_kind(u, d.body + i - 1u) == K_HASH) q = NO_PARAM;
+            if ((i > 0u && (u.items[d.ifirst + i - 1u] & I_PASTE) != 0u) || (i + 1u < n && (u.items[d.ifirst + i + 1u] & I_PASTE) != 0u)) q = NO_PARAM;
         }
         bool make = false;
         if (q != NO_PARAM && q < np && a.args[ab + q].hi > a.args[ab + q].lo) {
@@ -1105,13 +1116,45 @@ inline void px_call(Ux u, Ar a, uint l, uint lane) {
     }
 }
 
-// Item `i` of definition `d`: 1 a `#` before a parameter (its stringizing), 2 that parameter,
-// 0 any other.
-inline uint px_hash_role(Ux u, PpDef d, uint i) {
-    if ((d.flags & D_FNLIKE) == 0u) return 0u;
-    if (ref_kind(u, d.body + i) == K_HASH && i + 1u < d.n_body && (u.items[d.ifirst + i + 1u] & 0xffffu) != NO_PARAM) return 1u;
-    if (i > 0u && ref_kind(u, d.body + i - 1u) == K_HASH && (u.items[d.ifirst + i] & 0xffffu) != NO_PARAM) return 2u;
-    return 0u;
+// What item `i` of definition `d` writes in call `L`'s substitution (`substitute`'s cases):
+constant uint R_LIT = 0u, R_HASH = 1u, R_GONE = 2u, R_RAW = 3u, R_EXP = 4u, R_PASTE = 5u;
+struct Role { uint role, count, q; };
+
+inline bool px_arg_empty(Ar a, device PxList& L, uint q) { return a.args[L.args + q].hi <= a.args[L.args + q].lo; }
+
+// GNU's `, ## __VA_ARGS__` at item `i` (the variadic parameter): a literal comma, `##`, then it.
+inline bool px_gnu_comma(Ux u, PpDef d, device PxList& L, uint i) {
+    if ((d.flags & D_VARIADIC) == 0u || i < 2u || L.nargs == 0u) return false;
+    if ((u.items[d.ifirst + i] & 0xffffu) != L.nargs - 1u) return false;
+    if ((u.items[d.ifirst + i - 1u] & I_PASTE) == 0u) return false;
+    return (u.items[d.ifirst + i - 2u] & 0xffffu) == NO_PARAM && ref_is(u, d.body + i - 2u, ',');
+}
+
+inline Role px_role(Ux u, Ar a, PpDef d, device PxList& L, uint i) {
+    uint n = d.n_body, it = u.items[d.ifirst + i], q = it & 0xffffu;
+    Role r; r.role = R_LIT; r.count = 1u; r.q = q;
+    bool fn = (d.flags & D_FNLIKE) != 0u;
+    if ((it & I_PASTE) != 0u) {
+        // `##`: an operator, gone in GNU's comma (`, ## __VA_ARGS__`).
+        if (i + 1u < n && px_gnu_comma(u, d, L, i + 1u)) { r.role = R_GONE; r.count = 0u; }
+        else r.role = R_PASTE;
+        return r;
+    }
+    if (q == NO_PARAM || q >= L.nargs) {
+        if (fn && ref_kind(u, d.body + i) == K_HASH && i + 1u < n && (u.items[d.ifirst + i + 1u] & 0xffffu) != NO_PARAM) r.role = R_HASH;
+        // GNU's comma goes with no variadic arguments.
+        else if (i + 2u < n && px_gnu_comma(u, d, L, i + 2u) && px_arg_empty(a, L, L.nargs - 1u)) { r.role = R_GONE; r.count = 0u; }
+        return r;
+    }
+    if (i > 0u && ref_kind(u, d.body + i - 1u) == K_HASH) { r.role = R_GONE; r.count = 0u; return r; }
+    uint len = a.args[L.args + q].hi - a.args[L.args + q].lo;
+    if (px_gnu_comma(u, d, L, i)) { r.role = R_RAW; r.count = len; return r; }
+    bool beside = (i > 0u && (u.items[d.ifirst + i - 1u] & I_PASTE) != 0u) || (i + 1u < n && (u.items[d.ifirst + i + 1u] & I_PASTE) != 0u);
+    if (beside) { r.role = R_RAW; r.count = len == 0u ? 1u : len; return r; }
+    uint id = atomic_load_explicit(&a.args[L.args + q].list, memory_order_relaxed);
+    r.role = R_EXP;
+    r.count = id >= 2u ? a.lists[id - 2u].size : 0u;
+    return r;
 }
 
 // `#` of the raw tokens `lo..hi` of list `p` (or the top level): a string literal, written to the
@@ -1170,28 +1213,55 @@ inline uint px_stringize(Ux u, Ar a, uint p, uint lo, uint hi, uint lane) {
     return SCRATCH | id;
 }
 
-// SUBST `l`: its body's items, a parameter used expanded its argument's flattened tokens (their
-// paint kept, the first taking the parameter's space), `#` and its parameter one string literal,
-// at offsets by a SIMD scan of the items' counts (one atomic add for all); the first token takes
-// the call's name's space; then the list is scanned.
+// `l ## r` (one lane): a placemarker gives the other (the left's space kept); else the two
+// spellings joined in the scratch bytes, and the relexer's verdict: one token (a scratch token of
+// its kind, with the left's space), or none (`ok` false: both stay).
+inline uint px_paste(Ux u, Ar a, uint l, uint lf, uint r, uint rf, thread uint& out_f, thread bool& ok) {
+    ok = true;
+    if (r == PLACEMARKER) { out_f = lf; return l; }
+    if (l == PLACEMARKER) { out_f = (rf & ~T_SPACE) | (lf & T_SPACE); return r; }
+    Span x = ref_span(u, l), y = ref_span(u, r);
+    uint n = x.len + y.len;
+    uint base = atomic_fetch_add_explicit(&a.ctl[4], n, memory_order_relaxed);
+    if (base + n > a.sb_cap) { px_refuse(a.ctl, X_ROOM); ok = false; return l; }
+    for (uint b = 0u; b < x.len; b++) a.sbytes[base + b] = x.p[b];
+    for (uint b = 0u; b < y.len; b++) a.sbytes[base + x.len + b] = y.p[b];
+    // A line splice inside: the lexer's reading of it is the CPU's.
+    for (uint b = 0u; b + 1u < n; b++) {
+        if (a.sbytes[base + b] == uchar('\\') && (a.sbytes[base + b + 1u] == uchar('\n') || a.sbytes[base + b + 1u] == uchar('\r'))) { px_refuse(a.ctl, X_RELEX); ok = false; return l; }
+    }
+    uint kind = relex(a.sbytes + base, n, u.relex_options);
+    if (kind == RELEX_REFUSED) { px_refuse(a.ctl, X_RELEX); ok = false; return l; }
+    if (kind == RELEX_NONE) { ok = false; return l; }
+    uint id = atomic_fetch_add_explicit(&a.ctl[5], 1u, memory_order_relaxed);
+    if (id >= a.st_cap) { px_refuse(a.ctl, X_ROOM); ok = false; return l; }
+    a.stoks[id].start = base; a.stoks[id].end = base + n; a.stoks[id].kind = kind;
+    out_f = lf & T_SPACE;
+    return SCRATCH | id;
+}
+
+// SUBST `l`: its body's items (`px_role`), at offsets by a SIMD scan of their counts (one atomic
+// add for all): a parameter used expanded its argument's flattened tokens (their paint kept, the
+// first taking the parameter's space), one beside `##` its raw tokens (an empty one a
+// placemarker), `#` and its parameter one string literal, `##` an operator. Then the pastes: each
+// chain `x ## y ## …` folded left to right by the lane at its head (chains in parallel); then the
+// list compacted in place (a carried SIMD scan) without the pasted-away tokens and placemarkers;
+// the first token takes the call's name's space; then the list is scanned.
 inline void px_subst(Ux u, Ar a, uint l, uint lane) {
     device PxList& L = a.lists[l];
     PpDef d = u.defs[L.def];
     uint n = d.n_body, total = 0u;
-    // The count of each item: 1, its argument's flattened size, or 0 (`#`'s parameter).
+    bool pastes = false;
     for (uint c0 = 0u; c0 < n; c0 += 32u) {
         uint i = c0 + lane, v = 0u;
         if (i < n) {
-            uint q = u.items[d.ifirst + i] & 0xffffu, role = px_hash_role(u, d, i);
-            if (role == 2u) v = 0u;
-            else if (role == 1u || q == NO_PARAM || q >= L.nargs) v = 1u;
-            else {
-                uint id = atomic_load_explicit(&a.args[L.args + q].list, memory_order_relaxed);
-                v = id >= 2u ? a.lists[id - 2u].size : 0u;
-            }
+            Role r = px_role(u, a, d, L, i);
+            v = r.count;
+            pastes = pastes || r.role == R_PASTE;
         }
         total += simd_sum(v);
     }
+    pastes = simd_any(pastes);
     uint base = 0u;
     if (lane == 0u) base = atomic_fetch_add_explicit(&a.ctl[0], total, memory_order_relaxed);
     base = simd_broadcast(base, 0);
@@ -1202,45 +1272,56 @@ inline void px_subst(Ux u, Ar a, uint l, uint lane) {
     }
     uint at = base;
     for (uint c0 = 0u; c0 < n; c0 += 32u) {
-        uint i = c0 + lane, v = 0u, src = 0u, role = 0u, q = NO_PARAM;
-        bool param = false;
-        uint sp = 0u;
+        uint i = c0 + lane, sp = 0u;
+        Role r; r.role = R_GONE; r.count = 0u; r.q = NO_PARAM;
         if (i < n) {
-            uint it = u.items[d.ifirst + i];
-            q = it & 0xffffu;
-            sp = (it & I_SPACE) != 0u ? T_SPACE : 0u;
-            role = px_hash_role(u, d, i);
-            if (role == 2u) v = 0u;
-            else if (role == 1u || q == NO_PARAM || q >= L.nargs) v = 1u;
-            else {
-                param = true;
-                uint id = atomic_load_explicit(&a.args[L.args + q].list, memory_order_relaxed);
-                if (id >= 2u) { v = a.lists[id - 2u].size; src = a.lists[id - 2u].base; }
-            }
+            r = px_role(u, a, d, L, i);
+            sp = (u.items[d.ifirst + i] & I_SPACE) != 0u ? T_SPACE : 0u;
         }
-        uint off = at + simd_prefix_exclusive_sum(v);
-        if (i < n && !param && role == 0u) {
+        uint off = at + simd_prefix_exclusive_sum(r.count);
+        if (i < n && (r.role == R_LIT || r.role == R_PASTE)) {
             a.tok[off] = d.body + i;
-            a.tflag[off] = sp;
+            a.tflag[off] = sp | (r.role == R_PASTE ? T_PASTE : 0u);
             a.tchild[off] = 0u;
         }
-        ulong todo = px_ballot(param && v > 0u);
+        // An expanded argument: its flattened tokens. Every shuffle with all 32 lanes active: one
+        // in a branch reads an idle lane.
+        ulong todo = px_ballot(r.role == R_EXP && r.count > 0u);
         for (uint guard = 0u; guard < 32u && todo != 0u; guard++) {
             uint who = uint(ctz(todo));
             todo &= todo - 1u;
-            // Every shuffle with all 32 lanes active: one in a branch reads an idle lane.
             uint dst = simd_shuffle(off, ushort(who)), spw = simd_shuffle(sp, ushort(who));
-            px_copy(a, dst, simd_shuffle(src, ushort(who)), simd_shuffle(v, ushort(who)), lane);
+            uint qw = simd_shuffle(r.q, ushort(who)), cw = simd_shuffle(r.count, ushort(who));
+            uint id = atomic_load_explicit(&a.args[L.args + qw].list, memory_order_relaxed);
+            px_copy(a, dst, a.lists[id - 2u].base, cw, lane);
             simdgroup_barrier(mem_flags::mem_device);
             if (lane == 0u) a.tflag[dst] = (a.tflag[dst] & ~T_SPACE) | spw;
         }
-        todo = px_ballot(role == 1u);
+        // A raw argument: its tokens from the call's parent, or a placemarker.
+        todo = px_ballot(r.role == R_RAW && r.count > 0u);
         for (uint guard = 0u; guard < 32u && todo != 0u; guard++) {
             uint who = uint(ctz(todo));
             todo &= todo - 1u;
+            uint dst = simd_shuffle(off, ushort(who)), spw = simd_shuffle(sp, ushort(who)), qw = simd_shuffle(r.q, ushort(who));
+            uint lo = a.args[L.args + qw].lo, len = a.args[L.args + qw].hi - lo;
+            for (uint j = lane; j < len; j += 32u) {
+                a.tok[dst + j] = par_ref(u, a, L.parent, lo + j);
+                a.tflag[dst + j] = par_flags(u, a, L.parent, lo + j) & ~(T_PASTE | T_DROP);
+                a.tchild[dst + j] = 0u;
+            }
+            simdgroup_barrier(mem_flags::mem_device);
+            if (lane == 0u) {
+                if (len == 0u) { a.tok[dst] = PLACEMARKER; a.tflag[dst] = 0u; a.tchild[dst] = 0u; }
+                else a.tflag[dst] = (a.tflag[dst] & ~T_SPACE) | spw;
+            }
+        }
+        todo = px_ballot(r.role == R_HASH);
+        for (uint guard = 0u; guard < 32u && todo != 0u; guard++) {
+            uint who = uint(ctz(todo));
+            todo &= todo - 1u;
+            uint dst = simd_shuffle(off, ushort(who)), spw = simd_shuffle(sp, ushort(who));
             uint qw = u.items[d.ifirst + simd_shuffle(i, ushort(who)) + 1u] & 0xffffu;
             uint lo = qw < L.nargs ? a.args[L.args + qw].lo : 0u, hi = qw < L.nargs ? a.args[L.args + qw].hi : 0u;
-            uint dst = simd_shuffle(off, ushort(who)), spw = simd_shuffle(sp, ushort(who));
             uint ref = px_stringize(u, a, L.parent, lo, hi, lane);
             if (lane == 0u) {
                 a.tok[dst] = ref;
@@ -1248,11 +1329,68 @@ inline void px_subst(Ux u, Ar a, uint l, uint lane) {
                 a.tchild[dst] = 0u;
             }
         }
-        at += simd_sum(v);
+        at += simd_sum(r.count);
+    }
+    px_fence();
+    simdgroup_barrier(mem_flags::mem_device);
+    if (pastes) {
+        // Each chain's head: a token with `##` after it and none before.
+        for (uint c0 = 0u; c0 < total; c0 += 32u) {
+            uint j = c0 + lane;
+            bool head = false;
+            if (j + 1u < total) {
+                uint f0 = a.tflag[base + j], f1 = a.tflag[base + j + 1u];
+                if ((f0 & T_PASTE) != 0u && (f1 & T_PASTE) != 0u) px_refuse(a.ctl, X_PASTE);
+                head = (f0 & T_PASTE) == 0u && (f1 & T_PASTE) != 0u && (j == 0u || (a.tflag[base + j - 1u] & T_PASTE) == 0u);
+            }
+            if (head) {
+                uint acc = a.tok[base + j], accf = a.tflag[base + j], w = j;
+                uint k = j + 1u;
+                for (uint step = 0u; step < total && k + 1u < total && (a.tflag[base + k] & T_PASTE) != 0u; step++) {
+                    uint r = a.tok[base + k + 1u], rf = a.tflag[base + k + 1u];
+                    a.tflag[base + k] |= T_DROP;
+                    uint f = 0u;
+                    bool ok = false;
+                    uint m = px_paste(u, a, acc, accf, r, rf, f, ok);
+                    if (ok) {
+                        acc = m; accf = f;
+                        a.tflag[base + k + 1u] |= T_DROP;
+                    } else {
+                        a.tok[base + w] = acc; a.tflag[base + w] = accf;
+                        w = k + 1u; acc = r; accf = rf;
+                    }
+                    k += 2u;
+                }
+                a.tok[base + w] = acc;
+                a.tflag[base + w] = accf & ~T_DROP;
+            }
+        }
+        px_fence();
+        simdgroup_barrier(mem_flags::mem_device);
+    }
+    // The compaction, in place: a token's new place is never after its old one.
+    uint kept = 0u;
+    for (uint c0 = 0u; c0 < total; c0 += 32u) {
+        uint j = c0 + lane, t = 0u, f = 0u;
+        bool keep = false;
+        if (j < total) {
+            t = a.tok[base + j];
+            f = a.tflag[base + j];
+            keep = t != PLACEMARKER && (f & T_DROP) == 0u;
+        }
+        uint w = kept + simd_prefix_exclusive_sum(keep ? 1u : 0u);
+        simdgroup_barrier(mem_flags::mem_device);
+        if (keep) {
+            a.tok[base + w] = t;
+            a.tflag[base + w] = f & ~(T_PASTE | T_DROP);
+            a.tchild[base + w] = 0u;
+        }
+        kept += simd_sum(keep ? 1u : 0u);
+        simdgroup_barrier(mem_flags::mem_device);
     }
     if (lane == 0u) {
-        L.first = base; L.len = total;
-        if (total > 0u) a.tflag[base] = (a.tflag[base] & ~T_SPACE) | (par_flags(u, a, L.parent, L.lo) & T_SPACE);
+        L.first = base; L.len = kept;
+        if (kept > 0u) a.tflag[base] = (a.tflag[base] & ~T_SPACE) | (par_flags(u, a, L.parent, L.lo) & T_SPACE);
     }
     px_fence();
     simdgroup_barrier(mem_flags::mem_device);
@@ -1332,7 +1470,7 @@ kernel void px_work(device const PpFile* files [[buffer(0)]], device const uchar
     u.sorted = sorted; u.perm = perm; u.n_rows = n_rows[0]; u.name_keys = name_keys; u.values = values;
     u.text_nodes = text_nodes; u.gat = gat; u.n_gaps = n_gaps[0]; u.firsts = firsts; u.n_toks = n_toks[0];
     u.tdepth = top_depth; u.va_opt = ulong(words[6]) | (ulong(words[7]) << 32);
-    u.sbytes = sbytes; u.stoks = stoks;
+    u.sbytes = sbytes; u.stoks = stoks; u.relex_options = words[10];
     Ar a;
     a.lists = lists; a.tok = tok; a.tflag = tflag; a.tchild = tchild; a.tdepth = tdepth; a.args = args; a.out = out; a.ctl = ctl;
     a.q.slots = slots; a.q.control = qctl; a.q.capacity = words[5];
