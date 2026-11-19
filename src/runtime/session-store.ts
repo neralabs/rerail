@@ -12,7 +12,7 @@ import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
 import { listRepositoryRules, ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
-import { auditViolations, checkouts, events, sessions, sessionsOfRepository, steerFeedback, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
+import { auditViolations, checkouts, events, ruleViolationRollup, sessions, sessionsOfRepository, steerFeedback, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
 import { conflictFooter, type ConflictFooter } from "./merge-assist/notes.js";
@@ -86,6 +86,14 @@ export interface DeclineNote {
   recordedAt: number;
   /** The audit that steered the rule's violations the agent declined ({@link DECLINED_AUDIT}); null when none did. */
   auditId: string | null;
+}
+
+/** A rule's declined violations in a range (`SqliteSessionReader.declinedByRule`). */
+export interface DeclinedViolations {
+  /** Distinct violations of a steer the coding agent declined. */
+  declined: number;
+  /** Of those, the ones an audit in range also recorded in Log mode. */
+  alsoLogged: number;
 }
 
 /** The steers a session's coding agent declined (`SqliteSessionReader.declines`). */
@@ -667,6 +675,64 @@ export class SqliteSessionReader {
         ORDER BY note.recorded_at, note.rowid
       `),
     }));
+  }
+
+  /**
+   * The notes of the sessions `sessionIds` placed on the steer each declined, oldest first: `violations_list` marks
+   * each violation of such a steer's audit and rule with the reasons. A note no audit steered before is left out.
+   */
+  placedDeclineNotes(sessionIds: readonly string[]): Array<DeclineNote & { auditId: string }> {
+    const database = this.#database.open();
+    if (database === undefined || sessionIds.length === 0) return [];
+    return database.all<DeclineNote & { auditId: string }>(sql`
+      SELECT ruleId, reason, recordedAt, auditId FROM (
+        SELECT note.rule_id AS ruleId, note.reason AS reason, note.recorded_at AS recordedAt, ${DECLINED_AUDIT} AS auditId,
+          note.rowid AS seq
+        FROM ${steerFeedback} note
+        WHERE note.session_id IN (${sql.join(sessionIds.map(id => sql`${id}`), sql`, `)})
+      ) WHERE auditId IS NOT NULL
+      ORDER BY recordedAt, seq
+    `);
+  }
+
+  /**
+   * Per rule, its violations in range whose steer the coding agent declined (`declined`), counted as `rules_activity`
+   * counts the rule's violations: each distinct violation key once, whichever sessions reported it. A declined steer
+   * is in range when its audit started in it. `alsoLogged` is how many of them an audit in range also recorded in Log
+   * mode, so are in `loggedViolations` too: a declined violation counts as declined, never also as Log only.
+   *
+   * Notes are few, so they drive the read: each note's steer (`DECLINED_AUDIT`), then that audit's violations of the
+   * rule, an `audit_violations_audit_key` probe. `CROSS JOIN` keeps that order, and the `+` keeps SQLite off
+   * `audit_violations_rule_started`, which would read every violation of the rule in range.
+   */
+  declinedByRule(since: number, repositoryIds: readonly string[] | undefined = undefined): Map<string, DeclinedViolations> {
+    const database = this.#database.open();
+    if (database === undefined) return new Map();
+    const scope = repositoryIds ?? this.#repositoryIds;
+    const scoped = (column: SQL) => (scope === undefined ? sql`1 = 1` : sql`${column} IN (${sessionsOfRepository(scope)})`);
+    const rows = database.all<DeclinedViolations & { ruleId: string }>(sql`
+      WITH declined_steers AS (
+        SELECT DISTINCT ${DECLINED_AUDIT} AS auditId, note.rule_id AS ruleId
+        FROM ${steerFeedback} note WHERE ${scoped(sql`note.session_id`)}
+      ),
+      declined_keys AS (
+        SELECT DISTINCT sighting.rule_id AS ruleId, sighting.violation_key AS violationKey
+        FROM declined_steers steer
+        CROSS JOIN ${auditViolations} sighting ON sighting.audit_id = steer.auditId AND sighting.rule_id = steer.ruleId
+        WHERE sighting.logged = 0 AND +sighting.started_at >= ${since}
+      ),
+      logged_keys AS (
+        SELECT DISTINCT ${ruleViolationRollup.ruleId} AS ruleId, ${ruleViolationRollup.violationKey} AS violationKey
+        FROM ${ruleViolationRollup}
+        WHERE ${ruleViolationRollup.lastSeenAt} >= ${since} AND ${ruleViolationRollup.lastLoggedAt} >= ${since}
+          AND ${ruleViolationRollup.ruleId} IN (SELECT ruleId FROM declined_keys) AND ${scoped(sql`${ruleViolationRollup.sessionId}`)}
+      )
+      SELECT declined.ruleId AS ruleId, count(*) AS declined, count(logged.ruleId) AS alsoLogged
+      FROM declined_keys declined
+      LEFT JOIN logged_keys logged ON logged.ruleId = declined.ruleId AND logged.violationKey = declined.violationKey
+      GROUP BY declined.ruleId
+    `);
+    return new Map(rows.map(({ ruleId, declined, alsoLogged }) => [ruleId, { declined, alsoLogged }]));
   }
 
   events(sessionId: string, query: SessionEventQuery = {}): readonly SessionEventRecord[] {

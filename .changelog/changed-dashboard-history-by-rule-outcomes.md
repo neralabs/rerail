@@ -1,0 +1,1 @@
+History by rule counts each violation once, as Log only, Steered or Declined, with a chip for each (Logged is now Log only). Rules show their declined count in red, and a declined violation the coding agent's reason. The rule sheet shows declined in place of last logged, and Overview's Violations steered leaves declined out.
