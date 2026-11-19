@@ -75,7 +75,7 @@ export interface DetectContext {
   readonly login?: string | null;
   /**
    * The owner of the pass's Git reads: once it stops, the pass's Git read running ends and no other starts
-   * (`readsStoppedBy`), and the pass stores nothing and answers null.
+   * (`readsStoppedBy`), and a pass that has not stored yet stores nothing and answers null.
    */
   readonly reads?: GitReads;
   /**
@@ -536,11 +536,24 @@ export interface DetectedConflicts {
 /**
  * Find the checkout's conflicts and store them with the dismissed ones. A detection that finishes after Merge Assist
  * was turned off, or once the owner of its `reads` stops, or whose events would not be `heard`, stores nothing and
- * answers null.
+ * answers null; one that stored answers what it stored, though its `reads` stop after.
  */
 export async function detectConflicts(context: DetectContext): Promise<DetectedConflicts | null> {
-  const detected = await readsStoppedBy(context.reads, () => detectPass(context));
-  return context.reads?.stopped === true ? null : detected;
+  return await readsStoppedBy(context.reads, () => detectPass(context));
+}
+
+/** Whether the owner of the pass's Git reads has stopped them. */
+function readsStopped(context: DetectContext): boolean {
+  return context.reads?.stopped === true;
+}
+
+/**
+ * What a pass that could compare nothing answers, for `problem`: the open conflicts stay as they were, unexamined, as
+ * a ref's do when it cannot be read.
+ */
+function uncompared(known: StoredConflict[], problem: string): DetectedConflicts {
+  const stay = known.some(entry => entry.conflict.status === "open") ? [UNCOMPARED_KEPT_PROBLEM] : [];
+  return { before: known, after: known, peers: { branches: 0, pullRequests: 0 }, problems: [problem, ...stay], checkout: { branch: null, base: null } };
 }
 
 /** {@link detectConflicts}, its Git reads run by its `reads`. */
@@ -550,11 +563,8 @@ async function detectPass(context: DetectContext): Promise<DetectedConflicts | n
   // examined here, so it stays as it is (below).
   const known = readConflicts(context.database, root);
   const view = await mineView(root);
-  if (typeof view === "string") {
-    // Nothing could be compared: the open conflicts stay as they were, unexamined, as a ref's do when it cannot be read.
-    const stay = known.some(entry => entry.conflict.status === "open") ? [UNCOMPARED_KEPT_PROBLEM] : [];
-    return { before: known, after: known, peers: { branches: 0, pullRequests: 0 }, problems: [view, ...stay], checkout: { branch: null, base: null } };
-  }
+  // Stopped meanwhile (here and before the store below): its reads ended early and what they gave is no finding.
+  if (typeof view === "string") return readsStopped(context) ? null : uncompared(known, view);
   const refs = await liveRefs(root, view, context);
   const { conflicts: detected, failed } = await overlapConflicts(context, view, [...refs.pulls, ...refs.branches]);
   // A ref this pass could not read, or every branch when they could not be listed, keeps the open conflicts it had.
@@ -565,7 +575,7 @@ async function detectPass(context: DetectContext): Promise<DetectedConflicts | n
     ...failed.map(({ ref, reason }) => `Could not compare ${ref.label}: ${reason}`),
   ];
   // Stopped meanwhile: its reads ended early and what they gave is no finding, and the database may be closing.
-  if (context.reads?.stopped === true) return null;
+  if (readsStopped(context)) return null;
   const now = context.now();
   const examined = new Set([...known.filter(entry => !kept(entry)), ...detected].map(entry => entry.conflict.id));
   return context.database.transaction(tx => {
