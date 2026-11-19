@@ -539,8 +539,7 @@ impl ContentStore {
     }
 
     pub fn corpus_pass_wanted(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<bool> {
-        // Segments past their budget are compacted whatever else is due (`compact_segments`).
-        if self.retired_memo_rows_left()? || self.segments_past_budget()? {
+        if self.retired_memo_rows_left()? {
             return Ok(true);
         }
         let due = match self.corpus_due()? {
@@ -821,7 +820,6 @@ impl ContentStore {
                 if swept > 0 {
                     pass.collection = self.collect_held(now, MAX_COLLECTION_BATCH)?;
                 }
-                pass.plan_rows += self.compact_segments()?;
                 return Ok(pass);
             }
             pass.kept = Some(self.keep_corpus_runs_held(policy, now)?);
@@ -868,35 +866,16 @@ impl ContentStore {
             budget = budget.saturating_sub(n);
         }
         pass.collection = self.collect_held(now, MAX_COLLECTION_BATCH)?;
-        pass.plan_rows += self.compact_segments()?;
+        // The memo's pack, once the entries collected left most of it unnamed (decision 0240 §4).
+        pass.plan_rows += usize::from(self.compact_memo_pack(MEMO_PACK_FLOOR)? > 0);
+        // The frames' segments, once frames written again or collected left most of them unnamed (decision 0295 §4).
+        pass.plan_rows += usize::from(self.compact_frame_segments(MEMO_PACK_FLOOR)? > 0);
+        // The tapes' and sources' segments, once files stored again or collected left most of them unnamed (0295 step 5).
+        pass.plan_rows += usize::from(self.compact_object_segments(MEMO_PACK_FLOOR)? > 0);
         if !pass.did_work() {
             self.immediate_transaction(|tx| Ok(tx.execute_cached("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=2", [])?))?;
         }
         Ok(pass)
-    }
-
-    /// The memo's, the frames' and the objects' segments compacted where due (`segments::compaction_due`): how many
-    /// kinds were. Each kind once the bytes no row names are most of its segments (the memo's entries collected,
-    /// decision 0240 §4; frames written again or collected, decision 0295 §4; files stored again or collected, 0295
-    /// step 5), or once it is more segments than a process should map (`segments::SEGMENT_BUDGET`).
-    fn compact_segments(&self) -> StoreResult<usize> {
-        let budget = super::segments::SEGMENT_BUDGET;
-        Ok(usize::from(self.compact_memo_pack(MEMO_PACK_FLOOR, budget)? > 0)
-            + usize::from(self.compact_frame_segments(MEMO_PACK_FLOOR, budget)? > 0)
-            + usize::from(self.compact_object_segments(MEMO_PACK_FLOOR, budget)? > 0))
-    }
-
-    /// Whether a kind's segments are more than `segments::SEGMENT_BUDGET`: a pass is wanted to compact them, though no
-    /// run left a decision due (runs over unchanged files record no new manifest).
-    fn segments_past_budget(&self) -> StoreResult<bool> {
-        let connection = self.connection.lock().expect("content store connection unavailable");
-        for sql in ["SELECT count(*) FROM memo_packs", "SELECT count(*) FROM frame_segments", "SELECT count(*) FROM object_segments"] {
-            let n: i64 = connection.query_row_cached(sql, [], |r| r.get(0))?;
-            if n as usize > super::segments::SEGMENT_BUDGET {
-                return Ok(true);
-            }
-        }
-        Ok(false)
     }
 
     /// Converts a store made before decision 0053 (`auto_vacuum` never took) to incremental vacuum: a full `VACUUM`,

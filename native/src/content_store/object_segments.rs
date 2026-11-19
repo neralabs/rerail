@@ -7,8 +7,9 @@
 //! held as the run holds them (no copy); once it holds the gather's cap, or the run's wave is sealed, it is placed in
 //! one segment and queued as one job, its tapes read there meanwhile ([`QueuedTape`]).
 
+use super::connection::Cached as _;
 use super::rows::{generation, intern_hash};
-use super::segments::{ALIGN, Place, SealedSegments, SegmentBytes, SegmentMaps, SegmentWriter, segment_path};
+use super::segments::{ALIGN, Place, SealedSegments, SegmentBytes, SegmentMaps, SegmentWriter};
 use super::write_back::{Closed, Gather, Held, Key, Kind, Syms, Work};
 use super::{CODEC_ZSTD, ContentStore, HashKey, SourceId, StoreError, StoreResult, TapeId, TapePayload};
 use rusqlite::{Connection, params};
@@ -357,80 +358,76 @@ impl ContentStore {
 
     /// The tape and source segments' bytes, and the bytes their rows name: what compaction would leave.
     pub fn object_segment_bytes(&self) -> StoreResult<(u64, u64)> {
-        let (segs, named): (Vec<i64>, i64) = {
-            let connection = self.connection.lock().expect("content store mutex poisoned");
-            let segs = connection.prepare("SELECT seg FROM object_segments")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
-            let named = connection.query_row(
-                "SELECT (SELECT coalesce(sum(seg_len), 0) FROM source_objects WHERE seg > 0) + (SELECT coalesce(sum(seg_len), 0) FROM tape_objects WHERE seg > 0)",
-                [],
-                |r| r.get(0),
-            )?;
-            (segs, named)
-        };
-        let dir = object_dir(&self.database_path);
-        let held = segs.iter().map(|&s| std::fs::metadata(segment_path(&dir, s)).map_or(0, |m| m.len())).sum();
-        Ok((held, named as u64))
+        self.object_segment_use().map(|(held, named, _)| (held, named))
     }
 
-    /// Copies every placed source's and tape's bytes to one new segment and removes the others, where the bytes no
-    /// row names (objects stored again, collected) are more than half the segments and at least `floor`, or the
-    /// segments are more than `budget` (`segments::compaction_due`): one write transaction. A row whose segment is not
-    /// there is marked so (`seg` -1, never a segment's number: no later segment is read as its), absent to readers
-    /// until its file is parsed and stored again; other rows name it, so it stays. Returns the bytes freed. A reader
-    /// that mapped an old segment reads it on.
-    pub fn compact_object_segments(&self, floor: u64, budget: usize) -> StoreResult<u64> {
-        let (held, named) = self.object_segment_bytes()?;
-        let count: i64 = self.connection.lock().expect("content store mutex poisoned").query_row("SELECT count(*) FROM object_segments", [], |r| r.get(0))?;
-        if !super::segments::compaction_due(held, named, count as usize, floor, budget) {
-            return Ok(0);
-        }
+    /// The tape and source segments' bytes, the bytes their rows name, and their numbers, oldest first.
+    fn object_segment_use(&self) -> StoreResult<(u64, u64, Vec<i64>)> {
         let dir = object_dir(&self.database_path);
-        let old = self.immediate_transaction_once(|t| {
-            let segs: Vec<i64> = t.prepare("SELECT seg FROM object_segments")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
-            // (table, row id, place).
-            let mut rows: Vec<(&str, i64, Place)> = Vec::new();
-            for (table, id) in [("tape_objects", "tape_id"), ("source_objects", "source_id")] {
-                let sql = format!("SELECT {id}, seg, seg_at, seg_len FROM {table} WHERE seg > 0 ORDER BY seg, seg_at");
-                for r in t.prepare(&sql)?.query_map([], |r| Ok((r.get::<_, i64>(0)?, Place { seg: r.get(1)?, at: r.get::<_, i64>(2)? as u64, len: r.get::<_, i64>(3)? as usize })))? {
-                    let (rowid, place) = r?;
-                    rows.push((table, rowid, place));
-                }
-            }
-            let mut maps = SegmentMaps::new(dir.clone());
-            let mut kept: Vec<(&str, i64, SegmentBytes)> = Vec::new();
-            for (table, rowid, place) in rows {
-                match maps.at(place) {
-                    Some(bytes) => kept.push((table, rowid, bytes)),
-                    None => {
-                        let id = if table == "tape_objects" { "tape_id" } else { "source_id" };
-                        t.execute(&format!("UPDATE {table} SET seg = -1 WHERE {id} = ?1"), [rowid])?;
-                    }
-                }
-            }
-            t.execute("DELETE FROM object_segments", [])?;
-            if kept.is_empty() {
-                return Ok(segs);
-            }
-            let entries: Vec<(&[u8], i64, &[u8; 32])> = kept.iter().map(|(_, rowid, b)| (b.bytes(), *rowid, &[0u8; 32])).collect();
-            let mut placed = super::segments::write_segments(&dir, &entries)?;
-            if placed.files().len() != 1 {
-                return Err(StoreError::Invalid("the objects' compaction made more than one segment".into()));
-            }
-            let seg = segs.iter().copied().max().unwrap_or(0) + 1;
-            t.execute("INSERT INTO object_segments(seg) VALUES (?1)", [seg])?;
-            for (i, (table, rowid, _)) in kept.iter().enumerate() {
-                let id = if *table == "tape_objects" { "tape_id" } else { "source_id" };
-                t.execute(&format!("UPDATE {table} SET seg = ?2, seg_at = ?3 WHERE {id} = ?1"), params![rowid, seg, placed.placed(i).1 as i64])?;
-            }
-            placed.name(&dir, &[seg])?;
-            Ok(segs)
-        })?;
-        for seg in old {
-            let _ = std::fs::remove_file(segment_path(&dir, seg));
-        }
-        let (now, _) = self.object_segment_bytes()?;
-        Ok(held.saturating_sub(now))
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let numbers = object_kind(&dir).numbers(&connection)?;
+        let named: i64 = connection.query_row_cached(
+            "SELECT (SELECT coalesce(sum(seg_len), 0) FROM source_objects WHERE seg > 0) + (SELECT coalesce(sum(seg_len), 0) FROM tape_objects WHERE seg > 0)",
+            [],
+            |r| r.get(0),
+        )?;
+        drop(connection);
+        Ok((object_kind(&dir).held(&numbers), named as u64, numbers))
     }
+
+    /// Merges the tape and source segments compaction retires (`segments::retired`): every one where the bytes no row
+    /// names (objects stored again, collected) are more than half of them and at least `floor`, else the oldest past
+    /// `segments::SEGMENT_BUDGET`; one write transaction. A row whose segment is not there is marked so (`seg` -1, never
+    /// a segment's number: no later segment is read as its), absent to readers until its file is parsed and stored
+    /// again; other rows name it, so it stays. Returns the bytes freed. A reader that mapped an old segment reads it on.
+    pub fn compact_object_segments(&self, floor: u64) -> StoreResult<u64> {
+        self.compact_object_segments_within(floor, super::segments::SEGMENT_BUDGET)
+    }
+
+    /// `compact_object_segments`, keeping at most `budget` segments.
+    fn compact_object_segments_within(&self, floor: u64, budget: usize) -> StoreResult<u64> {
+        let (held, named, numbers) = self.object_segment_use()?;
+        let Some(upto) = super::segments::retired(held, named, &numbers, floor, budget) else { return Ok(0) };
+        let dir = object_dir(&self.database_path);
+        let kind = object_kind(&dir);
+        let retired = self.immediate_transaction_once(|t| super::segments::merge(t, &kind, upto, placed_objects(t, upto)?, |o| lose_object(t, o), |o, seg, at| move_object(t, o, seg, at)))?;
+        kind.remove(&retired);
+        Ok(held.saturating_sub(self.object_segment_bytes()?.0))
+    }
+}
+
+/// The tape and source segments, as compaction finds and merges them.
+fn object_kind(dir: &Path) -> super::segments::SegmentKind<'_> {
+    super::segments::SegmentKind { table: "object_segments", column: "seg", dir }
+}
+
+/// A placed object's row, as compaction moves it: its table, the table's id column, and its id.
+type ObjectRow = (&'static str, &'static str, i64);
+
+/// The tapes' and sources' tables, each with its id column.
+const OBJECT_TABLES: [(&str, &str); 2] = [("tape_objects", "tape_id"), ("source_objects", "source_id")];
+
+/// The tapes and sources placed in segments numbered up to `upto`, each table's in their order there.
+fn placed_objects(t: &Connection, upto: i64) -> rusqlite::Result<Vec<super::segments::Moved<ObjectRow>>> {
+    let mut out = Vec::new();
+    for (table, id) in OBJECT_TABLES {
+        let mut st = t.prepare(&format!("SELECT {id}, seg, seg_at, seg_len FROM {table} WHERE seg > 0 AND seg <= ?1 ORDER BY seg, seg_at"))?;
+        for row in st.query_map([upto], |r| <(i64, i64, i64, i64)>::try_from(r))? {
+            let (rowid, seg, at, len) = row?;
+            out.push(super::segments::Moved { key: (table, id, rowid), doc: rowid, digest: [0; 32], place: Place { seg, at: at as u64, len: len as usize } });
+        }
+    }
+    Ok(out)
+}
+
+/// A placed object whose segment is not there, marked so (`compact_object_segments`).
+fn lose_object(t: &Connection, (table, id, rowid): &ObjectRow) -> rusqlite::Result<()> {
+    t.execute(&format!("UPDATE {table} SET seg = -1 WHERE {id} = ?1"), [rowid]).map(drop)
+}
+
+/// A placed object's bytes, moved to segment `seg` at `at`.
+fn move_object(t: &Connection, (table, id, rowid): &ObjectRow, seg: i64, at: i64) -> rusqlite::Result<()> {
+    t.execute(&format!("UPDATE {table} SET seg = ?2, seg_at = ?3 WHERE {id} = ?1"), params![rowid, seg, at]).map(drop)
 }
 
 /// A source whose bytes are at `place`: inserted, or (stored by its hash) moved there, so a row whose segment went
@@ -473,6 +470,42 @@ mod tests {
         store.tape_frames_for(&[source], 7, 1, 1).unwrap().remove(0).map(|f| f.bytes().unwrap().to_vec())
     }
 
+    /// A test's files: its sources, each with its tape.
+    type Files = [(Arc<String>, Arc<Vec<u8>>)];
+
+    fn key(i: usize) -> Key {
+        Key::of(&[b"a test's tape", &[i as u8]])
+    }
+
+    /// `files` queued in one run: gathered (the first read where the run holds it), until the gather is full (the
+    /// last): placed, read in its segment, the wave not sealed yet.
+    fn queue(store: &ContentStore, files: &Files) {
+        let _waves = write_back::run_waves();
+        for (i, (source, tape)) in files.iter().enumerate() {
+            store.queue_source_and_tape(key(i), HashKey::sha256(source.as_bytes()), 7, 1, 1, source, Arc::clone(tape), true).unwrap();
+            match i {
+                0 => assert!(matches!(store.queued_tape(&key(0)), Some(Ok(ObjectBytes::Heap(_))))),
+                3 => assert!(matches!(store.queued_tape(&key(0)), Some(Ok(ObjectBytes::Mapped(_))))),
+                _ => {}
+            }
+        }
+    }
+
+    /// Each of `files` reads back whole: its tape and its source.
+    fn assert_read_back(store: &ContentStore, ids: &[SourceId], files: &Files) {
+        for (id, (source, tape)) in ids.iter().zip(files) {
+            assert_eq!(tape_of(store, *id).as_deref(), Some(&tape[..]));
+            assert_eq!(store.get_source(*id).unwrap(), source.as_bytes());
+        }
+    }
+
+    /// Every tape and source row points into a segment and holds no frame.
+    fn assert_pointers(store: &ContentStore) {
+        let rows: Vec<(i64, i64, i64)> = store.connection.lock().unwrap().prepare("SELECT codec_id, seg, length(frame) FROM tape_objects UNION ALL SELECT codec_id, seg, length(frame) FROM source_objects").unwrap().query_map([], |r| <(i64, i64, i64)>::try_from(r)).unwrap().collect::<Result<_, _>>().unwrap();
+        assert_eq!(rows.len(), 8);
+        assert!(rows.iter().all(|&(codec, seg, frame)| (codec, seg > 0, frame) == (CODEC_RAW, true, 0)), "pointers, no frames: {rows:?}");
+    }
+
     /// Decision 0295 step 5: a run's parsed files are gathered, placed in one segment once the gather is full or the
     /// wave is sealed (read there meanwhile), and written as rows pointing at it: no frame, read in place. A row whose
     /// segment went missing is a miss, whole again once its file is stored again; stored again, the old bytes are no
@@ -483,49 +516,26 @@ mod tests {
         let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
         let big = write_back::gather_cap() + 1;
         let files: Vec<(Arc<String>, Arc<Vec<u8>>)> = (0..4).map(|i| (Arc::new(format!("source {i}\n")), Arc::new(vec![i as u8 + 1; if i == 3 { big } else { 100 + i }]))).collect();
-        let key = |i: usize| Key::of(&[b"a test's tape", &[i as u8]]);
-        let queue = || {
-            let _waves = write_back::run_waves();
-            for (i, (source, tape)) in files.iter().enumerate() {
-                store.queue_source_and_tape(key(i), HashKey::sha256(source.as_bytes()), 7, 1, 1, source, Arc::clone(tape), true).unwrap();
-                match i {
-                    // Gathered: read where the run holds it.
-                    0 => assert!(matches!(store.queued_tape(&key(0)), Some(Ok(ObjectBytes::Heap(_))))),
-                    // The gather full: placed, read in its segment, the wave not sealed yet.
-                    3 => assert!(matches!(store.queued_tape(&key(0)), Some(Ok(ObjectBytes::Mapped(_))))),
-                    _ => {}
-                }
-            }
-        };
-        queue();
+        queue(&store, &files);
         store.written().unwrap();
         let ids: Vec<SourceId> = files.iter().map(|(source, _)| store.source_by_hash(HashKey::sha256(source.as_bytes())).unwrap().expect("stored")).collect();
         assert_eq!(ids.len(), 4);
-        let rows: Vec<(i64, i64, i64)> = store.connection.lock().unwrap().prepare("SELECT codec_id, seg, length(frame) FROM tape_objects UNION ALL SELECT codec_id, seg, length(frame) FROM source_objects").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().collect::<Result<_, _>>().unwrap();
-        assert!(rows.len() == 8 && rows.iter().all(|&(codec, seg, frame)| codec == CODEC_RAW && seg > 0 && frame == 0), "pointers, no frames: {rows:?}");
-        for (id, (source, tape)) in ids.iter().zip(&files) {
-            assert_eq!(tape_of(&store, *id).as_deref(), Some(&tape[..]));
-            assert_eq!(store.get_source(*id).unwrap(), source.as_bytes());
-        }
+        assert_pointers(&store);
+        assert_read_back(&store, &ids, &files);
         let (held, named) = store.object_segment_bytes().unwrap();
         assert!(held >= named && named as usize > big, "{held} {named}");
         assert!(store.capacity().unwrap().bytes >= held, "the disk budget counts the segments");
         // A segment gone: a miss, until the file is stored again.
-        for e in std::fs::read_dir(object_dir(&store.database_path)).unwrap() {
-            std::fs::remove_file(e.unwrap().path()).unwrap();
-        }
+        std::fs::remove_dir_all(object_dir(&store.database_path)).unwrap();
         assert_eq!(tape_of(&store, ids[0]), None);
-        queue();
+        queue(&store, &files);
         store.written().unwrap();
         assert_eq!(tape_of(&store, ids[0]).as_deref(), Some(&files[0].1[..]));
         // Stored again: the first copy is no row's, and compaction keeps one segment.
-        queue();
+        queue(&store, &files);
         store.written().unwrap();
-        assert!(store.compact_object_segments(0, super::super::segments::SEGMENT_BUDGET).unwrap() > 0);
+        assert!(store.compact_object_segments(0).unwrap() > 0);
         assert_eq!(std::fs::read_dir(object_dir(&store.database_path)).unwrap().count(), 1, "one segment left");
-        for (id, (source, tape)) in ids.iter().zip(&files) {
-            assert_eq!(tape_of(&store, *id).as_deref(), Some(&tape[..]));
-            assert_eq!(store.get_source(*id).unwrap(), source.as_bytes());
-        }
+        assert_read_back(&store, &ids, &files);
     }
 }

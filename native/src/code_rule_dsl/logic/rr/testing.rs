@@ -574,38 +574,47 @@ pub fn report(paths: &[PathBuf], filter: Option<&str>) -> Result<serde_json::Val
     // A store of testing mode's own (in the engine's tests, each test's: decision 0118).
     let _store = (cfg!(not(any(test, feature = "test-hooks"))) && std::env::var_os("RERAIL_TAPE_CACHE").is_none())
         .then(|| crate::code_rule_dsl::logic::plan::corpus::use_store(testing_store()));
-    // The store the runs keep their roots in: a test's directory is its own in each store (`in_work`).
+    // The store the runs keep their roots in, held while they run (`hold_store`).
     let store = crate::code_rule_dsl::logic::plan::corpus::tape_cache_path();
+    let _held = hold_store(store.as_deref())?;
     let mut rows = Vec::new();
     for file in rule_files(paths) {
-        if !std::fs::read_to_string(&file).is_ok_and(|t| may_hold_tests(&t)) {
-            continue;
-        }
-        for test in tests(&file)? {
-            let id = format!("{}::{}", file.display(), test.name);
-            if filter.is_some_and(|f| !id.contains(f)) {
-                continue;
-            }
-            let (failures, findings) = match in_work(store.as_deref(), &file, &test.name, |work| run(&file, &test, work)) {
-                Ok(Ok(outcome)) => (outcome.failures, outcome.findings),
-                Ok(Err(e)) | Err(e) => (vec![e], Vec::new()),
-            };
-            rows.push(serde_json::json!({
-                "file": file, "test": test.name, "line": test.line,
-                "status": if failures.is_empty() { "pass" } else { "fail" },
-                "failures": failures, "findings": findings,
-            }));
+        if std::fs::read_to_string(&file).is_ok_and(|t| may_hold_tests(&t)) {
+            rows.extend(file_rows(&file, filter, store.as_deref())?);
         }
     }
     Ok(serde_json::Value::Array(rows))
+}
+
+/// The rows of `file`'s tests whose `<file>::<name>` contains `filter` (`report`), each run over `store`.
+fn file_rows(file: &Path, filter: Option<&str>, store: Option<&Path>) -> Result<Vec<serde_json::Value>, String> {
+    let mut rows = Vec::new();
+    for test in tests(file)? {
+        if filter.is_none_or(|f| format!("{}::{}", file.display(), test.name).contains(f)) {
+            rows.push(test_row(file, &test, store));
+        }
+    }
+    Ok(rows)
+}
+
+/// `test` of `file` run over `store` in its directory (`in_work`), as its row of the report.
+fn test_row(file: &Path, test: &Test, store: Option<&Path>) -> serde_json::Value {
+    let (failures, findings) = match in_work(store, file, &test.name, |work| run(file, test, work)) {
+        Ok(Ok(outcome)) => (outcome.failures, outcome.findings),
+        Ok(Err(e)) | Err(e) => (vec![e], Vec::new()),
+    };
+    serde_json::json!({
+        "file": file, "test": test.name, "line": test.line,
+        "status": if failures.is_empty() { "pass" } else { "fail" },
+        "failures": failures, "findings": findings,
+    })
 }
 
 /// Runs `f` in `test`'s directory of `file` (`$TMPDIR/rerail-test-rr-work/<digest of the store's path, the file's and
 /// the test's name>`), removed after. The directory is the test's every run over `store`: its fixtures are a corpus
 /// root, and the store keeps a root's runs and frames by its path (`kept_strata::part_space`), so a directory of each
 /// run's own was a root more on every run, all its frames written again. Runs over two stores (two processes at once,
-/// each its own testing store) use two directories; a lock beside it (`.lock`) has a second process running the same
-/// test over the same store wait for the first.
+/// each its own testing store) use two directories; two over one store take turns (`hold_store`).
 fn in_work<T>(store: Option<&Path>, file: &Path, test: &str, f: impl FnOnce(&Path) -> T) -> Result<T, String> {
     use sha2::Digest as _;
     let file = dunce::canonicalize(file).map_err(|e| format!("{}: {e}", file.display()))?;
@@ -614,16 +623,39 @@ fn in_work<T>(store: Option<&Path>, file: &Path, test: &str, f: impl FnOnce(&Pat
         digest.update(part.as_bytes());
         digest.update(b"\0");
     }
-    let base = std::env::temp_dir().join("rerail-test-rr-work");
-    std::fs::create_dir_all(&base).map_err(|e| format!("{}: {e}", base.display()))?;
     let digest: [u8; 32] = digest.finalize().into();
-    let work = base.join(crate::content_store::observe::hex(&digest));
-    let lock = work.with_extension("lock");
-    let held = std::fs::File::create(&lock).and_then(|l| l.lock().map(|()| l)).map_err(|e| format!("{}: {e}", lock.display()))?;
+    let work = work_base()?.join(crate::content_store::observe::hex(&digest));
     let out = f(&work);
     let _ = std::fs::remove_dir_all(&work);
-    drop(held);
     Ok(out)
+}
+
+/// The directory of the tests' directories (`in_work`).
+fn work_base() -> Result<PathBuf, String> {
+    let base = std::env::temp_dir().join("rerail-test-rr-work");
+    std::fs::create_dir_all(&base).map_err(|e| format!("{}: {e}", base.display()))?;
+    Ok(base)
+}
+
+/// The lock a report holds on `store` while its tests run there (`in_work`): a second process testing over the same
+/// store waits for the first. Beside the store (`<store>.test-rr.lock`), so it goes where the store goes (another
+/// build's testing store is removed with its files, `testing_store`); with no store, in the tests' directory.
+fn hold_store(store: Option<&Path>) -> Result<std::fs::File, String> {
+    let path = match store {
+        Some(store) => {
+            let mut name = store.as_os_str().to_owned();
+            name.push(".test-rr.lock");
+            PathBuf::from(name)
+        }
+        None => work_base()?.join("no-store.lock"),
+    };
+    let held = || -> std::io::Result<std::fs::File> {
+        std::fs::create_dir_all(path.parent().unwrap_or(&path))?;
+        let lock = std::fs::File::create(&path)?;
+        lock.lock()?;
+        Ok(lock)
+    };
+    held().map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Testing mode's store, one per build of the engine, kept between runs: `$TMPDIR/rerail-test-rr-stores/<build>.sqlite`.

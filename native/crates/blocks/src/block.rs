@@ -384,33 +384,45 @@ impl Block {
         if len < size_of::<Header>() {
             return Err(format!("{}: {len} bytes, shorter than a header", path.display()));
         }
-        // Unix: the mapping keeps the pages, so the descriptor is closed (`f`, dropped as this returns).
-        #[cfg(unix)]
-        let b = {
-            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, f.as_raw_fd(), 0) };
-            if p == libc::MAP_FAILED {
-                return Err(io::Error::last_os_error().to_string());
-            }
-            Block::make(p.cast(), len, len, None, false, None)
-        };
-        #[cfg(windows)]
-        let b = {
-            let p = crate::windows::map_file(&f, len, false).map_err(|e| e.to_string())?;
-            Block::make(p, len, len, Some(f), false, None)
-        };
-        // No mapping: the file read into a reservation of its own.
-        #[cfg(not(any(unix, windows)))]
-        let b = {
-            let mut f = f;
-            let p = crate::mem::reserve(len.div_ceil(PAGE) * PAGE);
-            std::io::Read::read_exact(&mut f, unsafe { std::slice::from_raw_parts_mut(p, len) }).map_err(|e| e.to_string())?;
-            Block::make(p, len.div_ceil(PAGE) * PAGE, len, None, false, None)
-        };
-        let at = frozen_at(unsafe { std::slice::from_raw_parts(b.base, len) }, kind).map_err(|e| format!("{}: {e}", path.display()))?;
-        if at.length != len {
-            return Err(format!("{}: header says {} bytes, the file has {len}", path.display(), at.length));
-        }
+        let b = Block::map_read(f, len)?;
+        b.check_frozen(len, kind).map_err(|e| format!("{}: {e}", path.display()))?;
         Ok(Frozen(Arc::new(b)))
+    }
+
+    /// The whole of `f`, `len` bytes, mapped read-only. The mapping keeps the pages, so the descriptor is closed (`f`,
+    /// dropped as this returns).
+    #[cfg(unix)]
+    fn map_read(f: File, len: usize) -> Result<Block, String> {
+        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, f.as_raw_fd(), 0) };
+        if p == libc::MAP_FAILED {
+            return Err(io::Error::last_os_error().to_string());
+        }
+        Ok(Block::make(p.cast(), len, len, None, false, None))
+    }
+
+    /// The whole of `f`, `len` bytes, mapped read-only; the file kept while its view is.
+    #[cfg(windows)]
+    fn map_read(f: File, len: usize) -> Result<Block, String> {
+        let p = crate::windows::map_file(&f, len, false).map_err(|e| e.to_string())?;
+        Ok(Block::make(p, len, len, Some(f), false, None))
+    }
+
+    /// No mapping: the whole of `f`, `len` bytes, read into a reservation of its own.
+    #[cfg(not(any(unix, windows)))]
+    fn map_read(mut f: File, len: usize) -> Result<Block, String> {
+        let p = crate::mem::reserve(len.div_ceil(PAGE) * PAGE);
+        std::io::Read::read_exact(&mut f, unsafe { std::slice::from_raw_parts_mut(p, len) }).map_err(|e| e.to_string())?;
+        Ok(Block::make(p, len.div_ceil(PAGE) * PAGE, len, None, false, None))
+    }
+
+    /// Whether the block, its file's `len` bytes, was frozen whole as a block of `kind`: magic, kind, state, and the
+    /// length its header says is the file's.
+    fn check_frozen(&self, len: usize, kind: u32) -> Result<(), String> {
+        let at = frozen_at(unsafe { std::slice::from_raw_parts(self.base, len) }, kind)?;
+        if at.length != len {
+            return Err(format!("header says {} bytes, the file has {len}", at.length));
+        }
+        Ok(())
     }
 }
 
