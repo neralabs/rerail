@@ -73,5 +73,12 @@ by any caller in the process, so two callers of different trust could not be kep
   - setfix's per-connection maps (COMPONENTS, DERIVED, ADOPTED, INPUTS, CHANGING, SCOPE_PATHS, SCOPE_SYMS), each a
     process map keyed by the connection's address, are one `OnConn` on the connection. `accel::sharded::ByScope`,
     their sharded lock, is gone with them.
-  - Still keyed by address: vtab's BOUND, REGISTERED, VIEWS, UNRESOLVED and SETUP, plan's TEMP_LEFT, atoms' RESERVED,
-    and setfix's STORED (by database).
+- Step 4, second part:
+  - vtab's BOUND, REGISTERED, VIEWS, UNRESOLVED and SETUP are one `OnVtab` on the connection. A `Modules` keeps weak
+    handles to the connections it bound on, for its drop. A node read's plan step holds its connection's data
+    weakly (`NodeTexts::At`), and the SQL `node_read` functions hold it (they close with the connection).
+  - plan's TEMP_LEFT (what a connection's runs left in SQL) is on the connection (`plan::Left`).
+  - atoms' RESERVED was keyed by the arena's address. It is the arena's own (`Atoms::reserved`), held by each
+    reservation of its atoms.
+  - setfix's STORED is keyed by database, and every connection on one store shares its tables. So it is the store's,
+    shared by design: it moves with the store's resources (step 5).

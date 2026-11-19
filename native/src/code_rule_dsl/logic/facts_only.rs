@@ -237,8 +237,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix/device.rs", "FLUSHED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "ARENA"),
-    // Which connections hold tables or views a run left in SQL: state of the connections, not a result kept.
-    ("code_rule_dsl/logic/plan.rs", "TEMP_LEFT"),
     ("code_rule_dsl/logic/lanes.rs", "ALL"),
     ("code_rule_dsl/logic/lanes.rs", "CPU"),
     ("code_rule_dsl/logic/lanes.rs", "BATCHES"),
@@ -248,11 +246,10 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "STORED"),
     ("code_rule_dsl/logic/native/setfix.rs", "SYMS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
-    // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
-    // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114 §4): which
-    // pending atoms no committed row may hold yet, not a result kept.
-    ("content_store/atoms.rs", "RESERVED"),
+    // This thread's reservation of atoms (decision 0114 §4): which pending atoms no committed row may hold yet, not a
+    // result kept.
     ("content_store/atoms.rs", "RESERVING"),
+    // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.

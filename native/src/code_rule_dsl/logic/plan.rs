@@ -11473,8 +11473,8 @@ fn plan_views(f: Fields<'_>, vs: &body::Versions, model: &mut Model, rules_by: &
     Ok(views)
 }
 
-/// What the runs on a connection (by `setfix_scope`) left with it, so the next run there asks SQL nothing it knows
-/// (decision 0104: no SQL in a run's waves that nothing needs). Dropped when the connection closes (`forget`).
+/// What the runs on a connection left with it, so the next run there asks SQL nothing it knows (decision 0104: no SQL
+/// in a run's waves that nothing needs). On the connection (decision 0442, `vtab::ConnData`), dropped as it closes.
 #[derive(Clone, Copy, Default)]
 struct Left {
     /// The last run left tables or views in SQL: the next run asks which, and drops them.
@@ -11484,20 +11484,16 @@ struct Left {
     /// The documents of its runs are node-id intervals by their keys (`docs_by_shift`).
     by_shift: bool,
 }
-static TEMP_LEFT: std::sync::Mutex<BTreeMap<usize, Left>> = std::sync::Mutex::new(BTreeMap::new());
 
-/// Forgets what the runs on the connection at `at` left (`setfix::forget_scope`, when it closes).
-pub fn forget_connection(at: usize) {
-    if let Ok(mut m) = TEMP_LEFT.lock() {
-        m.remove(&at);
-    }
+/// What the runs on `db` left with it (`Left`).
+fn left_on(db: &Connection) -> std::sync::Arc<parking_lot::Mutex<Left>> {
+    crate::code_rule_dsl::facts::vtab::connection_data(db).get::<parking_lot::Mutex<Left>>()
 }
 
 /// States that the runs on `db` have documents whose nodes are `d << 32 | index` (the corpus runner's): a range read
 /// computes a document's interval, so no table of them is written or read in the run's waves.
 pub fn docs_by_shift(db: &Connection) {
-    super::native::setfix::forgotten_on_close();
-    TEMP_LEFT.lock().expect("temp_left").entry(super::native::setfix_scope(db)).or_default().by_shift = true;
+    left_on(db).lock().by_shift = true;
 }
 
 pub fn by_shift_of(db: &Connection) -> bool {
@@ -11505,27 +11501,26 @@ pub fn by_shift_of(db: &Connection) -> bool {
 }
 
 fn by_shift(db: &Connection) -> bool {
-    TEMP_LEFT.lock().expect("temp_left").get(&super::native::setfix_scope(db)).is_some_and(|l| l.by_shift)
+    left_on(db).lock().by_shift
 }
 
 /// `temp_store` in memory, set once a connection.
 fn temp_in_memory(db: &Connection) -> Result<()> {
-    let at = super::native::setfix_scope(db);
-    if TEMP_LEFT.lock().expect("temp_left").get(&at).is_some_and(|l| l.configured) {
+    let left = left_on(db);
+    if left.lock().configured {
         return Ok(());
     }
     // Set when SQL first runs on the connection (`vtab::setup_now`): a run all native runs no statement.
     crate::code_rule_dsl::facts::vtab::defer_setup(db, "PRAGMA temp_store = MEMORY;");
-    super::native::setfix::forgotten_on_close();
-    TEMP_LEFT.lock().expect("temp_left").entry(at).or_default().configured = true;
+    left.lock().configured = true;
     Ok(())
 }
 
-/// At a run's end: its connection is in `TEMP_LEFT` when the run made a table or a view, or kept one. While the run
+/// At a run's end: its connection's `Left::temp` is set when the run made a table or a view, or kept one. While the run
 /// lasts, SQLite's authorizer on its connection notes each table or view made (`TempLeft::watch`), with no statement
 /// of its own; the run's end takes it away.
 struct TempLeft {
-    scope: usize,
+    left: std::sync::Arc<parking_lot::Mutex<Left>>,
     made: std::sync::Arc<std::sync::atomic::AtomicBool>,
     db: *mut rusqlite::ffi::sqlite3,
 }
@@ -11545,12 +11540,12 @@ unsafe extern "C" fn note_made(made: *mut std::ffi::c_void, action: std::ffi::c_
 impl TempLeft {
     /// Notes the tables and views `db` makes until the guard drops. rusqlite 0.41's `authorizer` takes the connection
     /// mutably (a run holds it shared), so the callback is SQLite's own, set and taken away here.
-    fn watch(db: &Connection, scope: usize) -> Self {
+    fn watch(db: &Connection) -> Self {
         let made = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         // SAFETY: the handle is the open connection's, which outlives the run (the guard is the run's local).
         let handle = unsafe { db.handle() };
         unsafe { rusqlite::ffi::sqlite3_set_authorizer(handle, Some(note_made), std::sync::Arc::as_ptr(&made) as *mut std::ffi::c_void) };
-        TempLeft { scope, made, db: handle }
+        TempLeft { left: left_on(db), made, db: handle }
     }
 }
 
@@ -11559,9 +11554,7 @@ impl Drop for TempLeft {
         // SAFETY: as in `watch`; no callback reads `made` once this returns.
         unsafe { rusqlite::ffi::sqlite3_set_authorizer(self.db, None, std::ptr::null_mut()) };
         let made = self.made.load(std::sync::atomic::Ordering::Relaxed);
-        if let Ok(mut m) = TEMP_LEFT.lock() {
-            m.entry(self.scope).or_default().temp = made;
-        }
+        self.left.lock().temp = made;
     }
 }
 
@@ -11683,8 +11676,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     }
     // The previous run's tables are dropped; its views are kept where this run plans the same (`plan_views`). A
     // connection whose runs left nothing in SQL is not asked what they left (`temp_left`).
-    let scope = super::native::setfix_scope(db);
-    let left = TEMP_LEFT.lock().expect("temp_left").get(&scope).is_some_and(|l| l.temp);
+    let left = left_on(db).lock().temp;
     let temp: Vec<(String, String, String)> = if !left {
         Vec::new()
     } else {
@@ -11692,7 +11684,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
             .collect::<rusqlite::Result<_>>()?
     };
-    let _left_after = TempLeft::watch(db, scope);
+    let _left_after = TempLeft::watch(db);
     let mut old_views: HashMap<String, String> = HashMap::new();
     for (ty, name, sql) in temp {
         if ty == "view" {

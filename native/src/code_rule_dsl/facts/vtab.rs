@@ -388,6 +388,29 @@ pub fn plan_signature(sources: &BTreeMap<String, Arc<dyn Source>>) -> u64 {
 #[derive(Default)]
 pub struct Modules {
     bindings: RefCell<HashMap<String, Binding>>,
+    /// The connections it bound tables on (weakly: a closed one's are gone with it).
+    on: RefCell<Vec<std::sync::Weak<ConnData>>>,
+}
+
+/// What this module keeps for one connection (decision 0442: on the connection, `ConnData`), dropped as it closes.
+#[derive(Default)]
+struct OnVtab {
+    /// The tables bound now, by name.
+    bound: parking_lot::Mutex<HashMap<String, Binding>>,
+    /// The tables its last run bound, emptied (`reuse`): their modules stay registered until it closes, and the next
+    /// run's `bind` of a table of the same shape takes one back.
+    registered: parking_lot::Mutex<HashMap<String, Binding>>,
+    /// The views noted on it (`note_view`).
+    views: parking_lot::Mutex<HashMap<String, UnmadeView>>,
+    /// The tables registered on it that no statement has resolved yet (`register`).
+    unresolved: parking_lot::Mutex<std::collections::BTreeSet<String>>,
+    /// Its deferred set-up (`defer_setup`).
+    setup: parking_lot::Mutex<Setup>,
+}
+
+/// What this module keeps for `db` (`OnVtab`).
+fn on(db: &Connection) -> Arc<OnVtab> {
+    connection_data(db).get::<OnVtab>()
 }
 impl Modules {
     /// Binds `source` to the table `name`, registering it on `db` the first time.
@@ -401,7 +424,7 @@ impl Modules {
     /// Keep the same binding cell when SQL rollback revives an earlier table instance.
     pub fn restore_binding(&self,db:&Connection,name:&str,binding:Binding)->Result<()> {
         register(db,name,binding.clone(),true)?;
-        BOUND.lock().insert((connection_scope(db),name.to_owned()),binding.clone());
+        self.bound_on(db).bound.lock().insert(name.to_owned(),binding.clone());
         self.bindings.borrow_mut().insert(name.into(),binding);
         Ok(())
     }
@@ -411,15 +434,15 @@ impl Modules {
             return binding.set(source);
         }
         // A kept connection's table of this shape from its last run (`reuse`): its module is registered still.
-        let at = connection_scope(db);
+        let on = self.bound_on(db);
         let columns = named(name, source.as_ref());
         let shape = (columns.clone(), (0..source.columns().len()).map(|c| source.text_column(c)).collect::<Vec<_>>(), source.writable());
-        let kept = REGISTERED.lock().remove(&(at, name.to_owned()));
+        let kept = on.registered.lock().remove(name);
         // (A writable table's `temp` virtual table is there still: the run's clean-up drops none it binds, and one it
         // drops is no longer kept, `dropped_temp`.)
         if let Some(binding) = kept.filter(|b| (b.schema.columns.clone(), b.schema.text.clone(), b.schema.writable) == shape) {
             binding.set(source)?;
-            BOUND.lock().insert((at, name.to_owned()), binding.clone());
+            on.bound.lock().insert(name.to_owned(), binding.clone());
             bindings.insert(name.into(), binding);
             return Ok(());
         }
@@ -431,9 +454,19 @@ impl Modules {
         };
         register(db, name, binding.clone(), restored)?;
         if name == "node" { for register in node_tables() { register(db, &binding)?; } demand::register(db)?; }
-        BOUND.lock().insert((connection_scope(db), name.to_owned()), binding.clone());
+        on.bound.lock().insert(name.to_owned(), binding.clone());
         bindings.insert(name.into(), binding);
         Ok(())
+    }
+    /// `db`'s `OnVtab`, with `db` noted as a connection this binds on.
+    fn bound_on(&self, db: &Connection) -> Arc<OnVtab> {
+        let data = connection_data(db);
+        let mut on = self.on.borrow_mut();
+        if !on.iter().any(|w| std::ptr::eq(w.as_ptr(), Arc::as_ptr(&data))) {
+            on.retain(|w| w.strong_count() > 0);
+            on.push(Arc::downgrade(&data));
+        }
+        data.get::<OnVtab>()
     }
     pub fn get(&self, name: &str) -> Option<Binding> {
         self.bindings.borrow().get(name).cloned()
@@ -445,7 +478,7 @@ impl Modules {
             db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{}",quote(name)))?;
         }
         self.bindings.borrow_mut().remove(name);
-        BOUND.lock().remove(&(unsafe { db.handle() } as usize, name.to_owned()));
+        on(db).bound.lock().remove(name);
         let name = CString::new(name).map_err(|_| failure("invalid native module name"))?;
         // SAFETY: the live connection owns its module. SQLite releases its auxiliary
         // data and keeps any already-open cursor's Arc ownership intact.
@@ -464,14 +497,17 @@ impl Drop for Modules {
         if mine.is_empty(){return;}
         // Their modules stay registered on the connection, which may still read them: a later run on it takes one
         // of the same shape back (`REGISTERED`; `reuse` empties them first).
-        let mut registered = REGISTERED.lock();
-        BOUND.lock().retain(|(at,name),binding| {
-            let owned = mine.get(name).is_some_and(|owned|Arc::ptr_eq(&owned.current,&binding.current));
-            if owned {
-                registered.insert((*at, name.clone()), binding.clone());
-            }
-            !owned
-        });
+        for data in self.on.get_mut().iter().filter_map(std::sync::Weak::upgrade) {
+            let Some(on) = data.get_if_any::<OnVtab>() else { continue };
+            let mut registered = on.registered.lock();
+            on.bound.lock().retain(|name,binding| {
+                let owned = mine.get(name).is_some_and(|owned|Arc::ptr_eq(&owned.current,&binding.current));
+                if owned {
+                    registered.insert(name.clone(), binding.clone());
+                }
+                !owned
+            });
+        }
     }
 }
 
@@ -516,6 +552,15 @@ impl<'a> Db<'a> {
     }
     pub fn at(&self) -> usize {
         self.at
+    }
+    /// The connection's data, held weakly (a plan step's, made before its run binds what it reads).
+    pub fn data_weak(&self) -> std::sync::Weak<ConnData> {
+        // SAFETY: `data` points into an `Arc` alive while `self` may be used.
+        let held = unsafe {
+            Arc::increment_strong_count(self.data.0.as_ptr());
+            Arc::from_raw(self.data.0.as_ptr())
+        };
+        Arc::downgrade(&held)
     }
     /// What the engine keeps for the connection (decision 0442).
     pub fn data(&self) -> &ConnData {
@@ -620,11 +665,6 @@ fn client(db: &Connection) -> *const Client {
         // SAFETY: the pointer `client` set, given back once as the connection closes.
         let client = unsafe { Box::from_raw(client.cast::<Client>()) };
         let at = client.0;
-        BOUND.lock().retain(|(h, _), _| *h != at);
-        REGISTERED.lock().retain(|(h, _), _| *h != at);
-        VIEWS.lock().retain(|(h, _), _| *h != at);
-        UNRESOLVED.lock().remove(&at);
-        SETUP.lock().remove(&at);
         if let Some(forget) = FORGET.get() {
             (forget.scope)(at, &client.1);
         }
@@ -671,21 +711,18 @@ pub struct UnmadeView {
     pub eqs: Vec<(usize, i64)>,
 }
 
-/// The tables a kept connection's last run bound, emptied (`reuse`), by connection and name: their modules stay
-/// registered until the connection closes, and the next run's `bind` of a table of the same shape takes one back.
-static REGISTERED: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Binding>>> = std::sync::LazyLock::new(Default::default);
 
 /// Whether `name` is a table of `db`'s connection's own, bound now or kept for a later bind (`REGISTERED`): its
 /// `temp` virtual table (a writable one's) is the binding's, not what an earlier run left. (A run binds some of
 /// its tables as it goes: the kept strata's `load` hook.)
 pub fn is_bound(db: &Connection, name: &str) -> bool {
-    let key = (connection_scope(db), name.to_owned());
-    BOUND.lock().contains_key(&key) || REGISTERED.lock().contains_key(&key)
+    let on = on(db);
+    on.bound.lock().contains_key(name) || on.registered.lock().contains_key(name)
 }
 
 /// A run dropped `temp.<name>` on `db`'s connection: a kept binding of that name is gone with it.
 pub fn dropped_temp(db: &Connection, name: &str) {
-    REGISTERED.lock().remove(&(connection_scope(db), name.to_owned()));
+    on(db).registered.lock().remove(name);
 }
 
 /// A connection's deferred set-up (`defer_setup`): the statements still to run, each with what undoes it, and what
@@ -695,30 +732,28 @@ struct Setup {
     pending: Vec<(String, Option<String>)>,
     undo: Vec<String>,
 }
-/// Set-up statements a connection runs only once SQL is about to run on it (`defer_setup`, `setup_now`).
-static SETUP: std::sync::LazyLock<parking_lot::Mutex<HashMap<usize, Setup>>> = std::sync::LazyLock::new(Default::default);
 
 /// Defers `sql` (statements, run as one batch) until SQL first runs on `db`'s connection (`setup_now`): a run whose
 /// readers are native runs none of it.
 pub fn defer_setup(db: &Connection, sql: &str) {
-    SETUP.lock().entry(connection_scope(db)).or_default().pending.push((sql.to_owned(), None));
+    on(db).setup.lock().pending.push((sql.to_owned(), None));
 }
 
 /// `defer_setup` of a run's own set-up on a connection a later run reuses: once run, `undo` undoes it when the
 /// connection is reused (`reuse`; `DETACH x` for an `ATTACH`).
 pub fn defer_setup_undone(db: &Connection, sql: &str, undo: &str) {
-    SETUP.lock().entry(connection_scope(db)).or_default().pending.push((sql.to_owned(), Some(undo.to_owned())));
+    on(db).setup.lock().pending.push((sql.to_owned(), Some(undo.to_owned())));
 }
 
 /// Runs `db`'s deferred set-up (`defer_setup`), once: before a statement that needs it (a table made, a table of
 /// `x` written).
 pub fn setup_now(db: &Connection) -> Result<()> {
-    let at = connection_scope(db);
-    let pending = std::mem::take(&mut SETUP.lock().entry(at).or_default().pending);
+    let on = on(db);
+    let pending = std::mem::take(&mut on.setup.lock().pending);
     for (sql, undo) in pending {
         db.execute_batch(&sql)?;
         if let Some(undo) = undo {
-            SETUP.lock().entry(at).or_default().undo.push(undo);
+            on.setup.lock().undo.push(undo);
         }
     }
     Ok(())
@@ -730,28 +765,23 @@ pub fn setup_now(db: &Connection) -> Result<()> {
 /// `bind` (`REGISTERED`). What the connection itself holds stays: its functions and modules, its symbols, which of
 /// its tables SQL has yet to connect (`UNRESOLVED`), what its runs left in SQL (`plan::Left`, which the next run drops).
 pub fn reuse(db: &Connection) -> Result<()> {
-    let at = connection_scope(db);
-    let undo = SETUP.lock().remove(&at).map(|s| s.undo).unwrap_or_default();
+    let on = on(db);
+    let undo = std::mem::take(&mut *on.setup.lock()).undo;
     for sql in undo.iter().rev() {
         db.execute_batch(sql)?;
     }
     // SQLite keeps each module's binding until the connection closes: the last run's sources are let go, its tables
     // left empty (a `Modules` may drop while its connection still reads, so this is the connection's next run's).
     // The next run's `bind` takes a table of the same shape back (`REGISTERED`): its module stays registered.
-    let mut registered = REGISTERED.lock();
-    BOUND.lock().retain(|(h, name), binding| {
-        if *h == at {
-            registered.insert((at, name.clone()), binding.clone());
-        }
-        *h != at
-    });
-    for ((h, _), binding) in registered.iter() {
-        if *h == at {
-            binding.clear();
-        }
+    let mut registered = on.registered.lock();
+    for (name, binding) in std::mem::take(&mut *on.bound.lock()) {
+        registered.insert(name, binding);
+    }
+    for binding in registered.values() {
+        binding.clear();
     }
     drop(registered);
-    VIEWS.lock().retain(|(h, _), _| *h != at);
+    on.views.lock().clear();
     if let Some(forget) = FORGET.get() {
         (forget.engine)(&connection_data(db));
     }
@@ -773,37 +803,35 @@ pub fn install_forget(forget: Forget) {
 }
 
 /// The tables registered on each connection that no statement has resolved yet (`register`).
-static UNRESOLVED: std::sync::LazyLock<parking_lot::Mutex<HashMap<usize, std::collections::BTreeSet<String>>>> = std::sync::LazyLock::new(Default::default);
 
 /// Resolves every table registered on `db` and not yet resolved, by preparing a read of it: an authorizer installed
 /// after this does not see SQLite connect them (an authored query's authorizer refuses what it does not name).
 pub fn resolve_tables(db: &Connection) -> Result<()> {
-    let names = UNRESOLVED.lock().remove(&connection_scope(db)).unwrap_or_default();
+    let on = on(db);
+    let names = std::mem::take(&mut *on.unresolved.lock());
     for name in names {
-        if BOUND.lock().contains_key(&(connection_scope(db), name.clone())) {
+        if on.bound.lock().contains_key(&name) {
             db.prepare(&format!("SELECT * FROM {}", quote(&name)))?;
         }
     }
     Ok(())
 }
 
-static VIEWS: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), UnmadeView>>> = std::sync::LazyLock::new(Default::default);
 
 /// Records `view` as the view `name` on `db`'s connection, until the connection closes or `forget_views`.
 pub(crate) fn note_view(db: &Connection, name: &str, view: UnmadeView) {
-    VIEWS.lock().insert((connection_scope(db), name.to_owned()), view);
+    on(db).views.lock().insert(name.to_owned(), view);
 }
 
 /// Drops the views noted on `db`'s connection: a run starts with none.
 pub fn forget_views(db: &Connection) {
-    let at = connection_scope(db);
-    VIEWS.lock().retain(|(h, _), _| *h != at);
+    on(db).views.lock().clear();
 }
 
 /// The rows of the noted view `name` (`note_view`), read from its bound input: each once, as SQL's view gives them
 /// (a set), column by column.
 pub fn view_columns(db: &Connection, name: &str) -> Option<Vec<Vec<i64>>> {
-    let view = VIEWS.lock().get(&(connection_scope(db), name.to_owned())).cloned()?;
+    let view = on(db).views.lock().get(name).cloned()?;
     let src = bound_source(db, &view.base)?;
     let mut rows: Vec<Vec<i64>> = src.filter_eq(&view.eqs).into_iter().map(|id| view.cols.iter().map(|&c| src.value(id as usize, c)).collect()).collect();
     rows.sort_unstable();
@@ -817,28 +845,25 @@ pub fn view_columns(db: &Connection, name: &str) -> Option<Vec<Vec<i64>>> {
     Some(columns)
 }
 
-static BOUND: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Binding>>> = std::sync::LazyLock::new(Default::default);
-
 /// The source bound now to the table `name` on `db`'s connection, if one is.
 pub fn bound_source(db: impl Scoped, name: &str) -> Option<Arc<dyn Source>> {
-    BOUND.lock().get(&(db.db().at(), name.to_owned())).map(Binding::current)
+    bound_source_in(db.db().data(), name)
 }
 
-/// `bound_source` by the connection's scope (`Scoped::at`), for a callback that holds the scope, not the connection.
-pub fn bound_source_at(at: usize, name: &str) -> Option<Arc<dyn Source>> {
-    BOUND.lock().get(&(at, name.to_owned())).map(Binding::current)
+/// `bound_source` by the connection's data (`connection_data`), for a callback that holds it, not the connection.
+pub fn bound_source_in(data: &ConnData, name: &str) -> Option<Arc<dyn Source>> {
+    data.get_if_any::<OnVtab>()?.bound.lock().get(name).map(Binding::current)
 }
 
 /// Rebind through the existing cell so its owning Modules and prepared cursors agree.
 pub fn replace_bound_source(db:&Connection,name:&str,source:Arc<dyn Source>)->Result<bool>{
-    let binding=BOUND.lock().get(&(unsafe{db.handle()} as usize,name.to_owned())).cloned();
+    let binding=on(db).bound.lock().get(name).cloned();
     if let Some(binding)=binding{binding.set(source)?;Ok(true)}else{Ok(false)}
 }
 
 /// SQL cursor work, by bound input. Snapshot differences attribute fused query work to its leaves.
 pub fn counters(db:&Connection)->BTreeMap<String,[u64;4]> {
-    let scope=unsafe{db.handle()} as usize;
-    BOUND.lock().iter().filter(|((s,_),_)|*s==scope).map(|((_,name),b)|(name.clone(),[b.stats.scans.load(Ordering::Relaxed),b.stats.batches.load(Ordering::Relaxed),b.stats.candidates.load(Ordering::Relaxed),b.stats.columns.load(Ordering::Relaxed)])).collect()
+    on(db).bound.lock().iter().map(|(name,b)|(name.clone(),[b.stats.scans.load(Ordering::Relaxed),b.stats.batches.load(Ordering::Relaxed),b.stats.candidates.load(Ordering::Relaxed),b.stats.columns.load(Ordering::Relaxed)])).collect()
 }
 
 #[repr(C)]
@@ -868,7 +893,7 @@ fn register(db: &Connection, name: &str, binding: Binding, restored:bool) -> Res
     }
     // xConnect is resolved before an authored-query authorizer is installed (`resolve_tables`), not here: a run whose
     // readers are native prepares no statement over its tables.
-    UNRESOLVED.lock().entry(connection_scope(db)).or_default().insert(name.to_owned());
+    on(db).unresolved.lock().insert(name.to_owned());
     Ok(())
     })();
     if result.is_err() {

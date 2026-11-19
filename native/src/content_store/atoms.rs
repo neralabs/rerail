@@ -355,6 +355,8 @@ pub struct Atoms {
     state: rerail_accel::sharded::Sharded<State>,
     /// The store's guest keys as this process holds them (decision 0391), shared as the atoms are.
     guest_keys: Arc<super::guest_keys::GuestKeys>,
+    /// Its atoms reserved by components not yet retired (`reserving`).
+    reserved: ReservedSet,
     /// Held (the lock file, exclusively locked) while this process may give out pending ids.
     /// Lock order: `lease`, then `reader`, then `state`.
     lease: Mutex<Option<File>>,
@@ -423,12 +425,12 @@ pub(super) fn segment_bytes() -> usize {
 
 thread_local! {
     /// The atoms this thread made while reserving (`reserving`), by arena.
-    static RESERVING: std::cell::RefCell<Option<(usize, Vec<(usize, Vec<Sym>)>)>> = const { std::cell::RefCell::new(None) };
+    static RESERVING: std::cell::RefCell<Option<(usize, Vec<(ReservedSet, Vec<Sym>)>)>> = const { std::cell::RefCell::new(None) };
 }
 
-/// Atoms reserved by components not yet retired, by arena (its address): pending, but no row a commit writes holds
-/// them yet (decision 0114 §4).
-static RESERVED: LazyLock<parking_lot::Mutex<HashMap<usize, std::collections::BTreeSet<Sym>>>> = LazyLock::new(Default::default);
+/// An arena's atoms reserved by components not yet retired (`Atoms::reserved`): pending, but no row a commit writes
+/// holds them yet (decision 0114 §4). The arena's own (decision 0442), held by each reservation of its atoms.
+type ReservedSet = Arc<parking_lot::Mutex<std::collections::BTreeSet<Sym>>>;
 
 /// Atoms made ahead of the run's order, by a component of strata (decision 0114 §4: the atoms' publication model).
 ///
@@ -454,7 +456,7 @@ pub fn reserving(arena: &Arc<Atoms>) -> Reservation {
 
 /// A thread's reservation in progress (`reserving`): `end` gives what it made. It holds the reservation it was
 /// made inside, which goes on when it ends.
-pub struct Reservation(Option<(usize, Vec<(usize, Vec<Sym>)>)>);
+pub struct Reservation(Option<(usize, Vec<(ReservedSet, Vec<Sym>)>)>);
 
 impl Reservation {
     pub fn end(mut self) -> Reserved {
@@ -474,7 +476,7 @@ impl Drop for Reservation {
 
 /// The atoms a component reserved: published (counted as pending) when dropped, as the component retires.
 #[derive(Default)]
-pub struct Reserved(Vec<(usize, Vec<Sym>)>);
+pub struct Reserved(Vec<(ReservedSet, Vec<Sym>)>);
 
 impl Reserved {
     /// Takes in what a later reservation of the same component made (its members resumed after their wave).
@@ -492,14 +494,9 @@ impl Drop for Reserved {
         if self.0.is_empty() {
             return;
         }
-        let mut all = RESERVED.lock();
-        for (at, ids) in self.0.drain(..) {
-            if let Some(set) = all.get_mut(&at) {
-                ids.iter().for_each(|id| { set.remove(id); });
-                if set.is_empty() {
-                    all.remove(&at);
-                }
-            }
+        for (set, ids) in self.0.drain(..) {
+            let mut set = set.lock();
+            ids.iter().for_each(|id| { set.remove(id); });
         }
     }
 }
@@ -614,6 +611,7 @@ impl Atoms {
             // Atom 0, the empty string, is the schema's first segment.
             state: rerail_accel::sharded::Sharded::new(State { atoms: Interner::default(), since: None, all_held: 1, map: None }),
             guest_keys: Arc::default(),
+            reserved: ReservedSet::default(),
             lease: Mutex::new(None),
             leased: AtomicBool::new(false),
             wanted: Mutex::new((None, false)),
@@ -830,7 +828,7 @@ impl Atoms {
         }
         // Atoms a component reserves (`reserving`) are no row's that a commit may write yet: not counted.
         let base = state.atoms.base() as Sym;
-        let reserved = RESERVED.lock().get(&(self as *const Atoms as usize)).map_or(0, |r| r.range(base..).count());
+        let reserved = self.reserved.lock().range(base..).count();
         n > reserved
     }
 
@@ -1066,8 +1064,8 @@ impl Atoms {
             {
                 let new: Vec<Sym> = ids.iter().copied().filter(|&id| id >= before).collect();
                 if !new.is_empty() {
-                    RESERVED.lock().entry(self as *const Atoms as usize).or_default().extend(new.iter().copied());
-                    r.push((self as *const Atoms as usize, new));
+                    self.reserved.lock().extend(new.iter().copied());
+                    r.push((Arc::clone(&self.reserved), new));
                 }
             }
         });

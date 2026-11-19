@@ -102,14 +102,9 @@ native/src/code_rule_dsl/facts/rows.rs::GIVEN_BACK	review
 native/src/code_rule_dsl/facts/rows.rs::LIVE	review	
 native/src/code_rule_dsl/facts/rows.rs::OPEN	review	
 native/src/code_rule_dsl/facts/span_prefilter.rs::SPAN_PREFILTER	review	
-native/src/code_rule_dsl/facts/vtab.rs::BOUND	review	
 native/src/code_rule_dsl/facts/vtab.rs::CLOSES	review	
 native/src/code_rule_dsl/facts/vtab.rs::FORGET	review	
 native/src/code_rule_dsl/facts/vtab.rs::NODE_TABLES	review	
-native/src/code_rule_dsl/facts/vtab.rs::REGISTERED	review	
-native/src/code_rule_dsl/facts/vtab.rs::SETUP	review	
-native/src/code_rule_dsl/facts/vtab.rs::UNRESOLVED	review	
-native/src/code_rule_dsl/facts/vtab.rs::VIEWS	review	
 native/src/code_rule_dsl/facts/vtab/demand.rs::NEXT	review	
 native/src/code_rule_dsl/facts/vtab/schema/cache.rs::SCHEMAS	review	
 native/src/code_rule_dsl/facts/vtab/syntax.rs::AST_COMPILER	stays	code a crate above registers at load
@@ -167,7 +162,7 @@ native/src/code_rule_dsl/logic/lanes.rs::MADE	review
 native/src/code_rule_dsl/logic/lanes.rs::NEXT	review	
 native/src/code_rule_dsl/logic/lanes.rs::SQL	shared	shared by design: an executor or its queues
 native/src/code_rule_dsl/logic/native/setfix.rs::ONCE	review	
-native/src/code_rule_dsl/logic/native/setfix.rs::STORED	connection	the stored tables read, by database: kept across runs with the connection's inputs (INPUTS, batch 4)
+native/src/code_rule_dsl/logic/native/setfix.rs::STORED	shared	the stored tables loaded, by database: every connection on one store shares them, so they are the store's (step 5)
 native/src/code_rule_dsl/logic/native/setfix.rs::SYMS	shared	shared by design: one per store file
 native/src/code_rule_dsl/logic/native/setfix/device.rs::TICKETS	review	
 native/src/code_rule_dsl/logic/native/setfix/device.rs::WAVES	review	
@@ -179,7 +174,6 @@ native/src/code_rule_dsl/logic/native/setfix/runs.rs::SITES	review
 native/src/code_rule_dsl/logic/plan.rs::KEPT	shared	program analyses kept across a session's runs: the session's or the shared object's (batch 5)
 native/src/code_rule_dsl/logic/plan.rs::RUNS	review	
 native/src/code_rule_dsl/logic/plan.rs::SHOWN	review	
-native/src/code_rule_dsl/logic/plan.rs::TEMP_LEFT	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/plan/choices.rs::KEPT	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/logic/plan/corpus.rs::CLOSING	review	
 native/src/code_rule_dsl/logic/plan/corpus.rs::COMBINED	shared	a cache (decision 0104 moves it to facts, in the shared store)
@@ -399,7 +393,6 @@ native/src/content_store/atoms.rs::GIVEN	review
 native/src/content_store/atoms.rs::IDENTITIES	shared	shared by design: one per store file
 native/src/content_store/atoms.rs::MEMORY	shared	shared by design: one per store file
 native/src/content_store/atoms.rs::REGISTRY	shared	shared by design: one per store file
-native/src/content_store/atoms.rs::RESERVED	connection	a connection's own state, keyed by connection in a process map
 native/src/content_store/compression.rs::LANGUAGE_TAGS	stays	code a crate above registers at load
 native/src/content_store/connection.rs::ALL_CONNECTIONS	shared	shared by design: one per store file
 native/src/content_store/connection.rs::CONNECTION_FUNCTIONS	stays	code a crate above registers at load

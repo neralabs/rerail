@@ -1685,9 +1685,9 @@ pub(crate) fn forgotten_on_close() {
 }
 
 /// Drops what the connection at `at` left: its components and derived relations (`scope`).
-pub fn forget_scope(at: usize, data: &crate::code_rule_dsl::facts::vtab::ConnData) {
-    // Its symbols, path and loaded inputs go with the connection's own values (`OnConn`).
-    crate::code_rule_dsl::logic::plan::forget_connection(at);
+pub fn forget_scope(_at: usize, data: &crate::code_rule_dsl::facts::vtab::ConnData) {
+    // Its symbols, path, loaded inputs and what its runs left in SQL (`plan::Left`) go with the connection's own
+    // values (`OnConn`).
     forget_engine(data);
 }
 
@@ -5963,19 +5963,20 @@ impl JoinRule {
 }
 
 /// Where a node read (`Step::Func`'s `texts`) finds the run's long-text nodes: the binding, when the join was made
-/// after it, or the connection's scope, looked up as the step runs when it was made before (a phase's plan made
-/// before its run binds its nodes). Without a binding a read is NULL, as the SQL function's (`functions::register`).
+/// after it, or the connection's data (weakly), looked up as the step runs when it was made before (a phase's plan
+/// made before its run binds its nodes). Without a binding a read is NULL, as the SQL function's
+/// (`functions::register`).
 #[derive(Clone)]
 pub enum NodeTexts {
     Held(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>),
-    At(usize),
+    At(std::sync::Weak<crate::code_rule_dsl::facts::vtab::ConnData>),
 }
 
 impl std::fmt::Debug for NodeTexts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             NodeTexts::Held(_) => f.write_str("Held"),
-            NodeTexts::At(at) => write!(f, "At({at})"),
+            NodeTexts::At(_) => f.write_str("At"),
         }
     }
 }
@@ -6348,10 +6349,9 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                 // batch (`syntax::LongTexts`).
                 let texts = if crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&name) {
                     let long = crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES;
-                    let at = conn.at();
-                    Some(match crate::code_rule_dsl::facts::vtab::bound_source_at(at, long) {
+                    Some(match crate::code_rule_dsl::facts::vtab::bound_source(&conn, long) {
                         Some(nodes) => NodeTexts::Held(nodes),
-                        None => NodeTexts::At(at),
+                        None => NodeTexts::At(conn.db().data_weak()),
                     })
                 } else {
                     None
@@ -7186,7 +7186,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     let read = match nodes {
                         NodeTexts::Held(nodes) => node_read(name, Some(&**nodes), val(slots, args[0])),
                         NodeTexts::At(at) => {
-                            let nodes = crate::code_rule_dsl::facts::vtab::bound_source_at(*at, crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES);
+                            let nodes = at.upgrade().and_then(|d| crate::code_rule_dsl::facts::vtab::bound_source_in(&d, crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES));
                             node_read(name, nodes.as_deref(), val(slots, args[0]))
                         }
                     };
