@@ -618,6 +618,8 @@ impl Placed {
     /// and the pairs `(rel, rel__stated)`, by name.
     pub fn normalized(&self, apart: bool) -> Result<Normalized> {
         use super::super::program_image::passes;
+        #[cfg(any(test, feature = "test-hooks"))]
+        NORMALIZED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if !self.whole || self.ids.is_some() {
             return Err(Error::Plan("the program has no image: its run reads it from its version".into()));
         }
@@ -697,6 +699,10 @@ impl Placed {
 
 /// A program's version as `plan::run` normalizes it (`Placed::normalized`): the version, the relations given a
 /// presence column, and the pairs `(rel, rel__stated)` whose stated facts were moved apart.
+/// Tests: the programs normalized so far in this process (`Placed::normalized`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub static NORMALIZED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 pub struct Normalized {
     pub placed: Placed,
     pub sentinels: std::collections::BTreeSet<String>,

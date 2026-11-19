@@ -1346,7 +1346,7 @@ pub mod tests {
         let result=cut(Some(&kept),key,&pl(&p),&st(&p),&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
         let v=crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0;
-        let lowered=lower::Lowered {version:v,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
+        let lowered=lower::Lowered {version:v,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python,normal:Default::default()};
         let reused=result.program(&lowered).unwrap();
         let placed=reused.placed().unwrap();
         // A view of an input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _).`) is never kept: its rule stays, to

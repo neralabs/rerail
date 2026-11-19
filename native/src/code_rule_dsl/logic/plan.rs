@@ -10679,6 +10679,8 @@ pub struct Hooks<'a> {
     /// tests them with every other test at once, each string once a run, as the batches do. Without it the run
     /// makes its own from the program's tests.
     pub texts: Option<Arc<super::strings::Vocabulary>>,
+    /// The program normalized (`lower::Lowered::normalized`), for `apart` as `run` decides it: read, not made again.
+    pub normalized: Option<Arc<body::Normalized>>,
     /// Posts the requests a component makes, their answers taken as they come (decision 0114 §3); used where the
     /// strata loop retires from a scoreboard, `answer` elsewhere.
     pub asking: Option<&'a mut dyn Asking>,
@@ -11260,6 +11262,12 @@ fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs, 
     connection::run(db,1,||super::native::register(db))?;
     connection::run(db,2,||super::native::register_symbols(db))?;
     super::native::forget_inputs(db);
+    // The program normalized once (`Lowered::normalized`), for `apart` as `run` decides it.
+    let mut hooks = hooks;
+    let apart = inputs.atoms.is_some() && !inputs.native.is_empty();
+    if hooks.normalized.is_none() {
+        hooks.normalized = Some(lowered.normalized(apart)?);
+    }
     let out = run(&lowered.placed()?, db, inputs, Some(lowered.lowering()), hooks);
     // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
     // write transaction (decision 0049).
@@ -11490,9 +11498,17 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     // The program's version as the run reads it (t36 item 7, step 2): normalized by the version passes
     // (`passes::normalize`, `stated_apart`), which the planner reads its rules and fields from, and the passes below
     // edit.
-    let body::Normalized { placed: normal_v, sentinels, stated } = {
+    // Normalized once a program (`lower::Lowered::normalized`) where the caller holds it, so every run of it (a
+    // corpus run's chunks) reads one version and the analyses it holds (Q203 item 3 (ii)).
+    let (normal_v, sentinels, stated) = {
         let _span = super::profile::span(|| "the program's version".into());
-        program.normalized(apart)?
+        match hooks.normalized.take() {
+            Some(n) => (n.placed.clone(), n.sentinels.clone(), n.stated.clone()),
+            None => {
+                let body::Normalized { placed, sentinels, stated } = program.normalized(apart)?;
+                (placed, sentinels, stated)
+            }
+        }
     };
     // The normalized program as the tree, decoded only for the version trace (a measurement aid).
     let lists = super::front::Lists::default();

@@ -44,6 +44,50 @@ fn benchmark_phase_0() {
 /// re-derives the edited file's component and its importers' only; `verify` derives everything again and
 /// compares; the contract refuses a relation that reads an undeclared cross-file one, and a row naming a node
 /// outside its closure.
+/// Q203 item 3 (ii): a corpus run's chunks read one normalized program, made once, not one each (each chunk's
+/// own version held every analysis of it again); the findings are those of one chunk.
+#[test]
+fn a_runs_chunks_normalize_the_program_once() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("normal-once");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (i, name) in ["a", "b", "c", "d", "e", "f", "g", "h"].iter().enumerate() {
+        std::fs::write(dir.join(format!("{name}.py")), format!("def f{i}():\n    x = {i}\n    return x\n\ndef g{i}():\n    return f{i}()\n")).unwrap();
+    }
+    let rule = dir.join("calls.rr");
+    std::fs::write(&rule, r#"
+.decl def(n: node, x: symbol)
+def(n, x) :- kind(n, "function_definition"), field(n, "name", c), text(c, x).
+.decl calls(n: node, x: symbol)
+calls(n, x) :- kind(n, "call"), field(n, "function", c), text(c, x), def(_, x).
+.output calls
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let run = |chunk_nodes: usize, store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(format!("store-{store}.sqlite"))));
+        let before = crate::code_rule_dsl::logic::plan::body::NORMALIZED.load(std::sync::atomic::Ordering::Relaxed);
+        let report = super::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, chunk_nodes).unwrap();
+        let normalized = crate::code_rule_dsl::logic::plan::body::NORMALIZED.load(std::sync::atomic::Ordering::Relaxed) - before;
+        (report.chunks, normalized, crate::code_rule_dsl::logic::plan::output::shown(&out, "calls").unwrap())
+    };
+    // The process's first run of the program does more than any later one (its images made): a warm-up, then
+    // each measured run over a store of its own.
+    run(1 << 20, "warm-up");
+    let (one, once, whole) = run(1 << 20, "one");
+    let (few, fewer, chunked) = run(80, "few");
+    let (many, normalized, more_chunked) = run(4, "many");
+    assert_eq!(one, 1);
+    assert!(few >= 2 && many > few, "the chunked runs' chunks: {few}, {many}");
+    assert_eq!(chunked, whole, "the findings of one chunk");
+    assert_eq!(more_chunked, whole, "the findings of one chunk");
+    assert!(whole.len() >= 4, "{whole:?}");
+    // The same at any chunk count (the file-local part's once, the cross part's, ...), none more a chunk; one chunk's
+    // run takes a part of its own besides.
+    assert_eq!(normalized, fewer, "{normalized} normalizations for {many} chunks, {fewer} for {few}");
+    assert!(normalized <= once, "{normalized} normalizations for {many} chunks, {once} for one");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn cross_file_rows_are_memoised_per_import_component() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
