@@ -108,6 +108,9 @@ Older releases could merge these names into one replacement character. An indivi
 The headless CLI requires a UTF-8 checkout path. If a symlink leads to an unsupported path, source selection reports the error before opening a checkout.
 Scope presence comes from published ownership or recorded history. A scope imported from an older store can own manifests or snapshots without a recorded scan.
 The engine reads the requested scope and run relations from one SQLite snapshot.
+For a lookup by scope, derive `analysis_history_request("named", name)` or `analysis_history_request("scope", scope)`.
+Each lookup uses the scope key in the store's primary index. The cache compares the rows for that scope.
+A publication or removal in another scope preserves the answer. Whole-store enumeration still observes all published runs.
 A run has an opaque key. Its scan ID is the value that the caller supplied or the standalone command assigned.
 Git run records use the clone ID shared by the repository's worktrees. A rename preserves the ID.
 A copy that includes the existing clone ID can read the same history from a shared store.
@@ -134,10 +137,10 @@ Use the run key to join facts. Two calls can supply the same scan ID.
 
 ```rr
 #include "analysis.rr"
+analysis_history_request("named", "release").
 .decl reviewed(scan: symbol, repository: symbol, tree: symbol)
 reviewed(id, repo, tree) :-
-    analysis_named_scope("release", scope), analysis_scope_run(scope, run),
-    analysis_run_scan_id(run, id), analysis_run_tree(run, repo, tree).
+    analysis_history_of("named", "release", _, _, id, _, repo, tree, _, _), tree != "".
 .output reviewed
 ```
 

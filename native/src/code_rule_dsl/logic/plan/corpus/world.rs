@@ -32,6 +32,18 @@ const BUDGET: usize = 4000;
 pub(super) const LOAD: &str = "load";
 pub(super) const LOADED: &str = "loaded";
 
+/// Include the rules that decide which keys are requested when following an output's dependencies.
+pub(super) fn needed(program: &front::Program) -> BTreeSet<String> {
+    let mut roots = program.outputs.clone();
+    loop {
+        let needed = front::needed(program, roots.clone());
+        let previous = roots.len();
+        roots.extend(WORLD.iter().filter(|(answer, req)| needed.contains(*answer) && !needed.contains(*req))
+            .map(|(_, req)| (*req).to_owned()));
+        if roots.len() == previous { return needed; }
+    }
+}
+
 /// Whether the program reads the file system or loads documents.
 pub(super) fn wanted(prog: &front::Program) -> bool {
     std::iter::once(LOAD).chain(WORLD.iter().map(|(_, req)| *req)).any(|req| asks(prog, req))
@@ -68,7 +80,7 @@ pub(super) struct Loaded {
 pub(super) struct World {
     git: Option<super::git::Git>,
     inventory_filter: Option<crate::git_workspace::snapshot::InventoryFilter>,
-    git_observations: BTreeMap<(String, String), String>,
+    observations: BTreeMap<(String, String), String>,
     roots: Vec<PathBuf>,
     root: PathBuf,
     dirs: BTreeMap<String, Vec<(String, bool)>>,
@@ -119,14 +131,14 @@ impl World {
         self.git.get_or_insert_with(|| super::git::Git::new(&self.root))
     }
 
-    pub(super) fn consulted_git(&mut self, operation: &str, repo: &str, value: &str, digest: String) {
-        let key = serde_json::to_string(&(repo, value)).expect("string tuple");
-        self.git_observations.insert((operation.to_owned(), key), digest);
+    pub(super) fn consulted_lookup(&mut self, operation: &str, domain: &str, value: &str, digest: String) {
+        let key = serde_json::to_string(&(domain, value)).expect("string tuple");
+        self.observations.insert((operation.to_owned(), key), digest);
     }
 
     pub(super) fn git_revision(&mut self, operation: &str, key: &str, expression: &str) -> (String, &'static str) {
         let (id, status) = self.git().resolve(operation, key, expression);
-        self.consulted_git(operation, key, expression, format!("{status}:{id}"));
+        self.consulted_lookup(operation, key, expression, format!("{status}:{id}"));
         (id, status)
     }
 
@@ -134,7 +146,7 @@ impl World {
         let records = self.git().records(repo, id);
         let status = records.iter().find(|record| matches!(record.field, "storage" | "error"))
             .map_or("unchecked", |record| record.first.as_str());
-        self.consulted_git(super::git::OBJECT, repo, id, status.to_owned());
+        self.consulted_lookup(super::git::OBJECT, repo, id, status.to_owned());
         records
     }
 
@@ -359,7 +371,7 @@ impl World {
     /// loaded document's bytes, and for a path refused or missing what is there now (decision 0083 §2). A run whose
     /// consulted things are all as they were would ask, load and derive the same (`still`).
     pub(super) fn consulted(&self) -> Vec<(String, String, String)> {
-        let mut out: Vec<_> = self.git_observations.iter().map(|((op, key), value)| (op.clone(), key.clone(), value.clone())).collect();
+        let mut out: Vec<_> = self.observations.iter().map(|((op, key), value)| (op.clone(), key.clone(), value.clone())).collect();
         for (asked, entries) in &self.dirs {
             out.push(("dir".to_owned(), asked.clone(), listing_digest(entries)));
         }
@@ -403,6 +415,10 @@ impl World {
             "git_file_storage" => crate::git_workspace::snapshot::file_stamp(&self.allowed(path)?)?,
             "load" => bytes_digest(Path::new(path)),
             "refused" => self.probe(path),
+            super::analysis_history::REQUEST => {
+                let (kind, key) = serde_json::from_str::<(String, String)>(path).ok()?;
+                super::analysis_history::requested(&kind, &key).ok()?.1
+            }
             super::git::REVISION | super::git::REPO_REVISION | super::git::OBJECT => {
                 let (repo, arg) = serde_json::from_str::<(String, String)>(path).ok()?;
                 self.git().observation(what, &repo, &arg)?

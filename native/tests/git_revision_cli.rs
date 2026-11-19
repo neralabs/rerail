@@ -267,6 +267,71 @@ fn standalone_logic_publishes_each_source_after_its_history_query_finishes() {
 }
 
 #[test]
+fn requested_history_reuses_only_the_named_scopes_records() {
+    use rerail_engine::content_store::{ContentStore, analysis_scope::{self, AnalysisRun, RunSource}};
+
+    let f = Checkout::new();
+    let database = f.area.path().join("store.sqlite");
+    let profile = f.area.path().join("profile");
+    let out = f.area.path().join("history");
+    let policy = f.area.path().join("release.rr");
+    let tree = f.git(&["rev-parse", "HEAD^{tree}"]);
+    let program = include_str!("../../docs/rule-syntax/git.md").split("```rr\n")
+        .filter_map(|part| part.split_once("```")).map(|(program, _)| program)
+        .find(|program| program.lines().any(|line| line == ".output release_scan")).unwrap();
+    fs::write(&policy, program).unwrap();
+    let publish = |scope: &str, scan: &str| {
+        let mut run = AnalysisRun::begin(ContentStore::open(&database).unwrap(), scope, scan).unwrap();
+        run.select_source(RunSource::Git { repository: "fixture".into(), tree: tree.clone(), commit: None }).unwrap();
+        run.finish(true).unwrap();
+    };
+    let query = |ids: &[&str], hit: bool| {
+        let result = f.command("logic", &[&policy, &f.repo, &out], Some("reader"))
+            .env("RERAIL_PROFILE", &profile).output().unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        assert!(f.run("csv", &[&out], None).status.success());
+        let csv = fs::read_to_string(out.join("release_scan.csv")).unwrap();
+        let mut rows: Vec<_> = csv.lines().collect();
+        rows.sort_unstable();
+        assert_eq!(rows, ids.iter().map(|id| format!("{id}\t{tree}")).collect::<Vec<_>>());
+        let decisions = fs::read_to_string(profile.join("profile.txt")).unwrap();
+        assert_eq!(decisions.contains("scope history reuse"), hit, "{decisions}");
+        let expected = format!("{:?}: {} run records", "release", ids.len());
+        assert!(decisions.contains(&expected), "{decisions}");
+    };
+    publish("named:release", "first");
+    query(&["first"], false);
+    for i in 0..64 { publish("named:other", &format!("unrelated-{i}")); }
+    assert_eq!(f.settled_store().query_row("SELECT count(*) FROM analysis_scope_run WHERE scope='named:other'", [], |r| r.get::<_, u32>(0)).unwrap(), 64);
+    query(&["first"], true);
+    analysis_scope::release_named_scope(&database, "other", &[]).unwrap();
+    query(&["first"], true);
+    publish("named:release", "second");
+    query(&["first", "second"], false);
+    analysis_scope::release_named_scope(&database, "release", &[]).unwrap();
+    query(&[], false);
+    query(&[], true);
+
+    // A directory scope and a named scope can have the same display value. The store's opaque ID selects one.
+    let store = ContentStore::open(&database).unwrap().identity();
+    publish("cwd:/review", "directory");
+    publish("named:/review", "named");
+    let directory = format!("scope:{store}:cwd:/review");
+    let foreign = format!("scope:{}:cwd:/review", store.wrapping_add(1));
+    fs::write(&policy, format!(r#"#include "analysis.rr"
+analysis_history_request("scope", s) :- analysis_directory_scope("/review", s).
+analysis_history_request("scope", "{foreign}").
+.decl exact(key: symbol, id: symbol)
+exact(key, id) :- analysis_history_of("scope", key, _, _, id, _, _, _, _, _).
+.output exact
+"#)).unwrap();
+    let run = f.run("logic", &[&policy, &f.repo, &out], Some("reader"));
+    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert!(f.run("csv", &[&out], None).status.success());
+    assert_eq!(fs::read_to_string(out.join("exact.csv")).unwrap().trim_end(), format!("{directory}\tdirectory"));
+}
+
+#[test]
 fn revision_constant_records_follow_their_inputs_and_published_owners() {
     use rerail_engine::content_store::{self, ContentStore, CorpusPolicy};
 

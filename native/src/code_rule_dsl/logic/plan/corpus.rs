@@ -6979,8 +6979,8 @@ fn run_observed(
         let load_ledger: Arc<std::sync::Mutex<cone_rounds::LoadLedger>> = Arc::default();
         let load_ledger_in = Arc::clone(&load_ledger);
         let git_root = root.to_path_buf();
-        let kept_git_reads: Arc<std::sync::Mutex<Vec<(String, String, String)>>> = Arc::default();
-        let kept_git_reads_in = Arc::clone(&kept_git_reads);
+        let kept_lookup_reads: Arc<std::sync::Mutex<Vec<(&'static str, String, String, String)>>> = Arc::default();
+        let kept_lookup_reads_in = Arc::clone(&kept_lookup_reads);
         let rounds_journal_in = rounds_journal.clone();
         // The cone and the caller take turns on separate stacks. This caller answers the cone's requests.
         let modes = modes.to_owned();
@@ -7089,9 +7089,16 @@ fn run_observed(
                     let unchanged = git.borrow_mut().get_or_insert_with(|| git::Git::new(&git_root))
                         .observation(req, &repo, &id).as_ref() == Some(&stamp);
                     if unchanged {
-                        kept_git_reads_in.lock().unwrap_or_else(|e| e.into_inner()).push((repo, id, stamp));
+                        kept_lookup_reads_in.lock().unwrap_or_else(|e| e.into_inner()).push((git::OBJECT, repo, id, stamp));
                     }
                     return unchanged;
+                }
+                if req == analysis_history::REQUEST {
+                    let [kind, key] = key else { return false };
+                    let (Some(kind), Some(key)) = (sym_text(*kind), sym_text(*key)) else { return false };
+                    let Some(digest) = analysis_history::kept(&kind, &key, rows, sym_text) else { return false };
+                    kept_lookup_reads_in.lock().unwrap_or_else(|e| e.into_inner()).push((analysis_history::REQUEST, kind, key, digest));
+                    return true;
                 }
                 if matches!(req, git::REVISION | git::REPO_REVISION) {
                     return false;
@@ -7246,6 +7253,19 @@ fn run_observed(
                 }
                 let answer = match rel { git::REVISION => "git_view_revision_of", git::REPO_REVISION => "git_revision_of", _ => "git_object_of" };
                 return Ok(vec![(answer.to_owned(), out)]);
+            }
+            if rel == analysis_history::REQUEST {
+                let mut out = Vec::new();
+                for row in rows {
+                    let [kind, key] = row.as_slice() else { return Err(Error::Plan("analysis_history_request takes a kind and a key".into())); };
+                    let (kind, key) = (text(*kind)?, text(*key)?);
+                    let (records, digest) = analysis_history::requested(&kind, &key)?;
+                    world.consulted_lookup(rel, &kind, &key, digest);
+                    for record in records {
+                        out.push(atoms(&record.each_ref().map(String::as_str))?);
+                    }
+                }
+                return Ok(vec![(analysis_history::ANSWER.to_owned(), out)]);
             }
             if rel == git::INVENTORY_CHILD {
                 let mut out = Vec::new();
@@ -7609,9 +7629,9 @@ fn run_observed(
         finished = Some(finish()?);
         cone_inputs = cone_digests(&exports.borrow(), &per_file, &split.locations, &pf, docs.iter().chain(&loaded_docs))?;
         let summary = world.summary(pauses);
-        if let Ok(mut reads) = kept_git_reads.lock() {
-            for (repo, id, stamp) in reads.drain(..) {
-                world.consulted_git(git::OBJECT, &repo, &id, stamp);
+        if let Ok(mut reads) = kept_lookup_reads.lock() {
+            for (operation, domain, key, digest) in reads.drain(..) {
+                world.consulted_lookup(operation, &domain, &key, digest);
             }
         }
         consulted.extend(world.consulted());
@@ -11532,7 +11552,7 @@ fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], pro
     let mut parts = crate::code_rule_dsl::logic::answers::split(&whole).expect("the program has answers");
     // Git answers start empty and are produced by the fixpoint. Unlike a
     // document load's exports, they have no caller-supplied seed rows.
-    parts.load_inputs.retain(|rel| !matches!(rel.as_str(), "git_view_revision_of" | "git_revision_of" | "git_object_of" | "git_inventory_child_of" | reference_facts::ANSWER | reference_facts::SIBLINGS_ANSWER | reference_facts::FILE_ANSWER | reference_facts::LINK_ANSWER));
+    parts.load_inputs.retain(|rel| !matches!(rel.as_str(), "git_view_revision_of" | "git_revision_of" | "git_object_of" | "git_inventory_child_of" | analysis_history::ANSWER | reference_facts::ANSWER | reference_facts::SIBLINGS_ANSWER | reference_facts::FILE_ANSWER | reference_facts::LINK_ANSWER));
     // The rest reads the answers as inputs: the runner binds what it gave.
     for rel in answers.values().flatten().filter(|r| !exports.contains(r)) {
         if !parts.rest_inputs.contains(rel) {

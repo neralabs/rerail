@@ -38,6 +38,24 @@ view_tip(r, v, c) :- git_root_view(r, v), git_view_revision(v, "HEAD", c).
 The repository convenience relation `git_revision(repo, expression, oid)` uses the invocation's root view.
 For immutable data such as a commit message, pass the repository and the resolved object ID.
 
+## Read one analysis scope's history
+
+Include `analysis.rr` and derive `analysis_history_request(kind, key)` for each scope you want to read.
+Use `"named"` with the name you passed to `--analysis-scope`. Use `"scope"` with an opaque scope ID from this store.
+The answer includes the request key, scope ID, run ID, scan ID, directory, repository, tree, commit and workspace snapshot.
+An absent scope has zero rows. Store read errors fail the query.
+
+```rr
+#include "analysis.rr"
+analysis_history_request("named", "release").
+.decl release_scan(scan: symbol, tree: symbol)
+release_scan(id, t) :- analysis_history_of("named", "release", _, _, id, _, _, t, _, _), t != "".
+.output release_scan
+```
+
+The store looks up completed runs by scope. Publishing or removing another scope preserves this query's cached result.
+To enumerate every published run, read `analysis_run_record` or its projections such as `analysis_scope_run`.
+
 ## Read the selected commit
 
 ```rr
@@ -183,10 +201,10 @@ This query returns the commits scanned under `release` in the current repository
 ```rr
 #include "analysis.rr"
 #include "git.rr"
+analysis_history_request("named", "release").
 .decl reviewed_commit(scan: symbol, commit: symbol)
 reviewed_commit(id, c) :-
-    git_root_repo(repo), analysis_named_scope("release", s), analysis_scope_run(s, run),
-    analysis_run_scan_id(run, id), analysis_run_commit(run, repo, c).
+    git_root_repo(repo), analysis_history_of("named", "release", _, _, id, _, repo, _, c, _), c != "".
 .output reviewed_commit
 ```
 

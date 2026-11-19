@@ -466,18 +466,8 @@ pub(super) fn still(root: &Path, input: &str, previous: &str) -> bool {
 /// An output whose dependencies are entirely Git inputs and ordinary rules
 /// can run before any source inventory is available.
 pub(super) fn metadata_only(program: &Program) -> bool {
-    let mut roots = program.outputs.clone();
-    let needed = loop {
-        let needed = super::front::needed(program, roots.clone());
-        // A world answer also reads the rules that produced its request.
-        let requests: Vec<_> = [("git_view_revision_of", REVISION), ("git_revision_of", REPO_REVISION), ("git_object_of", OBJECT),
-            ("git_inventory_child_of", INVENTORY_CHILD)]
-            .into_iter().filter(|(answer, request)| needed.contains(*answer) && !needed.contains(*request))
-            .map(|(_, request)| request.to_owned()).collect();
-        if requests.is_empty() { break needed; }
-        roots.extend(requests);
-    };
-    if !needed.iter().any(|rel| INPUTS.contains(&rel.as_str()) || super::analysis_history::is_input(rel)) {
+    let needed = super::world::needed(program);
+    if !needed.iter().any(|rel| INPUTS.contains(&rel.as_str()) || super::analysis_history::is_input(rel) || rel == super::analysis_history::ANSWER) {
         return false;
     }
     let heads: std::collections::BTreeSet<_> = program.rules.iter().map(|rule| rule.head.rel.as_str()).collect();
@@ -490,6 +480,7 @@ pub(super) fn metadata_only(program: &Program) -> bool {
             || program.facts.contains_key(rel.as_str())
             || INPUTS.contains(&rel.as_str())
             || super::analysis_history::is_input(rel)
+            || rel == super::analysis_history::ANSWER
             || super::source_languages::is_input(rel)
             // A declared relation with no producers is empty, unless a phase can supply it.
             || (program.decls.contains_key(rel.as_str()) && !rel.contains("__") && !program.inputs.contains(rel))

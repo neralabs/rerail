@@ -5,6 +5,12 @@
 .decl analysis_run_record(scope: symbol, kind: symbol, value: symbol, run: symbol, scan: symbol, directory: symbol, repo: symbol, tree: symbol, commit: symbol, snapshot: symbol)
 .input analysis_run_record
 
+// A bounded history lookup. The selector is a named scope or a store-qualified scope ID.
+.decl analysis_history_request(kind: symbol, key: symbol) extensible
+.decl analysis_history_lookup(kind: symbol, key: symbol)
+analysis_history_lookup(k, v) :- analysis_history_request(k, v).
+.decl analysis_history_of(kind: symbol, key: symbol, scope: symbol, run: symbol, scan: symbol, directory: symbol, repo: symbol, tree: symbol, commit: symbol, snapshot: symbol)
+
 .decl analysis_named_scope(name: symbol, scope: symbol)
 analysis_named_scope(name, s) :- analysis_scope_record(s, "named", name).
 

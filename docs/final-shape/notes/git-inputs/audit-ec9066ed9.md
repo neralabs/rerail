@@ -2,7 +2,7 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Nineteen of the 28 follow-up findings have verified results. Nine remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+Twenty of the 28 follow-up findings have verified results. Eight remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
 
 | Open finding | What still needs to pass |
 | --- | --- |
@@ -10,11 +10,23 @@ Nineteen of the 28 follow-up findings have verified results. Nine remain open. T
 | 23. Scope stop after restore | Recover the committed stop, acquisition cutoff and affected store identities after restoring the control database. Exercise crashes on both sides of acknowledgement. |
 | 42. Removed stores | Retire a route by store identity. Apply its outstanding stop if that store returns. Preserve a different store at the same path. |
 | 52. Git-backed policies | Reopen a compiled policy after restart. Count lowerings when its blobs stay the same and when an include changes. |
-| 61. History by scope | Read only the requested scope's records. Check reuse after an unrelated publication and invalidation after a relevant one. |
 | Bound commit metadata | Request the bound commit when a rule reads its metadata. Verify root commits, non-root commits and unavailable objects under negation. |
 | Commit diagnostic locations | Identify the repository, commit and optional field in the report. Distinguish a commit finding from a finding in a file named `git`. |
 | Content handles | Read verified content through a rule-visible handle. Check reuse across revisions and the result for a missing object. |
 | Selected document provenance | Join the selected path, blob, grammar, tape and document. Test two paths with identical bytes and a scan that excludes one. |
+
+## Scope-keyed history
+
+In case 61, the standalone CLI queried the single completed run in `release`.
+After 64 runs published under `other`, the query read one record and reused its cached answer.
+Deleting `other` also kept that answer. A second publication under `release` returned two distinct run IDs.
+Deleting `release` returned zero rows. Repeating that query reused the empty answer.
+An opaque directory scope ID selected its own run when a named scope had the same display value. An ID from another store returned zero rows.
+
+On macOS, an additional check used the standalone CLI for each publication and query.
+After an unrelated publication, the evaluator ran zero of its two strata and wrote zero rows back.
+After a relevant publication it updated one stratum. SQLite used the primary keys of the scope, run and snapshot tables for this lookup.
+All 12 standalone Git revision tests passed on Linux, including the existing whole-store enumeration. [CLI tests](../../../../native/tests/git_revision_cli.rs) · [Rule example](../../../rule-syntax/git.md#read-one-analysis-scopes-history)
 
 ## Constant relations across revisions and scopes
 

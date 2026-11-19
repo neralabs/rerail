@@ -350,11 +350,12 @@ fn legacy_scope_value(scope: &str) -> &str {
     }
 }
 
-fn completed_runs(db: &rusqlite::Connection) -> StoreResult<Vec<CompletedRun>> {
-    let mut statement = db.prepare_cached("SELECT r.scope,h.value,r.acquisition,r.scan_id,r.directory,r.repository,r.tree,r.git_commit,s.snapshot_id
+fn completed_runs(db: &rusqlite::Connection, scope: Option<&str>) -> StoreResult<Vec<CompletedRun>> {
+    let filter = if scope.is_some() { "WHERE r.scope=?1" } else { "" };
+    let mut statement = db.prepare_cached(&format!("SELECT r.scope,h.value,r.acquisition,r.scan_id,r.directory,r.repository,r.tree,r.git_commit,s.snapshot_id
         FROM analysis_scope_run r JOIN analysis_history_scope h USING(scope)
-        LEFT JOIN analysis_run_workspace_snapshot s USING(scope,acquisition) ORDER BY r.scope,r.acquisition,s.snapshot_id")?;
-    let rows = statement.query_map([], |r| Ok(CompletedRun {
+        LEFT JOIN analysis_run_workspace_snapshot s USING(scope,acquisition) {filter} ORDER BY r.scope,r.acquisition,s.snapshot_id"))?;
+    let rows = statement.query_map(rusqlite::params_from_iter(scope), |r| Ok(CompletedRun {
         scope: r.get(0)?, value: r.get(1)?, acquisition: r.get(2)?, scan_id: r.get(3)?,
         directory: r.get(4)?, repository: r.get(5)?, tree: r.get(6)?, commit: r.get(7)?, snapshot: r.get(8)?,
     }))?;
@@ -364,6 +365,15 @@ fn completed_runs(db: &rusqlite::Connection) -> StoreResult<Vec<CompletedRun>> {
 impl ContentStore {
     pub fn completed_analysis_runs(&self) -> StoreResult<Vec<CompletedRun>> {
         Ok(self.analysis_records(false, true)?.runs)
+    }
+
+    pub fn completed_runs_in_scope(&self, scope: &str) -> StoreResult<Vec<CompletedRun>> {
+        let mut db = self.connection.lock().map_err(super::StoreError::Invalid)?;
+        let tx = db.transaction()?;
+        self.check_scope_store(&tx)?;
+        let runs = completed_runs(&tx, Some(scope))?;
+        tx.commit()?;
+        Ok(runs)
     }
 
     pub fn analysis_records(&self, scopes: bool, runs: bool) -> StoreResult<AnalysisRecords> {
@@ -385,7 +395,7 @@ impl ContentStore {
             })?.collect::<rusqlite::Result<_>>()?;
         }
         if runs {
-            records.runs = completed_runs(&tx)?;
+            records.runs = completed_runs(&tx, None)?;
         }
         tx.commit()?;
         Ok(records)

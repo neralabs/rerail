@@ -5095,7 +5095,7 @@ fn rename_literal(l: &Literal, name: &dyn Fn(&str) -> String) -> Literal {
     }
 }
 
-pub const WORLD: [(&str, &str); 11] = [
+pub const WORLD: [(&str, &str); 12] = [
     ("dir_entry", "rr_dir_req"),
     ("file_line", "rr_file_req"),
     ("file_digest", "rr_digest_req"),
@@ -5103,6 +5103,7 @@ pub const WORLD: [(&str, &str); 11] = [
     ("git_revision_of", "git_revision_request"),
     ("git_object_of", "git_object_request"),
     ("git_inventory_child_of", "git_inventory_child_request"),
+    ("analysis_history_of", "analysis_history_lookup"),
     ("reference_summary_of", "reference_summary_request"),
     ("reference_siblings_of", "reference_siblings_request"),
     ("reference_file_of", "reference_file_request"),
