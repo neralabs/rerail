@@ -136,7 +136,7 @@ export interface RerailDaemonOptions {
   onShutdownRequest?: () => void;
 }
 
-/** What `--tls-cert` and `--tls-key` name, read: PEM text. */
+/** What `--tls-cert` and `--tls-key` name, read: PEM text, which `loadDaemonTls` parses before it hands it on. */
 export interface DaemonTlsMaterial {
   cert: string;
   key: string;
@@ -959,7 +959,8 @@ export class TlsKeyExposedError extends Error {
  * this account can read (a missing or misspelled one, a folder, a FIFO, a file this account may not read, one another
  * program holds with a lease or an oplock, one larger than any key, one that holds no key such as the certificate, one
  * whose readers cannot be read), and a certificate that would not serve with the key, is a mistake in the command and
- * stops the start within seconds. `access` is for tests.
+ * stops the start within seconds. So does a key or certificate that is empty or does not parse (`refuseUnparsed`), in a
+ * line that names the file. `access` is for tests.
  */
 export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = {}): Promise<DaemonTlsMaterial> {
   let others: string | undefined;
@@ -975,7 +976,32 @@ export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = 
     throw await refusedKey(tls, `${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`);
   }
   const [cert, key] = await Promise.all([readFile(tls.certFile, "utf8"), readFile(tls.keyFile, "utf8")]);
+  // Node's https server reads an empty key as no key: it would listen, say https, and fail every handshake.
+  refuseUnparsed(PRIVATE_KEY_FILE, tls.keyFile, key);
+  refuseUnparsed(CERTIFICATE_FILE, tls.certFile, cert);
   return { cert, key };
+}
+
+/** What a TLS file is called, what it must hold, and the parse that stands for the one its text meets at start. */
+interface TlsFileKind {
+  readonly name: string;
+  readonly holds: string;
+  readonly parse: (text: string) => unknown;
+}
+
+// The key is parsed as the https server parses it, so every key a server took before is taken still; the certificate
+// as `RerailDaemon.start` parses it for its fingerprint, which refused any other before.
+const PRIVATE_KEY_FILE: TlsFileKind = { name: "TLS private key", holds: "a PEM private key", parse: key => createSecureContext({ key }) };
+const CERTIFICATE_FILE: TlsFileKind = { name: "TLS certificate", holds: "a PEM X.509 certificate", parse: pem => new X509Certificate(pem) };
+
+/** Stops the start, in one line that names `file`, when `text`, read from it, is empty or does not parse as `kind`. */
+function refuseUnparsed(kind: TlsFileKind, file: string, text: string): void {
+  if (text === "") throw new Error(`The ${kind.name} ${file} is empty: it must hold ${kind.holds}`);
+  try {
+    kind.parse(text);
+  } catch (error) {
+    throw new Error(`The ${kind.name} ${file} is not ${kind.holds}: ${errorText(error)}`);
+  }
 }
 
 /**
@@ -1018,7 +1044,7 @@ async function readPrivateKey(path: string): Promise<Buffer | undefined> {
 async function certificateServes(certFile: string, key: Buffer): Promise<boolean> {
   const cert = (await readWithoutWaiting(certFile))?.toString("utf8");
   if (cert === undefined) return false;
-  certificateFingerprint(cert);
+  refuseUnparsed(CERTIFICATE_FILE, certFile, cert);
   createSecureContext({ cert, key });
   return true;
 }

@@ -240,6 +240,58 @@ Start-Sleep 60`;
     expect(await loadDaemonTls(files)).toEqual({ cert, key });
   });
 
+  it("stops the start in one line naming the file when the key or the certificate is empty or holds no PEM", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const { cert, key } = selfSignedCertificate();
+    const files = { certFile: join(root, "cert.pem"), keyFile: join(root, "key.pem") };
+    await writeFile(files.certFile, cert);
+    await writeFile(files.keyFile, key);
+    const empty = join(root, "empty.pem");
+    await writeFile(empty, "");
+    const blank = join(root, "blank.pem");
+    await writeFile(blank, " \r\n\n");
+    const text = join(root, "text.pem");
+    await writeFile(text, "not a key\n");
+    // A key only its owner reads, on every system, so each start below reaches the files' text.
+    const ownerOnly = { platform: "win32" as const, acl: { otherReaders: (): string[] => [] } };
+    // An empty key started a daemon that said it listened on https and failed every handshake.
+    const refused: [{ certFile: string; keyFile: string }, string][] = [
+      [{ ...files, keyFile: empty }, `The TLS private key ${empty} is empty: it must hold a PEM private key`],
+      [{ ...files, keyFile: blank }, `The TLS private key ${blank} is not a PEM private key: `],
+      [{ ...files, keyFile: text }, `The TLS private key ${text} is not a PEM private key: `],
+      [{ ...files, keyFile: files.certFile }, `The TLS private key ${files.certFile} is not a PEM private key: `],
+      [{ ...files, certFile: empty }, `The TLS certificate ${empty} is empty: it must hold a PEM X.509 certificate`],
+      [{ ...files, certFile: text }, `The TLS certificate ${text} is not a PEM X.509 certificate: `],
+    ];
+    for (const [named, line] of refused) {
+      const error = await loadDaemonTls(named, ownerOnly).then(() => undefined, (thrown: unknown) => thrown);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(line);
+      expect((error as Error).message).not.toContain("\n");
+      expect(error).not.toBeInstanceOf(TlsKeyExposedError);
+    }
+  });
+
+  it("serves https with each form of key file a start served before: the key alone, after its certificate, after its curve", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const certificate = selfSignedCertificate();
+    const certFile = join(root, "cert.pem");
+    await writeFile(certFile, certificate.cert);
+    // What `openssl ecparam -genkey -name prime256v1` writes before the key: the curve, P-256's identifier.
+    const curve = "-----BEGIN EC PARAMETERS-----\nBggqhkjOPQMBBw==\n-----END EC PARAMETERS-----\n";
+    const ownerOnly = { platform: "win32" as const, acl: { otherReaders: (): string[] => [] } };
+    const forms: [string, string][] = [["key.pem", certificate.key], ["both.pem", `${certificate.cert}${certificate.key}`], ["curve.pem", `${curve}${certificate.key}`]];
+    for (const [name, text] of forms) {
+      const keyFile = join(root, name);
+      await writeFile(keyFile, text);
+      const tls = await loadDaemonTls({ certFile, keyFile }, ownerOnly);
+      expect(tls).toEqual({ cert: certificate.cert, key: text });
+      const { state } = await startHttps(tls);
+      expect(await probeDaemon(state)).toMatchObject({ status: "ok", health: { pid: process.pid } });
+      await Promise.all(daemons.splice(0).map(daemon => daemon.close()));
+    }
+  });
+
   it("refuses a Windows private key whose ACL lets other accounts read it, which mode bits cannot show", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
     const { cert, key } = selfSignedCertificate();
@@ -309,8 +361,8 @@ Start-Sleep 60`;
     // certificate is not this key's. Each is a mistake in the command, which the start names once the key is private.
     const certificates: [string, string][] = [
       [join(root, "certt.pem"), await readError(join(root, "certt.pem"))], [root, await readError(root)],
-      [join(root, "text.pem"), "The TLS certificate is not a PEM X.509 certificate: "],
-      [keyFile, "The TLS certificate is not a PEM X.509 certificate: "], [join(root, "other.pem"), "key values mismatch"],
+      [join(root, "text.pem"), `The TLS certificate ${join(root, "text.pem")} is not a PEM X.509 certificate: `],
+      [keyFile, `The TLS certificate ${keyFile} is not a PEM X.509 certificate: `], [join(root, "other.pem"), "key values mismatch"],
     ];
     for (const [certFile, error] of certificates) {
       const refused = loadDaemonTls({ certFile, keyFile }, shared);

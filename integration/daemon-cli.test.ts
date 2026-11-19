@@ -256,12 +256,45 @@ describe("Rerail daemon CLI", () => {
       const starts: [string[], string][] = [
         [["--tls-cert", misspelled], notFound], [["--host", "0.0.0.0", "--allow-remote", "--tls-cert", misspelled], notFound],
         [["--tls-cert", root], `EISDIR: illegal operation on a directory, read '${literal(root)}'`],
-        [["--tls-cert", keyFile], "The TLS certificate is not a PEM X\\.509 certificate: "],
+        [["--tls-cert", keyFile], `The TLS certificate ${literal(keyFile)} is not a PEM X\\.509 certificate: `],
         [["--tls-cert", join(root, "other.pem")], "error:\\w+:x509 certificate routines::key values mismatch"],
       ];
       for (const [options, message] of starts) {
         const start = promisify(execFile)(process.execPath, [cli, "daemon", "start", "--dev", "--port", "0", ...options, "--tls-key", keyFile], { env });
         await expect(start).rejects.toMatchObject({ code: 1, stderr: expect.stringMatching(new RegExp(`rerail daemon: ${message}`, "u")) });
+        expect(existsSync(join(root, "daemon.json"))).toBe(false);
+      }
+    } finally {
+      await promisify(execFile)(process.execPath, [cli, "daemon", "stop"], { env }).catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  // An empty key used to start a daemon that said it listened on https and failed every handshake: `rerail daemon start`
+  // waited its 15 s, said only that the daemon was not ready, and left it running. A key or certificate that is empty
+  // or holds no PEM is a mistake in the command, named in one line, and no daemon runs.
+  test("refuses to start, naming the file, when --tls-key or --tls-cert is empty or holds no PEM", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
+    const cli = join(process.cwd(), "dist", "cli", "cli.js");
+    const env = { ...process.env, RERAIL_HOME: root };
+    const certFile = join(root, "cert.pem");
+    const keyFile = join(root, "key.pem");
+    const emptyKey = join(root, "empty-key.pem");
+    const textKey = join(root, "text-key.pem");
+    const emptyCert = join(root, "empty-cert.pem");
+    try {
+      const { cert, key } = selfSignedCertificate();
+      const texts: [string, string][] = [[certFile, cert], [keyFile, key], [emptyKey, ""], [textKey, "not a key\n"], [emptyCert, ""]];
+      for (const [file, text] of texts) await writeFile(file, text);
+      for (const file of [keyFile, emptyKey, textKey]) await makePrivate(file);
+      const starts: [string, string, string][] = [
+        [certFile, emptyKey, `The TLS private key ${literal(emptyKey)} is empty: it must hold a PEM private key`],
+        [certFile, textKey, `The TLS private key ${literal(textKey)} is not a PEM private key: `],
+        [emptyCert, keyFile, `The TLS certificate ${literal(emptyCert)} is empty: it must hold a PEM X\\.509 certificate`],
+      ];
+      for (const [tlsCert, tlsKey, line] of starts) {
+        const start = promisify(execFile)(process.execPath, [cli, "daemon", "start", "--dev", "--port", "0", "--tls-cert", tlsCert, "--tls-key", tlsKey], { env });
+        await expect(start).rejects.toMatchObject({ code: 1, stderr: expect.stringMatching(new RegExp(`rerail daemon: ${line}`, "u")) });
         expect(existsSync(join(root, "daemon.json"))).toBe(false);
       }
     } finally {

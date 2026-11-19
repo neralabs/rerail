@@ -1,0 +1,1 @@
+`rerail daemon start` now stops at once, naming the file, when `--tls-key` or `--tls-cert` is empty or holds no PEM key or certificate. An empty key used to start a daemon that said it listened on https but refused every connection; the start waited 15 seconds, then left it running.
