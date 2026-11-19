@@ -759,16 +759,17 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     const link = join(root, "w.git");
     linkFolder(join(main, ".git", "worktrees", "w"), link);
     await rewriteInPlace(join(worktree, ".git"), `gitdir: ${link}\n`);
-    // Git for Windows refuses a .git file that names a junction: there each list asks Git and nothing is kept.
-    const placements = gitsAnswer(worktree).git ? 1 : 3;
-    expect(registryPlacements(worktree)).toBe(placements);
+    // Git for Windows refuses such a .git file at some of these steps: where Git refuses, each list asks it and nothing
+    // is kept; where it takes the folder, three lists ask it once.
+    const placements = (): number => (gitsAnswer(worktree).git ? 1 : 3);
+    expect(registryPlacements(worktree)).toBe(placements());
 
     const commondir = join(main, ".git", "worktrees", "w", "commondir");
     await rewriteInPlace(commondir, `${join(other, ".git")}\n`);
-    expect(registryPlacements(worktree)).toBe(placements);
+    expect(registryPlacements(worktree)).toBe(placements());
     git(other, "config", "core.repositoryformatversion", "1");
     git(other, "config", "extensions.worktreeConfig", "true");
-    expect(registryPlacements(worktree)).toBe(placements);
+    expect(registryPlacements(worktree)).toBe(placements());
 
     await rewriteInPlace(commondir, `${join(root, "gone")}\n`);
     expect(gitsAnswer(worktree).git).toBe(false);
