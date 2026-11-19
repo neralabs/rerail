@@ -4,9 +4,9 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { repositoryIdentityLocation } from "../../../src/engine/catalog/repository-identity.js";
+import { repositoryIdentityLocation, repositoryIdentityLocationAsync } from "../../../src/engine/catalog/repository-identity.js";
 import { createCheckoutResolver, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
-import { gitText, runGit } from "../../../src/engine/git.js";
+import { gitText, runGit, runGitAsync } from "../../../src/engine/git.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { startStateReader } from "../../../src/runtime/index.js";
 import { linkFolder } from "../../support/platform/links.js";
@@ -14,7 +14,7 @@ import { removeFolder } from "../../support/platform/remove-folder.js";
 
 vi.mock("../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../src/engine/git.js")>();
-  return { ...actual, runGit: vi.fn(actual.runGit), gitText: vi.fn(actual.gitText) };
+  return { ...actual, runGit: vi.fn(actual.runGit), runGitAsync: vi.fn(actual.runGitAsync), gitText: vi.fn(actual.gitText) };
 });
 
 vi.mock("node:fs", async importOriginal => {
@@ -312,5 +312,27 @@ describe("each folder shape gets Git's answer, and Git is asked only where a .gi
     vi.mocked(lstatSync).mockImplementation(deniedLstat as typeof lstatSync);
 
     expect(askedWhileAnswering(folder), "Rerail asked Git").toBe(true);
+  });
+});
+
+describe("the location read off the thread", () => {
+  it("is the blocking read's for a checkout, a folder in it, a linked worktree, a folder outside Git and one that is gone, with no Git outside Git", async () => {
+    const root = await plainRoot();
+    const main = checkout(root, "main");
+    git(main, "worktree", "add", "-q", join(root, "linked"));
+    const outside = folderAt(root, "notes");
+    const folders = [main, folderAt(main, "src"), join(root, "linked"), outside, join(root, "gone")];
+
+    for (const folder of folders) expect(await repositoryIdentityLocationAsync(folder), folder).toEqual(repositoryIdentityLocation(folder));
+    expect(vi.mocked(runGitAsync).mock.calls.filter(([cwd]) => cwd === outside)).toEqual([]);
+  });
+
+  it("starts no Git once its signal is aborted, so even a checkout reads as outside Git", async () => {
+    const root = await plainRoot();
+    const main = checkout(root, "main");
+
+    const location = await repositoryIdentityLocationAsync(main, AbortSignal.abort());
+
+    expect({ git: location.git, workspaceRoot: location.workspaceRoot }).toEqual({ git: false, workspaceRoot: resolve(main) });
   });
 });

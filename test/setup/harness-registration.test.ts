@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { build } from "esbuild";
 import ignore from "ignore";
 import { sql } from "drizzle-orm";
-import { commandLine, ENTRY_POINTS, openSqliteDatabase, shellWord } from "../../src/engine/index.js";
+import { commandLine, ENTRY_POINTS, openSqliteDatabase, shellWord, STATUS_LINES_FOLDER } from "../../src/engine/index.js";
 import {
   CURSOR_HOOK_EVENTS,
   HARNESSES,
@@ -23,6 +23,7 @@ import {
   readClaudeStatusCommand,
   readClaudeStatusRegistration,
   writeClaudeStatusRegistration,
+  type ClaudeStatusLine,
 } from "../../src/setup/claude-status-store.js";
 import { MANAGED_SKILL_MARKER, RERAIL_COMMANDS, readRepoQuestion, renderQuestion } from "../../src/harness/index.js";
 import { runInstallCommand, setupAnswerCommand } from "../../src/cli/index.js";
@@ -91,8 +92,19 @@ function hookLine(nodePath: string, root: string, executable: string): string {
   return `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' ${nodePath} ${join(root, "dist", executable)}`;
 }
 
-/** The registered status line: the same fallback, with the settings path after the script for a project's settings. */
-function statusCommand(nodePath: string, root: string, settingsPath?: string): string {
+/** The registered status line where the person had none: the shell Claude Code starts reads Rerail's status script. */
+function statusCommand(root: string): string {
+  return `. ${join(root, "dist", "hosts", "claude", "claude-status.sh")}`;
+}
+
+/** Where a status line of the person's own runs first: node, the Node status script and a project's settings path, handed to the status script. */
+function composedStatusCommand(nodePath: string, root: string, settingsPath?: string): string {
+  const words = [nodePath, join(root, "dist", "hosts", "claude", "claude-status.js"), ...settingsPath === undefined ? [] : [settingsPath]];
+  return `set -- ${words.join(" ")}; ${statusCommand(root)}`;
+}
+
+/** The status line versions before the status script registered, which Windows still gets: node behind the fallback. */
+function legacyStatusCommand(nodePath: string, root: string, settingsPath?: string): string {
   const command = `sh -c 'if [ -x "$0" ]; then exec "$0" "$@"; fi; exec node "$@"' ${nodePath} ${join(root, "dist", "hosts", "claude", "claude-status.js")}`;
   return settingsPath === undefined ? command : `${command} ${settingsPath}`;
 }
@@ -1042,7 +1054,7 @@ describe("Claude Code status-line ownership", () => {
     skip(WINDOWS, POSIX_SETUP);
     const statusLine = { type: "command", command: "sh ~/my-status.sh --compact", padding: 2, refreshInterval: 1000 };
     const { options, path, original } = await claudeFixture({ permissions: { allow: ["Read"] }, statusLine });
-    const installedCommand = statusCommand(options.nodePath, options.root);
+    const installedCommand = composedStatusCommand(options.nodePath, options.root);
     await registerHarnesses(options);
     expect((await readJson(path)).statusLine).toEqual({ ...statusLine, command: installedCommand });
     expect(readClaudeStatusCommand(options.home)).toEqual(statusLine);
@@ -1065,7 +1077,7 @@ describe("Claude Code status-line ownership", () => {
     await registerHarnesses(managed);
     const settings = await readJson(path);
     expect(settings.statusLine).toMatchObject({
-      ...statusLine, command: statusCommand(managed.nodePath, managed.root),
+      ...statusLine, command: composedStatusCommand(managed.nodePath, managed.root),
     });
     expect(readClaudeStatusCommand(options.home)).toEqual(statusLine);
     for (const groups of Object.values(settings.hooks as Record<string, { hooks: { command: string }[] }[]>)) {
@@ -1149,7 +1161,7 @@ describe("Claude Code status-line ownership", () => {
     await registerHarnesses(options);
     expect(await readJson(rootPath)).toEqual({
       ...rootSettings,
-      statusLine: { ...rootStatus, command: statusCommand(options.nodePath, options.root, rootPath) },
+      statusLine: { ...rootStatus, command: composedStatusCommand(options.nodePath, options.root, rootPath) },
     });
     expect(readClaudeStatusCommand(options.home, rootPath)).toEqual(rootStatus);
     expect(readClaudeStatusCommand(options.home)).toEqual(globalStatus);
@@ -1159,7 +1171,7 @@ describe("Claude Code status-line ownership", () => {
     await registerHarnesses(upgraded);
     const installed = await readJson(rootPath);
     expect(installed.statusLine).toEqual({
-      ...rootStatus, command: statusCommand(upgraded.nodePath, upgraded.root, rootPath),
+      ...rootStatus, command: composedStatusCommand(upgraded.nodePath, upgraded.root, rootPath),
     });
     await registerHarnesses(upgraded);
     expect(await readJson(rootPath)).toEqual(installed);
@@ -1258,7 +1270,7 @@ describe("Claude Code status-line ownership", () => {
 
     await registerHarnesses(options);
     const settings = await readJson(settingsPath);
-    expect(settings.statusLine).toEqual({ ...statusLine, command: statusCommand(options.nodePath, options.root), refreshInterval: 5 });
+    expect(settings.statusLine).toEqual({ ...statusLine, command: statusCommand(options.root) });
     expect(readClaudeStatusRegistration(options.home)).toMatchObject({ previous: null });
     expect((settings.hooks as Record<string, unknown>).Stop)
       .toEqual([{ hooks: [{ type: "command", command: hookLine(options.nodePath, options.root, "hosts/claude/claude-hook.js") }] }]);
@@ -1284,7 +1296,7 @@ describe("Claude Code status-line ownership", () => {
     });
     await registerHarnesses(options);
     const installed = await readJson(path);
-    expect(installed.statusLine).toEqual({ ...replaced, command: statusCommand(options.nodePath, options.root) });
+    expect(installed.statusLine).toEqual({ ...replaced, command: statusCommand(options.root) });
     expect(readClaudeStatusRegistration(options.home)).toMatchObject({ previous: null });
     expect(readClaudeStatusRegistration(options.home)?.previousInherited).toBeUndefined();
     expect(readClaudeStatusCommand(options.home)).toBeUndefined();
@@ -1302,13 +1314,82 @@ describe("Claude Code status-line ownership", () => {
   it("replaces its own status line when this home has no record of it", async ({ skip }) => {
     skip(WINDOWS, POSIX_SETUP);
     const { options, path } = await claudeFixture();
-    const installedCommand = statusCommand(options.nodePath, options.root);
+    const installedCommand = statusCommand(options.root);
     await seed(path, { statusLine: { type: "command", command: installedCommand } });
     await registerHarnesses(options);
-    expect((await readJson(path)).statusLine).toEqual({ type: "command", command: installedCommand, refreshInterval: 5 });
+    expect((await readJson(path)).statusLine).toEqual({ type: "command", command: installedCommand });
     expect(readClaudeStatusRegistration(options.home)).toMatchObject({ installedCommand, previous: null });
     await unregisterHarnesses(options);
     expect((await readJson(path)).statusLine).toBeUndefined();
+  });
+
+  it("sets no refresh interval, so Claude Code runs the status line on its own events only", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
+    const { options, path } = await claudeFixture();
+    await registerHarnesses(options);
+    expect((await readJson(path)).statusLine).toEqual({ type: "command", command: statusCommand(options.root) });
+    // Windows still starts node, and gets no interval either.
+    const windows = await claudeFixture();
+    await registerHarnesses({ ...windows.options, platform: "win32" });
+    expect((await readJson(windows.path)).statusLine).not.toHaveProperty("refreshInterval");
+  });
+
+  it("takes out the 5 second interval an earlier version set, once, and keeps an interval that is the person's", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
+    const legacy = async (previous: ClaudeStatusLine | null, installed: Record<string, unknown>) => {
+      const { options, path } = await claudeFixture();
+      const installedCommand = legacyStatusCommand(options.nodePath, options.root);
+      await writeClaudeStatusRegistration(options.home, { settingsPath: path, installedRoot: options.root, installedCommand, previous },
+        async () => { await seed(path, { statusLine: { ...previous, type: "command", command: installedCommand, ...installed } }); }, path);
+      await registerHarnesses(options);
+      return { options, path, statusLine: (await readJson(path)).statusLine };
+    };
+    // Rerail's own: no status line before it, or one with no interval.
+    const alone = await legacy(null, { refreshInterval: 5 });
+    expect(alone.statusLine).toEqual({ type: "command", command: statusCommand(alone.options.root) });
+    const mine = { type: "command" as const, command: "printf mine", padding: 1 };
+    const composed = await legacy(mine, { refreshInterval: 5 });
+    expect(composed.statusLine).toEqual({ ...mine, command: composedStatusCommand(composed.options.nodePath, composed.options.root) });
+    // The person's: the interval their own status line had, and one they set on Rerail's since.
+    expect((await legacy({ ...mine, refreshInterval: 5 }, {})).statusLine).toMatchObject({ refreshInterval: 5 });
+    expect((await legacy(mine, { refreshInterval: 9 })).statusLine).toMatchObject({ refreshInterval: 9 });
+    // Once: five seconds set after the move to the status script are the person's too.
+    await seed(alone.path, { statusLine: { ...alone.statusLine as object, refreshInterval: 5 } });
+    await registerHarnesses(alone.options);
+    expect((await readJson(alone.path)).statusLine).toMatchObject({ refreshInterval: 5 });
+    await unregisterHarnesses(composed.options);
+    expect(await readJson(composed.path)).toEqual({ statusLine: mine });
+  });
+
+  it("restores a status line without the interval an earlier version set on it, when that version's registration is removed", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
+    const { options, path } = await claudeFixture();
+    const previous = { type: "command" as const, command: "printf mine" };
+    const installedCommand = legacyStatusCommand(options.nodePath, options.root);
+    await writeClaudeStatusRegistration(options.home, { settingsPath: path, installedRoot: options.root, installedCommand, previous },
+      async () => { await seed(path, { statusLine: { type: "command", command: installedCommand, refreshInterval: 5 } }); }, path);
+    await unregisterHarnesses(options);
+    expect(await readJson(path)).toEqual({ statusLine: previous });
+  });
+
+  it("registers a status line that prints the file the daemon keeps for the session, starting no program", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
+    const { options, path } = await claudeFixture();
+    // The package's status script, where the registered command has the shell read it.
+    await mkdir(join(options.root, "dist", "hosts", "claude"), { recursive: true });
+    await copyFile(join(process.cwd(), "src", "hosts", "claude", "claude-status.sh"), join(options.root, ENTRY_POINTS.claudeStatusShell));
+    await registerHarnesses(options);
+    const { command } = (await readJson(path)).statusLine as { command: string };
+    const status = join(options.home, ".rerail", STATUS_LINES_FOLDER);
+    await mkdir(status, { recursive: true });
+    await writeFile(join(status, "session-one"), "24-bit colour\n256 colours\nno colour\n");
+    // As Claude Code runs it: `/bin/sh -c <command>`, the session as JSON on stdin. The empty PATH holds no node, or
+    // anything else, to start.
+    const run = spawnSync("/bin/sh", ["-c", command], {
+      input: JSON.stringify({ session_id: "session-one", cwd: options.home }), encoding: "utf8",
+      env: { PATH: "", HOME: options.home, NO_COLOR: "1" },
+    });
+    expect({ stdout: run.stdout, stderr: run.stderr, status: run.status }).toEqual({ stdout: "no colour\n", stderr: "", status: 0 });
   });
 
   it("replaces another install's status line inherited from shared project settings without inheriting it again", async ({ skip }) => {
@@ -1320,7 +1401,7 @@ describe("Claude Code status-line ownership", () => {
     });
     await registerHarnesses(options);
     expect((await readJson(localPath)).statusLine).toEqual({
-      type: "command", command: statusCommand(options.nodePath, options.root, localPath), refreshInterval: 5,
+      type: "command", command: statusCommand(options.root),
     });
     const registration = readClaudeStatusRegistration(options.home, localPath);
     expect(registration).toMatchObject({ previous: null });
@@ -1338,7 +1419,7 @@ describe("Claude Code status-line ownership", () => {
     await seed(path, { statusLine: { type: "command", command: `/old/node ${join(other, "dist", "hosts", "claude", "claude-status.js")} ${path}` } });
     await registerHarnesses(options);
     expect((await readJson(path)).statusLine).toEqual({
-      type: "command", command: statusCommand(options.nodePath, options.root, path), refreshInterval: 5,
+      type: "command", command: statusCommand(options.root),
     });
     expect(readClaudeStatusRegistration(options.home, path)).toMatchObject({ previous: null });
     expect(readClaudeStatusCommand(options.home, path)).toBeUndefined();
@@ -1409,7 +1490,7 @@ describe("Claude Code status-line ownership", () => {
     await registerHarnesses(options);
     expect(readClaudeStatusCommand(options.home, path)).toEqual(statusLine);
     expect((await readJson(path)).statusLine).toMatchObject({
-      ...statusLine, command: statusCommand(options.nodePath, options.root, path),
+      ...statusLine, command: composedStatusCommand(options.nodePath, options.root, path),
     });
     expect(await readFile(rootPath, "utf8")).toBe(rootOriginal);
     await unregisterHarnesses(options);
@@ -1931,7 +2012,7 @@ describe("legacy package-root cutover", () => {
 
     await registerHarnesses(options);
     const settings = await readJson(settingsPath);
-    expect(settings.statusLine).toEqual({ ...statusLine, command: statusCommand(options.nodePath, options.root), refreshInterval: 5 });
+    expect(settings.statusLine).toEqual({ ...statusLine, command: statusCommand(options.root) });
     expect((settings.hooks as Record<string, unknown>).Stop)
       .toEqual([{ hooks: [{ type: "command", command: hookLine(options.nodePath, options.root, "hosts/claude/claude-hook.js") }] }]);
     expect(((await readJson(join(options.home, ".codex", "hooks.json"))).hooks as Record<string, unknown>).Stop)

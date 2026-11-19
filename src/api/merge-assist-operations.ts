@@ -65,9 +65,9 @@ function changeTarget(stores: RerailApiStores, input: TargetInput, caller: ApiCa
  * A scan is the only change a coding agent reaches here (the others are people's), and it stays in the agent's own
  * checkout and the checkouts inside it: a scan changes what the sessions there are told.
  */
-function checkoutOf(stores: RerailApiStores, input: TargetInput, caller: ApiCaller, write: boolean): string {
-  if (!write) return checkoutOnDisk(resolveTarget(stores, input, caller, false));
-  const checkout = checkoutOnDisk(changeTarget(stores, input, caller));
+async function checkoutOf(stores: RerailApiStores, input: TargetInput, caller: ApiCaller, write: boolean): Promise<string> {
+  if (!write) return await checkoutOnDisk(resolveTarget(stores, input, caller, false));
+  const checkout = await checkoutOnDisk(changeTarget(stores, input, caller));
   if (caller.kind === "agent" && (caller.checkout === undefined || within(caller.checkout, checkout) === undefined)) throw agentScanRefused();
   return checkout;
 }
@@ -101,7 +101,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     query: mergeAssistTargetSchema,
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {
-      const checkout = checkoutOf(stores, input, caller, false);
+      const checkout = await checkoutOf(stores, input, caller, false);
       return await answer(() => stores.mergeAssist().status(checkout));
     },
   }),
@@ -114,7 +114,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     body: mergeAssistTargetSchema,
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {
-      const checkout = checkoutOf(stores, input, caller, true);
+      const checkout = await checkoutOf(stores, input, caller, true);
       return await answer(() => stores.mergeAssist().scan(checkout));
     },
   }),
@@ -127,7 +127,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     query: mergeAssistTargetSchema,
     output: mergeAssistSettingsSchema,
     handler: async (stores, input, caller) => {
-      const checkout = checkoutOf(stores, input, caller, false);
+      const checkout = await checkoutOf(stores, input, caller, false);
       return await answer(() => stores.mergeAssist().settings(checkout));
     },
   }),
@@ -141,7 +141,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {
       peopleOnly(caller, "only a person changes Merge Assist's settings, on the dashboard's Merge Assist page or with rerail merge-assist on|off|settings");
-      const checkout = checkoutOf(stores, input, caller, true);
+      const checkout = await checkoutOf(stores, input, caller, true);
       return await answer(() => applySettings(stores.mergeAssist(), checkout, input));
     },
   }),
@@ -155,7 +155,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {
       peopleOnly(caller, "only a person dismisses an in-flight conflict, on the dashboard's Merge Assist page or with rerail merge-assist dismiss; tell them about it in one line");
-      const checkout = checkoutOf(stores, input, caller, true);
+      const checkout = await checkoutOf(stores, input, caller, true);
       return await answer(() => stores.mergeAssist().dismissConflict(checkout, input.conflictId));
     },
   }),
