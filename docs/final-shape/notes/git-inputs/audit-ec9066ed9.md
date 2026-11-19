@@ -2,6 +2,35 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners. The experiments ran on macOS.
 
+## Status at `00ca25ab7`
+
+Four more follow-up cases have repairs. Twenty implementation findings and two Windows runtime checks remain open.
+The [original repair list](audit-c1b588f91.md#checks-for-the-other-gaps-in-the-original-audit) covers the numbered cases and the additional requirements separately.
+
+| Case | Commit | Verification |
+| --- | --- | --- |
+| 50 | `250abffc6`, `00ca25ab7` | From a foreign Git environment, the CLI reports the selected checkout's clone ID, branch and commit. The rule resolves that checkout's HEAD and index entry. Changing the pack directory forces an existing view to reopen the repository. The rule still resolves the selected index. The async Git helpers read its blob bytes. |
+| 54 | `58aadfcbd` | Both catalog load orders return the requested policy version. An equivalent new view selects it. A second checkout with the same commit ID cannot select it. A request without a source reports ambiguity when the catalog holds two Git versions. |
+| 48 | `66a234496` | The report preserves a packed ref ending in byte `ff`. Passing the reported bytes to Git returns the selected commit. Its replacement-character sibling returns a different commit. A detached HEAD has neither a ref name nor raw ref bytes. |
+| 49 | `30a283c16` | `--path=--alpha.py` and a path list both select the same file, report its violation and exit 3. Missing argument values still produce a usage error. |
+
+For case 21, `6bedf57a1` adds the Windows file identity and change time to Git storage observations.
+Windows exposes the change time separately from the last write time. [FILE_BASIC_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_basic_info)
+The test rewrites a loose tree in place with the same length and restores its modification time.
+On macOS, a reused view and a fresh view detect the damage. Separate warm and cold content stores report the same failure.
+The warm scan returns its finding again after the original bytes are restored.
+The Windows reader type-checked for `x86_64-pc-windows-msvc`. A runtime result on NTFS is pending.
+The [package job](../../../../.github/workflows/package.yml) now records the Windows test volume type, Git build options and Node architecture.
+The same job runs the Git message-selector comparison for case 22.
+
+On macOS, the four targeted CLI and native-binding regressions passed after the view-refresh change.
+The full headless and Git helper suites passed all 146 tests with the rebuilt addon.
+On earlier cold starts, the first headless test exceeded its five-second timeout.
+The Git workspace suite passed all 22 selected tests on the build farm.
+The local store suite passed 255 tests and skipped four under its normal filter.
+On the farm, full store runs failed in filesystem journal replay tests, including a serial run.
+The TypeScript build typecheck passed.
+
 ## Status at `6e3f1618e`
 
 There are 24 open implementation findings and two missing Windows results. Case numbers refer to this follow-up audit.

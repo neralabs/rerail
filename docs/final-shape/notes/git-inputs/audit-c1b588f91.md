@@ -112,3 +112,17 @@ The [scope and cache notes](analysis-scopes.md) record the repair behavior and t
 The [headless regressions](../../../../test/cli/headless-scan.test.ts) exercise the scan interface.
 The [scope store tests](../../../../native/src/content_store/corpus_runs/tests.rs) inspect durable ownership after publication, cancellation, and deletion.
 The [follow-up audit at `ec9066ed9`](audit-ec9066ed9.md) records additional fixtures and open issues.
+
+### Checks for the other gaps in the original audit
+
+| Requirement | Implementation and evidence |
+| --- | --- |
+| Observe the effective index that supplied the answers | `68ccbe8ac` hashes the sorted tracking paths from the same decoded index it queries. The split-index fixture changes shared-index availability between warm reads. |
+| Read each searched commit once | `3fb6e46ba` keeps the verified commit in the search queue and deduplicates tips before lookup. The four-commit and 64-commit searches made four and 64 verified reads, respectively. |
+| Limit checks of unchanged pack layouts | `eaaed594f` shares layout validation across workers. `8a328d0a0` limits unsuccessful lookups in larger indexes. The [measurements](analysis-scopes.md) include probe counts, decode counts and memory cost. |
+| Retain the compiled inventory, root and source checks | `6af0a46a1` retains the embedded programs and labels parse counters with their inputs. `6e3f1618e` also retains a working-tree policy and its include graph in the store that consumes them. A fresh process returned findings with zero parses after another scope's rows were collected. |
+| Bound the filtered tree walk in rules | `ae7b6388d` derives candidate ancestry in [git-inventory.rr](../../../../native/src/code_rule_dsl/typing/programs/git-inventory.rr). The filtered walk checks repeated tree IDs along each placement and prunes excluded children before opening them. |
+| Index and compact release receipts | `a91b1bf7f` retains the cutoff necessary to reject late publishers and compacts superseded numbered receipts. After four deliveries for a parent and child, the test checks both cutoffs and finds two receipt rows. |
+| Resolve relative Git expressions from the invocation directory | The CLI and native fixtures compare a subdirectory's `HEAD:./` with Git. A scan reports requested and skipped paths. The path-list and direct argument tests preserve leading spaces and dashes. |
+| Run headless without an extracted source or a scratch output directory | `a42954648` uses in-memory configuration and returns diagnostics directly. Historical reads use the object database. The selected content store is durable. |
+| Compare message selectors with Git on Windows | The package job runs the native selector comparison on x64 Windows. The macOS result and a Windows-target typecheck do not supply the missing Windows runtime result. |
