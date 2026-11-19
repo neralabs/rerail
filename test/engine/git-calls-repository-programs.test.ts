@@ -210,6 +210,23 @@ describe("Rerail's Git calls start no filter program only a repository's own con
     expect(firstSeen).toEqual(["notes.txt"]);
   }, 60_000);
 
+  it("keeps the command-line config a call that does not block is given, and adds its own after it", async () => {
+    const root = await folder();
+    const marker = join(root, "filter-ran");
+    const work = await repository(root, "work", { ".gitattributes": "*.txt filter=probe\n", "notes.txt": "one\n" });
+    git(work, "config", "filter.probe.clean", recording(marker));
+    await writeFile(join(work, "notes.txt"), "two\n");
+    await writeFile(join(work, "new.log"), "log\n");
+    const excludes = join(root, "person.excludes");
+    await writeFile(excludes, "*.log\n");
+    const env = { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.excludesFile", GIT_CONFIG_VALUE_0: excludes };
+
+    const listing = await runGitWithoutBlocking(work, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], { env });
+
+    expect(runs(marker)).toBe(0);
+    expect([listing.status, listing.stdout]).toEqual([0, "notes.txt\0"]);
+  }, 60_000);
+
   it.skipIf(process.platform === "win32")("makes no call whose config Git cannot list, and its result holds none of what the listing printed", async () => {
     const root = await folder();
     const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
