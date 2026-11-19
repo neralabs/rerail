@@ -741,6 +741,7 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
     cacheWarning = error instanceof Error ? error.message : String(error);
   }
   const analysisStore = analysisRun === undefined ? ":memory:" : durableStore;
+  let report: ScanReport | undefined;
   try {
     const source = options.revision === undefined ? undefined : new binding.GitRevisionSource(root, options.revision, options.analysisScope!, resolve(options.repo));
     if (source !== undefined)
@@ -748,7 +749,6 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
     const home = openHomeDatabase(homeDatabase);
     const useHome = homeIsScanConfiguration(options, home, root, packs);
     let configuration: RerailDatabase | undefined;
-    let report: ScanReport;
     try {
       configuration = openRerailDatabase(":memory:");
       report = await scanReport(configuration, options, { root, home, useHome, packs, scanId, startedAt, source, analysisStore, analysisRun });
@@ -774,7 +774,9 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
     throw error;
   } finally {
     if (analysisRun !== undefined) await binding.collectAnalysisCacheAsync(durableStore).catch(error => {
-      process.stderr.write(`rerail: analysis cache collection failed: ${String(error)}\n`);
+      const message = `Analysis cache collection failed: ${error instanceof Error ? error.message : String(error)}`;
+      if (report !== undefined) (report.cacheWarnings ??= []).push(message);
+      else process.stderr.write(`rerail: ${message}\n`);
     });
   }
 }

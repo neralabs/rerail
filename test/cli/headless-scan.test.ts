@@ -969,6 +969,19 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
     }
   });
 
+  it("returns collection failures in the report and preserves scan findings", async () => {
+    const root = checkout();
+    const failure = vi.spyOn(loadNativeBinding(), "collectAnalysisCacheAsync").mockRejectedValueOnce(new Error("collector unavailable"));
+    try {
+      const report = await scan(root, { revision: "HEAD", analysisScope: "collection" });
+      expect(report.status).toBe("completed");
+      expect(report.violations.map(row => row.path)).toEqual(["a.py"]);
+      expect(report.cacheWarnings).toContain("Analysis cache collection failed: collector unavailable");
+    } finally {
+      failure.mockRestore();
+    }
+  });
+
   it("releases a stopped checkout's scope without an active watch", async () => {
     const root = checkout();
     const databasePath = join(`${root}-home`, "rerail.sqlite");

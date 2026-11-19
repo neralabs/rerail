@@ -220,7 +220,7 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
   violation without a source span. An explicit `.rr` `@place` gives a line, column 1, and a null `end`.
 - **`payloadHash`**: `sha256:` of the rule's canonical JSON, the same digest approvals and audits use.
   For a `.rr` policy, it hashes the list of file digests for the policy and its includes.
-- **`cacheWarnings`** lists errors that prevented the scan from retaining its cache.
+- **`cacheWarnings`** lists failures in cache retention or collection.
   The report keeps the findings and scan status.
   If the durable cache fails, the scan can retry in memory.
   The retry uses the same Git source and policy. Git read failures still fail the scan.
