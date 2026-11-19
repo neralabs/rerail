@@ -101,7 +101,9 @@ const SAMPLE: std::time::Duration = std::time::Duration::from_millis(10);
 pub struct Written {
     /// The heap's live bytes.
     pub heap: usize,
-    /// Host blocks' used bytes (`crate::blocks::host_held`): resident only where written.
+    /// Host blocks' used bytes less their free lists' (`crate::blocks::host_held`): resident only where written, and
+    /// a dead relation's pages given back. A block reserves address space enough to grow in place and lives while any
+    /// relation in it does (decision 0445), so its used extent alone would count its dead relations for its life.
     pub host_blocks: usize,
     /// The GPU pool's leases, and its idle buffers.
     pub leased: usize,
@@ -120,7 +122,10 @@ impl Written {
 /// and not the driver's count, which counts a wrap of host memory again.
 pub fn written() -> Written {
     let heap = HEAP.get().map_or(0, |f| f());
-    let host_blocks = crate::blocks::host_held().0;
+    let host_blocks = {
+        let (used, free) = crate::blocks::host_held();
+        used.saturating_sub(free)
+    };
     #[cfg(all(feature = "gpu", target_os = "macos"))]
     let ((leased, idle), ledger) = (crate::gpu::shared::held_bytes(), crate::gpu::shared::ledger_bytes());
     #[cfg(not(all(feature = "gpu", target_os = "macos")))]
@@ -160,6 +165,11 @@ mod tests {
         b.try_alloc_chunk(8 << 20, 1 << 14).unwrap();
         let after = written().host_blocks - before;
         assert!(after >= 8 << 20 && after < 9 << 20, "8 MB written counts {after} bytes");
+        // A chunk given back (a dead relation's) is not counted (decision 0445).
+        let at = b.try_alloc_chunk(4 << 20, 1 << 14).unwrap();
+        b.free_chunk(at, 4 << 20);
+        let freed = written().host_blocks - before;
+        assert!(freed >= 8 << 20 && freed < 9 << 20, "a chunk given back counts: {freed} bytes");
         assert!(limit() == memory() + metal());
         drop(b);
     }

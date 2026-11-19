@@ -5364,8 +5364,11 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   found with the memo off, one run in three inlined differently, the first chunk to plan a program choosing for all)
   follow the chunks' order as Q88's plans do; lines are noted by work; exploration draws from a fixed seed. hogql
   CPU: 81.9-83.1 B, the same inline choices in 6 of 6 runs; Metal 76.6-81.1 B, 3 of 3.
-- **Open**: a new binary's first run (15 chunks, the cone's rounds); 2 (row blocks reserved large and grown in
-  place, tails released); on Metal, the device's room at run time: 14-49 stratum runs a run refused on the device
-  (`BackendFailure: an index of N rows`) and run on the host, by what the chunks beside them hold (0444,
-  "Measured"); (c), the threads' coordination; the Metal peak footprint at big chunks (1.36-1.47 GB, the count's
+- **Done** (decision 0445, 2026-11-19): 2. Row blocks reserve 16 GiB of address space and grow in place, so no
+  tail moves (WASI keeps sized blocks); the device's wrap still grows with the used extent (0266 §12); the count
+  and a chunk's held bytes leave out free lists. hogql Metal 70.9-72.6 B (one 75.5 B), device refusals 2-6 stratum
+  runs a run, against 76.6-81.1 B and 14-49.
+- **Open**: a new binary's first run (15 chunks, the cone's rounds); on Metal, a chunk's held bytes differ between
+  runs (14-36 MB for one chunk; the CPU's never), so the chunks at once differ (0445, "Measured"); (c), the threads'
+  coordination; the Metal peak footprint at big chunks (1.36-1.47 GB, the count's
   most 1.15 GB), whose largest rise t49 found in the guests' `ann_ctx` stratum.

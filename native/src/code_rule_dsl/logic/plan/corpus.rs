@@ -6108,13 +6108,21 @@ fn run_observed(
     // measurement aid: "the memory line lifted") replaces the limit; `RERAIL_CHUNK_NODES` (another) sizes every chunk
     // after the first, whatever was measured (Q88).
     let size_limit = std::env::var("RERAIL_RUN_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or_else(rerail_accel::budget::limit, |mb| mb << 20);
+    let start = rerail_accel::budget::written();
+    crate::code_rule_dsl::logic::profile::decision("chunk size: the count at the chunks' start", || {
+        let h = crate::code_rule_dsl::facts::rows::held();
+        format!(
+            "{} MB: the heap {} MB, host blocks {} MB (rows' blocks: a run's {} MB, sources' {} MB, kept rows' {} MB used), the pool's leases {} MB and idle {} MB, the ledger {} MB",
+            start.total() >> 20, start.heap >> 20, start.host_blocks >> 20, h[0].1 >> 20, h[1].1 >> 20, h[2].1 >> 20, start.leased >> 20, start.idle >> 20, start.ledger >> 20
+        )
+    });
     let schedule = parking_lot::Mutex::new(sizing::Schedule::new(
         sizing::FIRST_NODES,
         chunk_nodes,
         plan_window,
         chunks_at_once,
         size_limit,
-        rerail_accel::budget::written().total(),
+        start.total(),
         std::env::var("RERAIL_CHUNK_NODES").ok().and_then(|v| v.parse::<usize>().ok()).map(|n| n.clamp(1, chunk_nodes)),
     ));
     // The chunks begun, numbered in the order they are filed.
@@ -6829,7 +6837,7 @@ fn run_observed(
                 let (live, idle) = rerail_accel::gpu::shared::held_bytes();
                 let h = crate::code_rule_dsl::facts::rows::held();
                 format!(
-                    "{} MB leased, {} MB idle; rows' blocks: a run's {} ({} MB written of {} MB), sources' {} ({} MB of {} MB), kept rows' {} ({} MB of {} MB); {} MB of dead relations' pages given back; {} relations of many parts merged into one ({} MB copied); the footprint {} MB",
+                    "{} MB leased, {} MB idle; rows' blocks: a run's {} ({} MB written of {} MB), sources' {} ({} MB of {} MB), kept rows' {} ({} MB of {} MB); {} MB of dead relations' pages given back; {} relations of many parts merged into one ({} MB copied); {} moved out of a full block ({} MB copied); the footprint {} MB",
                     live >> 20,
                     idle >> 20,
                     h[0].0, h[0].1 >> 20, h[0].2 >> 20,
@@ -6838,6 +6846,8 @@ fn run_observed(
                     crate::code_rule_dsl::facts::rows::given_back() >> 20,
                     crate::code_rule_dsl::facts::rows::merged().0,
                     crate::code_rule_dsl::facts::rows::merged().1 >> 20,
+                    crate::code_rule_dsl::facts::rows::MOVED[0].load(std::sync::atomic::Ordering::Relaxed),
+                    crate::code_rule_dsl::facts::rows::MOVED[1].load(std::sync::atomic::Ordering::Relaxed) >> 20,
                     crate::code_rule_dsl::prof::footprint_mb(),
                 )
             });

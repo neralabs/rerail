@@ -14,9 +14,11 @@
 //!
 //! A segment and the tail are relations of `rerail_blocks` (columns in doubling chunks), read through the reads
 //! written once (`rerail_clif::relation`: the host's are `rerail_blocks::generated_reads`, the kernels' the same
-//! reads in MSL). They live in shared FACTS blocks (`Facts`): a block holds many relations, leased from the GPU pool
-//! (pinned, a no-copy buffer of the device's), or reserved anonymously where there is none. A block never moves;
-//! a tail whose block is full moves to another, one copy of its rows (as a vector's growth copies them). Every row
+//! reads in MSL). They live in shared FACTS blocks (`Facts`): a block holds many relations, in host memory the device
+//! reads through a no-copy wrap of its used extent (decision 0435 §1). A block never moves, and reserves address space
+//! enough that a tail grows in it in place (decision 0445): its pages are taken as rows are written, and a dead
+//! relation's go back to the OS. Where a reservation is memory (WASI), a block is sized, and a tail whose block is full
+//! moves to another, one copy of its rows (as a vector's growth copies them; `MOVED` counts them). Every row
 //! lies whole in one segment. Segments past `MAX_SEGMENTS` are merged from the newest (the small ones a session's
 //! edits add), so a row's segment is found among a few.
 
@@ -29,21 +31,35 @@ use rerail_blocks::rows::ColRead;
 /// The most segments a frozen relation holds; past them its newest are merged.
 const MAX_SEGMENTS: usize = 8;
 
-/// A FACTS block's size: what relations fill before the next is leased (a relation larger takes one its size).
-const FACTS_BYTES: usize = 64 << 20;
+/// Whether a reservation is address space only (a 64-bit Unix: `rerail_blocks::mem::reserve`), its pages taken as
+/// they are written; elsewhere (WASI) it is a zeroed allocation of its whole length.
+const RESERVES_ADDRESS_SPACE: bool = cfg!(all(unix, target_pointer_width = "64"));
+
+/// What a block of relations reserves where a reservation is address space (decision 0445, t49 item 2): enough that
+/// no relation's tail outgrows its block within a run's memory. A Mac gave 4,000 such reservations at once.
+const BLOCK_RESERVE: usize = 16 << 30;
 
 impl Life {
-    /// The size of its blocks (a relation larger takes one its size): a batch's sources take less, as they die
-    /// with it. At 64 MB, their blocks' room held about 60 MB more at the peak of posthog/hogql's CPU binding.
+    /// What its blocks reserve (a relation larger takes one its size). Where a reservation is memory, a batch's
+    /// sources' and kept rows' blocks are smaller, as they die with it.
     fn block_bytes(self) -> usize {
         match self {
-            Life::Run => FACTS_BYTES,
-            Life::Source => FACTS_BYTES / 4,
-            Life::Kept => FACTS_BYTES / 4,
             // Each alone in a block of its size (`try_new`).
             Life::Device => 0,
+            _ if RESERVES_ADDRESS_SPACE => BLOCK_RESERVE,
+            Life::Run => 64 << 20,
+            Life::Source | Life::Kept => 16 << 20,
         }
     }
+}
+
+/// Relations moved out of a full block (`Part::grow`, `Part::moved_room`), and the bytes of their rows copied: none
+/// where a block reserves address space (decision 0445), read by the profile.
+pub static MOVED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+
+fn count_move(rows: u32, k: usize) {
+    MOVED[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    MOVED[1].fetch_add(u64::from(rows) * k as u64 * 8, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Room a block keeps past a new relation's: what its other relations' tails may take meanwhile.
@@ -75,7 +91,8 @@ impl Drop for Facts {
 }
 
 /// What a chunk's evaluation wrote in blocks of relations (decision 0435 §4, Q261): every block it made, at its
-/// most (a block's used bytes never fall), and of those the ones still held when it ended (rows it handed on). A
+/// most (a block's used bytes never fall), and of the blocks still held when it ended (rows it handed on), the bytes
+/// past their free lists (decision 0445). A
 /// function of the chunk and its plans, not of the threads' timing, as the process's count is not.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Written {
@@ -128,6 +145,8 @@ pub struct Chunk {
     made: Mutex<Vec<std::sync::Weak<Facts>>>,
     /// The bytes written in its blocks given back (`Facts`'s drop), and in those held when it ended (`Written`).
     tally: Arc<std::sync::atomic::AtomicUsize>,
+    /// Of its blocks held when it ended, their used bytes, and those past their free lists (`Written::held`).
+    live: std::sync::atomic::AtomicUsize,
     held: std::sync::atomic::AtomicUsize,
 }
 
@@ -153,10 +172,13 @@ pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
                 open.lock().unwrap_or_else(|e| e.into_inner()).take();
             }
             let made = std::mem::take(&mut *self.1.made.lock().unwrap_or_else(|e| e.into_inner()));
-            let (n, live) = (made.len(), made.iter().filter_map(std::sync::Weak::upgrade).map(|f| f.block.used()).collect::<Vec<_>>());
-            self.1.held.store(live.iter().sum(), std::sync::atomic::Ordering::Relaxed);
+            // Of a block still held, its used bytes are what the chunk wrote in it, and those past its free list what
+            // it holds (decision 0445: a block one kept relation holds lives, its dead relations' pages given back).
+            let (n, live) = (made.len(), made.iter().filter_map(std::sync::Weak::upgrade).map(|f| (f.block.used(), f.block.used().saturating_sub(f.block.free_bytes()))).collect::<Vec<_>>());
+            self.1.live.store(live.iter().map(|l| l.0).sum(), std::sync::atomic::Ordering::Relaxed);
+            self.1.held.store(live.iter().map(|l| l.1).sum(), std::sync::atomic::Ordering::Relaxed);
             if !live.is_empty() {
-                let bytes: usize = live.iter().sum();
+                let bytes: usize = live.iter().map(|l| l.1).sum();
                 crate::code_rule_dsl::logic::profile::decision("a chunk's blocks outlived it", || {
                     format!("{} of its {n} blocks, {} MB used in them, held by rows it handed on", live.len(), bytes >> 20)
                 });
@@ -169,7 +191,7 @@ pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
     // Its open blocks are let go here: a block none of its relations holds is given back, and tallied.
     drop(leave);
     let held = chunk.held.load(std::sync::atomic::Ordering::Relaxed);
-    (r, Written { bytes: chunk.tally.load(std::sync::atomic::Ordering::Relaxed) + held, held })
+    (r, Written { bytes: chunk.tally.load(std::sync::atomic::Ordering::Relaxed) + chunk.live.load(std::sync::atomic::Ordering::Relaxed), held })
 }
 
 /// A block of at least `bytes` for relations, from the one block policy (decision 0342): a run bound to the device
@@ -863,6 +885,7 @@ impl Part {
         let k = self.rel().rows.ncols as usize;
         let need = rows as usize + n;
         let mut moved = Part::new(self.life, k, need.max(2 * rows as usize));
+        count_move(rows, k);
         // copy: growth: a relation moved out of a full block, once, as a vector's growth moves it.
         moved.copy_from(self, 0, rows);
         assert!(moved.rel().rows.try_reserve(&moved.facts.block, need as u64), "a new relation's room for its rows");
@@ -908,6 +931,8 @@ impl Part {
         }
         let k = self.rel().rows.ncols as usize;
         let mut moved = Part::new(self.life, k, 2 * n as usize);
+        count_move(self.len(), k);
+        // copy: growth: a relation moved out of a full block, once, as a vector's growth moves it.
         moved.copy_from(self, 0, self.len());
         *self = moved;
     }
@@ -1841,9 +1866,35 @@ mod tests {
         assert_eq!(w, again, "the same chunk measures the same");
         assert!(w.bytes >= 2 * 200_000 * 8, "the dropped relation's rows count: {w:?}");
         assert!(w.held > 0 && w.held <= w.bytes, "{w:?}");
+        // The dropped relation lay in the block the kept one holds: held is the kept part, not the block's extent.
+        assert!(w.held < 2 * 200_000 * 8, "the dropped relation's rows are not held: {w:?}");
         assert_eq!(*kept.row(999, 2), [1_998, 1_999]);
         let (_, none) = in_chunk_measured(|| ());
         assert_eq!(none, Written::default());
+    }
+
+    /// A tail grows in its block in place, past what a block was sized at before (64 MB), never moved (decision 0445
+    /// R1): its block reserves address space, and its pages are taken as the rows are written.
+    #[test]
+    fn a_tail_grows_in_its_block_past_the_old_size_without_moving() {
+        if !RESERVES_ADDRESS_SPACE {
+            return;
+        }
+        in_chunk(|| {
+            let moved = MOVED[0].load(std::sync::atomic::Ordering::Relaxed);
+            let mut r = Rows::new(1);
+            // copy: not block data (a test's literal rows)
+            let lot: Vec<i64> = (0..1 << 20).collect();
+            r.extend_from_slice(&lot);
+            let facts = block_of(&r);
+            for _ in 1..10 {
+                r.extend_from_slice(&lot);
+            }
+            assert!(Arc::ptr_eq(&facts, &block_of(&r)), "the same block");
+            assert!(facts.block.used() > 64 << 20, "past the old size: {} bytes", facts.block.used());
+            assert_eq!(MOVED[0].load(std::sync::atomic::Ordering::Relaxed), moved, "no relation moved");
+            assert_eq!(r.get(9 << 20 | 5, 0), 5);
+        });
     }
 
     /// A relation a chunk drops gives its chunks back to the chunk's block (decision 0342): the next relation of
