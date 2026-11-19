@@ -1551,20 +1551,12 @@ pass.
   submission, or read after its command buffers completed), so none outlives an access. The device tests
   (`rerail-logic` 17, `rerail-device-metal` 11, on the M1 Max) pass.
 
-### Q253. A store shared by a run of one program and runs of all 317 gives the full set's run another program's rows
+### Q253. (withdrawn) A run of one program then all 317 on one store seemed to give B101 rows of another scope
 
-- **Found** (2026-11-19, ep2 on m3, fb5de313d and the binary before it alike): a state warmed by runs of all 317
-  programs (a0 cold, a1, a2), then two runs of B101's program alone (the farm had pruned the state's other rule
-  files), then a run of all 317 again (B101's constant new to the store): 1,528 rows where h1 has 1,334, all 194
-  extra rows B101's, in files h1's B101 has none in (`benchmarks/bench_binary_diff.py:1109.61` and others). The
-  run was checked under `RERAIL_COMBINE_LINK=check`: its program is the whole link's, so the rows come from
-  something kept per file or per part whose key leaves out the policy's scope or the program set (300 of 300
-  files read from the per-file memo; B101 alone read 214 files by its scope).
-- **Keep**: every warm run's rows equal a cold run's, whatever ran on the store before (0077, 0117); the per-file
-  memo's and the parts' reuse.
-- **Done when**: the sequence above (317 programs, then B101's alone, then 317) gives h1's rows; a test with two
-  programs, run alone then together on one store, compares with a cold run.
-- **Record**: open.
+- **Withdrawn** (2026-11-19): not the engine's. The extra 194 rows were `B101.csv`, which a run of B101's program
+  alone writes. The full set writes this finding as `p0_B101.csv`, and h1 has those rows in full. Both runs had
+  the name `c`, and the harness (`go.sh`) wrote the second into the first's directory, so `rows.sh` read the
+  first run's `B101.csv` as well. `go.sh` now starts each run in an empty directory.
 
 ### Q158. (a second Q21 until 2026-11-18; Q89 on Typing-support) Red tests that predate 0281 step 4
 
