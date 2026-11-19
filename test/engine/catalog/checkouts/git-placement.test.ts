@@ -621,6 +621,19 @@ describe("a kept answer follows the folders' owners, and the user's trust in ano
 });
 
 describe("an entry Git reads through a link is read through it", () => {
+  it("a checkout whose objects folder is a link, once the folder it names is gone", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    await rename(join(main, ".git", "objects"), join(root, "objects"));
+    linkFolder(join(root, "objects"), join(main, ".git", "objects"));
+    expect(expectGitsAnswers(main, main)).toBe(1);
+    const answer = gitsAnswer(main);
+
+    await rename(join(root, "objects"), join(root, "objects-gone"));
+    expect(gitsAnswer(main)).not.toEqual(answer);
+    expectGitsAnswers(main);
+  });
+
   it.skipIf(process.platform !== "win32")("asks Git for a worktree reached through a junction whose real folder the engine does not take for the user's", async () => {
     const root = await temporaryRoot();
     const main = repository(join(root, "main"));

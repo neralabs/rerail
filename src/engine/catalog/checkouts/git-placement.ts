@@ -10,7 +10,16 @@
  * owner, is read again at every use, as Git reads it at every start: no file time stands in for its text, since a
  * rewrite within one tick of the file system's clock leaves every time as it was.
  */
-import { closeSync, constants as fsConstants, fstatSync, lstatSync, openSync, readFileSync, type Stats } from "node:fs";
+import {
+  accessSync,
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  type Stats,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { pathsOwnedByCurrentUser } from "../../native/native.js";
 import { storedPath } from "../checkout-control.js";
@@ -268,13 +277,27 @@ function realPaths(folder: string, common: string): { readonly realFolder: strin
 
 /**
  * Whether Git takes `gitFolder` for a Git folder, as it does before it places a checkout there: a `HEAD` it takes
- * ({@link validHead}), and `objects` and `refs` in the common Git folder. Undefined where `HEAD` is a link, which Git
- * reads by its target's name and which is left to Git.
+ * ({@link validHead}), and `objects` and `refs` in the common Git folder that Git can reach ({@link reachable}).
+ * Undefined where `HEAD` is a link, which Git reads by its target's name and which is left to Git.
  */
 function gitFolderTaken(gitFolder: string, common: string): boolean | undefined {
   const head = validHead(gitFolder);
   if (head === undefined) return undefined;
-  return head && isFolder(look(join(common, "objects"))) && isFolder(look(join(common, "refs")));
+  return head && reachable(join(common, "objects")) && reachable(join(common, "refs"));
+}
+
+/**
+ * Whether Git's `access(path, X_OK)` passes, as Git checks `objects` and `refs`: through a link, as Git follows one, so
+ * a link whose folder goes is told from one whose folder is there. On Windows it asks only whether the path is there,
+ * as Git for Windows does.
+ */
+function reachable(path: string): boolean {
+  try {
+    accessSync(path, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
