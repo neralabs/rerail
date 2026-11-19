@@ -1,5 +1,5 @@
 // scripts/ship/waits-model.ts: how the user waits are judged. A latency distribution fails only when the bootstrap 95%
-// CI of its p50 or p95 ratio lies wholly above 1.10; a rate fails when the candidate's is higher; a single wait fails on
+// CI of its p50 or p95 ratio lies wholly above 1.15; a rate fails when the candidate's is higher; a single wait fails on
 // its median, and counts only when its confirmation runs fail too; a set absolute limit fails the candidate whatever the
 // baseline does; a scenario whose candidate runs fail where the baseline's complete fails.
 
@@ -58,7 +58,7 @@ describe("single waits", () => {
   const scan = spec("wait/W5/scan-warm");
 
   it("counts a failing median only when its confirmation runs fail too", () => {
-    const first = [run("W5", "scan-warm", "baseline", { wall_ms: [700] }), run("W5", "scan-warm", "candidate", { wall_ms: [800] })];
+    const first = [run("W5", "scan-warm", "baseline", { wall_ms: [700] }), run("W5", "scan-warm", "candidate", { wall_ms: [850] })];
     const confirmPasses = [...first, run("W5", "scan-warm", "baseline", { wall_ms: [700] }, { phase: "confirm" }), run("W5", "scan-warm", "candidate", { wall_ms: [720] }, { phase: "confirm" })];
     expect(waitItem(scan, first, config).status).toBe("fail");
     expect(waitItem(scan, confirmPasses, config).status).toBe("noisy");

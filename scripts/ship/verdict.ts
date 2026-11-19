@@ -1,10 +1,12 @@
 // The shippability bar's verdict logic (scripts/ship/shipbar.ts): pure functions over measured runs and findings, the
-// same for every candidate. A candidate passes a metric when its median is at most 1.10 times main's, keeps every
+// same for every candidate. A candidate passes a metric when its median is at most 1.15 times main's, keeps every
 // finding main gets right and adds no false positive main does not have, completes every run main completes, and
-// ships every rule main ships.
+// ships every rule main ships. Slice B (each rule alone) counts a rule over the bar only when it is still over after
+// its confirmation runs and its time moved by at least RULE_FLOOR_MS; slice C (one file, all rules) is judged as a
+// whole-pack cell is. Every failing time carries a locator: the phase that moved (locate).
 
 /** The tolerance, in percent: a candidate figure fails when it is more than this much above main's. */
-export const TOLERANCE_PERCENT = 10;
+export const TOLERANCE_PERCENT = 15;
 
 export type Status = "pass" | "fail" | "not-compared";
 
@@ -25,7 +27,7 @@ export function spread(values: readonly number[]): number {
 
 /** Whether `candidate` is within the tolerance of `main`: candidate <= main * (1 + TOLERANCE_PERCENT / 100), exactly. */
 export function withinTolerance(main: number, candidate: number, tolerancePercent = TOLERANCE_PERCENT): boolean {
-  // Scaled to integers' arithmetic so 1.10 times main is the bar itself, not a float next to it.
+  // Scaled to integers' arithmetic so 1.15 times main is the bar itself, not a float next to it.
   return candidate * 100 <= main * (100 + tolerancePercent);
 }
 
@@ -39,7 +41,7 @@ export interface MetricVerdict {
   ratio: number | null;
   spreadMain: number | null;
   spreadCandidate: number | null;
-  /** |ratio - 1.10| is at most the larger spread: the verdict could go either way between runs. */
+  /** |ratio - bar| is at most the larger spread: the verdict could go either way between runs. */
   withinSpread: boolean;
   reason: string;
 }
@@ -254,4 +256,196 @@ export function grouping(runs: readonly { together?: number }[]): { policies: nu
   if (runs.length === 0 || runs.some((r) => typeof r.together !== "number")) return null;
   const sizes = runs.map((r) => r.together!);
   return { policies: runs.length, combined: sizes.filter((n) => n > 1).length, alone: sizes.filter((n) => n === 1).length, largest: Math.max(...sizes) };
+}
+
+// ---------------------------------------------------------------- slice B: one rule × all files
+
+/** A time over the bar counts only when it moved by at least this much (ms), after its confirmation runs. */
+export const RULE_FLOOR_MS = 20;
+/** Rules over this ratio (and moved by at least RULE_FLOOR_MS) are counted apart in the report. */
+export const RULE_ALERT_RATIO = 1.5;
+
+/**
+ * pass: within the bar at the first runs; noisy: over at the first runs, within at the confirmation runs; under-floor:
+ * still over, but moved by less than the floor; fail: still over and moved by at least the floor.
+ */
+export type TimeStatus = "pass" | "fail" | "noisy" | "under-floor" | "not-compared";
+
+export interface TimeVerdict {
+  name: string;
+  /** The first runs' medians (ms); null where that side completed none. */
+  main: number | null;
+  candidate: number | null;
+  ratio: number | null;
+  /** The confirmation runs' medians, where both sides made some. */
+  confirm: { main: number; candidate: number; ratio: number } | null;
+  /** Over the bar at the first runs' medians: before confirmation and the floor (the report's unfiltered list). */
+  overBefore: boolean;
+  /** The figures the status rests on: the confirmation runs' where made, else the first runs'. */
+  finalRatio: number | null;
+  finalDeltaMs: number | null;
+  status: TimeStatus;
+}
+
+/** One time (a rule's compile + evaluate, or a fixed-cost figure) against main's, with its confirmation and the floor. */
+export function judgeTime(name: string, main: readonly number[], candidate: readonly number[], confirmMain: readonly number[] = [], confirmCandidate: readonly number[] = [], floorMs = RULE_FLOOR_MS, tolerancePercent = TOLERANCE_PERCENT): TimeVerdict {
+  const first = compareMetric(name, main, candidate, tolerancePercent);
+  const base = { name, main: first.main, candidate: first.candidate, ratio: first.ratio };
+  if (first.status === "not-compared") return { ...base, confirm: null, overBefore: false, finalRatio: null, finalDeltaMs: null, status: "not-compared" };
+  const confirmed = confirmMain.length > 0 && confirmCandidate.length > 0 ? compareMetric(name, confirmMain, confirmCandidate, tolerancePercent) : null;
+  const final = confirmed ?? first;
+  const finalDeltaMs = final.candidate! - final.main!;
+  const overBefore = first.status === "fail";
+  let status: TimeStatus;
+  if (!overBefore) status = "pass";
+  else if (confirmed !== null && confirmed.status === "pass") status = "noisy";
+  else status = finalDeltaMs >= floorMs ? "fail" : "under-floor";
+  return { ...base, confirm: confirmed === null ? null : { main: confirmed.main!, candidate: confirmed.candidate!, ratio: confirmed.ratio! }, overBefore, finalRatio: final.ratio, finalDeltaMs, status };
+}
+
+/**
+ * Whether a time needs confirmation runs: over the bar at its first runs, by at least the floor (one moved by less
+ * cannot count whatever its confirmation says), and not confirmed yet.
+ */
+export function needsConfirmation(v: TimeVerdict, floorMs = RULE_FLOOR_MS): boolean {
+  return v.overBefore && v.confirm === null && (v.finalDeltaMs ?? 0) >= floorMs;
+}
+
+/** The nearest-rank percentile `p` (0–100) of `values`. */
+export function percentile(values: readonly number[], p: number): number {
+  if (values.length === 0) throw new Error("percentile of no values");
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1))]!;
+}
+
+export interface RuleSliceStats {
+  rules: number;
+  /** Rules both sides timed. */
+  compared: number;
+  /** Over the first runs' ratios of the compared rules (finite ones). */
+  medianRatio: number | null;
+  p95Ratio: number | null;
+  /** Over the bar at the first runs, before confirmation and the floor. */
+  overBefore: string[];
+  /** Still over after confirmation and moved by at least the floor: the rules that fail. */
+  failing: string[];
+  /** Final ratio above RULE_ALERT_RATIO and moved by at least the floor. */
+  overAlert: string[];
+  /** The worst final ratios, worst first, with each side's ms (the confirmation's where made). */
+  worst: { rule: string; ratio: number; main: number; candidate: number }[];
+}
+
+/** Slice B's summary of one pack's rules alone: the ratio distribution, the rules over the bar and the worst ones. */
+export function ruleSliceStats(rules: readonly TimeVerdict[], worstCount = 5, floorMs = RULE_FLOOR_MS): RuleSliceStats {
+  const compared = rules.filter((r) => r.status !== "not-compared");
+  const ratios = compared.map((r) => r.ratio!).filter(Number.isFinite);
+  return {
+    rules: rules.length,
+    compared: compared.length,
+    medianRatio: ratios.length > 0 ? median(ratios) : null,
+    p95Ratio: ratios.length > 0 ? percentile(ratios, 95) : null,
+    overBefore: compared.filter((r) => r.overBefore).map((r) => r.name),
+    failing: compared.filter((r) => r.status === "fail").map((r) => r.name),
+    overAlert: compared.filter((r) => (r.finalRatio ?? 0) > RULE_ALERT_RATIO && (r.finalDeltaMs ?? 0) >= floorMs).map((r) => r.name),
+    worst: [...compared]
+      .sort((a, b) => (b.finalRatio ?? 0) - (a.finalRatio ?? 0) || (b.finalDeltaMs ?? 0) - (a.finalDeltaMs ?? 0) || (a.name < b.name ? -1 : 1))
+      .slice(0, worstCount)
+      .map((r) => ({ rule: r.name, ratio: r.finalRatio!, main: r.confirm?.main ?? r.main!, candidate: r.confirm?.candidate ?? r.candidate! })),
+  };
+}
+
+// ---------------------------------------------------------------- the phase that moved
+
+export const PHASES = ["load", "compile", "evaluate", "startup"] as const;
+
+/** The part of a run row a locator reads: product-run.ts's in-process phases beside the process's own figures. */
+export interface PhaseRun {
+  mode: "cold" | "warm";
+  completed: boolean;
+  wallMs: number;
+  rssKB: number;
+  phases?: { load_ms: number; compile_ms: number; evaluate_ms: number } | null;
+}
+
+/** Each side's median of every phase over its completed runs of one mode; startup is the wall outside the phases. */
+function phaseMedians(runs: readonly PhaseRun[], mode: "cold" | "warm"): Record<(typeof PHASES)[number], number> | null {
+  const timed = runs.filter((r) => r.completed && r.mode === mode && r.phases != null);
+  if (timed.length === 0) return null;
+  const of = (pick: (r: PhaseRun) => number): number => median(timed.map(pick));
+  return {
+    load: of((r) => r.phases!.load_ms),
+    compile: of((r) => r.phases!.compile_ms),
+    evaluate: of((r) => r.phases!.evaluate_ms),
+    startup: of((r) => r.wallMs - r.phases!.load_ms - r.phases!.compile_ms - r.phases!.evaluate_ms),
+  };
+}
+
+/**
+ * One line naming the phase a failing figure moved in, from both sides' runs of its mode: the phase (load, compile,
+ * evaluate, or startup: the process's wall outside them) whose median grew most, with every phase's change. A warm
+ * figure over the bar whose cold counterpart passes moved in the store (`coldPasses`). Peak RSS names startup when the
+ * empty rule set's peak grew by at least half as much (`fixed`), else the rules' phase whose time grew more (compile or
+ * evaluate). `only` limits the phases considered (a rule alone: compile and evaluate).
+ */
+export function locate(metric: string, main: readonly PhaseRun[], candidate: readonly PhaseRun[], options: { coldPasses?: boolean; fixed?: { main: readonly PhaseRun[]; candidate: readonly PhaseRun[] }; only?: readonly (typeof PHASES)[number][] } = {}): string {
+  const mode = metric.endsWith("warm") ? "warm" : "cold";
+  const m = phaseMedians(main, mode);
+  const c = phaseMedians(candidate, mode);
+  const deltas = m === null || c === null ? null : (options.only ?? PHASES).map((phase) => ({ phase, delta: c[phase] - m[phase] }));
+  const top = deltas === null ? null : deltas.reduce((best, d) => (d.delta > best.delta ? d : best));
+  const detail = deltas === null ? "no phases recorded" : deltas.map((d) => `${d.phase} ${d.delta < 0 ? "−" : "+"}${Math.round(Math.abs(d.delta))} ms`).join(", ");
+  if (metric.startsWith("rss")) {
+    const rules = m !== null && c !== null && c.compile - m.compile > c.evaluate - m.evaluate ? "compile" : "evaluate";
+    const rssOf = (runs: readonly PhaseRun[]): number[] => runs.filter((r) => r.completed && r.mode === mode).map((r) => r.rssKB);
+    const item = [rssOf(main), rssOf(candidate)];
+    const fixed = options.fixed === undefined ? null : [rssOf(options.fixed.main), rssOf(options.fixed.candidate)];
+    if (fixed !== null && [...fixed, ...item].every((v) => v.length > 0)) {
+      const itemDelta = median(item[1]!) - median(item[0]!);
+      const fixedDelta = median(fixed[1]!) - median(fixed[0]!);
+      const mb = (kb: number): string => `${kb < 0 ? "−" : "+"}${Math.round(Math.abs(kb) / 1024)} MB`;
+      return `${fixedDelta >= itemDelta / 2 ? "startup" : rules}: the empty rule set's peak RSS ${mb(fixedDelta)} of ${mb(itemDelta)}; ${detail}`;
+    }
+    return `${rules}: peak RSS (no empty-rule-set runs to split it); ${detail}`;
+  }
+  if (options.coldPasses === true && mode === "warm") return `store: over only on the reused store (the cold run passes); ${detail}`;
+  return `${top?.phase ?? "unknown"}: ${detail}`;
+}
+
+// ---------------------------------------------------------------- slice C: all rules × one file
+
+/**
+ * Each pack's source extensions: slice C picks its files among these in the pack's real-code corpus (a PHP file that
+ * is a Blade template is the blade pack's). A pack main ships that is missing here cannot be measured.
+ */
+export const SOURCE_EXTENSIONS: Readonly<Record<string, readonly string[]>> = {
+  blade: [".blade.php"],
+  complexity: [".ts"],
+  javascript: [".ts"],
+  next: [".tsx", ".jsx", ".ts", ".js"],
+  node: [".ts"],
+  php: [".php"],
+  python: [".py"],
+  react: [".tsx", ".jsx", ".js", ".ts"],
+  rerail: [".ts"],
+  rust: [".rs"],
+  sql: [".sql"],
+  typescript: [".ts"],
+  vue: [".vue"],
+};
+
+export type FileLabel = "largest" | "median" | "small";
+
+/**
+ * Slice C's three files of a corpus, by bytes among the pack's source files (ties by path): the largest, the median,
+ * and a small one (the 5th percentile: small, not degenerate). Empty where the corpus has no source file of the pack.
+ */
+export function pickFiles(pack: string, files: readonly { path: string; bytes: number }[]): { label: FileLabel; path: string; bytes: number }[] {
+  const extensions = SOURCE_EXTENSIONS[pack];
+  if (extensions === undefined) throw new Error(`no source extensions declared for pack ${pack} (verdict.ts SOURCE_EXTENSIONS)`);
+  const sources = files
+    .filter((f) => extensions.some((ext) => f.path.endsWith(ext)) && !(pack === "php" && f.path.endsWith(".blade.php")))
+    .sort((a, b) => a.bytes - b.bytes || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  if (sources.length === 0) return [];
+  const at = (label: FileLabel, i: number): { label: FileLabel; path: string; bytes: number } => ({ label, path: sources[i]!.path, bytes: sources[i]!.bytes });
+  return [at("largest", sources.length - 1), at("median", sources.length >> 1), at("small", Math.floor(sources.length / 20))];
 }

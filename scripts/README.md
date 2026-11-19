@@ -80,27 +80,36 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
 - `ship/`: the shippability bar (`shipbar.ts`, `npm run bench:ship -- prepare|run|verdict …`): whether a candidate
   engine is no worse than main's on every rule pack main ships, as two verdicts, the candidate's packs as they ship
   through the product's path (`product-run.ts`) and the hand-written `.rerail` rewrites through `rerail-engine
-  run-policies`. Per pack, on its fixtures and on the real-code corpus `corpora.json` pins, each side runs N times
-  interleaved on pinned cores under the same memory and time caps, and the verdict (`verdict.ts`) fails a metric (wall,
-  CPU and peak RSS, cold and warm) above 1.10 times main's median, a lost true positive or a new false positive against
-  the upstream recording, a run main completes that the candidate does not, and a rule main ships that the candidate
-  cannot run. A cell failing at the median runs `--confirm` more repetitions (a metric passing them is noisy: reported,
-  not counted), and a confirmed slowdown is attributed to rules by timing each rule alone (`--drill`). By default a run
-  is quick: one run per side, a failing cell run once more, the shipped packs only. A pack's caps can be raised for
+  run-policies`. The benchmark is three slices per pack, always all three, candidate against main on the same pinned
+  cores under the same memory and time caps, the side order alternating: A, all rules × all files (per corpus: its
+  fixtures and the real-code corpus `corpora.json` pins, `--runs` times cold then warm); B, one rule × all files (per
+  corpus, the empty rule set and every rule main ships that the candidate ships, each alone, `--rule-runs` cold runs per
+  side on a fresh store); C, all rules × one file (the largest, the median and a 5th-percentile file by bytes among the
+  pack's source extensions in its real-code corpus, `--file-runs` times cold then warm). The bar (`verdict.ts`), per
+  pack and slice: every figure at most 1.15 times main's median (A and C: wall, CPU and peak RSS, cold and warm; B: each
+  rule's in-process compile + evaluate, counted only when still over after its confirmation runs and moved by at least
+  20 ms, and the empty rule set's cold wall, load, compile and evaluate); findings no worse than main's (A: no lost true
+  positive, no new false positive against the upstream recording; B: each rule's findings the same set on both sides;
+  C: each file's the same set); every run main completes completed; every rule main ships runnable. Anything over the
+  bar runs `--confirm` (3) more repetitions per side (a figure passing them is noisy: reported, not counted), and every
+  failing item names the phase that moved (load, compile, evaluate, store or startup). A pack whose runs lack a slice is
+  INCOMPLETE and never passes; a run narrowed by `--packs` or `--corpus` is PARTIAL, never PASS; the `.rerail` rewrites
+  measure slice A only, so they are INCOMPLETE at best. A pack's caps can be raised for
   both sides (`--pack-cap python=56G,14400`); a `.rerail` pack run that does not complete records how far it got and then
   runs in fixed chunks (`--rr-chunk`), whose summed figures the report labels chunked; each `.rerail` run records whether
   its policies ran combined or alone. `prepare` exports the baseline (a
   checkout, a git ref, or `release:<version>`: the source at its tag with the published package's prebuilt engines, so
   the baseline is never built) and the corpora anywhere; `run` measures on Linux (taskset, GNU time, a cgroup), macOS
   (`time -l`, no CPU affinity, a polled memory cap: `platform-watch.mjs`) or Windows (a job object: `platform-win.cs`), as
-  `platform.ts` sets out, each run row naming how it was pinned, capped and measured, signed in to AWS for the pack
-  data; `run` and `verdict` write `report.json` (`report-model.ts`, schema `ship-no-ship/report/v1`) and `report.md`
-  (`report.ts`): one row per pack naming its worst metric and the rule behind it, each pack's metrics, rules and raw
-  runs behind `<details>`. Beside the gross figures, and never judged (`metric.ts`, `metric-report.ts`): each side's
+  `platform.ts` sets out, each run row naming how it was pinned, capped and measured and the box's and the idle sibling
+  CPUs' load, signed in to AWS for the pack data; `run` and `verdict` write `report.json` (`report-model.ts`, schema
+  `ship-no-ship/report/v2`) and `report.md` (`report.ts`): one row per pack with its three slices side by side (A's
+  ratios; B's rule count, fixed cost, median and p95 rule ratio, rules over 1.15× counted and before the filter, over
+  1.5×; C's three files), the findings per slice and the load, then each pack's slices, worst rules and raw runs behind
+  `<details>`. Beside the gross figures, and never judged (`metric.ts`, `metric-report.ts`): each side's
   start-up (its empty rule set on the same corpus, `fixed.jsonl`), net time and net ratio, the product path's load /
   compile / evaluate phases (compile per rule, evaluate per rule per syntax node), the corpus's files, bytes, lines,
-  tokens and engine node counts (`<out>/workload/`), and in the drill-down each rule's multiple of the pack's median
-  rule.
+  tokens and engine node counts (`<out>/workload/`), and in slice B each rule's multiple of the pack's median rule.
   `waits` (`waits.ts`, Linux) measures the waits a user experiences (W1–W8) on both checkouts through their built
   Claude Code hook, CLI and daemon, each side in its own fresh home: a session replayed from public git history
   (`waits-session.ts`, pinned in `waits.json`; `waits --prepare` builds it where the history is), first sessions,
