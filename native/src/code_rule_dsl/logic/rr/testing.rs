@@ -7,9 +7,10 @@
 //! Here a test's program is the file's statements with the test's own (declarations, clauses, facts) spliced in after
 //! them, read as `read_file` reads the file (`rr::lower_files`). A `.given r` drops every rule of `r` first, so `r`
 //! holds the test's facts and nothing else: a unit test of the rules that read it. The run is `run-rr`'s
-//! (`tools::run_program`) over a directory holding the test's fixture files (none, for a unit test). Its `.expect`s
-//! are checked against the run's findings (finding keys: code, path, line, column) and the rows of the relations they
-//! name.
+//! (`tools::run_program`) over a directory holding the test's fixture files (none, for a unit test), and given the
+//! test's tool calls (`.tool_call "Bash" `{"command": "…"}``, the `toolCalls` option: `docs/rule-syntax/tool-calls.md`),
+//! whose ids are "1", "2", … in order. Its `.expect`s are checked against the run's findings (finding keys: code,
+//! path, line, column; a tool call's has path "" and line 0) and the rows of the relations they name.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -25,6 +26,8 @@ pub struct Test {
     pub exactly: bool,
     /// Each fixture file's path under the run's root, and its bytes.
     pub fixtures: Vec<(String, Vec<u8>)>,
+    /// The tool calls the run is given, in order: each `{"tool", "input"}` (`.tool_call`); its id is its place, from 1.
+    pub calls: Vec<serde_json::Value>,
     /// The relations whose rules the test drops (`.given`): their rows are the test's facts.
     pub givens: Vec<(String, usize)>,
     /// The test's own declarations, clauses and facts.
@@ -95,6 +98,7 @@ fn bad<T>(path: &Path, line: usize, what: impl std::fmt::Display) -> Result<T, S
 #[derive(Default)]
 struct Block {
     fixtures: Vec<(String, Vec<u8>)>,
+    calls: Vec<serde_json::Value>,
     givens: Vec<(String, usize)>,
     rules: Vec<Statement>,
     expects: Vec<Expect>,
@@ -102,11 +106,12 @@ struct Block {
 
 fn block(path: &Path, items: Vec<Statement>, test: bool) -> Result<Block, String> {
     let dir = path.parent().unwrap_or(Path::new("."));
-    let what = if test { "a test holds `.fixture`, `.given`, `.expect`, declarations and clauses" } else { "a fixture set holds `.fixture`, `.given`, declarations and clauses" };
+    let what = if test { "a test holds `.fixture`, `.tool_call`, `.given`, `.expect`, declarations and clauses" } else { "a fixture set holds `.fixture`, `.tool_call`, `.given`, declarations and clauses" };
     let mut b = Block::default();
     for (item, at) in items {
         match item {
             Item::Setting { key, text } if key == "fixture" => b.fixtures.push(fixture(path, dir, at, &text)?),
+            Item::Setting { key, text } if key == "tool_call" => b.calls.push(tool_call(path, at, &text)?),
             Item::Setting { key, text } if key == "given" => {
                 b.givens.extend(text.split(',').map(str::trim).filter(|r| !r.is_empty()).map(|r| (r.to_owned(), at)));
             }
@@ -137,14 +142,16 @@ pub fn tests(path: &Path) -> Result<Vec<Test>, String> {
             return bad(path, line, format!("a second test named {name}"));
         }
         let own = block(path, items, true)?;
-        let mut test = Test { name, line, exactly, fixtures: Vec::new(), givens: Vec::new(), rules: Vec::new(), expects: own.expects };
+        let mut test = Test { name, line, exactly, fixtures: Vec::new(), calls: Vec::new(), givens: Vec::new(), rules: Vec::new(), expects: own.expects };
         for set in &uses {
             let Some(b) = sets.get(set) else { return bad(path, line, format!("no fixture set named {set}")) };
             test.fixtures.extend(b.fixtures.iter().cloned());
+            test.calls.extend(b.calls.iter().cloned());
             test.givens.extend(b.givens.iter().cloned());
             test.rules.extend(b.rules.iter().cloned());
         }
         test.fixtures.extend(own.fixtures);
+        test.calls.extend(own.calls);
         test.givens.extend(own.givens);
         test.rules.extend(own.rules);
         let mut paths = BTreeSet::new();
@@ -183,6 +190,23 @@ fn fixture(path: &Path, dir: &Path, line: usize, text: &str) -> Result<(String, 
             std::fs::read(dir.join(file.as_ref())).map(|bytes| (name, bytes)).map_err(|e| format!("{}:{line}: {file}: {e}", path.display()))
         }
         _ => bad(path, line, "`.fixture \"<path>\"` then a fenced text or `from \"<file>\"`"),
+    }
+}
+
+/// `.tool_call "<tool>" <fenced JSON object>`: a tool call the test's run is given, the tool's name and its arguments
+/// (`{"command": "…"}`), as `{"tool", "input"}`.
+fn tool_call(path: &Path, line: usize, text: &str) -> Result<serde_json::Value, String> {
+    let usage = "`.tool_call \"<tool>\"` then its arguments, a JSON object in a fence: .tool_call \"Bash\" `{\"command\": \"ls\"}`";
+    let spanned = syntax::tokens(text).map_err(|e| format!("{}:{line}: {e:?}", path.display()))?;
+    let (Some((Tok::Str(tool), _, _)), Some((Tok::Tick(_), start, end)), None) = (spanned.first(), spanned.get(1), spanned.get(2)) else {
+        return bad(path, line, usage);
+    };
+    let raw = &text[*start..*end];
+    let n = raw.bytes().take_while(|&b| b == b'`').count();
+    match serde_json::from_str::<serde_json::Value>(&raw[n..raw.len() - n]) {
+        Ok(input) if input.is_object() => Ok(serde_json::json!({ "tool": tool.to_string(), "input": input })),
+        Ok(_) => bad(path, line, usage),
+        Err(e) => bad(path, line, format!("{usage}: {e}")),
     }
 }
 
@@ -291,17 +315,21 @@ impl Outcome {
     }
 }
 
-/// A finding's key, from a row of `rr_diagnostic`.
+/// A finding's key, from a row of `rr_diagnostic`; `call`: the tool call's id, for a finding at one (path "", line 0).
 #[derive(Clone, Debug, PartialEq)]
 struct Finding {
     code: String,
     path: String,
     line: i64,
     column: Option<i64>,
+    call: Option<String>,
 }
 
 impl std::fmt::Display for Finding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(call) = &self.call {
+            return write!(f, "{} at call {call:?}", self.code);
+        }
         write!(f, "{} at {:?}:{}", self.code, self.path, self.line)?;
         if let Some(column) = self.column {
             write!(f, ":{column}")?;
@@ -382,16 +410,31 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
             program.outputs.push(relation.clone());
         }
     }
-    let report = crate::code_rule_dsl::tools::run_program(program, &files, &root, &out, &serde_json::Value::Null).map_err(|e| format!("{id}: {e}"))?;
+    // The test's tool calls, each with its id (its place, from 1), as the run is given them (`corpus::added`).
+    let options = if test.calls.is_empty() {
+        serde_json::Value::Null
+    } else {
+        let calls: Vec<serde_json::Value> = test.calls.iter().enumerate().map(|(k, call)| {
+            let mut call = call.clone();
+            call["id"] = serde_json::json!((k + 1).to_string());
+            call
+        }).collect();
+        serde_json::json!({ "toolCalls": calls })
+    };
+    let report = crate::code_rule_dsl::tools::run_program(program, &files, &root, &out, &options).map_err(|e| format!("{id}: {e}"))?;
     let findings: Vec<Finding> = report["diagnostics"]
         .as_array()
         .into_iter()
         .flatten()
-        .map(|row| Finding {
-            code: row["code"].as_str().unwrap_or_default().to_owned(),
-            path: row["path"].as_str().unwrap_or_default().to_owned(),
-            line: row["line"].as_i64().unwrap_or(0),
-            column: row["column"].as_i64(),
+        .map(|row| {
+            let path = row["path"].as_str().unwrap_or_default().to_owned();
+            Finding {
+                code: row["code"].as_str().unwrap_or_default().to_owned(),
+                call: row["at"].as_str().filter(|_| path.is_empty()).map(str::to_owned),
+                path,
+                line: row["line"].as_i64().unwrap_or(0),
+                column: row["column"].as_i64(),
+            }
         })
         .collect();
     // The run's outputs, read where they are.

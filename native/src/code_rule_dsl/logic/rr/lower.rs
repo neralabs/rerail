@@ -166,6 +166,13 @@ struct Violation {
     tag: Option<usize>,
 }
 
+impl Violation {
+    /// Whether its findings are at a tool call: its `at` is the call's id (`.scope tool_calls`).
+    fn call(&self) -> bool {
+        self.columns.first().is_some_and(|(_, ty)| matches!(ty.as_str(), "symbol" | "sym"))
+    }
+}
+
 /// A finding's code: the violation's name, a column's value, or a constant.
 #[derive(Clone)]
 enum FindingCode {
@@ -261,6 +268,16 @@ pub fn span_columns(prog: Program) -> (Program, SpanColumns) {
 /// A helper relation's stem, column types and rules (their templates: variables numbered in order, so the fresh
 /// names one occurrence made inside it do not tell it from another).
 type HelperKey = (String, Vec<String>, Vec<String>);
+
+/// The relations of the tool calls a run is given (`docs/rule-syntax/tool-calls.md`), core.rerail's: `tool_call(call,
+/// tool)` and `tool_input(call, key, value)`. A run's `toolCalls` option is their rows (`corpus::added`).
+pub const TOOL_CALLS: [&str; 2] = ["tool_call", "tool_input"];
+
+/// `.scope tool_calls`: the policy reads the tool calls a run is given ([`TOOL_CALLS`]) and no file, and its findings
+/// are at a call.
+fn reads_tool_calls(settings: &[(String, String)]) -> bool {
+    settings.iter().any(|(k, t)| k == "scope" && t.trim() == "tool_calls")
+}
 
 /// The globs a program's `.scope` settings select documents by: (within, out), `dirs` and `include` within, `exclude`
 /// and `tests false` out. `None` for no scope and for `.scope given` (the files are a caller's, a test's, not found
@@ -1037,9 +1054,11 @@ fn whole(mut l: Lowerer, library: Option<&Program>) -> Result<Program, Error> {
     l.unit();
     lower_boolean_relations(&mut l.prog);
     // A printed program (its findings already rules) is read again with its `.scope` settings: the documents it
-    // selects are the same.
+    // selects are the same. A program of tool calls selects none (no entry reads a path).
     l.prog.text_globs = scope_text_globs(&l.prog.settings);
-    if l.prog.doc_scopes.is_none() {
+    if reads_tool_calls(&l.prog.settings) {
+        l.prog.doc_scopes = Some(Vec::new());
+    } else if l.prog.doc_scopes.is_none() {
         l.prog.doc_scopes = scope_globs(&l.prog.settings).map(|g| vec![g]);
     }
     for round in ON_REQUEST {
@@ -1464,8 +1483,9 @@ impl Lowerer {
     #[allow(clippy::too_many_arguments)]
     fn violation(&mut self, name: String, cols: Vec<(String, String)>, code: Option<Code>, code_in: Option<String>, tag: Option<String>, suppress: Vec<Suppress>, fixes: Vec<Fix>, message: String) -> Result<(), Error> {
         let Some((_, at)) = cols.first() else { return Err(Error::Syntax(format!(".violation {name} has no `at` column"))) };
-        if !matches!(at.as_str(), "node" | "span" | "loc") {
-            return Err(Error::Syntax(format!(".violation {name}: `at` is a node, a span or a loc, not a {at}")));
+        // A symbol is a tool call's id, in a `.scope tool_calls` policy (`findings` checks which).
+        if !matches!(at.as_str(), "node" | "span" | "loc" | "symbol") {
+            return Err(Error::Syntax(format!(".violation {name}: `at` is a node, a span, a loc or a tool call (symbol), not a {at}")));
         }
         let node = at == "node";
         let column = |c: &String| cols.iter().position(|(n, _)| n == c).ok_or_else(|| Error::Syntax(format!(".violation {name}: no column {c}")));
@@ -1512,6 +1532,15 @@ impl Lowerer {
                 }
             })
             .collect();
+        // A tool call's relations are read only by a policy that says so (`.scope tool_calls`), as a JSON rule that reads
+        // `input` samples tool calls (`rules.rs`); such a policy reads no file, so no other `.scope` goes beside it.
+        let tool_calls = reads_tool_calls(&self.prog.settings);
+        if !tool_calls && let Some(rel) = self.prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.as_str()).find(|r| TOOL_CALLS.contains(r)) {
+            return Err(Error::Syntax(format!("{rel} is a tool call's relation: a policy that reads tool calls says `.scope tool_calls`")));
+        }
+        if tool_calls && let Some((_, other)) = self.prog.settings.iter().find(|(k, t)| k == "scope" && t.trim() != "tool_calls") {
+            return Err(Error::Syntax(format!("`.scope tool_calls` reads no file: no `.scope {}` beside it", other.trim())));
+        }
         let guest_errors = self.guest_policy();
         if self.violations.is_empty() && on.is_empty() && guest_errors.is_empty() {
             return Ok(());
@@ -1543,6 +1572,13 @@ impl Lowerer {
         // Whether a rule makes a `@place` value: only then can a span or loc `at` hold one.
         let place_values = self.prog.rules.iter().any(|r| r.head.args.iter().chain(r.body.iter().flat_map(literal_terms)).any(has_place));
         for f in std::mem::take(&mut self.violations) {
+            if f.call() != tool_calls {
+                return Err(Error::Syntax(if tool_calls {
+                    format!(".violation {}: a `.scope tool_calls` policy's findings are at a tool call, `at: symbol`", f.name)
+                } else {
+                    format!(".violation {}: `at` is a tool call (a symbol) only in a `.scope tool_calls` policy", f.name)
+                }));
+            }
             self.diagnostics(&policy, &f)?;
             let code_col = match f.code {
                 FindingCode::Column(i) => Some(i),
@@ -1555,6 +1591,13 @@ impl Lowerer {
             };
             let head = Atom { rel: "violation".into(), args: [Term::Str(policy.clone().into()), Term::Str(f.name.clone().into()), code, v("rr_p"), v("rr_l"), v("rr_c")].into(), neg: false, gated: false };
             let cols: Vec<Term> = (0..f.arity).map(|i| if i == 0 || Some(i) == code_col { v(&format!("rr_v{i}")) } else { Term::Wild }).collect();
+            // At a tool call: no path, line 0, column 0.
+            if f.call() {
+                let mut head = head;
+                head.args.make_mut()[3..].clone_from_slice(&[Term::Str("".into()), Term::Int(0), Term::Int(0)]);
+                self.prog.rules.push(Rule { head, body: [atom(&f.name, cols), atom(TOOL_CALLS[0], vec![v("rr_v0"), Term::Wild])].into() });
+                continue;
+            }
             let at = if f.node {
                 vec![atom("node", vec![v("rr_d"), v("rr_v0"), Term::Wild, Term::Wild, Term::Wild]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), atom("line", vec![v("rr_v0"), v("rr_l")]), atom("col", vec![v("rr_v0"), v("rr_c")])]
             } else {

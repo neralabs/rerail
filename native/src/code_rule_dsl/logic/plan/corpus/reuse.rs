@@ -133,7 +133,7 @@ const SUMMARY: &str = "program";
 fn settings(root: &Path, options: &serde_json::Value) -> Result<super::added::Added> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
-    Ok(super::added::Added::of(&settings, options))
+    super::added::Added::of(&settings, options).map_err(Error::Plan)
 }
 
 /// The library files the programs include, each with its digest now: the record's `rule` entries.
