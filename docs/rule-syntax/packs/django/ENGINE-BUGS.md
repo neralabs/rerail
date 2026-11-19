@@ -17,7 +17,7 @@ The last column is each bug on main after the final-shape engine landed (2026-11
 | 5 | One tape cache per machine: concurrent runs fail | engine `tape_cache_path` | Reproduced | Partly: the default store is per build and working directory; runs started from one directory still share it |
 | 6 | Very large repositories do not finish | engine, scale | Observed once (PostHog) | Not re-measured |
 | 7 | `sym_of` has no row for an attribute of a class of the same module | `lib/python/names.rerail` | Reproduced with a probe; cause found | Present (probe fails as described) |
-| 8 | A call to a def under an outside decorator has no call target | `lib/python/calls.rerail` | Reproduced with a probe | Fixed by tbelanger/decorated-call-targets: the call targets the def and stays open (probe passes); workaround removed |
+| 8 | A call to a def under an outside decorator has no call target | `lib/python/calls.rerail` | Reproduced with a probe | Present; fixed by #875: the call targets the def and stays open (probe passes). Workaround removed |
 | 9 | Rules that read the call graph take hours on large repositories | `python/calls` typing program, scale | Observed; not profiled | Not re-measured; the typing program is unchanged |
 | 10 | A negated tree axis is read wrong below a node a sym_of relation found | engine: lowering or demand of `!inside`/`within_stop` | Reproduced with a probe; bisected to a merge | Present; fixed by #862. Until it merges three rules fail their cases |
 
