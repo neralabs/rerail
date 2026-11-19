@@ -49,6 +49,16 @@ fn with_swapped(bytes: &[u8], list: List, a: usize, b: usize) -> Vec<u8> {
     out
 }
 
+/// `bytes` with entry `from` of the list `list` picks out copied over entry `to`.
+fn with_copied(bytes: &[u8], list: List, from: usize, to: usize) -> Vec<u8> {
+    let census = decode_census(bytes).expect("the census decodes");
+    let words = list(&census);
+    let entry = |at: usize| offset(bytes, words.bytes) + 4 * at * words.width..offset(bytes, words.bytes) + 4 * (at + 1) * words.width;
+    let mut out = bytes.to_vec();
+    out[entry(to)].copy_from_slice(&bytes[entry(from)]);
+    out
+}
+
 #[test]
 fn a_census_reads_back_what_it_was_written_from() {
     let census = census();
@@ -79,7 +89,8 @@ fn a_census_whose_bytes_it_did_not_write_is_refused() {
     refused(&other, "another format");
     refused(&[bytes.as_slice(), &[0]].concat(), "a trailing byte");
     refused(&bytes[..bytes.len() - 1], "a byte short");
-    // An index that names no name, in each list, and a kind that names none.
+    // An index that names no name, in each list, and a kind that names none: in the list's last entry, so the
+    // lists stay in order and only the bound refuses them.
     for (list, what) in [
         ((|census| census.distinct) as List, "distinct"),
         (|census| census.tokens, "tokens"),
@@ -89,20 +100,31 @@ fn a_census_whose_bytes_it_did_not_write_is_refused() {
         (|census| census.implied, "an implied kind"),
         (|census| census.parents, "a parents kind"),
     ] {
-        refused(&with_word(&bytes, list, 0, 0, names), what);
+        let last = list(&read).len() - 1;
+        assert!(decode_census(&with_word(&bytes, list, last, 0, names - 1)).is_some(), "{what}: the last name is refused");
+        refused(&with_word(&bytes, list, last, 0, names), what);
     }
     // A range that runs past its list, by its start and by its length.
     refused(&with_word(&bytes, |census| census.implied, 1, 1, 4), "an implied range's start");
     refused(&with_word(&bytes, |census| census.implied, 0, 2, 4), "an implied range's length");
     refused(&with_word(&bytes, |census| census.parents, 0, 2, u32::MAX), "a parents range's length");
-    // Lists a lookup searches, out of order.
+    // Lists a lookup searches, out of order or with an entry twice (they ascend strictly).
     refused(&with_swapped(&bytes, |census| census.tokens, 0, 1), "unsorted tokens");
     refused(&with_swapped(&bytes, |census| census.distinct, 0, 2), "unsorted distinct pairs");
     refused(&with_swapped(&bytes, |census| census.implied, 0, 1), "unsorted implied kinds");
     refused(&with_swapped(&bytes, |census| census.parents, 0, 1), "unsorted parents kinds");
-    // Names out of order: `(` and `)` swapped where they lie (each one byte, after its length).
+    refused(&with_copied(&bytes, |census| census.tokens, 0, 1), "a token twice");
+    refused(&with_copied(&bytes, |census| census.distinct, 0, 1), "a distinct pair twice");
+    refused(&with_copied(&bytes, |census| census.implied, 0, 1), "an implied kind twice");
+    refused(&with_copied(&bytes, |census| census.parents, 0, 1), "a parents kind twice");
+    // Names out of order, and a name twice: `(` and `)` swapped where they lie (each one byte, after its length),
+    // and `)` written as `(`.
     let (open, close) = (read.names.binary_search(&"(").unwrap(), read.names.binary_search(&")").unwrap());
+    let (open, close) = (offset(&bytes, read.names[open].as_bytes()), offset(&bytes, read.names[close].as_bytes()));
     let mut swapped = bytes.clone();
-    swapped.swap(offset(&bytes, read.names[open].as_bytes()), offset(&bytes, read.names[close].as_bytes()));
+    swapped.swap(open, close);
     refused(&swapped, "unsorted names");
+    let mut twice = bytes.clone();
+    twice[close] = b'(';
+    refused(&twice, "a name twice");
 }
