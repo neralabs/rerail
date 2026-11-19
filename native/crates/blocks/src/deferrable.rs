@@ -24,7 +24,7 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::sync::Mutex;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -36,8 +36,8 @@ struct Mapping {
     /// Wrapped for a device: a kernel may have written it, so its write-back unmaps it first (module doc).
     wrapped: bool,
     /// The no-copy wrap the GPU binds the block through, made once with the mapping; let go at the seal.
-    #[cfg(target_os = "macos")]
-    gpu: Mutex<Option<metal::Buffer>>,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    gpu: Mutex<Option<rerail_device::device::Buffer>>,
 }
 
 unsafe impl Send for Mapping {}
@@ -61,8 +61,8 @@ impl Backing for Shared {
         self.0.len
     }
 
-    #[cfg(target_os = "macos")]
-    fn buffer(&self) -> Option<metal::Buffer> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn buffer(&self) -> Option<rerail_device::device::Buffer> {
         self.0.gpu.lock().unwrap().clone()
     }
 }
@@ -95,7 +95,7 @@ impl Deferrable {
         kind: u32,
         len: usize,
         fresh: bool,
-        #[cfg(target_os = "macos")] device: Option<&metal::DeviceRef>,
+        #[cfg(any(target_os = "macos", target_os = "linux"))] device: Option<&rerail_device::device::Device>,
     ) -> io::Result<Deferrable> {
         let len = len.max(crate::block::PAGE).div_ceil(crate::block::PAGE) * crate::block::PAGE;
         let f = OpenOptions::new().read(true).write(true).create(true).truncate(fresh).open(path)?;
@@ -104,19 +104,24 @@ impl Deferrable {
         if p == libc::MAP_FAILED {
             return Err(io::Error::last_os_error());
         }
-        #[cfg(target_os = "macos")]
-        let gpu = device.map(|d| {
-            d.new_buffer_with_bytes_no_copy(p as *const std::ffi::c_void, len as u64, metal::MTLResourceOptions::StorageModeShared, None)
-        });
-        #[cfg(target_os = "macos")]
+        // SAFETY: the mapping outlives the wrap, which it holds and lets go at the seal, before it is unmapped.
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let gpu = match device.map(|d| unsafe { rerail_device::device::wrap_host_memory(d, p.cast(), len) }).transpose() {
+            Ok(g) => g,
+            Err(e) => {
+                unsafe { libc::munmap(p, len) };
+                return Err(io::Error::other(e));
+            }
+        };
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         let wrapped = gpu.is_some();
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let wrapped = false;
         let mapping = Arc::new(Mapping {
             base: p.cast(),
             len,
             wrapped,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             gpu: Mutex::new(gpu),
         });
         let block = Block::over_with(kind, Box::new(Shared(mapping.clone())), !fresh);
@@ -146,7 +151,7 @@ impl Deferrable {
     pub fn seal(mut self) -> Sealed {
         let block = self.block.take().expect("an open deferrable block");
         let (mapping, path, kind) = (self.mapping.clone(), std::mem::take(&mut self.path), self.kind);
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             block.release_gpu_buffer();
             mapping.gpu.lock().unwrap().take();
@@ -308,7 +313,7 @@ mod tests {
             kind::JOURNAL,
             len,
             fresh,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             None,
         )
         .unwrap()
@@ -368,7 +373,7 @@ mod tests {
         let d = dir("gpu");
         let path = d.join("seg-1");
         let len = 16usize << 20;
-        let slab = Deferrable::create(&path, kind::JOURNAL, len + (1 << 16), true, Some(&device)).unwrap();
+        let slab = Deferrable::create(&path, kind::JOURNAL, len + (1 << 16), true, Some(&rerail_device::device::Device::Native(device.clone()))).unwrap();
         let off = slab.block().alloc(len, crate::block::PAGE);
         const SRC: &str = "kernel void fill(device uint *p [[buffer(0)]], uint i [[thread_position_in_grid]]) { p[i] = i * 2654435761u; }";
         metal::objc::rc::autoreleasepool(|| {

@@ -4571,7 +4571,7 @@ fn layouts_are_carried_with_the_program() {
     assert_eq!(about.layouts.iter().find(|(r, _)| *r == rel).map(|(_, f)| f), Some(child));
     // Combined: each relation keeps its facts under the name it has there.
     let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&policy("a"), &policy("b")]).unwrap();
-    let layouts = combined.layouts();
+    let layouts = ProgramFields::layouts(&*combined);
     assert_eq!(layouts.get("child"), Some(child), "{:?}", layouts.keys().collect::<Vec<_>>());
 }
 

@@ -717,17 +717,15 @@ fn a_local_join_can_export_a_node_bound_by_equality() {
         .output observed
         observed(answer) :- node(_, p, "some-kind", _, _), child(p, g, 0), mid = g, answer = mid, !excluded(g).
     "#;
-    // The tree's pass is gone (0276 step 6): the version's is checked alone. `push_equal_columns`'s switch, read as
-    // it reads it (the test is compiled in crates that see only `rerail-logic`'s public items).
+    // The version's pass is the only split (0276 step 6): no tree form to compare it with.
     let program = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
     let (image, _) = Builder::of_program(&program).unwrap().finish().unwrap();
     let mut pass = PushLocalJoins::default();
     let mut pipeline = Pipeline::new("test", image);
     pipeline.program(&mut pass);
     let (result, _) = pipeline.finish().unwrap();
-    let equal_columns = std::env::var("RERAIL_PUSH_EQUAL_COLUMNS").map_or(true, |value| value != "off");
     let helpers: Vec<_> = pass.made.iter().filter(|name| name.ends_with("_observed")).collect();
-    assert_eq!(helpers.len(), usize::from(equal_columns), "{}", result.show());
+    assert_eq!(helpers.len(), usize::from(push_equal_columns()), "{}", result.show());
     if let [helper] = helpers.as_slice() {
         assert!(result.show().contains(&format!("observed($answer) :- {helper}(")));
     }

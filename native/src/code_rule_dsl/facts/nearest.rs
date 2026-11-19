@@ -40,14 +40,13 @@ pub(crate) fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) ->
 }
 
 /// A kind-set axis's batch solve made on the device from the batch's chunk block (decision 0289 §2): per node row of
-/// the batch's `node`, the first of its rows (`nodes + 1` values, `u32`), and the rows, each a pair of node rows
-/// (inner << 32 | outer, `u64`). Both are written into the chunk, where the host reads them in place: their offsets
-/// in the block, and the pairs' count.
+/// the batch's `node`, the first of its rows (`nodes + 1` values, `u32`, in the chunk), and its rows, each the ids
+/// of `n` and `a`, written once into a relation of their own (decision 0353 step 5), which the host and the device
+/// read where it lies.
 #[cfg(target_os = "macos")]
 pub struct InChunk {
     pub start: usize,
-    pub pairs: usize,
-    pub len: usize,
+    pub rows: super::rows::Part,
 }
 
 /// What makes an axis's solve in a chunk: `members` per dialect tag (256) and kind code (1,024) a bit, `None` for

@@ -2534,6 +2534,20 @@ pub fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
         memory::mb(live as f64),
         memory::mb(resident as f64)
     );
+    // The count the run is weighed by (decision 0435 §3, §5): beside the footprint, their gap names what it misses.
+    let w = rerail_accel::budget::written();
+    let _ = writeln!(
+        r,
+        "What the run wrote (decision 0435): {} MB now, {} MB at most read, of a limit of {} MB; heap {} MB, host blocks {} MB, the GPU pool's leases {} MB and idle {} MB, rerail-metal's ledger {} MB",
+        memory::mb(w.total() as f64),
+        memory::mb(rerail_accel::budget::written_most() as f64),
+        memory::mb(rerail_accel::budget::limit() as f64),
+        memory::mb(w.heap as f64),
+        memory::mb(w.host_blocks as f64),
+        memory::mb(w.leased as f64),
+        memory::mb(w.idle as f64),
+        memory::mb(w.ledger as f64)
+    );
     let _ = writeln!(r, "Spans by bytes their thread allocated while open, less the spans inside them (own); kept = allocated less freed, in all");
     let _ = writeln!(r, "{:>10} {:>10} {:>10} {:>9}  span", "own MB", "all MB", "kept MB", "calls");
     let mut by: Vec<(&String, &SpanTotal)> = spans.iter().filter(|(_, t)| t.own_alloc > 0).collect();

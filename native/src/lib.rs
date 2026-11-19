@@ -119,6 +119,8 @@ pub(crate) fn install_store_functions() {
         code_rule_dsl::install_devices();
         code_rule_dsl::install_languages();
         content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
+        // A 16z tape compresses its own blocks: stored as it is, read a block at a time (decision 0353 step 4b).
+        content_store::set_tapes_kept_as_is(|bytes| bytes.starts_with(rerail_tape_format::f16::MAGIC16Z));
         content_store::set_connection_functions(|db| {
             code_rule_dsl::text::install(db)?;
             code_rule_dsl::prefilter::tapes::install(db)

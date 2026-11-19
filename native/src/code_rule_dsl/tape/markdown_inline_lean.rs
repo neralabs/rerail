@@ -29,12 +29,12 @@ fn kinds() -> &'static [Option<u16>] {
 /// cannot be made.
 pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_markdown_inline_lean::Refusal> {
     let kinds = kinds();
-    let code_of = |&key: &u32| -> Result<Code, String> {
+    let code_of = move |&key: &u32| -> Result<Code, String> {
         let (kind, _, _, _) = rerail_markdown_inline_lean::unkey(key);
         let kind = kinds[usize::from(kind)].ok_or_else(|| format!("tree-sitter-md-inline lacks the lean parser's kind {kind}"))?;
         Code::plain(kind, 0, &[])
     };
-    rerail_markdown_inline_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, &code_of))
+    rerail_markdown_inline_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, code_of))
 }
 
 /// The inline grammar's tree parser: the lean parser, standing in for tree-sitter-md-inline where it

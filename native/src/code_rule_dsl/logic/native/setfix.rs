@@ -841,6 +841,9 @@ impl Rel {
                     match &rounds {
                         Some(r) if f.levels.len() == f.n => f.add_leveled(&row, r[id]),
                         _ => {
+                            // copy (0353 step 6): a placed row read back beside rows derived here (row 8).
+                            static PLACED_BACK: rerail_prof::copies::Site = rerail_prof::copies::Site::new(8, "6", "rows the device placed, read back into Fresh (push_fresh)");
+                            PLACED_BACK.copied(8 * row.len());
                             f.data.extend_from_slice(&row);
                             f.n += 1;
                         }
@@ -884,7 +887,9 @@ impl Rel {
             return false;
         }
         let from = self.n;
-        self.data.extend_from_slice(&f.data[..m * k]);
+        static INTO_RELATION: rerail_prof::copies::Site = rerail_prof::copies::Site::new(8, "6", "head rows copied from Fresh into their relation (push_fresh)");
+        // copy (0353 step 6): head rows staged in `Fresh`, then copied into their relation (row 8).
+        INTO_RELATION.time(|| (self.data.extend_from_slice(&f.data[..m * k]), 8 * m * k));
         // The rows come sorted by the first order (`Fresh::settle`): known so, their runs take them in place.
         self.sorted.note(&self.data, k, &self.idx[0].cols, from as u32, (from + m) as u32);
         for _ in 0..m {
@@ -1257,6 +1262,8 @@ impl Fresh {
         } else {
 // copy (0353 step 6): head rows staged and merged before their relation takes them. They go: a CPU stratum
 // claims and writes its rows in the relation's block, as the device does (decision 0353).
+            static MERGED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(8, "6", "head rows staged, merged across workers (Fresh::absorb)");
+            MERGED.copied(8 * o.data.len());
             self.data.extend_from_slice(&o.data);
         }
         self.n += o.n;
@@ -2523,6 +2530,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                     }
                     for (r, (f, d)) in fresh.iter_mut().zip(dev_fresh).enumerate() {
                         // Rows with their rounds (a relation that keeps levels, decision 0311): each at its level.
+                        // copy (0353 step 6): the device's rows staged (decision 0353).
+                        static DEVICE_STAGED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(8, "6", "the device's head rows staged in Fresh (setfix)");
+                        DEVICE_STAGED.copied(8 * d.data.len());
                         if !d.levels.is_empty() {
                             let rel = &mut store.rels[r];
                             let k = rel.k;
@@ -2531,7 +2541,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                             }
                             continue;
                         }
-// copy (0353 step 6): the device's rows staged (decision 0353).
+// copy (0353 step 6): the device's rows staged (decision 0353), counted above.
                         f.data.extend_from_slice(&d.data);
                         f.n += d.n;
                         // The device's rows, in no order known here.

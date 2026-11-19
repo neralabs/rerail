@@ -1370,7 +1370,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     let device = rerail_accel::gpu::join::device()?;
                     let block = d.block.gpu_buffer(device);
                     let dev = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}: a view of {n} rows, {k} columns"))?;
-                    batch.expand_view(&block, d.root, d.view, d.pairs, &want, &dev).map_err(|e| format!("{e:?}: a view made on the device"))?;
+                    batch.expand_view(&block, d.root, d.view, &want, &dev).map_err(|e| format!("{e:?}: a view made on the device"))?;
                     rep.uploads += 1;
                     rep.upload_cpu += thread_cpu() - c0;
                     let by = &mut rep.upload_by[profile::UPLOAD_MADE];
@@ -1447,6 +1447,12 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
             return Ok((dev, Some(ix.clone()), place));
         }
         let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
+        // `child` probed by its parent: its children off the tape, no index of the view (decision 0353 step 4c).
+        if let Some(ix) = batch.by_parent(&dev, &by).map_err(|e| format!("{e:?}: a parent probe"))? {
+            let ix = Rc::new(ix);
+            e.indexes.push((key, ix.clone()));
+            return Ok((dev, Some(ix), place));
+        }
         let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
         // Built here, or found the relation's own already (decision 0325 step 5).
         if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
@@ -2923,8 +2929,6 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             Some(b) => b,
             None => batch.insert(direct_batch(None)?),
         };
-// copy (0353 step 6): the fixpoint's total copied into a run's block. It goes: the total lives in a block
-// of the run's life from its start (decision 0353).
         let (room, dst, at) = head_room(&store.rels[h], &fresh[h], k, total.rows)?;
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
         b.place_rows(mj::Rows::Rel(total), total.rows, None, &no_counts, &ident, dst, at).map_err(|e| format!("{e:?}: a component's rows placed"))?;

@@ -399,6 +399,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     }
 
     r.push_str(&crate::code_rule_dsl::logic::lanes::prof::report());
+    copies(&mut r);
     stages(&mut r);
     let _ = writeln!(r, "\n== Device (Metal): per span and kernel; GPU = command buffers' GPU time, wait = host wall time");
     if state.devices.is_empty() {
@@ -493,7 +494,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     let cut: u64 = state.decisions.iter().filter(|((topic, _), _)| topic == "chunk cut by the run's memory line").map(|(_, n)| n).sum();
     let sized: u64 = state.decisions.iter().filter(|((topic, _), _)| topic == "chunk size").map(|(_, n)| n).sum();
     if cut > 0 {
-        let _ = writeln!(r, "- {cut} of {sized} chunk sizings (every phase's) were cut by the run's memory line (the footprint left under a quarter of a chunk's MB): every stratum and matcher wave runs once per chunk, so the device gets small grains and pays its per-launch latency per chunk. See \"chunk size\" under == Decisions; RERAIL_RUN_MB moves the line.");
+        let _ = writeln!(r, "- {cut} of {sized} chunk sizings (every phase's) were held by the run's memory limit (what the count written leaves held them under the caller's most, decision 0435): every stratum and matcher wave runs once per chunk, so the device gets small grains and pays its per-launch latency per chunk. See \"chunk size\" under == Decisions; RERAIL_RUN_MB moves the line.");
         warned += 1;
     }
     if !state.hazards.is_empty() {
@@ -587,6 +588,21 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     }
     r.insert_str(header.len(), &super::life::section(&life, &after));
     std::fs::write(dir.join("profile.txt"), r)
+}
+
+/// The copies decision 0353 still lists (`rerail_prof::copies`), by its table's row: the bytes each site copied, its
+/// calls and its CPU. Its steps drive the total to 0; a site not named here copied nothing in the run.
+fn copies(r: &mut String) {
+    use std::fmt::Write as _;
+    let sites = rerail_prof::copies::sites();
+    let (bytes, cpu) = sites.iter().fold((0u64, 0u64), |(b, c), (_, t)| (b + t.bytes, c + t.cpu_ns));
+    let _ = writeln!(r, "\n== copies (decision 0353): {:.1} MB, {:.1} ms CPU in all; by row of its table, the step that removes each", bytes as f64 / 1e6, cpu as f64 / 1e6);
+    if sites.is_empty() {
+        r.push_str("(none)\n");
+    }
+    for (site, t) in sites {
+        let _ = writeln!(r, "  row {:>2}  step {:<3} {:>10.1} MB {:>9} calls {:>9.1} ms  {}", site.row, site.step, t.bytes as f64 / 1e6, t.calls, t.cpu_ns as f64 / 1e6, site.name);
+    }
 }
 
 /// The stage counters (`rerail_prof`): the device runs' host stages (CPU of the thread that ran

@@ -42,7 +42,8 @@ s1000, at load 18:
    block climbs while its ancestors are in `through` and not members. The chain formula went from 96.8 ms to 54.6 ms in
    one-formula mode. The best of three runs per formula shape went from 66.9–74.6 ms to 49.2–66.2 ms. A node-parallel
    climb over every node was tried first: 244 ms in total. It was dropped.
-2. **Chunks grow until one measures** (`UNCREDIBLE_GROWTH = 4` in `run_observed`). A chunk below the credible growth
+2. **Chunks grow until one measures** (`UNCREDIBLE_GROWTH = 4` in `run_observed`; superseded 2026-11-19 by 0435 §4,
+   merged from CUDA-support: chunks grow up to eightfold from what each wrote, `plan/corpus/sizing.rs`). A chunk below the credible growth
    makes the next one four times its size, at most the caller's `--chunk`. One chunk still runs at a time, so a larger
    one measures again. This reuses the existing sizing (`PROBE_NODES`, `CHUNK_CREDIBLE_MB`, the chunk-size decision
    in the profile) and does not add a mechanism. Measured with the memory line lifted (`RERAIL_RUN_MB=20000`), pinned,

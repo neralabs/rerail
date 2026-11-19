@@ -27,7 +27,7 @@ use crate::kinds::{self, K};
 use crate::{Refusal, Tape, key};
 use rerail_html_lean::tags;
 use rerail_simd8::swar::load8;
-use rerail_tape_format::{Redo, Widths, Writer};
+use rerail_tape_format::{Redo, Sink, Widths, Writer};
 
 type R<T> = Result<T, Refusal>;
 
@@ -91,7 +91,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
 }
 
 /// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
-pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
+pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     // The scanner reads a NUL as the text's end.
     if src.contains(&0) {
         return Err(Refusal::Lex(src.iter().position(|&c| c == 0).unwrap_or(0) as u32));
@@ -102,7 +102,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out,
         let mut p = P {
             src,
             b: &b,
-            w: Writer::new(0, widths, src.len() / 4 + 16),
+            w: Writer::new(0, widths, src.len() / 4 + 16).to(finish.target(), src),
             open: Vec::new(),
             serialized: tags::SERIALIZED_EMPTY,
             frames: Vec::new(),
@@ -110,10 +110,10 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out,
             at: 0,
         };
         p.document()?;
-        match finish(p.w) {
+        match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             Err(Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(Refusal::TooLarge);
                 }
                 widths = w;
@@ -314,7 +314,15 @@ impl<'a> P<'a> {
             self.at = 3;
         }
         let root = self.open_node(K::Document, self.at)?;
+        // The first node's start, taken before its commit.
+        let mut first = None;
         loop {
+            if first.is_none() && self.w.len() > root + 1 {
+                first = Some(self.w.start(root + 1));
+            }
+            // A text, interpolation or tag read is final (an element it ends is closed, as a node passed on may
+            // be): its nodes are committed (passed to format 16's ops; decision 0426 §2).
+            self.w.commit();
             if self.at >= self.src.len() {
                 // An element open at the end is an error: the scanner finds no token there.
                 if !self.open.is_empty() {
@@ -351,7 +359,7 @@ impl<'a> P<'a> {
         }
         // The document spans its nodes, from the first one's start (the file's end where it has
         // none), to the file's end.
-        let first = if self.w.len() > root + 1 { self.w.start(root + 1) } else { self.src.len() as u32 };
+        let first = first.unwrap_or(self.src.len() as u32);
         self.w.set_start(root, first);
         self.close(root, self.src.len())
     }

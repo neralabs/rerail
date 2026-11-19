@@ -791,3 +791,75 @@ impl Planner {
 
 #[cfg(test)]
 mod tests;
+
+/// Decision 0440 step 5's speed gate for the histogram: the UKL library's (`rerail_gpu::library::histogram`) against
+/// this lane's `hist`, on the same buffers: GPU time of the command buffer, warmed, the median of nine runs taken in
+/// turn. A measurement: `--ignored`.
+#[cfg(test)]
+mod library_speed {
+    use super::*;
+    use rerail_gpu::device::ComputeQueue;
+    use rerail_gpu::kernels::{alloc, buffer_of};
+
+    fn median(mut v: Vec<f64>) -> f64 {
+        v.sort_by(f64::total_cmp);
+        v[v.len() / 2]
+    }
+
+    #[test]
+    #[ignore = "a measurement"]
+    fn the_library_histogram_is_no_slower_than_the_lane() {
+        let lane = gpu().expect("a Metal device");
+        let shared = rerail_gpu::shared::get().expect("a Metal device");
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let (parts, per) = (1024usize, 4096usize);
+        for width in [1000u32, 5000] {
+            let codes: Vec<u16> = (0..parts * per)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    (x % width as u64) as u16
+                })
+                .collect();
+            let offsets: Vec<u32> = (0..=parts).map(|p| (p * per) as u32).collect();
+            let (cb, ob) = (buffer_of(&codes).unwrap(), buffer_of(&offsets).unwrap());
+            let (h, bad) = (alloc::<u32>(parts * width as usize).unwrap(), buffer_of(&[0u32; 4]).unwrap());
+            let run_lane = || {
+                let command = lane.queue.new_command_buffer().to_owned();
+                let enc = command.new_compute_command_encoder();
+                enc.set_compute_pipeline_state(&lane.pipes[Pipe::Hist as usize]);
+                for (i, b) in [&cb, &ob, &h].into_iter().enumerate() {
+                    enc.set_buffer(i as u64, Some(b.metal().expect("a Metal buffer")), 0);
+                }
+                enc.set_bytes(3, 4, (&width as *const u32).cast());
+                enc.set_buffer(4, Some(bad.metal().expect("a Metal buffer")), 0);
+                enc.dispatch_thread_groups(MTLSize::new(parts as u64, 1, 1), MTLSize::new(TG, 1, 1));
+                enc.end_encoding();
+                command.commit();
+                command.wait_until_completed();
+                let (s, e): (f64, f64) = unsafe { (objc::msg_send![&*command, GPUStartTime], objc::msg_send![&*command, GPUEndTime]) };
+                e - s
+            };
+            let run_lib = || {
+                let mut q = ComputeQueue::new(&shared.queue);
+                rerail_gpu::library::histogram::<u16>(&q, &cb, &ob, parts as u32, width, &h, &bad).unwrap();
+                let e = q.flush();
+                e.await_().unwrap();
+                e.gpu_seconds()
+            };
+            for _ in 0..3 {
+                run_lane();
+                run_lib();
+            }
+            let (mut a, mut b) = (Vec::new(), Vec::new());
+            for _ in 0..9 {
+                a.push(run_lane());
+                b.push(run_lib());
+            }
+            let (a, b) = (median(a) * 1e3, median(b) * 1e3);
+            eprintln!("histogram of 4M u16 codes, width {width}, 1024 partitions: lane {a:.3} ms, UKL library {b:.3} ms ({:.2}x)", b / a);
+            assert!(b <= a * 1.1, "the library's histogram is slower than the lane's");
+        }
+    }
+}
