@@ -1,12 +1,15 @@
 //! Capacity limits, object pins, and collection of unreachable rows.
 
+use super::connection::{BusyRetries, retry_busy};
 use super::rows::{generation, intern_string};
 use super::snapshots::GIT_TREE_BATCH_ENTRIES;
 use super::{
-    CapacityState, CollectionReport, ContentStore, HashKey, MAX_COLLECTION_BATCH, STRING_OWNER, SourceId,
-    StoreCapacity, StoreError, StoreResult, TapeId,
+    CapacityState, CollectionReport, ContentStore, HashKey, MAX_COLLECTION_BATCH, STRING_OWNER,
+    SourceId, StoreCapacity, StoreError, StoreResult, TapeId,
 };
-use rusqlite::{OptionalExtension, Params, Transaction, TransactionBehavior, params};
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
+use rusqlite::{Connection, OptionalExtension, Params, TransactionBehavior, params};
 use std::fs;
 use std::time::Instant;
 
@@ -24,6 +27,24 @@ impl ContentStore {
         lease_until: i64,
     ) -> StoreResult<()> {
         self.pin_object(OBJECT_SOURCE, source_id.0, owner, lease_until)
+    }
+
+    /// When `owner`'s pin of `source_id` ends (unix seconds), where it has one: a reader renews a lease only once it
+    /// has run down, so a run that reads what an earlier run kept writes nothing (decision 0250).
+    pub fn source_lease(&self, source_id: SourceId, owner: &str) -> StoreResult<Option<i64>> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
+        connection
+            .query_row_cached(
+                "SELECT p.lease_until FROM object_pins p JOIN strings s ON s.string_id=p.owner_string_id \
+                 WHERE p.object_kind_id=?1 AND p.object_id=?2 AND s.domain_id=?3 AND s.value=?4",
+                params![OBJECT_SOURCE, source_id.0, STRING_OWNER, owner],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(StoreError::from)
     }
 
     pub fn pin_tape(&self, tape_id: TapeId, owner: &str, lease_until: i64) -> StoreResult<()> {
@@ -44,9 +65,10 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let owner_id = intern_string(&transaction, STRING_OWNER, owner)?;
-        transaction.execute(
+        transaction.execute_cached(
             "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until) VALUES (?1,?2,?3,?4)\
              ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
             params![object_kind, object_id, owner_id, lease_until],
@@ -55,109 +77,28 @@ impl ContentStore {
         Ok(())
     }
 
-    /// From now on, each source this handle stores (`put_source`, `put_source_and_tape`) or finds through
-    /// [`Self::held_source_by_hash`] is pinned for `owner` until unix second `lease_until`, in the transaction that
-    /// stores or finds it (O95). A run's sources are live only once its manifest names them; held, a collector
-    /// running meanwhile cannot take them, or their tapes' and memo rows' sources, from under it.
-    /// `release_pins(owner)` ends the hold.
-    pub fn hold_sources(&self, owner: &str, lease_until: i64) -> StoreResult<()> {
-        if owner.is_empty() || lease_until <= 0 {
-            return Err(StoreError::Invalid("object pin is invalid".to_owned()));
-        }
-        *self.holder.lock() = Some((owner.to_owned(), lease_until));
-        Ok(())
-    }
-
-    /// Pins `source` under this handle's holder, if it has one, in `transaction`.
-    pub(super) fn pin_held(&self, transaction: &rusqlite::Transaction<'_>, source: SourceId) -> StoreResult<()> {
-        self.pin_held_object(transaction, OBJECT_SOURCE, source.0)
-    }
-
-    /// Pins `tape` under this handle's holder, if it has one, in `transaction`: a run's tapes stay until its manifest
-    /// makes them live, so the next run does not parse them again.
-    pub(super) fn pin_held_tape(&self, transaction: &rusqlite::Transaction<'_>, tape: TapeId) -> StoreResult<()> {
-        self.pin_held_object(transaction, OBJECT_TAPE, tape.0)
-    }
-
-    fn pin_held_object(&self, transaction: &rusqlite::Transaction<'_>, kind: i64, id: i64) -> StoreResult<()> {
-        let Some((owner, lease_until)) = self.holder.lock().clone() else { return Ok(()) };
-        let owner_id = intern_string(transaction, STRING_OWNER, &owner)?;
-        transaction
-            .prepare_cached(
-                "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until) VALUES (?1,?2,?3,?4)\
-                 ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
-            )?
-            .execute(params![kind, id, owner_id, lease_until])?;
-        Ok(())
-    }
-
-    /// The source whose SHA-256 is `hash`, pinned under the holder in the same transaction when the handle has one.
-    pub fn held_source_by_hash(&self, hash: HashKey) -> StoreResult<Option<SourceId>> {
-        if self.holder.lock().is_none() {
-            return self.source_by_hash(hash);
-        }
-        self.immediate_transaction(|transaction| {
-            let found = super::objects::source_id_by_hash(transaction, hash)?;
-            if let Some(source) = found {
-                self.pin_held(transaction, source)?;
-            }
-            Ok(found)
-        })
-    }
-
-    /// `held_source_by_hash` of each of `hashes`, in their order: one read, and the sources found pinned under the
-    /// holder in the same transaction, a few statements whatever their number.
-    pub fn held_sources_by_hash(&self, hashes: &[HashKey]) -> StoreResult<Vec<Option<SourceId>>> {
-        if hashes.is_empty() {
-            return Ok(Vec::new());
-        }
-        let list = serde_json::to_string(&hashes.iter().map(|h| super::rows::hash_params(*h)).collect::<Vec<_>>()).expect("integers");
-        let read = |connection: &rusqlite::Connection| -> StoreResult<Vec<Option<SourceId>>> {
-            let mut out = vec![None; hashes.len()];
-            let mut statement = connection.prepare_cached(
-                "SELECT j.key, s.source_id FROM json_each(?1) j JOIN hashes h INDEXED BY hashes_by_prefix \
-                 ON h.algorithm_id=json_extract(j.value,'$[0]') AND h.lane0=json_extract(j.value,'$[1]') \
-                 AND h.lane1=json_extract(j.value,'$[2]') AND h.lane2=json_extract(j.value,'$[3]') AND h.lane3=json_extract(j.value,'$[4]') \
-                 JOIN source_objects s ON s.canonical_hash_id=h.hash_id",
-            )?;
-            for row in statement.query_map([&list], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))? {
-                let (at, id) = row?;
-                out[at as usize] = Some(SourceId(id));
-            }
-            Ok(out)
-        };
-        let Some((owner, lease_until)) = self.holder.lock().clone() else {
-            let connection = self.connection.lock().expect("content store mutex poisoned");
-            return read(&connection);
-        };
-        self.immediate_transaction(|transaction| {
-            let found = read(transaction)?;
-            let owner_id = intern_string(transaction, STRING_OWNER, &owner)?;
-            super::bounded_insert::insert(
-                transaction,
-                "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until)",
-                "ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
-                found.iter().flatten().map(|s| {
-                    use rusqlite::types::Value;
-                    [Value::Integer(OBJECT_SOURCE), Value::Integer(s.0), Value::Integer(owner_id), Value::Integer(lease_until)]
-                }),
-            )?;
-            Ok(found)
-        })
-    }
-
-    pub fn release_pins(&self, owner: &str) -> StoreResult<usize> {
-        if self.holder.lock().as_ref().is_some_and(|(o, _)| o == owner) {
-            *self.holder.lock() = None;
-        }
+    /// The stored source of each of `hashes`, in their order: one read, nothing written. A run holds what it finds by
+    /// its collection lease (`hold_collection`, decision 0306 step 4).
+    pub fn sources_by_hashes(&self, hashes: &[HashKey]) -> StoreResult<Vec<Option<SourceId>>> {
         let connection = self
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        connection.execute(
-            "DELETE FROM object_pins WHERE owner_string_id IN (SELECT string_id FROM strings WHERE domain_id=?1 AND value=?2)",
-            params![STRING_OWNER, owner],
-        ).map_err(StoreError::from)
+        sources_by_hashes(&connection, hashes)
+    }
+
+    pub fn release_pins(&self, owner: &str) -> StoreResult<usize> {
+        // A write: it waits out other writers as every store write does, the connection held by each attempt alone.
+        retry_busy(&mut BusyRetries::default(), || {
+            self.connection
+                .lock()
+                .expect("content store mutex poisoned")
+                .execute(
+                    "DELETE FROM object_pins WHERE owner_string_id IN (SELECT string_id FROM strings WHERE domain_id=?1 AND value=?2)",
+                    params![STRING_OWNER, owner],
+                )
+                .map_err(StoreError::from)
+        })
     }
 
     pub fn capacity(&self) -> StoreResult<StoreCapacity> {
@@ -178,6 +119,8 @@ impl ContentStore {
                 Err(error) => return Err(StoreError::Io(error)),
             }
         }
+        // The segments beside it (decision 0295): tapes and sources, frames, memo entries, uncompressed.
+        let bytes = bytes.saturating_add(super::segments::segment_bytes(&self.database_path));
         Ok(StoreCapacity {
             bytes,
             state: capacity_state(bytes),
@@ -210,8 +153,44 @@ impl ContentStore {
         self.collect_held(now, batch)
     }
 
-    /// The caller holds the exclusive collection lease through the complete pass.
+    /// The caller holds the exclusive collection lease through the complete pass. Its transaction, and then the
+    /// vacuum (a write too), wait out other writers as every store write does (`retry_busy`): one attempt each, with
+    /// SQLite's busy timeout alone, failed the pass while parallel writers held the store (O-collector-busy-flake).
     pub(super) fn collect_held(&self, now: i64, batch: usize) -> StoreResult<CollectionReport> {
+        let report = retry_busy(&mut BusyRetries::default(), || {
+            self.collect_held_once(now, batch)
+        })?;
+        // Free pages back to the file system, a write of its own after the pass committed: a writer holding the
+        // store past the retries leaves them to the next pass. Failing the pass for it failed a collector whose rows
+        // were already collected. A file mostly free is the upkeep job's, vacuumed whole: an incremental vacuum's
+        // cost grows with the free list (ep2: 8.1 s for these 4,096 pages with 1.8M free, behind every run).
+        match retry_busy(&mut BusyRetries::default(), || {
+            let connection = self
+                .connection
+                .lock()
+                .expect("content store mutex poisoned");
+            connection.query_row_cached("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))?;
+            if super::upkeep::leaves_to_whole_vacuum(&connection, self.database_path())? {
+                return Ok(());
+            }
+            incremental_vacuum(&connection, 4096)
+        }) {
+            Ok(()) | Err(StoreError::Busy) => {}
+            Err(error) => return Err(error),
+        }
+        self.decompressed_cache
+            .lock()
+            .expect("decompressed cache mutex poisoned")
+            .clear();
+        self.local_result_cache
+            .lock()
+            .expect("local result cache mutex poisoned")
+            .clear();
+        Ok(report)
+    }
+
+    /// One attempt at `collect_held`'s transaction: run again whole if it finds the store busy.
+    fn collect_held_once(&self, now: i64, batch: usize) -> StoreResult<CollectionReport> {
         self.decompressed_cache
             .lock()
             .expect("decompressed cache mutex poisoned")
@@ -223,7 +202,8 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let expired_pins = execute_collect(
             &transaction,
             "DELETE FROM object_pins WHERE (object_kind_id,object_id,owner_string_id) IN (\
@@ -476,17 +456,6 @@ impl ContentStore {
             [],
         )?;
         self.commit(transaction)?;
-        connection.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))?;
-        incremental_vacuum(&connection, 4096)?;
-        drop(connection);
-        self.decompressed_cache
-            .lock()
-            .expect("decompressed cache mutex poisoned")
-            .clear();
-        self.local_result_cache
-            .lock()
-            .expect("local result cache mutex poisoned")
-            .clear();
         Ok(report)
     }
 }
@@ -506,7 +475,7 @@ fn collect_sql(sql: &'static str) -> &'static str {
 }
 
 fn execute_collect(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     sql: &'static str,
     params: impl Params,
 ) -> StoreResult<usize> {
@@ -534,4 +503,35 @@ pub(super) fn capacity_state(bytes: u64) -> CapacityState {
     } else {
         CapacityState::Normal
     }
+}
+
+/// The stored source of each of `hashes`, in their order, read on `connection` in one statement.
+fn sources_by_hashes(
+    connection: &rusqlite::Connection,
+    hashes: &[HashKey],
+) -> StoreResult<Vec<Option<SourceId>>> {
+    let mut out = vec![None; hashes.len()];
+    if hashes.is_empty() {
+        return Ok(out);
+    }
+    let list = serde_json::to_string(
+        &hashes
+            .iter()
+            .map(|h| super::rows::hash_params(*h))
+            .collect::<Vec<_>>(),
+    )
+    .expect("integers");
+    let mut statement = connection.prepare_cached(
+        "SELECT j.key, s.source_id FROM json_each(?1) j JOIN hashes h INDEXED BY hashes_by_prefix \
+         ON h.algorithm_id=json_extract(j.value,'$[0]') AND h.lane0=json_extract(j.value,'$[1]') \
+         AND h.lane1=json_extract(j.value,'$[2]') AND h.lane2=json_extract(j.value,'$[3]') AND h.lane3=json_extract(j.value,'$[4]') \
+         JOIN source_objects s ON s.canonical_hash_id=h.hash_id",
+    )?;
+    for row in statement.query_map([&list], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+    })? {
+        let (at, id) = row?;
+        out[at as usize] = Some(SourceId(id));
+    }
+    Ok(out)
 }

@@ -91,7 +91,7 @@ pub(super) fn fill(scopes: impl IntoIterator<Item = String>) -> (Vec<String>, &'
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn child_span_and_later_child_requests_keep_their_real_dependencies() {
@@ -154,7 +154,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod publication_tests {
+pub mod publication_tests {
     use super::*;
     use rusqlite::{Connection, Result, functions::FunctionFlags};
     use std::sync::{

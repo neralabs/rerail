@@ -1,24 +1,18 @@
 /** Set-up and the repository's own lint config, a database from before set-up, `rerail setup` itself, and rule packs from npm. */
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Set-up fetches rule packs through the fake environment's store: this repository's TypeScript pack.
-// Passed through, and watched: a run that must read no code never matches packs against the repository.
+// The pack matcher's scan, passed through and watched: a run that must read no code never scans the repository.
 const readsRepository = vi.hoisted(() => vi.fn<(root: string) => void>());
-vi.mock("../../src/engine/catalog/rule-packs.js", async (importOriginal) => {
-  type Match = (root: string, packs?: readonly unknown[]) => unknown;
-  const actual = await importOriginal<{ recommendRulePacks: Match; rulePacksThatFit: Match }>();
-  const watched = (match: Match): Match => (root, packs) => {
-    readsRepository(root);
-    return match(root, packs);
-  };
-  return { ...actual, recommendRulePacks: watched(actual.recommendRulePacks), rulePacksThatFit: watched(actual.rulePacksThatFit) };
+vi.mock("../../src/engine/catalog/rule-pack-matcher.js", async (importOriginal) => {
+  const actual = await importOriginal<{ scanRepository: (root: string) => unknown }>();
+  return { ...actual, scanRepository: (root: string) => (readsRepository(root), actual.scanRepository(root)) };
 });
 import { openRerailDatabase } from "../../src/engine/index.js";
 import { listRepositoryRules, loadRuleCatalog, lookupCheckout, recordCheckout, ruleSettings } from "../../src/engine/index.js";
-import { runSetup, setupPacks, startRerail, startRerailStep } from "../../src/cli/repository-setup.js";
+import { folderFromAnswer, runSetup, setupPacks, startRerail, startRerailStep } from "../../src/cli/repository-setup.js";
 import { workspaceStartState } from "../../src/runtime/index.js";
 import { noBrowserReason, runSetupCommand, type SetupIo } from "../../src/cli/setup-cli.js";
 import { ManagedUpdater } from "../../src/setup/index.js";
@@ -28,6 +22,8 @@ import { repositoryPath } from "../support/oracles.js";
 import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { attachedPacks } from "../support/attached-packs.js";
 import { removeFixtures, TS_PACKS, type Fixture, fixture, agentIo, terminalIo, request, selected, expectUntouched, SETUP_TIMEOUT_MS, TYPESCRIPT } from "../support/repository-setup.js";
+import { shellWord } from "../../src/engine/index.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 afterEach(async () => {
   readsRepository.mockClear();
@@ -66,35 +62,37 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     const asked = agentIo();
     await runSetup(asked, request(setup, environment, { answer: "yes", repo: setup.repo }));
     expect(asked.text()).toContain("From your lint config (read as data, never run):");
-    expect(asked.text()).toContain(`${TYPE_DEFINITIONS} starts with option = "type"  .eslintrc.json: "@typescript-eslint/consistent-type-definitions": ["error","type"]`);
-    expect(asked.text()).toContain(`${TSLINT_COMMENT} starts off  .eslintrc.json: "@typescript-eslint/ban-tslint-comment": "off"`);
+    // The config extends nothing, so the rules it does not name start off, counted.
+    expect(asked.text()).toMatch(/^ {4}\d+ rules start off {2}\.eslintrc\.json does not turn it on$/mu);
+    expect(asked.text()).toContain(`${TYPE_DEFINITIONS} starts on with option = "type"  .eslintrc.json: "@typescript-eslint/consistent-type-definitions": ["error","type"]`);
+    // The pack starts ban-tslint-comment off already: the config's off changes nothing, so it is not named.
+    expect(asked.text()).not.toContain(TSLINT_COMMENT);
 
     await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
-    expect(rulesOf(setup, [TYPE_DEFINITIONS, TSLINT_COMMENT])).toEqual({
-      // The pack keeps consistent-type-definitions off; the repository's option is there for when it is turned on.
-      [TYPE_DEFINITIONS]: { on: false, config: { option: "type" } },
+    expect(rulesOf(setup, [TYPE_DEFINITIONS, TSLINT_COMMENT, TS_COMMENT])).toEqual({
+      [TYPE_DEFINITIONS]: { on: true, config: { option: "type" } },
       [TSLINT_COMMENT]: { on: false, config: null },
+      [TS_COMMENT]: { on: false, config: null },
     });
   });
 
-  it("starts the ESLint ports off for an eslint.config.ts it cannot read statically, and takes an .oxlintrc.json off", async () => {
+  it("keeps the pack's values for the ESLint ports when it cannot read eslint.config.ts statically, and takes an .oxlintrc.json off", async () => {
     const setup = await fixture();
     writeFileSync(join(setup.repo, "eslint.config.ts"), "throw new Error(\"run\");\n");
-    writeFileSync(join(setup.repo, ".oxlintrc.json"), "{ // ours\n  \"rules\": { \"typescript/ban-tslint-comment\": \"off\", },\n}\n");
+    writeFileSync(join(setup.repo, ".oxlintrc.json"), "{ // ours\n  \"rules\": { \"typescript/ban-ts-comment\": \"off\", },\n}\n");
     const environment = fakeSetupEnvironment();
     const review = agentIo();
     await runSetup(review, request(setup, environment, { answer: "yes", repo: setup.repo }));
-    expect(review.text()).toContain("eslint.config.ts is not statically readable: it exports no config Rerail can find (export default or module.exports). Rerail never runs your config. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off.");
-    expect(review.text()).toContain(`${TS_COMMENT} starts off  eslint.config.ts is not statically readable`);
-    expect(review.text()).toContain(`${TSLINT_COMMENT} starts off  eslint.config.ts is not statically readable; .oxlintrc.json: "typescript/ban-tslint-comment": "off"`);
+    expect(review.text()).toContain("eslint.config.ts is not statically readable: it exports no config Rerail can find (export default or module.exports). Rerail never runs your config. The rules Rerail ports from ESLint keep the pack's values, since Rerail cannot tell which it turns on or off.");
+    expect(review.text()).toContain(`${TS_COMMENT} starts off  .oxlintrc.json: "typescript/ban-ts-comment": "off"`);
 
     await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     expect(selected(setup)).toEqual(["typescript"]);
     expect(rulesOf(setup, [TS_COMMENT, TSLINT_COMMENT])).toEqual({ [TS_COMMENT]: { on: false, config: null }, [TSLINT_COMMENT]: { on: false, config: null } });
   });
 
-  // dolanmiu/docx (PR 3716) sets consistent-type-definitions to "type" in its eslint.config.ts, for its
-  // **/src/**/*.ts files, after shared configs; set-up used to leave the option for the person to set by hand.
+  // dolanmiu/docx (PR 3716) sets consistent-type-definitions to "type" in its eslint.config.ts for some files, after
+  // shared configs; set-up used to leave the option for the person to set by hand.
   it("takes options and folder offs from a flat eslint.config.ts, read as data, and writes them on start", async () => {
     const setup = await fixture();
     writeFileSync(join(setup.repo, "eslint.config.ts"), [
@@ -102,7 +100,7 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
       "import tsEslint from \"typescript-eslint\";",
       "const config: Linter.Config[] = [",
       "  ...tsEslint.configs.stylistic,",
-      "  { files: [\"**/src/**/*.ts\"], rules: { \"@typescript-eslint/consistent-type-definitions\": [\"error\", \"type\"] } },",
+      "  { files: [\"**/*.ts\"], rules: { \"@typescript-eslint/consistent-type-definitions\": [\"error\", \"type\"] } },",
       "  { files: [\"scripts/**\"], rules: { \"@typescript-eslint/ban-tslint-comment\": \"off\" } },",
       "];",
       "export default config;",
@@ -110,17 +108,22 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     const environment = fakeSetupEnvironment();
     const asked = agentIo();
     await runSetup(asked, request(setup, environment, { answer: "yes", repo: setup.repo }));
-    expect(asked.text()).toContain(`${TYPE_DEFINITIONS} starts with option = "type"  eslint.config.ts: "@typescript-eslint/consistent-type-definitions": ["error","type"] for ["**/src/**/*.ts"]`);
+    expect(asked.text()).toMatch(/^ {4}\d+ rules start on {2}eslint\.config\.ts: tsEslint\.configs\.stylistic$/mu);
+    // Files that hold every file the port runs on (here app.ts) count as every file.
+    expect(asked.text()).toContain(`${TYPE_DEFINITIONS} starts on with option = "type"  eslint.config.ts: "@typescript-eslint/consistent-type-definitions": ["error","type"]\n`);
     expect(asked.text()).toContain(`${TSLINT_COMMENT} starts off in scripts/  eslint.config.ts: "@typescript-eslint/ban-tslint-comment": "off" for ["scripts/**"]`);
 
     await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
-    expect(rulesOf(setup, [TYPE_DEFINITIONS])).toEqual({ [TYPE_DEFINITIONS]: { on: false, config: { option: "type" } } });
+    expect(rulesOf(setup, [TYPE_DEFINITIONS, TSLINT_COMMENT])).toEqual({ [TYPE_DEFINITIONS]: { on: true, config: { option: "type" } }, [TSLINT_COMMENT]: { on: true, config: null } });
     const database = openRerailDatabase(setup.databasePath, { readonly: true });
     try {
-      expect(database.select().from(ruleSettings).all().map(({ folder, targetId, on, config }) => ({ folder, targetId, on, config }))).toEqual([
-        { folder: "", targetId: TYPE_DEFINITIONS, on: null, config: { option: "type" } },
-        { folder: "scripts", targetId: TSLINT_COMMENT, on: false, config: null },
-      ]);
+      const rows = database.select().from(ruleSettings).all().map(({ folder, targetId, on, config, origin }) => ({ folder, targetId, on, config, origin }));
+      expect(rows.every(row => row.origin === "lint-config")).toBe(true);
+      expect(rows.filter(row => row.targetId === TYPE_DEFINITIONS || row.targetId === TSLINT_COMMENT)).toEqual(expect.arrayContaining([
+        { folder: "", targetId: TSLINT_COMMENT, on: true, config: null, origin: "lint-config" },
+        { folder: "", targetId: TYPE_DEFINITIONS, on: true, config: { option: "type" }, origin: "lint-config" },
+        { folder: "scripts", targetId: TSLINT_COMMENT, on: false, config: null, origin: "lint-config" },
+      ]));
     } finally {
       database.$client.close();
     }
@@ -311,7 +314,8 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
       .toEqual({ status: "waiting" });
     expect(asked.text()).toContain("Set-up could not get any of Rerail’s rule packs.");
     expect(asked.text()).toContain("@neralabs/rerail-pack-typescript: npm error code E401");
-    expect(asked.text()).toContain(`--answer pick-myself --repo ${setup.repo} --packs none`);
+    // The agent runs answers in a POSIX shell, Git Bash on Windows, which needs a Windows path in quotes.
+    expect(asked.text()).toContain(`--answer pick-myself --repo ${shellWord("posix", setup.repo)} --packs none`);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
   });
 
@@ -371,8 +375,27 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     writeFileSync(packJson, JSON.stringify({ ...JSON.parse(readFileSync(packJson, "utf8")) as Record<string, unknown>, rules: [] }));
     const asked = agentIo();
     await runSetup(asked, request(setup, fakeSetupEnvironment({ packs: directoryPackStore(packsRoot, ["typescript"]) }), { answer: "yes", repo: setup.repo }));
-    expect(asked.text()).toContain("TypeScript would fit, but has no rules yet, so set-up does not offer it.");
+    expect(asked.text()).toContain("TypeScript would be suggested, but has no rules yet, so set-up does not offer it.");
     expect(asked.text()).not.toContain("--packs typescript@");
+  });
+
+  it("says why no pack fits: the Python pack excludes every Python file there", async () => {
+    const setup = await fixture();
+    for (const path of ["tests/test_models.py", "tests/test_views.py", "scripts/release.py"]) {
+      mkdirSync(join(setup.repo, dirname(path)), { recursive: true });
+      writeFileSync(join(setup.repo, path), "x = 1\n");
+    }
+    const asked = agentIo();
+    await runSetup(asked, request(setup, fakeSetupEnvironment({ packs: countingStore(["python"]) }), { answer: "yes", repo: setup.repo }));
+    expect(asked.text()).toContain([
+      "Scanned acme-api. No rule pack matches what it’s built with.",
+      "",
+      "  Found           .py 3 · .ts 1",
+      "                  from Git’s list of files, which leaves out what Git ignores",
+      "  Closest         Python excludes the 3 files it looks for: tests/ (2),",
+      "                  scripts/ (1)",
+      "  Packs look for  Python  *.py, *.pyi",
+    ].join("\n"));
   });
 
   it("says npm gave no pack and offers to try again, never that none fit or to start with none", async () => {
@@ -383,10 +406,10 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     const environment = fakeSetupEnvironment({ packs });
     expect(await runSetup(io, request(setup, environment))).toEqual({ status: "not-now" });
     expect(packs.fetches).toHaveLength(2);
-    expect(io.text()).toContain("Couldn’t download Rerail’s rule packs, so set-up can’t tell which fit acme-api.");
+    expect(io.text()).toContain("Couldn’t download Rerail’s rule packs, so set-up can’t suggest rule packs for acme-api.");
     expect(io.text()).toContain("npm error code E401");
     expect(io.text()).toContain("Try downloading them again?");
-    expect(io.text()).not.toContain("None of Rerail’s rule packs fit");
+    expect(io.text()).not.toContain("No rule pack matches");
     expect(io.text()).not.toContain("with no rule packs on?");
     expect(environment.connections).toEqual([]);
   });
@@ -406,9 +429,9 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(await runSetup(asked, request(setup, fakeSetupEnvironment({ packs }), { answer: "pick-myself", repo: setup.repo }))).toEqual({ status: "waiting" });
     const [complexity] = repositoryPackVersions("complexity");
     expect(asked.text()).toContain("Which rule packs should Rerail start with in acme-api?");
-    expect(asked.text()).toContain(`complexity@${complexity!.version}  Cyclomatic complexity`);
+    expect(asked.text()).toContain(`complexity@${complexity!.version}  Function complexity`);
     expect(asked.text()).not.toContain("(limit 6)");
-    expect(asked.text()).toContain(`--answer pick-myself --repo ${setup.repo} --packs none`);
+    expect(asked.text()).toContain(`--answer pick-myself --repo ${shellWord("posix", setup.repo)} --packs none`);
     expect(readsRepository).not.toHaveBeenCalled();
     expect(packs.installs).toEqual([]);
     expectUntouched(setup);
@@ -428,17 +451,17 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
 
   it("checks each pack's core range against the active Rerail, not the package set-up runs from", async () => {
     const setup = await fixture();
-    // `rerail update` has made 0.2.0 active; this run is the older package a coding agent's session loaded.
+    // `rerail update rollback` has made 0.0.9 active, older than any pack fits; this run is the newer package a coding agent's session loaded.
     const current = join(process.env.RERAIL_HOME!, "current");
     mkdirSync(current, { recursive: true });
-    writeFileSync(join(current, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.2.0" }));
+    writeFileSync(join(current, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.0.9" }));
     try {
       const asked = agentIo();
       await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "yes", repo: setup.repo }));
-      expect(asked.text()).toMatch(/@neralabs\/rerail-pack-typescript@\S+: .*0\.2\.0/u);
-      expect(asked.text()).toContain("Scanned acme-api. None of Rerail’s rule packs fit it.");
+      expect(asked.text()).toMatch(/@neralabs\/rerail-pack-typescript@\S+: .*0\.0\.9/u);
+      expect(asked.text()).toContain("Scanned acme-api. No rule pack matches what it’s built with.");
     } finally {
-      await rm(current, { recursive: true, force: true });
+      await removeFolder(current);
     }
   });
 
@@ -480,5 +503,20 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(loadRuleCatalog(storeHome).packs.get("typescript")?.version).toBe(TYPESCRIPT[0]!.version);
     expect(loadRuleCatalog().packs.size).toBe(0);
     expect(selected(setup)).toEqual(TS_PACKS);
+  });
+});
+
+describe("the folder a set-up answer names", () => {
+  it("reads a Windows path with ~\\ or the quotes Explorer's Copy as path adds", () => {
+    const home = String.raw`C:\Users\me`;
+    expect(folderFromAnswer(String.raw`~\code\app`, home, "win32")).toBe(String.raw`C:\Users\me\code\app`);
+    expect(folderFromAnswer("~/code/app", home, "win32")).toBe(String.raw`C:\Users\me\code\app`);
+    expect(folderFromAnswer(String.raw` "C:\my app" `, home, "win32")).toBe(String.raw`C:\my app`);
+    expect(folderFromAnswer("~", home, "win32")).toBe(home);
+  });
+
+  it("keeps POSIX answers as before", () => {
+    expect(folderFromAnswer("~/code/app", "/home/me", "linux")).toBe("/home/me/code/app");
+    expect(folderFromAnswer(String.raw`~\code`, "/home/me", "linux")).toBe(posix.resolve(String.raw`~\code`));
   });
 });

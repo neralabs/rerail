@@ -97,9 +97,16 @@ function renderAsk(stored) {
 const BLOCK_NOT_LIVE = "Block is not in this release";
 const MODE_READ_ONLY = "Use Edit with coding agent to change this";
 
+/**
+ * Whether the Block button shows: while the daemon runs Block mode's experiment (internal testing), or for a rule
+ * already on Block, which keeps it.
+ */
+const showsBlock = mode => mode === "block" || (data.health?.experiments ?? []).includes("BLOCK_MODE");
+
 function renderModes(stored) {
   const mode = ruleMode(stored);
   for (const b of p.modes.children) {
+    if (b.dataset.v === "block") setAttr(b, "hidden", !showsBlock(mode));
     const pressed = b.dataset.v === mode, why = b.dataset.v === "block" ? BLOCK_NOT_LIVE : MODE_READ_ONLY;
     setAttr(b, "aria-pressed", String(pressed));
     setAttr(b, "title", pressed ? null : why);
@@ -257,11 +264,14 @@ export function renderPanel(root) {
   const panel = ui.panel;
   const stored = panel?.kind === "rule" ? data.rules.get(panel.id) : undefined;
   const pack = panel?.kind === "pack" ? data.packs.find(x => x.id === panel.id) : undefined;
-  const open = stored !== undefined || pack !== undefined;
+  // A browser that lost the daemon's capability still holds what it read before: the page asking to connect it shows
+  // alone. `ui.panel` stays, so the sheet opens again once the browser is connected.
+  const open = !data.accessRequired && (stored !== undefined || pack !== undefined);
   const state = open ? "open" : "";
   if (document.body.dataset.panel !== state) document.body.dataset.panel = state;
+  if (!open) return;
   if (stored) renderRule(root, stored);
-  else if (pack) renderPackPanel(root, pack);
+  else renderPackPanel(root, pack);
 }
 
 /** Scroll the body back to the top when a different rule opens. */

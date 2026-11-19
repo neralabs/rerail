@@ -16,6 +16,8 @@ pub(in crate::code_rule_dsl) struct Reads {
     pub source: Arc<AtomicBool>,
 }
 pub(in crate::code_rule_dsl) fn install(db: &super::Database, tables: &BTreeSet<String>) -> Result<Reads> {
+    // Every bound table connected before the authorizer is on (`vtab::resolve_tables`).
+    crate::code_rule_dsl::facts::vtab::resolve_tables(db)?;
     let tables = tables.clone();
     let reads = Arc::new(parking_lot::Mutex::new(
         BTreeMap::<String, BTreeSet<String>>::new(),
@@ -102,6 +104,8 @@ pub(in crate::code_rule_dsl) fn install(db: &super::Database, tables: &BTreeSet<
                         | "typeof"
                         | "unicode"
                         | "upper"
+                        | "verify_ed25519"
+                        | "sha256"
                         | "rx_matches"
                         | "rx_extract"
                         | "rx_replace"

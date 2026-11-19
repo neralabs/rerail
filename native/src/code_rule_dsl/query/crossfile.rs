@@ -20,7 +20,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 /// One relation's rows and the files whose rows are unknown.
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Relation {
+pub struct Relation {
     /// Projected fields per row, in the order the caller reports them.
     pub(in crate::code_rule_dsl) rows: Vec<Map<String, Value>>,
     /// Files of the relation's domain whose rows are incomplete.
@@ -29,7 +29,7 @@ pub(in crate::code_rule_dsl) struct Relation {
 
 /// What `require_each` found for one subject row.
 #[derive(Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum Requirement {
+pub enum Requirement {
     /// No evidence row satisfies the predicate, and the evidence is complete.
     Missing(usize),
     /// No complete evidence row satisfies it, but some evidence file is incomplete: unknown.
@@ -80,7 +80,7 @@ impl Poll {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Evidence rows the last `require_each` on this thread tested the join predicate against.
     static PROBED_ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -351,7 +351,7 @@ pub(in crate::code_rule_dsl) fn require_each(
             buckets.entry(hash).or_default().push(index);
         }
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     PROBED_ROWS.with(|probed| probed.set(0));
     let unknown = !evidence.incomplete.is_empty();
     let mut requirements = Vec::new();
@@ -362,7 +362,7 @@ pub(in crate::code_rule_dsl) fn require_each(
         }
         let mut satisfies = |candidate: usize| -> Result<bool, Interrupted> {
             poll.visit()?;
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             PROBED_ROWS.with(|probed| probed.set(probed.get() + 1));
             Ok(predicate.holds(&[row, &evidence.rows[candidate]]))
         };
@@ -500,7 +500,7 @@ pub(in crate::code_rule_dsl) fn budget(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use serde_json::json;
 

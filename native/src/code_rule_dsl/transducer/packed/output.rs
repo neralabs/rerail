@@ -1,12 +1,12 @@
 use super::{Directive, Error, value::ByteNfa};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct OutputProgram {
-    pub(super) instructions: Vec<OutputInstruction>,
+pub struct OutputProgram {
+    pub instructions: Vec<OutputInstruction>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum OutputInstruction {
+pub enum OutputInstruction {
     MatchProperty {
         key: u16,
         value: Option<u16>,

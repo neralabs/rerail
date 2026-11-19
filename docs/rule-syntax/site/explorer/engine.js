@@ -142,7 +142,7 @@ export async function loadEngine(url, expected, progress) {
   return WebAssembly.compile(bytes);
 }
 
-// Files named by path ("python/ast.rr") as the nested directories a mount takes.
+// Files named by path ("python/ast.rerail") as the nested directories a mount takes.
 export function nest(flat) {
   const root = {};
   for (const [path, text] of Object.entries(flat)) {
@@ -162,18 +162,20 @@ export function explore(engine, { id, rr, parts, sources, lib: libFiles, full = 
     engine.mount("/lib", nest(libFiles));
     engine.lib = libFiles;
   }
-  const rule = { [`${id}.rr`]: rr, ...parts };
-  // A few rules include their part files as the repository lays them out ("../packs/python/<id>.<part>.rr",
+  const rule = { [`${id}.rerail`]: rr, ...parts };
+  // A few rules include their part files as the repository lays them out ("../packs/python/<id>.<part>.rerail",
   // from the rule's folder), so the parts are also mounted there.
   const packs = { python: { ...parts } };
   engine.mount("/w", { rule, packs, src: sources, out: {}, prof: {} });
   // A full run (`--full`) compiles and evaluates afresh, outside the session, so its profile shows every step.
-  const run = engine.command(["logic", `/w/rule/${id}.rr`, "/w/src", "/w/out", ...(full ? ["--full"] : [])]);
+  const run = engine.command(["logic", `/w/rule/${id}.rerail`, "/w/src", "/w/out", ...(full ? ["--full"] : [])]);
   const key = JSON.stringify([id, rr, parts]);
   if (engine.flat?.key !== key && !engine.dead) {
-    const flat = engine.command(["flatten", `/w/rule/${id}.rr`]);
+    const flat = engine.command(["flatten", `/w/rule/${id}.rerail`]);
     engine.flat = { key, program: flat.code === 0 ? flat.stdout.join("\n") : "", error: flat.stderr.join("\n") };
   }
+  // The run's outputs are one image (`out/outputs.rro`, decision 0239): written out as `.csv` files to show.
+  if (run.code === 0) engine.command(["csv", "/w/out"]);
   const w = engine.read("/w");
   const text = (bytes) => (bytes instanceof Uint8Array ? new TextDecoder().decode(bytes) : "");
   const out = {};

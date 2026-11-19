@@ -160,13 +160,13 @@ impl Dump {
     }
 
     /// The text `body_sha256` hashes, for tests.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn body_text(&self, def: &Node) -> Option<String> {
         Some(self.body(def)?.concat())
     }
 
     /// The text `signature_sha256` hashes, for tests.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn signature_text(&self, def: &Node) -> Option<String> {
         Some(self.signature(def)?.concat())
     }

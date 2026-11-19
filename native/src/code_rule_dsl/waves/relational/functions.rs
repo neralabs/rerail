@@ -40,7 +40,7 @@ pub(super) fn install_bound(db: &Connection, binding: SharedBinding) -> Result<(
             let cost = text.len().div_ceil(256).max(1);
             if pattern.len() > max_pattern
                 || work
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
                         left.checked_sub(cost)
                     })
                     .is_err()
@@ -91,10 +91,10 @@ pub(super) fn install_bound(db: &Connection, binding: SharedBinding) -> Result<(
     Ok(())
 }
 
-/// W's `rx_matches`, `rx_extract` and `rx_replace` on `db` with no budget: the reference `.rr`'s `@rx_replace` is
+/// W's `rx_matches`, `rx_extract` and `rx_replace` on `db` with no budget: the reference `.rerail`'s `@rx_replace` is
 /// tested against (`logic::plan::tests`).
-#[cfg(test)]
-pub(in crate::code_rule_dsl) fn install_unbounded(db: &Connection) -> Result<()> {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn install_unbounded(db: &Connection) -> Result<()> {
     let binding = binding();
     rebind(&binding, usize::MAX, Arc::new(AtomicUsize::new(usize::MAX)));
     install_bound(db, binding)

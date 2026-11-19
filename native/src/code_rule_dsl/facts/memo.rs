@@ -69,4 +69,4 @@ pub(crate) fn evaluate(
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

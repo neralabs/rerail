@@ -18,12 +18,12 @@ use std::sync::{LazyLock, Mutex};
 /// runs, whatever binds it. The interpreter and the compiled programs are two bindings of the same
 /// plan, so their requests and their readiness are keyed by it, per binding.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub(in crate::code_rule_dsl) struct PlanId(pub(in crate::code_rule_dsl) [u8; 32]);
+pub struct PlanId(pub(in crate::code_rule_dsl) [u8; 32]);
 
 impl PlanId {
     /// A batch of programs' plan: their digests in order (`Program::plain_digest`, which holds
     /// set mode).
-    pub(in crate::code_rule_dsl) fn of_programs(programs: &[Program]) -> Self {
+    pub fn of_programs(programs: &[Program]) -> Self {
         let mut digest = Sha256::new();
         digest.update(b"rerail-plan-programs-v1\0");
         for program in programs {
@@ -34,7 +34,7 @@ impl PlanId {
     }
 
     /// The plan of a part of `self` (a wave's programs `start..end`, as a batch of its roots runs).
-    pub(in crate::code_rule_dsl) fn part(&self, start: usize, end: usize) -> Self {
+    pub fn part(&self, start: usize, end: usize) -> Self {
         let mut digest = Sha256::new();
         digest.update(b"rerail-plan-part-v1\0");
         digest.update(self.0);
@@ -55,6 +55,16 @@ enum Binding {
     MetalJit,
 }
 
+impl Binding {
+    /// Its kind of form in the record of forms (`rerail_accel::forms`, decision 0202).
+    fn form(self) -> &'static str {
+        match self {
+            Binding::CpuJit => "cpu-jit",
+            Binding::MetalJit => "metal-jit",
+        }
+    }
+}
+
 #[derive(Default)]
 struct Requests {
     running: BTreeSet<(Binding, PlanId)>,
@@ -72,6 +82,7 @@ fn ready(binding: Binding, plan: PlanId) -> bool {
 /// Starts `compile` as a job on the pool unless a request for (`binding`, `plan`) runs, finished
 /// or failed.
 fn request(binding: Binding, plan: PlanId, compile: impl FnOnce() -> Result<(), Error> + Send + 'static) {
+    let kind = binding.form();
     let Ok(mut requests) = REQUESTS.lock() else { return };
     let key = (binding, plan);
     if requests.running.contains(&key) || requests.ready.contains(&key) || requests.failed.contains(&key) {
@@ -81,7 +92,9 @@ fn request(binding: Binding, plan: PlanId, compile: impl FnOnce() -> Result<(), 
     requests.running.insert(key);
     rayon::spawn(move || {
         // A panic is a failed compilation (a job's panic would end the process).
+        let started = std::time::Instant::now();
         let done = rerail_accel::exec::as_job("a compilation", || std::panic::catch_unwind(std::panic::AssertUnwindSafe(compile))).unwrap_or(Err(Error::BackendFailure));
+        rerail_accel::forms::compiled(kind, &plan.hex(), "", started.elapsed().as_secs_f64(), done.is_ok());
         if let Ok(mut requests) = REQUESTS.lock() {
             requests.running.remove(&key);
             if done.is_ok() {
@@ -94,14 +107,14 @@ fn request(binding: Binding, plan: PlanId, compile: impl FnOnce() -> Result<(), 
 }
 
 /// The backend a batch of `programs` runs on, as `resolve_plan` under their own plan.
-pub(super) fn resolve(backend: ExecutionBackend, programs: &[Program]) -> Result<ExecutionBackend, Error> {
+pub fn resolve(backend: ExecutionBackend, programs: &[Program]) -> Result<ExecutionBackend, Error> {
     resolve_plan(backend, PlanId::of_programs(programs), programs)
 }
 
 /// The backend a batch of `programs`, plan `plan`, runs on: a background backend's compiled
 /// binding once `plan`'s is ready, else its interpreter, with the compiled binding requested (the
 /// swap is at the next batch of the plan). Others are themselves.
-pub(super) fn resolve_plan(backend: ExecutionBackend, plan: PlanId, programs: &[Program]) -> Result<ExecutionBackend, Error> {
+pub fn resolve_plan(backend: ExecutionBackend, plan: PlanId, programs: &[Program]) -> Result<ExecutionBackend, Error> {
     let resolved = match backend {
         ExecutionBackend::CpuBackground => {
             if ready(Binding::CpuJit, plan) || native_cpu::compiled(programs)? {
@@ -114,26 +127,24 @@ pub(super) fn resolve_plan(backend: ExecutionBackend, plan: PlanId, programs: &[
                 ExecutionBackend::CpuInterpreter
             }
         }
-        #[cfg(target_os = "macos")]
         ExecutionBackend::MetalBackground => {
-            use super::metal_program_backend as metal;
-            if ready(Binding::MetalJit, plan) || metal::jit_ready(programs)? {
+            let metal = super::device::required()?;
+            if ready(Binding::MetalJit, plan) || metal.jit_ready(programs)? {
                 ExecutionBackend::MetalJit
             } else {
                 // The fallback runs now, so it is built now (once per process).
-                metal::compile_interpreter_cached()?;
+                metal.compile_interpreter()?;
                 let owned = programs.to_vec();
-                request(Binding::MetalJit, plan, move || {
-                    metal::compile_sweep_cached()?;
-                    metal::compile_jit_cached(&owned).map(|_| ())
-                });
+                request(Binding::MetalJit, plan, move || metal.compile_background(&owned));
                 ExecutionBackend::MetalInterpreter
             }
         }
-        #[cfg(not(target_os = "macos"))]
-        ExecutionBackend::MetalBackground => return Err(Error::UnsupportedBackend),
         other => return Ok(other),
     };
+    if matches!(resolved, ExecutionBackend::CpuInterpreter | ExecutionBackend::MetalInterpreter) {
+        let kind = if resolved == ExecutionBackend::CpuInterpreter { Binding::CpuJit } else { Binding::MetalJit }.form();
+        rerail_accel::forms::interpreted(kind, &plan.hex(), &format!("{} programs", programs.len()), 1);
+    }
     crate::code_rule_dsl::prof::count(
         match resolved {
             ExecutionBackend::CpuJit | ExecutionBackend::MetalJit => "compilation.batches_compiled",
@@ -145,11 +156,9 @@ pub(super) fn resolve_plan(backend: ExecutionBackend, plan: PlanId, programs: &[
 }
 
 /// Waits for every running compilation (tests: the batch after it runs compiled).
-#[cfg(test)]
-pub(super) fn settle() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn settle() {
     rerail_accel::exec::help_until(|| REQUESTS.lock().map_or(true, |requests| requests.running.is_empty()).then_some(()));
 }
 
-#[cfg(test)]
-#[path = "compilation_tests.rs"]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

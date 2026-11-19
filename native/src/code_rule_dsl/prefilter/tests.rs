@@ -1,28 +1,32 @@
 use super::*;
 use crate::code_rule_dsl::{
     language::GrammarDialect,
-    tape::{Grammar, TAPE_FORMAT_VERSION, TapeImage},
+    tape::TAPE_FORMAT_VERSION,
 };
 use crate::content_store::prefilter::TOO_BIG;
-use ast_grep_core::tree_sitter::StrDoc;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::Path;
 
-pub(in crate::code_rule_dsl) fn document(source: &str, lang: GrammarDialect) -> (TapeDoc, Vec<u8>) {
-    let native = StrDoc::new(source, lang);
-    let grammar = Grammar::new(lang).unwrap();
-    let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
-    let bytes = image.to_bytes().unwrap();
-    (TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap(), bytes)
-}
+pub(in crate::code_rule_dsl) use crate::code_rule_dsl::fixtures::{document, open, temp};
 
-/// A fresh store path: the clock alone is not unique across parallel tests (macOS reads it in
-/// microseconds), so a counter disambiguates.
-pub(in crate::code_rule_dsl) fn temp() -> PathBuf {
-    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    std::env::temp_dir().join(format!("rerail-prefilter-{}-{nonce}-{n}.sqlite", std::process::id()))
+/// Removes the stores `temp` made for processes that have exited.
+fn sweep() {
+    let me = std::process::id();
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else { return };
+    for e in entries.flatten() {
+        let name = e.file_name();
+        let Some(rest) = name.to_str().and_then(|n| n.strip_prefix("rerail-prefilter-")) else { continue };
+        let Some(pid) = rest.split('-').next().and_then(|p| p.parse::<i32>().ok()) else { continue };
+        // SAFETY: signal 0 sends nothing; it only asks whether the process exists. Windows: never known gone.
+        #[cfg(unix)]
+        let alive = pid as u32 == me || unsafe { libc::kill(pid, 0) } == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH);
+        #[cfg(not(unix))]
+        let alive = { let _ = (pid, me); true };
+        if alive {
+            continue;
+        }
+        let path = e.path();
+        let _ = if path.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
+    }
 }
 
 /// Stores `source` and its tape, publishes the tape's prefilter rows, and returns both.
@@ -37,10 +41,6 @@ pub(in crate::code_rule_dsl) fn put(store: &ContentStore, source: &str, lang: Gr
 
 fn count(store: &ContentStore, sql: &str) -> i64 {
     store.query_rows(sql, [], |r| r.get(0)).unwrap()[0]
-}
-
-pub(in crate::code_rule_dsl) fn open(path: &Path) -> ContentStore {
-    ContentStore::open(path).unwrap()
 }
 
 /// A rule's compiled matcher, outside any rule document.
@@ -199,8 +199,9 @@ fn no_relation_stores_a_row_per_node() {
         let (_, doc) = put(&store, &std::fs::read_to_string(path).unwrap(), GrammarDialect::Rust);
         nodes += doc.transducer_len();
     }
-    for source in ["import os\n\ndef f(a, b=1):\n    \"\"\"Doc.\"\"\"\n    return os.path.join(a, str(b))\n\nclass C:\n    x = [1, 2, 3]\n"] {
-        nodes += put(&store, &source.repeat(50), GrammarDialect::Python).1.transducer_len();
+    {
+        let source = "import os\n\ndef f(a, b=1):\n    \"\"\"Doc.\"\"\"\n    return os.path.join(a, str(b))\n\nclass C:\n    x = [1, 2, 3]\n";
+        nodes += put(&store, &source.repeat(300), GrammarDialect::Python).1.transducer_len();
     }
     assert!(nodes > 50_000, "{nodes}");
     let tables = store

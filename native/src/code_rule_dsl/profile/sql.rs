@@ -2,25 +2,29 @@
 //! outside callbacks and timed spans, while the connection's schema still exists.
 
 #[path = "sql/coverage.rs"]
-mod coverage;
+pub mod coverage;
 #[allow(dead_code)]
 #[path = "sql/snapshot.rs"]
-pub(in crate::code_rule_dsl) mod snapshot;
+pub mod snapshot;
 #[path = "sql/timing.rs"]
-mod timing;
+pub mod timing;
 use rusqlite::{Connection, ffi};
 use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ffi::{CStr, c_int, c_uint, c_void};
 use std::fs::{File, create_dir_all};
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Write, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Instant, SystemTime};
 use timing::{Started, Timing};
+// The SQL executor's planning and batches read the thread's CPU clock in every build.
+#[path = "clock.rs"]
+pub mod clock;
+pub use clock::thread_cpu_ns;
 
 static DIRECTORY: LazyLock<Option<PathBuf>> =
     LazyLock::new(|| std::env::var_os("RERAIL_SQL_PROFILE_DIR").map(PathBuf::from));
@@ -37,7 +41,7 @@ static ORIGIN: LazyLock<(Instant, u128)> = LazyLock::new(|| {
 static CONTEXT_FILTER: LazyLock<Option<String>> =
     LazyLock::new(|| std::env::var("RERAIL_SQL_PROFILE_SCOPE").ok());
 #[allow(dead_code)]
-pub(in crate::code_rule_dsl) fn captures_scope(scope: &str) -> bool {
+pub fn captures_scope(scope: &str) -> bool {
     DIRECTORY.is_some()
         && CONTEXT_FILTER
             .as_deref()
@@ -58,7 +62,7 @@ thread_local! {
     static EXPLAINING: Cell<bool> = const { Cell::new(false) };
 }
 
-pub(in crate::code_rule_dsl) fn explaining() -> bool {
+pub fn explaining() -> bool {
     EXPLAINING.get()
 }
 
@@ -71,7 +75,7 @@ impl Drop for Explanation {
 
 /// Cumulative callback counts, read at statement boundaries. No clocks in row callbacks.
 #[derive(Clone, Copy)]
-pub(in crate::code_rule_dsl) enum FrameEvent {
+pub enum FrameEvent {
     Scan,
     Lookup,
     Next,
@@ -82,7 +86,7 @@ pub(in crate::code_rule_dsl) enum FrameEvent {
 }
 
 #[inline]
-pub(in crate::code_rule_dsl) fn frame(event: FrameEvent, count: usize) {
+pub fn frame(event: FrameEvent, count: usize) {
     if ACTIVE.get() != 0 {
         FRAME.with(|counter| {
             let mut values = counter.get();
@@ -94,14 +98,14 @@ pub(in crate::code_rule_dsl) fn frame(event: FrameEvent, count: usize) {
 
 /// Time only cache misses, including any scan-order preparation needed by the lookup.
 /// These spans are contained in SQL time; they must not be added to the CPU budget.
-pub(in crate::code_rule_dsl) fn index_build(rows: usize) -> IndexBuild {
+pub fn index_build(rows: usize) -> IndexBuild {
     let started = (ACTIVE.get() != 0).then(Started::now);
     frame(FrameEvent::IndexBuild, 1);
     frame(FrameEvent::IndexedRows, rows);
     IndexBuild(started)
 }
 
-pub(in crate::code_rule_dsl) struct IndexBuild(Option<Started>);
+pub struct IndexBuild(Option<Started>);
 
 impl Drop for IndexBuild {
     fn drop(&mut self) {
@@ -133,6 +137,8 @@ struct Running {
 
 #[derive(Default)]
 struct State {
+    saved_queries: usize,
+    query_prefix: u64,
     explained: usize,
     running: HashMap<usize, Running>,
     ids: HashMap<String, usize>,
@@ -178,7 +184,8 @@ impl State {
 
 /// Must drop before its connection. The Box keeps callback data stable when Session moves.
 /// Each connection runs on one worker at a time, as required by rusqlite.
-pub(in crate::code_rule_dsl) struct Profiler {
+pub struct Profiler {
+    observer:Option<Arc<crate::code_rule_dsl::sql_admission::observer::Observed>>,
     database: *mut ffi::sqlite3,
     state: RefCell<State>,
     context: Arc<parking_lot::Mutex<Value>>,
@@ -186,7 +193,7 @@ pub(in crate::code_rule_dsl) struct Profiler {
 }
 
 /// Context can nest around mutable session methods without borrowing the connection.
-pub(in crate::code_rule_dsl) struct Context {
+pub struct Context {
     context: Arc<parking_lot::Mutex<Value>>,
     previous: Value,
 }
@@ -201,10 +208,12 @@ impl Drop for Context {
 unsafe impl Send for Profiler {}
 
 impl Profiler {
+    pub fn observe(&mut self,observer:Arc<crate::code_rule_dsl::sql_admission::observer::Observed>) {self.observer=Some(observer);}
+
     /// Cumulative executions, wall nanoseconds, VM steps, scans, sorts, and autoindex rows.
-    pub(in crate::code_rule_dsl) fn totals(&self) -> [u64;6] { self.state.borrow().totals }
+    pub fn totals(&self) -> [u64;6] { self.state.borrow().totals }
     /// Untimed API outcome. Measured work remains in SQL and native operator events.
-    pub(in crate::code_rule_dsl) fn result(&self, name:&str, error:Option<String>) {
+    pub fn result(&self, name:&str, error:Option<String>) {
         let mut state=self.state.borrow_mut();
         let query=state.query(&format!("API {name} result"),"operator");
         let mut context=self.context.lock().clone();
@@ -213,15 +222,15 @@ impl Profiler {
             "wallNs":0,"cpuNs":0,"selfWallNs":0,"selfCpuNs":0,"rows":null,
             "completed":true,"outcome":if error.is_some(){"error"}else{"ok"},"context":context,"thread":format!("{:?}",std::thread::current().id())}));
     }
-    pub(in crate::code_rule_dsl) fn context(&self, value: Value) {
+    pub fn context(&self, value: Value) {
         *self.context.lock() = value;
     }
 
-    pub(in crate::code_rule_dsl) fn stage(&self, value: &str) {
+    pub fn stage(&self, value: &str) {
         self.context.lock()["stage"] = json!(value);
     }
 
-    pub(in crate::code_rule_dsl) fn scope(&self, fields: Value) -> Context {
+    pub fn scope(&self, fields: Value) -> Context {
         let mut context = self.context.lock();
         let previous = context.clone();
         if !context.is_object() { *context = json!({}); }
@@ -232,7 +241,7 @@ impl Profiler {
     }
     /// # Safety
     /// The returned profiler must be dropped before its connection closes.
-    pub(in crate::code_rule_dsl) unsafe fn configured(
+    pub unsafe fn configured(
         connection: &Connection,
     ) -> rusqlite::Result<Option<Box<Self>>> {
         let directory = DIRECTORY.clone().or_else(|| {
@@ -257,6 +266,7 @@ impl Profiler {
         let file = File::create(stem.with_extension("jsonl"))
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         let mut this = Box::new(Self {
+            observer:None,
             // SAFETY: the profiler is owned by Session and dropped before this connection.
             database: unsafe { connection.handle() },
             state: RefCell::new(State {
@@ -281,7 +291,7 @@ impl Profiler {
         Ok(this)
     }
 
-    pub(in crate::code_rule_dsl) fn operation(
+    pub fn operation(
         &self,
         sql: &str,
         at: (&str, usize),
@@ -316,7 +326,7 @@ impl Profiler {
     }
 
     /// Explains every newly observed statement without running its body or tracing EXPLAIN.
-    pub(in crate::code_rule_dsl) fn checkpoint(
+    pub fn checkpoint(
         &self,
         connection: &Connection,
     ) -> rusqlite::Result<()> {
@@ -325,7 +335,7 @@ impl Profiler {
     }
 
     /// Capture plans before their physical inputs are released, without rewriting the report.
-    pub(in crate::code_rule_dsl) fn explain_pending(&self, connection: &Connection) {
+    pub fn explain_pending(&self, connection: &Connection) {
         let _explanation = Explanation(EXPLAINING.replace(true));
         self.state.borrow_mut().enabled = false;
         {
@@ -374,17 +384,58 @@ impl Profiler {
             return Err(io_error(std::io::Error::other(error.clone())));
         }
         let origins: serde_json::Map<String, Value> = ORIGINS.iter().enumerate().map(|(i, name)| ((*name).to_owned(), json!({"started":state.origin_started[i], "completed":state.origin_completed[i], "running":state.origin_started[i].saturating_sub(state.origin_completed[i])}))).collect();
-        let data = json!({"version":1,"pid":std::process::id(),"events":state.events,
-            "clock":"process monotonic nanoseconds","originUnixUs":ORIGIN.1,"cpuClock":if cfg!(unix) {"thread CPU"} else {"unavailable"},
-            "writtenAtUnixMs":SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis(),
-            "queries":state.queries,"error":state.error,
-            "executionCoverage":{"source":"code-rule-dsl","fromSessionStart":true,
-                "started":state.sql_started,"completed":state.sql_completed,"running":state.running.len(), "origins":origins}});
-        let file = File::create(self.stem.with_extension("json")).map_err(io_error)?;
+        // Explained query records are immutable. Reuse their persisted prefix
+        // instead of walking every earlier bytecode array at every checkpoint.
+        // Copy to a temporary file before appending so failures preserve the last
+        // complete snapshot. std::fs::copy can clone extents on supported filesystems.
+        let path = self.stem.with_extension("json");
+        let temporary = self.stem.with_extension("json.tmp");
+        let prefix = state.query_prefix;
+        let file = if prefix > 0 {
+            let copied = std::fs::copy(&path, &temporary).map_err(io_error)?;
+            if copied < prefix {
+                return Err(io_error(std::io::Error::other("SQL profile catalog prefix is truncated")));
+            }
+            let mut file = std::fs::OpenOptions::new().write(true).open(&temporary).map_err(io_error)?;
+            file.set_len(prefix).map_err(io_error)?;
+            file.seek(SeekFrom::Start(prefix)).map_err(io_error)?;
+            file
+        } else { File::create(&temporary).map_err(io_error)? };
         let mut writer = BufWriter::new(file);
-        serde_json::to_writer(&mut writer, &data)
-            .map_err(|e| io_error(std::io::Error::other(e)))?;
+        if prefix == 0 { writer.write_all(b"{\"queries\":[").map_err(io_error)?; }
+        let saved = state.saved_queries;
+        for (id, query) in state.queries.iter().enumerate().skip(saved) {
+            if id > 0 { writer.write_all(b",").map_err(io_error)?; }
+            serde_json::to_writer(&mut writer, query).map_err(|e|io_error(std::io::Error::other(e)))?;
+        }
+        let query_prefix = writer.stream_position().map_err(io_error)?;
+        writer.write_all(b"],").map_err(io_error)?;
+        let mut header = Vec::new();
+        let write = (|| -> serde_json::Result<()> {
+            use serde::ser::{SerializeMap, Serializer};
+            let mut serializer = serde_json::Serializer::new(&mut header);
+            let mut data = serializer.serialize_map(Some(10))?;
+            data.serialize_entry("version", &1)?;
+            data.serialize_entry("pid", &std::process::id())?;
+            data.serialize_entry("events", &state.events)?;
+            data.serialize_entry("clock", "process monotonic nanoseconds")?;
+            data.serialize_entry("originUnixUs", &ORIGIN.1)?;
+            data.serialize_entry("cpuClock", if cfg!(unix) {"thread CPU"} else {"unavailable"})?;
+            data.serialize_entry("writtenAtUnixMs", &SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis())?;
+            data.serialize_entry("metadataPublication", &json!({"serializedQueries":state.queries.len()-saved,
+                "reusedQueryBytes":prefix.saturating_sub(12)}))?;
+            data.serialize_entry("error", &state.error)?;
+            data.serialize_entry("executionCoverage", &json!({"source":"code-rule-dsl","fromSessionStart":true,
+                "started":state.sql_started,"completed":state.sql_completed,"running":state.running.len(),"origins":origins}))?;
+            data.end()
+        })();
+        write.map_err(|e| io_error(std::io::Error::other(e)))?;
+        writer.write_all(&header[1..]).map_err(io_error)?;
         writer.flush().map_err(io_error)?;
+        drop(writer);
+        std::fs::rename(temporary,path).map_err(io_error)?;
+        state.saved_queries = state.queries.len();
+        state.query_prefix = query_prefix;
         Ok(())
     }
 }
@@ -407,7 +458,7 @@ impl Drop for Profiler {
     }
 }
 
-pub(in crate::code_rule_dsl) struct Operation<'a> {
+pub struct Operation<'a> {
     profiler: &'a Profiler,
     query: usize,
     previous: Option<Value>,
@@ -420,12 +471,12 @@ pub(in crate::code_rule_dsl) struct Operation<'a> {
 }
 
 impl Operation<'_> {
-    pub(in crate::code_rule_dsl) fn finish(mut self, rows: usize) {
+    pub fn finish(mut self, rows: usize) {
         self.rows = Some(rows);
         self.completed = true;
     }
 
-    pub(in crate::code_rule_dsl) fn finish_unobserved(mut self) {
+    pub fn finish_unobserved(mut self) {
         self.completed = true;
     }
 }
@@ -539,6 +590,7 @@ unsafe extern "C" fn trace(
                     }
                 };
                 let sql = String::from_utf8_lossy(canonical);
+                if let Some(observer)=&profiler.observer {observer.start(pointer);}
                 let query = state.query(&sql, "sql");
                 state.sql_started += 1;
                 state.origin_started[origin] += 1;
@@ -569,6 +621,7 @@ unsafe extern "C" fn trace(
                 }
             }
             ffi::SQLITE_TRACE_PROFILE => {
+                if let Some(observer)=&profiler.observer {observer.end(pointer);}
                 let Some(running) = state.running.remove(&key) else {
                     return;
                 };
@@ -616,6 +669,6 @@ unsafe extern "C" fn trace(
     0
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[path = "sql/tests.rs"]
-mod tests;
+pub mod tests;

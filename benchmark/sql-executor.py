@@ -95,6 +95,25 @@ def document_session_request(files, scalar_consumers=False, projection=False):
     }
 
 
+def corpus_session_request(workload):
+    corpus = json.loads(subprocess.check_output([
+        "zstd", "-dc", str(ROOT / "native/src/code_rule_dsl/facts/vtab/golden/corpus.json.zst")]))
+    files = [{"path": path, "language": "python", "source": source} for path, source in corpus]
+    original = next(f for f in files if f["path"] == "json/decoder.py")
+    edited = {**original, "source": original["source"] + "\n\ndef debug_extra(text):\n    return eval(text)\n"}
+    program = (ROOT / f"native/src/code_rule_dsl/logic/plan/golden/programs/{workload}.rerail").read_text()
+    outputs = [name.strip() for line in program.splitlines() if line.startswith(".output ")
+               for name in line.removeprefix(".output ").split(",")]
+    return {"program": program, "snapshot": {"files": files}, "steps": [
+        {"file_changes": {"upsert": [edited]}, "limits": {"max_steps": 1}, "expected_error": "execution-limit"},
+        {"file_changes": {"upsert": [edited]}},
+        {"file_changes": {"upsert": [edited]}},
+        {"file_changes": {"upsert": [original]}},
+        {"file_changes": {"delete": [f["path"] for f in files]}},
+        {"snapshot": {"files": files}},
+    ], "queries": [f'SELECT count(*) FROM "{name}"' for name in outputs]}
+
+
 def cases(corpus):
     result = [(f"update-recursive-lattice-{groups}", recursive_lattice(groups)) for groups in [1000, 10000]]
     for n in [64, 128, 256, 512, 1024]:
@@ -246,7 +265,7 @@ hit(i) :- target(o), picked(i,o).
     retry = dict(result[-1][1], max_waves=4096, queries=["SELECT count(*) FROM reached"])
     result.append(("wave-budget-raised", retry))
     for name in ["workload", "calls"]:
-        src = (ROOT/f"native/src/code_rule_dsl/logic/plan/golden/programs/{name}.rr").read_text()
+        src = (ROOT/f"native/src/code_rule_dsl/logic/plan/golden/programs/{name}.rerail").read_text()
         result.append((f"wave-{name}-cpython", {"snapshot": {"files": [{"path":p,"source":s,"language":"python"} for p,s in corpus]}, "program":src, "queries":["SELECT count(*) FROM finding"]}))
         # Diagnostic workaround only: avoid the projection names already bound by the session.
         # Explicit rules retain the same node projections; the original case remains above.
@@ -425,7 +444,7 @@ def main():
             if "timeout" in result: break
     if not args.only or args.only == "corpus":
         for workload in ["workload", "workload_demand", "calls"]:
-            program = ROOT/f"native/src/code_rule_dsl/logic/plan/golden/programs/{workload}.rr"
+            program = ROOT/f"native/src/code_rule_dsl/logic/plan/golden/programs/{workload}.rerail"
             for trial in range(args.repeats):
                 modes = ["sql","native"] if trial%2==0 else ["native","sql"]
                 for mode in modes:
@@ -436,6 +455,8 @@ def main():
                     flags = ["--sql"] if mode=="sql" else ["--modes","program"]
                     result = run([args.engine,"logic",str(program),str(corpus_root),str(directory/"out"),*flags],args.timeout,env)
                     (directory/"stdout.txt").write_text(result.pop("stdout")); (directory/"stderr.txt").write_text(result.pop("stderr"))
+                    # A run's outputs are one image (`out/outputs.rro`, decision 0239): written out as `.csv` files to hash.
+                    subprocess.run([args.engine,"csv",str(directory/"out")],capture_output=True)
                     outputs = {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (directory/"out").glob("*.csv")}
                     records.append({"case":f"corpus-{workload}","mode":mode,"trial":trial,"profiled":trial==0,"outputs":outputs,**result})
                     print(workload,mode,trial,result,flush=True)
@@ -469,6 +490,12 @@ if __name__ == "__main__":
         parser.add_argument("output", type=Path)
         args = parser.parse_args()
         args.output.write_text(json.dumps(document_session_request(args.document_session_request, args.scalar_consumers, args.projection)))
+    elif sys.argv[1:2] == ["--corpus-session-request"]:
+        parser = argparse.ArgumentParser(description="Generate a complete CPython replay with rollback, recovery, no-op, empty input, and restoration.")
+        parser.add_argument("--corpus-session-request", choices=["workload", "calls"], required=True)
+        parser.add_argument("output", type=Path)
+        args = parser.parse_args()
+        args.output.write_text(json.dumps(corpus_session_request(args.corpus_session_request)))
     elif sys.argv[1:2] == ["--session-request"]:
         parser = argparse.ArgumentParser(description="Generate a recursive request with rollback and recovery checks.")
         parser.add_argument("--session-request", type=int, required=True, metavar="REGIONS")

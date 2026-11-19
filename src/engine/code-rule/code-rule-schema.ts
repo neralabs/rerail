@@ -148,6 +148,9 @@ export type CodeRuleAstRule = CodeRuleDslAstRule;
 export type CodeRuleAstRelation = CodeRuleDslAstRelation;
 
 const AST_RULE_KEYS = ["pattern", "kind", "regex", "nthChild", "all", "any", "not", "matches", "inside", "has", "precedes", "follows", "compare", "count", "resolves", "value", "arguments", "binds", "parse", "capture", "formatArgs", "layout", "filePath", "host", "embedded", "calls", "importTarget"] as const;
+/** `stored` says why the token a `regex` tests is stored where the rule looks (the engine's `compile::token_tests`). */
+const storedHasRegex = (rule: { stored?: string | undefined; regex?: string | undefined }): boolean => rule.stored === undefined || rule.regex !== undefined;
+const STORED_NEEDS_REGEX = { message: "stored says why a token a regex tests is stored: it needs a regex.", path: ["stored"] };
 /** The grammars `parse` applies and their kinds (the engine's `literal::Grammar`). */
 export const CODE_RULE_PARSE_GRAMMARS = ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc", "rustFormat", "identifierWords", "pythonFString"] as const;
 export const CODE_RULE_PARSE_KINDS: Record<(typeof CODE_RULE_PARSE_GRAMMARS)[number], readonly string[]> = {
@@ -831,6 +834,7 @@ export const codeRuleAstRuleSchema: z.ZodType<CodeRuleDslAstRule> = z.lazy(() =>
       pattern: z.union([nonEmptyString, z.object({ context: nonEmptyString, selector: nonEmptyString }).strict()]).optional(),
       kind: nonEmptyString.optional(),
       regex: nonEmptyString.optional(),
+      stored: nonEmptyString.optional(),
       nthChild: codeRuleNthChildSchema.optional(),
       all: z.array(codeRuleAstRuleSchema).min(1).optional(),
       any: z.array(codeRuleAstRuleSchema).min(1).optional(),
@@ -859,6 +863,7 @@ export const codeRuleAstRuleSchema: z.ZodType<CodeRuleDslAstRule> = z.lazy(() =>
       }),
     })
     .strict()
+    .refine(storedHasRegex, STORED_NEEDS_REGEX)
     .refine(rule => AST_RULE_KEYS.some(key => rule[key] !== undefined), "An ast rule must contain at least one matcher.") as unknown as z.ZodType<CodeRuleDslAstRule>,
 );
 export const codeRuleAstRelationSchema: z.ZodType<CodeRuleDslAstRelation> = z.lazy(() =>
@@ -869,6 +874,7 @@ export const codeRuleAstRelationSchema: z.ZodType<CodeRuleDslAstRelation> = z.la
       pattern: z.union([nonEmptyString, z.object({ context: nonEmptyString, selector: nonEmptyString }).strict()]).optional(),
       kind: nonEmptyString.optional(),
       regex: nonEmptyString.optional(),
+      stored: nonEmptyString.optional(),
       nthChild: codeRuleNthChildSchema.optional(),
       all: z.array(codeRuleAstRuleSchema).min(1).optional(),
       any: z.array(codeRuleAstRuleSchema).min(1).optional(),
@@ -897,6 +903,7 @@ export const codeRuleAstRelationSchema: z.ZodType<CodeRuleDslAstRelation> = z.la
       }),
     })
     .strict()
+    .refine(storedHasRegex, STORED_NEEDS_REGEX)
     .refine(rule => AST_RULE_KEYS.some(key => rule[key] !== undefined), "An ast relation must contain at least one matcher.") as unknown as z.ZodType<CodeRuleDslAstRelation>,
 );
 /** `calls`: its inner rule's keys, and how chains pass and what they bind. */
@@ -944,6 +951,7 @@ export const codeRuleParseSchema: z.ZodType<CodeRuleDslParse> = z.lazy(() =>
       pattern: z.union([nonEmptyString, z.object({ context: nonEmptyString, selector: nonEmptyString }).strict()]).optional(),
       kind: nonEmptyString.optional(),
       regex: nonEmptyString.optional(),
+      stored: nonEmptyString.optional(),
       nthChild: codeRuleNthChildSchema.optional(),
       all: z.array(codeRuleAstRuleSchema).min(1).optional(),
       any: z.array(codeRuleAstRuleSchema).min(1).optional(),
@@ -955,6 +963,7 @@ export const codeRuleParseSchema: z.ZodType<CodeRuleDslParse> = z.lazy(() =>
       follows: codeRuleAstRelationSchema.optional(),
       compare: codeRuleCompareSchema.optional(),
       count: codeRuleAstCountSchema.optional(),
+      filePath: z.object({ regex: nonEmptyString.optional(), notRegex: nonEmptyString.optional() }).strict().refine(value => value.regex !== undefined || value.notRegex !== undefined).optional(),
       ...semanticRuleShape({
         resolves: codeRuleResolvesSchema,
         value: codeRuleValueTestSchema,
@@ -976,6 +985,7 @@ export const codeRuleParseSchema: z.ZodType<CodeRuleDslParse> = z.lazy(() =>
       path: ["grammar"],
     })
     .refine(rule => rule.interpolation === undefined || rule.grammar === "pythonFString", "interpolation requires pythonFString.")
+    .refine(storedHasRegex, STORED_NEEDS_REGEX)
     .refine(rule => AST_RULE_KEYS.some(key => key !== "filePath" && rule[key] !== undefined), "parse must hold a rule over the parsed tree.") as unknown as z.ZodType<CodeRuleDslParse>,
 );
 export const codeRuleAstCountSchema: z.ZodType<CodeRuleDslAstCount> = z.lazy(() =>
@@ -1009,6 +1019,7 @@ export const codeRulePredicateSchema: z.ZodType<CodeRuleDslPredicate> = z.lazy((
     z.object({ le: codeRuleValuePair }).strict(),
     z.object({ gt: codeRuleValuePair }).strict(),
     z.object({ ge: codeRuleValuePair }).strict(),
+
   ]),
 );
 
@@ -1526,7 +1537,6 @@ function checkViolationAgainstQuery(clause: CodeRuleDslReportingClause, context:
 export const codeRuleDefineSchema = z
   .object({
     report_when: z.object({ count: z.object({ gt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) }).strict() }).strict().optional(),
-
     language: z.enum(CODE_RULE_LANGUAGE_IDS).optional(),
     utils: z.record(utilityId, codeRuleUtilitySchema).optional(),
     options: z.record(optionName, codeRuleOptionDeclarationSchema).optional(),
@@ -1569,16 +1579,20 @@ export const codeRuleClauseSchema = z
         z.object({ name: nonEmptyString, query: nonEmptyString, indexes: z.array(z.array(nonEmptyString).min(1).max(16)).max(8).optional(),
           deferred: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), nonEmptyString).refine(fields => Object.keys(fields).length >= 1 && Object.keys(fields).length <= 32 && new Set(Object.keys(fields).map(s => s.toLowerCase())).size === Object.keys(fields).length, "Deferred columns must contain 1 to 32 distinct fields.").optional(),
         }).strict(),
+        z.object({ name: nonEmptyString, pythonAst: z.object({ roots: nonEmptyString, syntax: nonEmptyString,
+          fields: z.array(z.enum(["dump", "body_sha256", "signature_sha256", "identifier", "unparse", "literal_json", "dump_sha256", "column", "repr_unparse"])).min(1).max(9).refine(fields => new Set(fields).size === fields.length, "Python AST fields must be distinct."),
+        }).strict() }).strict(),
         z.object({ name: nonEmptyString, reachability: z.object({ roots: nonEmptyString, edges: nonEmptyString.optional(), syntax: nonEmptyString.optional(),
           batchSize: z.number().int().min(1).max(4096).optional(),
           graph: z.enum(["directed", "forest"]).optional(),
-        }).strict().refine(s => s.syntax === undefined ? s.edges !== undefined : s.edges === undefined && s.graph === undefined, "Reachability requires either edges or syntax.") }).strict(),
+          selection: z.literal("memoized-first").optional(), sinks: nonEmptyString.optional(), match: z.enum(["node", "edge"]).optional(),
+        }).strict().refine(s => s.syntax === undefined ? s.edges !== undefined : s.edges === undefined && s.graph === undefined, "Reachability requires either edges or syntax.").refine(s => s.selection === undefined ? s.sinks === undefined && s.match === undefined : s.sinks !== undefined && s.edges !== undefined && s.syntax === undefined && s.graph === undefined && s.batchSize === undefined, "Memoized first-match requires roots, edges, sinks and one complete batch.") }).strict(),
       ])).max(64).optional(),
       references: z.object({ language: z.literal("python"),
         siblingLinks: z.array(z.object({ decorator: nonEmptyString, name: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict()).min(1).max(32).optional(),
         constructorFields: z.object({ fieldToParameter: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict().optional(),
       }).strict().optional(),
-      query: nonEmptyString, key: z.array(nonEmptyString).min(1).max(16).optional(), code: nonEmptyString.optional(),
+      query: nonEmptyString, key: z.array(nonEmptyString).min(1).max(16).optional(), code: nonEmptyString.optional(), message: nonEmptyString.optional(),
     }).strict().refine(plan => plan.requireNonemptyInput === undefined || Object.hasOwn(plan.inputs, plan.requireNonemptyInput),
       "requireNonemptyInput must name a declared input.").refine(plan => plan.partitionBy !== "file" || (plan.references === undefined && plan.locations === undefined),
       "File partitions cannot declare references or diagnostic locations.").optional(),

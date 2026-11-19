@@ -1,7 +1,7 @@
 //! Stored per-file results: engine and grammar identities, the local-result encoding, restoring a
 //! file from the store, and publishing evaluated files.
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::TEST_ENGINE_BUILD_ID;
 use super::calls_state::Consumers;
 use super::crossfile::CrossFileScheduler;
@@ -34,21 +34,21 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Weak};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Runs on the apply's thread once `persist_files` has published its files, before it
     /// promotes them and renews the lease: a test takes the store there.
-    pub(super) static AFTER_FILES_PUBLISHED: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+    pub static AFTER_FILES_PUBLISHED: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
     /// Lease renewals `persist_files` attempted on this thread: a test shows a busy promotion
     /// leaves the renewal unattempted.
-    pub(super) static LEASE_RENEWAL_ATTEMPTS: std::cell::Cell<usize> =
+    pub static LEASE_RENEWAL_ATTEMPTS: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
 
 /// Fill `file` with its stored results. `None` unless every eligible clause has a decodable one:
 /// a partial result set is never presented as the file's result.
-pub(super) fn restore_complete_results(
+pub fn restore_complete_results(
     file: &mut FileState,
     code_rules: &[Arc<CompiledCodeRule>],
     persisted: &[crate::content_store::StoredLocalResult],
@@ -122,7 +122,7 @@ fn serialize_witnesses<S: serde::Serializer>(
     }))
 }
 
-pub(super) fn encode_local_result(
+pub fn encode_local_result(
     witnesses: &[Witness],
     failure: Option<LocalFailure>,
     syntax: Option<&str>,
@@ -179,7 +179,7 @@ fn persisted_failure(code: &str, message: &str) -> Option<LocalFailure> {
 
 /// A stored result, or `None` when it is from another encoding or cannot be read: a cache miss
 /// the caller answers by evaluating.
-pub(super) fn decode_local_result(
+pub fn decode_local_result(
     bytes: &[u8],
     path: &str,
 ) -> Option<(Vec<Witness>, Option<LocalFailure>, Option<String>)> {
@@ -362,10 +362,12 @@ pub(super) fn restore_persisted_file(
             let kinds = matcher.anchors.root_kinds()?;
             Some(crate::content_store::SearchKindLookup {
                 tape_id,
-                index_version: crate::code_rule_dsl::transducer::POSITIONAL_INDEX_VERSION,
+                index_version: crate::code_rule_dsl::search_index::POSITIONAL_INDEX_VERSION,
                 kind_tokens: kinds
                     .iter()
-                    .map(|&kind| crate::code_rule_dsl::transducer::kind_index_token(matcher.language, kind))
+                    .map(|&kind| {
+                        crate::code_rule_dsl::search_index::kind_index_token(matcher.language, kind)
+                    })
                     .collect::<Option<_>>()?,
             })
         })
@@ -507,23 +509,18 @@ fn candidate_identities(
 /// The engine build a stored clause result was computed by (see `build.rs`): any engine source or
 /// dependency change can change a clause's violations, so it changes the result catalog.
 fn engine_build_id() -> &'static str {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(engine) = TEST_ENGINE_BUILD_ID.get() {
         return engine;
     }
-    env!("RERAIL_ENGINE_BUILD_ID")
+    crate::code_rule_dsl::build_ids::engine()
 }
-
-/// The parser and grammar versions a stored tape was parsed with (see `build.rs`).
-const GRAMMAR_BUILD_ID: &str = env!("RERAIL_GRAMMAR_BUILD_ID");
 
 /// The stored tapes' grammar version column: the grammar build identity as a positive integer.
-pub(in crate::code_rule_dsl) fn grammar_version() -> i64 {
-    i64::from_str_radix(&GRAMMAR_BUILD_ID[..15], 16).expect("grammar build identity is hex")
-}
+pub use crate::code_rule_dsl::build_ids::grammar_version;
 
 pub(super) fn grammar_set() -> HashKey {
-    HashKey::sha256(GRAMMAR_BUILD_ID.as_bytes())
+    HashKey::sha256(crate::code_rule_dsl::build_ids::grammar().as_bytes())
 }
 
 /// The inputs besides source content that one file's clause results depend on: its path (and so
@@ -560,9 +557,7 @@ type CatalogMemo = (
 static CATALOGS: LazyLock<parking_lot::Mutex<Vec<CatalogMemo>>> = LazyLock::new(Default::default);
 
 /// The result catalog of `code_rules`: every apply reads it, so it is hashed once per code-rule set.
-pub(super) fn candidate_catalog(
-    code_rules: &[Arc<CompiledCodeRule>],
-) -> Result<CandidateCatalogIdentity> {
+pub fn candidate_catalog(code_rules: &[Arc<CompiledCodeRule>]) -> Result<CandidateCatalogIdentity> {
     let engine = engine_build_id();
     let same = |(known_engine, known, _): &CatalogMemo| {
         *known_engine == engine
@@ -617,7 +612,7 @@ fn hash_candidate_catalog(
         HashKey::sha256(&bytes),
         grammar_set(),
         3,
-        i64::from(tape::TAPE_FORMAT_VERSION),
+        i64::from(tape::formats::stored_version()),
     )
     .map_err(|error| invalid(error.to_string()))
 }
@@ -659,98 +654,95 @@ pub(super) fn persist_files(
     };
     // Each file's payloads (tape bytes, encoded and compressed local results, blob alias) are
     // independent of every other file's, so they are built on the worker pool.
-    let prepared = (|| {
-        paths
-            .par_iter()
-            .map(|path| {
-                let file = files
-                    .get(path)
-                    .ok_or_else(|| invalid(format!("missing file for persistence: {path}")))?;
-                let candidates = file
-                    .candidates
-                    .regex
-                    .iter()
-                    .chain(&file.candidates.ast)
-                    .map(candidate)
-                    .collect::<Vec<_>>();
-                let tape_bytes = {
-                    #[cfg(feature = "code-rule-profile")]
-                    let _timer = profile::PhaseTimer::start(profile::Phase::TapeSerialize);
-                    file.tape
-                        .as_ref()
-                        .map(|(_, image)| {
-                            Ok::<_, String>((
-                                image.primary.to_bytes()?,
-                                image
-                                    .derived
-                                    .iter()
-                                    .map(DerivedBytes::of)
-                                    .collect::<std::result::Result<Vec<_>, String>>()?,
-                            ))
-                        })
-                        .transpose()
-                        .map_err(invalid)?
-                };
-                let local_result_ids = file
-                    .witnesses
-                    .keys()
-                    .chain(file.failures.keys())
-                    .chain(&file.candidates.regex)
-                    .chain(&file.candidates.ast)
-                    .copied()
-                    .collect::<BTreeSet<_>>();
-                let context = file_context(&file.input);
-                let stamped = CrossFileScheduler::stamped_context(file, context);
-                let mut local_results = local_result_ids
-                    .iter()
-                    .filter(|id| {
-                        !file.transient_failure
-                            && !file.restored_result_ids.contains(id)
-                            && !file.unstored.contains(id)
+    let prepared = paths
+        .par_iter()
+        .map(|path| {
+            let file = files
+                .get(path)
+                .ok_or_else(|| invalid(format!("missing file for persistence: {path}")))?;
+            let candidates = file
+                .candidates
+                .regex
+                .iter()
+                .chain(&file.candidates.ast)
+                .map(candidate)
+                .collect::<Vec<_>>();
+            let tape_bytes = {
+                #[cfg(feature = "code-rule-profile")]
+                let _timer = profile::PhaseTimer::start(profile::Phase::TapeSerialize);
+                file.tape
+                    .as_ref()
+                    .map(|(_, image)| {
+                        Ok::<_, String>((
+                            image.primary.to_bytes()?,
+                            image
+                                .derived
+                                .iter()
+                                .map(DerivedBytes::of)
+                                .collect::<std::result::Result<Vec<_>, String>>()?,
+                        ))
                     })
-                    .filter_map(|id| {
-                        let context = if consumers.contains_key(id) {
-                            stamped?
-                        } else {
-                            context
-                        };
-                        Some((id, context))
+                    .transpose()
+                    .map_err(invalid)?
+            };
+            let local_result_ids = file
+                .witnesses
+                .keys()
+                .chain(file.failures.keys())
+                .chain(&file.candidates.regex)
+                .chain(&file.candidates.ast)
+                .copied()
+                .collect::<BTreeSet<_>>();
+            let context = file_context(&file.input);
+            let stamped = CrossFileScheduler::stamped_context(file, context);
+            let mut local_results = local_result_ids
+                .iter()
+                .filter(|id| {
+                    !file.transient_failure
+                        && !file.restored_result_ids.contains(id)
+                        && !file.unstored.contains(id)
+                })
+                .filter_map(|id| {
+                    let context = if consumers.contains_key(id) {
+                        stamped?
+                    } else {
+                        context
+                    };
+                    Some((id, context))
+                })
+                .map(|(id, context)| {
+                    let witnesses = file.witnesses.get(id).map(Vec::as_slice).unwrap_or(&[]);
+                    let bytes = encode_local_result(
+                        witnesses,
+                        file.failures.get(id).copied(),
+                        file.syntax.as_deref(),
+                    )?;
+                    let frame = compress(&bytes, 3).map_err(|error| invalid(error.to_string()))?;
+                    Ok(LocalResultPublication {
+                        candidate: candidate(id),
+                        context,
+                        raw_length: bytes.len(),
+                        frame,
                     })
-                    .map(|(id, context)| {
-                        let witnesses = file.witnesses.get(id).map(Vec::as_slice).unwrap_or(&[]);
-                        let bytes = encode_local_result(
-                            witnesses,
-                            file.failures.get(id).copied(),
-                            file.syntax.as_deref(),
-                        )?;
-                        let frame =
-                            compress(&bytes, 3).map_err(|error| invalid(error.to_string()))?;
-                        Ok(LocalResultPublication {
-                            candidate: candidate(id),
-                            context,
-                            raw_length: bytes.len(),
-                            frame,
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                if !file.transient_failure {
-                    local_results.extend(CrossFileScheduler::summary_publication(file)?);
-                }
-                let grammar_id = file_language(&file.input).map_or(0, grammar_id);
-                let aliases = clean_blob_alias(storage, file)
-                    .into_iter()
-                    .collect::<Vec<_>>();
-                Ok((
-                    file,
-                    candidates,
-                    tape_bytes,
-                    grammar_id,
-                    aliases,
-                    local_results,
-                ))
-            })
-            .collect::<Result<Vec<_>>>()
-    })()?;
+                })
+                .collect::<Result<Vec<_>>>()?;
+            if !file.transient_failure {
+                local_results.extend(CrossFileScheduler::summary_publication(file)?);
+            }
+            let grammar_id = file_language(&file.input).map_or(0, grammar_id);
+            let aliases = clean_blob_alias(storage, file)
+                .into_iter()
+                .collect::<Vec<_>>();
+            Ok((
+                file,
+                candidates,
+                tape_bytes,
+                grammar_id,
+                aliases,
+                local_results,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
     // Each file's derived documents, borrowing the bytes built above and the texts its image holds.
     let documents = prepared
         .iter()
@@ -788,7 +780,7 @@ pub(super) fn persist_files(
                     tape: tape_bytes.as_ref().map(|(bytes, _)| TapePayload {
                         grammar_id: *grammar_id,
                         grammar_version: grammar_version(),
-                        tape_format_version: i64::from(tape::TAPE_FORMAT_VERSION),
+                        tape_format_version: i64::from(tape::formats::stored_version()),
                         bytes,
                         documents,
                     }),
@@ -816,7 +808,7 @@ pub(super) fn persist_files(
     if closed.load(Ordering::Acquire) {
         return Err(invalid("policy workspace is closed"));
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(published) = AFTER_FILES_PUBLISHED.take() {
         published();
     }
@@ -845,7 +837,7 @@ pub(super) fn persist_files(
     )?;
     if busy_during.is_none() {
         let now = unix_seconds()?;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         LEASE_RENEWAL_ATTEMPTS.set(LEASE_RENEWAL_ATTEMPTS.get() + 1);
         busy_during = busy_store(
             storage

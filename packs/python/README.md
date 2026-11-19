@@ -1,13 +1,17 @@
 # Rerail rule pack: Python
 
-537 code rules for Python, ported from Ruff 0.16.9 (488 rules) and Bandit 1.9.4 (49 tests). Each is scored against the
+**Linter-equivalent to Ruff 0.16.9 and Bandit 1.9.4.** Each rule flags what the original flags, bar declared differences. [What this means](../../docs/rule-packs.md#linter-equivalent).
+
+538 code rules for Python, ported from Ruff 0.16.9 (488 rules) and Bandit 1.9.4 (50 tests). Each is scored against the
 tool's own findings on the tool's test fixtures, and against the labelled lines of the tool's real-code samples
 ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path, with
 every disagreement declared in `divergences.json` (55 today, across 15 shipped rules: all but one on Ruff's
 fixtures and Rerail's probes, and B406 on a Django sample, where Bandit is wrong). Every port honours its tool's
 suppression comment, as the tool does: Ruff's `# noqa` (`suppress.noqa`) and Bandit's `# nosec` (`suppress.nosec`);
 PGH004, which reports `noqa` comments, is the one exception, as in Ruff (`suppressionExemptions` in
-`conformance.json`). 219 Ruff rules that Ruff's default selection leaves off ship off (`"on": false` in `pack.json`).
+`conformance.json`). 219 Ruff rules that Ruff's default selection leaves off ship off (`"on": false` in `pack.json`),
+and so do B009 and B010, which that selection keeps on: a reviewer holds them off (`heldOff`; their sections say why),
+so set-up never turns them on from a repository's Ruff config.
 The conformance check ([conformance/README.md](../../conformance/README.md#the-gate)) gates the shipped rules. The
 rename variants that test the ECMAScript packs against fitting to their tests (`holds-under-rename`) do not exist for
 Python yet, so the real-code samples are the pack's only such evidence.
@@ -23,7 +27,7 @@ checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 | `divergences.json` | Declared disagreements with the tools |
 | `upstream/<tool>/` | The tool's copied tests (`fixtures/`), the cases Rerail wrote for it (`fixtures/rerail/`, listed in `UPSTREAM.md`: every shipped rule on lines carrying `# noqa` or `# nosec`, as a stub for rules Ruff reports only in stubs, and D104 exempt, since it reports once per package; and probes of inputs the ports once misread or their reviews pinned), its expected findings (`fixtures.expected.json`), the generator (`generate.py`, sharing `upstream/common.py`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
-| `candidates/rules/` | Ports still being evaluated (104 Ruff and Bandit ports): never shipped or listed in `pack.json`. 103 have a `conformance.json` port and are scored against the expected findings without gating; A005 (GPL-derived fixtures only) has none, and INP001 (tested only with a `namespace-packages` option) has no expected findings. The Conformance comment on a pull request says where each candidate stops |
+| `candidates/rules/` | Ports still being evaluated (103 Ruff and Bandit ports): never shipped or listed in `pack.json`. 102 have a `conformance.json` port and are scored against the expected findings without gating; A005 (GPL-derived fixtures only) has none, and INP001 (tested only with a `namespace-packages` option) has no expected findings. The Conformance comment on a pull request says where each candidate stops |
 | `candidates/README.md` | What each candidate is waiting on and its rule details; not published |
 
 Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it
@@ -141,9 +145,13 @@ Port of Ruff's B007 (unused-loop-control-variable) with the default `dummy-varia
 
 Port of Ruff's B009 (getattr-with-constant): `getattr(obj, "name")` with exactly two positional arguments and no keyword arguments, `obj` not starred, the second a str literal (not bytes, an f- or t-string; escapes decoded, implicit concatenations joined) whose value is a Python identifier (Unicode XID, not a keyword) and not a mangled private name (`__x` without a trailing `__`). The callee (parentheses transparent) resolves to the builtin `getattr` (Ruff's `match_builtin_expr`): the unshadowed name, or `getattr` of the `builtins` module through the file's imports. Reported on the call.
 
+It ships off, though Ruff's default selection turns B009 on, for the reason B010 does. The rule cannot see types, and under mypy or pyright the two forms differ: `obj.name` is checked and fails where `obj`'s type does not declare `name` (a marker on a function, a method patched onto a class, an attribute a mixin's host class defines), while `getattr()` is the usual way to read such an attribute. The steer asks for the plain read only where the type declares the attribute, and to keep `getattr` otherwise rather than add a `# type: ignore`.
+
 ### `ruff-b010-set-attr-with-constant`
 
 Port of Ruff's B010 (set-attr-with-constant): `setattr(obj, "name", value)` used as an expression statement, with exactly three positional arguments and no keyword arguments, `obj` not starred, the name a str literal (not bytes, an f- or t-string; escapes decoded, implicit concatenations joined) whose value is a Python identifier (Unicode XID, not a keyword), not `__debug__` and not a mangled private name. The callee (parentheses transparent) resolves to the builtin `setattr` (Ruff's `match_builtin_expr`): the unshadowed name, or `setattr` of the `builtins` module through the file's imports. Reported on the call.
+
+It ships off, though Ruff's default selection turns B010 on. The rule cannot see types, and under mypy or pyright the two forms differ: `obj.name = value` is checked and fails where `obj`'s type does not declare `name` (a marker on a function, a method patched onto a class), while `setattr()` is the usual way to set such an attribute. Agents told to swap every such call for an assignment added `# type: ignore[attr-defined]` instead. The steer now asks for the assignment only where the type declares the attribute, and to keep `setattr` otherwise.
 
 ### `ruff-b011-assert-false`
 
@@ -500,6 +508,10 @@ Port of Bandit 1.9.4's B406 import_xml_sax. Divergence: an import of only xml.sa
 ### `bandit-b610-django-extra-used`
 
 Port of Bandit 1.9.4's B610 django_extra_used: a call of `extra` whose `where` or `tables` is not a list of plain strings, or whose `select` is not a dict of plain strings, bound to QuerySet.extra's six positional slots. Port of the kernel test b610_extra_with_a_non_literal_where_tables_or_select. `# nosec` honoured. Divergence: Bandit reports a call of any function or method named `extra`; the port reports only a method call whose receiver looks like a Django QuerySet or Manager: a name or attribute named `objects`, `qs`, `QS`, `queryset`, `querysets`, `manager` or `managers`, alone or after an underscore-joined prefix (`User.objects`, `self.queryset`, `base_qs`, `_default_manager`); a call of `get_queryset`; a method call on such a receiver (`User.objects.filter(...)`); or `self` or `super()` inside a class with a base whose name ends in `QuerySet` or is `Manager`, `BaseManager` or `BaseUserManager`, optionally dotted (`models.QuerySet`); a base that only ends in `Manager` (`AbstractContextManager`, `PluginManager`, `TreeManager`) does not count. A bare `extra(...)` call and `extra` on any other receiver are not reported.
+
+### `bandit-b105-hardcoded-password-string`
+
+Port of Bandit 1.9.4's B105 hardcoded_password_string. A candidate name is a name, attribute or string key containing `password`, `passwd`, `pwd`, `pass`, `passphrase`, `token` or `secret` as a whole underscore-separated word (`db_password`, `API_TOKEN`; not `passport` or `tokenizer`). Reported: a plain string assigned to a candidate name or attribute (an annotated assignment is not, as in Bandit); every string compared with a candidate name or attribute when the first comparator is a string, each at its own position; a candidate dict key whose value is any constant; and `d["password"] = "x"`, at the key. Bytes and f-strings are not plain strings, and a string on the left of a comparison is not reported. `# nosec` honoured.
 
 ### `ruff-air001-airflow-variable-name-task-id-mismatch`
 

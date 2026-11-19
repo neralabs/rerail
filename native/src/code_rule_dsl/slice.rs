@@ -13,7 +13,7 @@
 use crate::code_rule_dsl::stats::ingest::{FactTable, merge_facts};
 use crate::code_rule_dsl::stats::plans::write_stat1;
 use crate::code_rule_dsl::prof;
-use crate::code_rule_dsl::CompiledCodeRuleDsl;
+use crate::code_rule_dsl::rule_api::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::facts::families::{Families, Ingested};
 use crate::code_rule_dsl::facts::observe::tree_name;
 use crate::code_rule_dsl::facts::vtab::syntax::Document;
@@ -213,14 +213,14 @@ fn execute(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, 
     let mut inputs: Vec<DerivationInput> = documents.iter().map(|d| DerivationInput { name: Some(d.core.clone()), digest: d.digest }).collect();
     // The demand statement's `py.*` families are facts the wave reads (decision 0029).
     if rules.wave.demand_reads_py() {
-        inputs.extend(crate::code_rule_dsl::facts::families::py_inputs(store, scope, &documents)?);
+        inputs.extend(crate::code_rule_dsl::facts::families::derived_inputs(store, scope, &documents)?);
     }
     // A file-local program without recursion: one wave per stratum and chunk.
     let limits = Limits { max_waves: program.strata(), ..Limits::default() };
     let wave = &mut rules.wave;
     let evaluated = evaluate.iter().map(|d| d.path.clone()).collect();
     let memoised = evaluate.clone();
-    let outcome = prof::time("slice.wave", || schedule::run_over(&lease, store, &program, scope, evaluate, inputs, &limits, &mut |chunk| wave.demand(&lease, store, scope, chunk)))?;
+    let outcome = prof::time("slice.wave", || schedule::batches::run_over(&lease, store, &program, scope, evaluate, inputs, &limits, &mut |chunk| wave.demand(&lease, store, scope, chunk)))?;
     prof::time("slice.remember", || -> StoreResult<()> {
         wave.statistics(&lease, scope)?;
         memo::remember(&lease, store, scope, &rules.digest, &memoised)?;

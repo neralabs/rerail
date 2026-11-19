@@ -8,11 +8,16 @@ mod scaling;
 mod updates;
 mod temporal;
 mod profiling;
+mod planning;
 mod initial;
+mod frontiers;
 mod cte;
 mod analysis;
 mod sharing;
 mod shape;
+mod producers;
+mod component_caches;
+mod workers;
 
 pub(super) fn executor() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     let dir = tempfile::tempdir().unwrap();
@@ -259,7 +264,7 @@ fn sessions_isolate_bindings_and_reject_invalid_relation_shapes() {
 fn rule_files_use_the_core_prelude_and_unused_inputs_need_no_binding() {
     let (dir, mut executor) = executor();
     executor.bind_snapshot(json!({"files":[{"path":"a.py", "language":"python", "source":"def f():\n    pass\n"}]}).to_string()).unwrap();
-    let file = dir.path().join("functions.rr");
+    let file = dir.path().join("functions.rerail");
     std::fs::write(&file, ".decl functions(n: node)\nfunctions(n) :- node(_, n, \"function_definition\", _, _).\n.output functions\n").unwrap();
     executor
         .run_file(file.to_string_lossy().into_owned(), "python".into(), None)
@@ -314,7 +319,7 @@ fn corpus_sql_mode_matches_native_rule_execution() {
     let program = CLOSURE.replace(".input edge", "edge(1, 2). edge(2, 3). edge(3, 4).");
     for (name, modes) in [("sql", ""), ("native", "program")] {
         let report = crate::code_rule_dsl::tools::logic(
-            &[program.clone()],
+            std::slice::from_ref(&program),
             &root,
             None,
             &dir.path().join(name),
@@ -329,9 +334,9 @@ fn corpus_sql_mode_matches_native_rule_execution() {
         }
     }
     let output =
-        |name: &str| std::fs::read_to_string(dir.path().join(name).join("reach.csv")).unwrap();
+        |name: &str| crate::code_rule_dsl::logic::plan::output::shown(&dir.path().join(name), "reach").unwrap();
     assert_eq!(output("sql"), output("native"));
-    assert_eq!(output("sql").lines().count(), 6);
+    assert_eq!(output("sql").len(), 6);
 }
 
 #[test]
@@ -550,11 +555,11 @@ a(x) :- b(x).
 fn a_corpus_runs_memoised_rows_bind_by_name_from_their_frames() {
     // A text no other test parses, so this run writes its own memo entries.
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("sql-corpus");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("sql-corpus");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), format!("{marker}def f():\n    pass\n")).unwrap();
     std::fs::write(dir.join("b.py"), format!("{marker}def f():\n    pass\ndef g():\n    pass\n")).unwrap();
-    let rule = dir.join("dup.rr");
+    let rule = dir.join("dup.rerail");
     std::fs::write(&rule, r#"
 .decl def(n: node, x: symbol)
 def(n, x) :- kind(n, "function_definition"), field(n, "name", c), text(c, x).
@@ -569,7 +574,7 @@ named(n, x) :- def(n, x), x = "g".
     let out = dir.join("out");
     let report = crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     assert_eq!(report.memo, (0, 0), "the run memoises every file");
-    let store = std::env::var("RERAIL_TAPE_CACHE").map_or_else(|_| std::env::temp_dir().join("rerail-tape-cache.sqlite"), std::path::PathBuf::from);
+    let store = crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the tape cache");
     let mut executor = CodeRuleSqlExecutor::new(store.to_string_lossy().into_owned()).unwrap();
     let bound: Value = serde_json::from_str(&executor.bind_corpus(dir.to_string_lossy().into_owned(), None).unwrap()).unwrap();
     // `def` is handed on as rows; `named`, a file-local output, as its rendered lines. `dup` reads
@@ -595,31 +600,25 @@ named(n, x) :- def(n, x), x = "g".
     // A frame that does not decode fails the statement that needs it, naming the file; a lookup
     // into another document does not decode it, so it still answers.
     let a_node = rows(&mut executor, "SELECT min(n) FROM def JOIN corpus_document d ON d.doc = n >> 32 WHERE sym_text(d.path) LIKE '%a.py'")[0][0]["integer"].as_str().unwrap().to_owned();
-    // Only this run's entry: its path, the root's plan, and b.py's content (unique to this run).
-    let b = rows(&mut executor, "SELECT sym_text(path) FROM corpus_document WHERE sym_text(path) LIKE '%b.py'")[0][0].as_str().unwrap().to_owned();
-    let root = std::fs::canonicalize(&dir).unwrap().to_string_lossy().into_owned();
-    let plan = "(SELECT m.plan_digest FROM corpus_manifests m JOIN corpus_roots r USING (root_id) WHERE r.path = ?2 ORDER BY m.last_run DESC LIMIT 1)";
-    // The newest source at that path under the plan: this run's content.
-    let entry = format!("path = ?1 AND plan_digest = {plan} AND source_id = (SELECT max(source_id) FROM facts_results WHERE path = ?1 AND plan_digest = {plan})");
-    let corrupt = |delta: i64| {
-        executor
-            .connection()
-            .execute(&format!("UPDATE facts_results SET raw_length = raw_length + {delta} WHERE {entry}"), rusqlite::params![&b, &root])
-            .unwrap()
+    // Only this run's entries: b.py's in the per-file memo (decision 0240 §4), found by its content's digest (an entry
+    // per program that read it), its bytes in the pack cut one short.
+    let b: [u8; 32] = {
+        use sha2::Digest as _;
+        sha2::Sha256::digest(std::fs::read(dir.join("b.py")).unwrap()).into()
     };
-    let changed = corrupt(1);
-    assert_eq!(changed, 1);
+    // Through a connection of its own: the executor's refuses a commit while atoms it holds are pending (0049).
+    let path = executor.connection().path().expect("a store on disk").to_owned();
+    let changed = rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute("UPDATE memo_entries SET len = len - 1 WHERE digest = ?1", rusqlite::params![&b[..]])
+        .unwrap();
+    assert!(changed >= 1);
+    // This process holds the frames in memory (decision 0104): an edit from outside is the next process's to read.
+    crate::content_store::forget_frames_snapshot(&path);
     executor.bind_corpus(dir.to_string_lossy().into_owned(), Some(vec!["def".into()])).unwrap();
     assert_eq!(rows(&mut executor, &format!("SELECT count(*) FROM def WHERE n = {a_node}")), json!([[1]]));
     let err = executor.query("SELECT count(*) FROM def".into(), None, None).unwrap_err().to_string();
     assert!(err.contains("b.py") && err.contains("does not decode"), "{err}");
-    // The store is shared with other tests: put the entry back.
-    let corrupt = |delta: i64| {
-        executor
-            .connection()
-            .execute(&format!("UPDATE facts_results SET raw_length = raw_length + {delta} WHERE {entry}"), rusqlite::params![&b, &root])
-            .unwrap()
-    };
-    assert_eq!(corrupt(-1), 1);
+    // No other test reads b.py's content, which is this run's own: its frames are left as they are.
     let _ = std::fs::remove_dir_all(&dir);
 }

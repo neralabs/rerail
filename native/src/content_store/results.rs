@@ -5,9 +5,10 @@ use super::{
     CODEC_ZSTD, CandidateCatalogIdentity, CandidateClause, ContentStore, DirectoryReuse, HashKey,
     SourceId, StoreError, StoreResult, StoredLocalResult, WorkspaceCompletion, WorkspaceId,
 };
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use rusqlite::{OptionalExtension, params};
 use std::collections::{HashMap, HashSet};
-use std::io::Cursor;
 use std::sync::Arc;
 
 pub(super) struct LocalResultCache {
@@ -25,7 +26,7 @@ impl LocalResultCache {
         }
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(super) fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -266,7 +267,7 @@ impl ContentStore {
         }
         self.immediate_transaction(|transaction| {
             let catalog_hash_id = intern_hash(transaction, catalog.key())?;
-            transaction.execute(
+            transaction.execute_cached(
                 "INSERT INTO completed_workspace_revisions(workspace_id,revision,catalog_hash_id,completed_at) \
                  VALUES (?1,?2,?3,?4) ON CONFLICT(workspace_id) DO UPDATE SET \
                  revision=excluded.revision,catalog_hash_id=excluded.catalog_hash_id,completed_at=excluded.completed_at",
@@ -287,12 +288,12 @@ impl ContentStore {
             for directory in directories {
                 let tree_hash_id = intern_hash(transaction, directory.tree)?;
                 let package_hash_id = intern_hash(transaction, directory.package_markers)?;
-                transaction.execute(
+                transaction.execute_cached(
                     "INSERT OR IGNORE INTO completed_directory_reuse(tree_hash_id,prefix,package_hash_id,catalog_hash_id) VALUES(?1,?2,?3,?4)",
                     params![tree_hash_id, directory.prefix, package_hash_id, catalog_hash_id],
                 )?;
             }
-            transaction.execute(
+            transaction.execute_cached(
                 "INSERT INTO completed_workspace_revisions(workspace_id,revision,catalog_hash_id,completed_at) \
                  VALUES (?1,?2,?3,?4) ON CONFLICT(workspace_id) DO UPDATE SET \
                  revision=excluded.revision,catalog_hash_id=excluded.catalog_hash_id,completed_at=excluded.completed_at",
@@ -362,7 +363,7 @@ impl ContentStore {
             .lock()
             .expect("content store mutex poisoned");
         connection
-            .query_row(
+            .query_row_cached(
                 "SELECT revision FROM completed_workspace_revisions WHERE workspace_id=?1",
                 [workspace_id.0],
                 |row| row.get(0),
@@ -378,7 +379,7 @@ fn decode_local_result(codec: i64, raw_length: i64, frame: Vec<u8>) -> StoreResu
             "unsupported local result codec {codec}"
         )));
     }
-    let bytes = zstd::stream::decode_all(Cursor::new(frame))?;
+    let bytes = super::decompress(&frame, 0)?;
     if bytes.len() != usize::try_from(raw_length).unwrap_or(usize::MAX) {
         return Err(StoreError::Corrupt(
             "local result length does not match metadata".to_owned(),

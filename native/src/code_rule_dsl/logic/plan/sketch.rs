@@ -23,10 +23,13 @@ pub(in crate::code_rule_dsl) const D: usize = 3;
 /// Counters per level of the distinct-value bitmap.
 pub(in crate::code_rule_dsl) const M: usize = 64;
 const LEVELS: usize = 32;
+/// The stored format (`encode`): 2 places a value by one mix (`add`).
+const FORMAT: u8 = 2;
+const _: () = assert!(W == 64 && M == 64 && D == 3, "`add` takes 6 bits a counter and 7 an AMS row, of three");
 
 /// One column's sketches.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub(in crate::code_rule_dsl) struct Sketch {
+pub struct Sketch {
     ams: [[i64; W]; D],
     /// Per level, M counters; a level is allocated when a value first reaches it (most levels stay empty).
     levels: Vec<Option<Box<[i64; M]>>>,
@@ -48,15 +51,18 @@ fn mix(mut x: u64) -> u64 {
 
 impl Sketch {
     /// `n` rows of value `v` in (`n < 0`: taken out).
-    pub(in crate::code_rule_dsl) fn add(&mut self, v: i64, n: i64) {
-        for (i, row) in self.ams.iter_mut().enumerate() {
-            let h = mix((v as u64) ^ mix(i as u64 + 1));
-            let sign = if h >> 63 == 1 { 1 } else { -1 };
-            row[(h % W as u64) as usize] += sign * n;
-        }
-        let h = mix((v as u64) ^ 0x5bd1_e995);
-        let level = (h.trailing_zeros() as usize).min(LEVELS - 1);
-        let slot = ((h >> 32) % M as u64) as usize;
+    pub fn add(&mut self, v: i64, n: i64) {
+        // One mix a value: each AMS row's sign and counter from 7 bits of it (bits 0–20), the bitmap's slot from 6
+        // more (21–26), and its level from the rest's trailing zeros (format 2; format 1 mixed once a row and once
+        // more for the bitmap, 7 mixes a value).
+        let h = mix(v as u64);
+        let at = |i: usize| (((h >> (i * 7)) >> 1) % W as u64) as usize;
+        let by = |i: usize| if (h >> (i * 7)) & 1 == 1 { n } else { -n };
+        self.ams[0][at(0)] += by(0);
+        self.ams[1][at(1)] += by(1);
+        self.ams[2][at(2)] += by(2);
+        let level = ((h >> 27).trailing_zeros() as usize).min(LEVELS - 1);
+        let slot = ((h >> 21) % M as u64) as usize;
         let counters = self.levels[level].get_or_insert_with(|| Box::new([0; M]));
         counters[slot] += n;
         if n < 0 && counters.iter().all(|&c| c == 0) {
@@ -84,14 +90,14 @@ impl Sketch {
     }
 
     /// The estimated sum of squared postings.
-    pub(in crate::code_rule_dsl) fn sq(&self) -> f64 {
+    pub fn sq(&self) -> f64 {
         let mut rows: Vec<f64> = self.ams.iter().map(|r| r.iter().map(|&c| (c as f64) * (c as f64)).sum()).collect();
         rows.sort_by(f64::total_cmp);
         rows[D / 2]
     }
 
     /// The estimated distinct values.
-    pub(in crate::code_rule_dsl) fn ndv(&self) -> f64 {
+    pub fn ndv(&self) -> f64 {
         let mut occupied = [false; M];
         // From the top level down: the union of levels ≥ L, and the lowest L where linear counting still holds.
         let mut best = None;
@@ -114,15 +120,15 @@ impl Sketch {
     }
 
     /// Bytes this sketch takes stored (`encode`).
-    pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
+    pub fn bytes(&self) -> usize {
         5 + D * W * 4 + self.levels.iter().flatten().count() * M * 4
     }
 
     /// The sketch as stored (`stat_total.sketch`): a format byte, the AMS counters, a mask of the occupied levels,
     /// and each occupied level's counters; counters as little-endian i32 (a column's rows stay under 2^31).
-    pub(in crate::code_rule_dsl) fn encode(&self) -> Vec<u8> {
+    pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.bytes());
-        out.push(1);
+        out.push(FORMAT);
         for &c in self.ams.iter().flatten() {
             out.extend_from_slice(&(c as i32).to_le_bytes());
         }
@@ -135,14 +141,15 @@ impl Sketch {
     }
 
     /// `encode`'s sketch back; `None` if the bytes are not one.
-    pub(in crate::code_rule_dsl) fn decode(bytes: &[u8]) -> Option<Sketch> {
+    pub fn decode(bytes: &[u8]) -> Option<Sketch> {
         let mut at = 1;
         let mut int = || {
             let b = bytes.get(at..at + 4)?;
             at += 4;
             Some(i32::from_le_bytes(b.try_into().ok()?))
         };
-        if bytes.first() != Some(&1) {
+        // A sketch of another format placed its values elsewhere: not one to add rows to.
+        if bytes.first() != Some(&FORMAT) {
             return None;
         }
         let mut s = Sketch::default();
@@ -165,7 +172,7 @@ impl Sketch {
 
 /// `RERAIL_STATS_SHADOW=<file>` (a measurement aid, decision 0096): every column measured exactly is also sketched,
 /// and one line per column is appended: where, the column, its rows, exact and estimated ndv and sq, and the bytes.
-pub(in crate::code_rule_dsl) fn shadowing() -> bool {
+pub fn shadowing() -> bool {
     shadow_file().is_some()
 }
 
@@ -179,7 +186,7 @@ fn shadow_file() -> Option<&'static std::sync::Mutex<std::fs::File>> {
 }
 
 /// One shadowed column's line (`shadowing`).
-pub(in crate::code_rule_dsl) fn shadow(at: &str, col: &str, rows: i64, ndv: i64, sq: i64, sketch: &Sketch) {
+pub fn shadow(at: &str, col: &str, rows: i64, ndv: i64, sq: i64, sketch: &Sketch) {
     use std::io::Write as _;
     if let Some(f) = shadow_file() {
         let _ = writeln!(f.lock().unwrap(), "{at}\t{col}\t{rows}\t{ndv}\t{:.0}\t{sq}\t{:.0}\t{}", sketch.ndv(), sketch.sq(), sketch.bytes());
@@ -187,7 +194,7 @@ pub(in crate::code_rule_dsl) fn shadow(at: &str, col: &str, rows: i64, ndv: i64,
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::Sketch;
 
     /// A skewed column: value v holds about 10000 / (v + 1) rows (Zipf), over `n` distinct values.

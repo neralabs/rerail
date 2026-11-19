@@ -4,10 +4,10 @@ use rusqlite::types::Value;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 #[path = "graph/program.rs"]
-pub(super) mod program;
+pub mod program;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Class {
+pub(crate) enum Class {
     File,
     Vocabulary,
     Request,
@@ -31,7 +31,7 @@ struct Definition {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Node {
+pub(crate) struct Node {
     pub id: usize,
     pub class: Class,
 }
@@ -144,7 +144,7 @@ impl Graph {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

@@ -2,7 +2,7 @@
 use super::*;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(in crate::code_rule_dsl) struct Operations {
+pub struct Operations {
     /// Planner-owned proof. External SQL callbacks cannot claim builtin laws.
     #[serde(skip)]
     pub reduction: crate::code_rule_dsl::logic::native::aggregation::Reduction,

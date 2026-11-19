@@ -115,6 +115,7 @@ fn the_vocabulary_engine_agrees_with_each_regex() {
 }
 
 /// A random tree of spans over `len` bytes: each node's children split part of its span.
+#[allow(clippy::single_range_in_vec_init)]
 fn spans(rng: &mut Lcg, len: usize) -> Vec<Range<usize>> {
     let mut out = vec![0..len];
     let mut at = 0;
@@ -213,7 +214,13 @@ fn backreferences_run_once_per_string() {
 /// census by form): `--ignored --nocapture` prints the distribution.
 #[test]
 fn serverplan_quality_s_regexes_lower() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/final-shape/data-layer-serverplan-quality.json");
+    let relative = "packs/data-layer/upstream/lint/authored/final-shape/data-layer-serverplan-quality.json";
+    let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("..").join(relative);
+    assert!(
+        path.exists(),
+        "{relative} is missing: pack test data is not in git: run `npm run fixtures:pull` (each tool-pack's archive, \
+         which its test-data.lock pins, from S3) (CONTRIBUTING.md, \"Pack test data\")"
+    );
     let document: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let mut patterns = std::collections::BTreeSet::new();
     fn walk(value: &serde_json::Value, out: &mut std::collections::BTreeSet<String>) {
@@ -271,9 +278,9 @@ fn searchers_read_from_the_cache_match_as_when_built() {
     let plans = lowered.iter().map(|l| &l.plan).collect::<Vec<_>>();
     let refs = terms.iter().map(Vec::as_slice).collect::<Vec<_>>();
     let cache = Memory::default();
-    let built = vocabulary::Searchers::new(&plans, Some(&cache));
+    let built = vocabulary::Searchers::new(&plans, Some(&cache), true);
     assert_eq!(built.compiling.read, 0);
-    let read = vocabulary::Searchers::new(&plans, Some(&cache));
+    let read = vocabulary::Searchers::new(&plans, Some(&cache), true);
     assert_eq!(read.compiling.built, 0, "{:?}", read.compiling);
     assert_eq!(read.compiling.read + read.compiling.lazy, built.compiling.built + built.compiling.lazy);
     let (from_built, _) = built.evaluate(&refs);
@@ -301,7 +308,7 @@ fn determinizing_a_group_costs_more_than_reading_it() {
         }
     }
     let cpu = || {
-        let (u, s) = crate::code_rule_dsl::logic::plan::corpus::thread_usage();
+        let (u, s) = crate::code_rule_dsl::prof::thread_usage();
         u + s
     };
     let patterns = [
@@ -316,11 +323,23 @@ fn determinizing_a_group_costs_more_than_reading_it() {
     let plans = lowered.iter().map(|l| &l.plan).collect::<Vec<_>>();
     let cache = Memory::default();
     let at = cpu();
-    let built = vocabulary::Searchers::new(&plans, Some(&cache));
+    let built = vocabulary::Searchers::new(&plans, Some(&cache), true);
     let build = cpu() - at;
     let at = cpu();
-    let read = vocabulary::Searchers::new(&plans, Some(&cache));
+    let read = vocabulary::Searchers::new(&plans, Some(&cache), true);
     let reading = cpu() - at;
     let bytes: usize = cache.0.lock().unwrap().values().flatten().map(Vec::len).sum();
     println!("built {:?} in {build:.4} s CPU; read {:?} in {reading:.4} s CPU; {bytes} bytes stored", built.compiling, read.compiling);
+}
+
+/// A glob matches as globset matches it: `**` spans line breaks, so `glob("**", n)` holds for a node of several
+/// lines (no-shadow's `unset` alternatives); a path glob's `*` still stops at `/`.
+#[test]
+fn a_glob_spans_line_breaks() {
+    let path = |g: &str| lower(&Source::of(Spelling::PathGlob(g.into())), Domain::ANY).unwrap();
+    let (found, _) = vocabulary::evaluate(&[&path("**").plan, &path("a*c").plan], &[b"a\nb", b"a\nc", b"a/c", b""]);
+    let gs = |g: &str, s: &[u8]| globset::GlobBuilder::new(g).literal_separator(true).build().unwrap().compile_matcher().is_match(std::path::Path::new(std::str::from_utf8(s).unwrap()));
+    assert_eq!(found[0], vec![0, 1, 2, 3]);
+    assert_eq!(found[1], vec![1]);
+    assert!(gs("**", b"a\nb") && gs("a*c", b"a\nc") && !gs("a*c", b"a/c"));
 }

@@ -161,7 +161,7 @@ pub(in crate::code_rule_dsl) fn materialize(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn containment_retains_linear_sql_storage_for_all_roots() {

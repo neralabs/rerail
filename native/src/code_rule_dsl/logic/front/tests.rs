@@ -1,10 +1,10 @@
-//! The front end's checks (stratification, lattices, value cycles, prune) on programs in `.rr` (`logic::rr`).
+//! The front end's checks (stratification, lattices, value cycles, prune) on programs in `.rerail` (`logic::rr`).
 
 use super::*;
 use crate::code_rule_dsl::logic::rr::parse;
 
 fn program(name: &str) -> Program {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/plan/golden/programs").join(name);
+    let path = rerail_store::source_tree::native().join("src/code_rule_dsl/logic/plan/golden/programs").join(name);
     parse(&std::fs::read_to_string(path).unwrap()).unwrap_or_else(|e| panic!("{name}: {e}"))
 }
 
@@ -15,14 +15,14 @@ fn program(name: &str) -> Program {
 fn t_programs_match_t_front_end() {
     type Expected = (usize, usize, usize, usize, &'static [&'static str], usize, usize, usize, usize, usize, usize, usize);
     let golden: [(&str, Expected); 5] = [
-        ("calls.rr", (98, 221, 160, 0, &[], 3, 7, 7, 76, 7, 221, 76)),
-        ("calls_rust.rr", (61, 148, 9, 0, &[], 5, 6, 4, 45, 8, 147, 44)),
-        ("workload.rr", (42, 63, 35, 1, &[], 1, 7, 3, 29, 2, 63, 29)),
+        ("calls.rerail", (99, 221, 160, 0, &[], 3, 8, 7, 76, 7, 221, 76)),
+        ("calls_rust.rerail", (61, 147, 9, 0, &[], 5, 6, 4, 45, 8, 146, 44)),
+        ("workload.rerail", (42, 63, 35, 1, &[], 1, 7, 3, 29, 2, 63, 29)),
         (
-            "workload_demand.rr",
+            "workload_demand.rerail",
             (43, 63, 35, 1, &["class_ref", "cv", "fn_ref", "has_def", "lookup", "returns", "type_of"], 1, 7, 3, 30, 2, 63, 30),
         ),
-        ("workload_perdoc.rr", (45, 66, 35, 1, &[], 1, 10, 3, 29, 2, 66, 29)),
+        ("workload_perdoc.rerail", (45, 66, 35, 1, &[], 1, 10, 3, 29, 2, 66, 29)),
     ];
     for (name, expected) in golden {
         let p = program(name);
@@ -50,8 +50,8 @@ fn t_programs_match_t_front_end() {
         // O11: the value cycles, each bounded by the tree.
         let treed: Vec<String> = cycles::check(&p).unwrap().iter().map(|c| c.iter().cloned().collect::<Vec<_>>().join(",")).collect();
         let expected: &[&str] = match name {
-            "calls.rr" => &["qn"],
-            "calls_rust.rr" => &["modn"],
+            "calls.rerail" => &["qn"],
+            "calls_rust.rerail" => &["modn"],
             _ => &["resolves"],
         };
         for rel in expected {
@@ -75,7 +75,7 @@ fn literals_parse_to_t_ast() {
     .unwrap();
     assert_eq!(p.facts["e"], [vec![Value::Int(1), Value::Int(-2)]]);
     let body = &p.rules[0].body;
-    assert_eq!(p.rules[0].head.args[1], Term::Call("cat".into(), vec![Term::Var("q".into()), Term::Var("a".into())]));
+    assert_eq!(p.rules[0].head.args[1], Term::Call("cat".into(), [Term::Var("q".into()), Term::Var("a".into())].into()));
     assert!(matches!(&body[1], Literal::Atom(a) if a.neg && a.rel == "g"));
     assert!(matches!(&body[2], Literal::Agg { var, op: AggOp::Count, over: None, atom } if var == "k" && atom.args[1] == Term::Wild));
     assert!(matches!(&body[3], Literal::Cmp { op: ">=", r: Term::Int(2), .. }));
@@ -165,7 +165,7 @@ fn named_errors() {
     assert!(parse(&derived).is_ok());
 
     // Depth bounds what preorder cannot: a parent relation with a decorator's edge (to the definition, a later
-    // node: up two edges, down one) still climbs one level each step (`ast_parent` in `python/ast.rr`).
+    // node: up two edges, down one) still climbs one level each step (`ast_parent` in `python/ast.rerail`).
     let tree = ".decl child(p: node, c: node, i: number)\n.decl kind(n: node, k: symbol)\n.decl nm(n: node, s: symbol)\n.input child, kind, nm\n\
         .decl deco(f: node, e: node)\ndeco(f, e) :- kind(dd, \"decorated_definition\"), child(dd, f, 1), child(dd, dc, 0), child(dc, e, 0).\n\
         .decl up(n: node, p: node)\nup(n, p) :- child(p, n, _), !kind(p, \"block\").\nup(e, f) :- deco(f, e).\nup(n, q) :- child(p, n, _), kind(p, \"block\"), up(p, q).\n";
@@ -175,7 +175,7 @@ fn named_errors() {
     let sideways = format!("{tree}.decl sib(a: node, b: node)\nsib(a, b) :- child(p, a, _), child(p, b, _).\n.decl qn(k: node, s: symbol)\nqn(k, s) :- nm(k, s).\nqn(k, @dot(p, s)) :- sib(k, o), qn(o, p), nm(k, s).\n");
     assert!(matches!(parse(&sideways), Err(Error::UnboundedValueCycle { .. })));
 
-    // The engine joins on variables: a computed atom argument is refused (`.rr` binds it first, `rr::lower`).
+    // The engine joins on variables: a computed atom argument is refused (`.rerail` binds it first, `rr::lower`).
     let computed = super::parse(".decl e(x: sym)\n.decl a(x: sym)\na($x) :- e(@cat($x, $x)).\n");
     assert!(matches!(computed, Err(Error::Syntax(m)) if m.contains("computed term")));
 }
@@ -245,7 +245,7 @@ fn an_undeclared_input_is_named() {
 fn comparisons_bind_like_t() {
     let bound = |vs: &[&str]| vs.iter().map(|v| v.to_string()).collect::<BTreeSet<_>>();
     let x = Term::Var("x".into());
-    let cat = Term::Call("cat".into(), vec![Term::Var("q".into()), Term::Var("a".into())]);
+    let cat = Term::Call("cat".into(), [Term::Var("q".into()), Term::Var("a".into())].into());
     assert_eq!(cmp_binds(&x, "=", &cat, &bound(&["q", "a"])), Some(bound(&["x"])));
     assert_eq!(cmp_binds(&x, "=", &cat, &bound(&["q"])), None);
     // A bound result splits into its unbound parts.
@@ -256,7 +256,7 @@ fn comparisons_bind_like_t() {
 /// The components come in T's order, which the planner and the native strata follow.
 #[test]
 fn components_in_t_order() {
-    let (sccs, _) = strata(&program("calls_rust.rr")).unwrap();
+    let (sccs, _) = strata(&program("calls_rust.rerail")).unwrap();
     let got = sccs.iter().map(|c| c.iter().cloned().collect::<Vec<_>>().join(",")).collect::<Vec<_>>().join(" | ");
     assert_eq!(
         got,
@@ -268,6 +268,31 @@ fn components_in_t_order() {
     );
 }
 
+/// Two components each closed by a negation: `strata` names the first, `unstratified` both (demand's split drops
+/// both in one round).
+#[test]
+fn every_unstratified_component_is_named() {
+    let prog = super::parse(
+        "
+        .decl e(x: node)
+        .decl a(x: node)
+        .decl b(x: node)
+        .decl c(x: node)
+        .decl d(x: node)
+        .input e
+        .output a, c
+        a($x) :- e($x), !b($x).
+        b($x) :- e($x), a($x).
+        c($x) :- e($x), !d($x).
+        d($x) :- e($x), c($x).
+        ",
+    )
+    .unwrap();
+    assert!(strata(&prog).is_err());
+    let all = unstratified(&prog);
+    assert_eq!(all.len(), 2, "{all:?}");
+}
+
 // ---- recursion ----
 
 /// Recursion that makes values, bounded by the data (`cycles`' rules), is accepted; each unbounded form next to
@@ -276,7 +301,10 @@ fn components_in_t_order() {
 fn value_cycles_bounded_by_the_data() {
     let decls = ".decl child(p: node, c: node, i: number)\n.decl field(p: node, f: symbol, c: node)\n.decl next_sibling(a: node, b: node)\n.decl kind(n: node, k: symbol)\n.decl text(n: node, s: symbol)\n.decl e(a: node, b: node)\n.decl lim(k: number)\n.input child, field, next_sibling, kind, text, e, lim\n";
     let ok = |src: &str| parse(&format!("{decls}{src}")).unwrap_or_else(|e| panic!("{src}: {e}"));
-    let refused = |src: &str| assert!(matches!(parse(&format!("{decls}{src}")), Err(Error::UnboundedValueCycle { .. })), "{src}");
+    let refused = |src: &str| {
+        let got = parse(&format!("{decls}{src}"));
+        assert!(matches!(got, Err(Error::UnboundedValueCycle { .. })), "{src}\ngot: {:?}", got.map(|_| "accepted"));
+    };
     // A counter below a constant, or below a value of a lower stratum; not one with no bound, or bounded the
     // wrong way, or below a value the recursion itself makes.
     ok(".decl n(x: number)\nn(1).\nn(x + 1) :- n(x), x < 20.\n");

@@ -1,6 +1,8 @@
 //! cranelift-jit's API on wasm32. A browser gives a module no executable memory, so `JITBuilder::new` fails
 //! with a backend error, the transducer's callers take their interpreter path, and no `JITModule` is ever made
 //! (it is uninhabited: every method is unreachable by construction).
+// `ModuleResult` is cranelift-jit's own API, whose error type is cranelift's.
+#![allow(clippy::result_large_err)]
 use cranelift_codegen::{Context, ir, isa};
 use cranelift_control::ControlPlane;
 use cranelift_module::*;
@@ -22,7 +24,22 @@ impl JITBuilder {
     pub fn symbol<K: Into<String>>(&mut self, _: K, _: *const u8) -> &mut Self {
         self
     }
+    pub fn memory_provider(&mut self, _: Box<dyn JITMemoryProvider>) -> &mut Self {
+        match self.0 {}
+    }
 }
+
+/// Where a JIT module's code goes: on wasm32 nowhere.
+pub trait JITMemoryProvider {}
+
+/// One arena for a module's code: none can be made on wasm32.
+pub struct ArenaMemoryProvider(std::convert::Infallible);
+impl ArenaMemoryProvider {
+    pub fn new_with_size(_: usize) -> std::io::Result<Self> {
+        Err(std::io::Error::other("no JIT on wasm32"))
+    }
+}
+impl JITMemoryProvider for ArenaMemoryProvider {}
 
 pub struct JITModule(std::convert::Infallible);
 impl JITModule {

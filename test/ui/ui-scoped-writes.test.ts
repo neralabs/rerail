@@ -224,7 +224,7 @@ describe("the page's rule pack writes", () => {
     expect(writes()).toEqual([]);
   });
 
-  it("sends Set up with recommended packs before a review switch clicked after it, so the switch is not undone", async () => {
+  it("sends Set up with suggested packs before a review switch clicked after it, so the switch is not undone", async () => {
     data.recommendations = recommended;
     page().setUpRecommended();
     page().keepPack("zod", false, "Zod switched off.");

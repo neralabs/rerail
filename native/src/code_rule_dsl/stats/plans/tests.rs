@@ -1,5 +1,5 @@
 use super::*;
-use crate::code_rule_dsl::prefilter::tests::{open, temp};
+use crate::code_rule_dsl::fixtures::{open, temp};
 
 fn reads(values: &[(&str, u64)]) -> BTreeMap<String, u64> {
     values.iter().map(|(stat, value)| ((*stat).to_owned(), *value)).collect()

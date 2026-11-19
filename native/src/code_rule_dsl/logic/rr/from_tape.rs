@@ -1,4 +1,4 @@
-//! A `.rr` file's statements, read off its tape (decision 0062). The tape is what the parser makes
+//! A `.rerail` file's statements, read off its tape (decision 0062). The tape is what the parser makes
 //! (`syntax::Parser::taped`, decision 0061) and what the content store keeps; lowering reads the statements this module
 //! gives, so a rule file's program is a function of its stored tape.
 //!
@@ -99,11 +99,11 @@ impl<'a> Tree<'a> {
 
     fn ty(&self, n: u32) -> Result<String, Error> {
         let name = self.name(n, Field::Name)?;
-        if !self.has_token(n, "<") {
-            return Ok(name);
+        // `T<a>`: the argument says it (its `<` and `>` are implied); `T<>` stores them.
+        if let Some(a) = self.get(n, Field::Argument) {
+            return Ok(format!("{name}<{}>", self.text(a)));
         }
-        let inner = self.get(n, Field::Argument).map_or("", |a| self.text(a));
-        Ok(format!("{name}<{inner}>"))
+        Ok(if self.has_token(n, "<") { format!("{name}<>") } else { name })
     }
 
     fn statement(&self, s: u32) -> Result<Item, Error> {
@@ -135,12 +135,15 @@ impl<'a> Tree<'a> {
                 let (mut names, mut params) = (Vec::new(), Vec::new());
                 for r in self.all(s, Field::Relation) {
                     let name = self.name(r, Field::Name)?;
-                    let tokens = &self.children[r as usize];
-                    let open = tokens.iter().copied().find(|&c| self.text(c) == "(" && self.kind(c) >= super::tape::FIRST_ANONYMOUS);
-                    let close = tokens.iter().copied().rev().find(|&c| self.text(c) == ")" && self.kind(c) >= super::tape::FIRST_ANONYMOUS);
-                    if let (Some(open), Some(close)) = (open, close) {
-                        let (from, to) = (self.nodes[open as usize].end as usize, self.nodes[close as usize].start as usize);
+                    // `r(…)`: the parameters' text, from the byte after the name's `(` to its `)`. The parentheses
+                    // around parameters are implied; `r()` stores them.
+                    let open = self.nodes[self.one(r, Field::Name)? as usize].end as usize;
+                    if let Some(p) = self.get(r, Field::Parameters) {
+                        let from = self.src[open..].find('(').map_or(open, |k| open + k + 1);
+                        let to = self.src[..self.nodes[r as usize].end as usize].rfind(')').unwrap_or(self.nodes[p as usize].end as usize);
                         params.push((name.clone(), self.src[from..to].to_owned()));
+                    } else if self.has_token(r, "(") {
+                        params.push((name.clone(), String::new()));
                     }
                     names.push(name);
                 }
@@ -210,6 +213,16 @@ impl<'a> Tree<'a> {
                 let text = self.text(self.one(s, Field::Document)?);
                 Item::Policy(serde_json::from_str(text).map_err(|e| Error::Syntax(format!("line {}: bad .policy document: {e}", self.line(s))))?)
             }
+            k if k == Kind::TestBlock as u16 => Item::Test {
+                name: self.name(s, Field::Name)?,
+                exactly: self.get(s, Field::Modifier).is_some(),
+                uses: self.all(s, Field::Argument).map(|c| self.text(c).to_owned()).collect(),
+                items: self.all(s, Field::Body).map(|c| Ok((self.statement(c)?, self.line(c)))).collect::<Result<_, Error>>()?,
+            },
+            k if k == Kind::FixturesBlock as u16 => Item::Fixtures {
+                name: self.name(s, Field::Name)?,
+                items: self.all(s, Field::Body).map(|c| Ok((self.statement(c)?, self.line(c)))).collect::<Result<_, Error>>()?,
+            },
             k if k == Kind::Setting as u16 => {
                 let name = self.one(s, Field::Name)?;
                 let first = self.children[s as usize].iter().copied().skip_while(|&c| c != name).nth(1);
@@ -262,7 +275,7 @@ impl<'a> Tree<'a> {
             k if k == Kind::Atom as u16 => Lit::Atom { rel: self.name(l, Field::Relation)?, args: self.arguments(self.one(l, Field::Arguments)?)?, neg: false },
             k if k == Kind::Negation as u16 => match self.literal(self.one(l, Field::Operand)?)? {
                 Lit::Atom { rel, args, neg } => Lit::Atom { rel, args, neg: !neg },
-                Lit::Pattern { subject, pattern, neg } => Lit::Pattern { subject, pattern, neg: !neg },
+                Lit::Pattern { subject, pattern, selector, neg } => Lit::Pattern { subject, pattern, selector, neg: !neg },
                 Lit::Group { alts, neg } => Lit::Group { alts, neg: !neg },
                 Lit::Cmp { .. } => return bad("a negated comparison"),
             },
@@ -274,6 +287,7 @@ impl<'a> Tree<'a> {
             k if k == Kind::PatternMatch as u16 => Lit::Pattern {
                 subject: self.term(self.one(l, Field::Subject)?)?,
                 pattern: super::code_body(self.text(self.one(l, Field::Pattern)?)).to_owned(),
+                selector: self.get(l, Field::Selector).map(|s| self.string(s)).transpose()?,
                 neg: false,
             },
             k if k == Kind::Group as u16 => Lit::Group { alts: self.alternatives(self.one(l, Field::Body)?)?, neg: false },
@@ -304,7 +318,8 @@ impl<'a> Tree<'a> {
             k if k == Kind::UnaryExpression as u16 => Term::Bin { op: "-", l: Box::new(Term::Num(0)), r: Box::new(self.term(self.one(t, Field::Operand)?)?) },
             k if k == Kind::ParenthesizedExpression as u16 => self.term(self.one(t, Field::Expression)?)?,
             k if k == Kind::Aggregate as u16 => Term::Agg {
-                op: self.text(self.one(t, Field::Operator)?).to_owned(),
+                // `count` is implied: the aggregate with a body alone.
+                op: self.get(t, Field::Operator).map_or("count", |o| self.text(o)).to_owned(),
                 over: self.get(t, Field::Value).map(|v| self.term(v).map(Box::new)).transpose()?,
                 by: self.all(t, Field::Key).map(|k| self.term(k)).collect::<Result<_, _>>()?,
                 sep: self.get(t, Field::Separator).map(|s| self.string(s)).transpose()?,
@@ -318,8 +333,8 @@ impl<'a> Tree<'a> {
 
 /// The statements of `src` from its tape `nodes` (`super::tape`, or a stored tape's facts: `nodes_of_facts`). A tape
 /// with an ERROR gives the error running the file gives (`super::syntax_error`).
-pub(super) fn statements(src: &str, nodes: &[Node]) -> Result<Vec<Statement>, Error> {
-    if nodes.iter().any(Node::is_error) {
+pub fn statements(src: &str, nodes: &[Node]) -> Result<Vec<Statement>, Error> {
+    if nodes.iter().any(|n| n.kind == ERROR) {
         let (_, message) = super::syntax_error(src).unwrap_or((0, "a statement that does not parse".to_owned()));
         return Err(Error::Syntax(message));
     }
@@ -331,15 +346,22 @@ pub(super) fn statements(src: &str, nodes: &[Node]) -> Result<Vec<Statement>, Er
 
 /// A stored tape's nodes, from the facts the store's tape gives (`facts::core::build_cached`).
 pub(super) fn nodes_of_facts(facts: &crate::code_rule_dsl::facts::core::Facts) -> Vec<Node> {
+    // Each node's parent from the subtrees open around it, in one pass (a parent asked per node is a search on
+    // format 15).
+    let mut open: Vec<(u32, u32)> = Vec::new();
     (0..facts.len())
         .map(|i| {
-            let flags = facts.flags[i];
-            let parent = facts.parent[i];
+            let flags = facts.flags(i as u32);
+            while open.last().is_some_and(|&(_, end)| end as usize <= i) {
+                open.pop();
+            }
+            let parent = open.last().map_or(u32::MAX, |&(at, _)| at);
+            open.push((i as u32, facts.subtree_end(i as u32)));
             Node {
-                kind: if flags & 8 != 0 { ERROR } else { crate::code_rule_dsl::facts::core::kind_code(facts.kind[i]) },
-                field: facts.field[i],
-                start: facts.start[i],
-                end: facts.end[i],
+                kind: if flags & 8 != 0 { ERROR } else { crate::code_rule_dsl::facts::core::kind_code(facts.kind(i as u32)) },
+                field: facts.field(i as u32),
+                start: facts.start(i as u32),
+                end: facts.end(i as u32),
                 parent: (i != 0 && parent != u32::MAX).then_some(parent),
                 extra: flags & 2 != 0,
             }

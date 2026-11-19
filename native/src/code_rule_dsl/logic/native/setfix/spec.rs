@@ -96,12 +96,18 @@ pub enum JoinItem {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct JoinSpec {
     pub items: Vec<JoinItem>,
+    /// Per item before the head, the planner's step it was made for (`plan_steps` for the head's computed terms),
+    /// and its steps: a literal can make several items (`$k = @sub(@strlen($d), 1)` makes two), so the engine's
+    /// steps are not the plan's. The engine reports counts, CPU and histograms by plan step through it
+    /// (`JoinRule::from`). Empty (a spec read from text): each item is its own step.
+    pub from: Vec<u32>,
+    pub plan_steps: u32,
 }
 
 /// How a relation starts: its table's rows, none, a query's rows, or a kept native relation less another's
 /// (`base`), plus its table's rows when `seeded`. A `base` with no relation gone (`-`) is a copy of the kept
 /// relation, its levels with it (decision 0090's `h__live`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Start {
     Rows,
     Empty,
@@ -111,7 +117,7 @@ pub enum Start {
 }
 
 /// An edge rule (`rule …`): see the module's spec.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EdgeSpec {
     pub head: usize,
     pub src: usize,
@@ -124,15 +130,33 @@ pub struct EdgeSpec {
 }
 
 /// One spec line, after `name`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Line {
     Rel { name: String, types: String, start: Start },
     NoWrite,
+    /// The placement put the stratum on the device (decision 0095 §7).
+    Device,
+    /// Its recursive relations keep each row's level (decision 0090): a session maintains them by levels. Without it
+    /// no row has one, and a closure may run on the device (bit rows give reach, not distance). The relations listed
+    /// reach themselves through the stratum's rules as written, so they keep levels even where this run's rules over
+    /// empty relations were left out and their cycle is not run (`leveled <rels|->`).
+    Leveled(Vec<usize>),
+    /// Its relations started from kept rows (`Start::Base`) hold them as no wave's delta: its first wave is driven by
+    /// its inputs' changes (seeds that read them, `plan::reads_change`), not by its kept rows (decision 0122 §2).
+    KeptOld,
+    /// Relation `rel` is a lattice's (decision 0124): its last column the value, joined by the lattice `name`'s join,
+    /// the `keys` columns before it the key; after `widen` changes of a key, widened.
+    Lattice { rel: usize, keys: usize, name: String, widen: Option<u32> },
     Request(usize),
     Produced(usize),
+    /// The relation's statistics are kept as its rows come (`Rel::stats`): a session keeps it for its next run.
+    Stats(usize),
     Seed { head: usize, join: Arc<JoinSpec> },
     Join { head: usize, delta: usize, join: Arc<JoinSpec>, whole: Option<Arc<JoinSpec>> },
     Probe { head: usize, delta: usize, sql: String },
+    /// A probe not planned yet (decision 0123 §9): its delta has had no rows. The run returns for its plan when its
+    /// delta first has rows (`done 4`), and the caller gives it its join (`reprobe`).
+    Unplanned { head: usize, delta: usize },
     Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize> },
     /// A recursive relation maintained by levels (decision 0090): its candidates, the level checked, those held,
     /// those gone and the kept rows shown (`levels <cand> <chk> <held> <gone> <live>`).
@@ -141,14 +165,14 @@ pub enum Line {
 }
 
 /// A component: its name, then its lines in order (relations are numbered in order, probes are numbered in order).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ComponentSpec {
     pub name: String,
     pub lines: Vec<Line>,
 }
 
 /// A probe's new body (`reprobe`): SQL, a join, or the join it runs in the wave whose delta is the whole relation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Reprobe {
     Sql(String),
     Join(Arc<JoinSpec>),
@@ -167,7 +191,7 @@ pub fn hex(s: &str) -> String {
 }
 
 pub fn unhex(s: &str) -> Result<String, String> {
-    if s.len() % 2 != 0 || !s.is_ascii() {
+    if !s.len().is_multiple_of(2) || !s.is_ascii() {
         return Err(format!("bad hex {s}"));
     }
     let b: Result<Vec<u8>, String> = (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| e.to_string())).collect();
@@ -392,7 +416,7 @@ impl JoinSpec {
                 other => return Err(format!("unknown join item {other}")),
             });
         }
-        Ok(JoinSpec { items })
+        Ok(JoinSpec { items, ..Default::default() })
     }
 }
 
@@ -409,8 +433,13 @@ impl std::fmt::Display for Line {
                 }
             }
             Line::NoWrite => f.write_str("nowrite"),
+            Line::Device => f.write_str("device"),
+            Line::Leveled(rels) => write!(f, "leveled {}", comma(rels)),
+            Line::KeptOld => f.write_str("keptold"),
+            Line::Lattice { rel, keys, name, widen } => write!(f, "lattice {rel} {keys} {} {}", hex(name), widen.map_or_else(|| "-".to_owned(), |w| w.to_string())),
             Line::Request(r) => write!(f, "request {r}"),
             Line::Produced(r) => write!(f, "produced {r}"),
+            Line::Stats(r) => write!(f, "stats {r}"),
             Line::Seed { head, join } => write!(f, "seed {head} {}", hex(&join.to_text())),
             Line::Join { head, delta, join, whole } => {
                 write!(f, "join {head} {delta} {}", hex(&join.to_text()))?;
@@ -420,6 +449,7 @@ impl std::fmt::Display for Line {
                 }
             }
             Line::Probe { head, delta, sql } => write!(f, "probe {head} {delta} {}", hex(sql)),
+            Line::Unplanned { head, delta } => write!(f, "unplanned {head} {delta}"),
             Line::Gate { done, src, quiet, after } => {
                 write!(f, "gate {done} {} {} {}", src.map_or("-".to_owned(), |s| s.to_string()), comma(quiet), comma(after))
             }
@@ -491,8 +521,18 @@ impl ComponentSpec {
                     Line::Rel { name: at(1)?.to_owned(), types: at(2)?.to_owned(), start }
                 }
                 "nowrite" => Line::NoWrite,
+                "device" => Line::Device,
+                "leveled" => Line::Leveled(t.get(1).map(|x| list(x)).transpose()?.unwrap_or_default()),
+                "keptold" => Line::KeptOld,
+                "lattice" => Line::Lattice {
+                    rel: num(at(1)?)?,
+                    keys: num(at(2)?)?,
+                    name: unhex(at(3)?)?,
+                    widen: if at(4)? == "-" { None } else { Some(num(at(4)?)?) },
+                },
                 "request" => Line::Request(num(at(1)?)?),
                 "produced" => Line::Produced(num(at(1)?)?),
+                "stats" => Line::Stats(num(at(1)?)?),
                 "seed" => Line::Seed { head: num(at(1)?)?, join: join(at(2)?)? },
                 "join" => Line::Join {
                     head: num(at(1)?)?,
@@ -501,6 +541,7 @@ impl ComponentSpec {
                     whole: t.get(4).map(|w| join(w)).transpose()?,
                 },
                 "probe" => Line::Probe { head: num(at(1)?)?, delta: num(at(2)?)?, sql: unhex(at(3)?)? },
+                "unplanned" => Line::Unplanned { head: num(at(1)?)?, delta: num(at(2)?)? },
                 "gate" => Line::Gate {
                     done: num(at(1)?)?,
                     src: if at(2)? == "-" { None } else { Some(num(at(2)?)?) },
@@ -554,7 +595,7 @@ impl Reprobe {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

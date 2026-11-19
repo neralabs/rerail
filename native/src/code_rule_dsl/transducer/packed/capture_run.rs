@@ -2,15 +2,13 @@
 //! Finite bodies form DAGs. Current-node admission retires before the next node.
 use super::*;
 #[path = "capture_run_entry.rs"]
-mod entry;
+pub mod entry;
 #[path = "capture_run_stream.rs"]
-mod stream;
-#[cfg(test)]
-#[path = "capture_run_stream_tests.rs"]
-mod stream_tests;
+pub mod stream;
+// stream_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Limits {
+pub struct Limits {
     pub path: usize,
     pub task: usize,
 }
@@ -23,7 +21,7 @@ impl Default for Limits {
     }
 }
 #[derive(Default, Debug, Eq, PartialEq)]
-pub(super) struct Report {
+pub struct Report {
     pub task_work: usize,
     pub capture_events: usize,
     pub exit_records: usize,
@@ -685,22 +683,22 @@ struct Region {
     candidate_count: usize,
 }
 
-pub(super) struct Prepared<'p> {
+pub struct Prepared<'p> {
     program: &'p Program,
     proof: Proof,
 }
-pub(super) struct Run {
+pub struct Run {
     pub outputs: Vec<Output>,
     pub report: Report,
 }
-pub(super) fn prepare(program: &Program) -> Result<Prepared<'_>, Error> {
+pub fn prepare(program: &Program) -> Result<Prepared<'_>, Error> {
     Ok(Prepared {
         program,
         proof: prove(program)?,
     })
 }
 impl Prepared<'_> {
-    pub(super) fn execute_streaming(
+    pub fn execute_streaming(
         &self,
         tape: &TapeDoc,
         root: u32,
@@ -708,7 +706,7 @@ impl Prepared<'_> {
     ) -> Result<Run, Error> {
         self.execute_mode(tape, root, limits, true)
     }
-    pub(super) fn execute(&self, tape: &TapeDoc, root: u32, limits: Limits) -> Result<Run, Error> {
+    pub fn execute(&self, tape: &TapeDoc, root: u32, limits: Limits) -> Result<Run, Error> {
         self.execute_mode(tape, root, limits, false)
     }
     fn execute_mode(

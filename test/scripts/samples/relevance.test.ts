@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { NEAR_MISS_CAP, candidateRule, nearMissCandidates, relaxedDocument, selectRelevant } from "../../../scripts/samples/relevance.js";
 import { sampleKey, sha256, type Sample } from "../../../scripts/samples/samples.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 function sample(path: string, text: string, expected: [string, { line: number }[]][], pinned = false): Sample {
   const bytes = Buffer.from(text, "utf8");
@@ -75,7 +76,7 @@ describe("relaxed queries", () => {
       expect(probe).toBe("relaxed query");
       expect([...selected]).toEqual([sampleKey(calls)]);
     } finally {
-      rmSync(directory, { recursive: true, force: true });
+      removeFolderSync(directory);
     }
   });
 });

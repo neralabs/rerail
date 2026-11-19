@@ -66,7 +66,7 @@ impl<K: Eq + Hash + Clone, V> Cache<K, V> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use std::sync::Arc;
     #[test]

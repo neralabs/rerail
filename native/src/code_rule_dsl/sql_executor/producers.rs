@@ -13,16 +13,17 @@
 //! Tuple maintenance recomputes a producer's stratum whole when anything its query reads changes:
 //! a relation of the program, or a session input it reads by name (`maintenance::maintain`).
 use super::*;
+pub mod schema;
 
 #[derive(Clone, Debug)]
-pub(super) struct Producer {
+pub struct Producer {
     pub rel: String,
     pub query: String,
 }
 
 /// `front::prune`, keeping what SQL producers' queries may read: every relation a query names,
 /// directly or as `rr_rel_<name>`. Naming is a superset of reading, so nothing read is dropped.
-pub(super) fn prune(mut program: front::Program) -> front::Program {
+pub fn prune(mut program: front::Program) -> front::Program {
     let named: BTreeSet<String> = program
         .settings
         .iter()
@@ -37,7 +38,7 @@ pub(super) fn prune(mut program: front::Program) -> front::Program {
             named.contains(&r) || named.contains(&format!("{}rel_{r}", catalog::PREFIX))
         })
         .cloned()
-        .collect();
+        .map(String::from).collect();
     let outputs = program.outputs.clone();
     program.outputs.extend(keep);
     let mut program = front::prune(program);
@@ -53,7 +54,7 @@ fn words(text: &str) -> impl Iterator<Item = String> + '_ {
 }
 
 /// Take the program's SQL producers out of its inputs: each becomes a derived relation.
-pub(super) fn take(program: &mut front::Program) -> Result<Vec<Producer>> {
+pub fn take(program: &mut front::Program) -> Result<Vec<Producer>> {
     let mut producers = Vec::new();
     let mut kept = Vec::new();
     for (key, text) in std::mem::take(&mut program.settings) {
@@ -93,50 +94,35 @@ pub(super) fn take(program: &mut front::Program) -> Result<Vec<Producer>> {
     Ok(producers)
 }
 
-/// The program relations each producer reads, as SQLite resolves its query. Inside a savepoint
-/// that is rolled back, every wave relation gets a placeholder table and its typed view; an
-/// authorizer records the tables the prepared query reads. A relation the emitter made a view
+/// The program relations each producer reads, as SQLite resolves its query. Missing relations
+/// get temporary native schemas, and typed names use query-local aliases. An authorizer
+/// records the tables the prepared query reads. A relation the emitter made a view
 /// counts as the relations that view reads. Each query must give its declaration's columns.
 /// Per producer: the wave relations it reads, and every other table or view it reads (lowercased),
 /// which tuple maintenance watches for changes.
-fn resolve(db: &mut rusqlite::Connection, emitted: &plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<Vec<(Vec<String>, Vec<String>)>> {
+fn resolve(db: &mut Database, emitted: &plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<Vec<(Vec<String>, Vec<String>)>> {
     use rusqlite::hooks::{AuthAction, Authorization};
     let tables: BTreeMap<String, String> =
         emitted.program.relations.iter().map(|(r, _)| (r.to_ascii_lowercase(), r.clone())).collect();
-    let views: BTreeMap<String, &select::Query> =
-        emitted.views.iter().map(|(r, q)| (r.to_ascii_lowercase(), q)).collect();
-    db.execute_batch("SAVEPOINT rr_producer_reads").map_err(error)?;
-    let result = (|| -> Result<Vec<(Vec<String>, Vec<String>)>> {
-        for (rel, arity) in &emitted.program.relations {
-            let cols = (0..*arity).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-            db.execute_batch(&format!("CREATE TEMP TABLE IF NOT EXISTS {}({cols})", quote(rel))).map_err(error)?;
-            if let Some(decl) = program.decls.get(rel) {
-                let view = quote(&format!("{}rel_{rel}", catalog::PREFIX));
-                let names = catalog::view_columns(decl).iter().map(|c| quote(c)).collect::<Vec<_>>().join(", ");
-                db.execute_batch(&format!("DROP VIEW IF EXISTS temp.{view}; CREATE TEMP VIEW {view}({names}) AS SELECT * FROM {}", quote(rel)))
-                    .map_err(error)?;
-            }
-        }
-        for statement in &emitted.setup {
-            // The emitter's views, so a query may name them; anything already present is kept.
-            let _ = db.execute_batch(statement);
-        }
+    let views: BTreeMap<String, (&String,&select::Query)> =
+        emitted.views.iter().map(|(r, q)| (r.to_ascii_lowercase(), (r,q))).collect();
+    schema::with_schema(db,emitted,program,producers,|db,prefix| {
         let mut out = Vec::new();
         for p in producers {
             let seen = Arc::new(parking_lot::Mutex::new(BTreeSet::<String>::new()));
             let record = Arc::clone(&seen);
-            db.authorizer(Some(move |context: rusqlite::hooks::AuthContext<'_>| {
+            db.connection_mut().authorizer(Some(move |context: rusqlite::hooks::AuthContext<'_>| {
                 if let AuthAction::Read { table_name, .. } = context.action {
                     record.lock().insert(table_name.to_ascii_lowercase());
                 }
                 Authorization::Allow
             }))
             .map_err(error)?;
-            let prepared = db.prepare(&format!("SELECT * FROM ({})", p.query)).map(|s| s.column_count());
-            db.authorizer(None::<fn(rusqlite::hooks::AuthContext<'_>) -> Authorization>).map_err(error)?;
+            let prepared = db.prepare(&format!("{prefix}SELECT * FROM ({})", p.query)).map(|s| s.column_count());
+            db.connection_mut().authorizer(None::<fn(rusqlite::hooks::AuthContext<'_>) -> Authorization>).map_err(error)?;
             let width = prepared.map_err(|e| error(format!("{}: SQL producer query: {e}", p.rel)))?;
-            if width != program.decls[&p.rel].len() {
-                return Err(error(format!("{}: the query gives {width} columns, the declaration {}", p.rel, program.decls[&p.rel].len())));
+            if width != program.decls[p.rel.as_str()].len() {
+                return Err(error(format!("{}: the query gives {width} columns, the declaration {}", p.rel, program.decls[p.rel.as_str()].len())));
             }
             let mut reads = BTreeSet::new();
             let mut other = BTreeSet::new();
@@ -147,10 +133,13 @@ fn resolve(db: &mut rusqlite::Connection, emitted: &plan::emit::Emitted, program
                 if !visited.insert(name.clone()) {
                     continue;
                 }
-                if let Some(rel) = tables.get(&name) {
-                    reads.insert(rel.clone());
-                } else if let Some(q) = views.get(&name) {
+                if let Some((rel,q)) = views.get(&name) {
+                    // Session normalization schedules the projection as a retained relation.
+                    // Keep its own gate as well as the dependencies needed by cold SQL views.
+                    reads.insert((*rel).clone());
                     pending.extend(q.reads().into_iter().filter_map(|r| r.program_relation().map(str::to_ascii_lowercase)));
+                } else if let Some(rel) = tables.get(&name) {
+                    reads.insert(rel.clone());
                 } else if !name.starts_with("sqlite_") {
                     other.insert(name);
                 }
@@ -158,9 +147,7 @@ fn resolve(db: &mut rusqlite::Connection, emitted: &plan::emit::Emitted, program
             out.push((reads.into_iter().collect(), other.into_iter().collect()));
         }
         Ok(out)
-    })();
-    db.execute_batch("ROLLBACK TO rr_producer_reads; RELEASE rr_producer_reads").map_err(error)?;
-    result
+    })
 }
 
 /// The relations whose rows depend on `rel` through the program's rules and producers, `rel`
@@ -170,8 +157,8 @@ fn downstream(program: &front::Program, producers: &[Producer], reads: &[Vec<Str
     loop {
         let before = out.len();
         for r in &program.rules {
-            if r.body.iter().filter_map(front::Literal::atom).any(|a| out.contains(&a.rel)) {
-                out.insert(r.head.rel.clone());
+            if r.body.iter().filter_map(front::Literal::atom).any(|a| out.contains(a.rel.as_str())) {
+                out.insert(r.head.rel.to_string());
             }
         }
         for (p, reads) in producers.iter().zip(reads) {
@@ -187,7 +174,7 @@ fn downstream(program: &front::Program, producers: &[Producer], reads: &[Vec<Str
 
 /// Add each producer's step to the emitted program, and the typed views its query may read.
 /// Returns what each producer reads beyond the wave relations (`resolve`), by producer.
-pub(super) fn steps(db: &mut rusqlite::Connection, emitted: &mut plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<BTreeMap<String, Vec<String>>> {
+pub fn steps(db: &mut Database, emitted: &mut plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<BTreeMap<String, Vec<String>>> {
     if producers.is_empty() {
         return Ok(BTreeMap::new());
     }
@@ -198,9 +185,10 @@ pub(super) fn steps(db: &mut rusqlite::Connection, emitted: &mut plan::emit::Emi
     }
     let resolved = resolve(db, emitted, program, producers)?;
     let all_reads: Vec<Vec<String>> = resolved.iter().map(|(reads, _)| reads.clone()).collect();
-    let mut stratum = emitted.program.steps.iter().map(|s| s.stratum).max().unwrap_or(0);
-    for (p, reads) in producers.iter().zip(&all_reads) {
-        let decl = &program.decls[&p.rel];
+    let top = emitted.program.steps.iter().map(|s| s.stratum).max().unwrap_or(0);
+    // Each producer a stratum of its own, after the program's.
+    for (stratum, (p, reads)) in (top + 1..).zip(producers.iter().zip(&all_reads)) {
+        let decl = &program.decls[p.rel.as_str()];
         let below = downstream(program, producers, &all_reads, &p.rel);
         if let Some(cycle) = reads.iter().find(|r| below.contains(*r)) {
             return Err(error(format!(
@@ -214,7 +202,6 @@ pub(super) fn steps(db: &mut rusqlite::Connection, emitted: &mut plan::emit::Emi
             .zip(&columns)
             .map(|((_, ty), c)| if ty == "sym" { format!("sym_atom({c})") } else { c.clone() })
             .collect();
-        stratum += 1;
         emitted.program.steps.push(schedule::Step {
             output: p.rel.clone(),
             stratum,
@@ -228,13 +215,17 @@ pub(super) fn steps(db: &mut rusqlite::Connection, emitted: &mut plan::emit::Emi
             ),
         });
         emitted.queries.push(None);
-        for rel in reads {
-            if let Some(decl) = program.decls.get(rel) {
-                let view = quote(&format!("{}rel_{rel}", catalog::PREFIX));
-                let names = catalog::view_columns(decl).iter().map(|c| quote(c)).collect::<Vec<_>>().join(", ");
-                emitted.setup.push(format!("DROP VIEW IF EXISTS temp.{view}"));
-                emitted.setup.push(format!("CREATE TEMP VIEW {view}({names}) AS SELECT * FROM {}", quote(rel)));
-            }
+    }
+    let named=producers.iter().flat_map(|p|words(&p.query)).collect::<BTreeSet<_>>();
+    let typed_reads=all_reads.iter().flatten().cloned().chain(emitted.views.iter()
+        .filter(|(r,_)|named.contains(&format!("{}rel_{}",catalog::PREFIX,r.to_ascii_lowercase())))
+        .map(|(r,_)|r.clone())).collect::<BTreeSet<_>>();
+    for rel in typed_reads {
+        if let Some(decl)=program.decls.get(rel.as_str()) {
+            let view=quote(&format!("{}rel_{rel}",catalog::PREFIX));
+            let names=catalog::view_columns(decl).iter().map(|c|quote(c)).collect::<Vec<_>>().join(", ");
+            emitted.setup.push(format!("DROP VIEW IF EXISTS temp.{view}"));
+            emitted.setup.push(format!("CREATE TEMP VIEW {view}({names}) AS SELECT * FROM {}",quote(&rel)));
         }
     }
     renumber(&mut emitted.program.steps)?;

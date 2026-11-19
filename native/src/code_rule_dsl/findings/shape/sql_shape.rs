@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Materialization {
+pub enum Materialization {
     Materialized,
     Inline,
 }
@@ -62,14 +62,14 @@ pub(crate) struct Query {
     pub branches: Vec<Select>,
 }
 #[derive(Debug)]
-pub(crate) struct SourceUse {
+pub struct SourceUse {
     /// Syntactic references in the emitted reachable definitions, counted once per definition.
     pub references: usize,
     pub materialization: Materialization,
     pub cte: Option<String>,
 }
 #[derive(Debug)]
-pub(crate) struct Emission {
+pub struct Emission {
     pub sql: String,
     pub sources: BTreeMap<String, SourceUse>,
     pub derived_ctes: BTreeMap<String, String>,
@@ -419,7 +419,7 @@ fn fresh_cte(reserved: &mut BTreeSet<String>, prefix: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     fn select(relation: &str, alias: &str, columns: &[&str]) -> Select {
         Select {

@@ -5,7 +5,8 @@ fn walks_with_negative_and_aggregate_seed_and_output_match_fresh_runs() {
     let (_d, mut e) = executor();
     let files = json!({"files":[{"path":"a.py","language":"python","source":"def first():\n    work()\ndef second():\n    other()\n"}]}).to_string();
     e.bind_snapshot(files.clone()).unwrap();
-    let p = ".decl node(d:number,n:node,k:symbol,s:number,e:number)\n.decl tape(n:node,p:node,s:number,d:number)\n.decl field(p:node,f:symbol,c:node)\n.decl name(n:node,s:symbol)\n.decl doc(d:number,p:symbol,m:symbol)\n.decl blocked(n:node)\n.decl marks(n:node,v:number)\n.input node,tape,field,name,doc,blocked,marks\n.decl scope(k:symbol)\nscope(\"function_definition\").\n.decl owns(n:node,o:symbol,c:number)\nowns(n,o,c) :- node(_,n,\"call\",_,_), !blocked(n), unused = min v : {marks(n,v)}, denominator = count : {marks(n,_)}, quotient = 1 / denominator, seed = count : {field(n,_,_)}, seed > 0, nearest(n,a,scope), field(a,\"name\",f), name(f,o), !blocked(a), c = count : {field(a,_,_)}.\n.output owns\n";
+    // Aggregates in the seed that hold over no marks: `min` over no rows and `1 / 0` bind nothing (Soufflé's).
+    let p = ".decl node(d:number,n:node,k:symbol,s:number,e:number)\n.decl tape(n:node,p:node,s:number,d:number)\n.decl field(p:node,f:symbol,c:node)\n.decl name(n:node,s:symbol)\n.decl doc(d:number,p:symbol,m:symbol)\n.decl blocked(n:node)\n.decl marks(n:node,v:number)\n.input node,tape,field,name,doc,blocked,marks\n.decl scope(k:symbol)\nscope(\"function_definition\").\n.decl owns(n:node,o:symbol,c:number)\nowns(n,o,c) :- node(_,n,\"call\",_,_), !blocked(n), unused = sum v : {marks(n,v)}, denominator = count : {marks(n,_)}, quotient = 1 / (denominator + 1), seed = count : {field(n,_,_)}, seed > 0, nearest(n,a,scope), field(a,\"name\",f), name(f,o), !blocked(a), c = count : {field(a,_,_)}.\n.output owns\n";
     bind(&mut e, "blocked", &["n"], json!([]));
     bind(&mut e, "marks", &["n", "v"], json!([]));
     e.run(p.into(), "python".into(), None).unwrap();
@@ -104,73 +105,18 @@ pub(super) fn profile<T>(
     e: &mut CodeRuleSqlExecutor,
     run: impl FnOnce(&mut CodeRuleSqlExecutor) -> T,
 ) -> (T, Box<SqlWork>) {
-    if let Some(before) = e.sql_profile_totals() {
-        let result = run(e);
-        let after = e.sql_profile_totals().unwrap();
-        let work = Box::<SqlWork>::default();
-        work.vm.set(after[2] - before[2]);
-        work.scans.set(after[3] - before[3]);
-        work.data_scans.set(after[3] - before[3]);
-        return (result, work);
-    }
-    use rusqlite::ffi;
-    unsafe extern "C" fn trace(
-        _: u32,
-        context: *mut std::ffi::c_void,
-        statement: *mut std::ffi::c_void,
-        _elapsed: *mut std::ffi::c_void,
-    ) -> i32 {
-        // SQLite invokes the callback synchronously while the boxed counters remain registered.
-        let work = unsafe { &*context.cast::<SqlWork>() };
-        let stmt = statement.cast::<ffi::sqlite3_stmt>();
-        let vm =
-            unsafe { ffi::sqlite3_stmt_status(stmt, ffi::SQLITE_STMTSTATUS_VM_STEP, 1) } as u64;
-        let scans =
-            unsafe { ffi::sqlite3_stmt_status(stmt, ffi::SQLITE_STMTSTATUS_FULLSCAN_STEP, 1) }
-                as u64;
-        work.vm.set(work.vm.get() + vm);
-        work.scans.set(work.scans.get() + scans);
-        let sql = unsafe { std::ffi::CStr::from_ptr(ffi::sqlite3_sql(stmt)) }.to_string_lossy();
-        if !sql.starts_with("DROP ") && !sql.starts_with("CREATE ") {
-            work.data_scans.set(work.data_scans.get() + scans);
-        }
-        if (scans > 100 || vm > 10000) && !sql.starts_with("DROP ") && !sql.starts_with("CREATE ") {
-            let mut rows = work.sql.borrow_mut();
-            let row = rows.entry(sql.into_owned()).or_default();
-            row.0 += vm;
-            row.1 += scans;
-        }
-        0
-    }
-    struct Trace(*mut ffi::sqlite3);
-    impl Drop for Trace {
-        fn drop(&mut self) {
-            unsafe {
-                ffi::sqlite3_trace_v2(self.0, 0, None, std::ptr::null_mut());
-            }
+    let receipts=e.db.admission().receipts();
+    let result=run(e);
+    let work=Box::<SqlWork>::default();
+    for row in receipts.lock().iter() {
+        let [vm,scans,_,_]=row.counters;
+        work.vm.set(work.vm.get()+vm);work.scans.set(work.scans.get()+scans);
+        if !row.sql.starts_with("DROP ") && !row.sql.starts_with("CREATE ") {
+            work.data_scans.set(work.data_scans.get()+scans);
+            if scans>100 || vm>10000 {let mut sql=work.sql.borrow_mut();let totals=sql.entry(row.sql.clone()).or_default();totals.0+=vm;totals.1+=scans;}
         }
     }
-    let work = Box::<SqlWork>::default();
-    let handle = unsafe { e.connection().handle() };
-    unsafe {
-        // Cached statements can retain counters from preparation before tracing starts.
-        let mut stmt = ffi::sqlite3_next_stmt(handle, std::ptr::null_mut());
-        while !stmt.is_null() {
-            ffi::sqlite3_stmt_status(stmt, ffi::SQLITE_STMTSTATUS_VM_STEP, 1);
-            ffi::sqlite3_stmt_status(stmt, ffi::SQLITE_STMTSTATUS_FULLSCAN_STEP, 1);
-            stmt = ffi::sqlite3_next_stmt(handle, stmt);
-        }
-        ffi::sqlite3_trace_v2(
-            handle,
-            ffi::SQLITE_TRACE_PROFILE as u32,
-            Some(trace),
-            std::ptr::from_ref(&*work).cast_mut().cast(),
-        );
-    }
-    let guard = Trace(handle);
-    let result = run(e);
-    drop(guard);
-    (result, work)
+    (result,work)
 }
 
 fn change(e: &mut CodeRuleSqlExecutor, patch: Value) -> Value {
@@ -201,6 +147,7 @@ fn ordered(e: &mut CodeRuleSqlExecutor, table: &str) -> Value {
 #[test]
 fn wide_old_sql_joins_use_indexed_deletion_rows_and_rollback_restores_them() {
     let (_d, mut e) = executor();
+    e.legacy_initial=true;
     bind(
         &mut e,
         "item",
@@ -484,15 +431,10 @@ owns(p,o) :- node(d,n,"call",_,_), doc(d,p,_), nearest(n,a,scope), field(a,"name
             json!([]),
             "{report}"
         );
-        assert!(
-            rows(
-                &mut e,
-                "SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_walk_*'"
-            )[0][0]
-                .as_u64()
-                .unwrap()
-                > 0
-        );
+        let walks=e.executions[0].objects.iter().filter(|(name,_)|name.starts_with("__sql_walk_")).map(|(name,_)|name).collect::<Vec<_>>();
+        assert!(!walks.is_empty());
+        assert!(walks.iter().all(|name|e.versions.owns(name)));
+        assert_eq!(rows(&mut e,"SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_walk_*' OR name GLOB '__sql_state_*' OR name GLOB '__rr_update_*'"),json!([[0]]));
         let (_fresh_dir, mut fresh) = executor();
         fresh.bind_snapshot(snapshot(&files)).unwrap();
         fresh.run(program.into(), "python".into(), None).unwrap();
@@ -507,6 +449,40 @@ owns(p,o) :- node(d,n,"call",_,_), doc(d,p,_), nearest(n,a,scope), field(a,"name
         ),
         json!([[0]])
     );
+}
+
+/// `nearest` from a bound ancestor walks down its subtree, and finds what climbing from every node finds. Under node
+/// ids per definition `node_order`'s keys are in preorder but not dense (by granule run, decision 0121): a walk that
+/// stepped over keys stopped at the first granule boundary, so a scope's nodes past it were never reached.
+#[test]
+fn nearest_descends_across_granule_boundaries_as_the_climb_finds() {
+    if !crate::code_rule_dsl::facts::vtab::syntax::definition_ids() {
+        return;
+    }
+    let (_d, mut e) = executor();
+    let source = "import os\ndef f():\n    a = 1\n    def g():\n        return a\n    return g\nclass C:\n    def m(self):\n        return f()\nx = f()\ny = C()\n";
+    e.bind_snapshot(json!({"files":[{"path":"m.py","language":"python","source":source}]}).to_string()).unwrap();
+    // `down` binds `$a` alone, so it descends; `up` binds `$n` alone, so it climbs.
+    let program = r#"
+.decl node(d:number,n:node,k:symbol,s:number,e:number)
+.decl tape(n:node,p:node,s:number,d:number)
+.decl node_order(n:node,k:number)
+.input node,tape,node_order
+.decl scope(k:symbol)
+scope("module"). scope("function_definition"). scope("class_definition").
+.decl down(a:node,n:node)
+down(a,n) :- node(_,a,k,_,_), scope(k), nearest(n,a,scope).
+.decl up(a:node,n:node)
+up(a,n) :- node(_,n,_,_,_), nearest(n,a,scope).
+.output down,up
+"#;
+    e.run(program.into(), "python".into(), None).unwrap();
+    let keys = rows(&mut e, "SELECT max(k) - min(k) + 1, count(*) FROM node_order");
+    assert!(keys[0][0].as_i64() > keys[0][1].as_i64(), "the keys skip at granule boundaries: {keys}");
+    let up = rows(&mut e, "SELECT * FROM up ORDER BY c0, c1");
+    // Every node but the module's root has a scope above it.
+    assert_eq!(json!([[up.as_array().unwrap().len() + 1]]), rows(&mut e, "SELECT count(*) FROM node"));
+    assert_eq!(rows(&mut e, "SELECT * FROM down ORDER BY c0, c1"), up);
 }
 
 #[test]

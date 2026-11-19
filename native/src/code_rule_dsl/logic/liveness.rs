@@ -35,10 +35,10 @@ use std::collections::BTreeSet;
 use super::front::{AggOp, Atom, Literal, Program, Rule, Term};
 
 /// The counts' relation: `liveof_count(rel, what, n)`.
-pub(in crate::code_rule_dsl) const COUNTS: &str = "liveof_count";
+pub const COUNTS: &str = "liveof_count";
 
 /// What `COUNTS` counts, in the order the report prints it.
-pub(in crate::code_rule_dsl) const MEASURES: [&str; 6] = ["rows", "live", "keys", "live keys", "library", "library live"];
+pub const MEASURES: [&str; 6] = ["rows", "live", "keys", "live keys", "library", "library live"];
 
 /// `rel`'s liveness relation, under a prefix no program uses: a program may name its own relations `live_…`
 /// (calls_cx has `live_def`).
@@ -47,12 +47,12 @@ pub(in crate::code_rule_dsl) fn live(rel: &str) -> String {
 }
 
 fn atom(rel: String, args: Vec<Term>) -> Atom {
-    Atom { rel, args, neg: false, gated: false }
+    Atom { rel: rel.into(), args: args.into(), neg: false, gated: false }
 }
 
 /// The backward rules and the counts for `prog` (its rules, declarations and outputs, as `rr::parse` gives them): a
 /// program of their own, to print after `prog`'s text, which declares what they read.
-pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
+pub fn program(prog: &Program) -> Program {
     // A program naming a relation as these do would read the liveness rules' rows as its own.
     if let Some(r) = prog.decls.keys().find(|r| r.starts_with(&live(""))) {
         panic!("{r}: the liveness rules' prefix is taken");
@@ -66,8 +66,8 @@ pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
     let declared = |r: &str| prog.decls.contains_key(r) && !prog.nullary.contains(r);
     let mut targets: BTreeSet<String> = BTreeSet::new();
     for o in prog.outputs.iter().filter(|o| declared(o)) {
-        let args: Vec<Term> = (0..prog.decls[o].len()).map(|i| Term::Var(format!("liveof_vo{i}"))).collect();
-        out.rules.push(Rule { head: atom(live(o), args.clone()), body: vec![Literal::Atom(atom(o.clone(), args))] });
+        let args: Vec<Term> = (0..prog.decls[o.as_str()].len()).map(|i| Term::Var(format!("liveof_vo{i}").into())).collect();
+        out.rules.push(Rule { head: atom(live(o), args.clone()), body: [Literal::Atom(atom(o.clone(), args))].into() });
         targets.insert(o.clone());
     }
     for rule in &prog.rules {
@@ -76,23 +76,23 @@ pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
             continue;
         }
         // Every derived relation is counted, read or not: a relation nothing reads is all dead rows.
-        targets.insert(h.clone());
+        targets.insert(h.to_string());
         // The head as a read of its liveness: a computed argument is a variable the body computes again.
         let mut computed = Vec::new();
-        let lattice_keys = prog.lattice.get(h).map(|l| l.keys);
+        let lattice_keys = prog.lattice.get(h.as_str()).map(|l| l.keys);
         let head_args: Vec<Term> = rule
             .head
             .args
             .iter()
             .enumerate()
             .map(|(i, t)| match t {
-                _ if lattice_keys.is_some_and(|k| i >= k) => Term::Var(var()),
+                _ if lattice_keys.is_some_and(|k| i >= k) => Term::Var(var().into()),
                 Term::Call(..) => {
                     let v = var();
-                    computed.push(Literal::Cmp { l: Term::Var(v.clone()), op: "=", r: t.clone() });
-                    Term::Var(v)
+                    computed.push(Literal::Cmp { l: Term::Var(v.clone().into()), op: "=", r: t.clone() });
+                    Term::Var(v.into())
                 }
-                Term::Wild | Term::Top => Term::Var(var()),
+                Term::Wild | Term::Top => Term::Var(var().into()),
                 other => other.clone(),
             })
             .collect();
@@ -106,8 +106,8 @@ pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
             if !declared(&read.rel) {
                 continue;
             }
-            let args: Vec<Term> = read.args.iter().map(|t| if matches!(t, Term::Wild) { Term::Var(var()) } else { t.clone() }).collect();
-            let positive = Literal::Atom(atom(read.rel.clone(), args.clone()));
+            let args: Vec<Term> = read.args.iter().map(|t| if matches!(t, Term::Wild) { Term::Var(var().into()) } else { t.clone() }).collect();
+            let positive = Literal::Atom(atom(read.rel.to_string(), args.clone()));
             let mut body = Vec::with_capacity(rule.body.len() + 2);
             if !negated {
                 body.push(live_head.clone());
@@ -125,36 +125,36 @@ pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
             if !negated {
                 body.extend(computed.iter().cloned());
             }
-            out.rules.push(Rule { head: atom(live(&read.rel), args), body });
-            targets.insert(read.rel.clone());
+            out.rules.push(Rule { head: atom(live(&read.rel), args), body: body.into() });
+            targets.insert(read.rel.to_string());
         }
     }
     let count = |n: &str, rel: &str, what: &str, of: Atom| Rule {
-        head: atom(COUNTS.to_owned(), vec![Term::Str(rel.to_owned()), Term::Str(what.to_owned()), Term::Var(n.to_owned())]),
-        body: vec![Literal::Agg { var: n.to_owned(), op: AggOp::Count, over: None, atom: of }],
+        head: atom(COUNTS.to_owned(), vec![Term::Str(rel.to_owned().into()), Term::Str(what.to_owned().into()), Term::Var(n.to_owned().into())]),
+        body: [Literal::Agg { var: n.to_owned(), op: AggOp::Count, over: None, atom: of }].into(),
     };
-    out.decls.insert(COUNTS.to_owned(), vec![("rel".into(), "symbol".into()), ("what".into(), "symbol".into()), ("n".into(), "number".into())]);
+    out.decls.insert(COUNTS.to_owned().into(), [("rel".into(), "symbol".into()), ("what".into(), "symbol".into()), ("n".into(), "number".into())].into());
     let library = prog.decls.contains_key("doc") && prog.decls.contains_key("loaded");
     for t in &targets {
-        let cols = &prog.decls[t];
-        let vars = |prefix: &str| -> Vec<Term> { (0..cols.len()).map(|i| Term::Var(format!("{prefix}{i}"))).collect() };
-        out.decls.insert(live(t), cols.clone());
+        let cols = &prog.decls[t.as_str()];
+        let vars = |prefix: &str| -> Vec<Term> { (0..cols.len()).map(|i| Term::Var(format!("{prefix}{i}").into())).collect() };
+        out.decls.insert(live(t).into(), cols.clone());
         out.rules.push(count("n", t, MEASURES[0], atom(t.clone(), vars("c"))));
         out.rules.push(count("n", t, MEASURES[1], atom(live(t), vars("c"))));
         // Keys: the first column's values, of all rows and of the live ones.
         let key = |of: &str| format!("liveof_key{of}_{t}");
         for (name, rel) in [(key(""), t.clone()), (key("l"), live(t))] {
-            out.decls.insert(name.clone(), vec![cols[0].clone()]);
+            out.decls.insert(name.clone().into(), [cols[0].clone()].into());
             let mut args = vec![Term::Var("k".into())];
             args.extend((1..cols.len()).map(|_| Term::Wild));
-            out.rules.push(Rule { head: atom(name.clone(), vec![Term::Var("k".into())]), body: vec![Literal::Atom(atom(rel, args))] });
+            out.rules.push(Rule { head: atom(name.clone(), vec![Term::Var("k".into())]), body: [Literal::Atom(atom(rel, args))].into() });
         }
         out.rules.push(count("n", t, MEASURES[2], atom(key(""), vec![Term::Var("k".into())])));
         out.rules.push(count("n", t, MEASURES[3], atom(key("l"), vec![Term::Var("k".into())])));
         // Rows about a loaded document: a library's.
         if library && cols[0].1 == "node" {
             for (name, rel, what) in [(format!("liveof_lib_{t}"), t.clone(), MEASURES[4]), (format!("liveof_libl_{t}"), live(t), MEASURES[5])] {
-                out.decls.insert(name.clone(), cols.clone());
+                out.decls.insert(name.clone().into(), cols.clone());
                 let args = vars("c");
                 let d = Term::Var("liveof_vd".into());
                 let p = Term::Var("liveof_vp".into());
@@ -162,10 +162,10 @@ pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
                     head: atom(name.clone(), args.clone()),
                     body: vec![
                         Literal::Atom(atom(rel, args.clone())),
-                        Literal::Cmp { l: d.clone(), op: "=", r: Term::Call("doc".into(), vec![args[0].clone()]) },
+                        Literal::Cmp { l: d.clone(), op: "=", r: Term::Call("doc".into(), [args[0].clone()].into()) },
                         Literal::Atom(atom("doc".into(), vec![d, p.clone(), Term::Wild])),
                         Literal::Atom(atom("loaded".into(), vec![p, Term::Wild, Term::Wild])),
-                    ],
+                    ].into(),
                 });
                 out.rules.push(count("n", t, what, atom(name, vars("c"))));
             }
@@ -175,59 +175,17 @@ pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
     out
 }
 
-/// `COUNTS`' rows (`liveof_count.csv`), by relation: each measure's count, absent where the relation had no row.
-pub(in crate::code_rule_dsl) fn read_counts(csv: &str) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> {
+/// `COUNTS`' rows, by relation, from a run's outputs: each measure's count, absent where the relation had no row.
+pub fn read_counts(outputs: &crate::code_rule_dsl::logic::plan::output::Outputs) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> {
     let mut out: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> = Default::default();
-    for line in csv.lines() {
-        let mut f = line.split('\t');
-        if let (Some(rel), Some(what), Some(n)) = (f.next(), f.next(), f.next()) {
-            out.entry(rel.to_owned()).or_default().insert(what.to_owned(), n.parse().unwrap_or(0));
+    for row in outputs.rows(COUNTS) {
+        if let (Some(rel), Some(what)) = (row.get(0).text(), row.get(1).text()) {
+            out.entry(rel.to_owned()).or_default().insert(what.to_owned(), row.get(2).int().map_or(0, |n| n as u64));
         }
     }
     out
 }
 
-#[cfg(test)]
-mod tests {
-    /// On a small program: an output's rows are live; a row no output reads is dead; a row that blocks a
-    /// negation is live; a read inside a count makes its group live.
-    #[test]
-    fn liveness_marks_what_outputs_read() {
-        let src = r#"
-.decl e(a: number, b: number)
-e(1, 2). e(2, 3). e(3, 4). e(7, 8).
-.decl stop(a: number)
-stop(3). stop(9).
-.decl path(a: number, b: number)
-path(a, b) :- e(a, b), !stop(a).
-path(a, c) :- path(a, b), e(b, c), !stop(b).
-.decl unused(a: number)
-unused(a) :- e(a, _).
-.decl fan(a: number, n: number)
-fan(a, n) :- path(a, _), n = count : { e(a, _) }.
-.decl out(a: number, b: number)
-out(a, b) :- path(a, b), a = 1.
-.output out, fan
-"#;
-        let prog = crate::code_rule_dsl::logic::rr::parse(src).unwrap();
-        let live = super::program(&prog);
-        let text = format!("{src}\n{}", crate::code_rule_dsl::logic::rr::print(&live).unwrap());
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("liveness");
-        std::fs::create_dir_all(&dir).unwrap();
-        let root = dir.join("root");
-        std::fs::create_dir_all(&root).unwrap();
-        let out = dir.join("out");
-        crate::code_rule_dsl::logic::plan::corpus::run(&text, &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let counts = super::read_counts(&std::fs::read_to_string(out.join(format!("{}.csv", super::COUNTS))).unwrap());
-        let _ = std::fs::remove_dir_all(&dir);
-        let get = |rel: &str, what: &str| counts.get(rel).and_then(|m| m.get(what)).copied().unwrap_or(0);
-        // path is (1,2) (2,3) (7,8) (1,3); stop(3) blocks (3,4) and (1,4). fan reads every row of path.
-        assert_eq!((get("path", "rows"), get("path", "live")), (4, 4), "{counts:?}");
-        // e(3,4) only meets a blocked derivation: deleting it changes nothing. The others make live paths.
-        assert_eq!((get("e", "rows"), get("e", "live"), get("e", "keys"), get("e", "live keys")), (4, 3, 4, 3), "{counts:?}");
-        assert_eq!((get("unused", "rows"), get("unused", "live")), (4, 0), "{counts:?}");
-        assert_eq!((get("stop", "rows"), get("stop", "live")), (2, 1), "stop(3) blocks path(3, 4); stop(9) blocks nothing: {counts:?}");
-        assert_eq!((get("out", "rows"), get("out", "live")), (2, 2), "{counts:?}");
-    }
-}
+// Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rerail` libraries).
 

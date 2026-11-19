@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
 
 pub const NONE: u32 = u32::MAX;
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Process-wide interner for kind and field names (the contract's `sym`).
 pub struct Symbols {
@@ -100,6 +100,7 @@ pub struct Facts {
     pub bindings: std::cell::OnceCell<Result<Vec<super::bindings::Binding>, String>>,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum Built {
     Facts(Facts),
     /// The parser stopped at a limit (`file_tape` returned `None`).
@@ -180,10 +181,10 @@ pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>, source: Arc<String>) -> F
         typedefs: Default::default(),
         bindings: Default::default(),
     };
-    for id in 0..n as u32 {
+    for (id, parent) in (0..n as u32).zip(doc.transducer_parents()) {
         let node = doc.node(id);
         f.kind.push(kind_sym(&node.kind()));
-        f.parent.push(doc.transducer_parent(id).unwrap_or(NONE));
+        f.parent.push(parent.unwrap_or(NONE));
         let span = doc.transducer_span(id);
         f.start.push(span.start as u32);
         f.end.push(span.end as u32);

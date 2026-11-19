@@ -104,6 +104,18 @@ fn python_matchers(
     })
 }
 
+/// The nodes of `tape` W's matcher matches at (`GrammarMatcher::match_root` at each node), as a file
+/// evaluation reads them: the file's scope table built once and shared by its nodes
+/// (`FileScopeSlot`, as W's wave installs it), not once per node.
+fn ws_roots(grammar: &GrammarMatcher, tape: &TapeDoc) -> BTreeSet<u32> {
+    let root = Root::doc(tape.clone());
+    let _scopes = crate::code_rule_dsl::matcher::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
+    let mut work = usize::MAX;
+    (0..tape.transducer_len() as u32)
+        .filter(|&ordinal| grammar.match_root(node_at(&root, ordinal), &mut work).ok().flatten().is_some())
+        .collect()
+}
+
 #[test]
 fn lowered_python_clauses_match_where_ws_matcher_does() {
     let tapes = fixtures();
@@ -138,26 +150,28 @@ fn lowered_python_clauses_match_where_ws_matcher_does() {
                 }
             };
             lowered += 1;
+            // Each fixture is a file of its own, W's matcher and the lowering both: the fixtures run in parallel,
+            // and are read in order, to the first that differs.
+            let runs = {
+                use rayon::prelude::*;
+                tapes
+                    .par_iter()
+                    .map(|tape| {
+                        let started = std::time::Instant::now();
+                        let expected = ws_roots(grammar, tape);
+                        let oracle = started.elapsed();
+                        let started = std::time::Instant::now();
+                        let actual = program.roots(tape);
+                        (expected, actual, oracle, started.elapsed())
+                    })
+                    .collect::<Vec<_>>()
+            };
             let mut first = None;
             let mut clause_time = std::time::Duration::ZERO;
-            for (index, tape) in tapes.iter().enumerate() {
-                let started = std::time::Instant::now();
-                let root = Root::doc(tape.clone());
-                let mut work = usize::MAX;
-                let expected = (0..tape.transducer_len() as u32)
-                    .filter(|&ordinal| {
-                        grammar
-                            .match_root(node_at(&root, ordinal), &mut work)
-                            .ok()
-                            .flatten()
-                            .is_some()
-                    })
-                    .collect::<BTreeSet<_>>();
-                oracle_time += started.elapsed();
-                let started = std::time::Instant::now();
-                let actual = program.roots(tape);
-                lowered_time += started.elapsed();
-                clause_time += started.elapsed();
+            for (index, (tape, (expected, actual, oracle, lowering))) in tapes.iter().zip(runs).enumerate() {
+                oracle_time += oracle;
+                lowered_time += lowering;
+                clause_time += lowering;
                 matched_nodes += expected.len();
                 match actual {
                     Ok(actual) if actual == expected => {}
@@ -192,7 +206,7 @@ fn lowered_python_clauses_match_where_ws_matcher_does() {
         lowered - mismatched.len(),
         tapes.len(),
     );
-    slowest.sort_by(|left, right| right.0.cmp(&left.0));
+    slowest.sort_by_key(|right| std::cmp::Reverse(right.0));
     eprintln!("S1 time: W's matcher {oracle_time:?}, lowered {lowered_time:?}; slowest lowered: {:?}", &slowest[..slowest.len().min(5)]);
     for mismatch in &mismatched {
         eprintln!("  mismatch {mismatch}");
@@ -243,16 +257,10 @@ fn the_gate_catches_a_widened_walk() {
                 continue;
             }
             let Ok(program) = LoweredMatcher::lower(&tree) else { continue };
-            let differs = tapes.iter().any(|tape| {
-                let root = Root::doc(tape.clone());
-                let mut work = usize::MAX;
-                let expected = (0..tape.transducer_len() as u32)
-                    .filter(|&ordinal| {
-                        grammar.match_root(node_at(&root, ordinal), &mut work).ok().flatten().is_some()
-                    })
-                    .collect::<BTreeSet<_>>();
-                program.roots(tape).ok() != Some(expected)
-            });
+            let differs = {
+                use rayon::prelude::*;
+                tapes.par_iter().any(|tape| program.roots(tape).ok() != Some(ws_roots(grammar, tape)))
+            };
             caught += usize::from(differs);
             if caught >= 3 {
                 return;
@@ -549,6 +557,46 @@ fn micro_walks_are_the_interpreters_label_outputs() {
     assert!(compared > 100_000 && overflowed * 100 < compared);
 }
 
+/// A long walk spills its frames to other threads (decision 0125): with a budget of one step, nearly every walk
+/// gives frames away (a descendant range halved, a move frame whole), and the wave's roots on Metal are still the
+/// CPU's. A frame lost, walked twice where a tally counts, or given its walk's wrong start shows here.
+#[cfg(target_os = "macos")]
+#[test]
+fn spilled_walks_find_the_cpus_roots() {
+    use super::compile_matcher::Backend;
+    use metal_program_backend::label_passes::SPILL_BUDGET_TEST;
+    let mut tapes = fixtures();
+    tapes.truncate(24);
+    let mut lowered = Vec::new();
+    for (_, compiled) in &clauses() {
+        for (_, grammar) in python_matchers(compiled) {
+            if let Ok(tree) = match_tree(grammar)
+                && let Ok(matcher) = LoweredMatcher::lower(&tree)
+            {
+                lowered.push(matcher);
+            }
+        }
+    }
+    // Waves of a dozen clauses, as the engine's are (the whole set is over the launch bound).
+    let (mut found, mut differ, mut waves) = (0, Vec::new(), 0);
+    for (at, clauses) in lowered.chunks(12).enumerate() {
+        let wave = LoweredWave::new(&clauses.iter().collect::<Vec<_>>()).unwrap();
+        let active = vec![vec![true; tapes.len()]; clauses.len()];
+        let (cpu, _) = wave.roots_batch(Backend::Cpu, &tapes, &active).unwrap();
+        SPILL_BUDGET_TEST.set(Some(1));
+        let metal = wave.roots_batch(Backend::MetalInterpreter, &tapes, &active);
+        SPILL_BUDGET_TEST.set(None);
+        let Ok((metal, run)) = metal else { continue };
+        assert!(run.metal, "the wave ran on Metal");
+        waves += 1;
+        found += cpu.iter().flatten().map(BTreeSet::len).sum::<usize>();
+        differ.extend(cpu.iter().zip(&metal).enumerate().filter(|(_, (c, m))| c != m).map(|(c, _)| (at, c)));
+    }
+    eprintln!("spilled: {waves} waves of {} clauses, {found} roots", lowered.len());
+    assert!(waves * 2 > lowered.len() / 12 && found > 1000, "most waves ran on Metal and found roots ({waves} waves, {found} roots)");
+    assert!(differ.is_empty(), "{} clauses differ on Metal with every walk spilling: {differ:?}", differ.len());
+}
+
 /// The combined graph (list step 15): a sub-rule shared by clauses is one label of the wave, and
 /// each clause's roots from the wave's labels are its roots alone. Clauses are active on half the
 /// tapes each, so a label an earlier clause owns is computed where a later clause reads it.
@@ -587,3 +635,109 @@ fn the_combined_graph_shares_labels_and_keeps_each_clauses_roots() {
     }
     assert!(compared > 0);
 }
+
+/// Patterns of every binding shape: single, repeated, multi before, between and after singles,
+/// and none; and Ruff fixtures to run them on, at every node of each tape.
+const BINDING_PATTERNS: &[&str] = &[
+    "$F($$$A)", "$A = $A", "def $F($$$ARGS): $$$BODY", "$X.format($$$A)", "if $C: $$$B", "[$$$A, $B]",
+    "$A + $B", "f($A, $$$, $B)", "return $$$", "$A[$B]", "for $X in $Y: $$$Z", "print($$$A, $B, $$$C)",
+];
+const BINDING_FIXTURES: &[&str] = &[
+    "pyflakes/F601.py", "pyflakes/F632.py", "flake8_simplify/SIM905.py", "flake8_bugbear/B031.py",
+    "flake8_bugbear/B006_B008.py", "flake8_return/RET504.py",
+];
+fn binding_fixtures() -> Vec<(String, TapeDoc)> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
+    BINDING_FIXTURES
+        .iter()
+        .map(|path| {
+            let source = std::fs::read_to_string(root.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"));
+            ((*path).to_owned(), python_tape(&source))
+        })
+        .collect()
+}
+
+/// What `execute_ast_pattern` gives, at every node of the fixtures for every binding pattern, is
+/// pinned: a change to how bindings are kept must give every capture as before.
+#[test]
+fn ast_pattern_captures_are_pinned() {
+    use sha2::{Digest as _, Sha256};
+    let mut h = Sha256::new();
+    let mut matched = 0;
+    for source in BINDING_PATTERNS {
+        let program = Program::compile_ast_grep_pattern(&Pattern::try_new(source, GrammarDialect::Python).unwrap()).unwrap();
+        for (path, tape) in binding_fixtures() {
+            for node in 0..tape.transducer_len() as u32 {
+                let Some(captures) = program.execute_ast_pattern(&tape, node).unwrap() else { continue };
+                matched += 1;
+                h.update(format!("{source}|{path}|{node}:").as_bytes());
+                for c in captures {
+                    h.update(format!("{}/{}/{}/{};", c.label, c.occurrence, c.node, c.multi).as_bytes());
+                }
+            }
+        }
+    }
+    let got: String = h.finalize().iter().take(16).map(|b| format!("{b:02x}")).collect();
+    assert!(matched > 500, "{matched} matches");
+    assert_eq!(got, "2f1444d906c39b0c99a4e20b5b9a56cb", "the captures moved ({matched} matches)");
+}
+
+/// The verdict alone (`matches_ast_pattern`, into bindings reused from node to node) is
+/// `execute_ast_pattern`'s, and so is what each name binds: nothing, one node, or several.
+#[test]
+fn ast_pattern_verdicts_reuse_their_bindings() {
+    let mut scratch = AstBindings::default();
+    for source in BINDING_PATTERNS {
+        let program = Program::compile_ast_grep_pattern(&Pattern::try_new(source, GrammarDialect::Python).unwrap()).unwrap();
+        let names: Vec<String> = ["A", "B", "C", "F", "X", "Y", "Z", "ARGS", "BODY", "NONE"].map(String::from).into();
+        for (path, tape) in binding_fixtures() {
+            for node in 0..tape.transducer_len() as u32 {
+                let captures = program.execute_ast_pattern(&tape, node).unwrap();
+                let verdict = program.matches_ast_pattern(&tape, node, &mut scratch).unwrap();
+                assert_eq!(verdict, captures.is_some(), "{source} at {path}:{node}");
+                let Some(captures) = captures else { continue };
+                for name in &names {
+                    let want = match captures.iter().find(|c| c.label == *name) {
+                        None => Bound::Unbound,
+                        Some(c) if c.multi => Bound::Multi,
+                        Some(c) => Bound::Single(c.node),
+                    };
+                    let got = program.ast_slot(name).map_or(Bound::Unbound, |slot| scratch.bound(slot));
+                    assert_eq!(got, want, "{source} at {path}:{node}: ${name}");
+                }
+            }
+        }
+    }
+}
+
+/// The end of children meets a named candidate (RER-131): where the tokens the tape leaves out after
+/// the last matched child begin with the goal's, the rest trails, in the packed matcher as in
+/// ast-grep-core's. `case $V:` matches `case 1: f(); break;` (ast-grep 0.51.0 does); `f($A)` still
+/// refuses `f(a, b)`, whose gap after `a` is `,`.
+#[test]
+fn ast_pattern_end_of_children_meets_implied_tokens() {
+    use ast_grep_core::matcher::MatcherExt as _;
+    let source = Arc::new("switch (x) { case 1: f(); break; }\nf(a);\nf(a, b);\n".to_owned());
+    let grammar = Grammar::new(GrammarDialect::TypeScript).expect("TypeScript grammar");
+    let image = TapeImage::parse(&grammar, &source, &|| false).expect("parser completed").expect("tape image");
+    let tape = TapeDoc::restore(source, grammar, &image, &|| false).expect("restored tape");
+    let root = Root::doc(tape.clone());
+    for (pattern, want) in [
+        (Pattern::contextual("switch ($X) { case $V: }", "switch_case", GrammarDialect::TypeScript).unwrap(), ["case 1: f(); break;"]),
+        (Pattern::try_new("f($A)", GrammarDialect::TypeScript).unwrap(), ["f(a)"]),
+    ] {
+        let program = Program::compile_ast_grep_pattern(&pattern).unwrap();
+        let (mut packed, mut core) = (Vec::new(), Vec::new());
+        for node in root.root().dfs() {
+            if program.execute_ast_pattern(&tape, node.node_id() as u32).unwrap().is_some() {
+                packed.push(node.text().into_owned());
+            }
+            if pattern.match_node(node.clone()).is_some() {
+                core.push(node.text().into_owned());
+            }
+        }
+        assert_eq!(packed, want, "packed");
+        assert_eq!(core, want, "ast-grep-core");
+    }
+}
+

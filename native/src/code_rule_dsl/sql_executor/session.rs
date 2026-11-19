@@ -1,17 +1,22 @@
 //! Output ownership and transitive invalidation. Persistent user tables are never owned here.
 use super::*;
-mod statistics;
-mod planning;
-pub(super) use planning::normalize_views;
-pub(super) use statistics::Statistics;
+pub mod statistics;
+pub mod planning;
+pub use planning::normalize_views;
+pub use statistics::Statistics;
 
 #[derive(Clone)]
-pub(super) struct Execution {
+pub struct Execution {
     pub inputs: BTreeSet<String>,
     pub objects: Vec<(String, bool)>,
     pub emitted: Arc<plan::emit::Emitted>,
+    /// Physical arities at the compiler boundary, before executor-private walk lowering.
+    pub logical_relations: Arc<Vec<(String,usize)>>,
+    /// Logical component proofs are built once, before physical helper lowering.
+    pub loop_analyses: Arc<Vec<Value>>,
     /// The program as declared (pruned, before lowering), for the catalog.
     pub program: Arc<front::Program>,
+    pub planning_digest: Option<String>,
     /// Relations made by SQL producers, each with the session inputs its query reads. Tuple
     /// maintenance recomputes a producer's stratum when what it reads changes.
     pub producers: BTreeMap<String, Vec<String>>,
@@ -24,7 +29,7 @@ pub(super) struct Execution {
 }
 
 impl CodeRuleSqlExecutor {
-    pub(super) fn affected(&self, changed: &BTreeSet<String>) -> BTreeSet<usize> {
+    pub fn affected(&self, changed: &BTreeSet<String>) -> BTreeSet<usize> {
         let mut changed = changed.clone();
         let mut affected = BTreeSet::new();
         loop {
@@ -47,12 +52,12 @@ impl CodeRuleSqlExecutor {
         }
     }
 
-    pub(super) fn invalidate(&mut self, changed: &BTreeSet<String>) -> Result<()> {
+    pub fn invalidate(&mut self, changed: &BTreeSet<String>) -> Result<()> {
         let affected = self.affected(changed);
         self.remove_executions(&affected)
     }
 
-    pub(super) fn remove_executions(&mut self, affected: &BTreeSet<usize>) -> Result<()> {
+    pub fn remove_executions(&mut self, affected: &BTreeSet<usize>) -> Result<()> {
         if affected.is_empty() {
             return Ok(());
         }
@@ -60,6 +65,9 @@ impl CodeRuleSqlExecutor {
             .iter()
             .flat_map(|i| self.executions[*i].objects.iter().cloned())
             .collect();
+        self.db.admission().require_owner(|| {
+            self.control_drop_bound() + objects.iter().filter(|(n, _)| !self.versions.owns(n)).count()
+        }).map_err(error)?;
         for table in [false, true] {
             for (name, is_table) in objects.iter().filter(|(_, is_table)| *is_table == table) {
                 if self.versions.owns(name) {
@@ -87,7 +95,7 @@ impl CodeRuleSqlExecutor {
         self.refresh_catalog()
     }
 
-    pub(super) fn result_index(&self, relation: &str, columns: &[u32]) -> Result<()> {
+    pub fn result_index(&self, relation: &str, columns: &[u32]) -> Result<()> {
         if !self
             .generated
             .iter()
@@ -97,7 +105,7 @@ impl CodeRuleSqlExecutor {
         }
         index(&self.db, relation, columns).map_err(error)
     }
-    pub(super) fn output_objects(
+    pub fn output_objects(
         &self,
         emitted: &plan::emit::Emitted,
     ) -> Result<Vec<(String, bool)>> {
@@ -158,7 +166,11 @@ impl CodeRuleSqlExecutor {
         }
         Ok(objects)
     }
-    pub(super) fn clear_control(&self) -> Result<()> {
+    pub fn control_drop_bound(&self) -> usize {
+        // One view drop for native statistics, then one inventory and up to seven table drops.
+        usize::from(self.statistics.snapshot().is_some()) + if self.control_ready.get() { 8 } else { 0 }
+    }
+    pub fn clear_control(&self) -> Result<()> {
         self.statistics.clear(&self.db)?;
         self.stats_ready.set(false);
         if !self.control_ready.get() {
@@ -177,7 +189,7 @@ impl CodeRuleSqlExecutor {
     }
 }
 
-pub(super) fn index(
+pub fn index(
     db: &rusqlite::Connection,
     relation: &str,
     columns: &[u32],
@@ -220,7 +232,9 @@ impl Drop for CodeRuleSqlExecutor {
         let _scope = profiling::scope(&self.db, "reset");
         self.db.profile_checkpoint();
         let _ = self.db.remove_bindings();
-        let _ = crate::content_store::atoms::Atoms::for_connection(&self.db).flush(&self.db);
+        if let Ok(_admission)=self.db.admission().enter("cleanup") {
+            let _ = crate::content_store::atoms::Atoms::for_connection(&self.db).flush(&self.db);
+        }
         self.db.profile_checkpoint();
     }
 }

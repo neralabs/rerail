@@ -92,7 +92,7 @@ impl TempDir {
             std::process::id()
         ));
         std::fs::create_dir_all(&path).unwrap();
-        Self(path.canonicalize().unwrap())
+        Self(dunce::canonicalize(path).unwrap())
     }
 
     fn store(&self) -> PathBuf {
@@ -239,7 +239,7 @@ fn stored_workspace(
             root_tree,
             1,
             HashKey::sha256(b"rerail-grammars-v1"),
-            i64::from(tape::TAPE_FORMAT_VERSION),
+            i64::from(tape::formats::stored_version()),
         )
         .unwrap();
     let owner = format!("context-test:{root}:{}", std::process::id());
@@ -383,8 +383,11 @@ fn hosts_repository_ingestion_and_file_sets_share_one_package_derivation() {
     let repository = git_workspace::discover(&root).unwrap();
     let mut manifests = crate::code_rule_dsl::package_manifest::Manifests::new(root.clone());
     let mut indexed = |path: &str, language: &str| {
-        repository_package(&mut manifests, &repository, path, language)
-            .map(|manifest| manifest.to_wire())
+        repository_package(&mut manifests, &repository, path, language).map(|manifest| {
+            crate::code_rule_dsl::package_manifest::of_file(&manifest)
+                .expect("an ECMA manifest")
+                .to_wire()
+        })
     };
     // A workspace or snapshot holding the same texts (the symlink is not one of its entries).
     let entries = files
@@ -404,7 +407,11 @@ fn hosts_repository_ingestion_and_file_sets_share_one_package_derivation() {
         crate::code_rule_dsl::package_manifest::manifest_in(path, |directory| {
             entries.get(directory)
         })
-        .map(|manifest| manifest.to_wire())
+        .map(|manifest| {
+            crate::code_rule_dsl::package_manifest::of_file(&manifest)
+                .expect("an ECMA manifest")
+                .to_wire()
+        })
     };
     // The nearest manifest decides. `bin` targets resolve against its folder (an absolute one or
     // one outside it never names a file below it); an unparsable `engines.node` falls through to
@@ -3805,7 +3812,7 @@ fn stateless_regex_clauses_report_snapshot_matches() {
 }
 
 /// Tapes the maintenance indexer can never decode (a previous tape format left behind by a
-/// `TAPE_FORMAT_VERSION` bump with unchanged grammars, or a current-format image this build
+/// format version change (`formats::stored_version`) with unchanged grammars, or a current-format image this build
 /// rejects) fill whole 64-tape backlog batches ahead of a valid tape. They must neither pin the
 /// keyset cursor nor stay in the backlog: the valid tape stored after them is indexed, and an
 /// undecodable tape is never narrowed.
@@ -3813,7 +3820,7 @@ fn stateless_regex_clauses_report_snapshot_matches() {
 fn undecodable_tapes_leave_the_search_index_backlog_without_pinning_its_cursor() {
     use super::persisted::grammar_version;
     use super::storage::index_stored_tapes;
-    use crate::code_rule_dsl::transducer::{POSITIONAL_INDEX_VERSION, kind_index_token};
+    use crate::code_rule_dsl::search_index::{POSITIONAL_INDEX_VERSION, kind_index_token};
     use crate::content_store::{SearchKindLookup, StoredKindPresence};
     use std::sync::atomic::AtomicBool;
     let _slot = WORKSPACE_TEST_SLOT.lock();
@@ -3821,8 +3828,8 @@ fn undecodable_tapes_leave_the_search_index_backlog_without_pinning_its_cursor()
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let mut undecodable = Vec::new();
     for (format, prefix) in [
-        (tape::TAPE_FORMAT_VERSION - 1, "previous"),
-        (tape::TAPE_FORMAT_VERSION, "corrupt"),
+        (tape::formats::stored_version() - 1, "previous"),
+        (tape::formats::stored_version(), "corrupt"),
     ] {
         for index in 0..64 {
             let source = store
@@ -3862,7 +3869,7 @@ fn undecodable_tapes_leave_the_search_index_backlog_without_pinning_its_cursor()
         store
             .tapes_without_search_index_after(
                 grammar_version(),
-                i64::from(tape::TAPE_FORMAT_VERSION),
+                i64::from(tape::formats::stored_version()),
                 None,
                 10_000,
             )
@@ -3882,7 +3889,9 @@ fn undecodable_tapes_leave_the_search_index_backlog_without_pinning_its_cursor()
     let lookup = |tape_id| SearchKindLookup {
         tape_id,
         index_version: POSITIONAL_INDEX_VERSION,
-        kind_tokens: vec![kind_index_token(crate::code_rule_dsl::language::GrammarDialect::Python, call).unwrap()],
+        kind_tokens: vec![
+            kind_index_token(crate::code_rule_dsl::language::GrammarDialect::Python, call).unwrap(),
+        ],
     };
     assert_eq!(
         store
@@ -4407,11 +4416,16 @@ fn a_request_that_fails_partway_leaves_the_package_context_unchanged() {
     assert_eq!(reported(), ["app/a.ts", "app/page.tsx"]);
     let context = || {
         let state = workspace.state.lock().unwrap();
+        let project = state
+            .project
+            .as_any()
+            .downcast_ref::<super::ingest::ecma::EcmaProject>()
+            .expect("ECMAScript's project context");
         (
-            state.graph_entries.keys().cloned().collect::<Vec<_>>(),
-            state.server_graph_directories.clone(),
-            state.module_configs.clone(),
-            state
+            project.graph_entries.keys().cloned().collect::<Vec<_>>(),
+            project.server_graph_directories.clone(),
+            project.module_configs.clone(),
+            project
                 .manifests
                 .iter()
                 .map(|(directory, manifest)| (directory.clone(), *manifest.digest()))

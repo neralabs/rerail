@@ -6,7 +6,7 @@ use crate::code_rule_dsl::logic::analysis::{
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(super) struct Bag {
+pub struct Bag {
     columns: Vec<usize>,
     tests: Vec<(usize, usize)>,
     pub value: Option<usize>,
@@ -283,7 +283,7 @@ pub(super) fn plan(steps: &mut [Step]) -> bags::Analysis {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn string_join_observes_deferred_sum_lookup_keys() {
@@ -424,8 +424,8 @@ mod tests {
     }
 
     fn connection() -> Connection {
-        let path = crate::code_rule_dsl::prefilter::tests::temp();
-        drop(crate::code_rule_dsl::prefilter::tests::open(&path));
+        let path = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&path).unwrap());
         Connection::open(path).unwrap()
     }
     fn hex(s: &str) -> String {
@@ -590,7 +590,7 @@ mod tests {
         assert!(
             fresh[0]
                 .data
-                .chunks_exact(5)
+                .as_chunks::<5>().0.iter()
                 .all(|row| row[1..] == [3, 17, 3, 7])
         );
         let Step::Scalar {

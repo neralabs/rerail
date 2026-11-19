@@ -1,7 +1,7 @@
 //! Resident memory accounting: retained-residency profiling and the memory profile estimate.
 
 // P's census, as placed with Phase 9 row 2 (`residency::admission::census`).
-pub(super) use crate::code_rule_dsl::residency::admission::census;
+pub use crate::code_rule_dsl::residency::admission::census;
 
 use super::global::Partition;
 use super::results::ResultPageIndex;

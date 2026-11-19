@@ -3,8 +3,8 @@ use rusqlite::Connection;
 
 /// A connection to a new content store, whose `atoms` table holds the symbols.
 fn connection() -> Connection {
-    let path = crate::code_rule_dsl::prefilter::tests::temp();
-    drop(crate::code_rule_dsl::prefilter::tests::open(&path));
+    let path = crate::code_rule_dsl::fixtures::temp();
+    drop(crate::code_rule_dsl::fixtures::open(&path));
     let db = Connection::open(path).unwrap();
     register(&db).unwrap();
     db
@@ -40,7 +40,7 @@ fn computed_sql_inputs_do_not_reenter_a_held_symbol_lock() {
 #[test]
 fn a_store_created_again_at_its_path_gives_a_run_its_symbols() {
     use crate::content_store::ContentStore;
-    let (path, elsewhere) = (crate::code_rule_dsl::prefilter::tests::temp(), crate::code_rule_dsl::prefilter::tests::temp());
+    let (path, elsewhere) = (crate::code_rule_dsl::fixtures::temp(), crate::code_rule_dsl::fixtures::temp());
     // A run interns its symbols (catching up with the store's atoms), then reads them.
     let run = |sql: &[&str]| -> Vec<String> {
         let store = ContentStore::open(&path).unwrap();
@@ -68,7 +68,7 @@ fn a_store_created_again_at_its_path_gives_a_run_its_symbols() {
 #[test]
 fn a_fresh_arena_reads_the_stores_atoms() {
     use crate::content_store::ContentStore;
-    let (path, elsewhere) = (crate::code_rule_dsl::prefilter::tests::temp(), crate::code_rule_dsl::prefilter::tests::temp());
+    let (path, elsewhere) = (crate::code_rule_dsl::fixtures::temp(), crate::code_rule_dsl::fixtures::temp());
     {
         let other = ContentStore::open(&elsewhere).unwrap();
         assert_eq!(other.intern_atoms(&["a", "b"]).unwrap(), [1, 2]);
@@ -139,6 +139,37 @@ fn set_fixpoint_closes_a_linear_rule_over_its_edges() {
     let mut expected = vec![(1, 2), (1, 3), (1, 4)];
     expected.extend([2, 3, 4].iter().flat_map(|&a| [(a, 2), (a, 3), (a, 4)]));
     assert_eq!(closure, expected);
+}
+
+/// A later wave can make the first substantial delta after the seed-statistics checkpoint. A bounded run
+/// must return those statistics before its multi-relation consumer runs with an empty-input estimate.
+#[test]
+fn set_fixpoint_yields_before_late_join_demands_outgrow_the_planning_statistics() {
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    for bounded in [true, false] {
+        let db = connection();
+        db.execute_batch("CREATE TABLE initial(c0); INSERT INTO initial VALUES (1),(2),(3);\n\
+            CREATE TABLE later(c0); CREATE TABLE result(c0);\n\
+            CREATE TABLE allowed(c0); INSERT INTO allowed VALUES (1),(3);").unwrap();
+        let join = format!("pos d1 v0\npos t:b:{}:{}:i v0\nhead v0",hex("allowed"),hex("c0"));
+        let spec = format!("name late\nrel initial i\nrel later i empty\nrel result i empty\n\
+            rule 1 0 - - key ; ecols ; pat v0 ; head v0\njoin 2 1 {}",hex(&join));
+        super::setfix::open(&db,&spec).unwrap();
+        let report = super::setfix::run(&db,"late",if bounded {8} else {0}).unwrap();
+        if bounded {
+            assert_eq!(report.split_whitespace().last(),Some("0"),"return for planning, not the fixpoint: {report}");
+            let stats=super::setfix::stats(&db,"late").unwrap();
+            assert_eq!(stats.lines().nth(1).unwrap().split_whitespace().next(),Some("3"));
+            assert_eq!(stats.lines().nth(2).unwrap().split_whitespace().next(),Some("0"),"the consumer must not run before its demand's statistics are available");
+            let report=super::setfix::run(&db,"late",0).unwrap();
+            assert_eq!(report.split_whitespace().last(),Some("1"));
+        } else {
+            assert_eq!(report.split_whitespace().last(),Some("1"),"unbounded callers need no planning checkpoints");
+        }
+        super::setfix::close(&db,"late").unwrap();
+        let got:Vec<i64>=db.prepare("SELECT c0 FROM result ORDER BY c0").unwrap().query_map([],|r|r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        assert_eq!(got,[1,3],"pausing must preserve the delta and final rows");
+    }
 }
 
 /// A chain that keeps rising (a counter around a cycle) needs `widen`; with it, the cycle's nodes widen to the
@@ -352,6 +383,106 @@ fn a_walk_along_an_edge_runs_as_its_closure() {
     }
 }
 
+/// The closure form over a reach graph of many components (decision 0098 §1): chains, small cyclic components packed
+/// into pieces of bit rows (several launches), and a component past the bit rows' limit walked on the host. Its rows
+/// are semi-naive's and search's. Run inside a device wave, its run waits for the wave (`3`), and the run after the
+/// flush finishes it with the same rows.
+#[test]
+fn a_closure_over_many_components_runs_in_pieces_like_semi_naive() {
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let mut edges: Vec<(i64, i64)> = Vec::new();
+    let mut seeds: Vec<(i64, i64)> = Vec::new();
+    // 300 small components of 7 nodes: a third chains, the rest with a fork and a cycle back to their first node.
+    for c in 0..300i64 {
+        let b = 1_000 + c * 10;
+        for i in 0..6 {
+            edges.push((b + i, b + i + 1));
+        }
+        if c % 3 != 0 {
+            edges.push((b, b + 2));
+            edges.push((b + 3, b + 5));
+            edges.push((b + 6, b));
+        }
+        seeds.push((b, c));
+        seeds.push((b + 4, c + 1_000));
+    }
+    // One component past 16,384 nodes: a binary tree of 17,000 nodes with its last node leading back to the root.
+    let (root, big) = (100_000i64, 17_000i64);
+    assert!(big as usize > super::setfix::closure::MAX_DENSE);
+    for i in 0..big {
+        for k in [2 * i + 1, 2 * i + 2] {
+            if k < big {
+                edges.push((root + i, root + k));
+            }
+        }
+    }
+    edges.push((root + big - 1, root));
+    seeds.extend([(root, 7), (root + 5, 8), (root + big - 1, 9)]);
+    let rows = |semi_naive: bool, wave: bool| -> Vec<(i64, i64)> {
+        let db = connection();
+        db.execute_batch("CREATE TABLE s(c0, c1); CREATE TABLE e(c0, c1); CREATE TABLE r(c0, c1);").unwrap();
+        for (a, b) in &seeds {
+            db.execute("INSERT INTO s VALUES (?1, ?2)", [a, b]).unwrap();
+        }
+        for (a, b) in &edges {
+            db.execute("INSERT INTO e VALUES (?1, ?2)", [a, b]).unwrap();
+        }
+        let src = |t: &str| format!("t:b:{}:{}:ii", hex(t), hex("c0, c1"));
+        let seed = format!("pos {} v0 v1\nhead v0 v1", src("s"));
+        let walk = format!("pos d0 v0 v1\npos {} v0 v2\nhead v2 v1", src("e"));
+        super::setfix::closure::semi_naive_here(semi_naive);
+        super::setfix::open(&db, &format!("name pieces\nrel r ii empty\nseed 0 {}\njoin 0 0 {}", hex(&seed), hex(&walk))).unwrap();
+        super::setfix::closure::semi_naive_here(false);
+        let before = crate::code_rule_dsl::logic::lanes::wave::flushed();
+        let report = if wave {
+            let first = {
+                let _w = crate::code_rule_dsl::logic::lanes::wave::suspendable();
+                super::setfix::run(&db, "pieces", 0).unwrap()
+            };
+            assert!(first.ends_with(" 3"), "inside a wave the run waits for it: {first}");
+            let launches = crate::code_rule_dsl::logic::lanes::wave::flush(1).unwrap();
+            assert!(launches >= 2, "the small components are packed into several pieces: {launches}");
+            let after = crate::code_rule_dsl::logic::lanes::wave::flushed();
+            assert_eq!((after.0 - before.0, after.1 - before.1), (1, launches as u64), "one wave of every piece");
+            super::setfix::run(&db, "pieces", 0).unwrap()
+        } else {
+            super::setfix::run(&db, "pieces", 0).unwrap()
+        };
+        assert!(report.ends_with(" 1"), "{report}");
+        let mut got = pairs(&db, "SELECT c0, c1 FROM r");
+        super::setfix::close(&db, "pieces").unwrap();
+        got.sort();
+        got
+    };
+    // Reachability by search: each seed's node, and every node a path of one or more edges leads to.
+    let mut out: std::collections::HashMap<i64, Vec<i64>> = std::collections::HashMap::new();
+    for &(a, b) in &edges {
+        out.entry(a).or_default().push(b);
+    }
+    let mut want = Vec::new();
+    for &(n, t) in &seeds {
+        let mut seen = std::collections::HashSet::from([n]);
+        let mut todo = vec![n];
+        while let Some(v) = todo.pop() {
+            for &w in out.get(&v).into_iter().flatten() {
+                if seen.insert(w) {
+                    todo.push(w);
+                }
+            }
+        }
+        want.extend(seen.into_iter().map(|v| (v, t)));
+    }
+    want.sort();
+    let semi = rows(true, false);
+    assert_eq!(semi.len(), want.len(), "semi-naive is reachability");
+    assert!(semi == want, "semi-naive is reachability");
+    let closure = rows(false, false);
+    assert_eq!(closure.len(), semi.len());
+    assert!(closure == semi, "the closure in pieces gives semi-naive's rows");
+    let waved = rows(false, true);
+    assert!(waved == semi, "the closure after its wave gives semi-naive's rows");
+}
+
 /// A count step that many bindings reach is answered from a count table (decision 0098 §1), exactly as walking counts:
 /// per row of the join's first scan when the key comes from it, else from the relation's histogram by its key.
 #[test]
@@ -369,6 +500,9 @@ fn a_count_many_bindings_reach_reads_its_count_table() {
     .unwrap();
     let src = |t: &str, cols: &str, types: &str| format!("t:b:{}:{}:{types}", hex(t), hex(cols));
     let (l, b, k) = (src("l", "c0, c1", "ii"), src("b", "c0, c1, c2", "iii"), src("k", "c0", "i"));
+    // Integration's per-key memo makes a repeated key's walk free, so here the walks never cost a table's build: the
+    // tables are built at the first probe, to check that what they count is what walking counts.
+    super::setfix::count_tables_at_once(true);
     let before = super::setfix::tables_built();
     // The key from the first step, a scan: counts per row.
     let per_row = format!("pos {l} v0 v1\ncount {b} v0 v1 _ v2\nhead v0 v1 v2");
@@ -388,4 +522,90 @@ fn a_count_many_bindings_reach_reads_its_count_table() {
     let after = super::setfix::tables_built();
     assert!(after.1 > before.1, "counts per row were built");
     assert!(after.0 > before.0, "a histogram was built");
+    super::setfix::count_tables_at_once(false);
+}
+
+/// A triangle (`pfn`'s shape: `p(c, o, m)`, `d(o, k)`, `f(k, m)`), in the order that rejects late: `p` by `$o` binds
+/// `$c`, read by the head alone, and `$m`, which `f` tests. Once `f` fails for an `($o, $m)`, `p`'s other rows with it are
+/// passed over (`setfix::factored`): `f` is entered once per failing group and once per row that joins, not once per
+/// row of `p`, and the rows are those SQL gives. The steps' counts are still the join's rows, as with no factoring.
+#[test]
+fn a_late_test_rejects_once_per_group_of_what_it_reads() {
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let db = connection();
+    db.execute_batch(
+        "CREATE TABLE d(c0, c1); CREATE TABLE p(c0, c1, c2); CREATE TABLE f(c0, c1); CREATE TABLE r(c0, c1);
+         WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 9) INSERT INTO d SELECT i, i FROM n;
+         WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 9999) INSERT INTO p SELECT i, i % 10, (i / 10) % 5 FROM n;
+         INSERT INTO f VALUES (0, 4), (2, 4), (4, 4), (6, 4), (8, 4), (1, 9);",
+    )
+    .unwrap();
+    let src = |t: &str, cols: &str, types: &str| format!("t:b:{}:{}:{types}", hex(t), hex(cols));
+    let (d, p, f) = (src("d", "c0, c1", "ii"), src("p", "c0, c1, c2", "iii"), src("f", "c0, c1", "ii"));
+    let join = format!("pos {d} v0 v1\npos {p} v2 v0 v3\npos {f} v1 v3\nhead v2 v0");
+    super::setfix::open(&db, &format!("name tri\nrel r ii empty\nseed 0 {}", hex(&join))).unwrap();
+    let report = super::setfix::run(&db, "tri", 0).unwrap();
+    assert!(report.ends_with(" 1"), "{report}");
+    let steps = super::setfix::steps(&db, "tri").unwrap();
+    let passed_over = super::setfix::passed_over(&db, "tri").unwrap();
+    super::setfix::close(&db, "tri").unwrap();
+    let rows = |sql: &str| db.prepare(sql).unwrap().query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).unwrap().map(Result::unwrap).collect::<Vec<_>>();
+    let got = rows("SELECT c0, c1 FROM r ORDER BY 1, 2");
+    let want = rows("SELECT DISTINCT p.c0, p.c1 FROM d JOIN p ON p.c1 = d.c0 JOIN f ON f.c0 = d.c1 AND f.c1 = p.c2 ORDER BY 1, 2");
+    assert_eq!(want.len(), 1000);
+    assert!(got == want, "the rows SQL gives: {} against {}", got.len(), want.len());
+    // `f` is entered by the 1,000 rows that join and once by each of the 45 failing (o, m) groups, of 10,000 rows:
+    // the other 8,955 are passed over. The counts are the join's: 10,000 rows into `f`, as the device counts them.
+    let into_f: u64 = steps.lines().next().unwrap().split(',').nth(2).unwrap().split(':').next().unwrap().parse().unwrap();
+    assert_eq!(into_f, 10_000, "{steps}");
+    assert_eq!(passed_over, [8_955], "{steps}");
+}
+
+/// `shortlex_min` keeps the shorter symbol, then the lesser by bytes; `TOP` and an atom the run does not hold absorb.
+#[test]
+fn shortlex_min_orders_symbols_by_length_then_bytes() {
+    use super::Lattice;
+    let dir = std::env::temp_dir().join(format!("rerail-shortlex-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let _ = std::fs::remove_file(dir.join("atoms.sqlite"));
+    // A store's atoms (RER-131: an arena belongs to a store of one identity).
+    let store = crate::content_store::ContentStore::open(&dir.join("atoms.sqlite")).unwrap();
+    let atoms = store.atoms_handle();
+    let s = atoms.intern_all(&["b.c", "zz", "ab", "é"]).unwrap();
+    let (bc, zz, ab, e) = (i64::from(s[0]), i64::from(s[1]), i64::from(s[2]), i64::from(s[3]));
+    let l = super::ShortlexMin(atoms);
+    assert_eq!(l.lub(bc, zz), zz, "shorter first");
+    assert_eq!(l.lub(zz, ab), ab, "then by bytes");
+    assert_eq!(l.lub(ab, zz), ab, "either order");
+    assert_eq!(l.lub(e, ab), e, "length in characters: é is one");
+    assert_eq!(l.lub(ab, TOP), TOP);
+    assert_eq!(l.lub(ab, i64::from(u32::MAX)), TOP, "an atom not held");
+    assert!(l.finite());
+    // The store closes (and flushes its atoms) before its folder goes.
+    drop(l);
+    drop(store);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A split (`t = @cat(m, x)` with `t` bound) whose parts are only looked up: each text is cut at every "." with a
+/// part before it, and at its start (`"" . t`). A part that is no atom ends that cut, read under the same read of the
+/// arena as the whole (decision 0279 §6). Only the cuts whose two parts are a row of `p` make one.
+#[test]
+fn a_split_looks_its_parts_up_and_skips_those_that_are_no_atom() {
+    let db = connection();
+    super::register_symbols(&db).unwrap();
+    db.execute_batch("CREATE TABLE w(c0); INSERT INTO w VALUES ('a.b.c'), ('x.y'), ('u.v'), ('q'), ('.z');
+        CREATE TABLE p(c0, c1); INSERT INTO p VALUES ('a', 'b.c'), ('a.b', 'c'), ('x', 'y'), ('', 'q'), ('a', 'zz');
+        CREATE TEMP TABLE result(c0, c1);").unwrap();
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let (w, p) = (format!("t:b:{}:{}:s", hex("w"), hex("c0")), format!("t:b:{}:{}:ss", hex("p"), hex("c0, c1")));
+    let seed = format!("pos {w} v0\ncat v0 v1 v2\npos {p} v1 v2\nhead v1 v2");
+    super::setfix::open(&db, &format!("name split\nrel result ss empty\nseed 0 {}", hex(&seed))).unwrap();
+    super::setfix::run(&db, "split", 0).unwrap();
+    let text = |c: &str| format!("CASE typeof({c}) WHEN 'integer' THEN sym_text({c}) ELSE {c} END");
+    let rows: Vec<(String, String)> = db.prepare(&format!("SELECT {}, {} FROM result ORDER BY 1, 2", text("c0"), text("c1"))).unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+    super::setfix::close(&db, "split").unwrap();
+    let want: Vec<(String, String)> = [("", "q"), ("a", "b.c"), ("a.b", "c"), ("x", "y")].iter().map(|&(a, b)| (a.to_owned(), b.to_owned())).collect();
+    assert_eq!(rows, want);
 }

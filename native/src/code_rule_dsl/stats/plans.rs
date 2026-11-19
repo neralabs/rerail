@@ -29,17 +29,17 @@ use std::sync::Arc;
 
 /// The version of the decisions and programs `compiled_plans` holds; a plan compiled by another is
 /// not read.
-pub(in crate::code_rule_dsl) const COMPILER_VERSION: i64 = 2;
+pub const COMPILER_VERSION: i64 = 2;
 /// Bytes of compiled programs kept in memory.
 const MEMORY: usize = 16 * 1024 * 1024;
 /// Weight of the newest observation in `plan_feedback`.
 const FEEDBACK_WEIGHT: f64 = 0.25;
 
 /// The bytes of a plan's `identity::CompiledPlanId`.
-pub(in crate::code_rule_dsl) type PlanId = [u8; 32];
+pub type PlanId = [u8; 32];
 
 /// The interval of values over which a decision that read `value` stays valid: its log2 bucket.
-pub(in crate::code_rule_dsl) fn interval(value: u64) -> (u64, u64) {
+pub fn interval(value: u64) -> (u64, u64) {
     if value == 0 {
         return (0, 0);
     }
@@ -50,7 +50,7 @@ pub(in crate::code_rule_dsl) fn interval(value: u64) -> (u64, u64) {
 /// A compiled plan: its decisions (with the statistic values they read, for `explain`) and the
 /// program they produced.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct Compiled {
+pub struct Compiled {
     pub decisions: String,
     pub program: Vec<u8>,
 }
@@ -72,7 +72,7 @@ fn holds(bounds: &[(String, u64, u64)], current: &BTreeMap<String, u64>) -> bool
 }
 
 /// Compiled plans, in memory and in the store.
-pub(in crate::code_rule_dsl) struct Plans {
+pub struct Plans {
     memory: Cache<Key, Held>,
 }
 
@@ -85,7 +85,7 @@ impl Default for Plans {
 impl Plans {
     /// The plans among `plans` whose stored decisions still hold for `current` (statistic →
     /// value, as read now), with their programs. One statement reads every stored interval.
-    pub(in crate::code_rule_dsl) fn valid(
+    pub fn valid(
         &mut self,
         db: &Connection,
         plans: &[PlanId],
@@ -138,7 +138,7 @@ impl Plans {
 
     /// Records `plan`, compiled from statistics `read` (statistic → value), replacing any earlier
     /// compilation.
-    pub(in crate::code_rule_dsl) fn put(
+    pub fn put(
         &mut self,
         db: &Connection,
         plan: PlanId,
@@ -170,14 +170,14 @@ fn hex(plan: &PlanId) -> String {
 
 /// A plan's observed behaviour on one backend.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(in crate::code_rule_dsl) struct Feedback {
+pub struct Feedback {
     pub selectivity: f64,
     pub ns_per_root: f64,
     pub samples: i64,
 }
 
 /// Folds one run of `plan` on `backend` into its feedback.
-pub(in crate::code_rule_dsl) fn observe(db: &Connection, plan: PlanId, backend: &str, selectivity: f64, ns_per_root: f64) -> Result<()> {
+pub fn observe(db: &Connection, plan: PlanId, backend: &str, selectivity: f64, ns_per_root: f64) -> Result<()> {
     db.execute(
         "INSERT INTO plan_feedback(plan, backend, selectivity, ns_per_root, samples, updated_at) \
          VALUES (?1, ?2, ?3, ?4, 1, unixepoch()) \
@@ -190,7 +190,7 @@ pub(in crate::code_rule_dsl) fn observe(db: &Connection, plan: PlanId, backend: 
     Ok(())
 }
 
-pub(in crate::code_rule_dsl) fn feedback(db: &Connection, plan: PlanId, backend: &str) -> Result<Option<Feedback>> {
+pub fn feedback(db: &Connection, plan: PlanId, backend: &str) -> Result<Option<Feedback>> {
     db.prepare_cached("SELECT selectivity, ns_per_root, samples FROM plan_feedback WHERE plan = ?1 AND backend = ?2")?
         .query_row(params![plan, backend], |row| {
             Ok(Feedback { selectivity: row.get(0)?, ns_per_root: row.get(1)?, samples: row.get(2)? })
@@ -201,7 +201,7 @@ pub(in crate::code_rule_dsl) fn feedback(db: &Connection, plan: PlanId, backend:
 /// Writes `sqlite_stat1` rows for `indexes` ((table, index, columns)) from `fact_stats`, and makes
 /// the planner read them. An index's k-th number is the rows an equality on its first k columns
 /// selects: the smallest postings-weighted fanout (`sq / rows`) among them, at least 1.
-pub(in crate::code_rule_dsl) fn write_stat1(db: &Connection, indexes: &[(&str, &str, &[&str])]) -> Result<()> {
+pub fn write_stat1(db: &Connection, indexes: &[(&str, &str, &[&str])]) -> Result<()> {
     db.execute_batch("ANALYZE sqlite_schema")?;
     let mut column = db.prepare_cached("SELECT rows, sq FROM fact_stats WHERE tbl = ?1 AND col = ?2")?;
     for (table, index, columns) in indexes {
@@ -227,5 +227,4 @@ pub(in crate::code_rule_dsl) fn write_stat1(db: &Connection, indexes: &[(&str, &
     db.execute_batch("ANALYZE sqlite_schema")
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

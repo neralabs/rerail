@@ -3,14 +3,14 @@ use ast_grep_core::{Doc, Node};
 use std::ops::Range;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) struct NodeRef {
+pub struct NodeRef {
     pub doc: u32,
     pub node_id: usize,
     pub start: usize,
     pub end: usize,
 }
 impl NodeRef {
-    pub(crate) fn of<D: Doc>(doc: u32, node: &Node<'_, D>) -> Self {
+    pub fn of<D: Doc>(doc: u32, node: &Node<'_, D>) -> Self {
         let range = node.range();
         Self {
             doc,
@@ -21,7 +21,7 @@ impl NodeRef {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ContextKind {
+pub enum ContextKind {
     Module,
     SyncFunction,
     AsyncFunction,
@@ -29,14 +29,14 @@ pub(crate) enum ContextKind {
     Lambda,
 }
 #[derive(Debug)]
-pub(crate) struct ExecutionContext {
+pub struct ExecutionContext {
     pub kind: ContextKind,
     pub parent: Option<u32>,
     pub owner: Option<NodeRef>,
     pub body: NodeRef,
 }
 #[derive(Debug)]
-pub(crate) struct CallSite {
+pub struct CallSite {
     pub call: NodeRef,
     /// The original function field, including all parentheses.
     pub callee: NodeRef,
@@ -49,13 +49,13 @@ pub(crate) struct CallSite {
     pub arguments: Range<usize>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Spread {
+pub enum Spread {
     None,
     Positional,
     Keywords,
 }
 #[derive(Debug)]
-pub(crate) struct Argument {
+pub struct Argument {
     pub call: usize,
     pub node: NodeRef,
     pub value: NodeRef,
@@ -69,19 +69,19 @@ pub(crate) struct Argument {
     pub after_positional_spread: bool,
 }
 #[derive(Debug)]
-pub(crate) struct Attribute {
+pub struct Attribute {
     pub node: NodeRef,
     pub object: NodeRef,
     pub name_node: NodeRef,
     pub name: String,
 }
 #[derive(Debug)]
-pub(crate) struct Parenthesis {
+pub struct Parenthesis {
     pub node: NodeRef,
     pub child: NodeRef,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SequenceKind {
+pub enum SequenceKind {
     Tuple,
     List,
     Set,
@@ -89,25 +89,25 @@ pub(crate) enum SequenceKind {
     Expressions,
 }
 #[derive(Debug)]
-pub(crate) struct Sequence {
+pub struct Sequence {
     pub node: NodeRef,
     pub kind: SequenceKind,
     pub children: Range<usize>,
 }
 #[derive(Debug)]
-pub(crate) struct SequenceChild {
+pub struct SequenceChild {
     pub node: NodeRef,
     pub named_index: usize,
     pub spread: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum AssignmentKind {
+pub enum AssignmentKind {
     Assignment,
     Augmented,
     NamedExpression,
 }
 #[derive(Debug)]
-pub(crate) struct Assignment {
+pub struct Assignment {
     pub node: NodeRef,
     pub left: NodeRef,
     pub right: Option<NodeRef>,
@@ -116,7 +116,7 @@ pub(crate) struct Assignment {
     pub context: u32,
 }
 #[derive(Debug)]
-pub(crate) struct WithItem {
+pub struct WithItem {
     pub node: NodeRef,
     pub value: NodeRef,
     pub as_pattern: Option<NodeRef>,
@@ -125,7 +125,7 @@ pub(crate) struct WithItem {
     pub context: u32,
 }
 #[derive(Default, Debug)]
-pub(crate) struct Counters {
+pub struct Counters {
     pub documents: usize,
     /// All syntax nodes, including punctuation and comments, each visited once.
     pub visited_nodes: usize,
@@ -135,7 +135,7 @@ pub(crate) struct Counters {
     pub peak_pending_nodes: usize,
 }
 #[derive(Default, Debug)]
-pub(crate) struct PythonStructure {
+pub struct PythonStructure {
     pub contexts: Vec<ExecutionContext>,
     pub calls: Vec<CallSite>,
     pub arguments: Vec<Argument>,
@@ -171,7 +171,7 @@ fn named<D: Doc>(node: &Node<'_, D>) -> bool {
 
 /// Collects owned byte-range facts; no Node or document reference escapes this call.
 /// Document IDs must be unique within the batch.
-pub(crate) fn collect<'t, D: Doc>(documents: Vec<(u32, Node<'t, D>)>) -> PythonStructure {
+pub fn collect<'t, D: Doc>(documents: Vec<(u32, Node<'t, D>)>) -> PythonStructure {
     collect_with(documents, |_, _| {})
 }
 
@@ -446,7 +446,7 @@ pub(crate) fn collect_with<'t, D: Doc>(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_core::AstGrep;
@@ -592,7 +592,12 @@ mod tests {
             .iter()
             .find(|sequence| sequence.kind == SequenceKind::List)
             .unwrap();
+        assert_eq!(text(source, sequence.node), "[one(), # ignored\n *xs, three()]");
         let rows = &facts.sequence_children[sequence.children.clone()];
+        assert_eq!(
+            rows.iter().map(|row| text(source, row.node)).collect::<Vec<_>>(),
+            vec!["one()", "*xs", "three()"]
+        );
         assert_eq!(
             rows.iter().map(|row| row.named_index).collect::<Vec<_>>(),
             vec![0, 1, 2]
@@ -608,6 +613,8 @@ mod tests {
             .unwrap();
         assert_eq!(text(source, annotated.right.unwrap()), "init()");
         assert_eq!(text(source, annotated.annotation.unwrap()), "T");
+        assert_eq!(text(source, annotated.node), "x: T = init()");
+        assert_eq!(facts.contexts[annotated.context as usize].kind, ContextKind::Module);
         let bare = facts
             .assignments
             .iter()
@@ -617,7 +624,16 @@ mod tests {
         assert!(facts.assignments.iter().any(|assignment| assignment.kind
             == AssignmentKind::NamedExpression
             && text(source, assignment.left) == "z"));
+        // The walrus's parentheses: the node itself, and the one named child they hold.
+        let parenthesis = facts
+            .parentheses
+            .iter()
+            .find(|parenthesis| text(source, parenthesis.node) == "(z := choose())")
+            .unwrap();
+        assert_eq!(text(source, parenthesis.child), "z := choose()");
         assert_eq!(facts.with_items.len(), 2);
+        assert_eq!(text(source, facts.with_items[0].node), "maker() as (p, q)");
+        assert_eq!(facts.contexts[facts.with_items[0].context as usize].kind, ContextKind::Module);
         assert_eq!(text(source, facts.with_items[0].value), "maker()");
         assert_eq!(text(source, facts.with_items[0].target.unwrap()), "(p, q)");
         assert!(facts.with_items[0].as_pattern.is_some());

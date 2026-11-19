@@ -466,7 +466,7 @@ impl AdmissionTable<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     fn node(start: u32, end: u32) -> MetalNode {

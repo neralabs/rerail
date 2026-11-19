@@ -4,7 +4,8 @@
 //!
 //! - `RERAIL_PARITY_PYTHON`: the interpreters, `:`-separated (default `python3`); each is one oracle.
 //! - `RERAIL_PARITY_ROOTS`: the corpora, `:`-separated directories (their `.py` files, `.git`, `node_modules` and
-//!   virtualenvs left out), and `fixtures`: the files of every recorded event (`fixtures/host/data-layer-port`).
+//!   virtualenvs left out), and `fixtures`: the files of every recorded event (the data-layer port's recordings, pack
+//!   test data under `packs/data-layer/upstream/lint/`, which `npm run fixtures:pull` fetches).
 //! - `RERAIL_PARITY_SHOW`: how many differences to print per fact (default 20).
 //!
 //! `cargo test --profile profiling --lib -- cpython::parity --ignored --nocapture`
@@ -19,9 +20,9 @@ use std::process::{Command, Stdio};
 const ORACLE: &str = include_str!("oracle.py");
 
 /// A corpus: its name and its files (absolute path, path to show).
-pub(crate) struct Corpus {
-    pub(crate) name: String,
-    pub(crate) files: Vec<(PathBuf, String)>,
+pub struct Corpus {
+    pub name: String,
+    pub files: Vec<(PathBuf, String)>,
 }
 
 fn env_list(key: &str, default: &str) -> Vec<String> {
@@ -36,7 +37,7 @@ pub(super) fn pythons() -> Vec<String> {
     env_list("RERAIL_PARITY_PYTHON", "python3")
 }
 
-pub(crate) fn corpora() -> Vec<Corpus> {
+pub fn corpora() -> Vec<Corpus> {
     env_list("RERAIL_PARITY_ROOTS", "fixtures")
         .into_iter()
         .map(|root| if root == "fixtures" { fixtures() } else { directory(Path::new(&root)) })
@@ -68,7 +69,14 @@ fn directory(root: &Path) -> Corpus {
 
 /// The Python files of every recorded event, each distinct (path, source) once, written under a temporary directory.
 fn fixtures() -> Corpus {
-    let port = Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/fixtures/host/data-layer-port");
+    let relative = "packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port";
+    // The checkout found as the test runs, not written into the build (decision 0224).
+    let port = rerail_store::source_tree::root().expect("the checkout").join(relative);
+    assert!(
+        port.exists(),
+        "{relative} is missing: pack test data is not in git: run `npm run fixtures:pull` (each tool-pack's archive, \
+         which its test-data.lock pins, from S3) (CONTRIBUTING.md, \"Pack test data\")"
+    );
     let mut sources: BTreeSet<(String, String)> = BTreeSet::new();
     let mut names: Vec<PathBuf> = std::fs::read_dir(&port).unwrap().flatten().map(|e| e.path()).collect();
     names.sort();
@@ -276,7 +284,8 @@ fn string_annotation_parity() {
                 .map(|((_, shown), s)| {
                     let s = s.as_ref()?;
                     let file = crate::code_rule_dsl::model::FileInput::new(shown.clone(), "python".to_owned(), std::sync::Arc::new(s.clone()), None, None, "core").ok()?;
-                    let (_, tape) = crate::code_rule_dsl::facts::core::build_with_tape(&file).ok()??;
+                    let (_, tape) = crate::code_rule_dsl::facts::core::build_with_tape(&file, true).ok()?;
+                    let tape = tape?;
                     let found = string_annotations(&tape).ok()?;
                     Some(found.iter().filter(|a| a.outer.is_none()).map(|a| (a.start, a.end, !a.tree.is_error(), if a.tree.is_error() { Vec::new() } else { annotation_names(&a.tree) })).collect())
                 })

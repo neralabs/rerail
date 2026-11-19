@@ -1,7 +1,7 @@
 //! Bounded typed publication batches. SQLite owns stored rows and transaction rollback.
 use rusqlite::{Connection, Result, limits::Limit, params_from_iter, types::Value};
 
-pub(crate) fn insert<const N: usize>(
+pub fn insert<const N: usize>(
     db: &Connection,
     prefix: &str,
     suffix: &str,
@@ -32,7 +32,7 @@ pub(crate) fn insert<const N: usize>(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

@@ -157,7 +157,7 @@ impl Inference {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn shared_cte_initialization_cannot_execute_sources_or_authored_functions() -> Result<()> {

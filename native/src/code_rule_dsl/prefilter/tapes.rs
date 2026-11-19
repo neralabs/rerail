@@ -14,13 +14,13 @@ use std::sync::Arc;
 
 /// Images held: a relation's scope and inner sets are ordered by tape, so a few suffice.
 const HELD: usize = 8;
-/// `tape_objects.codec_id` of a zstd frame (`content_store::CODEC_ZSTD`).
-const CODEC_ZSTD: i64 = 1;
 
 pub(super) struct StoreTapes {
     database: *mut ffi::sqlite3,
     held: VecDeque<(i64, Arc<Held>)>,
     grammars: HashMap<i64, Arc<Grammar>>,
+    /// The store's tape segments, mapped as rows name them (decision 0295 step 5): made at the first such row.
+    maps: Option<crate::content_store::ObjectMaps>,
 }
 
 // SAFETY: the handle is the owning connection's; access is serialized by that connection and the
@@ -61,15 +61,18 @@ impl StoreTapes {
         // SAFETY: the owning connection is live while its modules are; the borrowed handle is not
         // closed when this `Connection` drops.
         let db = unsafe { Connection::from_handle(self.database)? };
-        let (grammar_id, codec, frame) = db.query_row(
-            "SELECT grammar_id,codec_id,frame FROM tape_objects WHERE tape_id=?1",
+        let (grammar_id, codec, frame, seg, seg_at, seg_len) = db.query_row(
+            "SELECT grammar_id,codec_id,frame,seg,seg_at,seg_len FROM tape_objects WHERE tape_id=?1",
             [fid],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?)),
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?)),
         )?;
-        if codec != CODEC_ZSTD {
-            return Err(invalid(format!("unsupported tape codec {codec}")));
+        if self.maps.is_none() {
+            let path = db.path().ok_or_else(|| invalid("a tape store without a file"))?;
+            self.maps = Some(crate::content_store::ObjectMaps::new(std::path::Path::new(path)));
         }
-        let bytes = zstd::stream::decode_all(&frame[..]).map_err(|error| invalid(format!("tape frame: {error}")))?;
+        let frame = self.maps.as_mut().expect("the maps").frame(codec, frame, seg, seg_at, seg_len).map_err(|error| invalid(format!("tape frame: {error}")))?;
+        let frame = frame.ok_or_else(|| invalid("a tape whose segment is not there"))?;
+        let bytes = frame.bytes(0).map_err(|error| invalid(format!("tape frame: {error}")))?;
         let grammar = match self.grammars.get(&grammar_id) {
             Some(grammar) => Arc::clone(grammar),
             None => {
@@ -79,6 +82,7 @@ impl StoreTapes {
                 grammar
             }
         };
+        // Its records' preorder is the node ids rows hold.
         let image = TapeImage::from_bytes(&bytes, &grammar).map_err(invalid)?;
         let parents = std::env::var_os("RERAIL_TREE_DESCENT").is_none().then(|| parents(&image));
         let image = Arc::new(Held { image, parents });
@@ -115,7 +119,7 @@ impl Structure for StoreTapes {
 /// `nera_tree` and `nera_size(tape, pre)` over the store's tapes, on a store connection.
 pub(crate) fn install(db: &Connection) -> Result<()> {
     // SAFETY: the modules and functions are dropped with `db`, before its handle is freed.
-    let tapes: Shared = Arc::new(parking_lot::Mutex::new(StoreTapes { database: unsafe { db.handle() }, held: VecDeque::new(), grammars: HashMap::new() }));
+    let tapes: Shared = Arc::new(parking_lot::Mutex::new(StoreTapes { database: unsafe { db.handle() }, held: VecDeque::new(), grammars: HashMap::new(), maps: None }));
     super::tree::install(db, Arc::clone(&tapes))?;
     db.create_scalar_function("nera_size", 2, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, move |context| {
         let fid = context.get::<i64>(0)?;

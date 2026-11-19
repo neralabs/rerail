@@ -21,7 +21,7 @@ pub(super) fn validate(words: &[u32]) -> Result<(), Error> {
 
 /// Validated GREEDY headers and their control-flow component order. Each exit
 /// precedes any region that it can enter. Callers first validate word operands.
-pub(super) fn ordered_headers(words: &[u32]) -> Result<Vec<(usize, usize)>, Error> {
+pub fn ordered_headers(words: &[u32]) -> Result<Vec<(usize, usize)>, Error> {
     if !words.iter().any(|&w| matches!(split(w), (FORK, GREEDY, _))) {
         return Ok(Vec::new());
     }
@@ -109,7 +109,7 @@ pub(super) fn ordered_headers(words: &[u32]) -> Result<Vec<(usize, usize)>, Erro
 /// path with no early value work executes at most words.len() instructions.
 /// Otherwise a join stays active before a different budget can exhaust.
 #[cfg(target_os = "macos")]
-pub(super) fn acyclic_joins(program: &super::Program) -> Vec<(usize, usize)> {
+pub fn acyclic_joins(program: &super::Program) -> Vec<(usize, usize)> {
     let words = &program.words;
     let mut predecessors = vec![Vec::new(); words.len()];
     for pc in 0..words.len() {

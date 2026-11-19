@@ -24,7 +24,7 @@ struct Shared {
     stats: Arc<Counters>,
 }
 #[derive(Clone)]
-pub(super) struct Binding {
+pub struct Binding {
     current: Arc<parking_lot::RwLock<Arc<dyn Source>>>,
     schema: Arc<Metadata>,
 }
@@ -436,4 +436,4 @@ pub(super) fn unregister(db: &Connection, name: &str) -> Result<()> {
 
 #[cfg(test)]
 #[path = "table/bindings_tests.rs"]
-mod bindings_tests;
+pub mod bindings_tests;

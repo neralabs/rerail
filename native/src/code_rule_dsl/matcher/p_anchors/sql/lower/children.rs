@@ -13,7 +13,7 @@ pub(super) fn fill(scopes: impl IntoIterator<Item = (u16, String)>) -> (Vec<Stri
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use rusqlite::{Connection, Result, functions::FunctionFlags};
     use std::sync::{

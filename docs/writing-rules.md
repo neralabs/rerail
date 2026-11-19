@@ -61,7 +61,9 @@ rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]
 <details>
 <summary>What it lists, with sample output</summary>
 
-It covers the last 30 days, across every coding agent and every worktree of the repository.
+It covers the last 30 days, across every coding agent and every worktree of the repository. A session that started
+earlier counts when it was still active in that time, and only what it did then is counted; a correction still shows
+the calls just before it, even ones from before that time.
 
 | It lists | Which can become |
 |---|---|
@@ -89,14 +91,15 @@ It covers the last 30 days, across every coding agent and every worktree of the 
 Code rules check the files the agent edits; command rules check the commands it runs.
 
 - **A code rule** is a `rerail.policy/v1` document: globs for scope, clauses that match text, paths or syntax.
-- **A command rule** is a conversation rule that matches `input.command`.
+- **A command rule** is a conversation rule that matches `input.command`. Conversation rules are
+  [internal testing](internal-testing.md) and experimental: none runs unless `RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1`.
 
 <details>
 <summary>What each kind catches</summary>
 
 - **Code rules** catch cross-layer imports, a call that bypasses a helper, a blocking call in async code, an old path
   still written in a `Justfile`, or a file in the wrong folder. A clause is a `regex` over a file's text or path, a
-  `file` query, or a syntax query over Python, JavaScript, TypeScript, PHP or Blade.
+  `file` query, or a syntax query over Python, JavaScript, TypeScript, PHP, Blade, Rust, SQL, Vue or Java.
 - **Command rules** catch force pushes, `--no-verify` or publishing.
 
 </details>
@@ -133,7 +136,7 @@ A draft is the rule plus the cases it must catch and pass; test it before adding
 |---|---|
 | `kind` | `code` |
 | `rule` | the rule document |
-| `folder` | optional: the repository folder to add the rule at, instead of the whole repository |
+| `folder` | optional: the repository folder to add the rule at, `""` for the whole repository. Absent, a new rule goes to the whole repository and one already added stays where it is. |
 | `cases.caught`, `cases.passed` | files the rule must catch, and must let pass: `{ "path", "content" }` |
 
 </details>
@@ -141,11 +144,14 @@ A draft is the rule plus the cases it must catch and pass; test it before adding
 [Writing path and text rules](path-and-text-rules.md#text-in-files) has complete drafts to start from.
 
 ```sh
-rerail rules test draft.json            # validate, run the cases, list the matches across the repo; writes nothing
+rerail rules test draft.json            # validate, run the cases, list the matches in the repo; writes nothing
+rerail rules test rule.rerail               # a .rerail rule file: run the tests it carries (.test ... .end)
 rerail rules test draft.json --json     # the same, listing every match and every file the rule could not check
+rerail rules test rule.rerail               # a .rerail rule file: run the tests it carries (.test ... .end)
 rerail rules add draft.json             # store it in your library and add it, on, to this repo
 rerail rules approve <id>               # after reading it: it steers instead of running in Log
 rerail rules export --output rules.json # your rules, to read or edit one
+rerail rules show <id> > draft.json     # one rule as a draft, a By Rerail one too; adding it back stores your copy
 ```
 
 <details>
@@ -153,6 +159,17 @@ rerail rules export --output rules.json # your rules, to read or edit one
 
 The text report shows the first five matches and the count; `--json` lists all. Path and `file` matches name the file
 with no line. Binary files in scope are counted; no rule reads them.
+
+The repo pass looks only where the added rule would run, so the count is what it would catch: for a rule of yours,
+the draft's `folder` and the folders it is already added at; for your copy of a By Rerail rule, the folders the
+original is added at. A new rule that names no `folder` is checked across the whole repo. A count over part of the
+repo names the folders; `--json` lists them in `repository.folders`, where `""` is the whole repo.
+
+Where `rules add` would refuse a code rule's draft as it is, the report says why, in the words `rules add` gives
+(`refusal` in `--json`): a copy's draft that names a `folder`, a By Rerail rule that is not added here or already has
+your copy here, or your copy made for another repo where the original runs. The cases alone still decide the exit
+code. Where Rerail cannot read where the rule is added, the report says so (`repository.notNarrowed`), and the count
+covers the draft's `folder`, else the whole repo.
 
 The repo pass skips, and counts without naming:
 

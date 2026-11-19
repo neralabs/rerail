@@ -229,11 +229,10 @@ fn attempt(q: &mut Query, near_at: usize) -> Option<()> {
     target.join = Join::Cross;
     for e in &mut target_predicates {
         e.visit_mut(&mut |e| {
-            if let E::Qualified { alias, .. } = e {
-                if alias == &old_alias {
+            if let E::Qualified { alias, .. } = e
+                && alias == &old_alias {
                     *alias = target.alias.clone();
                 }
-            }
         });
     }
     target_predicates.push(E::Binary {
@@ -280,7 +279,7 @@ pub(super) fn optimize(q: &mut Query) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::super::super::super::logic::sql::select::Cte;
     use super::*;
     fn equal(a: E, b: E) -> E {

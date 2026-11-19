@@ -28,7 +28,7 @@ struct Entry {
 }
 
 #[derive(Default)]
-pub(super) struct Definitions {
+pub struct Definitions {
     entries: Vec<Entry>,
     names: HashMap<String, usize>,
 }
@@ -155,7 +155,7 @@ impl Definitions {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

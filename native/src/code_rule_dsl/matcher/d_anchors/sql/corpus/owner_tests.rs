@@ -1,6 +1,7 @@
+use crate::code_rule_dsl::matcher::d_anchors::tests::compile_rule;
 use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::matcher::d_anchors::tests::compile_rule;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use serde_json::json;
 
 fn doc(source: &str) -> TapeDoc {
@@ -29,7 +30,7 @@ fn one_sql_publication_serves_independent_memberships_and_coexisting_versions() 
         "versions coexist in one physical index"
     );
     assert!(
-        a.prepared_file("a.ts", 1, &new.index_source_digest())
+        a.prepared_file("a.ts", 1, new.index_source_digest())
             .is_none()
     );
     b.remove("a.ts").unwrap();

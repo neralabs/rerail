@@ -4,8 +4,8 @@ use std::{
     cell::Cell,
     sync::{Arc, atomic::AtomicUsize},
 };
-mod completed;
-pub(in crate::code_rule_dsl) mod layout;
+pub mod completed;
+pub mod layout;
 const MAX_STAGES: usize = 100;
 const MAX_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
 thread_local! { static READERS: Cell<usize> = const { Cell::new(0) }; }
@@ -65,17 +65,17 @@ impl Stages {
 /// All offsets are checked scalar indices. No source, path, or host pointer is a request field.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(in crate::code_rule_dsl) struct Root {
+pub struct Root {
     pub file: u32,
     pub node: u32,
     pub expand: u32,
 }
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Tree {
+pub struct Tree {
     pub facts: Arc<super::syntax::Facts>,
     pub visible: Arc<Vec<u32>>,
 }
-pub(in crate::code_rule_dsl) struct Demand {
+pub struct Demand {
     pub roots: Vec<Root>,
     pub trees: Vec<Tree>,
     pub paths: Vec<String>,
@@ -98,7 +98,7 @@ impl Completed {
 }
 /// Checked, flat request columns. Relation boundaries are numeric CSR offsets.
 #[derive(Default)]
-struct Resident {
+pub struct Resident {
     ends: Vec<u32>,
     visible: Vec<u32>,
     files: Vec<[u32; 4]>,
@@ -109,7 +109,7 @@ struct Resident {
     retained: Vec<Tree>,
     resident_bytes: usize,
 }
-pub(in crate::code_rule_dsl) const MAX_RESIDENT_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_RESIDENT_BYTES: usize = 64 * 1024 * 1024;
 fn capacity(bytes: Option<usize>, limit: usize) -> Result<usize> {
     bytes
         .filter(|&n| n <= limit)
@@ -328,7 +328,7 @@ pub(in crate::code_rule_dsl) fn execute(
     outputs
 }
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn callback_cannot_reserve_producer_work() {

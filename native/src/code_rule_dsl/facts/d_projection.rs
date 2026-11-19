@@ -262,7 +262,7 @@ impl Row {
             .map(|(c, n)| (n.clone(), self.value(c)))
             .collect()
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn json(&self) -> Value {
         self.data()
             .raw
@@ -381,4 +381,4 @@ impl Serialize for Serialized<'_> {
     }
 }
 #[cfg(test)]
-mod tests;
+pub mod tests;

@@ -58,9 +58,9 @@ fn invalid(error: impl std::fmt::Display) -> StoreError {
 /// The policies' rules as the wave runs them.
 #[derive(Clone, Debug, Default)]
 pub(in crate::code_rule_dsl) struct Logic {
-    /// Datalog appended to the wave's source: the relations' declarations, `.output`, and the rules over
-    /// `match`.
-    pub(in crate::code_rule_dsl) rules: String,
+    /// The program added to the wave's source (`matches::SOURCE`): the relations' declarations, outputs, rules
+    /// over `match` and their facts, as a program (`wave_program`), never printed (decision 0249).
+    pub(in crate::code_rule_dsl) rules: Program,
     /// The demand program: the magic rules seeded by `wave(d)`, deriving `demanded(i, d)`. `None`: every
     /// clause is demanded on every document.
     pub(in crate::code_rule_dsl) demand: Option<Program>,
@@ -77,11 +77,11 @@ impl Logic {
         let mut prog = Program::default();
         for (i, clause) in clauses.iter().enumerate() {
             let (policy, id) = &clause.key;
-            let head = Atom { rel: "violation".to_owned(), args: vec![Term::Str(policy.clone()), Term::Str(id.clone()), var("D"), var("N")], neg: false, gated: false };
-            prog.rules.push(Rule { head, body: vec![matched(i, "D", "N")] });
+            let head = Atom { rel: "violation".into(), args: [Term::Str(policy.clone().into()), Term::Str(id.clone().into()), var("D"), var("N")].into(), neg: false, gated: false };
+            prog.rules.push(Rule { head, body: [matched(i, "D", "N")].into() });
         }
         declare_violation(&mut prog);
-        Self { rules: wave_text(&merged(prog)).expect("a clause's forbid rule prints as .rr"), demand: None, bound: Vec::new() }
+        Self { rules: wave_program(&merged(prog)), demand: None, bound: Vec::new() }
     }
 
     /// The demand statement on `store` (its atoms interned there): a SELECT of `(i, d)` rows over
@@ -117,11 +117,11 @@ impl Logic {
 }
 
 fn var(name: &str) -> Term {
-    Term::Var(name.to_owned())
+    Term::Var(name.to_owned().into())
 }
 
 fn atom(rel: &str, args: Vec<Term>) -> Literal {
-    Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false })
+    Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false })
 }
 
 /// `matched(i, d, n)`: clause `i`'s matches.
@@ -129,43 +129,41 @@ fn matched(i: usize, document: &str, node: &str) -> Literal {
     atom(MATCH, vec![Term::Int(i as i64), var(document), var(node)])
 }
 
-/// Whether `rel` is one of the `py.*` families (`facts::vtab::syntax::PY`).
+/// Whether `rel` is one of a family's lazy relations (`facts::vtab::syntax::Families`: Python's `py.*`).
 fn is_py(rel: &str) -> bool {
-    crate::code_rule_dsl::facts::vtab::syntax::PY.contains(&rel)
+    crate::code_rule_dsl::facts::vtab::syntax::is_family(rel)
 }
 
 /// Declares each `py.*` family the rules read and do not declare: integer columns, as bound.
 fn declare_py(prog: &mut Program) {
-    use crate::code_rule_dsl::facts::vtab::syntax::{PY, PY_COLUMNS};
-    let read: BTreeSet<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).filter(|rel| is_py(rel)).collect();
+    let read: BTreeSet<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).filter(|rel| is_py(rel)).collect();
     for rel in read {
-        let columns = PY_COLUMNS[PY.iter().position(|p| *p == rel).expect("a py family")];
-        prog.decls.entry(rel).or_insert_with(|| columns.iter().map(|c| ((*c).to_owned(), "int".to_owned())).collect());
+        let columns = crate::code_rule_dsl::facts::vtab::syntax::family_columns(&rel).expect("a family's relation");
+        prog.decls.entry(rel.into()).or_insert_with(|| columns.iter().map(|c| ((*c).to_owned(), "int".to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
     }
 }
 
 /// Declares each base relation the rules read and do not declare (`BASE`), as bound.
 fn declare_base(prog: &mut Program) {
-    let read: BTreeSet<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).collect();
+    let read: BTreeSet<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).collect();
     for (rel, columns) in BASE.iter().filter(|(rel, _)| read.contains(*rel)) {
-        prog.decls.entry((*rel).to_owned()).or_insert_with(|| columns.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+        prog.decls.entry((*rel).to_owned().into()).or_insert_with(|| columns.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
     }
 }
 
 fn declare_violation(prog: &mut Program) {
-    prog.decls.entry("violation".to_owned()).or_insert_with(|| {
-        [("policy", "sym"), ("clause", "sym"), ("d", "int"), ("n", "int")].map(|(c, t)| (c.to_owned(), t.to_owned())).to_vec()
+    prog.decls.entry("violation".to_owned().into()).or_insert_with(|| {
+        [("policy", "sym"), ("clause", "sym"), ("d", "int"), ("n", "int")].map(|(c, t)| (c.to_owned(), t.to_owned())).to_vec().iter().map(|(c, t)| (c.into(), t.into())).collect()
     });
     if !prog.outputs.iter().any(|o| o == "violation") {
         prog.outputs.push("violation".to_owned());
     }
 }
 
-/// The rules' text for the wave, in `.rr`: declarations (nodes are the wave's integers), outputs, rules, facts.
-fn wave_text(prog: &Program) -> Result<String, crate::code_rule_dsl::logic::front::Error> {
-    let decls = prog.decls.iter().map(|(rel, cols)| (rel.clone(), cols.iter().map(|(c, t)| (c.clone(), if t == "node" { "int".to_owned() } else { t.clone() })).collect())).collect();
-    let printed = Program { decls, outputs: prog.outputs.clone(), rules: prog.rules.clone(), facts: prog.facts.clone(), ..Program::default() };
-    crate::code_rule_dsl::logic::rr::print(&printed)
+/// The rules for the wave: declarations (nodes are the wave's integers), outputs, rules, facts.
+fn wave_program(prog: &Program) -> Program {
+    let decls = prog.decls.iter().map(|(rel, cols)| (rel.clone(), cols.iter().map(|(c, t)| (c.clone(), if t == "node" { "int".into() } else { t.clone() })).collect())).collect();
+    Program { decls, outputs: prog.outputs.clone(), rules: prog.rules.clone(), facts: prog.facts.clone(), ..Program::default() }
 }
 
 /// A rule with its variables renamed `V0, V1, …` in order of appearance, and its constants in the head and in
@@ -178,13 +176,17 @@ fn shape(rule: &Rule) -> (Rule, Vec<Value>) {
     };
     fn term(t: &mut Term, rename: &mut dyn FnMut(&mut String)) {
         match t {
-            Term::Var(v) => rename(v),
+            Term::Var(v) => {
+                let mut s = v.to_string();
+                rename(&mut s);
+                *v = s.into();
+            }
             Term::Call(_, args) => args.iter_mut().for_each(|a| term(a, rename)),
             _ => {}
         }
     }
     let mut constants = Vec::new();
-    let abstracted = |args: &mut Vec<Term>, rename: &mut dyn FnMut(&mut String), constants: &mut Vec<Value>| {
+    let abstracted = |args: &mut [Term], rename: &mut dyn FnMut(&mut String), constants: &mut Vec<Value>| {
         for arg in args {
             let value = match arg {
                 Term::Int(i) => Value::Int(*i),
@@ -194,15 +196,15 @@ fn shape(rule: &Rule) -> (Rule, Vec<Value>) {
                     continue;
                 }
             };
-            *arg = Term::Var(format!("K{}", constants.len()));
+            *arg = Term::Var(format!("K{}", constants.len()).into());
             constants.push(value);
         }
     };
     let mut out = rule.clone();
-    abstracted(&mut out.head.args, &mut rename, &mut constants);
+    abstracted(out.head.args.make_mut(), &mut rename, &mut constants);
     for literal in &mut out.body {
         match literal {
-            Literal::Atom(a) if !a.neg && !a.gated => abstracted(&mut a.args, &mut rename, &mut constants),
+            Literal::Atom(a) if !a.neg && !a.gated => abstracted(a.args.make_mut(), &mut rename, &mut constants),
             Literal::Atom(a) => a.args.iter_mut().for_each(|t| term(t, &mut rename)),
             Literal::Cmp { l, r, .. } => {
                 term(l, &mut rename);
@@ -253,14 +255,14 @@ fn merged(mut prog: Program) -> Program {
         let rel = loop {
             let rel = format!("{}_shape_{tables}", shaped.head.rel);
             tables += 1;
-            if !prog.decls.contains_key(&rel) {
+            if !prog.decls.contains_key(rel.as_str()) {
                 break rel;
             }
         };
-        let columns = rows[0].iter().enumerate().map(|(j, v)| (format!("k{j}"), kind(v).to_owned())).collect();
-        prog.decls.insert(rel.clone(), columns);
+        let columns = rows[0].iter().enumerate().map(|(j, v)| (format!("k{j}"), kind(v).to_owned())).map(|(c, t)| (c.into(), t.into())).collect();
+        prog.decls.insert(rel.clone().into(), columns);
         let args = (0..rows[0].len()).map(|j| var(&format!("K{j}"))).collect();
-        prog.facts.insert(rel.clone(), rows);
+        prog.facts.insert(rel.clone(), rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
         let body = std::iter::once(atom(&rel, args)).chain(shaped.body).collect();
         prog.rules.push(Rule { head: shaped.head, body });
     }
@@ -281,6 +283,254 @@ pub(in crate::code_rule_dsl) struct Lowered {
 /// demand program.
 pub(in crate::code_rule_dsl) fn lower(policies: &[(String, CompiledCodeRuleDsl)]) -> StoreResult<Lowered> {
     lower_with(policies, &Program::default())
+}
+
+/// What reads an `ast` atom's captures (decision 0107): W's matcher of the atom's rule, matched again at each root the
+/// transducer found, and the visits its policy allows a file. `verify`: the transducer runs a relaxed matcher (a
+/// superset of the roots), so each root is W's only where W's matcher matches there too.
+pub(in crate::code_rule_dsl) struct Captor {
+    pub(in crate::code_rule_dsl) grammar: crate::code_rule_dsl::matcher::GrammarMatcher,
+    pub(in crate::code_rule_dsl) limits: crate::code_rule_dsl::model::Limits,
+    pub(in crate::code_rule_dsl) verify: bool,
+}
+
+/// An `ast` atom's matcher lowered for the transducer (decision 0106), as `lower_with` lowers a helper clause: the
+/// forbid clause of a policy of its own (`base`'s `define` clauses kept so utils resolve), its Python grammar's match
+/// tree, and the gates on a document's path and text. A matcher the transducer does not lower runs as its relaxed
+/// form ([`relaxed`]) where that lowers, its roots confirmed by W's matcher (`Captor::verify`, decision 0107). `Err`
+/// says why it does not lower.
+pub(in crate::code_rule_dsl) fn lower_matcher(matcher: &str, base: Option<&serde_json::Value>) -> Result<(LoweredMatcher, Vec<crate::code_rule_dsl::matcher::DocumentGate>, Captor), String> {
+    let value: serde_json::Value = serde_json::from_str(matcher).map_err(|e| format!("the matcher is not JSON: {e}"))?;
+    let (grammar, limits) = helper_grammar(&value, base)?;
+    let lower = |grammar: &crate::code_rule_dsl::matcher::GrammarMatcher| -> Result<_, String> {
+        let (tree, paths) = gated_match_tree(grammar).map_err(|e| format!("{e:?}"))?;
+        Ok((LoweredMatcher::lower(&tree).map_err(|e| format!("{e:?}"))?, paths))
+    };
+    // A `transform` makes text for the captures and matches nothing: the transducer lowers the rule without it, and
+    // W's matcher (the captor, which keeps it) makes the text at each root.
+    let (value, shape) = match value.as_object().filter(|o| o.contains_key("transform")) {
+        Some(o) => {
+            let mut bare = o.clone();
+            bare.remove("transform");
+            let bare = serde_json::Value::Object(bare);
+            let (shape, _) = helper_grammar(&bare, base)?;
+            (bare, shape)
+        }
+        None => (value, grammar.clone()),
+    };
+    match lower(&shape) {
+        Ok((lowered, paths)) => Ok((lowered, paths, Captor { grammar, limits, verify: false })),
+        Err(why) => {
+            // Comparisons dropped first; then every negation in a positive place too.
+            let mut last = why.clone();
+            for every_not in [false, true] {
+                let loose_base = base.and_then(|b| relaxed_utils(b, &value, every_not));
+                let base = loose_base.as_ref().or(base);
+                let Some(loose) = relaxed(&value, every_not).or_else(|| loose_base.as_ref().map(|_| value.clone())) else { continue };
+                let (loose, _) = helper_grammar(&loose, base)?;
+                match lower(&loose) {
+                    Ok((lowered, paths)) => return Ok((lowered, paths, Captor { grammar, limits, verify: true })),
+                    Err(again) => last = again,
+                }
+            }
+            Err(if last == why { why } else { format!("{why}; relaxed: {last}") })
+        }
+    }
+}
+
+/// `value`'s Python grammar matcher, compiled as a helper policy's forbid clause, and its policy's visit limits.
+fn helper_grammar(value: &serde_json::Value, base: Option<&serde_json::Value>) -> Result<(crate::code_rule_dsl::matcher::GrammarMatcher, crate::code_rule_dsl::model::Limits), String> {
+    let defines: Vec<serde_json::Value> = base.and_then(|b| b.get("clauses")).and_then(|c| c.as_array()).into_iter().flatten().filter(|c| c.get("define").is_some()).cloned().collect();
+    let mut document = base.cloned().unwrap_or_else(|| serde_json::json!({"format": "rerail.policy/v1", "revision": 1, "mode": "block"}));
+    document["id"] = serde_json::Value::String(format!("rr{HELPERS}"));
+    let mut clauses = defines;
+    clauses.push(serde_json::json!({"id": "h0", "forbid": {"ast": value}, "violation": {"code": "helper", "message": "helper", "anchor": "witness.span"}}));
+    document["clauses"] = serde_json::Value::Array(clauses);
+    let compiled = crate::code_rule_dsl::CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), crate::code_rule_dsl::tools::CAPABILITIES.to_owned()).map_err(|e| e.reason.to_string())?;
+    let clause = compiled.inner.clauses.iter().find(|c| c.id == "h0").ok_or("the helper clause is missing")?;
+    let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { return Err("not an ast query".to_owned()) };
+    let grammar = matchers.iter().find(|m| m.language == GrammarDialect::Python).ok_or("no Python matcher")?;
+    Ok((grammar.clone(), compiled.inner.capabilities.limits.clone()))
+}
+
+/// `base`'s policy with its utils (`define.utils`) relaxed as `relaxed` relaxes a rule, where that only widens what
+/// a rule using them matches: no `not` in a util reaches a widened one (through `matches`, transitively). `None`
+/// where no util changes, or one would be widened under a `not`.
+fn relaxed_utils(base: &serde_json::Value, rule: &serde_json::Value, every_not: bool) -> Option<serde_json::Value> {
+    use serde_json::Value;
+    use std::collections::{BTreeMap, BTreeSet};
+    fn refs(v: &Value, out: &mut BTreeSet<String>) {
+        match v {
+            Value::Object(o) => o.iter().for_each(|(k, v)| match (k.as_str(), v) {
+                ("matches", Value::String(name)) => {
+                    out.insert(name.clone());
+                }
+                _ => refs(v, out),
+            }),
+            Value::Array(a) => a.iter().for_each(|v| refs(v, out)),
+            _ => {}
+        }
+    }
+    /// The utils `v` reaches under a `not`.
+    fn negated(v: &Value, under: bool, out: &mut BTreeSet<String>) {
+        match v {
+            Value::Object(o) => o.iter().for_each(|(k, v)| match (k.as_str(), v) {
+                ("matches", Value::String(name)) if under => {
+                    out.insert(name.clone());
+                }
+                _ => negated(v, under || k == "not", out),
+            }),
+            Value::Array(a) => a.iter().for_each(|v| negated(v, under, out)),
+            _ => {}
+        }
+    }
+    let mut out = base.clone();
+    let mut changed: BTreeSet<String> = BTreeSet::new();
+    let mut graph: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut under_not: BTreeSet<String> = BTreeSet::new();
+    negated(rule, false, &mut under_not);
+    for clause in out.get_mut("clauses")?.as_array_mut()? {
+        let Some(utils) = clause.get_mut("define").and_then(|d| d.get_mut("utils")).and_then(Value::as_object_mut) else { continue };
+        for (name, util) in utils.iter_mut() {
+            negated(util, false, &mut under_not);
+            refs(util, graph.entry(name.clone()).or_default());
+            // A util is a bare rule; `{"regex": ""}` (every node) stands in where relaxing leaves it nothing.
+            let wrapped = serde_json::json!({"rule": {"all": [util.clone(), {"regex": ""}]}});
+            if let Some(mut loose) = relaxed(&wrapped, every_not) {
+                let mut rule = loose["rule"].take();
+                if let Some(items) = rule.get_mut("all").and_then(Value::as_array_mut)
+                    && items.len() > 1
+                {
+                    items.retain(|item| item != &serde_json::json!({"regex": ""}));
+                }
+                *util = rule;
+                changed.insert(name.clone());
+            }
+        }
+    }
+    if changed.is_empty() {
+        return None;
+    }
+    // A util reaching a widened one widens too.
+    let mut widened = changed;
+    loop {
+        let more: Vec<String> = graph.iter().filter(|(n, r)| !widened.contains(*n) && r.iter().any(|x| widened.contains(x))).map(|(n, _)| n.clone()).collect();
+        if more.is_empty() {
+            break;
+        }
+        widened.extend(more);
+    }
+    let mut reached = BTreeSet::new();
+    for n in &under_not {
+        reached.insert(n.clone());
+        let mut work = vec![n.clone()];
+        while let Some(x) = work.pop() {
+            for y in graph.get(&x).into_iter().flatten() {
+                if reached.insert(y.clone()) {
+                    work.push(y.clone());
+                }
+            }
+        }
+    }
+    reached.is_disjoint(&widened).then_some(out)
+}
+
+/// A matcher's rule with the terms the transducer's labels cannot carry dropped where dropping only widens it: a
+/// comparison of captures (`compare`) or a test of the file's path (`filePath`, W's to confirm) as a conjunct, and a `not` holding one, in a positive place (an `all`'s item,
+/// a key of a rule, the rule of a `has` or `inside`); with `every_not`, every `not` in a positive place (a fact that
+/// may be unknown under one, say). An `any` with an arm left matching every node goes too. Every node the matcher
+/// matches, the relaxed one does. `None` where nothing is dropped, or a term would have to be dropped where that
+/// narrows (under a `not`).
+pub(in crate::code_rule_dsl) fn relaxed(value: &serde_json::Value, every_not: bool) -> Option<serde_json::Value> {
+    use serde_json::Value;
+    enum Relax {
+        Same,
+        Changed,
+        /// Nothing positive left: the term matches every node, so its parent drops it.
+        Remove,
+        Fail,
+    }
+    fn holds_unsupported(v: &Value) -> bool {
+        match v {
+            Value::Object(o) => o.iter().any(|(k, v)| k == "compare" || k == "filePath" || holds_unsupported(v)),
+            Value::Array(a) => a.iter().any(holds_unsupported),
+            _ => false,
+        }
+    }
+    /// The keys that are not a rule's terms but how a relational rule applies.
+    const HOW: [&str; 2] = ["stopBy", "field"];
+    fn relax(rule: &mut Value, every_not: bool) -> Relax {
+        let Some(obj) = rule.as_object_mut() else { return Relax::Same };
+        let mut changed = false;
+        for key in obj.keys().cloned().collect::<Vec<_>>() {
+            match key.as_str() {
+                "compare" | "filePath" => {
+                    obj.remove(&key);
+                    changed = true;
+                }
+                "not" if every_not || holds_unsupported(&obj[&key]) => {
+                    obj.remove(&key);
+                    changed = true;
+                }
+                "all" => {
+                    let Some(items) = obj[&key].as_array_mut() else { continue };
+                    let mut kept = Vec::new();
+                    for mut item in std::mem::take(items) {
+                        match relax(&mut item, every_not) {
+                            Relax::Same => kept.push(item),
+                            Relax::Changed => {
+                                changed = true;
+                                kept.push(item);
+                            }
+                            Relax::Remove => changed = true,
+                            Relax::Fail => return Relax::Fail,
+                        }
+                    }
+                    if kept.is_empty() {
+                        obj.remove(&key);
+                    } else {
+                        obj.insert(key, Value::Array(kept));
+                    }
+                }
+                "any" => {
+                    let Some(arms) = obj[&key].as_array_mut() else { continue };
+                    let mut every = false;
+                    for arm in arms {
+                        match relax(arm, every_not) {
+                            Relax::Same => {}
+                            Relax::Changed => changed = true,
+                            // An arm left matching every node: so does the `any`, which goes.
+                            Relax::Remove => every = true,
+                            Relax::Fail => return Relax::Fail,
+                        }
+                    }
+                    if every {
+                        obj.remove(&key);
+                        changed = true;
+                    }
+                }
+                "has" | "inside" | "precedes" | "follows" => match relax(&mut obj[&key], every_not) {
+                    Relax::Same => {}
+                    Relax::Changed => changed = true,
+                    Relax::Remove => {
+                        obj.remove(&key);
+                        changed = true;
+                    }
+                    Relax::Fail => return Relax::Fail,
+                },
+                _ => {}
+            }
+        }
+        if changed && obj.keys().all(|k| HOW.contains(&k.as_str())) {
+            return Relax::Remove;
+        }
+        if changed { Relax::Changed } else { Relax::Same }
+    }
+    let mut value = value.clone();
+    match relax(value.get_mut("rule")?, every_not) {
+        Relax::Changed => Some(value),
+        Relax::Same | Relax::Remove | Relax::Fail => None,
+    }
 }
 
 /// The policy of an authored program's helper `ast` atoms has its policy's id and this suffix.
@@ -360,7 +610,7 @@ pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRule
         owned.push((id, compile(&document)?));
     }
     // The clauses whose rules the authored ones replace.
-    let replaced: BTreeSet<(String, String)> = authored
+    let replaced: BTreeSet<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)> = authored
         .rules
         .iter()
         .filter(|rule| rule.head.rel == "violation")
@@ -400,10 +650,22 @@ pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRule
             let (policy, compiled) = &policies[p];
             let clause = &compiled.inner.clauses[at];
             let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { return None };
+            // W's findings read the same-node regex groups (`findings::groups`), not a gap test's.
+            if !clause.violation.gap_tests.is_empty() {
+                return None;
+            }
             let mut python = matchers.iter().enumerate().filter(|(_, m)| m.language == GrammarDialect::Python);
             let (grammar_at, grammar) = python.next()?;
             let (tree, paths) = gated_match_tree(grammar).ok()?;
-            let lowered = LoweredMatcher::lower(&tree).ok()?;
+            let lowered = match LoweredMatcher::lower(&tree) {
+                Ok(lowered) => lowered,
+                Err(e) => {
+                    // A clause the IR refuses runs on W's matcher, natively (decision 0202's `ir-form` list).
+                    let name = format!("{policy}/{}", clause.id);
+                    rerail_accel::forms::missing("ir-form", &name, &name, &format!("{e:?}"), 1);
+                    return None;
+                }
+            };
             clauses.push(Clause {
                 paths,
                 name: format!("{policy}/{}", clause.id),
@@ -472,7 +734,7 @@ pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRule
         if !covered {
             continue;
         }
-        wave.rules.push(Rule { head: rule.head.clone(), body: lowered_body });
+        wave.rules.push(Rule { head: rule.head.clone(), body: lowered_body.into() });
         // The chunk's documents seed each atom's demand.
         seeds.sort();
         seeds.dedup();
@@ -506,7 +768,7 @@ pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRule
         .filter(|rel| is_bound(rel))
         .filter_map(|rel| crate::code_rule_dsl::logic::sql::select::input_columns(rel).map(|columns| (rel.to_owned(), columns)))
         .collect();
-    Ok(Lowered { clauses, shapes, logic: Logic { rules: wave_text(&merged(wave)).map_err(invalid)?, demand, bound }, program })
+    Ok(Lowered { clauses, shapes, logic: Logic { rules: wave_program(&merged(wave)), demand, bound }, program })
 }
 
 /// The demand program of `rules` (each reading `ast_i` atoms after `wave` seeds): `.demand` on every atom,
@@ -516,12 +778,12 @@ fn demand_program(mut prog: Program, wave: &Program, atoms: usize) -> StoreResul
     if atoms == 0 {
         return Ok(None);
     }
-    let int = |name: &str| (name.to_owned(), "int".to_owned());
-    prog.decls = wave.decls.iter().map(|(rel, cols)| (rel.clone(), cols.iter().map(|(c, t)| (c.clone(), if t == "node" { "int".to_owned() } else { t.clone() })).collect())).collect();
-    prog.decls.insert(WAVE.to_owned(), vec![int("d")]);
+    let int = |name: &str| (name.into(), "int".into());
+    prog.decls = wave.decls.iter().map(|(rel, cols)| (rel.clone(), cols.iter().map(|(c, t)| (c.clone(), if t == "node" { "int".into() } else { t.clone() })).collect())).collect();
+    prog.decls.insert(WAVE.to_owned().into(), [int("d")].into());
     prog.inputs.push(WAVE.to_owned());
     for i in 0..atoms {
-        prog.decls.insert(format!("ast_{i}"), vec![int("d"), int("n")]);
+        prog.decls.insert(format!("ast_{i}").into(), [int("d"), int("n")].into());
         prog.inputs.push(format!("ast_{i}"));
         prog.demand.push(format!("ast_{i}"));
     }
@@ -535,9 +797,9 @@ fn demand_program(mut prog: Program, wave: &Program, atoms: usize) -> StoreResul
         let more = magic
             .rules
             .iter()
-            .filter(|rule| !rule.head.rel.starts_with("magic_") && !unavailable.contains(&rule.head.rel))
-            .filter(|rule| rule.body.iter().any(|l| l.atom().is_some_and(|a| unavailable.contains(&a.rel)) || matches!(l, Literal::Ast { .. })))
-            .map(|rule| rule.head.rel.clone())
+            .filter(|rule| !rule.head.rel.starts_with("magic_") && !unavailable.contains(rule.head.rel.as_str()))
+            .filter(|rule| rule.body.iter().any(|l| l.atom().is_some_and(|a| unavailable.contains(a.rel.as_str())) || matches!(l, Literal::Ast { .. })))
+            .map(|rule| rule.head.rel.to_string())
             .collect::<Vec<_>>();
         if more.is_empty() {
             break;
@@ -550,7 +812,7 @@ fn demand_program(mut prog: Program, wave: &Program, atoms: usize) -> StoreResul
     for rule in magic.rules.iter().filter(|rule| rule.head.rel.starts_with("magic_ast_")) {
         let body = widened(&rule.head, &rule.body, &unavailable);
         needed.extend(body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()));
-        rules.push(Rule { head: rule.head.clone(), body });
+        rules.push(Rule { head: rule.head.clone(), body: body.into() });
     }
     let mut seen = BTreeSet::new();
     while let Some(rel) = needed.iter().find(|rel| !seen.contains(*rel)).cloned() {
@@ -561,28 +823,28 @@ fn demand_program(mut prog: Program, wave: &Program, atoms: usize) -> StoreResul
         }
     }
     for i in 0..atoms {
-        let head = Atom { rel: DEMANDED.to_owned(), args: vec![Term::Int(i as i64), var("D")], neg: false, gated: false };
-        rules.push(Rule { head, body: vec![atom(&format!("magic_ast_{i}"), vec![var("D")])] });
+        let head = Atom { rel: DEMANDED.to_owned().into(), args: [Term::Int(i as i64), var("D")].into(), neg: false, gated: false };
+        rules.push(Rule { head, body: [atom(&format!("magic_ast_{i}"), vec![var("D")])].into() });
     }
-    let referenced: BTreeSet<String> = rules.iter().flat_map(|r| std::iter::once(r.head.rel.clone()).chain(r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()))).collect();
-    let mut decls: BTreeMap<String, Vec<(String, String)>> = magic.decls.iter().filter(|(rel, _)| referenced.contains(*rel)).map(|(r, c)| (r.clone(), c.clone())).collect();
-    decls.insert(DEMANDED.to_owned(), vec![int("c"), int("d")]);
-    decls.insert(WAVE.to_owned(), vec![int("d")]);
+    let referenced: BTreeSet<String> = rules.iter().flat_map(|r| std::iter::once(r.head.rel.to_string()).chain(r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()))).collect();
+    let mut decls: BTreeMap<crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::List<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)>> = magic.decls.iter().filter(|(rel, _)| referenced.contains(rel.as_str())).map(|(r, c)| (r.clone(), c.clone())).collect();
+    decls.insert(DEMANDED.into(), [int("c"), int("d")].into());
+    decls.insert(WAVE.into(), [int("d")].into());
     for i in 0..atoms {
-        decls.entry(format!("magic_ast_{i}")).or_insert_with(|| vec![int("d")]);
+        decls.entry(format!("magic_ast_{i}").into()).or_insert_with(|| [int("d")].into());
     }
     let facts = magic.facts.iter().filter(|(rel, _)| referenced.contains(*rel)).map(|(r, f)| (r.clone(), f.clone())).collect();
     // The chunk's documents and the `py.*` families the magic rules read are its inputs.
     let inputs = std::iter::once(WAVE.to_owned()).chain(referenced.iter().filter(|rel| is_bound(rel)).cloned()).collect();
     let demand = Program { decls, facts, rules, inputs, outputs: vec![DEMANDED.to_owned()], ..Program::default() };
-    front::strata(&demand).map_err(|e| invalid(format!("the policies' demand: {e}")))?;
+    front::components_of(&demand).map_err(|e| invalid(format!("the policies' demand: {e}")))?;
     Ok(Some(demand))
 }
 
 /// `body` less the literals the batch has not derived (`unavailable`), and less those left without their
 /// variables bound: leaving a literal out of a magic rule only widens demand.
 fn widened(head: &Atom, body: &[Literal], unavailable: &BTreeSet<String>) -> Vec<Literal> {
-    let mut kept: Vec<Literal> = body.iter().filter(|l| !l.atom().is_some_and(|a| unavailable.contains(&a.rel))).cloned().collect();
+    let mut kept: Vec<Literal> = body.iter().filter(|l| !l.atom().is_some_and(|a| unavailable.contains(a.rel.as_str()))).cloned().collect();
     loop {
         let bound: BTreeSet<String> = kept.iter().filter_map(|l| match l {
             Literal::Atom(a) if !a.neg => Some(a.vars()),
@@ -601,7 +863,7 @@ fn widened(head: &Atom, body: &[Literal], unavailable: &BTreeSet<String>) -> Vec
     let bound: BTreeSet<String> = kept.iter().filter_map(|l| l.atom().filter(|a| !a.neg)).flat_map(|a| a.vars()).collect();
     if !head.vars().is_subset(&bound) {
         // The seed binds every atom's document: a key the widening unbound is demanded everywhere.
-        return vec![atom(WAVE, head.args.clone())];
+        return vec![atom(WAVE, head.args.to_vec())];
     }
     kept
 }

@@ -2,7 +2,7 @@
 
 Four branches write Rerail rules, in three notations:
 
-- **this branch** (More-ergonomic-rule-syntax): Soufflé Datalog with six additions, `.rr` files;
+- **this branch** (More-ergonomic-rule-syntax): Soufflé Datalog with six additions, `.rerail` files;
 - **Final rerail shape** (wolfeel): "Rerail logic", a Datalog dialect with a parser, a stratifier and magic sets in
   the engine, `.rdl` files. Its decisions 0036 (tree axes are built-ins computed as tapes) and 0037 (text tests are
   globs over typed text) are the newest statements about rule syntax;
@@ -60,7 +60,7 @@ the globs, the typed text relations and the execution, and keeps `match` for wha
 - Execution: each distinct string is tested once, for all rules together. Exact sets become hash sets of symbol
   ids, affix sets Aho-Corasick automata, other globs small DFAs; rules join on integers.
 - The translator prints a glob test wherever the source regex is exactly one, and `match` nowhere else
-  (`site/textglob.py`). It never guesses: a construct whose glob reading differs for some string, such as `\w*`,
+  (the engine's translator, `json_rules/textglob.rs`). It never guesses: a construct whose glob reading differs for some string, such as `\w*`,
   a negated class or `.+`, keeps `match`. Over this branch's 930 translated rules and hand ports there are 2,123
   distinct regexes:
 
@@ -98,7 +98,7 @@ not make it.
 - **Classifying `match`:** a literal set becomes an index join, a general pattern is tested once per distinct term,
   and nodes with no term fall back to a text scan. That is the lowering for `match` and the glob family alike.
 - **Named derived facts** (decision 0005): a library relation must name a concept, have at least two users, and
-  have at most as many rows per document as nodes. The libraries (`python/ast.rr`, `signing.rr`) already follow
+  have at most as many rows per document as nodes. The libraries (`python/ast.rerail`, `signing.rerail`) already follow
   the second rule; the other two are now stated in data-layer/DESIGN.md.
 - **Stop rules and field edges** (`stopBy: <rule>`, `has … field`, `nthChild.ofRule`): already `within_stop` with
   a helper relation, `field(p, f, c)`, and `child(p, c, i)` with a count.
@@ -112,7 +112,7 @@ not make it.
 - **`@sha256(s)`** was already in core. Its `body_sha256` and `dump_sha256` fields hash `ast.dump` text; here
   the allowlist that stores them is re-signed once with `@tree_digest` instead (there is no `@ast_dump`).
 - **Lambda parameters.** Its batch-nine audit found lambda parameters attributed to the enclosing `def`.
-  `python/ast.rr` does not have that defect: `sig_param` takes a function's parameters from its own `parameters`
+  `python/ast.rerail` does not have that defect: `sig_param` takes a function's parameters from its own `parameters`
   field, and `py_frame` treats a lambda as its own frame.
 - **Ordered first-match reachability.** It reproduces the scripts' depth-first search, in edge order, with a
   visiting set and a memo shared across roots (ordered_first.rs). This branch now has the same semantics as two

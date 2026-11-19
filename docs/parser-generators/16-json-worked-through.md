@@ -374,7 +374,7 @@ time.
 
 One kernel per program. One threadgroup of 1024 threads takes a run of files, up to a chunk,
 and every step ends at a threadgroup barrier. No threadgroup waits on another. This replaces
-the look-back of today's tier-1 kernel (`metal_block_program.rs`, `LOOK_BACK`,
+the look-back of today's tier-1 kernel (`native/crates/metal/src/block_program.rs`, `LOOK_BACK`,
 `HALO_EXCHANGE`), which waits on other groups.
 
 ### 7.1 The kernel's frame

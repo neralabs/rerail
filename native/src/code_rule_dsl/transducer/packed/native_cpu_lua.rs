@@ -1,12 +1,13 @@
 use super::{
-    metal_batch_abi::MetalNode,
     native_cpu::NativeTaskContext,
+    native_cpu_tape,
     value::{LuaInstruction, LuaProgram, ValueMatcher, ValueSetMember},
 };
 use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch};
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Module};
+use rerail_clif::inline::ReadIds;
 use std::mem;
 
 fn pointer(function: &mut FunctionBuilder<'_>, base: Value, offset: usize) -> Value {
@@ -146,6 +147,7 @@ pub(super) fn define(
     id: FuncId,
     program: &LuaProgram,
 ) -> Result<(), Box<cranelift_module::ModuleError>> {
+    let reads = ReadIds::declare(module)?;
     let mut context = module.make_context();
     context.func.signature = module.make_signature();
     let pointer_type = module.target_config().pointer_type();
@@ -212,33 +214,12 @@ pub(super) fn define(
             .brif(valid_node, initialize, &[], invalid, &[]);
 
         function.switch_to_block(initialize);
-        let nodes = pointer(
-            &mut function,
-            task,
-            mem::offset_of!(NativeTaskContext, nodes),
-        );
         let source = pointer(
             &mut function,
             task,
             mem::offset_of!(NativeTaskContext, source),
         );
-        let node_offset = function
-            .ins()
-            .imul_imm(node_index, mem::size_of::<MetalNode>() as i64);
-        let node_offset = function.ins().uextend(pointer_type, node_offset);
-        let node = function.ins().iadd(nodes, node_offset);
-        let source_start = function.ins().load(
-            types::I32,
-            MemFlags::trusted(),
-            node,
-            mem::offset_of!(MetalNode, source_start) as i32,
-        );
-        let source_end = function.ins().load(
-            types::I32,
-            MemFlags::trusted(),
-            node,
-            mem::offset_of!(MetalNode, source_end) as i32,
-        );
+        let (source_start, source_end) = native_cpu_tape::span(&mut function, &reads, task, node_index);
         let source_length = function.ins().load(
             types::I32,
             MemFlags::trusted(),
@@ -938,7 +919,7 @@ pub(super) fn define(
         function.finalize();
     }
     super::native_cpu_codegen::define_function(module, id, &mut context).inspect_err(|_| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         eprintln!("{}", context.func.display());
     })?;
     module.clear_context(&mut context);

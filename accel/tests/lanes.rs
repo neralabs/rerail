@@ -77,7 +77,8 @@ fn a_wave_runs_on_every_lane_at_once_and_matches_the_reference() {
     for ((k, _), d) in ks.iter().zip(&done) {
         assert_eq!(d.out, cpu::run(k), "{} on {}", k.form().name(), d.lane.name());
     }
-    for l in &lanes {
+    // This wave contains array kernels; SQL programs have separate coverage.
+    for l in lanes.iter().filter(|&&l|l!=Lane::Sql) {
         assert!(report.launches[l.index()] > 0, "no launch on {}", l.name());
     }
     eprintln!("pinned: {report:?}");
@@ -245,7 +246,8 @@ fn small_joins_and_staged_columns_match_the_reference() {
     let ex = Executor::new();
     let mut rng = Rng(0x5eed);
     let mut col = |n: usize, m: u64| -> Vec<i64> { (0..n).map(|_| rng.below(m) as i64 - (m as i64) / 2).collect() };
-    let mut cases: Vec<(Vec<Vec<i64>>, Vec<Vec<i64>>)> = Vec::new();
+    type Sides = (Vec<Vec<i64>>, Vec<Vec<i64>>);
+    let mut cases: Vec<Sides> = Vec::new();
     for (nl, nr, k, m) in [(1500, 2048, 1, 700), (3000, 1000, 2, 40), (10, 1, 3, 3), (0, 50, 1, 9), (40, 0, 2, 9), (5000, 1999, 3, 6), (6000, 5000, 1, 50), (4000, 9000, 2, 30)] {
         cases.push(((0..k).map(|_| col(nl, m)).collect(), (0..k).map(|_| col(nr, m)).collect()));
     }
@@ -354,10 +356,11 @@ fn launches_planned_on_a_lane_behind_its_plan_are_claimed_by_the_others() {
     let delay = std::time::Duration::from_millis(300);
     let mut ex = Executor::with(vec![Arc::new(CpuBackend::default()), Arc::new(Slow(delay))]);
     // The device priced far cheaper, so the plan puts every launch there.
-    for f in [rerail_accel::kernel::Form::Probe] {
+    {
+        let f = rerail_accel::kernel::Form::Probe;
         ex.prices.set(f, Lane::Gpu, Some(1e-15));
     }
-    ex.prices.latency = [0.0; 4];
+    ex.prices.latency = [0.0; Lane::COUNT];
     ex.prices.fixed[Lane::Gpu.index()] = rerail_accel::price::Fixed { submission: 0.0, launch: 0.0 };
     ex.prices.host[Lane::Gpu.index()] = rerail_accel::price::Fixed { submission: 0.0, launch: 0.0 };
     let mut rng = Rng(0xc1a1);
@@ -433,7 +436,7 @@ fn a_device_with_nothing_planned_takes_the_cores_late_launches() {
     let mut ex = Executor::with(vec![Arc::new(CpuBackend::default()), Arc::new(Fake { delay: std::time::Duration::ZERO, log })]);
     // The device fast, but dear in host CPU, so the plan puts every launch on the cores.
     ex.prices.set(rerail_accel::kernel::Form::Probe, Lane::Gpu, Some(1e-9));
-    ex.prices.latency = [0.0; 4];
+    ex.prices.latency = [0.0; Lane::COUNT];
     ex.prices.fixed[Lane::Gpu.index()] = rerail_accel::price::Fixed { submission: 0.0, launch: 0.0 };
     ex.prices.host[Lane::Gpu.index()] = rerail_accel::price::Fixed { submission: 0.05, launch: 0.05 };
     let hold = std::time::Duration::from_millis(300);
@@ -537,6 +540,31 @@ fn a_program_is_placed_by_its_own_prices_and_runs_the_lanes_form() {
     assert!(format!("{}", ex.score()).contains("program"), "{}", ex.score());
 }
 
+#[test]
+fn polling_a_batch_preserves_its_outputs_and_scoreboard_completion() {
+    use rerail_accel::exec::CpuBackend;
+    let executor=Executor::with(vec![Arc::new(CpuBackend::default())]);
+    let kernel=Kernel::Histogram {off:vec![0,3].into(),codes:vec![0,1,1].into(),width:2};
+    let expected=cpu::run(&kernel);
+    let mut running=executor.begin(Batch(vec![Launch::on(kernel.clone(),Lane::Cpu),Launch::on(kernel,Lane::Cpu)])).unwrap();
+    let started=std::time::Instant::now();
+    while !running.ready() {
+        // A guard against a batch that never completes, not a time limit: the pool this batch queues on is shared
+        // with the other tests here, which on a two-core runner hold it for many seconds.
+        assert!(started.elapsed()<std::time::Duration::from_secs(120), "the batch never completed");
+        if !rerail_accel::exec::on_pool() || !rerail_accel::exec::help_once() {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+    assert!(running.ready(),"Polling a completed batch must retain every reply");
+    let (done,report)=running.wait().unwrap();
+    assert_eq!(done.len(),2);
+    for item in done {assert_eq!(item.out,expected);}
+    assert_eq!(report.launches[Lane::Cpu.index()],2);
+    let score=executor.score();let cpu=&score.units[Lane::Cpu.index()];
+    assert_eq!((cpu.jobs,cpu.failed,cpu.queued,cpu.running),(2,0,0,0));
+}
+
 /// The cost statistics fit a device lane's rate from warm samples of one kernel alone, its fixed costs taken out;
 /// cold, failed and mixed jobs, and a table form on the cores, are not fitted.
 #[test]
@@ -558,6 +586,7 @@ fn learned_rates_come_from_warm_samples_of_one_kernel() {
         cold: false,
         ok: true,
         load: 1.0,
+        threads: 1,
     };
     let mut samples: Vec<Sample> = (0..MIN_SAMPLES).map(|i| sample(Lane::Gpu, "test-learned-span", 1, 1e5 + i as f64, 2e-9)).collect();
     samples.push(Sample { cold: true, ..sample(Lane::Gpu, "test-learned-span", 1, 1e5, 1.0) });

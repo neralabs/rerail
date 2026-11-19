@@ -1,14 +1,15 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { SqliteAuditReader, SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map((path) => removeFolder(path)));
 });
 
 async function temporaryDatabase(): Promise<string> {
@@ -111,6 +112,26 @@ describe("SQLite audit persistence", () => {
     });
     store.close();
   });
+
+  // Every evaluator's open interrupts its session's earlier runs. Before, it updated with nothing to match and waited up
+  // to 5 s on the daemon's thread for another process's write lock.
+  it("interrupts a session with nothing running without waiting for another process's write lock", async () => {
+    const path = await temporaryDatabase();
+    const store = new SqliteAuditStore(path);
+    store.finish(store.start(input), { status: "completed" });
+    const writer = new Database(path);
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      const asked = performance.now();
+      store.interrupt("session-a");
+      expect(performance.now() - asked).toBeLessThan(1_000);
+    } finally {
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      store.close();
+    }
+  });
+
   it("assembles bounded result pages in SQLite without a JavaScript result aggregate", async () => {
     const path = await temporaryDatabase();
     const store = new SqliteAuditStore(path);
@@ -138,7 +159,13 @@ describe("SQLite audit persistence", () => {
       violations: [{ id: "violation-1" }, { id: "violation-2" }],
       failures: [{ clauseId: "clause-b" }],
     });
-    expect(new Database(path).prepare("SELECT count(*) AS count FROM audit_result_pages").get()).toEqual({ count: 0 });
+    const pages = new Database(path);
+    try {
+      expect(pages.prepare("SELECT count(*) AS count FROM audit_result_pages").get()).toEqual({ count: 0 });
+    } finally {
+      // Left open, it holds the database until collected, and Windows then refuses to remove the test's folder.
+      pages.close();
+    }
     store.close();
   });
 
@@ -198,7 +225,9 @@ describe("SQLite audit persistence", () => {
     store.finish(listed, { status: "failed", failures: [...failures, ...failures, ...failures] });
     recordRepositoryAudit(path, "/many", many);
     recordRepositoryAudit(path, "/listed", listed);
-    for (const reader of [store, new SqliteAuditReader(path)]) {
+    // Each reader is closed before the folder is removed: Windows will not delete a database file a connection holds.
+    const separate = new SqliteAuditReader(path);
+    for (const reader of [store, separate]) {
       expect(reader.get(many)).toMatchObject({ failureCount: 31, unlistedFailureCount: 30 });
       expect(reader.get(listed)).toMatchObject({ failureCount: 3, unlistedFailureCount: 0 });
       expect(reader.list().audits.map(({ auditId, failureCount }) => [auditId, failureCount]).sort())
@@ -208,6 +237,7 @@ describe("SQLite audit persistence", () => {
       expect(reader.listRepositoryAudits().repositories.map(({ workspaceRoot, audit }) =>
         [workspaceRoot, audit?.failureCount, audit?.unlistedFailureCount])).toEqual([["/listed", 3, 0], ["/many", 31, 30]]);
     }
+    separate.close();
     store.close();
   });
 });

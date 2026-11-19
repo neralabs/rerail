@@ -3,7 +3,7 @@
   "id": "data-layer-serverplan-dispatch-architecture",
   "revision": 1,
   "mode": "block",
-  "description": "Candidate port of nera-data-layer serverplan_dispatch_architecture at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "description": "Candidate port of the data-layer repository's serverplan_dispatch_architecture at 2b1504adc4291daaf080b2e932962b134da1a69a.",
   "scope": {
     "include": [
       "impl/common/l2065_plan_core/**/*.py",

@@ -4,7 +4,7 @@ import type { RuleMode } from "../catalog/rule-mode.js";
 import { sensitiveByName } from "../path-boundary.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
-import { inlineCode, steerBlock, steerRules, steerText, type SteerFinding, type SteerTrigger } from "./rerail-steer.js";
+import { inlineCode, steerBlock, steerRules, steerText, type SteerFinding, type SteerShell, type SteerTrigger } from "./rerail-steer.js";
 import { steerOrigin, type SteerRuleSource } from "./steer-origin.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
@@ -99,9 +99,8 @@ export interface CodeRuleDslDefineClause {
 }
 
 export interface CodeRuleDslDefine {
-  /** Report all findings together only above this count. Failures remain visible. */
+  /** Report findings only above this count; failures remain visible. */
   report_when?: { count: { gt: number } };
-
   /** The language `utils` compile for; required with them. */
   language?: CodeRuleLanguageId;
   /**
@@ -197,14 +196,17 @@ export interface CodeRuleDslRelational {
   partitionBy?: "file" | "repository";
   syntax?: { name: string; gate: string; fields?: string[]; columns?: string[]; excludeKinds?: string[]; emptyTextKinds?: string[]; edges?: string; ownership?: string; owners?: Record<string,{kind:string;outermost?:boolean}> };
   inputs: Record<string, CodeRuleDslRelation>;
-  references?: { language: "python"; siblingLinks?: NonNullable<CodeRuleDslAstRule["calls"]>["siblingLinks"]; constructorFields?: NonNullable<CodeRuleDslAstRule["calls"]>["constructorFields"] };
+  references?: { language: "python"; siblingLinks?: { decorator: string; name: { replace: string; by: string } }[]; constructorFields?: { fieldToParameter: { replace: string; by: string } } };
   stages?: ({ name: string } & (
     | { query: string; indexes?: string[][]; deferred?: Record<string, string>; reachability?: never }
-    | { reachability: { roots: string; edges?: string; syntax?: string; batchSize?: number; graph?: "directed" | "forest" }; query?: never; indexes?: never; deferred?: never }
+    | { pythonAst: { roots: string; syntax: string; fields: ("dump" | "body_sha256" | "signature_sha256" | "identifier" | "unparse" | "literal_json" | "dump_sha256" | "column" | "repr_unparse")[] }; query?: never; indexes?: never; deferred?: never; reachability?: never }
+    | { reachability: { roots: string; edges?: string; syntax?: string; batchSize?: number; graph?: "directed" | "forest"; selection?: "memoized-first"; sinks?: string; match?: "node" | "edge" }; query?: never; indexes?: never; deferred?: never }
   ))[];
   query: string;
   key?: string[];
   code?: string;
+  /** Output column containing the exact diagnostic message. */
+  message?: string;
 }
 
 
@@ -250,7 +252,7 @@ export interface CodeRuleDslFileQuery {
 
 export interface CodeRuleDslAstQuery {
   ast: {
-    /** Gate on whole-file syntax. Invalid permits matches inside error regions. */
+    /** Gate on whole-file syntax. */
     syntax?: "valid" | "invalid";
     language: CodeRuleLanguageId;
     rule: CodeRuleDslAstRule;
@@ -689,8 +691,12 @@ export interface CodeRuleDslAstRule extends CodeRuleDslSemanticAstRuleFields {
   pattern?: CodeRuleDslAstPattern;
   kind?: string;
   regex?: string;
+  /**
+   * Why the token `regex` tests is stored where the rule looks: an optional or alternative token the tape keeps. A
+   * kindless token test the tape may leave out, and that neither the named structure nor a gap answers, does not compile.
+   */
+  stored?: string;
   nthChild?: CodeRuleDslNthChild;
-  /** File path condition that can also scope a call-graph seed. */
   filePath?: CodeRuleDslTextCondition;
   all?: CodeRuleDslAstRule[];
   any?: CodeRuleDslAstRule[];
@@ -750,10 +756,8 @@ export interface CodeRuleDslLayoutGap {
  * is not evaluated in a file with syntax errors. A parsed tree's rule (`parse`) refuses it.
  */
 export interface CodeRuleDslLayout {
-  /** Regex on the complete first line of the node, or the preceding line. */
   line?: string;
   previousLine?: string;
-  /** Regex over a bounded window around the first line, optionally ending at the first matching line, inclusive. */
   context?: { before?: number; after?: number; through?: string; regex: string };
   span?: CodeRuleDslLineCount;
   start?: CodeRuleDslLineCount;
@@ -963,7 +967,6 @@ export type CodeRuleDslParseGrammar = "percentFormat" | "braceFormat" | "annotat
  */
 export interface CodeRuleDslParse extends CodeRuleDslAstRule {
   grammar: CodeRuleDslParseGrammar;
-  /** The opaque slot text in a pythonFString projection. Defaults to "{}". */
   interpolation?: string;
 }
 
@@ -1577,10 +1580,19 @@ export interface IgnoredEditMatch {
   pattern: string;
 }
 
+/** What a walk of the session's folder asks of each file and folder it finds (`CodeRuleAuditor.walkView`). */
+export type WalkView = Pick<CodeRuleAuditor, "acceptsPath" | "ignoresPath">;
+
 export interface CodeRuleAuditor {
   openWorkspace(sessionId: string): Promise<void>;
   /** Refresh live rules before filtering paths for a tool's preimages; `acceptsPath` reflects them on return. */
   refreshCodeRules?(): void;
+  /**
+   * Before a tool call's files are filtered, at its start and at its result: `paths` (as for `acceptsPath`) are found
+   * again in the checkout that owns them now, where a folder above one became a checkout after a lookup passed it.
+   * Absent: a file's checkout does not change while a session runs.
+   */
+  refreshOwners?(paths: readonly string[]): void;
   /** Activates defaults at the next event boundary; work already queued keeps its snapshot. */
   updateSettings?(settings: Required<AuditSettings>): void;
   /** `path` is relative to the session folder and may lead out of it (`../`) into another checkout. */
@@ -1590,6 +1602,12 @@ export interface CodeRuleAuditor {
    * a shell-write walk neither descends into such a folder (`directory`) nor observes such a file. Absent: nothing is.
    */
   ignoresPath?(path: string, directory: boolean): boolean;
+  /**
+   * `acceptsPath` and `ignoresPath` for one walk, which asks them only of the files and folders it found, never of a
+   * link. It may keep what it learns of a folder for the rest of the walk, so a walk costs a lookup per folder where
+   * the auditor would make one per file. Absent: the walk asks the auditor itself.
+   */
+  walkView?(): WalkView;
   /**
    * Why an edit of the file `path` (as for `acceptsPath`) goes unchecked though the rules would read it: the pattern
    * by which Git ignores it, while the session follows `.gitignore`, with its file (absolute) and line. Undefined for a
@@ -1611,6 +1629,7 @@ export interface CodeRuleAuditor {
   auditGeneratedEdits(sessionId: string, batch: CodeRuleEditBatch): Promise<CodeRuleResponse>;
   /** Wait until every accepted generated edit has completed, without waiting for unrelated audits. */
   settleGeneratedEdits?(): Promise<void>;
+  /** An audit someone asked for, whose runs are recorded as scans (`AuditOrigin`), not as the session's own. */
   audit?(sessionId: string, input: {
     scope: "repository" | "touched-files";
     mode: AuditMode;
@@ -1688,9 +1707,12 @@ function steerFindings(violations: readonly CodeRuleViolation[], sensitive: (pat
   });
 }
 
-/** The steer block (`steerBlock`) for `violations`, in first-seen order, led as `trigger` says (an edit's by default). */
-export function renderSteer(violations: readonly CodeRuleViolation[], trigger: SteerTrigger = { kind: "edit" }): string {
-  return steerBlock(trigger, steerFindings(violations, sensitiveByName));
+/**
+ * The steer block (`steerBlock`) for `violations`, in first-seen order, led as `trigger` says (an edit's by default), its
+ * command written for `shell` (`steerBlock`'s default when absent).
+ */
+export function renderSteer(violations: readonly CodeRuleViolation[], trigger: SteerTrigger = { kind: "edit" }, shell?: SteerShell): string {
+  return steerBlock(trigger, steerFindings(violations, sensitiveByName), shell);
 }
 
 /** Rule ids credited with a steer: the distinct `ruleId`s of the rendered violations, in first-seen order. */
@@ -1702,17 +1724,19 @@ export function steerRuleIds(violations: readonly CodeRuleViolation[]): string[]
  * The rendered steer text with its contributing rule ids and rules (`steerRules`, each naming where it comes from);
  * the text is byte-identical to `renderSteer` when `sensitive` is `sensitiveByName`. `sensitive` judges which
  * violation paths are secret-like: a caller that knows the checkout the paths are relative to passes
- * `checkoutPathBoundary(root).sensitive`, so a file that links to a secret is judged as one.
+ * `checkoutPathBoundary(root).sensitive`, so a file that links to a secret is judged as one. `shell` is the session's
+ * coding agent's (`steerShell`), which the steer's command is written for.
  */
 export function buildSteer(
   violations: readonly CodeRuleViolation[],
   trigger: SteerTrigger,
   sourceOf: SteerSourceOf = () => undefined,
   sensitive: (path: string) => boolean = sensitiveByName,
+  shell?: SteerShell,
 ): { content: string; ruleIds: string[]; rules: SteerRule[] } {
   const findings = steerFindings(violations, sensitive);
   return {
-    content: steerBlock(trigger, findings),
+    content: steerBlock(trigger, findings, shell),
     ruleIds: steerRuleIds(violations),
     rules: steerRules(findings, ruleId => steerOrigin(ruleId, sourceOf(ruleId))),
   };

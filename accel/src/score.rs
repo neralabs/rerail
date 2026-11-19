@@ -112,7 +112,7 @@ pub struct FormRow {
 #[derive(Clone, Debug, Default)]
 pub struct TagRow {
     pub batches: u64,
-    pub launches: [u64; 4],
+    pub launches: [u64; Lane::COUNT],
     /// Launches whose lane is not the first to finish: the slack or the band let a lane of less host CPU take them.
     pub not_fastest: u64,
     /// The host CPU the placement estimated, and what placing every launch on its fastest lane would have cost.
@@ -131,7 +131,7 @@ pub struct TagRow {
     pub stalled: u64,
     /// Launches run on each lane, as claimed (decision 0100 §11); those run off the lane they were planned on,
     /// and those the waiting caller ran itself.
-    pub ran: [u64; 4],
+    pub ran: [u64; Lane::COUNT],
     pub moved: u64,
     pub helped: u64,
     /// The last overlaps (at most 32): the next batch's slack is their lower quartile, so a kind whose callers
@@ -163,7 +163,7 @@ pub struct PhaseRow {
 /// The scoreboard's state at one moment.
 #[derive(Clone, Debug, Default)]
 pub struct Score {
-    pub units: [Unit; 4],
+    pub units: [Unit; Lane::COUNT],
     /// By (lane, form).
     pub forms: BTreeMap<(Lane, &'static str), FormRow>,
     /// By (lane, phase).
@@ -354,6 +354,8 @@ pub struct Sample {
     pub ok: bool,
     /// The cores' slowdown under the machine's load when it ended ([`crate::exec::cores_slowdown`]).
     pub load: f64,
+    /// The executor's pool threads ([`crate::exec::threads`]).
+    pub threads: u32,
 }
 
 static KEEP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -390,7 +392,42 @@ pub struct Ticket {
     items: Vec<Item>,
     queued: Instant,
     started: Option<Instant>,
-    cpu0: f64,
+    /// The CPU seconds counted so far, on every thread the job ran on.
+    cpu: f64,
+    /// The thread it runs on now and its clock then: `None` while it is handed between threads.
+    cpu0: Option<(std::thread::ThreadId, f64)>,
+    /// Its phases so far, gathered from each thread it ran on.
+    phases: Vec<(&'static str, u64, f64, f64)>,
+}
+
+impl Ticket {
+    /// The job leaves this thread: its CPU and phases here are counted. A device job begins on its lane's thread and
+    /// runs its host work on the lanes' pool; reading one thread's clock at the start and another's at the end gave
+    /// a difference of two unrelated clocks (158 ms a job, the lane's total past the process's).
+    pub fn pause(&mut self) {
+        // On another thread than the one that resumed it, the clock is not this job's: nothing is counted.
+        if let Some((at, c0)) = self.cpu0.take()
+            && at == std::thread::current().id()
+        {
+            self.cpu += thread_cpu() - c0;
+        }
+        for (name, n, c, w) in take_phases() {
+            match self.phases.iter_mut().find(|e| e.0 == name) {
+                Some(e) => {
+                    e.1 += n;
+                    e.2 += c;
+                    e.3 += w;
+                }
+                None => self.phases.push((name, n, c, w)),
+            }
+        }
+    }
+
+    /// The job runs on this thread from now: its clock is read here, and what the thread counted before is not its.
+    pub fn resume(&mut self) {
+        take_phases();
+        self.cpu0 = Some((std::thread::current().id(), thread_cpu()));
+    }
 }
 
 /// An executor's scoreboard.
@@ -428,7 +465,7 @@ fn since(t: Instant) -> f64 {
 
 impl Scoreboard {
     /// A scoreboard for lanes with `slots` workers each (0: the lane is absent).
-    pub fn new(slots: [usize; 4]) -> Self {
+    pub fn new(slots: [usize; Lane::COUNT]) -> Self {
         let _ = epoch();
         let mut score = Score::default();
         for (u, s) in score.units.iter_mut().zip(slots) {
@@ -468,15 +505,14 @@ impl Scoreboard {
             u.queued += 1;
             u.outstanding += est;
         });
-        Ticket { id: NEXT.fetch_add(1, Ordering::Relaxed), lane, items, queued: Instant::now(), started: None, cpu0: 0.0 }
+        Ticket { id: NEXT.fetch_add(1, Ordering::Relaxed), lane, items, queued: Instant::now(), started: None, cpu: 0.0, cpu0: None, phases: Vec::new() }
     }
 
     /// A worker took the job.
     pub fn start(&self, t: &mut Ticket) {
-        take_phases();
         let now = Instant::now();
         t.started = Some(now);
-        t.cpu0 = thread_cpu();
+        t.resume();
         self.with(|s| {
             let u = &mut s.units[t.lane.index()];
             u.queued -= 1;
@@ -487,11 +523,12 @@ impl Scoreboard {
         });
     }
 
-    /// The job ended, well or not: its seconds run.
-    pub fn finish(&self, t: Ticket, ok: bool) -> f64 {
+    /// The job ended, well or not: its seconds run, and its CPU seconds on every thread it ran on.
+    pub fn finish(&self, mut t: Ticket, ok: bool) -> (f64, f64) {
         let end = Instant::now();
-        let cpu = thread_cpu() - t.cpu0;
-        let phases = take_phases();
+        t.pause();
+        let cpu = t.cpu;
+        let phases = std::mem::take(&mut t.phases);
         let start = t.started.unwrap_or(end);
         let ran = end.duration_since(start).as_secs_f64();
         let waited = start.saturating_duration_since(t.queued).as_secs_f64();
@@ -541,13 +578,16 @@ impl Scoreboard {
                 p.wall += w;
             }
         });
-        if KEEP.load(Ordering::Relaxed) {
+        // A job with no units (a stream's: `strata`, the whole strata loop) prices nothing, and its wall would be
+        // fitted as its lane's submission: not kept.
+        let units: f64 = t.items.iter().map(|i| i.units).sum();
+        if KEEP.load(Ordering::Relaxed) && units > 0.0 {
             let cold = phases.iter().any(|p| matches!(p.0, "pipeline compile" | "pipeline wait" | "new buffer"));
             let sample = Sample {
                 lane: t.lane,
                 forms: t.items.iter().map(|i| i.form).collect::<Vec<_>>().join(","),
                 launches: t.items.len() as u32,
-                units: t.items.iter().map(|i| i.units).sum(),
+                units,
                 estimate: est,
                 host_estimate: host_est,
                 wall: ran,
@@ -557,6 +597,7 @@ impl Scoreboard {
                 cold,
                 ok,
                 load: crate::exec::cores_slowdown(),
+                threads: crate::exec::threads() as u32,
             };
             let mut held = SAMPLES.lock().unwrap_or_else(|p| p.into_inner());
             if held.len() < HELD {
@@ -568,7 +609,6 @@ impl Scoreboard {
         if let Some(f) = trace() {
             let mut forms: Vec<&str> = t.items.iter().map(|i| i.form).collect();
             forms.dedup();
-            let units: f64 = t.items.iter().map(|i| i.units).sum();
             let thread = std::thread::current().name().unwrap_or("?").to_owned();
             let ph: Vec<String> = phases.iter().map(|&(name, _, c, w)| format!("{name}={:.1}/{:.1}", c * 1e6, w * 1e6)).collect();
             let line = format!(
@@ -586,7 +626,7 @@ impl Scoreboard {
             );
             let _ = f.lock().unwrap_or_else(|p| p.into_inner()).write_all(line.as_bytes());
         }
-        ran
+        (ran, cpu)
     }
 
     /// A batch of kind `tag` placed: per launch its lane, its cost there and the fastest lane's, and the slack used.
@@ -609,7 +649,7 @@ impl Scoreboard {
 
     /// A batch of kind `tag` collected: its caller worked `overlap` seconds before it waited, then stalled `stall`;
     /// its launches ran on `ran` per lane, `moved` of them off their planned lane and `helped` by the caller.
-    pub fn collected(&self, tag: &'static str, overlap: f64, stall: f64, ran: [u64; 4], moved: u64, helped: u64) {
+    pub fn collected(&self, tag: &'static str, overlap: f64, stall: f64, ran: [u64; Lane::COUNT], moved: u64, helped: u64) {
         self.with(|s| {
             let t = s.tags.entry(tag).or_default();
             for (a, b) in t.ran.iter_mut().zip(ran) {
@@ -644,7 +684,7 @@ impl Scoreboard {
     }
 
     /// The lanes' measured latency, device job CPU, and host CPU over its estimate, where measured.
-    pub fn measured(&self) -> [(Option<f64>, Option<f64>, Option<f64>); 4] {
+    pub fn measured(&self) -> [(Option<f64>, Option<f64>, Option<f64>); Lane::COUNT] {
         self.with(|s| std::array::from_fn(|i| (s.units[i].latency, s.units[i].job_cpu, s.units[i].host_ratio)))
     }
 
@@ -658,8 +698,13 @@ impl Scoreboard {
         });
     }
 
+    /// `f` of `lane`'s unit now (its jobs queued and running), read under the board's lock.
+    pub fn with_units<R>(&self, lane: Lane, f: impl FnOnce(&Unit) -> R) -> R {
+        self.with(|s| f(&s.units[lane.index()]))
+    }
+
     /// The estimated seconds not yet done, per lane.
-    pub fn outstanding(&self) -> [f64; 4] {
+    pub fn outstanding(&self) -> [f64; Lane::COUNT] {
         self.with(|s| std::array::from_fn(|i| s.units[i].outstanding))
     }
 
@@ -692,20 +737,70 @@ mod tests {
     /// A job's estimate is outstanding from its queueing to its end, and its counts land on its lane and form.
     #[test]
     fn a_job_is_outstanding_until_it_ends_and_counted_on_its_lane() {
-        let b = Scoreboard::new([2, 0, 1, 0]);
+        let b = Scoreboard::new([2, 0, 1, 0, 0]);
         let mut t = b.queue(Lane::Gpu, vec![Item { form: "probe", units: 10.0, estimate: 0.5, host: 0.0 }, Item { form: "tile", units: 4.0, estimate: 1.5, host: 0.0 }]);
-        assert_eq!(b.outstanding(), [0.0, 0.0, 2.0, 0.0]);
+        assert_eq!(b.outstanding(), [0.0, 0.0, 2.0, 0.0, 0.0]);
         assert_eq!(b.score().units[Lane::Gpu.index()].queued, 1);
         b.start(&mut t);
         assert_eq!((b.score().units[Lane::Gpu.index()].running, b.score().units[Lane::Gpu.index()].peak), (1, 1));
-        let ran = b.finish(t, true);
+        let (ran, _) = b.finish(t, true);
         let s = b.score();
         let u = &s.units[Lane::Gpu.index()];
         assert_eq!((u.queued, u.running, u.jobs, u.launches, u.failed), (0, 0, 1, 2, 0));
-        assert_eq!(b.outstanding(), [0.0; 4]);
+        assert_eq!(b.outstanding(), [0.0; Lane::COUNT]);
         assert!((u.estimated - 2.0).abs() < 1e-12);
         // The submission's time shared by the estimates: a quarter to the probe.
         assert!((s.forms[&(Lane::Gpu, "probe")].actual - ran / 4.0).abs() < 1e-12);
         assert!(s.to_string().contains("gpu"));
+    }
+
+    /// A device job begins on its lane's thread and ends on a pool thread: its CPU is the work it did on each, never
+    /// the difference of two threads' clocks, and its phases are its own, wherever they were counted.
+    #[test]
+    fn a_job_handed_between_threads_counts_only_its_own_cpu() {
+        fn spin(s: f64) {
+            let c0 = thread_cpu();
+            while thread_cpu() - c0 < s {
+                std::hint::black_box(0u64);
+            }
+        }
+        let b = Scoreboard::new([1, 0, 1, 0, 0]);
+        // The finishing thread has run long before the job: under one clock read at each end, that would be counted.
+        let (send, take) = std::sync::mpsc::channel::<Ticket>();
+        let finisher = std::thread::spawn(move || {
+            spin(0.2);
+            add("before", 0.2, 0.2);
+            let mut t = take.recv().unwrap();
+            t.resume();
+            spin(0.01);
+            add("read", 0.01, 0.01);
+            t.pause();
+            t
+        });
+        let mut t = b.queue(Lane::Gpu, vec![Item { form: "probe", units: 1.0, estimate: 0.01, host: 0.0 }]);
+        b.start(&mut t);
+        spin(0.01);
+        add("encode", 0.01, 0.01);
+        t.pause();
+        send.send(t).unwrap();
+        let t = finisher.join().unwrap();
+        b.finish(t, true);
+        let s = b.score();
+        let cpu = s.units[Lane::Gpu.index()].cpu;
+        assert!((0.019..0.1).contains(&cpu), "the job's CPU was {cpu} s");
+        let names: Vec<_> = s.phases.keys().filter(|k| k.0 == Lane::Gpu).map(|k| k.1).collect();
+        assert!(names.contains(&"encode") && names.contains(&"read") && !names.contains(&"before"), "{names:?}");
+        // Resumed on one thread and ended on another: the other's clock is not read.
+        let mut t = b.queue(Lane::Gpu, vec![Item { form: "probe", units: 1.0, estimate: 0.01, host: 0.0 }]);
+        b.start(&mut t);
+        let t = std::thread::spawn(move || {
+            spin(0.2);
+            t
+        })
+        .join()
+        .unwrap();
+        b.finish(t, true);
+        let more = b.score().units[Lane::Gpu.index()].cpu - cpu;
+        assert!((0.0..0.1).contains(&more), "the second job's CPU was {more} s");
     }
 }

@@ -6,9 +6,9 @@
 //! literal_json(n, v)                 W's pythonAst `literal_json` of expression node n: `json.dumps(ast.literal_eval(
 //!                                    node), sort_keys=True, separators=(",", ":"))` of the `ast` node at n's span
 //!                                    whose class n's kind is (W's `KINDS`); no row where either raises
-//! cpython_unparse(n, s)              core.rr's @py_unparse(n): `ast.unparse` of the `ast` expression (keyword, arg,
+//! cpython_unparse(n, s)              core.rerail's @py_unparse(n): `ast.unparse` of the `ast` expression (keyword, arg,
 //!                                    alias) at n's span whose class n's kind is
-//! cpython_ast_dump(n, s)             core.rr's @ast_dump(n): `ast.dump(node, include_attributes=False)` of the
+//! cpython_ast_dump(n, s)             core.rerail's @ast_dump(n): `ast.dump(node, include_attributes=False)` of the
 //!                                    `ast` node at n's span whose class n's kind is
 //! dump_sha256(n, h)                  W's `dump_sha256`: sha256 of that dump (lowercase hex)
 //! body_sha256(f, h)                  W's `body_sha256` of def f: of `ast.dump(ast.Module(body=f.body, type_ignores=[]))`
@@ -16,7 +16,7 @@
 //!                                    dump(ast.Tuple(elts=type_params))`
 //! ```
 //!
-//! `cpython_syntax_error` is core.rr's `syntax_error(d, l, msg)` of a Python document under the name the converter
+//! `cpython_syntax_error` is core.rerail's `syntax_error(d, l, msg)` of a Python document under the name the converter
 //! gives it: both read the tape's one cached verdict (`Facts::python_syntax`, `python_syntax::error`); the tape's
 //! `syntax_error(d)` (an ERROR or MISSING node) is apart. Where `ast.parse` raises no `SyntaxError` but another
 //! exception (a format spec's `UnicodeDecodeError`), a batch reading any of these relations for that document fails,
@@ -30,18 +30,9 @@ use super::{Dialect, Projected};
 use crate::code_rule_dsl::cpython::printed::{Printed, Want, by_start, of_kind, printed};
 use std::collections::{BTreeSet, HashMap};
 
-/// The relation the corpus binds for CPython's verdict (core.rr's `syntax_error(d, l, msg)`).
-pub(crate) const SYNTAX_ERROR: &str = "cpython_syntax_error";
-/// W's `literal_json` (`cpython::literal`).
-pub(crate) const LITERAL_JSON: &str = "literal_json";
-/// core.rr's `@py_unparse(n)` (`cpython::unparse`).
-pub(crate) const UNPARSE: &str = "cpython_unparse";
-/// core.rr's `@ast_dump(n)` (`cpython::dump`).
-pub(crate) const AST_DUMP: &str = "cpython_ast_dump";
-/// W's `dump_sha256`, `body_sha256` and `signature_sha256` (`cpython::dump`).
-pub(crate) const DUMP_SHA256: &str = "dump_sha256";
-pub(crate) const BODY_SHA256: &str = "body_sha256";
-pub(crate) const SIGNATURE_SHA256: &str = "signature_sha256";
+pub use crate::code_rule_dsl::facts::core::cpython_relations::{
+    AST_DUMP, BODY_SHA256, DUMP_SHA256, LITERAL_JSON, SIGNATURE_SHA256, SYNTAX_ERROR, UNPARSE, columns,
+};
 
 #[derive(Default)]
 pub(super) struct CPython {
@@ -58,7 +49,7 @@ pub(super) struct CPython {
 const PRINTED: [&str; 5] = [UNPARSE, AST_DUMP, DUMP_SHA256, BODY_SHA256, SIGNATURE_SHA256];
 
 impl CPython {
-    pub(super) fn new(reads: &BTreeSet<String>) -> Self {
+    pub(super) fn start(reads: &BTreeSet<String>) -> Self {
         let want = Want {
             unparse: reads.contains(UNPARSE),
             dump: reads.contains(AST_DUMP),
@@ -99,7 +90,7 @@ impl CPython {
                 let f = &*p.facts;
                 let mut by_span: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
                 for (local, &id) in p.core.iter().enumerate() {
-                    by_span.entry((f.start[id as usize], f.end[id as usize])).or_default().push(local as u32);
+                    by_span.entry((f.start(id), f.end(id))).or_default().push(local as u32);
                 }
                 for l in &literals {
                     let Some(nodes) = by_span.get(&(l.start, l.end)) else { continue };
@@ -126,7 +117,7 @@ impl CPython {
         }
         let f = &*p.facts;
         for (local, &id) in p.core.iter().enumerate() {
-            let (start, end) = (f.start[id as usize], f.end[id as usize]);
+            let (start, end) = (f.start(id), f.end(id));
             let exact = by_span.get(&(start, end));
             if exact.is_none() && !starting.contains_key(&start) {
                 continue;
@@ -177,11 +168,24 @@ impl CPython {
     }
 }
 
-/// A printed relation's columns.
-pub(crate) fn columns(rel: &str) -> &'static [&'static str] {
-    match rel {
-        UNPARSE | AST_DUMP => &["n", "s"],
-        DUMP_SHA256 => &["n", "h"],
-        _ => &["f", "h"],
+
+/// CPython's syntax verdicts, `ast.unparse` and `ast.dump` as a batch's producer (`syntax::Producer`).
+pub struct Producer;
+
+impl super::Producer for Producer {
+    fn dialect(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::Python
+    }
+    fn start(&self, reads: &BTreeSet<String>, _: &[String]) -> Box<dyn super::ProducerRun> {
+        Box::new(CPython::start(reads))
+    }
+}
+
+impl super::ProducerRun for CPython {
+    fn document(&mut self, p: &super::Projected, d: &super::Document, dialect: Option<&super::Dialect>, own: bool, string: &mut dyn FnMut(&str) -> usize) -> crate::content_store::StoreResult<()> {
+        CPython::document(self, p, &d.path, dialect, own, string)
+    }
+    fn relations(self: Box<Self>, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, super::Relation)> {
+        CPython::relations(*self, atom)
     }
 }

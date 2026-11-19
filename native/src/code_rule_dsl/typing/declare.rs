@@ -259,4 +259,4 @@ fn annotation(s: &str, terms: &mut Terms, vars: &HashMap<String, Tid>, intern: &
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

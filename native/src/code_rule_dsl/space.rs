@@ -10,7 +10,7 @@
 
 /// Each file's first node in the space and its node count.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct NodeSpace {
+pub struct NodeSpace {
     bases: Vec<u32>,
     counts: Vec<u32>,
     len: u32,
@@ -18,7 +18,7 @@ pub(in crate::code_rule_dsl) struct NodeSpace {
 
 impl NodeSpace {
     /// The space of files with `counts[f]` nodes each, in order.
-    pub(in crate::code_rule_dsl) fn new(counts: Vec<u32>) -> Self {
+    pub fn new(counts: Vec<u32>) -> Self {
         let mut bases = Vec::with_capacity(counts.len());
         let mut len = 0_u32;
         for &count in &counts {
@@ -28,41 +28,41 @@ impl NodeSpace {
         Self { bases, counts, len }
     }
 
-    pub(in crate::code_rule_dsl) fn files(&self) -> usize {
+    pub fn files(&self) -> usize {
         self.counts.len()
     }
 
-    pub(in crate::code_rule_dsl) fn len(&self) -> u32 {
+    pub fn len(&self) -> u32 {
         self.len
     }
 
-    pub(in crate::code_rule_dsl) fn words(&self) -> usize {
+    pub fn words(&self) -> usize {
         (self.len as usize).div_ceil(64)
     }
 
-    pub(in crate::code_rule_dsl) fn base(&self, file: usize) -> u32 {
+    pub fn base(&self, file: usize) -> u32 {
         self.bases[file]
     }
 
-    pub(in crate::code_rule_dsl) fn count(&self, file: usize) -> u32 {
+    pub fn count(&self, file: usize) -> u32 {
         self.counts[file]
     }
 
     /// File `file`'s nodes as a range of the space.
-    pub(in crate::code_rule_dsl) fn range(&self, file: usize) -> std::ops::Range<u32> {
+    pub fn range(&self, file: usize) -> std::ops::Range<u32> {
         self.bases[file]..self.bases[file] + self.counts[file]
     }
 }
 
 /// The dense form 0024 §1 built: one bit per node of the space. Kept as the reference and the
 /// baseline the containers are measured against (0045).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) struct DenseSet {
     words: Vec<u64>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[allow(dead_code)]
 impl DenseSet {
     pub(in crate::code_rule_dsl) fn empty(space: &NodeSpace) -> Self {
@@ -178,7 +178,7 @@ impl DenseSet {
     }
 
     /// The set's nodes in ascending order.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::code_rule_dsl) fn iter(&self) -> impl Iterator<Item = u32> + '_ {
         self.words.iter().enumerate().flat_map(|(at, &word)| {
             let mut word = word;
@@ -193,7 +193,7 @@ impl DenseSet {
     }
 
     /// The set's nodes of file `file`, as positions in the file, ascending.
-    pub(in crate::code_rule_dsl) fn file_nodes<'a>(&'a self, space: &'a NodeSpace, file: usize) -> impl Iterator<Item = u32> + 'a {
+    pub fn file_nodes<'a>(&'a self, space: &'a NodeSpace, file: usize) -> impl Iterator<Item = u32> + 'a {
         let range = space.range(file);
         let base = range.start;
         let words = if range.is_empty() { 0..0 } else { range.start as usize / 64..(range.end as usize - 1) / 64 + 1 };
@@ -212,12 +212,12 @@ impl DenseSet {
     }
 }
 
-pub(in crate::code_rule_dsl) mod chunked;
+pub mod chunked;
 
-pub(in crate::code_rule_dsl) use chunked::{Builder, NodeSet};
+pub use chunked::{Builder, NodeSet};
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

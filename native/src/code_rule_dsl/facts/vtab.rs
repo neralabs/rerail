@@ -27,15 +27,17 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
-pub(in crate::code_rule_dsl) mod schema;
-pub(in crate::code_rule_dsl) mod syntax;
+pub mod schema;
+pub mod syntax;
+// cratify: `python` is rerail-lang-python's (it mounts it)
+pub mod demand;
 
 /// `idx_num` of a filter on several `=` columns, listed in `idx_str`.
 const MULTI: c_int = 1 << 22;
 const ORDERED: c_int = 1 << 23;
 const PRIMARY_BATCH: c_int = 1 << 24;
 
-fn failure(message: &str) -> rusqlite::Error {
+pub fn failure(message: &str) -> rusqlite::Error {
     rusqlite::Error::UserFunctionError(message.to_owned().into())
 }
 
@@ -43,12 +45,24 @@ fn failure(message: &str) -> rusqlite::Error {
 /// Text result columns stay in SQLite's filters and never enter integer probes.
 /// A mutable owner must close every reader before changing rows, then refresh its binding
 /// and planner estimates. Most producers expose immutable snapshots.
-pub(crate) trait RowCells: Send+Sync {
+pub trait RowCells: Send+Sync {
     fn cell(&self,column:usize)->Value;
 }
-pub(crate) struct ReadRow {pub id:i64,pub cells:Arc<dyn RowCells>}
-pub(crate) trait RowStream:Send {fn next(&mut self)->Option<ReadRow>;}
-pub(crate) trait Source: Send + Sync {
+pub struct ReadRow {pub id:i64,pub cells:Arc<dyn RowCells>}
+pub trait RowStream:Send {fn next(&mut self)->Option<ReadRow>;}
+/// A view the device makes in place from a chunk block (`Source::device_view`, decision 0289).
+#[cfg(target_os = "macos")]
+pub struct DeviceView<'a> {
+    pub block: &'a rerail_blocks::Block,
+    pub root: usize,
+    pub view: u32,
+    pub rows: usize,
+    /// An axis's pairs in the block (`device_chunk::VIEW_AXIS`), else 0.
+    pub pairs: usize,
+}
+
+pub trait Source: Send + Sync {
+    fn python_batch(&self) -> Option<Arc<syntax::Batch>> { None }
     fn row_stream(&self,_range:Range<usize>,_reverse:bool)->Option<Box<dyn RowStream>> {None}
     fn direct_all(&self,_equal:&[(usize,i64)])->Option<Vec<ReadRow>> {None}
     fn direct_one(&self,_column:usize,_values:&[i64])->Option<Vec<ReadRow>> {None}
@@ -72,6 +86,8 @@ pub(crate) trait Source: Send + Sync {
         Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_READONLY),None))
     }
     fn text_column(&self, _column: usize) -> bool { false }
+    /// The source as itself, for a caller that carries state between two of one kind (`carry_sorted`).
+    fn as_any(&self) -> Option<&dyn std::any::Any> { None }
     fn columns(&self) -> Vec<String>;
     fn len(&self) -> usize;
     /// Row `row`'s values of `columns`, into `out`: one value at a time by default; a source that finds a row's
@@ -85,6 +101,12 @@ pub(crate) trait Source: Send + Sync {
         self.len()
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize;
+    /// A lookup on `column`'s CPU, as a multiple of a derived relation's (placement's `CPU_PER_PROBE` a row in and
+    /// `CPU_PER_ROW_OUT` a row out; decision 0312): a view whose lookup walks the tree or searches the documents
+    /// costs several. Fitted from the profile's `sources.tsv`.
+    fn lookup_cost(&self, _column: usize) -> f64 {
+        1.0
+    }
     /// The rows estimated to match one value on each of `columns` at once. By default the columns are taken
     /// as independent (each keeps its share of the rows), bounded by the most selective one.
     fn estimated_matches_all(&self, columns: &[usize]) -> usize {
@@ -120,11 +142,27 @@ pub(crate) trait Source: Send + Sync {
     fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
         (0..self.len()).filter(|&r| eqs.iter().all(|&(c, v)| self.value(r, c) == v)).map(|r| r as u32).collect()
     }
+    /// A view the device makes from its batch's chunk block (decision 0289): the block, its root, the view's code
+    /// (`syntax::device_chunk::VIEW_*`) and its rows. `None`: the device uploads its rows.
+    #[cfg(target_os = "macos")]
+    fn device_view(&self) -> Option<DeviceView<'_>> {
+        None
+    }
     /// Rows are made per looked-up value, so reading them all (a scan, a hash index of every row)
     /// makes every one: a join probes such a source through `lookup`, whatever its match estimate.
     fn made_on_lookup(&self) -> bool {
         false
     }
+    /// For a reader that takes the whole relation where a join would look it up (the device's keyed read, which
+    /// sorts the rows it is given, decision 0277): whether its rows can be made at once, at the cost of a solve the
+    /// source runs, rather than one lookup each. A source that answers so makes them (and its lookups then read
+    /// them). Every source not made on lookup has them.
+    fn complete_rows(&self) -> bool {
+        !self.made_on_lookup()
+    }
+    /// The planner expects `keys` lookups on `column` (decision 0143): a source that can make every row at once for
+    /// less than that many lookups cost chooses to.
+    fn expect_lookups(&self, _column: usize, _keys: f64) {}
     /// The planner's statistics (`syntax::statistics`'s rows) where the source knows them without
     /// reading every row: a source whose rows are made on lookup.
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
@@ -155,24 +193,45 @@ pub(crate) trait Source: Send + Sync {
     }
     /// The rows whose `column` is one of `values`; `None` scans.
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>>;
+    /// The rows whose `column` is `value` and whose columns hold every `(column, value)` of `eqs`, in `lookup`'s
+    /// order, where the source tests `eqs` as it finds them (a view's children by parent and field, off the tape)
+    /// rather than each row's values read back; `None`: looked up, then filtered.
+    fn lookup_eq(&self, _column: usize, _value: i64, _eqs: &[(usize, i64)]) -> Option<Vec<usize>> {
+        None
+    }
     fn value(&self, row: usize, column: usize) -> i64;
     /// The rows whose `column` is `value`, as a slice of the source's own sorted index (no allocation); `None`
     /// where the source keeps none.
     fn sorted_rows(&self, _column: usize, _value: i64) -> Option<&[u32]> {
         None
     }
+    /// Whether `sorted_rows` serves `column`, asked without building its index: a plan choosing among a source's
+    /// columns built every candidate's sorted form to ask, where it reads one.
+    fn sorts_rows(&self, column: usize) -> bool {
+        self.sorted_rows(column, 0).is_some()
+    }
 }
 
 #[derive(Default)]
-pub(crate) struct Counters {
+pub struct Counters {
     pub scans: AtomicU64,
     pub batches: AtomicU64,
     pub candidates: AtomicU64,
     pub columns: AtomicU64,
 }
 
+/// `source`'s columns as relation `rel`'s table names them: a derived relation named like a base one is read by the
+/// base names (`core::input_column_name`: `value`, handed on from the chunks as `c0`, `c1`, is read as `value(n, v)`).
+/// Its first binding names the table so; every later one is compared so (`Binding::set`), and a reader of the bound
+/// source finds a column so (`setfix::view`).
+pub fn named(rel: &str, source: &dyn Source) -> Vec<String> {
+    source.columns().into_iter().map(|c| crate::code_rule_dsl::facts::core::input_column_name(rel, &c).map_or(c, str::to_owned)).collect()
+}
+
 #[derive(Clone)]
-pub(crate) struct Binding {
+pub struct Binding {
+    /// The relation's name: its table's columns are its source's as `named` reads them.
+    name: Arc<str>,
     current: Arc<parking_lot::RwLock<Arc<dyn Source>>>,
     schema: Arc<Metadata>,
     stats: Arc<Counters>,
@@ -182,8 +241,8 @@ impl Binding {
         *self.current.write() = self.schema.clone();
     }
     pub fn set(&self, source: Arc<dyn Source>) -> Result<()> {
-        if self.schema.columns != source.columns() || self.schema.writable!=source.writable() || self.schema.text.iter().enumerate().any(|(c,t)| *t!=source.text_column(c)) {
-            return Err(failure("native binding schema changed"));
+        if self.schema.columns != named(&self.name, source.as_ref()) || self.schema.writable!=source.writable() || self.schema.text.iter().enumerate().any(|(c,t)| *t!=source.text_column(c)) {
+            return Err(failure(&format!("native binding schema changed: bound with columns {:?} (writable {}), now {:?} (writable {})", self.schema.columns, self.schema.writable, source.columns(), source.writable())));
         }
         *self.current.write() = source;
         Ok(())
@@ -191,7 +250,7 @@ impl Binding {
     pub fn counters(&self) -> &Counters {
         &self.stats
     }
-    fn current(&self) -> Arc<dyn Source> {
+    pub fn current(&self) -> Arc<dyn Source> {
         self.current.read().clone()
     }
 }
@@ -225,7 +284,7 @@ impl Source for Metadata {
 
 /// A hash over each source's size and index shape, in buckets: statements prepared under one
 /// signature keep their plans while sources of the same shape are rebound.
-pub(crate) fn plan_signature(sources: &BTreeMap<String, Arc<dyn Source>>) -> u64 {
+pub fn plan_signature(sources: &BTreeMap<String, Arc<dyn Source>>) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hash = std::collections::hash_map::DefaultHasher::new();
     fn bucket(n: usize) -> u32 {
@@ -248,12 +307,12 @@ pub(crate) fn plan_signature(sources: &BTreeMap<String, Arc<dyn Source>>) -> u64
 
 /// The tables registered on one connection, by name. The connection's owner holds it.
 #[derive(Default)]
-pub(crate) struct Modules {
+pub struct Modules {
     bindings: RefCell<HashMap<String, Binding>>,
 }
 impl Modules {
     /// Binds `source` to the table `name`, registering it on `db` the first time.
-    pub(crate) fn bind(&self, db: &Connection, name: &str, source: Arc<dyn Source>) -> Result<()> {
+    pub fn bind(&self, db: &Connection, name: &str, source: Arc<dyn Source>) -> Result<()> {
         self.bind_inner(db,name,source,false)
     }
     /// SQL can restore a dropped virtual-table schema before native rollback runs.
@@ -261,7 +320,7 @@ impl Modules {
         self.bind_inner(db,name,source,true)
     }
     /// Keep the same binding cell when SQL rollback revives an earlier table instance.
-    pub(crate) fn restore_binding(&self,db:&Connection,name:&str,binding:Binding)->Result<()> {
+    pub fn restore_binding(&self,db:&Connection,name:&str,binding:Binding)->Result<()> {
         register(db,name,binding.clone(),true)?;
         BOUND.lock().insert((connection_scope(db),name.to_owned()),binding.clone());
         self.bindings.borrow_mut().insert(name.into(),binding);
@@ -272,21 +331,36 @@ impl Modules {
         if let Some(binding) = bindings.get(name) {
             return binding.set(source);
         }
+        // A kept connection's table of this shape from its last run (`reuse`): its module is registered still.
+        let at = connection_scope(db);
+        let columns = named(name, source.as_ref());
+        let shape = (columns.clone(), (0..source.columns().len()).map(|c| source.text_column(c)).collect::<Vec<_>>(), source.writable());
+        let kept = REGISTERED.lock().remove(&(at, name.to_owned()));
+        // (A writable table's `temp` virtual table is there still: the run's clean-up drops none it binds, and one it
+        // drops is no longer kept, `dropped_temp`.)
+        if let Some(binding) = kept.filter(|b| (b.schema.columns.clone(), b.schema.text.clone(), b.schema.writable) == shape) {
+            binding.set(source)?;
+            BOUND.lock().insert((at, name.to_owned()), binding.clone());
+            bindings.insert(name.into(), binding);
+            return Ok(());
+        }
         let binding = Binding {
-            schema: Arc::new(Metadata { text:(0..source.columns().len()).map(|c|source.text_column(c)).collect(), columns: source.columns(), writable:source.writable() }),
+            name: name.into(),
+            schema: Arc::new(Metadata { text:(0..source.columns().len()).map(|c|source.text_column(c)).collect(), columns, writable:source.writable() }),
             current: Arc::new(parking_lot::RwLock::new(source)),
             stats: Arc::new(Counters::default()),
         };
         register(db, name, binding.clone(), restored)?;
+        if name == "node" { for register in node_tables() { register(db, &binding)?; } demand::register(db)?; }
         BOUND.lock().insert((connection_scope(db), name.to_owned()), binding.clone());
         bindings.insert(name.into(), binding);
         Ok(())
     }
-    pub(crate) fn get(&self, name: &str) -> Option<Binding> {
+    pub fn get(&self, name: &str) -> Option<Binding> {
         self.bindings.borrow().get(name).cloned()
     }
     /// Releases the table without a schema write or a retained row source.
-    pub(crate) fn unregister(&self, db: &Connection, name: &str) -> Result<()> {
+    pub fn unregister(&self, db: &Connection, name: &str) -> Result<()> {
         if self.bindings.borrow().get(name).is_some_and(|b|b.schema.writable)
             && db.query_row("SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE name=?1)",[name],|r|r.get::<_,bool>(0))? {
             db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{}",quote(name)))?;
@@ -309,7 +383,79 @@ impl Drop for Modules {
     fn drop(&mut self) {
         let mine=self.bindings.get_mut();
         if mine.is_empty(){return;}
-        BOUND.lock().retain(|(_,name),binding|!mine.get(name).is_some_and(|owned|Arc::ptr_eq(&owned.current,&binding.current)));
+        // Their modules stay registered on the connection, which may still read them: a later run on it takes one
+        // of the same shape back (`REGISTERED`; `reuse` empties them first).
+        let mut registered = REGISTERED.lock();
+        BOUND.lock().retain(|(at,name),binding| {
+            let owned = mine.get(name).is_some_and(|owned|Arc::ptr_eq(&owned.current,&binding.current));
+            if owned {
+                registered.insert((*at, name.clone()), binding.clone());
+            }
+            !owned
+        });
+    }
+}
+
+/// A run's connection, or only its scope (`connection_scope`) where the work runs off the connection's thread: a
+/// stratum run as a job on the pool (decision 0113). A connection is not `Sync`, but what the engine keeps per
+/// connection (bound sources, native relations, components, symbols) is keyed by its scope alone, so a job reads and
+/// writes it from any thread. Only SQL needs the connection: [`Db::sql`] is an error without one.
+#[derive(Clone, Copy)]
+pub struct Db<'a> {
+    at: usize,
+    conn: Option<&'a Connection>,
+}
+
+impl<'a> Db<'a> {
+    pub fn of(conn: &'a Connection) -> Self {
+        Db { at: connection_scope(conn), conn: Some(conn) }
+    }
+    /// The scope alone: a job off the connection's thread.
+    pub fn detached(self) -> Db<'static> {
+        Db { at: self.at, conn: None }
+    }
+    pub fn at(&self) -> usize {
+        self.at
+    }
+    pub fn sql(&self) -> rusqlite::Result<&'a Connection> {
+        self.conn.ok_or_else(|| rusqlite::Error::ModuleError("SQL read by a stratum off the run's thread (decision 0113): it has only its connection's scope".into()))
+    }
+}
+
+/// A run's SQL, where the caller is on the connection's thread: a detached scope here is a stratum the issuer should
+/// not have sent off its thread (`plan::strand`), a bug, so it panics with what it is.
+impl std::ops::Deref for Db<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        self.conn.expect("SQL read by a stratum off the run's thread (decision 0113)")
+    }
+}
+
+/// What a function of the engine's per-connection state takes: a connection or a [`Db`].
+pub trait Scoped {
+    fn db(&self) -> Db<'_>;
+    fn at(&self) -> usize {
+        self.db().at()
+    }
+}
+impl Scoped for Connection {
+    fn db(&self) -> Db<'_> {
+        Db::of(self)
+    }
+}
+impl Scoped for Db<'_> {
+    fn db(&self) -> Db<'_> {
+        *self
+    }
+}
+impl Scoped for rusqlite::functions::ConnectionRef<'_> {
+    fn db(&self) -> Db<'_> {
+        Db::of(self)
+    }
+}
+impl<T: Scoped + ?Sized> Scoped for &T {
+    fn db(&self) -> Db<'_> {
+        (**self).db()
     }
 }
 
@@ -318,27 +464,229 @@ impl Drop for Modules {
 /// The scope of what this process keeps per connection (its handle, an address), with a hook that drops all of it
 /// when the connection closes: the vtab bindings here and the native engine's relations
 /// (`logic::native::forget_scope`). A closed connection's address is reused by the next one opened.
-pub(crate) fn connection_scope(db: &Connection) -> usize {
+/// What registers a family's tables over the bound `node` relation (Python's semantic producers, `vtab::python`).
+pub(crate) type NodeTables = fn(&Connection, &Binding) -> Result<()>;
+
+static NODE_TABLES: std::sync::OnceLock<Vec<NodeTables>> = std::sync::OnceLock::new();
+
+/// Registers the families' tables over `node` (once, at load).
+pub fn install_node_tables(tables: Vec<NodeTables>) {
+    let _ = NODE_TABLES.set(tables);
+}
+
+fn node_tables() -> &'static [NodeTables] {
+    NODE_TABLES.get().map_or(&[], Vec::as_slice)
+}
+
+pub fn connection_scope(db: &Connection) -> usize {
     const KEY: &std::ffi::CStr = c"rerail.connection-scope";
+    // Each close bumps the generation: a thread's last connection with its hook set (`LAST`) is known to have it
+    // until some connection closes (whose address the next one may take), without asking SQLite on every lookup.
+    static CLOSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    thread_local!(static LAST: std::cell::Cell<(usize, u64)> = const { std::cell::Cell::new((0, u64::MAX)) });
     unsafe extern "C" fn closed(at: *mut std::os::raw::c_void) {
+        CLOSES.fetch_add(1, Ordering::AcqRel);
         let at = at as usize;
         BOUND.lock().retain(|(h, _), _| *h != at);
-        crate::code_rule_dsl::logic::native::forget_scope(at);
+        REGISTERED.lock().retain(|(h, _), _| *h != at);
+        VIEWS.lock().retain(|(h, _), _| *h != at);
+        UNRESOLVED.lock().remove(&at);
+        SETUP.lock().remove(&at);
+        if let Some(forget) = FORGET.get() {
+            (forget.scope)(at);
+        }
     }
     let handle = unsafe { db.handle() };
+    let closes = CLOSES.load(Ordering::Acquire);
+    if LAST.get() == (handle as usize, closes) {
+        return handle as usize;
+    }
     unsafe {
         if rusqlite::ffi::sqlite3_get_clientdata(handle, KEY.as_ptr()).is_null() {
             rusqlite::ffi::sqlite3_set_clientdata(handle, KEY.as_ptr(), handle.cast(), Some(closed));
         }
     }
+    LAST.set((handle as usize, closes));
     handle as usize
+}
+
+/// A view of one bound input that a run read in place and did not make in SQL (`plan`): the input, the input's columns
+/// it keeps (in the view's order), and its (column, value) filters. A reader after the run reads it from the input.
+#[derive(Clone, Debug)]
+pub struct UnmadeView {
+    pub base: String,
+    pub cols: Vec<usize>,
+    pub eqs: Vec<(usize, i64)>,
+}
+
+/// The tables a kept connection's last run bound, emptied (`reuse`), by connection and name: their modules stay
+/// registered until the connection closes, and the next run's `bind` of a table of the same shape takes one back.
+static REGISTERED: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Binding>>> = std::sync::LazyLock::new(Default::default);
+
+/// Whether `name` is a table of `db`'s connection's own, bound now or kept for a later bind (`REGISTERED`): its
+/// `temp` virtual table (a writable one's) is the binding's, not what an earlier run left. (A run binds some of
+/// its tables as it goes: the kept strata's `load` hook.)
+pub fn is_bound(db: &Connection, name: &str) -> bool {
+    let key = (connection_scope(db), name.to_owned());
+    BOUND.lock().contains_key(&key) || REGISTERED.lock().contains_key(&key)
+}
+
+/// A run dropped `temp.<name>` on `db`'s connection: a kept binding of that name is gone with it.
+pub fn dropped_temp(db: &Connection, name: &str) {
+    REGISTERED.lock().remove(&(connection_scope(db), name.to_owned()));
+}
+
+/// A connection's deferred set-up (`defer_setup`): the statements still to run, each with what undoes it, and what
+/// undoes those already run (`reuse`).
+#[derive(Default)]
+struct Setup {
+    pending: Vec<(String, Option<String>)>,
+    undo: Vec<String>,
+}
+/// Set-up statements a connection runs only once SQL is about to run on it (`defer_setup`, `setup_now`).
+static SETUP: std::sync::LazyLock<parking_lot::Mutex<HashMap<usize, Setup>>> = std::sync::LazyLock::new(Default::default);
+
+/// Defers `sql` (statements, run as one batch) until SQL first runs on `db`'s connection (`setup_now`): a run whose
+/// readers are native runs none of it.
+pub fn defer_setup(db: &Connection, sql: &str) {
+    SETUP.lock().entry(connection_scope(db)).or_default().pending.push((sql.to_owned(), None));
+}
+
+/// `defer_setup` of a run's own set-up on a connection a later run reuses: once run, `undo` undoes it when the
+/// connection is reused (`reuse`; `DETACH x` for an `ATTACH`).
+pub fn defer_setup_undone(db: &Connection, sql: &str, undo: &str) {
+    SETUP.lock().entry(connection_scope(db)).or_default().pending.push((sql.to_owned(), Some(undo.to_owned())));
+}
+
+/// Runs `db`'s deferred set-up (`defer_setup`), once: before a statement that needs it (a table made, a table of
+/// `x` written).
+pub fn setup_now(db: &Connection) -> Result<()> {
+    let at = connection_scope(db);
+    let pending = std::mem::take(&mut SETUP.lock().entry(at).or_default().pending);
+    for (sql, undo) in pending {
+        db.execute_batch(&sql)?;
+        if let Some(undo) = undo {
+            SETUP.lock().entry(at).or_default().undo.push(undo);
+        }
+    }
+    Ok(())
+}
+
+/// Readies a connection an earlier run worked on for the next run (its owner keeps it, `corpus::Connections`): what
+/// the earlier run set up of its own is undone (SQL only where its set-up ran), and what the process kept for that
+/// run on it (its views, the engine's relations) is dropped; its bound tables are emptied, kept for the next run's
+/// `bind` (`REGISTERED`). What the connection itself holds stays: its functions and modules, its symbols, which of
+/// its tables SQL has yet to connect (`UNRESOLVED`), what its runs left in SQL (`plan::Left`, which the next run drops).
+pub fn reuse(db: &Connection) -> Result<()> {
+    let at = connection_scope(db);
+    let undo = SETUP.lock().remove(&at).map(|s| s.undo).unwrap_or_default();
+    for sql in undo.iter().rev() {
+        db.execute_batch(sql)?;
+    }
+    // SQLite keeps each module's binding until the connection closes: the last run's sources are let go, its tables
+    // left empty (a `Modules` may drop while its connection still reads, so this is the connection's next run's).
+    // The next run's `bind` takes a table of the same shape back (`REGISTERED`): its module stays registered.
+    let mut registered = REGISTERED.lock();
+    BOUND.lock().retain(|(h, name), binding| {
+        if *h == at {
+            registered.insert((at, name.clone()), binding.clone());
+        }
+        *h != at
+    });
+    for ((h, _), binding) in registered.iter() {
+        if *h == at {
+            binding.clear();
+        }
+    }
+    drop(registered);
+    VIEWS.lock().retain(|(h, _), _| *h != at);
+    if let Some(forget) = FORGET.get() {
+        (forget.engine)(at);
+    }
+    Ok(())
+}
+
+/// What the evaluator keeps per connection, dropped with it: `scope` when the connection closes (its symbols,
+/// paths and plans with its relations), `engine` when a run reuses it (its relations and components alone).
+pub struct Forget {
+    pub scope: fn(usize),
+    pub engine: fn(usize),
+}
+
+static FORGET: std::sync::OnceLock<Forget> = std::sync::OnceLock::new();
+
+/// Registers what the evaluator drops with a connection (once, at load).
+pub fn install_forget(forget: Forget) {
+    let _ = FORGET.set(forget);
+}
+
+/// The tables registered on each connection that no statement has resolved yet (`register`).
+static UNRESOLVED: std::sync::LazyLock<parking_lot::Mutex<HashMap<usize, std::collections::BTreeSet<String>>>> = std::sync::LazyLock::new(Default::default);
+
+/// Resolves every table registered on `db` and not yet resolved, by preparing a read of it: an authorizer installed
+/// after this does not see SQLite connect them (an authored query's authorizer refuses what it does not name).
+pub fn resolve_tables(db: &Connection) -> Result<()> {
+    let names = UNRESOLVED.lock().remove(&connection_scope(db)).unwrap_or_default();
+    for name in names {
+        if BOUND.lock().contains_key(&(connection_scope(db), name.clone())) {
+            db.prepare(&format!("SELECT * FROM {}", quote(&name)))?;
+        }
+    }
+    Ok(())
+}
+
+static VIEWS: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), UnmadeView>>> = std::sync::LazyLock::new(Default::default);
+
+/// Records `view` as the view `name` on `db`'s connection, until the connection closes or `forget_views`.
+pub(crate) fn note_view(db: &Connection, name: &str, view: UnmadeView) {
+    VIEWS.lock().insert((connection_scope(db), name.to_owned()), view);
+}
+
+/// Drops the views noted on `db`'s connection: a run starts with none.
+pub fn forget_views(db: &Connection) {
+    let at = connection_scope(db);
+    VIEWS.lock().retain(|(h, _), _| *h != at);
+}
+
+/// The rows of the noted view `name` (`note_view`), read from its bound input: each once, as SQL's view gives them
+/// (a set), column by column.
+pub fn view_columns(db: &Connection, name: &str) -> Option<Vec<Vec<i64>>> {
+    let view = VIEWS.lock().get(&(connection_scope(db), name.to_owned())).cloned()?;
+    let src = bound_source(db, &view.base)?;
+    let mut rows: Vec<Vec<i64>> = src.filter_eq(&view.eqs).into_iter().map(|id| view.cols.iter().map(|&c| src.value(id as usize, c)).collect()).collect();
+    rows.sort_unstable();
+    rows.dedup();
+    let mut columns = vec![Vec::with_capacity(rows.len()); view.cols.len()];
+    for row in rows {
+        for (c, v) in row.into_iter().enumerate() {
+            columns[c].push(v);
+        }
+    }
+    Some(columns)
 }
 
 static BOUND: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Binding>>> = std::sync::LazyLock::new(Default::default);
 
 /// The source bound now to the table `name` on `db`'s connection, if one is.
-pub(crate) fn bound_source(db: &Connection, name: &str) -> Option<Arc<dyn Source>> {
-    BOUND.lock().get(&(unsafe { db.handle() } as usize, name.to_owned())).map(Binding::current)
+pub fn bound_source(db: impl Scoped, name: &str) -> Option<Arc<dyn Source>> {
+    BOUND.lock().get(&(db.db().at(), name.to_owned())).map(Binding::current)
+}
+
+/// `bound_source` by the connection's scope (`Scoped::at`), for a callback that holds the scope, not the connection.
+pub fn bound_source_at(at: usize, name: &str) -> Option<Arc<dyn Source>> {
+    BOUND.lock().get(&(at, name.to_owned())).map(Binding::current)
+}
+
+/// Rebind through the existing cell so its owning Modules and prepared cursors agree.
+pub fn replace_bound_source(db:&Connection,name:&str,source:Arc<dyn Source>)->Result<bool>{
+    let binding=BOUND.lock().get(&(unsafe{db.handle()} as usize,name.to_owned())).cloned();
+    if let Some(binding)=binding{binding.set(source)?;Ok(true)}else{Ok(false)}
+}
+
+/// SQL cursor work, by bound input. Snapshot differences attribute fused query work to its leaves.
+pub fn counters(db:&Connection)->BTreeMap<String,[u64;4]> {
+    let scope=unsafe{db.handle()} as usize;
+    BOUND.lock().iter().filter(|((s,_),_)|*s==scope).map(|((_,name),b)|(name.clone(),[b.stats.scans.load(Ordering::Relaxed),b.stats.batches.load(Ordering::Relaxed),b.stats.candidates.load(Ordering::Relaxed),b.stats.columns.load(Ordering::Relaxed)])).collect()
 }
 
 #[repr(C)]
@@ -366,8 +714,9 @@ fn register(db: &Connection, name: &str, binding: Binding, restored:bool) -> Res
         let exists=restored&&db.query_row("SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE name=?1)",[name],|r|r.get::<_,bool>(0))?;
         if !exists {db.execute_batch(&format!("CREATE VIRTUAL TABLE temp.{} USING {}",quote(name),quote(name)))?;}
     }
-    // Resolve xConnect before an authored-query authorizer is installed.
-    db.prepare(&format!("SELECT * FROM {}", quote(name)))?;
+    // xConnect is resolved before an authored-query authorizer is installed (`resolve_tables`), not here: a run whose
+    // readers are native prepares no statement over its tables.
+    UNRESOLVED.lock().entry(connection_scope(db)).or_default().insert(name.to_owned());
     Ok(())
     })();
     if result.is_err() {
@@ -645,11 +994,10 @@ struct Cursor {
 impl Cursor {
     fn start_stream(&mut self) {
         if !self.cache_rows||self.direct.is_some() {return;}
-        if let Some(rows)=&self.selected {
-            if rows.len()>128&&rows.windows(2).all(|w|w[1]==w[0]+1) {
+        if let Some(rows)=&self.selected
+            && rows.len()>128&&rows.windows(2).all(|w|w[1]==w[0]+1) {
                 self.range=rows[0]..rows[rows.len()-1]+1;self.selected=None;
             }
-        }
         if self.selected.is_none()&&self.range.len()>128 {
             self.stream=self.source.row_stream(self.range.clone(),self.reverse);
             if let Some(stream)=&mut self.stream {self.stream_row=stream.next();}
@@ -814,6 +1162,8 @@ unsafe impl VTabCursor for Cursor {
             let column = (index / 2 - 1) as usize;
             let mut values = Vec::new();
             if batch {
+                #[cfg(any(test, feature = "test-hooks"))]
+                let _span=crate::code_rule_dsl::logic::profile::span(|| "SQL IN key decode".into());
                 stats.batches.fetch_add(1, Ordering::Relaxed);
                 let mut iter = args.in_values(0)?;
                 while let Some(value) = iter.next()? {
@@ -824,6 +1174,8 @@ unsafe impl VTabCursor for Cursor {
             } else {
                 values.extend(integer(&args.get::<Value>(0)?));
             }
+            #[cfg(any(test, feature = "test-hooks"))]
+            let _span=batch.then(||crate::code_rule_dsl::logic::profile::span(|| "SQL IN index lookup".into()));
             self.direct=self.source.direct_one(column,&values);
             if self.direct.is_none() {self.selected = self.source.lookup(column, &values);}
         }
@@ -866,27 +1218,47 @@ unsafe impl VTabCursor for Cursor {
 
 /// Row-major integer cells with every column indexed: each column's rows sorted by value, built on
 /// first use. Producers' compact relations (S `relation.rs`) and small derived relations.
-pub(crate) struct Relation {
+/// A column whose values were pushed in order (a document's lines, columns and texts, by node) is its own index:
+/// searched in the cells, with no sort and no row list. Its distinct values are counted as it is pushed.
+pub struct Relation {
     columns: Vec<String>,
     cells: Vec<i64>,
     indexes: Box<[OnceLock<ColumnIndex>]>,
+    /// Per column, its distinct values while its values have come in nondecreasing order, else `None`.
+    ordered: Box<[Option<usize>]>,
 }
 struct ColumnIndex {
     rows: Vec<u32>,
     distinct: usize,
+    /// Every `FENCE`th row's value, in order: a search reads these, contiguous, before the rows they bound, whose
+    /// values it reads one random access each (a search of 100 k rows was 34 of them a probe, two bounds).
+    fence: Vec<i64>,
 }
+/// Rows a fence entry stands for (0.125 bytes a row).
+const FENCE: usize = 64;
 impl Relation {
-    pub(crate) fn new(columns: &[&str]) -> Self {
+    pub fn new(columns: &[&str]) -> Self {
         assert!(!columns.is_empty());
         Self {
             columns: columns.iter().map(|c| (*c).to_owned()).collect(),
             cells: Vec::new(),
             indexes: columns.iter().map(|_| OnceLock::new()).collect(),
+            ordered: columns.iter().map(|_| Some(0)).collect(),
         }
     }
-    pub(crate) fn push(&mut self, row: &[i64]) {
+    pub fn push(&mut self, row: &[i64]) {
         assert_eq!(row.len(), self.columns.len());
         assert!(self.len() < u32::MAX as usize);
+        let last = self.len().checked_sub(1);
+        for (c, o) in self.ordered.iter_mut().enumerate() {
+            let prev = last.map(|l| self.cells[l * row.len() + c]);
+            *o = match (*o, prev) {
+                (Some(d), None) => Some(d + 1),
+                (Some(d), Some(p)) if row[c] > p => Some(d + 1),
+                (Some(d), Some(p)) if row[c] == p => Some(d),
+                _ => None,
+            };
+        }
         self.cells.extend_from_slice(row);
         self.indexes.iter_mut().for_each(|i| *i = OnceLock::new());
     }
@@ -895,14 +1267,51 @@ impl Relation {
             let mut rows: Vec<u32> = (0..self.len() as u32).collect();
             rows.sort_by_key(|&r| self.value(r as usize, column));
             let distinct = 1 + rows.windows(2).filter(|w| self.value(w[0] as usize, column) != self.value(w[1] as usize, column)).count();
-            ColumnIndex { rows, distinct }
+            let fence = rows.iter().step_by(FENCE).map(|&r| self.value(r as usize, column)).collect();
+            ColumnIndex { rows, distinct, fence }
         })
+    }
+    /// Whether `column`'s values were pushed in order, so that it is its own index.
+    pub fn ordered(&self, column: usize) -> bool {
+        self.ordered[column].is_some()
+    }
+    /// The rows with values in `lo..=hi` of a column pushed in order (`ordered`): a search of the cells.
+    fn ordered_between(&self, column: usize, lo: i64, hi: i64) -> Range<usize> {
+        let first = |below: &dyn Fn(i64) -> bool| -> usize {
+            let (mut a, mut b) = (0, self.len());
+            while a < b {
+                let m = a + (b - a) / 2;
+                if below(self.value(m, column)) { a = m + 1 } else { b = m }
+            }
+            a
+        };
+        let start = first(&|v| v < lo);
+        start..first(&|v| v <= hi).max(start)
+    }
+    /// The rows with values in `lo..=hi`, in value order.
+    fn rows_between(&self, column: usize, lo: i64, hi: i64) -> Vec<usize> {
+        if self.ordered[column].is_some() {
+            return self.ordered_between(column, lo, hi).collect();
+        }
+        self.index(column).rows[self.between(column, lo, hi)].iter().map(|&r| r as usize).collect()
     }
     /// The positions in `column`'s index of the rows with values in `lo..=hi`.
     fn between(&self, column: usize, lo: i64, hi: i64) -> Range<usize> {
-        let rows = &self.index(column).rows;
-        let start = rows.partition_point(|&r| self.value(r as usize, column) < lo);
-        let end = rows.partition_point(|&r| self.value(r as usize, column) <= hi);
+        let index = self.index(column);
+        // The first position whose value is not `below` (ascending): the fence's entry past it bounds the rows to
+        // search to one fence's span.
+        // `RERAIL_FENCE=off`: every row searched, as before (to measure the fence).
+        static OFF: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_FENCE").is_ok_and(|v| v == "off"));
+        let first = |below: &dyn Fn(i64) -> bool| -> usize {
+            if *OFF {
+                return index.rows.partition_point(|&r| below(self.value(r as usize, column)));
+            }
+            let j = index.fence.partition_point(|&k| below(k));
+            let (from, to) = (j.saturating_sub(1) * FENCE, (j * FENCE).min(index.rows.len()));
+            from + index.rows[from..to].partition_point(|&r| below(self.value(r as usize, column)))
+        };
+        let start = first(&|v| v < lo);
+        let end = first(&|v| v <= hi);
         start..end.max(start)
     }
 }
@@ -915,7 +1324,8 @@ impl Source for Relation {
         self.cells.len() / self.columns.len()
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
-        let one = self.len().div_ceil(self.index(column).distinct.max(1));
+        let distinct = self.ordered[column].unwrap_or_else(|| self.index(column).distinct);
+        let one = self.len().div_ceil(distinct.max(1));
         if batch { one * 8 } else { one }
     }
     fn indexed(&self, _: usize) -> bool {
@@ -941,10 +1351,14 @@ impl Source for Relation {
                 None => return Some(Vec::new()),
             },
         };
-        let rows = &self.index(column).rows;
-        Some(rows[self.between(column, lo, hi)].iter().map(|&r| r as usize).collect())
+        Some(self.rows_between(column, lo, hi))
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+        #[cfg(any(test, feature = "test-hooks"))]
+        if let Some(rows) = lookup_spike::selected(self, column, values) { return Some(rows); }
+        if self.ordered[column].is_some() {
+            return Some(values.iter().flat_map(|&v| self.ordered_between(column, v, v)).collect());
+        }
         let rows = &self.index(column).rows;
         Some(values.iter().flat_map(|&v| rows[self.between(column, v, v)].iter().map(|&r| r as usize)).collect())
     }
@@ -955,10 +1369,9 @@ impl Source for Relation {
 
 /// S's `query/plan/relation.rs` as copied (0689eb25); merged into this module (decision 0008).
 #[allow(dead_code)]
-mod s_relation;
-/// P's `relational/table.rs` as copied (2c92eb35), over P's test-only relational stage (O18).
-#[cfg(test)]
-#[allow(dead_code)]
-mod p_table;
-#[cfg(test)]
-mod tests;
+pub mod s_relation;
+// cratify: `p_table` is rerail-w's (it mounts it)
+// cratify: `tests` is rerail-logic's (it mounts it)
+
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod lookup_spike;

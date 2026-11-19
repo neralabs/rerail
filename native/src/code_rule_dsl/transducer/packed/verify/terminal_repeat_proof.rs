@@ -3,7 +3,7 @@
 use super::*;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct TerminalRepeat {
+pub struct TerminalRepeat {
     pub begin: usize,
     pub children: bool,
     pub named: bool,
@@ -72,7 +72,7 @@ fn paths(program: &Program, start: usize, header: usize, repeat: u16) -> Option<
     Some(output)
 }
 
-pub(super) fn prove(program: &Program) -> Option<TerminalRepeat> {
+pub fn prove(program: &Program) -> Option<TerminalRepeat> {
     if !program.tree_sitter_query {
         return None;
     }

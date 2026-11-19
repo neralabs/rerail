@@ -279,7 +279,7 @@ impl<K: Hash + Eq + Copy> Rev<K> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

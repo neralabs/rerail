@@ -29,26 +29,50 @@ pub const CROSS_WIDTH: usize = 8;
 
 /// `values` (rows of `width`, flat) as a block: each column in turn, as zigzag varints of the difference from the row
 /// above.
-fn encode(width: usize, values: &[i64]) -> Vec<u8> {
+pub(super) fn encode(width: usize, values: &[i64]) -> Vec<u8> {
+    let rows = values.len() / width.max(1);
+    // Many rows: each column's rows in parts at once, each part's first value the difference from the row above it
+    // (the part before's last), so the parts' bytes, one after another, are the bytes one thread writes.
+    const PART: usize = 1 << 15;
+    if width > 0 && rows >= 2 * PART {
+        use rayon::prelude::*;
+        let parts: Vec<(usize, usize)> = (0..width).flat_map(|c| (0..rows).step_by(PART).map(move |a| (c, a))).collect();
+        let bytes: Vec<Vec<u8>> = parts.par_iter().map(|&(c, a)| {
+            let mut out = Vec::with_capacity(PART.min(rows - a) * 2);
+            let last = if a == 0 { 0 } else { values[(a - 1) * width + c] };
+            encode_column(width, c, &values[a * width..(a + PART).min(rows) * width], last, &mut out);
+            out
+        }).collect();
+        let mut out = Vec::with_capacity(bytes.iter().map(Vec::len).sum());
+        for b in &bytes {
+            out.extend_from_slice(b);
+        }
+        return out;
+    }
     let mut out = Vec::with_capacity(values.len() * 2);
     for c in 0..width {
-        let mut last = 0i64;
-        for row in values.chunks_exact(width) {
-            let d = row[c].wrapping_sub(last);
-            last = row[c];
-            let mut z = ((d << 1) ^ (d >> 63)) as u64;
-            while z >= 0x80 {
-                out.push((z as u8) | 0x80);
-                z >>= 7;
-            }
-            out.push(z as u8);
-        }
+        encode_column(width, c, values, 0, &mut out);
     }
     out
 }
 
+/// Column `c` of `values` (rows of `width`) onto `out`, as `encode` writes it: `last` is the value of the row above
+/// the first.
+fn encode_column(width: usize, c: usize, values: &[i64], mut last: i64, out: &mut Vec<u8>) {
+    for row in values.chunks_exact(width) {
+        let d = row[c].wrapping_sub(last);
+        last = row[c];
+        let mut z = ((d << 1) ^ (d >> 63)) as u64;
+        while z >= 0x80 {
+            out.push((z as u8) | 0x80);
+            z >>= 7;
+        }
+        out.push(z as u8);
+    }
+}
+
 /// A block's columns: `rows` values each, `width` of them.
-fn decode(width: usize, rows: usize, data: &[u8], cols: &mut [Vec<i64>]) -> StoreResult<()> {
+pub(super) fn decode(width: usize, rows: usize, data: &[u8], cols: &mut [Vec<i64>]) -> StoreResult<()> {
     let bad = || super::StoreError::Invalid("a cross-file memo block ends early".to_owned());
     let mut at = 0;
     for col in cols.iter_mut().take(width) {
@@ -84,7 +108,9 @@ impl ContentStore {
 
     /// The rows of `rels` (name, width) stored under `sources`, as columns per relation, in one query; with
     /// `with_source`, each relation's last column is the source a row is stored under.
-    pub fn cross_rows(&self, sources: &[SourceId], rels: &[(String, usize)], with_source: bool) -> StoreResult<BTreeMap<String, Vec<Vec<i64>>>> {
+    /// `syms`: each relation's symbol columns, stored as the store numbers its atoms and read as this process's
+    /// (decision 0170), every relation's in one call.
+    pub fn cross_rows(&self, sources: &[SourceId], rels: &[(String, usize)], syms: &BTreeMap<String, Vec<bool>>, with_source: bool) -> StoreResult<BTreeMap<String, Vec<Vec<i64>>>> {
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let ids = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>()).expect("ids encode");
         let names = serde_json::to_string(&rels.iter().map(|(r, _)| r.as_str()).collect::<Vec<_>>()).expect("names encode");
@@ -107,14 +133,32 @@ impl ContentStore {
                 cols[width].extend(std::iter::repeat_n(source, rows));
             }
         }
-        Ok(out.into_iter().collect())
+        drop(q);
+        drop(st);
+        drop(connection);
+        let mut out: BTreeMap<String, Vec<Vec<i64>>> = out.into_iter().collect();
+        map_symbols(&mut out, syms, |v| self.atoms.to_local(super::StoreIds::as_stored(v)).map(drop))?;
+        Ok(out)
     }
 
     /// Stores a component's descriptor as a source, names it by `digest`, and replaces its rows with `rels` (name to
     /// width and flat rows), in one transaction: a block per relation with rows.
-    pub fn put_cross_rows(&self, digest: &str, descriptor: &[u8], rels: &BTreeMap<String, (usize, Vec<i64>)>) -> StoreResult<SourceId> {
+    /// `syms`: each relation's symbol columns, written as the store numbers its atoms (decision 0170).
+    pub fn put_cross_rows(&self, digest: &str, descriptor: &[u8], rels: &BTreeMap<String, (usize, Vec<i64>)>, syms: &BTreeMap<String, Vec<bool>>) -> StoreResult<SourceId> {
         let source = self.put_source(descriptor, &[])?;
-        self.immediate_transaction_once(|t| {
+        super::atoms::mapped(|| self.immediate_transaction_once(|t| {
+            let mapped;
+            let rels = if self.atoms.forked() {
+                let mut cols: BTreeMap<String, Vec<Vec<i64>>> = rels.iter().map(|(r, (w, v))| (r.clone(), (0..*w).map(|c| v.iter().skip(c).step_by((*w).max(1)).copied().collect()).collect())).collect();
+                map_symbols(&mut cols, syms, |v| self.atoms.to_store(t, super::ProcessIds::of_process(v)).map(drop))?;
+                mapped = cols.into_iter().map(|(r, cols)| {
+                    let (w, n) = (cols.len(), cols.first().map_or(0, Vec::len));
+                    (r, (w, (0..n).flat_map(|i| cols.iter().map(move |c| c[i])).collect::<Vec<i64>>()))
+                }).collect::<BTreeMap<_, _>>();
+                &mapped
+            } else {
+                rels
+            };
             t.prepare_cached("INSERT INTO cross_components(digest, source_id) VALUES (?1, ?2) ON CONFLICT(digest) DO UPDATE SET source_id = excluded.source_id")?
                 .execute(params![format!("{BLOCKS}{digest}"), source.0])?;
             t.prepare_cached("DELETE FROM cross_blocks WHERE source_id = ?1")?.execute([source.0])?;
@@ -130,8 +174,37 @@ impl ContentStore {
                 ins.execute(params![source.0, rel, *width as i64, rows as i64, encode(*width, values)])?;
             }
             Ok(source)
-        })
+        }))
     }
+}
+
+/// Maps the symbol columns (`syms`) of `rels` (columns per relation) with `f`, every relation's in one call.
+fn map_symbols(rels: &mut BTreeMap<String, Vec<Vec<i64>>>, syms: &BTreeMap<String, Vec<bool>>, f: impl FnOnce(&mut [i64]) -> StoreResult<()>) -> StoreResult<()> {
+    let mut values = Vec::new();
+    for (rel, cols) in rels.iter() {
+        let Some(s) = syms.get(rel) else { continue };
+        for (c, col) in cols.iter().enumerate() {
+            if s.get(c) == Some(&true) {
+                values.extend_from_slice(col);
+            }
+        }
+    }
+    if values.is_empty() {
+        return Ok(());
+    }
+    f(&mut values)?;
+    let mut at = 0;
+    for (rel, cols) in rels.iter_mut() {
+        let Some(s) = syms.get(rel) else { continue };
+        for (c, col) in cols.iter_mut().enumerate() {
+            if s.get(c) == Some(&true) {
+                let n = col.len();
+                col.copy_from_slice(&values[at..at + n]);
+                at += n;
+            }
+        }
+    }
+    Ok(())
 }
 
 impl SourceId {
@@ -158,11 +231,11 @@ mod tests {
     fn cross_rows_are_read_by_key_ranges_in_one_query() {
         let (path, store) = store();
         let rels = BTreeMap::from([("a".to_owned(), (2, vec![1, 2, 3, 4])), ("b".to_owned(), (1, vec![9]))]);
-        let one = store.put_cross_rows("d1", b"one", &rels).unwrap();
-        let two = store.put_cross_rows("d2", b"two", &BTreeMap::from([("a".to_owned(), (2, vec![5, 6]))])).unwrap();
+        let one = store.put_cross_rows("d1", b"one", &rels, &BTreeMap::new()).unwrap();
+        let two = store.put_cross_rows("d2", b"two", &BTreeMap::from([("a".to_owned(), (2, vec![5, 6]))]), &BTreeMap::new()).unwrap();
         let found = store.cross_lookup(&["d1".to_owned(), "d2".to_owned(), "d3".to_owned()]).unwrap();
         assert_eq!(found, HashMap::from([("d1".to_owned(), one), ("d2".to_owned(), two)]));
-        let rows = store.cross_rows(&[one, two], &[("a".to_owned(), 2)], false).unwrap();
+        let rows = store.cross_rows(&[one, two], &[("a".to_owned(), 2)], &BTreeMap::new(), false).unwrap();
         let mut a: Vec<(i64, i64)> = rows["a"][0].iter().copied().zip(rows["a"][1].iter().copied()).collect();
         a.sort_unstable();
         assert_eq!(a, vec![(1, 2), (3, 4), (5, 6)]);
@@ -195,5 +268,22 @@ mod tests {
             assert_eq!(back, values, "width {width}");
         }
         assert!(decode(1, 2, &encode(1, &[1]), &mut [Vec::new()]).is_err());
+    }
+
+    /// Many rows are encoded in parts at once, and the bytes are one thread's: each part goes on from the row above.
+    #[test]
+    fn a_block_encoded_in_parts_is_one_threads() {
+        let (width, rows) = (3, 200_003);
+        let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+        let values: Vec<i64> = (0..width * rows).map(|_| { x ^= x << 13; x ^= x >> 7; x ^= x << 17; (x as i64) >> (x % 50) }).collect();
+        let mut one = Vec::new();
+        for c in 0..width {
+            encode_column(width, c, &values, 0, &mut one);
+        }
+        let parts = encode(width, &values);
+        assert_eq!(parts, one);
+        let mut cols = vec![Vec::new(); width];
+        decode(width, rows, &parts, &mut cols).unwrap();
+        assert!((0..rows).all(|r| (0..width).all(|c| cols[c][r] == values[r * width + c])));
     }
 }

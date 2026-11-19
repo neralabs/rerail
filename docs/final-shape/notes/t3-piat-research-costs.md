@@ -18,7 +18,7 @@ Citation prefixes (line numbers refer to the source file):
 
 Number tags: **(M)** measured, **(D)** derived/taken from elsewhere, **(A)** assumed, as the source marks them. Where a source does not tag a number, the tag is given as the source's general statement of method (e.g. "all figures measured") or marked "(untagged)".
 
-The common corpus unless stated otherwise: nera-data-layer at the pinned commit (`2b1504ad`), 9,010 `.py` files, 137.9 MB (9,021 files including 11 Rust grammar files, 137,924,324 B) (HRP:61, M1:10, LL:32-35).
+The common corpus unless stated otherwise: the data-layer repository at the pinned commit (`2b1504ad`), 9,010 `.py` files, 137.9 MB (9,021 files including 11 Rust grammar files, 137,924,324 B) (HRP:61, M1:10, LL:32-35).
 
 ---
 
@@ -883,11 +883,11 @@ Read-only scan of streams since the survey, measured against `docs/rule-engine-d
 ## 8. lessons-ledger.md (LL)
 
 ### Header (LL:1-22)
-- Compiled 2026-10-25, read-only. Prior work: **PR** = nera-data-layer PR 2539 tip `281f500d7c` (2026-06-27), docs `docs/design/`; **AIS** = ast-index-spike `main` + `origin/jeremybarnes/seadragon`; **TAIL** = seadragon's `TAIL_LATENCY_WORKPLAN.md`. Current: **DLRE** `rerail/Data-layer-rule-expressivity` 10-19 → 10-24 (J = journal, WP = `sql-performance-recovery-workplan.md`); **SSC** 10-16 → 10-24; **N1562** 10-16 → 10-25; **Tempo** (-sql 09-24 → 10-16; -metal 09-30 → 10-25); **Main** = `rerail/Pulling-it-all-together`.
+- Compiled 2026-10-25, read-only. Prior work: **PR** = the data-layer repository's PR 2539 tip `281f500d7c` (2026-06-27), docs `docs/design/`; **AIS** = ast-index-spike `main` + `origin/jeremybarnes/seadragon`; **TAIL** = seadragon's `TAIL_LATENCY_WORKPLAN.md`. Current: **DLRE** `rerail/Data-layer-rule-expressivity` 10-19 → 10-24 (J = journal, WP = `sql-performance-recovery-workplan.md`); **SSC** 10-16 → 10-24; **N1562** 10-16 → 10-25; **Tempo** (-sql 09-24 → 10-16; -metal 09-30 → 10-25); **Main** = `rerail/Pulling-it-all-together`.
 - Status words: ADOPTED, RE-LEARNED (where/when/detour), VIOLATED, N/R. All dates 2026; DLRE section dates used (commits trail; 10-21 and 10-22 entries first committed in `5b09437c` on 10-23).
 
 ### Part A: runtime comparison (LL:26-89)
-Corpora: PR = nera-data-layer `281f500d7c`, 5,078 `.py`, 83.5 MB; DLRE = `2b1504ad`, 9,010 `.py`, 137.9 MB (9,021 files incl. 11 Rust, 137,924,324 B). Growth 1.77× files, 1.65× bytes June → October. PR "projected 5,000-file" numbers = whole repo then.
+Corpora: PR = the data-layer repository at `281f500d7c`, 5,078 `.py`, 83.5 MB; DLRE = `2b1504ad`, 9,010 `.py`, 137.9 MB (9,021 files incl. 11 Rust, 137,924,324 B). Growth 1.77× files, 1.65× bytes June → October. PR "projected 5,000-file" numbers = whole repo then.
 
 Best like-for-like (LL:42-52):
 | Run | Files / MB | Rules | Cold time | ms/file | ms/file-rule | Source |
@@ -1033,7 +1033,7 @@ Exactly one SQL-bearing clause kind, `relational`:
 ### §3 Census (AS:65-108)
 - **10 of 60** rules use `relational`, **52 clauses**; **191 evidence inputs, 431 SQL stages, ~926 KB authored SQL text**.
 - Per rule: serverplan-state-tripwires 32; serverplan-steps 7; serverplan-quality 6; 1 each: execution-authority-bypass, impl-direct-execution, internal-dead-code, legacy-execution-surfaces, public-api-triples, serverplan-dispatch-architecture, serverplan-target-architecture.
-- Also `fixtures/host/data-layer-port/profiling/{batched-sql,evidence,native-relations-metrics}.json`, `test/scripts/test_sql_variants.py`.
+- Also `packs/data-layer/upstream/benchmarks/authored/profiling/{batched-sql,evidence,native-relations-metrics}.json`, `test/scripts/test_sql_variants.py`.
 - By primitive (per clause; one clause may be in several; counts from stage names and query features):
   | # | Primitive | Clauses (rules) | What |
   |---|---|---|---|

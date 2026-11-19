@@ -2,31 +2,48 @@
 use super::*;
 use crate::code_rule_dsl::sql_executor::phase::Phase;
 
-fn extreme(r: &Reducer, changed: &str, next: &str, function: &str) -> String {
+pub fn extreme(r: &Reducer, changed: &str, next: &str, function: &str) -> String {
     let k = r.keys();
     let order = if function == "min" { "ASC" } else { "DESC" };
     // Probe the persistent ordered index. Never scan an untouched large value group.
+    // All value-key columns are NOT NULL. NOT IN builds one searchable membership
+    // set instead of scanning a materialized CTE for each ordered candidate.
     format!(
-        "(SELECT {function}(v) FROM (SELECT v FROM (SELECT v.c{k} AS v FROM {} v WHERE {} AND NOT EXISTS(SELECT 1 FROM {changed} t WHERE {}) ORDER BY v.c{k} {order} LIMIT 1) UNION ALL SELECT n.c{k} AS v FROM {next} n WHERE {}))",
+        "(SELECT {function}(v) FROM (SELECT v FROM (SELECT v.c{k} AS v FROM {} v WHERE {} AND ({}) NOT IN(SELECT {} FROM {changed}) ORDER BY v.c{k} {order} LIMIT 1) UNION ALL SELECT n.c{k} AS v FROM {next} n WHERE {}))",
         quote(&r.values),
         equal("v", "d", k),
-        equal("t", "v", r.width()),
+        names("v",r.width()), names("",r.width()),
         equal("n", "d", k)
     )
 }
 
-pub(super) fn apply(
+pub fn apply(
     r: &Reducer,
     shared: &Shared,
     w: &mut Work<'_>,
     delta: &Delta,
 ) -> Result<Option<(String, u64)>> {
+    let mut phase = Phase::default();
+    let mut publications = vec![];
+    let staged = append(r, shared, w, delta, &mut phase, &mut publications)?;
+    let counts = phase.execute(w)?;
+    super::publication::publish(w, &publications, &counts)?;
+    let touched = counts[&staged.touched].rows as u64;
+    Ok((touched > 0).then_some((staged.changed, touched)))
+}
+
+pub fn append(
+    r: &Reducer,
+    shared: &Shared,
+    w: &mut Work<'_>,
+    delta: &Delta,
+    phase: &mut Phase,
+    publications: &mut Vec<super::publication::Publication>,
+) -> Result<super::super::staged::Summary> {
     let store = w.versions.unwrap();
     let k = r.keys();
     let width = r.width();
     let cols = names("", k);
-    let mut phase = Phase::default();
-    let mut publications = vec![];
     if w.profiler.is_some() {
         phase.analyses.push(json!({"operation":"shared scalar summaries","storage_group":r.groups,"context_consumers":r.pool_consumers,"storage_proof":"Same non-null bag, grouping keys, pure filters and value; each consumer retains its own lookup mapping","members":shared.members,"layout":shared.layout,"extrema_access":"Persistent ordered probes plus changed values","sum_contract":"Exact 128-bit state; 64-bit range checked only at rule lookup"}));
     }
@@ -57,8 +74,8 @@ pub(super) fn apply(
         );
         super::publication::append(
             w,
-            &mut phase,
-            &mut publications,
+            phase,
+            publications,
             &r.values,
             &delta,
             &next,
@@ -126,8 +143,8 @@ pub(super) fn apply(
     let active = phase.view(k + 5, &format!("SELECT * FROM {next} WHERE c{k}>0"));
     super::publication::append(
         w,
-        &mut phase,
-        &mut publications,
+        phase,
+        publications,
         &r.groups,
         &keys,
         &active,
@@ -138,8 +155,5 @@ pub(super) fn apply(
     let touched_rows = w.output_table(k)?;
     phase.load_empty(store, &changed_rows, &changed)?;
     phase.load_empty(store, &touched_rows, &keys)?;
-    let counts = phase.execute(w)?;
-    super::publication::publish(w, &publications, &counts)?;
-    let touched = counts[&touched_rows].rows as u64;
-    Ok((touched > 0).then_some((changed_rows, touched)))
+    Ok(super::super::staged::Summary { keys, active, changed_query: changed, touched: touched_rows, changed: changed_rows, values:value_changes })
 }

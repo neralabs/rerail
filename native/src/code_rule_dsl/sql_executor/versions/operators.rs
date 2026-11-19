@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn versioned_reducer_state_matches_fresh_sql_across_sparse_edits_and_forks() {
     let (_d, mut engine) = super::super::tests::executor();
+    engine.legacy_initial=true;
     engine.bind_relation(json!({"name":"event","columns":["id","g","v"],"rows":(0..2000).map(|g|vec![g,g,g+1]).collect::<Vec<_>>()} ).to_string()).unwrap();
     engine.bind_relation(json!({"name":"owner","columns":["g"],"rows":(0..2000).map(|g|vec![g]).collect::<Vec<_>>()} ).to_string()).unwrap();
     let program = ".decl event(id:number,g:number,v:number)\n.decl owner(g:number)\n.input event,owner\n.decl result(g:number,n:number,s:number,lo:number,hi:number)\nresult(g,n,s,lo,hi) :- owner(g), k=g+1, n=count : {event(_,k,_)}, s=sum v : {event(_,k,v)}, lo=min v : {event(_,k,v)}, hi=max v : {event(_,k,v)}.\n.output result\n";
@@ -17,6 +18,10 @@ fn versioned_reducer_state_matches_fresh_sql_across_sparse_edits_and_forks() {
         .cloned()
         .collect::<Vec<_>>();
     for (name, table) in support {
+        if engine.versions.owns(&name) {
+            engine.versions.remove_all(&engine.db,&name).unwrap();
+            continue;
+        }
         engine
             .db
             .execute_batch(&format!(

@@ -1,6 +1,6 @@
 use super::{ExecutionStatement, SqlViolationRow, drive, split_measured_statement_packets};
 use crate::code_rule_dsl::demand::vtab::{MatchRegistry, PackedDemand, RowKind, register_module};
-use crate::code_rule_dsl::prefilter::tests::{open, temp};
+use crate::code_rule_dsl::fixtures::{open, temp};
 use crate::code_rule_dsl::transducer::packed::ExecutionBackend;
 use std::sync::Arc;
 

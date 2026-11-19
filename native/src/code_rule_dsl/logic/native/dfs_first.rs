@@ -1,4 +1,4 @@
-//! `dfs_first` and `dfs_first_memo` (`core.rr`, data-layer/DESIGN.md addition 7): the first target a depth-first
+//! `dfs_first` and `dfs_first_memo` (`core.rerail`, data-layer/DESIGN.md addition 7): the first target a depth-first
 //! search from each root reaches, set-based until a cycle.
 //!
 //! From the spike `docs/rule-syntax/spikes/dfs-first/native` (checked there against a port of the Data-layer
@@ -99,11 +99,11 @@ fn prepare(g: &Graph) -> Prep {
     drop(rsrc);
     // 2. next: the first edge into a live node; an edge to itself is skipped unless it is a hit.
     let mut nxt = vec![NONE; n];
-    for u in 0..n {
+    for (u, next) in nxt.iter_mut().enumerate() {
         for e in g.out(u as u32) {
             let d = g.dst[e] as usize;
             if live[d] && (d != u || g.target[d]) {
-                nxt[u] = e as u32;
+                *next = e as u32;
                 break;
             }
         }
@@ -370,7 +370,7 @@ pub(in crate::code_rule_dsl) fn dfs_first(edges: &[(i64, i64, i64)], targets: &[
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// The Data-layer branch's `ordered_first.rs` `Graph::first`, as the spike ports it line for line (edge mode):

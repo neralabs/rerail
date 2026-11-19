@@ -1,18 +1,18 @@
 //! Adapt the logical language to executor-independent key and scalar proofs.
 use super::{bags, keys, scalars};
-mod storage;
+pub mod storage;
 use crate::code_rule_dsl::logic::front::{self, AggOp, Atom, Literal, Term};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct RuleAnalysis {
+pub struct RuleAnalysis {
     pub head: String,
     pub uniqueness: keys::Proof,
     pub scalars: scalars::Analysis,
     pub contribution_storage: super::storage::Projection,
 }
 #[derive(Clone, Debug, Default, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct ProgramAnalysis {
+pub struct ProgramAnalysis {
     pub relation_keys: keys::Keys,
     pub key_inferences: Vec<KeyInference>,
     pub rules: Vec<RuleAnalysis>,
@@ -21,7 +21,7 @@ pub(in crate::code_rule_dsl) struct ProgramAnalysis {
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct KeyInference {
+pub struct KeyInference {
     pub relation: String,
     pub columns: Vec<usize>,
     pub reason: String,
@@ -30,7 +30,7 @@ pub(in crate::code_rule_dsl) struct KeyInference {
 
 fn variable(t: &Term) -> Option<String> {
     if let Term::Var(v) = t {
-        Some(v.clone())
+        Some(v.to_string())
     } else {
         None
     }
@@ -38,8 +38,8 @@ fn variable(t: &Term) -> Option<String> {
 fn equality(model: &mut keys::Projection, a: &Term, b: &Term) {
     if let Some(a) = variable(a) {
         match b {
-            Term::Var(b) => model.equalities.push((a, b.clone())),
-            Term::Int(_) | Term::Str(_) | Term::Top => {
+            Term::Var(b) => model.equalities.push((a, b.to_string())),
+            Term::Int(_) | Term::Branded(_) | Term::Str(_) | Term::Top => {
                 model.fixed.insert(a);
             }
             _ => {}
@@ -59,8 +59,8 @@ fn projection(head: &Atom, body: &[Literal], known: &keys::Keys) -> keys::Projec
                     .collect();
                 for (c, term) in atom.args.iter().enumerate() {
                     match term {
-                        Term::Var(v) => model.equalities.push((columns[c].clone(), v.clone())),
-                        Term::Int(_) | Term::Str(_) | Term::Top => {
+                        Term::Var(v) => model.equalities.push((columns[c].clone(), v.to_string())),
+                        Term::Int(_) | Term::Branded(_) | Term::Str(_) | Term::Top => {
                             model.fixed.insert(columns[c].clone());
                         }
                         Term::Call(_, _) => model.opaque = true,
@@ -68,10 +68,10 @@ fn projection(head: &Atom, body: &[Literal], known: &keys::Keys) -> keys::Projec
                     }
                 }
                 model.inputs.push(keys::Input {
-                    relation: atom.rel.clone(),
+                    relation: atom.rel.to_string(),
                     columns,
                     keys: known
-                        .get(&atom.rel)
+                        .get(atom.rel.as_str())
                         .cloned()
                         .unwrap_or_else(|| vec![(0..atom.args.len()).collect()]),
                 });
@@ -126,10 +126,10 @@ fn scalar_inputs(body: &[Literal]) -> Vec<scalars::Scalar> {
                 let mut variables = BTreeSet::new();
                 b.vars(&mut variables);
                 if variables.is_subset(&outer) {
-                    outer.insert(a.clone());
+                    outer.insert(a.to_string());
                     if matches!(b, Term::Call(_, _)) || !variables.is_disjoint(&dependent_variables)
                     {
-                        dependent_variables.insert(a.clone());
+                        dependent_variables.insert(a.to_string());
                     }
                 }
             }
@@ -159,7 +159,7 @@ fn scalar_inputs(body: &[Literal]) -> Vec<scalars::Scalar> {
         let mut dependent = false;
         for (i, term) in atom.args.iter().enumerate() {
             match term {
-                Term::Var(v) if Some(v) == over.as_ref() => {
+                Term::Var(v) if Some(v.as_str()) == over.as_deref() => {
                     if let Some(previous) = locals.insert(v, i) {
                         predicates.push(E::Apply(
                             "=".into(),
@@ -168,10 +168,10 @@ fn scalar_inputs(body: &[Literal]) -> Vec<scalars::Scalar> {
                     }
                     value = E::Column(i);
                 }
-                Term::Var(v) if outer.contains(v) || aggregate_outputs.contains(v) => {
+                Term::Var(v) if outer.contains(v.as_str()) || aggregate_outputs.contains(v.as_str()) => {
                     keys.push(E::Column(i));
-                    lookup.push(E::Column(variables[v]));
-                    dependent |= dependent_variables.contains(v);
+                    lookup.push(E::Column(variables[v.as_str()]));
+                    dependent |= dependent_variables.contains(v.as_str());
                 }
                 Term::Var(v) => {
                     if let Some(previous) = locals.insert(v, i) {
@@ -184,8 +184,11 @@ fn scalar_inputs(body: &[Literal]) -> Vec<scalars::Scalar> {
                 Term::Int(n) => {
                     predicates.push(E::Apply("=".into(), vec![E::Column(i), E::Integer(*n)]))
                 }
+                Term::Branded(a) => {
+                    predicates.push(E::Apply("=".into(), vec![E::Column(i), E::Integer(a.value())]))
+                }
                 Term::Str(s) => {
-                    predicates.push(E::Apply("=".into(), vec![E::Column(i), E::Text(s.clone())]))
+                    predicates.push(E::Apply("=".into(), vec![E::Column(i), E::Text(s.to_string())]))
                 }
                 Term::Wild => {}
                 _ => predicates.push(E::Opaque(format!("{term:?}"))),
@@ -204,7 +207,7 @@ fn scalar_inputs(body: &[Literal]) -> Vec<scalars::Scalar> {
                 AggOp::Max => Kind::Max,
                 AggOp::Join { .. } => Kind::OrderedJoin,
             },
-            source: atom.rel.clone(),
+            source: atom.rel.to_string(),
             keys,
             predicates,
             lookup,
@@ -222,8 +225,8 @@ impl ProgramAnalysis {
             .decls
             .iter()
             .map(|(name, cols)| {
-                let width = program.lattice.get(name).map_or(cols.len(), |l| l.keys);
-                (name.clone(), vec![(0..width).collect()])
+                let width = program.lattice.get(name.as_str()).map_or(cols.len(), |l| l.keys);
+                (name.to_string(), vec![(0..width).collect()])
             })
             .collect();
         let mut key_inferences = relation_keys.iter().flat_map(|(name, keys)| keys.iter().map(|key| KeyInference {
@@ -238,25 +241,40 @@ impl ProgramAnalysis {
             *producers.entry(r.head.rel.as_str()).or_default() += 1;
         }
         let inputs: std::collections::HashSet<&str> = program.inputs.iter().map(String::as_str).collect();
+        // A rule's projection reads only its positive atoms' keys. A rule none of whose relations gained a key since
+        // it was last projected gives the same key again, which its own relation (it is its only producer) already
+        // holds: it is passed over, in the same sweeps and order, so the keys found are those every rule re-projected
+        // in every sweep finds. Each sweep projected every rule (thousands, a sweep per step of a chain of keys).
+        let mut step = 0usize;
+        let mut gained: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        let mut projected: Vec<Option<usize>> = vec![None; program.rules.len()];
         loop {
             let mut changed = false;
-            for rule in &program.rules {
+            for (ri, rule) in program.rules.iter().enumerate() {
                 let name = &rule.head.rel;
                 if inputs.contains(name.as_str())
-                    || program.facts.get(name).is_some_and(|v| !v.is_empty())
-                    || program.natives.contains_key(name)
-                    || program.lattice.contains_key(name)
+                    || program.facts.get(name.as_str()).is_some_and(|v| !v.is_empty())
+                    || program.natives.contains_key(name.as_str())
+                    || program.lattice.contains_key(name.as_str())
                     || producers.get(name.as_str()) != Some(&1)
                 {
                     continue;
                 }
+                if let Some(at) = projected[ri]
+                    && !rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && gained.get(a.rel.as_str()).is_some_and(|&g| g > at)))
+                {
+                    continue;
+                }
+                projected[ri] = Some(step);
                 let model = projection(&rule.head, &rule.body, &relation_keys);
                 if let Some(key) = model.key() {
-                    let current = relation_keys.entry(name.clone()).or_default();
+                    let current = relation_keys.entry(name.to_string()).or_default();
                     if current.iter().all(|old| key.len() < old.len()) {
-                        key_inferences.push(KeyInference { relation: name.clone(), columns: key.clone(), reason: "Projection preserves a determining input key, with one rule and no additional producer".into(), proof: Some(model.prove(&key)) });
+                        key_inferences.push(KeyInference { relation: name.to_string(), columns: key.clone(), reason: "Projection preserves a determining input key, with one rule and no additional producer".into(), proof: Some(model.prove(&key)) });
                         *current = vec![key];
                         changed = true;
+                        step += 1;
+                        gained.insert(name.as_str(), step);
                     }
                 }
             }
@@ -264,11 +282,13 @@ impl ProgramAnalysis {
                 break;
             }
         }
+        // Each rule's analyses alone, on the pool's threads.
+        use rayon::prelude::*;
         let rules: Vec<RuleAnalysis> = program
             .rules
-            .iter()
+            .par_iter()
             .map(|r| RuleAnalysis {
-                head: r.head.rel.clone(),
+                head: r.head.rel.to_string(),
                 uniqueness: projection(&r.head, &r.body, &relation_keys).unique(),
                 scalars: scalars::analyze(scalar_inputs(&r.body)),
                 contribution_storage: storage::analyze(r),

@@ -2,6 +2,33 @@
 use super::*;
 
 impl Version {
+    /// Compare immutable indexes without decoding unchanged branches. Both results
+    /// have positional, non-null complete-row keys, and retain source row IDs.
+    pub fn difference_roots(&self, new: &Self) -> Result<(Self, Self, usize)> {
+        if self.schema.columns.len() != new.schema.columns.len() {
+            return Err(error("native difference arity"));
+        }
+        let empty = Self::empty(Arc::new(Schema::integers(
+            self.schema.columns.len(),
+            self.schema.columns.len(),
+        )));
+        if self.same(new) {
+            return Ok((empty.clone(), empty, 0));
+        }
+        let (mut added, mut removed, mut visited) = (vec![], vec![], 0);
+        Node::difference(
+            &self.full,
+            &new.full,
+            &mut added,
+            &mut removed,
+            &mut visited,
+        );
+        Ok((
+            empty.delta_subset(new, added)?,
+            empty.delta_subset(self, removed)?,
+            visited,
+        ))
+    }
     fn delta_subset(&self, source: &Self, rows: Vec<Row>) -> Result<Self> {
         if self.len() != 0
             || self.schema.keys != self.schema.columns.len()

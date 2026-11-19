@@ -41,7 +41,8 @@ fn different_rules_and_lookup_mappings_share_one_bag_and_keep_separate_values() 
         json!([[0, 1, 2], [1, 2, 1], [2, 3, 3]]),
     );
     bind(&mut e, "watch", &["id", "g"], json!([[0, 1]]));
-    e.run(PROGRAM.into(), "python".into(), None).unwrap();
+    let initial:Value=serde_json::from_str(&e.run(PROGRAM.into(), "python".into(), None).unwrap()).unwrap();
+    assert!(initial["preparation"]["summary_transition_reuses"].as_u64().unwrap()>0,"{initial}");
     compare(&mut e);
     let explain: Value = serde_json::from_str(&e.explain().unwrap()).unwrap();
     let pools = &explain["executions"][0]["scalar_storage"][0];
@@ -58,7 +59,7 @@ fn different_rules_and_lookup_mappings_share_one_bag_and_keep_separate_values() 
             ["group"]
             .clone()
     };
-    assert_eq!(group("a"), group("b"));
+    assert_ne!(group("a"), group("b"), "Independent gates keep their own cursor roots");
     assert_ne!(group("a"), group("other"));
     assert_eq!(
         rows(&mut e, "SELECT * FROM b WHERE c0=2"),

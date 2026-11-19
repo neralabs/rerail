@@ -265,3 +265,67 @@ fn ane() {
     }
     println!("load after: {}", load());
 }
+
+/// The Neural Engine's tiles with and without the overlap of the host's work and the predictions: per phase, a
+/// submission's median (wall, and the lane thread's CPU for the host's phases), and its best wall and process CPU
+/// (user + sys). Run alone, release: `cargo test --release -p rerail-accel price::bench::ane_overlap -- --ignored
+/// --nocapture`.
+#[cfg(all(feature = "ane", target_os = "macos"))]
+#[test]
+#[ignore = "timing: release build, run alone with --ignored --nocapture"]
+fn ane_overlap() {
+    use crate::ane::{Ane, MemoryStore, Split};
+    use crate::exec::Backend;
+    println!("load before: {}", load());
+    let lane = Ane::new(Arc::new(MemoryStore::default()));
+    let mut rng = Rng(42);
+    // W1 (7 tiles) and W5's constant against 8,192 names (4 tiles of 2,048 rows over 13,088 bits).
+    let w1 = Kernel::BitProduct { a: bits(&mut rng, 13088, 768, 1), b: bits(&mut rng, 444, 768, 1).fixed(), min: None };
+    let b5 = bits(&mut rng, 2048, 13088, 5).fixed();
+    let w5 = Kernel::BitProduct { a: bits(&mut rng, 8192, 13088, 5), b: b5, min: None };
+    println!("| workload | overlap | tiles | encode wall (CPU) | predict wall | decode wall (CPU) | host wait | Core ML CPU | submit wall | submit CPU (user+sys) |");
+    println!("|---|---|---|---|---|---|---|---|---|---|");
+    for (name, k, iters) in [("W1", &w1, 30), ("W5 x4", &w5, 8)] {
+        assert_eq!(lane.refusal(k), None, "{name}");
+        let want = crate::cpu::run(k);
+        for on in [false, true, false, true] {
+            lane.set_overlap(on);
+            assert!(lane.submit(&[k]).unwrap()[0] == want, "{name}");
+            let (mut splits, mut walls, mut cpus) = (Vec::<Split>::new(), Vec::new(), Vec::new());
+            for _ in 0..iters {
+                let (c0, t) = (process_cpu(), Instant::now());
+                std::hint::black_box(lane.submit(&[k]).unwrap());
+                walls.push(t.elapsed().as_secs_f64());
+                cpus.push(process_cpu() - c0);
+                splits.push(lane.last_split());
+            }
+            let med = |f: &dyn Fn(&Split) -> f64| {
+                let mut v: Vec<f64> = splits.iter().map(f).collect();
+                v.sort_by(f64::total_cmp);
+                v[v.len() / 2] * 1e3
+            };
+            let s = splits[0];
+            assert_eq!(s.overlap, on);
+            walls.sort_by(f64::total_cmp);
+            cpus.sort_by(f64::total_cmp);
+            println!(
+                "| {name} | {} | {} | {:.2} ({:.2}) | {:.2} | {:.2} ({:.2}) | {:.2} | {:.2} | best {:.2} / median {:.2} | best {:.2} / median {:.2} |",
+                if on { "on" } else { "off" },
+                s.tiles,
+                med(&|s| s.expand),
+                med(&|s| s.expand_cpu),
+                med(&|s| s.predict),
+                med(&|s| s.sum),
+                med(&|s| s.sum_cpu),
+                med(&|s| s.wait),
+                med(&|s| s.predict_cpu),
+                walls[0] * 1e3,
+                walls[walls.len() / 2] * 1e3,
+                cpus[0] * 1e3,
+                cpus[cpus.len() / 2] * 1e3,
+            );
+        }
+    }
+    println!("(ms a submission; phases are medians; encode/decode CPU is the lane thread's, Core ML CPU the rest of the process over the tiles)");
+    println!("load after: {}", load());
+}

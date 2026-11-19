@@ -30,8 +30,8 @@ pub fn is_main_thread() -> bool {
     }
     #[cfg(target_os = "linux")]
     {
-        // SAFETY: no arguments.
-        unsafe { libc::gettid() == libc::getpid() }
+        // SAFETY: no arguments. The system call, not glibc's `gettid` (2.30): the Linux engine links against 2.17.
+        unsafe { libc::syscall(libc::SYS_gettid) == libc::c_long::from(libc::getpid()) }
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
@@ -41,7 +41,7 @@ pub fn is_main_thread() -> bool {
 
 /// Jobs on the one pool that borrow the caller's data, within [`scope`]: every one has ended when it returns. Each is
 /// handed the scope again, to start more.
-pub(crate) struct Jobs<'s, 'r>(
+pub struct Jobs<'s, 'r>(
     #[cfg(not(target_family = "wasm"))] &'r rayon::Scope<'s>,
     #[cfg(target_family = "wasm")] std::marker::PhantomData<(&'s (), &'r ())>,
 );
@@ -49,9 +49,18 @@ pub(crate) struct Jobs<'s, 'r>(
 impl<'s> Jobs<'s, '_> {
     /// Starts `f` as the job `name` on the pool (wasm32 has no threads: it runs here). A wait that runs it for
     /// another knows it by its name (`rerail_accel::exec::waits`).
-    pub(crate) fn spawn(&self, name: &'static str, f: impl for<'x> FnOnce(&Jobs<'s, 'x>) + Send + 's) {
+    pub fn spawn(&self, name: &'static str, f: impl for<'x> FnOnce(&Jobs<'s, 'x>) + Send + 's) {
         #[cfg(not(target_family = "wasm"))]
-        self.0.spawn(move |s| rerail_accel::exec::as_job(name, || f(&Jobs(s))));
+        {
+            // The job runs in the run's context where it was started (`run_state`), and its span is under the one
+            // open there, on whichever thread runs it.
+            let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
+            self.0.spawn(move |s| {
+                let _in = carry.enter();
+                let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || format!("{name} (job)"));
+                rerail_accel::exec::as_job(name, || f(&Jobs(s)))
+            });
+        }
         #[cfg(target_family = "wasm")]
         let _ = name;
         #[cfg(target_family = "wasm")]
@@ -61,7 +70,7 @@ impl<'s> Jobs<'s, '_> {
 
 /// Runs `op` on this thread with a scope for jobs that borrow its data; returns once they have all ended (meanwhile,
 /// on one of the pool's threads, it runs the pool's jobs).
-pub(crate) fn scope<'s, R>(op: impl for<'r> FnOnce(&Jobs<'s, 'r>) -> R) -> R {
+pub fn scope<'s, R>(op: impl for<'r> FnOnce(&Jobs<'s, 'r>) -> R) -> R {
     #[cfg(not(target_family = "wasm"))]
     {
         rayon::in_place_scope(|s| op(&Jobs(s)))
@@ -81,19 +90,28 @@ pub(crate) struct Beside<T> {
     slot: std::sync::Arc<(parking_lot::Mutex<Option<std::thread::Result<T>>>, std::sync::atomic::AtomicBool)>,
 }
 
+/// Frees `value` on the pool, off the caller's thread: freeing a large structure (a program analysis's results for
+/// every rule) is work the caller does not need done before it goes on. It reads no run context, so it carries none.
+pub(crate) fn drop_behind<T: Send + 'static>(value: T) {
+    rayon::spawn(move || drop(value));
+}
+
 /// Starts `f` beside the caller ([`Beside`]).
 pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
     let slot = std::sync::Arc::new((parking_lot::Mutex::new(None), std::sync::atomic::AtomicBool::new(false)));
     let held = std::sync::Arc::clone(&slot);
+    let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
     let run = move || {
         held.1.store(true, std::sync::atomic::Ordering::Release);
+        let _in = carry.enter();
+        let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || format!("{name} (job)"));
         let r = rerail_accel::exec::as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
         *held.0.lock() = Some(r);
     };
     if cfg!(not(target_family = "wasm")) && max() >= 2 {
         rayon::spawn(run);
     } else {
-        std::thread::spawn(run);
+        let _ = rerail_accel::exec::service(name, None, run);
     }
     Beside { name, slot }
 }
@@ -120,7 +138,7 @@ impl<T> Beside<T> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     /// The setting is at least one thread.
     #[test]
     fn the_setting_is_at_least_one_thread() {

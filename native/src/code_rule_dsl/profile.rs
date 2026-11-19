@@ -1,14 +1,14 @@
 //! Benchmark-only attribution for the existing workspace evaluator.
 //! Disabled in production builds. Reports worker CPU separately from wall time.
 
-mod clock;
-pub(super) mod memory;
-pub(super) use clock::thread_cpu_ns;
-pub(super) mod navigation;
-mod semantic;
+pub mod clock;
+pub mod memory;
+pub use clock::thread_cpu_ns;
+pub mod navigation;
+pub mod semantic;
 #[allow(unused_imports)]
-pub(super) use super::sql_profile as sql;
-pub(crate) mod trace;
+pub use super::sql_profile as sql;
+pub mod trace;
 use ast_grep_core::matcher::{DumpPattern, Matcher};
 use serde_json::{Value, json};
 use std::borrow::Cow;
@@ -37,11 +37,12 @@ fn describe_matcher(matcher: &AstMatcher, language: GrammarDialect) -> Value {
         }
         AstMatcher::Kind(kind) => json!({ "kind": kind.potential_kinds().map(|kinds|
             kinds.iter().map(|id| kind_name(id as u16)).collect::<Vec<_>>()) }),
+        AstMatcher::Supertype(supertype) => {
+            json!({ "supertype": kind_name(supertype.class), "kinds":
+            supertype.kinds.iter().map(|&id| kind_name(id)).collect::<Vec<_>>() })
+        }
         AstMatcher::Regex(_) => json!({ "regex": true }),
-        AstMatcher::Supertype(supertype) => json!({ "supertype": kind_name(supertype.class),
-            "kinds": supertype.kinds.iter().map(|&id|kind_name(id)).collect::<Vec<_>>() }),
         AstMatcher::Never => json!({ "never": true }),
-        #[cfg(test)]
         AstMatcher::TestUnknown(_) => json!({ "testUnknown": true }),
         AstMatcher::All(items) | AstMatcher::Any(items) => {
             let operator = if matches!(matcher, AstMatcher::All(_)) {
@@ -430,7 +431,13 @@ pub(super) fn record_transient(navigation_bytes: usize) {
 }
 
 /// W's retained-bytes report (`workspace/memory.rs`), which P's profile dropped.
-pub(super) fn record_retained(source: usize, tape: usize, grammar: usize, dispatch: usize, results: usize) {
+pub(super) fn record_retained(
+    source: usize,
+    tape: usize,
+    grammar: usize,
+    dispatch: usize,
+    results: usize,
+) {
     with_profile(|profile| {
         profile.retained_source_bytes = Some(source);
         profile.retained_tape_bytes = Some(tape);
@@ -612,7 +619,7 @@ impl Drop for ApplyProfile {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

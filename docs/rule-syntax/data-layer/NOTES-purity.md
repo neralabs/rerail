@@ -1,12 +1,12 @@
 # Purity group: notes
 
-This group has four data-layer checks, written in `.rr`, and two libraries:
+This group has four data-layer checks, written in `.rerail`, and two libraries:
 
-- `lib/data-layer/purity-ast.rr` (102 lines) holds the `ast` idioms that the purity and
+- `lib/data-layer/purity-ast.rerail` (102 lines) holds the `ast` idioms that the purity and
   authority scripts spell the same way: `ast_walk`, `short_name`, `walk_name`, `body_def`,
-  `last_body_def`, `class_field`, `deco_at`, `walk_qualname` and `py_repr`. `short_name` now
+  `last_body_def`, `class_field_name`, `deco_at`, `walk_qualname` and `py_repr`. `short_name` now
   sees through parentheses, so `(a.foo)` gives "foo".
-- `lib/data-layer/purity-calls.rr` (181 lines) is new. It holds pure_lazy_runtime_purity's
+- `lib/data-layer/purity-calls.rerail` (181 lines) is new. It holds pure_lazy_runtime_purity's
   call graph:
   - receiver chains through parentheses;
   - each qualname's last def;
@@ -15,7 +15,7 @@ This group has four data-layer checks, written in `.rr`, and two libraries:
   - method lookup through the first base that resolves;
   - the edges `pc_edge(f, g, via)`.
 
-  It uses python/security.rr's `pos_arg`, `arg_count` and `kwarg`.
+  It uses python/security.rerail's `pos_arg`, `arg_count` and `kwarg`.
 
 ## Scores
 
@@ -24,7 +24,7 @@ Before this round, dl dropped events that compare messages or fields; it now sco
 their keys. "Reader" means the census reader lowers the file with no refusal. `check_rr.py`
 prints ok for every file.
 
-| check | Python lines | .rr lines | before | after | reader |
+| check | Python lines | .rerail lines | before | after | reader |
 |---|---|---|---|---|---|
 | authentication_plan_purity | 322 | 95 | 8/8 | 10/10 | yes |
 | readthrough_authority_architecture | 355 | 96 | 10/10 | 12/12 | yes |
@@ -38,8 +38,8 @@ In the "before" column:
 
 Each generated table has a generator with a `--check` mode, which prints ok:
 
-- `cached-pure-lazy-allowlist.symbols.rr` comes from `gen-cached-pure-lazy-allowlist.py`;
-- `pure-lazy-runtime-purity.tables.rr` comes from `gen-pure-lazy-runtime-purity.py`.
+- `cached-pure-lazy-allowlist.symbols.rerail` comes from `gen-cached-pure-lazy-allowlist.py`;
+- `pure-lazy-runtime-purity.tables.rerail` comes from `gen-pure-lazy-runtime-purity.py`.
 
 The second generator now also emits:
 
@@ -66,7 +66,7 @@ The second generator now also emits:
     - an entry whose path is not its fragment's;
     - duplicate entries;
     - ceiling field errors.
-  - The list and the burn-down ceiling are each signed. They are checked with signing.rr's
+  - The list and the burn-down ceiling are each signed. They are checked with signing.rerail's
     `allow_entry`, `allow_sig` and `allow_status`. Both signatures verify on the real
     files, checked with libsodium.
 - **Categories.** A mutated global that no other category clause covers now gets
@@ -78,7 +78,7 @@ The second generator now also emits:
 - **Parentheses.** Receivers can be parenthesised: `(_OBJ).lookup(k)` and `(_CTX).get()`.
 - **`**_OPTS`.** It no longer counts as mutable state in a frozen dataclass call.
 - **Idioms.**
-  - The call graph moved to purity-calls.rr.
+  - The call graph moved to purity-calls.rerail.
   - The r1…r7 ladder became `plp_rhit` ranks with `min`.
   - The name sets are generated.
 
@@ -177,10 +177,10 @@ No misses, and no approximations beyond the linter's own spelling tests.
 
 ## Change requests
 
-### 1. lib/data-layer/signing.rr: the allowlist version
+### 1. lib/data-layer/signing.rerail: the allowlist version
 
 `allow_message` hard-codes `"version":1`. The cached pure-lazy policy signs `"version":2`, so
-`cached-pure-lazy-allowlist.rr` builds its message itself (`cpl_sign_msg`). The proposed
+`cached-pure-lazy-allowlist.rerail` builds its message itself (`cpl_sign_msg`). The proposed
 text replaces the current `allow_message` rule:
 
 ```
@@ -194,7 +194,7 @@ allow_message(l, msg) :- allow_sig(l, linter, _), allow_ver(l, ver),
     msg = cat("{\"allowlist\":[", body, "],\"linter\":", @json_str(linter), ",\"version\":", to_string(ver), "}").
 ```
 
-pure_lazy_runtime_purity needs no signing.rr change. Its two lists sign version 1.
+pure_lazy_runtime_purity needs no signing.rerail change. Its two lists sign version 1.
 
 ### 2. rrlab lowering: `split_dot` with `_`
 
@@ -221,11 +221,11 @@ reader accepts this shape. It should refuse it, or the lowering should materiali
 - **Stubs.** `@tree_digest` and `@nfkc` are stubs; they are what blocks the cached check's
   remaining scores.
 
-No change is requested to `lib/core.rr` or to any other library file outside this group.
+No change is requested to `lib/core.rerail` or to any other library file outside this group.
 
 ## Engine reader refusal (coordinator)
 
-The final-shape reader (`rr-census`) refuses `walk_qualname` in `lib/data-layer/purity-ast.rr` (lines 85 and 87)
+The final-shape reader (`rr-census`) refuses `walk_qualname` in `lib/data-layer/purity-ast.rerail` (lines 85 and 87)
 as an `UnboundedValueCycle`: the recursion builds a string with `@dot`. Each def has one qualified name, a function
 of its node, so the cycle is bounded by the tree; python/ast's `dotted_expr` is refused for the same reason. The
 request is for the reader to accept a value cycle whose head value is functionally determined by a node column

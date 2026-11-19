@@ -375,7 +375,7 @@ pub fn block(path: &str, sum: &Summary, ctx: &ModuleCtx, it: &mut Interner) -> B
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

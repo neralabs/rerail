@@ -1,10 +1,10 @@
-//! A `Program` as `.rr` text, which `rr::parse` reads back as the same program: for programs the engine builds
+//! A `Program` as `.rerail` text, which `rr::parse` reads back as the same program: for programs the engine builds
 //! (a wave's rules, the converter's output) and passes on as text.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
-use super::syntax::quote;
+use rerail_rr_syntax::syntax::quote;
 use super::translate::{relation, var};
 use crate::code_rule_dsl::logic::front::{AggOp, Atom, Error, Literal, Native, Program, Term, Value, axis};
 use crate::code_rule_dsl::logic::strings::{SET, is_test};
@@ -24,7 +24,9 @@ fn term(t: &Term) -> Result<String, Error> {
         Term::Int(n) => n.to_string(),
         Term::Str(s) => quote(s),
         Term::Top => "top".to_owned(),
-        Term::Call(f, _) if is_test(f) || f == SET => return Err(Error::Syntax(format!("@{f} as a value: no .rr form"))),
+        // A lowered program's atom (decision 0270) is the store's: a lowered program is kept as its image.
+        Term::Branded(b) => return Err(Error::Syntax(format!("the atom {b}: no .rerail form"))),
+        Term::Call(f, _) if is_test(f) || f == SET => return Err(Error::Syntax(format!("@{f} as a value: no .rerail form"))),
         Term::Call(f, args) => format!("@{}({})", if f == "cat" { "dot" } else { f }, terms(args)?),
     })
 }
@@ -45,10 +47,10 @@ pub(super) fn glob_literal(s: &str) -> String {
     out
 }
 
-/// A regex test's `.rr` pattern: `match` is whole-string, the engine's `rx` a search. A `match("X", s)` lowers to
+/// A regex test's `.rerail` pattern: `match` is whole-string, the engine's `rx` a search. A `match("X", s)` lowers to
 /// `rx` of `^(?:X)$` and prints back as written; another `rx` is the search `(?s:.*)(?:P)(?s:.*)`, its flag on the
 /// dots only (a leading `(?s)` would give P's own `.` newlines), `irx` that under `(?i:…)`.
-pub(super) fn search(op: &str, p: &str) -> String {
+pub fn search(op: &str, p: &str) -> String {
     match (op, whole(p)) {
         ("rx", Some(x)) => x.to_owned(),
         ("rx", None) => format!("(?s:.*)(?:{p})(?s:.*)"),
@@ -97,6 +99,8 @@ fn test(op: &str, s: &Term, pattern: &Term, neg: bool) -> Result<String, Error> 
         Ok(match op {
             "equals" => format!("{s} {} {}", if neg { "!=" } else { "=" }, quote(p)),
             "iequals" => format!("{bang}iglob({}, {s})", quote(&glob_literal(p))),
+            // A search (`rx` of no `^(?:X)$`) is the data-layer builtin `@rx_matches` (`functions::catalogue`).
+            "rx" if whole(p).is_none() => format!("@rx_matches({s}, {}) = {}", quote(p), if neg { 0 } else { 1 }),
             "rx" | "irx" => format!("{bang}match({}, {s})", quote(&search(op, p))),
             _ => format!("{bang}{op}({}, {s})", quote(p)),
         })
@@ -110,7 +114,7 @@ fn test(op: &str, s: &Term, pattern: &Term, neg: bool) -> Result<String, Error> 
 }
 
 /// An atom. `match_all("re", sp, m)` and `match_group("re", sp, m, g, gsp)` are the built-ins where the program
-/// declares no relation of that name (a `.rr` program cannot): they print as themselves, where a relation of a
+/// declares no relation of that name (a `.rerail` program cannot): they print as themselves, where a relation of a
 /// reserved name gets a trailing `_` (`translate::relation`).
 fn atom(a: &Atom, prog: &Program) -> Result<String, Error> {
     let bang = if a.neg { "!" } else { "" };
@@ -120,8 +124,8 @@ fn atom(a: &Atom, prog: &Program) -> Result<String, Error> {
     {
         return Ok(if has { format!("{bang}has({}, {}, {set})", term(x)?, term(n)?) } else { format!("{bang}inside({}, {}, {set})", term(n)?, term(x)?) });
     }
-    let builtin = BUILTINS.contains(&a.rel.as_str()) && !prog.decls.contains_key(&a.rel);
-    let name = if builtin { a.rel.clone() } else { relation(&a.rel) };
+    let builtin = BUILTINS.contains(&a.rel.as_str()) && !prog.decls.contains_key(a.rel.as_str());
+    let name = if builtin { a.rel.clone() } else { relation(&a.rel).into() };
     Ok(format!("{bang}{name}({})", terms(&a.args)?))
 }
 
@@ -172,8 +176,29 @@ fn native_rule(head: &Atom, native: &Native, prog: &Program) -> Result<String, E
             };
             format!("{} :- {call}.", atom(head, prog)?)
         }
+        Native::PythonCandidates {input,targets,context,member} => format!("{} :- python_candidates({}, {}, {}, {}, {}).",atom(head, prog)?,terms(&head.args)?,relation(input),relation(targets),quote(context),quote(member)),
+        Native::Python {kind,input,targets} => {
+            let tail=targets.as_ref().map(|t|format!(", {}",relation(t))).unwrap_or_default();
+            format!("{} :- python_{}({}, {}{}).",atom(head, prog)?,kind,terms(&head.args)?,relation(input),tail)
+        }
         Native::Components { edge, own } => {
             format!("{} :- components({}, {}, {}).", atom(head, prog)?, terms(&head.args)?, relation(edge), relation(own))
+        }
+        // The reach index's relations are plain rules (decision 0119): printed as the closure they hold, which is
+        // recognized again when read back.
+        Native::Reach { seed, edge } => {
+            let (r, x, y, z) = (relation(&head.rel), var("rr_x"), var("rr_y"), var("rr_z"));
+            format!("{r}({x}, {y}) :- {}({x}, {y}).\n{r}({x}, {z}) :- {r}({x}, {y}), {}({y}, {z}).", relation(seed), relation(edge))
+        }
+        Native::ReachThrough { reach, map } => {
+            let (x, e, q) = (var("rr_x"), var("rr_e"), var("rr_q"));
+            format!("{}({x}, {q}) :- {}({x}, {e}), {}({e}, {q}).", relation(&head.rel), relation(reach), relation(map))
+        }
+        // The text test over its input's rows, as the rule it was made from (`strings::as_relations`).
+        Native::TextTest { input, column, op, patterns } => {
+            let s = head.args.get(*column).cloned().unwrap_or_else(|| Term::Var("rr_text0".into()));
+            let set = Term::Call(crate::code_rule_dsl::logic::strings::SET.into(), patterns.iter().map(|p| Term::Str(p.as_str().into())).collect::<Vec<_>>().into());
+            format!("{} :- {}({}), {}.", atom(head, prog)?, relation(input), terms(&head.args)?, test(op, &s, &set, false)?)
         }
         Native::MatchAll { input, pattern, groups, positions } => {
             let s = (0..).map(|i| format!("rr_text{i}")).find(|v| !groups.contains(v)).expect("a free name");
@@ -185,17 +210,27 @@ fn native_rule(head: &Atom, native: &Native, prog: &Program) -> Result<String, E
     })
 }
 
-/// The program's `.rr` text.
-pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
+/// The program's `.rerail` text: as written, its node attributes inputs again where the lowering answered them on request
+/// (decision 0174, `lower::undo_on_request`), which reading the text makes again.
+pub fn print(prog: &Program) -> Result<String, Error> {
+    if super::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| prog.decls.contains_key(a.req)) {
+        let mut written = prog.clone();
+        super::lower::undo_on_request(&mut written);
+        return print_written(&written);
+    }
+    print_written(prog)
+}
+
+fn print_written(prog: &Program) -> Result<String, Error> {
     // Keep the public schema when printing frontend unit columns back to rule source.
     let mut logical;
     let prog = if prog.nullary.is_empty() { prog } else {
         logical=prog.clone();
         for name in &prog.nullary {
-            if let Some(cols)=logical.decls.get_mut(name){cols.clear();}
+            if let Some(cols)=logical.decls.get_mut(name.as_str()){cols.clear();}
             for row in logical.facts.get_mut(name).into_iter().flatten(){row.clear();}
         }
-        let decode=|a:&mut Atom|{if prog.nullary.contains(&a.rel){a.args.clear();}};
+        let decode=|a:&mut Atom|{if prog.nullary.contains(a.rel.as_str()){a.args.clear();}};
         for rule in &mut logical.rules {
             decode(&mut rule.head);
             for lit in &mut rule.body{if let Literal::Atom(a)|Literal::Agg{atom:a,..}=lit{decode(a);}}
@@ -209,7 +244,9 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
     for (key, text) in &prog.settings {
         writeln!(out, ".{key} {text}").expect("a string");
     }
-    for (name, kinds) in &prog.kindsets {
+    // A set that is no relation of the program (no rule reads it) is printed by its kinds; one that is stays a
+    // relation, declared and stated below with the rest, once.
+    for (name, kinds) in prog.kindsets.iter().filter(|(name, _)| !prog.decls.contains_key(name.as_str())) {
         writeln!(out, ".decl {name}(kind: symbol)").expect("a string");
         writeln!(out, "{}", kinds.iter().map(|k| format!("{name}({}).", quote(k))).collect::<Vec<_>>().join(" ")).expect("a string");
     }
@@ -220,7 +257,7 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
         if made(name) {
             continue;
         }
-        let lattice = prog.lattice.get(name);
+        let lattice = prog.lattice.get(name.as_str());
         let mut printed = Vec::new();
         for (i, (c, t)) in cols.iter().enumerate() {
             match lattice {
@@ -236,8 +273,9 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
                     };
                     printed.push(format!("{c}: {column}"));
                 }
-                // `core.rr`'s `docof` over nodes and spans stays an input (`lower::projections`).
+                // `core.rerail`'s `docof` over nodes and spans stays an input (`lower::projections`).
                 _ if i == 0 && name == "docof" && prog.inputs.iter().any(|r| r == "docof") => printed.push(format!("{c}: loc")),
+                _ if prog.tapes.get(name.as_str()).is_some_and(|cols| cols.contains(&i)) => printed.push(format!("{c}: tape")),
                 _ => printed.push(format!("{c}: {}", ty(t))),
             }
         }
@@ -262,15 +300,16 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
     for (rel, rows) in &prog.facts {
         for row in rows {
             let values = row.iter().map(|v| match v {
-                Value::Int(n) => n.to_string(),
-                Value::Str(s) => quote(s),
+                Value::Int(n) => Ok(n.to_string()),
+                Value::Str(s) => Ok(quote(s)),
+                Value::Branded(b) => Err(Error::Syntax(format!("the atom {b}: no .rerail form"))),
             });
-            writeln!(out, "{}({}).", relation(rel), values.collect::<Vec<_>>().join(", ")).expect("a string");
+            writeln!(out, "{}({}).", relation(rel), values.collect::<Result<Vec<_>, _>>()?.join(", ")).expect("a string");
         }
     }
     for rule in &prog.rules {
         // A relation made natively is printed as what made it: its rule only orders it after its inputs.
-        if let Some(native) = prog.natives.get(&rule.head.rel) {
+        if let Some(native) = prog.natives.get(rule.head.rel.as_str()) {
             writeln!(out, "{}", native_rule(&rule.head, native, prog)?).expect("a string");
             continue;
         }

@@ -1,16 +1,16 @@
 //! The SQLite layout from ast-index-spike's tape_store.py: rec6 file rows and positional FTS.
 use crate::code_rule_dsl::{budget, language, tape::TapeDoc};
 use ast_grep_core::Doc;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use rusqlite::OptionalExtension;
 use rusqlite::{Connection, Result, params};
 use std::path::Path;
 #[path = "store/publication.rs"]
-pub(super) mod publication;
+pub mod publication;
 
 pub(super) const LANG_STRIDE: u32 = 1024;
 
-pub(super) fn kind_token(code: u32) -> String {
+pub fn kind_token(code: u32) -> String {
     let mut digits = [0_u8; 7];
     let mut at = digits.len();
     let mut code = code;
@@ -28,14 +28,14 @@ pub(super) fn kind_token(code: u32) -> String {
     )
 }
 
-pub(super) struct Store {
+pub struct Store {
     #[cfg(feature = "code-rule-profile")]
     pub(super) graph: parking_lot::Mutex<super::graph::Graph>,
     #[cfg(feature = "code-rule-profile")]
     pub(super) origins:
         parking_lot::Mutex<std::collections::HashMap<usize, std::collections::BTreeSet<String>>>,
     // Close incremental read cursors before the database destroys its SQL callbacks.
-    pub(super) readers: super::reader::Readers,
+    pub readers: super::reader::Readers,
     pub db: crate::code_rule_dsl::residency::admission::relational::database::Database,
     values: parking_lot::Mutex<super::values::Counts>,
     // Connection closes before the temporary database is unlinked, including on Windows.
@@ -97,11 +97,11 @@ impl Store {
             _temporary: None,
         })
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn put(&self, path: &str, doc: &TapeDoc) -> Result<i64> {
         self.put_with(path, doc, &budget::matcher_budget_exhausted)
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn put_with(&self, path: &str, doc: &TapeDoc, interrupted: &impl Fn() -> bool) -> Result<i64> {
         let lang = u32::from(language::tape_tag(*doc.get_lang()).expect("tape language"));
         if let Some(fid) = self
@@ -127,7 +127,7 @@ impl Store {
         self.put_known(path, doc, previous, known_language, interrupted)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn put_known(
         &self,
         path: &str,
@@ -264,7 +264,7 @@ impl Store {
                 &tx,
                 &format!("INSERT INTO {table}"),
                 "",
-                bytes.chunks_exact(8).map(|pair| {
+                bytes.as_chunks::<8>().0.iter().map(|pair| {
                     [
                         fid.into(),
                         i64::from(u32::from_le_bytes(pair[..4].try_into().expect("key width")))
@@ -287,7 +287,7 @@ impl Store {
         crate::code_rule_dsl::profile::record_sql_index_write(doc.transducer_len());
         Ok(fid)
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn remove(&self, path: &str) -> Result<()> {
         if let Some(fid) = self
             .db
@@ -307,7 +307,7 @@ impl Store {
         self.values.lock().remove(fid);
         Ok(())
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn resident_bytes(&self) -> Result<usize> {
         self.db.resident_bytes()
     }
@@ -315,7 +315,7 @@ impl Store {
 
 
 /// A file's index rows, built from the file alone so publication holds the corpus lock only to write.
-pub(super) struct Image<'a> {
+pub struct Image<'a> {
     doc: &'a TapeDoc,
     lang: u32,
     tape: crate::code_rule_dsl::tape::IndexImage,
@@ -336,7 +336,7 @@ pub(super) fn image<'a>(doc: &'a TapeDoc, interrupted: &impl Fn() -> bool) -> Re
     let mut counts = [0_i64; 1024];
     let mut positions = super::kind_postings::Builder::default();
     let mut mask = [0_u8; 128];
-    for (pre, rec) in image.rec.chunks_exact(6).enumerate() {
+    for (pre, rec) in image.rec.as_chunks::<6>().0.iter().enumerate() {
         if pre.is_multiple_of(256) && interrupted() {
             return Err(rusqlite::Error::UserFunctionError(
                 "index construction interrupted".into(),

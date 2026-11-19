@@ -16,7 +16,7 @@ use std::time::Instant;
 
 /// A kind of work a span is charged with.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub(in crate::code_rule_dsl) enum Unit {
+pub enum Unit {
     /// A SQLite VM step (charged from each statement's `SQLITE_STMTSTATUS_VM_STEP`).
     VmStep,
     /// A row into a step of a native join (`native::setfix` step counts).
@@ -100,7 +100,11 @@ pub(super) fn calibrate(units: &std::collections::BTreeSet<Unit>) -> (BTreeMap<U
         source = "read from the roof cache";
     }
     let missing: Vec<Unit> = units.iter().copied().filter(|u| !known.contains_key(u)).collect();
-    if !missing.is_empty() {
+    // Phase 0's run (`bootstrap.rerail`, inside a run) measures none: its profile is a part of the run's, whose own report
+    // measures them after every phase, so the loops (seconds in a debug build) are not charged to the run's loading.
+    if !missing.is_empty() && crate::code_rule_dsl::phase_clock::active() {
+        source = "not measured in phase 0's run (the run's own profile measures them)";
+    } else if !missing.is_empty() {
         known.extend(measure(&missing));
         source = if missing.len() == units.len() { "measured now" } else { "partly measured now" };
         if let Some(path) = cache {
@@ -110,15 +114,30 @@ pub(super) fn calibrate(units: &std::collections::BTreeSet<Unit>) -> (BTreeMap<U
     (units.iter().map(|u| (*u, known.get(u).copied().flatten())).collect(), source.to_owned())
 }
 
-/// The roof cache of this engine binary: `<temp>/rerail-roofs/<digest of its path, size and modification time>.json`.
+/// The roof cache: `<temp>/rerail-roofs/<digest>.json`, per machine (its temporary directory) and day (`read_cache`).
+/// The roofs are this machine running the loops below, so the digest is of what decides their speed: the loops'
+/// code (this file's text), and how it was compiled (the build's profile, `target/<profile>`, and its debug
+/// assertions). Keyed by the binary (its path, size and time), every rebuild measured them again: 10 s of CPU at the
+/// next profiled run's report, a cold run's cost seen from outside (`life`).
 fn cache_file() -> Option<std::path::PathBuf> {
     use sha2::Digest as _;
     let exe = std::env::current_exe().ok()?;
-    let meta = std::fs::metadata(&exe).ok()?;
-    let modified = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
-    let key = sha2::Sha256::digest(format!("{}\0{}\0{modified}", exe.display(), meta.len()).as_bytes());
+    let key = sha2::Sha256::digest(format!("{}\0{}\0{}", ROOF_LOOPS, build_profile(&exe), cfg!(debug_assertions)).as_bytes());
     let name: String = key.iter().take(8).map(|b| format!("{b:02x}")).collect();
     Some(std::env::temp_dir().join("rerail-roofs").join(format!("{name}.json")))
+}
+
+/// The loops' code: this file, as built.
+const ROOF_LOOPS: &str = include_str!("roofline.rs");
+
+/// The build's profile, by where Cargo put the binary: the directory under `target` (`debug`, `profiling`, …), or the
+/// binary's own directory elsewhere.
+fn build_profile(exe: &std::path::Path) -> String {
+    let parts: Vec<String> = exe.parent().into_iter().flat_map(|p| p.components()).map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+    match parts.iter().rposition(|c| c == "target") {
+        Some(i) if i + 1 < parts.len() => parts[i + 1].clone(),
+        _ => parts.last().cloned().unwrap_or_default(),
+    }
 }
 
 /// A cache written within the last day, by unit name.
@@ -141,7 +160,7 @@ fn write_cache(path: &std::path::Path, roofs: &BTreeMap<Unit, Option<f64>>) {
 
 fn measure(units: &[Unit]) -> BTreeMap<Unit, Option<f64>> {
     let units = units.to_vec();
-    std::thread::spawn(move || {
+    rerail_accel::exec::service("profile roofline", None, move || {
         // What the memory sampler names while the loops run (not a span: `write` holds the profile's records).
         let _doing = super::memory::Doing::new("profile: the machine's roofs measured (roofline, not the run's work)");
         #[cfg(target_os = "macos")]
@@ -154,7 +173,8 @@ fn measure(units: &[Unit]) -> BTreeMap<Unit, Option<f64>> {
         }
         units.iter().map(|&u| (u, roof(u))).collect()
     })
-    .join()
+    .ok()
+    .and_then(|t| t.join().ok())
     .unwrap_or_default()
 }
 
@@ -278,10 +298,10 @@ fn roof(u: Unit) -> Option<f64> {
         Unit::Candidate => None,
         Unit::Literal => {
             use crate::code_rule_dsl::logic::front::{Atom, Literal, Term};
-            let var = |i: usize| Term::Var(format!("v{}", i % 7));
+            let var = |i: usize| Term::Var(format!("v{}", i % 7).into());
             // 2^16 literals: a clone's cost per literal, as 2^20 measured it, without ~650 MB held three times over.
             let body: Vec<Literal> = (0..1usize << 16)
-                .map(|i| Literal::Atom(Atom { rel: format!("r{}", i % 97), args: vec![var(i), var(i + 1), var(i + 2)], neg: false, gated: false }))
+                .map(|i| Literal::Atom(Atom { rel: format!("r{}", i % 97).into(), args: [var(i), var(i + 1), var(i + 2)].into(), neg: false, gated: false }))
                 .collect();
             Some(best(3, || {
                 let t = Instant::now();
@@ -314,11 +334,15 @@ struct Line {
 }
 
 /// The roofline section of the report. `work` holds what was charged by span; `own` each span's own CPU.
-pub(super) fn report(r: &mut String, own: &BTreeMap<String, f64>, work: &BTreeMap<(String, Unit), u64>, joins: &BTreeMap<String, (u64, u64)>) {
+/// Returns the calibration's wall and CPU (the process's, every thread: its loops run on threads of their own) and
+/// where its roofs came from: the report's own work, after the CPU the spans account for (`life`).
+pub fn report(r: &mut String, own: &BTreeMap<String, f64>, work: &BTreeMap<(String, Unit), u64>, joins: &BTreeMap<String, (u64, u64)>) -> (f64, f64, String) {
     let t = Instant::now();
+    let cpu0 = super::life::cpu(false);
     let charged: std::collections::BTreeSet<Unit> = work.keys().map(|(_, u)| *u).collect();
     let (roofs, source) = calibrate(&charged);
     let calibration = t.elapsed().as_secs_f64();
+    let calibration_cpu = super::life::cpu(false) - cpu0;
     let load = std::fs::read_to_string("/proc/loadavg").ok().or_else(|| {
         std::process::Command::new("sysctl").args(["-n", "vm.loadavg"]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
     });
@@ -326,7 +350,7 @@ pub(super) fn report(r: &mut String, own: &BTreeMap<String, f64>, work: &BTreeMa
         r,
         "\n== Roofline: each span's work against the best this machine does that work (its roof); excess = own CPU less units x roof"
     );
-    let _ = writeln!(r, "Roofs of the {} kinds of work charged, {source} in {calibration:.2} s{}:", roofs.len(), load.map(|l| format!(" (load {l})")).unwrap_or_default());
+    let _ = writeln!(r, "Roofs of the {} kinds of work charged, {source} in {calibration:.2} s ({calibration_cpu:.2} s CPU){}:", roofs.len(), load.map(|l| format!(" (load {l})")).unwrap_or_default());
     for (u, ns) in &roofs {
         match ns {
             Some(ns) => {
@@ -422,10 +446,11 @@ pub(super) fn report(r: &mut String, own: &BTreeMap<String, f64>, work: &BTreeMa
     for (p, s) in bare.iter().take(25) {
         let _ = writeln!(r, "  {s:>8.3} s  {p}");
     }
+    (calibration, calibration_cpu, format!("the roofline's roofs, {source}"))
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// Roofs written to the cache read back by unit name, `None` included; an unknown name is skipped.
@@ -438,5 +463,19 @@ mod tests {
         std::fs::write(&path, r#"{"no such unit": 1.0}"#).unwrap();
         assert_eq!(read_cache(&path), Some(BTreeMap::new()));
         let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    /// A rebuild keeps the roofs: the cache is named by the loops and the build's profile, not by the binary.
+    #[test]
+    fn the_roof_cache_is_the_builds_profile_not_its_binary() {
+        let at = |p: &str| super::build_profile(std::path::Path::new(p));
+        assert_eq!(at("/w/target/debug/rerail-engine"), "debug");
+        assert_eq!(at("/w/target/debug/deps/rerail_engine-56c28bf847ab8017"), "debug");
+        assert_eq!(at("/w/target/profiling/rerail-engine"), "profiling");
+        assert_eq!(at("/w/tmp/cold/engine-copy"), "cold");
+        assert!(super::ROOF_LOOPS.contains("fn measure("));
     }
 }

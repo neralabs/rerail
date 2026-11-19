@@ -2,12 +2,15 @@
 use super::*;
 
 #[derive(Clone, Default)]
-pub(super) struct Pool {
+pub struct Pool {
+    pub batch_runtime: Arc<parking_lot::Mutex<Option<temporal::BatchRuntime>>>,
+    pub worker_accounting: Option<Arc<work_graph::Accounting>>,
+    pub worker_plan:Arc<parking_lot::Mutex<Option<Value>>>,
     tables: BTreeMap<(String, bool, bool), Vec<String>>,
     next: usize,
 }
 
-pub(super) struct Work<'a> {
+pub struct Work<'a> {
     pub db: &'a rusqlite::Connection,
     pub versions: Option<&'a versions::Store>,
     pub profiler: Option<&'a super::super::sql_profile::Profiler>,
@@ -24,12 +27,19 @@ pub(super) struct Work<'a> {
     pub context_rows: u64,
     pub summary_initializations: Vec<reductions::Initial>,
 }
-pub(super) struct Mark {
+pub struct Mark {
     used: usize,
     positions: BTreeMap<(String, bool, bool), usize>,
 }
 
 impl Pool {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn names(&self) -> Vec<String> {
+        self.tables.values().flatten().cloned().collect::<BTreeSet<_>>().into_iter().collect()
+    }
+    pub fn sql_drop_bound(&self, store: &versions::Store) -> usize {
+        self.tables.values().flatten().filter(|n| !store.owns(n)).count()
+    }
     pub fn clear(&mut self, db: &rusqlite::Connection, store: &versions::Store) -> Result<()> {
         for name in self.tables.values().flatten() {
             if store.owns(name) {
@@ -39,7 +49,9 @@ impl Pool {
             db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{}", quote(name)))
                 .map_err(error)?;
         }
-        *self = Self::default();
+        self.tables.clear();
+        self.next = 0;
+        *self.worker_plan.lock() = None;
         Ok(())
     }
 }

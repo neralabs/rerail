@@ -1,16 +1,16 @@
 //! Typed SQL for the logic language's plans (05 Phase 5 row 4), from
-//! ner-1562-scale-test-the-re-railer's `query/plan/render/{sql_ast, typed_boundary}.rs` and
+//! scale-test-the-re-railer's `query/plan/render/{sql_ast, typed_boundary}.rs` and
 //! `query/plan/physical.rs`: a SQL AST rendered and checked against the relations a statement may
 //! read, so emitted SQL names only declared fact families. N's `relational_ir.rs`/`relational.rs`
 //! (tree axes in SQL) are not kept: tree navigation is the transducer's.
-pub(in crate::code_rule_dsl) mod physical;
-pub(in crate::code_rule_dsl) mod select;
-pub(in crate::code_rule_dsl) mod sql_ast;
-pub(in crate::code_rule_dsl) mod typed_boundary;
+pub mod physical;
+pub mod select;
+pub mod sql_ast;
+pub mod typed_boundary;
 
-pub(in crate::code_rule_dsl) mod program;
-pub(in crate::code_rule_dsl) mod lattices;
-pub(in crate::code_rule_dsl) mod properties;
+pub mod program;
+pub mod lattices;
+pub mod properties;
 
 /// SQLite's keywords (sqlite.org/lang_keywords.html, 147 of them), sorted.
 const SQLITE_KEYWORDS: [&str; 147] = [
@@ -37,6 +37,17 @@ pub(in crate::code_rule_dsl) fn table(name: &str) -> String {
     let quoted = name.split('.').map(|part| if part.starts_with('"') { std::borrow::Cow::Borrowed(part) } else { ident(part) }).collect::<Vec<_>>().join(".");
     if rest.is_empty() { quoted } else { format!("{quoted} {rest}") }
 }
+/// A relation's name as `ident` wrote it, read back: a quoted identifier without its quotes (`"plan"` is `plan`, a
+/// doubled `""` one `"`); any other name as it is. What finds a relation by its name in a statement's text (setfix's
+/// `view`, which reads a bound input in place) reads it so, or a relation named like a keyword is not found.
+pub(in crate::code_rule_dsl) fn unquote(name: &str) -> std::borrow::Cow<'_, str> {
+    match name.strip_prefix('"').and_then(|n| n.strip_suffix('"')) {
+        Some(inner) if inner.contains("\"\"") => std::borrow::Cow::Owned(inner.replace("\"\"", "\"")),
+        Some(inner) => std::borrow::Cow::Borrowed(inner),
+        None => std::borrow::Cow::Borrowed(name),
+    }
+}
+
 /// A relation's name as an SQL identifier: as written, unless it is a SQLite keyword (`values`, `order`) or not a
 /// plain identifier, which is quoted. Every SQL statement that names a program's relation writes it so (O106).
 pub(in crate::code_rule_dsl) fn ident(name: &str) -> std::borrow::Cow<'_, str> {

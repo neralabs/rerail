@@ -3,12 +3,11 @@
 #[cfg(any(test, feature = "test-hooks"))]
 use super::SEARCH_INDEX_FAMILY_WRITES;
 use super::{
-    CODEC_ZSTD, ContentStore, HashKey, MAX_PUBLICATION_BATCH, SearchKindLookup, StoreError,
-    StoreResult, StoredKindPresence, TapeId, TapeSearchIndex, UnindexedTape,
+    ContentStore, HashKey, MAX_PUBLICATION_BATCH, SearchKindLookup, StoreError, StoreResult,
+    StoredKindPresence, TapeId, TapeSearchIndex, UnindexedTape,
 };
 use rusqlite::{TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Cursor;
 #[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::Ordering;
 
@@ -18,7 +17,8 @@ use std::sync::atomic::Ordering;
 /// this build reads them (`tape_objects` lookups match the format too).
 pub(super) const TAPES_WITHOUT_SEARCH_INDEX_SQL: &str = "SELECT t.tape_id, t.grammar_id, \
      s.codec_id, s.raw_length, s.frame, sh.algorithm_id, sh.lane0, sh.lane1, sh.lane2, sh.lane3, \
-     t.codec_id, t.raw_length, t.frame, th.algorithm_id, th.lane0, th.lane1, th.lane2, th.lane3 \
+     t.codec_id, t.raw_length, t.frame, th.algorithm_id, th.lane0, th.lane1, th.lane2, th.lane3, \
+     s.seg, s.seg_at, s.seg_len, t.seg, t.seg_at, t.seg_len \
      FROM tape_objects t \
      JOIN hashes th ON th.hash_id = t.canonical_hash_id \
      JOIN source_objects s ON s.source_id = t.source_id \
@@ -60,7 +60,8 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         // The schema requires a positive node count; nothing reads the count of an incomplete set.
         let mut put_set = transaction.prepare_cached(
             "INSERT INTO search_index_sets(tape_id,index_version,node_count,complete,has_errors) \
@@ -104,7 +105,8 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let mut remove_kind =
             transaction.prepare_cached("DELETE FROM search_kind_fts WHERE rowid=?1")?;
         let mut put_kind =
@@ -145,29 +147,31 @@ impl ContentStore {
         after: Option<TapeId>,
         limit: usize,
     ) -> StoreResult<Vec<UnindexedTape>> {
-        type Frame = (i64, i64, Vec<u8>, HashKey);
+        type Frame = (i64, i64, Vec<u8>, HashKey, [i64; 3]);
         let rows = {
             let connection = self
                 .connection
                 .lock()
                 .expect("content store mutex poisoned");
             let mut statement = connection.prepare_cached(TAPES_WITHOUT_SEARCH_INDEX_SQL)?;
-            let frame = |row: &rusqlite::Row<'_>, at: usize| -> rusqlite::Result<Frame> {
-                Ok((
-                    row.get(at)?,
-                    row.get(at + 1)?,
-                    row.get(at + 2)?,
-                    HashKey {
-                        algorithm: row.get(at + 3)?,
-                        lanes: [
-                            row.get(at + 4)?,
-                            row.get(at + 5)?,
-                            row.get(at + 6)?,
-                            row.get(at + 7)?,
-                        ],
-                    },
-                ))
-            };
+            let frame =
+                |row: &rusqlite::Row<'_>, at: usize, seg: usize| -> rusqlite::Result<Frame> {
+                    Ok((
+                        row.get(at)?,
+                        row.get(at + 1)?,
+                        row.get(at + 2)?,
+                        HashKey {
+                            algorithm: row.get(at + 3)?,
+                            lanes: [
+                                row.get(at + 4)?,
+                                row.get(at + 5)?,
+                                row.get(at + 6)?,
+                                row.get(at + 7)?,
+                            ],
+                        },
+                        [row.get(seg)?, row.get(seg + 1)?, row.get(seg + 2)?],
+                    ))
+                };
             statement
                 .query_map(
                     params![
@@ -180,36 +184,51 @@ impl ContentStore {
                         Ok((
                             TapeId(row.get(0)?),
                             row.get::<_, i64>(1)?,
-                            frame(row, 2)?,
-                            frame(row, 10)?,
+                            frame(row, 2, 18)?,
+                            frame(row, 10, 21)?,
                         ))
                     },
                 )?
                 .collect::<Result<Vec<_>, _>>()?
         };
-        let decode = |(codec, length, frame, hash): Frame| -> StoreResult<Vec<u8>> {
-            if codec != CODEC_ZSTD {
-                return Err(StoreError::Corrupt("unsupported object codec".to_owned()));
-            }
-            let bytes = zstd::stream::decode_all(Cursor::new(frame))?;
-            if usize::try_from(length).ok() != Some(bytes.len()) || HashKey::sha256(&bytes) != hash
-            {
+        // A source is checked against its hash; its tape against its identity (`HashKey::tape_identity`).
+        // In a segment (decision 0295 step 5): read there; one whose segment is gone is not indexed.
+        let mut maps = super::segments::SegmentMaps::new(super::object_segments::object_dir(
+            &self.database_path,
+        ));
+        let mut decode = |(codec, length, frame, hash, [seg, at, len]): Frame,
+                          identity: &dyn Fn(&[u8]) -> HashKey|
+         -> StoreResult<Option<Vec<u8>>> {
+            let Some(frame) =
+                super::object_segments::row_frame(&mut maps, codec, frame, seg, at, len)?
+            else {
+                return Ok(None);
+            };
+            let bytes = frame.bytes(0)?.into_vec();
+            if usize::try_from(length).ok() != Some(bytes.len()) || identity(&bytes) != hash {
                 return Err(StoreError::Corrupt(
                     "object length or hash does not match metadata".to_owned(),
                 ));
             }
-            Ok(bytes)
+            Ok(Some(bytes))
         };
-        rows.into_iter()
-            .map(|(tape, grammar, source, image)| {
-                Ok(UnindexedTape {
-                    tape,
-                    grammar,
-                    source: decode(source)?,
-                    image: decode(image)?,
-                })
-            })
-            .collect()
+        let mut out = Vec::with_capacity(rows.len());
+        for (tape, grammar, source, image) in rows {
+            let source_hash = source.3;
+            let (Some(source), Some(image)) = (
+                decode(source, &|bytes| HashKey::sha256(bytes))?,
+                decode(image, &|bytes| HashKey::tape_identity(source_hash, bytes))?,
+            ) else {
+                continue;
+            };
+            out.push(UnindexedTape {
+                tape,
+                grammar,
+                source,
+                image,
+            });
+        }
+        Ok(out)
     }
 
     /// Returns whether each complete, error-free stored tape contains any requested root kind.

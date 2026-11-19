@@ -30,25 +30,31 @@ const DFA_LIMIT: usize = 4 << 20;
 
 /// Compiled groups of automata, kept between processes (decision 0075): `get` gives a group's DFA as `to_bytes` made
 /// it, `Some(None)` for a group known not to determinize within `DFA_LIMIT`, and `None` for one never compiled.
-pub(in crate::code_rule_dsl) trait DfaCache {
+pub trait DfaCache {
     fn get(&self, key: &str) -> Option<Option<Vec<u8>>>;
     fn put(&self, key: &str, dfa: Option<&[u8]>);
+    /// A group this process holds already: whether the cache keeps it, naming it as `get` would (a store's run names
+    /// its sources in its manifest), with nothing read. One it does not keep is `put`.
+    fn held(&self, _key: &str) -> bool {
+        true
+    }
 }
 
 /// What compiling the searchers did, for the run's report: groups read from the cache, determinized, and run lazily.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct Compiling {
-    pub(in crate::code_rule_dsl) read: usize,
-    pub(in crate::code_rule_dsl) built: usize,
-    pub(in crate::code_rule_dsl) lazy: usize,
+pub struct Compiling {
+    pub read: usize,
+    pub built: usize,
+    pub lazy: usize,
 }
 
 type Dfa = regex_automata::dfa::dense::DFA<Vec<u32>>;
 
 /// A group of automata searched together for every pattern that matches (`MatchKind::All`).
+#[allow(clippy::large_enum_variant)]
 enum Engine {
     /// Determinized, from the cache or built now. A string the DFA gives up on (a quit byte) is asked of `lazy`.
-    Dfa(Dfa),
+    Dfa(std::sync::Arc<Dfa>),
     /// The lazy DFA, for a group that does not determinize within `DFA_LIMIT`.
     Lazy,
     /// One at a time: the group does not build together.
@@ -85,7 +91,7 @@ fn group_key(hirs: &[regex_syntax::hir::Hir]) -> String {
         hash.update(hir.to_string().as_bytes());
         hash.update(b"\0");
     }
-    format!("dfa1:{}", crate::lower_hex(&hash.finalize()))
+    format!("dfa1:{}", crate::code_rule_dsl::prof::lower_hex(&hash.finalize()))
 }
 
 /// `hirs` determinized into one DFA over all of them, if it fits in `DFA_LIMIT`.
@@ -102,6 +108,15 @@ fn determinize(hirs: &[regex_syntax::hir::Hir]) -> Option<Dfa> {
         )
         .build_from_nfa(&nfa)
         .ok()
+}
+
+/// The groups this process determinized, by `group_key`: their DFA, or `None` for one that runs lazily. A few
+/// hundred at a time (a data-layer policy makes a handful), cleared when full.
+const KEPT_GROUPS: usize = 512;
+
+fn kept_groups() -> &'static std::sync::Mutex<HashMap<String, Option<std::sync::Arc<Dfa>>>> {
+    static KEPT: std::sync::OnceLock<std::sync::Mutex<HashMap<String, Option<std::sync::Arc<Dfa>>>>> = std::sync::OnceLock::new();
+    KEPT.get_or_init(Default::default)
 }
 
 /// A DFA read back from the bytes `to_bytes_native_endian` made; `None` when they no longer read.
@@ -133,11 +148,32 @@ pub(in crate::code_rule_dsl) struct Searchers {
     groups: Vec<Group>,
     backtracking: Vec<(usize, Compiled)>,
     pub(in crate::code_rule_dsl) compiling: Compiling,
+    /// The groups a cache keeps, by key, with their automata (`None`: run lazily): named in a cache again by a later
+    /// run that takes these searchers as compiled (`name_in`).
+    cached: Vec<(String, Option<std::sync::Arc<Dfa>>)>,
+}
+
+/// Names the group `key` in `cache` (`DfaCache::held`), or puts it there where the cache does not keep it.
+fn held_or_put(cache: &dyn DfaCache, key: &str, dfa: &Option<std::sync::Arc<Dfa>>) {
+    if cache.held(key) {
+        return;
+    }
+    match dfa {
+        Some(dfa) => {
+            let (bytes, pad) = dfa.to_bytes_native_endian();
+            cache.put(key, Some(&bytes[pad..]));
+        }
+        None => cache.put(key, None),
+    }
 }
 
 impl Searchers {
-    pub(in crate::code_rule_dsl) fn new(plans: &[&Plan], cache: Option<&dyn DfaCache>) -> Self {
-        let mut out = Searchers { plans: plans.len(), always: Vec::new(), whole: HashMap::new(), affixes: Vec::new(), groups: Vec::new(), backtracking: Vec::new(), compiling: Compiling::default() };
+    /// `dense`: a group this process has not determinized and `cache` does not hold is determinized now (and kept);
+    /// otherwise it runs on the lazy DFA, which builds the states its strings reach, and is kept nowhere (a later run
+    /// that wants it dense builds it). A dense build costs more than a small run's search saves
+    /// (O-vocabulary-dfa-reuse).
+    pub(in crate::code_rule_dsl) fn new(plans: &[&Plan], cache: Option<&dyn DfaCache>, dense: bool) -> Self {
+        let mut out = Searchers { plans: plans.len(), always: Vec::new(), whole: HashMap::new(), affixes: Vec::new(), groups: Vec::new(), backtracking: Vec::new(), compiling: Compiling::default(), cached: Vec::new() };
         let mut affixes: [(Vec<Vec<u8>>, Vec<usize>); 3] = Default::default();
         let mut automata = Vec::new();
         for (at, plan) in plans.iter().enumerate() {
@@ -169,16 +205,45 @@ impl Searchers {
         for group in automata.chunks(GROUP) {
             let owners: Vec<usize> = group.iter().map(|(at, _)| *at).collect();
             let hirs: Vec<regex_syntax::hir::Hir> = group.iter().map(|(_, hir)| hir.clone()).collect();
-            let key = cache.map(|_| group_key(&hirs));
+            // A group already determinized in this process (another policy of a batch, another run) is taken as it
+            // is: by its key, which names its patterns (O-vocabulary-dfa-reuse). The store's cache is asked after.
+            let named = group_key(&hirs);
+            if let Some(kept) = kept_groups().lock().expect("the kept groups").get(&named).cloned() {
+                crate::code_rule_dsl::prof::count("text.dfa_group_kept", 1);
+                // Named in the cache as a read of it would (the run's manifest), or put where it is not kept there.
+                if let Some(c) = cache {
+                    held_or_put(c, &named, &kept);
+                }
+                out.cached.push((named.clone(), kept.clone()));
+                let engine = match kept {
+                    Some(dfa) => {
+                        out.compiling.read += 1;
+                        Engine::Dfa(dfa)
+                    }
+                    None => {
+                        out.compiling.lazy += 1;
+                        Engine::Lazy
+                    }
+                };
+                out.groups.push(Self::grouped(Group { owners, hirs, engine, lazy: std::sync::OnceLock::new() }, plans));
+                continue;
+            }
+            let key = cache.map(|_| named.clone());
             let cached = cache.zip(key.as_deref()).and_then(|(c, k)| c.get(k));
             let engine = match cached {
                 Some(Some(bytes)) if let Some(dfa) = read_dfa(&bytes) => {
                     out.compiling.read += 1;
-                    Engine::Dfa(dfa)
+                    Engine::Dfa(std::sync::Arc::new(dfa))
                 }
                 Some(None) => {
                     out.compiling.lazy += 1;
                     Engine::Lazy
+                }
+                _ if !dense => {
+                    out.compiling.lazy += 1;
+                    let group = Group { owners, hirs, engine: Engine::Lazy, lazy: std::sync::OnceLock::new() };
+                    out.groups.push(Self::grouped(group, plans));
+                    continue;
                 }
                 _ => match determinize(&hirs) {
                     Some(dfa) => {
@@ -188,7 +253,7 @@ impl Searchers {
                             let (bytes, pad) = dfa.to_bytes_native_endian();
                             c.put(k, Some(&bytes[pad..]));
                         }
-                        Engine::Dfa(dfa)
+                        Engine::Dfa(std::sync::Arc::new(dfa))
                     }
                     None => {
                         out.compiling.lazy += 1;
@@ -199,17 +264,42 @@ impl Searchers {
                     }
                 },
             };
-            let group = Group { owners, hirs, engine, lazy: std::sync::OnceLock::new() };
-            // A group that runs lazily but does not build together runs one at a time.
-            let group = if matches!(group.engine, Engine::Lazy) && group.lazy().is_none() {
-                let each = group.owners.iter().map(|at| Compiled::of(plans[*at])).collect();
-                Group { engine: Engine::Each(each), ..group }
-            } else {
-                group
+            let kept = match &engine {
+                Engine::Dfa(dfa) => Some(Some(std::sync::Arc::clone(dfa))),
+                Engine::Lazy => Some(None),
+                Engine::Each(_) => None,
             };
-            out.groups.push(group);
+            if let Some(kept) = kept {
+                if cache.is_some() {
+                    out.cached.push((named.clone(), kept.clone()));
+                }
+                let mut all = kept_groups().lock().expect("the kept groups");
+                if all.len() >= KEPT_GROUPS {
+                    all.clear();
+                }
+                all.insert(named, kept);
+            }
+            out.groups.push(Self::grouped(Group { owners, hirs, engine, lazy: std::sync::OnceLock::new() }, plans));
         }
         out
+    }
+
+    /// Names each group a cache keeps in `cache` (`DfaCache::held`), as compiling them with it did: a later run that
+    /// takes these searchers as they are (compiled once a process) names the same sources in its manifest.
+    pub(in crate::code_rule_dsl) fn name_in(&self, cache: &dyn DfaCache) {
+        for (key, dfa) in &self.cached {
+            held_or_put(cache, key, dfa);
+        }
+    }
+
+    /// A group that runs lazily but does not build together runs one at a time.
+    fn grouped(group: Group, plans: &[&Plan]) -> Group {
+        if matches!(group.engine, Engine::Lazy) && group.lazy().is_none() {
+            let each = group.owners.iter().map(|at| Compiled::of(plans[*at])).collect();
+            Group { engine: Engine::Each(each), ..group }
+        } else {
+            group
+        }
     }
 
     /// For each plan, the indexes of the `terms` it matches, ascending. A term a plan cannot decide (a backtracking
@@ -285,7 +375,7 @@ impl Searchers {
                         set.clear();
                         let input = regex_automata::Input::new(*term);
                         let asked_lazily = match &group.engine {
-                            Engine::Dfa(dfa) => regex_automata::dfa::Automaton::try_which_overlapping_matches(dfa, &input, set).is_err(),
+                            Engine::Dfa(dfa) => regex_automata::dfa::Automaton::try_which_overlapping_matches(&**dfa, &input, set).is_err(),
                             _ => true,
                         };
                         if asked_lazily {
@@ -313,14 +403,14 @@ impl Searchers {
 /// For each of `plans`, the indexes of the `terms` it matches, ascending. A term a plan cannot
 /// decide (a backtracking pattern past its limits) is left out; `undecided` says which plans had one.
 pub(in crate::code_rule_dsl) fn evaluate(plans: &[&Plan], terms: &[&[u8]]) -> (Vec<Vec<u32>>, Vec<bool>) {
-    Searchers::new(plans, None).evaluate(terms)
+    Searchers::new(plans, None, true).evaluate(terms)
 }
 
 /// Each of `lowered`'s matching terms of language `lang` (atoms), kept in the store by key: a key
 /// seen for the first time is evaluated over the whole vocabulary, and a known key over the terms
 /// added since it last read the log (`text_pending`). Exact sets are looked up by value, never
 /// evaluated or kept.
-pub(in crate::code_rule_dsl) fn fill(store: &ContentStore, lang: u32, lowered: &[Arc<Lowered>]) -> StoreResult<HashMap<Key, Vec<i64>>> {
+pub fn fill(store: &ContentStore, lang: u32, lowered: &[Arc<Lowered>]) -> StoreResult<HashMap<Key, Vec<i64>>> {
     let lang = i64::from(lang);
     store.candidate_transaction(true, |db| {
         let _stage = crate::code_rule_dsl::prof::Stage::start("text.vocabulary");
@@ -371,7 +461,7 @@ pub(in crate::code_rule_dsl) fn fill(store: &ContentStore, lang: u32, lowered: &
         let mut register = db.prepare_cached("INSERT INTO text_matcher(lang,key,plan,upto) VALUES (?1,?2,?3,?4) ON CONFLICT(lang,key) DO UPDATE SET upto=excluded.upto")?;
         // Keys group by where they start reading: a new key reads every term; a known key the log
         // past its place (terms still in the vocabulary).
-        let mut starts = upto.iter().copied().collect::<Vec<_>>();
+        let mut starts = upto.to_vec();
         starts.sort_unstable();
         starts.dedup();
         for from in starts {

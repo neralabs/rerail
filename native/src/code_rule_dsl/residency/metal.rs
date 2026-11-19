@@ -4,4 +4,4 @@
 //! names it here; the slab residency built on it is Phase 9's write-new row (provenance, O19).
 
 #[allow(unused_imports)]
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::metal_backend::MappedBuffer;
+pub use crate::code_rule_dsl::transducer::packed::metal_backend::MappedBuffer;

@@ -1,13 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, inArray, isNull, like, sql } from "drizzle-orm";
+import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { z } from "zod/v4";
-import { physicalPath } from "../catalog/checkout-control.js";
+import { checkoutRealpath, earlierRealpath, physicalPath } from "../catalog/checkout-control.js";
+import { outsideGit } from "../catalog/repository-identity.js";
 import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { runGit } from "../git.js";
-import { checkouts, repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions, audits } from "../storage/schema.js";
+import { processState } from "../process-liveness.js";
+import { checkouts, repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions, audits, events } from "../storage/schema.js";
 import { isOmittedFailuresSummary, isSourceGap } from "./audit.js";
+import { ownerLockFreed, ownerLockOf, ownerToken } from "./owner-lock.js";
 import { scrubSecrets } from "../secret-scrub.js";
 
 import {
@@ -79,7 +83,24 @@ function ancestors(path: string): string[] {
   for (let folder = dirname(path); folder !== folders.at(-1); folder = dirname(folder)) folders.push(folder);
   return folders;
 }
-function canonicalWorkspace(path: string): string { try { return realpathSync(path); } catch { return resolve(path); } }
+function canonicalWorkspace(path: string): string { try { return checkoutRealpath(path); } catch { return resolve(path); } }
+/** {@link canonicalWorkspace} as Rerail 0.1.4 and earlier gave it, the key they saved a workspace's settings under. */
+function earlierWorkspace(path: string): string { try { return earlierRealpath(path); } catch { return resolve(path); } }
+/** The repository of the checkout recorded under the folder `key` names, null where none is, as a column. */
+function recordedRepository(key: SQLiteColumn | ReturnType<typeof sql.placeholder>) {
+  return sql<string | null>`(SELECT ${checkouts.repositoryKey} FROM ${checkouts} WHERE ${checkouts.checkoutPath} = ${key})`;
+}
+/**
+ * The audit settings rows saved under either of two keys, `stored` and `earlier`, as a prepared statement, each with
+ * the repository of the checkout recorded under its own key (`recorded`) and under `stored` (`own`).
+ */
+function settingsUnderEither(database: RerailDatabase) {
+  return database.select({
+    ...getTableColumns(auditSettings), recorded: recordedRepository(auditSettings.workspaceRoot), own: recordedRepository(sql.placeholder("stored")),
+  }).from(auditSettings).where(inArray(auditSettings.workspaceRoot, [sql.placeholder("stored"), sql.placeholder("earlier")])).prepare();
+}
+/** A session's folder as it spelt it, and the repository Rerail recorded the session in; a caller's folder has none. */
+interface SpeltFolder { readonly cwd: string; readonly repositoryId?: string | null }
 function controls(
   databasePath: string,
   row: { cwd: string; endedAt: number | null },
@@ -96,8 +117,8 @@ function controls(
     repositoryAudit: repositoryAudit ?? null,
   };
 }
-function requireSession(database: RerailDatabase, sessionId: string): { cwd: string; endedAt: number | null } {
-  const row = database.select({ cwd: sessions.cwd, endedAt: sessions.endedAt }).from(sessions).where(eq(sessions.sessionId, sessionId)).get();
+function requireSession(database: RerailDatabase, sessionId: string): SpeltFolder & { cwd: string; endedAt: number | null } {
+  const row = database.select({ cwd: sessions.cwd, endedAt: sessions.endedAt, repositoryId: sessions.repositoryId }).from(sessions).where(eq(sessions.sessionId, sessionId)).get();
   if (row === undefined) throw new Error(`Unknown Rerail session: ${sessionId}`);
   return row;
 }
@@ -106,10 +127,45 @@ function request(row: typeof auditRequests.$inferSelect): AuditRequest {
   return auditRequestSchema.parse({ ...row, paths: row.paths, auditIds: row.auditIds });
 }
 function processIsLive(processId: number): boolean {
-  if (processId === process.pid) return true;
-  try { process.kill(processId, 0); return true; } catch (error) {
-    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
-  }
+  return processId === process.pid || processState(processId) !== "gone";
+}
+
+/** An open session with its owner row, as a start finds it, and when it was last heard from. */
+interface OwnedOpenSession {
+  readonly sessionId: string;
+  readonly processId: number;
+  readonly token: string;
+  readonly heardAt: number;
+}
+
+/** `answer`, asked once per distinct key. */
+function askedOnce<K, V>(answer: (key: K) => V): (key: K) => V {
+  const answers = new Map<K, V>();
+  return key => {
+    if (!answers.has(key)) answers.set(key, answer(key));
+    return answers.get(key)!;
+  };
+}
+
+/**
+ * The tokens of the claims this process made under no lock (`registerOwner`) and has not let go (`releaseOwner`): a
+ * row that names this process and none of them is a process's that the system gave the same pid before. The row's
+ * time cannot tell: the wall clock can step back after this process started (NTP, a virtual machine resumed), and a
+ * claim made since then reads as made before the start. Holds one token per session this process holds under no lock.
+ */
+const claimsHereWithoutLock = new Set<string>();
+
+/**
+ * Whether the runtime that wrote `owner` has ended, so the session it holds is no one's: the process the row names is
+ * gone; or the row was written under an engine service's lock that is free now (`ownerLockFreed`), however that service
+ * ended and whatever process holds its pid; or, written under none, it names this process but this process did not
+ * make the claim (`claimsHereWithoutLock`), a process the system gave the same pid did.
+ */
+function writerEnded(owner: OwnedOpenSession, live: (processId: number) => boolean, freed: (lockId: string) => boolean): boolean {
+  if (!live(owner.processId)) return true;
+  const lockId = ownerLockOf(owner.token);
+  if (lockId !== undefined) return freed(lockId);
+  return owner.processId === process.pid && !claimsHereWithoutLock.has(owner.token);
 }
 
 /** Durable controls keyed by canonical workspace, with requests kept session-local. */
@@ -117,6 +173,14 @@ export class SqliteAuditControlStore {
   readonly path: string;
   readonly #database: RerailDatabase;
   constructor(databasePath: string, database?: RerailDatabase) { this.path = databasePath; this.#database = database ?? openRerailDatabase(databasePath); }
+
+  /**
+   * SQLite's `PRAGMA data_version` on this store's connection: it changes when any other connection commits to the
+   * database, and stays put otherwise, so a poller can tell that nothing it reads here changed without reading it.
+   */
+  dataVersion(): number {
+    return z.number().int().parse(this.#database.$client.pragma("data_version", { simple: true }));
+  }
 
   #interruptOwned(sessionId: string, error: string): void {
     const update = { status: "interrupted" as const, finishedAt: Date.now(), error };
@@ -135,10 +199,68 @@ export class SqliteAuditControlStore {
     return { ...owner, active: false };
   }
 
-  getWorkspaceSettings(workspaceRoot: string): AuditSettings | undefined {
-    const row = this.#database.select().from(auditSettings)
-      .where(eq(auditSettings.workspaceRoot, canonicalWorkspace(workspaceRoot))).get();
+  /**
+   * The settings saved for the folder `workspaceRoot` as spelt here. A session reading its own passes the repository
+   * Rerail recorded it in, which ties a row Rerail 0.1.4 saved under that spelling to the folder as its row would
+   * ({@link #savedHere}), so the read needs no session row.
+   */
+  getWorkspaceSettings(workspaceRoot: string, repositoryId: string | null = null): AuditSettings | undefined {
+    return this.#settings(canonicalWorkspace(workspaceRoot), { cwd: workspaceRoot, repositoryId });
+  }
+
+  #settings(workspaceRoot: string, spelt: SpeltFolder): AuditSettings | undefined {
+    const row = this.#settingsRow(workspaceRoot, spelt);
     return row === undefined ? undefined : parseSettings(row.settings);
+  }
+
+  /**
+   * The row saved under `workspaceRoot`, the canonical key, else the one Rerail 0.1.4 and earlier saved for the same
+   * folder under the key `spelt.cwd` (the folder as the session or caller spelt it) gave it on Windows. An older Rerail
+   * sharing the database goes on writing that row, so it is read where it is rather than copied. Both keys are read in
+   * one statement, prepared once per store, so a folder with no row under either costs no more than a read of the
+   * canonical key alone.
+   */
+  #settingsRow(workspaceRoot: string, spelt: SpeltFolder): typeof auditSettings.$inferSelect | undefined {
+    const earlier = this.#earlierKey(workspaceRoot, spelt.cwd);
+    if (earlier === workspaceRoot) return this.#database.select().from(auditSettings).where(eq(auditSettings.workspaceRoot, workspaceRoot)).get();
+    this.#settingsUnderEither ??= settingsUnderEither(this.#database);
+    const rows = this.#settingsUnderEither.all({ stored: workspaceRoot, earlier });
+    return rows.find(row => row.workspaceRoot === workspaceRoot) ?? rows.find(row => this.#savedHere(row, spelt));
+  }
+
+  #settingsUnderEither: ReturnType<typeof settingsUnderEither> | undefined;
+
+  /**
+   * Whether the row Rerail 0.1.4 saved under the spelling `spelt.cwd` was saved for this folder. A letter or 8.3 name
+   * can lead elsewhere than when 0.1.4 saved through it, so the row counts only where a fact ties it to this folder's
+   * repository: the session's, else the one recorded for the folder under its stored spelling. Outside Git 0.1.4
+   * recorded the folder under that same spelling, so the checkout recorded there names the repository the spelling
+   * reached then; with none recorded there, nothing ties the row to this folder. A Git checkout was recorded under
+   * Git's top level instead, so nothing says whose row it is, and it is read as 0.1.4 read it there.
+   */
+  #savedHere(row: { readonly recorded: string | null; readonly own: string | null }, spelt: SpeltFolder): boolean {
+    if (row.recorded !== null) return row.recorded === (spelt.repositoryId ?? row.own);
+    return !this.#outsideGit(spelt.cwd);
+  }
+
+  /** {@link outsideGit} once per folder spelling, as {@link #earlierKeys} holds its key: a `git init` there later keeps the answer. */
+  readonly #outsideGit = askedOnce(outsideGit);
+
+  /**
+   * The keys Rerail 0.1.4 and earlier gave each folder spelling this store was asked about. The runtime reads a session's
+   * settings before each of its events, so the realpath runs once per spelling rather than once per event; a link in
+   * the path changed while this process runs keeps the key it had.
+   */
+  readonly #earlierKeys = new Map<string, string>();
+
+  /** The key 0.1.4 gave `spelled` on Windows; `workspaceRoot` itself where the two cannot differ. */
+  #earlierKey(workspaceRoot: string, spelled: string): string {
+    if (process.platform !== "win32" || spelled === workspaceRoot) return workspaceRoot;
+    const known = this.#earlierKeys.get(spelled);
+    if (known !== undefined) return known;
+    const earlier = earlierWorkspace(spelled);
+    this.#earlierKeys.set(spelled, earlier);
+    return earlier;
   }
 
   getSettings(sessionId: string): AuditControls {
@@ -161,34 +283,40 @@ export class SqliteAuditControlStore {
     return controls(
       this.path,
       session,
-      this.getWorkspaceSettings(workspaceRoot),
+      this.#settings(workspaceRoot, session),
       repositoryAudit === undefined ? undefined : repositoryAuditSchema.parse(repositoryAudit),
       owner,
     );
   }
   hasUserSettings(sessionId: string): boolean {
     const session = requireSession(this.#database, sessionId);
-    return this.getWorkspaceSettings(session.cwd) !== undefined;
+    return this.#settings(canonicalWorkspace(session.cwd), session) !== undefined;
   }
   updateSettings(sessionId: string, patch: z.input<typeof auditSettingsPatchSchema>): AuditControls {
     const parsed = auditSettingsPatchSchema.parse(patch);
     this.#database.transaction(() => {
-      this.#saveSettings(canonicalWorkspace(requireSession(this.#database, sessionId).cwd), parsed);
+      const session = requireSession(this.#database, sessionId);
+      this.#saveSettings(canonicalWorkspace(session.cwd), parsed, session);
     });
     return this.getSettings(sessionId);
   }
-  /** `updateSettings` for a checkout by its folder, before any session there exists: what its sessions start with. */
+  /**
+   * `updateSettings` for a checkout by its folder, before any session there exists: what its sessions start with. The
+   * change starts from the settings {@link getWorkspaceSettings} reads for the folder as spelt here.
+   */
   updateWorkspaceSettings(workspaceRoot: string, patch: z.input<typeof auditSettingsPatchSchema>): AuditSettings {
     const parsed = auditSettingsPatchSchema.parse(patch);
-    return this.#database.transaction(() => this.#saveSettings(canonicalWorkspace(workspaceRoot), parsed));
+    return this.#database.transaction(() => this.#saveSettings(canonicalWorkspace(workspaceRoot), parsed, { cwd: workspaceRoot }));
   }
   /**
-   * Merges `patch` over the checkout's saved settings, else the defaults, and saves the result. The default strategy,
-   * `message`, is left out of the row, as rows read before the key existed, so a release that reads `{ scope, mode }`
-   * strictly still reads every row that does not opt into an experimental strategy.
+   * Merges `patch` over the checkout's saved settings, else the defaults, and saves the result under the canonical key.
+   * The saved settings are read as the folder spelt `spelt` finds them, so a session's own spelling starts from what
+   * Rerail 0.1.4 saved under it; that row stays for 0.1.4 to read. The default strategy, `message`, is left out of the
+   * row, as rows read before the key existed, so a release that reads `{ scope, mode }` strictly still reads every row
+   * that does not opt into an experimental strategy.
    */
-  #saveSettings(workspaceRoot: string, patch: AuditSettingsPatch): AuditSettings {
-    const previous = this.#database.select().from(auditSettings).where(eq(auditSettings.workspaceRoot, workspaceRoot)).get();
+  #saveSettings(workspaceRoot: string, patch: AuditSettingsPatch, spelt: SpeltFolder = { cwd: workspaceRoot }): AuditSettings {
+    const previous = this.#settingsRow(workspaceRoot, spelt);
     const settings = auditSettingsSchema.parse({ ...DEFAULT_AUDIT_SETTINGS, ...(previous === undefined ? {} : parseSettings(previous.settings)), ...patch });
     const { steerStrategy, ...saved } = settings;
     const row = steerStrategy === "message" ? saved : settings;
@@ -275,8 +403,9 @@ export class SqliteAuditControlStore {
     )).run();
   }
 
-  registerOwner(sessionId: string, delivery: "background" | "next-event"): PolicyOwnerClaim {
-    const token = randomUUID();
+  /** Claims the session for this process, under the lock `lockId` of the engine service it runs in when it has one. */
+  registerOwner(sessionId: string, delivery: "background" | "next-event", lockId?: string | undefined): PolicyOwnerClaim {
+    const token = ownerToken(lockId);
     this.#database.transaction(() => {
       requireSession(this.#database, sessionId);
       const owner = this.#owner(sessionId);
@@ -284,12 +413,80 @@ export class SqliteAuditControlStore {
       if (owner !== undefined) this.#interruptOwned(sessionId, "Owning runtime was replaced before scan could complete");
       this.#database.insert(policySessionOwners).values({ sessionId, delivery, active: true, processId: process.pid, token, updatedAt: Date.now() })
         .onConflictDoUpdate({ target: policySessionOwners.sessionId, set: { delivery, active: true, processId: process.pid, token, updatedAt: Date.now() } }).run();
+      // The runtime opened the record just before this claim; another daemon's sweep may have ended it in between, as
+      // the row this claim replaces was a writer's that ended (`endSessionsOfEndedOwners`). The session is open.
+      this.#database.update(sessions).set({ endedAt: null }).where(eq(sessions.sessionId, sessionId)).run();
     });
+    if (lockId === undefined) claimsHereWithoutLock.add(token);
     return { token };
+  }
+  /**
+   * Writes the owner row of `claim`, which this process made (`registerOwner`) and still holds, again where another
+   * connection removed it with the session's rows, as putting back a database copied before the session began does, so
+   * the session's scans are claimed and its end is swept as before. A row already there, this claim's or another
+   * runtime's, is left as it is: a live runtime's claim is never taken.
+   */
+  claimAgain(sessionId: string, delivery: "background" | "next-event", claim: PolicyOwnerClaim): void {
+    this.#database.insert(policySessionOwners)
+      .values({ sessionId, delivery, active: true, processId: process.pid, token: claim.token, updatedAt: Date.now() })
+      .onConflictDoNothing().run();
+  }
+  /**
+   * Whether `claim` still owns the session for this process: the claim a suspended session kept, which its next open
+   * takes back without interrupting the scans queued for it. False once its owner was released or replaced.
+   */
+  holdsOwner(sessionId: string, claim: PolicyOwnerClaim): boolean {
+    const owner = this.#owner(sessionId);
+    return owner?.active === true && owner.token === claim.token && owner.processId === process.pid;
   }
   releaseOwner(sessionId: string, claim: PolicyOwnerClaim): void {
     this.#database.update(policySessionOwners).set({ active: false, updatedAt: Date.now() })
       .where(and(eq(policySessionOwners.sessionId, sessionId), eq(policySessionOwners.token, claim.token))).run();
+    claimsHereWithoutLock.delete(claim.token);
+  }
+  /**
+   * Ends each open session whose owner row's writer has ended (`writerEnded`), as a daemon stopped by a machine
+   * restart, its heap limit or a kill leaves every session it held or had let go of while quiet: its scans still queued
+   * are interrupted and its owner released, as when its owner is found gone, and its record ends `idleMs` after it was
+   * last heard from (its newest recorded event, else its start), as the idle close of a daemon still running would have
+   * ended it, and at the latest at `now`. Each process and each lock is asked once. One query and one transaction;
+   * returns how many sessions it ended.
+   */
+  endSessionsOfEndedOwners(idleMs: number, now: number): number {
+    return this.#database.transaction(() => {
+      const open = this.#database.all<OwnedOpenSession>(sql`
+        SELECT ${sessions.sessionId} AS sessionId, ${policySessionOwners.processId} AS processId,
+          ${policySessionOwners.token} AS token,
+          coalesce((SELECT ${events.observedAt} FROM ${events} WHERE ${events.sessionId} = ${sessions.sessionId}
+            ORDER BY ${events.sequence} DESC LIMIT 1), ${sessions.startedAt}) AS heardAt
+        FROM ${sessions} JOIN ${policySessionOwners} ON ${policySessionOwners.sessionId} = ${sessions.sessionId}
+        WHERE ${sessions.endedAt} IS NULL
+      `);
+      const live = askedOnce(processIsLive);
+      const freed = askedOnce((lockId: string) => ownerLockFreed(this.path, lockId));
+      const ended = open.filter(owner => writerEnded(owner, live, freed));
+      if (ended.length > 0) this.#endAbandoned(ended, idleMs, now);
+      return ended.length;
+    });
+  }
+  /**
+   * Whether an open session's owner row was written under the lock `lockId` (`ownerToken`), so its lock file must stay
+   * until a sweep has ended that session: a row whose lock has no file reads as a writer's that may still run.
+   */
+  namesOwnerLock(lockId: string): boolean {
+    return this.#database.select({ sessionId: policySessionOwners.sessionId }).from(policySessionOwners)
+      .innerJoin(sessions, eq(sessions.sessionId, policySessionOwners.sessionId))
+      .where(and(isNull(sessions.endedAt), like(policySessionOwners.token, `${lockId}.%`))).limit(1).get() !== undefined;
+  }
+  #endAbandoned(ended: readonly OwnedOpenSession[], idleMs: number, now: number): void {
+    const ids = ended.map(owner => owner.sessionId);
+    const at = Date.now();
+    this.#database.update(auditRequests).set({ status: "interrupted", finishedAt: at, error: "Owning runtime exited before scan could complete" })
+      .where(and(inArray(auditRequests.sessionId, ids), inArray(auditRequests.status, ["queued", "running"]))).run();
+    this.#database.update(policySessionOwners).set({ active: false, updatedAt: at }).where(inArray(policySessionOwners.sessionId, ids)).run();
+    for (const { sessionId, heardAt } of ended) {
+      this.#database.update(sessions).set({ endedAt: Math.min(heardAt + idleMs, now) }).where(eq(sessions.sessionId, sessionId)).run();
+    }
   }
   requestAudit(sessionId: string, input: z.input<typeof auditRequestInputSchema>): AuditRequest {
     const parsed = auditRequestInputSchema.parse(input);
@@ -329,6 +526,11 @@ export class SqliteAuditControlStore {
       error,
     }).run();
     return this.listAuditRequests(sessionId).find(request => request.id === id)!;
+  }
+  /** Whether a scan request for the session waits in its queue, not yet claimed. */
+  hasQueuedRequest(sessionId: string): boolean {
+    return this.#database.select({ id: auditRequests.id }).from(auditRequests)
+      .where(and(eq(auditRequests.sessionId, sessionId), eq(auditRequests.status, "queued"))).limit(1).get() !== undefined;
   }
   listAuditRequests(sessionId: string): AuditRequest[] {
     requireSession(this.#database, sessionId);

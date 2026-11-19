@@ -105,7 +105,7 @@ artifact through; a wide one only costs re-running a producer CI runs anyway.
 | failed | none | Unknown places, unless the policy reports it | the run fails, unless the policy reports it | the same |
 
 A failure the script treats as a finding, the policy writes as one. test_budget's collection failure is a
-failure of the check (the script exits 1), so [test-budget.rr](test-budget.rr) reports it:
+failure of the check (the script exits 1), so [test-budget.rerail](test-budget.rerail) reports it:
 
 ```
 collection_failed(@place(BASE, 1), why) :- input_error("artifact:test_collection", "failed", why).
@@ -149,7 +149,7 @@ layer's code already separates the runtime part in every case but one.
   ```
 - **Static part:** a lower bound from the source, and the signed baseline. If the bound already exceeds the
   ceiling, `budget_exceeded` is reported without the artifact, as the script reports it without collecting.
-- **Port:** [test-budget.rr](test-budget.rr).
+- **Port:** [test-budget.rerail](test-budget.rerail).
 
 ### serverplan_shape_probes (serverplan_target_architecture)
 

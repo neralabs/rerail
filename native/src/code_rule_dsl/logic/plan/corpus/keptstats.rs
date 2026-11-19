@@ -38,8 +38,15 @@ pub(super) struct Keeper {
     /// With the exports: each base relation's held columns, counted by file (`Counted`, a row emitted once per file
     /// holding it), by (relation, memo key, the columns taken from an entry's row); and the files' tree counts.
     base_rels: Vec<(String, String, Vec<usize>)>,
+    /// Per base relation (by key): the row's column each of its counted columns is (`begin`'s), when it counts some
+    /// of a row's columns: those its rules read. Not kept in the blob: its statistics name their columns.
+    from: HashMap<String, Vec<usize>>,
     base: super::exports::Counted,
     own: super::Own,
+    /// Per export (by key): each value document its rows name in their location column (`doc_at`), and how many
+    /// counted files' entries hold its rows (decision 0117 step 2). A value document's rows go to every file that
+    /// asked for it; any other owner's to one file. Kept in the blob.
+    holders: BTreeMap<String, rustc_hash::FxHashMap<i64, i64>>,
 }
 
 /// What a session's keeper keeps of its files beyond their statistics (0096 step 3): the exports, and each base
@@ -50,21 +57,30 @@ pub(super) struct Keep {
 }
 
 impl Keeper {
-    /// For a run reading `rels`, by entry key: the base relations held (`memo::base_key`, each with every column
-    /// `input_columns` names) and the exports (each with its columns `c0…`), and `exports`, each export's column that
-    /// names its rows' document (`Keeper::doc_at`).
-    pub(super) fn begin(&mut self, rels: &[(String, Vec<String>)], exports: HashMap<String, Option<usize>>, keep: Option<Keep>) {
+    /// For a run reading `rels`, by entry key: the base relations held (`memo::base_key`, each with the columns its
+    /// rules read, and `Some` of the row's columns they are) and the exports (each with its columns `c0…`, `None`),
+    /// and `exports`, each export's column that names its rows' document (`Keeper::doc_at`). A relation counted at
+    /// other columns before is counted from scratch.
+    pub(super) fn begin(&mut self, rels: &[(String, Vec<String>, Option<Vec<usize>>)], exports: HashMap<String, Option<usize>>, keep: Option<Keep>) {
         self.doc_at = exports;
         self.seen.clear();
         self.failed = None;
         self.counted = (0, 0);
-        // A relation new to the keeper (another program's set): counted from scratch.
-        if rels.iter().any(|(rel, _)| !self.rels.contains_key(rel)) && !self.docs.is_empty() {
+        // A relation new to the keeper (another program's set), or counted at other columns: counted from scratch.
+        if rels.iter().any(|(rel, columns, _)| self.rels.get(rel).is_none_or(|s| s.columns() != columns.as_slice())) && !self.docs.is_empty() {
             self.docs.clear();
             self.rels.clear();
+            self.holders.clear();
         }
-        for (rel, columns) in rels {
+        self.from.clear();
+        for (rel, columns, from) in rels {
+            if self.rels.get(rel).is_some_and(|s| s.columns() != columns.as_slice()) {
+                self.rels.remove(rel);
+            }
             self.rels.entry(rel.clone()).or_insert_with(|| RelStats::new(columns.clone()));
+            if let Some(from) = from {
+                self.from.insert(rel.clone(), from.clone());
+            }
         }
         // The exports counted while the files counted are the same ones; else counted again from every file.
         match keep {
@@ -91,6 +107,11 @@ impl Keeper {
     /// a memo hit's export rows need not be held again.
     pub(super) fn exports_held(&self) -> bool {
         self.exports.is_some() && !self.building && self.failed.is_none()
+    }
+
+    /// Every file counted, with the content and key it was counted under.
+    pub(super) fn counted_files(&self) -> Vec<(String, memo::Content, i64)> {
+        self.docs.iter().map(|(p, (c, k))| (p.clone(), *c, *k)).collect()
     }
 
     /// The files counted that this run has not seen yet, with the content and key they were counted under.
@@ -143,15 +164,65 @@ impl Keeper {
                 }
                 return;
             }
-            Some((c, k)) => match old(c, k) {
+            Some((c, k)) => {
+                if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+                    eprintln!("statkeep {path}: counted under {:?}, now {:?}", (c, k), now);
+                }
+                match old(c, k) {
                 Some(before) => {
+                    // A relation whose rows the edit left as they were (node ids by definition keep an unchanged
+                    // definition's) is counted out and in again to no effect: left as counted. Each relation's
+                    // statistics are its own rows', so this is exact; within a relation the rows are counted out and
+                    // in whole, as its per-document statistics need.
+                    let (before, now_rows) = changed_only(&before, entry);
+                    if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+                        // What a row-level count would leave out: the rows the old and new share at either end.
+                        for (rel, (w, new)) in &now_rows.rows {
+                            let Some((_, old)) = before.rows.get(rel) else { continue };
+                            let (a, b): (Vec<&[i64]>, Vec<&[i64]>) = (old.chunks_exact((*w).max(1)).collect(), new.chunks_exact((*w).max(1)).collect());
+                            let head = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+                            let tail = a[head..].iter().rev().zip(b[head..].iter().rev()).take_while(|(x, y)| x == y).count();
+                            let set: std::collections::HashSet<&[i64]> = a.iter().copied().collect();
+                            let kept = b.iter().filter(|r| set.contains(*r)).count();
+                            eprintln!("statkeep diff {path} {rel}: old {} new {} rows, same at the ends {head}+{tail}, new rows also old {kept}", a.len(), b.len());
+                            // The rows that changed, paired by their node (`node`'s second column, else the first): which
+                            // of the other columns differ.
+                            let key = usize::from(rel == "base:node");
+                            let now: std::collections::HashSet<&[i64]> = b.iter().copied().collect();
+                            let gone: std::collections::HashMap<i64, &[i64]> = a.iter().filter(|r| !now.contains(*r)).filter_map(|r| r.get(key).map(|k| (*k, *r))).collect();
+                            let fresh: Vec<&[i64]> = b.iter().copied().filter(|r| !set.contains(r)).collect();
+                            let mut by_col = vec![0usize; *w];
+                            let mut paired = 0;
+                            for r in &fresh {
+                                let Some(o) = r.get(key).and_then(|k| gone.get(k)) else { continue };
+                                paired += 1;
+                                for c in (0..*w).filter(|&c| c != key) {
+                                    by_col[c] += usize::from(o[c] != r[c]);
+                                }
+                            }
+                            let names: Vec<String> = match rel.strip_prefix("base:").and_then(crate::code_rule_dsl::logic::sql::select::input_columns) {
+                                Some(cols) => cols.iter().map(|c| (*c).to_owned()).collect(),
+                                None => (0..*w).map(|c| format!("c{c}")).collect(),
+                            };
+                            let differ: Vec<String> = (0..*w).filter(|&c| by_col[c] > 0).map(|c| format!("{}={}", names.get(c).map_or("?", |n| n.as_str()), by_col[c])).collect();
+                            eprintln!("statkeep churn {rel}: gone {} new {} paired {paired}; columns differing: {}", a.len() - (b.len() - fresh.len()).min(a.len()), fresh.len(), differ.join(" "));
+                        }
+                    }
+                    crate::code_rule_dsl::logic::profile::decision("statistics kept by file (decision 0096 §3)", || {
+                        format!("an edited file's unchanged relations not counted again: {} of {} changed", now_rows.rows.len(), entry.rows.len())
+                    });
                     self.count(&before, -1);
                     if !self.building {
                         self.patch_exports(path, &before, -1);
                     }
+                    self.count(&now_rows, 1);
+                    self.patch_exports(path, &now_rows, 1);
+                    self.docs.insert(path.to_owned(), now);
+                    return;
                 }
                 None => return self.fail(format!("{path}: the memo no longer holds the rows counted")),
-            },
+                }
+            }
             None => {}
         }
         self.count(entry, 1);
@@ -163,19 +234,39 @@ impl Keeper {
     /// counted out is not held.
     fn patch_exports(&mut self, path: &str, entry: &memo::Entry, sign: i64) {
         let Some(counted) = self.exports.as_mut() else { return };
-        let mut ok = self.export_rels.iter().all(|rel| match entry.rows.get(rel) {
-            Some((width, values)) => counted.patch(rel, *width, values, sign),
-            None => true,
+        let exports_span = crate::code_rule_dsl::logic::profile::span(|| "statistics: exports counted".into());
+        // A file's rows are grouped by the document they name (its location column): its own document's, and each
+        // guest's it holds (the same rows in every file that holds that guest). Each group is counted as one
+        // (`patch_own`): compared with the rows kept for that document, not hashed a row at a time.
+        // `RERAIL_COUNT_OWN=off` counts every row a row at a time, as before decision 0220.
+        static OWN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let by_file = *OWN.get_or_init(|| std::env::var("RERAIL_COUNT_OWN").map_or(true, |v| v != "off"));
+        let doc_at = &self.doc_at;
+        let mut ok = self.export_rels.iter().all(|rel| match (entry.rows.get(rel), doc_at.get(rel).copied().flatten()) {
+            (Some((width, values)), Some(at)) if by_file && at < *width => {
+                by_document(values, *width, |row| memo::document_of(row[at]), None).iter().all(|(d, rows)| counted.patch_own(rel, *width, *d, Some(at), rows, sign))
+            }
+            (Some((width, values)), _) => counted.patch(rel, *width, values, sign),
+            (None, _) => true,
         });
+        drop(exports_span);
+        let _base = crate::code_rule_dsl::logic::profile::span(|| "statistics: base columns counted".into());
         for (rel, key, from) in &self.base_rels {
             let Some((width, values)) = entry.rows.get(key) else { continue };
             if from.iter().any(|c| c >= width) {
                 ok = false;
                 break;
             }
-            let projected: Vec<i64> = values.chunks_exact(*width).flat_map(|row| from.iter().map(|c| row[*c])).collect();
-            ok &= self.base.patch(rel, from.len(), &projected, sign);
+            // A base relation's row names its document in its first column.
+            if by_file {
+                ok &= by_document(values, *width, |row| memo::document_of(row[0]), Some(from.as_slice())).iter().all(|(d, rows)| self.base.patch_own(rel, from.len(), *d, None, rows, sign));
+            } else {
+                let projected: Vec<i64> = values.chunks_exact(*width).flat_map(|row| from.iter().map(|c| row[*c])).collect();
+                ok &= self.base.patch(rel, from.len(), &projected, sign);
+            }
         }
+        drop(_base);
+        let _own = crate::code_rule_dsl::logic::profile::span(|| "statistics: own counted".into());
         let own = super::Own::taken(&entry.rows);
         if sign > 0 { self.own.add(&own) } else { self.own.sub(&own) }
         if !ok {
@@ -184,11 +275,34 @@ impl Keeper {
     }
 
     fn count(&mut self, entry: &memo::Entry, sign: i64) {
+        let values = crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS as i64;
+        let holders = crate::code_rule_dsl::logic::profile::span(|| "statistics: holders".into());
+        for (key, at) in &self.doc_at {
+            let (Some(at), Some((width, rows))) = (at, entry.rows.get(key)) else { continue };
+            if at >= width {
+                continue;
+            }
+            let owners: rustc_hash::FxHashSet<i64> = rows.chunks_exact(*width).map(|r| memo::document_of(r[*at])).filter(|d| *d >= values).collect();
+            if owners.is_empty() {
+                continue;
+            }
+            let held = self.holders.entry(key.clone()).or_default();
+            for o in owners {
+                let n = held.entry(o).or_default();
+                *n += sign;
+                if *n == 0 {
+                    held.remove(&o);
+                }
+            }
+        }
+        drop(holders);
+        let _rels = crate::code_rule_dsl::logic::profile::span(|| "statistics: relations".into());
         for (key, stats) in &mut self.rels {
             if let Some((width, values)) = entry.rows.get(key) {
-                match self.doc_at.get(key) {
-                    Some(at) => stats.rows_by(values, *width, sign, *at),
-                    None => stats.documents(values, *width, sign),
+                match (self.doc_at.get(key), self.from.get(key)) {
+                    (Some(at), _) => stats.rows_by(values, *width, sign, *at),
+                    (None, Some(from)) => stats.documents_at(values, *width, from, sign),
+                    (None, None) => stats.documents(values, *width, sign),
                 }
             }
         }
@@ -219,6 +333,7 @@ impl Keeper {
         if let Some(why) = self.failed.take() {
             self.docs.clear();
             self.rels.clear();
+            self.holders.clear();
             self.exports = None;
             return Err(why);
         }
@@ -231,16 +346,27 @@ impl Keeper {
     /// The keeper as a run of the tape cache keeps it (decision 0096 §2): one blob, the files' contents it counts
     /// and each relation's statistics. Only stored contents are kept (a session's are its memory's).
     pub(super) fn encode(&self) -> Vec<u8> {
-        let mut out = vec![2u8];
+        let mut out = vec![4u8];
         let int = |out: &mut Vec<u8>, v: i64| out.extend_from_slice(&v.to_le_bytes());
-        let mut docs: Vec<(&String, i64, i64)> = self.docs.iter().filter_map(|(p, (c, k))| match c { memo::Content::Stored(id) => Some((p, id.raw(), *k)), memo::Content::Held(_) => None }).collect();
+        // A content the store does not hold yet is kept by its digest: the next run finds its source (`resolve`).
+        let mut docs: Vec<(&String, memo::Content, i64)> = self.docs.iter().filter(|(_, (c, _))| !matches!(c, memo::Content::Held(_))).map(|(p, (c, k))| (p, *c, *k)).collect();
         // In path order: the same keeper is the same blob.
-        docs.sort();
+        docs.sort_by(|a, b| a.0.cmp(b.0));
         int(&mut out, docs.len() as i64);
-        for (p, id, k) in docs {
+        for (p, c, k) in docs {
             int(&mut out, p.len() as i64);
             out.extend_from_slice(p.as_bytes());
-            int(&mut out, id);
+            match c {
+                memo::Content::Stored(id) => {
+                    out.push(0);
+                    int(&mut out, id.raw());
+                }
+                memo::Content::Unstored(d) => {
+                    out.push(1);
+                    out.extend_from_slice(&d);
+                }
+                memo::Content::Held(_) => unreachable!("not kept"),
+            }
             int(&mut out, k);
         }
         int(&mut out, self.rels.len() as i64);
@@ -249,7 +375,84 @@ impl Keeper {
             out.extend_from_slice(rel.as_bytes());
             stats.encode(&mut out);
         }
+        int(&mut out, self.holders.len() as i64);
+        for (rel, held) in &self.holders {
+            int(&mut out, rel.len() as i64);
+            out.extend_from_slice(rel.as_bytes());
+            let mut pairs: Vec<(i64, i64)> = held.iter().map(|(o, n)| (*o, *n)).collect();
+            pairs.sort_unstable();
+            int(&mut out, pairs.len() as i64);
+            for (o, n) in pairs {
+                int(&mut out, o);
+                int(&mut out, n);
+            }
+        }
         out
+    }
+
+    /// Maps the values its exact maps count in symbol columns with `f` (decision 0170: this process's ids to the
+    /// store's as the blob is written, back as it is read), all in one call. `syms` gives a relation's symbol columns
+    /// (by its key and width); a relation it does not know keeps no exact maps when `strict`, so its constants are
+    /// counted from the rows held. The sketches hash the values as they are counted, and stay as they are: a run
+    /// across numberings perturbs their estimates, never a finding.
+    /// What `syms` says of each relation's columns (`map_symbols`'s first argument), asked now: for a write that maps
+    /// them later, where `syms` is not at hand (the store's writer, decision 0306).
+    pub(super) fn symbol_columns(&self, syms: &dyn Fn(&str, &[String]) -> Option<Vec<bool>>) -> BTreeMap<String, Option<Vec<bool>>> {
+        self.rels.iter().map(|(rel, stats)| (rel.clone(), syms(rel, stats.columns()))).collect()
+    }
+
+    pub(super) fn map_symbols(&mut self, syms: &dyn Fn(&str, &[String]) -> Option<Vec<bool>>, strict: bool, f: impl FnOnce(&mut [i64]) -> crate::content_store::StoreResult<()>) -> crate::content_store::StoreResult<()> {
+        let mut taken: Vec<(String, usize, Vec<i64>)> = Vec::new();
+        let mut values: Vec<i64> = Vec::new();
+        for (rel, stats) in self.rels.iter_mut() {
+            let width = stats.columns().len();
+            let Some(cols) = syms(rel, stats.columns()).filter(|c| c.len() == width) else {
+                if strict {
+                    for c in 0..width {
+                        stats.take_exact(c);
+                    }
+                }
+                continue;
+            };
+            for c in (0..width).filter(|&c| cols[c]) {
+                if let Some(pairs) = stats.take_exact(c) {
+                    let (vs, ns): (Vec<i64>, Vec<i64>) = pairs.into_iter().unzip();
+                    values.extend(vs);
+                    taken.push((rel.clone(), c, ns));
+                }
+            }
+        }
+        if !values.is_empty() {
+            f(&mut values)?;
+        }
+        let mut values = values.into_iter();
+        for (rel, c, ns) in taken {
+            let pairs = ns.into_iter().map(|n| (values.next().expect("one a count"), n)).collect();
+            if let Some(stats) = self.rels.get_mut(&rel) {
+                stats.put_exact(c, pairs);
+            }
+        }
+        Ok(())
+    }
+
+    /// Export `key`'s value documents and how many counted files hold each (`holders`).
+    pub(super) fn holders(&self, key: &str) -> Option<&rustc_hash::FxHashMap<i64, i64>> {
+        self.holders.get(key)
+    }
+
+    /// The contents kept by digest (a run's new sources, written after its blob was made), as the store holds them
+    /// now: `found` gives each digest's source, in one read before the run's first wave.
+    pub(super) fn resolve(&mut self, found: impl FnOnce(&[[u8; 32]]) -> Vec<Option<crate::content_store::SourceId>>) {
+        let unstored: Vec<(String, [u8; 32])> = self.docs.iter().filter_map(|(p, (c, _))| match c { memo::Content::Unstored(d) => Some((p.clone(), *d)), _ => None }).collect();
+        if unstored.is_empty() {
+            return;
+        }
+        let ids = found(&unstored.iter().map(|(_, d)| *d).collect::<Vec<_>>());
+        for ((path, _), id) in unstored.into_iter().zip(ids) {
+            if let (Some(id), Some(at)) = (id, self.docs.get_mut(&path)) {
+                at.0 = memo::Content::Stored(id);
+            }
+        }
     }
 
     /// `encode`'s keeper back, `None` if the bytes are not one.
@@ -265,34 +468,83 @@ impl Keeper {
             let n = usize::try_from(int(at)?).ok()?;
             String::from_utf8(take(at, n)?.to_vec()).ok()
         };
-        if bytes.first() != Some(&2) {
+        if bytes.first() != Some(&4) {
             return None;
         }
         let mut k = Keeper::default();
         for _ in 0..int(&mut at)? {
             let path = text(&mut at)?;
-            let id = crate::content_store::SourceId::from_raw(int(&mut at)?);
-            k.docs.insert(path, (memo::Content::Stored(id), int(&mut at)?));
+            let content = match take(&mut at, 1)?[0] {
+                0 => memo::Content::Stored(crate::content_store::SourceId::from_raw(int(&mut at)?)),
+                1 => memo::Content::Unstored(take(&mut at, 32)?.try_into().ok()?),
+                _ => return None,
+            };
+            k.docs.insert(path, (content, int(&mut at)?));
         }
         for _ in 0..int(&mut at)? {
             let rel = text(&mut at)?;
             k.rels.insert(rel, RelStats::decode(bytes, &mut at)?);
         }
+        for _ in 0..int(&mut at)? {
+            let rel = text(&mut at)?;
+            let mut held = rustc_hash::FxHashMap::default();
+            for _ in 0..int(&mut at)? {
+                let o = int(&mut at)?;
+                held.insert(o, int(&mut at)?);
+            }
+            k.holders.insert(rel, held);
+        }
         (at == bytes.len()).then_some(k)
     }
 }
 
-fn same(a: (memo::Content, i64), b: (memo::Content, i64)) -> bool {
+/// The keeper's test that a file's rows are counted already: the same content under the same document key.
+pub(super) fn same(a: (memo::Content, i64), b: (memo::Content, i64)) -> bool {
     a.1 == b.1
         && match (a.0, b.0) {
             (memo::Content::Stored(x), memo::Content::Stored(y)) => x == y,
-            (memo::Content::Held(x), memo::Content::Held(y)) => x == y,
+            (memo::Content::Unstored(x), memo::Content::Unstored(y)) | (memo::Content::Held(x), memo::Content::Held(y)) => x == y,
             _ => false,
         }
 }
 
+/// `flat`'s rows (`width` a row) grouped by the document `doc` says each names, in the order the documents first
+/// come, each row taken at the columns `from` (all, when `None`). A document's rows mostly come together, so its
+/// group is looked up once a run of them.
+fn by_document(flat: &[i64], width: usize, doc: impl Fn(&[i64]) -> i64, from: Option<&[usize]>) -> Vec<(i64, Vec<i64>)> {
+    let mut groups: Vec<(i64, Vec<i64>)> = Vec::new();
+    let mut at: rustc_hash::FxHashMap<i64, usize> = Default::default();
+    let mut last: Option<(i64, usize)> = None;
+    for row in flat.chunks_exact(width) {
+        let d = doc(row);
+        let g = match last {
+            Some((l, g)) if l == d => g,
+            _ => {
+                let g = *at.entry(d).or_insert_with(|| {
+                    groups.push((d, Vec::new()));
+                    groups.len() - 1
+                });
+                last = Some((d, g));
+                g
+            }
+        };
+        match from {
+            Some(from) => groups[g].1.extend(from.iter().map(|&c| row[c])),
+            None => groups[g].1.extend_from_slice(row),
+        }
+    }
+    groups
+}
+
+/// `before` and `now` without the relations whose rows are the same in both: what an edit changed, by relation.
+fn changed_only(before: &memo::Entry, now: &memo::Entry) -> (memo::Entry, memo::Entry) {
+    let same = |rel: &String| before.rows.get(rel) == now.rows.get(rel);
+    let keep = |e: &memo::Entry| memo::Entry { rows: e.rows.iter().filter(|(r, _)| !same(r)).map(|(r, v)| (r.clone(), v.clone())).collect(), key: e.key, nodes: e.nodes, outputs: Default::default() };
+    (keep(before), keep(now))
+}
+
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{Keeper, memo};
 
     /// A keeper read back from its blob counts the same files the same way: an edit patches it as it would the one
@@ -305,7 +557,7 @@ mod tests {
             e
         };
         let id = |n| memo::Content::Stored(crate::content_store::SourceId::from_raw(n));
-        let rels = [(memo::base_key("r"), vec!["n".to_owned(), "v".to_owned()])];
+        let rels = [(memo::base_key("r"), vec!["n".to_owned(), "v".to_owned()], None)];
         let mut k = Keeper::default();
         k.begin(&rels, Default::default(), None);
         for (n, path) in ["a.py", "b.py"].iter().enumerate() {
@@ -323,5 +575,39 @@ mod tests {
         let r = memo::base_key("r");
         assert_eq!(after[&r].rows(), first[&r].rows());
         assert_ne!(after[&r], first[&r], "b.py's values moved");
+    }
+
+    /// A base relation counted at the columns its rules read (some of a row's) has those columns' statistics as one
+    /// counted at every column; counted at other columns next run, it is counted from scratch.
+    #[test]
+    fn a_base_relation_is_counted_at_the_columns_read() {
+        let entry = |key: i64| {
+            let mut e = memo::Entry { key, ..memo::Entry::default() };
+            e.rows.insert(memo::base_key("r"), (3, (0..30).flat_map(|i| [key << 32 | i, i % 4, (i * i + key) % 7]).collect()));
+            e
+        };
+        let id = |n| memo::Content::Stored(crate::content_store::SourceId::from_raw(n));
+        let names = |c: &[&str]| c.iter().map(|c| (*c).to_owned()).collect::<Vec<_>>();
+        let r = memo::base_key("r");
+        let every = [(r.clone(), names(&["n", "v", "w"]), None)];
+        let read = [(r.clone(), names(&["n", "w"]), Some(vec![0, 2]))];
+        let (mut all, mut some) = (Keeper::default(), Keeper::default());
+        all.begin(&every, Default::default(), None);
+        some.begin(&read, Default::default(), None);
+        for (n, path) in ["a.py", "b.py", "c.py"].iter().enumerate() {
+            let k = n as i64 + 1;
+            all.file(path, Some(id(k)), k, &entry(k), &|_, _| None);
+            some.file(path, Some(id(k)), k, &entry(k), &|_, _| None);
+        }
+        let (all, some_stats) = (all.end(&|_, _, _| None).unwrap(), some.end(&|_, _, _| None).unwrap());
+        let held = |c: &str| c != "v";
+        let whole: Vec<_> = all[&r].statistics(&held).into_iter().filter(|m| held(&m.0)).collect();
+        assert_eq!(some_stats[&r].statistics(&|_| true), whole);
+        // Read at every column now: what it counted at two is not taken for three.
+        some.begin(&every, Default::default(), None);
+        some.file("a.py", Some(id(1)), 1, &entry(1), &|_, _| None);
+        let again = some.end(&|_, _, _| None).unwrap();
+        assert_eq!(again[&r].columns().len(), 3);
+        assert_eq!(again[&r].rows(), 30, "counted from scratch: one file");
     }
 }

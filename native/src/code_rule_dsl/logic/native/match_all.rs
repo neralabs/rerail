@@ -1,4 +1,4 @@
-//! `match_all("re", s)` over symbols (`core.rr`): one row per non-overlapping match of `re` anywhere in `s`, with
+//! `match_all("re", s)` over symbols (`core.rerail`): one row per non-overlapping match of `re` anywhere in `s`, with
 //! that match's named groups bound to their text. A match in which a group takes no part gives no row, as in `match`.
 //!
 //! The evaluator reads the distinct texts the rule asks about (its context relation, `rr::lower`) and inserts the
@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) fn rows<'s>(re: &Regex, groups: &[String], s: &'s s
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

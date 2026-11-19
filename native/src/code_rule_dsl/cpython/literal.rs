@@ -70,7 +70,7 @@ pub(crate) fn literals(source: &str) -> Vec<Literal> {
 }
 
 /// The JSON text of one expression (its file's text `source`), for tests.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn literal_json_of(source: &str) -> Option<String> {
     let found = literals(source);
     let first = found.first()?;

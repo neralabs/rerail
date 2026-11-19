@@ -3,15 +3,16 @@
 //! G's schema 9 and 10 tables are created on first use (`IF NOT EXISTS`); the end of
 //! `complete_snapshot_trees` (8fe9ffed4 l.3072-3080, recording the workspace revision), which
 //! the fragment copy left out, is G's; the collection fragment is `collect_tree_result_segments`.
-// COPY: Tempo ner-1562-scale-test-the-re-railer@8fe9ffed4:tempo/native/src/content_store.rs, fragments verbatim:
+// COPY: Tempo scale-test-the-re-railer@8fe9ffed4:tempo/native/src/content_store.rs, fragments verbatim:
 // l.265-279 (SCHEMA_V10), l.523-542 (segment structs), l.2962-3071 (complete_snapshot_trees),
 // l.3161-3252 (tree_result_segments), l.3439-3446 (collection).
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use super::{
     CandidateCatalogIdentity, ContentStore, HashKey, SnapshotId, StoreError, StoreResult,
     WorkspaceCompletion, rows::intern_hash,
 };
 use rusqlite::params;
-use std::io::Cursor;
 
 mod snapshot_trees;
 #[cfg(test)]
@@ -176,7 +177,7 @@ impl ContentStore {
                     ));
                 }
             }
-            transaction.execute(
+            transaction.execute_cached(
                 "INSERT INTO completed_workspace_revisions(workspace_id,revision,catalog_hash_id,completed_at) \
                  VALUES (?1,?2,?3,?4) ON CONFLICT(workspace_id) DO UPDATE SET \
                  revision=excluded.revision,catalog_hash_id=excluded.catalog_hash_id,completed_at=excluded.completed_at",
@@ -256,7 +257,7 @@ impl ContentStore {
             .into_iter()
             .map(
                 |(prefix, page_index, page_count, raw_length, file_count, frame)| {
-                    let bytes = zstd::stream::decode_all(Cursor::new(frame))?;
+                    let bytes = super::decompress(&frame, 0)?;
                     if bytes.len() != usize::try_from(raw_length).unwrap_or(usize::MAX) {
                         return Err(StoreError::Corrupt(
                             "tree result length mismatch".to_owned(),
@@ -283,10 +284,10 @@ impl ContentStore {
     /// G's collection of segments no completed snapshot tree names (8fe9ffed4 l.3439-3446),
     /// as a function of its own: W's collection pass has no tree result segments.
     pub fn collect_tree_result_segments(
-        transaction: &rusqlite::Transaction<'_>,
+        transaction: &rusqlite::Connection,
         limit: i64,
     ) -> StoreResult<()> {
-        transaction.execute(
+        transaction.execute_cached(
             "DELETE FROM tree_result_segments WHERE (tree_hash_id,prefix,catalog_hash_id) IN (\
              SELECT r.tree_hash_id,r.prefix,r.catalog_hash_id FROM tree_result_segments r \
              WHERE NOT EXISTS (SELECT 1 FROM completed_snapshot_trees c WHERE c.tree_hash_id=r.tree_hash_id \

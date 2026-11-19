@@ -196,7 +196,7 @@ impl Program {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn canonical_producers_parameters_and_bag_rows_ignore_fragment_order_and_aliases() {
@@ -287,7 +287,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod scope_tests {
+pub mod scope_tests {
     use super::*;
     #[test]
     #[should_panic(expected = "file domain is a semantic input")]

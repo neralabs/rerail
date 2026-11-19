@@ -1,8 +1,9 @@
 //! Shared packed-span codec for the engine and the captured-SQL laboratory.
 use std::ops::Range;
 
-pub(super) const WIDTH: usize = 6;
-pub(super) const CHECKPOINT_STRIDE: usize = 16;
+pub const WIDTH: usize = 6;
+/// Nodes a checkpoint covers: the tape format's (one definition, `rerail_tape_format`).
+pub use rerail_tape_format::CHECKPOINT_STRIDE;
 
 pub(super) fn read_varint(bytes: &[u8], at: &mut usize) -> Result<u32, String> {
     let mut result = 0u32;
@@ -20,7 +21,7 @@ pub(super) fn read_varint(bytes: &[u8], at: &mut usize) -> Result<u32, String> {
     Err("span varint overflow".into())
 }
 
-pub(crate) fn index_span(
+pub fn index_span(
     spans: &[u8],
     checkpoints: &[u8],
     pre: usize,

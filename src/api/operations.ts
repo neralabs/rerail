@@ -1,11 +1,10 @@
-import { realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 import { SECRET_FILE_FINDING_MESSAGE, type CodeRuleViolation, type CodeRuleViolationFix, type CodeRuleSourceSpan } from "../engine/code-rule/code-rule.js";
-import { AUDIT_BLIND_REASONS, AUDIT_FAILURE_CODES, AUDIT_MODES, AUDIT_SCOPES, AUDIT_STATUSES, type AuditFailure } from "../engine/audit/audit.js";
+import { AUDIT_BLIND_REASONS, AUDIT_FAILURE_CODES, AUDIT_MODES, AUDIT_ORIGINS, AUDIT_SCOPES, AUDIT_STATUSES, type AuditFailure } from "../engine/audit/audit.js";
 import type { AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../engine/audit/audit-store.js";
-import { withinCheckout } from "../engine/catalog/checkout-control.js";
+import { checkoutRealpath, withinCheckout } from "../engine/catalog/checkout-control.js";
 import { RERAIL_HOSTS } from "../engine/adapter-contract.js";
 import { internalTesting } from "../engine/internal-testing.js";
 import { agentTranscriptPayload } from "../engine/transcript-boundary.js";
@@ -23,7 +22,8 @@ import { approvalKey, packSubject, readApprovals } from "../engine/catalog/rule-
 import { rulePackListSchema } from "./rule-pack-contracts.js";
 import { SESSION_EVENT_PAGE_LIMIT, type StoredSessionSummary } from "../runtime/session-store.js";
 import type { ApiCaller } from "../engine/catalog/repository-model.js";
-import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
+import { ApiError, defineOperation, experimentalSummary, type Operation, type RerailApiStores } from "./operation.js";
+import { mergeAssistOperations } from "./merge-assist-operations.js";
 import { activityRules, callerRepositoryKey, checkoutAt, checkoutRuleCatalog, historyScope, repositoryOperations, within } from "./repository-operations.js";
 import { inactiveField, inactiveOf, targetShape } from "./repository-contracts.js";
 import { presentationDaemonSchema, presentationResponseSchema, sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
@@ -90,7 +90,8 @@ const auditFailureSchema: z.ZodType<AuditFailure> = z.object({
   blind: z.enum(AUDIT_BLIND_REASONS).optional(),
 }).strict();
 
-export const auditRecordSchema = createSelectSchema(audits).extend({
+// `ruleProvenance` is the audit's provenance wherever the database keeps it; the id of its stored copy stays inside.
+export const auditRecordSchema = createSelectSchema(audits).omit({ ruleProvenanceId: true }).extend({
   paths: z.array(z.string()),
   violations: z.array(codeRuleViolationSchema),
   failures: z.array(auditFailureSchema),
@@ -111,6 +112,7 @@ export const auditQuerySchema = z.object({
   status: z.enum(AUDIT_STATUSES).optional(),
   scope: z.enum(AUDIT_SCOPES).optional(),
   mode: z.enum(AUDIT_MODES).optional().describe("Audit mode (steer, log), not the mode of the rules it ran."),
+  origin: z.enum(AUDIT_ORIGINS).optional().describe("ongoing: a session's own edits; scan: one someone asked for, which the dashboard leaves out."),
   limit: countParameter.min(1).max(200).optional().describe("Maximum records to return; defaults to 50 and is capped at 200."),
   offset: countParameter.optional().describe("Number of matching records to skip; defaults to 0."),
 }).strict();
@@ -151,16 +153,14 @@ const repositoryAuditEntrySchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("failure"), failure: auditFailureSchema }).strict(),
 ]);
 
+/** `fields` without the ones that are undefined: a query takes an absent filter as no filter, never as `undefined`. */
+function definedOnly<T extends object>(fields: { [K in keyof T]-?: T[K] | undefined }): T {
+  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)) as T;
+}
+
 function auditQuery(input: z.infer<typeof auditQuerySchema>): AuditQuery {
-  return {
-    ...(input.auditId === undefined ? {} : { auditId: input.auditId }),
-    ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
-    ...(input.status === undefined ? {} : { status: input.status }),
-    ...(input.scope === undefined ? {} : { scope: input.scope }),
-    ...(input.mode === undefined ? {} : { mode: input.mode }),
-    ...(input.limit === undefined ? {} : { limit: input.limit }),
-    ...(input.offset === undefined ? {} : { offset: input.offset }),
-  };
+  const { auditId, sessionId, status, scope, mode, origin, limit, offset } = input;
+  return definedOnly<AuditQuery>({ auditId, sessionId, status, scope, mode, origin, limit, offset });
 }
 function repositoryAuditQuery(input: z.infer<typeof repositoryAuditQuerySchema>): RepositoryAuditQuery {
   return {
@@ -223,6 +223,26 @@ function sessionResponse(stores: RerailApiStores, caller: ApiCaller, sessionId: 
     : { session, hud: stores.reader.hud(sessionId), audit: stores.audits.latestSummary(sessionId) ?? null };
 }
 const sessionId = z.object({ sessionId: z.string().min(1) });
+
+/**
+ * `operation` with the start state of the folder its `repository` names read also under `spelling`, the folder as a
+ * Windows host spelt it ({@link RerailApiStores.repositoryState}); unchanged without one, or for any other folder.
+ */
+function readingSpelling(operation: Operation): Operation {
+  return { ...operation, handler: (stores, input, caller) => operation.handler(spelledStores(stores, input), input, caller) };
+}
+
+/** `stores` whose start-state read of `repository` passes `spelling` on; `stores` itself where it is no absolute path. */
+function spelledStores(stores: RerailApiStores, { repository, spelling }: { repository?: unknown; spelling?: unknown }): RerailApiStores {
+  if (typeof spelling !== "string" || !isAbsolute(spelling)) return stores;
+  const repositoryState = (workspace: string) => stores.repositoryState(workspace, workspace === repository ? spelling : undefined);
+  return new Proxy(stores, { get: (target, key) => key === "repositoryState" ? repositoryState : boundTo(target, Reflect.get(target, key)) });
+}
+
+/** `value` called on `target`, as a property read of `target` gives it: stores keep private fields a proxy cannot reach. */
+function boundTo(target: object, value: unknown): unknown {
+  return typeof value === "function" ? (value as (...parameters: unknown[]) => unknown).bind(target) : value;
+}
 
 const repositoryFilter = {
   repository: z.string().min(1).optional().describe("Only this repository's history (its key or an alias); machine-wide without it. A coding agent reads only its own repository's."),
@@ -321,7 +341,7 @@ export const operations: readonly Operation[] = [
       return { removed: stores.preferences().remove(input.repository, input.host) };
     },
   }),
-  defineOperation({
+  readingSpelling(defineOperation({
     id: "presentation_get",
     method: "GET",
     path: "/api/presentation",
@@ -331,6 +351,7 @@ export const operations: readonly Operation[] = [
       host: z.enum(PRESENTATION_HOSTS).exclude([""]),
       sessionId: z.string().min(1).optional().describe("Exact session for passive daemon health and compact status."),
       onDemand: booleanParameter.optional().describe("Read session status even when ambient presentation is silent."),
+      spelling: z.string().optional().describe("On Windows, `repository` as the host spelt it, where that differs: read only for a start or stop Rerail 0.1.4 saved under it."),
     }).strict(),
     output: presentationResponseSchema,
     handler: (stores, input, caller) => {
@@ -348,8 +369,8 @@ export const operations: readonly Operation[] = [
       if (session !== null) {
         try {
           // A host may report a directory below its launch root; presence and identity follow the session's canonical cwd.
-          const cwd = realpathSync(session.session.cwd);
-          if (session.session.host !== input.host || !withinCheckout(cwd, realpathSync(input.repository))) session = null;
+          const cwd = checkoutRealpath(session.session.cwd);
+          if (session.session.host !== input.host || !withinCheckout(cwd, checkoutRealpath(input.repository))) session = null;
           else repository = cwd;
         } catch { session = null; }
       }
@@ -362,7 +383,7 @@ export const operations: readonly Operation[] = [
       if (presence === "silent" && !input.onDemand) session = null;
       return { presence, repositoryState, scope, context: { daemon, session } };
     },
-  }),
+  })),
   defineOperation({
     id: "rules_activity",
     method: "GET",
@@ -487,21 +508,27 @@ export const operations: readonly Operation[] = [
     id: "audit_requests_create",
     method: "POST",
     path: "/api/sessions/{sessionId}/audit-requests",
-    summary: internalTesting("Queue an explicit audit for one session. Touched-file audits require paths."),
+    experiment: "REPOSITORY_SCAN",
+    summary: internalTesting(experimentalSummary("REPOSITORY_SCAN", "Queue an explicit audit for one session. Touched-file audits require paths.")),
     params: sessionId,
     body: auditRequestInputSchema,
     output: auditRequestSchema,
     handler: (stores, input, caller) => {
       requireSession(stores, caller, input.sessionId);
       const { sessionId, ...request } = input;
-      return stores.auditControls().requestAudit(sessionId, request);
+      const created = stores.auditControls().requestAudit(sessionId, request);
+      // A session the daemon suspended while it was quiet keeps its owner, so its scan queues; it opens again to run it
+      // now, as an open session would. The answer does not wait for that: it reads the session's ledger back.
+      if (created.status === "queued") stores.resumeSession?.(sessionId);
+      return created;
     },
   }),
   defineOperation({
     id: "audit_requests_list",
     method: "GET",
     path: "/api/sessions/{sessionId}/audit-requests",
-    summary: internalTesting("List explicit audit requests and the ids of the audits each one produced for one session."),
+    experiment: "REPOSITORY_SCAN",
+    summary: internalTesting(experimentalSummary("REPOSITORY_SCAN", "List explicit audit requests and the ids of the audits each one produced for one session.")),
     params: sessionId,
     output: z.object({ auditRequests: z.array(auditRequestSchema) }),
     handler: (stores, input, caller) => {
@@ -513,7 +540,8 @@ export const operations: readonly Operation[] = [
     id: "repository_audits_list",
     method: "GET",
     path: "/api/repository-audits",
-    summary: internalTesting("List one full repository audit baseline per historically scanned repository."),
+    experiment: "REPOSITORY_SCAN",
+    summary: internalTesting(experimentalSummary("REPOSITORY_SCAN", "List one full repository audit baseline per historically scanned repository.")),
     query: repositoryAuditQuerySchema.extend(repositoryFilter),
     output: z.object({
       repositories: z.array(repositoryAuditSummarySchema),
@@ -525,7 +553,8 @@ export const operations: readonly Operation[] = [
     id: "repository_audit_entries_list",
     method: "GET",
     path: "/api/repository-audits/{auditId}/entries",
-    summary: internalTesting("Query paginated violations and failures from one repository audit baseline."),
+    experiment: "REPOSITORY_SCAN",
+    summary: internalTesting(experimentalSummary("REPOSITORY_SCAN", "Query paginated violations and failures from one repository audit baseline.")),
     params: z.object({ auditId: z.string().min(1) }),
     query: repositoryAuditEntryQuerySchema,
     output: z.object({
@@ -703,6 +732,7 @@ export const operations: readonly Operation[] = [
     },
   }),
   ...repositoryOperations,
+  ...mergeAssistOperations,
 ];
 
 /** The flat argument object an MCP tool takes: path params, query, and body merged. */

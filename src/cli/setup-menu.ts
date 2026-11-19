@@ -1,39 +1,50 @@
+import { setImmediate as nextTurn, setTimeout as sleep } from "node:timers/promises";
 import type { ChoiceMenu } from "../runtime/repository-start.js";
 
 /**
  * Set-up's input at a real terminal: whole lines for the folder and pack prompts, single keys for a question's menu.
- * One reader owns stdin for the whole run, so switching between the two never leaves a second reader on it, and
- * what is typed ahead of a prompt waits in one buffer until the prompt reads it (the terminal holds what arrives
- * while stdin is paused).
+ * One reader owns stdin for the whole run, so switching between the two never leaves a second reader on it. A
+ * question takes only what is typed once it is on screen. stdin reads from the start of the run to its end, and what
+ * arrives while no question waits (an Enter pressed during the download or the scan) is dropped as it comes: a
+ * terminal holds keys while stdin is paused, and a Windows console hands them over too late after reading starts for
+ * a drop at the question to catch them. Ctrl-C while set-up is busy still interrupts it, as the terminal is not in raw
+ * mode then.
  */
 
 /** A key the menu acts on; `other` is ignored. */
 export type MenuKey = "up" | "down" | "enter" | "interrupt" | "end" | "other" | { readonly digit: number };
 
+/** The keys an escape sequence's final character names; any other sequence is `other`. */
+const ESCAPE_KEYS: Readonly<Record<string, MenuKey>> = { A: "up", B: "down" };
+
+/** The keys one character is. Enter is CR in raw mode and LF in line mode. */
+const CHARACTER_KEYS: Readonly<Record<string, MenuKey>> = {
+  "\r": "enter",
+  "\n": "enter",
+  "\u0003": "interrupt",
+  "\u0004": "end",
+  k: "up",
+  j: "down",
+};
+
 /** The key at the start of `bytes`, and how many characters it takes; undefined while it may be incomplete. */
 export function readKey(bytes: string): { key: MenuKey; length: number } | undefined {
   if (bytes === "") return undefined;
-  if (bytes.startsWith("\u001b")) {
-    const sequence = /^\u001b[[O][0-9;]*[A-Za-z~]/u.exec(bytes);
-    if (sequence !== null) {
-      const final = sequence[0].at(-1);
-      return { key: final === "A" ? "up" : final === "B" ? "down" : "other", length: sequence[0].length };
-    }
-    // A lone Escape, or the start of a sequence whose rest has not arrived.
-    if (/^\u001b(?:[[O][0-9;]*)?$/u.test(bytes)) return undefined;
-    return { key: "other", length: 1 };
-  }
-  // Enter is CR in raw mode and LF when typed ahead in line mode; CRLF is one Enter.
+  if (bytes.startsWith("\u001b")) return readEscape(bytes);
+  // CRLF is one Enter.
   if (bytes.startsWith("\r\n")) return { key: "enter", length: 2 };
   const first = String.fromCodePoint(bytes.codePointAt(0) ?? 0);
-  const length = first.length;
-  if (first === "\r" || first === "\n") return { key: "enter", length };
-  if (first === "\u0003") return { key: "interrupt", length };
-  if (first === "\u0004") return { key: "end", length };
-  if (first === "k") return { key: "up", length };
-  if (first === "j") return { key: "down", length };
-  if (/^[1-9]$/u.test(first)) return { key: { digit: Number(first) }, length };
-  return { key: "other", length };
+  const key = /^[1-9]$/u.test(first) ? { digit: Number(first) } : CHARACTER_KEYS[first] ?? "other";
+  return { key, length: first.length };
+}
+
+/** The key at the start of `bytes`, which start with Escape; undefined while it may be incomplete. */
+function readEscape(bytes: string): { key: MenuKey; length: number } | undefined {
+  const sequence = /^\u001b[[O][0-9;]*[A-Za-z~]/u.exec(bytes)?.[0];
+  if (sequence !== undefined) return { key: ESCAPE_KEYS[sequence.at(-1) ?? ""] ?? "other", length: sequence.length };
+  // A lone Escape, or the start of a sequence whose rest has not arrived.
+  if (/^\u001b(?:[[O][0-9;]*)?$/u.test(bytes)) return undefined;
+  return { key: "other", length: 1 };
 }
 
 export type MenuAction =
@@ -97,22 +108,49 @@ function frameRows(frame: string, columns: number | undefined): number {
   return lines.reduce((rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line) / columns)), 0);
 }
 
+/**
+ * How long stdin must bring nothing before a question is drawn. A Windows console hands over keys held in it about a
+ * millisecond after raw mode starts, through a thread of its own, later than turns of the event loop that bring nothing.
+ */
+const QUIET_MS = 50;
+
+/**
+ * The most quiet waits the drop takes. A key held down repeats faster than one, so without a cap the question would not
+ * be drawn until it is let go; after these it is drawn anyway.
+ */
+const QUIET_WAITS = 10;
+
 export class TerminalInput {
   private buffer = "";
   private ended = false;
-  private listening = false;
+  /** A question is on screen: what stdin reads is its answer. Otherwise it was typed before one was and is dropped. */
+  private asking = false;
+  /** stdin read something during the drop's last quiet wait. */
+  private heard = false;
+  /** The drop is running, in raw mode: Ctrl-C reaches stdin as a byte rather than a signal. */
+  private dropping = false;
+  /** Ctrl-C was read during the drop. */
+  private interrupted = false;
   private wake: (() => void) | undefined;
   /** The last line or key ended on a lone CR: an LF that comes next is the rest of that Enter (CRLF split across reads). */
   private afterCr = false;
 
+  /** Starts reading stdin, until `close`. */
   constructor(
     private readonly input: TerminalInputStream,
     private readonly write: (text: string) => void,
-    /** Ctrl-C in the menu, after the terminal is put back: what the terminal's own Ctrl-C does. */
+    /** Ctrl-C in the menu or before a question is drawn, after the terminal is put back: what the terminal's own Ctrl-C does. */
     private readonly interrupt: () => void = () => process.kill(process.pid, "SIGINT"),
     /** The terminal's width, to count the rows a menu's wrapped lines take; undefined when unknown. */
     private readonly columns: () => number | undefined = () => undefined,
-  ) {}
+    /** The drop's wait for stdin to bring nothing more. */
+    private readonly quiet: () => Promise<unknown> = () => sleep(QUIET_MS),
+  ) {
+    input.setEncoding("utf8");
+    input.on("data", this.onData);
+    input.on("end", this.onEnd);
+    input.resume();
+  }
 
   /** Take `length` characters off the buffer. */
   private consume(length: number): void {
@@ -127,9 +165,44 @@ export class TerminalInput {
     if (this.buffer.startsWith("\n")) this.buffer = this.buffer.slice(1);
   }
 
+  /**
+   * Drops everything typed before a question is on screen. What came while no question waited is already dropped, and
+   * what is left of the last read goes here. A line typed without Enter, or keys typed while set-up held the event
+   * loop, stay in the terminal until raw mode makes them readable, so the drop turns raw mode on and lets stdin read
+   * until a quiet wait brings nothing more, or {@link QUIET_WAITS} have passed. True when Ctrl-C was read meanwhile: the
+   * caller interrupts set-up, as the terminal's own Ctrl-C would have outside raw mode.
+   */
+  private async dropTypedAhead(raw: boolean): Promise<boolean> {
+    this.buffer = "";
+    this.interrupted = false;
+    if (!raw) this.input.setRawMode(true);
+    this.dropping = true;
+    try {
+      // macOS tells a reader already waiting nothing when raw mode makes such a line readable, so stdin stops reading
+      // for a turn (it stops a tick after the pause) and starts again, which finds it.
+      this.input.pause();
+      await nextTurn();
+      this.input.resume();
+      for (let wait = 0; wait < QUIET_WAITS && !this.interrupted; wait++) {
+        this.heard = false;
+        await this.quiet();
+        if (!this.heard) break;
+      }
+      return this.interrupted;
+    } finally {
+      this.dropping = false;
+      if (!raw) this.input.setRawMode(false);
+    }
+  }
+
   private readonly onData = (chunk: string): void => {
-    this.buffer += chunk;
-    this.wake?.();
+    this.heard = true;
+    if (this.asking) {
+      this.buffer += chunk;
+      this.wake?.();
+    } else if (this.dropping && chunk.includes("\u0003")) {
+      this.interrupted = true;
+    }
   };
 
   private readonly onEnd = (): void => {
@@ -137,20 +210,12 @@ export class TerminalInput {
     this.wake?.();
   };
 
-  /** Waits for more input, reading stdin only meanwhile. */
+  /** Waits for more input. */
   private async more(): Promise<void> {
-    if (!this.listening) {
-      this.input.setEncoding("utf8");
-      this.input.on("data", this.onData);
-      this.input.on("end", this.onEnd);
-      this.listening = true;
-    }
-    await new Promise<void>(resolve => {
-      this.wake = resolve;
-      this.input.resume();
-    });
+    const { promise, resolve } = Promise.withResolvers<void>();
+    this.wake = resolve;
+    await promise;
     this.wake = undefined;
-    this.input.pause();
   }
 
   /**
@@ -158,7 +223,20 @@ export class TerminalInput {
    * undefined.
    */
   async line(prompt: string): Promise<string | undefined> {
+    if (await this.dropTypedAhead(false)) {
+      this.interrupt();
+      return undefined;
+    }
     this.write(prompt);
+    this.asking = true;
+    try {
+      return await this.readLine();
+    } finally {
+      this.asking = false;
+    }
+  }
+
+  private async readLine(): Promise<string | undefined> {
     for (;;) {
       this.settle();
       const end = this.buffer.search(/[\r\n]/u);
@@ -176,55 +254,77 @@ export class TerminalInput {
     }
   }
 
-  /** The menu, in raw mode until an answer is taken: its index, or undefined on Ctrl-D or end of input. */
+  /** The menu, in raw mode until an answer is taken: its index, or undefined on Ctrl-D, end of input or Ctrl-C. */
   async choose(menu: ChoiceMenu): Promise<number | undefined> {
-    let highlight = 0;
-    let frame = menu.frame(highlight);
-    this.write(frame);
     const restore = (): void => {
       this.input.setRawMode(false);
     };
     this.input.setRawMode(true);
     process.once("exit", restore);
     try {
-      for (;;) {
-        this.settle();
-        const read = readKey(this.buffer);
-        if (read === undefined) {
-          if (this.ended) {
-            this.write("\n");
-            return undefined;
-          }
-          await this.more();
-          continue;
-        }
-        this.consume(read.length);
-        const action = menuAction(read.key, highlight, menu.count);
-        if (action.type === "move" && action.highlight !== highlight) {
-          highlight = action.highlight;
-          // The cursor is on the frame's last row: up the rows above it, wrapped lines' included.
-          const rows = frameRows(frame, this.columns()) - 1;
-          frame = menu.frame(highlight);
-          this.write(`${redrawFrom(rows)}${frame}`);
-        } else if (action.type === "pick") {
-          this.write("\n");
-          return action.index;
-        } else if (action.type === "cancel") {
-          this.write("\n");
-          return undefined;
-        } else if (action.type === "interrupt") {
-          this.write("\n");
-          restore();
-          this.interrupt();
-          return undefined;
-        }
+      if (await this.dropTypedAhead(true)) {
+        restore();
+        this.interrupt();
+        return undefined;
       }
+      return await this.answer(menu, restore);
     } finally {
+      this.asking = false;
       restore();
       process.removeListener("exit", restore);
     }
   }
 
+  /** Draws the menu and moves its cursor key by key until a key ends it; end of input cancels it. */
+  private async answer(menu: ChoiceMenu, restore: () => void): Promise<number | undefined> {
+    let highlight = 0;
+    let frame = menu.frame(highlight);
+    this.write(frame);
+    this.asking = true;
+    for (;;) {
+      const key = await this.nextKey();
+      const action: MenuAction = key === undefined ? { type: "cancel" } : menuAction(key, highlight, menu.count);
+      if (action.type === "none") continue;
+      if (action.type !== "move") return this.end(action, restore);
+      highlight = action.highlight;
+      frame = this.redraw(frame, menu.frame(highlight));
+    }
+  }
+
+  /** The next key, waiting for it; undefined at end of input. */
+  private async nextKey(): Promise<MenuKey | undefined> {
+    for (;;) {
+      this.settle();
+      const read = readKey(this.buffer);
+      if (read !== undefined) {
+        this.consume(read.length);
+        return read.key;
+      }
+      if (this.ended) return undefined;
+      await this.more();
+    }
+  }
+
+  /** Draws `next` over `shown` when they differ, and returns what is on screen. */
+  private redraw(shown: string, next: string): string {
+    if (next === shown) return shown;
+    // The cursor is on the frame's last row: up the rows above it, wrapped lines' included.
+    this.write(`${redrawFrom(frameRows(shown, this.columns()) - 1)}${next}`);
+    return next;
+  }
+
+  /** Ends the menu on its line: the answer taken, or undefined when cancelled or interrupted (terminal put back first). */
+  private end(action: Extract<MenuAction, { type: "pick" | "cancel" | "interrupt" }>, restore: () => void): number | undefined {
+    this.write("\n");
+    if (action.type === "pick") return action.index;
+    if (action.type === "interrupt") {
+      restore();
+      this.interrupt();
+    }
+    return undefined;
+  }
+
+  /** Stops reading stdin, which lets the process exit. */
   close(): void {
     this.input.removeListener("data", this.onData);
     this.input.removeListener("end", this.onEnd);

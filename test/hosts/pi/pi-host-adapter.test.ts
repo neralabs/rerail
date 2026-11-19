@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import type { AdapterEvent, AdapterSession } from "../../../src/engine/index.js";
+import { type AdapterDelivery, type AdapterEvent, type AdapterSession, sendNativeDeliveries } from "../../../src/engine/index.js";
 import { registerPiHostAdapter } from "../../../src/hosts/pi/pi-host-adapter.js";
 
 type Handler = (event: unknown, context: ExtensionContext) => unknown;
@@ -76,5 +76,26 @@ describe("Pi host adapter owner transitions", () => {
     await harness.handlers.get("message_end")?.(completedMessage, harness.context);
 
     expect(harness.ingested()).toBe(1);
+  });
+});
+
+describe("native steers", () => {
+  it("sends a note naming no rule (a Merge Assist note), with its conflict for the person's line, and records no steer for it, as it does for a rule's steer", async () => {
+    const steer = (content: string, ruleIds: readonly string[]): AdapterDelivery => ({
+      sessionId: "session", requested: "steer", mechanism: "native-queue", content, ruleIds, rules: [],
+    });
+    const conflict = { id: "conflict:a", text: "your edit overlaps jbarnes-1: retry.ts" };
+    const sent: Array<{ content: string; details: object }> = [];
+    const receipts: Array<readonly string[]> = [];
+    await sendNativeDeliveries(
+      [{ ...steer("Your edit overlaps open work.", []), conflict }, steer("Fix a.", ["a"])],
+      message => { sent.push({ content: message.content, details: message.details }); },
+      (_sessionId, _receiptId, ruleIds) => { receipts.push(ruleIds); },
+    );
+    expect(sent).toEqual([
+      { content: "Your edit overlaps open work.", details: expect.objectContaining({ conflict }) },
+      { content: "Fix a.", details: expect.not.objectContaining({ conflict: expect.anything() }) },
+    ]);
+    expect(receipts).toEqual([["a"]]);
   });
 });

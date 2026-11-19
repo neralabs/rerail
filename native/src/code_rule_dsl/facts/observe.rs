@@ -9,18 +9,18 @@ use super::propagate::{Work, propagate};
 use crate::content_store::{Binding, Derivation, DerivationRecord, HashKey, StoreResult};
 
 /// The name a file's object is bound under in `scope`.
-pub(crate) fn path_name(scope: &str, path: &str) -> String {
+pub fn path_name(scope: &str, path: &str) -> String {
     format!("{scope}#path:{path}")
 }
 
 /// The name a directory's tree hash is bound under in `scope` ("" is the root).
-pub(crate) fn tree_name(scope: &str, prefix: &str) -> String {
+pub fn tree_name(scope: &str, prefix: &str) -> String {
     format!("{scope}#tree:{prefix}")
 }
 
 /// What one push did: trees the comparison read, names it rebound, and the propagation.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct Push {
+pub struct Push {
     pub trees_read: usize,
     pub rebound: usize,
     pub work: Work,
@@ -28,7 +28,7 @@ pub(crate) struct Push {
 
 /// Rebinds the names of `scope` that changed between the root tree last observed for it and
 /// `new`; returns the names whose digest changed, and how many trees the comparison read.
-pub(crate) fn observe_root(store: &(impl Graph + ?Sized), scope: &str, new: HashKey) -> StoreResult<(Vec<String>, usize)> {
+pub fn observe_root(store: &(impl Graph + ?Sized), scope: &str, new: HashKey) -> StoreResult<(Vec<String>, usize)> {
     let old = store.binding(&tree_name(scope, ""))?;
     let diff = store.store().tree_changes_since(old, new)?;
     let bindings = diff
@@ -65,7 +65,7 @@ pub(crate) fn push_root(
 /// binds a root only with the names it rebound. Every derivation an unwritten write would have
 /// recomputed is invalid by the validity join, so the invalid derivations are the first wave and
 /// `propagate` carries their changes as on any push. None: the store was clean.
-pub(crate) fn recover(
+pub fn recover(
     store: &(impl Graph + ?Sized),
     max_waves: u32,
     mut recompute: impl FnMut(&[Derivation]) -> StoreResult<Vec<DerivationRecord>>,
@@ -87,7 +87,7 @@ pub(crate) fn recover(
     Ok(Some(work))
 }
 
-pub(crate) mod roots;
+pub mod roots;
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

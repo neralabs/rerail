@@ -93,8 +93,8 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
         let reads: Vec<String> = all
             .rules
             .iter()
-            .filter(|r| shared.contains(&r.head.rel))
-            .flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.clone()))
+            .filter(|r| shared.contains(r.head.rel.as_str()))
+            .flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()))
             .chain(all.natives.iter().filter(|(rel, _)| shared.contains(*rel)).flat_map(|(_, n)| n.reads().into_iter().map(str::to_owned)))
             .filter(|rel| owned.contains(rel))
             .collect();
@@ -126,12 +126,14 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
         return Ok(report);
     }
     let (_, locations, _) = crate::code_rule_dsl::typing::file_local::split_located(all);
+    let derived: BTreeSet<String> = all.rules.iter().map(|r| r.head.rel.to_string()).chain(all.natives.keys().cloned()).filter(|r| !all.inputs.contains(r)).collect();
+    // The rules are guarded out of the program and put back: what the guards read of it is its declarations.
+    let mut rules = std::mem::take(&mut all.rules);
     let typed = |rel: &str, c: usize, ty: &[&str]| all.decls.get(rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| ty.contains(&t.as_str()));
-    let derived: BTreeSet<String> = all.rules.iter().map(|r| r.head.rel.clone()).chain(all.natives.keys().cloned()).filter(|r| !all.inputs.contains(r)).collect();
     // Per relation, where a row's document is read: (document columns, node columns, span or node columns). A node's
     // document is its id's high half (`@doc`); a span's is `docof`'s, as `file_local::locate` reads it.
     let place = |rel: &str| -> (Vec<usize>, Vec<usize>, Vec<usize>) {
-        let width = all.decls.get(rel).map_or(0, Vec::len);
+        let width = all.decls.get(rel).map_or(0, |c| c.len());
         if derived.contains(rel) {
             let cols = locations.get(rel).cloned().unwrap_or_default();
             let of = |ty: &[&str]| cols.iter().copied().filter(|&c| typed(rel, c, ty)).collect::<Vec<_>>();
@@ -143,35 +145,35 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
     };
     // One rule's guards: on each read whose location no read of `covers` gives. Returns the guards added.
     let guard_rule = |rule: &mut front::Rule, covers: &BTreeSet<String>, outside: &str| -> usize {
-        let var = |t: Option<&Term>| if let Some(Term::Var(v)) = t { Some(v.clone()) } else { None };
+        let var = |t: Option<&Term>| if let Some(Term::Var(v)) = t { Some(v.to_string()) } else { None };
         let mut covered: BTreeSet<String> = BTreeSet::new();
-        for a in rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None }).filter(|a| !a.neg && covers.contains(&a.rel)) {
+        for a in rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None }).filter(|a| !a.neg && covers.contains(a.rel.as_str())) {
             let (docs, nodes, spans) = place(&a.rel);
             covered.extend(docs.into_iter().chain(nodes).chain(spans).filter_map(|c| var(a.args.get(c))));
         }
         let mut guards: Vec<(usize, Vec<Literal>)> = Vec::new();
         let mut fresh = 0;
         // A check of a bound document, never a relation to start from: the documents out of the scope, negated.
-        let at = |d: &str| Literal::Atom(Atom { rel: outside.to_owned(), args: vec![Term::Var(d.to_owned())], neg: true, gated: false });
+        let at = |d: &str| Literal::Atom(Atom { rel: outside.to_owned().into(), args: [Term::Var(d.to_owned().into())].into(), neg: true, gated: false });
         let of_node = |n: &str, fresh: &mut usize| -> Vec<Literal> {
             let g = format!("{}{}", crate::code_rule_dsl::logic::simplify::GUARD_VAR, *fresh);
             *fresh += 1;
-            vec![Literal::Cmp { l: Term::Var(g.clone()), op: "=", r: Term::Call("doc".to_owned(), vec![Term::Var(n.to_owned())]) }, at(&g)]
+            vec![Literal::Cmp { l: Term::Var(g.clone().into()), op: "=", r: Term::Call("doc".into(), [Term::Var(n.to_owned().into())].into()) }, at(&g)]
         };
         let of_span = |n: &str, fresh: &mut usize| -> Vec<Literal> {
             let g = format!("{}{}", crate::code_rule_dsl::logic::simplify::GUARD_VAR, *fresh);
             *fresh += 1;
-            vec![Literal::Atom(Atom { rel: "docof".to_owned(), args: vec![Term::Var(n.to_owned()), Term::Var(g.clone())], neg: false, gated: false }), at(&g)]
+            vec![Literal::Atom(Atom { rel: "docof".into(), args: [Term::Var(n.to_owned().into()), Term::Var(g.clone().into())].into(), neg: false, gated: false }), at(&g)]
         };
         for (k, l) in rule.body.iter().enumerate() {
             match l {
-                Literal::Atom(a) if !a.neg && !covers.contains(&a.rel) && !machinery(&a.rel) => {
+                Literal::Atom(a) if !a.neg && !covers.contains(a.rel.as_str()) && !machinery(&a.rel) => {
                     let (docs, nodes, spans) = place(&a.rel);
                     let dvs: Vec<String> = docs.iter().filter_map(|&c| var(a.args.get(c))).collect();
                     let nvs: Vec<String> = nodes.iter().filter_map(|&c| var(a.args.get(c))).collect();
                     let svs: Vec<String> = spans.iter().filter_map(|&c| var(a.args.get(c))).collect();
                     let mut g = Vec::new();
-                    if !derived.contains(&a.rel) {
+                    if !derived.contains(a.rel.as_str()) {
                         // A base row is one document's: one guard, unless a location of it is covered.
                         if !dvs.iter().chain(&nvs).chain(&svs).any(|v| covered.contains(v)) {
                             // By the node where there is one (a shift: the read stays a test of that node, which
@@ -217,12 +219,23 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
         }
         added
     };
-    let mut rules = all.rules.clone();
-    for (heads, outside) in &groups {
-        let added: usize = rules.iter_mut().filter(|r| heads.contains(&r.head.rel)).map(|r| guard_rule(r, heads, outside)).sum();
-        report.guarded.push((outside.clone(), added));
+    // Each rule's groups, in order: one pass over the rules, not one per group.
+    let mut groups_of: rustc_hash::FxHashMap<&str, Vec<usize>> = Default::default();
+    for (k, (heads, _)) in groups.iter().enumerate() {
+        for h in heads {
+            groups_of.entry(h.as_str()).or_default().push(k);
+        }
     }
-    drop(place);
+    let mut added = vec![0usize; groups.len()];
+    for r in rules.iter_mut() {
+        let Some(ks) = groups_of.get(r.head.rel.as_str()) else { continue };
+        for &k in ks {
+            added[k] += guard_rule(r, &groups[k].0, &groups[k].1);
+        }
+    }
+    for ((_, outside), n) in groups.iter().zip(added) {
+        report.guarded.push((outside.clone(), n));
+    }
     all.rules = rules;
     Ok(report)
 }

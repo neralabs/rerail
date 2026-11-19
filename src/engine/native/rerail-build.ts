@@ -1,6 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 import { loadNativeBinding } from "./native.js";
 import { defaultRerailHome, VERSIONS_DIR } from "../storage/rerail-home.js";
 import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
@@ -30,10 +30,14 @@ function managedBuild(
   return { kind: "main", home, version, packageRoot: realPackageRoot };
 }
 
+/** What {@link resolveRerailBuild} throws for a package that is neither main nor dev, so has no content store of its own. */
+export class NoContentStoreError extends Error {}
+
 /**
  * Classifies the package at `packageRoot`. Main iff its real path is a version directory of the managed
  * Rerail home (`RERAIL_HOME`, default `~/.rerail`); otherwise dev iff it lives in a Git checkout (the nearest
- * ancestor holding `.git`, a directory or a worktree's file). Anything else has no content store of its own.
+ * ancestor holding `.git`, a directory or a worktree's file). Anything else has no content store of its own
+ * ({@link NoContentStoreError}); a folder that cannot be read throws its own error.
  */
 export function resolveRerailBuild(packageRoot: string, environment: NodeJS.ProcessEnv = process.env): RerailBuild {
   const realPackageRoot = realpathSync(packageRoot);
@@ -43,7 +47,7 @@ export function resolveRerailBuild(packageRoot: string, environment: NodeJS.Proc
     if (existsSync(join(directory, ".git"))) return { kind: "dev", packageRoot: realPackageRoot, checkout: directory };
     if (dirname(directory) === directory) break;
   }
-  throw new Error(
+  throw new NoContentStoreError(
     `Rerail at ${realPackageRoot} is neither the managed installation under ` +
       `${join(defaultRerailHome(environment), VERSIONS_DIR)} nor in a Git checkout, so it has no content store`,
   );
@@ -65,9 +69,25 @@ export function isMainRerailBuild(): boolean {
   return managedBuild(realpathSync(PACKAGE_ROOT), process.env) !== undefined;
 }
 
-/** The directory holding the machine-wide content store that only the main build opens. */
-export function mainContentStoreDirectory(): string {
-  return join(homedir(), ".cache", "rerail");
+/**
+ * The directory holding the machine-wide content store that only the main build opens: `~/.cache/rerail`, and on
+ * Windows `AppData\Local\rerail` in the profile. A roaming profile copies everything under the profile folder but
+ * `AppData\Local` at each sign-in and sign-out, so a store at `~/.cache` there slowed every sign-in, and of two
+ * machines signed in at once, the last to sign out overwrote the other's SQLite files.
+ */
+export function mainContentStoreDirectory(home: string = homedir(), platform: NodeJS.Platform = process.platform): string {
+  return platform === "win32" ? win32.join(home, "AppData", "Local", "rerail") : join(home, ".cache", "rerail");
+}
+
+/** Where releases before `mainContentStoreDirectory` moved it kept the Windows content store; the uninstall removes it. */
+export function legacyWindowsContentStoreDirectory(home: string = homedir()): string {
+  return win32.join(home, ".cache", "rerail");
+}
+
+/** Whether `storePath` lies in the machine-wide content store directory, which only the main daemon opens. */
+export function isInMainContentStoreDirectory(storePath: string): boolean {
+  const path = relative(resolve(mainContentStoreDirectory()), resolve(storePath));
+  return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
 }
 
 /** The content store `RERAIL_CONTENT_STORE_PATH` names, absolute, or undefined when it names none. */
@@ -77,9 +97,21 @@ export function contentStoreOverride(): string | undefined {
 }
 
 /**
+ * What the engine writes beside a content store, as suffixes of its path: SQLite's `-wal`, `-shm` and `-journal`, the
+ * locks its collection and upkeep take (`.collection.lock`, `.runs.lock`), and the folders of segments that hold its
+ * frames, its memo and its tapes and sources (`.frames`, `.memo`, `.objects`).
+ */
+export const CONTENT_STORE_SIDECARS = ["-wal", "-shm", "-journal", ".collection.lock", ".runs.lock", ".frames", ".memo", ".objects"] as const;
+
+/** The store at `store` and everything the engine writes beside it ({@link CONTENT_STORE_SIDECARS}), store first. */
+export function contentStoreFiles(store: string): string[] {
+  return [store, ...CONTENT_STORE_SIDECARS.map(suffix => `${store}${suffix}`)];
+}
+
+/**
  * The content store `build` (default: this process's) opens: the machine-wide one for main, `<checkout>/.rerail/`
  * for dev, so no two checkouts and no checkout and the managed installation share a store. The file name is the
- * native binary's (`content-v3.sqlite` at store floor 3), so a floor raise renames every store at once.
+ * native binary's (`content-v5.sqlite` at store floor 5), so a floor raise renames every store at once.
  * `RERAIL_CONTENT_STORE_PATH` overrides both (tests give each run its own file), and then no build is resolved.
  */
 export function contentStorePath(build?: RerailBuild): string {

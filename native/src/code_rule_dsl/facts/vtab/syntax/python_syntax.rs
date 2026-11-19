@@ -13,7 +13,20 @@ pub(super) fn error(source: &str) -> Result<Option<(u32, String)>, String> {
         .map_err(|r| format!("{}: {}", r.class, r.message))
 }
 
-/// The error a batch reading CPython's facts of document `path` fails with, where `ast.parse` raises no `SyntaxError`.
-pub(super) fn failure(path: &str, raised: &str) -> crate::content_store::StoreError {
-    crate::content_store::StoreError::Invalid(format!("{path}: CPython's ast.parse raises {raised}"))
+pub use super::core_rr::failure;
+
+#[cfg(test)]
+mod tests {
+    /// Python's verdict is CPython's grammar's: Python 2's `print "x"`, which tree-sitter accepts, is an error; a
+    /// `match` statement is not; the line is the first error's.
+    #[test]
+    #[cfg(feature = "python-syntax-error")]
+    fn python_syntax_errors_follow_cpythons_grammar() {
+        use super::error as python_error;
+        assert_eq!(python_error("x = 1\n"), Ok(None));
+        assert_eq!(python_error("match x:\n    case 1:\n        pass\n"), Ok(None));
+        assert_eq!(python_error("y = 2\nprint \"x\"\n").map(|e| e.map(|e| e.0)), Ok(Some(2)));
+        assert_eq!(python_error("y = 2\r\nz = 3\rdef (:\n").map(|e| e.map(|e| e.0)), Ok(Some(3)), "lines as src_line counts them");
+        assert!(python_error("f\"{x:\\x}\"\n").is_err_and(|e| e.starts_with("UnicodeDecodeError: ")), "ast.parse raises");
+    }
 }

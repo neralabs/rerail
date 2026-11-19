@@ -22,7 +22,7 @@ fn equality(model: &mut keys::Projection, a: &E, b: &E) {
         }
     }
 }
-pub(in crate::code_rule_dsl) fn projection(
+pub fn projection(
     q: &Query,
     columns: &[Vec<String>],
     known: &keys::Keys,
@@ -72,7 +72,7 @@ pub(in crate::code_rule_dsl) fn projection(
 }
 
 /// Column identities are supplied by the adapter; callbacks and subqueries remain opaque.
-pub(in crate::code_rule_dsl) fn expression(
+pub fn expression(
     e: &E,
     columns: &BTreeMap<(String, String), usize>,
 ) -> Expression {

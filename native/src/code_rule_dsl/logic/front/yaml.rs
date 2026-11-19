@@ -16,10 +16,10 @@ use super::{Atom, Error, Literal, Program, Rule, Term};
 use serde_json::Value;
 
 const HEAD: &str = "violation";
-const MARK: &str = "ast";
+pub const MARK: &str = "ast";
 
 /// A document's text, YAML or JSON (JSON is YAML).
-pub(in crate::code_rule_dsl) fn read(text: &str) -> Result<Value, Error> {
+pub fn read(text: &str) -> Result<Value, Error> {
     serde_yaml_ng::from_str(text).map_err(|e| Error::Syntax(format!("bad policy document: {e}")))
 }
 
@@ -28,7 +28,7 @@ fn str_field<'a>(v: &'a Value, key: &str, what: &str) -> Result<&'a str, Error> 
 }
 
 /// Adds a policy document to `prog`: its forbid matchers as rules into `violation`, the rest as a `.policy`.
-pub(in crate::code_rule_dsl) fn add(prog: &mut Program, doc: &Value) -> Result<(), Error> {
+pub fn add(prog: &mut Program, doc: &Value) -> Result<(), Error> {
     let policy = str_field(doc, "id", "a policy")?.to_owned();
     let mut header = doc.clone();
     let clauses = header
@@ -41,14 +41,14 @@ pub(in crate::code_rule_dsl) fn add(prog: &mut Program, doc: &Value) -> Result<(
             return Err(Error::Syntax(format!("policy {policy}: a forbid clause holds one `ast` matcher")));
         };
         let id = str_field(clause, "id", "a clause")?;
-        let args = vec![Term::Str(policy.clone()), Term::Str(id.to_owned()), Term::Var("D".to_owned()), Term::Var("N".to_owned())];
+        let args = vec![Term::Str(policy.clone().into()), Term::Str(id.to_owned().into()), Term::Var("D".into()), Term::Var("N".into())];
         let body =
             vec![Literal::Ast { document: "D".to_owned(), node: "N".to_owned(), matcher: matcher.to_string(), captures: Vec::new() }];
-        prog.rules.push(Rule { head: Atom { rel: HEAD.to_owned(), args, neg: false, gated: false }, body });
+        prog.rules.push(Rule { head: Atom { rel: HEAD.to_owned().into(), args: args.into(), neg: false, gated: false }, body: body.into() });
         clause["forbid"] = Value::String(MARK.to_owned());
     }
-    prog.decls.entry(HEAD.to_owned()).or_insert_with(|| {
-        [("policy", "sym"), ("clause", "sym"), ("d", "int"), ("n", "node")].map(|(c, t)| (c.to_owned(), t.to_owned())).to_vec()
+    prog.decls.entry(HEAD.to_owned().into()).or_insert_with(|| {
+        [("policy", "sym"), ("clause", "sym"), ("d", "int"), ("n", "node")].map(|(c, t)| (c.to_owned(), t.to_owned())).to_vec().iter().map(|(c, t)| (c.into(), t.into())).collect()
     });
     if !prog.outputs.iter().any(|o| o == HEAD) {
         prog.outputs.push(HEAD.to_owned());
@@ -58,7 +58,7 @@ pub(in crate::code_rule_dsl) fn add(prog: &mut Program, doc: &Value) -> Result<(
 }
 
 /// The policy documents `prog` holds, each with its matchers back from its `violation` rules.
-pub(in crate::code_rule_dsl) fn documents(prog: &Program) -> Result<Vec<Value>, Error> {
+pub fn documents(prog: &Program) -> Result<Vec<Value>, Error> {
     let mut out = Vec::new();
     for header in &prog.policies {
         let mut doc = header.clone();
@@ -71,7 +71,7 @@ pub(in crate::code_rule_dsl) fn documents(prog: &Program) -> Result<Vec<Value>, 
             let matcher = prog
                 .rules
                 .iter()
-                .filter(|r| r.head.rel == HEAD && r.head.args.get(..2) == Some(&[Term::Str(policy.clone()), Term::Str(id.clone())]))
+                .filter(|r| r.head.rel == HEAD && r.head.args.get(..2) == Some(&[Term::Str(policy.clone().into()), Term::Str(id.clone().into())]))
                 .find_map(|r| match r.body.as_slice() {
                     [Literal::Ast { matcher, .. }] => Some(matcher),
                     _ => None,
@@ -85,11 +85,10 @@ pub(in crate::code_rule_dsl) fn documents(prog: &Program) -> Result<Vec<Value>, 
     Ok(out)
 }
 
-/// The `.rr` text of a program of policies: its declarations, outputs, `.policy` documents and rules.
-pub(in crate::code_rule_dsl) fn text(prog: &Program) -> String {
+/// The `.rerail` text of a program of policies: its declarations, outputs, `.policy` documents and rules.
+pub fn text(prog: &Program) -> String {
     let printed = Program { decls: prog.decls.clone(), outputs: prog.outputs.clone(), policies: prog.policies.clone(), rules: prog.rules.clone(), ..Program::default() };
-    crate::code_rule_dsl::logic::rr::print(&printed).expect("matcher rules print as .rr")
+    crate::code_rule_dsl::logic::rr::print(&printed).expect("matcher rules print as .rerail")
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-logic's (it mounts it)

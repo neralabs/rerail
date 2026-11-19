@@ -75,23 +75,12 @@ open(p, s, e) :- reference_open(n), node(d, n, _, s, e), doc(d, p, _).
     );
     let out = dir.join(".out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, dir, None, &out, "program", Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
-    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
-    let num = |s: &str| s.parse::<u32>().unwrap();
+    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).unwrap();
+    let text = |r: &crate::code_rule_dsl::logic::plan::output::Row<'_>, c: usize| r.get(c).to_string();
+    let num = |r: &crate::code_rule_dsl::logic::plan::output::Row<'_>, c: usize| u32::try_from(r.get(c).int().expect("a number")).unwrap();
     Graph {
-        edges: read("edge")
-            .lines()
-            .map(|l| {
-                let f: Vec<&str> = l.split('\t').collect();
-                ((f[0].to_owned(), num(f[1]), num(f[2]), f[3].to_owned(), num(f[4]), num(f[5])), f[6].to_owned())
-            })
-            .collect(),
-        open: read("open")
-            .lines()
-            .map(|l| {
-                let f: Vec<&str> = l.split('\t').collect();
-                (f[0].to_owned(), num(f[1]), num(f[2]))
-            })
-            .collect(),
+        edges: outputs.rows("edge").iter().map(|r| ((text(r, 0), num(r, 1), num(r, 2), text(r, 3), num(r, 4), num(r, 5)), text(r, 6))).collect(),
+        open: outputs.rows("open").iter().map(|r| (text(r, 0), num(r, 1), num(r, 2))).collect(),
     }
 }
 
@@ -161,7 +150,10 @@ fn compare(rule: &std::path::Path, adjust: &Adjust, files: &[(String, String)], 
 /// `reference_rows`, which its relational stages read.
 #[test]
 fn reference_edge_is_ws_reference_graph_on_the_fixtures() {
-    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("references");
+    // Every event of the two policies, each run and compared with W's graph: about 11 minutes on CI's 4-vCPU runner (2
+    // cores, hyperthreaded) beside the rest of its leg, past a test's 10. More than that, never hours.
+    crate::test_watchdog::allow(std::time::Duration::from_secs(1500));
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("references");
     let mut seen = Seen::default();
     let mut skipped = 0;
     for (k, event) in events().into_iter().enumerate().filter(|(_, e)| CHECKS.contains(&e.check.as_str())) {
@@ -250,7 +242,7 @@ def unused():
 /// corpus runner's rows are W's graph's, and between them every label but `late` and an open definition occur.
 #[test]
 fn reference_edge_is_ws_reference_graph_on_projects() {
-    let project = std::path::PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/calls/project");
+    let project = std::path::PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/calls/project");
     let mut oracle = Vec::new();
     let mut pending = vec![project.clone()];
     while let Some(dir) = pending.pop() {
@@ -264,7 +256,7 @@ fn reference_edge_is_ws_reference_graph_on_projects() {
         }
     }
     let package: Vec<(String, String)> = PACKAGE.iter().map(|(p, s)| ((*p).to_owned(), (*s).to_owned())).collect();
-    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("reference-projects");
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("reference-projects");
     let mut seen = Seen::default();
     for check in CHECKS {
         let rule = rule_file(check).expect("the policy's file");

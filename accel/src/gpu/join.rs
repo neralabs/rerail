@@ -78,7 +78,7 @@ pub struct Column {
     pub rows: usize,
 }
 
-fn device() -> Result<&'static metal::Device, String> {
+pub fn device() -> Result<&'static metal::Device, String> {
     shared::get().map(|s| &s.device).ok_or_else(|| "no Metal device".to_owned())
 }
 
@@ -123,7 +123,7 @@ pub fn scratch_set(set: usize) -> usize {
 ///
 /// A variant's source is compiled once, into one library, and each of its kernels is made from that library: a
 /// sort's five kernels cost one compile, not five.
-fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> Result<ComputePipelineState, String> {
+pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> Result<ComputePipelineState, String> {
     shared::pipeline(&format!("join {variant} {name}"), || {
         let library = library(variant, source)?;
         let device = device()?;
@@ -132,6 +132,7 @@ fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> Resul
             device.new_compute_pipeline_state_with_function(&f).map_err(|e| format!("{name}: {e}"))
         })
     })
+    .inspect_err(|e| eprintln!("rerail: the Metal pipeline {variant} {name} is not made: {e}"))
 }
 
 /// The library of a variant's source, compiled the first time (a thread that asks meanwhile waits for it).
@@ -144,7 +145,10 @@ fn library(variant: &str, source: impl FnOnce() -> String) -> Result<metal::Libr
         return Ok(l.clone());
     }
     let device = device()?;
-    let l = objc::rc::autoreleasepool(|| device.new_library_with_source(&source(), &metal::CompileOptions::new()).map_err(|e| format!("compiling {variant}: {e}")))?;
+    // A shipped kernel that does not compile is a bug: its message is said here, where callers that keep only an
+    // error's kind (`rerail_compiler::Error::BackendFailure`) would lose it.
+    let l = objc::rc::autoreleasepool(|| device.new_library_with_source(&source(), &metal::CompileOptions::new()).map_err(|e| format!("compiling {variant}: {e}")))
+        .inspect_err(|e| eprintln!("rerail: a Metal library does not compile: {e}"))?;
     *s = Some(l.clone());
     Ok(l)
 }
@@ -181,7 +185,7 @@ pub fn set_wait(w: Wait) -> Wait {
 /// A committed command buffer, to wait for, and the pooled buffers it reads that nothing else holds: a pooled
 /// buffer is written by the host when handed out again, and Metal orders no host write after a GPU read, so they
 /// return to the pool only once it completes.
-pub(super) struct Submitted {
+pub struct Submitted {
     command: metal::CommandBuffer,
     done: Option<std::sync::mpsc::Receiver<()>>,
     reads: Vec<Column>,
@@ -229,7 +233,7 @@ pub fn add_timeline(command: &CommandBufferRef, committed: f64, returned: f64) {
 
 impl Submitted {
     /// Commits `command` (checked against the launch budget), with a completion handler when this thread waits on one.
-    pub(super) fn commit(command: &CommandBufferRef) -> Result<Submitted, String> {
+    pub fn commit(command: &CommandBufferRef) -> Result<Submitted, String> {
         let done = (WAIT.with(Cell::get) == Wait::Handler).then(|| {
             let (tx, rx) = std::sync::mpsc::sync_channel::<()>(1);
             let block = block::ConcreteBlock::new(move |_: &CommandBufferRef| {
@@ -253,7 +257,7 @@ impl Submitted {
     }
 
     /// Waits for it; its GPU seconds. The buffers it read return to the pool after.
-    pub(super) fn wait(self) -> f64 {
+    pub fn wait(self) -> f64 {
         crate::score::phase("gpu wait", || match &self.done {
             Some(rx) if self.command.status() != metal::MTLCommandBufferStatus::Completed => {
                 let _ = rx.recv();
@@ -277,9 +281,11 @@ const HIST: usize = 3;
 const HEADS: usize = 4;
 /// A scan's levels: slots `SCAN..`.
 const SCAN: usize = 5;
+/// The first slot free for other modules' scratch (the engine's device stages): past the scan's levels.
+pub const FREE: usize = 16;
 
 /// Scratch slot `slot`, at least `bytes` long (grown to a power of two when it is shorter).
-fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
+pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
     let set = SET.with(Cell::get);
     SCRATCH.with_borrow_mut(|sets| {
         let s = &mut sets[set];
@@ -292,7 +298,7 @@ fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
             if let Some(old) = s[slot].take() {
                 old.release();
             }
-            s[slot] = Some(shared::lease_zeroed(bytes.max(64))?);
+            s[slot] = Some(shared::lease_for_join(bytes.max(64), true)?);
         }
         Ok(s[slot].as_ref().expect("a scratch buffer").buffer().clone())
     })
@@ -308,18 +314,25 @@ pub struct Held {
     pub buffer: Buffer,
 }
 
-/// What keeps a held buffer's memory: a lease of the pool, or a staged column whose shared buffer the device reads
-/// in place (`crate::col`).
+/// What keeps a held buffer's memory: a lease of the pool, a staged column whose shared buffer the device reads
+/// in place (`crate::col`), or what holds a block the device reads in place (its owner's handle: decision 0325).
 enum Lease {
     Pooled(#[allow(dead_code)] shared::Pooled),
     Col(#[allow(dead_code)] crate::col::Col),
+    Kept(#[allow(dead_code)] Box<dyn std::any::Any + Send + Sync>),
 }
 
 impl Held {
+    /// A block's own device buffer (`rerail_blocks::Block::gpu_buffer`), kept bound while `keep` (what holds the
+    /// block) lives: the device reads the block where it is, nothing copied (decision 0325).
+    pub fn kept(buffer: Buffer, keep: Box<dyn std::any::Any + Send + Sync>) -> Held {
+        Held { _lease: Lease::Kept(keep), buffer }
+    }
+
     /// A buffer of at least `bytes` (its contents are a previous user's: every reader writes first).
     pub fn new(bytes: usize) -> Result<Held, String> {
         device()?;
-        let lease = shared::lease(bytes)?;
+        let lease = shared::lease_for_join(bytes, false)?;
         let buffer = lease.buffer().clone();
         Ok(Held { _lease: Lease::Pooled(lease), buffer })
     }
@@ -327,7 +340,7 @@ impl Held {
     /// A buffer of at least `bytes`, its first `bytes` zero.
     pub fn zeroed(bytes: usize) -> Result<Held, String> {
         device()?;
-        let lease = shared::lease_zeroed(bytes)?;
+        let lease = shared::lease_for_join(bytes, true)?;
         let buffer = lease.buffer().clone();
         Ok(Held { _lease: Lease::Pooled(lease), buffer })
     }
@@ -349,11 +362,58 @@ impl Held {
 /// writes.
 pub struct Pass<'a> {
     encoder: &'a ComputeCommandEncoderRef,
+    /// The dispatches encoded so far (a command buffer's launch budget counts them).
+    dispatches: Cell<usize>,
+    /// Whether `end` ended the encoder; dropped without it (an error between its dispatches: a refused lease), the
+    /// drop ends it, as Metal requires of an encoder it releases.
+    ended: bool,
 }
 
 impl<'a> Pass<'a> {
     pub fn new(command: &'a CommandBufferRef) -> Pass<'a> {
-        Pass { encoder: command.new_compute_command_encoder() }
+        let encoder = command.new_compute_command_encoder();
+        // Named: the launch budget's record reads the encoder's label, and an unnamed one's is nil.
+        encoder.set_label("rows");
+        Pass { encoder, dispatches: Cell::new(0), ended: false }
+    }
+
+    /// The dispatches encoded so far.
+    pub fn dispatches(&self) -> usize {
+        self.dispatches.get()
+    }
+
+    /// `groups` threadgroups of 256 threads over `buffers`, then `bytes` (a parameter block, as `constant T&`) after
+    /// them.
+    pub fn run_bytes(&self, pipeline: &ComputePipelineState, buffers: &[&BufferRef], bytes: &[u8], groups: usize) {
+        self.encoder.set_compute_pipeline_state(pipeline);
+        for (i, b) in buffers.iter().enumerate() {
+            self.encoder.set_buffer(i as u64, Some(b), 0);
+        }
+        self.encoder.set_bytes(buffers.len() as u64, bytes.len().max(4) as u64, if bytes.is_empty() { [0u32].as_ptr().cast() } else { bytes.as_ptr().cast() });
+        self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(256, 1, 1));
+        self.dispatches.set(self.dispatches.get() + 1);
+    }
+
+    /// `run_bytes`, its threadgroups the three words at `offset` of `grid` (written by the device before it).
+    pub fn run_bytes_indirect(&self, pipeline: &ComputePipelineState, buffers: &[&BufferRef], bytes: &[u8], grid: &BufferRef, offset: u64) {
+        self.encoder.set_compute_pipeline_state(pipeline);
+        for (i, b) in buffers.iter().enumerate() {
+            self.encoder.set_buffer(i as u64, Some(b), 0);
+        }
+        self.encoder.set_bytes(buffers.len() as u64, bytes.len().max(4) as u64, if bytes.is_empty() { [0u32].as_ptr().cast() } else { bytes.as_ptr().cast() });
+        self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(256, 1, 1));
+        self.dispatches.set(self.dispatches.get() + 1);
+    }
+
+    /// `run` of `params`, its threadgroups the three words at `offset` of `grid`.
+    pub fn run_indirect(&self, pipeline: &ComputePipelineState, buffers: &[&BufferRef], params: &[u32], grid: &BufferRef, offset: u64) {
+        self.encoder.set_compute_pipeline_state(pipeline);
+        for (i, b) in buffers.iter().enumerate() {
+            self.encoder.set_buffer(i as u64, Some(b), 0);
+        }
+        self.encoder.set_bytes(buffers.len() as u64, std::mem::size_of_val(params).max(4) as u64, if params.is_empty() { [0u32].as_ptr().cast() } else { params.as_ptr().cast() });
+        self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(256, 1, 1));
+        self.dispatches.set(self.dispatches.get() + 1);
     }
 
     /// `groups` threadgroups of 256 threads over `buffers`, then `params` as `constant uint*` and `longs` as
@@ -369,10 +429,20 @@ impl<'a> Pass<'a> {
             self.encoder.set_bytes(at + 1, std::mem::size_of_val(longs) as u64, longs.as_ptr().cast());
         }
         self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(256, 1, 1));
+        self.dispatches.set(self.dispatches.get() + 1);
     }
 
-    pub fn end(self) {
+    pub fn end(mut self) {
         self.encoder.end_encoding();
+        self.ended = true;
+    }
+}
+
+impl Drop for Pass<'_> {
+    fn drop(&mut self) {
+        if !self.ended {
+            self.encoder.end_encoding();
+        }
     }
 }
 
@@ -423,7 +493,7 @@ impl Column {
 
 /// A multi-level exclusive scan of `count` `uint`s in place, its levels' sums in scratch; the total after it in
 /// `total()`.
-struct Scan {
+pub struct Scan {
     count: usize,
     /// Each level's threadgroups and their sums.
     levels: Vec<(usize, Buffer)>,
@@ -454,6 +524,48 @@ kernel void scan_block(device uint* data [[buffer(0)]], device uint* sums [[buff
     if (t == 255) sums[tg] = off + inc;
 }
 
+// The grids of a scan sized on the device (`Scan::size`): of min(totals[p[0]], p[1]) + 1 values, and of a pass of
+// 256 threads a group over them. Per level k: its count at a[k], its threadgroups at a[8 + 3k]; the pass's at a[32].
+kernel void scan_size(device const uint* totals [[buffer(0)]], device uint* a [[buffer(1)]], constant uint* p [[buffer(2)]],
+                      uint t [[thread_position_in_grid]]) {
+    if (t != 0) return;
+    uint n = min(totals[p[0]], p[1]) + 1;
+    a[32] = (n + 255) / 256; a[33] = 1; a[34] = 1;
+    for (uint k = 0; k < p[2] && k < 8; k++) {
+        uint g = max((n + 1023) / 1024, 1u);
+        a[k] = n; a[8 + 3 * k] = g; a[9 + 3 * k] = 1; a[10 + 3 * k] = 1;
+        n = g;
+    }
+}
+
+// scan_block and scan_add, their count a[p[0]] (`scan_size`'s).
+kernel void scan_block_sized(device uint* data [[buffer(0)]], device uint* sums [[buffer(1)]], device const uint* a [[buffer(2)]],
+                             constant uint* p [[buffer(3)]], uint tg [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]],
+                             uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
+    uint n = a[p[0]];
+    uint at = tg * 1024 + t * 4;
+    uint v[4];
+    uint mine = 0;
+    for (uint i = 0; i < 4; i++) { v[i] = at + i < n ? data[at + i] : 0; mine += v[i]; }
+    uint inc = simd_prefix_inclusive_sum(mine);
+    threadgroup uint part[8];
+    if (lane == 31) part[sg] = inc;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint off = 0;
+    for (uint k = 0; k < sg; k++) off += part[k];
+    uint run = off + inc - mine;
+    for (uint i = 0; i < 4; i++) { if (at + i < n) data[at + i] = run; run += v[i]; }
+    if (t == 255) sums[tg] = off + inc;
+}
+
+kernel void scan_add_sized(device uint* data [[buffer(0)]], device const uint* sums [[buffer(1)]], device const uint* a [[buffer(2)]],
+                           constant uint* p [[buffer(3)]], uint tg [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]]) {
+    uint n = a[p[0]];
+    uint at = tg * 1024 + t * 4;
+    uint s = sums[tg];
+    for (uint i = 0; i < 4; i++) { if (at + i < n) data[at + i] += s; }
+}
+
 // Each value of a block plus its block's prefix.
 kernel void scan_add(device uint* data [[buffer(0)]], device const uint* sums [[buffer(1)]], constant uint* p [[buffer(2)]],
                      uint tg [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]]) {
@@ -465,7 +577,7 @@ kernel void scan_add(device uint* data [[buffer(0)]], device const uint* sums [[
 "#;
 
 impl Scan {
-    fn new(count: usize) -> Result<Scan, String> {
+    pub fn new(count: usize) -> Result<Scan, String> {
         let mut levels = Vec::new();
         let mut size = count;
         loop {
@@ -480,7 +592,7 @@ impl Scan {
     }
 
     /// A scan whose levels are its own: several in one command buffer, each total read after it completes.
-    fn owned(count: usize) -> Result<Scan, String> {
+    pub fn owned(count: usize) -> Result<Scan, String> {
         let (mut levels, mut owned) = (Vec::new(), Vec::new());
         let mut size = count;
         loop {
@@ -501,7 +613,7 @@ impl Scan {
         self._owned
     }
 
-    fn encode(&self, pass: &Pass<'_>, data: &BufferRef) -> Result<(), String> {
+    pub fn encode(&self, pass: &Pass<'_>, data: &BufferRef) -> Result<(), String> {
         let block = pipeline("scan", "scan_block", || SCAN_SOURCE.to_owned())?;
         let add = pipeline("scan", "scan_add", || SCAN_SOURCE.to_owned())?;
         let mut inputs: Vec<(&BufferRef, usize)> = vec![(data, self.count)];
@@ -514,6 +626,34 @@ impl Scan {
         for k in (0..self.levels.len().saturating_sub(1)).rev() {
             let (buffer, n) = inputs[k];
             pass.run(&add, &[buffer, &self.levels[k].1], &[n as u32], &[], self.levels[k].0);
+        }
+        Ok(())
+    }
+
+    /// Encodes the grids of a scan sized on the device: of `min(totals[slot], cap) + 1` values (a stage's rows and
+    /// one), from the binding table's count the work before wrote, not the host's guess of its space. The scan's
+    /// levels are those of `count` values (its most). Returns the grids' words, for `encode_sized` and
+    /// `Pass::run_bytes_sized`.
+    pub fn size(&self, pass: &Pass<'_>, totals: &BufferRef, slot: usize, cap: usize) -> Result<Held, String> {
+        assert!(self.levels.len() <= 8 && cap < self.count);
+        let size = pipeline("scan", "scan_size", || SCAN_SOURCE.to_owned())?;
+        let a = Held::new(4 * 40)?;
+        pass.run(&size, &[totals, &a.buffer], &[slot as u32, cap as u32, self.levels.len() as u32], &[], 1);
+        Ok(a)
+    }
+
+    /// `encode`, each level's grid `size`'s.
+    pub fn encode_sized(&self, pass: &Pass<'_>, data: &BufferRef, sizes: &Held) -> Result<(), String> {
+        let block = pipeline("scan", "scan_block_sized", || SCAN_SOURCE.to_owned())?;
+        let add = pipeline("scan", "scan_add_sized", || SCAN_SOURCE.to_owned())?;
+        let a: &BufferRef = &sizes.buffer;
+        let mut inputs: Vec<&BufferRef> = vec![data];
+        for (k, (_, sums)) in self.levels.iter().enumerate() {
+            pass.run_indirect(&block, &[inputs[k], sums, a], &[k as u32], a, 4 * (8 + 3 * k as u64));
+            inputs.push(sums);
+        }
+        for k in (0..self.levels.len().saturating_sub(1)).rev() {
+            pass.run_indirect(&add, &[inputs[k], &self.levels[k].1, a], &[k as u32], a, 4 * (8 + 3 * k as u64));
         }
         Ok(())
     }
@@ -643,7 +783,7 @@ pub struct Keyed {
     pub bytes: usize,
 }
 
-fn groups(n: usize) -> usize {
+pub fn groups(n: usize) -> usize {
     n.div_ceil(256).max(1)
 }
 
@@ -679,6 +819,21 @@ impl Keyed {
         self.runs.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// The runs' keys in order: the key's distinct values, ascending (after the sort completes).
+    pub fn run_keys(&self) -> Vec<i64> {
+        let n = self.runs();
+        let p = self.rkeys.buffer.contents();
+        // SAFETY: `run_compact` wrote `n` keys of the sort's word, its command buffer completed (`runs` settled it).
+        (0..n).map(|i| unsafe {
+            let k = match self.key {
+                Width::W16 => *p.cast::<u16>().add(i) as u64,
+                Width::W32 => *p.cast::<u32>().add(i) as u64,
+                Width::W64 => *p.cast::<u64>().add(i),
+            };
+            (k as i64).wrapping_add(self.base)
+        }).collect()
+    }
+
     /// The sort's GPU seconds (after it completes).
     pub fn gpu_seconds(&self) -> f64 {
         self.settle();
@@ -709,53 +864,24 @@ impl Keyed {
         let mut columns = columns.into_iter();
         let lead = columns.next().ok_or("a sort of no columns")?;
         let n = lead.rows;
-        let key = lead.width.key();
-        let [init, hist, scatter, heads, compact] = sort_pipes(lead.width)?;
-        let kb = key.bytes();
-        let (keys_a, keys_b) = (scratch(KEYS_A, kb * n)?, scratch(KEYS_B, kb * n)?);
-        // The order ends in `idx_a` after an even number of passes: that one is the relation's own, the other scratch.
-        let passes = lead.bits.div_ceil(8);
-        let perm = Held::new(4 * n)?;
-        let other = scratch(IDX, 4 * n)?;
-        let (idx_a, idx_b): (&BufferRef, &BufferRef) = if passes % 2 == 0 { (&perm.buffer, &other) } else { (&other, &perm.buffer) };
-        let tiles = n.div_ceil(TILE).max(1);
-        let histogram = scratch(HIST, 4 * 256 * tiles)?;
-        let hscan = Scan::new(256 * tiles)?;
-        let heads_buf = scratch(HEADS, 4 * n)?;
-        let rscan = Scan::new(n)?;
-        let starts = Held::new(4 * (n + 1))?;
-        let rkeys = Held::new(kb * n)?;
-        let nruns = Held::new(4)?;
+        let parts = encode_sort(pass, &lead.buffer.buffer, lead.width, lead.bits, n)?;
         let mut others = Vec::new();
         let mut reads = Vec::new();
-        if n > 0 {
-            let nn = n as u32;
-            pass.run(&init, &[&lead.buffer.buffer, &keys_a, idx_a], &[nn], &[], groups(n));
-            for p in 0..passes {
-                let (ki, ii, ko, io) = if p % 2 == 0 { (&keys_a, idx_a, &keys_b, idx_b) } else { (&keys_b, idx_b, &keys_a, idx_a) };
-                pass.run(&hist, &[ki, &histogram], &[nn, 8 * p], &[], tiles);
-                hscan.encode(pass, &histogram)?;
-                pass.run(&scatter, &[ki, ii, &histogram, ko, io], &[nn, 8 * p], &[], tiles);
-            }
-            let keys = if passes % 2 == 0 { &keys_a } else { &keys_b };
-            // The heads' scan after the histograms': the two share scratch, one after the other.
-            pass.run(&heads, &[keys, &heads_buf], &[nn], &[], groups(n));
-            rscan.encode(pass, &heads_buf)?;
-            pass.run(&compact, &[keys, &heads_buf, &starts.buffer, &rkeys.buffer, &nruns.buffer], &[nn], &[], groups(n));
-        }
         for c in columns {
             let w = c.width;
             let gather = gather_pipe(w)?;
             let out = Held::new(n * w.bytes())?;
             if n > 0 {
-                pass.run(&gather, &[&c.buffer.buffer, &perm.buffer, &out.buffer], &[n as u32], &[], groups(n));
+                pass.run(&gather, &[&c.buffer.buffer, &parts.perm.buffer, &out.buffer], &[n as u32], &[], groups(n));
             }
             others.push(Column { buffer: out, width: w, base: c.base, bits: c.bits, rows: c.rows });
             reads.push(c);
         }
         let base = lead.base;
         reads.push(lead);
+        let kb = parts.key.bytes();
         let bytes = 4 * n + (n + 1) * (4 + kb) + others.iter().map(Column::bytes).sum::<usize>();
+        let SortParts { perm, starts, rkeys, nruns, key } = parts;
         let keyed = Keyed { rows: n, key, base, perm, starts, rkeys, nruns, others, pending: std::sync::Mutex::new(None), runs: std::sync::atomic::AtomicUsize::new(usize::MAX), gpu: std::sync::atomic::AtomicU64::new(0), bytes };
         Ok((keyed, reads))
     }
@@ -820,6 +946,341 @@ kernel void pair_keys(device const ulong* words [[buffer(0)]], device uint* out 
     else out[t] = uint(key);
 }
 "#;
+
+/// A sort's results on the device: each sorted place's row (`perm`), the key's runs (each one's first place in
+/// `starts`, with the end after the last; its key in `rkeys`, in the sort's word `key`) and their count (`nruns`).
+pub struct SortParts {
+    pub perm: Held,
+    pub starts: Held,
+    pub rkeys: Held,
+    pub nruns: Held,
+    pub key: Width,
+}
+
+/// Encodes into `pass` a stable LSD radix sort of the `n` values of `lead` (each `width` wide, their span `bits`
+/// bits) and the runs of equal values: the passes only its span needs. Intermediates are in scratch; the results are
+/// buffers of their own. `nruns` is not written when `n` is 0.
+pub fn encode_sort(pass: &Pass<'_>, lead: &BufferRef, width: Width, bits: u32, n: usize) -> Result<SortParts, String> {
+    let key = width.key();
+    let [init, hist, scatter, heads, compact] = sort_pipes(width)?;
+    let kb = key.bytes();
+    let (keys_a, keys_b) = (scratch(KEYS_A, kb * n)?, scratch(KEYS_B, kb * n)?);
+    // The order ends in `idx_a` after an even number of passes: that one is the relation's own, the other scratch.
+    let passes = bits.div_ceil(8);
+    let perm = Held::new(4 * n)?;
+    let other = scratch(IDX, 4 * n)?;
+    let (idx_a, idx_b): (&BufferRef, &BufferRef) = if passes % 2 == 0 { (&perm.buffer, &other) } else { (&other, &perm.buffer) };
+    let tiles = n.div_ceil(TILE).max(1);
+    let starts = Held::new(4 * (n + 1))?;
+    let rkeys = Held::new(kb * n)?;
+    let nruns = Held::new(4)?;
+    if n > 0 {
+        let histogram = scratch(HIST, 4 * 256 * tiles)?;
+        let hscan = Scan::new(256 * tiles)?;
+        let heads_buf = scratch(HEADS, 4 * n)?;
+        let nn = n as u32;
+        pass.run(&init, &[lead, &keys_a, idx_a], &[nn], &[], groups(n));
+        for p in 0..passes {
+            let (ki, ii, ko, io) = if p % 2 == 0 { (&keys_a, idx_a, &keys_b, idx_b) } else { (&keys_b, idx_b, &keys_a, idx_a) };
+            pass.run(&hist, &[ki, &histogram], &[nn, 8 * p], &[], tiles);
+            hscan.encode(pass, &histogram)?;
+            pass.run(&scatter, &[ki, ii, &histogram, ko, io], &[nn, 8 * p], &[], tiles);
+        }
+        let keys = if passes % 2 == 0 { &keys_a } else { &keys_b };
+        // The heads' scan after the histograms': the two share scratch, one after the other.
+        let rscan = Scan::new(n)?;
+        pass.run(&heads, &[keys, &heads_buf], &[nn], &[], groups(n));
+        rscan.encode(pass, &heads_buf)?;
+        pass.run(&compact, &[keys, &heads_buf, &starts.buffer, &rkeys.buffer, &nruns.buffer], &[nn], &[], groups(n));
+    }
+    Ok(SortParts { perm, starts, rkeys, nruns, key })
+}
+
+/// A column's statistics made on the device (decision 0209 §6): its rows, distinct values, the sums of its values'
+/// counts squared and cubed, and its `k` most common values with their counts, most common first.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ColStats {
+    pub rows: u64,
+    pub ndv: u64,
+    pub sq: u64,
+    pub cube: u64,
+    pub top: Vec<(i64, u64)>,
+}
+
+/// The kernels of `column_stats` for a sort word `key`.
+fn col_stats_source(key: Width) -> String {
+    let k = key.ty();
+    format!(
+        r#"#include <metal_stdlib>
+using namespace metal;
+
+// Each run's length (0 past the runs), 1,024 a threadgroup, four a thread; the group's sums of lengths squared and
+// cubed into `part` (two words a group).
+kernel void col_stats(device const uint* starts [[buffer(0)]], device const uint* nruns [[buffer(1)]], device uint* lens [[buffer(2)]],
+                      device ulong* part [[buffer(3)]], constant uint* p [[buffer(4)]],
+                      uint g [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]]) {{
+    uint n = p[0];
+    uint runs = n > 0 ? nruns[0] : 0;
+    ulong sq = 0, cube = 0;
+    for (uint i = 0; i < 4; i++) {{
+        uint r = g * 1024 + i * 256 + t;
+        if (r >= n) break;
+        uint len = r < runs ? starts[r + 1] - starts[r] : 0;
+        lens[r] = len;
+        ulong l = len;
+        sq += l * l;
+        cube += l * l * l;
+    }}
+    threadgroup ulong S[256];
+    threadgroup ulong C[256];
+    S[t] = sq; C[t] = cube;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint s = 128; s > 0; s >>= 1) {{
+        if (t < s) {{ S[t] += S[t + s]; C[t] += C[t + s]; }}
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }}
+    if (t == 0) {{ part[2 * g] = S[0]; part[2 * g + 1] = C[0]; }}
+}}
+
+// One threadgroup: the groups' sums (`p[1]` of them) and the runs' count into `out`.
+kernel void col_sum(device const ulong* part [[buffer(0)]], device const uint* nruns [[buffer(1)]], device ulong* out [[buffer(2)]],
+                    constant uint* p [[buffer(3)]], uint t [[thread_index_in_threadgroup]]) {{
+    uint n = p[0], groups = p[1];
+    ulong sq = 0, cube = 0;
+    for (uint g = t; g < groups; g += 256) {{ sq += part[2 * g]; cube += part[2 * g + 1]; }}
+    threadgroup ulong S[256];
+    threadgroup ulong C[256];
+    S[t] = sq; C[t] = cube;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint s = 128; s > 0; s >>= 1) {{
+        if (t < s) {{ S[t] += S[t + s]; C[t] += C[t + s]; }}
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }}
+    if (t == 0) {{ out[0] = n > 0 ? nruns[0] : 0; out[1] = S[0]; out[2] = C[0]; }}
+}}
+
+// The k longest runs, longest first, from the lengths' sort (ascending, stable): each one's key and length.
+kernel void col_top(device const uint* perm [[buffer(0)]], device const uint* lens [[buffer(1)]], device const {k}* rkeys [[buffer(2)]],
+                    device ulong* out [[buffer(3)]], constant uint* p [[buffer(4)]], uint t [[thread_position_in_grid]]) {{
+    uint n = p[0], k = p[1];
+    if (t >= k) return;
+    ulong key = 0, len = 0;
+    if (t < n) {{ uint r = perm[n - 1 - t]; len = lens[r]; key = ulong(rkeys[r]); }}
+    out[3 + t] = key;
+    out[3 + k + t] = len;
+}}
+"#
+    )
+}
+
+/// A column for `column_stats_of`: values on the host, uploaded as narrow as their span lets them be; or 64-bit values
+/// the device already holds (a resident relation's column, `rows` longs from long `at` of `buffer`), read in place.
+pub enum StatCol<'a> {
+    Host(&'a [i64]),
+    /// Values the device holds: `rows` of them at value `at` of `buffer`, or, with `col`, column `col` of the
+    /// `rerail_blocks` relation whose descriptor is `at` bytes into the block `buffer` binds (decision 0325).
+    Device { buffer: &'a BufferRef, at: usize, rows: usize, col: Option<u32> },
+}
+
+impl StatCol<'_> {
+    fn rows(&self) -> usize {
+        match self {
+            StatCol::Host(v) => v.len(),
+            StatCol::Device { rows, .. } => *rows,
+        }
+    }
+}
+
+/// A device column's span and its keys (`col_span`, `col_base`, `col_narrow`): each tile's least and greatest into
+/// `part`, then the least (the base) and whether the span passes 32 bits into `span`, then each value less the base
+/// as a sort key, 32 bits wide, or 64 when `p[3]` says the span is wide (the batch is encoded again for those).
+/// The column span kernels' source: `COL_SPAN_SOURCE` after the relation's reads written once
+/// (`rerail_blocks::RELATION_READS`), which a relation's column is read in its block with (decision 0325).
+fn col_span_source() -> String {
+    COL_SPAN_SOURCE.replacen("using namespace metal;\n", &format!("using namespace metal;\n{}", rerail_blocks::RELATION_READS), 1)
+}
+
+const COL_SPAN_SOURCE: &str = r#"#include <metal_stdlib>
+using namespace metal;
+
+// Value `r` of a column: at `at` of `src`, or (`rel_col` its number + 1) column `rel_col - 1` of the relation whose
+// descriptor is `at` bytes into the block `src` binds.
+static inline long col_value(device const long* src, ulong at, uint rel_col, uint r) {
+    return rel_col == 0u ? src[at + r] : long(clif_rel_get((device const uchar*)src, at, r, rel_col - 1u));
+}
+
+constant long LEAST = long(0x8000000000000000UL);
+constant long MOST = long(0x7fffffffffffffffUL);
+
+kernel void col_span(device const long* src [[buffer(0)]], device long* part [[buffer(1)]], constant uint* p [[buffer(2)]],
+                     uint g [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]]) {
+    uint n = p[0];
+    ulong at = ulong(p[1]) | (ulong(p[2]) << 32);
+    long lo = MOST, hi = LEAST;
+    for (uint i = 0; i < 4; i++) {
+        uint r = g * 1024 + i * 256 + t;
+        if (r >= n) break;
+        long v = col_value(src, at, p[3], r);
+        lo = min(lo, v);
+        hi = max(hi, v);
+    }
+    threadgroup long L[256];
+    threadgroup long H[256];
+    L[t] = lo; H[t] = hi;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint s = 128; s > 0; s >>= 1) {
+        if (t < s) { L[t] = min(L[t], L[t + s]); H[t] = max(H[t], H[t + s]); }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (t == 0) { part[2 * g] = L[0]; part[2 * g + 1] = H[0]; }
+}
+
+// One threadgroup: the tiles' (`p[0]` of them) least and greatest; the base and whether the span is wide.
+kernel void col_base(device const long* part [[buffer(0)]], device long* span [[buffer(1)]], constant uint* p [[buffer(2)]],
+                     uint t [[thread_index_in_threadgroup]]) {
+    uint groups = p[0];
+    long lo = MOST, hi = LEAST;
+    for (uint g = t; g < groups; g += 256) { lo = min(lo, part[2 * g]); hi = max(hi, part[2 * g + 1]); }
+    threadgroup long L[256];
+    threadgroup long H[256];
+    L[t] = lo; H[t] = hi;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint s = 128; s > 0; s >>= 1) {
+        if (t < s) { L[t] = min(L[t], L[t + s]); H[t] = max(H[t], H[t + s]); }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (t == 0) { span[0] = L[0]; span[1] = (ulong(H[0]) - ulong(L[0])) >> 32 != 0 ? 1 : 0; }
+}
+
+kernel void col_narrow(device const long* src [[buffer(0)]], device const long* span [[buffer(1)]], device uchar* keys [[buffer(2)]],
+                       constant uint* p [[buffer(3)]], uint r [[thread_position_in_grid]]) {
+    uint n = p[0];
+    if (r >= n) return;
+    ulong at = ulong(p[1]) | (ulong(p[2]) << 32);
+    ulong d = ulong(col_value(src, at, p[4], r)) - ulong(span[0]);
+    if (p[3] == 0) ((device uint*)keys)[r] = uint(d); else ((device ulong*)keys)[r] = d;
+}
+"#;
+
+/// Decision 0209 §6, the GPU batch over host columns (`column_stats_of`).
+pub fn column_stats(cols: &[&[i64]], k: usize) -> Result<Vec<ColStats>, String> {
+    let cols: Vec<StatCol<'_>> = cols.iter().map(|c| StatCol::Host(c)).collect();
+    column_stats_of(&cols, k)
+}
+
+/// Decision 0209 §6, the GPU batch: each column's statistics (`ColStats`) and its `k` most common values, all in one
+/// command buffer. Per column: the radix sort with its runs (`encode_sort`), a value's count its run's length;
+/// `col_stats` reduces the lengths a tile a threadgroup, `col_sum` the tiles'; a second sort of the lengths gives
+/// the longest runs (`col_top`). The host reads one small buffer a column. Exact, as the CPU's batch is.
+///
+/// A column the device holds (`StatCol::Device`) is not read by the host: its span is found on the device
+/// (`COL_SPAN_SOURCE`), and its keys sorted 32 bits wide. A column whose span passes 32 bits is made again in a second
+/// command buffer, 64 bits wide.
+pub fn column_stats_of(cols: &[StatCol<'_>], k: usize) -> Result<Vec<ColStats>, String> {
+    device()?;
+    let mut got = stats_round(cols, k, false)?;
+    let wide: Vec<usize> = got.iter().enumerate().filter(|(_, g)| g.is_none()).map(|(i, _)| i).collect();
+    if !wide.is_empty() {
+        let again: Vec<StatCol<'_>> = wide.iter().map(|&i| match &cols[i] {
+            StatCol::Device { buffer, at, rows, col } => StatCol::Device { buffer, at: *at, rows: *rows, col: *col },
+            StatCol::Host(v) => StatCol::Host(v),
+        }).collect();
+        for (i, g) in wide.into_iter().zip(stats_round(&again, k, true)?) {
+            got[i] = g;
+        }
+    }
+    Ok(got.into_iter().map(|g| g.expect("made 64 bits wide")).collect())
+}
+
+/// One command buffer of `column_stats_of`; a device column whose span passes 32 bits is `None` unless `wide`.
+fn stats_round(cols: &[StatCol<'_>], k: usize, wide: bool) -> Result<Vec<Option<ColStats>>, String> {
+    let queue = queue()?;
+    let command = queue.new_command_buffer();
+    let pass = Pass::new(command);
+    let mut keep: Vec<Held> = Vec::new();
+    let mut reads: Vec<Column> = Vec::new();
+    // Per column: its statistics' words, and its base (on the host, or the device's span buffer).
+    let mut outs: Vec<Option<(Held, Result<i64, Held>)>> = Vec::new();
+    for col in cols {
+        let n = col.rows();
+        if n == 0 {
+            outs.push(None);
+            continue;
+        }
+        let nn = n as u32;
+        let tiles = n.div_ceil(TILE).max(1);
+        let (keys, width, bits, base): (Buffer, Width, u32, Result<i64, Held>) = match col {
+            StatCol::Host(values) => {
+                let c = Column::upload(values)?;
+                let got = (c.buffer.buffer.clone(), c.width, c.bits, Ok(c.base));
+                reads.push(c);
+                got
+            }
+            StatCol::Device { buffer, at, rows: _, col } => {
+                let spans = pipeline("column span", "col_span", col_span_source)?;
+                let based = pipeline("column span", "col_base", col_span_source)?;
+                let narrow = pipeline("column span", "col_narrow", col_span_source)?;
+                let (lo, hi) = (*at as u32, (*at >> 32) as u32);
+                // A relation's column (its number + 1), or 0 for values at `at`.
+                let rel_col = col.map_or(0, |c| c + 1);
+                let part = Held::new(16 * tiles)?;
+                let span = Held::new(16)?;
+                let width = if wide { Width::W64 } else { Width::W32 };
+                let keys = Held::new(width.bytes() * n)?;
+                pass.run(&spans, &[buffer, &part.buffer], &[nn, lo, hi, rel_col], &[], tiles);
+                pass.run(&based, &[&part.buffer, &span.buffer], &[tiles as u32], &[], 1);
+                pass.run(&narrow, &[buffer, &span.buffer, &keys.buffer], &[nn, lo, hi, u32::from(wide), rel_col], &[], groups(n));
+                let buf = keys.buffer.clone();
+                keep.extend([part, keys]);
+                (buf, width, if wide { 64 } else { 32 }, Err(span))
+            }
+        };
+        let parts = encode_sort(&pass, &keys, width, bits, n)?;
+        let variant = format!("column stats {:?}", parts.key.bytes());
+        let stats = pipeline(&variant, "col_stats", || col_stats_source(parts.key))?;
+        let sum = pipeline(&variant, "col_sum", || col_stats_source(parts.key))?;
+        let top = pipeline(&variant, "col_top", || col_stats_source(parts.key))?;
+        let lens = Held::new(4 * n)?;
+        let out = Held::zeroed(8 * (3 + 2 * k))?;
+        // The lengths' sums spread over the column's tiles, then their sums in one threadgroup.
+        let part = Held::new(16 * tiles)?;
+        pass.run(&stats, &[&parts.starts.buffer, &parts.nruns.buffer, &lens.buffer, &part.buffer], &[nn], &[], tiles);
+        pass.run(&sum, &[&part.buffer, &parts.nruns.buffer, &out.buffer], &[nn, tiles as u32], &[], 1);
+        keep.push(part);
+        let by_len = encode_sort(&pass, &lens.buffer, Width::W32, 32, n)?;
+        pass.run(&top, &[&by_len.perm.buffer, &lens.buffer, &parts.rkeys.buffer, &out.buffer], &[nn, k as u32], &[], groups(k));
+        outs.push(Some((out, base)));
+        keep.extend([lens, parts.perm, parts.starts, parts.rkeys, parts.nruns, by_len.perm, by_len.starts, by_len.rkeys, by_len.nruns]);
+    }
+    pass.end();
+    let mut done = Submitted::commit(command)?;
+    done.reads = reads;
+    done.wait();
+    drop(keep);
+    Ok(outs
+        .into_iter()
+        .zip(cols)
+        .map(|(o, col)| {
+            let Some((out, base)) = o else { return Some(ColStats::default()) };
+            let base = match base {
+                Ok(b) => b,
+                Err(span) => {
+                    // SAFETY: two longs, written by `col_base`; the command buffer completed.
+                    let s = unsafe { std::slice::from_raw_parts(span.buffer.contents().cast::<i64>(), 2) };
+                    if s[1] != 0 && !wide {
+                        return None;
+                    }
+                    s[0]
+                }
+            };
+            // SAFETY: `3 + 2k` words, written by `col_stats` and `col_top`; the command buffer completed.
+            let w = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u64>(), 3 + 2 * k) };
+            let ndv = w[0];
+            let top = (0..k.min(ndv as usize)).map(|i| ((w[3 + i] as i64).wrapping_add(base), w[3 + k + i])).collect();
+            Some(ColStats { rows: col.rows() as u64, ndv, sq: w[1], cube: w[2], top })
+        })
+        .collect())
+}
 
 /// A probe join's pairs, (left row, right host row), in left row order, and its GPU time.
 pub struct Probed {

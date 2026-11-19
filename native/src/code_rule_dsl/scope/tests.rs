@@ -604,6 +604,26 @@ fn javascript_using_declarations_are_block_scoped() {
     );
 }
 
+/// A TypeScript `using` or `await using` declaration binds its name in its block, as in
+/// JavaScript (Patch 30 in `grammars/tree-sitter-typescript/PATCHES.md`), and a `using` name
+/// is a variable like any other.
+#[test]
+fn typescript_using_declarations_are_block_scoped() {
+    typescript(
+        "{ using t: T = open(); t; }\nt;\nasync function f(rs) {\n  { await using a = open(); a; }\n  a;\n  for (await using r of rs) r;\n  r;\n}\nconst using = [1];\nusing.push(2);\n",
+        &[
+            ("t", 1, Local),
+            ("t", 2, Global),
+            ("a", 1, Local),
+            ("a", 2, Global),
+            ("r", 1, Local),
+            ("r", 2, Global),
+            // The fifth whole-word `using`, after three keywords and the declaration.
+            ("using", 4, Local),
+        ],
+    );
+}
+
 #[test]
 fn javascript_escaped_names_resolve_by_their_decoded_names() {
     // espree decodes `\uXXXX` and `\u{X}` escapes into `Identifier.name`, which eslint-scope
@@ -1426,7 +1446,7 @@ fn oracle_fixtures(
     let root = std::env::var("SCOPE_ORACLE_ROOT")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
-            std::path::Path::new(crate::code_rule_dsl::fixtures_dir!())
+            std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!())
                 .join(pack)
                 .join("scope")
         })

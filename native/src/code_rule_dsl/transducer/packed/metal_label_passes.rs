@@ -14,7 +14,7 @@
 //! sweeps follow the recursion's direction rather than one tree edge per round.
 
 #[path = "metal_label_patterns.rs"]
-mod patterns;
+pub mod patterns;
 
 use super::super::PackedPattern;
 use super::super::metal_batch_abi::MetalSupertype;
@@ -23,7 +23,9 @@ use super::*;
 use super::super::metal_batch_abi::MetalEvaluation;
 use metal::{Buffer, CommandBuffer};
 use std::collections::HashMap;
+use crate::code_rule_dsl::residency::slabs::ResidentParts as _;
 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
+pub use crate::code_rule_dsl::transducer::packed::device::{Outcome, RootJobs, RootsFound};
 
 /// A pass writes the label `target` (an index, not a class); labels it reads are its classes.
 pub(in crate::code_rule_dsl) enum Pass<'a> {
@@ -62,12 +64,12 @@ pub(in crate::code_rule_dsl) enum Pass<'a> {
     Empty { target: u32 },
 }
 
-/// A pass's roots, as a rule over each document's codes (decision 0033): no node list is built.
-/// Every root test a pass's domain makes (its kinds, its program's leading kind and supertype
-/// tests, `matcher::Entry`) is a property of a node's code, so a pass's roots in a document are
-/// the nodes of the codes its rule admits, which the residency indexes (`DocView::by_code`). The
-/// run hands the device each pass's (document, code) runs (`RootSeg`); the device reads its root
-/// in place. Listed roots (a clause's prefilter candidates, few and scattered) are a list.
+/// A pass's roots, as a rule over each document's codes (decision 0033): every root test a pass's
+/// domain makes (its kinds, its program's leading kind and supertype tests, `matcher::Entry`) is a
+/// property of a node's code. The device is handed the rule, not its roots (decision 0293 §10): a
+/// thread takes a pass and a group of 64 of a document's nodes and finds the group's roots from
+/// the tape's code bytes (`root_mask`). Listed roots (a clause's prefilter candidates, few and
+/// scattered) are a row of bits over the batch's nodes.
 #[derive(Debug)]
 pub(in crate::code_rule_dsl) enum Roots {
     /// The nodes whose kind is one of `kinds` (any where `None`) and whose code passes `entry`
@@ -78,10 +80,9 @@ pub(in crate::code_rule_dsl) enum Roots {
 }
 
 impl Roots {
-    fn admits(kinds: &Option<Vec<u16>>, entry: &[(u8, u16)], code: &crate::code_rule_dsl::tape::resident::DeviceCode) -> bool {
-        let class = |class: u16| code.classes[..usize::from(code.class_count)].contains(&class);
-        kinds.as_ref().is_none_or(|kinds| kinds.binary_search(&code.kind).is_ok())
-            && entry.iter().all(|&(op, arg)| if op == super::super::KIND { code.kind == arg } else { class(arg) })
+    fn admits(kinds: &Option<Vec<u16>>, entry: &[(u8, u16)], kind: u16, classes: &[u16]) -> bool {
+        kinds.as_ref().is_none_or(|kinds| kinds.binary_search(&kind).is_ok())
+            && entry.iter().all(|&(op, arg)| if op == super::super::KIND { kind == arg } else { classes.contains(&arg) })
     }
 
     /// This rule as the sweep tests it at a node's code (`sweep_admits`): {kind count or NONE,
@@ -105,96 +106,107 @@ impl Roots {
                 if !active.get(file).copied().unwrap_or(false) {
                     return Box::new(std::iter::empty());
                 }
-                Box::new((0..tape.transducer_len() as u32).filter(move |&node| {
-                    kinds.as_ref().is_none_or(|kinds| kinds.binary_search(&tape.transducer_kind(node)).is_ok())
-                        && entry.iter().all(|&(op, arg)| if op == super::super::KIND { tape.transducer_kind(node) == arg } else { tape.transducer_has_supertype(node, arg) })
-                }))
+                let mut nodes = Vec::new();
+                tape.transducer_nodes_where(|kind, classes| Self::admits(kinds, entry, kind, classes), &mut nodes);
+                Box::new(nodes.into_iter())
             }
         }
     }
 
-    /// This rule's segments over a batch's documents, appended to `segs` (in u32s, as `RootSeg`s
-    /// at 16-byte records): the header's index (in records) and the roots' count. Listed nodes go
-    /// after every segment, in `listed`, which the caller appends and offsets (`Segments`).
-    fn segments(&self, documents: &[std::sync::Arc<crate::code_rule_dsl::residency::slabs::Resident>], segs: &mut Segments) -> (u32, u32) {
-        let header = segs.records.len();
-        segs.records.push([0; 4]);
-        let mut total = 0_u32;
-        for (doc, resident) in documents.iter().enumerate() {
-            match self {
-                Self::Listed(lists) => {
-                    let Some(list) = lists.get(doc).filter(|list| !list.is_empty()) else { continue };
-                    segs.records.push([doc as u32, ROOT_LISTED | segs.listed.len() as u32, list.len() as u32, total]);
-                    segs.listed.extend_from_slice(list);
-                    total += list.len() as u32;
+    /// Whether this rule may have roots in file `file` (a rule over codes runs in the files
+    /// `active` marks; a list, where it has some).
+    fn runs_in(&self, file: usize) -> bool {
+        match self {
+            Self::Listed(lists) => lists.get(file).is_some_and(|list| !list.is_empty()),
+            Self::Codes { active, .. } => active.get(file).copied().unwrap_or(false),
+        }
+    }
+
+    /// This rule as the device reads it (`root_mask`), appended to `words`: its kind (0 over codes,
+    /// 1 listed); over codes, a bit per file it runs in, then its test (`device_rule`); listed,
+    /// its nodes as a row of bits over the batch's nodes (two words past the last, which a 64-bit
+    /// window at the end reads).
+    fn table(&self, files: &[TapeDoc], words: &mut Vec<u32>) -> Result<(), Error> {
+        match self {
+            Self::Codes { active, .. } => {
+                words.push(0);
+                let mut bits = vec![0_u32; files.len().div_ceil(32)];
+                for file in (0..files.len()).filter(|&file| active.get(file).copied().unwrap_or(false)) {
+                    bits[file / 32] |= 1 << (file % 32);
                 }
-                Self::Codes { kinds, entry, active } => {
-                    if !active.get(doc).copied().unwrap_or(false) {
-                        continue;
+                words.extend(bits);
+                words.extend(self.device_rule()?);
+            }
+            Self::Listed(lists) => {
+                words.push(1);
+                let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
+                let row = words.len();
+                words.resize(row + nodes.div_ceil(32) + 2, 0);
+                let mut base = 0;
+                for (file, tape) in files.iter().enumerate() {
+                    for &local in lists.get(file).into_iter().flatten() {
+                        let node = base + local as usize;
+                        words[row + node / 32] |= 1 << (node % 32);
                     }
-                    let starts = resident.code_starts();
-                    for (code, device) in resident.codes().iter().enumerate() {
-                        let count = starts[code + 1] - starts[code];
-                        if count > 0 && Self::admits(kinds, entry, device) {
-                            segs.records.push([doc as u32, starts[code], count, total]);
-                            total += count;
-                        }
-                    }
+                    base += tape.transducer_len();
                 }
             }
         }
-        segs.records[header] = [(segs.records.len() - header - 1) as u32, total, 0, 0];
-        (header as u32, total)
+        Ok(())
     }
 }
 
-/// Bit 31 of a segment's start: its nodes are listed (`Roots::Listed`), not a code's.
-const ROOT_LISTED: u32 = 1 << 31;
+/// A batch's groups of 64 nodes, each document's from its first node (`ROOT_GROUP`).
+const ROOT_GROUP: usize = 64;
 
-/// A run's root segments (`Roots::segments`): 16-byte records, then the listed nodes. One per
-/// distinct rule (by its `Arc`), so passes of one domain share them.
+/// A run's pass roots as the device reads them (`root_mask`): the batch's file count and each
+/// file's first group (and the total), then one rule per distinct `Roots` (by its `Arc`), so passes
+/// of one domain share it. Nothing a root: a rule is a few words, a list a bit a node.
 #[derive(Default)]
-struct Segments {
-    records: Vec<[u32; 4]>,
-    listed: Vec<u32>,
-    by_rule: HashMap<usize, (u32, u32)>,
+struct RootTable {
+    words: Vec<u32>,
+    by_rule: HashMap<usize, (u32, bool)>,
 }
 
-impl Segments {
-    fn of(&mut self, roots: &std::sync::Arc<Roots>, documents: &[std::sync::Arc<crate::code_rule_dsl::residency::slabs::Resident>]) -> (u32, u32) {
+impl RootTable {
+    fn prefix(&mut self, files: &[TapeDoc]) {
+        if self.words.is_empty() {
+            self.words.push(files.len() as u32);
+            let mut group = 0_u32;
+            for tape in files {
+                self.words.push(group);
+                group += tape.transducer_len().div_ceil(ROOT_GROUP) as u32;
+            }
+            self.words.push(group);
+        }
+    }
+
+    /// The batch's groups.
+    fn groups(&self) -> u32 {
+        if self.words.is_empty() { 0 } else { self.words[1 + self.words[0] as usize] }
+    }
+
+    /// A file's groups.
+    fn file_groups(files: &[TapeDoc], file: usize) -> u32 {
+        files[file].transducer_len().div_ceil(ROOT_GROUP) as u32
+    }
+
+    /// The rule's word in the table, and whether it may have roots anywhere in the batch.
+    fn of(&mut self, roots: &std::sync::Arc<Roots>, files: &[TapeDoc]) -> Result<(u32, bool), Error> {
+        self.prefix(files);
         if let Some(found) = self.by_rule.get(&(std::sync::Arc::as_ptr(roots) as usize)) {
-            return *found;
+            return Ok(*found);
         }
-        let found = roots.segments(documents, self);
+        let at = self.words.len() as u32;
+        roots.table(files, &mut self.words)?;
+        let found = (at, (0..files.len()).any(|file| roots.runs_in(file)));
         self.by_rule.insert(std::sync::Arc::as_ptr(roots) as usize, found);
-        found
+        Ok(found)
     }
 
-    /// A registered rule's header and, per document with roots, its first root's index in the
-    /// rule and how many.
-    fn by_doc(&self, roots: &std::sync::Arc<Roots>) -> Result<(u32, HashMap<u32, (u32, u32)>), Error> {
-        let &(header, _) = self.by_rule.get(&(std::sync::Arc::as_ptr(roots) as usize)).ok_or(Error::BackendFailure)?;
-        let count = self.records[header as usize][0] as usize;
-        let mut docs = HashMap::<u32, (u32, u32)>::new();
-        for record in &self.records[header as usize + 1..header as usize + 1 + count] {
-            docs.entry(record[0]).and_modify(|(_, total)| *total += record[2]).or_insert((record[3], record[2]));
-        }
-        Ok((header, docs))
-    }
-
-    /// As the device reads them: listed starts offset past the records.
-    fn words(&self) -> Vec<u32> {
-        let offset = 4 * self.records.len() as u32;
-        let mut words = Vec::with_capacity(4 * self.records.len() + self.listed.len());
-        for record in &self.records {
-            let from = if record[1] & ROOT_LISTED != 0 && record[2] > 0 { ROOT_LISTED | ((record[1] & !ROOT_LISTED) + offset) } else { record[1] };
-            words.extend([record[0], from, record[2], record[3]]);
-        }
-        words.extend_from_slice(&self.listed);
-        if words.is_empty() {
-            words.push(0);
-        }
-        words
+    /// A registered rule's word.
+    fn at(&self, roots: &std::sync::Arc<Roots>) -> Result<(u32, bool), Error> {
+        self.by_rule.get(&(std::sync::Arc::as_ptr(roots) as usize)).copied().ok_or(Error::BackendFailure)
     }
 }
 
@@ -230,17 +242,6 @@ pub(in crate::code_rule_dsl) struct Plan<'a> {
     /// (`root_records_*`, decision 0024 §3): `Outcome::records`.
     pub(in crate::code_rule_dsl) roots: Option<&'a RootJobs<'a>>,
 }
-
-/// Root programs and, per program, per file, their starts (an anchor a task).
-pub(in crate::code_rule_dsl) struct RootJobs<'a> {
-    pub(in crate::code_rule_dsl) programs: Vec<&'a Program>,
-    pub(in crate::code_rule_dsl) starts: Vec<Vec<Vec<u32>>>,
-}
-
-/// Per root program: per file its (task, record)s in task then walk order, or `None` where the
-/// program did not run on the device (not a micro walk of at most 32 frames, a walk that
-/// overflowed, or records past the buffer); the host walks those.
-pub(in crate::code_rule_dsl) type RootsFound = Vec<Option<Vec<Vec<(u32, super::super::RootRecord)>>>>;
 
 /// The root walks' kernels in `KERNELS`: 8 and 32 frames.
 const ROOT_KERNELS: [usize; 2] = [9, 10];
@@ -512,26 +513,6 @@ const WIDE: (usize, Option<u32>) = (EXECUTION_LANES, None);
 /// The fewest states per lane a run over the buffer budget takes (`Error::BackendBudget`).
 const MIN_STATES: u32 = 512;
 
-#[derive(Debug, Default)]
-pub(in crate::code_rule_dsl) struct Outcome {
-    /// Every label's words after the passes.
-    pub(in crate::code_rule_dsl) labels: Vec<u32>,
-    pub(in crate::code_rule_dsl) words: usize,
-    pub(in crate::code_rule_dsl) command_buffers: usize,
-    pub(in crate::code_rule_dsl) dispatches: usize,
-    /// Why the host waited before the end: workspace growth, a recursive group that needed more
-    /// rounds than were encoded (the whole clause again), the upload budget.
-    pub(in crate::code_rule_dsl) waits: [usize; 3],
-    /// Rounds encoded per recursive group.
-    pub(in crate::code_rule_dsl) rounds: usize,
-    /// Whether a task outgrew `NARROW`'s states, so the batch ran again with `WIDE`'s.
-    pub(in crate::code_rule_dsl) widened: bool,
-    /// Whether a micro walk outgrew its frames, so every program ran on the interpreter.
-    pub(in crate::code_rule_dsl) interpreted: bool,
-    /// The plan's root records (`Plan::roots`); empty without roots.
-    pub(in crate::code_rule_dsl) records: RootsFound,
-}
-
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct Shape {
@@ -548,6 +529,86 @@ struct Shape {
     file_count: u32,
     /// A micro walk's steps (`compile_micro::steps` for the largest file and program).
     steps: u32,
+    /// Profiling (`RERAIL_GPU_WALK_STEPS`): 1 + the dispatch's first pass's place in its stats
+    /// buffer (bound at `WALK_STATS_SLOT`); 0 off.
+    profile: u32,
+    /// The spill queue's capacity in frames (`MicroQ`, decision 0125); 0 no spill.
+    queue: u32,
+    /// A walk's steps between spills (`SPILL_BUDGET`).
+    budget: u32,
+}
+
+/// A walk's steps before it spills a frame, and between spills: well past a short walk's (most take
+/// under 20), well under a long one's (a module's descendants, 10^5).
+const SPILL_BUDGET: u32 = 512;
+
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    /// Tests: the spill budget (`SPILL_BUDGET`), low so every walk spills.
+    pub static SPILL_BUDGET_TEST: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+}
+
+fn spill_budget() -> u32 {
+    #[cfg(any(test, feature = "test-hooks"))]
+    if let Some(budget) = SPILL_BUDGET_TEST.get() {
+        return budget;
+    }
+    SPILL_BUDGET
+}
+
+/// Where a micro kernel binds its spill queue's slots, control and items (`MicroQ`).
+const SPILL_SLOTS: [u64; 3] = [23, 24, 25];
+/// The spill queue's frames: a long walk's frames past its step budget (`MICRO_BUDGET`).
+const SPILL_FRAMES: usize = 1 << 15;
+/// A spilled frame's words (`MICRO_ITEM`).
+const SPILL_ITEM: usize = 20;
+
+/// Whether long micro walks spill their frames to other threads (`RERAIL_MICRO_SPILL=off`: not).
+fn spill_on() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_MICRO_SPILL").map_or(true, |v| v != "off"));
+    *ON
+}
+
+/// Where a micro kernel binds its walk statistics (`Shape::profile`): below the slabs.
+const WALK_STATS_SLOT: u64 = 26;
+
+/// Profiling (`RERAIL_GPU_WALK_STEPS`): each micro pass's walks, steps and longest walk, by its
+/// words, in the profile's stages (`walk_steps.`, `walk_items.`, `walk_max.`).
+fn walk_steps_on() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_GPU_WALK_STEPS").is_some());
+    *ON
+}
+
+/// A micro walk's words as text: what a profile names the walk by.
+fn describe_walk(tier: usize, words: &[u32]) -> String {
+    let mut out = format!("t{tier}:");
+    for &word in words {
+        let (op, mode, arg) = super::super::split(word);
+        let named = if mode == 1 { "n" } else { "" };
+        let part = match op {
+            0 => "fail".to_owned(),
+            1 => format!("kind={arg}"),
+            2 => format!("field={arg}"),
+            3 => format!("flags{mode}/{arg}"),
+            4 => format!("text{arg}"),
+            10 => format!("class={arg}"),
+            16 => format!("child{named}"),
+            17 => format!("next{named}"),
+            18 => "parent".to_owned(),
+            19 => format!("desc{named}"),
+            20 => format!("after{named}"),
+            21 => format!("save{arg}"),
+            22 => format!("load{arg}"),
+            32 => "capture".to_owned(),
+            48 => format!("fork@{arg}"),
+            49 => format!("jump@{arg}"),
+            64 => format!("emit{arg}"),
+            other => format!("op{other}/{arg}"),
+        };
+        out.push(' ');
+        out.push_str(&part);
+    }
+    out
 }
 
 #[repr(C)]
@@ -698,13 +759,29 @@ fn scratch_rows(plan: &Plan<'_>) -> usize {
     plan.steps.iter().flat_map(|(_, levels)| levels).map(Vec::len).max().unwrap_or(0).max(1)
 }
 
-/// The device's tape view (decision 0032), which the label and pattern kernels read.
-const TAPE_VIEW: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"));
+/// The device's tape view (decision 0032), which the label and pattern kernels read: the
+/// document table's entry as generated (`slabs::msl`, decisions 0289 §4 and 0310), the reads written once in CLIF
+/// (`metal_tape_reads.metal`), then the readers.
+///
+/// The batch's tape format is function constant 0 (`tape_format`, 0 for a mixed batch): each view load of the format
+/// field reads it, so a batch of one format runs reads without the other format's branches (t41: label_micro 388 to
+/// about 300 ms at s1000). Every pipeline of these sources is made with a value ([`pipeline_of`]).
+static TAPE_VIEW: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!(
+        "#include <metal_stdlib>\nusing namespace metal;\n{}constant uint tape_format [[function_constant(0)]];\n#define clif_view(v,a) ((tape_format!=0u&&(a)=={}u)?tape_format:(v)[(a)/4u])\n{}{}",
+        crate::code_rule_dsl::residency::slabs::msl(),
+        // The view's own offset: a read's `v` is the entry past its `at` (`metal_tape.metal`'s `TAPE_READ`).
+        std::mem::offset_of!(crate::code_rule_dsl::residency::slabs::TapeView, format),
+        include_str!("metal_tape_reads.metal"),
+        include_str!("metal_tape.metal")
+    )
+});
 /// The label kernels over the tape view.
-const SOURCE: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"), include_str!("metal_label_passes.metal"));
-/// Where a label kernel binds the batch's four slabs (`Slabs`): past every other buffer.
+static SOURCE: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| format!("{}{}{}", *TAPE_VIEW, include_str!("metal_work_queue.metal"), include_str!("metal_label_passes.metal")));
+/// Where a label kernel binds the batch's chunk block (`ChunkTape`'s `at`): past every other buffer.
 const SLAB_SLOT: u64 = 27;
-const KERNELS: [&str; 11] = [
+const KERNELS: [&str; 14] = [
     "label_sink",
     "label_settle",
     "label_round",
@@ -716,9 +793,18 @@ const KERNELS: [&str; 11] = [
     "label_group_32",
     "root_records_8",
     "root_records_32",
+    "label_group_64",
+    "label_group_128",
+    "label_group_256",
 ];
-/// The fused group kernels in `KERNELS` (`Runner::group`): 8 and 32 frames a walk.
-const GROUP_KERNELS: [usize; 2] = [7, 8];
+/// The fused group kernels in `KERNELS` (`Runner::group`): 8, 32, 64, 128 and 256 frames a walk.
+const GROUP_KERNELS: [usize; 5] = [7, 8, 11, 12, 13];
+/// The frames of each fused group kernel (`GROUP_KERNELS`). A walk takes the fewest that hold its
+/// static depth, at most the loop tier's 64, which a loop walk (no static depth) takes, as
+/// `label_micro` does. A run whose walk outgrows them runs again deep (`Runner::deep`), where the
+/// cap is 256: past every static depth seen (159 on the S7 slice), so only a loop walk can still
+/// outgrow it, and only that runs on the interpreter.
+const GROUP_FRAMES: [usize; 5] = [8, 32, 64, 128, 256];
 /// A group dispatch's threads per file.
 const GROUP_WIDTH: u64 = 64;
 
@@ -747,6 +833,10 @@ const TIER_KERNELS: [usize; 3] = [4, 5, 3];
 /// the footprint over budget (511–515 MB). A run whose walk outgrows 64 frames runs again with
 /// the same stacks as 2048 of 128 (`label_micro_deep`, `MICRO_DEEP_POOL`).
 const MICRO_POOL: usize = 4096;
+/// A SIMD group's lanes on every Apple GPU: the kernels that spread a group's roots over its lanes are written for it
+/// (`simd_roots`), and every pool and stack count here is a multiple of it.
+const SIMD_WIDTH: usize = 32;
+const _: () = assert!(MICRO_POOL % SIMD_WIDTH == 0 && MICRO_DEEP_POOL % SIMD_WIDTH == 0);
 const MICRO_STACK_WORDS: usize = 64 * 17;
 /// The pooled stacks' words (`Runner::stacks`), shared by every tier and the root walks: a tier
 /// of `frames` frames of `words` words each runs this many lanes (32,768 of 8 micro frames).
@@ -784,51 +874,68 @@ pub(in crate::code_rule_dsl) fn warm() {
                 // 0.8 s under load) than opening it itself (50-80 ms).
                 let _ = super::set_steps::pipelines();
                 let _ = compile_resident_interpreter_cached();
-                let _ = pipelines();
+                // The run's format, as its tapes are placed (a 16z tape as 16): its batches' kernels.
+                let _ = pipelines(match crate::code_rule_dsl::tape::formats::Format::of_run() {
+                    crate::code_rule_dsl::tape::formats::Format::F15 => 15,
+                    _ => 16,
+                });
                 let _ = compile_sweep_cached();
             });
         }));
     });
 }
 
-/// The label kernels, compiled once (until the residency's drop).
-static PIPELINES: Mutex<Option<Vec<ComputePipelineState>>> = Mutex::new(None);
-/// The clauses' pattern kernels, by source (until the residency's drop).
-static PATTERN_PIPELINES: LazyLock<Mutex<HashMap<String, ComputePipelineState>>> = LazyLock::new(Default::default);
+/// The label kernels, compiled once per tape format (until the residency's drop).
+static PIPELINES: LazyLock<Mutex<HashMap<u32, Vec<ComputePipelineState>>>> = LazyLock::new(Default::default);
+/// The clauses' pattern kernels, by source and tape format (until the residency's drop).
+static PATTERN_PIPELINES: LazyLock<Mutex<HashMap<(String, u32), ComputePipelineState>>> = LazyLock::new(Default::default);
+
+/// A pipeline of a source over [`TAPE_VIEW`] for a batch of tapes in `format` (0: mixed).
+fn pipeline_of(source: &str, name: &str, format: u32) -> Result<ComputePipelineState, Error> {
+    rerail_metal::runtime::pipeline_named_constant(source, name, Some(format))
+}
 
 /// Releases the compiled label and pattern kernels (the residency's drop).
 pub(in crate::code_rule_dsl) fn drop_pipelines() {
     if let Ok(mut pipelines) = PIPELINES.lock() {
-        *pipelines = None;
+        pipelines.clear();
     }
     if let Ok(mut pipelines) = PATTERN_PIPELINES.lock() {
         pipelines.clear();
     }
 }
 
-fn pipelines() -> Result<Vec<ComputePipelineState>, Error> {
+fn pipelines(format: u32) -> Result<Vec<ComputePipelineState>, Error> {
     let mut cached = PIPELINES.lock().map_err(|_| Error::BackendFailure)?;
-    if let Some(pipelines) = &*cached {
+    if let Some(pipelines) = cached.get(&format) {
         return Ok(pipelines.clone());
     }
     let pipelines = KERNELS
         .iter()
-        .map(|name| pipeline_named(SOURCE, name))
+        .map(|name| pipeline_of(&SOURCE, name, format))
         .collect::<Result<Vec<_>, _>>()?;
-    *cached = Some(pipelines.clone());
+    cached.insert(format, pipelines.clone());
     Ok(pipelines)
+}
+
+/// Compiles every label kernel and the fact-only pattern kernel for a batch of `format` (0: mixed): how many of each.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn compile_label_kernels(format: u32) -> Result<(usize, usize), Error> {
+    let kernels = pipelines(format)?.len();
+    let patterns = pattern_pipelines(&[], true, format)?.map_or(0, |(pipelines, _)| pipelines.len());
+    Ok((kernels, patterns))
 }
 
 /// The plan's pattern kernels, one per `patterns::GROUP` of its patterns (a fact-only plan's
 /// one), with every pattern's metavariable names in the plan's numbering.
-fn pattern_pipelines(patterns: &[&PackedPattern], facts: bool) -> Result<Option<(Vec<ComputePipelineState>, Vec<Vec<String>>)>, Error> {
+fn pattern_pipelines(patterns: &[&PackedPattern], facts: bool, format: u32) -> Result<Option<(Vec<ComputePipelineState>, Vec<Vec<String>>)>, Error> {
     if patterns.is_empty() && !facts {
         return Ok(None);
     }
     let (mut pipelines, mut names) = (Vec::new(), Vec::new());
     let groups = patterns.chunks(patterns::GROUP).collect::<Vec<_>>();
     for (group, members) in if groups.is_empty() { vec![&[][..]] } else { groups }.into_iter().enumerate() {
-        let (pipeline, group_names) = pattern_pipeline(members, group * patterns::GROUP)?;
+        let (pipeline, group_names) = pattern_pipeline(members, group * patterns::GROUP, format)?;
         pipelines.push(pipeline);
         names.extend(group_names);
     }
@@ -836,7 +943,7 @@ fn pattern_pipelines(patterns: &[&PackedPattern], facts: bool) -> Result<Option<
 }
 
 /// One group's pattern kernel, compiled once per distinct source.
-fn pattern_pipeline(patterns: &[&PackedPattern], first: usize) -> Result<(ComputePipelineState, Vec<Vec<String>>), Error> {
+fn pattern_pipeline(patterns: &[&PackedPattern], first: usize, format: u32) -> Result<(ComputePipelineState, Vec<Vec<String>>), Error> {
     let (source, names) = patterns::source(patterns, first);
     // `RERAIL_DIAG_PATTERNS=<dir>`: each pattern kernel's source, for measuring it alone.
     if let Some(dir) = std::env::var_os("RERAIL_DIAG_PATTERNS") {
@@ -846,12 +953,13 @@ fn pattern_pipeline(patterns: &[&PackedPattern], first: usize) -> Result<(Comput
         let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{:016x}.metal", hasher.finish())), &source);
     }
     let mut cached = PATTERN_PIPELINES.lock().map_err(|_| Error::BackendFailure)?;
-    if let Some(pipeline) = cached.get(&source) {
+    let key = (source, format);
+    if let Some(pipeline) = cached.get(&key) {
         return Ok((pipeline.clone(), names));
     }
     crate::code_rule_dsl::prof::count("gpu.pattern_pipelines", 1);
-    let pipeline = pipeline_named(&source, patterns::KERNEL)?;
-    cached.insert(source, pipeline.clone());
+    let pipeline = pipeline_of(&key.0, patterns::KERNEL, format)?;
+    cached.insert(key, pipeline.clone());
     Ok((pipeline, names))
 }
 
@@ -862,7 +970,7 @@ fn bytes_of<T: Copy>(values: &[T]) -> &[u8] {
 /// The batch's tape buffers, shared by every level.
 struct Tapes {
     /// The batch's documents, resident (decision 0032): the label kernels read their tapes in
-    /// place, `docs` holding each one's `DocView`.
+    /// place, `docs` holding each one's `ChunkTape`.
     table: crate::code_rule_dsl::residency::slabs::DocTable,
     docs: MappedBuffer,
     /// The label state: the prefix (head, labels, the sweeps' words), the scratch rows and the
@@ -954,31 +1062,47 @@ struct Runner<'a> {
     /// Whether the loop tier runs with 128-frame stacks (`label_micro_deep`).
     deep: bool,
     walks: HashMap<usize, Walks>,
-    /// Every pass's roots as segments (`Roots::segments`), one buffer for the run (`segs`).
-    segments: Segments,
-    segs: Option<MappedBuffer>,
+    /// Every pass's roots as rules (`RootTable`), one buffer for the run (`root_words`).
+    root_table: RootTable,
+    root_words: Option<MappedBuffer>,
     /// The loop tier's stacks (`MICRO_POOL` of them), committed only as walks use them.
     stacks: Option<MappedBuffer>,
     /// The deep fused groups' stacks, one buffer for all of them: the groups run one after
     /// another in the command buffer (five of 33 MB each on S7 before, list step 13).
-    group_stacks: [Option<MappedBuffer>; 2],
+    group_stacks: [Option<MappedBuffer>; 5],
     encoded: bool,
     outcome: Outcome,
     /// The plan's root walks, encoded after its passes (`records`).
     roots: Option<RootsEncoded>,
+    /// Profiling (`RERAIL_GPU_WALK_STEPS`): the stats buffer of each micro dispatch encoded since
+    /// the last flush, with its passes' names; the next dispatch's binding.
+    walk_stats: Vec<(MappedBuffer, Vec<String>)>,
+    walk_bind: Option<Buffer>,
+    /// The micro walks' spill queue (`MicroQ`): slots, control, items; made on first use.
+    spill: Option<[MappedBuffer; 3]>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Tests: the passes run on the interpreter, as a run whose walks outgrew their frames does.
-    pub(in crate::code_rule_dsl) static INTERPRET_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub static INTERPRET_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 fn interpret_only() -> bool {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     return INTERPRET_ONLY.get();
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-hooks")))]
     false
+}
+
+/// `Error::BackendCapacity`, counted by where it was raised (`capacity.<line>` in the profile's stages): which bound a
+/// run that fell back to the CPU met.
+#[track_caller]
+fn capacity() -> Error {
+    if crate::code_rule_dsl::prof::on() {
+        crate::code_rule_dsl::prof::count_named(format!("capacity.label_passes:{}", std::panic::Location::caller().line()), 1);
+    }
+    Error::BackendCapacity
 }
 
 pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
@@ -1032,8 +1156,8 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
                 .map(|tape| {
                     let mut nested = vec![0_usize; tape.transducer_len()];
                     let mut longest = 0;
-                    for node in 0..tape.transducer_len() as u32 {
-                        let above = tape.transducer_parent(node).map_or(0, |parent| nested[parent as usize]);
+                    for (node, parent) in (0..tape.transducer_len() as u32).zip(tape.transducer_parents()) {
+                        let above = parent.map_or(0, |parent| nested[parent as usize]);
                         nested[node as usize] = above + usize::from(has(tape, node));
                         longest = longest.max(nested[node as usize]);
                         if *siblings {
@@ -1088,6 +1212,10 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         Ok(rounds)
     };
     let mut wanted = expected.clone();
+    if std::env::var_os("RERAIL_LAUNCHES").is_some() {
+        let levels = plan.steps.iter().map(|(_, levels)| levels.len()).sum::<usize>();
+        eprintln!("PLAN steps {} levels {levels} fixed {fixed} groups {groups} per group {per_group:?} expected {expected:?} files {}", plan.steps.len(), files.len());
+    }
     let mut rounds = plan_rounds(0, &wanted)?;
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let (mut retries, mut used, mut buffers) = (0, 0, 0);
@@ -1113,7 +1241,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
                 lanes.1 = lanes.1.map(|states| states / 2);
                 continue;
             }
-            Err(Error::BackendBudget) => return Err(Error::BackendCapacity),
+            Err(Error::BackendBudget) => return Err(capacity()),
             // A loop walk outgrew the pool's 64 frames (or a walk its captures or steps): the
             // pool's 128-frame stacks first. Only a walk's overflow reaches here; a batch over a
             // budget (`BackendCapacity`) goes back to the wave to be split, before anything of a
@@ -1208,25 +1336,30 @@ fn encode(
         crate::code_rule_dsl::prof::count("gpu.kept", 1);
     }
     mark("before pipelines");
-    let queue = device.new_command_queue();
-    queue.set_label("Rerail label passes");
+    let queue = rerail_metal::queue()?;
     let command = queue.new_command_buffer().to_owned();
     command.set_label("Rerail label passes");
+    let tapes = crate::code_rule_dsl::prof::time("gpu.tapes", || tapes(device, files, plan, words, rows.as_ref(), [scratch_rows(plan) * words, tally_rows(plan) * nodes]))?;
+    // The batch's one format, or 0 for a mixed batch: the kernels are made for it (`TAPE_VIEW`).
+    let format = tapes.table.format().unwrap_or(0);
+    if crate::code_rule_dsl::prof::on() {
+        crate::code_rule_dsl::prof::count_named(format!("gpu.tape_format={format}"), 1);
+    }
     let mut runner = Runner {
         device,
         engine: compile_resident_interpreter_cached()?,
-        kernels: pipelines()?,
+        kernels: pipelines(format)?,
         sweep: if plan.steps.iter().any(|(recursive, levels)| *recursive && sweeps(levels)) {
             Some(compile_sweep_cached()?)
         } else {
             None
         },
         orders: HashMap::new(),
-        patterns: pattern_pipelines(&plan.patterns, plan.steps.iter().flat_map(|(_, levels)| levels).flatten().any(|pass| matches!(pass, Pass::Fact { .. })))?,
+        patterns: pattern_pipelines(&plan.patterns, plan.steps.iter().flat_map(|(_, levels)| levels).flatten().any(|pass| matches!(pass, Pass::Fact { .. })), format)?,
         command,
         queue,
         files,
-        tapes: crate::code_rule_dsl::prof::time("gpu.tapes", || tapes(device, files, plan, words, rows.as_ref(), [scratch_rows(plan) * words, tally_rows(plan) * nodes]))?,
+        tapes,
         plan_labels: prefix_labels,
         label_rows: rows.as_ref().map(|(_, row_of)| row_of.clone()),
         words,
@@ -1241,10 +1374,10 @@ fn encode(
         micro,
         deep,
         walks: HashMap::new(),
-        segments: Segments::default(),
-        segs: None,
+        root_table: RootTable::default(),
+        root_words: None,
         stacks: kept.as_mut().and_then(|kept| kept.stacks.as_ref().map(|stacks| MappedBuffer::wrap(stacks.buffer.clone()))),
-        group_stacks: [None, None],
+        group_stacks: [None, None, None, None, None],
         encoded: false,
         outcome: Outcome {
             words,
@@ -1252,6 +1385,9 @@ fn encode(
             ..Outcome::default()
         },
         roots: None,
+        walk_stats: Vec::new(),
+        walk_bind: None,
+        spill: None,
     };
     mark("buffers");
     if crate::code_rule_dsl::prof::on() {
@@ -1415,15 +1551,14 @@ fn tapes(
         // Back for a retry, which builds the prefix again.
         plan.initial.set(initial);
     }
-    // The documents in the slabs, one table over them: a batch over `MAX_SLABS` is the wave's to
-    // split.
+    // The documents resident, gathered into one block (decision 0289 §4), one table over them.
     let table = crate::code_rule_dsl::prof::time("residency.docs", || crate::code_rule_dsl::residency::slabs::admit_docs(files))?;
-    let table = crate::code_rule_dsl::residency::slabs::DocTable::new(table).ok_or(Error::BackendCapacity)?;
+    let table = crate::code_rule_dsl::residency::slabs::DocTable::one_block(table).ok_or_else(capacity)?;
     if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
         return Err(Error::BackendFailure);
     }
     let docs = if table.views.is_empty() {
-        MappedBuffer::zeroed::<crate::code_rule_dsl::residency::slabs::DocView>(device, 1)?
+        MappedBuffer::zeroed::<crate::code_rule_dsl::residency::slabs::ChunkTape>(device, 1)?
     } else {
         MappedBuffer::from_slice(device, &table.views)?
     };
@@ -1438,7 +1573,6 @@ fn tapes(
 }
 
 impl Runner<'_> {
-    /// The batch's slabs at `SLAB_SLOT..` (`Slabs`), the last repeated where it has fewer.
     /// The pooled stacks every walk tier and root walk runs on (`STACK_WORDS`), made at first use
     /// and kept for the next run (`Kept`). Kernels that share them run in order (tracked).
     fn stacks(&mut self) -> Result<Buffer, Error> {
@@ -1448,12 +1582,13 @@ impl Runner<'_> {
         Ok(self.stacks.as_ref().expect("stacks").buffer.clone())
     }
 
+    /// The batch's chunk block, as kernels read documents (`SLAB_SLOT`; a stand-in for none).
+    fn block(&self) -> &Buffer {
+        self.tapes.table.block.as_ref().map_or(&self.flags.buffer, |block| block.buffer())
+    }
+
     fn bind_slabs(&self, encoder: &metal::ComputeCommandEncoderRef) {
-        let slabs = &self.tapes.table.slabs;
-        for slot in 0..crate::code_rule_dsl::residency::slabs::MAX_SLABS {
-            let buffer = slabs.get(slot).or(slabs.last()).map_or(&self.flags.buffer, |slab| &slab.buffer.buffer);
-            encoder.set_buffer(SLAB_SLOT + slot as u64, Some(buffer), 0);
-        }
+        encoder.set_buffer(SLAB_SLOT, Some(self.block()), 0);
     }
 
     fn flag(&self, index: usize) -> u32 {
@@ -1468,7 +1603,7 @@ impl Runner<'_> {
         commit_checked(&self.command)?;
         wait_checked(&self.command)?;
         crate::code_rule_dsl::prof::count("gpu.commits", 1);
-        if crate::code_rule_dsl::prof::on() {
+        {
             // The command buffer's time on the GPU (`GPUStartTime` to `GPUEndTime`).
             unsafe extern "C" {
                 fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
@@ -1481,8 +1616,19 @@ impl Runner<'_> {
                 (send(object, sel_registerName(c"GPUStartTime".as_ptr())), send(object, sel_registerName(c"GPUEndTime".as_ptr())))
             };
             crate::code_rule_dsl::prof::count("gpu.device_us", ((end - start) * 1e6) as usize);
+            self.outcome.device += (end - start).max(0.0);
         }
         self.outcome.command_buffers += 1;
+        for (stats, names) in self.walk_stats.drain(..) {
+            let values = unsafe { std::slice::from_raw_parts(stats.buffer.contents().cast::<u32>(), 3 * names.len()) };
+            let mut stages = rerail_prof::stages();
+            for (name, v) in names.iter().zip(values.chunks(3)) {
+                stages.entry(format!("walk_items.{name}")).or_default().1 += v[0] as usize;
+                stages.entry(format!("walk_steps.{name}")).or_default().1 += v[1] as usize;
+                let max = stages.entry(format!("walk_max.{name}")).or_default();
+                max.1 = max.1.max(v[2] as usize);
+            }
+        }
         self.retained.clear();
         self.programs.clear();
         self.segment_bytes = 0;
@@ -1516,6 +1662,10 @@ impl Runner<'_> {
         };
         crate::code_rule_dsl::prof::count_named(format!("kernel_us.{label}"), ((end - start) * 1e6) as usize);
         crate::code_rule_dsl::prof::count_named(format!("kernel_n.{label}"), 1);
+        // The run's GPU time too: split off here, its buffer never reaches the flush that counts it.
+        crate::code_rule_dsl::prof::count("gpu.device_us", ((end - start) * 1e6) as usize);
+        self.outcome.device += (end - start).max(0.0);
+        self.outcome.command_buffers += 1;
         self.command = self.queue.new_command_buffer().to_owned();
         self.command.set_label("Rerail label passes");
     }
@@ -1546,8 +1696,18 @@ impl Runner<'_> {
     }
 
     fn dispatch(&mut self, state: &ComputePipelineState, label: &str, buffers: &[(&Buffer, u64)], shape: Shape, threads: usize) {
+        // The kernels that spread a SIMD group's roots over its lanes (`simd_roots`) run whole SIMD groups of 32: a lane
+        // past the items holds no roots. Every tier's pool is a multiple of 32, so this stays inside its stacks.
+        let threads = if label.starts_with("label_micro") || label == patterns::KERNEL {
+            assert_eq!(state.thread_execution_width(), SIMD_WIDTH as u64, "simd_roots is written for SIMD groups of 32");
+            threads.div_ceil(SIMD_WIDTH) * SIMD_WIDTH
+        } else {
+            threads
+        };
         if crate::code_rule_dsl::prof::on() {
             crate::code_rule_dsl::prof::count_named(format!("threads.{label}"), threads);
+            // The pipeline's thread limit: under 1,024 means the kernel's registers cap its occupancy (t41).
+            crate::code_rule_dsl::prof::count_named(format!("pipeline.{label}.max_threads={}", state.max_total_threads_per_threadgroup()), 1);
         }
         if threads == 0 {
             return;
@@ -1560,6 +1720,12 @@ impl Runner<'_> {
             encoder.set_buffer(index as u64, Some(buffer), *offset);
         }
         self.bind_slabs(encoder);
+        if label.starts_with("label_micro") {
+            encoder.set_buffer(WALK_STATS_SLOT, Some(self.walk_bind.as_ref().unwrap_or(&self.flags.buffer)), 0);
+            for (slot, buffer) in SPILL_SLOTS.iter().zip(self.spill.iter().flatten().map(|b| &b.buffer).chain(std::iter::repeat(&self.flags.buffer))) {
+                encoder.set_buffer(*slot, Some(buffer), 0);
+            }
+        }
         encoder.set_bytes(
             buffers.len() as u64,
             std::mem::size_of::<Shape>() as u64,
@@ -1592,16 +1758,15 @@ impl Runner<'_> {
     /// is encoded so the host never waits to grow it.
     fn size(&mut self, plan: &Plan<'_>) -> Result<(), Error> {
         let mut widest_seen: Option<(WorkspaceTotals, u32, u32, usize)> = None;
-        // Every pass's roots as segments, in one buffer for the run, before anything binds it.
-        let documents = self.tapes.table.documents.clone();
+        // Every pass's roots as rules, in one buffer for the run, before anything binds it.
         for pass in plan.steps.iter().flat_map(|(_, levels)| levels).flatten() {
             if let Pass::Program { roots, .. } | Pass::Count { roots, .. } | Pass::Pattern { roots, .. } = pass {
-                self.segments.of(roots, &documents);
+                self.root_table.of(roots, self.files)?;
             }
         }
-        let segs = self.segments.words();
-        crate::code_rule_dsl::prof::count("size.segment_words", segs.len());
-        self.segs = Some(MappedBuffer::from_slice(self.device, &segs)?);
+        self.root_table.prefix(self.files);
+        crate::code_rule_dsl::prof::count("size.root_words", self.root_table.words.len());
+        self.root_words = Some(MappedBuffer::from_slice(self.device, &self.root_table.words)?);
         // A sweeping group is one batch of all its programs, by its address; a level is one by
         // its own.
         let batches = plan.steps.iter().flat_map(|(recursive, levels)| {
@@ -1633,8 +1798,7 @@ impl Runner<'_> {
                 let files = self.files;
                 // Each distinct (value, kind)'s slot row, computed once for the run's levels.
                 let mut rows = HashMap::<String, Option<u32>>::new();
-                let documents = self.tapes.table.documents.clone();
-                let segments = &mut self.segments;
+                let root_table = &self.root_table;
                 // Threads: a pass's from its own start, over its (shared) item range.
                 let mut threads = [0_u32; 3];
                 let mut fused = Vec::new();
@@ -1667,14 +1831,16 @@ impl Runner<'_> {
                 };
                 let mut place = |program: &Program, roots: &std::sync::Arc<Roots>, mode: u32, target: u32, table: Option<Vec<u32>>| -> bool {
                     let Some(walk) = Micro::of(program) else { return true };
-                    // The rule's segments, shared by passes of its domain.
-                    let (start, count) = segments.of(roots, &documents);
+                    // The rule, shared by passes of its domain; a thread a group of the batch.
+                    let Ok((start, any)) = root_table.at(roots) else { return true };
+                    let count = if any { root_table.groups() } else { 0 };
                     if crate::code_rule_dsl::prof::on() {
+                        let count = (0..files.len()).map(|file| roots.nodes(file, &files[file]).count()).sum::<usize>();
                         let depth = walk.depth().map_or("loop".to_owned(), |depth| format!("{:02}", depth.min(64)));
                         if walk.depth().is_none() && std::env::var_os("RERAIL_DUMP_LOOP").is_some() {
                             eprintln!("LOOP {:?}", walk.ops());
                         }
-                        crate::code_rule_dsl::prof::count_named(format!("depth.{depth}"), count as usize);
+                        crate::code_rule_dsl::prof::count_named(format!("depth.{depth}"), count);
                     }
                     // The walk's slots as rows of `texts`, contiguous from `text_start`; a row
                     // already computed for another pass is copied.
@@ -1798,19 +1964,17 @@ impl Runner<'_> {
             let programs = passes.iter().map(|(program, ..)| (*program).clone()).collect::<Vec<_>>();
             // The level's programs over the resident documents: nothing of the tapes is packed,
             // and no task is a record (decision 0033). An evaluation per (file, program) with
-            // roots; its tasks are its roots, which the device takes from the rule's segments.
+            // roots; its tasks are its document's groups of 64 nodes, whose roots the device finds
+            // from the rule (`root_mask`).
             let no_anchors = vec![vec![Vec::<u32>::new(); programs.len()]; self.files.len()];
             let mut batch = crate::code_rule_dsl::prof::time("size.batch", || PackedBatch::new_resident(&programs, self.files, &no_anchors))?;
             let mut specs = Vec::new();
             {
-                let by_doc = passes
-                    .iter()
-                    .map(|(_, roots, ..)| self.segments.by_doc(roots))
-                    .collect::<Result<Vec<_>, Error>>()?;
+                let rules = passes.iter().map(|(_, roots, ..)| self.root_table.at(roots)).collect::<Result<Vec<_>, Error>>()?;
                 for file in 0..self.files.len() {
-                    for (program, (header, docs)) in by_doc.iter().enumerate() {
-                        if let Some(&(base, count)) = docs.get(&(file as u32)) {
-                            specs.push([program as u32, file as u32, *header, base, count]);
+                    for (program, ((_, roots, ..), (at, _))) in passes.iter().zip(&rules).enumerate() {
+                        if roots.runs_in(file) {
+                            specs.push([program as u32, file as u32, *at, 0, RootTable::file_groups(self.files, file)]);
                         }
                     }
                 }
@@ -1830,7 +1994,7 @@ impl Runner<'_> {
             use super::super::packed_batch::{MARKS, MARKS_CAPTURED, ONE_RESULT, TALLY};
             for (program, (_, _, mode, slot)) in batch.programs.iter_mut().zip(&passes) {
                 if *slot >= 1 << 22 {
-                    return Err(Error::BackendCapacity);
+                    return Err(capacity());
                 }
                 program.flags |= MARKS | (slot << 8);
                 if matches!(*mode, 1 | 3) {
@@ -1886,10 +2050,10 @@ impl Runner<'_> {
             });
             // Marking programs publish no results, so `label_sink` routes none.
             let routes = [[0_u32; 2]];
-            // In the tasks' place: a level's roots' segments (the run's), a sweep's table.
+            // In the tasks' place: the run's root rules, a sweep's table.
             let tasks = match &sweep_table {
                 Some(table) => MappedBuffer::from_slice(self.device, table)?,
-                None => MappedBuffer::wrap(self.segs.as_ref().ok_or(Error::BackendFailure)?.buffer.clone()),
+                None => MappedBuffer::wrap(self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone()),
             };
             let prepared = Prepared {
                 tasks,
@@ -1968,12 +2132,13 @@ impl Runner<'_> {
                         }
                     }
                     let count = (constraints.len() / 2) as u32 - start;
-                    // One item for the pass: its threads find their roots in its segments.
-                    let (segment, roots) = self.segments.by_rule.get(&(std::sync::Arc::as_ptr(roots) as usize)).copied().ok_or(Error::BackendFailure)?;
-                    if roots > 0 {
+                    // One item for the pass: a thread a group of the batch's nodes, which finds its
+                    // roots from the rule.
+                    let (rule, any) = self.root_table.at(roots)?;
+                    if any {
                         let group = *pattern / patterns::GROUP;
-                        matches[group].extend([*pattern as u32, row, segment, start, count, pattern_threads[group]]);
-                        pattern_threads[group] += roots;
+                        matches[group].extend([*pattern as u32, row, rule, start, count, pattern_threads[group]]);
+                        pattern_threads[group] += self.root_table.groups();
                     }
                     Op {
                         target: place(target),
@@ -2012,7 +2177,7 @@ impl Runner<'_> {
             let task_count = (matches.len() / 6) as u32;
             let (items, constraints) = (self.upload(matches)?, self.upload(&constraints)?);
             let docs = self.tapes.docs.buffer.clone();
-            let segs = self.segs.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
+            let root_words = self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
             let shape = Shape {
                 item_count: pattern_threads,
                 task_count,
@@ -2027,7 +2192,7 @@ impl Runner<'_> {
                     (&flags, 0),
                     (&items, 0),
                     (&constraints, 0),
-                    (&segs, 0),
+                    (&root_words, 0),
                 ],
                 shape,
             )?;
@@ -2062,8 +2227,8 @@ impl Runner<'_> {
         let workspace = self.workspace.as_mut().ok_or(Error::BackendFailure)?;
         let lease = &mut workspace.lease;
         let generation = lease.generation;
-        let span = u32::try_from(prepared.task_count + 1).map_err(|_| Error::BackendCapacity)? * 2;
-        lease.generation = lease.generation.checked_add(span).ok_or(Error::BackendCapacity)?;
+        let span = u32::try_from(prepared.task_count + 1).map_err(|_| capacity())? * 2;
+        lease.generation = lease.generation.checked_add(span).ok_or_else(capacity)?;
         let stamp = |evaluations: &[MetalEvaluation]| {
             let mut evaluations = evaluations.to_vec();
             evaluations.iter_mut().for_each(|evaluation| evaluation.generation = generation);
@@ -2084,15 +2249,15 @@ impl Runner<'_> {
     }
 
     /// The interpreter's buffers for a prepared batch, in `run_batch`'s order: over resident
-    /// tapes, the document table at `files` and the slabs at `nodes`, `children`, `source` and
-    /// `lineStarts` (`RERAIL_RESIDENT`).
+    /// tapes, the document table at `files` and the chunk block at `nodes`, which the kernel reads
+    /// (`RERAIL_RESIDENT`; `children`, `source` and `lineStarts` bind it too, unread).
     fn bound(&self, prepared: &Prepared) -> Vec<Buffer> {
         let lease = &self.workspace.as_ref().expect("a workspace").lease;
         let tapes = &self.tapes;
-        let slabs = &tapes.table.slabs;
-        let slab = |slot: usize| slabs.get(slot).or(slabs.last()).map_or(&self.flags.buffer, |slab| &slab.buffer.buffer);
+        let block = self.block();
         let program_buffers = &prepared.program;
-        let (files, nodes, children, source, lines) = (&tapes.docs.buffer, slab(0), slab(1), slab(2), slab(3));
+        // The block at `nodes`, where the kernel reads it; the other three are unread there.
+        let (files, nodes, children, source, lines) = (&tapes.docs.buffer, block, block, block, block);
         [
             &prepared.tasks.buffer,
             &prepared.header.buffer,
@@ -2169,17 +2334,22 @@ impl Runner<'_> {
     }
 
     /// A recursive group's rounds to its fixpoint as one dispatch (`label_group_*`, decision 0024
-    /// §3), where every pass is a micro walk of at most 32 frames, a complement, a count or empty:
+    /// §3), where every pass is a micro walk (a loop walk with the loop tier's frames, the deep
+    /// pool's once a run outgrew them), a complement, a count or empty:
     /// each level's walks, words, starts and text rows concatenated, its settles after them.
     /// `false` where the group is not such (it runs as rounds of levels).
     fn group(&mut self, levels: &[Vec<Pass<'_>>]) -> Result<bool, Error> {
         let unfused = |why: &str| {
             crate::code_rule_dsl::prof::count_named(format!("gpu.unfused.{why}"), 1);
+            if std::env::var_os("RERAIL_LAUNCHES").is_some() {
+                eprintln!("UNFUSED {why}: {} levels", levels.len());
+            }
             Ok(false)
         };
         if !self.micro {
             return unfused("interpreted");
         }
+        let loop_frames = if self.deep { GROUP_FRAMES[4] } else { GROUP_FRAMES[2] };
         let place = |rows: &Option<Vec<u32>>, label: &u32| rows.as_ref().map_or(*label, |rows| rows[*label as usize]);
         let (mut records, mut words, mut texts) = (Vec::<[u32; 8]>::new(), Vec::<u32>::new(), Vec::<u32>::new());
         let (mut shape_levels, mut ops, mut steps, mut deepest) = (Vec::<[u32; 4]>::new(), Vec::<Op>::new(), 0_u32, 0_usize);
@@ -2201,10 +2371,11 @@ impl Runner<'_> {
             }
             let (pass_start, op_start) = (records.len() as u32, ops.len() as u32);
             if let Some(walks) = walks {
-                if walks.fused.iter().any(|(_, depth)| depth.is_none_or(|depth| depth > 32)) {
-                    return unfused("deep");
-                }
-                deepest = deepest.max(walks.fused.iter().filter_map(|(_, depth)| *depth).max().unwrap_or(0));
+                // A walk's frames: its static depth, at most the run's tier (64, 256 on the deep run), which a
+                // loop walk takes. A static depth bounds the grammar's nesting, not a file's: a walk that does
+                // outgrow its frames flags it (`MICRO_FAIL`) and the group runs again deep, then interpreted.
+                let frames = |depth: &Option<usize>| depth.unwrap_or(loop_frames).min(loop_frames);
+                deepest = deepest.max(walks.fused.iter().map(|(_, depth)| frames(depth)).max().unwrap_or(0));
                 steps = steps.max(walks.steps);
                 let word_at = words.len() as u32;
                 let text_at = (texts.len() / self.words) as u32;
@@ -2231,7 +2402,7 @@ impl Runner<'_> {
         }
         crate::code_rule_dsl::prof::count("gpu.fused_groups", 1);
         let (passes, words) = (self.upload(&records)?, self.upload(&words)?);
-        let items = self.segs.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
+        let items = self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
         let texts = if texts.is_empty() { self.upload(&[0_u32])? } else { self.upload(&texts)? };
         let (group_levels, ops) = (self.upload(&shape_levels)?, self.upload(&ops)?);
         let shape = Shape { target_count: shape_levels.len() as u32, steps, ..self.shape() };
@@ -2249,12 +2420,13 @@ impl Runner<'_> {
             group_levels,
             ops,
         ];
-        let pipeline = GROUP_KERNELS[usize::from(deepest > 8)];
-        // The kernel's stacks in device memory, one per thread launched (8 or 32 frames).
+        // The fewest frames that hold its deepest walk; the kernel's stacks in device memory, one per
+        // thread launched.
+        let depth = GROUP_FRAMES.iter().position(|&frames| deepest <= frames).expect("checked above");
+        let pipeline = GROUP_KERNELS[depth];
         let mut buffers = buffers.to_vec();
-        let depth = usize::from(deepest > 8);
         if self.group_stacks[depth].is_none() {
-            let words = GROUP_STACK_WORDS / if depth == 0 { 4 } else { 1 };
+            let words = GROUP_STACK_WORDS / 32 * GROUP_FRAMES[depth];
             self.group_stacks[depth] = Some(MappedBuffer::untouched::<u32>(self.device, self.files.len().max(1) * GROUP_WIDTH as usize * words)?);
         }
         buffers.push(self.group_stacks[depth].as_ref().expect("group stacks").buffer.clone());
@@ -2478,13 +2650,42 @@ impl Runner<'_> {
     fn walk(&mut self, level: usize) -> Result<(), Error> {
         let Some(walks) = self.walks.get(&level) else { return Ok(()) };
         let words = walks.words.buffer.clone();
-        let items = self.segs.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
+        let items = self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
         let texts = walks.texts.buffer.clone();
         let steps = walks.steps;
         let tiers = walks.tiers.iter().map(|(tier, passes, count, threads)| (*tier, passes.buffer.clone(), *count, *threads)).collect::<Vec<_>>();
         let stacks = self.stacks()?;
         for (tier, passes, count, threads) in tiers {
-        let shape = Shape { item_count: threads as u32, target_count: count as u32, steps, ..self.shape() };
+        let mut shape = Shape { item_count: threads as u32, target_count: count as u32, steps, ..self.shape() };
+        if spill_on() {
+            if self.spill.is_none() {
+                self.spill = Some([
+                    MappedBuffer::zeroed::<u32>(self.device, SPILL_FRAMES)?,
+                    MappedBuffer::zeroed::<u32>(self.device, 8)?,
+                    MappedBuffer::zeroed::<u32>(self.device, SPILL_FRAMES * SPILL_ITEM)?,
+                ]);
+            }
+            // A fresh queue each dispatch: its slots empty, its head, tail, active, overflow and
+            // frames taken zero.
+            let [slots, control, _] = self.spill.as_ref().expect("the spill queue");
+            let blit = self.command.new_blit_command_encoder();
+            blit.set_label("Rerail micro spill queue");
+            blit.fill_buffer(&slots.buffer, metal::NSRange::new(0, 4 * SPILL_FRAMES as u64), 0);
+            blit.fill_buffer(&control.buffer, metal::NSRange::new(0, 32), 0);
+            blit.end_encoding();
+            shape.queue = SPILL_FRAMES as u32;
+            shape.budget = spill_budget();
+        }
+        if walk_steps_on() {
+            // Each pass's record names it by its words.
+            let records = unsafe { std::slice::from_raw_parts(passes.contents().cast::<[u32; 8]>(), count) };
+            let all = unsafe { std::slice::from_raw_parts(words.contents().cast::<u32>(), words.length() as usize / 4) };
+            let names = records.iter().map(|r| describe_walk(tier, &all[r[0] as usize..(r[0] + r[1]) as usize])).collect();
+            let stats = MappedBuffer::zeroed::<u32>(self.device, 3 * count.max(1))?;
+            self.walk_bind = Some(stats.buffer.clone());
+            self.walk_stats.push((stats, names));
+            shape.profile = 1;
+        }
         let tapes = &self.tapes;
         let (docs, head) = (tapes.docs.buffer.clone(), tapes.supertypes.buffer.clone());
         let (state, flags) = (self.tapes.supertypes.buffer.clone(), self.flags.buffer.clone());
@@ -2509,6 +2710,7 @@ impl Runner<'_> {
             _ => (TIER_KERNELS[tier], threads.min(stack_lanes(TIER_FRAMES[tier], 17))),
         };
         self.kernel(pipeline, &buffers, shape, threads);
+        self.walk_bind = None;
         }
         Ok(())
     }

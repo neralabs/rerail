@@ -10,14 +10,14 @@ use regex_syntax::hir::{Capture, Class, Hir, HirKind, Look, Repetition};
 
 /// What is known of the text a test reads. A field is a fact rewrites may rely on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct Domain {
+pub struct Domain {
     /// The text never holds a line break (identifiers, names, paths).
     pub(in crate::code_rule_dsl) single_line: bool,
 }
 
 impl Domain {
     /// Any text: a node's, a file's, a string literal's.
-    pub(in crate::code_rule_dsl) const ANY: Self = Self { single_line: false };
+    pub const ANY: Self = Self { single_line: false };
     /// One line at most: an identifier, a dotted name, a path.
     #[allow(dead_code, reason = "the framework's API: no caller knows its text is one line yet")]
     pub(in crate::code_rule_dsl) const LINE: Self = Self { single_line: true };
@@ -25,7 +25,7 @@ impl Domain {
 
 /// `\A`? `core` `\z`?: the whole text's anchors, and what lies between them.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct Pattern {
+pub struct Pattern {
     pub(in crate::code_rule_dsl) start: bool,
     pub(in crate::code_rule_dsl) core: Hir,
     pub(in crate::code_rule_dsl) end: bool,

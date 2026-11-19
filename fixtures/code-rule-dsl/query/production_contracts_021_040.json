@@ -110,25 +110,6 @@
             "captures": {},
             "clauseId": "contract",
             "code": "SQL",
-            "id": "sha256:f934da70dcb4cea15a577323ebb72a8c12f5fca3f582cac86216aeb769398d34",
-            "message": "contract",
-            "mode": "block",
-            "path": "contract.py",
-            "ruleId": "sql-contract-not-unknown",
-            "span": {
-              "endByte": 7,
-              "endColumn": 7,
-              "endLine": 0,
-              "startByte": 6,
-              "startColumn": 6,
-              "startLine": 0
-            },
-            "variables": {}
-          },
-          {
-            "captures": {},
-            "clauseId": "contract",
-            "code": "SQL",
             "id": "sha256:9653700bc80d7ad9bea230a44438b4e57a4c72d8bdf67eff7c137c80e7038da6",
             "message": "contract",
             "mode": "block",
@@ -183,7 +164,31 @@
             "variables": {}
           }
         ]
-      }
+      },
+      "departures": [
+        {
+          "violation": {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:f934da70dcb4cea15a577323ebb72a8c12f5fca3f582cac86216aeb769398d34",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-not-unknown",
+            "span": {
+              "endByte": 7,
+              "endColumn": 7,
+              "endLine": 0,
+              "startByte": 6,
+              "startColumn": 6,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          "reason": "RER-131: the tape stores no token the grammar implies, and no reader makes one up"
+        }
+      ]
     }
   },
   {
@@ -1049,25 +1054,6 @@
             "captures": {},
             "clauseId": "contract",
             "code": "SQL",
-            "id": "sha256:322ea071e5fe30f093e5c067d589b17425dd2277385e0386ab6d9101138e6822",
-            "message": "contract",
-            "mode": "block",
-            "path": "contract.py",
-            "ruleId": "sql-contract-inside-neighbor",
-            "span": {
-              "endByte": 8,
-              "endColumn": 8,
-              "endLine": 0,
-              "startByte": 7,
-              "startColumn": 7,
-              "startLine": 0
-            },
-            "variables": {}
-          },
-          {
-            "captures": {},
-            "clauseId": "contract",
-            "code": "SQL",
             "id": "sha256:8e02541aaad7a29948758bd60ac56aad50bb332b376d9099b9a1705ba9b3d97a",
             "message": "contract",
             "mode": "block",
@@ -1084,7 +1070,31 @@
             "variables": {}
           }
         ]
-      }
+      },
+      "departures": [
+        {
+          "violation": {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:322ea071e5fe30f093e5c067d589b17425dd2277385e0386ab6d9101138e6822",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-inside-neighbor",
+            "span": {
+              "endByte": 8,
+              "endColumn": 8,
+              "endLine": 0,
+              "startByte": 7,
+              "startColumn": 7,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          "reason": "RER-131: the tape stores no token the grammar implies, and no reader makes one up"
+        }
+      ]
     }
   },
   {
@@ -1195,63 +1205,6 @@
             "captures": {},
             "clauseId": "contract",
             "code": "SQL",
-            "id": "sha256:5075307c64ec23060bc2f38b8d7330f11692f90eb639b772771796662c4d8136",
-            "message": "contract",
-            "mode": "block",
-            "path": "contract.py",
-            "ruleId": "sql-contract-inside-end",
-            "span": {
-              "endByte": 6,
-              "endColumn": 6,
-              "endLine": 0,
-              "startByte": 5,
-              "startColumn": 5,
-              "startLine": 0
-            },
-            "variables": {}
-          },
-          {
-            "captures": {},
-            "clauseId": "contract",
-            "code": "SQL",
-            "id": "sha256:551cabcaa3370e512f697704e00ff58e0d22aa009cf9fd91f125e452429417cc",
-            "message": "contract",
-            "mode": "block",
-            "path": "contract.py",
-            "ruleId": "sql-contract-inside-end",
-            "span": {
-              "endByte": 7,
-              "endColumn": 7,
-              "endLine": 0,
-              "startByte": 6,
-              "startColumn": 6,
-              "startLine": 0
-            },
-            "variables": {}
-          },
-          {
-            "captures": {},
-            "clauseId": "contract",
-            "code": "SQL",
-            "id": "sha256:dd57c346eaeb098622e7de32daa42205c131add31d5345f99e31e96a1e7e75d3",
-            "message": "contract",
-            "mode": "block",
-            "path": "contract.py",
-            "ruleId": "sql-contract-inside-end",
-            "span": {
-              "endByte": 8,
-              "endColumn": 8,
-              "endLine": 0,
-              "startByte": 7,
-              "startColumn": 7,
-              "startLine": 0
-            },
-            "variables": {}
-          },
-          {
-            "captures": {},
-            "clauseId": "contract",
-            "code": "SQL",
             "id": "sha256:9f45a15039035237a5417bf0c1527655af3920f274c7153d11f3ccca0fb21c72",
             "message": "contract",
             "mode": "block",
@@ -1328,25 +1281,6 @@
             "captures": {},
             "clauseId": "contract",
             "code": "SQL",
-            "id": "sha256:f39d0af4e375b8dc8ef43f9c580ae2e2b55b633873334836be8fd3aeae047d4e",
-            "message": "contract",
-            "mode": "block",
-            "path": "contract.py",
-            "ruleId": "sql-contract-inside-end",
-            "span": {
-              "endByte": 16,
-              "endColumn": 7,
-              "endLine": 1,
-              "startByte": 15,
-              "startColumn": 6,
-              "startLine": 1
-            },
-            "variables": {}
-          },
-          {
-            "captures": {},
-            "clauseId": "contract",
-            "code": "SQL",
             "id": "sha256:9ed0c3eb2c9f4551c2fdba977ab05b81feb2354af5ae18119e0fb367af53b965",
             "message": "contract",
             "mode": "block",
@@ -1363,7 +1297,97 @@
             "variables": {}
           }
         ]
-      }
+      },
+      "departures": [
+        {
+          "violation": {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:5075307c64ec23060bc2f38b8d7330f11692f90eb639b772771796662c4d8136",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-inside-end",
+            "span": {
+              "endByte": 6,
+              "endColumn": 6,
+              "endLine": 0,
+              "startByte": 5,
+              "startColumn": 5,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          "reason": "RER-131: the tape stores no token the grammar implies, and no reader makes one up"
+        },
+        {
+          "violation": {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:551cabcaa3370e512f697704e00ff58e0d22aa009cf9fd91f125e452429417cc",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-inside-end",
+            "span": {
+              "endByte": 7,
+              "endColumn": 7,
+              "endLine": 0,
+              "startByte": 6,
+              "startColumn": 6,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          "reason": "RER-131: the tape stores no token the grammar implies, and no reader makes one up"
+        },
+        {
+          "violation": {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:dd57c346eaeb098622e7de32daa42205c131add31d5345f99e31e96a1e7e75d3",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-inside-end",
+            "span": {
+              "endByte": 8,
+              "endColumn": 8,
+              "endLine": 0,
+              "startByte": 7,
+              "startColumn": 7,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          "reason": "RER-131: the tape stores no token the grammar implies, and no reader makes one up"
+        },
+        {
+          "violation": {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:f39d0af4e375b8dc8ef43f9c580ae2e2b55b633873334836be8fd3aeae047d4e",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-inside-end",
+            "span": {
+              "endByte": 16,
+              "endColumn": 7,
+              "endLine": 1,
+              "startByte": 15,
+              "startColumn": 6,
+              "startLine": 1
+            },
+            "variables": {}
+          },
+          "reason": "RER-131: the tape stores no token the grammar implies, and no reader makes one up"
+        }
+      ]
     }
   },
   {
@@ -1457,25 +1481,6 @@
             "captures": {},
             "clauseId": "contract",
             "code": "SQL",
-            "id": "sha256:81eea4feaeb47e2480ce233faf4b096db47fb94a0b1d7fac94e80a9179856569",
-            "message": "contract",
-            "mode": "block",
-            "path": "contract.py",
-            "ruleId": "sql-contract-inside-stop-rule",
-            "span": {
-              "endByte": 6,
-              "endColumn": 6,
-              "endLine": 0,
-              "startByte": 5,
-              "startColumn": 5,
-              "startLine": 0
-            },
-            "variables": {}
-          },
-          {
-            "captures": {},
-            "clauseId": "contract",
-            "code": "SQL",
             "id": "sha256:b5f6c1dcff86d8731c0256d3c15c9fd5e3ac5059f7a3c1d754f095a0fc76f43b",
             "message": "contract",
             "mode": "block",
@@ -1487,44 +1492,6 @@
               "endLine": 0,
               "startByte": 5,
               "startColumn": 5,
-              "startLine": 0
-            },
-            "variables": {}
-          },
-          {
-            "captures": {},
-            "clauseId": "contract",
-            "code": "SQL",
-            "id": "sha256:fec4428ee921db177e64c6796ac86879ed989b446d3eac8e61bece1f7bfe2139",
-            "message": "contract",
-            "mode": "block",
-            "path": "contract.py",
-            "ruleId": "sql-contract-inside-stop-rule",
-            "span": {
-              "endByte": 7,
-              "endColumn": 7,
-              "endLine": 0,
-              "startByte": 6,
-              "startColumn": 6,
-              "startLine": 0
-            },
-            "variables": {}
-          },
-          {
-            "captures": {},
-            "clauseId": "contract",
-            "code": "SQL",
-            "id": "sha256:5fc22d1a84a3baff7240b08e8ed2a7c52dfcfce50399071a2f299a17bfb91b9d",
-            "message": "contract",
-            "mode": "block",
-            "path": "contract.py",
-            "ruleId": "sql-contract-inside-stop-rule",
-            "span": {
-              "endByte": 8,
-              "endColumn": 8,
-              "endLine": 0,
-              "startByte": 7,
-              "startColumn": 7,
               "startLine": 0
             },
             "variables": {}
@@ -1609,25 +1576,6 @@
             "captures": {},
             "clauseId": "contract",
             "code": "SQL",
-            "id": "sha256:0c1e8c8287fcb6b412db2c55207d97c4043c89c18a76319f9e1abd1e6ab5049b",
-            "message": "contract",
-            "mode": "block",
-            "path": "contract.py",
-            "ruleId": "sql-contract-inside-stop-rule",
-            "span": {
-              "endByte": 16,
-              "endColumn": 7,
-              "endLine": 1,
-              "startByte": 15,
-              "startColumn": 6,
-              "startLine": 1
-            },
-            "variables": {}
-          },
-          {
-            "captures": {},
-            "clauseId": "contract",
-            "code": "SQL",
             "id": "sha256:991bc82e96ff750e8828f10621b1bfd14ee9a50dd6e6caecd2ecc1dcb89f1c01",
             "message": "contract",
             "mode": "block",
@@ -1644,7 +1592,97 @@
             "variables": {}
           }
         ]
-      }
+      },
+      "departures": [
+        {
+          "violation": {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:81eea4feaeb47e2480ce233faf4b096db47fb94a0b1d7fac94e80a9179856569",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-inside-stop-rule",
+            "span": {
+              "endByte": 6,
+              "endColumn": 6,
+              "endLine": 0,
+              "startByte": 5,
+              "startColumn": 5,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          "reason": "RER-131: the tape stores no token the grammar implies, and no reader makes one up"
+        },
+        {
+          "violation": {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:fec4428ee921db177e64c6796ac86879ed989b446d3eac8e61bece1f7bfe2139",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-inside-stop-rule",
+            "span": {
+              "endByte": 7,
+              "endColumn": 7,
+              "endLine": 0,
+              "startByte": 6,
+              "startColumn": 6,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          "reason": "RER-131: the tape stores no token the grammar implies, and no reader makes one up"
+        },
+        {
+          "violation": {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:5fc22d1a84a3baff7240b08e8ed2a7c52dfcfce50399071a2f299a17bfb91b9d",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-inside-stop-rule",
+            "span": {
+              "endByte": 8,
+              "endColumn": 8,
+              "endLine": 0,
+              "startByte": 7,
+              "startColumn": 7,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          "reason": "RER-131: the tape stores no token the grammar implies, and no reader makes one up"
+        },
+        {
+          "violation": {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:0c1e8c8287fcb6b412db2c55207d97c4043c89c18a76319f9e1abd1e6ab5049b",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-inside-stop-rule",
+            "span": {
+              "endByte": 16,
+              "endColumn": 7,
+              "endLine": 1,
+              "startByte": 15,
+              "startColumn": 6,
+              "startLine": 1
+            },
+            "variables": {}
+          },
+          "reason": "RER-131: the tape stores no token the grammar implies, and no reader makes one up"
+        }
+      ]
     }
   },
   {

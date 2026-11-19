@@ -33,10 +33,10 @@ struct State {
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 
 /// The root of a run, for the run's length: calls answer from the repository that holds it. A run inside another
-/// (phase 0's `bootstrap.rr` run, a phase) sets its own and puts the outer run's back when it ends.
-pub(in crate::code_rule_dsl) struct Scope(Option<PathBuf>);
+/// (phase 0's `bootstrap.rerail` run, a phase) sets its own and puts the outer run's back when it ends.
+pub struct Scope(Option<PathBuf>);
 
-pub(in crate::code_rule_dsl) fn scope(root: &Path) -> Scope {
+pub fn scope(root: &Path) -> Scope {
     let previous = STATE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|s| s.root.clone());
     set_root(root);
     Scope(previous)
@@ -88,8 +88,8 @@ fn tracked(state: &mut State, path: &str) -> Option<bool> {
 
 fn open(root: &Path) -> Option<Repo> {
     let repo = gix::discover(root).ok()?;
-    let workdir = repo.workdir()?.canonicalize().ok()?;
-    let prefix = root.canonicalize().ok()?.strip_prefix(&workdir).ok()?.to_path_buf();
+    let workdir = dunce::canonicalize(repo.workdir()?).ok()?;
+    let prefix = dunce::canonicalize(root).ok()?.strip_prefix(&workdir).ok()?.to_path_buf();
     Some(Repo { repo, prefix })
 }
 
@@ -157,7 +157,7 @@ pub(super) fn git_tracked(path: &str) -> Value {
 /// What the run over `root` read that moves: `("git_index", root, digest)` when `@git_tracked` read the index. For
 /// the whole-run cutoff's record (`Report::consulted`). The state is the process's, one root at a time: a run over
 /// another root since gives nothing, so it is never recorded against this one.
-pub(in crate::code_rule_dsl) fn consulted(root: &Path) -> Vec<(String, String, String)> {
+pub fn consulted(root: &Path) -> Vec<(String, String, String)> {
     let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
     let Some(state) = guard.as_ref() else { return Vec::new() };
     match (&state.root, &state.index) {
@@ -175,7 +175,7 @@ fn commit_of(repo: &gix::Repository, rev: &str) -> Result<gix::ObjectId, String>
 
 /// `git_rev`'s rows for the repository holding `root`: `("head", HEAD)`, and with a base reference, `("base", the
 /// merge base of HEAD and it)`, the revision a change is compared against. Also the root's path in the work tree.
-pub(in crate::code_rule_dsl) fn revisions(root: &Path, base: Option<&str>) -> Result<(Vec<(String, String)>, PathBuf), String> {
+pub fn revisions(root: &Path, base: Option<&str>) -> Result<(Vec<(String, String)>, PathBuf), String> {
     let repo = open(root).ok_or_else(|| format!("no Git work tree holds {}", root.display()))?;
     let head = commit_of(&repo.repo, "HEAD")?;
     let mut rows = vec![("head".to_owned(), head.to_string())];
@@ -190,7 +190,7 @@ pub(in crate::code_rule_dsl) fn revisions(root: &Path, base: Option<&str>) -> Re
 }
 
 /// Whether what `consulted` recorded (and `git_rev`'s reads, `("git_rev", "REV", id)`) reads the same now.
-pub(in crate::code_rule_dsl) fn still(what: &str, path: &str, digest: &str) -> bool {
+pub fn still(what: &str, path: &str, digest: &str) -> bool {
     match what {
         "git_index" => open(Path::new(path)).map(|r| sha256_file(&r.repo.index_path())).unwrap_or_default() == digest,
         "git_rev" => {
@@ -203,7 +203,7 @@ pub(in crate::code_rule_dsl) fn still(what: &str, path: &str, digest: &str) -> b
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]
@@ -212,7 +212,7 @@ mod tests {
         let root = dir.join("sub");
         std::fs::create_dir_all(root.join("docs")).unwrap();
         let git = |args: &[&str]| {
-            let out = std::process::Command::new("git").arg("-C").arg(&dir).args(args).output().unwrap();
+            let out = std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").arg("-C").arg(&dir).args(args).output().unwrap();
             assert!(out.status.success(), "git {args:?}");
             String::from_utf8(out.stdout).unwrap().trim().to_owned()
         };

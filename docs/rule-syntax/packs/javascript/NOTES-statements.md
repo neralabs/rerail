@@ -1,10 +1,10 @@
 # Notes: tsx/statements, eslint-curly, eslint-one-var
 
-> The core additions proposed below are now in lib/core.rr (2026-11-05).
+> The core additions proposed below are now in lib/core.rerail (2026-11-05).
 
-These are hand-written versions of the two ESLint rules that `site/translate.py` produces from
+These are hand-written versions of the two ESLint rules that the engine's JSON translator (`rerail-engine translate-json`) produces from
 `packs/javascript/rules/eslint-curly.json` and `eslint-one-var.json`. Both are written on top of a new
-library, `lib/tsx/statements.rr`. The library supplies the words the generated text was missing, such as
+library, `lib/tsx/statements.rerail`. The library supplies the words the generated text was missing, such as
 "the body of this if", "a block that needs its braces", "a one-line statement", "removing these braces
 would join two lines", and "an earlier declaration in the same scope". With those words, each rule reads
 as ESLint's own description of it.
@@ -34,7 +34,7 @@ as ESLint's own description of it.
     so this one counts as initialized.
   - `<!--` comments are `html_comment` extras, and `is_comment` covers them wherever comments are skipped.
 
-## Proposed for core.rr
+## Proposed for core.rerail
 
 The library has one block for core, at its top: tokens. The engine reads them off the tree-sitter tree
 as spans, skipping comments, as ESLint's token store does.
@@ -52,7 +52,7 @@ after it, and asks whether that token starts with `( [ / \` + -`. The unbrace fi
 brace tokens. And "an `else` follows this block" is `token_after(b, t), text(t, "else")`. one-var uses
 them to put a for head's finding on its `var` token: `token_before(left, t)`. None of these
 can be told from named nodes: `)`, `else`, `;` and `}` are anonymous. The JSON gets the same answers
-from ast-grep `layout` terms, which have no .rr form. No `wrap`/`unwrap` edit is proposed for core.
+from ast-grep `layout` terms, which have no .rerail form. No `wrap`/`unwrap` edit is proposed for core.
 Wrapping is `replace(b, \`{$b}\`)`, and unwrapping is the library edit `unbrace(b)`, made of two
 `replace`s on the brace tokens.
 
@@ -94,7 +94,7 @@ one-var:
 
 ## Could not express / open
 
-- An .rr policy has one `.language`. The JSON's using clauses name the javascript grammar. Which
+- An .rerail policy has one `.language`. The JSON's using clauses name the javascript grammar. Which
   grammar runs on .js files is up to the engine, and the library reads both shapes.
 - `tsx/names` defines `fn_scope`, which lacks `generator_function` and `class_static_block`. This
   library keeps its own `var_scope`/`lexical_scope`, following ESLint's stacks, instead of reusing

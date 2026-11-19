@@ -1,4 +1,4 @@
-//! Python's string annotations as core.rr's relation, made by a batch only for a program that reads it
+//! Python's string annotations as core.rerail's relation, made by a batch only for a program that reads it
 //! (`Annotations::new`'s `reads`), off the document's tape (`Document::tape`):
 //!
 //! ```text
@@ -99,7 +99,7 @@ impl Annotations {
             .iter()
             .enumerate()
             .filter(|&(_, &id)| HOSTS.contains(&dialect.name(f, id)))
-            .map(|(local, &id)| ((f.start[id as usize], f.end[id as usize]), p.global(local as u32)))
+            .map(|(local, &id)| ((f.start(id), f.end(id)), p.global(local as u32)))
             .collect();
         if let Some(g) = d.guest.as_deref() {
             if g.grammar == GRAMMAR {
@@ -113,7 +113,15 @@ impl Annotations {
         if tape.transducer_len() != f.len() {
             return Err(StoreError::Invalid(format!("{}: the tape is not the one the facts were read off", d.path)));
         }
-        let found = string_annotations(tape).map_err(|e| StoreError::Invalid(format!("{}: {e}", d.path)))?;
+        // A file whose scope table cannot be built (nesting past the build's depth or stack) gives no rows, and the
+        // run goes on: one file ended a 30k-file run before. Its strings' names are then read as plain strings.
+        let found = match string_annotations(tape) {
+            Ok(found) => found,
+            Err(e) => {
+                eprintln!("rerail: {}: its string annotations are not read ({e})", d.path);
+                return Ok(());
+            }
+        };
         // Each annotation's nested ones: an outer one comes before its nested ones, so the innermost are placed first.
         let mut nested: Vec<Vec<Nested>> = vec![Vec::new(); found.len()];
         for k in (0..found.len()).rev() {
@@ -164,5 +172,32 @@ impl Annotations {
         let hosts: BTreeSet<i64> = self.hosts.into_iter().collect();
         hosts.iter().for_each(|&s| r.push(&[s]));
         vec![(RELATION, r)]
+    }
+}
+
+/// Python's string annotations as a batch's producer (`syntax::Producer`).
+pub struct Producer;
+
+impl super::Producer for Producer {
+    fn dialect(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::Python
+    }
+    fn taped(&self) -> &'static [&'static str] {
+        &[RELATION]
+    }
+    fn start(&self, reads: &BTreeSet<String>, _: &[String]) -> Box<dyn super::ProducerRun> {
+        Box::new(Annotations::new(reads))
+    }
+}
+
+impl super::ProducerRun for Annotations {
+    fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, own: bool, _: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
+        Annotations::document(self, p, d, dialect, own)
+    }
+    fn relations(self: Box<Self>, _: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
+        Annotations::relations(*self)
+    }
+    fn reads_guests(&self) -> bool {
+        true
     }
 }

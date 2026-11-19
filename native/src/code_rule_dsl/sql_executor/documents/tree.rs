@@ -207,7 +207,7 @@ impl<K: Ord + Clone, V: Measure<K>> Node<K, V> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[derive(Clone)]
     struct Number(i64);
@@ -227,7 +227,7 @@ mod tests {
         for step in 0..1500 {
             seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
             let key = (seed % 137) as i32;
-            let value = if seed % 5 == 0 {
+            let value = if seed.is_multiple_of(5) {
                 None
             } else {
                 Some(Number(step))

@@ -1,0 +1,48 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b401-import-telnetlib",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove imports of telnetlib; Telnet sends credentials and data unencrypted, so use SSH or another encrypted protocol.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "B401",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "import telnetlib"
+              },
+              {
+                "pattern": "import telnetlib as $ALIAS"
+              },
+              {
+                "pattern": "from telnetlib import $$$NAMES"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "B401",
+        "anchor": "witness.span",
+        "message": "Remove this telnetlib import and use SSH or another encrypted protocol instead.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B401"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

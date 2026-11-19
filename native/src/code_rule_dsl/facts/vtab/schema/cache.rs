@@ -82,4 +82,4 @@ impl Cache {
 
 #[cfg(test)]
 #[path = "cache/tests.rs"]
-mod tests;
+pub mod tests;

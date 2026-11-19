@@ -27,7 +27,7 @@ impl ToSql for Slice {
 
 pub(in crate::code_rule_dsl) fn charge(work: &AtomicUsize, count: usize) -> Result<()> {
     if work
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
             left.checked_sub(count)
         })
         .is_err()
@@ -59,7 +59,7 @@ fn update(binding: &SharedBinding, snapshot: Option<&Snapshot>, work: Arc<Atomic
         .collect();
     *binding.write() = Binding { files, work };
 }
-pub(super) fn bind(
+pub fn bind(
     db: &super::Database,
     snapshot: Option<&Snapshot>,
     work: Arc<AtomicUsize>,

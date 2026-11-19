@@ -7,13 +7,13 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tree_sitter::{Language, Node as TsNode, Parser};
 
-mod sql;
+pub mod sql;
 
 // ---- copied from tape.rs (v7) ----
 pub const KIND_LIMIT: usize = 1024;
 const FIELD_LIMIT: usize = 64;
 pub const SENTINEL: u16 = u16::MAX;
-pub const CHECKPOINT_STRIDE: usize = 16;
+pub use rerail_tape_format::CHECKPOINT_STRIDE;
 pub const WIDTH: usize = 6;
 pub const ERROR_CODE: u16 = 0;
 const ERROR_SYMBOL: u16 = u16::MAX;
@@ -935,12 +935,12 @@ fn measure(corpus: &str, lang: &str, dirs: &[String]) {
                 let mut cols = vec![[0u32; 5]; n];
                 let mut offset = 0usize;
                 let mut start = 0i64;
-                for i in 0..n {
+                for (i, col) in cols.iter_mut().enumerate() {
                     let enc = read_varint(&a.spans, &mut offset);
                     let delta = ((enc >> 1) as i32) ^ -((enc & 1) as i32);
                     let len = read_varint(&a.spans, &mut offset);
                     start += i64::from(delta);
-                    cols[i] = [a.kind(i) as u32, a.parent(i) as u32, a.size(i), start as u32, start as u32 + len];
+                    *col = [a.kind(i) as u32, a.parent(i) as u32, a.size(i), start as u32, start as u32 + len];
                 }
                 sink = sink.wrapping_add(cols.len() as u64);
             }
@@ -1006,4 +1006,4 @@ pub(crate) fn main(args: &[String]) {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

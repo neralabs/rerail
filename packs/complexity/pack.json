@@ -1,10 +1,10 @@
 {
   "format": "rerail.rule-pack/v1",
   "id": "complexity",
-  "name": "Cyclomatic complexity",
+  "name": "Function complexity",
   "category": "language",
-  "covers": "Keeps Python, TypeScript, JavaScript, PHP, Rust and Vue functions, and those a Blade template's PHP defines, at cyclomatic complexity 6 or below, measured as lizard does.",
-  "reason": "matches Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source",
+  "covers": "Keeps functions small enough to read, test and change: flags any function with more than 6 paths through it (cyclomatic complexity, counted as lizard 1.24.0 does). For Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue and Java.",
+  "reason": "matches Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue or Java source",
   "match": {
     "any": [
       {
@@ -143,6 +143,26 @@
           "**/__tests__/**"
         ],
         "label": "*.vue files"
+      },
+      {
+        "files": [
+          "**/*.java"
+        ],
+        "exclude": [
+          "**/generated/**",
+          "**/generated-sources/**",
+          "**/generated-test-sources/**",
+          "**/generated-src/**",
+          "**/src/test/**",
+          "**/src/*Test/**",
+          "**/src/testFixtures/**",
+          "**/*Test.java",
+          "**/*Tests.java",
+          "**/*TestCase.java",
+          "**/*IT.java",
+          "**/*ITCase.java"
+        ],
+        "label": "*.java files"
       }
     ]
   },
@@ -150,7 +170,7 @@
     {
       "id": "complexity-cyclomatic-python",
       "document": "rules/complexity-cyclomatic-python.json",
-      "title": "Keep Python functions at cyclomatic complexity 6 or lower",
+      "title": "Keep Python functions to 6 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
@@ -166,7 +186,7 @@
     {
       "id": "complexity-cyclomatic-typescript",
       "document": "rules/complexity-cyclomatic-typescript.json",
-      "title": "Keep TypeScript functions at cyclomatic complexity 6 or lower",
+      "title": "Keep TypeScript functions to 6 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
@@ -182,7 +202,7 @@
     {
       "id": "complexity-cyclomatic-javascript",
       "document": "rules/complexity-cyclomatic-javascript.json",
-      "title": "Keep JavaScript functions at cyclomatic complexity 6 or lower",
+      "title": "Keep JavaScript functions to 6 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
@@ -198,7 +218,7 @@
     {
       "id": "complexity-cyclomatic-php",
       "document": "rules/complexity-cyclomatic-php.json",
-      "title": "Keep PHP functions at cyclomatic complexity 6 or lower",
+      "title": "Keep PHP functions to 6 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
@@ -214,7 +234,7 @@
     {
       "id": "complexity-cyclomatic-blade",
       "document": "rules/complexity-cyclomatic-blade.json",
-      "title": "Keep the functions in Blade templates at cyclomatic complexity 6 or lower",
+      "title": "Keep the functions in Blade templates to 6 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
@@ -230,7 +250,7 @@
     {
       "id": "complexity-cyclomatic-rust",
       "document": "rules/complexity-cyclomatic-rust.json",
-      "title": "Keep Rust functions at cyclomatic complexity 6 or lower",
+      "title": "Keep Rust functions to 6 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
@@ -246,7 +266,7 @@
     {
       "id": "complexity-cyclomatic-vue",
       "document": "rules/complexity-cyclomatic-vue.json",
-      "title": "Keep Vue component functions at cyclomatic complexity 6 or lower",
+      "title": "Keep Vue component functions to 6 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
@@ -256,6 +276,22 @@
         "passes": {
           "path": "src/components/Grade.vue",
           "text": "<script setup lang=\"ts\">\nconst props = defineProps<{ score: number; late: boolean }>();\n\nfunction grade(): string {\n  if (props.late) return \"F\";\n  return props.score > 90 ? \"A\" : \"B\";\n}\n</script>\n\n<template>\n  <p v-if=\"props.late && props.score > 0\">{{ props.score > 90 ? grade() : \"B\" }}</p>\n</template>\n"
+        }
+      }
+    },
+    {
+      "id": "complexity-cyclomatic-java",
+      "document": "rules/complexity-cyclomatic-java.json",
+      "title": "Keep Java methods and constructors to 6 or fewer paths",
+      "group": "Complexity",
+      "examples": {
+        "caught": {
+          "path": "src/main/java/com/example/Grade.java",
+          "text": "class Grade {\n    String grade(int score, boolean late, boolean extra) {\n        if (score > 90 && !late) {\n            return \"A\";\n        }\n        if (score > 80 || extra) {\n            return \"B\";\n        }\n        if (score > 70) {\n            return \"C\";\n        }\n        for (int bonus : new int[] {1, 2}) {\n            if (bonus > score) {\n                return \"D\";\n            }\n        }\n        return \"F\";\n    }\n}\n"
+        },
+        "passes": {
+          "path": "src/main/java/com/example/Grade.java",
+          "text": "class Grade {\n    String grade(int score, boolean late) {\n        if (late) {\n            return \"F\";\n        }\n        return score > 90 ? \"A\" : \"B\";\n    }\n}\n"
         }
       }
     }

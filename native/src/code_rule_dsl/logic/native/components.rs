@@ -1,4 +1,4 @@
-//! `components(d, c, key, edge, own)` (`core.rr`, decision 0076 §2): each document's component of the
+//! `components(d, c, key, edge, own)` (`core.rerail`, decision 0076 §2): each document's component of the
 //! graph `edge(d, e)` (d depends on e) and the component's Merkle key.
 //!
 //! - A component is a strongly connected component; `c` is its smallest document.
@@ -125,7 +125,7 @@ fn tarjan(out: &[Vec<usize>]) -> Vec<Vec<usize>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     fn run(edges: &[(i64, i64)], own: &[(i64, &str)]) -> BTreeMap<i64, (i64, String)> {

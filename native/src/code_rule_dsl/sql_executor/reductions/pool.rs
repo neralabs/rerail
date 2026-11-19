@@ -2,12 +2,12 @@
 use super::*;
 use crate::code_rule_dsl::logic::analysis::{bags, scalars};
 #[derive(Clone, Default)]
-pub(in crate::code_rule_dsl::sql_executor) struct Plans {
+pub struct Plans {
     pub states: BTreeMap<String, Retained>,
     pub storage: Vec<Report>,
 }
 #[derive(Clone, serde::Serialize)]
-pub(in crate::code_rule_dsl::sql_executor) struct Report {
+pub struct Report {
     #[serde(serialize_with = "serialize_analysis")]
     pub analysis: Arc<bags::Analysis>,
     pub groups: Vec<String>,
@@ -25,7 +25,7 @@ impl std::ops::DerefMut for Plans {
     }
 }
 
-pub(super) fn combine(plans: &mut Plans, queries: &[Option<Query>]) {
+pub fn combine(plans: &mut Plans, queries: &[Option<Query>]) {
     let mut paths = vec![];
     let mut inputs = vec![];
     for (output, state) in &plans.states {
@@ -120,16 +120,41 @@ pub(super) fn combine(plans: &mut Plans, queries: &[Option<Query>]) {
     plans.storage.push(Report { analysis, groups, evaluation_boundary: "Bag storage ignores outer lookup dependencies; each consumer keeps its own lookup and dependency index. Cross-gate transitions require equal input snapshots and maintenance cursors" });
 }
 
+/// Wave gates can share a layout, but their applied input cursors can diverge.
+/// Keep distinct names for their immutable roots; transitions share only after
+/// the input-version and maintenance-cursor proof succeeds.
+pub fn combine_cursors(plans: &mut Plans, queries: &[Option<Query>]) {
+    let names = plans.states.iter().flat_map(|(out,state)|state.rules.iter().enumerate().flat_map(move |(rule,r)|
+        r.reducers.iter().enumerate().map(move |(scalar,s)|{
+            let (groups,values,_,_)=reducer::combined::storage(s);
+            ((out.clone(),rule,scalar),(groups,values))
+        })))
+        .collect::<BTreeMap<_,_>>();
+    combine(plans,queries);
+    for (out,state) in &mut plans.states {
+        for (rule,r) in Arc::make_mut(&mut state.rules).iter_mut().enumerate() {
+            for (scalar,s) in r.reducers.iter_mut().enumerate() {
+                let (groups,values) = &names[&(out.clone(),rule,scalar)];
+                reducer::combined::cursor_names(s,groups,values);
+            }
+            r.rewrite(queries[r.step].as_ref().unwrap());
+        }
+    }
+    for report in &mut plans.storage {
+        report.evaluation_boundary = "Independent wave gates retain separate cursor roots. Equal input versions, summary roots, and pending journals permit shared initialization or transition evaluation";
+    }
+}
+
 /// A maintenance pass keeps immutable dirty-key snapshots across scratch rewinds.
 /// Nested passes get their own cache; a later batch always applies its delta again.
-pub(in crate::code_rule_dsl::sql_executor) type Cache = BTreeMap<(usize, String), Cached>;
+pub type Cache = BTreeMap<(usize, String), Cached>;
 #[derive(Clone)]
-pub(in crate::code_rule_dsl::sql_executor) enum Cached {
+pub enum Cached {
     Native(versions::Version),
     Rows(usize, Vec<Vec<i64>>),
     Empty,
 }
-pub(super) fn recalled(w: &mut Work<'_>, group: &str) -> Result<Option<Option<(String, u64)>>> {
+pub fn recalled(w: &mut Work<'_>, group: &str) -> Result<Option<Option<(String, u64)>>> {
     let scope = w.versions.map_or(0, versions::Store::current_scope);
     let Some(cached) = w.summaries.get(&(scope, group.into())).cloned() else {
         return Ok(None);
@@ -147,7 +172,7 @@ pub(super) fn recalled(w: &mut Work<'_>, group: &str) -> Result<Option<Option<(S
     };
     Ok(Some(result))
 }
-pub(super) fn remember(
+pub fn remember(
     w: &mut Work<'_>,
     group: &str,
     result: &Option<(String, u64)>,

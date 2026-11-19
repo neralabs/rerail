@@ -2,6 +2,8 @@
 #
 # Every token below is a leaf kind of tree-sitter-json 0.24.8:
 #   '{' '}' '[' ']' ',' ':' '"'  string_content  escape_sequence  number  true  false  null
+# The tree is named-only, as the engine's tapes: the punctuation and the quotes are implied,
+# no leaf (`implied`, in the tree).
 #   comment (an extra) is not lexed: a file with one escapes to tree-sitter.
 #
 # Observed facts this file relies on (tree-sitter-json 0.24.8, checked with its parser):
@@ -112,4 +114,10 @@ tree json {
   node array nested           = '[' [value (',' value)*] ']'
   node string                 = '"' (string_content | escape_sequence)* '"'
   choice value supertype _value = object | array | string | number | true | false | null
+  # Named-only, as the engine's tapes: each token here is a delimiter its node implies, so it
+  # makes no leaf. `true`, `false` and `null` are nodes of their own.
+  implied object '{' ',' '}'
+  implied pair ':'
+  implied array '[' ',' ']'
+  implied string '"'
 }

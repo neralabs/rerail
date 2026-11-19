@@ -1,6 +1,6 @@
 //! One set merge for full runs and differential updates. Candidate and result rows are sets.
 use rusqlite::Connection;
-pub(in crate::code_rule_dsl) fn fold(
+pub fn fold(
     db: &Connection,
     rel: &str,
     arity: usize,

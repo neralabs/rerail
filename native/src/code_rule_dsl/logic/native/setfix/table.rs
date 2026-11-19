@@ -26,7 +26,10 @@ use super::{InRel, Key, Src, Step, is_dead};
 use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
 use rerail_accel::{Batch, Kernel, Launch, Output};
 use rustc_hash::{FxHashMap as HashMap, FxHasher};
-use std::cell::{Cell, OnceCell};
+#[cfg(any(test, feature = "test-hooks"))]
+use std::cell::Cell;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::collections::BTreeSet;
 use std::hash::Hasher;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -54,13 +57,13 @@ impl Table {
 /// A count step's state in one join: the rows its walks read, and its counts per row once built.
 #[derive(Default)]
 pub(super) struct StepForm {
-    spent: Cell<u64>,
-    tried: Cell<bool>,
+    spent: AtomicU64,
+    tried: AtomicBool,
     /// Whether the relation's tables were looked at for one by this step's columns (once: another step's, or a
     /// wave's, is read as this step's own).
-    looked: Cell<bool>,
-    table: OnceCell<Arc<Table>>,
-    per_row: OnceCell<Vec<u32>>,
+    looked: AtomicBool,
+    table: OnceLock<Arc<Table>>,
+    per_row: OnceLock<Vec<u32>>,
 }
 
 /// The tables a run found worth building, by relation (its table's name) and columns: the next chunk builds them ahead,
@@ -83,6 +86,16 @@ fn hash(key: &[i64]) -> u64 {
     }
     h.finish()
 }
+
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    /// Tests: build a step's table at its first probe, whatever its walks cost.
+    pub(super) static AT_ONCE: Cell<bool> = const { Cell::new(false) };
+}
+#[cfg(not(any(test, feature = "test-hooks")))]
+pub(super) fn at_once() -> bool { false }
+#[cfg(any(test, feature = "test-hooks"))]
+pub(super) fn at_once() -> bool { AT_ONCE.with(Cell::get) }
 
 fn off_on() -> bool {
     std::env::var("RERAIL_COUNT_TABLE").is_ok_and(|v| v == "off")
@@ -189,8 +202,12 @@ fn table(rel: &InRel, cols: &[usize]) -> Result<Arc<Table>, String> {
     if let Some(t) = rel.tables.lock().unwrap().get(cols) {
         return Ok(Arc::clone(t));
     }
-    let (p, launch) = histogram_launch(rel, cols);
-    let (mut done, _) = crate::code_rule_dsl::logic::lanes::executor().run(Batch(vec![launch]))?;
+    let (p, launch) = {
+        let _h = crate::code_rule_dsl::logic::lanes::prof::host("count table (histogram)", "encode: code the keys, group by partition");
+        histogram_launch(rel, cols)
+    };
+    let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run("count table (histogram)", Batch(vec![launch]))?;
+    let _h = crate::code_rule_dsl::logic::lanes::prof::host("count table (histogram)", "decode: the slot map of key to count");
     let t = Arc::new(histogram_table(p, done.remove(0).out)?);
     rel.tables.lock().unwrap().entry(cols.to_vec()).or_insert_with(|| Arc::clone(&t));
     Ok(t)
@@ -215,10 +232,10 @@ pub(super) fn count(form: &StepForm, src: &Src, keys: &[(usize, Key)], tests: &[
     if let Some(t) = form.table.get() {
         return Some(t.count(key));
     }
-    if form.looked.get() {
+    if form.looked.load(Relaxed) {
         return None;
     }
-    form.looked.set(true);
+    form.looked.store(true, Relaxed);
     let (rel, cols) = cols_of(src, keys, tests)?;
     let t = rel.tables.lock().unwrap().get(&cols).cloned()?;
     let n = t.count(key);
@@ -229,22 +246,25 @@ pub(super) fn count(form: &StepForm, src: &Src, keys: &[(usize, Key)], tests: &[
 /// Notes that step `i` of `steps` walked `walked` rows for one probe, and builds its table once walking has cost as
 /// much as building it would (see the module's comment).
 pub(super) fn spent(form: &StepForm, steps: &[Step], i: usize, walked: u64) {
-    if form.tried.get() {
+    if form.tried.load(Relaxed) {
         return;
     }
-    let Step::Scalar { src, keys, tests, kind: ScalarKind::Count, .. } = &steps[i] else { return };
+    let Step::Scalar { src, keys, tests, kind: ScalarKind::Count, col: None, .. } = &steps[i] else { return };
     let Some((rel, cols)) = cols_of(src, keys, tests) else {
-        form.tried.set(true);
+        form.tried.store(true, Relaxed);
         return;
     };
-    let spent = form.spent.get() + walked + 1;
-    form.spent.set(spent);
+    let spent = form.spent.fetch_add(walked + 1, Relaxed) + walked + 1;
     let left = per_row_left(steps, i);
     let cost = rel.len() as u64 + left.as_ref().map_or(0, |(l, _)| l.len() as u64) + FLOOR;
-    if spent < cost {
+    if spent < cost && !at_once() {
         return;
     }
-    form.tried.set(true);
+    // A morsel on another thread may pass the cost at the same time: one of them builds.
+    if form.tried.swap(true, Relaxed) {
+        return;
+    }
+    crate::code_rule_dsl::logic::lanes::prof::count(if left.is_some() { "count per row" } else { "count table (histogram)" }, "rows walked by probes before the build paid", spent);
     if off_on() {
         return;
     }
@@ -298,6 +318,7 @@ fn per_row_left(steps: &[Step], i: usize) -> Option<(Arc<InRel>, Vec<Option<usiz
 /// The count, for every row of `left`, of `rel`'s rows whose `cols` equal the row's key (`of_key`, with `keys`'
 /// constants): one `CountTable` launch.
 fn per_row(rel: &InRel, cols: &[usize], left: &InRel, of_key: &[Option<usize>], keys: &[(usize, Key)]) -> Result<Vec<u32>, String> {
+    let h = crate::code_rule_dsl::logic::lanes::prof::host("count per row", "encode: code both sides, group by partition");
     let coded = code(rel, cols);
     let (roff, right, _) = group(coded.parts, coded.rows.iter().copied());
     // Each left row's key, coded as the relation's are; a key it lacks is `ABSENT` (no right row has that code).
@@ -320,7 +341,9 @@ fn per_row(rel: &InRel, cols: &[usize], left: &InRel, of_key: &[Option<usize>], 
         .collect();
     let (loff, lcodes, pos) = group(coded.parts, lefts.iter().copied());
     let k = Kernel::CountTable { loff: loff.into(), left: lcodes.into(), roff: roff.into(), right: right.into(), emit: false };
-    let (mut done, _) = crate::code_rule_dsl::logic::lanes::executor().run(Batch(vec![Launch::new(k)]))?;
+    drop(h);
+    let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run("count per row", Batch(vec![Launch::new(k)]))?;
+    let _h = crate::code_rule_dsl::logic::lanes::prof::host("count per row", "decode: counts back in row order");
     let Output::PerRow(counts) = done.remove(0).out else { return Err("a count table's launch returned no counts per row".into()) };
     let mut b = BUILT.lock().unwrap();
     b.per_row += 1;
@@ -343,6 +366,7 @@ pub(super) fn prefetch(wants: &BTreeSet<(String, Vec<usize>)>, held: impl Fn(&st
         if rel.tables.lock().unwrap().contains_key(cols) {
             continue;
         }
+        let _h = crate::code_rule_dsl::logic::lanes::prof::host("count table (level wave)", "encode: code the keys, group by partition");
         let (p, l) = histogram_launch(&rel, cols);
         pending.push((rel, cols.clone(), p));
         launches.push(l);
@@ -352,7 +376,8 @@ pub(super) fn prefetch(wants: &BTreeSet<(String, Vec<usize>)>, held: impl Fn(&st
     }
     let n = launches.len();
     let rels: BTreeSet<*const InRel> = pending.iter().map(|(r, _, _)| Arc::as_ptr(r)).collect();
-    let (done, _) = crate::code_rule_dsl::logic::lanes::executor().run(Batch(launches))?;
+    let (done, _) = crate::code_rule_dsl::logic::lanes::prof::run("count table (level wave)", Batch(launches))?;
+    let _h = crate::code_rule_dsl::logic::lanes::prof::host("count table (level wave)", "decode: the slot map of key to count");
     for ((rel, cols, p), d) in pending.into_iter().zip(done) {
         let t = Arc::new(histogram_table(p, d.out)?);
         rel.tables.lock().unwrap().entry(cols).or_insert(t);

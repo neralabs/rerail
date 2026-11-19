@@ -7,8 +7,15 @@
 
 #[path = "../../../src/content_store/mod.rs"]
 pub mod content_store;
+/// Every in-process Git read: the one opener, its setup and its pool (`native/src/git_access`). Its Node-API
+/// owner (`owner.rs`) is the engine's, which installs the setup.
+#[path = "../../../src/git_access/mod.rs"]
+pub mod git_access;
 #[path = "../../../src/git_workspace.rs"]
 pub mod git_workspace;
+/// The checkout the engine runs from, found as it runs (decision 0224).
+#[path = "../../../src/source_tree.rs"]
+pub mod source_tree;
 /// A regex's literal probe (the prefilter's; the store's vocabulary uses it too).
 #[path = "../../../src/code_rule_dsl/prefilter/probes.rs"]
 pub mod probes;

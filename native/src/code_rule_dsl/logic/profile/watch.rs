@@ -34,7 +34,7 @@ pub(in crate::code_rule_dsl) fn dump(dir: &Path, why: &str, started: std::time::
     );
     header.push_str(&super::open_spans());
     header.push('\n');
-    super::write(dir, &header)
+    super::report::write(dir, &header)
 }
 
 /// Every thread's native stack into `out`; says how it was made.
@@ -82,6 +82,8 @@ fn stacks(out: &Path) -> String {
 /// Takes the stop signals on a thread of its own, and the deadline; see the module. Call it before any other
 /// thread starts, so they inherit the blocked signals. A no-op off Unix.
 pub fn watch() {
+    // The process's `main`: the profile's account of its life starts here (`life`).
+    super::life::entered();
     #[cfg(all(unix, not(target_family = "wasm")))]
     {
         let started = std::time::Instant::now();
@@ -98,7 +100,7 @@ pub fn watch() {
         };
         use std::sync::atomic::{AtomicU32, Ordering};
         static SNAPSHOTS: AtomicU32 = AtomicU32::new(0);
-        let _ = std::thread::Builder::new().name("rerail-watch".into()).spawn(move || {
+        let _ = rerail_accel::exec::service("rerail-watch", None, move || {
             loop {
                 let mut sig = 0;
                 // SAFETY: waits for one of the blocked signals in `set`.
@@ -123,7 +125,7 @@ pub fn watch() {
             }
         });
         if let Some(seconds) = std::env::var("RERAIL_DEADLINE").ok().and_then(|s| s.parse::<f64>().ok()).filter(|s| *s > 0.0) {
-            let _ = std::thread::Builder::new().name("rerail-deadline".into()).spawn(move || {
+            let _ = rerail_accel::exec::service("rerail-deadline", None, move || {
                 std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
                 match destination() {
                     Some(dir) => match dump(&dir.join("deadline"), &format!("RERAIL_DEADLINE={seconds}"), started) {

@@ -12,29 +12,28 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
 };
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
-struct Pending {
+pub struct Pending {
     path: Arc<str>,
     start: i64,
     end: i64,
     projection: Option<Row>,
 }
-struct Sink<'a> {
-    db: &'a super::Database,
-    table: &'a str,
-    input: &'a FactQuery,
-    work: &'a Arc<AtomicUsize>,
-    pending: Vec<Pending>,
-    path: Arc<str>,
-    error: Option<napi::Error>,
-    rows: usize,
-    peak: usize,
-    batches: usize,
+pub struct Sink<'a> {
+    pub db: &'a super::Database,
+    pub table: &'a str,
+    pub input: &'a FactQuery,
+    pub work: &'a Arc<AtomicUsize>,
+    pub pending: Vec<Pending>,
+    pub path: Arc<str>,
+    pub error: Option<napi::Error>,
+    pub rows: usize,
+    pub peak: usize,
+    pub batches: usize,
 }
 impl Sink<'_> {
-    fn flush(&mut self) -> Result<()> {
+    pub fn flush(&mut self) -> Result<()> {
         let published = self
             .pending
             .iter()
@@ -68,7 +67,7 @@ impl Sink<'_> {
         self.batches += 1;
         Ok(())
     }
-    fn emit(&mut self, mut witness: Witness) -> Witness {
+    pub fn emit(&mut self, mut witness: Witness) -> Witness {
         // The matcher completes the current column chunk before calling this sink.
         // SQLite errors invalidate this entire session, including already inserted batches.
         let projection = witness.captures.take_projection();

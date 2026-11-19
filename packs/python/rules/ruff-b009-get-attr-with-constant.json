@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-b009-get-attr-with-constant",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Use plain attribute access instead of getattr() with a constant attribute name; it is no safer and harder to read.",
+  "description": "Use plain attribute access instead of getattr() with a constant name only where the object's type declares the attribute; elsewhere getattr() keeps type checkers satisfied.",
   "scope": {
     "include": [
       "**/*"
@@ -176,7 +176,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B009",
-        "message": "Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.",
+        "message": "If the object's type declares this attribute, use `obj.name`; if not (a marker on a function, a patched method, a mixin's host attribute), keep `getattr` rather than a read with `# type: ignore`.",
         "suppress": {
           "noqa": {
             "codes": [

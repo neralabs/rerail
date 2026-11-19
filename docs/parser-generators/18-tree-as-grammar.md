@@ -40,6 +40,75 @@ tree json {
 - **`nested`** marks a node that may contain itself. Its content runs on a stack frame; every
   other node is inlined into the level that uses it. A non-nested node may not refer to
   itself, directly or through others.
+- **Shared rules.** The compiler also gives a level of its own to a node or a choice that is
+  inlined in several places, when a call saves enough states. Inlined, each place has a copy
+  of the rule's inner states: those it may go on from. Called, the level has them once, and
+  each use pays a push and a return. The states saved are the inner positions, once instead
+  of at each use, less a state per call:
+
+  ```
+  saved = (uses - 1) * inner - uses       # shared when saved >= 8
+  ```
+
+  A choice of single tokens has no inner position: each place needs its states either way, so
+  it stays inlined (JSON's `value`). So does JSON's `pair`: two uses save three states. A rule
+  that may match no token, or whose first token merges into the leaf before, stays inlined
+  (a call takes a token of its own), as do the rules a level that refuses a mark uses.
+
+  `.rr`'s expressions and aggregates are used in many places. With every rule inlined, its
+  machine had 858 states and 8,370 arms; shared, 438 and 4,014.
+
+  States of different levels that act alike are one state. A level's identity is left out of
+  the merge, and levels that share a state are joined into one level. Each still ends as its
+  own does: the root apart, a level with a node of its own apart from one without (its end
+  closes the node), and levels that refuse different marks apart. This takes `.rr` from 438
+  states to 284 and from 4,014 arms to 2,881; JSON's object and array share their end, 19
+  states to 18. Tier 2's words do not change (they were merged already, `merge_words`); the
+  machine, and every table made from it, is smaller.
+
+- **Remembered words.** `.rr`'s five aggregate words (`min`, `max`, `sum`, `mean`, `join`)
+  were written out once each, in seven places, and differed only in their own kind. Now they
+  are one choice, `remember aggregate_word`: the token it takes is its level's word, and
+  `as aggregate_word` (a wrap's or a relabel's moved node, a reading's `K as C`) names that
+  token's kind. Tier 2's `REMEMBER K` sets the level's word; a call keeps its caller's beside
+  its return and gives it back there, so a nested level starts with its caller's. A rule that
+  takes a remembered word stays inlined (a call would give the word back as it ends).
+  `.rr`: 284 states to 252, 2,881 arms to 2,396.
+
+- **Flags.** An aggregate's value may hold no named argument (a `:` after a word there ends
+  the value), down through every call inside it. `.rr` said so with a copy of the term rules,
+  `_nn`. Now it is a flag: `flag no_named`; `with no_named R` and `without no_named R` call the
+  nested rule `R` with it set or clear; `unless no_named A` is `A` only where it is clear.
+  A called level runs with its caller's flags, but where `with` or `without` sets one, and the
+  caller's are its own again where the call returns (tier 2 keeps them beside the return, with
+  the level's word). Tier 2's `FLAG` sets, clears or tests one. A guarded arm whose flag is set
+  is not there: the state ends, or refuses. Where the arm's own call set the flag, the guard
+  is settled when the grammar compiles. `.rr`: 252 states to 234, 2,396 arms to 2,225.
+
+- **Shared arms.** Tier 2's code also has one copy of each arm body. An arm is a run of
+  plain words (its span, keyword check and acts) ending in a `GOTO`. Runs with the same words
+  are one body, lowered once. Each place enters it with the index of its own target, and the
+  body ends in a jump table on that index. A refusal inside the body names the place's own
+  word: the place also sets how far its words are from the body's.
+
+  The shape check reads the control-flow graph, where a body's jump reaches every place's
+  target, not only its own. A cycle there that passes no `TOKEN` is refused, even though it
+  cannot happen. So places share only while the word graph, with each body's jump to all its
+  targets, has no such cycle; a place whose false edge closes one keeps its own body.
+
+  On `.rr`, 1,620 runs become 379 bodies: 6,090 words lowered as 1,900. Tier 2's machine
+  code goes from 261K to 246K instructions, while its stack loads and stores go from 66K to
+  98K. The words were not most of the code: tier 2 keeps about 20 state variables in SSA,
+  and each block where paths meet carries all of them. A shared body is such a block for
+  hundreds of places.
+
+- **State in memory where few words touch it.** Tier 2 keeps in SSA only the state every
+  token uses: the cursors, the token's start, end and limit, the node count, the open and
+  return depths. The supertype count, pending extras, wraps, the moved node, dropped records
+  and a shared arm's target and shift are slots of the stack frame, read and written where
+  used. On `.rr`, with shared arms, tier 2 goes from 246K instructions to 202K, and its stack
+  loads and stores from 98K to 43K (the slots' own included): both below the 261K and 66K
+  before shared arms.
 - **Every token is a leaf node,** as before; `skip` bytes are in none.
 - The root spans the file from its first token to the file's end, as tree-sitter's does
   (trailing whitespace included).

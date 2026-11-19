@@ -1,11 +1,11 @@
-"""Writes ruff-npy002-numpy-legacy-random.methods.rr: the legacy numpy.random functions NPY002 reports, grouped by
+"""Writes ruff-npy002-numpy-legacy-random.methods.rerail: the legacy numpy.random functions NPY002 reports, grouped by
 the advice each group gets, from the JSON's clauses (one clause per group).
     python3 docs/rule-syntax/packs/python/gen-ruff-npy002-numpy-legacy-random.py
 """
 import json, os
 HERE = os.path.dirname(os.path.abspath(__file__))
 JSON = os.path.join(HERE, "..", "..", "..", "..", "packs", "python", "rules", "ruff-npy002-numpy-legacy-random.json")
-OUT = os.path.join(HERE, "ruff-npy002-numpy-legacy-random.methods.rr")
+OUT = os.path.join(HERE, "ruff-npy002-numpy-legacy-random.methods.rerail")
 SKIP = ("shared", "string-annotation")
 
 

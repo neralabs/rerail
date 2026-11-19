@@ -1,4 +1,4 @@
-"""Writes unicorn-prefer-node-protocol.modules.rr from the policy JSON's list of built-in modules.
+"""Writes unicorn-prefer-node-protocol.modules.rerail from the policy JSON's list of built-in modules.
     python3 docs/rule-syntax/packs/javascript/gen-unicorn-prefer-node-protocol.py
 The JSON holds the list as one regex alternation, ^(?:a|b\\/c|…)$; each name becomes a row bare_builtin(name)."""
 import json, os, re
@@ -26,4 +26,4 @@ if __name__ == "__main__":
             line = ""
         line += r
     L.append(line.rstrip())
-    open(os.path.join(HERE, "unicorn-prefer-node-protocol.modules.rr"), "w").write("\n".join(L) + "\n")
+    open(os.path.join(HERE, "unicorn-prefer-node-protocol.modules.rerail"), "w").write("\n".join(L) + "\n")

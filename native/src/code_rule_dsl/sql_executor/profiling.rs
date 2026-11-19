@@ -2,11 +2,11 @@
 use super::super::logic::profile;
 use super::*;
 
-pub(super) struct Scope {
+pub struct Scope {
     _context: Option<super::super::sql_profile::Context>,
     _cpu: profile::Span,
 }
-pub(super) fn scope(db: &Database, stage: &str) -> Scope {
+pub fn scope(db: &Database, stage: &str) -> Scope {
     Scope {
         _context: db.profile_scope(|| {
             let phase = if stage.starts_with("bind_") {
@@ -28,30 +28,51 @@ pub(super) fn scope(db: &Database, stage: &str) -> Scope {
 impl CodeRuleSqlExecutor {
     /// Rust probes can reuse the installed trace instead of replacing SQLite's sole callback.
     pub fn sql_profile_totals(&self) -> Option<[u64; 6]> {
-        self.db.profiler().map(|p| p.totals())
+        self.db.profiler().map(|p| {
+            let owner=p.totals();let workers=self.worker_profile_totals.totals();
+            std::array::from_fn(|n|owner[n].saturating_add(workers[n]))
+        })
     }
-    pub(super) fn profiled<T>(
+    pub fn profiled<T>(
         &mut self,
         name: &str,
         f: impl FnOnce(&mut Self) -> Result<T>,
     ) -> Result<T> {
         let _scope = scope(&self.db, name);
         let _operation = self.db.profile_scope(|| json!({"operation":name}));
-        let result = f(self);
+        let ledger = self.db.admission();
+        self.planning = planning::Operation::start(name, &self.db, &self.limits);
+        let measurement = self.planning.as_ref().map(|_| ledger.measure());
+        let (result, denied) = match ledger.enter(name) {
+            Ok(_admission) => (f(self), false),
+            Err(e) => (Err(error(e)), true),
+        };
+        let result=if result.is_err() && self.db.admission().exhausted() {
+            Err(error(format!("SQL session submission allowance exhausted: {}",self.db.admission().snapshot())))
+        }else{result};
+        drop(measurement);
+        if let Some(operation) = self.planning.take() {
+            let report = operation.finish(result.is_ok(), denied || ledger.exhausted());
+            super::super::logic::costs::sql_plans::submit(report.clone());
+            self.last_planning = Some(report);
+        }
         if let Some(p) = self.db.profiler() {
             p.result(name, result.as_ref().err().map(ToString::to_string));
         }
         self.db.profile_checkpoint();
         result
     }
-    pub(super) fn profiled_read<T>(
+    pub fn profiled_read<T>(
         &self,
         name: &str,
         f: impl FnOnce(&Self) -> Result<T>,
     ) -> Result<T> {
         let _scope = scope(&self.db, name);
         let _operation = self.db.profile_scope(|| json!({"operation":name}));
-        let result = f(self);
+        let result = match self.db.admission().enter(name) {Ok(_admission)=>f(self),Err(e)=>Err(error(e))};
+        let result=if result.is_err() && self.db.admission().exhausted() {
+            Err(error(format!("SQL session submission allowance exhausted: {}",self.db.admission().snapshot())))
+        }else{result};
         if let Some(p) = self.db.profiler() {
             p.result(name, result.as_ref().err().map(ToString::to_string));
         }

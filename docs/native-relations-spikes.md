@@ -63,7 +63,7 @@ The owned-row adapter continues to store complete vectors.
 
 The workload contains five pinned data-layer files, with 1,026,452 source bytes.
 The source commit is `2b1504adc4291daaf080b2e932962b134da1a69a`.
-[The evidence file](../fixtures/host/data-layer-port/profiling/native-relations-metrics.json) records hashes, counts, phase timings, and artifact names.
+[The evidence file](../packs/data-layer/upstream/benchmarks/authored/profiling/native-relations-metrics.json) records hashes, counts, phase timings, and artifact names.
 Raw profiles remain under `.rerail/profiles/native-relations-spike/`.
 
 ### Complete captured-input SQL replay
@@ -175,7 +175,7 @@ The native inference solver does not become the dominant sampled cost.
 7. Keep the current IR-name inference in SQL.
    Require a demonstrated expensive fixed point before selecting a native solver.
 
-[PR 2539](https://github.com/neralabs/nera-data-layer/pull/2539) supports the demand and storage direction.
+PR 2539 supports the demand and storage direction.
 Its transferable ideas are typed fact catalogs, field demand, shared producers, narrow rows, and explicit invalidation.
 The bytecode experiment shows why demand added after broad extraction has limited value here.
 

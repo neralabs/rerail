@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -12,6 +12,7 @@ import {
   type ParityAdapter,
   type ParityRun,
 } from "../../integration/support/parity-harness.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 function adapters(overrides: Partial<Record<ParityAdapter["host"], () => Promise<ParityRun>>> = {}): ParityAdapter[] {
   return PARITY_HOSTS.map(host => ({
@@ -99,7 +100,7 @@ describe("live harness evidence", () => {
         await expect(readLedger(root, [event])).rejects.toThrow();
       }
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await removeFolder(root);
     }
   });
 

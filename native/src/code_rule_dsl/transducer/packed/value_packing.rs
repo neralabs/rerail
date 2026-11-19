@@ -15,7 +15,7 @@ fn checked_u32(value: usize) -> Result<u32, Error> {
 }
 
 #[derive(Clone, Debug, Default)]
-pub(super) struct PackedValueTables {
+pub struct PackedValueTables {
     pub values: Vec<ValueRecord>,
     pub nfa_states: Vec<NfaStateRecord>,
     pub nfa_data: Vec<u32>,
@@ -240,7 +240,7 @@ pub(super) fn unicode_word_data() -> Vec<u32> {
     data
 }
 
-pub(super) fn lua_matcher(
+pub fn lua_matcher(
     batch: &PackedBatch,
     instruction: LuaInstructionRecord,
 ) -> Result<ValueMatcher, Error> {
@@ -309,7 +309,7 @@ pub(super) fn lua_matcher(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::super::value::ValueSetMember;
     use super::*;
 

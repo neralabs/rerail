@@ -52,7 +52,7 @@ pub fn scratch(sh: &mut Shared, members: &[(intern::Sym, intern::Sym)]) -> (Delt
 }
 
 pub fn run_big<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
-    std::thread::Builder::new().stack_size(4 << 30).spawn(f).unwrap().join().unwrap()
+    rerail_accel::exec::service("ygraph (big stack)", Some(4 << 30), f).unwrap().join().unwrap()
 }
 
 fn arg(args: &[String], name: &str) -> Option<String> {

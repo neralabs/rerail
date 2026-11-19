@@ -1026,7 +1026,7 @@ impl<'a> Compiler<'a> {
                     }
                 }
                 eprintln!(
-                    "Tempo ignored SCM property predicate {} for ast-index-spike compatibility; exact host semantics are tracked in NER-1690 (https://linear.app/nera/issue/NER-1690)",
+                    "Tempo ignored SCM property predicate {} for ast-index-spike compatibility; exact host semantics are not implemented",
                     predicate.name
                 );
                 continue;
@@ -1234,7 +1234,7 @@ pub(super) fn compile(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]
@@ -1349,7 +1349,7 @@ mod tests {
                 .and_then(|name| pinned_nvim.get(name))
             {
                 assert_eq!(
-                    crate::lower_hex(&Sha256::digest(source.as_bytes())),
+                    crate::code_rule_dsl::prof::lower_hex(&Sha256::digest(source.as_bytes())),
                     *expected
                 );
             }

@@ -3,7 +3,7 @@
 //! time and memory, and (`RERAIL_DL_W=1`) its keys against W's engine on the same files.
 //!
 //!   RERAIL_DL_POLICY=<policy.json>[:<policy.json>…] RERAIL_DL_ROOT=<dir>
-//!   [RERAIL_DL_LOGIC=<program.rr>] [RERAIL_DL_BACKEND=cpu|metal] [RERAIL_DL_W=1] [RERAIL_PROF=1]
+//!   [RERAIL_DL_LOGIC=<program.rerail>] [RERAIL_DL_BACKEND=cpu|metal] [RERAIL_DL_W=1] [RERAIL_PROF=1]
 //!   cargo test --profile profiling --lib -- slice::tests::data_layer::data_layer_bench --ignored --nocapture
 //!
 //! A clause the path cannot run is reported with its reason, and left out of the policy the slice
@@ -16,11 +16,18 @@ use crate::code_rule_dsl::matcher::gated_match_tree;
 use crate::code_rule_dsl::transducer::packed::LoweredMatcher;
 
 /// Peak resident set of the process, in MB (`ru_maxrss` is bytes on macOS, KB elsewhere).
+#[cfg(unix)]
 fn peak_rss_mb() -> u64 {
     let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
     unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
     let raw = usage.ru_maxrss as u64;
     if cfg!(target_os = "macos") { raw >> 20 } else { raw >> 10 }
+}
+
+/// Peak working set of the process, in MB (`rerail_prof::windows_peak_working_set`, bytes).
+#[cfg(windows)]
+fn peak_rss_mb() -> u64 {
+    rerail_prof::windows_peak_working_set() >> 20
 }
 
 /// Why a clause does not run on the slice's path, or `None` when it lowers.
@@ -64,6 +71,7 @@ fn with_options(document: &mut serde_json::Value, options: &serde_json::Map<Stri
 }
 
 /// Each policy split into what the slice runs (compiled) and the clauses it refused, with reasons.
+#[allow(clippy::type_complexity)]
 fn split(path: &Path) -> Result<((String, CompiledCodeRuleDsl), Vec<(String, String)>), String> {
     let mut document: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let mut refused = Vec::new();
@@ -165,6 +173,14 @@ fn data_layer_bench() {
     for ((rule, code), n) in &by_code {
         eprintln!("DL   {rule} {code}: {n}");
     }
+    // `RERAIL_DL_KEYS=<dir>`: every key, as `rule code path line` lines (`slice.tsv`, and `w.tsv` with RERAIL_DL_W).
+    let write_keys = |name: &str, keys: &BTreeSet<(String, String, String, usize)>| {
+        if let Some(dir) = std::env::var_os("RERAIL_DL_KEYS") {
+            let text: String = keys.iter().map(|(rule, code, path, line)| format!("{rule}\t{code}\t{path}\t{line}\n")).collect();
+            std::fs::write(PathBuf::from(dir).join(name), text).unwrap();
+        }
+    };
+    write_keys("slice.tsv", &ours);
     crate::code_rule_dsl::prof::report("dl cold");
 
     let (cpu0, wall0) = (cpu(), std::time::Instant::now());
@@ -182,6 +198,7 @@ fn data_layer_bench() {
         let (cpu0, wall0) = (cpu(), std::time::Instant::now());
         let (ws, failed) = ws_keys(&policies, &names, &texts);
         eprintln!("DL W: {} keys, {} failures; cpu {:?}, wall {:?}", ws.len(), failed.len(), cpu() - cpu0, wall0.elapsed());
+        write_keys("w.tsv", &ws);
         let difference = Difference::of(&run, &ws, &failed);
         for ((rule, code), (only_ours, only_ws)) in &difference.clauses {
             eprintln!("DL   differs {rule} {code}: {only_ours} only ours, {only_ws} only W");
@@ -196,10 +213,10 @@ fn data_layer_bench() {
 }
 
 /// The data-layer fixtures on the final shape's path: each recorded pytest event of one check
-/// (`RERAIL_DL_RECORDING`, `RERAIL_DL_CHECK`, e.g. `gate/data-layer/fixtures/host/data-layer-port/
-/// batch-06-recording.json` and `serverplan_quality`) is a root of its files, audited cold with the
-/// policy compiled at the event's options; its keys (code, path, line) are compared with the
-/// recorded findings. Prints per entry point how many events agree.
+/// (`RERAIL_DL_RECORDING`, `RERAIL_DL_CHECK`, e.g. `packs/data-layer/upstream/lint/authored/fixtures/host/
+/// data-layer-port/batch-06-recording.json`, fetched by `npm run fixtures:pull`, and `serverplan_quality`)
+/// is a root of its files, audited cold with the policy compiled at the event's options; its keys (code,
+/// path, line) are compared with the recorded findings. Prints per entry point how many events agree.
 #[test]
 #[ignore = "the data-layer fixtures; RERAIL_DL_POLICY, RERAIL_DL_RECORDING, RERAIL_DL_CHECK, --ignored --nocapture"]
 fn data_layer_fixtures() {

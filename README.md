@@ -19,7 +19,7 @@ Rule checking runs on your machine and makes no network requests. No account or 
 
 ## Quickstart
 
-You need Node.js 24 or later and Git, on macOS, Linux with glibc 2.28 or later (not Alpine or other musl Linux), or Windows, on arm64 or x64. Prebuilt native engines ship in the package, so nothing is compiled on your machine. If set-up or Rerail goes wrong, see [Troubleshooting](docs/troubleshooting.md).
+You need Node.js 24 or later and Git, on macOS, Linux with glibc 2.28 or later (not Alpine or other musl Linux), or Windows, on arm64 or x64. On Windows, Claude Code also needs Git Bash, from Git for Windows. Prebuilt native engines ship in the package, so nothing is compiled on your machine. If set-up or Rerail goes wrong, see [Troubleshooting](docs/troubleshooting.md).
 
 In your repository, run this to install Rerail under `~/.rerail`, connect your coding agents and start Rerail there:
 
@@ -27,9 +27,11 @@ In your repository, run this to install Rerail under `~/.rerail`, connect your c
 npx @neralabs/rerail setup
 ```
 
+In Windows PowerShell, if that says `npx.ps1 cannot be loaded`, run `npx.cmd @neralabs/rerail setup` ([why](docs/troubleshooting.md#windows-powershell-npxps1-cannot-be-loaded)).
+
 Then, in a new terminal, which has `rerail` on its `PATH`, open the dashboard with `rerail manage`.
 
-Set-up asks before it reads the repository, shows the rule packs that fit it with the reason for each, and installs only the ones you confirm. It connects the coding agents it finds (or only the ones you name with `--agents`), puts `~/.rerail/bin` on your `PATH`, and starts Rerail in this repository only. Everywhere else Rerail stays off until you run `/rerail-start` (or `rerail start`) there. To have a coding agent install it for you, ask it to; it runs `setup --relay` and asks you each question in the session. [Installing Rerail](docs/installation.md) says what set-up changes on your machine and how to update and remove Rerail.
+Set-up asks before it reads the repository, shows the rule packs suggested for what it is built with and the reason for each, or why none matches, and installs only the ones you confirm. It connects the coding agents it finds (or only the ones you name with `--agents`), puts `~/.rerail/bin` on your `PATH`, and starts Rerail in this repository only. Everywhere else Rerail stays off until you run `/rerail-start` (or `rerail start`) there. To have a coding agent install it for you, ask it to; it runs `setup --relay` and asks you each question in the session. [Installing Rerail](docs/installation.md) says what set-up changes on your machine and how to update and remove Rerail.
 
 Then start a new Claude Code, Codex, Cursor, OMP or Pi session in the repository. To watch Rerail catch a broken rule and steer the fix, run:
 
@@ -53,7 +55,7 @@ The agent drafts the rule from your description, tests it against the repository
 </p>
 
 1. **Capture.** Hooks (Claude Code, Codex, Cursor) or native extensions (OMP, Pi) observe the session automatically, so the agent never has to remember to call Rerail. Before an edit, Rerail records the file as it was, so it can tell which lines the agent changed.
-2. **Evaluate.** One background daemon keeps the engine and every repository's compiled rules in memory, checks the files the agent touched, and reports only the lines it changed.
+2. **Evaluate.** One background daemon keeps the engine and the compiled rules of each repository in use in memory, checks the files the agent touched, and reports only the lines it changed.
 3. **Steer.** Each rule has a mode. `log` records the violation. `steer` sends the agent the rule, the location, what is wrong and, where the rule has one, a suggested fix.
 4. **Record.** Sessions and violations are stored in one local SQLite database (`~/.rerail/rerail.sqlite`) and shown in the dashboard, so you can see what fired, where and why.
 
@@ -74,7 +76,7 @@ A session in OMP: Rerail steers the agent on `eslint-eqeqeq` from the `javascrip
 
 ## Rule packs
 
-Core ships no rules. A rule pack is a set of rules published as its own npm package: Rerail's are `@neralabs/rerail-pack-<id>`, and anyone can publish one as `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`, which Rerail has not reviewed ([rule packs](docs/rule-packs.md#third-parties-packs)). Set-up recommends the packs that fit a repository, by its files or its dependencies, and installs the ones you confirm into `~/.rerail/packs`. A pack runs only where you add it. Manage packs from the dashboard's **Rule packs** page or with `rerail packs list|add|remove|recommend`.
+Core ships no rules. A rule pack is a set of rules published as its own npm package: Rerail's are `@neralabs/rerail-pack-<id>`, and anyone can publish one as `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`, which Rerail has not reviewed ([rule packs](docs/rule-packs.md#third-parties-packs)). Set-up recommends the packs that fit a repository, by its files or its dependencies, and installs the ones you confirm into `~/.rerail/packs`. A pack runs only where you add it. Manage packs from the dashboard's **Rule packs** page or with `rerail packs list|add|remove|recommend|calibrate`.
 
 To add a pack after set-up, first see the packs that fit this repository, and why:
 
@@ -96,11 +98,13 @@ rerail manage
 
 `rerail packs add` installs a pack but turns it on nowhere; it runs only in the repositories you add it to.
 
-| Pack | Ported from |
+Packs that port a linter are [linter-equivalent](docs/rule-packs.md#linter-equivalent) to it.
+
+| Pack | Linter-equivalent to |
 | --- | --- |
 | `python` | Ruff v0.16, Bandit v1 |
 | `javascript` | ESLint v10, eslint-plugin-unicorn v76 |
-| `typescript` | typescript-eslint v8, eslint-plugin-vitest v1 |
+| `typescript` | typescript-eslint v8, @vitest/eslint-plugin v1 |
 | `next` | @next/eslint-plugin-next v16 |
 | `react` | eslint-plugin-react v7, eslint-plugin-react-hooks v7 |
 | `node` | eslint-plugin-n v18 |
@@ -109,13 +113,15 @@ rerail manage
 | `rust` | Clippy (Rust 1.99) |
 | `blade` | Bladestan v0.11, tlint v9, stillat/blade-parser v2 |
 | `php` | PHP_CodeSniffer v4, PHPStan v2, Psalm v6 |
-| `complexity` | lizard v1: cyclomatic complexity above 6, for Python, TypeScript, JavaScript, PHP, Blade, Rust and Vue |
+| `complexity` | none: counts like lizard v1, for cyclomatic complexity above 6 in Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue and Java |
 
 A ported rule ships only once it passes the conformance check: it is scored against the original tool's own findings on the tool's tests, at the exact release the pack pins, and on real-code samples. Ports that are not ready yet sit in each pack's `candidates/`, scored but never shipped. Each pack is versioned with changesets and released separately from core. See [Rule packs](docs/rule-packs.md), the [pack format](docs/pack-format.md) and [the conformance check](conformance/README.md#the-gate).
 
+Set-up reads the repository's own linter config, as data, and turns pack rules on and off to match it: the same rules on, the same rules off. `rerail packs calibrate` reads it again after the config changes, and keeps any setting you made yourself ([the repository's own lint config](docs/rule-scoping.md#the-repositorys-own-lint-config)).
+
 A worktree can also carry rules of its own: each rule document in its `.rerail/rules/` folder runs in that worktree only, with nothing to install or add, and `rerail packs list` there shows what loaded ([a rule for one worktree only](docs/writing-rules.md#a-rule-for-one-worktree-only)). `/rerail-create` writes a rule there when you ask for this worktree only.
 
-Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL and Vue; regex rules and `file` rules read every text file in their scope, `Justfile`, `LICENSE` and lock files included ([Writing path and text rules](docs/path-and-text-rules.md)). Move your own rules between machines with `rerail rules export` and `rerail rules import`.
+Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL, Vue and Java; regex rules and `file` rules read every text file in their scope, `Justfile`, `LICENSE` and lock files included ([Writing path and text rules](docs/path-and-text-rules.md)). Move your own rules between machines with `rerail rules export` and `rerail rules import`.
 
 ## Supported coding agents
 
@@ -136,12 +142,12 @@ Every agent gets the same commands; Codex has them as `$rerail-*` skills:
 | --- | --- |
 | `/rerail` | What Rerail is doing in this repository, and every command (`/rerail-help` is the same) |
 | `/rerail-start`, `/rerail-stop` | Start or stop Rerail in this checkout and the worktrees inside it; rules and history are kept |
-| `/rerail-create` | Create a rule in your own words |
+| `/rerail-create` | Write a rule in your own words, change one, or get rule suggestions for this repository |
 | `/rerail-show-me` | See Rerail catch a broken rule in this repository and steer the fix, then clean up |
 | `/rerail-bug-report` | Work out what went wrong: fix your own rule, or report a Rerail bug in an issue |
 | `/rerail-manage` | Open the dashboard |
 | `/rerail-update` | Update Rerail to the newest version |
-| `/rerail-uninstall` | Remove Rerail from this computer; rules and history are kept in a backup |
+| `/rerail-uninstall` | Remove Rerail from this computer, keeping your rules and history in a backup or deleting everything |
 
 Everything else is a `rerail` terminal command: `rerail status`, `rerail version`, `rerail update check`, `rerail reset`. Run `rerail --help` for the full list. In Claude Code, OMP and Pi the status line shows `R E R A I L ● <n> rules`, and how many times Rerail steered, while Rerail is on; see [In-session surfaces](docs/in-session-surfaces.md).
 
@@ -154,7 +160,7 @@ When the agent decides not to follow a steer, it records its one-line reason wit
 > still testing them internally. They are not supported, they may change or be removed in any release without notice,
 > and nothing in this README promises they work. Do not build on them or rely on them in your workflow.
 
-Their list, and where each one surfaces, is in [Internal testing](docs/internal-testing.md). Found one? Feedback is welcome in an issue, labelled as internal testing.
+Each is off until its `RERAIL_EXPERIMENTAL_<FEATURE>` variable is set. Their list, where each one surfaces and which variable turns it on are in [Internal testing](docs/internal-testing.md). Found one? Feedback is welcome in an issue, labelled as internal testing.
 
 ## Repository structure
 
@@ -176,7 +182,7 @@ Their list, and where each one surfaces, is in [Internal testing](docs/internal-
 ├── packs/            # rule packs, one npm package each
 ├── model/            # bundled, pinned potion-base-8M model (Git LFS)
 ├── hooks/            # hook manifests for Claude Code, Codex and Cursor
-├── skills/           # agent skills shipped with Rerail (rerail-create)
+├── skills/           # agent skills shipped with Rerail (rerail-create, rerail-bug-report)
 ├── .claude-plugin/ .codex-plugin/ .cursor-plugin/  # agent plugin manifests
 ├── ui/               # dashboard: plain HTML, CSS and ES modules, no build step
 ├── conformance/      # the conformance check: scores ported rules against upstream tools' findings

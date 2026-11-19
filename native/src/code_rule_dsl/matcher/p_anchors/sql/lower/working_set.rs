@@ -42,7 +42,7 @@ pub fn snapshot(db: &Connection, live: usize) -> Result<Value> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     #[test]
     fn distinguishes_live_objects_from_freed_reserved_pages() {
         let db = rusqlite::Connection::open_in_memory().unwrap();

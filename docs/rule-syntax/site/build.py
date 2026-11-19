@@ -1,6 +1,9 @@
 """Build the Rerail logic syntax page: out/index.html and out/data/*.json.
 
-    python3 docs/rule-syntax/site/build.py [--dlre <Data-layer-rule-expressivity worktree>] [--ndl <nera-data-layer checkout>]
+    ENGINE=<rerail-engine> python3 docs/rule-syntax/site/build.py [--dlre <Data-layer-rule-expressivity worktree>] [--ndl <data-layer checkout>]
+
+The generated view of each JSON rule is the engine's translator (decision 0175, `rerail-engine translate-json
+--display`); ENGINE defaults to the worktree's target/profiling/rerail-engine.
 """
 
 import argparse
@@ -11,12 +14,12 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 RS = os.path.join(ROOT, "docs", "rule-syntax")
 sys.path.insert(0, HERE)
-import translate  # noqa: E402
 import runpy  # noqa: E402
 
 LIBS = [
@@ -25,7 +28,7 @@ LIBS = [
     ("python/imports", "datalog", "What each import binds and loads, the import-time module graph, and module exports."),
     ("python/calls", "datalog", "Call targets and call chains: which function a call can reach, with unknown targets kept as unknown, joined from the typing program's answers; and the call syntax helpers."),
     ("python/types", "datalog", "What class each expression may hold: type_of, proven_type, possible_type and their open sides, joined from the typing program's answers."),
-    ("typing/python", "program", "The Python typing program: points-to, call targets, method lookup through bases, and types, in .rr. The engine runs it before the rules, file by file and then in bounded cross-file rounds.", "typing/programs/calls.rr"),
+    ("typing/python", "program", "The Python typing program: points-to, call targets, method lookup through bases, and types, in .rerail. The engine runs it before the rules, file by file and then in bounded cross-file rounds.", "typing/programs/calls.rerail"),
     ("python/ast", "datalog", "Python as CPython's ast sees it: Name and context, frames with decorators inside the def, parameters by kind, assignments, constants, qualified names, and visit order."),
     ("python/flow", "datalog", "Statement order within a body, and blocks that always raise. Tree arithmetic only."),
     ("data-layer/signing", "datalog", "The data-layer repository's signed allowlists and ratchet baselines, verified in Datalog: the signed bytes rebuilt with join, checked with @ed25519_ok."),
@@ -78,6 +81,17 @@ def description(rr):
     return json.loads('"' + m.group(1) + '"') if m else ""
 
 
+def display(paths):
+    """Each JSON policy's display translation by the engine's translator (`translate-json --display`): its file stem
+    to (text, JSON terms left as `ast(..)` atoms, ungrounded rules). A policy the translator cannot take is left out."""
+    engine = os.environ.get("ENGINE") or os.path.join(ROOT, "target", "profiling", "rerail-engine")
+    os.makedirs(os.path.join(ROOT, "tmp"), exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="site-display.", dir=os.path.join(ROOT, "tmp")) as out:
+        subprocess.run([engine, "translate-json", "--display", *paths, "--out", out], check=True, capture_output=True)
+        counts = json.loads(read(os.path.join(out, "counts.json")))
+        return {stem: (read(os.path.join(out, stem + ".rerail")), c["untranslated"], c["ungrounded"]) for stem, c in counts.items()}
+
+
 def git_show(repo, rev, path):
     try:
         return subprocess.run(["git", "-C", repo, "show", f"{rev}:{path}"], check=True, capture_output=True, text=True).stdout
@@ -88,7 +102,7 @@ def git_show(repo, rev, path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dlre", default=os.path.join(os.path.dirname(ROOT), "Data-layer-rule-expressivity"))
-    ap.add_argument("--ndl", default=os.path.join(os.path.dirname(os.path.dirname(ROOT)), "nera-data-layer-ner1131-base-audit"))
+    ap.add_argument("--ndl", default=os.path.join(os.path.dirname(os.path.dirname(ROOT)), "data-layer-base-audit"))
     ap.add_argument("--out", default=os.path.join(HERE, "out"))
     a = ap.parse_args()
     runpy.run_path(os.path.join(HERE, "pages.py"))   # writes intro.html and syntax.html
@@ -96,7 +110,7 @@ def main():
 
     libs = {}
     for mod, kind, blurb, *path in LIBS:
-        src = os.path.join(RS, *path) if path else os.path.join(RS, "lib", mod + ".rr")
+        src = os.path.join(RS, *path) if path else os.path.join(RS, "lib", mod + ".rerail")
         libs[mod] = {"kind": kind, "src": read(src), "blurb": blurb}
     n_native = sum(len(re.findall(r"^\.(?:decl|edit)\s", l["src"], re.M)) for l in libs.values() if l["kind"] == "native")
     n_datalog = sum(len(re.findall(r"^\.(?:decl|edit)\s", l["src"], re.M)) for m, l in libs.items() if l["kind"] == "datalog")
@@ -106,22 +120,24 @@ def main():
     for pdir in sorted(glob.glob(os.path.join(ROOT, "packs", "*", "rules"))):
         name = pdir.split(os.sep)[-2]
         rules = []
-        for f in sorted(glob.glob(os.path.join(pdir, "*.json"))):
+        files = sorted(glob.glob(os.path.join(pdir, "*.json")))
+        shown = display(files) if files else {}
+        for f in files:
             doc = json.loads(read(f))
-            rr, u, ug = translate.translate(doc)
+            rr, u, ug = shown[os.path.basename(f)[:-5]]
             ungrounded += ug
             pretty = json.dumps(doc, indent=2, ensure_ascii=False)
             rid = doc.get("id", os.path.basename(f))
             entry = {"id": rid, "d": doc.get("description", ""), "m": doc.get("mode", "log"),
                      "j": compact(doc), "r": rr, "u": u, "jl": pretty.count("\n") + 1, "rl": rr.count("\n")}
-            # The hand-written rule: docs/rule-syntax/packs/<pack>/<id>.rr, plus <id>.<part>.rr files (a fact table).
-            hand = os.path.join(RS, "packs", name, rid + ".rr")
+            # The hand-written rule: docs/rule-syntax/packs/<pack>/<id>.rerail, plus <id>.<part>.rerail files (a fact table).
+            hand = os.path.join(RS, "packs", name, rid + ".rerail")
             if os.path.exists(hand):
                 entry["h"] = read(hand)
                 hand_rules += 1
                 hand_rr += len("\n".join(l for l in entry["h"].split("\n") if not l.lstrip().startswith("//")))
                 entry["hx"] = {os.path.basename(x)[len(rid) + 1:-3]: read(x)
-                               for x in sorted(glob.glob(os.path.join(RS, "packs", name, rid + ".*.rr")))}
+                               for x in sorted(glob.glob(os.path.join(RS, "packs", name, rid + ".*.rerail")))}
             rules.append(entry)
             total_json += len(pretty)
             total_rr += len("\n".join(l for l in rr.split("\n") if not l.lstrip().startswith("//")))  # code only
@@ -136,51 +152,51 @@ def main():
     packs.sort(key=lambda p: (-p["count"], p["name"]))
 
     hand_meta, hand_data = [], {}
-    router_json = json.loads(read(os.path.join(RS, "nested-routers.json")))
-    b1, b2 = read(os.path.join(RS, "nested-routers.b1.rr")), read(os.path.join(RS, "nested-routers.b2.rr"))
-    hand_data["router"] = {"json": compact(router_json), "gen": translate.translate(router_json)[0], "b1": b1, "b2": b2}
+    router_path = os.path.join(RS, "nested-routers.json")
+    router_json = json.loads(read(router_path))
+    b1, b2 = read(os.path.join(RS, "nested-routers.b1.rerail")), read(os.path.join(RS, "nested-routers.b2.rerail"))
+    hand_data["router"] = {"json": compact(router_json), "gen": display([router_path])["nested-routers"][0], "b1": b1, "b2": b2}
     hand_meta.append({"key": "router", "title": "no-nested-routers", "tags": ["worked example", "typescript"],
                       "summary": "A react-router router nested inside another. Today's JSON, its generated form, the same meaning written by hand, and a more accurate version that follows components across files.",
                       "views": [
-                          {"label": "More accurate", "panes": [{"title": "Accurate version .rr", "src": "b2", "lang": "rr"}, {"title": "Same meaning as the JSON .rr", "src": "b1", "lang": "rr"}]},
-                          {"label": "Today vs .rr", "panes": [{"title": "Today: JSON", "src": "json", "lang": "json"}, {"title": "Same meaning .rr", "src": "b1", "lang": "rr"}]},
-                          {"label": "Today vs generated", "panes": [{"title": "Today: JSON", "src": "json", "lang": "json"}, {"title": "Generated .rr", "src": "gen", "lang": "rr"}]},
+                          {"label": "More accurate", "panes": [{"title": "Accurate version .rerail", "src": "b2", "lang": "rr"}, {"title": "Same meaning as the JSON .rerail", "src": "b1", "lang": "rr"}]},
+                          {"label": "Today vs .rerail", "panes": [{"title": "Today: JSON", "src": "json", "lang": "json"}, {"title": "Same meaning .rerail", "src": "b1", "lang": "rr"}]},
+                          {"label": "Today vs generated", "panes": [{"title": "Today: JSON", "src": "json", "lang": "json"}, {"title": "Generated .rerail", "src": "gen", "lang": "rr"}]},
                       ]})
 
-    fli1, fli2 = read(os.path.join(RS, "function-level-imports.b1.rr")), read(os.path.join(RS, "function-level-imports.b2.rr"))
+    fli1, fli2 = read(os.path.join(RS, "function-level-imports.b1.rerail")), read(os.path.join(RS, "function-level-imports.b2.rerail"))
     yaml = git_show(a.ndl, PR2539, "scripts/lint_specs/lint_function_level_imports.yaml") or "# The earlier YAML port is not available in this checkout\n"
     py = git_show(a.ndl, NDL_COMMIT, "scripts/lint_function_level_imports.py") or "# The Python linter is not available in this checkout\n"
     hand_data["fli"] = {"yaml": yaml, "b1": fli1, "b2": fli2, "py": py}
     hand_meta.append({"key": "fli", "title": "function-level-imports", "tags": ["data-layer", "ratchet"],
                       "summary": "Classifies imports inside functions. One version matches today's Python linter exactly; the accurate version classifies from evidence: proven import cycles, annotation-only use, ImportError guards.",
                       "views": [
-                          {"label": "From evidence", "panes": [{"title": "Accurate version .rr", "src": "b2", "lang": "rr"}, {"title": "Same meaning as the Python linter .rr", "src": "b1", "lang": "rr"}]},
-                          {"label": "Earlier YAML attempt vs .rr", "panes": [{"title": "Earlier attempt: YAML with embedded SQL", "src": "yaml", "lang": "yaml"}, {"title": "Same meaning as the Python linter .rr", "src": "b1", "lang": "rr"}]},
-                          {"label": "Python linter vs .rr", "panes": [{"title": "scripts/lint_function_level_imports.py", "src": "py", "lang": "text"}, {"title": "Same meaning as the Python linter .rr", "src": "b1", "lang": "rr"}]},
+                          {"label": "From evidence", "panes": [{"title": "Accurate version .rerail", "src": "b2", "lang": "rr"}, {"title": "Same meaning as the Python linter .rerail", "src": "b1", "lang": "rr"}]},
+                          {"label": "Earlier YAML attempt vs .rerail", "panes": [{"title": "Earlier attempt: YAML with embedded SQL", "src": "yaml", "lang": "yaml"}, {"title": "Same meaning as the Python linter .rerail", "src": "b1", "lang": "rr"}]},
+                          {"label": "Python linter vs .rerail", "panes": [{"title": "scripts/lint_function_level_imports.py", "src": "py", "lang": "text"}, {"title": "Same meaning as the Python linter .rerail", "src": "b1", "lang": "rr"}]},
                       ]})
 
     for key, slug, pyfile in DATA_LAYER:
-        p = os.path.join(RS, "data-layer", slug + ".rr")
+        p = os.path.join(RS, "data-layer", slug + ".rerail")
         if not os.path.exists(p):
             continue
         final = read(p)
         cand = next((c for c in (os.path.join(a.dlre, "packs", "data-layer", d, "rules", f"data-layer-{slug}.json")
                                  for d in ("candidates", ".")) if os.path.exists(c)), "")
         entry = {"final": final}
-        views = [{"label": "Final form", "panes": [{"title": slug + ".rr", "src": "final", "lang": "rr"}]}]
+        views = [{"label": "Final form", "panes": [{"title": slug + ".rerail", "src": "final", "lang": "rr"}]}]
         if os.path.exists(cand):
             doc = json.loads(read(cand))
             entry["json"] = compact(doc)
             views[0]["panes"].append({"title": "Today: JSON port", "src": "json", "lang": "json"})
-            try:   # the machine translator reads the early JSON format only; later ports get no generated view
-                entry["gen"] = translate.translate(doc)[0]
-                views.append({"label": "JSON port vs generated", "panes": [{"title": "JSON port in today's format", "src": "json", "lang": "json"}, {"title": "Generated .rr", "src": "gen", "lang": "rr"}]})
-            except Exception:
-                pass
+            shown = display([cand]).get(os.path.basename(cand)[:-5])
+            if shown:   # a port the translator cannot take gets no generated view
+                entry["gen"] = shown[0]
+                views.append({"label": "JSON port vs generated", "panes": [{"title": "JSON port in today's format", "src": "json", "lang": "json"}, {"title": "Generated .rerail", "src": "gen", "lang": "rr"}]})
         src = git_show(a.ndl, NDL_COMMIT, "scripts/" + pyfile)
         if src:
             entry["py"] = src
-            views.append({"label": "Python linter vs .rr", "panes": [{"title": "scripts/" + pyfile, "src": "py", "lang": "text"}, {"title": slug + ".rr", "src": "final", "lang": "rr"}]})
+            views.append({"label": "Python linter vs .rerail", "panes": [{"title": "scripts/" + pyfile, "src": "py", "lang": "text"}, {"title": slug + ".rerail", "src": "final", "lang": "rr"}]})
         hand_data[key] = entry
         hand_meta.append({"key": key, "title": slug, "tags": ["data-layer"], "summary": description(final), "views": views})
 

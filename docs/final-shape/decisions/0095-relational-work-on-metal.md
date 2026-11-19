@@ -285,8 +285,8 @@ Before a stratum opens, the planner has priced each of its rules: an estimate of
   - The GPU's is assumed until the relational lab measures it: 2 ns a unit and 0.15 ms a submission.
   - The device wave (§5) divides the submission's cost among a level's strata, and the price will say so once it
     exists.
-- **The GPU is chosen when it is cheaper by a margin (2x) and the device has every form the stratum uses.** Today
-  it has none, so every stratum runs on the CPU.
+- **The GPU is chosen when it is cheaper by a margin (2x) and the device has every form the stratum uses.** It has
+  join, negation and comparison (order of work, step 4), priced from the host's measured costs.
 - **The profile says what the device lacks.** Its section "Placement" gives:
   - the strata the GPU would run cheaper, with the CPU they took against the GPU's estimate;
   - the forms missing, by the CPU of the strata that need them;
@@ -414,9 +414,83 @@ Before a stratum opens, the planner has priced each of its rules: an estimate of
        device.
    - The chunk tile stays for what equality does not cover: pairs within a document under `within`, `@doc`
      equality and order comparisons (the brute force per document that §4 meant).
-4. **Negation, then aggregates (`sort`, `group`).** `sort` is built (step 3). Next: a stratum's joins run on
-   the device from the engine, as the placement chooses, in one command buffer per stratum, its relations resident
-   across the chunk's strata.
+4. **Negation, then aggregates (`sort`, `group`).** `sort` is built (step 3).
+   - **Built: a stratum's joins on the device, from the engine** (`setfix::device`, `metal_join`). When the
+     placement puts a stratum on the GPU, its spec says `device`, and the native engine runs the stratum's seed
+     joins there: plain equi-joins, negation (an anti-join), existence (a semi-join), and the filters after an atom
+     (comparisons, `@doc`, `in` over a set, `let`), as the block program's row stream.
+     - **The plan.** A rule's steps compile to stages over a binding table: a column per variable slot, a row per
+       binding. An atom is a stage (join, semi-join or anti-join, by the relation's hash-sorted index on the keys
+       it reads); the fused filters after it are its row program, run per candidate on the device; `let` and
+       `docof` that only bind are a map in place. A filter that follows a map is a stage of its own.
+     - **One command buffer for the stratum.** Every rule's stages go into one batch. Each stage is count, scan,
+       scatter: no atomic append, so rows come out in a fixed order. A stage from the rule's single first binding
+       runs a thread per candidate row (a thread walking them all cost the slice 1.2 s of GPU time). A stage's
+       space is guessed from the growth the same rule saw before; a stage that overflows runs again from itself,
+       sized exactly, and the stages after it are sized again.
+     - **Rows back as the CPU's.** The head's rows are made distinct on the device (each row claims a place by its
+       hash; the first of equal rows is kept, and the order is kept), then go into the store through the same
+       check the CPU's walk uses. Each step's entered and passed counts are rebuilt from the stages' totals and
+       counters, so the planner replans from the same observations.
+     - **Residency.** A relation's device copy and its sorts by key columns stay on the device for as long as the
+       relation lives (a weak reference), within 384 MB, least recently used first out. Strata of a chunk that
+       read the same relation share one upload and one sort.
+     - **What stays on the CPU, named.** A stratum with recursion, gates or requests, or with no native seed join;
+       an atom over the component's own relation; a computed head; an atom read by keys over a relation made on
+       lookup (an axis or `within`, which the CPU reads a key at a time). Each is a refusal in the profile, with
+       the CPU it took; nothing is rerouted silently.
+     - **Priced.** `DEVICE_FORMS` is join, negation and comparison. The device's price is the host's measured cost
+       per submission (100 µs), rule (6 µs) and stage (8 µs), a sort per relation and keys (45 µs), its join steps
+       on their device forms, and 40 ns per row back. Only the joins' part is compared: the rest of a stratum
+       (planning, the store) is paid on either side. Small strata stay on the CPU.
+     - **The profile** gives, under "Placement", the strata run on the GPU: GPU time from the command buffers'
+       timestamps, submissions, dispatches and reruns, the host's CPU split into encoding, uploads, waiting and
+       rows back, uploads against resident hits, and the costliest 25 strata; then the refusals by reason.
+     - **Tests:** stages against nested loops (`metal_join`), head rows made distinct, and a stratum's seeds on the
+       device giving the CPU's rows and per-step counts (`setfix::device`). The relational lab's replay runs each
+       capture on the device first and compares its rows with the run's. On the slice's 82 captures of 2·10^4
+       units and more, 44 ran on the device and all 44 gave the run's rows (129 ms of GPU time, 87 submissions);
+       38 were refused: 32 recursive, 3 aggregates, 2 text tests, 1 function call.
+     - **Slice of 8 programs** (debug build, load 95–138), findings identical to the base and to the CPU binding.
+       Paired under the Metal binding, device joins on against off (`RERAIL_DEVICE_JOINS=off`, a measurement aid):
+
+       | | joins on the CPU | joins on the device |
+       |---|---|---|
+       | Retired instructions (process) | 221.2 G, 221.0 G | 209.2 G, 208.9 G |
+       | Local phase, user CPU | 14.26 s, 14.29 s | 13.03 s, 12.96 s |
+
+       50 strata (71 runs, 148 rules, 350 stages) ran on the device. Their CPU went from 3.03 s to 1.85 s; the
+       device took 108 ms of GPU time in 88 submissions. The host's part is 569 ms: 66 encoding, 190 uploads,
+       6 waiting and 307 putting 2.0 M rows into the store. The largest wins are aggregates' inputs (`rr_agg36`
+       0.42 to 0.14 s) and regions (0.18 to 0.04 s). The largest stratum (`fl853_p4_outer`, 777 K rows) gains
+       little (0.65 to 0.60 s): most of its time is storing its rows, which both sides pay.
+     - **Python pack** (534 programs, debug build), findings identical to the base binary's in every run.
+       - Paired under the Metal binding, device joins on and off run at the same time (load 13–20):
+
+         | | joins on the CPU | joins on the device |
+         |---|---|---|
+         | Local phase, user + sys | 125.5 + 5.5 s | 117.4 + 6.1 s |
+         | Cross phase, user + sys | 18.1 + 0.5 s | 17.5 + 0.6 s |
+         | Retired instructions (process) | 2,731 G | 2,596 G |
+         | The 345 strata the device ran (756 runs) | 25.7 s CPU | 15.9 s CPU, 1.0 s GPU |
+
+       - The device ran 4,149 rules in 6,385 stages, 1,075 submissions. The host's part was 5.1 s: 0.8 s encoding,
+         1.3 s uploads (1,353 relations, 253 MB; 4,753 found resident), 0.06 s waiting and 2.9 s putting 30 M rows
+         into the store. The strata gain at every size of planned work; of 345, 61 are slower, by little.
+       - The largest gains are aggregates' inputs: `rr_agg36` 1.64 to 0.56 s, `rr_agg239` 0.49 to 0.03 s. A stratum
+         of 1,484 one-atom rules (`rr_embed_req`) goes from 4.46 to 3.93 s.
+       - Refused: 41 strata (5.3 s) read a relation made on lookup by keys; 2 (0.6 s) found the process's device
+         budget spent. The device's buffers share 256 MB with the syntax side's tapes, so the joins keep within
+         what is left: a submission takes rules while 48 MB remain, and a refusal for space gives back the
+         relations kept resident and the pool's free buffers, then runs once more.
+       - Against the CPU binding, from the same binary (load 107–153, not at the same time): local 165.3 + 7.7 s
+         against 160.8 + 9.0 s, 2,670 G against 2,602 G instructions.
+     - Not yet: aggregates and recursion on the device; batching a dependency level's strata into one submission
+       (`device::run` already takes any set of seed rules, so a level is one call); uploads in the 16-bit layout
+       (§6), and residency past the life of the engine's relation (a relation rebuilt is uploaded again); relations
+       made on lookup read by keys; the host's prices. The engine's host cost per rule or stage is about 120 µs in
+       the debug build, against the 6 and 8 µs priced, and rows back cost 130 ns against 40. The strata placed
+       gain at every size all the same, so the prices stay until the release build is measured.
 5. **Device waves (§5)**, once enough strata run to make whole levels.
 6. **Recursion:** the queue for file-local fixpoints, waves for the rest.
 7. **Text tests** on the device (O66).

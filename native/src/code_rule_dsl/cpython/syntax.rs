@@ -1,4 +1,4 @@
-//! `ast.parse`'s verdict on a module's text, as CPython 3.13 gives it (core.rr's `syntax_error(d, l, msg)`): whether it
+//! `ast.parse`'s verdict on a module's text, as CPython 3.13 gives it (core.rerail's `syntax_error(d, l, msg)`): whether it
 //! raises `SyntaxError` (or its subclasses `IndentationError`, `TabError`), and the error's `lineno` and `msg`.
 //!
 //! Ruff's parser (`ruff_python_parser`, at `cpython::VERSION`) reads the grammar; its errors and the version-gated
@@ -500,7 +500,7 @@ fn expr_name(e: &Expr) -> &'static str {
 }
 
 /// Ruff's errors on `source` and the brackets left open, for a difference report.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn explain(source: &str) -> String {
     let parsed = parse_unchecked(source, ParseOptions::from(Mode::Module).with_target_version(super::VERSION));
     let lines = Lines::new(source);

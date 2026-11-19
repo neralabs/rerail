@@ -1,180 +1,32 @@
-//! Wall time by stage, for profiling the wave (O28): with `RERAIL_PROF` set, `time` adds each
-//! call's wall time to its stage and `report` prints and clears them; without it, `time` only
-//! calls. Stages may nest and run on several threads, so their times overlap and need not sum.
+//! CPU time by stage, for profiling the wave (O28): the counters are the `rerail-prof` crate's
+//! (shared with the engine's crates); here are the engine's memory readings.
 
-use std::collections::BTreeMap;
-use std::sync::{LazyLock, Mutex};
-use std::time::{Duration, Instant};
-
-static ON: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_PROF").is_some());
-static STAGES: Mutex<BTreeMap<String, (Duration, usize)>> = Mutex::new(BTreeMap::new());
-
-pub(in crate::code_rule_dsl) fn time<T>(stage: &str, f: impl FnOnce() -> T) -> T {
-    if !*ON {
-        return f();
-    }
-    let start = Instant::now();
-    // A top-level stage's process CPU (user + sys) as well: its own where nothing overlaps it.
-    let top = stage.starts_with("slice.") || stage.starts_with("demand.") || stage.starts_with("labels.");
-    let cpu = top.then(process_cpu);
-    let out = f();
-    let elapsed = start.elapsed();
-    let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(cpu) = cpu {
-        let entry = stages.entry(format!("cpu_ms.{stage}")).or_default();
-        entry.1 += ((process_cpu() - cpu).as_secs_f64() * 1e3) as usize;
-    }
-    let entry = stages.entry(stage.to_owned()).or_default();
-    entry.0 += elapsed;
-    entry.1 += 1;
-    out
-}
-
-/// CPU time on wasm32 (the browser build): the engine runs on one thread of one Web Worker, which holds no
-/// CPU clock, so the time since the first read stands in for user + sys CPU.
+#[allow(unused_imports)]
+pub use rerail_prof::{Stage, count, count_named, on, report, time};
 #[cfg(target_family = "wasm")]
-pub(crate) fn single_thread_cpu() -> Duration {
-    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    START.get_or_init(std::time::Instant::now).elapsed()
-}
-
-/// The process's CPU time so far (user + sys).
-#[cfg(target_family = "wasm")]
-fn process_cpu() -> Duration {
-    single_thread_cpu()
-}
-
-/// The process's CPU time so far (user + sys).
-#[cfg(unix)]
-fn process_cpu() -> Duration {
-    let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
-    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-    let time = |t: libc::timeval| Duration::from_secs(t.tv_sec as u64) + Duration::from_micros(t.tv_usec as u64);
-    time(usage.ru_utime) + time(usage.ru_stime)
-}
-
-/// The process's CPU time so far (user + kernel).
+pub use rerail_prof::single_thread_cpu;
 #[cfg(windows)]
-fn process_cpu() -> Duration {
-    let (user, kernel) = windows_cpu(false);
-    user + kernel
-}
-
-/// Windows: the (user, kernel) CPU time of the calling thread (`thread`) or of the process, from
-/// `GetThreadTimes` / `GetProcessTimes`; zero if the call fails.
-#[cfg(windows)]
-pub(crate) fn windows_cpu(thread: bool) -> (Duration, Duration) {
-    use windows_sys::Win32::Foundation::FILETIME;
-    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread, GetProcessTimes, GetThreadTimes};
-    let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
-    let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
-    // SAFETY: the pseudo-handles name the calling thread and process, and every out-pointer is a FILETIME.
-    let got = unsafe {
-        if thread {
-            GetThreadTimes(GetCurrentThread(), &mut created, &mut exited, &mut kernel, &mut user)
-        } else {
-            GetProcessTimes(GetCurrentProcess(), &mut created, &mut exited, &mut kernel, &mut user)
-        }
-    };
-    if got == 0 {
-        return (Duration::ZERO, Duration::ZERO);
-    }
-    // FILETIME counts 100 ns ticks.
-    let time = |t: FILETIME| Duration::from_nanos(((u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime)) * 100);
-    (time(user), time(kernel))
-}
-
-/// Windows: the process's peak working set (its resident high-water mark), in bytes; 0 if the call fails.
-#[cfg(windows)]
-pub(crate) fn windows_peak_working_set() -> u64 {
-    use windows_sys::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
-    use windows_sys::Win32::System::Threading::GetCurrentProcess;
-    // SAFETY: PROCESS_MEMORY_COUNTERS is plain integers, so all-zero is valid.
-    let mut counters = unsafe { std::mem::zeroed::<PROCESS_MEMORY_COUNTERS>() };
-    counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
-    // SAFETY: the pseudo-handle names this process, and `cb` is the size of the struct written.
-    if unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) } == 0 {
-        return 0;
-    }
-    counters.PeakWorkingSetSize as u64
-}
-
-/// Prints the stages' times under `title` and clears them.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(in crate::code_rule_dsl) fn report(title: &str) {
-    if !*ON {
-        return;
-    }
-    let stages = std::mem::take(&mut *STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
-    eprintln!("prof {title}:");
-    for (stage, (elapsed, calls)) in stages {
-        eprintln!("  {stage:<40} {:>10.1} ms {calls:>7} calls", elapsed.as_secs_f64() * 1e3);
-    }
-}
-
-/// A stage timed until it drops.
-pub(in crate::code_rule_dsl) struct Stage(Option<(&'static str, Instant, Option<Duration>)>);
-
-impl Stage {
-    pub(in crate::code_rule_dsl) fn start(stage: &'static str) -> Self {
-        Self(ON.then(|| (stage, Instant::now(), (stage.starts_with("labels.") || stage.starts_with("demand.") || stage == "size.texts").then(process_cpu))))
-    }
-}
-
-impl Drop for Stage {
-    fn drop(&mut self) {
-        if let Some((stage, start, cpu)) = self.0.take() {
-            let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            if let Some(cpu) = cpu {
-                stages.entry(format!("cpu_ms.{stage}")).or_default().1 += ((process_cpu() - cpu).as_secs_f64() * 1e3) as usize;
-            }
-            let entry = stages.entry(stage.to_owned()).or_default();
-            entry.0 += start.elapsed();
-            entry.1 += 1;
-        }
-    }
-}
-
-/// Adds `amount` (bytes, records) to `stage`'s count, shown as its calls.
-pub(in crate::code_rule_dsl) fn count(stage: &'static str, amount: usize) {
-    if *ON {
-        let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        stages.entry(stage.to_owned()).or_default().1 += amount;
-    }
-}
-
-/// Whether stages are timed (`RERAIL_PROF`).
-pub(in crate::code_rule_dsl) fn on() -> bool {
-    *ON
-}
-
-/// `count` with a name made at run time.
-pub(in crate::code_rule_dsl) fn count_named(stage: String, amount: usize) {
-    if *ON {
-        let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        stages.entry(stage).or_default().1 += amount;
-    }
-}
+pub use rerail_prof::{windows_cpu, windows_peak_working_set};
 
 /// Records the process's peak resident memory so far, in MB, as `stage`'s count (the largest seen).
 /// Return the heap's freed pages to the system at a stage's end. jemalloc keeps freed pages a
 /// second (`lib.rs`) and an audit's stages free hundreds of MB within one: S7 on Metal held
 /// 0.96 GB of footprint against 283 MB live heap and 101 MB of buffers (O30).
-pub(in crate::code_rule_dsl) fn release() {
+pub fn release() {
     let _stage = Stage::start("heap.release");
-    crate::purge_allocator_pages();
+    purge_allocator_pages();
     // The system allocator's freed pages too (SQLite's and the Metal runtime's allocations).
     #[cfg(target_os = "macos")]
     {
         unsafe extern "C" {
-            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+            pub fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
         }
         unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
     }
 }
 
-pub(in crate::code_rule_dsl) fn peak(stage: &str) {
-    if *ON {
+pub fn peak(stage: &str) {
+    if on() {
         // No resident-set counter on wasm32: its peak reads 0.
         #[cfg(target_family = "wasm")]
         let mb = 0;
@@ -187,7 +39,7 @@ pub(in crate::code_rule_dsl) fn peak(stage: &str) {
         };
         #[cfg(windows)]
         let mb = (windows_peak_working_set() >> 20) as usize;
-        let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut stages = rerail_prof::stages();
         let entry = stages.entry(format!("peak_mb.{stage}")).or_default();
         entry.1 = entry.1.max(mb);
         // The memory held now, not the process's high-water mark: its physical footprint.
@@ -227,8 +79,8 @@ pub(in crate::code_rule_dsl) fn peak(stage: &str) {
                         info.ri_phys_footprint >> 20,
                         tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20,
                         tikv_jemalloc_ctl::stats::resident::read().unwrap_or(0) >> 20,
-                        crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
-                        crate::code_rule_dsl::transducer::packed::metal_backend::driver_mb()
+                        device_memory().0,
+                        device_memory().1
                     );
                 }
             }
@@ -266,7 +118,7 @@ pub(in crate::code_rule_dsl) fn peak(stage: &str) {
 
 /// The process's physical footprint now, in MB (macOS; 0 elsewhere).
 /// What the heap holds live, in MB (jemalloc's allocated bytes); 0 where the system allocator runs (Windows, wasm).
-pub(in crate::code_rule_dsl) fn live_heap_mb() -> usize {
+pub fn live_heap_mb() -> usize {
     #[cfg(not(any(windows, target_family = "wasm")))]
     {
         let _ = tikv_jemalloc_ctl::epoch::advance();
@@ -276,7 +128,7 @@ pub(in crate::code_rule_dsl) fn live_heap_mb() -> usize {
     0
 }
 
-pub(in crate::code_rule_dsl) fn footprint_mb() -> usize {
+pub fn footprint_mb() -> usize {
     #[cfg(target_os = "macos")]
     {
         let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v2>() };
@@ -289,7 +141,7 @@ pub(in crate::code_rule_dsl) fn footprint_mb() -> usize {
 }
 
 /// The process's footprint high-water mark, in MB (0 off macOS).
-pub(in crate::code_rule_dsl) fn max_footprint_mb() -> usize {
+pub fn max_footprint_mb() -> usize {
     #[cfg(target_os = "macos")]
     {
         let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v4>() };
@@ -299,4 +151,85 @@ pub(in crate::code_rule_dsl) fn max_footprint_mb() -> usize {
         }
     }
     0
+}
+
+/// Return every arena's freed pages to the system.
+pub fn purge_allocator_pages() {
+    // SAFETY: arena.4096 is jemalloc's all-arenas selector; purge reads and writes no value, so
+    // jemalloc requires null value pointers (`raw::write` passes a non-null one and is refused).
+    #[cfg(not(any(windows, target_family = "wasm")))]
+    unsafe {
+        tikv_jemalloc_sys::mallctl(
+            c"arena.4096.purge".as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+        );
+    }
+}
+
+/// The device's buffers in MB (reserved by the engine, held by the driver), read by the stage reports; the
+/// device registers the reader as the engine loads (`register_device_memory`, Metal's `device_metal::register`).
+static DEVICE_MEMORY: std::sync::OnceLock<fn() -> (usize, usize)> = std::sync::OnceLock::new();
+
+/// Registers the device's buffer reader; the first registration holds.
+pub fn register_device_memory(read: fn() -> (usize, usize)) {
+    let _ = DEVICE_MEMORY.set(read);
+}
+
+/// The device's buffers in MB (reserved, driver); none without a device.
+pub fn device_memory() -> (usize, usize) {
+    DEVICE_MEMORY.get().map_or((0, 0), |read| read())
+}
+
+/// The calling thread's CPU (user, system) seconds.
+pub fn thread_usage() -> (f64, f64) {
+    #[cfg(target_os = "macos")]
+    {
+        let mut info: libc::thread_basic_info = unsafe { std::mem::zeroed() };
+        let mut count = (std::mem::size_of::<libc::thread_basic_info>() / std::mem::size_of::<libc::integer_t>()) as libc::mach_msg_type_number_t;
+        // SAFETY: THREAD_BASIC_INFO fills a `thread_basic_info` of `count` integers for this thread's port (the
+        // pthread's own, so no port right is taken).
+        let port = unsafe { libc::pthread_mach_thread_np(libc::pthread_self()) };
+        unsafe { libc::thread_info(port, libc::THREAD_BASIC_INFO as libc::thread_flavor_t, (&raw mut info).cast(), &mut count) };
+        let t = |v: libc::time_value_t| f64::from(v.seconds) + f64::from(v.microseconds) / 1e6;
+        (t(info.user_time), t(info.system_time))
+    }
+    // The browser build's one thread (`prof::single_thread_cpu`), all of it user time.
+    #[cfg(target_family = "wasm")]
+    {
+        (single_thread_cpu().as_secs_f64(), 0.0)
+    }
+    #[cfg(windows)]
+    {
+        let (user, kernel) = windows_cpu(true);
+        (user.as_secs_f64(), kernel.as_secs_f64())
+    }
+    #[cfg(not(any(target_os = "macos", target_family = "wasm", windows)))]
+    {
+        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+        unsafe { libc::getrusage(libc::RUSAGE_THREAD, &mut u) };
+        let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
+        (s(u.ru_utime), s(u.ru_stime))
+    }
+}
+
+/// `bytes` as lower-case hex, two digits a byte: how a SHA-256 digest is written.
+pub fn lower_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
+}
+
+/// Return allocator pages after eviction closes idle SQLite connections.
+pub fn release_allocator_memory() {
+    // Background threads, where available, decay pages between applies too.
+    #[cfg(not(any(windows, target_family = "wasm")))]
+    let _ = tikv_jemalloc_ctl::background_thread::write(true);
+    purge_allocator_pages();
 }

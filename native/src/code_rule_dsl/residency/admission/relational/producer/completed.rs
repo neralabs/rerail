@@ -128,7 +128,7 @@ pub(in crate::code_rule_dsl) fn publish(
     name: &str,
     work: Arc<AtomicUsize>,
 ) -> super::Result<()> {
-    let Completed { output, paths } = completed;
+    let Completed { output, paths, .. } = completed;
     let size = output
         .roots
         .iter()

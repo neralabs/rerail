@@ -2,7 +2,7 @@ use super::*;
 use crate::content_store::tests::store;
 
 fn manifest(id: i64, root: i64, last_time: i64, sources: &[i64]) -> Manifest {
-    Manifest { id, root, last_time, grammar_version: 1, tape_format: 1, plan: vec![id as u8; 32], sources: sources.to_vec() }
+    Manifest { id, root, last_time, grammar_version: 1, tape_format: 1, plan: vec![id as u8; 32], lane: None, policy: None, sources: sources.to_vec() }
 }
 
 fn sizes(n: i64, bytes: u64) -> Sizes {
@@ -173,7 +173,7 @@ fn parallel_writers_and_a_collector_share_one_store() {
     drop(store);
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let collector = {
-        let (path, stop) = (path.clone(), stop.clone());
+        let (path, stop) = (path.to_path_buf(), stop.clone());
         std::thread::spawn(move || {
             let store = ContentStore::open(&path).unwrap();
             let policy = CorpusPolicy::default();
@@ -187,7 +187,7 @@ fn parallel_writers_and_a_collector_share_one_store() {
     };
     let writers: Vec<_> = (0..3u64)
         .map(|w| {
-            let path = path.clone();
+            let path = path.to_path_buf();
             std::thread::spawn(move || {
                 let store = ContentStore::open(&path).unwrap();
                 for i in 0..40u64 {
@@ -240,29 +240,43 @@ fn a_held_plan_stays_live_until_its_run_releases_it() {
     assert_eq!(live(old), Some(0), "released, it is dead again");
 }
 
-/// O95: a handle holding its sources pins each one it stores or finds, in the same transaction; a collector cannot
-/// take them, or the tapes it stores of them, until the holder releases them.
+/// Decision 0306 step 4: a running run's collection lease alone keeps what it reads and writes from every collector
+/// (another handle's, as another process's): no hold, no pin. Once its manifest names its sources and plan and the
+/// lease goes, collection keeps what the manifest names and takes the rest.
 #[test]
-fn a_held_source_survives_collection_until_released() {
-    let (path, store) = store("corpus-held-source");
+fn a_runs_lease_keeps_its_sources_and_plan_from_collection_without_holds() {
+    let (path, store) = store("corpus-run-lease");
     let collector = ContentStore::open(&path).unwrap();
-    let passes = || {
+    let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400, decide_every_secs: 1, ..CorpusPolicy::default() };
+    let passes = |now: i64| {
         for _ in 0..3 {
-            collector.collect(1_000, MAX_COLLECTION_BATCH).unwrap();
+            collector.collect(now, MAX_COLLECTION_BATCH).unwrap();
+            collector.collect_corpus_pass(&policy, now).unwrap();
         }
     };
-    let found = noise(7, 256);
-    let old = store.put_source(&found, &[]).unwrap();
-    store.hold_sources("corpus-run:held", 2_000).unwrap();
-    let stored = noise(8, 256);
-    let (new, tape) = store.put_source_and_tape(&stored, crate::content_store::HashKey::sha256(&stored), 1, 7, 9, &noise(9, 256)).unwrap();
-    assert_eq!(store.held_source_by_hash(crate::content_store::HashKey::sha256(&found)).unwrap(), Some(old));
-    passes();
-    assert_eq!(store.tape_by_source(new, 1, 7, 9).unwrap(), Some(tape), "the stored source and its tape are held");
-    assert_eq!(store.source_by_hash(crate::content_store::HashKey::sha256(&found)).unwrap(), Some(old), "the found source is held");
-    store.release_pins("corpus-run:held").unwrap();
-    passes();
-    assert_eq!(store.source_by_hash(crate::content_store::HashKey::sha256(&found)).unwrap(), None, "released, it is collected");
+    let plan = [41u8; 32];
+    let rows = || -> i64 { store.connection.lock().unwrap().query_row("SELECT count(*) FROM facts_results WHERE plan_digest=?1", [&plan[..]], |r| r.get(0)).unwrap() };
+    // An earlier run's manifest, under another plan: what a collector decides from.
+    let earlier = store.put_source(&noise(20, 256), &[]).unwrap();
+    assert!(store.record_corpus_run_naming("/repo", &[earlier], 7, 9, [40u8; 32], &[], 1_000).unwrap());
+    let lease = store.hold_collection().unwrap();
+    let (named, unnamed) = (noise(21, 256), noise(22, 256));
+    let named_id = store.put_source(&named, &[]).unwrap();
+    store.put_source(&unnamed, &[]).unwrap();
+    let set = crate::content_store::FactsPlanSet::new(vec![plan]);
+    let result = crate::content_store::FactsResult { plan, path_dependent: true, entry: vec![1, 2, 3] };
+    store.put_facts_memo(crate::content_store::FactsMemoKey { source: named_id, fact_schema: live_fact_schema(150), path: "a.py" }, &set, &[result], &[]).unwrap();
+    passes(2_000);
+    let found = |bytes: &[u8]| store.source_by_hash(crate::content_store::HashKey::sha256(bytes)).unwrap();
+    assert!(found(&named).is_some() && found(&unnamed).is_some(), "the run's sources, neither held nor named, are kept while it runs");
+    assert_eq!(rows(), 1, "and its plan's rows");
+    // The run's record: its manifest names the one source and the plan; then the lease goes.
+    assert!(store.record_corpus_run_naming("/repo", &[named_id], 7, 9, plan, &[], 3_000).unwrap());
+    drop(lease);
+    passes(4_000);
+    assert_eq!(found(&named), Some(named_id), "named by the manifest, kept");
+    assert_eq!(rows(), 1, "the plan's rows, named, kept");
+    assert_eq!(found(&unnamed), None, "named by nothing, collected once the run is done");
 }
 
 /// Old memo rows of every writer go, while their source lives on: a prepared program's plans a later build replaced
@@ -314,4 +328,266 @@ fn old_memo_rows_are_collected_while_their_source_lives() {
     passes(2_000);
     assert_eq!((rows(lapsed), rows(running), rows(unrecorded)), (0, 1, 1), "the lapsed hold's rows go, with no new run to prompt it");
     assert!(store.get_source(source).is_ok(), "the source lives on");
+}
+
+/// Decision 0117: a kept manifest past a root's protected runs keeps its sources, not its plan (a plan's memo serves
+/// one engine build only); and the hold of a run whose process is gone (a killed run never releases it) is released by
+/// the next collection pass, which then collects every dead plan, not one a pass.
+#[test]
+fn only_protected_runs_keep_plans_and_a_dead_process_holds_nothing() {
+    let (_path, store) = store("corpus-protected-plans");
+    let policy = CorpusPolicy { protected_runs: 1, high_water: u64::MAX / 4, low_water: u64::MAX / 4, backstop_secs: 86_400, ..CorpusPolicy::default() };
+    let live = |plan: [u8; 32]| -> Option<i64> {
+        store.connection.lock().unwrap().query_row("SELECT live FROM corpus_plans WHERE plan_digest=?1", [&plan[..]], |r| r.get(0)).optional().unwrap()
+    };
+    let plans = [[41u8; 32], [42u8; 32], [43u8; 32]];
+    for (i, plan) in plans.iter().enumerate() {
+        let source = store.put_source(&noise(60 + i as u64, 256), &[]).unwrap();
+        store.put_tape(source, 1, 7, 9, &noise(560 + i as u64, 256)).unwrap();
+        assert!(store.record_corpus_run("/repo", &[source], 7, 9, *plan, 1_000 + i as i64).unwrap());
+        store.keep_corpus_runs(&policy, 1_000 + i as i64).unwrap();
+    }
+    let manifests: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM corpus_manifests", [], |r| r.get(0)).unwrap();
+    assert_eq!(manifests, 3, "under the high-water mark every manifest is kept");
+    assert_eq!(plans.map(live), [Some(0), Some(0), Some(1)], "only the protected run's plan is live");
+    // A process that has exited: its hold is an orphan.
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let pid = child.id();
+    child.wait().unwrap();
+    store.hold_corpus_plan(plans[0], &format!("corpus-run:{pid}:0:0"), 9_000).unwrap();
+    store.hold_corpus_plan(plans[1], &format!("corpus-run:{}:0:0", std::process::id()), 9_000).unwrap();
+    assert_eq!(live(plans[0]), Some(1), "held, the plan is live");
+    for _ in 0..3 {
+        store.collect_corpus_pass(&policy, 1_010).unwrap();
+    }
+    assert_eq!(live(plans[0]), None, "the dead process's hold went, and its plan with it");
+    assert_eq!(live(plans[1]), Some(1), "a running process's hold stays");
+    assert_eq!(live(plans[2]), Some(1));
+}
+
+/// Programs run one at a time over a root, each its own lane (a policy set's, one process each): each keeps its plan
+/// live, however many run between; a lane's replaced build loses its plan as before; and past `protected_lanes`, the
+/// root's oldest lanes lose theirs.
+#[test]
+fn each_lane_keeps_its_last_runs_plans() {
+    let (_path, store) = store("corpus-lanes");
+    let policy = CorpusPolicy { protected_runs: 1, protected_lanes: 6, high_water: 0, low_water: 0, backstop_secs: 86_400, ..CorpusPolicy::default() };
+    let live = |plan: [u8; 32]| -> Option<i64> {
+        store.connection.lock().unwrap().query_row("SELECT live FROM corpus_plans WHERE plan_digest=?1", [&plan[..]], |r| r.get(0)).optional().unwrap()
+    };
+    let source = store.put_source(&noise(70, 256), &[]).unwrap();
+    store.put_tape(source, 1, 7, 9, &noise(570, 256)).unwrap();
+    let mut now = 1_000;
+    let mut run = |plan: [u8; 32], lane: u8| {
+        now += 1;
+        store.record_corpus_run_lane("/repo", &[source], 7, 9, plan, &[], Some([lane; 32]), now).unwrap();
+        store.keep_corpus_runs(&policy, now).unwrap();
+    };
+    // Five programs, then the five again: every plan live.
+    let plans: Vec<[u8; 32]> = (0..5u8).map(|i| [100 + i; 32]).collect();
+    for _ in 0..2 {
+        for (i, plan) in plans.iter().enumerate() {
+            run(*plan, i as u8);
+        }
+    }
+    assert_eq!(plans.iter().map(|p| live(*p)).collect::<Vec<_>>(), vec![Some(1); 5], "each lane keeps its plan");
+    // Lane 0 under a new build: its old plan dies, the others stay.
+    let rebuilt = [110u8; 32];
+    run(rebuilt, 0);
+    assert_eq!((live(plans[0]), live(rebuilt)), (Some(0), Some(1)), "a replaced build's plan dies");
+    assert!(plans[1..].iter().all(|p| live(*p) == Some(1)));
+    // Three new lanes: the root has eight, and its two oldest (lanes 1 and 2) are past the newest six.
+    for lane in 20..23u8 {
+        run([lane + 100; 32], lane);
+    }
+    assert_eq!(plans[1..].iter().map(|p| live(*p)).collect::<Vec<_>>(), vec![Some(0), Some(0), Some(1), Some(1)]);
+}
+
+/// A lane names its policy set (where its programs come from, and the run's options): an edit of the set's programs
+/// is a new lane of the same set, and supersedes the older, which keeps no protection (its plan dies, and the frames
+/// it alone held go with the next sweep, decision 0227). Another set's lane over the root keeps its own, and so does
+/// a run naming no set, its lane its own set (`record_run`). A run back on the older programs (an edit undone) supersedes the newer.
+/// Q19: each edit had left its predecessor protected, up to `protected_lanes` of them, and the cross part's space,
+/// one per root, grew with every edit.
+#[test]
+fn a_policy_sets_newer_lane_supersedes_its_older() {
+    let (_path, store) = store("corpus-policy-sets");
+    // Decisions only when one is worth it (`corpus_decision_worth`): an edit must make one.
+    let policy = CorpusPolicy { protected_runs: 1, protected_lanes: 6, high_water: 0, low_water: 0, backstop_secs: 86_400, decide_every_runs: 1_000, decide_every_secs: 86_400, ..CorpusPolicy::default() };
+    // A dead plan's row goes in the same pass (its memo rows first): not live either way.
+    let live = |plan: [u8; 32]| -> bool {
+        store.connection.lock().unwrap().query_row("SELECT live FROM corpus_plans WHERE plan_digest=?1", [&plan[..]], |r| r.get::<_, i64>(0)).optional().unwrap() == Some(1)
+    };
+    let source = store.put_source(&noise(71, 256), &[]).unwrap();
+    store.put_tape(source, 1, 7, 9, &noise(571, 256)).unwrap();
+    let mut now = 1_000;
+    let mut run = |plan: [u8; 32], lane: u8, set: Option<u8>| {
+        now += 1;
+        store.record_corpus_run_policy("/repo", &[source], 7, 9, plan, &[], Some([lane; 32]), set.map(|s| [s; 32]), now).unwrap();
+        store.collect_corpus_pass(&policy, now).unwrap();
+    };
+    let (a, b, none) = ([101u8; 32], [102u8; 32], [103u8; 32]);
+    run(a, 1, Some(1));
+    run(b, 2, Some(2));
+    run(none, 3, Some(3));
+    assert_eq!([a, b, none].map(live), [true; 3], "three lanes, each protected");
+    // Set 1's programs edited: lane 4.
+    let edited = [104u8; 32];
+    run(edited, 4, Some(1));
+    assert_eq!([a, edited, b, none].map(live), [false, true, true, true], "the edited set's older lane superseded, the others kept");
+    // The edit undone: lane 1 again, and lane 4 superseded.
+    run(a, 1, Some(1));
+    assert_eq!([a, edited, b, none].map(live), [true, false, true, true], "the undone edit's lane superseded");
+}
+
+/// Decision 0302 §4: a lane recorded with no set is an older binary's (this one names every lane's set, a run with
+/// none its lane's own). Over a root this binary has run, such a lane keeps no protection: no newer lane of its set can
+/// ever supersede it. Over a root only older binaries ran, it is protected as they protected it.
+#[test]
+fn an_older_binarys_lane_keeps_no_protection_where_sets_are_named() {
+    let (_path, store) = store("corpus-legacy-lanes");
+    let policy = CorpusPolicy { protected_runs: 1, protected_lanes: 6, high_water: 0, low_water: 0, backstop_secs: 86_400, ..CorpusPolicy::default() };
+    let live = |plan: [u8; 32]| -> bool {
+        store.connection.lock().unwrap().query_row("SELECT live FROM corpus_plans WHERE plan_digest=?1", [&plan[..]], |r| r.get::<_, i64>(0)).optional().unwrap() == Some(1)
+    };
+    let source = store.put_source(&noise(72, 256), &[]).unwrap();
+    store.put_tape(source, 1, 7, 9, &noise(572, 256)).unwrap();
+    let (old_a, old_b, named, alone) = ([111u8; 32], [112u8; 32], [113u8; 32], [114u8; 32]);
+    store.record_corpus_run_lane("/repo", &[source], 7, 9, old_a, &[], Some([1; 32]), 1_001).unwrap();
+    store.record_corpus_run_lane("/repo", &[source], 7, 9, old_b, &[], Some([2; 32]), 1_002).unwrap();
+    store.record_corpus_run_lane("/other", &[source], 7, 9, alone, &[], Some([4; 32]), 1_003).unwrap();
+    store.keep_corpus_runs(&policy, 1_003).unwrap();
+    assert_eq!([old_a, old_b, alone].map(live), [true; 3], "older binaries' lanes, protected as they were");
+    store.record_corpus_run_policy("/repo", &[source], 7, 9, named, &[], Some([3; 32]), Some([9; 32]), 1_004).unwrap();
+    store.keep_corpus_runs(&policy, 1_004).unwrap();
+    assert_eq!([old_a, old_b, named, alone].map(live), [false, false, true, true], "where sets are named, the older lanes go");
+}
+
+/// Decision 0227: a run that begins stops the frames sweep (its progress handler), rolled back and still due. The
+/// sweep is many small statements, each a few VM steps: the run must stop it all the same.
+#[test]
+fn a_run_that_begins_stops_a_sweep_of_many_small_deletes() {
+    use crate::content_store::frames::{Put, Rel, Rows};
+    let (_path, store) = store("corpus-sweep-stops");
+    let source = store.put_source(&noise(73, 256), &[]).unwrap();
+    store.record_corpus_run_naming("/r", &[source], 1, 1, [5u8; 32], &[], 1).unwrap();
+    // 3,000 frames of a program no manifest names: all unreachable.
+    let space = [9u8; 32];
+    let rels: Vec<Rel> = (0..3000u32).map(|i| Rel { name: format!("r{i}"), ident: [1; 32] }).collect();
+    let puts: Vec<Put> = rels.iter().map(|r| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } }).collect();
+    store.keep_frames(&space, &puts, &[], Some((&rels[..], 0, [7u8; 32]))).unwrap();
+    store.keep_corpus_runs(&CorpusPolicy::default(), 2).unwrap();
+    assert!(store.frames_sweep_wanted().unwrap());
+    let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = std::sync::Arc::clone(&asked);
+    let out = store.sweep_frames(move || { seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed); true }).unwrap();
+    assert!(out.is_none(), "a run began: the sweep stopped (asked {} times)", asked.load(std::sync::atomic::Ordering::Relaxed));
+    assert!(store.frames_sweep_wanted().unwrap(), "rolled back, still due");
+    let n: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM frames WHERE space = ?1", [&space[..]], |r| r.get(0)).unwrap();
+    assert_eq!(n, 3000, "every frame still there");
+}
+
+#[test]
+fn a_lanes_sources_are_its_newest_runs_whichever_build_ran_it() {
+    let (_path, store) = store("corpus-lane-sources");
+    let sources: Vec<SourceId> = (0..3u8).map(|i| store.put_source(&noise(80 + u64::from(i), 256), &[]).unwrap()).collect();
+    assert!(store.lane_sources("/repo", &[1; 32]).unwrap().is_empty(), "a lane with no run read nothing");
+    store.record_corpus_run_lane("/repo", &sources[..2], 7, 9, [10; 32], &[], Some([1; 32]), 1_000).unwrap();
+    store.record_corpus_run_lane("/repo", &sources[2..], 7, 9, [11; 32], &[], Some([2; 32]), 1_001).unwrap();
+    // The same lane under another build (another plan), reading one source more.
+    store.record_corpus_run_lane("/repo", &sources, 7, 9, [12; 32], &[], Some([1; 32]), 1_002).unwrap();
+    let mut got = store.lane_sources("/repo", &[1; 32]).unwrap();
+    got.sort_by_key(|s| s.0);
+    assert_eq!(got, sources, "lane 1's newest run");
+    assert_eq!(store.lane_sources("/repo", &[2; 32]).unwrap(), sources[2..].to_vec(), "lane 2's own");
+    assert!(store.lane_sources("/other", &[1; 32]).unwrap().is_empty(), "by root");
+}
+
+/// Decision 0227: a keep decision leaves the frames it made unreachable to the `frames` upkeep job, which is due
+/// until it has swept them, and a utility job: finished by `finish_soon`, with no scheduler.
+#[test]
+fn a_keep_decision_leaves_its_sweep_to_the_frames_job() {
+    use rerail_accel::upkeep::Job as _;
+    let (_path, store) = store("corpus-frames-job");
+    let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400, ..CorpusPolicy::default() };
+    let mut job = crate::content_store::upkeep::Frames::new(store.database_path());
+    assert_eq!(job.qos(), rerail_accel::upkeep::Qos::Utility);
+    assert!(!store.frames_sweep_wanted().unwrap(), "a new store has nothing to sweep");
+    assert_eq!(job.due(), rerail_accel::upkeep::Due::No);
+    let source = store.put_source(&noise(7, 256), &[]).unwrap();
+    store.put_tape(source, 1, 7, 9, &noise(507, 256)).unwrap();
+    assert!(store.record_corpus_run("/repo", &[source], 7, 9, [7u8; 32], 1_000).unwrap());
+    store.keep_corpus_runs(&policy, 1_000).unwrap();
+    assert!(store.frames_sweep_wanted().unwrap(), "the decision is past the last sweep");
+    assert_eq!(job.due(), rerail_accel::upkeep::Due::Urgent);
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    assert_eq!(job.step(&rerail_accel::upkeep::Slice::for_test(std::time::Duration::from_millis(200), 64 << 20, &stop)).unwrap(), rerail_accel::upkeep::Step::Done);
+    assert!(!store.frames_sweep_wanted().unwrap(), "swept");
+    assert_eq!(job.due(), rerail_accel::upkeep::Due::No);
+}
+
+/// A frames job outlives its store (the process holds it): once the store is gone, the job reads no deleted file
+/// and is not due, and its step makes no new store at the path. Its cached connection had read the deleted file's
+/// last decision for ever, each `finish_soon` sweeping a store the step had made anew, a hundred passes over every
+/// gone store of a test process.
+#[test]
+fn a_frames_job_over_a_gone_store_is_not_due_and_makes_no_store() {
+    use rerail_accel::upkeep::Job as _;
+    let (path, store) = store("corpus-frames-gone");
+    let file = store.database_path().to_path_buf();
+    let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400, ..CorpusPolicy::default() };
+    let mut job = crate::content_store::upkeep::Frames::new(&file);
+    let source = store.put_source(&noise(9, 256), &[]).unwrap();
+    store.put_tape(source, 1, 7, 9, &noise(509, 256)).unwrap();
+    assert!(store.record_corpus_run("/repo", &[source], 7, 9, [9u8; 32], 1_000).unwrap());
+    store.keep_corpus_runs(&policy, 1_000).unwrap();
+    assert_eq!(job.due(), rerail_accel::upkeep::Due::Urgent);
+    drop(store);
+    drop(path);
+    assert!(!file.exists(), "the store's folder is gone with its binding");
+    assert_eq!(job.due(), rerail_accel::upkeep::Due::No, "a gone store has nothing to sweep");
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    assert_eq!(job.step(&rerail_accel::upkeep::Slice::for_test(std::time::Duration::from_millis(200), 64 << 20, &stop)).unwrap(), rerail_accel::upkeep::Step::Done);
+    assert!(!file.exists(), "the step made no store");
+}
+
+/// Decision 0190 §8: a sweep yields to a run that begins over its store, here another process's (its shared lock on
+/// `<store>.runs.lock`). The step stops with its transaction rolled back, and the sweep stays due for after the run.
+#[test]
+fn a_sweep_yields_to_a_run_over_its_store() {
+    use rerail_accel::upkeep::Job as _;
+    let (_path, store) = store("corpus-frames-yield");
+    let policy = CorpusPolicy { protected_runs: 1, high_water: 0, low_water: 0, backstop_secs: 86_400, ..CorpusPolicy::default() };
+    let mut job = crate::content_store::upkeep::Frames::new(store.database_path());
+    let source = store.put_source(&noise(8, 256), &[]).unwrap();
+    store.put_tape(source, 1, 7, 9, &noise(508, 256)).unwrap();
+    assert!(store.record_corpus_run("/repo", &[source], 7, 9, [8u8; 32], 1_000).unwrap());
+    store.keep_corpus_runs(&policy, 1_000).unwrap();
+    assert!(store.frames_sweep_wanted().unwrap());
+    let mut lock = store.database_path().as_os_str().to_owned();
+    lock.push(".runs.lock");
+    let run = std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(&lock).unwrap();
+    run.lock_shared().unwrap();
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let slice = || rerail_accel::upkeep::Slice::for_test(std::time::Duration::from_millis(200), 64 << 20, &stop).over_file(store.database_path());
+    assert_eq!(job.step(&slice()).unwrap(), rerail_accel::upkeep::Step::More, "the run stops the sweep");
+    assert!(store.frames_sweep_wanted().unwrap(), "still due");
+    run.unlock().unwrap();
+    // The probe is cached for 25 ms.
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    assert_eq!(job.step(&slice()).unwrap(), rerail_accel::upkeep::Step::Done);
+    assert!(!store.frames_sweep_wanted().unwrap(), "swept once the run ended");
+}
+
+#[test]
+fn a_store_mostly_free_is_left_to_the_whole_vacuum() {
+    let (_path, store) = store("collect-mostly-free");
+    let count = |p: &str| -> i64 { store.connection.lock().unwrap().query_row(&format!("PRAGMA {p}"), [], |r| r.get(0)).unwrap() };
+    // 24 MB written and dropped: past `FREE_BYTES`, and most of the file.
+    store.connection.lock().unwrap().execute_batch("CREATE TABLE ballast(b BLOB); WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 6000) INSERT INTO ballast SELECT zeroblob(4000) FROM n; DROP TABLE ballast;").unwrap();
+    let free = count("freelist_count");
+    assert!(free * 4 > count("page_count") * 3, "{free} free of {}", count("page_count"));
+    store.collect(1_000, 64).unwrap();
+    // The collector's own vacuum left them: each of its pages walks a free list this long.
+    assert_eq!(count("freelist_count"), free);
 }

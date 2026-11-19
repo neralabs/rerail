@@ -1,0 +1,285 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt022-pytest-useless-yield-fixture",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use return instead of yield in a pytest fixture that has no teardown code after its only yield; a plain return is simpler.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "fixture-yield-without-teardown",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "fixture-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "pytest.fixture",
+                  "pytest.yield_fixture"
+                ]
+              }
+            },
+            "fixture-callee": {
+              "any": [
+                {
+                  "matches": "fixture-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fixture-callee"
+                  }
+                }
+              ]
+            },
+            "fixture-expr": {
+              "any": [
+                {
+                  "matches": "fixture-callee"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "fixture-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fixture-expr"
+                  }
+                }
+              ]
+            },
+            "abstract-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "abc.abstractmethod",
+                  "abc.abstractclassmethod",
+                  "abc.abstractstaticmethod",
+                  "abc.abstractproperty"
+                ]
+              }
+            },
+            "abstract-expr": {
+              "any": [
+                {
+                  "matches": "abstract-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "abstract-expr"
+                  }
+                }
+              ]
+            },
+            "plain-yield": {
+              "kind": "yield",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^from$"
+                }
+              }
+            },
+            "yield-expr": {
+              "any": [
+                {
+                  "matches": "plain-yield"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "yield-expr"
+                  }
+                }
+              ]
+            },
+            "yield-walk-stop": {
+              "any": [
+                {
+                  "kind": "function_definition"
+                },
+                {
+                  "kind": "decorated_definition",
+                  "has": {
+                    "field": "definition",
+                    "kind": "function_definition"
+                  }
+                },
+                {
+                  "kind": "lambda"
+                },
+                {
+                  "kind": "return_statement"
+                },
+                {
+                  "kind": "yield"
+                },
+                {
+                  "kind": "boolean_operator"
+                },
+                {
+                  "kind": "binary_operator"
+                },
+                {
+                  "kind": "unary_operator"
+                },
+                {
+                  "kind": "not_operator"
+                },
+                {
+                  "kind": "comparison_operator"
+                },
+                {
+                  "kind": "conditional_expression"
+                },
+                {
+                  "kind": "named_expression"
+                },
+                {
+                  "kind": "await"
+                },
+                {
+                  "kind": "attribute"
+                },
+                {
+                  "kind": "subscript"
+                },
+                {
+                  "kind": "slice"
+                },
+                {
+                  "kind": "list_splat"
+                },
+                {
+                  "kind": "dictionary"
+                },
+                {
+                  "kind": "set"
+                },
+                {
+                  "kind": "list"
+                },
+                {
+                  "kind": "tuple"
+                },
+                {
+                  "kind": "expression_list"
+                },
+                {
+                  "kind": "list_comprehension"
+                },
+                {
+                  "kind": "set_comprehension"
+                },
+                {
+                  "kind": "dictionary_comprehension"
+                },
+                {
+                  "kind": "generator_expression"
+                },
+                {
+                  "kind": "string"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "expression_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "yield-expr"
+            },
+            "nthChild": {
+              "position": 1,
+              "reverse": true,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "block",
+              "count": {
+                "has": {
+                  "stopBy": {
+                    "matches": "yield-walk-stop"
+                  },
+                  "matches": "plain-yield"
+                },
+                "max": 1
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "function_definition",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "decorated_definition",
+                  "has": {
+                    "kind": "decorator",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "fixture-expr"
+                    }
+                  },
+                  "not": {
+                    "has": {
+                      "kind": "decorator",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "abstract-expr"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PT022",
+        "message": "Nothing runs after this `yield`: use `return`, and annotate the value type instead of `Generator[T, ...]` or `Iterator[T]`. Keep `yield` if a local object (temp dir, open file) must stay alive.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT022"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

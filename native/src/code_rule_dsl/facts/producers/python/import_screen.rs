@@ -13,21 +13,21 @@ use ast_grep_core::{Doc, Node};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Prefix {
+pub enum Prefix {
     Qualified(String),
     Relative { level: usize, rest: String },
 }
 
 #[derive(Default, Debug)]
-pub(crate) struct Imports {
-    bindings: BTreeMap<String, BTreeSet<Prefix>>,
+pub struct Imports {
+    pub bindings: BTreeMap<String, BTreeSet<Prefix>>,
     /// An import could not be understood, so qualification requests are admitted.
     pub opaque: bool,
 }
 impl Imports {
     /// Observe only the import node's subtree, never the enclosing document.
     /// Passing any other node is harmless and does not make the file opaque.
-    pub(crate) fn observe(&mut self, node: &Node<'_, TapeDoc>, module: Option<&ModulePath>) {
+    pub fn observe(&mut self, node: &Node<'_, TapeDoc>, module: Option<&ModulePath>) {
         match node.kind().as_ref() {
             "import_statement" | "import_from_statement" | "future_import_statement" => {}
             _ => return,
@@ -47,7 +47,7 @@ impl Imports {
     /// True only requests normal semantic confirmation. Targets are unioned by the
     /// caller across predicates; no rule identity is involved. Prefix targets and
     /// custom typing-module aliases are conservatively overadmitted.
-    pub(crate) fn may_qualify(
+    pub fn may_qualify(
         &self,
         node: &Node<'_, TapeDoc>,
         wanted_imports: &BTreeSet<String>,
@@ -62,10 +62,11 @@ impl Imports {
             Fact::Unknown(_) | Fact::Unsupported(_) => return true,
             Fact::Known(chain) => chain,
         };
-        if self.opaque {
-            return true;
-        }
-        let (head, tail) = (chain.head, chain.attributes);
+        self.may_qualify_parts(chain.head,chain.attributes,wanted_imports,wanted_globals,module)
+    }
+    pub(crate) fn may_qualify_parts(&self,head:String,tail:Vec<String>,wanted_imports:&BTreeSet<String>,wanted_globals:&BTreeSet<String>,module:Option<&ModulePath>)->bool {
+        if self.opaque { return true; }
+
         if tail.is_empty()
             && (wanted_globals.contains(&head)
                 || wanted_globals
@@ -111,9 +112,7 @@ impl Imports {
                     Some(_name) => {
                         // `import a.b` binds a to a, not to a.b.
                         let Some(head) = item
-                            .children()
-                            .filter(named)
-                            .next()
+                            .children().find(named)
                             .and_then(|head| identifier(&head))
                         else {
                             self.opaque = true;
@@ -271,229 +270,68 @@ fn wanted(name: &str, imports: &BTreeSet<String>) -> bool {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::code_rule_dsl::{
-        language::GrammarDialect,
-        facts::producers::python::python_facts::{self, Fact, Qualification},
-        scope::{
-            Reading, ScopeTable,
-            options::{DEFAULT_PYTHON_MINOR, PythonOptions},
-        },
-        tape::{Grammar, TapeImage},
-    };
-    use ast_grep_core::{AstGrep, tree_sitter::StrDoc};
-    use std::sync::Arc;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-    fn tape(source: &str) -> AstGrep<TapeDoc> {
-        let grammar = Grammar::new(GrammarDialect::Python).unwrap();
-        let parsed = StrDoc::new(source, GrammarDialect::Python);
-        let image =
-            TapeImage::encode(parsed.tree.root_node(), &grammar, source, &|| false).unwrap();
-        AstGrep::doc(TapeDoc::restore(Arc::new(source.into()), grammar, &image, &|| false).unwrap())
-    }
-    fn imports(root: &AstGrep<TapeDoc>, module: Option<&ModulePath>) -> Imports {
-        let mut imports = Imports::default();
-        // Production supplies these nodes from its existing tape pass.
-        for node in root.root().dfs() {
-            if matches!(
-                node.kind().as_ref(),
-                "import_statement" | "import_from_statement" | "future_import_statement"
-            ) {
-                imports.observe(&node, module);
+/// The same conservative import screen over existing core facts. No tape restoration or scope table.
+impl Imports {
+    pub fn from_core(f: &crate::code_rule_dsl::facts::core::Facts, catalog: &crate::code_rule_dsl::language::KindCatalog, module: Option<&ModulePath>) -> Self {
+        use crate::code_rule_dsl::facts::core::{kind_atom, kind_code, facts_tag};
+        let kind = |n: u32| catalog.kind_name(kind_code(f.kind(n))).unwrap_or("");
+        let named = |n: u32| f.flags(n) & 1 != 0 && !matches!(kind(n), "comment" | "line_continuation");
+        let field = |n: u32, name: &str| catalog.field_id(name).and_then(|id| f.children(n).into_iter().find(|&c| f.field(c) == id));
+        let ident = |n: u32| (kind(n)=="identifier").then(|| crate::code_rule_dsl::identifier::python_name(f.text(n).into()).into_owned());
+        let dotted = |n: u32| -> Option<String> {
+            if kind(n)!="dotted_name" { return None; }
+            let parts=f.children(n).iter().copied().filter(|&c|named(c)).map(ident).collect::<Option<Vec<_>>>()?;
+            (!parts.is_empty()).then(||parts.join("."))
+        };
+        let binding = |n:u32| -> Option<(String,String)> {
+            match kind(n) {
+                "dotted_name" => dotted(n).map(|s|(s.clone(),s)),
+                "aliased_import" => Some((dotted(field(n,"name")?)?,ident(field(n,"alias")?)?)),
+                _=>None,
             }
-        }
-        imports
-    }
-    fn assert_necessary(
-        source: &str,
-        module: Option<&ModulePath>,
-        wanted: &[&str],
-        globals: &[&str],
-    ) {
-        let root = tape(source);
-        let imports = imports(&root, module);
-        if !source.contains("import *") {
-            assert!(
-                !imports.opaque,
-                "recognized import syntax must not disable the screen"
-            );
-        }
-        let table = ScopeTable::build_in(
-            root.root(),
-            GrammarDialect::Python,
-            usize::MAX,
-            &|| false,
-            Reading::default(),
-            module,
-        )
-        .unwrap();
-        let python = PythonOptions::new(DEFAULT_PYTHON_MINOR);
-        let callees: Vec<_> = root
-            .root()
-            .dfs()
-            .filter(|n| n.kind() == "call")
-            .filter_map(|n| n.field("function"))
-            .collect();
-        let facts = python_facts::project(
-            &table,
-            python_facts::Config {
-                module,
-                python: &python,
-            },
-            callees.clone(),
-        )
-        .unwrap();
-        let by_id: BTreeMap<_, _> = facts
-            .by_range
-            .into_values()
-            .flatten()
-            .map(|f| (f.node_id, f))
-            .collect();
-        let wanted: BTreeSet<String> = wanted.iter().map(|s| (*s).into()).collect();
-        let globals: BTreeSet<String> = globals.iter().map(|s| (*s).into()).collect();
-        let mut confirmed = 0;
-        for node in callees {
-            let row = &by_id[&node.node_id()];
-            let matches = match &row.qualification {
-                Fact::Known(Qualification::Qualified { name, .. }) => wanted.contains(name),
-                Fact::Known(Qualification::Unshadowed { name, .. }) => {
-                    row.attributes.is_empty() && globals.contains(name)
+        };
+        let mut out=Self { opaque:f.syntax_errors(), ..Self::default() };
+        for name in ["import_statement","import_from_statement","future_import_statement"] {
+            let code=catalog.kind_id(name); if code==0 {continue;}
+            for n in f.of_kind(kind_atom(facts_tag(f),code)) {
+                if name=="import_statement" {
+                    for c in f.children(n).iter().copied().filter(|&c|named(c)) {
+                        match kind(c) {
+                            "dotted_name" => match dotted(c).and_then(|s|s.split('.').next().map(str::to_owned)) {
+                                Some(head)=>out.add(head.clone(),Prefix::Qualified(head)), None=>out.opaque=true,
+                            },
+                            "aliased_import"=>match binding(c) {Some((q,a))=>out.add(a,Prefix::Qualified(q)),None=>out.opaque=true},
+                            _=>out.opaque=true,
+                        }
+                    }
+                    continue;
                 }
-                _ => false,
-            };
-            if matches {
-                confirmed += 1;
-                assert!(
-                    imports.may_qualify(&node, &wanted, &globals, module),
-                    "screen excluded native fact for {}",
-                    node.text()
-                );
+                let module_node=field(n,"module_name");
+                let prefix=match module_node {
+                    Some(m) if kind(m)=="dotted_name"=>dotted(m).map(Prefix::Qualified),
+                    Some(m) if kind(m)=="relative_import"=> {
+                        let level=f.text(m).chars().take_while(|c|*c=='.'||c.is_whitespace()).filter(|c|*c=='.').count();
+                        let rest=f.children(m).iter().copied().find(|&c|kind(c)=="dotted_name").map(dotted).unwrap_or(Some(String::new()));
+                        rest.filter(|_|level!=0).map(|rest|Prefix::Relative{level,rest})
+                    },
+                    None=>Some(Prefix::Qualified("__future__".into())), _=>None,
+                };
+                let Some(prefix)=prefix else {out.opaque=true;continue;};
+                for c in f.children(n).iter().copied().filter(|&c|named(c)&&Some(c)!=module_node) {
+                    let Some((q,a))=binding(c) else {out.opaque=true;continue;};
+                    let imported=match &prefix {
+                        Prefix::Qualified(p)=>Prefix::Qualified(join(p,&[q])),
+                        Prefix::Relative{level,rest}=> {
+                            if module.is_none(){out.opaque=true;}
+                            Prefix::Relative{level:*level,rest:if rest.is_empty(){q}else{format!("{rest}.{q}")}}
+                        }
+                    };
+                    out.add(a,imported);
+                }
             }
         }
-        assert!(confirmed > 0, "fixture must exercise native positive facts");
-    }
-
-    #[test]
-    fn every_matching_native_alias_submodule_relative_global_and_definition_is_admitted() {
-        let module = ModulePath::dotted("pkg.worker").unwrap();
-        let source = "import os.path\nimport pathlib as paths\nfrom subprocess import run as launch\nfrom .helpers import wait as pause\nimport pkg as K\nfrom __future__ import annotations\nos.path.join('a','b')\n(paths.Path)('f')\nlaunch([])\npause()\nK.go()\nlen([])\ndef local(): pass\nlocal()\ndef hidden(launch):\n    launch([])\ndef nested():\n    import httpx as h\n    h.get('url')\n";
-        assert_necessary(
-            source,
-            Some(&module),
-            &[
-                "os.path.join",
-                "pathlib.Path",
-                "subprocess.run",
-                "pkg.helpers.wait",
-                "pkg.go",
-                "pkg.worker.local",
-                "httpx.get",
-            ],
-            &["len"],
-        );
-    }
-
-    #[test]
-    fn negative_screen_and_deduplicated_prefixes_do_not_resolve_shadowing_or_order() {
-        let source = "import requests as r\nimport requests as r\nr = object()\nr.get('url')\nunrelated.run()\nlate()\nfrom subprocess import run as late\n";
-        let root = tape(source);
-        let imports = imports(&root, None);
-        assert!(!imports.opaque);
-        assert_eq!(imports.bindings["r"].len(), 1);
-        let wanted = BTreeSet::from(["requests.get".into(), "subprocess.run".into()]);
-        let globals = BTreeSet::new();
-        let node = |text: &str| {
-            root.root()
-                .dfs()
-                .find(|n| {
-                    n.kind() == "call" && n.field("function").is_some_and(|f| f.text() == text)
-                })
-                .unwrap()
-                .field("function")
-                .unwrap()
-        };
-        assert!(
-            imports.may_qualify(&node("r.get"), &wanted, &globals, None),
-            "shadowing is deliberately overadmitted"
-        );
-        assert!(
-            imports.may_qualify(&node("late"), &wanted, &globals, None),
-            "source order is deliberately overadmitted"
-        );
-        assert!(!imports.may_qualify(&node("unrelated.run"), &wanted, &globals, None));
-        assert_necessary("import pkg as x\n(x.K)()\n", None, &["pkg.K"], &[]);
-    }
-
-    #[test]
-    fn impossible_primary_qualifications_do_not_demand_scopes_or_remove_receiver_shapes() {
-        let root = tape("from pathlib import Path\nPath('f').open()\nhandlers['open']()\n");
-        let imports = imports(&root, None);
-        let wanted = BTreeSet::from(["pathlib.Path".into()]);
-        let globals = BTreeSet::from(["open".into()]);
-        let callees: Vec<_> = root
-            .root()
-            .dfs()
-            .filter(|n| n.kind() == "call")
-            .filter_map(|n| n.field("function"))
-            .collect();
-        let path_method = callees
-            .iter()
-            .find(|n| n.text() == "Path('f').open")
-            .unwrap();
-        let subscript = callees
-            .iter()
-            .find(|n| n.text() == "handlers['open']")
-            .unwrap();
-        assert!(!imports.may_qualify(path_method, &wanted, &globals, None));
-        assert!(!imports.may_qualify(subscript, &wanted, &globals, None));
-        let constructor_callee = callees.iter().find(|n| n.text() == "Path").unwrap();
-        assert!(imports.may_qualify(constructor_callee, &wanted, &globals, None));
-        // Even an opaque import cannot turn a valid non-name head into a name.
-        let opaque = Imports {
-            opaque: true,
-            ..Default::default()
-        };
-        assert!(!opaque.may_qualify(path_method, &wanted, &globals, None));
-        let malformed = tape("broken = (\n");
-        assert!(imports.may_qualify(&malformed.root(), &wanted, &globals, None));
-        // The receiver call still exists in the tree. Binding/value consumers must
-        // retain it independently of this qualification-only primary filter.
-        assert_eq!(path_method.field("object").unwrap().kind(), "call");
-    }
-
-    #[test]
-    fn stars_missing_module_and_unsupported_callees_stay_conservative() {
-        let source = "from pkg import *\nimport requests as r\nr.get('url')\n";
-        assert_necessary(source, None, &["requests.get"], &[]);
-        let root = tape(source);
-        assert!(imports(&root, None).opaque);
-        let root = tape("from .helpers import wait as w\nw()\n");
-        assert!(imports(&root, None).opaque);
-        let root = tape("factory().open()\n");
-        let callee = root.root().dfs().find(|n| n.kind() == "attribute").unwrap();
-        assert!(!Imports::default().may_qualify(
-            &callee,
-            &BTreeSet::from(["pathlib.Path.open".into()]),
-            &BTreeSet::new(),
-            None
-        ));
-        let root = tape("import pkg as p\np.member.extra()\n");
-        let imports = imports(&root, None);
-        let callee = root
-            .root()
-            .dfs()
-            .find(|n| n.kind() == "attribute" && n.text() == "p.member.extra")
-            .unwrap();
-        assert!(
-            imports.may_qualify(
-                &callee,
-                &BTreeSet::from(["pkg.member".into()]),
-                &BTreeSet::new(),
-                None
-            ),
-            "native prefix options are overadmitted"
-        );
+        out
     }
 }

@@ -5,7 +5,7 @@
 use super::super::reader::{Column, Readers};
 use super::{ANCESTORS, CHILDREN, install};
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::prefilter::tests::document;
+use crate::code_rule_dsl::fixtures::document;
 use rusqlite::{Connection, params};
 
 /// P's `file` table (`matcher/anchors/sql/schema.sql`), which the reader opens BLOBs in.
@@ -19,7 +19,7 @@ const FILE: &str = "CREATE TABLE file (
 #[test]
 fn children_ancestors_and_spans_match_the_tape() {
     // More than 65,535 nodes below the root, so sizes and parent deltas overflow to `sizb`/`parb`.
-    let source = format!("def f():\n    return [{}]\n", "x, ".repeat(40_000));
+    let source = format!("def f():\n    return [{}]\n", "x, ".repeat(70_000));
     let (doc, _) = document(&source, GrammarDialect::Python);
     let image = doc.index_image(&|| false).unwrap();
     assert!(!image.sizb.is_empty() && !image.parb.is_empty());

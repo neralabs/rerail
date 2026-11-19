@@ -2,7 +2,7 @@
 use rusqlite::{Connection, Result};
 use std::collections::BTreeMap;
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Storage {
+pub struct Storage {
     objects: BTreeMap<String, Object>,
 }
 struct Object {
@@ -125,7 +125,7 @@ impl Storage {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn reuses_empty_schemas_preserves_bags_and_affinity_and_separates_successive_bindings()

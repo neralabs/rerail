@@ -2,39 +2,41 @@
 //! their input tables and earlier stages in a fresh in-memory SQLite connection.
 use crate::code_rule_dsl::eval::{evidence::Rows, failure, violation_from_witness};
 use crate::code_rule_dsl::json::{hex_digest, invalid};
-use crate::code_rule_dsl::model::{CompiledClause, CompiledCodeRule, Evaluation, FactQuery, Snapshot};
+use crate::code_rule_dsl::model::{
+    CompiledClause, CompiledCodeRule, Evaluation, FactQuery, Snapshot,
+};
 use crate::code_rule_dsl::violations::{Captures, Witness};
 use napi::Result;
 use rusqlite::Connection;
 use rusqlite::hooks::Authorization;
-mod authorizer;
-pub(in crate::code_rule_dsl) mod execution;
-pub(in crate::code_rule_dsl) mod compile;
-pub(in crate::code_rule_dsl) mod pipeline;
-pub(in crate::code_rule_dsl) mod pool;
-mod shared;
-pub(in crate::code_rule_dsl) use shared::Versions;
-mod storage;
+pub mod authorizer;
+pub mod compile;
+// cratify: `execution` is rerail-engine's (it mounts it)
+pub mod pipeline;
+pub mod pool;
+pub mod shared;
+pub use shared::Versions;
+pub mod storage;
 
-mod admission;
-mod anchors;
-mod batch;
-pub(in crate::code_rule_dsl) mod database;
+pub mod admission;
+pub mod anchors;
+pub mod batch;
+pub mod database;
 use database::Database;
-pub(in crate::code_rule_dsl) mod deferred;
-mod forest;
-mod functions;
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use functions::install_unbounded as install_regex_functions;
-mod inputs;
-mod insert;
-mod producer;
-mod reachability;
-pub(in crate::code_rule_dsl) mod schema;
-mod source;
-pub(in crate::code_rule_dsl) mod syntax;
-mod table;
-pub(in crate::code_rule_dsl) use reachability::Reachability;
+pub mod deferred;
+pub mod forest;
+pub mod functions;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use functions::install_unbounded as install_regex_functions;
+pub mod inputs;
+pub mod insert;
+pub mod producer;
+pub mod reachability;
+pub mod schema;
+pub mod source;
+pub mod syntax;
+pub mod table;
+pub use reachability::Reachability;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{
@@ -43,7 +45,7 @@ use std::sync::{
 };
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Stage {
+pub struct Stage {
     pub(in crate::code_rule_dsl) name: String,
     pub(in crate::code_rule_dsl) inputs: BTreeSet<String>,
     pub(in crate::code_rule_dsl) reads_source: bool,
@@ -72,18 +74,19 @@ pub(in crate::code_rule_dsl) const REFERENCE_FIELDS: &[&str] = &[
 ];
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Plan {
+pub struct Plan {
     pub(in crate::code_rule_dsl) require_nonempty: Option<usize>,
     pub(in crate::code_rule_dsl) syntax: Option<Arc<syntax::Spec>>,
     pub(in crate::code_rule_dsl) per_file: bool,
     pub(in crate::code_rule_dsl) references: Option<References>,
     pub(in crate::code_rule_dsl) locations: BTreeSet<String>,
-    pub(in crate::code_rule_dsl) inputs: Vec<(String, FactQuery)>,
+    pub inputs: Vec<(String, FactQuery)>,
     pub(in crate::code_rule_dsl) stages: Vec<Stage>,
     pub(in crate::code_rule_dsl) cuts: Vec<pipeline::Cut>,
     pub(in crate::code_rule_dsl) query: String,
     pub(in crate::code_rule_dsl) key: Vec<String>,
     pub(in crate::code_rule_dsl) code: Option<String>,
+    pub(in crate::code_rule_dsl) message: Option<String>,
     pub(in crate::code_rule_dsl) last_uses: BTreeMap<String, usize>,
     pub(in crate::code_rule_dsl) reads_source: bool,
 }
@@ -100,11 +103,14 @@ pub(in crate::code_rule_dsl) fn identifier(value: &str) -> bool {
 fn quote(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
-pub(in crate::code_rule_dsl) fn sql_error(error: rusqlite::Error) -> napi::Error {
+pub fn sql_error(error: rusqlite::Error) -> napi::Error {
     invalid(format!("relational query: {error}"))
 }
 
-pub(in crate::code_rule_dsl) fn connection(max_pattern: usize, work: Arc<AtomicUsize>) -> Result<Database> {
+pub fn connection(
+    max_pattern: usize,
+    work: Arc<AtomicUsize>,
+) -> Result<Database> {
     let db = validation_connection(max_pattern, work)?;
     db.execute_batch("PRAGMA temp_store=FILE; PRAGMA cache_spill=ON; PRAGMA cache_size=-1024; PRAGMA temp.cache_size=-512; PRAGMA analysis_limit=1000;")
         .map_err(sql_error)?;
@@ -124,7 +130,7 @@ fn configure(mut db: Database, max_pattern: usize, work: Arc<AtomicUsize>) -> Re
     configure_in_place(&db, max_pattern, work)?;
     Ok(db)
 }
-fn configure_in_place(db: &Database, max_pattern: usize, work: Arc<AtomicUsize>) -> Result<()> {
+pub fn configure_in_place(db: &Database, max_pattern: usize, work: Arc<AtomicUsize>) -> Result<()> {
     db.hooks.progress(None::<fn() -> bool>).map_err(sql_error)?;
     db.set_limit(
         rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
@@ -203,7 +209,11 @@ pub(in crate::code_rule_dsl) fn inspect_fields_recursive(
     result
 }
 
-pub(in crate::code_rule_dsl) fn create_input(db: &Database, name: &str, fields: &[String]) -> Result<()> {
+pub fn create_input(
+    db: &Database,
+    name: &str,
+    fields: &[String],
+) -> Result<()> {
     db.storage
         .borrow_mut()
         .declare_input(db, name, input_schema(name, fields))
@@ -250,7 +260,8 @@ pub(in crate::code_rule_dsl) fn create_stage(
         });
     }
     #[cfg(feature = "code-rule-profile")]
-    let mut span = crate::code_rule_dsl::profile::trace::Span::start("sql-materialize", _logical_name);
+    let mut span =
+        crate::code_rule_dsl::profile::trace::Span::start("sql-materialize", _logical_name);
     #[cfg(feature = "code-rule-profile")]
     let work_before = work.load(Ordering::Relaxed);
     let physical = if materialize {
@@ -341,7 +352,8 @@ pub(in crate::code_rule_dsl) fn create_stage(
     if materialize && inserted != 0 {
         for (index, fields) in stage.indexes.iter().enumerate() {
             #[cfg(feature = "code-rule-profile")]
-            let _span = crate::code_rule_dsl::profile::trace::Span::start("sql-index", _logical_name);
+            let _span =
+                crate::code_rule_dsl::profile::trace::Span::start("sql-index", _logical_name);
             db.storage
                 .borrow_mut()
                 .index(
@@ -394,19 +406,19 @@ fn read_value(value: rusqlite::types::ValueRef<'_>) -> Result<Value> {
     })
 }
 
-pub(in crate::code_rule_dsl) struct Job<'a> {
+pub struct Job<'a> {
     pub code_rule: &'a CompiledCodeRule,
     pub clause: &'a CompiledClause,
     pub inputs: Inputs,
     pub budget: crate::code_rule_dsl::budget::Context,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Preparation {
+pub enum Preparation {
     Gate,
     Body,
 }
 
-pub(in crate::code_rule_dsl) struct Inputs {
+pub struct Inputs {
     pub versions: Option<Versions>,
     pub gate: Option<Rows>,
     pub rows: Option<Vec<Rows>>,
@@ -414,16 +426,16 @@ pub(in crate::code_rule_dsl) struct Inputs {
     pub snapshot: Snapshot,
     pub file_local: bool,
 }
-enum Step {
+pub enum Step {
     Sql,
     Native(producer::Demand),
     Done,
 }
-struct Session<'a> {
+pub struct Session<'a> {
     code_rule: &'a CompiledCodeRule,
     clause: &'a CompiledClause,
     plan: &'a Plan,
-    db: pool::Lease,
+    pub db: pool::Lease,
     finished: std::cell::Cell<bool>,
     descriptor_bytes: usize,
     syntax_files: syntax::Files,
@@ -432,8 +444,8 @@ struct Session<'a> {
     work: Arc<AtomicUsize>,
     tables: BTreeSet<String>,
     next: usize,
-    aliases: BTreeMap<String, String>,
-    physical_stages: Arc<Vec<Stage>>,
+    pub aliases: BTreeMap<String, String>,
+    pub physical_stages: Arc<Vec<Stage>>,
     needed: BTreeSet<String>,
     visible: Snapshot,
     scope_bindings: BTreeMap<String, usize>,
@@ -441,7 +453,7 @@ struct Session<'a> {
     plan_signature: u64,
 }
 impl<'a> Session<'a> {
-    fn new(
+    pub fn new(
         code_rule: &'a CompiledCodeRule,
         clause: &'a CompiledClause,
         mut inputs: Inputs,
@@ -794,7 +806,8 @@ impl<'a> Session<'a> {
                             Sql::Text(edge.source_name.text().to_owned()),
                             Sql::Text(edge.target_name.text().to_owned()),
                             Sql::Integer(i64::from(
-                                edge.target.flags & crate::code_rule_dsl::calls::summary::CLASS != 0,
+                                edge.target.flags & crate::code_rule_dsl::calls::summary::CLASS
+                                    != 0,
                             )),
                         ]
                     }),
@@ -896,8 +909,10 @@ impl<'a> Session<'a> {
             .values()
             .map(|rows| {
                 rows.capacity()
-                    * (std::mem::size_of::<((usize, usize), (crate::code_rule_dsl::violations::Span, bool))>()
-                        + 16)
+                    * (std::mem::size_of::<(
+                        (usize, usize),
+                        (crate::code_rule_dsl::violations::Span, bool),
+                    )>() + 16)
             })
             .sum::<usize>()
             + aliases
@@ -933,7 +948,7 @@ impl<'a> Session<'a> {
             native_sources,
         })
     }
-    fn activate(&self) -> Result<()> {
+    pub fn activate(&self) -> Result<()> {
         let changed = self.db.active.get() != self.db.id;
         self.db.activate(
             self.code_rule.capabilities.limits.max_regex_pattern_bytes,
@@ -964,7 +979,7 @@ impl<'a> Session<'a> {
                         return false;
                     }
                     guard
-                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                        .try_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
                             left.checked_sub(1)
                         })
                         .is_err()
@@ -1024,7 +1039,7 @@ impl<'a> Session<'a> {
         self.next += 1;
         Ok(())
     }
-    fn advance(&mut self) -> Result<Step> {
+    pub fn advance(&mut self) -> Result<Step> {
         self.activate()?;
         let _reader = producer::ReadOnly::enter();
         if let Some(logical) = self.plan.stages.get(self.next) {
@@ -1233,7 +1248,17 @@ impl<'a> Session<'a> {
                 path: path.to_owned(),
                 span: Some(span),
                 captures: Captures::default(),
-                message: None,
+                message: plan
+                    .message
+                    .as_ref()
+                    .map(|field| {
+                        values
+                            .get(field)
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                            .ok_or_else(|| invalid("relational message must be text"))
+                    })
+                    .transpose()?,
                 fix: None,
                 ignored: false,
                 sql_violation: None,

@@ -66,6 +66,21 @@ test("SQL parity requires recovery after a failed operation", () => {
   for (const observed of [f.actual, f.oracle]) { observed.checks.pop(); observed.requestSha256 = sha256(f.request); }
   assert.ok(compare(f).problems.some(p => p.includes("recovery")));
 });
+test("SQL parity checks the retained session cap without limiting the oracle", () => {
+  const f = fixture();
+  const request = { ...JSON.parse(f.request), max_submissions: 100 };
+  f.request = Buffer.from(JSON.stringify(request));
+  for (const observation of [f.actual, f.oracle]) observation.requestSha256 = sha256(f.request);
+  f.actual.sql_budget = { limit: 100, executed: 98, reserved: 0 };
+  f.oracle.sql_budget = { limit: null, executed: 120, reserved: 0 };
+  assert.deepEqual(compare(f).problems, []);
+  for (const invalid of [{ executed: 101 }, { limit: null }, { reserved: 2 }]) {
+    const original = f.actual.sql_budget;
+    f.actual.sql_budget = { ...original, ...invalid };
+    assert.ok(compare(f).problems.some(p => p.includes("SQL admission")));
+    f.actual.sql_budget = original;
+  }
+});
 test("valid SQL parity leaves the fixed complete-job allowance at 100", () => {
   const p = workload(compare(fixture()));
   function report(n) { return { workload: p, sessions: 1, captureCoverage: { complete: true, problems: [] },
@@ -138,10 +153,10 @@ test("snapshot and file publication compare semantic cells and complete document
   f.request=Buffer.from(JSON.stringify(request));
   for (const observed of [f.actual,f.oracle]) {
     observed.requestSha256=sha256(f.request);
-    observed.inputs={native:["n","s"]};
+    observed.inputs={native:["n","s","k"]};
     for (const [id,check] of observed.checks.entries()) {
       check.documents=id<2?[a,b]:[a,c];
-      check.state.native={columns:["n","s"],rows:[[{node:["a.py","0"]},{symbol:"x"}]]};
+      check.state.native={columns:["n","s","k"],rows:[[{node:["a.py","0"]},{symbol:"x"},{nodeOrder:["a.py","1"]}]]};
     }
     observed.checks[1].outcome="execution-limit";
   }

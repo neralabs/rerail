@@ -36,12 +36,12 @@ fn first_edit_uses_prepared_inputs_projections_and_reducers_with_bounded_work() 
     eprintln!("first edit: {work:?}");
 }
 
-fn scratch_names(e: &mut CodeRuleSqlExecutor) -> Vec<String> {
-    rows(e,"SELECT name FROM temp.sqlite_schema WHERE type='table' AND name GLOB '__rr_update_*' ORDER BY name").as_array().unwrap().iter().map(|r|r[0].as_str().unwrap().to_owned()).collect()
+fn scratch_names(e: &CodeRuleSqlExecutor) -> Vec<String> {
+    e.scratch.names()
 }
 
 #[test]
-fn warm_edits_reuse_scratch_schema_and_failures_preserve_empty_pooled_tables() {
+fn warm_edits_reuse_scratch_roots_and_failures_preserve_empty_pool() {
     let (_dir, mut e) = executor();
     edge(&mut e, json!([[1, 2], [2, 3]]));
     e.run(CLOSURE.into(), "python".into(), None).unwrap();
@@ -53,8 +53,10 @@ fn warm_edits_reuse_scratch_schema_and_failures_preserve_empty_pooled_tables() {
         };
         e.apply_changes(patch.to_string(), None).unwrap();
     }
-    let names = scratch_names(&mut e);
+    let names = scratch_names(&e);
     assert!(!names.is_empty());
+    assert!(names.iter().all(|name|e.versions.owns(name)));
+    assert_eq!(rows(&mut e,"SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__rr_update_*'"),json!([[0]]));
     let schema = rows(&mut e, "PRAGMA temp.schema_version");
     for insert in [true, false, true, false] {
         let patch = if insert {
@@ -65,7 +67,7 @@ fn warm_edits_reuse_scratch_schema_and_failures_preserve_empty_pooled_tables() {
         let report: Value =
             serde_json::from_str(&e.apply_changes(patch.to_string(), None).unwrap()).unwrap();
         assert_eq!(report["scratch_tables_created"], 0, "{report}");
-        assert_eq!(scratch_names(&mut e), names);
+        assert_eq!(scratch_names(&e), names);
         assert_eq!(rows(&mut e, "PRAGMA temp.schema_version"), schema);
         for name in &names {
             assert_eq!(
@@ -82,7 +84,7 @@ fn warm_edits_reuse_scratch_schema_and_failures_preserve_empty_pooled_tables() {
     );
     e.set_limits("{}".into()).unwrap();
     assert_eq!(rows(&mut e, "SELECT * FROM reach ORDER BY c0,c1"), old);
-    assert_eq!(scratch_names(&mut e), names);
+    assert_eq!(scratch_names(&e), names);
     for name in &names {
         assert_eq!(
             rows(&mut e, &format!("SELECT count(*) FROM {name}")),
@@ -92,5 +94,5 @@ fn warm_edits_reuse_scratch_schema_and_failures_preserve_empty_pooled_tables() {
     e.apply_changes(json!([{"name":"edge","delete":[[1,2]]}]).to_string(), None)
         .unwrap();
     e.reset().unwrap();
-    assert!(scratch_names(&mut e).is_empty());
+    assert!(scratch_names(&e).is_empty());
 }

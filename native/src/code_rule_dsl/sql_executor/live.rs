@@ -9,7 +9,7 @@ struct Rows {
     positions: BTreeMap<Vec<i64>, usize>,
     indexes: Vec<BTreeMap<i64, BTreeSet<usize>>>,
 }
-pub(super) struct Live {
+pub struct Live {
     columns: Vec<String>,
     rows: RwLock<Rows>,
 }

@@ -1,5 +1,6 @@
 //! Git tree and snapshot storage.
 
+use super::compression::{compress_source, compress_tape, file_tag};
 use super::objects::{compress_documents, put_source_tx, put_tape_tx, validate_tape_payload};
 #[cfg(any(test, feature = "test-hooks"))]
 use super::rows::intern_string;
@@ -9,9 +10,11 @@ use super::rows::{
 use super::{
     ContentStore, GitTree, HASH_SHA256, HashKey, MAX_PUBLICATION_BATCH, OperationDeadline,
     STRING_PATH_COMPONENT, SnapshotFilePublication, SnapshotId, SourceId, StoreError, StoreResult,
-    StoredFile, TapeId, WorkspaceId, WorkspaceRegistration, compress,
+    StoredFile, TapeId, WorkspaceId, WorkspaceRegistration,
 };
-use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 #[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::Ordering;
@@ -90,7 +93,7 @@ impl ContentStore {
                 StoreError::Invalid("snapshot root is not one of its Git trees".to_owned())
             })?;
         self.put_git_trees_bulk(trees)?;
-        let snapshot = |transaction: &Transaction<'_>| {
+        let snapshot = |transaction: &Connection| {
             insert_snapshot(
                 transaction,
                 root_tree,
@@ -188,7 +191,7 @@ impl ContentStore {
     /// Runs one Git-tree write transaction.
     fn git_tree_transaction<T>(
         &self,
-        mut operation: impl FnMut(&Transaction<'_>) -> StoreResult<T>,
+        mut operation: impl FnMut(&Connection) -> StoreResult<T>,
     ) -> StoreResult<T> {
         let written = self.immediate_transaction(|tx| {
             #[cfg(any(test, feature = "test-hooks"))]
@@ -214,7 +217,7 @@ impl ContentStore {
     fn git_tree_batch_writer(
         &self,
         trees: &[&GitTree],
-    ) -> StoreResult<impl Fn(&Transaction<'_>) -> StoreResult<()> + '_> {
+    ) -> StoreResult<impl Fn(&Connection) -> StoreResult<()> + '_> {
         #[cfg(any(test, feature = "test-hooks"))]
         self.git_tree_lookup_count.fetch_add(1, Ordering::Relaxed);
         let mut hashes = std::collections::BTreeSet::new();
@@ -271,7 +274,7 @@ impl ContentStore {
         let entries = encode(serde_json::Value::Array(entries))?;
         #[cfg(any(test, feature = "test-hooks"))]
         let tree_count = trees.len();
-        Ok(move |tx: &Transaction<'_>| {
+        Ok(move |tx: &Connection| {
             #[cfg(any(test, feature = "test-hooks"))]
             self.git_tree_write_count
                 .fetch_add(tree_count, Ordering::Relaxed);
@@ -301,18 +304,18 @@ impl ContentStore {
         }
         self.immediate_transaction(|transaction| {
             let tree_hash_id = intern_hash(transaction, tree)?;
-            transaction.execute(
+            transaction.execute_cached(
                 "INSERT INTO git_trees(tree_hash_id) VALUES (?1) ON CONFLICT(tree_hash_id) DO NOTHING",
                 [tree_hash_id],
             )?;
-            let tree_id: i64 = transaction.query_row(
+            let tree_id: i64 = transaction.query_row_cached(
                 "SELECT tree_id FROM git_trees WHERE tree_hash_id=?1",
                 [tree_hash_id],
                 |row| row.get(0),
             )?;
             let name_string_id = intern_string(transaction, STRING_PATH_COMPONENT, name)?;
             let target_hash_id = intern_hash(transaction, target)?;
-            transaction.execute(
+            transaction.execute_cached(
                 "INSERT INTO git_tree_entries(tree_id,name_string_id,mode_id,object_kind_id,target_hash_id) VALUES (?1,?2,?3,?4,?5)\
                  ON CONFLICT(tree_id,name_string_id) DO UPDATE SET mode_id=excluded.mode_id,object_kind_id=excluded.object_kind_id,target_hash_id=excluded.target_hash_id",
                 params![tree_id, name_string_id, mode_id, object_kind_id, target_hash_id],
@@ -357,9 +360,10 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let path_id = intern_path(&transaction, path)?;
-        transaction.execute(
+        transaction.execute_cached(
             "INSERT INTO snapshot_files(snapshot_id,path_id,source_id,tape_id) VALUES (?1,?2,?3,?4)\
              ON CONFLICT(snapshot_id,path_id) DO UPDATE SET source_id=excluded.source_id,tape_id=excluded.tape_id",
             params![snapshot_id.0, path_id, source_id.0, tape_id.map(|id| id.0)],
@@ -394,10 +398,14 @@ impl ContentStore {
         for publication in publications {
             validate_relative_path(publication.path)?;
             validate_tape_payload(publication.tape)?;
-            let source_frame = compress(publication.source, self.compression_level)?;
+            let source_frame = compress_source(
+                publication.source,
+                self.compression_level,
+                file_tag(publication.path, publication.tape.map(|tape| tape.bytes)),
+            )?;
             let tape_frame = publication
                 .tape
-                .map(|payload| compress(payload.bytes, self.compression_level))
+                .map(|payload| compress_tape(payload.bytes, self.compression_level))
                 .transpose()?;
             let document_frames = publication
                 .tape
@@ -410,7 +418,8 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let mut stored = Vec::with_capacity(prepared.len());
         for (publication, source_frame, tape_frame, document_frames) in prepared {
             let source_id = put_source_tx(
@@ -431,7 +440,7 @@ impl ContentStore {
                 _ => unreachable!("tape frame follows tape payload"),
             };
             let path_id = intern_path(&transaction, publication.path)?;
-            transaction.execute(
+            transaction.execute_cached(
                 "INSERT INTO snapshot_files(snapshot_id,path_id,source_id,tape_id) VALUES (?1,?2,?3,?4)\
                  ON CONFLICT(snapshot_id,path_id) DO UPDATE SET source_id=excluded.source_id,tape_id=excluded.tape_id",
                 params![snapshot_id.0, path_id, source_id.0, tape_id.map(|id| id.0)],
@@ -448,7 +457,7 @@ impl ContentStore {
 
 /// Records the snapshot over `root_tree` while that tree is complete; `None` when it is not.
 fn insert_snapshot(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     root_tree: HashKey,
     scanner_version: i64,
     grammar_set: HashKey,
@@ -470,12 +479,12 @@ fn insert_snapshot(
         return Ok(None);
     };
     let grammar_hash_id = intern_hash(transaction, grammar_set)?;
-    transaction.execute(
+    transaction.execute_cached(
         "INSERT INTO snapshots(root_tree_id,scanner_version,grammar_set_hash_id,tape_format_version)\
          VALUES (?1,?2,?3,?4) ON CONFLICT(root_tree_id,scanner_version,grammar_set_hash_id,tape_format_version) DO NOTHING",
         params![tree_id, scanner_version, grammar_hash_id, tape_format_version],
     )?;
-    let snapshot_id = transaction.query_row(
+    let snapshot_id = transaction.query_row_cached(
         "SELECT snapshot_id FROM snapshots WHERE root_tree_id=?1 AND scanner_version=?2 AND grammar_set_hash_id=?3 AND tape_format_version=?4",
         params![tree_id, scanner_version, grammar_hash_id, tape_format_version],
         |row| row.get(0),

@@ -1,7 +1,7 @@
 //! Projection syntax does not choose a different storage or maintenance engine.
 use super::*;
 
-pub(in crate::code_rule_dsl::sql_executor) fn normalize_views(
+pub fn normalize_views(
     e: &mut plan::emit::Emitted,
 ) -> usize {
     // Keep the checked queries for semantic domains and explain; their execution is a relation step.

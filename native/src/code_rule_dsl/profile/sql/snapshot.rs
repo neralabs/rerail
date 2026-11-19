@@ -1,7 +1,7 @@
 //! Preserve the failed SQL owner's temporary relations for bounded offline diagnosis.
 use rusqlite::{Connection, Result};
 #[path = "backup.rs"]
-mod backup;
+pub mod backup;
 use std::{
     ffi::CStr,
     path::{Path, PathBuf},
@@ -18,7 +18,7 @@ fn save(source: &Connection, path: &Path, schema: &CStr) -> Result<()> {
 
 /// No callback or successful-query overhead: invoked only after an engine failure.
 /// Main and temporary databases are separate owners and must both be preserved.
-pub(in crate::code_rule_dsl) fn capture(
+pub fn capture(
     source: &Connection,
     context: serde_json::Value,
 ) -> Result<Option<PathBuf>> {
@@ -52,7 +52,7 @@ pub(in crate::code_rule_dsl) fn capture(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn failure_snapshot_keeps_temp_values_indexes_and_source_ownership() -> Result<()> {

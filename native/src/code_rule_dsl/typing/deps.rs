@@ -313,4 +313,4 @@ pub(crate) fn summary(module: &str, functions: &BTreeMap<String, BTreeSet<String
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

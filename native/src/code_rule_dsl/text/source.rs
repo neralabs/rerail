@@ -7,7 +7,7 @@ use regex_syntax::hir::Hir;
 /// A test's spelling.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[allow(dead_code, reason = "the framework's spellings: `Glob` and `OneOf` have no rule front end yet")]
-pub(in crate::code_rule_dsl) enum Spelling {
+pub enum Spelling {
     /// Rust `regex` syntax, as the `regex` crate reads it (W's matcher reads the same), with
     /// backreferences beyond it (`value.regex`, `value::text_regex`).
     Regex(String),
@@ -26,7 +26,7 @@ pub(in crate::code_rule_dsl) enum Spelling {
 
 /// A test: its spelling, and whether it ignores case.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct Source {
+pub struct Source {
     pub(in crate::code_rule_dsl) spelling: Spelling,
     pub(in crate::code_rule_dsl) fold_case: bool,
 }
@@ -38,11 +38,11 @@ pub(super) enum Parsed {
 }
 
 impl Source {
-    pub(in crate::code_rule_dsl) fn regex(pattern: impl Into<String>) -> Self {
+    pub fn regex(pattern: impl Into<String>) -> Self {
         Self { spelling: Spelling::Regex(pattern.into()), fold_case: false }
     }
 
-    pub(in crate::code_rule_dsl) fn of(spelling: Spelling) -> Self {
+    pub fn of(spelling: Spelling) -> Self {
         Self { spelling, fold_case: false }
     }
 
@@ -173,9 +173,13 @@ fn parse(pattern: &str, fold_case: bool) -> Result<Hir, Error> {
         .map_err(|e| Error(format!("regex {pattern:?}: {e}")))
 }
 
+/// A globset regex, read as globset itself reads it: `.` matches a line break too, so `**` (and `*`, `?` of a
+/// non-path glob) spans the lines of a multi-line text. globset's string carries no `(?s)`; its own matcher sets
+/// the flag (`new_regex`). Without it, `glob("**", n)` failed on any node whose text has a newline.
 fn parse_bytes(pattern: &str) -> Result<Hir, Error> {
     regex_syntax::ParserBuilder::new()
         .utf8(false)
+        .dot_matches_new_line(true)
         .build()
         .parse(pattern)
         .map_err(|e| Error(format!("glob regex {pattern:?}: {e}")))

@@ -29,7 +29,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 /// The relations, and their columns (`sql::select::input_columns`).
-pub(in crate::code_rule_dsl) const RELATIONS: [&str; 2] = ["reference_edge", "reference_open"];
+pub(in crate::code_rule_dsl) use super::REFERENCE_RELATIONS as RELATIONS;
 
 /// The edge labels `reference_edge`'s `via` takes.
 const VIAS: [&str; 9] = ["param_type", "field", "bare", "unqualified", "self", "super", "late", "name", "sibling"];
@@ -73,7 +73,7 @@ type File = (Arc<str>, Arc<Summary>, HashMap<(u32, u32), i64>);
 
 /// The corpus's files as the graph reads them, gathered while the chunks are built (`add`, from the chunk builder's
 /// jobs, in any order), linked once they all are (`relations`), in path order.
-pub(super) struct Files {
+pub(in crate::code_rule_dsl) struct Files {
     config: Config,
     /// The directories the corpus marks as packages (`__init__.py`), from which each file's module follows.
     packages: HashSet<String>,
@@ -82,7 +82,7 @@ pub(super) struct Files {
 
 impl Files {
     /// For `prog`, over the corpus's `paths`; `None` where `prog` reads neither relation.
-    pub(super) fn new(prog: &Program, read: &BTreeSet<String>, paths: &[String]) -> Result<Option<Self>> {
+    pub(in crate::code_rule_dsl) fn new(prog: &Program, read: &BTreeSet<String>, paths: &[String]) -> Result<Option<Self>> {
         if !RELATIONS.iter().any(|r| read.contains(*r)) {
             return Ok(None);
         }
@@ -92,7 +92,7 @@ impl Files {
 
     /// Document `key` at `path`, with its source and core facts: summarized as W's stateless evaluation summarizes an
     /// in-scope Python file, its module named by the corpus's package markers (`eval::parse_snapshot`).
-    pub(super) fn add(&self, key: u32, path: &str, source: &Arc<String>, facts: &Arc<Facts>) -> Result<()> {
+    fn add_file(&self, key: u32, path: &str, source: &Arc<String>, facts: &Arc<Facts>) -> Result<()> {
         if !self.config.scope.as_ref().is_some_and(|scope| scope.matches(path)) {
             return Ok(());
         }
@@ -109,7 +109,7 @@ impl Files {
     /// The relations the program reads, as (name, columns, values): the summaries linked as W links them for the
     /// configured key (`CallsView::build_modes`), each edge and open definition at its node, `via` as an atom.
     #[allow(clippy::type_complexity)]
-    pub(super) fn relations(self, store: &ContentStore, read: &BTreeSet<String>) -> Result<Vec<(&'static str, Vec<String>, Vec<Option<Vec<i64>>>)>> {
+    fn relations_of(self, store: &ContentStore, read: &BTreeSet<String>) -> Result<Vec<(&'static str, Vec<String>, Vec<Option<Vec<i64>>>)>> {
         let key = self.config.key;
         let mut files = self.files.into_inner().expect("reference files");
         files.sort_unstable_by(|a, b| a.0.cmp(&b.0));
@@ -143,4 +143,21 @@ impl Files {
 
 fn columns(names: &[&str]) -> Vec<String> {
     names.iter().map(|c| (*c).to_owned()).collect()
+}
+
+/// Python's reference graph, made where a program of Python files reads it (`corpus::install_cross_file`).
+pub(in crate::code_rule_dsl) fn make(label: &str, prog: &Program, read: &BTreeSet<String>, paths: &[String]) -> Result<Option<Box<dyn super::CrossFileRelations>>> {
+    if label != "python" {
+        return Ok(None);
+    }
+    Ok(Files::new(prog, read, paths)?.map(|files| Box::new(files) as Box<dyn super::CrossFileRelations>))
+}
+
+impl super::CrossFileRelations for Files {
+    fn add(&self, key: u32, path: &str, source: &Arc<String>, facts: &Arc<Facts>) -> Result<()> {
+        self.add_file(key, path, source, facts)
+    }
+    fn relations(self: Box<Self>, store: &ContentStore, read: &BTreeSet<String>) -> Result<Vec<(&'static str, Vec<String>, Vec<Option<Vec<i64>>>)>> {
+        (*self).relations_of(store, read)
+    }
 }

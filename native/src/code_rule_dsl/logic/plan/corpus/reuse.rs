@@ -22,77 +22,213 @@ use std::path::Path;
 /// Whether the cutoff applies to a run with these options and typing inputs.
 pub(super) fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Option<&Path>) -> bool {
     let asked = options.get("reuse").and_then(serde_json::Value::as_bool).unwrap_or(false);
-    asked && t_facts.is_none() && typing.declarations.is_empty() && typing.site.is_none() && typing.summarize.is_none() && super::tape_cache_path().is_some()
+    // A run asked for a debugging dump runs: kept outputs carry none. A profile does not turn the cutoff off: a
+    // profiled warm run is measured as it runs, and its profile says the cutoff applied.
+    let side_output = std::env::vars_os().any(|(k, _)| k.to_str().is_some_and(|k| k.starts_with("RERAIL_DUMP_")));
+    let wanted = asked && !side_output && t_facts.is_none() && typing.declarations.is_empty() && typing.site.is_none() && typing.summarize.is_none() && super::tape_cache_path().is_some();
+    if !wanted {
+        miss(&format!("not wanted (asked {asked}, dump {side_output}, t facts {}, typing {}, tape cache {})", t_facts.is_some(), !typing.declarations.is_empty() || typing.site.is_some() || typing.summarize.is_some(), super::tape_cache_path().is_some()));
+    }
+    wanted
 }
 
 /// The run's key: everything it is a function of besides what it consults.
-fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
+/// Switches that change how a run is measured or held, never what it outputs: left out of the key. A profile's path
+/// differs every run, so with it in the key no profiled run ever found the last run's record.
+const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE", "RERAIL_UPKEEP", "RERAIL_UPKEEP_CPU", "RERAIL_UPKEEP_MB", "RERAIL_UPKEEP_IDLE", "RERAIL_UPKEEP_BATTERY", "RERAIL_UPKEEP_JOBS", "RERAIL_UPKEEP_LOG", "RERAIL_JOINS", "RERAIL_JOINS_LOG", "RERAIL_JOIN_SLOW", "RERAIL_JOIN_SLOW_ROWS", "RERAIL_JOIN_CRITICAL", "RERAIL_JOIN_EXPLORE", "RERAIL_JOIN_MARGIN", "RERAIL_JOIN_SEED", "RERAIL_OBSERVE_TRACE"];
+
+/// Every engine switch that can change what a run outputs (`RERAIL_*` less `NOT_OUTPUTS`), in name order, as bytes for
+/// the run's key.
+fn switches() -> Vec<u8> {
+    let mut switches: Vec<(String, String)> = std::env::vars_os()
+        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.to_string_lossy().into_owned())))
+        .filter(|(k, _)| k.starts_with("RERAIL_") && !NOT_OUTPUTS.contains(&k.as_str()))
+        .collect();
+    switches.sort();
+    let mut out = Vec::new();
+    for (k, v) in switches {
+        out.extend_from_slice(k.as_bytes());
+        out.push(0);
+        out.extend_from_slice(v.as_bytes());
+        out.push(0);
+    }
+    out
+}
+
+fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
     let mut h = Sha256::new();
-    h.update(b"rerail.run-reuse/v1\0");
+    // v4: the run's settings keyed as the rows it adds (decision 0249), the texts as the files'.
+    h.update(b"rerail.run-reuse/v4\0");
     for p in programs {
         h.update((p.len() as u64).to_le_bytes());
         h.update(p.as_bytes());
     }
+    added.hash(&mut h);
     h.update(options.to_string().as_bytes());
     h.update([0]);
-    h.update(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
+    h.update(dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
     h.update([0]);
     h.update(modes.as_bytes());
     h.update(format!("\0{typing:?}\0").as_bytes());
-    h.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
+    // A phase's run is a function of the facts handed down to it (its files, for phase 1), which no consulted file
+    // names: the same program over other files is another run.
+    h.update(super::phases::handed_down_text().as_bytes());
+    h.update([0]);
+    h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     h.update([u8::from(crate::code_rule_dsl::facts::vtab::syntax::definition_ids())]);
-    // What changes the outputs from outside the text: a sample of the corpus, decision 0091's guards.
-    for var in ["RERAIL_SAMPLE_EVERY", "RERAIL_SCOPE_GUARDS", "RERAIL_LIBRARIES", "RERAIL_REQUESTS"] {
-        h.update(std::env::var(var).unwrap_or_default().as_bytes());
-        h.update([0]);
+    // What can change the outputs from outside the text: every engine switch (a sample of the corpus, decision 0091's
+    // guards, the matcher and planner switches). Listing only some reused a run made under others: a run with
+    // `RERAIL_AST_PARTS=off` answered with the outputs of one with it on. The cache's own path names the store.
+    h.update(switches());
+    format!("{CUTOFF}{}", h.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>())
+}
+
+/// The key's parts, each as a short digest, and the options (`RERAIL_REUSE_TRACE`): which part made a run miss.
+fn key_parts(programs: &[&str], root: &Path, options: &serde_json::Value, typing: &Typing) -> String {
+    if std::env::var_os("RERAIL_REUSE_TRACE").is_none() {
+        return String::new();
+    }
+    let short = |b: &[u8]| Sha256::digest(b).iter().take(3).map(|b| format!("{b:02x}")).collect::<String>();
+    let texts: Vec<u8> = programs.iter().flat_map(|p| p.bytes()).collect();
+    format!(
+        "texts {}, root {} ({}), typing {}, handed down {}, switches {}, options {}",
+        short(&texts),
+        short(root.to_string_lossy().as_bytes()),
+        root.display(),
+        short(format!("{typing:?}").as_bytes()),
+        short(super::phases::handed_down_text().as_bytes()),
+        short(&switches()),
+        options.to_string().chars().take(300).collect::<String>()
+    )
+}
+
+/// The prefix of a whole-run cutoff's record (the observer's `run_record`). Its consulted lines name the plans the
+/// run used (`plan`, digest in hex): the observer's store is collected with the content store's, and a record no
+/// live plan of which it names is dropped (`observe::collect`).
+pub const CUTOFF: &str = "cutoff:";
+
+/// The record's entry of the texts' include graphs (`Texts::graphs`), each one's digest or none: with every rule file
+/// as recorded, the same graphs list the same rule files, so the check need not list them again (decision 0275).
+const GRAPHS: &str = "graphs";
+
+/// The texts' include graphs as the record's entry holds them.
+fn graphs_line(graphs: &[Option<[u8; 32]>]) -> String {
+    let mut h = Sha256::new();
+    for g in graphs {
+        match g {
+            Some(d) => {
+                h.update([1]);
+                h.update(d);
+            }
+            None => h.update([0]),
+        }
     }
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The programs with the root's settings (`<root>/rerail.env`, the `env` option), as the run reads them.
-fn with_settings(programs: &[&str], root: &Path, options: &serde_json::Value) -> Result<Vec<String>> {
+/// The record's entry of the program's parts the check reads (`corpus::Summary`), as JSON.
+const SUMMARY: &str = "program";
+
+/// The root's settings (`<root>/rerail.env`, the `env` option), as the rows the run adds (decision 0249).
+fn settings(root: &Path, options: &serde_json::Value) -> Result<super::added::Added> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-    let settings = crate::code_rule_dsl::tools::settings(root, &flags).map_err(Error::Plan)?;
-    Ok(programs.iter().map(|p| crate::code_rule_dsl::tools::with_settings(p, &settings)).collect())
+    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
+    Ok(super::added::Added::of(&settings, options))
 }
 
 /// The library files the programs include, each with its digest now: the record's `rule` entries.
-fn rule_files(programs: &[String]) -> Result<Vec<(String, String, String)>> {
-    let mut out = Vec::new();
-    for p in programs {
-        for path in crate::code_rule_dsl::logic::rr::included_files(p)? {
-            let digest = observe(|o| o.digest(&path)).map(|d| crate::content_store::observe::hex(&d)).unwrap_or_default();
-            out.push(("rule".to_owned(), path.to_string_lossy().into_owned(), digest));
+///
+/// Read off phase 0's graphs (decision 0246): each text's includes (`Graph::digests`) and the phase programs its
+/// declarations name, with theirs (`Graph::rules`), which `bootstrap.rerail` resolved as it loaded the modules. Nothing is
+/// parsed: listing them by reading every module again was 4.3 G of a one-file run, the parse the shipped bundle saves.
+/// A text phase 0 has no graph of (it includes nothing, or the run was handed it read), or a `phase_dir` the graph
+/// does not search, lists them as before (`listed`). `RERAIL_REUSE_CHECK` lists both and says where they differ.
+pub fn rule_files(given: &super::Texts<'_>, options: &serde_json::Value) -> Result<Vec<(String, String, String)>> {
+    let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(std::path::PathBuf::from);
+    let (paths, missed) = match graph_files(given, dir.as_deref()) {
+        Some((paths, missed)) => {
+            if std::env::var_os("RERAIL_REUSE_CHECK").is_some() {
+                let (old, old_missed) = listed(given, dir.as_deref())?;
+                let old: std::collections::BTreeSet<_> = old.into_iter().collect();
+                let new: std::collections::BTreeSet<_> = paths.iter().cloned().collect();
+                eprintln!("RERAIL_REUSE_CHECK rule files: {} from the graph, {} listed; only the graph's {:?}; only listed {:?}", new.len(), old.len(), new.difference(&old).collect::<Vec<_>>(), old.difference(&new).collect::<Vec<_>>());
+                let old_missed: std::collections::BTreeSet<_> = old_missed.into_iter().collect();
+                let new_missed: std::collections::BTreeSet<_> = missed.iter().cloned().collect();
+                eprintln!("RERAIL_REUSE_CHECK missing phase programs: {} from the graph, {} listed; only the graph's {:?}; only listed {:?}", new_missed.len(), old_missed.len(), new_missed.difference(&old_missed).collect::<Vec<_>>(), old_missed.difference(&new_missed).collect::<Vec<_>>());
+            }
+            (paths, missed)
         }
+        None => listed(given, dir.as_deref())?,
+    };
+    let mut out = Vec::new();
+    // Phase 1's program (`sources.rerail`), which every run's documents come from: its includes are core's, as the
+    // programs' are.
+    let sources = super::phases::sources_path();
+    let digest = observe(|o| o.digest(&sources)).map(|d| crate::content_store::observe::hex(&d)).unwrap_or_default();
+    out.push(("rule".to_owned(), sources.to_string_lossy().into_owned(), digest));
+    for path in paths {
+        let digest = observe(|o| o.digest(&path)).map(|d| crate::content_store::observe::hex(&d)).unwrap_or_default();
+        out.push(("rule".to_owned(), path.to_string_lossy().into_owned(), digest));
     }
+    // The places a phase program was looked for and not found: no digest, so one appearing there differs.
+    out.extend(missed.into_iter().map(|path| ("rule".to_owned(), path.to_string_lossy().into_owned(), String::new())));
     out.sort();
     out.dedup();
     Ok(out)
 }
 
-fn encode_consulted(consulted: &[(String, String, String)]) -> String {
-    consulted.iter().map(|(w, p, d)| format!("{w}\t{p}\t{d}")).collect::<Vec<_>>().join("\n")
+/// The programs' rule files from phase 0's graphs, where every text has one and no `phase_dir` shadows the phase
+/// programs' directory the graphs were resolved in; with the phase programs' candidates that were not there
+/// (`Graph::absent`), which a run checks are still missing (decision 0275), as `listed`'s.
+#[allow(clippy::type_complexity)]
+fn graph_files(given: &super::Texts<'_>, dir: Option<&Path>) -> Option<(Vec<std::path::PathBuf>, Vec<std::path::PathBuf>)> {
+    if dir.is_some() || given.graphs.is_empty() || given.graphs.iter().any(Option::is_none) || given.derived.len() != given.graphs.len() {
+        return None;
+    }
+    let mut paths: Vec<std::path::PathBuf> = given.derived.iter().flat_map(|g| g.digests.keys().chain(g.rules.keys()).cloned()).collect();
+    paths.extend(crate::code_rule_dsl::logic::rr::engine_files());
+    let missed = given.derived.iter().flat_map(|g| g.phases.values().flatten().map(|(_, c)| c).filter(|c| g.absent.contains(c)).cloned()).collect();
+    Some((paths, missed))
 }
 
-fn decode_consulted(text: &str) -> Vec<(String, String, String)> {
-    text.lines()
-        .filter_map(|l| {
-            let mut f = l.splitn(3, '\t');
-            Some((f.next()?.to_owned(), f.next()?.to_owned(), f.next()?.to_owned()))
-        })
-        .collect()
+/// The programs' rule files read off their texts (`Texts::names`, which resolves each text's includes again) and
+/// the phase programs their declarations name (`phases::phase_files`, which reads each), with the places a phase
+/// program was looked for and not found.
+#[allow(clippy::type_complexity)]
+fn listed(given: &super::Texts<'_>, dir: Option<&Path>) -> Result<(Vec<std::path::PathBuf>, Vec<std::path::PathBuf>)> {
+    let read = given.names()?;
+    let (mut paths, missed) = super::phases::phase_files(read, dir)?;
+    for t in read {
+        paths.extend(t.included.iter().cloned());
+    }
+    Ok((paths, missed))
 }
 
-/// The outputs a run wrote: each `<rel>.csv` in `out`, as (name, bytes).
-fn outputs_of<'a>(out: &Path, names: impl Iterator<Item=&'a str>) -> Vec<(String,Vec<u8>)> {
-    let mut files=names.filter_map(|name| {
-        let name=format!("{name}.csv");
-        std::fs::read(out.join(&name)).ok().map(|bytes|(name,bytes))
-    }).collect::<Vec<_>>();
-    files.sort(); files
+/// A record's lists as bytes: the observer's codec (one definition for every record, `observe::encode_lists`).
+pub use crate::content_store::observe::{decode_lists, encode_lists};
+
+/// A record's consulted list as bytes (`encode_lists`): each entry its kind, its path and its digest.
+pub fn encode_consulted(consulted: &[(String, String, String)]) -> Vec<u8> {
+    let flat: Vec<&str> = consulted.iter().flat_map(|(w, p, d)| [w.as_str(), p, d]).collect();
+    encode_lists(&[&flat[..]])
 }
 
-fn encode_outputs(files: &[(String, Vec<u8>)]) -> Vec<u8> {
+/// The list `encode_consulted` made, or none where the bytes are not one.
+pub fn decode_consulted(bytes: &[u8]) -> Option<Vec<(String, String, String)>> {
+    let [flat]: [Vec<String>; 1] = decode_lists(bytes)?.try_into().ok()?;
+    if flat.len() % 3 != 0 {
+        return None;
+    }
+    let mut it = flat.into_iter();
+    Some(std::iter::from_fn(|| Some((it.next()?, it.next()?, it.next()?))).collect())
+}
+
+/// The outputs a run wrote, as one file: a base of the relations `names` of the stack in `out` (decision 0239).
+fn outputs_of<'a>(out: &Path, names: impl Iterator<Item = &'a str>) -> Vec<(String, Vec<u8>)> {
+    crate::code_rule_dsl::logic::plan::output::base_of(out, names).map(|bytes| vec![(crate::code_rule_dsl::logic::plan::output::FILE.to_owned(), bytes)]).unwrap_or_default()
+}
+
+pub fn encode_outputs(files: &[(String, Vec<u8>)]) -> Vec<u8> {
     let mut out = Vec::new();
     for (name, bytes) in files {
         out.extend((name.len() as u32).to_le_bytes());
@@ -103,7 +239,7 @@ fn encode_outputs(files: &[(String, Vec<u8>)]) -> Vec<u8> {
     out
 }
 
-fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
+pub fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
     let mut files = Vec::new();
     while !b.is_empty() {
         let n = u32::from_le_bytes(b.get(..4)?.try_into().ok()?) as usize;
@@ -118,153 +254,131 @@ fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
 
 /// The kept outputs written into `out`, when every read of the last run under this key is as it was.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn reused(programs: &[&str], root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value) -> Result<Option<Report>> {
+pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value) -> Result<Option<Report>> {
+    let programs = given.programs;
     let checking = super::thread_usage();
-    let texts = with_settings(programs, root, options)?;
-    let key = key(&texts, root, options, modes, typing);
-    let Some((consulted, outputs)) = observe(|o| o.run_record(&key)) else { return Ok(None) };
-    let consulted = decode_consulted(&consulted);
-    let Some(outputs) = decode_outputs(&outputs) else { return Ok(None) };
+    let key = key(programs, &settings(root, options)?, root, options, modes, typing);
+    let Some((consulted, outputs)) = observe(|o| o.run_record(&key)) else {
+        miss(&format!("no record under the run's key {} (programs {}; {})", &key[..CUTOFF.len() + 12], programs.len(), key_parts(programs, root, options, typing)));
+        return Ok(None);
+    };
+    let Some(consulted) = decode_consulted(&consulted) else {
+        miss("the record's consulted list does not decode");
+        return Ok(None);
+    };
+    // The plans it names are for collection (`CUTOFF`), not reads to check: the reused run names them, as the run
+    // that made the record did, so its outer run records the manifest it recorded then.
+    let (plans, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == "plan");
+    let (graphs, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == GRAPHS);
+    let (summary, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == SUMMARY);
+    let plans: Vec<[u8; 32]> = plans.iter().filter_map(|c| crate::content_store::observe::unhex(&c.2)).collect();
+    let Some(outputs) = decode_outputs(&outputs) else {
+        miss("the record's outputs do not decode");
+        return Ok(None);
+    };
     // The library files first (a `stat` each), then the documents and the resolution rules' reads.
     let (rules, rest): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == "rule");
-    if rule_files(&texts)? != rules || !unchanged(programs, root, typing, options, &rest)? {
+    // What the record names, by its digest, first: an edit's document or rule file differs here, before the rule
+    // files are listed again (each phase program parsed) or the programs combined. Each is the observer's answer,
+    // which the journal trusts unread where nothing changed.
+    if let Some(c) = rules.iter().chain(rest.iter().filter(|c| c.0 == "doc" && !c.2.is_empty())).find(|c| super::world::bytes_digest(&root.join(&c.1)) != c.2) {
+        miss(&format!("{} {} changed", c.0, c.1));
         return Ok(None);
     }
+    // Decision 0275, rederived until a key settles it: with every rule file as recorded (a `stat` each, then its
+    // sha), the same include graphs list the same rule files; the record's are compared, and the rule files are
+    // listed again only for a record that has none.
+    match graphs.first() {
+        Some(g) if g.2 != graphs_line(&given.graphs) => {
+            miss("the include graphs differ");
+            return Ok(None);
+        }
+        Some(_) => {}
+        None if rule_files(given, options)? != rules => {
+            miss("the rule files differ");
+            return Ok(None);
+        }
+        None => {}
+    }
+    // The program's parts the check reads, as recorded: a function of the texts (the key) and the rule files (as
+    // recorded), so the program is not combined again to read them.
+    let summary = summary.first().and_then(|c| super::Summary::decode(c.2.as_bytes()));
+    if !unchanged(programs, &given.graphs, given.read, root, typing, options, &rest, summary)? {
+        miss("a consulted file or read changed");
+        return Ok(None);
+    }
+    crate::code_rule_dsl::logic::profile::decision("whole-run cutoff (t23 §4)", || "every read as it was: the kept outputs written, nothing evaluated".into());
     std::fs::create_dir_all(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?;
-    let mut report = Report::default();
+    let mut report = Report { plans, ..Report::default() };
     for (name, bytes) in &outputs {
-        std::fs::write(out.join(name), bytes).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
-        let rel = name.trim_end_matches(".csv").to_owned();
-        report.rows.insert(rel, bytes.iter().filter(|b| **b == b'\n').count());
+        if name != crate::code_rule_dsl::logic::plan::output::FILE {
+            return Err(Error::Plan(format!("{name}: no output file of this run's")));
+        }
+        crate::code_rule_dsl::logic::plan::output::replace(out, &[bytes]).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
+        let image = crate::code_rule_dsl::logic::plan::output::Image::one(bytes).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
+        for rel in image.names() {
+            report.rows.insert(rel.to_owned(), image.rel(rel).expect("named").rows);
+        }
     }
     let now = super::thread_usage();
     report.phases.push(("unchanged: phase 0 checked every read, outputs kept", now.0 - checking.0, now.1 - checking.1, super::usage().2, 0));
-    // The documents the run read: the workspace's and those its requests loaded.
-    report.files = rest.iter().filter(|c| (c.0 == "doc" && !c.2.is_empty()) || c.0 == "load").count();
+    // The documents the run read: the workspace's and those its requests loaded, each once. Phase 1 loads a
+    // workspace document by its absolute path, which the run lists by its path from the root: counted twice, a warm
+    // run of one file reported two.
+    let base = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let read: std::collections::BTreeSet<std::path::PathBuf> =
+        rest.iter().filter(|c| (c.0 == "doc" && !c.2.is_empty()) || c.0 == "load").map(|c| base.join(&c.1)).collect();
+    report.files = read.len();
     report.consulted = rest;
     Ok(Some(report))
 }
 
 /// Keeps the record of a run that ended: what it consulted (and the library files its text includes), and its
 /// outputs.
-pub(super) fn record(programs: &[&str], root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report) -> Result<()> {
-    // A phase's program and exports are its own record's (`phases`), not this one's: such a run is not kept.
-    if report.consulted.is_empty() || !report.phase_runs.is_empty() {
+/// Why the cutoff did not apply: a profile line, and stderr under `RERAIL_REUSE_TRACE`.
+fn miss(why: &str) {
+    crate::code_rule_dsl::logic::profile::decision("whole-run cutoff (t23 §4)", || format!("not applied: {why}"));
+    if std::env::var_os("RERAIL_REUSE_TRACE").is_some() {
+        eprintln!("rerail: whole-run cutoff not applied: {why}");
+    }
+    // A warm run asked for the cutoff and evaluates again (`RERAIL_WARM`). One that did not ask (a session's, which
+    // maintains its strata instead) is checked by its deltas.
+    if !why.starts_with("not wanted") {
+        crate::code_rule_dsl::logic::profile::warm_fault("the whole-run cutoff did not apply", || why.to_owned());
+    }
+}
+
+pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report) -> Result<()> {
+    let programs = given.programs;
+    // Every phase's program is among the rule files (`rule_files`), and what each phase consulted is the record's
+    // too: a phase's exports are a function of its program and what it consulted, so a run whose every read, its
+    // phases' included, is as it was derives the same (O-cutoff-phases). Phase 1's are the source files, and the
+    // directories, files and library documents its imports read.
+    if report.consulted.is_empty() {
+        miss("not recorded: nothing consulted");
         return Ok(());
     }
-    let texts = with_settings(programs, root, options)?;
-    let key = key(&texts, root, options, modes, typing);
-    let mut consulted = rule_files(&texts)?;
-    consulted.extend(report.consulted.iter().cloned());
+    let key = key(programs, &settings(root, options)?, root, options, modes, typing);
+    let mut consulted = rule_files(given, options)?;
+    let mut read: Vec<(String, String, String)> = report.consulted.iter().cloned().chain(report.phase_runs.iter().flat_map(|r| r.report.consulted.iter().cloned())).collect();
+    read.sort();
+    read.dedup();
+    // One entry a document: a phase that read its bytes names its digest, where another listed it unread.
+    let read_docs: std::collections::BTreeSet<String> = read.iter().filter(|c| c.0 == "doc" && !c.2.is_empty()).map(|c| c.1.clone()).collect();
+    read.retain(|c| !(c.0 == "doc" && c.2.is_empty() && read_docs.contains(&c.1)));
+    consulted.extend(read);
+    consulted.extend(report.plans.iter().map(|plan| ("plan".to_owned(), String::new(), crate::content_store::observe::hex(plan))));
+    consulted.push((GRAPHS.to_owned(), String::new(), graphs_line(&given.graphs)));
+    if let Some(summary) = super::Summary::of(programs, &given.graphs, given.read, root, options)?.encode().and_then(|b| String::from_utf8(b).ok()) {
+        consulted.push((SUMMARY.to_owned(), String::new(), summary));
+    }
     let outputs = encode_outputs(&outputs_of(out,report.rows.keys().map(String::as_str)));
+    if std::env::var_os("RERAIL_REUSE_TRACE").is_some() {
+        eprintln!("rerail: whole-run cutoff: recorded under {} ({} consulted)", &key[..CUTOFF.len() + 12], consulted.len());
+    }
     observe(|o| o.put_run_record(&key, &encode_consulted(&consulted), &outputs));
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::code_rule_dsl::typing::file_local::Binding;
-
-    /// An unchanged run is kept; a document's edit, a new document, the root's settings (read by `env`) and the text
-    /// each run it again.
-    #[test]
-    fn an_unchanged_run_writes_its_kept_outputs() {
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("reuse");
-        let _ = std::fs::remove_dir_all(&dir);
-        let src = dir.join("src");
-        std::fs::create_dir_all(&src).unwrap();
-        std::fs::write(src.join("a.py"), "def f():\n    return 1\n").unwrap();
-        let out = dir.join("out");
-        let _no_session = super::super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
-        super::super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
-        let program = |name: &str| {
-            let text = format!("#include \"core.rr\"\n.decl {name}(s: symbol)\n{name}(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output {name}\n");
-            crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(&text).unwrap()).unwrap()
-        };
-        let options = serde_json::json!({ "reuse": true });
-        let run = |text: &str| super::super::run_with_options(&[text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
-        let kept = |r: &super::Report| r.phases.iter().any(|p| p.0.starts_with("unchanged"));
-        let defs = || std::fs::read_to_string(out.join("defs.csv")).unwrap();
-        let text = program("defs");
-        assert!(!kept(&run(&text)), "the first run derives");
-        assert_eq!(defs(), "f\n");
-        std::fs::remove_file(out.join("defs.csv")).unwrap();
-        let again = run(&text);
-        assert!(kept(&again), "unchanged: kept");
-        assert_eq!((defs().as_str(), again.rows.get("defs").copied()), ("f\n", Some(1)), "the kept outputs written again");
-        // A document's edit runs it again, and that run is kept in turn.
-        std::fs::write(src.join("a.py"), "def g():\n    return 1\n").unwrap();
-        assert!(!kept(&run(&text)), "an edited document");
-        assert_eq!(defs(), "g\n");
-        assert!(kept(&run(&text)));
-        std::fs::write(src.join("b.py"), "def h():\n    pass\n").unwrap();
-        assert!(!kept(&run(&text)), "a new document");
-        assert_eq!(defs(), "g\nh\n");
-        std::fs::write(src.join("rerail.env"), "mode=strict\n").unwrap();
-        run(&text);
-        assert!(kept(&run(&text)), "settings reach only a program that declares `env`");
-        let with_env = |name: &str| program(name).replace(".output", ".decl env(k: symbol, v: symbol)\n.output");
-        assert!(!kept(&run(&with_env("defs"))));
-        assert!(kept(&run(&with_env("defs"))));
-        std::fs::write(src.join("rerail.env"), "mode=lax\n").unwrap();
-        assert!(!kept(&run(&with_env("defs"))), "the root's settings, for a program that declares `env`");
-        assert!(!kept(&run(&program("names"))), "another text");
-        // Each library file a text includes is in the record, with its digest (a flattened text includes none).
-        let rules = super::rule_files(&["#include \"core.rr\"\n.decl x(s: symbol)\n".to_owned()]).unwrap();
-        assert!(rules.iter().any(|r| r.1.ends_with("core.rr") && !r.2.is_empty()) && rules.iter().any(|r| r.1.ends_with("components.rr")), "{rules:?}");
-        // A policy file the program reads (`.input … filename=`) is consulted: its edit runs it again.
-        std::fs::write(src.join("allow.txt"), "a\n").unwrap();
-        let reads = "#include \"core.rr\"\n.decl entry(n: number, e: symbol)\n.input entry(IO=lines, filename=\"allow.txt\")\n.decl listed(e: symbol)\nlisted(e) :- entry(_, e).\n.output listed\n";
-        let reads = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reads).unwrap()).unwrap();
-        run(&reads);
-        assert!(kept(&run(&reads)));
-        std::fs::write(src.join("allow.txt"), "a\nb\n").unwrap();
-        assert!(!kept(&run(&reads)), "an edited input file");
-        assert_eq!(std::fs::read_to_string(out.join("listed.csv")).unwrap(), "a\nb\n");
-        assert!(kept(&run(&reads)));
-        // Off: derived every time.
-        let off = serde_json::json!({});
-        let r = super::super::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &off).unwrap();
-        assert!(!kept(&r), "not asked");
-        super::super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn unchanged_cross_file_outputs_skip_derivation_and_changed_members_invalidate() {
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("cross-reuse");
-        let src = dir.join("src"); std::fs::create_dir_all(&src).unwrap();
-        std::fs::write(src.join("a.py"),"x = 1\n").unwrap();
-        std::fs::write(src.join("b.py"),"y = 2\n").unwrap();
-        let _guard = super::super::SESSION_TESTS.lock().unwrap_or_else(|e|e.into_inner());
-        super::super::TEST_TAPE_CACHE.with(|p|*p.borrow_mut()=Some(dir.join("store.sqlite")));
-        let p = "#include \"core.rr\"\n.decl pairs(a:symbol,b:symbol)\npairs(a,b) :- doc(d,a,_),doc(e,b,_),d!=e.\n.output pairs\n";
-        let out=dir.join("out");
-        let run=||super::super::run_with_options(&[p],&src,None,&out,"program",Binding::Cpu,1<<18,&Default::default(),&serde_json::json!({"reuse":true})).unwrap();
-        let first=run();
-        let original=std::fs::read(out.join("pairs.csv")).unwrap();
-        assert_eq!(first.rows["pairs"],2);
-        std::fs::remove_file(out.join("pairs.csv")).unwrap();
-        let kept=run();
-        assert!(kept.phases.iter().any(|p|p.0.starts_with("unchanged")),"{:?}",kept.phases);
-        assert_eq!(std::fs::read(out.join("pairs.csv")).unwrap(),original);
-        assert_eq!(kept.cross,(0,0)); assert_eq!(kept.chunks,0);
-        std::fs::write(src.join("c.py"),"z = 3\n").unwrap();
-        std::fs::write(out.join("stale.csv"),"old\n").unwrap();
-        assert_eq!(run().rows["pairs"],6);
-        let kept=run();
-        assert!(!kept.rows.contains_key("stale"),"an older program's output is not part of this run");
-        std::fs::remove_file(src.join("b.py")).unwrap();
-        assert_eq!(run().rows["pairs"],2);
-        super::super::TEST_TAPE_CACHE.with(|p|*p.borrow_mut()=None);
-        let _=std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn outputs_and_records_round_trip() {
-        let files = vec![("a.csv".to_owned(), b"1\t2\n".to_vec()), ("b.csv".to_owned(), Vec::new())];
-        assert_eq!(super::decode_outputs(&super::encode_outputs(&files)).unwrap(), files);
-        let c = vec![("doc".to_owned(), "a.py".to_owned(), "ab".to_owned()), ("rule".to_owned(), "/x/core.rr".to_owned(), "cd".to_owned())];
-        assert_eq!(super::decode_consulted(&super::encode_consulted(&c)), c);
-    }
-}
+// Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rerail` libraries).

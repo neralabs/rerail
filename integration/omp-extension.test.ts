@@ -20,6 +20,9 @@ import { OmpMessageContentSource, OmpWatermarkStore, SqlitePresentationPreferenc
 import { OmpHost } from "./support/omp-host.js";
 import type { HostEvidence } from "./support/omp-host.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
+import { withExperiments } from "../test/support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES", "SEMANTIC_TOOLS");
 
 const originalRerailHome = process.env.RERAIL_HOME;
 const temporaryDirectories: string[] = [];

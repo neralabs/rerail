@@ -61,6 +61,12 @@ fn check(source: &str, what: &str) -> usize {
     let facts = core::from_tape(root.root().get_doc(), Arc::new(LineTable::new(source, Terminators::of(GrammarDialect::Python)))).unwrap();
     let grammar = Grammar::new(tape_tag(GrammarDialect::Python).unwrap(), &GrammarDialect::Python.kinds());
     let rows = rows(&grammar, &facts);
+    let basic=structure(&grammar,&facts);
+    assert!(basic.arg.is_empty(),"call structure must not extract arguments");
+    assert_eq!(basic.call,rows.call);
+    let selected:Vec<_>=rows.call.iter().take(2).map(|r|r[0]).collect();
+    assert_eq!(arguments(&grammar,&facts,&selected),rows.arg.iter().copied().filter(|r|selected.contains(&r[0])).collect::<Vec<_>>());
+    assert!(arguments(&grammar,&facts,&[]).is_empty());
     let (expected, args) = oracle(&root);
     assert_eq!(sorted(&rows.call), sorted(&expected.call), "{what}: py_call");
     assert_eq!(sorted(&rows.site), sorted(&expected.site), "{what}: py_call_site");
@@ -82,7 +88,7 @@ fn py_families_equal_s_producers() {
     for (at, source) in sources.iter().enumerate() {
         calls += check(source, &format!("source {at}"));
     }
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/python");
+    let root = Path::new(env!("RERAIL_FIXTURES_DIR")).join("python");
     let mut stack = vec![root];
     let mut files = 0;
     while let Some(dir) = stack.pop() {
@@ -90,12 +96,11 @@ fn py_families_equal_s_producers() {
             let path = entry.unwrap().path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "py") {
-                if let Ok(source) = std::fs::read_to_string(&path) {
+            } else if path.extension().is_some_and(|e| e == "py")
+                && let Ok(source) = std::fs::read_to_string(&path) {
                     calls += check(&source, &path.display().to_string());
                     files += 1;
                 }
-            }
         }
     }
     assert!(files > 100 && calls > 1000, "{files} files, {calls} calls");

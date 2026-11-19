@@ -96,8 +96,8 @@ export const GROUPS = {
     // step bundles, and the built package.
     entries: ["vitest.config.ts", "integration/**/*.ts", ...PACKAGE_BUILD],
     // The dashboard page daemon-cli.test.ts compares, the model the OMP host loads, Codex's hooks file, the OMP host
-    // the job provisions.
-    reads: [...PACKAGE_READS, "hooks/codex.json", "scripts/host/install-omp-host.mjs"],
+    // the job provisions, the pack claude-hook-rules.test.ts adds from this checkout.
+    reads: [...PACKAGE_READS, "hooks/codex.json", "scripts/host/install-omp-host.mjs", "packs/complexity/package.json"],
   },
   sessions: {
     jobs: ["real-sessions", "provider-smoke"],
@@ -112,6 +112,11 @@ export const GROUPS = {
 export const UNGUARDED = {
   "release-pr": "whether this is the Release pull request, which its branch decides, no file path",
   rust: "the Rust jobs build and test crates; cargo's inputs are no TypeScript import closure",
+  "rust-all": "scripts/check/ci/rust-selection.mjs selects from cargo's packages and module trees, no import closure",
+  "rust-packages": "scripts/check/ci/rust-selection.mjs, as rust-all",
+  "rust-cargo-args": "scripts/check/ci/rust-selection.mjs, as rust-all",
+  "rust-nextest-filter": "scripts/check/ci/rust-selection.mjs, as rust-all",
+  "rust-engine": "scripts/check/ci/rust-selection.mjs, as rust-all",
 };
 
 /** The `changes` output of filter `name`: the filter's answer on a pull request it could list whole, else `'true'`. */

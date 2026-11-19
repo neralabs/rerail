@@ -2,10 +2,10 @@
 use super::*;
 use reducer::combined::publication;
 impl Retained {
-    pub(super) fn scalar_phase_analysis(&self) -> crate::code_rule_dsl::logic::analysis::Decision {
+    pub fn scalar_phase_analysis(&self) -> crate::code_rule_dsl::logic::analysis::Decision {
         use crate::code_rule_dsl::logic::analysis::Decision;
-        let reason = if self.lattice.is_some() {
-            Some("Lattice folding keeps its existing transition boundary")
+        let reason = if self.lattice.as_ref().is_some_and(|l| l.tree.is_some()) {
+            Some("Registered lattice ordering keeps its existing transition boundary")
         } else if self.rules.len() > 32 || self.rules.iter().any(|r| r.width + self.width >= 2000) {
             Some("The combined support phase exceeds its checked SQL size bound")
         } else if self.rules.iter().all(|r| r.reducers.is_empty()) {
@@ -21,11 +21,11 @@ impl Retained {
         }
         Decision::new(
             true,
-            "Independent bag maintenance and fenced context evaluation share one SQL support phase; empty set operands are omitted and unique output differences use anti-joins",
+            "Independent summaries and fenced context evaluation share one SQL support phase; builtin lattice supports fold affected keys before the unchanged outer merge and widening gate",
         )
     }
-    pub(super) fn scalar_phase_eligible(&self) -> bool {
-        self.lattice.is_none()
+    pub fn scalar_phase_eligible(&self) -> bool {
+        self.lattice.as_ref().is_none_or(|l| l.tree.is_none())
             && self.rules.len() <= 32
             && self.rules.iter().any(|r| !r.reducers.is_empty())
             && self
@@ -34,19 +34,19 @@ impl Retained {
                 .all(|r| r.width + self.width < 2000 && r.evaluation_order.proven)
     }
 }
-pub(super) fn apply(
+pub fn apply(
     state: &Retained,
     w: &mut Work<'_>,
     changes: &BTreeMap<String, Delta>,
 ) -> Result<(Delta, u64, u64)> {
     let _context = w.profile_scope(|| json!({"logicalAnalysis":state.explain()}));
-    let mut groups = 0;
+    let mut summaries = reducer::staged::Batch::default();
+    let mut phase = phase::Phase::default();
     let mut extra = BTreeMap::new();
     for rule in state.rules.iter() {
         let mut queries = vec![];
         for reducer in &rule.reducers {
-            if let Some((keys, touched)) = reducer.apply(w, changes)? {
-                groups += touched;
+            if let Some(keys) = summaries.append(reducer, w, changes, &mut phase)? {
                 queries.push(reducer.affected_contexts(rule, &keys));
             }
         }
@@ -54,7 +54,6 @@ pub(super) fn apply(
             extra.insert(rule.step, queries);
         }
     }
-    let mut phase = phase::Phase::default();
     if w.profiler.is_some() {
         phase
             .analyses
@@ -62,8 +61,9 @@ pub(super) fn apply(
     }
     let mut pending = vec![];
     let (keys, next, difference) =
-        fused::append_with(state, w, changes, &mut phase, &extra, &mut pending)?;
+        fused::append_with(state, w, changes, &mut phase, &extra, &mut pending, &summaries.sources)?;
     let width = state.width;
+    let key_width = state.lattice.as_ref().map_or(width, |l| l.keys);
     let (plus_rows, minus_rows) = if let Some(difference) = difference {
         difference
     } else {
@@ -72,7 +72,7 @@ pub(super) fn apply(
             &format!(
                 "SELECT r.* FROM {keys} k CROSS JOIN {} r WHERE {}",
                 quote(&state.output),
-                equal("r", "k", width)
+                equal("r", "k", key_width)
             ),
         );
         let plus_rows = phase.relation(
@@ -98,6 +98,7 @@ pub(super) fn apply(
     phase.load_empty(store, &minus, &minus_rows)?;
     let counts = phase.execute(w)?;
     publication::publish(w, &pending, &counts)?;
+    let groups = summaries.finish(w, &counts)?;
     let contexts = state
         .rules
         .iter()

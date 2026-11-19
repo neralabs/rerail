@@ -1,12 +1,14 @@
 use super::{
-    metal_batch_abi::{MetalNode, NONE, NfaRangeRecord, NfaStateRecord, ValueRecord},
+    metal_batch_abi::{NONE, NfaRangeRecord, NfaStateRecord, ValueRecord},
     native_cpu::NativeTaskContext,
+    native_cpu_tape,
     value::ByteNfa,
 };
 use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch};
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Linkage, Module};
+use rerail_clif::inline::ReadIds;
 use std::mem;
 
 const REJECT: i64 = 0;
@@ -16,7 +18,7 @@ const WORK_LIMIT: i64 = 3;
 const CAPACITY: i64 = 4;
 
 #[derive(Clone, Copy)]
-pub(super) struct RegexHelpers {
+pub struct RegexHelpers {
     closure: FuncId,
     pub(super) find: FuncId,
 }
@@ -320,7 +322,7 @@ fn define_utf8_scalar(
         function.finalize();
     }
     super::native_cpu_codegen::define_function(module, id, &mut context).inspect_err(|_| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         eprintln!("utf8 scalar:\n{}", context.func.display());
     })?;
     module.clear_context(&mut context);
@@ -433,7 +435,7 @@ fn define_unicode_word_side(
     Ok(id)
 }
 
-pub(super) fn define_helpers(
+pub fn define_helpers(
     module: &mut JITModule,
 ) -> Result<RegexHelpers, Box<cranelift_module::ModuleError>> {
     let unicode_word = define_unicode_word(module)?;
@@ -2045,6 +2047,7 @@ pub(super) fn define(
     value_index: u32,
     helpers: RegexHelpers,
 ) -> Result<(), Box<cranelift_module::ModuleError>> {
+    let reads = ReadIds::declare(module)?;
     let pointer_type = module.target_config().pointer_type();
     let mut context = module.make_context();
     context.func.signature = module.make_signature();
@@ -2131,29 +2134,7 @@ pub(super) fn define(
             .ins()
             .brif(valid_node, initialize, &[], invalid, &[]);
         function.switch_to_block(initialize);
-        let nodes = pointer(
-            &mut function,
-            task,
-            mem::offset_of!(NativeTaskContext, nodes),
-        );
-        let node_address = indexed_address(
-            &mut function,
-            nodes,
-            node_index,
-            mem::size_of::<MetalNode>(),
-        );
-        let source_start = function.ins().load(
-            types::I32,
-            MemFlags::trusted(),
-            node_address,
-            mem::offset_of!(MetalNode, source_start) as i32,
-        );
-        let source_end = function.ins().load(
-            types::I32,
-            MemFlags::trusted(),
-            node_address,
-            mem::offset_of!(MetalNode, source_end) as i32,
-        );
+        let (source_start, source_end) = native_cpu_tape::span(&mut function, &reads, task, node_index);
         let source_length = function.ins().load(
             types::I32,
             MemFlags::trusted(),

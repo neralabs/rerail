@@ -1,6 +1,9 @@
 // A build of some languages, or without the addon (`headless`), leaves the others' code and the addon's API unused by
 // design: dead-code warnings there say nothing (the default build still warns).
-#![cfg_attr(any(not(feature = "all-languages"), feature = "headless"), allow(dead_code))]
+#![cfg_attr(
+    any(not(feature = "all-languages"), feature = "headless"),
+    allow(dead_code)
+)]
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
@@ -9,38 +12,103 @@ extern crate cranelift_jit_wasm as cranelift_jit;
 #[cfg(test)]
 mod build_identity;
 /// `build.rs` generates the language tables with this file; the library builds it only for tests,
-/// so `cargo test` checks how the build validates the language registry.
+/// so `cargo test` checks how the build validates the language registry. The rest is the build script's.
 #[cfg(test)]
+#[allow(dead_code)]
 mod build_languages;
+// Each test's time limit, enforced inside the test binary (`RERAIL_TEST_TIMEOUT`).
 mod code_rule_dsl;
+#[cfg(test)]
+mod executors_guard_tests;
+#[cfg(test)]
+mod test_watchdog;
+#[cfg(test)]
+mod text_readers_guard_tests;
+#[cfg(all(test, not(windows)))]
+pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;
 pub use rerail_store::content_store;
-pub mod git_ignore;
+/// Every in-process Git read (`native/src/git_access`): the opener, its setup and its pool are the store's
+/// (`rerail-store`), which the workspace discovery and the ignore matcher open through; the Node-API object that
+/// installs the setup is the engine's.
+pub mod git_access {
+    pub use rerail_store::git_access::*;
+    pub mod owner;
+    #[cfg(test)]
+    mod tests;
+}
 pub use rerail_store::git_workspace;
+pub use rerail_store::source_tree;
+pub use rerail_w::git_ignore;
 mod main_instance;
 mod model;
-mod panic_boundary;
+pub use rerail_w::panic_boundary;
 pub mod process;
-/// The most threads the process uses (`RERAIL_THREADS`).
-pub mod threads;
+pub use rerail_logic::threads;
 /// The browser's long-lived engine: `rerail_command` and its buffers (wasm/README.md).
 #[cfg(target_family = "wasm")]
 pub mod reactor;
 mod rules;
+pub mod tree_watch;
 
-use model::{ModelFingerprint, load_model, verify_model};
+use model::{ModelFingerprint, shared_model, verify_model};
 use napi::{Error, Result, Status, bindgen_prelude::Float32Array};
 use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
 use std::path::Path;
 
-// jemalloc does not build for MSVC targets; Windows keeps the system allocator.
-#[cfg(not(any(windows, target_family = "wasm")))]
+// jemalloc does not build for MSVC targets; Windows keeps the system allocator. The test build declares it too
+// (`rust_allocations_reach_the_profile_allocator` checks it).
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+static GLOBAL: Sampled = Sampled;
 
-#[cfg(not(any(windows, target_family = "wasm")))]
+/// jemalloc, with the heap sampler around it (`rerail_prof::heap`, `RERAIL_HEAP_SAMPLE`): off, one load more an
+/// allocation. Tree-sitter's allocations go to jemalloc directly and are not sampled.
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+#[cfg_attr(test, allow(dead_code))]
+struct Sampled;
+
+// Every allocation of every crate calls these through the allocator shim (`__rust_alloc`): inlined into it, as
+// jemalloc's own are, they cost the shim one load more an allocation and not a call of their own.
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+unsafe impl std::alloc::GlobalAlloc for Sampled {
+    #[inline]
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+        let p = unsafe { tikv_jemallocator::Jemalloc.alloc(layout) };
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::alloc(p as usize, layout.size());
+        }
+        p
+    }
+    #[inline]
+    unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
+        let p = unsafe { tikv_jemallocator::Jemalloc.alloc_zeroed(layout) };
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::alloc(p as usize, layout.size());
+        }
+        p
+    }
+    #[inline]
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::free(ptr as usize);
+        }
+        unsafe { tikv_jemallocator::Jemalloc.dealloc(ptr, layout) }
+    }
+    #[inline]
+    unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
+        let q = unsafe { tikv_jemallocator::Jemalloc.realloc(ptr, layout, new_size) };
+        if rerail_prof::heap::on() && !q.is_null() {
+            rerail_prof::heap::free(ptr as usize);
+            rerail_prof::heap::alloc(q as usize, new_size);
+        }
+        q
+    }
+}
+
+#[cfg(not(any(test, windows, target_family = "wasm")))]
 union JemallocConf {
     byte: &'static u8,
     character: &'static std::ffi::c_char,
@@ -50,7 +118,7 @@ union JemallocConf {
 // decay cost a tenth of a storage-heavy benchmark's CPU in mmap/munmap); every apply purges them
 // when it ends and again once its response is freed (`purge_allocator_pages`), so nothing dirty
 // is kept at rest.
-#[cfg(not(any(windows, target_family = "wasm")))]
+#[cfg(not(any(test, windows, target_family = "wasm")))]
 #[allow(non_upper_case_globals)]
 #[unsafe(export_name = "_rjem_malloc_conf")]
 pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
@@ -61,11 +129,27 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 });
 
 /// The engine's SQL functions, for every connection the store opens (its crate, `rerail-store`): the text tests'
-/// and the prefilter's tapes. Set as the library loads, before any store is opened.
-fn install_store_functions() {
-    content_store::set_connection_functions(|db| {
-        code_rule_dsl::text::install(db)?;
-        code_rule_dsl::prefilter::tapes::install(db)
+/// and the prefilter's tapes; with the build's identities, devices and languages. Once a process, before any store is
+/// opened: as the library loads (the allocator's hook; Windows' module init), and where neither runs (the browser's
+/// build) at the first command (`tools::cli_in`).
+pub(crate) fn install_store_functions() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        code_rule_dsl::build_ids::set(
+            env!("RERAIL_ENGINE_BUILD_ID"),
+            env!("RERAIL_GRAMMAR_BUILD_ID"),
+        );
+        code_rule_dsl::install_devices();
+        code_rule_dsl::install_languages();
+        content_store::set_language_tags(
+            code_rule_dsl::stored_tape_tag,
+            code_rule_dsl::path_tape_tag,
+        );
+        content_store::set_connection_functions(|db| {
+            code_rule_dsl::text::install(db)?;
+            code_rule_dsl::prefilter::tapes::install(db)
+        });
+        code_rule_dsl::sql_hazards::strict_on_every_connection();
     });
 }
 
@@ -82,6 +166,9 @@ fn install_store_functions_on_load() {
 #[cfg(not(any(windows, target_family = "wasm")))]
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
+    // No pool here: a constructor runs inside `dlopen` (`configure_thread_pool` says why that hangs). The CLI
+    // registers its own main thread before its first job (`threads::configure(true)`); Node's pool is made as it
+    // registers the addon's exports.
     install_store_functions();
     use std::ffi::c_void;
     unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
@@ -97,20 +184,31 @@ fn install_tree_sitter_allocator() {
     }
     unsafe extern "C" fn realloc(pointer: *mut c_void, size: usize) -> *mut c_void {
         // SAFETY: Tree-sitter passes null or a pointer these functions returned.
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::free(pointer as usize);
+        }
         allocated(unsafe { tikv_jemalloc_sys::realloc(pointer, size) }, size)
     }
     unsafe extern "C" fn free(pointer: *mut c_void) {
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::free(pointer as usize);
+        }
         // SAFETY: Tree-sitter passes null or a pointer these functions returned.
         unsafe { tikv_jemalloc_sys::free(pointer) }
     }
+    // The heap sampler sees Tree-sitter's allocations too (`rerail_prof::heap`).
     fn allocated(pointer: *mut c_void, size: usize) -> *mut c_void {
         if pointer.is_null() && size > 0 {
             std::process::abort();
+        }
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::alloc_by(pointer as usize, size, rerail_prof::heap::TREE_SITTER);
         }
         pointer
     }
     // SAFETY: the four functions are jemalloc's, return no null for a nonzero size, and are
     // installed while the addon loads, before any Tree-sitter object exists.
+    #[cfg(not(feature = "system-allocator"))]
     unsafe {
         tree_sitter::set_allocator(Some(tree_sitter::Allocator {
             malloc,
@@ -121,15 +219,17 @@ fn install_tree_sitter_allocator() {
     }
 }
 
-/// The one pool, of the most threads the process uses (`RERAIL_THREADS`), the loading thread one of them when it is
-/// the process's main thread: made as Node registers the addon's exports, before any of them runs, and not in the
-/// library's constructor. A constructor runs inside `dlopen`, which holds glibc's loader lock; rayon's
-/// `use_current_thread` waits for every pool thread to start, and each one's first thread-local with a destructor
-/// registers it through `__cxa_thread_atexit_impl`, which takes that lock: the load never returned.
+/// The one pool, of the most threads the process uses (`RERAIL_THREADS`): made as Node registers the addon's exports,
+/// before any of them runs, and not in the library's constructor. A constructor runs inside `dlopen`, which holds
+/// glibc's loader lock; rayon's `build_global` waits for every pool thread to start, and each one's first
+/// thread-local with a destructor registers it through `__cxa_thread_atexit_impl`, which takes that lock: the load
+/// never returned. Node's main thread returns to its event loop while an async call runs, so the pool's threads are
+/// all actual workers (not the loading thread, which a pool made with it would wait on), including with
+/// RERAIL_THREADS=1.
 #[cfg(not(target_family = "wasm"))]
 #[napi(module_exports)]
 pub fn configure_thread_pool(_exports: napi::bindgen_prelude::Object) {
-    threads::configure(threads::is_main_thread());
+    threads::configure(false);
 }
 
 #[napi(object)]
@@ -250,7 +350,10 @@ pub fn native_memory_profile() -> String {
 
 /// SQLite's allocator set when the library loads, before anything can initialize SQLite
 /// (`content_store::sqlite_on_jemalloc`).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(all(
+    any(target_os = "macos", target_os = "linux"),
+    not(feature = "system-allocator")
+))]
 #[used]
 #[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
 #[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
@@ -261,34 +364,9 @@ static SQLITE_ALLOCATOR: extern "C" fn() = {
     install
 };
 
-/// Return allocator pages after eviction closes idle SQLite connections.
-pub(crate) fn release_allocator_memory() {
-    // Background threads, where available, decay pages between applies too.
-    #[cfg(not(any(windows, target_family = "wasm")))]
-    let _ = tikv_jemalloc_ctl::background_thread::write(true);
-    purge_allocator_pages();
-}
-
-/// Return every arena's freed pages to the system.
-pub(crate) fn purge_allocator_pages() {
-    // SAFETY: arena.4096 is jemalloc's all-arenas selector; purge reads and writes no value, so
-    // jemalloc requires null value pointers (`raw::write` passes a non-null one and is refused).
-    #[cfg(not(any(windows, target_family = "wasm")))]
-    unsafe {
-        tikv_jemalloc_sys::mallctl(
-            c"arena.4096.purge".as_ptr(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            0,
-        );
-    }
-}
-
 #[napi]
 pub struct ConversationEngine {
     encoder: ModelEncoder,
-    fingerprint: ModelFingerprint,
     rules: RuleSet,
 }
 
@@ -302,22 +380,20 @@ impl ConversationEngine {
                 "max_input_tokens must be positive",
             ));
         }
-        let loaded = load_model(Path::new(&model_path))?;
-        let dimensions = loaded.fingerprint.dimensions as usize;
+        let model = shared_model(Path::new(&model_path))?;
+        let dimensions = model.fingerprint.dimensions as usize;
         Ok(Self {
             encoder: ModelEncoder {
-                model: loaded.model,
-                tokenizer: loaded.tokenizer,
+                model,
                 max_input_tokens: max_input_tokens as usize,
             },
-            fingerprint: loaded.fingerprint,
             rules: RuleSet::empty(dimensions),
         })
     }
 
     #[napi]
     pub fn fingerprint(&self) -> ModelFingerprint {
-        self.fingerprint.clone()
+        self.encoder.model.fingerprint.clone()
     }
     #[napi(catch_unwind)]
     pub fn embed_texts(&self, texts: Vec<String>) -> Result<Vec<Float32Array>> {
@@ -330,7 +406,7 @@ impl ConversationEngine {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
-        let vectors = self.encoder.model.encode_with_args(
+        let vectors = self.encoder.model.model.encode_with_args(
             &texts,
             Some(self.encoder.max_input_tokens),
             texts.len(),
@@ -341,7 +417,7 @@ impl ConversationEngine {
                 "embedding count did not match text count",
             ));
         }
-        let dimensions = self.fingerprint.dimensions as usize;
+        let dimensions = self.encoder.model.fingerprint.dimensions as usize;
         vectors
             .into_iter()
             .map(|vector| {
@@ -365,6 +441,7 @@ impl ConversationEngine {
             .map(|text| {
                 let encoding = self
                     .encoder
+                    .model
                     .tokenizer
                     .encode(text.as_str(), false)
                     .map_err(|error| {
@@ -413,6 +490,7 @@ impl ConversationEngine {
                 }
                 let encoding = self
                     .encoder
+                    .model
                     .tokenizer
                     .encode(text.as_str(), false)
                     .map_err(|error| {
@@ -470,21 +548,49 @@ impl ConversationEngine {
     }
 }
 
-/// `bytes` as lower-case hex, two digits a byte: how a SHA-256 digest is written.
-pub(crate) fn lower_hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes
-        .iter()
-        .fold(String::with_capacity(bytes.len() * 2), |mut hex, byte| {
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        })
+pub(crate) use code_rule_dsl::prof::lower_hex;
+
+#[cfg(test)]
+mod executor_tests {
+    /// The run's executors are installed as the library loads (`install_store_functions`), and the facts' lookup of a
+    /// binding's executor is the run's (2026-11-15). Its fallback, an executor of every lane, was made on every
+    /// lookup (`map_or`'s default is evaluated first): every CPU run compiled the GPU's kernels, prewarmed its sorts
+    /// and built the Neural Engine's lane.
+    #[test]
+    fn the_facts_executor_of_the_cpu_binding_is_the_runs_and_asks_for_no_device_lane() {
+        let before = rerail_accel::lanes::device_lanes_asked();
+        let ex = rerail_facts::code_rule_dsl::facts::core::executor_for(false);
+        assert_eq!(
+            rerail_accel::lanes::device_lanes_asked(),
+            before,
+            "the lookup asked for a device lane"
+        );
+        assert!(
+            std::ptr::eq(ex, crate::code_rule_dsl::logic::lanes::executor_for(false)),
+            "not the run's executor"
+        );
+    }
 }
 
 #[cfg(all(test, not(windows)))]
 mod tests {
     use tikv_jemalloc_ctl::{epoch, raw};
     use tikv_jemalloc_sys::{MALLOCX_ARENA, MALLOCX_TCACHE_NONE, dallocx, mallocx};
+
+    #[cfg(not(any(target_family = "wasm", feature = "system-allocator")))]
+    #[test]
+    fn rust_allocations_reach_the_profile_allocator() {
+        let allocated = || unsafe { raw::read::<u64>(b"thread.allocated\0") }.unwrap();
+        let before = allocated();
+        let bytes = std::hint::black_box(vec![0u8; 1 << 20]);
+        let after = allocated();
+        assert!(
+            after - before >= bytes.len() as u64,
+            "Rust allocations must use production jemalloc and reach its profile counters: {} bytes recorded for {} allocated",
+            after - before,
+            bytes.len()
+        );
+    }
 
     #[test]
     fn purge_returns_freed_pages() {
@@ -495,19 +601,30 @@ mod tests {
             let key = format!("stats.arenas.{arena}.pdirty\0");
             unsafe { raw::read::<usize>(key.as_bytes()) }.unwrap()
         };
+        // Its pages kept dirty until purged: no decay by time (the default purges after 10 s, which a loaded run's
+        // pause can reach).
+        unsafe { raw::write::<isize>(format!("arena.{arena}.dirty_decay_ms\0").as_bytes(), -1) }
+            .unwrap();
         let flags = MALLOCX_ARENA(arena as usize) | MALLOCX_TCACHE_NONE;
         let size = 4 << 20;
-        unsafe {
-            let block = mallocx(size, flags).cast::<u8>();
-            assert!(!block.is_null());
-            std::ptr::write_bytes(block, 1, size);
-            dallocx(block.cast(), flags);
-        }
+        // Other tests' runs purge every arena when they end (`purge_allocator_pages`): one of them can purge this
+        // arena between the free and its count. A few tries: one free seen dirty, then purged, is what is asked.
+        let seen = (0..20).any(|_| {
+            unsafe {
+                let block = mallocx(size, flags).cast::<u8>();
+                assert!(!block.is_null());
+                std::ptr::write_bytes(block, 1, size);
+                dallocx(block.cast(), flags);
+            }
+            if dirty() == 0 {
+                return false;
+            }
+            super::purge_allocator_pages();
+            dirty() == 0
+        });
         assert!(
-            dirty() > 0,
-            "the freed block's pages are dirty until purged"
+            seen,
+            "a freed block's pages are dirty until purged, and none after"
         );
-        super::purge_allocator_pages();
-        assert_eq!(dirty(), 0);
     }
 }

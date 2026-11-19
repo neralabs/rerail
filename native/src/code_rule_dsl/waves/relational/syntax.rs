@@ -5,7 +5,7 @@ use crate::code_rule_dsl::{
     violations::Span,
 };
 use ast_grep_core::source::SgNode;
-mod packed;
+pub mod packed;
 use packed::{Columns, Fields, Postings};
 use rusqlite::{Connection, types::Value, vtab::Context};
 use std::{
@@ -19,14 +19,14 @@ use std::{
 
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(in crate::code_rule_dsl) struct Owner {
+pub struct Owner {
     pub kind: String,
     #[serde(default)]
     pub outermost: bool,
 }
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(in crate::code_rule_dsl) struct Spec {
+pub struct Spec {
     pub name: String,
     pub gate: String,
     #[serde(default)]
@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) struct Spec {
     pub owners: BTreeMap<String, Owner>,
 }
 
-pub(in crate::code_rule_dsl) trait Source: Send + Sync {
+pub trait Source: Send + Sync {
     fn columns(&self) -> Vec<String>;
     fn column_types(&self) -> Vec<String>;
     fn len(&self) -> usize;
@@ -85,7 +85,7 @@ struct OwnerIndex {
     distinct: usize,
 }
 type Selections = parking_lot::Mutex<HashMap<(Vec<String>, bool), Arc<Selection>>>;
-pub(in crate::code_rule_dsl) struct Facts {
+pub struct Facts {
     doc: TapeDoc,
     lines: Arc<LineTable>,
     rows: Vec<u32>,
@@ -113,7 +113,7 @@ impl Facts {
         )
     }
 
-    pub(in crate::code_rule_dsl) fn build(file: &FileInput) -> Result<Arc<Self>> {
+    pub fn build(file: &FileInput) -> Result<Arc<Self>> {
         #[cfg(feature = "code-rule-profile")]
         let _span = crate::code_rule_dsl::profile::trace::Span::start("syntax-prepare", "document");
         let language =
@@ -277,7 +277,7 @@ impl Facts {
         cache.insert(key, Arc::clone(&index));
         Ok(index)
     }
-    pub(in crate::code_rule_dsl) fn subtree_ends(&self) -> &[u32] {
+    pub fn subtree_ends(&self) -> &[u32] {
         &self.packed.subtree_end
     }
     fn visible(&self, excludes: &[String]) -> Result<Arc<Vec<u32>>> {

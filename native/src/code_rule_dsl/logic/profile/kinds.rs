@@ -13,7 +13,7 @@ use std::fmt::Write;
 use super::SpanTotal;
 
 /// The class of a span's own CPU, from its path.
-pub(super) fn kind(path: &str) -> String {
+pub fn kind(path: &str) -> String {
     let top = path.split('/').next().unwrap_or(path);
     let has = |s: &str| path.contains(s);
     let part = match top {
@@ -46,6 +46,8 @@ pub(super) fn kind(path: &str) -> String {
         "measuring sources"
     } else if top == "stats" {
         "statistics phase (preparing, measuring, binding)"
+    } else if has("W's reference graph") {
+        "W's reference graph (a second parse, in Rust: no device form)"
     } else if has("tape") || has("parse") || has("tree-sitter") {
         "parsing"
     } else if top == "write" {
@@ -71,7 +73,7 @@ fn planned(path: &str) -> Option<(String, usize)> {
 /// The join order searches summed by the rule's head relation: CPU, searches and the largest body. A search is
 /// made when a rule is first seen or a size it reads moved (decision 0038), so many searches of one head mean its
 /// sizes keep moving between waves.
-pub(super) fn searches(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
+pub fn searches(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
     let mut heads: BTreeMap<String, (f64, u64, usize)> = BTreeMap::new();
     for (p, t) in spans.iter().filter(|(p, _)| p.ends_with("/search")) {
         if let Some((h, lits)) = planned(p) {
@@ -92,7 +94,7 @@ pub(super) fn searches(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
 }
 
 /// The own CPU of every span, summed by `kind`; written to the report and as `kinds.tsv`.
-pub(super) fn by_kind(r: &mut String, spans: &BTreeMap<String, SpanTotal>) -> String {
+pub fn by_kind(r: &mut String, spans: &BTreeMap<String, SpanTotal>) -> String {
     let mut kinds: BTreeMap<String, f64> = BTreeMap::new();
     // An `other` class's largest spans, so that the next span to add is named.
     let mut others: BTreeMap<String, Vec<(f64, &String)>> = BTreeMap::new();
@@ -127,7 +129,7 @@ pub(super) fn by_kind(r: &mut String, spans: &BTreeMap<String, SpanTotal>) -> St
 
 /// Spans whose own CPU is not under a span of their own: at least `MIN_OWN` seconds and a quarter of the span's.
 /// The join order search is its own work (`searches`), not a missing span.
-pub(super) fn unexplained(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
+pub fn unexplained(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
     const MIN_OWN: f64 = 0.5;
     let parents: std::collections::BTreeSet<&str> = spans.keys().filter_map(|p| p.rsplit_once('/').map(|(parent, _)| parent)).collect();
     let mut rows: Vec<(&String, &SpanTotal)> = spans.iter().filter(|(p, t)| parents.contains(p.as_str()) && kind(p) != "planning: join order search" && t.own >= MIN_OWN && t.own >= 0.25 * t.total).collect();
@@ -143,7 +145,7 @@ pub(super) fn unexplained(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
 
 /// A native join plan's head relation: `seed r: …` and `join r(…) (delta at i): …` derive `r`. Lowering's copies
 /// count as the relation they copy.
-fn head(plan: &str) -> String {
+pub(super) fn head(plan: &str) -> String {
     let rest = plan.strip_prefix("seed ").or_else(|| plan.strip_prefix("join ")).unwrap_or(plan);
     let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
     let mut name = name.as_str();
@@ -160,19 +162,24 @@ fn head(plan: &str) -> String {
     name.to_owned()
 }
 
+/// A profiled path and the plan it ran (or a part and its head relation).
+type PathPlan = (String, String);
+/// A head's CPU, work and plans.
+type HeadTotal = (f64, u64, usize);
+
 /// The native joins summed by part and head relation: CPU (while profiling, per probe) and work (rows into every
 /// step); written to the report and as `heads.tsv`.
-pub(super) fn by_head(r: &mut String, native: &[(&(String, String), &Vec<(u64, u64)>)], cpu: &BTreeMap<(String, String), f64>) -> String {
-    let mut heads: BTreeMap<(String, String), (f64, u64, usize)> = BTreeMap::new();
+pub fn by_head(r: &mut String, native: &[(&PathPlan, &Vec<(u64, u64)>)], cpu: &BTreeMap<PathPlan, f64>) -> String {
+    let mut heads: BTreeMap<PathPlan, HeadTotal> = BTreeMap::new();
     for ((p, plan), steps) in native {
         let part = kind(&format!("{p}/engine run (joins)"));
         let e = heads.entry((part, head(plan))).or_default();
         e.0 += cpu.get(&(p.clone(), plan.clone())).copied().unwrap_or(0.0);
-        e.1 += steps.iter().map(|(a, _)| a).sum::<u64>();
+        e.1 += super::plan_work(steps);
         e.2 += 1;
     }
     let (all_cpu, all_work) = heads.values().fold((0.0, 0u64), |(c, w), e| (c + e.0, w + e.1));
-    let mut rows: Vec<(&(String, String), &(f64, u64, usize))> = heads.iter().collect();
+    let mut rows: Vec<(&PathPlan, &HeadTotal)> = heads.iter().collect();
     rows.sort_by(|a, b| b.1.0.total_cmp(&a.1.0).then(b.1.1.cmp(&a.1.1)));
     let _ = writeln!(r, "\n== Native joins by head relation ({all_cpu:.2} s CPU in the probes, {all_work} work in all; a copy lowering made counts as its relation)");
     let _ = writeln!(r, "{:>9} {:>6} {:>13} {:>6}  part / head", "cpu s", "%", "work", "plans");
@@ -187,7 +194,7 @@ pub(super) fn by_head(r: &mut String, native: &[(&(String, String), &Vec<(u64, u
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     #[test]
     fn a_plan_is_counted_as_the_relation_it_derives() {
         assert_eq!(super::head("join rr_in_annotation_0_fret($f, $k) (delta at 1): pv($r, $k, $v)"), "fret");

@@ -1,8 +1,9 @@
 import { existsSync, statSync } from "node:fs";
 import { readRemoteConfig } from "../runtime/remote-config.js";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { posix, win32 } from "node:path";
 import { and, eq } from "drizzle-orm";
+import { physicalPath } from "../engine/catalog/checkout-control.js";
 import type { RulesDashboardScope } from "../api/session-contracts.js";
 import { CODING_AGENT_NAMES, type ConnectResult } from "../setup/coding-agents.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
@@ -22,7 +23,7 @@ import {
   workspaceSetUp,
 } from "../runtime/repository-start.js";
 import { recordSetUp } from "../engine/catalog/rule-configuration.js";
-import { loadRulePacks, packIdOfPackage, recommendRulePacks, RERAIL_PUBLISHER, rulePackShortName, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
+import { loadRulePacks, packIdOfPackage, recommendRulePacks, RERAIL_PUBLISHER, rulePackShortName, type NoFitExplanation, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { readRepositoryLintConfig } from "../engine/catalog/lint-config/repository-lint-config.js";
@@ -75,6 +76,7 @@ import {
   type QuestionForm,
   type QuestionStep,
   type RecommendedPacksInput,
+  type SetupCommand,
 } from "../harness/setup-screens.js";
 import type { SetupQuestion, SetupQuestionId, SetupStep } from "../harness/setup-step.js";
 
@@ -151,7 +153,8 @@ export interface SetupEnvironment {
   setSessionsApproved(approved: boolean): Promise<void>;
   /**
    * A dashboard page scoped to `scope`'s repository and checkout; the link is always returned. `open`: try a
-   * browser (E6 says why none opened). False when an earlier run already opened it, so a re-run shows the link alone.
+   * browser (E6 says why none opened). False when an earlier run already opened it, so a re-run shows the link alone,
+   * and whenever a coding agent runs set-up (the agent lane and `--json`).
    */
   dashboard(scope: RulesDashboardScope, page: DashboardPage, open: boolean): Promise<DashboardLink>;
   /** Where rule packs are fetched from and installed to: npm, into the Rerail home. */
@@ -176,7 +179,7 @@ export interface RepositorySetupOptions {
   /** `--answer`: the person's answer, relayed by the coding agent. */
   answer?: string;
   /** What the agent lane's answer commands run; `rerail setup` when absent. */
-  setupCommand?: string;
+  setupCommand?: SetupCommand;
   /** `--json`: what each answer's `next.args` start with; `setup --json` when absent. */
   nextArgs?: readonly string[];
   /** `--json`: the question a run stopped at. */
@@ -288,14 +291,19 @@ async function approveSessions(run: Run, answer: string | undefined, repo: strin
     return { answer: undefined };
   }
   if (environment.sessionsApproved()) return { answer };
-  const form = sessionsQuestion({
-    carriedArgs: repo === undefined ? [] : [SETUP_FLAGS.repo, repo],
-    remoteHosts: remoteHostsOf(packsHome(run)),
-    ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
-  });
-  const picked = await choose(run, form, SESSIONS_ANSWERS);
+  const picked = await choose(run, sessionsForm(run, repo), SESSIONS_ANSWERS);
   if (picked === undefined) return halted(run.io);
   return approveSessions(run, picked, repo);
+}
+
+/** T2b's question; a relayed run asks it of the person reading it in a coding agent session. */
+function sessionsForm(run: Run, repo: string | undefined): QuestionForm {
+  return sessionsQuestion({
+    carriedArgs: repo === undefined ? [] : [SETUP_FLAGS.repo, repo],
+    remoteHosts: remoteHostsOf(packsHome(run)),
+    inSession: run.io.relayed === true || run.io.lane === "json",
+    ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
+  });
 }
 
 /** The hosts of this home's remotes (`rerail remote`), or null when their configuration cannot be read. */
@@ -338,10 +346,22 @@ async function choose<K extends string>(run: Run, form: QuestionForm, keys: read
   }
 }
 
+/**
+ * The folder a typed answer names, absolute. `~` stands for the home folder, and on Windows so does `~\`, and one pair
+ * of double quotes around the answer goes: Explorer's "Copy as path" adds them, and no Windows file name holds one.
+ */
+export function folderFromAnswer(answer: string, home: string, platform: NodeJS.Platform = process.platform): string {
+  const windows = platform === "win32";
+  const paths = windows ? win32 : posix;
+  let trimmed = answer.trim();
+  if (windows && trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) trimmed = trimmed.slice(1, -1);
+  const fromHome = trimmed === "~" || trimmed.startsWith("~/") || (windows && trimmed.startsWith("~\\"));
+  return paths.resolve(fromHome ? paths.join(home, trimmed.slice(1)) : trimmed);
+}
+
 /** The repository at a folder the person named: its Git root, or the folder itself outside Git. */
 function repositoryAt(folder: string): Repository | undefined {
-  const trimmed = folder.trim();
-  const path = resolve(trimmed === "~" || trimmed.startsWith("~/") ? `${homedir()}${trimmed.slice(1)}` : trimmed);
+  const path = folderFromAnswer(folder, homedir());
   try {
     if (!statSync(path).isDirectory()) return undefined;
   } catch {
@@ -353,7 +373,13 @@ function repositoryAt(folder: string): Repository | undefined {
 
 const HOME_FOLDER_REFUSED = "Start Rerail inside a repository, not your home folder.";
 
-const isHomeFolder = (root: string): boolean => resolve(root) === resolve(homedir());
+/**
+ * Whether `root` is the home folder, by any path that leads to it: compared as stored, since Windows paths ignore case
+ * and a home spelled `c:\users\me` is still the home folder, and through links.
+ */
+export function isHomeFolder(root: string, home: string = homedir()): boolean {
+  return physicalPath(root) === physicalPath(home);
+}
 
 /** The Git repository set-up ran in, if any. A plain folder, or the home folder, is no repository to offer. */
 function repositoryHere(cwd: string): Repository | undefined {
@@ -448,8 +474,9 @@ function packLabels(packs: readonly { packId: string; folder: string }[]): strin
 
 /**
  * The rule settings the repository's own lint config gives the rules of packs `packIds`, owned by the repository,
- * read from its files now. None for a rule the repository has a setting of its own for in that folder (one the person
- * made in the dashboard stands).
+ * read from its files now and marked as the lint config's (`origin`), so `rerail packs calibrate` may change them
+ * later. None for a rule the repository has a setting of its own for in that folder (one the person made in the
+ * dashboard stands).
  */
 function lintConfigSettings(database: RerailDatabase, home: string, root: string, repositoryKey: RepositoryKey, packIds: readonly string[]): RuleSetting[] {
   const own = new Set(database.select({ folder: ruleSettings.folder, targetId: ruleSettings.targetId }).from(ruleSettings).where(and(
@@ -459,7 +486,7 @@ function lintConfigSettings(database: RerailDatabase, home: string, root: string
   )).all().map(row => `${row.folder}\0${row.targetId}`));
   return readRepositoryLintConfig(root, loadRuleCatalog(home), packIds).settings
     .filter(setting => !own.has(`${setting.folder}\0${setting.ruleId}`))
-    .map(({ ruleId, folder, on, config }) => ({ owner: { kind: "repository", repositoryKey }, folder, targetKind: "rule", targetId: ruleId, on, mode: null, config }));
+    .map(({ ruleId, folder, on, config }) => ({ owner: { kind: "repository", repositoryKey }, folder, targetKind: "rule", targetId: ruleId, on, mode: null, config, origin: "lint-config" }));
 }
 
 /** Names of the other set-up repositories Rerail is on in: as a whole, or in one of their checkouts. */
@@ -495,8 +522,13 @@ function dashboardScope(run: Run, repository: Repository): RulesDashboardScope {
   return { repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath };
 }
 
-/** Step 6: what is on, how to try it, the link to manage rules, and the other started repos. */
-async function summary(run: Run, repository: Repository, open: boolean, agents: AgentsConnection): Promise<SetupOutcome> {
+/**
+ * Step 6: what is on, how to try it, the link to manage rules, and the other started repos. `firstStart`: this run
+ * started the repository, so a person at a terminal gets the dashboard in their browser. A coding agent's run (the
+ * agent lane and `--json`) gets the link alone, since it may run where no one watches the screen, or in a sandbox.
+ */
+async function summary(run: Run, repository: Repository, firstStart: boolean, agents: AgentsConnection): Promise<SetupOutcome> {
+  const open = firstStart && run.io.lane === "terminal";
   const scope = dashboardScope(run, repository);
   const { packNames, ruleCount, others } = readDatabase(run, database => {
     const checkout = lookupCheckout(database, repository.root);
@@ -531,10 +563,17 @@ async function connect(run: Run, repository: Repository | undefined, again = fal
   const seen = again ? environment.agentsSeen() : undefined;
   const agents = named ?? (!again ? found : seen === undefined ? [] : found.filter(id => !seen.includes(id)));
   const result = await environment.connect(agents, repository?.root);
+  // A registration written whose hook then failed is changed and failed at once: it is named only as failed.
+  const failed = new Set(result.failures.map(({ agent }) => agent));
   return {
     connected: codingAgents(result.all),
-    ...(again && named === undefined ? { added: codingAgents(result.changed) } : {}),
-    failed: result.failures.map(({ agent, message, file }) => ({ agent: { id: agent, name: CODING_AGENT_NAMES[agent] }, message, ...(file === undefined ? {} : { file }) })),
+    ...(again && named === undefined ? { added: codingAgents(result.changed.filter(id => !failed.has(id))) } : {}),
+    failed: result.failures.map(({ agent, message, file, registered }) => ({
+      agent: { id: agent, name: CODING_AGENT_NAMES[agent] },
+      message,
+      ...(file === undefined ? {} : { file }),
+      ...(registered === undefined ? {} : { registered }),
+    })),
     codexTrust: result.codexTrust,
     ompPlugin: result.ompPlugin,
     anyFound: found.length > 0,
@@ -704,6 +743,8 @@ interface Offering {
   readonly withoutRules: readonly string[];
   /** The catalog the offered packs' rules come from, for the lint config's settings. */
   readonly catalog: RuleCatalog;
+  /** Why no pack fits, when discovery scanned the repository and had packs to offer. */
+  readonly nothingFits?: NoFitExplanation;
 }
 
 const onRules = (pack: RulePack): number => pack.rules.filter(rule => rule.on).length;
@@ -728,6 +769,7 @@ function discoveryOffering(discovery: PackDiscovery): Offering {
     unavailable: discovery.problems,
     withoutRules: discovery.withoutRules.flatMap(found => found.match === undefined ? [] : [found.pack.name]),
     catalog: discovery.catalog,
+    ...(discovery.nothingFits === undefined ? {} : { nothingFits: discovery.nothingFits }),
   };
 }
 
@@ -788,6 +830,7 @@ function packsInput(run: Run, repository: Repository, offering: Offering): Recom
     agentsFound: codingAgents(connecting),
     ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
     lintConfig: readRepositoryLintConfig(repository.root, offering.catalog, offering.offers.map(({ recommendation }) => recommendation.pack.id)),
+    ...(offering.nothingFits === undefined ? {} : { nothingFits: offering.nothingFits }),
   };
 }
 

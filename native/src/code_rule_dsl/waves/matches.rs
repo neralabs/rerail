@@ -18,9 +18,7 @@ use crate::content_store::ContentStore;
 use std::collections::HashMap;
 use crate::code_rule_dsl::demand::vtab::PackedDemand;
 use crate::code_rule_dsl::facts::Graph;
-use crate::code_rule_dsl::facts::core;
-use crate::code_rule_dsl::facts::families::{Families, Tape, core_name};
-use crate::code_rule_dsl::facts::observe::path_name;
+use crate::code_rule_dsl::facts::families::{Families, Tape};
 use crate::code_rule_dsl::facts::vtab::syntax::Document;
 use crate::code_rule_dsl::language::{GrammarDialect, tape_tag};
 use crate::code_rule_dsl::matcher::AnchorPlan;
@@ -57,6 +55,29 @@ const KEPT: &str = "
 matched(c, d, n) :- kept_match(c, d, n).
 span(d, n, s, e) :- kept_span(d, n, s, e).
 ";
+/// `prog` with `more`'s declarations, inputs, outputs, rules (after its own) and facts: the program the two texts
+/// one after the other read as.
+fn joined(prog: &mut crate::code_rule_dsl::logic::front::Program, more: &crate::code_rule_dsl::logic::front::Program) {
+    prog.decls.extend(more.decls.iter().map(|(k, v)| (k.clone(), v.clone())));
+    prog.nullary.extend(more.nullary.iter().cloned());
+    prog.lattice.extend(more.lattice.iter().map(|(k, v)| (k.clone(), v.clone())));
+    prog.kindsets.extend(more.kindsets.iter().map(|(k, v)| (k.clone(), v.clone())));
+    for i in &more.inputs {
+        if !prog.inputs.contains(i) {
+            prog.inputs.push(i.clone());
+        }
+    }
+    for o in &more.outputs {
+        if !prog.outputs.contains(o) {
+            prog.outputs.push(o.clone());
+        }
+    }
+    prog.rules.extend(more.rules.iter().cloned());
+    for (rel, rows) in &more.facts {
+        prog.facts.entry(rel.clone()).or_default().extend(rows.iter().cloned());
+    }
+}
+
 /// The kept rows a warm run reads, filled by its caller (`slice`).
 pub(in crate::code_rule_dsl) const KEPT_MATCH: &str = "temp.wave_kept_match";
 pub(in crate::code_rule_dsl) const KEPT_SPAN: &str = "temp.wave_kept_span";
@@ -97,6 +118,9 @@ pub(in crate::code_rule_dsl) struct Wave {
     pub(in crate::code_rule_dsl) route: Candidates,
     /// The policies' rules over the clauses, and their demand (`policies`, list step 21).
     logic: super::policies::Logic,
+    /// The planner's programs, made once for the wave: `SOURCE` and the policies' rules (`logic.rules`), then with
+    /// `KEPT` for a warm run; each with its digest (`choices::key`), the compiled plan's key (decision 0249).
+    sources: [(crate::code_rule_dsl::logic::front::Program, [u8; 32]); 2],
     /// The demand statement, planned on the run's store when its program is (`Logic::demand_sql`).
     demand_sql: std::sync::Mutex<Option<Option<String>>>,
     /// Each chunk's candidates, in order.
@@ -147,7 +171,7 @@ impl Wave {
 
     /// Whether the demand statement reads a `py.*` family: the wave then reads it before its batch.
     pub(in crate::code_rule_dsl) fn demand_reads_py(&self) -> bool {
-        let py = |rel: &str| crate::code_rule_dsl::facts::vtab::syntax::PY.contains(&rel);
+        let py = |rel: &str| crate::code_rule_dsl::facts::vtab::syntax::is_family(rel);
         self.logic.demand.as_ref().is_some_and(|p| p.rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| py(&a.rel)))))
     }
 
@@ -159,7 +183,17 @@ impl Wave {
         }
         let matchers = clauses.iter().map(|clause| &clause.matcher).collect::<Vec<_>>();
         let lowered = LoweredWave::new(&matchers).map_err(invalid)?;
+        let mut cold = crate::code_rule_dsl::logic::rr::parse(SOURCE).map_err(invalid)?;
+        joined(&mut cold, &logic.rules);
+        let mut warm = cold.clone();
+        joined(&mut warm, &crate::code_rule_dsl::logic::rr::parse(KEPT).map_err(invalid)?);
+        // Each program keyed by its version's digest (decision 0173 §7), once.
+        let keyed = |p: crate::code_rule_dsl::logic::front::Program| -> StoreResult<_> {
+            let key = crate::code_rule_dsl::logic::plan::choices::key(&crate::code_rule_dsl::logic::plan::body::Placed::of_program(&p).map_err(invalid)?);
+            Ok((p, key))
+        };
         Ok(Self {
+            sources: [keyed(cold)?, keyed(warm)?],
             backend,
             names: clauses.iter().map(|clause| clause.name.clone()).collect(),
             plans: clauses.iter().map(|clause| Arc::clone(&clause.plan)).collect(),
@@ -210,11 +244,12 @@ impl Wave {
     fn emit(&self, store: &ContentStore, kept: bool) -> StoreResult<Program> {
         // The run's demand statement, its atoms this store's.
         *self.demand_sql.lock().expect("demand statement mutex poisoned") = Some(self.logic.demand_sql(store)?);
-        let (source, batch) = self.inputs(kept);
+        let batch = self.inputs(kept);
+        let (source, key) = &self.sources[usize::from(kept)];
         let mut identity = crate::code_rule_dsl::stats::identity::CompiledPlanId::builder()
             .text("rerail.wave-program/v1")
             .text(PROGRAM)
-            .text(&source)
+            .bytes(key)
             .u64(crate::code_rule_dsl::stats::plans::COMPILER_VERSION as u64);
         let mut inputs = batch.iter().collect::<Vec<_>>();
         inputs.sort_by(|a, b| a.0.cmp(b.0));
@@ -245,7 +280,7 @@ impl Wave {
             atoms.extend(names.iter().map(|name| (*name).to_owned()).zip(found.iter().copied()));
             Ok(found)
         };
-        let mut program = emit::emit_batch(&source, PROGRAM, &batch, intern).map_err(invalid)?.program;
+        let mut program = emit::emit_program(source, PROGRAM, &batch, intern).map_err(invalid)?.program;
         program.file_local = true;
         program.partitions = vec![(RELATION.to_owned(), self.names.clone())];
         let bytes = serde_json::to_vec(&program).map_err(|error| invalid(error.to_string()))?;
@@ -300,8 +335,8 @@ impl Wave {
         }
     }
 
-    /// The planner's source and the batch inputs it reads, each with its source and estimate.
-    fn inputs(&self, kept: bool) -> (String, HashMap<String, (Source, f64)>) {
+    /// The batch inputs the planner's program (`sources`) reads, each with its source and estimate.
+    fn inputs(&self, kept: bool) -> HashMap<String, (Source, f64)> {
         let mut batch = HashMap::from([
             (
                 "terminal".to_owned(),
@@ -324,14 +359,11 @@ impl Wave {
             };
             batch.insert(rel.clone(), (Source::named(&format!("main.{rel}"), columns), rows));
         }
-        let mut source = SOURCE.to_owned();
-        source.push_str(&self.logic.rules);
         if kept {
-            source.push_str(KEPT);
             batch.insert("kept_match".to_owned(), (Source::positional(KEPT_MATCH, &["c0", "c1", "c2"]), 1000.0));
             batch.insert("kept_span".to_owned(), (Source::positional(KEPT_SPAN, &["c0", "c1", "c2", "c3"]), 1000.0));
         }
-        (source, batch)
+        batch
     }
 
     /// The chunk's batch: its documents' stored tapes, in order, labelled by every clause's
@@ -361,12 +393,15 @@ impl Wave {
         crate::code_rule_dsl::prof::time("demand.gates", || self.gate(&mut demanded, documents, &tapes));
         crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("1.tapes");
-        let docs = tapes.iter().map(|tape| tape.doc.clone()).collect::<Vec<_>>();
+        // Each read at its path, which a `filePath` test inside a matcher tests.
+        let docs = tapes.iter().zip(documents).map(|(tape, document)| tape.doc.with_path(&document.path)).collect::<Vec<_>>();
         // The walks' text tests from the term index (`R[tid]`, list step 17).
         let docs = crate::code_rule_dsl::prof::time("demand.texts", || self.texts(graph.store(), &tapes, docs))?;
         let metal = cfg!(target_os = "macos")
             && matches!(self.backend, ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground);
         let programs = self.lowered.programs();
+        // Set by the Metal run of the labels (macOS).
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
         let mut found = None;
         let (candidates, views) = if metal {
             // On Metal the candidates come first (set steps on the device, ~150 ms), then every
@@ -541,23 +576,7 @@ impl Wave {
     }
 }
 
-/// The documents of `paths` in `scope` whose core facts are bound, each keyed by its path name's
-/// atom, its facts rebuilt from its stored tape.
-pub(in crate::code_rule_dsl) fn documents(graph: &(impl Graph + ?Sized), scope: &str, paths: &[String]) -> StoreResult<Vec<Document>> {
-    let mut out = Vec::new();
-    for path in paths {
-        let core = core_name(scope, path);
-        let Some(digest) = graph.binding(&core)? else { continue };
-        let Some(tape) = Families::stored(graph, scope, path)? else { continue };
-        let facts = core::from_tape(&tape.doc, Arc::clone(&tape.lines)).map_err(StoreError::Invalid)?;
-        if core::digest(&facts) != digest {
-            return Err(StoreError::Invalid(format!("stale core facts for {core}")));
-        }
-        let key = graph.store().atom(&path_name(scope, path))?.ok_or_else(|| StoreError::Corrupt(format!("{path} has no atom")))?;
-        out.push(Document { key, path: path.clone(), core, digest, facts: Arc::new(facts), tape: None, guest: None, module: None });
-    }
-    Ok(out)
-}
+pub(in crate::code_rule_dsl) use crate::code_rule_dsl::facts::families::stored_documents as documents;
 
 /// The tapes labelled on Metal, all at once or, where their label levels outgrow a workspace
 /// (06 S7: 250 files in one chunk) or the evaluation's launch bound, each half on its own: a file's labels read only that file.
@@ -609,6 +628,7 @@ mod tests;
 /// is the dialect the store's tag names. Leases are not kept: the label run takes its own.
 fn prepare(store: &ContentStore, docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> StoreResult<()> {
     use crate::code_rule_dsl::{language, residency::slabs, tape::Grammar};
+    // The stored bytes are read in place.
     let digests = docs.iter().map(|doc| doc.resident_key().map_err(StoreError::Invalid)).collect::<StoreResult<Vec<_>>>()?;
     let grammar = |id: i64| Grammar::new(u8::try_from(id).ok().and_then(language::from_tape_tag).ok_or("unknown grammar")?);
     slabs::admit(store, &digests, &grammar).map(drop).map_err(invalid)

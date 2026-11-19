@@ -160,7 +160,7 @@ pub(super) fn execute(
                                         let mut children = tape
                                             .transducer_children(parent)
                                             .inspect(|_| {
-                                                #[cfg(test)]
+                                                #[cfg(any(test, feature = "test-hooks"))]
                                                 {
                                                     measured.sibling_edge_visits += 1;
                                                 }

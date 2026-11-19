@@ -2,7 +2,7 @@
 use super::*;
 pub(in crate::code_rule_dsl) const NONE: u32 = u32::MAX;
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Columns {
+pub struct Columns {
     pub parent: Vec<u32>,
     pub subtree_end: Vec<u32>,
     pub kind: Vec<u32>,
@@ -16,8 +16,9 @@ pub(in crate::code_rule_dsl) struct Columns {
 impl Columns {
     pub fn build(doc: &TapeDoc) -> Result<Self> {
         let mut c = Self::default();
-        for id in 0..u32::try_from(doc.transducer_len())
-            .map_err(|_| invalid("packed document capacity"))?
+        for (id, parent) in (0..u32::try_from(doc.transducer_len())
+            .map_err(|_| invalid("packed document capacity"))?)
+            .zip(doc.transducer_parents())
         {
             if crate::code_rule_dsl::budget::step_budget_exhausted() {
                 return Err(invalid("interrupted: packed syntax"));
@@ -34,7 +35,7 @@ impl Columns {
                 kind
             };
             let span = doc.transducer_span(id);
-            c.parent.push(doc.transducer_parent(id).unwrap_or(NONE));
+            c.parent.push(parent.unwrap_or(NONE));
             c.subtree_end.push(doc.transducer_descendants(id).end);
             c.kind.push(kind);
             c.field.push(u32::from(doc.transducer_field(id)));
@@ -58,7 +59,7 @@ impl Columns {
     }
 }
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Postings {
+pub struct Postings {
     pub offsets: Vec<u32>,
     pub values: Vec<u32>,
 }
@@ -98,7 +99,7 @@ impl Postings {
             .map_or(&[], |v| &self.values[v[0] as usize..v[1] as usize])
     }
 }
-pub(in crate::code_rule_dsl) struct Fields {
+pub struct Fields {
     offsets: Vec<u32>,
     codes: Vec<u32>,
     nodes: Vec<u32>,

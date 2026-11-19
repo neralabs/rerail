@@ -1,25 +1,33 @@
 import {
+  cursorRelayedLine,
   cursorSession,
   cursorWorkspace,
   handleCursorEvent,
   type CursorHookInput,
   type CursorHookOutput,
 } from "./cursor-hook-adapter.js";
-import { launchedDirectly, serveHook } from "../../harness/hook-adapter.js";
-import { hookRerailStarted, runHostHook, type HookOptions } from "../../harness/hook-host.js";
+import { serveHookEntry } from "../../harness/hook-adapter.js";
+import { answerAutostartOff, hookRerailStarted, runHostHook, withDaemonDeadline, type HookOptions } from "../../harness/hook-host.js";
 
 export { CURSOR_FOLLOWUP_LOOP_LIMIT, cursorHookEvent, cursorHookOutput, handleCursorEvent } from "./cursor-hook-adapter.js";
 
+/**
+ * A session that starts while no daemon runs, because `RERAIL_AUTOSTART` kept the hook from starting one, says so through
+ * the model, which Cursor asks to relay the line (`answerAutostartOff`, `cursorRelayedLine`).
+ */
 export async function runCursorHook(
   input: CursorHookInput,
   options: HookOptions = {},
 ): Promise<CursorHookOutput> {
+  const waiting = withDaemonDeadline(options);
   const workspace = cursorWorkspace(input);
   if (!await hookRerailStarted("cursor", workspace, options.databasePath)) return {};
-  return runHostHook("cursor", workspace, cursorSession(input).sessionId, input.hook_event_name === "sessionStart", options, (runtime, storageRoot) =>
-    handleCursorEvent(input, runtime, storageRoot));
+  const startsSession = input.hook_event_name === "sessionStart";
+  return await runHostHook("cursor", workspace, cursorSession(input).sessionId, startsSession, waiting, (runtime, storageRoot, lock) =>
+    handleCursorEvent(input, runtime, storageRoot, lock), String(input.hook_event_name))
+    .catch((error: unknown) => answerAutostartOff(error, startsSession, cursorRelayedLine));
 }
 
 // `serveHook` answers `{}` and exits 0 whatever fails, as Rerail does where it is not started, so Cursor carries on: a
 // failed hook would put an error on every tool call (design N11). The reason goes to stderr, out of the chat.
-if (launchedDirectly(import.meta.url)) await serveHook(input => runCursorHook(input as CursorHookInput));
+await serveHookEntry(import.meta.url, input => runCursorHook(input as CursorHookInput));

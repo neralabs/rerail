@@ -1,4 +1,4 @@
-//! `core.rr`'s repository inputs (decision 0046): facts about the repository that are not source code, one reader
+//! `core.rerail`'s repository inputs (decision 0046): facts about the repository that are not source code, one reader
 //! per kind of file, made once a run (not per batch) and bound beside the batches' relations.
 //!
 //! - `option(name, v)` and `option_item(name, i, v)`: the policy's `options` (`rerail.policy/v1`), as rrlab reads
@@ -26,9 +26,9 @@ const MAX_FILES: usize = 200_000;
 
 /// The rows, as strings, before they are interned.
 #[derive(Default, Debug, PartialEq)]
-pub(crate) struct Rows {
-    pub(crate) option: Vec<(String, String)>,
-    pub(crate) option_item: Vec<(String, i64, String)>,
+pub struct Rows {
+    pub option: Vec<(String, String)>,
+    pub option_item: Vec<(String, i64, String)>,
     pub(crate) file: Vec<String>,
     pub(crate) package: Vec<(String, String)>,
     pub(crate) package_field: Vec<(String, String, String)>,
@@ -44,8 +44,30 @@ fn scalar(v: &Value) -> String {
     }
 }
 
+/// The run's options over the defaults its programs declare (`.options {"name": {"default": …}, …}`): an option the
+/// run does not set has its declared default, so a rule's option reads the same whether or not its caller passes
+/// options. A run option that is not an object (none given) leaves only the defaults.
+pub fn with_declared(settings: &[(String, String)], opts: &Value) -> Value {
+    let mut merged = serde_json::Map::new();
+    for (_, text) in settings.iter().filter(|(k, _)| k == "options") {
+        let Ok(Value::Object(decl)) = serde_json::from_str::<Value>(text) else { continue };
+        for (name, spec) in decl {
+            if let Some(d) = spec.get("default") {
+                merged.entry(name).or_insert_with(|| d.clone());
+            }
+        }
+    }
+    if merged.is_empty() {
+        return opts.clone();
+    }
+    if let Value::Object(given) = opts {
+        merged.extend(given.clone());
+    }
+    Value::Object(merged)
+}
+
 /// `option` and `option_item` of a policy's `options`.
-pub(crate) fn options(opts: &Value, rows: &mut Rows) {
+pub fn options(opts: &Value, rows: &mut Rows) {
     let merged;
     let opts = match opts {
         Value::Array(list) => {
@@ -156,7 +178,7 @@ pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) {
 }
 
 /// The repository inputs a program reads (`reads`), interned in `store`, by relation.
-pub(crate) fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Value, reads: &dyn Fn(&str) -> bool) -> StoreResult<Vec<(&'static str, Relation)>> {
+pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Value, reads: &dyn Fn(&str) -> bool) -> StoreResult<Vec<(&'static str, Relation)>> {
     let mut rows = Rows::default();
     if reads("option") || reads("option_item") {
         options(opts, &mut rows);
@@ -200,7 +222,7 @@ pub(crate) fn relations(store: &ContentStore, root: &Path, docs: &[String], opts
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

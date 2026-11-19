@@ -179,7 +179,7 @@ fn edges(rule: &Rule, moves: &Moves) -> Edges {
     for literal in &rule.body {
         match literal {
             Literal::Atom(a) if !a.neg => {
-                for (&(i, j), ms) in moves.get(&a.rel).into_iter().flatten() {
+                for (&(i, j), ms) in moves.get(a.rel.as_str()).into_iter().flatten() {
                     if let (Some(Term::Var(x)), Some(Term::Var(y))) = (a.args.get(i), a.args.get(j)) {
                         ms.iter().for_each(|(&m, &s)| add(x, y, Some((m, s))));
                     }
@@ -305,7 +305,7 @@ fn depth_edges(rule: &Rule, depths: &Depths) -> BTreeMap<String, Vec<(String, Sp
     for literal in &rule.body {
         match literal {
             Literal::Atom(a) if !a.neg => {
-                for (&(i, j), &d) in depths.get(&a.rel).into_iter().flatten() {
+                for (&(i, j), &d) in depths.get(a.rel.as_str()).into_iter().flatten() {
                     if let (Some(Term::Var(x)), Some(Term::Var(y))) = (a.args.get(i), a.args.get(j)) {
                         add(x, y, d);
                     }
@@ -361,7 +361,7 @@ fn depth_summary(prog: &Program, rules: &[&Rule], depths: &Depths) -> BTreeMap<(
             let mut all = true;
             for (rule, reached) in rules.iter().zip(&reached) {
                 let d = match (reached.get(&i), rule.head.args.get(j)) {
-                    (Some(r), Some(Term::Var(y))) => r.get(y).copied(),
+                    (Some(r), Some(Term::Var(y))) => r.get(y.as_str()).copied(),
                     _ => None,
                 };
                 let Some(d) = d.filter(|d| d.0 > -INF || d.1 < INF) else {
@@ -381,7 +381,9 @@ fn depth_summary(prog: &Program, rules: &[&Rule], depths: &Depths) -> BTreeMap<(
 /// The depth guarantees of a component's relations: for a recursive one the least spans its rules keep,
 /// from no rows up, widened to no bound on a side that still moves after a few rounds. As with `summarize`, an
 /// input, or a relation with facts, guarantees nothing.
-fn depth_summaries(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&str, Vec<&Rule>>, depths: &mut Depths) {
+/// A component that reads no member of itself (not `recursive`) is settled by its first round: its rules read only
+/// relations below it, so a second round gives the first's spans again.
+fn depth_summaries(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&str, Vec<&Rule>>, depths: &mut Depths, recursive: bool) {
     let (rels, none): (Vec<&String>, Vec<&String>) = component
         .iter()
         .filter(|rel| columns(prog, rel, "node").len() > 1)
@@ -421,7 +423,7 @@ fn depth_summaries(prog: &Program, component: &BTreeSet<String>, by_head: &BTree
                 changed = true;
             }
         }
-        if !changed {
+        if !changed || !recursive {
             return;
         }
     }
@@ -437,7 +439,7 @@ fn step(rule: &Rule, edges: &Edges, from: &str, to: &str, way: Move) -> Option<b
     // The head's column `#j` is its variable there (a part of a variable is tested by nothing).
     let named = |v: &str| -> Option<String> {
         match v.strip_prefix('#').and_then(|j| j.parse::<usize>().ok()).and_then(|j| rule.head.args.get(j)) {
-            Some(Term::Var(x)) => Some(x.clone()),
+            Some(Term::Var(x)) => Some(x.to_string()),
             Some(_) => None,
             None => Some(v.to_owned()),
         }
@@ -462,7 +464,7 @@ fn shrinks(t: &Term) -> Option<bool> {
 
 /// The fewest bytes a match of `re` has outside its group `g` when g takes part (its capture is that much
 /// shorter than the text matched); `None` when `re` does not parse or has no group g.
-pub(super) fn gap(re: &str, g: &str) -> Option<usize> {
+pub fn gap(re: &str, g: &str) -> Option<usize> {
     use regex_syntax::hir::{Hir, HirKind};
     fn min(h: &Hir) -> usize {
         h.properties().minimum_len().unwrap_or(0)
@@ -499,15 +501,15 @@ impl<'a> Bounds<'a> {
         let mut outside = BTreeSet::new();
         for l in &rule.body {
             match l {
-                Literal::Atom(a) if !a.neg && !component.contains(&a.rel) => outside.extend(a.vars()),
-                Literal::Agg { var, atom, .. } if !component.contains(&atom.rel) => {
+                Literal::Atom(a) if !a.neg && !component.contains(a.rel.as_str()) => outside.extend(a.vars()),
+                Literal::Agg { var, atom, .. } if !component.contains(atom.rel.as_str()) => {
                     outside.insert(var.clone());
                 }
                 Literal::Nearest { .. } | Literal::Ast { .. } => outside.extend(l.vars()),
                 _ => {}
             }
         }
-        let bound = |v: &String, below: bool| {
+        let bound = |v: &str, below: bool| {
             rule.body.iter().any(|l| match l {
                 Literal::Cmp { l: Term::Var(x), op, r: Term::Int(_) } if x == v => if below { matches!(*op, ">" | ">=") } else { matches!(*op, "<" | "<=") },
                 Literal::Cmp { l: Term::Int(_), op, r: Term::Var(x) } if x == v => if below { matches!(*op, "<" | "<=") } else { matches!(*op, ">" | ">=") },
@@ -519,7 +521,7 @@ impl<'a> Bounds<'a> {
                 && bound(v, true)
                 && bound(v, false)
             {
-                outside.insert(v.clone());
+                outside.insert(v.to_string());
             }
         }
         Bounds { rule, outside }
@@ -552,7 +554,7 @@ impl<'a> Bounds<'a> {
             },
             _ => return false,
         };
-        let bound = |k: &Term| matches!(k, Term::Int(_)) || matches!(k, Term::Var(v) if self.outside.contains(v));
+        let bound = |k: &Term| matches!(k, Term::Int(_)) || matches!(k, Term::Var(v) if self.outside.contains(v.as_str()));
         let this = |t: &Term| matches!(t, Term::Var(v) if v == x || Some(v.as_str()) == alias);
         let (below, above): (&[&str], &[&str]) = if by > 0 { (&["<", "<="], &[">", ">="]) } else { (&[">", ">="], &["<", "<="]) };
         by == 0
@@ -621,12 +623,12 @@ fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, b
         let bound = b.atoms();
         let fixed = |v: &str| bound.contains(v) || b.outside.contains(v);
         for literal in &rule.body {
-            if let Some(a) = literal.atom().filter(|a| !a.neg && component.contains(&a.rel)) {
+            if let Some(a) = literal.atom().filter(|a| !a.neg && component.contains(a.rel.as_str())) {
                 for (i, t) in a.args.iter().enumerate() {
                     if let Term::Var(v) = t
-                        && !b.outside.contains(v)
+                        && !b.outside.contains(v.as_str())
                     {
-                        from.entry(v.clone()).or_default().insert(((a.rel.clone(), i), false));
+                        from.entry(v.to_string()).or_default().insert(((a.rel.to_string(), i), false));
                     }
                 }
             }
@@ -660,13 +662,13 @@ fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, b
             }
         }
         // A head term that a variable bound outside the component is assigned (`$t = @add($l, 1), lines(d, $t, _)`
-        // and the head's `@add($l, 1)`, as `.rr` lowers a call it binds and also writes) takes that variable's
+        // and the head's `@add($l, 1)`, as `.rerail` lowers a call it binds and also writes) takes that variable's
         // finitely many values (O111: `era001`'s `era_run`).
         let finite_terms: Vec<&Term> = rule
             .body
             .iter()
             .filter_map(|l| match l {
-                Literal::Cmp { l: Term::Var(v), op: "=", r } if b.outside.contains(v) => Some(r),
+                Literal::Cmp { l: Term::Var(v), op: "=", r } if b.outside.contains(v.as_str()) => Some(r),
                 _ => None,
             })
             .collect();
@@ -675,7 +677,7 @@ fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, b
                 continue;
             }
             for (c, made) in sources(t, None, &from) {
-                out.push((c, (rule.head.rel.clone(), j), made));
+                out.push((c, (rule.head.rel.to_string(), j), made));
             }
         }
     }
@@ -718,7 +720,8 @@ fn columns(prog: &Program, rel: &str, ty: &str) -> Vec<usize> {
 /// What the relations of `component` guarantee between their columns in every row, added to `moves`: the
 /// greatest set of moves each rule gives, its recursive atoms assumed to give them (an input, or a relation
 /// with facts, guarantees nothing).
-fn summarize(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&str, Vec<&Rule>>, moves: &mut Moves) {
+/// As `depth_summaries`, a component that is not `recursive` is settled by its first round.
+fn summarize(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&str, Vec<&Rule>>, moves: &mut Moves, recursive: bool) {
     let (rels, none): (Vec<&String>, Vec<&String>) = component.iter().partition(|r| !prog.inputs.contains(r) && !prog.facts.contains_key(*r) && by_head.contains_key(r.as_str()));
     for rel in none {
         moves.remove(rel);
@@ -757,7 +760,8 @@ fn summarize(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&s
             }
             held.retain(|_, ways| !ways.is_empty());
         }
-        if next == assumed {
+        if next == assumed || !recursive {
+            assumed = next;
             break;
         }
         assumed = next;
@@ -791,11 +795,11 @@ fn count_step(rule: &Rule, bounds: &Bounds<'_>, edges: &Edges, head: Option<usiz
     let up = |t: &Term| matches!(t, Term::Call(f, args) if f == "add" && matches!(args.as_slice(), [Term::Var(x), Term::Int(c)] | [Term::Int(c), Term::Var(x)] if x == b && *c > 0));
     // `t` is the value of a variable bound outside the component (`$k = t`, either way round).
     let outside_value = |t: &Term| {
-        rule.body.iter().any(|l| matches!(l, Literal::Cmp { l: Term::Var(v), op: "=", r } | Literal::Cmp { l: r, op: "=", r: Term::Var(v) } if outside.contains(v) && r == t))
+        rule.body.iter().any(|l| matches!(l, Literal::Cmp { l: Term::Var(v), op: "=", r } | Literal::Cmp { l: r, op: "=", r: Term::Var(v) } if outside.contains(v.as_str()) && r == t))
     };
     // A comparison is a move in values' order: document order's under preorder ids (`by_value`).
     let smaller = if by_value() { Move::Smaller } else { Move::Earlier };
-    let above = |x: &String| outside.contains(x) && reach(edges, x, b, smaller) == Some(true);
+    let above = |x: &str| outside.contains(x) && reach(edges, x, b, smaller) == Some(true);
     match rule.head.args.get(j)? {
         Term::Var(x) if x == b => Some(false),
         Term::Var(x) => rule
@@ -803,11 +807,11 @@ fn count_step(rule: &Rule, bounds: &Bounds<'_>, edges: &Edges, head: Option<usiz
             .iter()
             .find_map(|l| match l {
                 Literal::Cmp { l: Term::Var(v), op: "=", r: Term::Var(y) } | Literal::Cmp { l: Term::Var(y), op: "=", r: Term::Var(v) } if v == x && y == b => Some(false),
-                Literal::Cmp { l: Term::Var(v), op: "=", r } if v == x && up(r) && (outside.contains(b) || outside.contains(x) || bounds.counter(r, Some(x.as_str()))) => Some(true),
+                Literal::Cmp { l: Term::Var(v), op: "=", r } if v == x && up(r) && (outside.contains(b.as_str()) || outside.contains(x.as_str()) || bounds.counter(r, Some(x.as_str()))) => Some(true),
                 _ => None,
             })
             .or_else(|| above(x).then_some(true)),
-        t if up(t) && (outside.contains(b) || outside_value(t) || bounds.counter(t, None)) => Some(true),
+        t if up(t) && (outside.contains(b.as_str()) || outside_value(t) || bounds.counter(t, None)) => Some(true),
         _ => None,
     }
 }
@@ -817,12 +821,12 @@ fn count_step(rule: &Rule, bounds: &Bounds<'_>, edges: &Edges, head: Option<usiz
 /// relation of `keyless`, and each other column is made from the inputs and values bound outside the component.
 fn function(rules: &[&Rule], component: &BTreeSet<String>, keyless: &BTreeSet<&str>) -> Option<BTreeSet<usize>> {
     let arity = rules.first()?.head.args.len();
-    let bound_by_atom = |rule: &Rule, v: &String| rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && a.args.iter().any(|t| matches!(t, Term::Var(x) if x == v))));
+    let bound_by_atom = |rule: &Rule, v: &str| rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && a.args.iter().any(|t| matches!(t, Term::Var(x) if x == v))));
     let inputs: BTreeSet<usize> = (0..arity)
         .filter(|&j| {
             rules.iter().all(|rule| match rule.head.args.get(j) {
                 Some(Term::Int(_) | Term::Str(_)) => true,
-                Some(Term::Var(v)) => bound_by_atom(rule, v),
+                Some(Term::Var(v)) => bound_by_atom(rule, v.as_str()),
                 _ => false,
             })
         })
@@ -842,7 +846,7 @@ fn function(rules: &[&Rule], component: &BTreeSet<String>, keyless: &BTreeSet<&s
                     let mut vars = BTreeSet::new();
                     r.vars(&mut vars);
                     if vars.is_subset(&known) {
-                        known.insert(v.clone());
+                        known.insert(v.to_string());
                     }
                 }
             }
@@ -897,9 +901,9 @@ fn bounded(
             (false, _) => None,
         };
         // The variables an atom strictly along the key binds, for the functions' inputs.
-        let mut before = BTreeSet::<&String>::new();
+        let mut before = BTreeSet::<&str>::new();
         for literal in &rule.body {
-            let Some(a) = literal.atom().filter(|a| component.contains(&a.rel) && !functions.contains_key(a.rel.as_str())) else { continue };
+            let Some(a) = literal.atom().filter(|a| component.contains(a.rel.as_str()) && !functions.contains_key(a.rel.as_str())) else { continue };
             let (ak, acount) = key[a.rel.as_str()];
             let placed = match (k, ak) {
                 (Some(k), Some(ak)) => {
@@ -923,11 +927,11 @@ fn bounded(
             match moved {
                 Some(true) => {
                     if matches!(literal, Literal::Atom(x) if !x.neg) {
-                        before.extend(a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }));
+                        before.extend(a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None }));
                     }
                 }
                 Some(false) => {
-                    same.entry(rule.head.rel.clone()).or_default().insert((a.rel.clone(), false));
+                    same.entry(rule.head.rel.to_string()).or_default().insert((a.rel.to_string(), false));
                     if creates {
                         made.push((&rule.head.rel, &a.rel, rule));
                     }
@@ -939,7 +943,7 @@ fn bounded(
             let Some(a) = literal.atom().filter(|a| functions.contains_key(a.rel.as_str())) else { continue };
             for &j in &functions[a.rel.as_str()] {
                 match a.args.get(j) {
-                    Some(Term::Var(v)) if before.contains(v) || bounds.outside.contains(v) => {}
+                    Some(Term::Var(v)) if before.contains(v.as_str()) || bounds.outside.contains(v.as_str()) => {}
                     Some(Term::Int(_) | Term::Str(_)) => {}
                     _ => return Err(rule.to_string()),
                 }
@@ -947,7 +951,7 @@ fn bounded(
         }
     }
     let cycles = super::tarjan(component, &same);
-    match made.into_iter().find(|(h, a, _)| cycles.iter().any(|c| c.contains(*h) && c.contains(*a))) {
+    match made.into_iter().find(|(h, a, _)| cycles.iter().any(|c| c.contains((*h).as_str()) && c.contains((*a).as_str()))) {
         Some((_, _, rule)) => Err(rule.to_string()),
         None => Ok(()),
     }
@@ -991,14 +995,14 @@ fn constant_keyed(rules: &[&Rule], component: &BTreeSet<String>) -> bool {
         let Some(c) = (0..arity(rel)).find(|&c| atoms.iter().all(|a| a.args.get(c).and_then(key).is_some())) else { return false };
         columns.insert(rel.as_str(), c);
     }
-    let node = |a: &super::Atom| key(&a.args[columns[a.rel.as_str()]]).map(|k| (a.rel.clone(), k));
+    let node = |a: &super::Atom| key(&a.args[columns[a.rel.as_str()]]).map(|k| (a.rel.to_string(), k));
     let mut graph = BTreeMap::<(String, String), BTreeSet<(String, String)>>::new();
     for rule in rules {
         let Some(head) = node(&rule.head) else { return false };
         let to = graph.entry(head).or_default();
         for l in &rule.body {
             if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
-                && component.contains(&a.rel)
+                && component.contains(a.rel.as_str())
             {
                 let Some(n) = node(a) else { return false };
                 to.insert(n);
@@ -1020,34 +1024,114 @@ fn constant_keyed(rules: &[&Rule], component: &BTreeSet<String>) -> bool {
 
 /// The components with a value cycle, each bounded by its keys; fails on one that is not
 /// (`Error::UnboundedValueCycle`).
-pub(in crate::code_rule_dsl) fn check(prog: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
+pub fn check(prog: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
+    checked(prog, &Given::default())
+}
+
+/// `check` of a program lowered without the rules of the library it reads (`rr::Text::lower_in`, decision 0246 §2):
+/// a library relation it reads guarantees what its rules in `library` do (`deparen(e, a)`: a is e or below it), as
+/// in the program lowered whole. Read only when the program alone fails: its library relations have no rules in it,
+/// so they guarantee nothing there.
+pub fn check_given(prog: &Program, library: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
+    match check(prog) {
+        Err(Error::UnboundedValueCycle { .. }) => checked(prog, &given(prog, library)),
+        done => done,
+    }
+}
+
+/// What a library gives a program's check: the moves and depths of the library relations the program reads and does
+/// not derive, and those relations.
+#[derive(Default)]
+struct Given {
+    moves: Moves,
+    depths: Depths,
+    rels: BTreeSet<String>,
+}
+
+/// The guarantees of the relations of `library` that `prog` reads and does not derive itself, summarized over their
+/// rules there and the relations below them (`summarize`, `depth_summaries`).
+fn given(prog: &Program, library: &Program) -> Given {
+    let reads = |rule: &Rule| -> Vec<String> {
+        rule.body
+            .iter()
+            .filter_map(|l| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.to_string()),
+                _ => None,
+            })
+            .collect()
+    };
+    let own: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
+    let mut by_head = BTreeMap::<&str, Vec<&Rule>>::new();
+    for rule in &library.rules {
+        by_head.entry(rule.head.rel.as_str()).or_default().push(rule);
+    }
+    let mut reach: BTreeSet<String> = BTreeSet::new();
+    let mut todo: Vec<String> = prog.rules.iter().flat_map(reads).filter(|r| !own.contains(r.as_str()) && by_head.contains_key(r.as_str())).collect();
+    while let Some(rel) = todo.pop() {
+        if reach.contains(&rel) {
+            continue;
+        }
+        todo.extend(by_head[rel.as_str()].iter().flat_map(|r| reads(r)).filter(|r| by_head.contains_key(r.as_str()) && !reach.contains(r)));
+        reach.insert(rel);
+    }
+    let Ok((sccs, edges_by)) = super::strata(library) else { return Given::default() };
+    let (mut moves, mut depths) = (base(library), depth_base());
+    for component in sccs.iter().filter(|c| c.iter().any(|r| reach.contains(r))) {
+        let recursive = component.len() > 1 || component.iter().any(|r| edges_by.get(r).is_some_and(|e| e.iter().any(|(w, _)| w == r)));
+        summarize(library, component, &by_head, &mut moves, recursive);
+        depth_summaries(library, component, &by_head, &mut depths, recursive);
+    }
+    let rels: BTreeSet<String> = reach.into_iter().filter(|r| !own.contains(r.as_str()) && !prog.inputs.contains(r) && !prog.facts.contains_key(r)).collect();
+    moves.retain(|r, _| rels.contains(r));
+    depths.retain(|r, _| rels.contains(r));
+    Given { moves, depths, rels }
+}
+
+/// `check`, the relations of `given` guaranteeing what it holds for them.
+fn checked(prog: &Program, given: &Given) -> Result<Vec<BTreeSet<String>>, Error> {
     // A program that does not stratify fails there, by name.
     let Ok((sccs, edges_by)) = super::strata(prog) else { return Ok(Vec::new()) };
     let mut treed = Vec::new();
     let mut moves = base(prog);
     let mut depths = depth_base();
+    moves.extend(given.moves.iter().map(|(r, m)| (r.clone(), m.clone())));
+    depths.extend(given.depths.iter().map(|(r, d)| (r.clone(), d.clone())));
     let mut by_head = BTreeMap::<&str, Vec<&Rule>>::new();
     for rule in &prog.rules {
         by_head.entry(rule.head.rel.as_str()).or_default().push(rule);
     }
-    for component in &sccs {
-        // A component's guarantees, for its own rules and the components above it.
-        summarize(prog, component, &by_head, &mut moves);
-        let recursive = component.len() > 1 || component.iter().any(|r| edges_by.get(r).is_some_and(|e| e.iter().any(|(w, _)| w == r)));
-        depth_summaries(prog, component, &by_head, &mut depths);
-        if !recursive {
-            continue;
+    // Each component: whether it recurses, and whether its value cycle needs a bound (neither reads the summaries).
+    // A recursion through constants only (`era_re("EXPR", …) :- era_re("OPD", …)`): finitely many rules, so finitely
+    // many values when the constants do not come back.
+    let kinds: Vec<(bool, Option<bool>)> = sccs
+        .iter()
+        .map(|component| {
+            let recursive = component.len() > 1 || component.iter().any(|r| edges_by.get(r).is_some_and(|e| e.iter().any(|(w, _)| w == r)));
+            if !recursive {
+                return (false, None);
+            }
+            let rules: Vec<&Rule> = component.iter().flat_map(|rel| by_head.get(rel.as_str()).into_iter().flatten().copied()).collect();
+            (true, value_cycle(prog, &rules, component).then(|| !constant_keyed(&rules, component)))
+        })
+        .collect();
+    // The guarantees are read by the components that need a bound, of those below them: none are made past the last.
+    let last = kinds.iter().rposition(|(_, bound)| *bound == Some(true));
+    for (i, component) in sccs.iter().enumerate() {
+        let (recursive, bound) = kinds[i];
+        // A component's guarantees, for its own rules and the components above it; a library relation's are given.
+        if last.is_some_and(|last| i <= last) && !component.iter().all(|r| given.rels.contains(r)) {
+            summarize(prog, component, &by_head, &mut moves, recursive);
+            depth_summaries(prog, component, &by_head, &mut depths, recursive);
+        }
+        match bound {
+            None => continue,
+            Some(false) => {
+                treed.push(component.clone());
+                continue;
+            }
+            Some(true) => {}
         }
         let rules: Vec<&Rule> = component.iter().flat_map(|rel| by_head.get(rel.as_str()).into_iter().flatten().copied()).collect();
-        if !value_cycle(prog, &rules, component) {
-            continue;
-        }
-        // A recursion through constants only (`era_re("EXPR", …) :- era_re("OPD", …)`): finitely many rules, so
-        // finitely many values when the constants do not come back.
-        if constant_keyed(&rules, component) {
-            treed.push(component.clone());
-            continue;
-        }
         let creating: Vec<bool> = rules.iter().map(|r| creates(r, component)).collect();
         // The relations with no node column that are functions of their inputs, which need no key.
         let keyless: BTreeSet<&str> = component.iter().map(String::as_str).filter(|rel| columns(prog, rel, "node").is_empty()).collect();

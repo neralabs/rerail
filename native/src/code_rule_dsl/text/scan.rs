@@ -36,20 +36,20 @@ use std::ops::Range;
 use std::sync::{Arc, LazyLock, Mutex};
 
 /// The nodes a test is asked about, and how to read them.
-pub(in crate::code_rule_dsl) struct Nodes<'a> {
+pub struct Nodes<'a> {
     /// The file's text.
-    pub(in crate::code_rule_dsl) text: &'a [u8],
+    pub text: &'a [u8],
     /// Nodes in the file (bits are over `0..len`).
-    pub(in crate::code_rule_dsl) len: usize,
+    pub len: usize,
     /// The nodes to decide, ascending.
-    pub(in crate::code_rule_dsl) candidates: &'a [u32],
-    pub(in crate::code_rule_dsl) span: &'a (dyn Fn(u32) -> Range<usize> + Sync),
+    pub candidates: &'a [u32],
+    pub span: &'a (dyn Fn(u32) -> Range<usize> + Sync),
 }
 
 /// Bit `n` set where candidate `n`'s text matches; `None` where the plan cannot decide a node (a
 /// backtracking pattern past its limits, an automaton that did not build). A batch of one plan,
 /// built once per plan.
-pub(in crate::code_rule_dsl) fn bits(lowered: &Arc<Lowered>, nodes: &Nodes<'_>) -> Option<Vec<u64>> {
+pub fn bits(lowered: &Arc<Lowered>, nodes: &Nodes<'_>) -> Option<Vec<u64>> {
     static ALONE: LazyLock<Mutex<HashMap<super::Key, Arc<Batch>>>> = LazyLock::new(Default::default);
     let batch = {
         let mut alone = ALONE.lock().expect("scan batches");
@@ -59,7 +59,7 @@ pub(in crate::code_rule_dsl) fn bits(lowered: &Arc<Lowered>, nodes: &Nodes<'_>) 
 }
 
 /// A set of plans scanned together: one literal pass over each file serves every plan.
-pub(in crate::code_rule_dsl) struct Batch {
+pub struct Batch {
     /// The plans asked for, then the parts they are made of (`How::Contains`'s edge plans).
     units: Vec<Unit>,
     /// How many of `units` are plans asked for.
@@ -92,7 +92,7 @@ enum How {
 }
 
 impl Batch {
-    pub(in crate::code_rule_dsl) fn of(plans: Vec<Arc<Lowered>>) -> Self {
+    pub fn of(plans: Vec<Arc<Lowered>>) -> Self {
         let asked = plans.len();
         let mut units = Vec::new();
         let mut shared = Vec::<Option<Vec<Vec<u8>>>>::new();
@@ -145,7 +145,7 @@ impl Batch {
     }
 
     /// Each plan's bits (`bits`), in the order asked.
-    pub(in crate::code_rule_dsl) fn bits(&self, nodes: &Nodes<'_>) -> Vec<Option<Vec<u64>>> {
+    pub fn bits(&self, nodes: &Nodes<'_>) -> Vec<Option<Vec<u64>>> {
         let words = nodes.len.div_ceil(64);
         if nodes.candidates.is_empty() {
             return vec![Some(vec![0; words]); self.asked];

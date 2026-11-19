@@ -2,7 +2,7 @@ use crate::code_rule_dsl::stats::identity::UtilityDefinitionId;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) enum FactFamilyContract {
+pub enum FactFamilyContract {
     Semantic,
     Value,
     Parse,
@@ -10,13 +10,13 @@ pub(in crate::code_rule_dsl) enum FactFamilyContract {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct StatementRelations {
+pub struct StatementRelations {
     fact_families: BTreeSet<FactFamilyContract>,
     utility_definitions: BTreeSet<UtilityDefinitionId>,
 }
 
 impl StatementRelations {
-    pub(in crate::code_rule_dsl) fn from_fact_families(
+    pub fn from_fact_families(
         families: impl IntoIterator<Item = FactFamilyContract>,
     ) -> Self {
         let mut fact_families = families.into_iter().collect::<BTreeSet<_>>();
@@ -29,7 +29,7 @@ impl StatementRelations {
         }
     }
 
-    pub(in crate::code_rule_dsl) fn with_utility_definitions(
+    pub fn with_utility_definitions(
         mut self,
         definitions: impl IntoIterator<Item = UtilityDefinitionId>,
     ) -> Self {
@@ -37,13 +37,13 @@ impl StatementRelations {
         self
     }
 
-    pub(in crate::code_rule_dsl) fn utility_definitions(
+    pub fn utility_definitions(
         &self,
     ) -> impl Iterator<Item = UtilityDefinitionId> + '_ {
         self.utility_definitions.iter().copied()
     }
 
-    pub(in crate::code_rule_dsl) fn fact_families(
+    pub fn fact_families(
         &self,
     ) -> impl Iterator<Item = FactFamilyContract> + '_ {
         self.fact_families.iter().copied()
@@ -51,7 +51,7 @@ impl StatementRelations {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{FactFamilyContract, StatementRelations};
 
     #[test]

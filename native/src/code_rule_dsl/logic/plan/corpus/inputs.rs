@@ -14,7 +14,7 @@ struct Failure {
 type ReadResult<T> = std::result::Result<T, Failure>;
 fn malformed(detail: impl Into<String>) -> Failure { Failure { kind: "malformed", detail: detail.into() } }
 
-pub(in crate::code_rule_dsl) fn parameters(text: &str) -> Result<BTreeMap<String, String>> {
+pub fn parameters(text: &str) -> Result<BTreeMap<String, String>> {
     let mut parts = Vec::new();
     let (mut start, mut quoted, mut escaped) = (0, false, false);
     for (i, c) in text.char_indices() {
@@ -67,7 +67,7 @@ fn select<'a>(value: &'a Json, steps: &[&str], prefix: Vec<Json>, out: &mut Vec<
 
 fn scalar(value: &Json, ty: &str, text: bool) -> ReadResult<Value> {
     match (ty, value) {
-        ("sym", Json::String(s)) => Ok(Value::Str(s.clone())),
+        ("sym", Json::String(s)) => Ok(Value::Str(s.clone().into())),
         ("int", Json::Number(n)) => n.as_i64().map(Value::Int).ok_or_else(|| malformed("number is outside the signed integer domain")),
         ("int", Json::Bool(b)) => Ok(Value::Int(i64::from(*b))),
         ("int", Json::String(s)) if text => s.parse().map(Value::Int).map_err(|_| malformed("invalid integer field")),
@@ -75,12 +75,12 @@ fn scalar(value: &Json, ty: &str, text: bool) -> ReadResult<Value> {
     }
 }
 
-fn typed(row: Vec<Json>, columns: &[(String, String)], text: bool) -> ReadResult<Vec<Value>> {
+fn typed(row: Vec<Json>, columns: &[(front::Name, front::Name)], text: bool) -> ReadResult<Vec<Value>> {
     if row.len() != columns.len() { return Err(malformed(format!("expected {} columns, found {}", columns.len(), row.len()))); }
     row.iter().zip(columns).map(|(v, (_, ty))| scalar(v, ty, text)).collect()
 }
 
-fn json_rows(value: &Json, pointer: &str, records: bool, prefix: Vec<Json>, columns: &[(String, String)]) -> ReadResult<Vec<Vec<Value>>> {
+fn json_rows(value: &Json, pointer: &str, records: bool, prefix: Vec<Json>, columns: &[(front::Name, front::Name)]) -> ReadResult<Vec<Vec<Value>>> {
     if !pointer.is_empty() && !pointer.starts_with('/') { return Err(malformed("path must be a JSON pointer")); }
     let steps: Vec<_> = if pointer.is_empty() { Vec::new() } else { pointer[1..].split('/').collect() };
     let mut selected = Vec::new();
@@ -92,7 +92,7 @@ fn json_rows(value: &Json, pointer: &str, records: bool, prefix: Vec<Json>, colu
             items.iter().map(|item| {
                 let Json::Object(map) = item else { return Err(malformed("record is not an object")); };
                 columns[prefix.len().min(columns.len())..].iter().map(|(key, _)|
-                    map.get(key).cloned().ok_or_else(|| malformed(format!("record is missing {key}")))).collect()
+                    map.get(key.as_str()).cloned().ok_or_else(|| malformed(format!("record is missing {key}")))).collect()
             }).collect::<ReadResult<_>>()?
         } else { match value {
             Json::Object(map) => map.iter().map(|(k, v)| vec![Json::String(k.clone()), v.clone()]).collect(),
@@ -113,7 +113,7 @@ impl Readers {
     fn read<'a>(&'a mut self, path: &str, read: &mut impl FnMut(&str) -> ReadResult<String>) -> ReadResult<&'a str> {
         self.bytes.entry(path.to_owned()).or_insert_with(|| read(path)).as_ref().map(String::as_str).map_err(Clone::clone)
     }
-    fn rows(&mut self, path: &str, io: &str, pointer: &str, records: bool, prefix: Vec<Json>, columns: &[(String, String)], read: &mut impl FnMut(&str) -> ReadResult<String>) -> ReadResult<Vec<Vec<Value>>> {
+    fn rows(&mut self, path: &str, io: &str, pointer: &str, records: bool, prefix: Vec<Json>, columns: &[(front::Name, front::Name)], read: &mut impl FnMut(&str) -> ReadResult<String>) -> ReadResult<Vec<Vec<Value>>> {
         if matches!(io, "json" | "yaml") {
             let key = (path.to_owned(), io.to_owned());
             if !self.documents.contains_key(&key) {
@@ -150,7 +150,7 @@ impl Readers {
 static FACTS_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 /// `logic --facts DIR`: the run's facts directory, for the process.
-pub(in crate::code_rule_dsl) fn set_facts_dir(dir: PathBuf) -> std::result::Result<(), String> {
+pub fn set_facts_dir(dir: PathBuf) -> std::result::Result<(), String> {
     FACTS_DIR.set(dir).map_err(|_| "the facts directory is already set".to_owned())
 }
 
@@ -162,7 +162,7 @@ fn facts_dir(root: &Path) -> PathBuf {
 /// stale or malformed fails the run, and so does a failed one unless the policy reports it.
 static REQUIRE_FACTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-pub(in crate::code_rule_dsl) fn require_facts() {
+pub fn require_facts() {
     REQUIRE_FACTS.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
@@ -170,7 +170,7 @@ pub(in crate::code_rule_dsl) fn require_facts() {
 /// `git_rev("base", …)`, which `at="base"` inputs are read at, is the merge base of HEAD and it.
 static BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
-pub(in crate::code_rule_dsl) fn set_base(rev: String) -> std::result::Result<(), String> {
+pub fn set_base(rev: String) -> std::result::Result<(), String> {
     BASE.set(rev).map_err(|_| "the base revision is already set".to_owned())
 }
 
@@ -179,7 +179,7 @@ fn unreadable(detail: impl std::fmt::Display) -> Failure { Failure { kind: "unre
 /// The tree of `rev` in the repository that holds `root`, and `root`'s path inside it.
 fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::ObjectId, PathBuf)> {
     let repo = gix::discover(root).map_err(|e| unreadable(format!("no repository holds {}: {e}", root.display())))?;
-    // `git_rev("base", …)`: the merge base of HEAD and `rev`, as core.rr defines it.
+    // `git_rev("base", …)`: the merge base of HEAD and `rev`, as core.rerail defines it.
     let (revs, _) = crate::code_rule_dsl::logic::strings::git::revisions(root, Some(rev)).map_err(unreadable)?;
     let base = revs.iter().find(|(n, _)| n == "base").map(|(_, id)| id.clone()).unwrap_or_default();
     let resolve = || -> std::result::Result<gix::ObjectId, Box<dyn std::error::Error + Send + Sync>> {
@@ -188,7 +188,7 @@ fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::Object
     };
     let tree = resolve().map_err(|e| unreadable(format!("base revision {rev}: {e}")))?;
     let workdir = repo.workdir().ok_or_else(|| unreadable("the repository has no work tree"))?;
-    let canonical = |p: &Path| p.canonicalize().map_err(|e| unreadable(format!("{}: {e}", p.display())));
+    let canonical = |p: &Path| dunce::canonicalize(p).map_err(|e| unreadable(format!("{}: {e}", p.display())));
     let prefix = canonical(root)?.strip_prefix(canonical(workdir)?).map(Path::to_path_buf).map_err(unreadable)?;
     Ok((repo, tree, prefix))
 }
@@ -249,7 +249,7 @@ fn quoted(text: &str) -> Option<(String, &str)> {
 }
 
 /// Every artifact the program declares. Two declarations of one name must agree (RUN-FACTS.md section 2).
-pub(in crate::code_rule_dsl) fn artifacts(settings: &[(String, String)]) -> Result<BTreeMap<String, Vec<String>>> {
+pub fn artifacts(settings: &[(String, String)]) -> Result<BTreeMap<String, Vec<String>>> {
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (_, text) in settings.iter().filter(|(k, _)| k == "artifact") {
         let (name, globs) = artifact_declaration(text)?;
@@ -313,7 +313,7 @@ pub(in crate::code_rule_dsl) fn inputs_digest(root: &Path, globs: &[String]) -> 
         hash.update(path.as_bytes());
         hash.update([0]);
         hash.update(blob_id(&bytes).as_bytes());
-        hash.update([b'\n']);
+        hash.update(*b"\n");
     }
     Ok(format!("sha256:{}", hash.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>()))
 }
@@ -343,7 +343,7 @@ fn artifact_data(name: &str, text: &str, digest: &str) -> ReadResult<Json> {
 /// wrapped with the digest of the inputs `declared` names for it, as `DIR/NAME.json`. A `NAME.status` (the
 /// producer's exit status) makes the artifact failed, with the first 4 KB of `NAME.err`; so does output that is not
 /// JSON. A raw file no policy declares is an error. Returns one line per artifact.
-pub(in crate::code_rule_dsl) fn stamp(raw: &Path, out: &Path, root: &Path, declared: &BTreeMap<String, Vec<String>>) -> std::result::Result<String, String> {
+pub fn stamp(raw: &Path, out: &Path, root: &Path, declared: &BTreeMap<String, Vec<String>>) -> std::result::Result<String, String> {
     let mut names: Vec<String> = std::fs::read_dir(raw)
         .map_err(|e| format!("{}: {e}", raw.display()))?
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -401,7 +401,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn of_result(result: &ReadResult<String>) -> String {
-    match result { Ok(text) => sha256_hex(text.as_bytes()), Err(f) => format!("{}", f.kind) }
+    match result { Ok(text) => sha256_hex(text.as_bytes()), Err(f) => f.kind.to_string() }
 }
 
 fn read_repository_file(root: &Path, name: &str) -> ReadResult<String> {
@@ -477,15 +477,14 @@ fn git_revisions(program: &mut front::Program, root: &Path, base: Option<&str>, 
     match crate::code_rule_dsl::logic::strings::git::revisions(root, base) {
         Ok((rows, _)) => {
             consulted.push(("git_rev".to_owned(), key, rows.iter().map(|(n, id)| format!("{n}={id}")).collect::<Vec<_>>().join(",")));
-            program.facts.entry("git_rev".to_owned()).or_default().extend(rows.into_iter().map(|(n, id)| vec![Value::Str(n), Value::Str(id)]));
+            program.facts.entry("git_rev".to_owned()).or_default().extend(rows.into_iter().map(|(n, id)| [Value::Str(n.into()), Value::Str(id.into())].into()));
             if base.is_none() {
-                return;
             }
         }
         Err(detail) => {
             consulted.push(("git_rev".to_owned(), key, String::new()));
             program.inputs.retain(|n| n != "input_error");
-            program.facts.entry("input_error".to_owned()).or_default().push(vec![Value::Str("git_rev".into()), Value::Str("unreadable".into()), Value::Str(detail.clone())]);
+            program.facts.entry("input_error".to_owned()).or_default().push([Value::Str("git_rev".into()), Value::Str("unreadable".into()), Value::Str(detail.clone().into())].into());
             let withheld = withhold(program, &BTreeMap::from([("git_rev".to_owned(), "git_rev unreadable".to_owned())]));
             for (output, why) in withheld.unknown {
                 eprintln!("unknown: {} ({why}): rows may be missing", output.strip_prefix("rr_place_").unwrap_or(&output));
@@ -588,9 +587,9 @@ fn populate_with(
             let result = data.as_ref().map_err(Clone::clone).and_then(|data| json_rows(data, pointer, records, Vec::new(), columns));
             program.inputs.retain(|n| n != rel);
             match result {
-                Ok(rows) => program.facts.entry(rel.to_owned()).or_default().extend(rows),
+                Ok(rows) => program.facts.entry(rel.to_owned()).or_default().extend(rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from)),
                 Err(error) => {
-                    let row = vec![Value::Str(format!("artifact:{name}")), Value::Str(error.kind.to_owned()), Value::Str(error.detail.clone())];
+                    let row = vec![Value::Str(format!("artifact:{name}").into()), Value::Str(error.kind.to_owned().into()), Value::Str(error.detail.clone().into())];
                     if !errors.contains(&row) {
                         errors.push(row);
                     }
@@ -632,20 +631,20 @@ fn populate_with(
         } else { readers.rows(path, io, pointer, records, Vec::new(), columns, read) };
         program.inputs.retain(|name| name != rel);
         match result {
-            Ok(rows) => program.facts.entry(rel.to_owned()).or_default().extend(rows),
+            Ok(rows) => program.facts.entry(rel.to_owned()).or_default().extend(rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from)),
             Err(error) if at_base => {
-                let row = vec![Value::Str(format!("{path}@base")), Value::Str(error.kind.to_owned()), Value::Str(error.detail.clone())];
+                let row = vec![Value::Str(format!("{path}@base").into()), Value::Str(error.kind.to_owned().into()), Value::Str(error.detail.clone().into())];
                 if !errors.contains(&row) {
                     errors.push(row);
                 }
                 incomplete.insert(rel.to_owned(), format!("{path}@base {}", error.kind));
             }
-            Err(error) => errors.push(vec![Value::Str(path.clone()), Value::Str(error.kind.to_owned()), Value::Str(error.detail)]),
+            Err(error) => errors.push(vec![Value::Str(path.clone().into()), Value::Str(error.kind.to_owned().into()), Value::Str(error.detail.into())]),
         }
     }
     if !errors.is_empty() {
         program.inputs.retain(|name| name != "input_error");
-        program.facts.entry("input_error".to_owned()).or_default().extend(errors);
+        program.facts.entry("input_error".to_owned()).or_default().extend(errors.into_iter().map(crate::code_rule_dsl::logic::front::List::from));
     }
     if !incomplete.is_empty() {
         let withheld = withhold(program, &incomplete);
@@ -678,20 +677,20 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
     loop {
         let mut grew = false;
         for rule in &program.rules {
-            if why.contains_key(&rule.head.rel) {
+            if why.contains_key(rule.head.rel.as_str()) {
                 continue;
             }
-            if let Some(w) = rule.body.iter().filter_map(Literal::atom).find_map(|a| why.get(&a.rel)) {
+            if let Some(w) = rule.body.iter().filter_map(Literal::atom).find_map(|a| why.get(a.rel.as_str())) {
                 let w = w.clone();
-                why.insert(rule.head.rel.clone(), w);
+                why.insert(rule.head.rel.to_string(), w);
                 grew = true;
             }
         }
         let mut dropped = Vec::new();
         program.rules.retain(|rule| {
             let reason = rule.body.iter().find_map(|l| match l {
-                Literal::Atom(a) if a.neg => why.get(&a.rel),
-                Literal::Agg { atom, .. } => why.get(&atom.rel),
+                Literal::Atom(a) if a.neg => why.get(a.rel.as_str()),
+                Literal::Agg { atom, .. } => why.get(atom.rel.as_str()),
                 _ => None,
             });
             match reason {
@@ -703,20 +702,20 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
             }
         });
         for (head, w) in dropped {
-            let entry = removed.entry(head.clone()).or_insert((0, w.clone()));
+            let entry = removed.entry(head.to_string()).or_insert((0, w.clone()));
             entry.0 += 1;
-            why.entry(head).or_insert(w);
+            why.entry(head.to_string()).or_insert(w);
             grew = true;
         }
         if !grew {
             break;
         }
     }
-    // The relations findings come from: the outputs, and what `rr_diagnostic` (lowering's findings) reads. Each
+    // The relations findings come from: the outputs, and what the finding relations (lowering's findings) read. Each
     // incomplete one is named with how many of its rules read an incomplete relation (the granularity is the rule).
     let mut reported: Vec<String> = program.outputs.clone();
-    for rule in program.rules.iter().filter(|r| r.head.rel == "rr_diagnostic") {
-        reported.extend(rule.body.iter().filter_map(Literal::atom).filter(|a| !a.neg).map(|a| a.rel.clone()));
+    for rule in program.rules.iter().filter(|r| crate::code_rule_dsl::logic::rr::is_diagnostic(&r.head.rel)) {
+        reported.extend(rule.body.iter().filter_map(Literal::atom).filter(|a| !a.neg).map(|a| a.rel.to_string()));
     }
     let mut seen = std::collections::BTreeSet::new();
     reported.retain(|r| seen.insert(r.clone()));
@@ -725,7 +724,7 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
         .filter_map(|rel| {
             let w = why.get(&rel)?;
             let rules: Vec<&front::Rule> = program.rules.iter().filter(|r| r.head.rel == rel).collect();
-            let reading = rules.iter().filter(|r| r.body.iter().filter_map(Literal::atom).any(|a| why.contains_key(&a.rel))).count();
+            let reading = rules.iter().filter(|r| r.body.iter().filter_map(Literal::atom).any(|a| why.contains_key(a.rel.as_str()))).count();
             let gone = removed.get(&rel).map_or(0, |(n, _)| *n);
             Some((rel, format!("{w}; {} of its {} rules", reading + gone, rules.len() + gone)))
         })
@@ -734,10 +733,10 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     fn rows(io: &str, source: &str, pointer: &str, records: bool, columns: &[(&str, &str)]) -> ReadResult<Vec<Vec<Value>>> {
-        let cols = columns.iter().map(|(name, ty)| ((*name).to_owned(), (*ty).to_owned())).collect::<Vec<_>>();
+        let cols = columns.iter().map(|(name, ty)| ((*name).into(), (*ty).into())).collect::<Vec<_>>();
         Readers::default().rows("fixture", io, pointer, records, Vec::new(), &cols, &mut |_| Ok(source.to_owned()))
     }
 
@@ -828,13 +827,13 @@ grew(e) :- now_entry(e), !was(_, e).
         let dir = std::env::temp_dir().join(format!("rerail-base-{}", std::process::id()));
         let root = dir.join("sub");
         std::fs::create_dir_all(&root).unwrap();
-        let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&dir).args(args).output().unwrap().status.success(), "git {args:?}");
+        let git = |args: &[&str]| assert!(std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").arg("-C").arg(&dir).args(args).output().unwrap().status.success(), "git {args:?}");
         git(&["init", "-q"]);
         std::fs::write(root.join("allow.txt"), "a\nb\n").unwrap();
         git(&["add", "sub/allow.txt"]);
         git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"]);
         std::fs::write(root.join("allow.txt"), "a\nb\nc\n").unwrap();
-        let head = String::from_utf8(std::process::Command::new("git").arg("-C").arg(&dir).args(["rev-parse", "HEAD"]).output().unwrap().stdout).unwrap();
+        let head = String::from_utf8(std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").arg("-C").arg(&dir).args(["rev-parse", "HEAD"]).output().unwrap().stdout).unwrap();
         for rev in [head.trim(), "HEAD"] {
             let mut read = base_reader(&root, Some(rev));
             assert_eq!(read("allow.txt").unwrap(), "a\nb\n", "{rev}");
@@ -984,10 +983,10 @@ quiet() :- ceiling(_), !over(_).
     fn combined_policies_keep_distinct_named_file_inputs_private() {
         let first = ".decl base_sig(s: symbol)\n.input base_sig(IO=json, filename=\"noqa.json\", path=\"/signature\")\n.decl result(s: symbol)\nresult(s) :- base_sig(s).\n.output result\n";
         let second = first.replace("noqa.json", "budget.json");
-        let mut program = super::super::combine(&[first, &second], "").unwrap();
+        let mut program = super::super::combine(&[first, &second]).unwrap();
         populate_with(&mut program, Path::new("."), &mut |name| Ok(format!("{{\"signature\":\"{name}\"}}")), &mut none, &mut no_base, &mut Vec::new()).unwrap();
-        assert_eq!(program.facts.get("p0_base_sig"), Some(&vec![vec![Value::Str("noqa.json".into())]]));
-        assert_eq!(program.facts.get("p1_base_sig"), Some(&vec![vec![Value::Str("budget.json".into())]]));
+        assert_eq!(program.facts.get("p0_base_sig"), Some(&vec![[Value::Str("noqa.json".into())].into()]));
+        assert_eq!(program.facts.get("p1_base_sig"), Some(&vec![[Value::Str("budget.json".into())].into()]));
         assert!(!program.facts.contains_key("base_sig"));
     }
 

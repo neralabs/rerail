@@ -33,7 +33,7 @@
 //! (home, key), each in the first free slot from its home. So the slots are a function of the set of keys, not of
 //! the order the definitions appear in, and adding one moves at most a granule it clashes with. Slot 0 is the
 //! document's own (its root); the top `SPAN_SLOTS` slots are its spans' (its text, lines and tokens, which are
-//! positions, in order), and the `EXTRA_SLOTS` below them `Extra`'s spans' (`ExtraSpan`: core.rr's source, lines,
+//! positions, in order), and the `EXTRA_SLOTS` below them `Extra`'s spans' (`ExtraSpan`: core.rerail's source, lines,
 //! comments and matches made beside the projection), a slot range for each kind.
 //!
 //! **Overflow** never falls back to preorder: up to `SPAN_SLOTS << INDEX_BITS` positions (4 M), each `ExtraSpan`
@@ -50,28 +50,28 @@ use crate::code_rule_dsl::facts::core::Facts;
 use std::collections::HashMap;
 
 pub(super) const SLOT_BITS: u32 = 14;
-pub(super) const INDEX_BITS: u32 = 32 - SLOT_BITS;
+pub const INDEX_BITS: u32 = 32 - SLOT_BITS;
 /// Indexes in one slot.
-pub(super) const INDEX: u32 = 1 << INDEX_BITS;
+pub const INDEX: u32 = 1 << INDEX_BITS;
 const SLOTS: u32 = 1 << SLOT_BITS;
 /// The top slots, from `SLOTS - 1` down, hold a document's spans: up to `SPAN_SLOTS << INDEX_BITS` of them.
 pub(super) const SPAN_SLOTS: u32 = 16;
 /// The positions (`span_low`) a document may have: past them a run fails (`super::Batch::build`), never wraps.
-pub(super) const POSITIONS: u64 = SPAN_SLOTS as u64 * INDEX as u64;
+pub const POSITIONS: u64 = SPAN_SLOTS as u64 * INDEX as u64;
 /// The first slot of the spans'.
 const SPAN_FIRST: u32 = SLOTS - SPAN_SLOTS;
 /// Slots of `Extra`'s spans (`ExtraSpan`): one for each kind of line and for the comments, `MATCH_SLOTS` for the
 /// matches, below the positions'.
 const MATCH_SLOTS: u32 = 12;
-pub(super) const EXTRA_SLOTS: u32 = 4 + MATCH_SLOTS;
+pub const EXTRA_SLOTS: u32 = 4 + MATCH_SLOTS;
 const EXTRA_FIRST: u32 = SPAN_FIRST - EXTRA_SLOTS;
 /// Slots granules take: `1..EXTRA_FIRST`.
 const GRANULE_SLOTS: u32 = EXTRA_FIRST - 1;
 
-/// The kinds of `Extra`'s spans (core.rr's `span`s made beside the projection: `super::Extra::document`), each in slots
+/// The kinds of `Extra`'s spans (core.rerail's `span`s made beside the projection: `super::Extra::document`), each in slots
 /// of its own between the granules' and the positions', so no node, position or other kind has its id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ExtraSpan {
+pub enum ExtraSpan {
     /// The whole source (index 0) and its physical lines (`src_line`, from 1).
     Line,
     /// The `\n`-lines (`src_line_lf`, from 1).
@@ -95,7 +95,7 @@ impl ExtraSpan {
         }
     }
     /// How many spans of the kind a document may have.
-    pub(crate) const fn capacity(self) -> u32 {
+    pub const fn capacity(self) -> u32 {
         match self {
             ExtraSpan::Match => MATCH_SLOTS * INDEX,
             _ => INDEX,
@@ -104,8 +104,14 @@ impl ExtraSpan {
 }
 
 /// The low bits of span `i` of `kind`, or `None` past the kind's capacity.
-pub(super) fn extra_low(kind: ExtraSpan, i: u32) -> Option<u32> {
+pub fn extra_low(kind: ExtraSpan, i: u32) -> Option<u32> {
     (i < kind.capacity()).then(|| ((EXTRA_FIRST + kind.first() + i / INDEX) << INDEX_BITS) | (i % INDEX))
+}
+
+/// The comment number (from 1) of a `Comment` span's low bits, as `extra_low(ExtraSpan::Comment, i)` made them.
+pub fn comment_of(low: u32) -> Option<u32> {
+    let first = EXTRA_FIRST + ExtraSpan::Comment.first();
+    (low >> INDEX_BITS == first).then_some(low % INDEX)
 }
 
 /// What starts a granule.
@@ -159,6 +165,16 @@ fn is_container_owner(kind: &str) -> bool {
     )
 }
 
+/// What kind `kind` is to the granules (`DEF`, `WRAPPER`, `BODY`, `OWNER`): the names above, made into a table by
+/// kind code once per grammar (`Dialect::granule_kind`), so cutting reads a byte for each node.
+pub fn kind_flags(kind: &str) -> u8 {
+    (u8::from(is_def(kind)) * DEF) | (u8::from(is_wrapper(kind)) * WRAPPER) | (u8::from(is_body(kind)) * BODY) | (u8::from(is_container_owner(kind)) * OWNER)
+}
+pub const DEF: u8 = 1;
+pub const WRAPPER: u8 = 2;
+pub const BODY: u8 = 4;
+pub const OWNER: u8 = 8;
+
 /// Declarations named by what they bind.
 fn binds(kind: &str) -> bool {
     matches!(kind, "lexical_declaration" | "variable_declaration" | "expression_statement" | "const_declaration" | "property_declaration" | "field_definition" | "public_field_definition" | "let_declaration")
@@ -185,8 +201,9 @@ enum Fold {
     All,
 }
 
-/// The ids of `p`'s nodes and of `tokens` (each token's node, in order): the low 32 bits.
-pub(super) fn number(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> Vec<u32> {
+/// The ids of `p`'s nodes and of `tokens` (each token's node, in order): the low 32 bits, written to `low` (as many
+/// as nodes and tokens); and each node's order key (`order`), returned.
+pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32], low: &mut [u32]) -> Vec<u32> {
     let mut fold = Fold::None;
     loop {
         let cut = cut(p, dialect, fold);
@@ -204,8 +221,44 @@ pub(super) fn number(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> Vec<u3
             fold = if fold == Fold::None { Fold::Statements } else { Fold::All };
             continue;
         }
-        return place(&cut, &nodes, tokens);
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "granule slots".into());
+        place(&cut, &nodes, tokens, low);
+        return order(&cut.of);
     }
+}
+
+/// Bits of an order key's index inside its granule; the rest are its run's rank (`order`).
+const ORDER_INDEX_BITS: u32 = 18;
+
+/// Each node's order key (`node_order`'s low 32 bits, decision 0121): the rank of its *run*, a stretch of nodes
+/// consecutive in preorder that are all one granule's, then its index among its granule's nodes. Runs follow one another
+/// in preorder and a granule's nodes are in preorder in it, so the keys are in preorder; but an edit inside a granule
+/// changes neither the runs (granules nested in it start where they did among its nodes) nor another granule's
+/// indexes, so no other granule's keys move, where a preorder index moves every node after the edit. An edit that
+/// adds or removes a granule moves the ranks after it. A document with more runs, or a granule with more nodes, than
+/// the bits hold is ordered by preorder index (one scheme per document, so its keys still compare).
+fn order(of: &[u32]) -> Vec<u32> {
+    let mut index = vec![0u32; of.iter().max().map_or(1, |&m| m as usize + 1)];
+    let mut rank = 0u32;
+    let mut keys = Vec::with_capacity(of.len());
+    for (l, &g) in of.iter().enumerate() {
+        if l > 0 && g != of[l - 1] {
+            rank += 1;
+        }
+        let i = &mut index[g as usize];
+        if rank >> (32 - ORDER_INDEX_BITS) != 0 || *i >> ORDER_INDEX_BITS != 0 {
+            return (0..of.len() as u32).collect();
+        }
+        keys.push(rank << ORDER_INDEX_BITS | *i);
+        *i += 1;
+    }
+    keys
+}
+
+/// Each node's granule, unfolded (`tests::node_order_keys_census`): an index in preorder of the granules' starts.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn granule_of(p: &Projected, dialect: &Dialect) -> Vec<u32> {
+    cut(p, dialect, Fold::None).of
 }
 
 /// The granules of `p`, folded as `fold` says.
@@ -213,30 +266,30 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
     let f = &*p.facts;
     let n = p.core.len();
     let kind = |l: usize| dialect.name(f, p.core[l]);
+    let is = |l: usize, flag: u8| dialect.granule_kind(dialect.code(f, p.core[l])) & flag != 0;
+    let starts_span = crate::code_rule_dsl::logic::profile::span(|| "granule starts".into());
     let mut start: Vec<Option<Start>> = vec![None; n];
     // A wrapper's definition is in the wrapper's granule.
     let mut claimed = vec![false; n];
     if fold != Fold::All {
         for l in 1..n {
-            let q = p.parent[l] as usize;
-            let k = kind(l);
+            let q = p.parent(l) as usize;
             let owner = |q: usize| {
-                let o = p.parent[q] as usize;
-                is_container_owner(kind(o)) && (start[o].is_some() || claimed[o])
+                let o = p.parent(q) as usize;
+                is(o, OWNER) && (start[o].is_some() || claimed[o])
             };
-            let in_container = q == 0 || (is_body(kind(q)) && p.parent[q] != super::NONE && owner(q));
-            if is_def(k) && !claimed[l] {
+            let in_container = q == 0 || (is(q, BODY) && p.parent(q) != super::NONE && owner(q));
+            if is(l, DEF) && !claimed[l] {
                 start[l] = Some(Start::Def);
             } else if in_container && fold == Fold::None {
                 start[l] = Some(Start::Stmt);
             }
             // A wrapper claims its first definition child, which then starts no granule of its own.
-            if start[l].is_some() && is_wrapper(k) {
-                if let Some(c) = p.children(l as u32).find(|&c| is_def(kind(c as usize))) {
+            if start[l].is_some() && is(l, WRAPPER)
+                && let Some(c) = p.children(l as u32).find(|&c| is(c as usize, DEF)) {
                     claimed[c as usize] = true;
                     start[l] = Some(Start::Def);
                 }
-            }
             if claimed[l] {
                 start[l] = None;
             }
@@ -249,15 +302,17 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
             starts.push(l as u32);
             starts.len() as u32 - 1
         } else {
-            of[p.parent[l] as usize]
+            of[p.parent(l) as usize]
         };
     }
+    drop(starts_span);
+    let _keys_span = crate::code_rule_dsl::logic::profile::span(|| "granule keys".into());
     // Keys, parents first (preorder).
     let mut keys = vec![String::new()];
     let mut seen: HashMap<String, u32> = HashMap::new();
     for g in 1..starts.len() {
         let l = starts[g] as usize;
-        let parent = &keys[of[p.parent[l] as usize] as usize];
+        let parent = &keys[of[p.parent(l) as usize] as usize];
         let base = format!("{parent}/{}:{}", kind(l), name(p, dialect, &of, &starts, g));
         let ord = seen.entry(base.clone()).or_insert(0);
         keys.push(format!("{base}#{ord}"));
@@ -339,16 +394,18 @@ fn own_digest(p: &Projected, of: &[u32], starts: &[u32], g: usize) -> String {
     let f = &*p.facts;
     let l = starts[g] as usize;
     let id = p.core[l] as usize;
-    let (start, end) = (f.start[id] as usize, f.end[id] as usize);
+    let (start, end) = (f.start(id as u32) as usize, f.end(id as u32) as usize);
     let mut h = Sha256::new();
     let mut at = start;
-    for x in l + 1..=l + p.size[l] as usize {
+    // Core IDs retain preorder. Find this subtree without materializing projection sizes.
+    let until = p.core.partition_point(|&node| node < f.subtree_end(id as u32));
+    for x in l + 1..until {
         // A nested granule's start whose parent is in this one: cut it out.
-        if of[x] as usize != g && of[p.parent[x] as usize] as usize == g {
+        if of[x] as usize != g && of[p.parent(x) as usize] as usize == g {
             let c = p.core[x] as usize;
-            h.update(&f.source.as_bytes()[at..f.start[c] as usize]);
+            h.update(&f.source.as_bytes()[at..f.start(c as u32) as usize]);
             h.update([0]);
-            at = f.end[c] as usize;
+            at = f.end(c as u32) as usize;
         }
     }
     h.update(&f.source.as_bytes()[at.min(end)..end]);
@@ -377,7 +434,7 @@ fn settle(keys: &[(usize, String)], taken: &mut [bool], out: &mut HashMap<usize,
 }
 
 /// The low bits of every node and token: granules placed, then their continuations.
-fn place(cut: &Cut, nodes: &[u32], tokens: &[u32]) -> Vec<u32> {
+fn place(cut: &Cut, nodes: &[u32], tokens: &[u32], low: &mut [u32]) {
     let g = cut.starts.len();
     let mut ntok = vec![0u32; g];
     for &t in tokens {
@@ -414,13 +471,12 @@ fn place(cut: &Cut, nodes: &[u32], tokens: &[u32]) -> Vec<u32> {
     }
     let mut next = vec![0u32; g];
     let owners = cut.of.iter().copied().chain(tokens.iter().map(|&t| cut.of[t as usize]));
-    owners
-        .map(|o| {
-            let i = next[o as usize];
-            next[o as usize] += 1;
-            slots[o as usize][(i / INDEX) as usize] << INDEX_BITS | (i % INDEX)
-        })
-        .collect()
+    assert_eq!(low.len(), cut.of.len() + tokens.len(), "a low id for each node and token");
+    for (slot, o) in low.iter_mut().zip(owners) {
+        let i = next[o as usize];
+        next[o as usize] += 1;
+        *slot = slots[o as usize][(i / INDEX) as usize] << INDEX_BITS | (i % INDEX);
+    }
 }
 
 /// The low bits of span `i` (past the nodes and tokens): the top slots, down from the last.
@@ -430,15 +486,15 @@ pub(super) fn span_low(i: u32) -> u32 {
 }
 
 /// The span index of low bits in the spans' slots, or `None` for a node's.
-pub(super) fn span_of(low: u32) -> Option<u32> {
+pub fn span_of(low: u32) -> Option<u32> {
     let slot = low >> INDEX_BITS;
     (slot >= SPAN_FIRST).then(|| (SLOTS - 1 - slot) << INDEX_BITS | (low % INDEX))
 }
 
 /// What a document's numbering came to (for measuring the bit widths): granules, slots past the first, the most
 /// nodes and tokens in one granule, and how far it folded.
-#[cfg(test)]
-pub(super) fn census(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> (usize, usize, u32, u8) {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn census(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> (usize, usize, u32, u8) {
     for (i, fold) in [Fold::None, Fold::Statements, Fold::All].into_iter().enumerate() {
         let cut = cut(p, dialect, fold);
         let mut size = vec![0u32; cut.starts.len()];

@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 /// One logical file's exact version: path, source content, file context and the grammar build and
 /// grammar a tape of it is parsed with.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(super) struct FileVersion {
+pub struct FileVersion {
     pub(super) path: String,
     source: HashKey,
     context: HashKey,
@@ -38,7 +38,7 @@ impl FileVersion {
     }
 
     // Read by P's relational workspace path (test-only, open item O18).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     pub(super) fn source_digest(&self) -> [u8; 32] {
         self.source.sha256_bytes().expect("source uses SHA-256")
     }
@@ -50,11 +50,10 @@ impl FileVersion {
 }
 
 /// A document the contract loaded: exactly the source and documents of one file version.
-pub(super) struct Document {
+pub struct Document {
     /// P's syntax facts, shared by P's relational inputs (test-only, open item O18).
-    #[cfg(test)]
     pub(super) syntax: std::sync::OnceLock<Arc<crate::code_rule_dsl::relational::syntax::Facts>>,
-    pub(super) source: Arc<String>,
+    pub source: Arc<String>,
     pub(super) image: tape::FileImage,
     language: GrammarDialect,
     bytes: std::sync::atomic::AtomicUsize,
@@ -62,22 +61,22 @@ pub(super) struct Document {
 
 /// Resident documents, bounded in bytes. A load beyond the bound evicts the least recently used
 /// documents; an evicted document is loaded again from the store or reparsed, never approximated.
-pub(super) struct DocumentCache {
+pub struct DocumentCache {
     limit: usize,
     used: usize,
     clock: u64,
     entries: HashMap<FileVersion, (u64, Arc<Document>)>,
-    pub(super) loads: DocumentLoads,
+    pub loads: DocumentLoads,
 }
 
 /// Where loaded documents came from, so tests and profiles can tell eviction happened.
 #[derive(Clone, Copy, Default)]
-pub(super) struct DocumentLoads {
+pub struct DocumentLoads {
     pub(super) resident: usize,
     pub(super) cached: usize,
-    pub(super) stored: usize,
+    pub stored: usize,
     pub(super) parsed: usize,
-    pub(super) evicted: usize,
+    pub evicted: usize,
 }
 
 /// The default residency bound for documents loaded through the contract.
@@ -106,7 +105,6 @@ impl DocumentCache {
         self.used = 0;
     }
 
-    #[cfg(test)]
     pub(super) fn account_syntax(&mut self, version: &FileVersion) {
         if let Some((_, document)) = self.entries.get(version)
             && let Some(facts) = document.syntax.get()
@@ -121,7 +119,7 @@ impl DocumentCache {
         self.shrink();
     }
 
-    pub(super) fn resident_bytes(&self) -> usize {
+    pub fn resident_bytes(&self) -> usize {
         self.used
     }
 
@@ -175,7 +173,7 @@ pub(super) fn prefetch(store: &ContentStore, sources: &[HashKey]) -> Result<Stor
         .stored_objects_by_hash(
             sources,
             grammar_version(),
-            i64::from(tape::TAPE_FORMAT_VERSION),
+            i64::from(tape::formats::stored_version()),
         )
         .map_err(|error| invalid(error.to_string()))?;
     let tapes = objects
@@ -299,7 +297,7 @@ pub(super) fn source(state: &mut WorkspaceState, path: &str) -> Result<Arc<Strin
     ))
 }
 
-pub(super) fn load(state: &mut WorkspaceState, path: &str) -> Result<(FileVersion, Arc<Document>)> {
+pub fn load(state: &mut WorkspaceState, path: &str) -> Result<(FileVersion, Arc<Document>)> {
     load_many(state, &[path.to_owned()], usize::MAX)?
         .pop()
         .ok_or_else(|| invalid("missing document"))
@@ -457,7 +455,6 @@ fn install_document(
     image: tape::FileImage,
 ) -> (FileVersion, Arc<Document>) {
     let document = Arc::new(Document {
-        #[cfg(test)]
         syntax: std::sync::OnceLock::new(),
         bytes: std::sync::atomic::AtomicUsize::new(source.len() + image.estimated_bytes()),
         source,
@@ -531,7 +528,7 @@ pub(super) struct NodeReference {
     ordinal: u32,
 }
 
-const NODE_REFERENCE_FORMAT: &str = "rerail.node-reference/v1";
+const NODE_REFERENCE_FORMAT: &str = "rerail.node-reference/v3";
 
 fn hash_text(hash: HashKey) -> String {
     hash.sha256_bytes()

@@ -12,6 +12,9 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
+fn sha256_hex(bytes:impl AsRef<[u8]>)->String {
+    Sha256::digest(bytes).iter().map(|byte|format!("{byte:02x}")).collect()
+}
 
 fn snapshot(
     session: &CodeRuleSqlExecutor,
@@ -91,7 +94,8 @@ fn snapshot(
                         .and_then(|c| c.get(column))
                         .map_or("int", String::as_str);
                     if documents || matches!(ty, "sym" | "symbol") {
-                        session.verification_cell(ty, *v).map_err(|e| e.into())
+                        session.verification_cell(ty, *v).map_err(|e|
+                            format!("checkpoint {check}: {name}[{column}] domain {ty}, raw {v:?}: {e}").into())
                     } else {
                         Ok(v.map(|n| json!(n.to_string())).unwrap_or(Value::Null))
                     }
@@ -112,7 +116,9 @@ fn snapshot(
 
 fn error_kind(error: &str) -> &'static str {
     let error = error.to_lowercase();
-    if error.contains("fixpoint") {
+    if error.contains("session submission allowance") || error.contains("session credits remain") {
+        "submission-limit"
+    } else if error.contains("fixpoint") {
         "wave-limit"
     } else if error.contains("interrupt")
         || error.contains("execution limit")
@@ -124,6 +130,18 @@ fn error_kind(error: &str) -> &'static str {
     } else {
         "engine-error"
     }
+}
+
+fn configure(session: &mut CodeRuleSqlExecutor, limits: &Value, request: &Value, oracle: bool) -> Result<()> {
+    let mut limits = limits.as_object().ok_or("limits must be an object")?.clone();
+    if limits.remove("max_submissions").is_some() {
+        return Err("max_submissions belongs to the session request, not to a replay step".into());
+    }
+    if !oracle && let Some(cap) = request.get("max_submissions") {
+        limits.insert("max_submissions".into(), cap.clone());
+    }
+    session.set_limits(Value::Object(limits).to_string())?;
+    Ok(())
 }
 
 fn fresh(
@@ -139,13 +157,14 @@ fn fresh(
     if oracle {
         session.use_cold_oracle();
     }
+    configure(&mut session, &json!({}), request, oracle)?;
     if let Some(snapshot) = documents {
         session.bind_snapshot(snapshot.to_string())?;
     }
     for fact in facts.values() {
         session.bind_relation(fact.to_string())?;
     }
-    session.set_limits(limits.to_string())?;
+    configure(&mut session, limits, request, oracle)?;
     let result = session
         .run(
             request["program"].as_str().ok_or("missing program")?.into(),
@@ -190,7 +209,7 @@ fn main() -> Result<()> {
         return Err("the independent oracle must run without SQL capture".into());
     }
     let bytes = std::fs::read(&args[2])?;
-    let digest = format!("{:x}", Sha256::digest(&bytes));
+    let digest = sha256_hex(&bytes);
     let request: Value = serde_json::from_slice(&bytes)?;
     // Every requested action must have replay coverage. Unknown fields cannot
     // silently turn a partial execution into a complete parity claim.
@@ -202,6 +221,7 @@ fn main() -> Result<()> {
         "steps",
         "changes",
         "max_waves",
+        "max_submissions",
         "queries",
     ];
     for name in request
@@ -305,7 +325,7 @@ fn main() -> Result<()> {
                 Err(e) => (Err(e.to_string()), None),
             }
         } else {
-            session.set_limits(limits.to_string())?;
+            configure(&mut session, &limits, &request, false)?;
             let result = if let Some(snapshot) = step.get("snapshot") {
                 session.apply_snapshot(snapshot.to_string(), limit)
             } else if let Some(files) = step.get("file_changes") {
@@ -332,7 +352,7 @@ fn main() -> Result<()> {
             }
             Err(error) => (error_kind(&error), Some(error), None),
         };
-        session.set_limits("{}".into())?;
+        configure(&mut session, &json!({}), &request, oracle)?;
         checks.push(json!({"id":id,"outcome":outcome,"error":message,"report":if oracle {None}else{report},"state":snapshot(&session,&execution,&facts,&digest,id)?,"documents":session.verification_files()}));
     }
     let mut queries = vec![];
@@ -356,9 +376,10 @@ fn main() -> Result<()> {
         )?;
         queries.push(serde_json::from_str::<Value>(&result)?);
     }
+    let explain: Value = serde_json::from_str(&session.explain()?)?;
     println!(
         "{}",
-        json!({"format":"rerail.sql-session-observation/v1","requestSha256":digest,"mode":args[0],"runnerSha256":format!("{:x}",Sha256::digest(std::fs::read(std::env::current_exe()?)?)),"inputs":session.verification_inputs(),"relations":execution["program"]["relations"],"outputs":execution["outputs"],"checks":checks,"queries":queries})
+        json!({"format":"rerail.sql-session-observation/v1","requestSha256":digest,"mode":args[0],"sql_budget":explain["sql_budget"],"runnerSha256":sha256_hex(std::fs::read(std::env::current_exe()?)?),"inputs":session.verification_inputs(),"relations":execution["program"]["relations"],"outputs":execution["outputs"],"checks":checks,"queries":queries})
     );
     Ok(())
 }

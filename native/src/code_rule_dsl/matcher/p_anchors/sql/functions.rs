@@ -249,7 +249,7 @@ pub(super) fn install(db: &Connection) -> Result<super::reader::Readers> {
 }
 
 /// The terms a pattern matches when it is `\A` and `\z` around a finite set of exact literals.
-pub(super) fn literal_set(pattern: &str) -> Option<Vec<String>> {
+pub fn literal_set(pattern: &str) -> Option<Vec<String>> {
     use regex_syntax::hir::{Hir, HirKind, Look, literal::Extractor};
     let hir = regex_syntax::parse(pattern).ok()?;
     let HirKind::Concat(parts) = hir.kind() else {

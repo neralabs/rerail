@@ -13,7 +13,7 @@ pub(in crate::code_rule_dsl) struct Cut {
 const SQL_BYTES: usize = 1024 * 1024;
 
 #[path = "pipeline/readers.rs"]
-mod readers;
+pub mod readers;
 use readers::occurrences;
 
 fn closure(
