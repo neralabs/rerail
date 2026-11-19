@@ -698,7 +698,21 @@ impl GitWorkspace {
     }
 }
 
-/// Whether `gix::discover` failed because no repository encloses the path, rather than because one could not be read.
+/// Discover from the caller's directory. A hook may export a worktree, index or ref namespace
+/// for a different repository. Gix applies these overrides even after successful path discovery.
+pub fn discover_repository(root: &Path) -> gix::Result<gix::Repository> {
+    let mut options = gix::sec::trust::Mapping::<gix::open::Options>::default();
+    if ["GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_SHALLOW_FILE"].iter()
+        .any(|name| std::env::var_os(name).is_some())
+    {
+        for level in [&mut options.full, &mut options.reduced] {
+            level.permissions.env.git_prefix = gix::sec::Permission::Deny;
+        }
+    }
+    gix::ThreadSafeRepository::discover_opts(root, Default::default(), options).map(Into::into)
+}
+
+/// Whether discovery failed because no repository encloses the path, rather than because one could not be read.
 pub fn is_no_repository(error: &gix::Error) -> bool {
     matches!(
         error.downcast_any_ref::<gix::discover::upwards::Error>(),
@@ -724,7 +738,7 @@ pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
 /// directory it shares with its other work trees (refs, config, info), each canonical: found without reading its
 /// status (decision 0105: a run watches them before it reads the status).
 pub fn locations(root: &Path) -> Option<(PathBuf, PathBuf, PathBuf)> {
-    let repository = gix::discover(root).ok()?;
+    let repository = discover_repository(root).ok()?;
     let canonical = |p: &Path| p.canonicalize().ok();
     Some((canonical(repository.workdir()?)?, canonical(repository.git_dir())?, canonical(repository.common_dir())?))
 }
@@ -734,7 +748,7 @@ pub fn discover_under(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
 }
 
 fn discover_in(root: &Path, scoped: bool) -> Result<GitWorkspace, DiscoveryError> {
-    let repository = gix::discover(root).map_err(|error| {
+    let repository = discover_repository(root).map_err(|error| {
         let message = format!("cannot discover Git repository: {error}");
         if is_no_repository(&error) {
             DiscoveryError::NoRepository(message)

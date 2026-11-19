@@ -212,8 +212,20 @@ const DEFAULT_TIMEOUT_MS = 10_000;
  * 2.42.2, 2.43.4 and 2.44.1; an older Git ignores it and may fetch from the remote.
  */
 function gitEnvironment(): NodeJS.ProcessEnv {
-  return { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
+  const env: NodeJS.ProcessEnv = { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
+  // Every caller supplies the directory to read. Git hooks can export their own checkout, index,
+  // object database and refs. Those settings would override -C, including in batch reads.
+  for (const key of Object.keys(env)) {
+    if (repositoryEnvironment.has(process.platform === "win32" ? key.toUpperCase() : key)) delete env[key];
+  }
+  return env;
 }
+
+const repositoryEnvironment = new Set([
+  "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_PREFIX", "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_SHALLOW_FILE",
+  "GIT_GRAFT_FILE", "GIT_REPLACE_REF_BASE",
+]);
 
 /**
  * `git -C <cwd> <args>` with fsmonitor and hooks disabled, in {@link gitEnvironment} (no optional locks, no lazy fetch
@@ -258,7 +270,7 @@ async function gitStdout(cwd: string, args: readonly string[], maxBuffer = 1024 
   execFile(
     executable,
     [...SAFE_CONFIG, "-C", cwd, ...args],
-    { encoding: "utf8", maxBuffer, timeout: DEFAULT_TIMEOUT_MS, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
+    { encoding: "utf8", maxBuffer, timeout: DEFAULT_TIMEOUT_MS, env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" } },
     (error, stdout) => settle(error === null ? stdout : undefined),
   );
   return await promise;

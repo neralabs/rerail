@@ -28,7 +28,7 @@ impl GitIgnore {
         let root = root
             .canonicalize()
             .map_err(|error| format!("cannot resolve {}: {error}", root.display()))?;
-        let repository = match gix::discover(&root) {
+        let repository = match crate::git_workspace::discover_repository(&root) {
             Ok(repository) => repository,
             Err(error) if crate::git_workspace::is_no_repository(&error) => return Ok(None),
             Err(error) => return Err(format!("cannot discover Git repository: {error}")),

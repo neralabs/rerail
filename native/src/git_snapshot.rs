@@ -636,7 +636,7 @@ impl Snapshot {
     }
 
     fn open(source: &Path, revision: &str, scope: Option<String>, invocation: &Path) -> Result<Self, String> {
-        let repo = physical_objects(gix::discover(source).map_err(|e| e.to_string())?);
+        let repo = physical_objects(super::discover_repository(source).map_err(|e| e.to_string())?);
         let work = repo.workdir().map(std::fs::canonicalize).transpose().map_err(|e| e.to_string())?;
         let relative = |path: &Path| -> Result<PathBuf, String> {
             let Some(work) = &work else { return Ok(PathBuf::new()); };

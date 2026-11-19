@@ -91,6 +91,42 @@ describe("headless rerail scan", () => {
     }]);
   });
 
+  it("keeps the selected checkout, source and rule repository together inside a foreign Git environment", async () => {
+    const root = checkout(), other = checkout(), home = root + "-home";
+    git(other, "switch", "-qc", "other");
+    git(other, "rm", "-q", "a.py");
+    git(other, "commit", "-qm", "other HEAD");
+    const head = git(root, "rev-parse", "HEAD");
+    expect(git(other, "rev-parse", "HEAD")).not.toBe(head);
+    writeFileSync(join(root, ".git", "rerail-repository-id"), "selected-checkout\n");
+    const policy = join(root, "which.rr");
+    writeFileSync(policy, `#include "git.rr"
+.policy "which" revision 1
+.violation Seen(at: span, oid: symbol) "{oid}"
+git_revision_request(r, "HEAD") :- git_root_repo(r).
+git_revision_request(r, ":a.py") :- git_root_repo(r).
+Seen(@place("git",1), oid) :- git_revision(r, "HEAD", oid), git_revision(r, ":a.py", _).
+`);
+    vi.stubEnv("GIT_DIR", join(other, ".git"));
+    try {
+      for (const worktree of [false, true]) {
+        if (worktree) {
+          vi.stubEnv("GIT_WORK_TREE", other);
+          vi.stubEnv("GIT_INDEX_FILE", join(other, ".git", "index"));
+        }
+        let output = "";
+        const stdout = { write: (value: string) => { output += value; return true; } };
+        expect(await runAuditCommand("scan", ["--repo", root, "--revision", "HEAD", "--analysis-scope", "explicit",
+          "--rr", policy, "--json", "--no-send"], { home, stdout })).toBe(0);
+        expect(JSON.parse(output)).toMatchObject({
+          status: "completed", checkout: { path: root, ref: "refs/heads/main", head }, source: { commit: head },
+          repository: { key: "clone:selected-checkout" }, violations: [{ message: head }],
+        });
+      }
+      expect(existsSync(join(other, ".git", "rerail-repository-id"))).toBe(false);
+    } finally { vi.unstubAllEnvs(); }
+  }, 30_000);
+
   it.skipIf(process.platform === "win32")("preserves spaces in the checkout and in paths from a list", async () => {
     const sibling = checkout();
     const root = sibling + " ";

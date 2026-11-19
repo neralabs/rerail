@@ -37,6 +37,23 @@ async function partialClone(): Promise<{ clone: string; oid: string }> {
 }
 
 describe("readGitBlobs", () => {
+  it("reads HEAD and index blobs from the requested checkout when a caller supplies another Git directory and index", async () => {
+    const root = await repository({ "a.py": "selected" });
+    const other = await repository({ "a.py": "other" });
+    const head = git(root, "rev-parse", "HEAD").trim(), blob = git(root, "rev-parse", ":a.py").trim();
+    vi.stubEnv("GIT_DIR", join(other, ".git"));
+    vi.stubEnv("GIT_COMMON_DIR", join(other, ".git"));
+    vi.stubEnv("GIT_WORK_TREE", other);
+    vi.stubEnv("GIT_INDEX_FILE", join(other, ".git", "index"));
+    vi.stubEnv("GIT_OBJECT_DIRECTORY", join(other, ".git", "objects"));
+    try {
+      expect(await gitHead(root)).toBe(head);
+      expect((await readGitBlobIds(root, [":a.py"])).get(":a.py")).toBe(blob);
+      expect((await readGitBlobs(root, [":a.py"], { maxBlobBytes: 20 })).get(":a.py")?.toString()).toBe("selected");
+      expect(process.env.GIT_DIR).toBe(join(other, ".git"));
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it("keeps every blob it was asked for when another in the batch is larger than the limit", async () => {
     const root = await repository({ "big.py": "x".repeat(5_000), "small.py": "print(1)\n" });
     await writeFile(join(root, "small.py"), "print(2)\n");

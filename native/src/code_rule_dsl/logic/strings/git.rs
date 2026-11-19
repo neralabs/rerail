@@ -80,7 +80,7 @@ fn open(root: &Path) -> Option<Repo> {
     if let Some((repo, prefix, tree, commit)) = crate::git_workspace::snapshot::repository(root) {
         return Some(Repo { repo, prefix, snapshot: Some((tree, commit)) });
     }
-    let repo = physical_objects(gix::discover(root).ok()?);
+    let repo = physical_objects(crate::git_workspace::discover_repository(root).ok()?);
     if repo.workdir().is_none() {
         return Some(Repo { repo, prefix: PathBuf::new(), snapshot: None });
     }

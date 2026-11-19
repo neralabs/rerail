@@ -108,6 +108,9 @@ rerail scope delete review
 ```
 
 Rerail discovers Git from the current folder or `--repo` and reads the selected tree directly.
+The selected directory determines the checkout, index, and object database for Git reads.
+A parent process can have `GIT_DIR` or `GIT_WORK_TREE` set for another checkout.
+The scan uses its selected directory for checkout metadata and rule queries in this case too.
 The scan uses today's rules, packs, and approvals. Use `--rules-ref` to select rules independently.
 The scan loads each selected `.rr` policy and its includes before it evaluates any policy.
 A retry uses these programs and their original digests.
