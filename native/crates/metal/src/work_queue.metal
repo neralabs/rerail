@@ -3,8 +3,9 @@ using namespace metal;
 
 // A device work queue (list step 17, decision 0027): a persistent dispatch's workers take items
 // from it and push the items their work creates; idle workers take those up. Prepended to a
-// kernel's source (`rerail_metal::work_queue::SOURCE`): the engine's lattice and label passes,
-// and the preprocessor's expansion (decision 0448).
+// kernel's source (`rerail_metal::work_queue::SOURCE`): the preprocessor's expansion (decision
+// 0448) alone. The engine's kernels use UKL's `<ukl/workqueue.h>`, the same protocol (0440 step
+// C); this copy goes when the expansion is written in UKL.
 //
 // The queue is linear, its capacity the most items the work can push (a lattice cell is pushed
 // at most once per change of an input), so no slot is used twice and no taker can see a stale

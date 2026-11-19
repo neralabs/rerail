@@ -312,7 +312,7 @@ fn type_arguments_are_the_lean_parsers() {
     ]);
 }
 
-/// Runs that count their depths (Q271), as `type_args_end` and `lambda_params_end` do: type
+/// Runs that count their depths (Q287), as `type_args_end` and `lambda_params_end` do: type
 /// arguments to the `>` that closes the `<`, a function type inside them, a lambda's parameters
 /// with brackets and an inner `->`; `a<b>c>(d)`, whose first `>` closes, is no call.
 #[test]

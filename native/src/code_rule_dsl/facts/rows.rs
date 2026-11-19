@@ -683,6 +683,16 @@ impl Part {
         Ok(part)
     }
 
+    /// Stores row `id`'s value `v` in column `c`.
+    ///
+    /// # Safety
+    /// Row `id` is within the rows reserved, and no reader reads it until it is claimed (`written`).
+    #[inline]
+    pub unsafe fn put(&self, id: u32, c: usize, v: i64) {
+        // SAFETY: as the caller says.
+        unsafe { self.rel().rows.put(id, c, v) }
+    }
+
     /// How long its rows live: the blocks it is in.
     pub fn life(&self) -> Life {
         self.life
@@ -732,6 +742,17 @@ impl Part {
         Part::new(Life::Run, k, rows)
     }
 
+    /// A relation of `k` columns living `life` long, room for `rows` rows alone in a block, and past them for
+    /// `indexes` indexes of its own over its rows, one for each key its readers probe it by (`Rows::with_index_room`'s
+    /// part; an axis's, by `n` and by `a`, decision 0353 step 5): a key past them copies the relation
+    /// (`DevIndex::moved`). The room is the block's address space: its pages are taken as an index is written.
+    pub fn with_index_room(life: Life, k: usize, rows: usize, indexes: usize) -> Part {
+        let cap = rows.next_power_of_two().max(1);
+        let index = 4 * (cap + 1) + 4 * rows.max(1) + 64;
+        let extra = indexes.max(1) * index + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
+        Part::try_new_with(life, k, rows, extra, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
+    }
+
     /// `for_writes` alone in a block with `room` bytes past its rows' (decision 0384 step 5): a relation the device
     /// goes on writing round after round (a lattice head, its held rows updated in place, its new keys' rows past
     /// them), its rows' chunks and its key map growing in the block (`reserve`), never moved. Its block reserves
@@ -755,17 +776,6 @@ impl Part {
         assert!(self.len() + n <= self.rel().rows.reserved(), "{n} rows written past {} into room for {}", self.len(), self.rel().rows.reserved());
         // SAFETY: within the rows reserved (asserted); the caller says they are written.
         unsafe { self.rel().rows.claim_reserved(n) };
-    }
-
-    /// Row `i`'s value in column `c` written where it lies: a derived value put in its place (a device fold's text
-    /// made its symbol).
-    ///
-    /// # Safety
-    /// Row `i` is reserved, and no reader or other writer touches it meanwhile.
-    pub unsafe fn put(&self, i: u32, c: usize, v: i64) {
-        debug_assert!(!self.capped(), "a capped part is never written");
-        // SAFETY: the caller's.
-        unsafe { self.rel().rows.put(i, c, v) };
     }
 
     /// Its indexes forgotten (`Relation::forget_indexes`): its rows' values were changed in place (a lattice's fold,
@@ -1048,10 +1058,7 @@ impl Rows {
     /// probed by its own indexes, not host tables (decision 0325 step 5). The room is the block's address space: its
     /// pages are taken as an index is written.
     pub fn with_index_room(k: usize, life: Life, rows: usize, indexes: usize) -> Rows {
-        let cap = rows.next_power_of_two().max(1);
-        let index = 4 * (cap + 1) + 4 * rows.max(1) + 64;
-        let extra = indexes.max(1) * index + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
-        let part = Part::try_new_with(life, k, rows, extra, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"));
+        let part = Part::with_index_room(life, k, rows, indexes);
         Rows { k, life, hint: rows, tail: Some(part), ..Rows::default() }
     }
 
@@ -1216,16 +1223,19 @@ impl Rows {
             // the rows it is bound with (`InBlock::rows`), and its indexes are of them (`find_index`'s rows).
             ([(0, p)], None) => p,
             (segs, tail) => self.merged.get_or_init(|| {
-                let parts: Vec<&Part> = segs.iter().map(|(_, p)| p).chain(tail.iter()).collect();
-                let rows: usize = parts.iter().map(|p| p.len() as usize).sum();
-                MERGED[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                MERGED[1].fetch_add(rows * self.k * 8, std::sync::atomic::Ordering::Relaxed);
-                crate::code_rule_dsl::logic::profile::decision("rows of many parts merged into one", || format!("{} parts, {rows} rows of {} columns ({} KB copied)", parts.len(), self.k, rows * self.k * 8 >> 10));
-                let mut one = Part::new(self.life, self.k, rows);
-                for p in parts {
-                    one.copy_from(p, 0, p.len());
-                }
-                one
+                static MERGED_SITE: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation's parts merged into one for the device (Rows::in_block)");
+                MERGED_SITE.time(|| {
+                    let parts: Vec<&Part> = segs.iter().map(|(_, p)| p).chain(tail.iter()).collect();
+                    let rows: usize = parts.iter().map(|p| p.len() as usize).sum();
+                    MERGED[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    MERGED[1].fetch_add(rows * self.k * 8, std::sync::atomic::Ordering::Relaxed);
+                    crate::code_rule_dsl::logic::profile::decision("rows of many parts merged into one", || format!("{} parts, {rows} rows of {} columns ({} KB copied)", parts.len(), self.k, rows * self.k * 8 >> 10));
+                    let mut one = Part::new(self.life, self.k, rows);
+                    for p in parts {
+                        one.copy_from(p, 0, p.len());
+                    }
+                    (one, 8 * self.k * rows)
+                })
             }),
         })
     }

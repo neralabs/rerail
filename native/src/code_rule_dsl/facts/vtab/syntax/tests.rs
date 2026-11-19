@@ -1737,7 +1737,7 @@ fn an_axis_counts_its_rows_without_its_solve() {
     }
 }
 
-/// Decision 0353 step 2: the numbering's reads as MSL (`id_reads.metal`, written once in CLIF), run on the device
+/// Decision 0353 step 2: the numbering's reads as UKL (`<ukl/reads/ids.h>`, written once in CLIF), run on the device
 /// over a projection's descriptor where it lies in its block, answer what the host's reads (their Rust) answer: for
 /// every tape node, its bit and ranks, the selects, the ids' low bits of nodes and tokens and back, and the order keys
 /// and back. In all three formats, whole and narrowed, a document of more nodes than a granule's slot holds.
@@ -1771,7 +1771,9 @@ kernel void ids_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[b
     o[11] = clif_num_is(b, d, 2u, x);
 }
 "#;
-    let lib = device.new_library_with_source(&format!("#include <metal_stdlib>\nusing namespace metal;\n{}{KERNEL}", include_str!("id_reads.metal")), &CompileOptions::new()).expect("the id reads compile");
+    let source = format!("#include <metal_stdlib>\nusing namespace metal;\n#include <ukl/reads/ids.h>\n{KERNEL}");
+    let source = rerail_accel::gpu::kernels::msl(&source, "ids_probe").unwrap();
+    let lib = device.new_library_with_source(&source, &CompileOptions::new()).expect("the id reads compile");
     let pipe = device.new_compute_pipeline_state_with_function(&lib.get_function("ids_probe", None).unwrap()).unwrap();
     let queue = device.new_command_queue();
     let many: String = (0..17_000).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
@@ -1875,19 +1877,14 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
     for (uint c = 0u; c < 2u; c++) o[14u + c] = long(clif_view_line(b, d, tt, v, ll, l, c));
 }
 "#;
-    const _: () = assert!(std::mem::size_of::<TapeView>() == 29 * 4);
     let jit = rerail_clif::jit::Reads::new();
     // SAFETY: `view_node`'s signature: the entry, the tape's base, its view, the lines' base, a local, a column.
     let read = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32, u32) -> i64 { unsafe { std::mem::transmute(jit.function(name)) } };
     let (node, child, field, core_node, line) = (read("view_node"), read("view_child"), read("view_field"), read("view_core"), read("view_line"));
     let device = Device::system_default();
     let pipe = device.as_ref().map(|device| {
-        let source = format!(
-            "#include <metal_stdlib>\nusing namespace metal;\n{}{}{}{KERNEL}",
-            include_str!("../../../transducer/packed/metal_tape_reads_z.metal"),
-            include_str!("id_reads.metal"),
-            include_str!("view_reads.metal")
-        );
+        let source = format!("#include <metal_stdlib>\nusing namespace metal;\n#include <ukl/reads/view.h>\n{KERNEL}");
+        let source = rerail_accel::gpu::kernels::msl(&source, "view_probe").unwrap();
         let lib = device.new_library_with_source(&source, &CompileOptions::new()).expect("the view reads compile");
         (device.new_compute_pipeline_state_with_function(&lib.get_function("view_probe", None).unwrap()).unwrap(), device.new_command_queue())
     });

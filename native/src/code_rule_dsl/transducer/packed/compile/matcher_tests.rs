@@ -362,8 +362,10 @@ fn seeded_and_copied_labels_find_ws_roots() {
         assert_eq!(program.roots(&tape).unwrap(), expected, "{clause}");
         let census = program.census();
         let patterns = census.iter().filter(|(kind, _)| *kind == "pattern").count();
-        // A neighbor's set is a formula a pass's anchor reads (0425), not a targets label of its own (0424's seed).
-        assert!(!census.iter().any(|(kind, _)| *kind == "targets"), "{clause}: no seed label");
+        // A neighbor's set is a formula a pass's anchor reads (0425), not a targets label of its own (0424's seed). A
+        // reach (`inside … stopBy end`) is a targets label: the nodes below a match, which `in-function` copies.
+        let targets = census.iter().filter(|(kind, _)| *kind == "targets").count();
+        assert_eq!(targets, usize::from(clause == "in-function"), "{clause}: no seed label");
         let within = program.labels.defs.iter().any(|label| matches!(label, Label::Roots(_, super::compile_matcher::Domain::Within(..))));
         match clause {
             "named" => assert_eq!(patterns, 0, "named: `$X` is a node test, not a pattern pass"),
@@ -391,6 +393,46 @@ fn seeded_and_copied_labels_match_on_metal() {
         let (metal, _) = program.roots_metal(&tapes).unwrap();
         assert_eq!(metal, cpu, "{clause}");
     }
+}
+
+/// Facts on Metal read their findings where the host wrote them, in the batch's fact block (Q251): rows with a slot
+/// (a node and its target), rows with none, and a node set as bits (`nthChild`). Each finds W's roots, and the
+/// device's are the CPU's.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn facts_on_metal_are_read_in_their_block() {
+    use super::compile_matcher::Backend;
+    let clause = |id: &str, rule: &str| {
+        format!(
+            r#"{{"id": "{id}", "forbid": {{"ast": {{"language": "python", "rule": {rule}}}}}, "violation": {{"anchor": "witness.span", "code": "X", "message": "x"}}}}"#
+        )
+    };
+    let clauses = [
+        clause("slot", r#"{"kind": "identifier", "binds": {"form": "assignment", "value": {"kind": "integer"}}}"#),
+        clause("no-slot", r#"{"kind": "identifier", "binds": {"form": "assignment"}}"#),
+        clause("bits", r#"{"kind": "identifier", "nthChild": 1}"#),
+    ];
+    let policy = format!(
+        r#"{{"format": "rerail.policy/v1", "id": "facts", "revision": 1, "mode": "steer", "description": "Q251's facts.",
+            "scope": {{"include": ["**/*"], "exclude": []}}, "clauses": [{}]}}"#,
+        clauses.join(", ")
+    );
+    let compiled = CodeRuleDslRuntime::compile(policy, "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let tapes = vec![
+        python_tape("x = 1\ny = \"s\"\nz = 2\nprint(x, y)\n"),
+        python_tape("def f(a, b):\n    c = 3\n    d = a\n    return c\n"),
+    ];
+    let mut seen = BTreeSet::new();
+    for (clause, grammar) in python_matchers(&compiled) {
+        let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
+        assert!(program.labels.defs.iter().any(|label| matches!(label, Label::Fact(..))), "{clause}: a fact label");
+        let cpu = program.roots_batch(Backend::Cpu, &tapes).unwrap();
+        assert!(cpu.iter().all(|roots| !roots.is_empty()), "{clause}: roots on every tape");
+        let (metal, _) = program.roots_metal(&tapes).unwrap();
+        assert_eq!(metal, cpu, "{clause}");
+        seen.insert(clause.to_owned());
+    }
+    assert_eq!(seen.len(), 3);
 }
 
 /// S2's parity gate (O23, F1): every lowered clause's passes run on Metal over the whole batch of
@@ -1537,7 +1579,7 @@ fn micro_walks_are_the_interpreters_label_outputs() {
 
 /// Whether a walk's first move, reached from its start through saves, forks and jumps only, is `after` with a tail
 /// that marks the start alone (tests, a `load` and its tests, a capture, the emit): the shape the device answers once
-/// for a parent's children (`metal_label_passes.metal`'s `sibling_pass`, work queue Q182).
+/// for a parent's children (`label_passes.uglykl`'s `sibling_pass`, work queue Q182).
 fn sibling_shape(words: &[u32]) -> bool {
     let (mut pc, mut seen) = (0, 0);
     while pc < words.len() && seen <= words.len() {
@@ -1718,7 +1760,7 @@ fn ast_pattern_captures_are_pinned() {
     }
     let got: String = h.finalize().iter().take(16).map(|b| format!("{b:02x}")).collect();
     assert!(matched > 500, "{matched} matches");
-    assert_eq!(got, "ea71d4437b2c2ba12fc3b08d3c7f982c", "the captures moved ({matched} matches)");
+    assert_eq!(got, "2f1444d906c39b0c99a4e20b5b9a56cb", "the captures moved ({matched} matches)");
 }
 
 /// The verdict alone (`matches_ast_pattern`, into bindings reused from node to node) is
@@ -1841,5 +1883,37 @@ fn presence_bitmap_census() {
             "presence: {role:<6} {} pairs: ruled out by presence {} ({:.1}%), empty anchor {} ({:.1}%); by nodes: {:.1}% and {:.1}%",
             c[0], c[1], pct(c[1], c[0]), c[2], pct(c[2], c[0]), pct(c[4], c[3]), pct(c[5], c[3])
         );
+    }
+}
+
+/// The end of children meets a named candidate (RER-131): where the tokens the tape leaves out after
+/// the last matched child begin with the goal's, the rest trails, in the packed matcher as in
+/// ast-grep-core's. `case $V:` matches `case 1: f(); break;` (ast-grep 0.51.0 does); `f($A)` still
+/// refuses `f(a, b)`, whose gap after `a` is `,`.
+/// PR #508's 65ff68df5 (t47).
+#[test]
+fn ast_pattern_end_of_children_meets_implied_tokens() {
+    use ast_grep_core::matcher::MatcherExt as _;
+    let source = Arc::new("switch (x) { case 1: f(); break; }\nf(a);\nf(a, b);\n".to_owned());
+    let grammar = Grammar::new(GrammarDialect::TypeScript).expect("TypeScript grammar");
+    let image = TapeImage::parse(&grammar, &source, &|| false).expect("parser completed").expect("tape image");
+    let tape = TapeDoc::restore(source, grammar, &image, &|| false).expect("restored tape");
+    let root = Root::doc(tape.clone());
+    for (pattern, want) in [
+        (Pattern::contextual("switch ($X) { case $V: }", "switch_case", GrammarDialect::TypeScript).unwrap(), ["case 1: f(); break;"]),
+        (Pattern::try_new("f($A)", GrammarDialect::TypeScript).unwrap(), ["f(a)"]),
+    ] {
+        let program = Program::compile_ast_grep_pattern(&pattern).unwrap();
+        let (mut packed, mut core) = (Vec::new(), Vec::new());
+        for node in root.root().dfs() {
+            if program.execute_ast_pattern(&tape, node.node_id() as u32).unwrap().is_some() {
+                packed.push(node.text().into_owned());
+            }
+            if pattern.match_node(node.clone()).is_some() {
+                core.push(node.text().into_owned());
+            }
+        }
+        assert_eq!(packed, want, "packed");
+        assert_eq!(core, want, "ast-grep-core");
     }
 }

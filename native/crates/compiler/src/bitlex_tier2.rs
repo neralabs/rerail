@@ -1229,7 +1229,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                     }
                     Some((ks, ws))
                 };
-                // The run's depths (Q271): each side its counter's.
+                // The run's depths (Q287): each side its counter's.
                 let mut nest_rows = Vec::new();
                 for (k, n) in nests.iter().enumerate() {
                     for (open, side) in [(true, &n.open), (false, &n.close)] {

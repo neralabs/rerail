@@ -2008,8 +2008,8 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
     }
     let mut db = Connection::open(path)?;
     db.busy_timeout(std::time::Duration::from_secs(10))?;
-    // The roots, by volume: (key, root, its directory's real path, cursor).
-    let mut roots: Vec<(String, String, PathBuf, Option<PathBuf>, Option<u64>)> = {
+    // The roots, by volume: (key, root, its directory's real path, cursor, the cursor's text).
+    let mut roots: Vec<(String, String, PathBuf, Option<PathBuf>, Option<u64>, Option<String>)> = {
         let mut st = db.prepare("SELECT key, value FROM observer_meta WHERE key LIKE 'journal:%'")?;
         st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, rusqlite::types::Value>(1)?)))?
             .flatten()
@@ -2017,28 +2017,32 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
                 let mut parts = key.splitn(3, ':');
                 let (_, volume, root) = (parts.next()?, parts.next()?.to_owned(), PathBuf::from(parts.next()?));
                 let real = plain(&root).then(|| std::fs::canonicalize(&root).ok()).flatten();
-                let cursor = text_cursor(&value).and_then(|c| c.parse().ok());
-                Some((key, volume, root, real, cursor))
+                let text = text_cursor(&value);
+                let cursor = text.as_deref().and_then(|c| c.parse().ok());
+                Some((key, volume, root, real, cursor, text))
             })
             .collect()
     };
     // Newest cursor first: of two names of one directory, the first is kept.
     roots.sort_by(|a, b| b.4.cmp(&a.4));
-    let mut kept: Vec<(String, PathBuf, PathBuf)> = Vec::new();
+    // Two names with the same cursor were asked by one run (a root reached through a symlink, its files read by
+    // their canonical paths too, `Observer::canonical`): both are in use, each with its own answers, and both are
+    // kept. Dropped, the next run asked the other name again and wrote its first cursor back (Q243).
+    let mut kept: Vec<(String, PathBuf, PathBuf, Option<String>)> = Vec::new();
     let mut dropped: Vec<String> = Vec::new();
-    for (key, volume, root, real, _) in &roots {
+    for (key, volume, root, real, _, text) in &roots {
         match real {
-            Some(real) if !kept.iter().any(|(v, _, r)| v == volume && r == real) => kept.push((volume.clone(), root.clone(), real.clone())),
+            Some(real) if !kept.iter().any(|(v, _, r, t)| v == volume && r == real && (t.is_none() || t != text)) => kept.push((volume.clone(), root.clone(), real.clone(), text.clone())),
             _ => dropped.push(key.clone()),
         }
     }
     // A root under another kept is asked as part of it (`watch_above` takes the widest).
-    let under: Vec<usize> = (0..kept.len()).filter(|&i| kept.iter().enumerate().any(|(j, (v, _, r))| j != i && *v == kept[i].0 && kept[i].2.starts_with(r) && kept[i].2 != *r)).collect();
+    let under: Vec<usize> = (0..kept.len()).filter(|&i| kept.iter().enumerate().any(|(j, (v, _, r, _))| j != i && *v == kept[i].0 && kept[i].2.starts_with(r) && kept[i].2 != *r)).collect();
     for &i in under.iter().rev() {
-        let (volume, root, _) = kept.remove(i);
+        let (volume, root, _, _) = kept.remove(i);
         dropped.push(cursor_key_text(&volume, &root));
     }
-    let held = |path: &Path| plain(path) && kept.iter().any(|(_, root, _)| path.starts_with(root));
+    let held = |path: &Path| plain(path) && kept.iter().any(|(_, root, _, _)| path.starts_with(root));
     // What a run recorded lately is kept though no root holds it: a root a run first asks has no cursor stored until
     // that run's end (`settle_roots`), and collection may run before it, in the same process or another.
     let young = |recorded_ns: i64| now_ns().saturating_sub(recorded_ns) < UNHELD_GRACE_NS;
@@ -2286,9 +2290,10 @@ mod tests {
         o.list_max = 0;
         o.journal_settle = std::time::Duration::from_secs(5);
         // Trust at once: these runs follow each other within the settle window, as no test can wait it out; and the
-        // journal's answer whatever it costs.
+        // journal's answer whatever it costs: waited for as long as its settle budget, since a cookie on a loaded
+        // host comes later than a run's 2 s (718434dca).
         o.settle_ns = 0;
-        o.wait_least_ns = 2_000_000_000;
+        o.wait_least_ns = o.journal_settle.as_nanos() as u64;
         o
     }
 

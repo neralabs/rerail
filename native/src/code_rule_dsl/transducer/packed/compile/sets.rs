@@ -76,7 +76,7 @@ pub struct DeviceFormula {
     pub texts: Vec<String>,
 }
 
-/// `DeviceFormula`'s operations (`label_formula` in `metal_label_passes.metal`). A test pushes a set; `AND` and
+/// `DeviceFormula`'s operations (`label_formula` in `label_passes.uglykl`). A test pushes a set; `AND` and
 /// `OR` combine the top `arg` sets; an axis step replaces the top set (a chain the top two: through, then to); `arg`
 /// of a step is whether its nodes are named.
 pub mod device_ops {

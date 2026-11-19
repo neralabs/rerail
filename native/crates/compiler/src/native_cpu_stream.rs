@@ -1775,7 +1775,7 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
         }
     }
     if let Some(r) = rest.get(run) {
-        // The run's depths (Q271): a block parameter each, from 0.
+        // The run's depths (Q287): a block parameter each, from 0.
         let counters = r.nests.iter().map(|n| usize::from(n.counter) + 1).max().unwrap_or(0);
         let scan = f.create_block();
         for _ in 0..=counters {

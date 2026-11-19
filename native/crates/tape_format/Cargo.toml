@@ -23,3 +23,5 @@ sha2 = { version = "0.10", features = ["asm"] }
 [dev-dependencies]
 # The reads in Cranelift's IR, JIT-compiled and run against this crate's readers (decision 0310).
 rerail-clif = { path = "../clif" }
+# The reads as UKL, run on the process's GPU (Metal, CUDA) against this crate's readers (decision 0440 step 6).
+rerail-gpu = { path = "../../../gpu" }

@@ -1,6 +1,6 @@
 # 0425. A pass starts within its demand: one formula read in its anchor, not a seed label
 
-Status: accepted (2026-11-18). Numbered 0406 until the hub merge. Supersedes 0424 item 5's seed labels. Follows Q250 (numbered Q187 where it was
+Status: accepted (2026-11-18). Numbered 0406 until the hub merge. Supersedes 0424 item 5's seed labels. Follows Q271 (numbered Q187 where it was
 written; the hub's Q187 is another item).
 
 ## Intro
@@ -17,7 +17,7 @@ mechanism:
 | 0396 | a recursive group's passes, within anchors reading the group's labels as every node | the anchor formula again, `labels_unknown` |
 | 0424 item 5 | inside an `all` that tests a neighbor, at a seed label of X's children or parents | a `Targets` label pass of its own, read as `Domain::Label` |
 
-The user asked for Q187 (now Q250) and added: "we also seem to be re-solving this problem over and over, so please
+The user asked for Q187 (now Q271) and added: "we also seem to be re-solving this problem over and over, so please
 survey the sibling worktrees and work on solving it more generically" (2026-11-18).
 
 The survey: no sibling worktree has a decision on starts, anchors, domains, demand or seeds that this branch lacks.
@@ -91,7 +91,7 @@ and not used for the verdict.
 
 ## What this tells us
 
-- Q250's premise is gone. 0424 saw `label_micro_8` + `label_micro` at 66.7 ms and their dispatches rising with the
+- Q271's premise is gone. 0424 saw `label_micro_8` + `label_micro` at 66.7 ms and their dispatches rising with the
   seeds. On this line (with 0365's anchors from the hub) the micro walks are 8–13 ms, and `label_micro`, the loop
   tier, no longer runs. Launching a pass over only the groups its domain has members in would save at most those
   8–13 ms. It is not built.
@@ -100,11 +100,11 @@ and not used for the verdict.
   fewer targets labels in the pack's wave (1,886 → 291, `wave.rir`).
 - The label passes' GPU time is now `label_formula`, 90–130 ms: the anchors' and formula passes' evaluation, about
   5 µs per (file, formula) pair. Each pair is word-wide set operations over the file's nodes. The kernel's time
-  follows how many formulas there are and how large they are, not dispatches. Q250 now names that.
+  follows how many formulas there are and how large they are, not dispatches. Q271 now names that.
 
 ## Open
 
-- Q250: `label_formula` evaluates each (file, formula) pair apart. Formulas of one level share their tests (the
+- Q271: `label_formula` evaluates each (file, formula) pair apart. Formulas of one level share their tests (the
   same kinds, the same neighbor sets), and each pair evaluates them again.
 - Q251: a level's fact constraints (the fact rows' `(node, label)` pairs, made on the host) were uploaded once per
   pattern kernel group, the same buffer each time. 32 MB (8.1 M words) went up on 15 fixtures. They are uploaded

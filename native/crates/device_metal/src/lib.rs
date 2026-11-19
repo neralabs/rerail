@@ -490,8 +490,6 @@ pub mod code_rule_dsl {
             #[cfg(target_os="macos")]
             pub mod metal_join;
             #[cfg(target_os="macos")]
-            pub mod metal_parallel;
-            #[cfg(target_os="macos")]
             pub mod metal_program_backend;
             #[cfg(target_os="macos")]
             pub mod metal_rows;

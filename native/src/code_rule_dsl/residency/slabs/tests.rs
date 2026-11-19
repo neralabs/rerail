@@ -191,7 +191,8 @@ fn a_batch_over_several_slabs_is_gathered_into_one_block() {
 }
 
 /// The device reads a resident tape as its document reads it (decision 0293), in every format the run may store:
-/// format 15's columns, format 16's arrays, and a 16z tape laid out as format 16 where it is placed, with no parent
+/// format 15's columns, format 16's arrays, and a 16z tape as stored, read through its table's cache of decoded blocks
+/// (decision 0353 step 4b) with no failures, with no parent
 /// column, child list or index of nodes by code beside them. Every node's code (kind, field, flags, classes), its
 /// parent, next and next named siblings, children, subtree and span. One document of more than a side-list part
 /// (1,024 nodes), with gaps and lengths past a byte, reads the side lists and the parts' starts.
@@ -200,7 +201,7 @@ fn the_device_reads_every_format_as_the_document_does() {
     use crate::code_rule_dsl::tape::formats::Format;
     use crate::code_rule_dsl::transducer::packed::metal_backend::{MappedBuffer, pipeline_named};
     use metal::MTLSize;
-    let tape = format!("{}{}{}", msl(), include_str!("../../transducer/packed/metal_tape_reads.metal"), include_str!("../../transducer/packed/metal_tape.metal"));
+    let tape = format!("{}{}{}", msl(), "#include <ukl/reads/tape_z.h>\n", include_str!("../../transducer/packed/device_tape.h"));
     const FIELDS: usize = 14;
     const KERNEL: &str = r#"
 inline uint tape_global(DocView d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}
@@ -212,7 +213,7 @@ kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device con
  o[0]=tape_kind(s,d,i);o[1]=tape_field(s,d,i);o[2]=tape_flags(s,d,i);
  o[3]=tape_global(d,tape_parent(s,d,i));o[4]=tape_global(d,tape_next(s,d,i));o[5]=tape_global(d,tape_next_named(s,d,i));
  o[6]=tape_child_count(s,d,i);o[7]=d.node_base+i+tape_size(s,d,i);o[8]=tape_start(s,d,i);o[9]=tape_end(s,d,i);
- o[10]=tape_global(d,tape_first_child(s,d,i));o[11]=tape_code(s,d,i).classCount;
+ o[10]=tape_global(d,tape_first_child(s,d,i));o[11]=tape_code(s,d,i)->classCount;
  uint line=tape_line(s,d,tape_start(s,d,i));o[12]=line;o[13]=tape_line_start(s,d,line);
 }
 "#;
@@ -237,6 +238,7 @@ kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device con
             .collect::<Vec<_>>();
         assert!(docs.last().unwrap().transducer_len() > 2 * 1024, "a document of several parts");
         // Stored as the run stores them, and admitted from the store: each read from its frames.
+        crate::install_store_functions();
         let path = temp();
         let store = ContentStore::open(&path).unwrap();
         let mut digests = Vec::new();
@@ -246,22 +248,17 @@ kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device con
             store.put_tape(source_id, i64::from(language::tape_tag(*lang).unwrap()), 1, i64::from(format.store_version()), &bytes).unwrap();
             digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
         }
+        // A 16z tape is stored as it is (its blocks are compressed; a load decodes none), the others in zstd frames.
+        let codecs: Vec<i64> = rusqlite::Connection::open(&path).unwrap().prepare("SELECT codec_id FROM tape_objects").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert!(!codecs.is_empty() && codecs.iter().all(|&c| c == i64::from(format != Format::F16Z)), "{format:?} stored with codecs {codecs:?}");
         let table = DocTable::one_block(admit(&store, &digests, &grammar).unwrap()).unwrap();
-        if format == Format::F16Z {
-            // The device decoded each 16z tape's pieces (decision 0336 §8): byte for byte the host's decode, LZ4
-            // pieces among them.
-            let mut lz4 = 0;
-            for (doc, resident_doc) in docs.iter().zip(&table.documents) {
-                let z = resident::Tape16Z::from_bytes(doc.resident_parts(None).unwrap().0).unwrap();
-                lz4 += z.piece_jobs().filter(|job| job.lz4).count();
-                let mut host = vec![0u8; z.decoded_len()];
-                z.decode_into(&mut host).unwrap();
-                assert_eq!(resident_doc.image(), host.as_slice(), "the device's 16z decode");
-            }
-            assert!(lz4 > 0, "LZ4 pieces decoded on the device");
-        }
-        let expected_format = if format == Format::F15 { 15 } else { 16 };
+        let expected_format = match format {
+            Format::F15 => 15,
+            Format::F16 => 16,
+            _ => rerail_clif::view::F16Z_FORMAT,
+        };
         assert!(table.views.iter().all(|view| view.format == expected_format), "{format:?} placed as format {expected_format}");
+        assert_eq!(table.cache.is_some(), format == Format::F16Z, "a cache for 16z tapes alone");
         if format != Format::F15 {
             // One code table a language in the block (decision 0336 §7): documents of a language read the same one.
             let mut tables = std::collections::HashMap::new();
@@ -286,12 +283,18 @@ kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device con
         encoder.set_buffer(1, Some(&node_doc.buffer), 0);
         encoder.set_buffer(2, Some(&out.buffer), 0);
         encoder.set_buffer(3, Some(table.block.as_ref().expect("one block bound").buffer()), 0);
+        if let Some(cache) = &table.cache {
+            encoder.use_resource(cache, metal::MTLResourceUsage::Read | metal::MTLResourceUsage::Write);
+        }
         let count = table.nodes as u32;
         encoder.set_bytes(7, 4, std::ptr::from_ref(&count).cast());
         encoder.dispatch_threads(MTLSize::new(table.nodes as u64, 1, 1), MTLSize::new(64, 1, 1));
         encoder.end_encoding();
         command.commit();
         command.wait_until_completed();
+        if let Some(cache) = &table.cache {
+            assert_eq!(rerail_metal::slabs::zcache_failed(cache), 0, "every 16z block found room");
+        }
         // SAFETY: the kernel wrote `nodes * FIELDS` u32s, and the command finished.
         let read = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u32>(), table.nodes * FIELDS) };
         for (doc, (tape, view)) in docs.iter().zip(&table.views).enumerate() {

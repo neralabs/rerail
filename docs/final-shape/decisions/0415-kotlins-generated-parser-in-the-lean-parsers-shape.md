@@ -114,7 +114,7 @@ parse 296M instructions, 64.5M cycles, 19.2 ms (118 cycles a node).
 
 ## Stages 3 and 4: where the operations are (2026-11-18)
 
-After Q271 to Q274 (step 36, the corpus 431 / 60 / 0), tier 1 is one forward pass of 2,460
+After Q287, Q272 to Q274 (step 36, the corpus 431 / 60 / 0), tier 1 is one forward pass of 2,460
 operations a block. `kotlin_parser`'s `tier1_cones` counts them by the statement that made each
 (`Compiled::origin`) and by the outputs that need them:
 

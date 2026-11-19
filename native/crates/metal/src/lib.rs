@@ -12,6 +12,8 @@
 /// files read in place from source slabs.
 pub mod block_program;
 pub mod buffer_observation;
+/// The engine's commands on the device layer (decision 0440 step C).
+pub mod lane;
 pub mod launch;
 pub mod launch_budget;
 /// The preprocessor's evaluator over tapes (decision 0436): plain MSL passes.
@@ -20,8 +22,8 @@ pub mod pp_blocks;
 pub mod pp_eval;
 /// Macro expansion on the device (decision 0448).
 pub mod pp_expand;
-/// The device work queue (decision 0027): one definition, prepended to each kernel source that
-/// takes and pushes items (`work_queue.metal`).
+/// The device work queue (decision 0027) in MSL, for the preprocessor's expansion (0448) until it
+/// is written in UKL; the engine's kernels include `<ukl/workqueue.h>` (0440 step C).
 pub mod work_queue {
     pub const SOURCE: &str = include_str!("work_queue.metal");
 }

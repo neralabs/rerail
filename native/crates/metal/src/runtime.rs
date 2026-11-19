@@ -97,9 +97,10 @@ static PRIVATE_RESERVATION_KEY: u8 = 0;
 const METAL_UPLOAD_CHUNK_BYTES: usize = 8 * 1024 * 1024;
 
 pub fn available_buffer_bytes(device: &Device) -> usize {
-    let reserved = pool().load(Ordering::Acquire);
-    let driver = usize::try_from(driver_bytes(device)).unwrap_or(usize::MAX);
-    metal_buffer_limit().saturating_sub(reserved.max(driver))
+    // The ledger and the pool's leases, never the driver's count (decision 0435 §2).
+    let _ = device;
+    let (live, idle) = rerail_accel::gpu::shared::held_bytes();
+    metal_buffer_limit().saturating_sub(pool().load(Ordering::Acquire) + live + idle)
 }
 
 pub fn buffer_usage() -> (usize, usize) {
@@ -439,11 +440,9 @@ impl MappedBuffer {
         }
         // A lock over no data: a panic elsewhere while it was held leaves nothing to distrust.
         let _allocation = METAL_ALLOCATION_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if mapping.length as u64 > device.max_buffer_length()
-            || driver_bytes(device)
-                .saturating_add(mapping.length as u64)
-                > metal_buffer_limit() as u64
-        {
+        // A wrap of host memory: not the device's memory, so no budget is weighed here (decision 0435 §2). Only the
+        // device's longest buffer bounds it.
+        if mapping.length as u64 > device.max_buffer_length() {
             if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
                 eprintln!(
                     "TEMPO_METAL_DRIVER_REJECT bytes={} reserved={} driver={} maximumBuffer={}",
@@ -453,7 +452,7 @@ impl MappedBuffer {
                     device.max_buffer_length()
                 );
             }
-            rerail_prof::count("capacity.metal_pool_driver", 1);
+            rerail_prof::count("capacity.metal_longest_buffer", 1);
             if rerail_prof::on() {
                 // What the driver held then, and the pool's own part of it (the most seen).
                 let mut stages = rerail_prof::stages();
@@ -505,11 +504,10 @@ impl MappedBuffer {
     ) -> Result<Self, Error> {
         // A lock over no data: a panic elsewhere while it was held leaves nothing to distrust.
         let _allocation = METAL_ALLOCATION_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if length as u64 > device.max_buffer_length()
-            || driver_bytes(device)
-                .saturating_add(length as u64)
-                > metal_buffer_limit() as u64
-        {
+        // The budget is weighed where the reservation was taken (`BufferReservation::acquire`: the ledger and the pool's
+        // leases). The driver's count is not weighed: it counts every no-copy wrap of host memory again, and refused
+        // small buffers while those wraps held its count (decision 0435 §2). Only the device's longest buffer bounds it.
+        if length as u64 > device.max_buffer_length() {
             if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
                 eprintln!(
                     "TEMPO_METAL_DRIVER_REJECT bytes={length} reserved={} driver={} maximumBuffer={} caller={}",
@@ -519,7 +517,7 @@ impl MappedBuffer {
                     std::panic::Location::caller()
                 );
             }
-            rerail_prof::count("capacity.metal_pool_driver", 1);
+            rerail_prof::count("capacity.metal_longest_buffer", 1);
             if rerail_prof::on() {
                 // What the driver held then, and the pool's own part of it (the most seen).
                 let mut stages = rerail_prof::stages();

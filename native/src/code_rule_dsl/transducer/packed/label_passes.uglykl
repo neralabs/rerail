@@ -1,0 +1,1295 @@
+// A lowered matcher's passes between its programs (06-first-slice S2, O23), one dependency level
+// at a time. The labels live in the prefix of the batch's supertype buffer (`has_supertype` reads
+// them as derived classes): element 0 is {label count, words per label}, then each label's bitset
+// over the batch's global nodes. `scratch` has a row per pass of the widest level (`Op::row`, a
+// pass's index in its level); `label_settle` moves a level's scratch into its labels.
+//
+// UKL (decision 0440 step C; was metal_label_passes.metal): compiled after the tape view's pieces
+// (`metal_label_passes.rs`'s `LABEL_VIEWS`), on every backend.
+#include <ukl/backend.h>
+#include <ukl/workqueue.h>
+typedef struct Result { uint32_t taskOrdinal,localOrdinal,start,label,captureStart,captureCount,propertyStart,propertyCount,dynamicStart,dynamicCount; } Result;
+typedef struct FinalCapture { uint32_t label,node,start,end,textStart,textLength,propertyStart,propertyCount,retained; } FinalCapture;
+typedef struct Arena { uint32_t start,capacity,cursor; } Arena;
+typedef struct Status { uint32_t error,resultCount,captureCount,programCounter,finalCaptureCount,propertyCount,outputByteCount,reserved; } Status;
+typedef struct Shape { uint32_t nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps,profile,queue,budget,lanes,frames,wide; } Shape;
+UKL_REFLECT_STRUCT(Shape, nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps,profile,queue,budget,lanes,frames,wide)
+// flags: [0] a task failed (bit 0 an interpreter task, bit 1 a micro walk), [2] the group settled (skip), [3] a group did not settle within its
+// encoded rounds, [4 + round % 2] the round changed a label.
+// How a program's results land: mode 0 roots, 1 captured nodes (into scratch row `slot`), 2 and
+// 3 counts by root and by captured node (into count slot `slot`).
+typedef struct Route { uint32_t mode,slot; } Route;
+// How a target settles: kind 0 from scratch, 1 the complement of `of`, 2 count slot `slot`'s
+// tallies within minimum..=maximum.
+typedef struct Op { uint32_t kind,target,of,slot,minimum,maximum,row; } Op;
+
+UKL_INLINE void mark(UKL_GLOBAL uint32_t* bits,uint32_t node){ukl_atomic_or(&bits[node/32u],1u<<(node%32u));}
+
+// A node's bit set, or its tally counted, only for a node of the batch (decision 0427): a node from a walk or a
+// capture indexes a row of `nodeCount`, and one past it would write past the row, past the buffer for the last. Any
+// other is not written: flag 256 (with 2, the passes again deep, then on the interpreter), which the host counts.
+#define NODE_OK(n) ((n)<shape.nodeCount)
+#define NODE_PAST {ukl_atomic_or(&flags[0],258u);}
+#define MARK(b,n) {uint32_t mark_n=(n);if(NODE_OK(mark_n))mark(b,mark_n);else NODE_PAST}
+#define TALLY(t,n) {uint32_t tally_n=(n);if(NODE_OK(tally_n))ukl_atomic_add(&(t)[tally_n],1u);else NODE_PAST}
+
+DEFINE_KERNEL2(label_passes, label_sink,
+               ROBUFFER, Arena,        arenas,   "[arenas]",
+               ROBUFFER, Result,       results,  "[results]",
+               ROBUFFER, FinalCapture, captures, "[captures]",
+               ROBUFFER, Status,       statuses, "[shape.taskCount]",
+               ROBUFFER, Route,        routes,   "[tasks]",
+               RWBUFFER, uint32_t,     scratch,  "[rows * shape.words]",
+               RWBUFFER, uint32_t,     counts,   "[slots * shape.nodeCount]",
+               RWBUFFER, uint32_t,     flags,    "[6]",
+               ARGS,     Shape,        shape,    ,
+               GID0,     uint32_t,     tid,      )
+{
+  if(ukl_atomic_load(&flags[2])!=0u)return;
+  // Bit 1: a task failed. Decision 0334: bit 4, a task ran over its budget below the ceiling (status 8); bit 8, a
+  // task stopped at the ceiling (status 4). Its evaluation says which (`Runner::unfinished`). Status 9: a mark or a
+  // tally of a node past the batch's, not written (decision 0427): `NODE_PAST`'s flags.
+  if(tid<shape.taskCount&&statuses[tid].error!=0u){uint32_t error=statuses[tid].error;ukl_atomic_or(&flags[0],error==8u?4u:error==4u?8u:error==9u?258u:1u);}
+  Arena arena=arenas[shape.resultArena];
+  if(tid>=arena.cursor)return;
+  Result result=results[arena.start+tid];
+  Route route=routes[result.taskOrdinal];
+  UKL_GLOBAL uint32_t* bits=scratch+route.slot*shape.words;
+  UKL_GLOBAL uint32_t* tally=counts+route.slot*shape.nodeCount;
+  if(route.mode==0u){MARK(bits,result.start);return;}
+  if(route.mode==2u){TALLY(tally,result.start);return;}
+  for(uint32_t at=0u;at<result.captureCount;at++){uint32_t node=captures[result.captureStart+at].node;if(route.mode==1u)MARK(bits,node)else TALLY(tally,node)}
+}
+
+// Each of the level's targets takes its new bits: a complement's or a count's computed here (per
+// word), the others' from scratch. A change sets flags[1]; scratch is cleared.
+DEFINE_KERNEL2(label_passes, label_settle,
+               RWBUFFER, uint32_t, labels,  "[labels * shape.words]",
+               RWBUFFER, uint32_t, scratch, "[rows * shape.words]",
+               RWBUFFER, uint32_t, flags,   "[6]",
+               ROBUFFER, Op,       ops,     "[shape.targetCount]",
+               RWBUFFER, uint32_t, counts,  "[slots * shape.nodeCount]",
+               ARGS,     Shape,    shape,   ,
+               GID0,     uint32_t, tid,     )
+{
+  if(ukl_atomic_load(&flags[2])!=0u)return;
+  // A round's last settle decides for the round before it, whose changes are all in: one that
+  // changed nothing reached the fixpoint, so the rest of the group is skipped. Deciding a round
+  // late costs only a round that changes nothing.
+  if(tid==0u&&shape.recursive!=0u&&shape.lastLevel!=0u&&shape.round>0u){
+    uint32_t previous=4u+(shape.round-1u)%2u;
+    if(ukl_atomic_load(&flags[previous])==0u){ukl_atomic_store(&flags[2],1u);ukl_atomic_or((UKL_GLOBAL uint32_t*)&labels[-2],0x80000000u);}
+    ukl_atomic_store(&flags[previous],0u);
+  }
+  if(tid>=shape.targetCount*shape.words)return;
+  Op op=ops[tid/shape.words];uint32_t index=tid%shape.words;
+  uint32_t at=op.target*shape.words+index,row=op.row*shape.words+index;
+  uint32_t word=scratch[row];scratch[row]=0u;
+  if(op.kind==1u){
+    word=~labels[op.of*shape.words+index];
+    uint32_t last=shape.nodeCount%32u;
+    if(index==shape.words-1u&&last!=0u)word&=(1u<<last)-1u;
+  }else if(op.kind==2u){
+    word=0u;
+    for(uint32_t bit=0u;bit<32u;bit++){uint32_t node=index*32u+bit;if(node>=shape.nodeCount)break;uint32_t count=counts[op.slot*shape.nodeCount+node];counts[op.slot*shape.nodeCount+node]=0u;if(count>=op.minimum&&count<=op.maximum)word|=1u<<bit;}
+  }
+  if(labels[at]!=word){labels[at]=word;if(shape.recursive!=0u)ukl_atomic_or(&flags[4u+shape.round%2u],1u);}
+}
+
+// A recursive group's end, one thread: still changing in its last round, without having been
+// skipped, means it did not settle (flags[3]). Clears the skip and the changed flags.
+DEFINE_KERNEL2(label_passes, label_round,
+               RWBUFFER, uint32_t, flags, "[6]",
+               RWBUFFER, uint32_t, head,  "[2]",
+               ARGS,     Shape,    shape, ,
+               GID0,     uint32_t, tid,   )
+{
+  if(tid!=0u)return;
+  if(flags[2]==0u&&flags[4u+(shape.round-1u)%2u]!=0u)flags[3]=1u;
+  flags[2]=0u;flags[4]=0u;flags[5]=0u;head[0]&=0x7fffffffu;
+}
+
+// A micro walk (O28, `compile/micro.rs`, the same walk): one thread per (pass, start), the pass's
+// program run from its start with a stack of frames in the thread, each a forked path or a move's
+// next candidate (children by index, descendants by range, following siblings by link). A roots
+// pass marks its start at the first emit; a targets pass marks every node an emitting path
+// captured. A walk that outgrows its frames, captures or steps, or reads an unsaved cursor, sets
+// bit 1 of flags[0], and the clause runs again with its passes on the interpreter.
+// A walk's document (decision 0032): its tape read in place from the chunk, by `device_tape.h`'s
+// accessors. Nodes are the batch's numbering throughout (labels, texts, records); a step reads
+// its node at `node - doc.node_base`. `head` is the label prefix: {label count, words}, then the
+// labels' bits.
+typedef struct Tree { UKL_GLOBAL const uint8_t* s; DocView d; } Tree;
+UKL_INLINE DocView doc_of(UKL_GLOBAL const DocView* docs,uint32_t count,uint32_t node){uint32_t first=0u,last=count;while(last-first>1u){uint32_t middle=(first+last)/2u;if(docs[middle].node_base<=node)first=middle;else last=middle;}return docs[first];}
+UKL_INLINE uint32_t tree_local(Tree t,uint32_t node){return node-t.d.node_base;}
+UKL_INLINE uint32_t tree_global(Tree t,uint32_t here){return here==TAPE_NONE?TAPE_NONE:here+t.d.node_base;}
+UKL_INLINE uint32_t tree_flags(Tree t,uint32_t node){return tape_flags(t.s,t.d,tree_local(t,node));}
+UKL_INLINE uint32_t tree_next(Tree t,uint32_t node,bool named){uint32_t here=tree_local(t,node);return tree_global(t,named?tape_next_named(t.s,t.d,here):tape_next(t.s,t.d,here));}
+UKL_INLINE uint32_t tree_first(Tree t,uint32_t node){return tree_global(t,tape_first_child(t.s,t.d,tree_local(t,node)));}
+UKL_INLINE uint32_t tree_end(Tree t,uint32_t node){return node+tape_size(t.s,t.d,tree_local(t,node));}
+UKL_INLINE uint32_t tree_parent(Tree t,uint32_t node){return tree_global(t,tape_parent(t.s,t.d,tree_local(t,node)));}
+// The node after `node`'s subtree (named: the next named one) while it is before `end`, a parent's end.
+UKL_INLINE uint32_t tree_next_in(Tree t,uint32_t node,uint32_t end,bool named){uint32_t here=tree_local(t,node),last=end-t.d.node_base;return tree_global(t,named?tape_next_named_in(t.s,t.d,here,last):tape_next_in(t.s,t.d,here,last));}
+// A pass: its words, its scratch label, whether it marks captures, and its roots: its rule at
+// `itemStart` in `items` (`root_mask`) and its threads, a group of 64 nodes each.
+typedef struct MicroPass { uint32_t wordStart,wordCount,target,targets,itemStart,itemCount,textStart,threadStart; } MicroPass;
+// A path's state, and for a move's frame (resume 1 children, 2 descendants, 3 following
+// siblings; 0 a forked path) where its candidates continue: `next` the next candidate (a child or
+// sibling by link, a descendant by number up to `end`). `end` is the parent of the frame's candidates for
+// resume 1 and 3 (their bound is its subtree's end), and for the live path and a forked one the parent of `node`
+// where the walk's step knew it (`MICRO_NONE` where not: after `desc`, or a `parent` step): a step to the next
+// sibling or the parent then reads no parent search (decision 0293 §9's device parent is a search; work queue Q53).
+// Eight cursors, as micro.rs's CURSORS.
+typedef struct MicroFrame { uint32_t pc,node,resume,named,next,end,cursors[8],capture0,capture1,captured; } MicroFrame;
+// A walk's tier sets its pool and frames on the host (metal_label_passes.rs's MICRO_POOL, MICRO_DEEP_POOL, the
+// shape's `frames`): its threads stride by the grid.
+#define MICRO_NONE 0xffffffffu
+
+// A walk's spill (decision 0125): past `shape.budget` steps a walk gives its lowest move frame
+// with candidates left to the dispatch's work queue (`metal_work_queue.metal`), a descendant
+// range of at least `2 * MICRO_CHUNK` nodes halved, so a long walk is many threads' work, not
+// one's critical path. An item is `MICRO_ITEM` words of `items` (the frame, its walk's start,
+// pass and document), written and read by atomics (coherent between threadgroups). A queue
+// out of room leaves the frame with its walk. `capacity` 0: no spill (a fused group's walks).
+typedef struct MicroQ { UKL_GLOBAL uint32_t* slots; UKL_GLOBAL uint32_t* control; UKL_GLOBAL uint32_t* items; uint32_t capacity; uint32_t pass; uint32_t doc; UKL_GLOBAL const uint32_t* roots; } MicroQ;
+// (`roots`: the batch's pass roots, `label_passes::Roots`, where a walk may test another node for its pass's start: a
+// sibling pass's leader, `scan_marks`. Null: none tested.)
+// Only the first `MICRO_STANDBY` threads of a dispatch wait for spilled frames (`MICRO_POLLS`
+// polls between items); the rest exit once the queue is empty. Every thread polling while a long
+// walk ran was 10^8 contended loads a dispatch. A thread that spilled still takes its own frames.
+#define MICRO_ITEM 20u
+#define MICRO_CHUNK 64u
+#define MICRO_POLLS 4096u
+#define MICRO_STANDBY 512u
+
+UKL_INLINE bool micro_class(Tree t,UKL_GLOBAL const uint32_t* head,uint32_t node,uint32_t kind){
+  if(kind>=16384u){uint32_t words=head[1];UKL_GLOBAL const uint32_t* bits=head+2;return ((bits[(kind-16384u)*words+node/32u]>>(node%32u))&1u)!=0u;}
+  return tape_has_class(t.s,t.d,tree_local(t,node),kind);
+}
+
+// A test of the node alone, as a walk's word reads it (kind, field, flags, class, text).
+UKL_INLINE bool micro_test(Tree t,UKL_GLOBAL const uint32_t* head,UKL_GLOBAL const uint32_t* texts,uint32_t textStart,uint32_t labelWords,uint32_t word,uint32_t node){
+  uint32_t op=word&255u,mode=(word>>8u)&255u,arg=word>>16u;
+  switch(op){
+    case 1u:return tape_kind(t.s,t.d,tree_local(t,node))==arg;
+    case 2u:return tape_field(t.s,t.d,tree_local(t,node))==arg;
+    case 3u:{uint32_t f=tree_flags(t,node);return (f&mode)==mode&&(f&arg)==0u;}
+    case 10u:return micro_class(t,head,node,arg);
+    case 4u:return ((texts[(textStart+arg)*labelWords+node/32u]>>(node%32u))&1u)!=0u;
+    default:return false;
+  }
+}
+// What a move frame's candidates read beyond the tape: a closure's tests (`compile/micro.rs`'s CLOSURE), the pass's
+// words from its first.
+typedef struct WalkRead { UKL_GLOBAL const uint32_t* words; UKL_GLOBAL const uint32_t* head; UKL_GLOBAL const uint32_t* texts; uint32_t textStart,labelWords; } WalkRead;
+
+// Whether a closure's scan enters `node`: its tests, the words from 3 past the closure's word (`named` above bit 0)
+// to its operand.
+UKL_INLINE bool closure_tests(Tree t,uint32_t named,WalkRead r,uint32_t node){
+  uint32_t at=named>>1u,last=r.words[at]>>16u;
+  for(uint32_t pc=at+3u;pc<last;pc++)if(!micro_test(t,r.head,r.texts,r.textStart,r.labelWords,r.words[pc],node))return false;
+  return true;
+}
+// Whether a closure's scan reaches past `node` into its subtree: a named scan skips an unnamed node's.
+UKL_INLINE bool closure_enters(Tree t,uint32_t named,WalkRead r,uint32_t node){
+  if((named&1u)!=0u&&(tree_flags(t,node)&1u)==0u)return false;
+  return closure_tests(t,named,r,node);
+}
+// A move frame's next candidate (`MicroFrame`, `RootFrame`). A closure's (resume 4) is the next node of the start's
+// subtree in preorder up to `end`: a node passing the closure's tests is entered (`next` its first child), another's
+// subtree skipped, and a named closure's unnamed node neither given nor entered. `named` holds the closure's word
+// above bit 0 (its tests are the words from 3 past it to its operand).
+#define WALK_NEXT(NAME,FRAME) UKL_INLINE uint32_t NAME(Tree t,UKL_PRIVATE FRAME* frame,WalkRead r){ \
+  if(frame->resume==1u){uint32_t end=tree_end(t,frame->end);while(frame->next!=MICRO_NONE){uint32_t child=frame->next;frame->next=tree_next_in(t,child,end,false);if(frame->named==0u||(tree_flags(t,child)&1u))return child;}return MICRO_NONE;} \
+  if(frame->resume==2u){while(frame->next<frame->end){uint32_t node=frame->next;frame->next++;if(frame->named==0u||(tree_flags(t,node)&1u))return node;}return MICRO_NONE;} \
+  if(frame->resume==3u){uint32_t node=frame->next;if(node==MICRO_NONE)return MICRO_NONE;frame->next=tree_next_in(t,node,tree_end(t,frame->end),frame->named!=0u);return node;} \
+  if(frame->resume==5u){while(frame->next<frame->end){uint32_t node=frame->next;frame->next=tree_end(t,node);if((frame->named&1u)==0u||(tree_flags(t,node)&1u))return node;}return MICRO_NONE;} \
+  if(frame->resume==4u){ \
+    bool named=(frame->named&1u)!=0u; \
+    while(frame->next<frame->end){ \
+      uint32_t node=frame->next; \
+      if(named&&(tree_flags(t,node)&1u)==0u){frame->next=tree_end(t,node);continue;} \
+      frame->next=closure_tests(t,frame->named,r,node)?node+1u:tree_end(t,node); \
+      return node; \
+    } \
+    return MICRO_NONE; \
+  } \
+  return MICRO_NONE; \
+}
+WALK_NEXT(walk_next_micro,MicroFrame)
+
+
+// A walk's frames live in thread memory, which the driver reserves per thread in flight: a
+// walk takes the smallest stack its static depth fits (`Micro::depth`; 06 S7: 128 frames for
+// every walk held ~850 MB a run).
+UKL_INLINE void micro_from(uint32_t FRAMES,Tree t,UKL_GLOBAL const uint32_t* head,MicroPass pass,UKL_GLOBAL const uint32_t* words,uint32_t start,UKL_GLOBAL uint32_t* scratch,UKL_GLOBAL uint32_t* flags,UKL_GLOBAL const uint32_t* texts,UKL_GLOBAL uint32_t* counts,Shape shape,UKL_GLOBAL MicroFrame* stack,UKL_PRIVATE uint32_t* steps,MicroQ q,uint32_t depth0);
+
+// A thread's walks: its items' roots, then the queue's spilled frames (`MicroQ`), each walked from its frame, until
+// none is left or the worker has polled its limit for nothing (`wq_idle`: `MICRO_POLLS` a standby thread's, else 1).
+// One loop calls the walk (`micro_from`) once for both: the compiler inlines the walk at every call, and two calls
+// held two copies of it and of every tape read under it (work queue Q181).
+//
+// An item is a group of 64 nodes of the batch, each `shape.lanes` lanes' (`TIER_LANES`); a pass's items are
+// contiguous from its threadStart. A lane finds the roots among its share of the group's nodes (`root_mask_in`, read
+// from the code bytes), and the SIMD group walks all its lanes' roots, one a lane a round (`simd_roots`). Every lane
+// takes every item step and every round, a lane past the items too: the rounds are the SIMD group's, and what decides
+// them (`item - lane`, `r.total`) is the same on every lane, so the shuffles see the whole group. The queue's turns
+// are each lane's own.
+UKL_INLINE void micro_run(uint32_t FRAMES,UKL_GLOBAL const DocView* docs,UKL_GLOBAL const uint8_t* chunk,UKL_GLOBAL const uint32_t* head,UKL_GLOBAL const MicroPass* passes,UKL_GLOBAL const uint32_t* words,UKL_GLOBAL const uint32_t* items,UKL_GLOBAL uint32_t* scratch,UKL_GLOBAL uint32_t* flags,UKL_GLOBAL const uint32_t* texts,UKL_GLOBAL uint32_t* counts,Shape shape,UKL_GLOBAL MicroFrame* stack,uint32_t tid,uint32_t grid,uint32_t lane,UKL_GLOBAL uint32_t* wstats,MicroQ q __UKL_PARAMS){
+  uint32_t lanes=ukl_max(shape.lanes,1u),limit=shape.itemCount*lanes;
+  uint32_t item=tid,round=0u;
+  uint64_t mask=0ul;uint32_t pass=0u,file=0u,group=0u;
+  SimdRoots r=simd_roots(0ul,lane __UKL_ARGS);
+  bool walking=true,fresh=true;
+  UklWorkQueue wq={q.slots,q.control,q.capacity};
+  uint32_t polls=0u,idle=tid<MICRO_STANDBY?MICRO_POLLS:1u,turn=0u;
+  while(true){
+    uint32_t p=0u,f=0u,start=0u,depth0=0u;
+    if(walking){
+      if(fresh){
+        if(item-lane>=limit){walking=false;continue;}
+        uint32_t at=item/lanes,part=item%lanes;
+        mask=0ul;pass=0u;file=0u;group=0u;
+        if(at<shape.itemCount&&ukl_atomic_load(&flags[2])==0u){
+          uint32_t low=0u,high=shape.targetCount;while(high-low>1u){uint32_t middle=(low+high)/2u;if(passes[middle].threadStart<=at)low=middle;else high=middle;}
+          pass=low;group=at-passes[low].threadStart;file=roots_file(items,group);group-=roots_first_group(items,file);
+          mask=root_mask_in(chunk,docs[file],items,passes[low].itemStart,file,group,part*(ROOT_GROUP/lanes),(part+1u)*(ROOT_GROUP/lanes));
+        }
+        r=simd_roots(mask,lane __UKL_ARGS);round=0u;fresh=false;
+      }
+      if(round>=r.total){item+=grid;fresh=true;continue;}
+      uint32_t i=round+lane;uint16_t owner=(uint16_t)(simd_root_lane(r,i __UKL_ARGS));
+      uint32_t lo=ukl_sg_shuffle((uint32_t)(mask),owner __UKL_ARGS),hi=ukl_sg_shuffle((uint32_t)(mask>>32u),owner __UKL_ARGS),from=ukl_sg_shuffle(r.prefix,owner __UKL_ARGS);
+      p=ukl_sg_shuffle(pass,owner __UKL_ARGS);f=ukl_sg_shuffle(file,owner __UKL_ARGS);uint32_t g=ukl_sg_shuffle(group,owner __UKL_ARGS);
+      round+=32u;
+      if(i>=r.total)continue;
+      start=docs[f].node_base+g*ROOT_GROUP+mask_nth(lo,hi,i-from);depth0=0u;
+    }else{
+      if(q.capacity==0u||turn>=UKL_WQ_TURNS)return;
+      turn++;
+      if(ukl_atomic_load(&flags[2])!=0u)return;
+      uint32_t at;
+      if(!ukl_wq_take(wq,&at)){if(ukl_wq_idle(wq,&polls,idle))return;continue;}
+      ukl_fence_device();
+      UKL_GLOBAL uint32_t* spilled=q.items+at*MICRO_ITEM;
+      uint32_t w[MICRO_ITEM];
+      for(uint32_t k=0u;k<MICRO_ITEM;k++)w[k]=ukl_atomic_load(&spilled[k]);
+      MicroFrame frame={w[0],w[1],w[2],w[3],w[4],w[5],{w[6],w[7],w[8],w[9],w[10],w[11],w[12],w[13]},w[14],w[15],w[16]};
+      stack[0]=frame;
+      p=w[18];f=w[19];start=w[17];depth0=1u;
+    }
+    Tree t={chunk,docs[f]};
+    q.pass=p;q.doc=f;
+    uint32_t steps=0u;
+    micro_from(FRAMES,t,head,passes[p],words,start,scratch,flags,texts,counts,shape,stack,&steps,q,depth0);
+    // Profiling (`RERAIL_GPU_WALK_STEPS`): the pass's walks, their steps, its longest walk's.
+    if(shape.profile!=0u){UKL_GLOBAL uint32_t* s=wstats+3u*(shape.profile-1u+p);ukl_atomic_add(&s[0],1u);ukl_atomic_add(&s[1],steps);ukl_atomic_max(&s[2],steps);}
+    if(!walking){ukl_wq_done(wq);polls=0u;}
+  }
+}
+
+// A pass's walk from `start`.
+// Gives the lowest move frame of `stack` with candidates left to the queue (its range's upper
+// half where a descendant range is long; the whole frame where frames above it are the walk's).
+// Where a range frame's scan (2 descendants, 4 a closure's) is halved, or MICRO_NONE: a range at its middle node; a
+// closure's at a node the scan reaches, from the middle node past the subtree of its highest ancestor below the
+// scan's start that the scan skips (a climb, as `parent`). The scan reaches the cut from either side, and the halves
+// are scans of their own, so a long scan spreads over the dispatch's threads in halvings (work queue Q56). Cut where
+// the next candidate's subtree ends, every spill handed on the rest of the scan, which ran one piece after another:
+// a 136,902-node scan took one dispatch's whole time.
+UKL_INLINE uint32_t scan_cut(Tree t,MicroFrame f,WalkRead r){
+  if(f.end-f.next<2u*MICRO_CHUNK)return MICRO_NONE;
+  uint32_t mid=f.next+(f.end-f.next)/2u,cut=mid;
+  if(f.resume==4u)for(uint32_t a=tree_parent(t,mid);a!=TAPE_NONE&&a!=f.node&&a>=f.next;a=tree_parent(t,a))if(!closure_enters(t,f.named,r,a))cut=tree_end(t,a);
+  // A sibling chain's: the sibling whose subtree holds the middle node, a climb to the chain's parent.
+  if(f.resume==5u){
+    uint32_t parent=tree_parent(t,f.next);
+    for(uint32_t up=tree_parent(t,cut);up!=parent;up=tree_parent(t,cut)){if(up==TAPE_NONE)return MICRO_NONE;cut=up;}
+  }
+  return cut>f.next&&cut<f.end?cut:MICRO_NONE;
+}
+// A frame given to the dispatch's work queue, as its walk's start, pass and document; false where the queue is full.
+UKL_INLINE bool spill_give(MicroQ q,MicroFrame give,uint32_t start){
+  uint32_t at=ukl_atomic_add(&q.control[4],1u);
+  if(at>=q.capacity)return false;
+  UKL_GLOBAL uint32_t* item=q.items+at*MICRO_ITEM;
+  uint32_t w[MICRO_ITEM]={give.pc,give.node,give.resume,give.named,give.next,give.end,give.cursors[0],give.cursors[1],give.cursors[2],give.cursors[3],give.cursors[4],give.cursors[5],give.cursors[6],give.cursors[7],give.capture0,give.capture1,give.captured,start,q.pass,q.doc};
+  for(uint32_t k=0u;k<MICRO_ITEM;k++)ukl_atomic_store(&item[k],w[k]);
+  ukl_fence_device();
+  UklWorkQueue wq={q.slots,q.control,q.capacity};
+  return ukl_wq_push(wq,at);
+}
+
+UKL_INLINE void micro_spill(Tree t,MicroQ q,UKL_GLOBAL MicroFrame* stack,uint32_t depth,uint32_t start,WalkRead r){
+  for(uint32_t i=0u;i<depth;i++){
+    MicroFrame f=stack[i];
+    if(f.resume==0u)continue;
+    // A range frame (2 descendants, 4 a closure's scan) has candidates while `next` is before `end`. A closure's
+    // is given whole: its skips are its subtrees', so a range cut at a node is not its candidates.
+    bool range=f.resume==2u||f.resume==4u||f.resume==5u;
+    bool has=range?f.next<f.end:f.next!=MICRO_NONE;
+    if(!has)continue;
+    MicroFrame give=f;
+    uint32_t cut=range?scan_cut(t,f,r):MICRO_NONE;
+    if(cut!=MICRO_NONE){give.next=cut;f.end=cut;}
+    else if(f.resume==4u&&tree_end(t,f.next)<f.end){cut=tree_end(t,f.next);give.next=cut;f.end=cut;}
+    else if(i+1u<depth){if(range)f.next=f.end;else f.next=MICRO_NONE;}
+    else continue;
+    if(spill_give(q,give,start))stack[i]=f;
+    return;
+  }
+}
+
+// A move's candidates scanned as one pass (`scan_marks`), where the words each candidate runs to its emit read the
+// candidate alone (`ScanTail`): tests of it, then at most one `load` of a saved node and tests of that, at most one
+// capture, and the emit. Any move with a frame of candidates scans so: `child` and `after` (a chain of siblings),
+// `desc` (a range) and a closure (a range with skips). The shape is all that is matched, not a pass or a rule.
+typedef struct ScanTail { uint32_t tests,testsEnd,load,fixedEnd,capture,emit; } ScanTail;
+UKL_INLINE bool scan_test_op(uint32_t op){return op==1u||op==2u||op==3u||op==4u||op==10u;}
+UKL_INLINE bool scan_tail(WalkRead r,MicroPass pass,uint32_t pc,UKL_PRIVATE ScanTail* x){
+  uint32_t at=pc;
+  x->tests=pc;x->load=MICRO_NONE;x->capture=0u;
+  while(at<pass.wordCount&&scan_test_op(r.words[at]&255u))at++;
+  x->testsEnd=at;x->fixedEnd=at;
+  if(at<pass.wordCount&&(r.words[at]&255u)==22u){
+    x->load=(r.words[at]>>16u)&7u;at++;
+    while(at<pass.wordCount&&scan_test_op(r.words[at]&255u))at++;
+    x->fixedEnd=at;
+  }
+  if(at<pass.wordCount&&(r.words[at]&255u)==32u){x->capture=1u;at++;}
+  x->emit=at;
+  return at<pass.wordCount&&(r.words[at]&255u)==64u;
+}
+UKL_INLINE bool scan_marks_at(WalkRead r,MicroPass pass,MicroFrame f){
+  if(f.resume==0u||f.resume>5u)return false;
+  ScanTail x;
+  return scan_tail(r,pass,f.pc,&x)&&f.captured+x.capture<=2u;
+}
+// The outputs among a window's candidates (bits of node `b` + k): a named move's named ones that pass the tail's tests.
+UKL_INLINE uint64_t scan_outputs(Tree t,WalkRead r,ScanTail x,uint64_t cand,uint32_t b,bool named){
+  if(!named&&x.testsEnd==x.tests)return cand;
+  uint64_t out=cand;
+  for(uint64_t c=cand;c!=0ul;c&=c-1ul){
+    uint32_t k=ukl_ctz64(c),node=b+k;bool keep=!named||(tree_flags(t,node)&1u)!=0u;
+    for(uint32_t pc=x.tests;keep&&pc<x.testsEnd;pc++)keep=micro_test(t,r.head,r.texts,r.textStart,r.labelWords,r.words[pc],node);
+    if(!keep)out&=~(1ul<<k);
+  }
+  return out;
+}
+// Whether the tail's tests of its loaded node pass at `node`.
+UKL_INLINE bool scan_fixed(Tree t,WalkRead r,ScanTail x,uint32_t node){
+  if(x.load==MICRO_NONE)return true;
+  for(uint32_t pc=x.testsEnd+1u;pc<x.fixedEnd;pc++)if(!micro_test(t,r.head,r.texts,r.textStart,r.labelWords,r.words[pc],node))return false;
+  return true;
+}
+// A sibling scan's answer shared by the siblings (work queue Q182), where its shape makes it the same question at
+// each of them: an `after` the walk reaches straight from its start (saves, forks and gotos only: every start's walk
+// reaches it so, its saved nodes the start), whose one mark is the start (an emit of the start, or of the start loaded
+// and captured, its tests then the start's). Its answer at a sibling s is whether a sibling after s passes. The walk
+// at the parent's first child, the siblings' leader, answers for all of them in one pass over the parent's children:
+// it finds the last that passes, and marks each sibling before it that is a start of the pass (`root_admits`) and
+// passes the tests of the loaded node. Every other sibling's walk, where the leader is a start, leaves the scan to it.
+// Each of a block's n starts scanned the siblings after it: n² hops, against the n of one pass. A step is a window.
+UKL_INLINE uint32_t sibling_pass(Tree t,UKL_PRIVATE MicroFrame* f,WalkRead r,ScanTail x,MicroPass pass,UKL_GLOBAL uint32_t* row,Shape shape,uint32_t start,uint32_t label,bool pack,uint32_t route,UKL_PRIVATE uint32_t* fired,UKL_PRIVATE uint32_t* steps,MicroQ q){
+  uint32_t first=start,bound=f->end,last=MICRO_NONE;bool named=(f->named&1u)!=0u;
+  for(uint32_t hop=first;hop<bound;){
+    if(++*steps>shape.steps)return 2u;
+    uint32_t b=hop&~63u,hi=ukl_min(bound-b,64u);uint64_t cand=0ul;
+    while(hop<b+hi){cand|=1ul<<(hop-b);hop=tree_end(t,hop);}
+    uint64_t out=scan_outputs(t,r,x,cand,b,named);
+    if(out!=0ul)last=b+63u-ukl_clz64(out);
+  }
+  f->next=f->end;
+  if(last==MICRO_NONE)return 0u;
+  for(uint32_t hop=first;hop<last;){
+    if(++*steps>shape.steps)return 2u;
+    uint32_t b=hop&~63u;uint64_t marks=0ul;
+    while(hop<b+64u&&hop<last){
+      if(root_admits(t.s,t.d,q.roots,pass.itemStart,q.doc,tree_local(t,hop))&&scan_fixed(t,r,x,hop))marks|=1ul<<(hop-b);
+      hop=tree_end(t,hop);
+    }
+    uint32_t w0=(uint32_t)(marks),w1=(uint32_t)(marks>>32u);
+    if(w0!=0u)ukl_atomic_or(&row[b/32u],w0);
+    if(w1!=0u)ukl_atomic_or(&row[b/32u+1u],w1);
+  }
+  // The leader's own output, as its emit's.
+  if(route==0u&&start<last&&scan_fixed(t,r,x,start)){
+    if(!pack)return 1u;
+    uint32_t members=r.words[pass.wordCount];
+    *fired|=1u<<label;
+    if(*fired==(members>=32u?0xffffffffu:((1u<<members)-1u)))return 1u;
+  }
+  return 0u;
+}
+// The scan, a segmented pass over windows of 64 nodes (work queue Q56, Q182). A window's codes and slots lie in a
+// line or two of the tape, so its reads are taken together, none waiting on a far one:
+// - a range's candidates are its nodes; a closure's, those its skips leave (a node reached but not entered hides
+//   its subtree's bits, its size read where it fails); a chain's, its hops over each sibling's subtree, within the
+//   window's slots, the next window where a hop leaves it;
+// - a named move drops the unnamed candidates, and the tail's tests the failing ones, into a mask of outputs.
+// The marks are then a mask, a word of 32 nodes at a time; tallies add a count. Where one output makes every mark
+// (the start's, or a saved node's), the scan stops at its first. Where every output counts, a scan past 4 spill
+// budgets of nodes (2,048 at the budget of 512) is halved into the work queue (`scan_cut`) before it starts, until
+// its piece fits, so its pieces run side by side. A step is a window. 0: the scan is done; 1: the walk is (its start marked, as every emit's in the pass);
+// 2: past the step bound, or a load of a node never saved.
+UKL_INLINE uint32_t scan_marks(Tree t,UKL_PRIVATE MicroFrame* f,WalkRead r,MicroPass pass,UKL_GLOBAL uint32_t* scratch,UKL_GLOBAL uint32_t* counts,Shape shape,uint32_t start,UKL_PRIVATE uint32_t* fired,UKL_PRIVATE uint32_t* steps,MicroQ q,bool straight){
+  ScanTail x;scan_tail(r,pass,f->pc,&x);
+  bool pack=(pass.targets&4u)!=0u,named=(f->named&1u)!=0u;
+  uint32_t label=r.words[x.emit]>>16u;
+  UKL_GLOBAL uint32_t* row=scratch+(pack?r.words[pass.wordCount+1u+label]:pass.target)*shape.words;
+  UKL_GLOBAL uint32_t* tally=counts+pass.target*shape.nodeCount;
+  uint32_t route=pack?((pass.targets&3u)==0u?0u:1u):pass.targets;
+  // `child` and `after` as a chain up to the parent's end.
+  uint32_t parent=f->resume==3u?f->end:TAPE_NONE;
+  if(f->resume==1u||f->resume==3u){
+    if(f->next==MICRO_NONE||f->end==TAPE_NONE){f->next=0u;f->end=0u;return 0u;}
+    f->end=tree_end(t,f->end);f->resume=5u;f->named&=1u;
+  }
+  // `sibling_pass`: an `after` straight from the start, whose one mark is the start.
+  if(straight&&parent!=TAPE_NONE&&q.roots!=0&&(route==0u||(route==1u&&x.capture!=0u&&f->captured==0u))
+     &&(x.load==MICRO_NONE?route==0u:f->cursors[x.load]==start)){
+    uint32_t first=parent+1u;
+    if(start==first)return sibling_pass(t,f,r,x,pass,row,shape,start,label,pack,route,fired,steps,q);
+    if(root_admits(t.s,t.d,q.roots,pass.itemStart,q.doc,tree_local(t,first))){f->next=f->end;return 0u;}
+  }
+  bool closure=f->resume==4u,chain=f->resume==5u;
+  uint32_t fixed=MICRO_NONE;
+  if(x.load!=MICRO_NONE){
+    fixed=f->cursors[x.load];
+    if(fixed==MICRO_NONE)return 2u;
+    for(uint32_t pc=x.testsEnd+1u;pc<x.fixedEnd;pc++)if(!micro_test(t,r.head,r.texts,r.textStart,r.labelWords,r.words[pc],fixed)){f->next=f->end;return 0u;}
+  }
+  // An output's own mark: the candidate's (captured), else only what every output marks alike.
+  bool each=x.capture!=0u&&fixed==MICRO_NONE&&route!=0u&&route!=2u;
+  // Halved where every output counts, before the scan. Where one output does, the scan stays whole and stops at its
+  // first: its pieces would each run the scan to their first, and in the short tier a given piece waits for the
+  // dispatch's tail (0380, Q182: the longest walk 290 → 74 steps, the two kernels 68–87 → 98–117 ms).
+  uint32_t piece=ukl_max(4u*shape.budget,2u*MICRO_CHUNK),split=q.capacity==0u||!(each||route>=2u)?MICRO_NONE:f->next;
+  uint32_t total=0u;
+  while(f->next<f->end){
+    if(f->next>=split){
+      split=MICRO_NONE;
+      while(f->end-f->next>piece){
+        uint32_t cut=scan_cut(t,*f,r);
+        if(cut==MICRO_NONE)break;
+        MicroFrame give=*f;give.next=cut;
+        if(!spill_give(q,give,start))break;
+        f->end=cut;
+      }
+    }
+    if(++*steps>shape.steps)return 2u;
+    uint32_t b=f->next&~63u,lo=f->next-b,hi=ukl_min(f->end-b,64u),next=b+hi;
+    uint64_t live=(hi==64u?~0ul:((1ul<<hi)-1ul))&~((1ul<<lo)-1ul),cand=live;
+    if(chain){
+      cand=0ul;uint32_t hop=f->next;
+      while(hop<b+hi){cand|=1ul<<(hop-b);hop=tree_end(t,hop);}
+      next=hop;
+    }else if(closure){
+      uint64_t given=live,enter=live;
+      for(uint32_t k=lo;k<hi;k++){
+        uint32_t node=b+k;uint64_t bit=1ul<<k;
+        if(named&&(tree_flags(t,node)&1u)==0u){given&=~bit;enter&=~bit;}
+        else if(!closure_tests(t,f->named,r,node))enter&=~bit;
+      }
+      uint64_t reached=live,fails=live&~enter;
+      while(fails!=0ul){
+        uint32_t k=ukl_ctz64(fails);uint64_t bit=1ul<<k;
+        uint32_t e=tree_end(t,b+k);
+        if(e>=b+64u){reached&=bit|(bit-1ul);next=e;break;}
+        uint64_t under=((1ul<<(e-b))-1ul)&~(bit|(bit-1ul));
+        reached&=~under;fails&=~(under|bit);
+      }
+      cand=reached&given;
+    }
+    uint64_t out=scan_outputs(t,r,x,cand,b,named&&!closure);
+    f->next=next;
+    if(out==0ul)continue;
+    if(!each&&route!=2u&&route!=3u){
+      // One output makes every mark.
+      if(route==0u){
+        mark(row,start);
+        if(!pack)return 1u;
+        uint32_t members=r.words[pass.wordCount];
+        *fired|=1u<<label;
+        if(*fired==(members>=32u?0xffffffffu:((1u<<members)-1u)))return 1u;
+      }else{
+        if(f->captured>0u)mark(row,f->capture0);
+        if(f->captured>1u)mark(row,f->capture1);
+        if(x.capture!=0u)mark(row,fixed);
+      }
+      f->next=f->end;return 0u;
+    }
+    total+=ukl_popcount64(out);
+    if(each&&route==1u){
+      uint32_t w0=(uint32_t)(out),w1=(uint32_t)(out>>32u);
+      if(w0!=0u)ukl_atomic_or(&row[b/32u],w0);
+      if(w1!=0u)ukl_atomic_or(&row[b/32u+1u],w1);
+    }else if(each)for(uint64_t o=out;o!=0ul;o&=o-1ul)ukl_atomic_add(&tally[b+ukl_ctz64(o)],1u);
+  }
+  f->next=f->end;
+  if(total==0u)return 0u;
+  if(route==2u)ukl_atomic_add(&tally[start],total);
+  else if(route==3u){
+    if(f->captured>0u)ukl_atomic_add(&tally[f->capture0],total);
+    if(f->captured>1u)ukl_atomic_add(&tally[f->capture1],total);
+    if(x.capture!=0u&&fixed!=MICRO_NONE)ukl_atomic_add(&tally[fixed],total);
+  }else{
+    if(f->captured>0u)mark(row,f->capture0);
+    if(f->captured>1u)mark(row,f->capture1);
+  }
+  return 0u;
+}
+
+UKL_INLINE void micro_from(uint32_t FRAMES,Tree t,UKL_GLOBAL const uint32_t* head,MicroPass pass,UKL_GLOBAL const uint32_t* words,uint32_t start,UKL_GLOBAL uint32_t* scratch,UKL_GLOBAL uint32_t* flags,UKL_GLOBAL const uint32_t* texts,UKL_GLOBAL uint32_t* counts,Shape shape,UKL_GLOBAL MicroFrame* stack,UKL_PRIVATE uint32_t* steps,MicroQ q,uint32_t depth0){
+  UKL_GLOBAL uint32_t* bits=scratch+pass.target*shape.words;
+  WalkRead r={words+pass.wordStart,head,texts,pass.textStart,shape.words};
+  uint32_t depth=depth0,fired=0u,spillAt=shape.budget;
+  MicroFrame path={0u,start,0u,0u,0u,MICRO_NONE,{MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE},MICRO_NONE,MICRO_NONE,0u};
+  #define MICRO_FAIL {ukl_atomic_or(&flags[0],2u);return;}
+  // A spilled frame's walk starts at its frame (`depth0` 1), as a path that ended.
+  bool fresh=depth0==0u,received=!fresh,straight=fresh;
+  while(true){
+    bool alive=fresh;
+    fresh=true;
+    while(alive){
+      if(++*steps>shape.steps)MICRO_FAIL
+      uint32_t word=words[pass.wordStart+path.pc],op=word&255u,mode=(word>>8u)&255u,arg=word>>16u;
+      bool named=mode==1u;
+      // Whether the walk came here straight from its start: saves, forks and gotos only (`sibling_pass`).
+      bool wasStraight=straight;
+      if(op!=21u&&op!=48u&&op!=49u)straight=false;
+      switch(op){
+        case 0u:alive=false;break;
+        case 1u:alive=tape_kind(t.s,t.d,tree_local(t,path.node))==arg;break;
+        case 2u:alive=tape_field(t.s,t.d,tree_local(t,path.node))==arg;break;
+        case 3u:{uint32_t nodeFlags=tree_flags(t,path.node);alive=(nodeFlags&mode)==mode&&(nodeFlags&arg)==0u;}break;
+        case 10u:alive=micro_class(t,head,path.node,arg);break;
+        case 4u:alive=((texts[(pass.textStart+arg)*shape.words+path.node/32u]>>(path.node%32u))&1u)!=0u;break;
+        case 17u:{uint32_t next=path.end!=MICRO_NONE?tree_next_in(t,path.node,tree_end(t,path.end),named):tree_next(t,path.node,named);if(next==MICRO_NONE)alive=false;else path.node=next;}break;
+        case 18u:{uint32_t parent=path.end!=MICRO_NONE?path.end:tree_parent(t,path.node);if(parent==MICRO_NONE)alive=false;else{path.node=parent;path.end=MICRO_NONE;}}break;
+        case 16u:case 19u:case 20u:{
+          MicroFrame frame=path;frame.pc=path.pc+1u;frame.named=named?1u:0u;
+          if(op==16u){frame.resume=1u;frame.next=tree_first(t,path.node);frame.end=path.node;}
+          else if(op==19u){frame.resume=2u;frame.next=path.node+1u;frame.end=tree_end(t,path.node);}
+          else{frame.resume=3u;frame.end=path.end!=MICRO_NONE?path.end:tree_parent(t,path.node);frame.next=frame.end==TAPE_NONE?MICRO_NONE:tree_next_in(t,path.node,tree_end(t,frame.end),named);}
+          if(scan_marks_at(r,pass,frame)){uint32_t ended=scan_marks(t,&frame,r,pass,scratch,counts,shape,start,&fired,steps,q,op==20u&&wasStraight&&path.node==start);if(ended==2u)MICRO_FAIL if(ended==1u)return;alive=false;break;}
+          uint32_t candidate=walk_next_micro(t,&frame,r);
+          if(candidate==MICRO_NONE){alive=false;break;}
+          if(depth==FRAMES)MICRO_FAIL
+          stack[depth++]=frame;path.end=op==16u?path.node:op==19u?MICRO_NONE:path.end;path.node=candidate;
+        }break;
+        // A closure (`compile/micro.rs`'s CLOSURE): each node of its scan continues where the loop's exit jumps.
+        case 23u:{
+          MicroFrame frame=path;frame.pc=words[pass.wordStart+path.pc+2u]>>16u;frame.resume=4u;frame.named=(named?1u:0u)|(path.pc<<1u);
+          frame.next=path.node+1u;frame.end=tree_end(t,path.node);
+          if(scan_marks_at(r,pass,frame)){uint32_t ended=scan_marks(t,&frame,r,pass,scratch,counts,shape,start,&fired,steps,q,false);if(ended==2u)MICRO_FAIL if(ended==1u)return;alive=false;break;}
+          uint32_t candidate=walk_next_micro(t,&frame,r);
+          if(candidate==MICRO_NONE){alive=false;break;}
+          if(depth==FRAMES)MICRO_FAIL
+          stack[depth++]=frame;path.node=candidate;path.end=MICRO_NONE;path.pc=frame.pc;
+        }continue;
+        case 21u:path.cursors[arg&7u]=path.node;break;
+        case 22u:{uint32_t saved=path.cursors[arg&7u];if(saved==MICRO_NONE)MICRO_FAIL path.node=saved;path.end=MICRO_NONE;}break;
+        case 32u:if(path.captured==0u)path.capture0=path.node;else if(path.captured==1u)path.capture1=path.node;else MICRO_FAIL path.captured++;break;
+        case 48u:{if(depth==FRAMES)MICRO_FAIL MicroFrame frame=path;frame.pc=arg;frame.resume=0u;stack[depth++]=frame;}break;
+        case 49u:path.pc=arg;continue;
+        case 64u:
+          // As label_sink routes: 0 the start (once), 1 the captured nodes, 2 a tally by start,
+          // 3 a tally by captured node, one each path.
+          // A pack (bit 2, `fusion::Fused`): the emit's row, by its label, follows the emit count
+          // after the words; the walk ends once every emit marked its start.
+          if((pass.targets&4u)!=0u){
+            uint32_t members=words[pass.wordStart+pass.wordCount];
+            UKL_GLOBAL uint32_t* row=scratch+words[pass.wordStart+pass.wordCount+1u+arg]*shape.words;
+            if((pass.targets&3u)==0u){MARK(row,start);fired|=1u<<arg;if(fired==(members>=32u?0xffffffffu:((1u<<members)-1u)))return;}
+            else{if(path.captured>0u)MARK(row,path.capture0);if(path.captured>1u)MARK(row,path.capture1);}
+            alive=false;break;
+          }
+          if(pass.targets==0u){MARK(bits,start);return;}
+          if(pass.targets==1u){if(path.captured>0u)MARK(bits,path.capture0);if(path.captured>1u)MARK(bits,path.capture1);}
+          else{UKL_GLOBAL uint32_t* tally=counts+pass.target*shape.nodeCount;
+            if(pass.targets==2u)TALLY(tally,start)
+            else{if(path.captured>0u)TALLY(tally,path.capture0)if(path.captured>1u)TALLY(tally,path.capture1)}}
+          alive=false;break;
+        default:MICRO_FAIL
+      }
+      if(alive){path.pc++;if(path.pc>=pass.wordCount)MICRO_FAIL}
+    }
+    if(q.capacity!=0u&&*steps>=spillAt){spillAt=*steps+shape.budget;micro_spill(t,q,stack,depth,start,r);}
+    // The next frame with a path left.
+    while(true){
+      if(depth==0u)return;
+      if(stack[depth-1u].resume==0u){path=stack[--depth];break;}
+      // The top frame advanced in thread memory (the stack may be in device memory).
+      MicroFrame top=stack[depth-1u];
+      // A frame taken from the queue scans as the walk's own does (a walk's own scans never stay on its stack).
+      if(received&&depth==1u){received=false;if(scan_marks_at(r,pass,top)){uint32_t ended=scan_marks(t,&top,r,pass,scratch,counts,shape,start,&fired,steps,q,false);if(ended==2u)MICRO_FAIL if(ended==1u)return;depth--;continue;}}
+      uint32_t candidate=walk_next_micro(t,&top,r);
+      if(candidate==MICRO_NONE){depth--;continue;}
+      stack[depth-1u]=top;path=top;path.node=candidate;if(top.resume>=4u||top.resume==2u)path.end=MICRO_NONE;break;
+    }
+  }
+  #undef MICRO_FAIL
+}
+// A micro walk tier: its frames are the shape's (`frames`: 8, 32, the loop tier's 64, the deep run's 128), its stacks in
+// device memory (`stacks`, `frames` a thread), its threads striding over the items (work queue Q181: one kernel for
+// every tier, compiled once, not once a tier).
+DEFINE_KERNEL2(label_passes, label_micro,
+               ROBUFFER, DocView,    docs,     "[shape.fileCount]",
+               ROBUFFER, uint32_t,   head,     "[2 + labels * words]",
+               ROBUFFER, MicroPass,  passes,   "[shape.targetCount]",
+               ROBUFFER, uint32_t,   words,    "[words]",
+               ROBUFFER, uint32_t,   items,    "[roots]",
+               RWBUFFER, uint32_t,   scratch,  "[rows * shape.words]",
+               RWBUFFER, uint32_t,   flags,    "[6]",
+               ROBUFFER, uint32_t,   texts,    "[texts * shape.words]",
+               RWBUFFER, uint32_t,   counts,   "[slots * shape.nodeCount]",
+               RWBUFFER, MicroFrame, stacks,   "[threads * shape.frames]",
+               ARGS,     Shape,      shape,    ,
+               RWBUFFER, uint32_t,   qslots,   "[shape.queue]",
+               RWBUFFER, uint32_t,   qcontrol, "[5]",
+               RWBUFFER, uint32_t,   qitems,   "[shape.queue * 20]",
+               RWBUFFER, uint32_t,   wstats,   "[3 * passes]",
+               ROBUFFER, uint8_t,    chunk,    "[block]",
+               GID0,     uint32_t,   tid,      ,
+               GSZ0,     uint32_t,   grid,     ,
+               LANE,     uint32_t,   lane,     )
+{
+  MicroQ q={qslots,qcontrol,qitems,shape.queue,0u,0u,items};
+  micro_run(shape.frames,docs,chunk,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*shape.frames,tid,grid,lane,wstats,q __UKL_ARGS);
+}
+
+// A recursive group's rounds to its fixpoint in one dispatch (decision 0024 §3): a threadgroup
+// per file, whose labels are its own (a walk never leaves its tree). A round runs each level in
+// order: its walks over the file's starts, then each target settled over the file's words, as
+// `label_settle` does for every file, the words a file shares with its neighbours by masked
+// atomics. The rounds repeat until one changes nothing; a file still changing after its node
+// count and two more sets flags[3]. `levels`: per level its passes' range and its settles'.
+typedef struct GroupLevel { uint32_t passStart,passCount,opStart,opCount; } GroupLevel;
+
+UKL_INLINE uint32_t group_mask(uint32_t index,uint32_t first,uint32_t end){
+  uint32_t low=index*32u,high=low+32u;
+  uint32_t from=ukl_max(first,low)-low,to=ukl_min(end,high)-low;
+  if(from>=to)return 0u;
+  return (to-from==32u)?0xffffffffu:(((1u<<(to-from))-1u)<<from);
+}
+
+UKL_INLINE void label_group_run(uint32_t FRAMES,UKL_GLOBAL MicroFrame* stack,UKL_GLOBAL const DocView* docs,UKL_GLOBAL const uint8_t* chunk,UKL_GLOBAL const uint32_t* head,UKL_GLOBAL const MicroPass* passes,UKL_GLOBAL const uint32_t* words,UKL_GLOBAL const uint32_t* items,UKL_GLOBAL uint32_t* scratch,UKL_GLOBAL uint32_t* flags,UKL_GLOBAL const uint32_t* texts,UKL_GLOBAL uint32_t* counts,UKL_GLOBAL const GroupLevel* levels,UKL_GLOBAL const Op* ops,Shape shape,uint32_t file,uint32_t lane,uint32_t width,uint32_t simdLane,UKL_LOCAL uint32_t* changed __UKL_PARAMS){
+  UKL_GLOBAL uint32_t* labels=(UKL_GLOBAL uint32_t*)(head+2);
+  DocView own=docs[file];
+  Tree t={chunk,own};
+  uint32_t first=own.node_base,end=own.node_base+own.nodes;
+  if(first>=end)return;
+  uint32_t firstWord=first/32u,endWord=(end+31u)/32u;
+  uint32_t limit=own.nodes+2u;
+  bool settled=false;
+  for(uint32_t round=0u;round<limit;round++){
+    if(lane==0u)ukl_atomic_store_local(changed,0u);
+    ukl_tg_barrier();
+    for(uint32_t level=0u;level<shape.targetCount;level++){
+      GroupLevel at=levels[level];
+      for(uint32_t p=0u;p<at.passCount;p++){
+        MicroPass pass=passes[at.passStart+p];
+        // The pass's roots in this file: its groups, a lane's every `width`th, each SIMD group's roots spread over its
+        // lanes (`simd_roots`). The loop runs while the SIMD group's first lane has a group, so its lanes go round
+        // together.
+        uint32_t groups=roots_file_groups(items,file);
+        for(uint32_t base=0u;base<groups;base+=width){
+          uint32_t group=base+lane;
+          uint64_t mask=group<groups?root_mask(chunk,own,items,pass.itemStart,file,group):0ul;
+          SimdRoots r=simd_roots(mask,simdLane __UKL_ARGS);
+          for(uint32_t round=0u;round<r.total;round+=32u){
+            uint32_t i=round+simdLane;uint16_t owner=(uint16_t)(simd_root_lane(r,i __UKL_ARGS));
+            uint32_t lo=ukl_sg_shuffle((uint32_t)(mask),owner __UKL_ARGS),hi=ukl_sg_shuffle((uint32_t)(mask>>32u),owner __UKL_ARGS),from=ukl_sg_shuffle(r.prefix,owner __UKL_ARGS),g=ukl_sg_shuffle(group,owner __UKL_ARGS);
+            if(i>=r.total)continue;
+            uint32_t steps=0u;
+            MicroQ none={flags,flags,flags,0u,0u,file,items};
+            micro_from(FRAMES,t,head,pass,words,own.node_base+g*ROOT_GROUP+mask_nth(lo,hi,i-from),scratch,flags,texts,counts,shape,stack,&steps,none,0u);
+          }
+        }
+      }
+      ukl_tg_barrier_device();
+      for(uint32_t task=lane;task<at.opCount*(endWord-firstWord);task+=width){
+        Op op=ops[at.opStart+task/(endWord-firstWord)];
+        uint32_t index=firstWord+task%(endWord-firstWord),mask=group_mask(index,first,end);
+        uint32_t row=op.row*shape.words+index,word;
+        word=ukl_atomic_and(&scratch[row],~mask)&mask;
+        if(op.kind==1u){
+          word=~ukl_atomic_load(&labels[op.of*shape.words+index])&mask;
+        }else if(op.kind==2u){
+          word=0u;
+          for(uint32_t bit=0u;bit<32u;bit++){
+            if(((mask>>bit)&1u)==0u)continue;
+            uint32_t node=index*32u+bit;
+            uint32_t count=ukl_atomic_exchange(&counts[op.slot*shape.nodeCount+node],0u);
+            if(count>=op.minimum&&count<=op.maximum)word|=1u<<bit;
+          }
+        }
+        UKL_GLOBAL uint32_t* target=&labels[op.target*shape.words+index];
+        uint32_t old=ukl_atomic_load(target)&mask;
+        if(old!=word){
+          ukl_atomic_or(target,word);
+          ukl_atomic_and(target,word|~mask);
+          ukl_atomic_store_local(changed,1u);
+        }
+      }
+      ukl_tg_barrier_device();
+    }
+    if(ukl_atomic_load_local(changed)==0u){settled=true;break;}
+    ukl_tg_barrier();
+  }
+  if(!settled&&lane==0u)ukl_atomic_or(&flags[3],1u);
+}
+
+// A group's frames are the shape's (`frames`: 8 to 256), one kernel for every depth (Q181).
+DEFINE_KERNEL2(label_passes, label_group,
+               ROBUFFER, DocView,    docs,     "[shape.fileCount]",
+               ROBUFFER, uint32_t,   head,     "[2 + labels * words]",
+               ROBUFFER, MicroPass,  passes,   "[passes]",
+               ROBUFFER, uint32_t,   words,    "[words]",
+               ROBUFFER, uint32_t,   items,    "[roots]",
+               RWBUFFER, uint32_t,   scratch,  "[rows * shape.words]",
+               RWBUFFER, uint32_t,   flags,    "[6]",
+               ROBUFFER, uint32_t,   texts,    "[texts * shape.words]",
+               RWBUFFER, uint32_t,   counts,   "[slots * shape.nodeCount]",
+               ROBUFFER, GroupLevel, levels,   "[shape.targetCount]",
+               ROBUFFER, Op,         ops,      "[ops]",
+               ARGS,     Shape,      shape,    ,
+               RWBUFFER, MicroFrame, stacks,   "[threads * shape.frames]",
+               ROBUFFER, uint8_t,    chunk,    "[block]",
+               SHARED,   uint32_t,   changed,  1,
+               TGID0,    uint32_t,   file,     ,
+               LID0,     uint32_t,   lane,     ,
+               LSZ0,     uint32_t,   width,    ,
+               LANE,     uint32_t,   simdLane, )
+{
+  label_group_run(shape.frames,stacks+(file*width+lane)*shape.frames,docs,chunk,head,passes,words,items,scratch,flags,texts,counts,levels,ops,shape,file,lane,width,simdLane,changed __UKL_ARGS);
+}
+
+// A root program's walk as records (decision 0024 §3, `Micro::records`, the same walk): a
+// thread per (program, file, task, start) item, after the labels, reading them in place. Each
+// path that emits is a record of 20 words: item, its ordinal in the item, the output label, the
+// captures held, then 8 captured nodes and their 8 labels. The walk runs twice: once to count its
+// records, once to write them where one atomic per item reserved them (an item numbered from
+// its dispatch's `shape.round`) (`cursor[0]`; `cursor[1]`
+// the buffer was too small). A walk outgrowing its frames, captures or steps flags its program.
+// pad: 1 where the walk ends at its first emit (set mode, one label); 1 + its emit count for a
+// pack in set mode.
+// `anchor`: its anchor's row in `texts` (decision 0365), a start outside it not walked; `0xffffffff` none.
+// A root walk's item: {pass, program, task, start}.
+typedef struct RootItem { uint32_t x,y,z,w; } RootItem;
+typedef struct RootPass { uint32_t wordStart,wordCount,textStart,pad,anchor; } RootPass;
+typedef struct RootFrame { uint32_t pc,node,resume,named,next,end,cursors[8],captured,caps[8],labs[8]; } RootFrame;
+// The 32-frame roots run as a pool of threads with device stacks (metal_label_passes.rs's ROOT_POOL).
+#define ROOT_CAPTURES 8u
+#define ROOT_RECORD 20u
+WALK_NEXT(walk_next_root,RootFrame)
+
+UKL_INLINE bool root_walk(uint32_t FRAMES,Tree t,UKL_GLOBAL const uint32_t* head,RootPass pass,UKL_GLOBAL const uint32_t* words,uint32_t start,UKL_GLOBAL const uint32_t* texts,Shape shape,UKL_GLOBAL RootFrame* stack,UKL_GLOBAL uint32_t* out,uint32_t capacity,uint32_t item,uint32_t at,UKL_PRIVATE uint32_t* emitted){
+  uint32_t depth=0u,steps=0u,fired=0u;
+  WalkRead r={words+pass.wordStart,head,texts,pass.textStart,shape.words};
+  RootFrame path;
+  path.pc=0u;path.node=start;path.resume=0u;path.named=0u;path.next=0u;path.end=MICRO_NONE;path.captured=0u;
+  for(uint32_t c=0u;c<8u;c++){path.cursors[c]=MICRO_NONE;path.caps[c]=MICRO_NONE;path.labs[c]=0u;}
+  while(true){
+    bool alive=true;
+    while(alive){
+      if(++steps>shape.steps)return false;
+      uint32_t word=words[pass.wordStart+path.pc],op=word&255u,mode=(word>>8u)&255u,arg=word>>16u;
+      bool named=mode==1u;
+      switch(op){
+        case 0u:alive=false;break;
+        case 1u:alive=tape_kind(t.s,t.d,tree_local(t,path.node))==arg;break;
+        case 2u:alive=tape_field(t.s,t.d,tree_local(t,path.node))==arg;break;
+        case 3u:{uint32_t nodeFlags=tree_flags(t,path.node);alive=(nodeFlags&mode)==mode&&(nodeFlags&arg)==0u;}break;
+        case 10u:alive=micro_class(t,head,path.node,arg);break;
+        case 4u:alive=((texts[(pass.textStart+arg)*shape.words+path.node/32u]>>(path.node%32u))&1u)!=0u;break;
+        case 17u:{uint32_t next=path.end!=MICRO_NONE?tree_next_in(t,path.node,tree_end(t,path.end),named):tree_next(t,path.node,named);if(next==MICRO_NONE)alive=false;else path.node=next;}break;
+        case 18u:{uint32_t parent=path.end!=MICRO_NONE?path.end:tree_parent(t,path.node);if(parent==MICRO_NONE)alive=false;else{path.node=parent;path.end=MICRO_NONE;}}break;
+        case 16u:case 19u:case 20u:{
+          RootFrame frame=path;frame.pc=path.pc+1u;frame.named=named?1u:0u;
+          if(op==16u){frame.resume=1u;frame.next=tree_first(t,path.node);frame.end=path.node;}
+          else if(op==19u){frame.resume=2u;frame.next=path.node+1u;frame.end=tree_end(t,path.node);}
+          else{frame.resume=3u;frame.end=path.end!=MICRO_NONE?path.end:tree_parent(t,path.node);frame.next=frame.end==TAPE_NONE?MICRO_NONE:tree_next_in(t,path.node,tree_end(t,frame.end),named);}
+          uint32_t candidate=walk_next_root(t,&frame,r);
+          if(candidate==MICRO_NONE){alive=false;break;}
+          if(depth==FRAMES)return false;
+          stack[depth++]=frame;path.end=op==16u?path.node:op==19u?MICRO_NONE:path.end;path.node=candidate;
+        }break;
+        case 23u:{
+          RootFrame frame=path;frame.pc=words[pass.wordStart+path.pc+2u]>>16u;frame.resume=4u;frame.named=(named?1u:0u)|(path.pc<<1u);
+          frame.next=path.node+1u;frame.end=tree_end(t,path.node);
+          uint32_t candidate=walk_next_root(t,&frame,r);
+          if(candidate==MICRO_NONE){alive=false;break;}
+          if(depth==FRAMES)return false;
+          stack[depth++]=frame;path.node=candidate;path.end=MICRO_NONE;path.pc=frame.pc;
+        }continue;
+        case 21u:path.cursors[arg&7u]=path.node;break;
+        case 22u:{uint32_t saved=path.cursors[arg&7u];if(saved==MICRO_NONE)return false;path.node=saved;path.end=MICRO_NONE;}break;
+        case 32u:if(path.captured==ROOT_CAPTURES)return false;path.caps[path.captured]=path.node;path.labs[path.captured]=arg;path.captured++;break;
+        case 48u:{if(depth==FRAMES)return false;RootFrame frame=path;frame.pc=arg;frame.resume=0u;stack[depth++]=frame;}break;
+        case 49u:path.pc=arg;continue;
+        case 64u:
+          // A pack in set mode (pad: 1 + its emit count, `fusion::Fused`): an emit whose label
+          // fired is dropped, and the walk ends once every label fired.
+          if(pass.pad>1u){uint32_t bit=1u<<arg;if((fired&bit)!=0u){alive=false;break;}fired|=bit;}
+          if(out!=0&&at+*emitted<capacity){
+            UKL_GLOBAL uint32_t* record=out+(at+*emitted)*ROOT_RECORD;
+            record[0]=item;record[1]=*emitted;record[2]=arg;record[3]=path.captured;
+            for(uint32_t c=0u;c<8u;c++){record[4u+c]=path.caps[c];record[12u+c]=path.labs[c];}
+          }
+          (*emitted)++;alive=false;
+          // Set mode with one label (`Micro::key_stop`): the task's key is found.
+          if(pass.pad==1u)return true;
+          if(pass.pad>1u&&fired==(pass.pad-1u>=32u?0xffffffffu:((1u<<(pass.pad-1u))-1u)))return true;
+          break;
+        default:return false;
+      }
+      if(alive){path.pc++;if(path.pc>=pass.wordCount)return false;}
+    }
+    while(true){
+      if(depth==0u)return true;
+      if(stack[depth-1u].resume==0u){path=stack[--depth];break;}
+      RootFrame top=stack[depth-1u];
+      uint32_t candidate=walk_next_root(t,&top,r);
+      if(candidate==MICRO_NONE){depth--;continue;}
+      stack[depth-1u]=top;path=top;path.node=candidate;if(top.resume>=4u||top.resume==2u)path.end=MICRO_NONE;break;
+    }
+  }
+}
+
+UKL_INLINE void root_records_run(uint32_t FRAMES,UKL_GLOBAL const DocView* docs,UKL_GLOBAL const uint8_t* chunk,UKL_GLOBAL const uint32_t* head,UKL_GLOBAL const RootPass* passes,UKL_GLOBAL const uint32_t* words,UKL_GLOBAL const RootItem* items,UKL_GLOBAL const uint32_t* texts,UKL_GLOBAL uint32_t* records,UKL_GLOBAL uint32_t* cursor,UKL_GLOBAL uint32_t* failures,Shape shape,uint32_t tid,UKL_GLOBAL RootFrame* stack){
+  if(tid>=shape.itemCount)return;
+  RootItem item=items[tid];RootPass pass=passes[item.x];
+  if(pass.anchor!=0xffffffffu&&((texts[pass.anchor*shape.words+item.w/32u]>>(item.w%32u))&1u)==0u)return;
+  Tree t={chunk,doc_of(docs,shape.fileCount,item.w)};
+  // The walk counts its records, claims their place, then walks again to write them there: one call in a loop of
+  // the two, as the compiler inlines the walk at every call (work queue Q181).
+  uint32_t at=0u;
+  for(uint32_t write=0u;write<2u;write++){
+    uint32_t emitted=0u;
+    bool walked=root_walk(FRAMES,t,head,pass,words,item.w,texts,shape,stack,write!=0u?records:0,write!=0u?shape.targetCount:0u,write!=0u?shape.round+tid:tid,at,&emitted);
+    if(write!=0u)return;
+    if(!walked){ukl_atomic_or(&failures[item.x],1u);return;}
+    if(emitted==0u)return;
+    at=ukl_atomic_add(&cursor[0],emitted);
+    if(at+emitted>shape.targetCount){ukl_atomic_or(&cursor[1],1u);return;}
+  }
+}
+
+// A root walk's frames are the shape's (`frames`: 8 or 32), one kernel for both (Q181).
+DEFINE_KERNEL2(label_passes, root_records,
+               ROBUFFER, DocView,   docs,     "[shape.fileCount]",
+               ROBUFFER, uint32_t,  head,     "[2 + labels * words]",
+               ROBUFFER, RootPass,  passes,   "[passes]",
+               ROBUFFER, uint32_t,  words,    "[words]",
+               ROBUFFER, RootItem,  items,    "[shape.itemCount]",
+               ROBUFFER, uint32_t,  texts,    "[texts * shape.words]",
+               RWBUFFER, uint32_t,  records,  "[shape.targetCount * 20]",
+               RWBUFFER, uint32_t,  cursor,   "[2]",
+               RWBUFFER, uint32_t,  failures, "[passes]",
+               ARGS,     Shape,     shape,    ,
+               RWBUFFER, RootFrame, stacks,   "[threads * shape.frames]",
+               ROBUFFER, uint8_t,   chunk,    "[block]",
+               GID0,     uint32_t,  tid,      ,
+               GSZ0,     uint32_t,  grid,     )
+{
+  for(uint32_t item=tid;item<shape.itemCount;item+=grid)root_records_run(shape.frames,docs,chunk,head,passes,words,items,texts,records,cursor,failures,shape,item,stacks+tid*shape.frames);
+}
+
+// A level's anchors (decision 0365, `Runner::formulas`). First `label_leaves`: each node's code read once, and every
+// distinct leaf test of the level's formulas (kind, field, flags, a grammar supertype) into its row of `leaves`, a
+// file's words at its region (`FORMULA_REGION`). Then `label_formula`: a threadgroup a (file, formula), the formula
+// (`compile_sets::DeviceFormula`, postfix over a stack of node sets in `scratch`, the file's region) into its rule's row
+// in `roots`: set where `mode` 0 (a rule over codes, kind 2), cleared outside the anchor where 1 (a listed rule). A leaf
+// is a copy of its row, a label a read of `head` (the levels before have settled), and an axis step goes over the
+// members of its set only (a climb stops at a node another thread set, whose climb goes on).
+// A formula: its targets (`FormulaTarget`: {row, mode, rule (`0xffffffff` none: a root walk's anchor in `texts`)}) and
+// words; identical formulas of a group are one, written to each target. Shape:
+// `round` a formula's slots, `itemCount` the dispatch's first formula, `queue` the words of a formula's scratch,
+// `recursive` the words of a leaf's row, `targetCount` (`label_leaves`) the leaves.
+typedef struct Formula { uint32_t targetStart,targetCount,wordStart,wordCount,pad; } Formula;
+// Where a formula's set goes: a rule's row, as `Formula` was (one formula, several rules).
+typedef struct FormulaTarget { uint32_t row,mode,rule; } FormulaTarget;
+#define FORMULA_REGION(d,file) ((d).node_base/32u+2u*(file))
+UKL_INLINE bool formula_get(UKL_GLOBAL uint32_t* slot,uint32_t n){return ((ukl_atomic_load(&slot[n/32u])>>(n%32u))&1u)!=0u;}
+UKL_INLINE bool formula_set(UKL_GLOBAL uint32_t* slot,uint32_t n){uint32_t bit=1u<<(n%32u);return (ukl_atomic_or(&slot[n/32u],bit)&bit)!=0u;}
+UKL_INLINE bool formula_named(Tree t,uint32_t n,bool named){return !named||(tape_flags(t.s,t.d,n)&1u)!=0u;}
+// The members of a slot: `FORMULA_EACH(slot, fw, lane, width, n) { ... }`, a word a thread.
+#define FORMULA_EACH(SLOT_,FW,LANE,WIDTH,N) for(uint32_t formulaW=(LANE);formulaW<(FW);formulaW+=(WIDTH))for(uint32_t formulaBits=ukl_atomic_load(&(SLOT_)[formulaW]);formulaBits!=0u;formulaBits&=formulaBits-1u)for(uint32_t N=formulaW*32u+ukl_ctz32(formulaBits),formulaOnce=0u;formulaOnce==0u;formulaOnce=1u)
+
+// A thread a word of the batch's leaf rows (`FORMULA_REGION`'s numbering, a file's words then its two spare): each leaf
+// test's 32 bits made in a register and stored once. The word is this thread's alone, so no atomic; and a file is not
+// one group, so the largest file does not set the pass's time (Q281: a group a file, an atomic a hit, took 2.7 ms a
+// pass at s1000).
+#define LEAF_BLOCK 8u
+DEFINE_KERNEL2(label_passes, label_leaves,
+               ROBUFFER, DocView,  docs,   "[shape.fileCount]",
+               ROBUFFER, uint32_t, tests,  "[shape.targetCount]",
+               RWBUFFER, uint32_t, leaves, "[shape.targetCount * shape.recursive]",
+               ARGS,     Shape,    shape,  ,
+               ROBUFFER, uint8_t,  chunk,  "[block]",
+               GID0,     uint32_t, tid,    )
+{
+  if(shape.fileCount==0u)return;
+  // The file whose region holds word `tid`: the last whose region starts at or before it.
+  uint32_t first=0u,last=shape.fileCount;
+  while(last-first>1u){uint32_t middle=(first+last)/2u;if(FORMULA_REGION(docs[middle],middle)<=tid)first=middle;else last=middle;}
+  DocView d=docs[first];
+  uint32_t region=FORMULA_REGION(d,first);
+  if(tid<region)return;
+  uint32_t w=tid-region,nodes=d.nodes;
+  if(w*32u>=nodes)return;
+  uint32_t count=ukl_min(32u,nodes-w*32u);
+  // The tests a block of `LEAF_BLOCK`, each block's bits in registers: a node's code is read once a block, not once a
+  // test (a code read is two dependent loads, its number then the code).
+  for(uint32_t from=0u;from<shape.targetCount;from+=LEAF_BLOCK){
+    uint32_t bits[LEAF_BLOCK];
+    for(uint32_t j=0u;j<LEAF_BLOCK;j++)bits[j]=0u;
+    for(uint32_t k=0u;k<count;k++){
+      uint32_t n=w*32u+k;
+      UKL_GLOBAL const DeviceCode* code=tape_code(chunk,d,n);
+      for(uint32_t j=0u;j<LEAF_BLOCK;j++){
+        uint32_t l=from+j;
+        if(l>=shape.targetCount)break;
+        uint32_t test=tests[l],op=test&255u,arg=test>>8u;
+        bool hit;
+        if(op==1u)hit=code->kind==arg;
+        else if(op==2u)hit=code->field==arg;
+        else if(op==3u){uint32_t m=arg&255u,a=arg>>8u;hit=(code->flags&m)==m&&(code->flags&a)==0u;}
+        else if(op==18u)hit=tape_next(chunk,d,n)!=TAPE_NONE;
+        else if(op==22u){hit=false;uint32_t end=tape_siblings_end(chunk,d,n);for(uint32_t c=tape_next_in(chunk,d,n,end);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end))if((tape_flags(chunk,d,c)&1u)!=0u){hit=true;break;}}
+        else if(op==21u){hit=false;uint32_t end=tape_end_of(chunk,d,n);for(uint32_t c=tape_first_child(chunk,d,n);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end))if((tape_flags(chunk,d,c)&1u)!=0u){hit=true;break;}}
+        else if(op==19u)hit=tape_size(chunk,d,n)>1u;
+        else{hit=false;for(uint32_t c=0u;c<code->classCount;c++){if(code->classes[c]==arg){hit=true;break;}if(code->classes[c]>arg)break;}}
+        bits[j]|=(uint32_t)hit<<k;
+      }
+    }
+    for(uint32_t j=0u;j<LEAF_BLOCK&&from+j<shape.targetCount;j++)leaves[(from+j)*shape.recursive+region+w]=bits[j];
+  }
+}
+#undef LEAF_BLOCK
+
+// A chain's reach's level (`REACH_CHAIN`): the descendants of `level`'s members, as a targets image reads them (a
+// block of words a thread, its members' furthest end, the blocks' running maximum, then each word by masks), into
+// `out` (added, or with `cut` taken out), and `level` becomes them within `keep`. Each thread reads and writes only
+// its own block's words, so the levels need no device barrier. Whether this thread's share of `level` is not empty.
+UKL_INLINE bool formula_descend(UKL_GLOBAL const uint8_t* chunk,DocView d,UKL_GLOBAL uint32_t* level,UKL_GLOBAL uint32_t* out,UKL_GLOBAL uint32_t* keep,bool cut,UKL_LOCAL uint32_t* partials,uint32_t lane,uint32_t width,uint32_t fw,uint32_t nodes,UKL_PRIVATE uint32_t* childs){
+  uint32_t block=(fw+width-1u)/width,low=ukl_min(lane*block,fw),high=ukl_min(low+block,fw),most=0u;
+  for(uint32_t w=low;w<high;w++)for(uint32_t bits=ukl_atomic_load(&level[w]);bits!=0u;bits&=bits-1u){uint32_t n=w*32u+ukl_ctz32(bits);most=ukl_max(most,n+tape_size(chunk,d,n));}
+  ukl_tg_barrier();
+  partials[lane]=most;
+  ukl_tg_barrier();
+  if(lane==0u){uint32_t run=0u;for(uint32_t k=0u;k<width;k++){uint32_t here=partials[k];partials[k]=run;run=ukl_max(run,here);}}
+  ukl_tg_barrier();
+  uint32_t reach=partials[lane];
+  bool any=false;
+  for(uint32_t w=low;w<high;w++){
+    uint32_t b=w*32u,bits=reach>=b+32u?0xffffffffu:(reach>b?(1u<<(reach-b))-1u:0u);
+    for(uint32_t rest=ukl_atomic_load(&level[w]);rest!=0u;rest&=rest-1u){
+      uint32_t k=ukl_ctz32(rest),end=b+k+tape_size(chunk,d,b+k),hi=ukl_min(end,b+32u)-b;
+      (*childs)++;
+      bits|=(hi==32u?0xffffffffu:((1u<<hi)-1u))&~((2u<<k)-1u);
+      reach=ukl_max(reach,end);
+    }
+    if(b+32u>nodes)bits&=(1u<<(nodes-b))-1u;
+    uint32_t now=ukl_atomic_load(&out[w]);
+    ukl_atomic_store(&out[w],cut?now&~bits:now|bits);
+    uint32_t next=ukl_atomic_load(&keep[w])&bits;
+    ukl_atomic_store(&level[w],next);
+    any|=next!=0u;
+  }
+  return any;
+}
+
+DEFINE_KERNEL2(label_passes, label_formula,
+               ROBUFFER, DocView,       docs,         "[files]",
+               ROBUFFER, uint32_t,      head,         "[2 + labels * words]",
+               ROBUFFER, Formula,       formulas,     "[formulas]",
+               ROBUFFER, uint32_t,      words,        "[words]",
+               RWBUFFER, uint32_t,      roots,        "[rules * words]",
+               RWBUFFER, uint32_t,      scratch,      "[formulas * shape.queue]",
+               ARGS,     Shape,         shape,        ,
+               ROBUFFER, uint32_t,      leaves,       "[leaves * shape.recursive]",
+               RWBUFFER, uint32_t,      stats,        "[21]",
+               ROBUFFER, FormulaTarget, targets,      "[targets]",
+               RWBUFFER, uint32_t,      labelScratch, "[rows * words]",
+               ROBUFFER, uint32_t,      rules,        "[rules]",
+               ROBUFFER, uint32_t,      texts,        "[texts * words]",
+               ROBUFFER, uint8_t,       chunk,        "[block]",
+               SHARED,   uint32_t,      partials,     1024,
+               SHARED,   uint32_t,      tally,        2,
+               TGID0,    uint32_t,      file,         ,
+               TGID1,    uint32_t,      group,        ,
+               GSZ1,     uint32_t,      groups,       ,
+               LID0,     uint32_t,      lane,         ,
+               LSZ0,     uint32_t,      width,        )
+{
+  // A descendant step's prefix of its members' counts (a block of words a thread, `FORMULA_WIDTH` threads), and the
+  // member counts a step within a conjunction is priced by.
+  DocView d=docs[file];
+  Tree t={chunk,d};
+  uint32_t nodes=d.nodes,fw=(nodes+31u)/32u,region=FORMULA_REGION(d,file);
+  if(nodes==0u)return;
+  // A dispatch of one size class (`shape.wide`, 0459): a file of the other class is the other dispatch's.
+  if(shape.wide!=0u&&(fw>=(shape.wide>>1u))!=((shape.wide&1u)!=0u))return;
+  // Profiling (`shape.profile`): per step kind its members (`stats[op]`), then parent and child reads (16, 17), the
+  // (file, formula)s (18), and the steps within a conjunction read down or climbed (19, 20).
+  bool profile=shape.profile!=0u;
+  uint32_t parents=0u,childs=0u;
+  #define FORMULA_COUNT(I,N) if(profile)ukl_atomic_add(&stats[I],N)
+  // A group evaluates the formulas `group`, `group + groups`, …: one each when the grid has a row a formula, all of
+  // the dispatch's in turn when it has one (`RERAIL_FORMULA_FUSED`, Q271), in the same scratch slots. (The grid's
+  // rows are groups: a group is one thread high.)
+  UKL_GLOBAL uint32_t* base=scratch+group*shape.queue+shape.round*region;
+  #define SLOT(i) (base+(i)*fw)
+  // The bits of local word `w` that are nodes of the file.
+  #define VALID(w) ((w)*32u+32u<=nodes?0xffffffffu:((1u<<(nodes-(w)*32u))-1u))
+  for(uint32_t y=group;y<shape.targetCount;y+=groups){
+  Formula formula=formulas[shape.itemCount+y];
+  // A rule over codes that does not run in this file: its row is never read here; none runs here, nothing to do.
+  bool wanted=false;
+  // A rule over codes runs in a file where its bit is set (an anchored rule's after its row, `Roots::table`).
+  for(uint32_t i=0u;i<formula.targetCount&&!wanted;i++){
+    FormulaTarget target=targets[formula.targetStart+i];
+    if(target.mode==1u||target.rule==0xffffffffu){wanted=true;continue;}
+    uint32_t codes=rules[target.rule]==2u?target.rule+rules[target.rule+1u]:target.rule;
+    wanted=rules[codes]!=0u||((rules[codes+1u+file/32u]>>(file%32u))&1u)!=0u;
+  }
+  if(!wanted)continue;
+  if(lane==0u)FORMULA_COUNT(18u,1u);
+  uint32_t top=0u;
+  for(uint32_t pc=0u;pc<formula.wordCount;pc++){
+    uint32_t word=words[formula.wordStart+pc],op=word&255u,arg=word>>8u;
+    if(op==0u||op==4u||op==12u||op==13u||op==20u){
+      // A set: every node, a label (its row in `head`, in the batch's numbering), none, a leaf's row, or a text test's
+      // row in `texts` (the batch's numbering).
+      UKL_GLOBAL uint32_t* out=SLOT(top);
+      for(uint32_t w=lane;w<fw;w+=width){
+        uint32_t bits=0u;
+        if(op==0u)bits=VALID(w);
+        else if(op==13u)bits=leaves[arg*shape.recursive+region+w];
+        else if(op==4u||op==20u){UKL_GLOBAL const uint32_t* row=op==4u?head+2u+(arg-16384u)*head[1]:texts+arg*shape.words;uint32_t b=d.node_base+w*32u,at=b/32u,sh=b%32u;bits=sh==0u?row[at]:(row[at]>>sh)|(row[at+1u]<<(32u-sh));bits&=VALID(w);}
+        ukl_atomic_store(&out[w],bits);
+      }
+      top++;
+    }else if(op==5u||op==6u){
+      uint32_t first=top-arg;
+      UKL_GLOBAL uint32_t* out=SLOT(first);
+      for(uint32_t w=lane;w<fw;w+=width){
+        uint32_t bits=ukl_atomic_load(&out[w]);
+        for(uint32_t k=1u;k<arg;k++){uint32_t other=ukl_atomic_load(&SLOT(first+k)[w]);bits=op==5u?bits&other:bits|other;}
+        ukl_atomic_store(&out[w],bits);
+      }
+      top=first+1u;
+    }else if(op>=14u&&op<=16u){
+      // A step within a conjunction: slot `c` its set, `src` the step's inner set, the result `c` ∩ the step's. Read
+      // down from `c`'s members (children, the subtree by rank, the next siblings), or climb from the inner set's
+      // (a parent is a search on the tape), whichever has fewer members (S277: priced by work).
+      bool named=(arg&1u)!=0u;
+      uint32_t c=top-2u,src=top-1u,at=top;
+      UKL_GLOBAL uint32_t* cand=SLOT(c);UKL_GLOBAL uint32_t* from=SLOT(src);UKL_GLOBAL uint32_t* out=SLOT(at);
+      uint32_t mine=0u,theirs=0u;
+      for(uint32_t w=lane;w<fw;w+=width){mine+=ukl_popcount32(ukl_atomic_load(&cand[w]));theirs+=ukl_popcount32(ukl_atomic_load(&from[w]));ukl_atomic_store(&out[w],0u);}
+      if(lane==0u){ukl_atomic_store_local(&tally[0],0u);ukl_atomic_store_local(&tally[1],0u);}
+      ukl_tg_barrier_device();
+      ukl_atomic_add_local(&tally[0],mine);ukl_atomic_add_local(&tally[1],theirs);
+      ukl_tg_barrier();
+      uint32_t candidates=ukl_atomic_load_local(&tally[0]),members=ukl_atomic_load_local(&tally[1]);
+      bool down=candidates<=4u*members;
+      if(lane==0u){FORMULA_COUNT(op,down?candidates:members);FORMULA_COUNT(down?19u:20u,1u);}
+      if(down&&op==15u){
+        // The inner set's members (named where it says) ranked by a prefix of their words' counts.
+        UKL_GLOBAL uint32_t* ranked=SLOT(at+1u);UKL_GLOBAL uint32_t* prefix=SLOT(at+2u);
+        for(uint32_t w=lane;w<fw;w+=width){
+          uint32_t bits=ukl_atomic_load(&from[w]);
+          if(named)for(uint32_t rest=bits;rest!=0u;rest&=rest-1u){uint32_t k=ukl_ctz32(rest);if((tape_flags(chunk,d,w*32u+k)&1u)==0u)bits&=~(1u<<k);}
+          ukl_atomic_store(&ranked[w],bits);
+        }
+        ukl_tg_barrier_device();
+        uint32_t block=(fw+width-1u)/width,low=ukl_min(lane*block,fw),high=ukl_min(low+block,fw),sum=0u;
+        for(uint32_t w=low;w<high;w++)sum+=ukl_popcount32(ukl_atomic_load(&ranked[w]));
+        partials[lane]=sum;
+        ukl_tg_barrier();
+        if(lane==0u){uint32_t run=0u;for(uint32_t k=0u;k<width;k++){uint32_t here=partials[k];partials[k]=run;run+=here;}}
+        ukl_tg_barrier();
+        uint32_t run=partials[lane];
+        for(uint32_t w=low;w<high;w++){ukl_atomic_store(&prefix[w],run);run+=ukl_popcount32(ukl_atomic_load(&ranked[w]));}
+        ukl_tg_barrier_device();
+        FORMULA_EACH(cand,fw,lane,width,n){
+          uint32_t end=ukl_min(n+tape_size(chunk,d,n),nodes),first=n+1u;
+          if(end<=first)continue;
+          // The ranked members before `end`, less those before `first`.
+          uint32_t we=(end-1u)/32u,wf=first/32u,re=(end-1u)%32u;
+          uint32_t be=ukl_atomic_load(&prefix[we])+ukl_popcount32(ukl_atomic_load(&ranked[we])&(re==31u?0xffffffffu:((1u<<(re+1u))-1u)));
+          uint32_t bf=ukl_atomic_load(&prefix[wf])+ukl_popcount32(ukl_atomic_load(&ranked[wf])&((1u<<(first%32u))-1u));
+          if(be>bf)formula_set(out,n);
+        }
+      }else if(down){
+        // Each candidate's children (a child step) or next siblings (following): one in the inner set keeps it.
+        FORMULA_EACH(cand,fw,lane,width,n){
+          for(uint32_t end=op==14u?tape_end_of(chunk,d,n):tape_siblings_end(chunk,d,n),k=op==14u?tape_first_child(chunk,d,n):tape_next_in(chunk,d,n,end);k!=TAPE_NONE;k=tape_next_in(chunk,d,k,end)){
+            childs++;
+            if(formula_get(from,k)&&formula_named(t,k,named)){formula_set(out,n);break;}
+          }
+        }
+      }else{
+        // The climb, as the step alone (`CHILD`, `DESCENDANT`, `FOLLOWING`), then within the candidates.
+        if(op==14u){
+          FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){parents++;uint32_t p=tape_parent(chunk,d,n);if(p!=TAPE_NONE&&formula_get(cand,p))formula_set(out,p);}
+        }else if(op==15u){
+          FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){for(uint32_t p=tape_parent(chunk,d,n);p!=TAPE_NONE;p=tape_parent(chunk,d,p)){parents++;if(formula_set(out,p))break;}}
+        }else{
+          // The members' parents, then each such parent's children before its last member.
+          UKL_GLOBAL uint32_t* parentSet=SLOT(at+1u);
+          for(uint32_t w=lane;w<fw;w+=width)ukl_atomic_store(&parentSet[w],0u);
+          ukl_tg_barrier_device();
+          FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){parents++;uint32_t p=tape_parent(chunk,d,n);if(p!=TAPE_NONE)formula_set(parentSet,p);}
+          ukl_tg_barrier_device();
+          FORMULA_EACH(parentSet,fw,lane,width,p){
+            uint32_t last=TAPE_NONE,end=tape_end_of(chunk,d,p);
+            for(uint32_t k=tape_first_child(chunk,d,p);k!=TAPE_NONE;k=tape_next_in(chunk,d,k,end)){childs++;if(formula_get(from,k)&&formula_named(t,k,named))last=k;}
+            if(last!=TAPE_NONE)for(uint32_t k=tape_first_child(chunk,d,p);k!=last;k=tape_next_in(chunk,d,k,end)){childs++;formula_set(out,k);}
+          }
+        }
+        ukl_tg_barrier_device();
+        // Within the candidates (a descendant's climb marked every ancestor).
+        for(uint32_t w=lane;w<fw;w+=width)ukl_atomic_store(&out[w],ukl_atomic_load(&out[w])&ukl_atomic_load(&cand[w]));
+      }
+      ukl_tg_barrier_device();
+      for(uint32_t w=lane;w<fw;w+=width)ukl_atomic_store(&cand[w],ukl_atomic_load(&out[w]));
+      top=c+1u;
+    }else{
+      // An axis step: from slot `src` (a chain's through, then to; a reached chain's from, then through) into the slot
+      // past them, then back to `src`.
+      bool named=(arg&1u)!=0u;
+      uint32_t src=op==11u||op==25u?top-2u:top-1u,at=top;
+      UKL_GLOBAL uint32_t* from=SLOT(src);UKL_GLOBAL uint32_t* out=SLOT(at);
+      for(uint32_t w=lane;w<fw;w+=width){ukl_atomic_store(&out[w],0u);if(op==10u)ukl_atomic_store(&SLOT(at+1u)[w],0u);}
+      ukl_tg_barrier_device();
+      uint32_t members=0u;
+      if(profile)FORMULA_EACH(op==11u?SLOT(src+1u):from,fw,lane,width,n)members++;
+      FORMULA_COUNT(op,members);
+      if(op==7u){
+        // The parents of the members.
+        FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){parents++;uint32_t p=tape_parent(chunk,d,n);if(p!=TAPE_NONE)formula_set(out,p);}
+      }else if(op==8u){
+        // The ancestors of the members.
+        FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){for(uint32_t p=tape_parent(chunk,d,n);p!=TAPE_NONE;p=tape_parent(chunk,d,p)){parents++;if(formula_set(out,p))break;}}
+      }else if(op==9u){
+        // The children of the members.
+        FORMULA_EACH(from,fw,lane,width,n){uint32_t end=tape_end_of(chunk,d,n);for(uint32_t c=tape_first_child(chunk,d,n);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end)){childs++;formula_set(out,c);}}
+      }else if(op==10u){
+        // The earlier siblings of the members: the members' parents, then each such parent's children before its last member.
+        UKL_GLOBAL uint32_t* parentSet=SLOT(at+1u);
+        FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){parents++;uint32_t p=tape_parent(chunk,d,n);if(p!=TAPE_NONE)formula_set(parentSet,p);}
+        ukl_tg_barrier_device();
+        FORMULA_EACH(parentSet,fw,lane,width,p){
+          uint32_t last=TAPE_NONE,end=tape_end_of(chunk,d,p);
+          for(uint32_t c=tape_first_child(chunk,d,p);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end)){childs++;if(formula_get(from,c)&&formula_named(t,c,named))last=c;}
+          if(last!=TAPE_NONE)for(uint32_t c=tape_first_child(chunk,d,p);c!=last;c=tape_next_in(chunk,d,c,end)){childs++;formula_set(out,c);}
+        }
+      }else if(op==23u){
+        // A targets image (0365 §10): the members' proper descendants. In preorder a node is one where a member before
+        // it ends past it: a block of words a thread, its members' furthest end, the blocks' running maximum, then
+        // each word by masks, its members in order. Work follows the members, a word op a member.
+        uint32_t block=(fw+width-1u)/width,low=ukl_min(lane*block,fw),high=ukl_min(low+block,fw),most=0u;
+        for(uint32_t w=low;w<high;w++)for(uint32_t bits=ukl_atomic_load(&from[w]);bits!=0u;bits&=bits-1u){uint32_t n=w*32u+ukl_ctz32(bits);most=ukl_max(most,n+tape_size(chunk,d,n));}
+        partials[lane]=most;
+        ukl_tg_barrier();
+        if(lane==0u){uint32_t run=0u;for(uint32_t k=0u;k<width;k++){uint32_t here=partials[k];partials[k]=run;run=ukl_max(run,here);}}
+        ukl_tg_barrier();
+        uint32_t reach=partials[lane];
+        for(uint32_t w=low;w<high;w++){
+          uint32_t b=w*32u,bits=reach>=b+32u?0xffffffffu:(reach>b?(1u<<(reach-b))-1u:0u);
+          for(uint32_t rest=ukl_atomic_load(&from[w]);rest!=0u;rest&=rest-1u){
+            uint32_t k=ukl_ctz32(rest),end=b+k+tape_size(chunk,d,b+k),hi=ukl_min(end,b+32u)-b;
+            if(profile)childs++;
+            bits|=(hi==32u?0xffffffffu:((1u<<hi)-1u))&~((2u<<k)-1u);
+            reach=ukl_max(reach,end);
+          }
+          ukl_atomic_store(&out[w],bits&VALID(w));
+        }
+      }else if(op==24u){
+        // The members' later siblings: each member's next siblings, until one another member's run has set.
+        FORMULA_EACH(from,fw,lane,width,n){uint32_t end=tape_siblings_end(chunk,d,n);for(uint32_t c=tape_next_in(chunk,d,n,end);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end)){childs++;if(formula_set(out,c))break;}}
+      }else if(op==25u){
+        // A chain's reach, as the CPU's `Reader` reads it: a node is reached where its parent is a member, or is in
+        // `through` and reached. So a node is reached where its nearest ancestor that is a member or not in `through`
+        // (a blocker) is a member. The members' and blockers' subtrees are ranges in preorder (`tape_size`, a hot read),
+        // so this is descendant images (`formula_descend`), a level each time a member sits below a blocker below a
+        // member: the reach is the union over levels k of desc(F_k) \ desc(X_k), with F_0 the members,
+        // X_k = blockers ∩ desc(F_k) and F_k+1 = members ∩ desc(X_k). Work follows the members and the blockers within
+        // the reach, a word op each, and their reads are independent (0437). (A pass over every node reading its
+        // parent, `tape_parent`, a search of the tape, took 0.8-6.8 ms a pass; reading down from the members through
+        // the child reads, a round a level of the tree, as long.)
+        UKL_GLOBAL uint32_t* blockers=SLOT(src+1u);UKL_GLOBAL uint32_t* level=SLOT(at+1u);
+        for(uint32_t w=lane;w<fw;w+=width){
+          uint32_t members=ukl_atomic_load(&from[w]);
+          ukl_atomic_store(&blockers[w],~ukl_atomic_load(&blockers[w])&~members&VALID(w));
+          ukl_atomic_store(&level[w],members);
+        }
+        ukl_tg_barrier_device();
+        for(;;){
+          formula_descend(chunk,d,level,out,blockers,false,partials,lane,width,fw,nodes,&childs);
+          bool more=formula_descend(chunk,d,level,out,from,true,partials,lane,width,fw,nodes,&childs);
+          ukl_tg_barrier();
+          if(lane==0u)partials[0]=0u;
+          ukl_tg_barrier();
+          if(more)partials[0]=1u;
+          ukl_tg_barrier();
+          bool again=partials[0]!=0u;
+          ukl_tg_barrier();
+          if(!again)break;
+        }
+      }else{
+        // A chain: the parents of `to`'s members, and on up through `through`'s.
+        UKL_GLOBAL uint32_t* through=SLOT(src);UKL_GLOBAL uint32_t* to=SLOT(src+1u);
+        FORMULA_EACH(to,fw,lane,width,n){
+          if(!formula_named(t,n,named))continue;
+          for(uint32_t p=tape_parent(chunk,d,n);p!=TAPE_NONE;p=tape_parent(chunk,d,p)){
+            parents++;
+            if(formula_set(out,p))break;
+            if(!formula_get(through,p)||!formula_named(t,p,named))break;
+          }
+        }
+      }
+      ukl_tg_barrier_device();
+      for(uint32_t w=lane;w<fw;w+=width)ukl_atomic_store(&from[w],ukl_atomic_load(&out[w]));
+      top=src+1u;
+    }
+    ukl_tg_barrier_device();
+  }
+  // The anchor into its rule's row, in the batch's numbering: a file's word spans two of the row's.
+  UKL_GLOBAL uint32_t* anchor=SLOT(0u);
+  uint32_t sh=d.node_base%32u;
+  for(uint32_t i=0u;i<formula.targetCount;i++){
+    FormulaTarget target=targets[formula.targetStart+i];
+    // Modes 0 and 1 a rule's row in `roots`; 2 a formula pass's scratch row, within its rule; 3 a targets pass's
+    // scratch row, the image as it is (its starts are in the formula).
+    UKL_GLOBAL uint32_t* row=(target.mode>=2u?labelScratch:roots)+target.row;
+    for(uint32_t w=lane;w<fw;w+=width){
+      uint32_t bits=ukl_atomic_load(&anchor[w]),valid=VALID(w),at=(d.node_base+w*32u)/32u;
+      if(target.mode!=1u){
+        if(bits==0u)continue;
+        // Within its rule: the rule read at the word's own 32 nodes, and only where the formula holds at one. A rule
+        // over codes reads each node's code, so reading it at every word (both halves of a 64-node group each time)
+        // was the floor of every formula's dispatch, whatever the formula (0447).
+        if(target.mode==2u){uint32_t lo=32u*(w%2u);bits&=(uint32_t)(root_mask_in(chunk,d,rules,target.rule,file,w/2u,lo,lo+32u)>>lo);if(bits==0u)continue;}
+        ukl_atomic_or(&row[at],bits<<sh);
+        if(sh!=0u)ukl_atomic_or(&row[at+1u],bits>>(32u-sh));
+      }else{
+        ukl_atomic_and(&row[at],~(valid<<sh)|(bits<<sh));
+        if(sh!=0u)ukl_atomic_and(&row[at+1u],~(valid>>(32u-sh))|(bits>>(32u-sh)));
+      }
+    }
+  }
+  // The next formula reuses the slots.
+  ukl_tg_barrier_device();
+  }
+  FORMULA_COUNT(16u,parents);
+  FORMULA_COUNT(17u,childs);
+  #undef FORMULA_COUNT
+  #undef SLOT
+  #undef VALID
+}

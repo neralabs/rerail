@@ -46,8 +46,8 @@ pub(in crate::code_rule_dsl) fn wave_labelled(
 }
 
 /// The sources of the wave's pattern kernels on Metal, in the plan's order (`metal`'s passes: the patterns as
-/// `levels` visits them, and the fact case when a clause has facts).
-pub(in crate::code_rule_dsl) fn wave_pattern_sources(this: &LoweredWave) -> Result<Vec<String>, Error> {
+/// `levels` visits them, and the fact case when a clause has facts), for tapes of `format`.
+pub(in crate::code_rule_dsl) fn wave_pattern_sources(this: &LoweredWave, format: u32) -> Result<Vec<String>, Error> {
     let clauses = this.clauses.iter().collect::<Vec<_>>();
     let mut patterns = Vec::new();
     let mut facts = false;
@@ -59,7 +59,7 @@ pub(in crate::code_rule_dsl) fn wave_pattern_sources(this: &LoweredWave) -> Resu
         }
         Ok(())
     })?;
-    Ok(metal_program_backend::label_passes::pattern_sources(&patterns, facts))
+    Ok(metal_program_backend::label_passes::pattern_sources(&patterns, facts, format))
 }
 
 /// Each clause's matches of the batch from `roots` (the candidates its root program starts from: listed, or its
@@ -139,17 +139,17 @@ fn metal<'a>(
         Ok(match clause.labels.def(id) {
             Label::Fact(fact, labels) => {
                 let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
-                let mut rows = Vec::new();
-                for (file, (tape, base)) in tapes.iter().zip(&bases).enumerate() {
-                    if !active.is_none_or(|active| active[at][file]) {
-                        continue;
-                    }
-                    let key = (Arc::as_ptr(fact) as usize, Arc::as_ptr(tape.document_source()) as usize);
-                    for (node, targets) in facts.get(&key).into_iter().flat_map(|found| found.rows()) {
-                        rows.push((base + node, targets.iter().zip(labels).map(|(target, label)| (base + target, index(*label))).collect()));
-                    }
-                }
-                Pass::Fact { target, rows }
+                // Where each active file's findings are in the fact block, which the device reads in place (Q251).
+                let found = tapes
+                    .iter()
+                    .enumerate()
+                    .filter(|&(file, _)| active.is_none_or(|active| active[at][file]))
+                    .filter_map(|(file, tape)| {
+                        let key = (Arc::as_ptr(fact) as usize, Arc::as_ptr(tape.document_source()) as usize);
+                        facts.get(&key).map(|found| (file as u32, *found))
+                    })
+                    .collect();
+                Pass::Fact { target, block: Arc::clone(&facts.block), found, labels: labels.iter().map(|label| index(*label)).collect() }
             }
             Label::Pattern(pattern, starts) | Label::Constrained(pattern, starts, _) => {
                 let constraints = match clause.labels.def(id) {

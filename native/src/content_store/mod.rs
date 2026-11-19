@@ -14,7 +14,7 @@ pub use compression::{decompress, decompress_chunks, decompress_head, decompress
 mod collection_guard;
 pub use collection_guard::CollectionLease;
 mod connection;
-pub use compression::set_language_tags;
+pub use compression::{set_language_tags, set_tapes_kept_as_is};
 pub use connection::set_connection_functions;
 mod corpus_runs;
 pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex, live_fact_schema, stat_blob_key};

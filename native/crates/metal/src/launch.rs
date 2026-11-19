@@ -187,10 +187,15 @@ pub fn wait_checked(command: &CommandBufferRef) -> Result<(), Error> {
 }
 
 fn mark_command(command: &CommandBufferRef, completed: bool) {
+    mark(command.as_ptr() as usize, completed);
+}
+
+/// Marks the dispatches of the command known by `pointer` (a Metal command buffer's address, or a device-layer
+/// command's key, `crate::lane`) submitted, or completed.
+pub(crate) fn mark(pointer: usize, completed: bool) {
     EVALUATION.with_borrow(|slot| {
         if let Some(evaluation) = slot {
             let mut evaluation = evaluation.borrow_mut();
-            let pointer = command.as_ptr() as usize;
             if let Some(&id) = evaluation.commands.get(&pointer) {
                 for record in &mut evaluation.records {
                     if record.command == id && record.encoded {
@@ -219,10 +224,18 @@ fn record_attempt(
     group: MTLSize,
     indirect: bool,
 ) -> bool {
+    let bound = EVALUATION.with_borrow(|slot| {
+        slot.as_ref().and_then(|e| e.borrow_mut().bindings.remove(&(command.as_ptr() as usize, encoder.as_ptr() as usize)))
+    });
+    attempt(command.as_ptr() as usize, encoder.label(), [grid.width, grid.height, grid.depth], [group.width, group.height, group.depth], indirect, bound.unwrap_or_default())
+}
+
+/// Charges one dispatch of the command known by `pointer` to the evaluation's budget and records it: false past
+/// the budget (the dispatch is not encoded), or with no evaluation.
+pub(crate) fn attempt(pointer: usize, kernel: &str, grid: [u64; 3], group: [u64; 3], indirect: bool, buffers: Vec<(usize, u64)>) -> bool {
     EVALUATION.with_borrow(|slot| {
         let Some(evaluation) = slot else { return false };
         let mut evaluation = evaluation.borrow_mut();
-        let pointer = command.as_ptr() as usize;
         let id = if let Some(&id) = evaluation.commands.get(&pointer) {
             id
         } else {
@@ -232,10 +245,6 @@ fn record_attempt(
             id
         };
         let encoded = evaluation.budget.reserve();
-        let buffers = evaluation
-            .bindings
-            .remove(&(pointer, encoder.as_ptr() as usize))
-            .unwrap_or_default();
         let (application_buffer_bytes, private_buffer_bytes) = crate::runtime::buffer_usage();
         evaluation.peak_application_buffer_bytes = evaluation
             .peak_application_buffer_bytes
@@ -243,9 +252,9 @@ fn record_attempt(
         let peak_application_buffer_bytes = evaluation.peak_application_buffer_bytes;
         evaluation.records.push(DispatchRecord {
             command: id,
-            kernel: encoder.label().to_owned(),
-            grid: [grid.width, grid.height, grid.depth],
-            group: [group.width, group.height, group.depth],
+            kernel: kernel.to_owned(),
+            grid,
+            group,
             indirect,
             encoded,
             submitted: false,
