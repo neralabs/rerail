@@ -57,6 +57,7 @@ function general() {
       row("Footer", "Shows in Claude Code, OMP and Pi only.",
         data.presence === null ? h("span.val", null, "…") : seg("presence", [["compact", "Show"], ["silent", "Do not show"]], data.presence)),
       installed === null ? null : row("Installed", null, h("span.val", null, installed)),
+      data.health ? row("Version", null, h("span.val", null, data.health.version)) : null,
       historyRow(),
       ui.scope === null ? null : row("Follow .gitignore",
         [`New sessions in ${repoName() || "this repo"} skip Git-ignored files, and so does `, h("code", null, "rerail rules test"),
@@ -118,7 +119,7 @@ function refreshCounts() {
 export function render(root) {
   refreshCounts();
   const counts = data.repositories.map(repoCounts);
-  const sig = JSON.stringify([ui.theme, data.presence, ui.scope, data.followGitignore, data.health?.installedAt, data.health?.database.path,
+  const sig = JSON.stringify([ui.theme, data.presence, ui.scope, data.followGitignore, data.health?.installedAt, data.health?.version, data.health?.database.path,
     data.repositories, data.repository?.repositoryKey, data.repository?.name, counts, data.agents, data.agentsError, clearAsk, clearing]);
   setContent(root, sig, () => h("div.settings", null, general(), repos(), agents(), uninstall()));
 }

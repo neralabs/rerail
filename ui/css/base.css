@@ -170,6 +170,7 @@ button.repopill:hover,.repopill[aria-expanded="true"]{background:var(--subtle);c
 .repomenu .sub{margin:3px 0 0;padding:8px 10px 6px;border-top:1px solid var(--border);font-size:12px;line-height:1.5;color:var(--muted-foreground)}
 .status{margin-left:auto;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;color:var(--muted-foreground);font-size:12px;text-align:right}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--success);flex:none}
+.status .ver{margin-right:6px}
 .status.warn{color:var(--warning-foreground)} .status.warn .dot{background:var(--warning-foreground)}
 .status.down{color:var(--danger-foreground)} .status.down .dot{background:var(--danger-foreground)}
 
