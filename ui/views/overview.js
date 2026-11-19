@@ -4,9 +4,9 @@
  * or the empty block that says what to do next.
  */
 import { h, setText, setAttr, setClass, setContent, syncChildren, icon, pendingIcon } from "../dom.js";
-import { ago, clock, fmt, plural, shortSessionId, whenLabel, HOST_NAME } from "../format.js";
-import { awaitingApproval, awaitingYourApproval, isFromPack, isRunning, worktreeLeftOut } from "../derive.js";
-import { data, ui, ALL_TIME, activityAllOf, allFires, fires, packOfRule, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
+import { ago, andList, clock, fmt, plural, shortSessionId, whenLabel, HOST_NAME } from "../format.js";
+import { awaitingApproval, awaitingYourApproval, isFromPack, isLog, isRunning, worktreeLeftOut } from "../derive.js";
+import { data, ui, ALL_TIME, activityAllOf, allFires, fires, packById, packOfRule, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
 import { ensureTitle } from "../poll.js";
 import { invalidate } from "../shell.js";
 import { rangeControl, syncRange } from "../render/range.js";
@@ -63,11 +63,18 @@ function stoppedBanner(repo) {
 }
 
 /** The welcome shows only where Rerail is started: a repository set up but never started reads as stopped. */
+/**
+ * Day one, before the first session: which rule packs are added, how many rules steer (a pack's rules steer from the
+ * start; only the ones it starts off are off), and what Rerail adds to a linter, in set-up's own words.
+ */
 function welcomeBanner(repo) {
-  const on = rulesArray().filter(isRunning).length;
+  const running = rulesArray().filter(isRunning), log = running.filter(isLog).length, steer = running.length - log;
+  const names = [...data.attachedPacks.keys()].map(id => packById(id)?.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
   return h("div.welcome", { role: "status" }, icon("done", 22), h("div", null,
-    h("b", null, `Rerail is on. ${fmt(on)} ${plural(on, "rule is", "rules are")} running in ${repo}.`),
-    h("p", null, "Start a coding agent session here and code as usual. Violations show on this page as they’re logged.")),
+    h("b", null, `Rerail is on in ${repo}: ${fmt(names.length)} ${plural(names.length, "rule pack")}, ${fmt(steer)} ${plural(steer, "rule")} steering${log ? `, ${fmt(log)} on Log only` : ""}.`),
+    names.length ? h("p", null, `${andList(names)}. Each pack starts some of its rules on and the rest off; turn more on from its page.`) : null,
+    h("p", null, "Your linter checks code after it’s written; Rerail tells your coding agent as it writes, so problems are fixed in the same turn."),
+    h("p.acts", null, h("button.btn.sm", { "data-act": "nav", "data-i": "packs" }, "See your rule packs"))),
   h("button.x", { "data-act": "dismisswelcome", "aria-label": "Dismiss" }, "✕"));
 }
 
@@ -75,7 +82,7 @@ function renderBanner(root, state) {
   const kind = data.loaded ? bannerFor(state, welcomeDismissed()) : null;
   const repo = repoName();
   const on = rulesArray().filter(isRunning).length;
-  setContent(root, JSON.stringify([kind, repo, on, data.repository?.repositoryKey]), () =>
+  setContent(root, JSON.stringify([kind, repo, on, data.repository?.repositoryKey, [...data.attachedPacks.keys()], rulesArray().filter(isRunning).map(r => r.rule.mode)]), () =>
     kind === "stopped" ? stoppedBanner(repo) : kind === "welcome" ? welcomeBanner(repo) : null);
 }
 
