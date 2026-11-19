@@ -1,6 +1,7 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { access } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
@@ -208,6 +209,48 @@ function ownConnection(ws: Workspace, github: GithubClient): { service: MergeAss
   };
   onTestFinished(close);
   return { service: createMergeAssistService({ database, github }), close, database };
+}
+
+/** The SQLite driver Rerail's database runs on, for another process to open the workspace's database with. */
+const SQLITE_DRIVER = createRequire(import.meta.url).resolve("better-sqlite3");
+
+/**
+ * How long {@link holdWriteLock}'s process holds the write lock when it is not told to give it back: well within the
+ * five seconds a Rerail connection waits for a lock, so a write that waits for the lock gets it.
+ */
+const LOCK_HELD_MS = 2_000;
+
+/**
+ * Another process holding the write lock of the database at `path`. Answers once it holds it, with `release`, which
+ * tells it to give the lock back and resolves once it has exited; untold, it gives it back after {@link LOCK_HELD_MS}.
+ */
+async function holdWriteLock(path: string): Promise<{ release: () => Promise<void> }> {
+  const script = [
+    "const database = new (require(process.argv[1]))(process.argv[2]);",
+    "database.exec(\"BEGIN IMMEDIATE\");",
+    "const end = () => { database.exec(\"ROLLBACK\"); database.close(); process.exit(0); };",
+    "process.stdin.once(\"data\", end);",
+    "setTimeout(end, Number(process.argv[3]));",
+    "process.stdout.write(\"held\\n\");",
+  ].join(" ");
+  const child = actualSpawn(process.execPath, ["-e", script, SQLITE_DRIVER, path, String(LOCK_HELD_MS)], { stdio: ["pipe", "pipe", "inherit"] });
+  const exited = new Promise<void>(done => child.once("exit", () => done()));
+  // The workspace's folder goes after the test: Windows refuses to remove a database a process holds.
+  onTestFinished(async () => {
+    if (running(child)) child.kill("SIGKILL");
+    await exited;
+  });
+  child.stdin.on("error", () => undefined);
+  await new Promise<void>((held, failed) => {
+    child.stdout.once("data", () => held());
+    child.once("exit", code => failed(new Error(`The process holding the lock exited with ${String(code)} before it held it.`)));
+  });
+  return {
+    release: async () => {
+      if (running(child)) child.stdin.end("release\n");
+      await exited;
+    },
+  };
 }
 
 const { access: actualAccess } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
@@ -554,34 +597,33 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     for (const sequence of events.values()) expect(sequence).toEqual(["closed", "detected"]);
   });
 
-  it("resolves a stop with no wait whose release of a scan's mark meets a database another connection holds, and leaves the mark to go stale, as when its process ends", async () => {
+  it("resolves a stop with no wait whose release of a scan's mark meets another process's write lock without waiting for the lock, and leaves the mark to go stale, as when its process ends", async () => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
     addPeers(ws);
     await ws.service().setEnabled(ws.repo, true);
     const github = new HeldGithub();
+    // Rerail's own connection, which waits five seconds for a lock.
     const { service, close, database } = ownConnection(ws, github);
-    // The release waits this long for the lock, not the five seconds a daemon's connection waits.
-    database.$client.pragma("busy_timeout = 50");
+    const busyTimeout: unknown = database.$client.pragma("busy_timeout", { simple: true });
     const asked = Promise.withResolvers<void>();
     github.onHeld = () => asked.resolve();
     const scan = service.openSession(ws.repo, "claude-code", "session-1");
     await asked.promise;
-    const holder = openRerailDatabase(ws.databasePath);
-    holder.$client.exec("BEGIN IMMEDIATE");
+    const holder = await holdWriteLock(ws.databasePath);
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    // As `DatabaseApiStores.close()` does: the stop, then the database closed in the same call.
+    // As `DatabaseApiStores.close()` does: the stop, then the database closed in the same call. A release that waited
+    // for the lock would get it once the other process gives it back by itself, and remove the mark.
     const stopped = service.stop(0);
+    const busyTimeoutAfter: unknown = database.$client.pragma("busy_timeout", { simple: true });
     close();
     const written = stderr.mock.calls.map(([text]) => String(text));
     stderr.mockRestore();
-    holder.$client.exec("ROLLBACK");
-    // Closed now, before the workspace's folder is removed: Windows refuses to remove a database a connection holds.
-    holder.$client.close();
+    await holder.release();
     github.release();
     await scan;
 
     await expect(stopped).resolves.toBeUndefined();
-    expect(written).toEqual([expect.stringContaining(`rerail: Merge Assist could not give up its scan of ${ws.repo}: `)]);
+    expect({ written, busyTimeoutAfter }).toEqual({ written: [`rerail: Merge Assist could not give up its scan of ${ws.repo}: database is locked\n`], busyTimeoutAfter: busyTimeout });
     expect(await stored(ws)).toEqual({ lastScan: null, scanning: true, conflicts: [] });
   });
 

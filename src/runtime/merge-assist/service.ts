@@ -169,6 +169,21 @@ const UNREAD_PULLS: Partial<Record<GithubReadiness["state"], string>> = {
 /** A checkout conflict events are fired in. */
 type FiredCheckout = Pick<CheckoutContext, "checkoutPath" | "repositoryKey">;
 
+/**
+ * Runs `work` with the busy wait of `database`'s open connection off: a write fails at once (SQLITE_BUSY) while another
+ * connection holds the write lock, where it would wait for the lock up to `busy_timeout` on the thread. The wait is put
+ * back after.
+ */
+function withoutBusyWait(database: RerailDatabase, work: () => void): void {
+  const busyTimeout = Number(database.$client.pragma("busy_timeout", { simple: true }));
+  database.$client.pragma("busy_timeout = 0");
+  try {
+    work();
+  } finally {
+    database.$client.pragma(`busy_timeout = ${busyTimeout}`);
+  }
+}
+
 class DatabaseMergeAssist implements MergeAssistRuntime {
   readonly #options: MergeAssistServiceOptions;
   readonly #now: () => number;
@@ -360,14 +375,20 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     return this.#scans.has(checkoutPath) || this.#liveMark(this.#db, checkoutPath) !== undefined;
   }
 
-  /** Remove the checkout's scan mark if it is still `mark`; nothing once the database is closed. */
-  #releaseMark(checkoutPath: string, mark: ScanMark): void {
-    if (this.#database?.$client.open !== true) return;
+  /**
+   * Remove the checkout's scan mark if it is still `mark`; nothing once the database is closed. Unless `waitForLock`,
+   * it fails at once while another connection holds the write lock (`withoutBusyWait`).
+   */
+  #releaseMark(checkoutPath: string, mark: ScanMark, waitForLock = true): void {
+    const database = this.#database;
+    if (database?.$client.open !== true) return;
     const key = STATE_KEYS.scanning(checkoutPath);
-    this.#database.transaction(tx => {
+    const release = (): void => database.transaction(tx => {
       const current = readState(tx, key, scanningSchema);
       if (current?.since === mark.since && current.pid === mark.pid) deleteState(tx, key);
     }, { behavior: "immediate" });
+    if (waitForLock) release();
+    else withoutBusyWait(database, release);
   }
 
   /**
@@ -627,8 +648,8 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     // No queued handler starts from now on, so none starts a command after the running ones are ended.
     this.#hook.stop();
     // With no wait, the passes end in this call, before it awaits anything: its caller may close the database as soon
-    // as it returns, as `DatabaseApiStores.close()` does.
-    if (waitMs <= 0) void this.#endPasses();
+    // as it returns, as `DatabaseApiStores.close()` does. Nor does it wait for another process's write lock.
+    if (waitMs <= 0) void this.#endPasses(false);
     const started = Date.now();
     await this.#commands.stop(Math.min(STOP_KILL_GRACE_MS, waitMs / 2));
     const timer = Promise.withResolvers<void>();
@@ -640,24 +661,25 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     } finally {
       clearTimeout(timeout);
     }
-    await this.#endPasses();
+    await this.#endPasses(true);
   }
 
   /**
    * Ends every pass still running at its next Git read, so it stores nothing, and gives up the scan marks of the scans
-   * among them while the database is open, so the next process scans at once. Resolves once the Git it ended has
-   * exited, so none runs on in the checkout, and not once the passes have: a file read on a drive that stopped
-   * answering would hold one until the drive answers. Such a pass ends by itself later: it stores nothing, starts no
-   * Git, and gives up its scan mark only while the database is open (`#releaseMark`).
+   * among them while the database is open, so the next process scans at once, waiting for another connection's write
+   * lock only if `waitForLock`. Resolves once the Git it ended has exited, so none runs on in the checkout, and not once
+   * the passes have: a file read on a drive that stopped answering would hold one until the drive answers. Such a pass
+   * ends by itself later: it stores nothing, starts no Git, and gives up its scan mark only while the database is open
+   * (`#releaseMark`).
    */
-  #endPasses(): Promise<void> {
+  #endPasses(waitForLock: boolean): Promise<void> {
     const ended = this.#reads.stop();
     for (const [path, { mark }] of this.#scans) {
       try {
-        this.#releaseMark(path, mark);
+        this.#releaseMark(path, mark, waitForLock);
       } catch (error) {
-        // Another connection held the database past its busy wait: the mark goes stale once this process ends, as a
-        // mark left by a process that ended without its stop does.
+        // Another connection held the write lock, past the busy wait or with none: the mark goes stale once this
+        // process ends, as a mark left by a process that ended without its stop does.
         process.stderr.write(`rerail: Merge Assist could not give up its scan of ${path}: ${error instanceof Error ? error.message : String(error)}\n`);
       }
     }
