@@ -616,11 +616,12 @@ preimages and held steers.
 - A Rerail home or `.rerail\sessions` folder Rerail makes outside the profile gets the ACL when it is made, and a home
   an earlier release made gets it at the next daemon launch. A `.rerail\sessions` Rerail did not make (Git makes one
   for a repository that commits a file in it; a person, or Rerail 0.1.4, may have made it) gets it when the daemon
-  first opens a session there, before it writes: the daemon reads the folder's ACL with `icacls` once per folder in its
-  life and sets it when the folder still inherits its parent's, and every record already in it inherits the new one.
-  Windows takes about 0.2 ms per file or folder already there to pass the ACL on; that session waits for it, once,
-  and the daemon answers every other session meanwhile. An entry someone set on that folder itself for another
-  account stays.
+  first opens a session there: the daemon reads the folder's ACL with `icacls` once per folder in its life and sets it
+  when the folder still inherits its parent's, and every record already in it inherits the new one. Windows takes
+  about 0.1 to 0.2 ms per file or folder already there to pass the ACL on, and no session waits for that: a session
+  waits only for the read, and one that opens while the ACL is passed on first gives its own folder the same ACL, one
+  more `icacls`, so what it writes is private from its first byte. An entry someone set on that folder itself for
+  another account stays.
   `rerail remote add` gives the `remote-tokens` folder the ACL before it writes a token there, so a remote's token is
   private before any daemon launch. A failure is reported on stderr, a daemon's log, with `icacls`'s reason, and never
   fails the caller.

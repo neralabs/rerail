@@ -318,7 +318,7 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
   everything written in it inherits; a home an earlier release made gets it at the next daemon launch, and a
   `.rerail\sessions` folder Rerail did not make (Git, a person, Rerail 0.1.4) when the daemon first opens a session
-  there, before it writes, the records already in it included (`src/engine/storage/windows-acl.ts`,
+  there, the records already in it included, each session's folder first (`src/engine/storage/windows-acl.ts`,
   `src/engine/storage/ledger-paths.ts`). A daemon TLS key whose ACL lets anyone else read it, or that has no DACL
   (everyone has full control), is never served with: when this account reads it as a private key, the daemon then
   serves this computer alone, on loopback, on T9's three conditions.
@@ -661,9 +661,9 @@ keeps its own `.gitignore`, and on Windows gives the records folder the owner-on
 - `ignoreInGit` rewrites `.gitignore` whenever it is not Rerail's own `*` file, so a planted `!*` cannot expose ledgers
   to `git add -A`.
 - A `.rerail/sessions` the repository's own commit makes, which on Windows outside the profile folder takes its
-  parent's ACL, is given the owner-only ACL when the daemon first opens a session there, before it writes
-  (`makeLedgerFolder` with `repair`); elsewhere it is made `0700`. On Windows, one whose ACL Rerail cannot read or
-  change is named in the daemon log.
+  parent's ACL, is given the owner-only ACL when the daemon first opens a session there, and that session's own folder
+  has it before the session writes (`makeLedgerFolder` with `repair`); elsewhere it is made `0700`. On Windows, one
+  whose ACL Rerail cannot read or change is named in the daemon log.
 
 **What remains:** a `RERAIL_STORAGE_ROOT` outside any `.rerail` folder is not checked. Replayed ledgers are still
 trusted state; planting one needs the session id, whose hash names the folder.
