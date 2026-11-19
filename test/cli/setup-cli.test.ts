@@ -32,7 +32,7 @@ import {
 } from "../../src/setup/index.js";
 import { ACTIVE_PROFILE_FILE, DEVICE_SECRETS_DIR, PROFILES_DIR } from "../../src/activation/index.js";
 import { DAEMON_PORT_FILE } from "../../src/daemon/index.js";
-import { INSTALLED_PACKS_DIR, LOCKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE } from "../../src/engine/index.js";
+import { INSTALLED_PACKS_DIR, LOCKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE, STATUS_LINES_FOLDER } from "../../src/engine/index.js";
 import { AUTOSTART_CLAIM_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, START_LOCK_DIR } from "../../src/runtime/index.js";
 import { POSIX_MODES } from "../support/platform/file-mode.js";
 import { stubUserHome } from "../support/user-home.js";
@@ -513,6 +513,35 @@ describe("rerail install --root", () => {
     const text = output.mock.calls.join("");
     expect(text).toContain(`Kept ${context.home}: access-token, coding-agents.json, daemon.log, locks (Rerail's settings, logs and records; delete it if you will not install Rerail again).`);
     expect(text).not.toContain("not Rerail's");
+  });
+
+  it("removes the Claude Code status lines the daemon kept, which nothing reads once the status line is gone", async () => {
+    const { context, packageRoot } = await fixture();
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    const status = join(context.home, STATUS_LINES_FOLDER);
+    await mkdir(status);
+    await writeFile(join(status, "a-session"), "R E R A I L ✕ not running\n");
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove"], context)).toBe(0);
+
+    expect(existsSync(status)).toBe(false);
+    expect(output.mock.calls.join("")).toContain(`Removed ${status} (the Claude Code status lines).`);
+  });
+
+  it("removes only the status lines from a status lines folder that holds files that are not Rerail's", async () => {
+    const { context, packageRoot } = await fixture();
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    const status = join(context.home, STATUS_LINES_FOLDER);
+    await mkdir(join(status, "drafts"), { recursive: true });
+    for (const name of ["a-session", "a-session.4242.2f0e9b7a-0000-4000-8000-000000000000.tmp"]) await writeFile(join(status, name), "Rerail's\n");
+    for (const name of ["notes.txt", "draft.tmp"]) await writeFile(join(status, name), "not Rerail's\n");
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove"], context)).toBe(0);
+
+    expect((await readdir(status)).sort()).toEqual(["draft.tmp", "drafts", "notes.txt"]);
+    expect(output.mock.calls.join("")).toContain(`Kept ${status} (the Claude Code status lines): it holds files that are not Rerail's: draft.tmp, drafts, notes.txt.`);
   });
 
   it("counts every name a Rerail writer gives an entry in its home as Rerail's, and what a write cut short leaves beside it", async () => {
