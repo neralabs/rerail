@@ -1812,7 +1812,7 @@ fn run_split_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: 
 
 /// The files' bytes admitted once a run, every pass of it reading them where they are.
 fn run_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], digests: Option<&[[u8; 32]]>, segments: Segments, read: bool) -> Result<(SerialRun, Option<Resident>), Error> {
-    // An `early` (decision 0330) or a prefix (0335) is the CPU's for now, as at `run_batch`.
+    // A prefix (0335) is the CPU's for now, as at `run_batch`.
     if programs.iter().any(|p| crate::block_program::starts_late(p)) {
         return Err(Error::UnsupportedBackend);
     }

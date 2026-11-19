@@ -11,7 +11,7 @@ use rerail_metal::block_program;
 /// Every step's tier 1 on Metal, generated MSL (one lane width, the class planes), equals the
 /// CPU interpreter on every document: outputs and extracted positions. A step whose program needs
 /// a form generated MSL lacks (`block_program::missing_form`: a fixed point, a back fill or load,
-/// an early start) is refused by that name and counted, not compared; most steps run.
+/// a prefix) is refused by that name and counted, not compared; most steps run.
 #[test]
 fn every_step_on_metal_equals_the_interpreter() {
     use block_program::{ClassStrategy, Executor, LaneWidth, run_split};
