@@ -772,36 +772,6 @@ describe("mechanical code rule regressions", () => {
     } finally { await enforcer.close(); }
   });
 
-  it("checks a tool call's edit in one engine call with a walk's batch that holds a package manifest, where a rule counts matches across files", async () => {
-    const { recorder, audits, finished } = recordingAudits();
-    const { root, enforcer, requestSteer } = await fixture({ audits: recorder, codeRules: [needleBudgetRule()] });
-    const loggedDoneAtSteer: number[] = [];
-    requestSteer.mockImplementation(async () => { loggedDoneAtSteer.push(finished.filter(path => path !== "api/a_own.py").length); });
-    // A package manifest makes the engine read its folder's sources again. Queued last, a check of one edit at a time
-    // up to it would hold the tool call's edit behind every log edit.
-    const logged = [...LOGGED, "api/z_other.py", "api/package.json"];
-    const text = (path: string) => (path === "api/z_other.py" ? "NEEDLE\n" : path === "api/package.json" ? "{}\n" : "safe()\n");
-    const language = (path: string) => (path === "api/package.json" ? "json" as const : "python" as const);
-    try {
-      for (const path of logged) await writeFile(join(root, path), text(path));
-      await writeFile(join(root, "api/a_own.py"), "NEEDLE\n");
-      await enforcer.openWorkspace("manifest");
-      await enforcer.auditGeneratedEdits("manifest", {
-        revision: 1, checkpoints: ["edit"], mode: "log", edits: logged.map(path => ({ path, language: language(path), generatedText: text(path) })),
-      });
-      await enforcer.auditGeneratedEdits("manifest", {
-        revision: 2, checkpoints: ["edit"], edits: [{ path: "api/a_own.py", language: "python", generatedText: "NEEDLE\n" }],
-      });
-      await settled(enforcer);
-      const steered = requestSteer.mock.calls.flatMap(([, , , metadata]) => metadata?.generatedEdit?.violations ?? []);
-      expect(steered.map(violation => `${violation.code}@${violation.path}`)).toContain("BUDGET@api/a_own.py");
-      expect(loggedDoneAtSteer).toHaveLength(1);
-      expect(loggedDoneAtSteer[0]).toBeLessThan(2);
-      expect([...audits.values()].map(audit => audit.paths[0])).toEqual([...logged, "api/a_own.py"]);
-      expect([...audits.values()].every(audit => audit.result?.status === "completed")).toBe(true);
-    } finally { await enforcer.close(); }
-  });
-
   it("lets a tool call's result wait for its own edit's steer, not for the log edits checked with it in one engine call", async () => {
     const { recorder, finished } = recordingAudits();
     const { root, enforcer, requestSteer } = await fixture({ audits: recorder, codeRules: [needleBudgetRule()] });

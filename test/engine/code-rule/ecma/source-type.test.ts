@@ -444,6 +444,7 @@ describe("a package.json edit alone", () => {
     const root = await repository(false, SOURCES);
     const { edit, enforcer, auditCount, reportedSince, close } = await enforcerFor(root, CROSS_FILE, SOURCES);
     const manifest = '{ "type": "module" }\n';
+    const applies = vi.spyOn(loadNativeBinding().CodeRuleDslWorkspace.prototype, "applyBufferAsync");
     try {
       expect(await edit()).toEqual(both(["PROGRAM", "REQUIRE"]));
       await writeFile(join(root, "package.json"), manifest);
@@ -459,7 +460,10 @@ describe("a package.json edit alone", () => {
       await enforcer.settle();
       // The manifest's edit reports the sources it made modules, as a check of it alone does: no CommonJS require now.
       expect(reportedSince(before)).toEqual({ ...both(["PROGRAM"]), "lib/own.ts PROGRAM": 1 });
+      // One engine call for the manifest, the sources it refreshed and the tool call's edit, not one per edit.
+      expect(applies).toHaveBeenCalledTimes(1);
     } finally {
+      applies.mockRestore();
       await close();
     }
   });

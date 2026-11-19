@@ -464,6 +464,8 @@ describe("Rerail tool results waiting for their edit's check", () => {
     // A walk of the other worktrees queues `log` batches, which steer no one: their checks end once the test opens `walk`.
     const walk = Promise.withResolvers<void>();
     const walkChecks: Promise<void>[] = [];
+    /** What each wait for the session's edit checks asked for: `steering`, or every edit. */
+    const settles: Array<"steering" | undefined> = [];
     let auditor: CodeRuleAuditor | undefined;
     const runtime = new RerailRuntime({
       autostart: false,
@@ -499,6 +501,7 @@ describe("Rerail tool results waiting for their edit's check", () => {
         },
         // With `steering`, the edits that may steer only: a walk's `log` checks are not waited for.
         settleGeneratedEdits: async only => {
+          settles.push(only);
           checking.resolve();
           await Promise.all(only === "steering" ? checks : [...checks, ...walkChecks]);
         },
@@ -531,7 +534,7 @@ describe("Rerail tool results waiting for their edit's check", () => {
         revision: 0, checkpoints: ["edit"], mode: "log", edits: [{ path: "b.ts", language: "typescript", generatedText: "export const b = 1;\n" }],
       });
     };
-    return { runtime, root, session, check, checking, steered, edit, lateEdit, turnEnd, walk, walkQueued };
+    return { runtime, root, session, check, checking, steered, edit, lateEdit, turnEnd, walk, walkQueued, settles };
   }
 
   /** `a.ts`'s finding as a steer renders it, and the digest that lists it at the end of the agent's run. */
@@ -550,22 +553,16 @@ describe("Rerail tool results waiting for their edit's check", () => {
   });
 
   it("answers a tool call's result with its edit's steer while a walk's log edits queued ahead of it are still being checked", async () => {
-    const { runtime, check, checking, steered, edit, walk, walkQueued } = await hookSession();
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { runtime, check, edit, walk, walkQueued, settles } = await hookSession();
     try {
       await walkQueued();
-      let answered = false;
       const { answering } = await edit("t1", BAD);
-      void answering.finally(() => { answered = true; });
-      await checking.promise;
       check.resolve();
-      await steered.promise;
-      // The answer goes out once the edit's own check ends, not when the one-second wait for the walk's checks runs out.
-      await vi.advanceTimersByTimeAsync(999);
-      expect(answered).toBe(true);
       expect((await answering).map(delivery => delivery.content)).toEqual([STEER]);
+      // The result waited for the edits that may steer only: a wait for every edit would hold it for the walk's checks
+      // until the one-second wait ran out.
+      expect(settles).toEqual(["steering"]);
     } finally {
-      vi.useRealTimers();
       walk.resolve();
       check.resolve();
       await runtime.dispose();
