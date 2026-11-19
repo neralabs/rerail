@@ -34,7 +34,6 @@ pub mod capture_run;
 // cratify: `metal_backend` is rerail-device-metal's (it mounts it)
 // cratify: a re-export of rerail-device-metal's, which its facades of this module make
 pub mod metal_batch_abi;
-// cratify: `metal_parallel` is rerail-device-metal's (it mounts it)
 // Row programs on Metal: scan, count and scatter over the 16-bit layout (decision 0095).
 // cratify: `metal_rows` is rerail-device-metal's (it mounts it)
 // Relations sorted by a key on the device, and the joins that probe them (decision 0095).
