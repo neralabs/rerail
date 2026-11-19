@@ -655,6 +655,15 @@ the old commit point. None of the grammars has that.
 `aot_format_16_tapes_are_the_jits`: 2,008 of the corpus's 2,018 files taken, 4,016 homes, each the
 JIT's.
 
+Left:
+- The JIT's format 16 run is still the general one (rows, then `pass` at commit points) where
+  `coded` holds. `coded` is the Rust backend's analysis of its one function (`OneFn::stacked`), which
+  the JIT does not make.
+- The host still reserves the rows, and format 15's image and code tables, for a format 16 run
+  (`Tape::sized`, `Vec::with_capacity`: not zeroed, so a run that writes none touches none of their
+  pages). Before none is reserved, each of the JIT's table functions (`shift`, `drop`, `blocks`)
+  must be shown not to reach them in a format 16 run.
+
 ## Step 27, done: no working rows in the format 16 run, only a stack of open nodes, in the generated Rust
 
 After step 26, each node still wrote a working row of 12 bytes (its kind and field, start, end):
