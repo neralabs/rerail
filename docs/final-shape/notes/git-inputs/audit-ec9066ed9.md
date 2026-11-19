@@ -2,6 +2,65 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners. The experiments ran on macOS.
 
+## Status at `4b4c8754e`
+
+Seventeen implementation issues or performance questions and five rule-interface gaps remain in this review.
+The preceding review listed 25 implementation items. Ten now have committed repairs. Two additional cases affect the long-lived checkout resolver.
+The rule-interface count includes two further discrepancies described below. The platform checks have separate status.
+
+### What can still go wrong
+
+| Case | Evidence | Repair and acceptance check |
+| --- | --- | --- |
+| 23. A committed stop can disappear | Restoring an older control database before delivery left three memberships alive. | Make a journal outside the restored control file authoritative for the stop decision, its cutoff and its target stores. Apply the decision idempotently to the control file and stores. Test rollback, restore, and crashes on both sides of acknowledgement. |
+| 68. Stopped directories leave generation rows | Stopping a parent removed 30 child runs and retained 30 generation rows. | Compact covered generations with a fence for prior writers. Attempt late publication before and after restart, then start a new watch. |
+| 17. An offline store is polled every five seconds | A failed legacy ownership probe loses its error and repeats the same interval. | Record the failure and attempt count. Increase the delay up to a cap. Reconnect and deliver the original cutoff. |
+| 42. A permanently removed store stays registered | Temporary outages are recoverable, but the registry has no way to retire a store. | Add retirement of an identified store with outstanding releases accounted for. Test an offline store returning and a different database taking its pathname. |
+| 75. Two Git names have the same report path | The invalid-byte filename and the literal string `[hex:ff2e7079]` both display as that string. | Add an unambiguous machine-readable path representation to failures and findings. Keep byte identity through rendering and deduplication. |
+| 46. An accepted filesystem spelling can lose a finding | On a case-insensitive volume, selecting `SRC/A.PY` missed the finding in `src/a.py`. | Resolve the selection against actual inventory names on that volume. Test case-sensitive siblings and the exact-name Git tree separately. |
+| 11. A binary can fail a historical scan | A 32,000,001-byte binary failed in Git and was skipped on the filesystem. | Check a bounded prefix for binary content before applying the text limit. Also exercise large text and a missing blob. |
+| 28. Native source reads hide the cause of failure | The same nullable result represents an absent path, an unavailable tracked object, and the text limit. | Add a checked read with distinct outcomes, and migrate callers that need diagnostics. Remove and restore the blob on the same view. |
+| 47. An excluded entry looks absent | A selected symlink, gitlink and missing path all land in the skipped list without a reason. | Carry the entry mode and skip reason into the report. Exercise all three in one scan. |
+| 61. One scope's history observes unrelated scopes | A query for one run read and hashed 65 rows after 64 unrelated publications. | Request and observe rows by scope. Count rows and cache hits after changing the queried scope and an unrelated one. |
+| 18. A long-lived view retains decoded subtrees | Disjoint selections leave the old decoded entries resident. | Budget decoded bytes and evict old entries. Measure retained bytes and re-decodes for disjoint paths and a tree larger than the budget. |
+| 52. Git-backed policies repeat compilation work | Reinspection follows and lowers the include graph again. | Cache the compiled graph by policy blob, resolved includes and engine inputs. Count lowerings after restart and after replacing one include. |
+| 53. Fresh-catalog inspection costs more | Warm inspection took a median 1.677 ms in a new catalog and 0.073 ms in the existing one. The cause remains unmeasured. | Separate store opening, validation and decoding. Make any optimization preserve correct answers across stores and eviction. |
+| 81. A newline in a worktree name breaks registration and pruning | In this review Git's NUL-delimited list contained the complete name. The catalog missed it. `pruneCheckouts` removed the recorded checkout while Git still listed it. | Share one structured reader between registration and pruning. Use NUL-delimited Git output or exact administrative records on an older Git. Check that pruning preserves that checkout's settings. |
+| 82. The worktree registry retains the old common directory | Replacing A's linked worktree with B's at the same path produced B's list labelled with A's common directory. | Revalidate the checkout's Git directory, common directory and registration data before reusing the list. Test moving a linked worktree. |
+| 86. The daemon can return A's settings for a linked checkout from B | I retained `createCheckoutResolver`, moved A's worktree, and put B's there. The retained resolver returned A's repository key. A fresh lookup returned B. | Invalidate cached discovery when the checkout or its Git directory changes. Compare the public resolver with fresh lookup after replacement, during absence, and after restoration. |
+| 87. Changing the remote leaves a fresh clone using the old remote's settings | A previously unrecorded clone used a recorded remote A. After changing its origin to recorded remote B, the same resolver still returned A. A fresh lookup returned B. | Revalidate remote-derived lookups against the effective Git configuration. Test a URL change, a removed remote and an included config file with the same resolver. |
+
+Cases 82 and 86 use different entry points and caches. Case 87 requires no move. The checkout keeps both its directory and its Git directory throughout.
+[Registry of worktrees](../../../../src/engine/catalog/repository-identity.ts) · [Checkout resolver and pruning](../../../../src/engine/catalog/repository-registry.ts)
+
+### What a rule author still cannot express as designed
+
+| Gap | Observable behavior | Repair and acceptance check |
+| --- | --- | --- |
+| A bound commit does not request its message | Joining `git_source_commit` to `git_message` yielded no row until the policy added an object request. | Propagate bound keys through the library. Compare direct and explicit queries, check missing objects, and count object reads. |
+| The documented HEAD example does not compile | The design uses `git_ref`. The public library declares a revision lookup and no ref-only lookup. | Make the example executable. Specify whether exact ref names and revision expressions require different relations. Test a branch, a symbolic HEAD and an expression. |
+| Ordered trailers have no public relation | A rule asking for the signed-off-by trailer failed to compile. | Implement ordered trailer facts, including repeated keys and continuations. Compare the examples with Git. |
+| A mutable lookup's public result drops the worktree key | Across two linked worktrees, the same repository key and expression `HEAD` gave different correct tips. The `git_root_view` values differed. The convenience answer `git_revision(repo, expr, oid)` cannot identify its worktree by itself. | Expose a public view-keyed lookup and error relation over the existing view-keyed provider. Document the invocation-scoped convenience relation and correct the design's definition of repository identity. Test both worktrees under one store. |
+| A finding about a commit has only a file-style location | A metadata-only policy anchored at `@place("git",1)` produced a finding at path `git`, line 1, in an empty tree. The report names the scanned commit. The finding has no structured commit location of its own. | Provide a commit location carrying repository, object ID and optional field. Preserve source spans for actual files. Exercise a commit message and a real file named `git` in the same report. |
+
+The rules for tree placement already live in `.rr`. The two-file revision fixture reused language classification and parser tapes with zero warm parses. That evidence concerns source processing. It does not close the Git-backed policy compilation or scope-history cases above.
+[Design contract](library.md) · [Current rule API](../../../rule-syntax/git.md) · [Measured cache behavior](analysis-scopes.md)
+
+### Repairs and evidence on this branch
+
+| Cases | Commit | What passed |
+| --- | --- | --- |
+| 44, 65, 78, 79, 80, 85 | `8fea135fb` | An existing view follows A's ref updates, refuses B at A's old location, and resumes after A returns. A moved read-only clone recovers its history and settings. The catalog rejects an oversized ID and a FIFO. A copy carrying the marker shares clone history and has a separate worktree view. |
+| 74 | `73689678b` | The optional-handle addon batch left six memberships before the repair and zero after a failed batch. Both policy orders retain prior published ownership. A subsequent metadata-only evaluation succeeds after a missing subtree. |
+| 83, 84 | `e0b83379d` | All 128 extended selector comparisons agree with Git, including the previous 40 mismatches. The earlier 60 named-remote comparisons still agree. Reusing a view observes configuration changes. |
+| 67 | `5074154dd`, `4b4c8754e` | Invalid revisions create no store or route. Tests cover failing policies, simultaneous acquisitions with the same scan ID, interruption on both sides of publication, a killed writer, and pre-upgrade registrations. An offline store remains a candidate until it can answer. |
+
+Git for Windows message selectors, same-length object rewrites on NTFS, and directory-scope release with invalid filename bytes on a byte-preserving Unix volume still need runtime evidence.
+The six-suite run after the addon rebuild had one timeout in the first filesystem scan. Its other 205 tests passed.
+Five fresh Node processes using the same addon and separate empty stores measured 4 ms for native binding load, 227–245 ms for runner import, and 234–255 ms for the first metadata-only revision scan. The repeat scan took 69–80 ms. Those figures cover a different fixture and do not explain the filesystem test's 8.4 seconds.
+I also timed the filesystem test's policy and source outside Vitest, in five fresh processes. Native binding load took 6–7 ms. Runner import took 222–236 ms. The first filesystem scan took 207–319 ms. The one-minute host load average at the start was 8.57. These runs reused the installed addon and the operating system's file cache.
+The final run of all six suites passed 207 tests at the original timeout. The store gate passed 263 tests with four skipped. Four standalone revision CLI tests, six cache architecture tests, and TypeScript checking passed. The intermittent first-test delay remains unexplained.
+
 ## Status at `87d18d609` and in the identity draft
 
 The previous review listed 20 follow-up cases. Three have committed repairs. Seventeen still lack a committed repair, including one performance measurement.
