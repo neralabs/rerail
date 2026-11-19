@@ -129,6 +129,7 @@ pub const PREPARING: &[&str] = &[
 pub mod phase0;
 pub mod cross_memo;
 pub mod switches;
+pub mod owner;
 pub mod matchers;
 pub mod preparation;
 /// The prefix of an `ast` matcher's relation (decision 0106).
@@ -2189,9 +2190,16 @@ thread_local! {
 
 
 /// The store the corpus runner keeps tapes in: `RERAIL_TAPE_CACHE`, else one in the temporary
-/// directory; `RERAIL_TAPE_CACHE=off` keeps none.
+/// directory; `RERAIL_TAPE_CACHE=off` keeps none. A named store another process kept past this one's wait is an error
+/// that names that process (`owner::named`).
 pub(in crate::code_rule_dsl) fn tape_cache() -> std::result::Result<Option<ContentStore>, crate::content_store::StoreError> {
-    tape_cache_path().map(|path| ContentStore::open(&path)).transpose()
+    match tape_cache_path() {
+        Some(path) => ContentStore::open(&path).map(Some),
+        None => match std::env::var_os("RERAIL_TAPE_CACHE").filter(|v| v != "off").and_then(|v| owner::refusal(std::path::Path::new(&v))) {
+            Some(why) => Err(crate::content_store::StoreError::Invalid(why)),
+            None => Ok(None),
+        },
+    }
 }
 
 /// Runs `f` with phase 0's observer (`content_store::observe`), kept beside the tape cache (`<tape cache>.files`), or
@@ -2331,7 +2339,11 @@ pub fn tape_cache_path() -> Option<std::path::PathBuf> {
     }
     match std::env::var("RERAIL_TAPE_CACHE") {
         Ok(v) if v == "off" => None,
-        Ok(v) => Some(std::path::PathBuf::from(v)),
+        // The user's store, this process's once no other owns it (`owner::named`): none while another keeps it.
+        Ok(v) => {
+            let path = std::path::PathBuf::from(v);
+            owner::named(&path).is_ok().then_some(path)
+        }
         // A test's own store, a copy of the template (`test_store`); the process's only off a test's thread.
         #[cfg(any(test, feature = "test-hooks"))]
         Err(_) => Some(test_store::own().unwrap_or_else(|| test_tape_cache().clone())),
@@ -2342,19 +2354,20 @@ pub fn tape_cache_path() -> Option<std::path::PathBuf> {
 
 /// The store a run uses when none is named: the project's for this build (`build_store`), the project being the
 /// working directory. Every stored key carries the engine's build, so another build's entries are of no use to a run;
-/// and another project's runs would leave their atoms and plans in it, and hold its writer.
+/// and another project's runs would leave their atoms and plans in it, and hold its writer. Of that store's slots, the
+/// first no other process owns (`owner::slot`): runs at once from one directory each have their own.
 #[cfg(not(any(test, feature = "test-hooks")))]
 fn default_store() -> &'static std::path::PathBuf {
     static PATH: std::sync::LazyLock<std::path::PathBuf> = std::sync::LazyLock::new(|| {
         let cwd = std::env::current_dir().ok().and_then(|d| dunce::canonicalize(&d).ok()).unwrap_or_default();
-        build_store("rerail-stores", Some(&cwd.to_string_lossy()))
+        owner::slot(&build_store("rerail-stores", Some(&cwd.to_string_lossy())))
     });
     &PATH
 }
 
 /// A store of this engine build's in `$TMPDIR/<dir>/`: `<build>.sqlite`, or `<build>-<key>.sqlite` for one `key` (a
 /// project) of several. Another build's files there, unused for a day, are removed (with their `-wal`, `-shm` and
-/// lock files, which start with the same name).
+/// lock files, which start with the same name), unless a live process owns their store (`owner`).
 pub fn build_store(dir: &str, key: Option<&str>) -> std::path::PathBuf {
     use std::hash::{Hash, Hasher};
     let dir = std::env::temp_dir().join(dir);
@@ -2365,7 +2378,7 @@ pub fn build_store(dir: &str, key: Option<&str>) -> std::path::PathBuf {
     for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > day);
-        if !name.starts_with(build) && old {
+        if !name.starts_with(build) && old && !owner::owned_elsewhere(&dir, &name) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
