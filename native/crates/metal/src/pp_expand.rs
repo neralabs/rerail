@@ -2,10 +2,8 @@
 //! definitions (S1, S2, S4), read from the tapes in place.
 
 use crate::Error;
-use crate::pp_blocks::{Enc, Grid, Scan, SegOp, SegScan, Sort, TG};
-use metal::BufferRef;
+use crate::pp_blocks::{Arena, Bound, Buf, Enc, Grid, Scan, SegOp, SegScan, Sort, TG};
 use crate::pp_eval::{Front, Unit, name_key};
-use crate::runtime::MappedBuffer;
 
 /// A definition (`PpDef` in the MSL): the unit's nodes of its name, its `params` node (0: none)
 /// and its body's first leaf; the leaves of each; its flags; its first parameter slot and item.
@@ -35,20 +33,20 @@ pub const I_SPACE: u32 = 1 << 17;
 /// The setup's definitions on the device: one a directive row, each parameter list's leaves'
 /// keys (a parameter's at its leaf, 0 elsewhere), and each body leaf's item.
 pub struct Defs {
-    pub defs: MappedBuffer,
-    pcount: MappedBuffer,
-    bcount: MappedBuffer,
-    pfirst: MappedBuffer,
-    ifirst: MappedBuffer,
+    pub defs: Buf,
+    pcount: Buf,
+    bcount: Buf,
+    pfirst: Buf,
+    ifirst: Buf,
     pscan: Scan,
     bscan: Scan,
-    row_args: MappedBuffer,
-    pargs: MappedBuffer,
-    bargs: MappedBuffer,
-    pub pkeys: MappedBuffer,
-    pub items: MappedBuffer,
+    row_args: Buf,
+    pargs: Buf,
+    bargs: Buf,
+    pub pkeys: Buf,
+    pub items: Buf,
     /// Set where a store's room ran out (decision 0448 §2): the unit runs again at the next rung.
-    pub room: MappedBuffer,
+    pub room: Buf,
     cap: u32,
 }
 
@@ -59,23 +57,22 @@ pub const RUNGS: u32 = 4;
 impl Defs {
     /// Room for `unit`'s rows, and at rung `rung` for their parameters' and bodies' leaves: each
     /// a node, so the last rung's, the unit's nodes, bounds them.
-    pub fn new(unit: &Unit, rung: u32) -> Result<Defs, Error> {
-        let device = crate::device()?;
+    pub fn new(arena: &Arena, unit: &Unit, rung: u32) -> Result<Defs, Error> {
         let rows = unit.dir_bound;
         let nodes = (unit.node_bound >> (RUNGS - 1 - rung.min(RUNGS - 1))).max(256);
-        let words = |k: usize| MappedBuffer::zeroed::<u32>(&device, k.max(1));
+        let words = |k: usize| arena.zeroed::<u32>(k.max(1));
         Ok(Defs {
-            defs: MappedBuffer::zeroed::<PpDef>(&device, rows)?,
+            defs: arena.zeroed::<PpDef>(rows)?,
             pcount: words(rows)?,
             bcount: words(rows)?,
             pfirst: words(rows)?,
             ifirst: words(rows)?,
-            pscan: Scan::new(rows)?,
-            bscan: Scan::new(rows)?,
+            pscan: Scan::new(arena, rows)?,
+            bscan: Scan::new(arena, rows)?,
             row_args: words(4)?,
             pargs: words(4)?,
             bargs: words(4)?,
-            pkeys: MappedBuffer::zeroed::<u64>(&device, nodes)?,
+            pkeys: arena.zeroed::<u64>(nodes)?,
             items: words(nodes)?,
             room: words(1)?,
             cap: nodes as u32,
@@ -86,35 +83,35 @@ impl Defs {
     /// parameter list's leaf) and S4 (`pd_items`, one thread a body leaf).
     pub fn encode(&self, enc: &Enc<'_>, unit: &Unit, front: &Front) -> Result<(), Error> {
         let n32 = unit.len() as u32;
-        let (u_files, u_data) = (&unit.files.buffer as &metal::BufferRef, unit.data());
-        let dir_total = &front.dir_total().buffer;
+        let (u_files, u_data) = (&front.files as &dyn Bound, front.data(unit));
+        let dir_total = &front.dir_total();
         let row_args = &self.row_args;
-        enc.run("pb_args", None, &[dir_total, &row_args.buffer], &[0], Grid::Groups(1))?;
+        enc.run("pb_args", None, &[dir_total, &row_args], &[0], Grid::Groups(1))?;
         enc.run(
             "pd_defs",
             None,
-            &[u_files, u_data, &front.bases.buffer, &front.dir_bases.buffer, dir_total, &front.rows.buffer, &self.defs.buffer, &self.pcount.buffer, &self.bcount.buffer],
+            &[u_files, u_data, &front.bases, &front.dir_bases, dir_total, &front.rows, &self.defs, &self.pcount, &self.bcount],
             &[n32],
-            Grid::Indirect(&row_args.buffer, 0),
+            Grid::Indirect(&row_args, 0),
         )?;
-        self.pscan.encode(enc, dir_total, 0, &self.pcount.buffer, &self.pfirst.buffer)?;
-        self.bscan.encode(enc, dir_total, 0, &self.bcount.buffer, &self.ifirst.buffer)?;
-        enc.run("pb_args", None, &[&self.pscan.total.buffer, &self.pargs.buffer], &[0], Grid::Groups(1))?;
-        enc.run("pb_args", None, &[&self.bscan.total.buffer, &self.bargs.buffer], &[0], Grid::Groups(1))?;
+        self.pscan.encode(enc, dir_total, 0, &self.pcount, &self.pfirst)?;
+        self.bscan.encode(enc, dir_total, 0, &self.bcount, &self.ifirst)?;
+        enc.run("pb_args", None, &[&self.pscan.total, &self.pargs], &[0], Grid::Groups(1))?;
+        enc.run("pb_args", None, &[&self.bscan.total, &self.bargs], &[0], Grid::Groups(1))?;
         let va = name_key(b"__VA_ARGS__");
         enc.run(
             "pd_params",
             None,
-            &[u_files, u_data, &front.bases.buffer, &front.keys.buffer, &front.dir_bases.buffer, dir_total, &self.defs.buffer, &self.pfirst.buffer, &self.pscan.total.buffer, &self.pkeys.buffer, &self.room.buffer],
+            &[u_files, u_data, &front.bases, &front.keys, &front.dir_bases, dir_total, &self.defs, &self.pfirst, &self.pscan.total, &self.pkeys, &self.room],
             &[n32, va as u32, (va >> 32) as u32, self.cap],
-            Grid::Indirect(&self.pargs.buffer, 0),
+            Grid::Indirect(&self.pargs, 0),
         )?;
         enc.run(
             "pd_items",
             None,
-            &[u_files, u_data, &front.bases.buffer, &front.keys.buffer, &front.dir_bases.buffer, dir_total, &self.defs.buffer, &self.ifirst.buffer, &self.bscan.total.buffer, &self.pkeys.buffer, &self.items.buffer, &self.room.buffer],
+            &[u_files, u_data, &front.bases, &front.keys, &front.dir_bases, dir_total, &self.defs, &self.ifirst, &self.bscan.total, &self.pkeys, &self.items, &self.room],
             &[n32, self.cap],
-            Grid::Indirect(&self.bargs.buffer, 0),
+            Grid::Indirect(&self.bargs, 0),
         )?;
         Ok(())
     }
@@ -135,8 +132,10 @@ pub fn definitions(unit: &Unit) -> Result<(crate::pp_eval::Evaluated, DefsRead),
 
 /// `definitions` from rung `rung`.
 pub fn definitions_from(unit: &Unit, rung: u32) -> Result<(crate::pp_eval::Evaluated, DefsRead), Error> {
-    let front = Front::new(unit, false)?;
-    let defs = Defs::new(unit, rung)?;
+    let arena = Arena::new();
+    let front = Front::new(&arena, unit, false)?;
+    let defs = Defs::new(&arena, unit, rung)?;
+    arena.lease()?;
     crate::pp_eval::run(|enc| {
         front.encode(enc, unit)?;
         defs.encode(enc, unit, &front)
@@ -224,48 +223,48 @@ fn builtin_value(key: u64) -> u32 {
 /// stretches, and each stretch token's meaning where it stands.
 pub struct Vis {
     // The layout, on the device.
-    insts: MappedBuffer,
-    n_insts: MappedBuffer,
-    dslot: MappedBuffer,
-    dactive: MappedBuffer,
-    n_dirs: MappedBuffer,
-    gslot: MappedBuffer,
-    gactive: MappedBuffer,
-    pub(crate) n_gaps: MappedBuffer,
+    insts: Buf,
+    n_insts: Buf,
+    dslot: Buf,
+    dactive: Buf,
+    n_dirs: Buf,
+    gslot: Buf,
+    gactive: Buf,
+    pub(crate) n_gaps: Buf,
     n_builtin: u32,
     nd: usize,
     ng: usize,
     // The text map: a word a node of the unit.
-    owner_in: MappedBuffer,
-    heads: MappedBuffer,
-    owner: MappedBuffer,
+    owner_in: Buf,
+    heads: Buf,
+    owner: Buf,
     owner_scan: SegScan,
-    tflag: MappedBuffer,
-    trank: MappedBuffer,
+    tflag: Buf,
+    trank: Buf,
     tscan: Scan,
-    pub(crate) text_nodes: MappedBuffer,
+    pub(crate) text_nodes: Buf,
     // The rows: a directive of the layout each, after the built-ins'.
-    rflag: MappedBuffer,
-    rat: MappedBuffer,
+    rflag: Buf,
+    rat: Buf,
     rscan: Scan,
-    pub(crate) sort_keys: MappedBuffer,
-    pub(crate) name_keys: MappedBuffer,
-    pub(crate) values: MappedBuffer,
-    pub(crate) n_rows: MappedBuffer,
+    pub(crate) sort_keys: Buf,
+    pub(crate) name_keys: Buf,
+    pub(crate) values: Buf,
+    pub(crate) n_rows: Buf,
     pub(crate) sort: Sort,
     // The stretches: a word each, and a lookup a text token.
-    gcounts: MappedBuffer,
-    pub(crate) gfirsts: MappedBuffer,
+    gcounts: Buf,
+    pub(crate) gfirsts: Buf,
     /// The stretches in the unit's order: their keys (slots), sorted with their places, and
     /// each one's slot in that order.
-    gkeys: MappedBuffer,
+    gkeys: Buf,
     gsort: Sort,
-    pub(crate) sslot: MappedBuffer,
-    pub(crate) gat: MappedBuffer,
+    pub(crate) sslot: Buf,
+    pub(crate) gat: Buf,
     pub(crate) gscan: Scan,
-    pub(crate) targs: MappedBuffer,
-    pub lookups: MappedBuffer,
-    pub bad: MappedBuffer,
+    pub(crate) targs: Buf,
+    pub lookups: Buf,
+    pub bad: Buf,
 }
 
 /// The top level's tokens at most: each instance's file's nodes.
@@ -276,10 +275,9 @@ pub fn top_bound(unit: &Unit, lay: &Layout) -> usize {
 const NO_INST: [PpInst; 1] = [PpInst { file: 0, dir_first: 0, gap_first: 0 }];
 
 impl Vis {
-    pub fn new(unit: &Unit, lay: &Layout) -> Result<Vis, Error> {
-        let device = crate::device()?;
-        let words = |v: &[u32]| MappedBuffer::from_slice(&device, if v.is_empty() { &[0] } else { v });
-        let zeroed = |k: usize| MappedBuffer::zeroed::<u32>(&device, k.max(1));
+    pub fn new(arena: &Arena, unit: &Unit, lay: &Layout) -> Result<Vis, Error> {
+        let words = |v: &[u32]| arena.from_slice(if v.is_empty() { &[0] } else { v });
+        let zeroed = |k: usize| arena.zeroed::<u32>(k.max(1));
         let nodes = unit.node_bound;
         let top = top_bound(unit, lay);
         let (nd, ng, nb) = (lay.dir_slots.len(), lay.gap_slots.len(), lay.builtins.len());
@@ -294,7 +292,7 @@ impl Vis {
             vals[k] = builtin_value(key);
         }
         Ok(Vis {
-            insts: MappedBuffer::from_slice(&device, if lay.insts.is_empty() { &NO_INST } else { &lay.insts })?,
+            insts: arena.from_slice(if lay.insts.is_empty() { &NO_INST } else { &lay.insts })?,
             n_insts: words(&[lay.insts.len() as u32])?,
             dslot: words(&lay.dir_slots)?,
             dactive: words(&lay.dir_active)?,
@@ -308,26 +306,26 @@ impl Vis {
             owner_in: zeroed(nodes)?,
             heads: zeroed(nodes)?,
             owner: zeroed(nodes)?,
-            owner_scan: SegScan::new(nodes)?,
+            owner_scan: SegScan::new(arena, nodes)?,
             tflag: zeroed(nodes)?,
             trank: zeroed(nodes)?,
-            tscan: Scan::new(nodes)?,
+            tscan: Scan::new(arena, nodes)?,
             text_nodes: zeroed(nodes)?,
             rflag: zeroed(nd)?,
             rat: zeroed(nd)?,
-            rscan: Scan::new(nd)?,
-            sort_keys: MappedBuffer::from_slice(&device, &sk)?,
-            name_keys: MappedBuffer::from_slice(&device, &nk)?,
-            values: MappedBuffer::from_slice(&device, &vals)?,
+            rscan: Scan::new(arena, nd)?,
+            sort_keys: arena.from_slice(&sk)?,
+            name_keys: arena.from_slice(&nk)?,
+            values: arena.from_slice(&vals)?,
             n_rows: zeroed(1)?,
-            sort: Sort::new(rows)?,
+            sort: Sort::new(arena, rows)?,
             gcounts: zeroed(ng)?,
             gfirsts: zeroed(ng)?,
-            gkeys: MappedBuffer::zeroed::<u64>(&device, ng.max(1))?,
-            gsort: Sort::new(ng)?,
+            gkeys: arena.zeroed::<u64>(ng.max(1))?,
+            gsort: Sort::new(arena, ng)?,
             sslot: zeroed(ng)?,
             gat: zeroed(ng)?,
-            gscan: Scan::new(ng)?,
+            gscan: Scan::new(arena, ng)?,
             targs: zeroed(4)?,
             lookups: zeroed(top)?,
             bad: zeroed(1)?,
@@ -343,77 +341,77 @@ impl Vis {
     /// - `pe_lookups`, a stretch token each, sized by that scan.
     pub fn encode(&self, enc: &Enc<'_>, unit: &Unit, front: &Front, defs: &Defs) -> Result<(), Error> {
         let n32 = unit.len() as u32;
-        let (u_files, u_data) = (&unit.files.buffer as &BufferRef, unit.data());
-        let total = &front.total().buffer;
-        let dir_total = &front.dir_total().buffer;
-        let by_node = Grid::Indirect(&front.node_args().buffer, 0);
-        enc.run("pe_owner_in", None, &[u_files, u_data, &front.bases.buffer, total, &self.owner_in.buffer], &[n32], by_node)?;
-        self.owner_scan.encode(enc, SegOp::Max, total, 0, &self.owner_in.buffer, &self.heads.buffer, &self.owner.buffer)?;
-        enc.run("pe_text_flag", None, &[u_files, u_data, &front.bases.buffer, total, &self.owner.buffer, &self.tflag.buffer], &[n32], by_node)?;
-        self.tscan.encode(enc, total, 0, &self.tflag.buffer, &self.trank.buffer)?;
-        enc.run("pe_text_nodes", None, &[&self.tflag.buffer, &self.trank.buffer, total, &self.text_nodes.buffer], &[], by_node)?;
+        let (u_files, u_data) = (&front.files as &dyn Bound, front.data(unit));
+        let total = &front.total();
+        let dir_total = &front.dir_total();
+        let by_node = Grid::Indirect(&front.node_args(), 0);
+        enc.run("pe_owner_in", None, &[u_files, u_data, &front.bases, total, &self.owner_in], &[n32], by_node)?;
+        self.owner_scan.encode(enc, SegOp::Max, total, 0, &self.owner_in, &self.heads, &self.owner)?;
+        enc.run("pe_text_flag", None, &[u_files, u_data, &front.bases, total, &self.owner, &self.tflag], &[n32], by_node)?;
+        self.tscan.encode(enc, total, 0, &self.tflag, &self.trank)?;
+        enc.run("pe_text_nodes", None, &[&self.tflag, &self.trank, total, &self.text_nodes], &[], by_node)?;
         let by_dir = Grid::Groups((self.nd as u64).div_ceil(TG));
         enc.run(
             "pe_row_flag",
             None,
-            &[&self.insts.buffer, &self.n_insts.buffer, &self.dactive.buffer, &self.n_dirs.buffer, &front.dir_bases.buffer, &front.rows.buffer, &defs.defs.buffer, &front.dir_keys.buffer, &self.rflag.buffer],
+            &[&self.insts, &self.n_insts, &self.dactive, &self.n_dirs, &front.dir_bases, &front.rows, &defs.defs, &front.dir_keys, &self.rflag],
             &[],
             by_dir,
         )?;
-        self.rscan.encode(enc, &self.n_dirs.buffer, 0, &self.rflag.buffer, &self.rat.buffer)?;
+        self.rscan.encode(enc, &self.n_dirs, 0, &self.rflag, &self.rat)?;
         enc.run(
             "pe_rows",
             None,
             &[
-                &self.insts.buffer,
-                &self.n_insts.buffer,
-                &self.dslot.buffer,
-                &self.n_dirs.buffer,
-                &front.dir_bases.buffer,
-                &front.rows.buffer,
-                &front.dir_keys.buffer,
-                &self.rflag.buffer,
-                &self.rat.buffer,
-                &self.sort_keys.buffer,
-                &self.name_keys.buffer,
-                &self.values.buffer,
+                &self.insts,
+                &self.n_insts,
+                &self.dslot,
+                &self.n_dirs,
+                &front.dir_bases,
+                &front.rows,
+                &front.dir_keys,
+                &self.rflag,
+                &self.rat,
+                &self.sort_keys,
+                &self.name_keys,
+                &self.values,
             ],
             &[self.n_builtin],
             by_dir,
         )?;
-        enc.run("pe_rows_total", None, &[&self.rscan.total.buffer, &self.n_rows.buffer], &[self.n_builtin], Grid::Groups(1))?;
-        self.sort.encode(enc, &self.n_rows.buffer, 0, &self.sort_keys.buffer, 64)?;
+        enc.run("pe_rows_total", None, &[&self.rscan.total, &self.n_rows], &[self.n_builtin], Grid::Groups(1))?;
+        self.sort.encode(enc, &self.n_rows, 0, &self.sort_keys, 64)?;
         let by_gap = Grid::Groups((self.ng as u64).div_ceil(TG));
-        enc.run("pe_gap_keys", None, &[&self.gslot.buffer, &self.n_gaps.buffer, &self.gkeys.buffer], &[], by_gap)?;
+        enc.run("pe_gap_keys", None, &[&self.gslot, &self.n_gaps, &self.gkeys], &[], by_gap)?;
         // 32 bits sort in an even number of passes: the keys end in place, their places in `vals_a`.
         debug_assert!(Sort::in_input(32));
-        self.gsort.encode(enc, &self.n_gaps.buffer, 0, &self.gkeys.buffer, 32)?;
+        self.gsort.encode(enc, &self.n_gaps, 0, &self.gkeys, 32)?;
         enc.run(
             "pe_gap_counts",
             None,
             &[
-                &self.insts.buffer,
-                &self.n_insts.buffer,
-                &self.gactive.buffer,
-                &self.n_gaps.buffer,
-                &front.dir_bases.buffer,
+                &self.insts,
+                &self.n_insts,
+                &self.gactive,
+                &self.n_gaps,
+                &front.dir_bases,
                 dir_total,
-                &front.rows.buffer,
-                &front.bases.buffer,
+                &front.rows,
+                &front.bases,
                 total,
-                &self.trank.buffer,
-                &self.tscan.total.buffer,
-                &self.gcounts.buffer,
-                &self.gfirsts.buffer,
-                &self.gsort.vals_a.buffer,
-                &self.gkeys.buffer,
-                &self.sslot.buffer,
+                &self.trank,
+                &self.tscan.total,
+                &self.gcounts,
+                &self.gfirsts,
+                &self.gsort.vals_a,
+                &self.gkeys,
+                &self.sslot,
             ],
             &[n32],
             by_gap,
         )?;
-        self.gscan.encode(enc, &self.n_gaps.buffer, 0, &self.gcounts.buffer, &self.gat.buffer)?;
-        enc.run("pb_args", None, &[&self.gscan.total.buffer, &self.targs.buffer], &[0], Grid::Groups(1))?;
+        self.gscan.encode(enc, &self.n_gaps, 0, &self.gcounts, &self.gat)?;
+        enc.run("pb_args", None, &[&self.gscan.total, &self.targs], &[0], Grid::Groups(1))?;
         // 64 bits sort in an even number of passes: the keys end in place, their rows in `vals_a`.
         debug_assert!(Sort::in_input(64));
         enc.run(
@@ -422,24 +420,24 @@ impl Vis {
             &[
                 u_files,
                 u_data,
-                &front.bases.buffer,
-                &front.keys.buffer,
-                &self.text_nodes.buffer,
-                &self.gat.buffer,
-                &self.n_gaps.buffer,
-                &self.gfirsts.buffer,
-                &self.sslot.buffer,
-                &self.gscan.total.buffer,
-                &self.sort_keys.buffer,
-                &self.sort.vals_a.buffer,
-                &self.n_rows.buffer,
-                &self.name_keys.buffer,
-                &self.values.buffer,
-                &self.lookups.buffer,
-                &self.bad.buffer,
+                &front.bases,
+                &front.keys,
+                &self.text_nodes,
+                &self.gat,
+                &self.n_gaps,
+                &self.gfirsts,
+                &self.sslot,
+                &self.gscan.total,
+                &self.sort_keys,
+                &self.sort.vals_a,
+                &self.n_rows,
+                &self.name_keys,
+                &self.values,
+                &self.lookups,
+                &self.bad,
             ],
             &[n32],
-            Grid::Indirect(&self.targs.buffer, 0),
+            Grid::Indirect(&self.targs, 0),
         )
     }
 
@@ -495,53 +493,52 @@ pub struct Exp {
     list_cap: u32,
     out_cap: u32,
     q_cap: u32,
-    words: MappedBuffer,
+    words: Buf,
     /// The scratch tokens (`#`'s and `##`'s): their bytes, and each one's (start, end, kind).
     /// `st_cap` (start, end, kind) words, then `sb_cap` bytes and slack.
-    scratch: MappedBuffer,
+    scratch: Buf,
     st_cap: usize,
-    theads: MappedBuffer,
-    delta: MappedBuffer,
-    depth: MappedBuffer,
+    theads: Buf,
+    delta: Buf,
+    depth: Buf,
     depth_scan: SegScan,
-    close: MappedBuffer,
-    close_at: MappedBuffer,
+    close: Buf,
+    close_at: Buf,
     close_scan: Scan,
-    close_keys: MappedBuffer,
+    close_keys: Buf,
     close_sort: Sort,
-    cend: MappedBuffer,
-    heads: MappedBuffer,
-    reach: MappedBuffer,
+    cend: Buf,
+    heads: Buf,
+    reach: Buf,
     reach_scan: SegScan,
-    state: MappedBuffer,
-    oflag: MappedBuffer,
-    oid: MappedBuffer,
+    state: Buf,
+    oflag: Buf,
+    oid: Buf,
     oscan: Scan,
-    v: MappedBuffer,
-    obase: MappedBuffer,
+    v: Buf,
+    obase: Buf,
     /// The top level's rollback: the exit-bearing calls flagged, their scan, their places in
     /// order, and the live claims' running end.
-    xflag: MappedBuffer,
-    xat: MappedBuffer,
+    xflag: Buf,
+    xat: Buf,
     xscan: Scan,
-    xpos: MappedBuffer,
-    xcover: MappedBuffer,
+    xpos: Buf,
+    xcover: Buf,
     vscan: Scan,
-    lists: MappedBuffer,
+    lists: Buf,
     /// The tokens' columns, `tok_cap` words each: the ref, the flags, the child, the depth and the
     /// origin (the list whose substitution wrote it).
-    tokens: MappedBuffer,
-    args: MappedBuffer,
-    slots: MappedBuffer,
-    qctl: MappedBuffer,
-    pub ctl: MappedBuffer,
-    pub out: MappedBuffer,
+    tokens: Buf,
+    args: Buf,
+    slots: Buf,
+    qctl: Buf,
+    pub ctl: Buf,
+    pub out: Buf,
 }
 
 impl Exp {
-    pub fn new(unit: &Unit, lay: &Layout, rung: u32) -> Result<Exp, Error> {
-        let device = crate::device()?;
-        let zeroed = |k: usize| MappedBuffer::zeroed::<u32>(&device, k.max(1));
+    pub fn new(arena: &Arena, unit: &Unit, lay: &Layout, rung: u32) -> Result<Exp, Error> {
+        let zeroed = |k: usize| arena.zeroed::<u32>(k.max(1));
         let top = top_bound(unit, lay);
         // Each rung doubles the whole arena, so a short text with a large expansion fits too.
         let tok = (top + 4096) << (rung + 1);
@@ -579,41 +576,41 @@ impl Exp {
             list_cap: lists as u32,
             out_cap: out as u32,
             q_cap: q as u32,
-            words: MappedBuffer::from_slice(&device, &words)?,
+            words: arena.from_slice(&words)?,
             // Slack past the last byte: a name's key reads 8 bytes at a time.
-            scratch: MappedBuffer::from_slice(&device, &scratch)?,
+            scratch: arena.from_slice(&scratch)?,
             st_cap: st,
             theads: zeroed(top)?,
             delta: zeroed(top)?,
             depth: zeroed(top)?,
-            depth_scan: SegScan::new(top)?,
+            depth_scan: SegScan::new(arena, top)?,
             close: zeroed(top)?,
             close_at: zeroed(top)?,
-            close_scan: Scan::new(top)?,
-            close_keys: MappedBuffer::zeroed::<u64>(&device, top)?,
-            close_sort: Sort::new(top)?,
+            close_scan: Scan::new(arena, top)?,
+            close_keys: arena.zeroed::<u64>(top)?,
+            close_sort: Sort::new(arena, top)?,
             cend: zeroed(top)?,
             heads: zeroed(top)?,
             reach: zeroed(top)?,
-            reach_scan: SegScan::new(top)?,
+            reach_scan: SegScan::new(arena, top)?,
             state: zeroed(top)?,
             oflag: zeroed(top)?,
             oid: zeroed(top)?,
-            oscan: Scan::new(top)?,
+            oscan: Scan::new(arena, top)?,
             v: zeroed(top)?,
             obase: zeroed(top)?,
             xflag: zeroed(top)?,
             xat: zeroed(top)?,
-            xscan: Scan::new(top)?,
+            xscan: Scan::new(arena, top)?,
             xpos: zeroed(top)?,
             xcover: zeroed(top)?,
-            vscan: Scan::new(top)?,
+            vscan: Scan::new(arena, top)?,
             lists: zeroed(lists * LIST_WORDS)?,
             tokens: zeroed(tok * 5)?,
             args: zeroed(args * ARG_WORDS)?,
             slots: zeroed(q)?,
             qctl: zeroed(4)?,
-            ctl: MappedBuffer::from_slice(&device, &ctl)?,
+            ctl: arena.from_slice(&ctl)?,
             out: zeroed(out)?,
         })
     }
@@ -625,121 +622,121 @@ impl Exp {
     /// the pieces); the queue's second phase (PLACE items to the output), and the check.
     pub fn encode(&self, enc: &Enc<'_>, unit: &Unit, front: &Front, defs: &Defs, vis: &Vis) -> Result<(), Error> {
         let n32 = unit.len() as u32;
-        let (u_files, u_data) = (&unit.files.buffer as &BufferRef, unit.data());
-        let n_toks = &vis.gscan.total.buffer;
-        let by_top = Grid::Indirect(&vis.targs.buffer, 0);
-        let top_in = [u_files, u_data, &front.bases.buffer, &vis.text_nodes.buffer, &vis.gat.buffer, &vis.n_gaps.buffer, &vis.gfirsts.buffer, n_toks];
+        let (u_files, u_data) = (&front.files as &dyn Bound, front.data(unit));
+        let n_toks = &vis.gscan.total;
+        let by_top = Grid::Indirect(&vis.targs, 0);
+        let top_in = [u_files, u_data, &front.bases, &vis.text_nodes, &vis.gat, &vis.n_gaps, &vis.gfirsts, n_toks];
         let mut parens = top_in.to_vec();
-        parens.extend([&self.theads.buffer as &BufferRef, &self.delta.buffer, &self.close.buffer]);
+        parens.extend([&self.theads as &dyn Bound, &self.delta, &self.close]);
         enc.run("px_top_parens", None, &parens, &[n32], by_top)?;
-        self.depth_scan.encode(enc, SegOp::Add, n_toks, 0, &self.delta.buffer, &self.theads.buffer, &self.depth.buffer)?;
-        self.close_scan.encode(enc, n_toks, 0, &self.close.buffer, &self.close_at.buffer)?;
-        enc.run("px_close_keys", None, &[&self.depth.buffer, &self.close.buffer, &self.close_at.buffer, n_toks, &self.close_keys.buffer, &self.ctl.buffer], &[], by_top)?;
-        self.close_sort.encode(enc, &self.close_scan.total.buffer, 0, &self.close_keys.buffer, CLOSE_BITS)?;
-        let closes = if Sort::in_input(CLOSE_BITS) { &self.close_keys.buffer as &BufferRef } else { &self.close_sort.keys_b.buffer };
+        self.depth_scan.encode(enc, SegOp::Add, n_toks, 0, &self.delta, &self.theads, &self.depth)?;
+        self.close_scan.encode(enc, n_toks, 0, &self.close, &self.close_at)?;
+        enc.run("px_close_keys", None, &[&self.depth, &self.close, &self.close_at, n_toks, &self.close_keys, &self.ctl], &[], by_top)?;
+        self.close_sort.encode(enc, &self.close_scan.total, 0, &self.close_keys, CLOSE_BITS)?;
+        let closes = if Sort::in_input(CLOSE_BITS) { &self.close_keys as &dyn Bound } else { &self.close_sort.keys_b };
         enc.run(
             "px_top_calls",
             None,
             &[
                 u_files,
                 u_data,
-                &front.bases.buffer,
-                &defs.defs.buffer,
-                &vis.lookups.buffer,
-                &vis.text_nodes.buffer,
-                &vis.gat.buffer,
-                &vis.n_gaps.buffer,
-                &vis.gfirsts.buffer,
+                &front.bases,
+                &defs.defs,
+                &vis.lookups,
+                &vis.text_nodes,
+                &vis.gat,
+                &vis.n_gaps,
+                &vis.gfirsts,
                 n_toks,
-                &self.depth.buffer,
+                &self.depth,
                 closes,
-                &self.close_scan.total.buffer,
-                &self.cend.buffer,
-                &self.ctl.buffer,
+                &self.close_scan.total,
+                &self.cend,
+                &self.ctl,
             ],
             &[n32],
             by_top,
         )?;
-        self.reach_scan.encode(enc, SegOp::Max, n_toks, 0, &self.cend.buffer, &self.heads.buffer, &self.reach.buffer)?;
-        enc.run("px_top_outer", None, &[&self.cend.buffer, &self.reach.buffer, n_toks, &self.state.buffer, &self.oflag.buffer], &[], by_top)?;
-        self.oscan.encode(enc, n_toks, 0, &self.oflag.buffer, &self.oid.buffer)?;
+        self.reach_scan.encode(enc, SegOp::Max, n_toks, 0, &self.cend, &self.heads, &self.reach)?;
+        enc.run("px_top_outer", None, &[&self.cend, &self.reach, n_toks, &self.state, &self.oflag], &[], by_top)?;
+        self.oscan.encode(enc, n_toks, 0, &self.oflag, &self.oid)?;
         enc.run(
             "px_top_lists",
             None,
-            &[&vis.lookups.buffer, &self.cend.buffer, &self.state.buffer, &self.oid.buffer, n_toks, &vis.sslot.buffer, &vis.gat.buffer, &vis.n_gaps.buffer, &self.lists.buffer, &self.slots.buffer, &self.ctl.buffer, &defs.defs.buffer],
+            &[&vis.lookups, &self.cend, &self.state, &self.oid, n_toks, &vis.sslot, &vis.gat, &vis.n_gaps, &self.lists, &self.slots, &self.ctl, &defs.defs],
             &[self.list_cap],
             by_top,
         )?;
-        enc.run("px_seed", None, &[&self.oscan.total.buffer, &self.qctl.buffer, &self.ctl.buffer], &[self.list_cap], Grid::Groups(1))?;
+        enc.run("px_seed", None, &[&self.oscan.total, &self.qctl, &self.ctl], &[self.list_cap], Grid::Groups(1))?;
         self.work(enc, unit, front, defs, vis, closes)?;
         // The top level's rollback: the exit-bearing calls in order, decided by one SIMD group.
-        enc.run("px_top_xflag", None, &[&self.state.buffer, &self.oid.buffer, &self.lists.buffer, n_toks, &self.xflag.buffer], &[], by_top)?;
-        self.xscan.encode(enc, n_toks, 0, &self.xflag.buffer, &self.xat.buffer)?;
-        enc.run("px_top_xlist", None, &[&self.xflag.buffer, &self.xat.buffer, n_toks, &self.xpos.buffer], &[], by_top)?;
-        let n_x = &self.xscan.total.buffer;
-        enc.run("px_top_cover", None, &[&self.xpos.buffer, n_x, &self.oid.buffer, &self.lists.buffer, &self.xcover.buffer, &self.ctl.buffer], &[], Grid::Groups(1))?;
-        enc.run("px_top_sizes", None, &[&self.state.buffer, &self.oid.buffer, &self.lists.buffer, n_toks, &self.v.buffer, &self.xpos.buffer, n_x, &self.xcover.buffer], &[], by_top)?;
-        self.vscan.encode(enc, n_toks, 0, &self.v.buffer, &self.obase.buffer)?;
+        enc.run("px_top_xflag", None, &[&self.state, &self.oid, &self.lists, n_toks, &self.xflag], &[], by_top)?;
+        self.xscan.encode(enc, n_toks, 0, &self.xflag, &self.xat)?;
+        enc.run("px_top_xlist", None, &[&self.xflag, &self.xat, n_toks, &self.xpos], &[], by_top)?;
+        let n_x = &self.xscan.total;
+        enc.run("px_top_cover", None, &[&self.xpos, n_x, &self.oid, &self.lists, &self.xcover, &self.ctl], &[], Grid::Groups(1))?;
+        enc.run("px_top_sizes", None, &[&self.state, &self.oid, &self.lists, n_toks, &self.v, &self.xpos, n_x, &self.xcover], &[], by_top)?;
+        self.vscan.encode(enc, n_toks, 0, &self.v, &self.obase)?;
         enc.run(
             "px_top_place",
             None,
             &[
-                &self.state.buffer,
-                &self.oid.buffer,
-                &self.lists.buffer,
+                &self.state,
+                &self.oid,
+                &self.lists,
                 n_toks,
-                &self.obase.buffer,
-                &vis.text_nodes.buffer,
-                &vis.gat.buffer,
-                &vis.n_gaps.buffer,
-                &vis.gfirsts.buffer,
-                &self.out.buffer,
-                &self.slots.buffer,
-                &self.qctl.buffer,
-                &self.ctl.buffer,
+                &self.obase,
+                &vis.text_nodes,
+                &vis.gat,
+                &vis.n_gaps,
+                &vis.gfirsts,
+                &self.out,
+                &self.slots,
+                &self.qctl,
+                &self.ctl,
             ],
             &[self.out_cap, self.q_cap],
             by_top,
         )?;
         self.work(enc, unit, front, defs, vis, closes)?;
-        enc.run("px_check", None, &[&self.qctl.buffer, &self.vscan.total.buffer, &self.ctl.buffer], &[self.out_cap], Grid::Groups(1))
+        enc.run("px_check", None, &[&self.qctl, &self.vscan.total, &self.ctl], &[self.out_cap], Grid::Groups(1))
     }
 
     /// The queue's persistent dispatch, `WORK_LAUNCHES` times.
-    fn work(&self, enc: &Enc<'_>, unit: &Unit, front: &Front, defs: &Defs, vis: &Vis, closes: &BufferRef) -> Result<(), Error> {
+    fn work(&self, enc: &Enc<'_>, unit: &Unit, front: &Front, defs: &Defs, vis: &Vis, closes: &dyn Bound) -> Result<(), Error> {
         for _ in 0..WORK_LAUNCHES {
             enc.run(
                 "px_work",
                 None,
                 &[
-                    &unit.files.buffer,
-                    unit.data(),
-                    &front.bases.buffer,
-                    &front.keys.buffer,
-                    &defs.defs.buffer,
-                    &defs.items.buffer,
-                    &vis.sort_keys.buffer,
-                    &vis.sort.vals_a.buffer,
-                    &vis.n_rows.buffer,
-                    &vis.name_keys.buffer,
-                    &vis.values.buffer,
-                    &vis.text_nodes.buffer,
-                    &vis.gat.buffer,
-                    &vis.n_gaps.buffer,
-                    &vis.gfirsts.buffer,
-                    &vis.gscan.total.buffer,
-                    &self.depth.buffer,
-                    &self.lists.buffer,
-                    &self.tokens.buffer,
-                    &self.args.buffer,
-                    &self.out.buffer,
-                    &self.slots.buffer,
-                    &self.qctl.buffer,
-                    &self.ctl.buffer,
-                    &self.words.buffer,
-                    &self.scratch.buffer,
+                    &front.files,
+                    front.data(unit),
+                    &front.bases,
+                    &front.keys,
+                    &defs.defs,
+                    &defs.items,
+                    &vis.sort_keys,
+                    &vis.sort.vals_a,
+                    &vis.n_rows,
+                    &vis.name_keys,
+                    &vis.values,
+                    &vis.text_nodes,
+                    &vis.gat,
+                    &vis.n_gaps,
+                    &vis.gfirsts,
+                    &vis.gscan.total,
+                    &self.depth,
+                    &self.lists,
+                    &self.tokens,
+                    &self.args,
+                    &self.out,
+                    &self.slots,
+                    &self.qctl,
+                    &self.ctl,
+                    &self.words,
+                    &self.scratch,
                     closes,
-                    &self.close_scan.total.buffer,
+                    &self.close_scan.total,
                 ],
                 &[],
                 Grid::Groups(WORKER_GROUPS),
@@ -814,10 +811,12 @@ pub const SCRATCH: u32 = 0x8000_0000;
 pub fn expand_from(unit: &Unit, lay: &Layout, rung: u32) -> Result<Expanded, Error> {
     let (mut def_rung, mut rung) = (0, rung);
     loop {
-        let front = Front::new(unit, false)?;
-        let defs = Defs::new(unit, def_rung)?;
-        let vis = Vis::new(unit, lay)?;
-        let exp = Exp::new(unit, lay, rung)?;
+        let arena = Arena::new();
+        let front = Front::new(&arena, unit, false)?;
+        let defs = Defs::new(&arena, unit, def_rung)?;
+        let vis = Vis::new(&arena, unit, lay)?;
+        let exp = Exp::new(&arena, unit, lay, rung)?;
+        arena.lease()?;
         let launches = crate::pp_eval::run(|enc| {
             front.encode(enc, unit)?;
             defs.encode(enc, unit, &front)?;
@@ -854,9 +853,11 @@ pub fn expand(unit: &Unit, lay: &Layout) -> Result<Expanded, Error> {
 pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, Vec<u32>), Error> {
     let mut rung = 0;
     loop {
-        let front = Front::new(unit, false)?;
-        let defs = Defs::new(unit, rung)?;
-        let vis = Vis::new(unit, lay)?;
+        let arena = Arena::new();
+        let front = Front::new(&arena, unit, false)?;
+        let defs = Defs::new(&arena, unit, rung)?;
+        let vis = Vis::new(&arena, unit, lay)?;
+        arena.lease()?;
         crate::pp_eval::run(|enc| {
             front.encode(enc, unit)?;
             defs.encode(enc, unit, &front)?;
@@ -887,7 +888,6 @@ pub const RELEX_REFUSED: u32 = 0xffff;
 /// For tests: the relexer's answer for each spelling (a tape kind, `RELEX_NONE` or
 /// `RELEX_REFUSED`), under `options`.
 pub fn relex(texts: &[Vec<u8>], options: u32) -> Result<Vec<u32>, Error> {
-    let device = crate::device()?;
     let mut bytes = Vec::new();
     let mut offsets = vec![0u32];
     for t in texts {
@@ -895,10 +895,12 @@ pub fn relex(texts: &[Vec<u8>], options: u32) -> Result<Vec<u32>, Error> {
         offsets.push(bytes.len() as u32);
     }
     bytes.extend_from_slice(&[0; 16]);
-    let (b, o) = (MappedBuffer::from_slice(&device, &bytes)?, MappedBuffer::from_slice(&device, &offsets)?);
-    let out = MappedBuffer::zeroed::<u32>(&device, texts.len().max(1))?;
+    let arena = Arena::new();
+    let (b, o) = (arena.from_slice(&bytes)?, arena.from_slice(&offsets)?);
+    let out = arena.zeroed::<u32>(texts.len())?;
+    arena.lease()?;
     let n = texts.len() as u32;
-    crate::pp_eval::run(|enc| enc.run("pd_relex_test", None, &[&b.buffer, &o.buffer, &out.buffer], &[n, options], Grid::Groups(u64::from(n).div_ceil(crate::pp_blocks::TG))))?;
+    crate::pp_eval::run(|enc| enc.run("pd_relex_test", None, &[&b, &o, &out], &[n, options], Grid::Groups(u64::from(n).div_ceil(crate::pp_blocks::TG))))?;
     // SAFETY: the device finished writing `out`.
     Ok(unsafe { std::slice::from_raw_parts(out.host().cast::<u32>(), texts.len()).to_vec() })
 }

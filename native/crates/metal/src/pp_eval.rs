@@ -14,8 +14,7 @@
 
 use crate::Error;
 use crate::launch::{commit_checked, wait_checked};
-use crate::pp_blocks::{Enc, Grid, Scan, TG};
-use crate::runtime::MappedBuffer;
+use crate::pp_blocks::{Arena, Bound, Buf, Enc, Grid, Scan, TG};
 
 /// The passes' source, preprocessed for Metal (`crate::pp_blocks::source`).
 pub fn source() -> Result<&'static str, Error> {
@@ -28,8 +27,8 @@ pub use crate::slabs::DocView;
 pub struct Unit {
     /// The documents, gathered into one slab: the lease the kernels read through.
     pub documents: Vec<Arc<Resident>>,
-    /// Their views, in the unit's file order (`PpFile` in the MSL).
-    pub files: MappedBuffer,
+    /// Their views, in the unit's file order (`PpFile` in the MSL): placed in each run's arena
+    /// (`Front::files`).
     pub views: Vec<DocView>,
     /// The unit's nodes: each view's.
     pub node_bound: usize,
@@ -122,13 +121,12 @@ impl Unit {
     /// The unit of `documents` (in its file order): gathered into one slab, which the kernels
     /// read, and their views listed.
     pub fn of(documents: Vec<Arc<Resident>>) -> Result<Unit, Error> {
-        let device = crate::device()?;
         let documents = crate::slabs::gather(documents)?;
         let views: Vec<DocView> = documents.iter().map(|d| d.view).collect();
         let file_nodes: Vec<u32> = views.iter().map(|v| v.nodes).collect();
         let node_bound = file_nodes.iter().map(|&n| n as usize).sum::<usize>().max(1);
         let dir_bound = file_nodes.iter().map(|&n| n as usize / 2).sum::<usize>().max(1);
-        Ok(Unit { files: MappedBuffer::from_slice(&device, &views)?, views, documents, node_bound, dir_bound, file_nodes })
+        Ok(Unit { views, documents, node_bound, dir_bound, file_nodes })
     }
 
     /// The unit's files.
@@ -140,9 +138,9 @@ impl Unit {
         self.views.is_empty()
     }
 
-    /// The slab the unit's documents are in, as the kernels bind it.
-    pub fn data(&self) -> &metal::BufferRef {
-        self.documents.first().map_or(&*self.files.buffer, |d| d.slab.buffer())
+    /// The slab the unit's documents are in, as the kernels bind it (`None`: no documents).
+    pub fn data(&self) -> Option<&metal::BufferRef> {
+        self.documents.first().map(|d| &**d.slab.buffer())
     }
 }
 
@@ -183,66 +181,77 @@ pub struct PpDir {
 pub struct Front {
     n: usize,
     nodes: bool,
-    pub n_files: MappedBuffer,
-    counts: MappedBuffer,
-    pub bases: MappedBuffer,
-    dir_counts: MappedBuffer,
-    pub dir_bases: MappedBuffer,
-    groups: MappedBuffer,
-    guarded: MappedBuffer,
-    guards: MappedBuffer,
-    bad: MappedBuffer,
-    args: MappedBuffer,
-    dir_args: MappedBuffer,
-    pub keys: MappedBuffer,
-    out: MappedBuffer,
-    pub rows: MappedBuffer,
-    pub dir_keys: MappedBuffer,
+    /// The unit's views (`PpFile`s), in the arena.
+    pub files: Buf,
+    pub n_files: Buf,
+    counts: Buf,
+    pub bases: Buf,
+    dir_counts: Buf,
+    pub dir_bases: Buf,
+    groups: Buf,
+    guarded: Buf,
+    guards: Buf,
+    bad: Buf,
+    args: Buf,
+    dir_args: Buf,
+    pub keys: Buf,
+    out: Buf,
+    pub rows: Buf,
+    pub dir_keys: Buf,
     scan: Scan,
     dir_scan: Scan,
 }
 
 impl Front {
-    pub fn new(unit: &Unit, nodes: bool) -> Result<Front, Error> {
-        let device = crate::device()?;
+    pub fn new(arena: &Arena, unit: &Unit, nodes: bool) -> Result<Front, Error> {
         let n = unit.len();
-        let per_file = || MappedBuffer::zeroed::<u32>(&device, n.max(1));
-        let one = |k: usize| MappedBuffer::zeroed::<u32>(&device, k);
+        let per_file = || arena.zeroed::<u32>(n);
+        let one = |k: usize| arena.zeroed::<u32>(k);
         Ok(Front {
             n,
             nodes,
-            n_files: MappedBuffer::from_slice(&device, &[n as u32])?,
+            files: arena.from_slice(&unit.views)?,
+            n_files: arena.from_slice(&[n as u32])?,
             counts: per_file()?,
             bases: per_file()?,
             dir_counts: per_file()?,
             dir_bases: per_file()?,
             groups: per_file()?,
             guarded: per_file()?,
-            guards: MappedBuffer::zeroed::<u64>(&device, n.max(1))?,
+            guards: arena.zeroed::<u64>(n)?,
             bad: one(1)?,
             args: one(4)?,
             dir_args: one(4)?,
-            keys: MappedBuffer::zeroed::<u64>(&device, unit.node_bound)?,
-            out: MappedBuffer::zeroed::<[u32; 4]>(&device, if nodes { unit.node_bound } else { 1 })?,
-            rows: MappedBuffer::zeroed::<PpDir>(&device, unit.dir_bound)?,
-            dir_keys: MappedBuffer::zeroed::<u64>(&device, unit.dir_bound)?,
-            scan: Scan::new(n)?,
-            dir_scan: Scan::new(n)?,
+            keys: arena.zeroed::<u64>(unit.node_bound)?,
+            out: arena.zeroed::<[u32; 4]>(if nodes { unit.node_bound } else { 1 })?,
+            rows: arena.zeroed::<PpDir>(unit.dir_bound)?,
+            dir_keys: arena.zeroed::<u64>(unit.dir_bound)?,
+            scan: Scan::new(arena, n)?,
+            dir_scan: Scan::new(arena, n)?,
         })
     }
 
+    /// The slab of the unit's documents, as a pass binds it (the views' store where the unit
+    /// has none: no pass reads it then).
+    pub fn data<'a>(&'a self, unit: &'a Unit) -> &'a dyn Bound {
+        match unit.data() {
+            Some(b) => b,
+            None => &self.files,
+        }
+    }
+
     /// The unit's nodes in all (after `encode`).
-    pub fn total(&self) -> &MappedBuffer {
+    pub fn total(&self) -> &Buf {
         &self.scan.total
     }
 
     /// The indirect arguments of a pass a node each (after `encode`).
-    pub fn node_args(&self) -> &MappedBuffer {
+    pub fn node_args(&self) -> &Buf {
         &self.args
     }
 
     /// The unit's directive rows in all (after `encode`).
-    pub fn dir_total(&self) -> &MappedBuffer {
+    pub fn dir_total(&self) -> &Buf {
         &self.dir_scan.total
     }
 
@@ -257,23 +266,23 @@ impl Front {
     pub fn encode(&self, enc: &Enc<'_>, unit: &Unit) -> Result<(), Error> {
         let n32 = self.n as u32;
         let files = Grid::Groups((self.n as u64).div_ceil(TG));
-        let (u_files, u_data) = (&unit.files.buffer as &metal::BufferRef, unit.data());
-        enc.run("pp_counts", None, &[u_files, u_data, &self.counts.buffer, &self.bad.buffer], &[n32], files)?;
-        self.scan.encode(enc, &self.n_files.buffer, 0, &self.counts.buffer, &self.bases.buffer)?;
-        enc.run("pb_args", None, &[&self.scan.total.buffer, &self.args.buffer], &[0], Grid::Groups(1))?;
-        let by_node = Grid::Indirect(&self.args.buffer, 0);
-        enc.run("pp_names", None, &[u_files, u_data, &self.bases.buffer, &self.scan.total.buffer, &self.keys.buffer], &[n32], by_node)?;
+        let (u_files, u_data): (&dyn Bound, &dyn Bound) = (&self.files, self.data(unit));
+        enc.run("pp_counts", None, &[u_files, u_data, &self.counts, &self.bad], &[n32], files)?;
+        self.scan.encode(enc, &self.n_files, 0, &self.counts, &self.bases)?;
+        enc.run("pb_args", None, &[&self.scan.total, &self.args], &[0], Grid::Groups(1))?;
+        let by_node = Grid::Indirect(&self.args, 0);
+        enc.run("pp_names", None, &[u_files, u_data, &self.bases, &self.scan.total, &self.keys], &[n32], by_node)?;
         if self.nodes {
-            enc.run("pp_nodes", None, &[u_files, u_data, &self.bases.buffer, &self.scan.total.buffer, &self.out.buffer], &[n32], by_node)?;
+            enc.run("pp_nodes", None, &[u_files, u_data, &self.bases, &self.scan.total, &self.out], &[n32], by_node)?;
         }
-        enc.run("pp_dir_counts", None, &[u_files, u_data, &self.dir_counts.buffer, &self.bad.buffer], &[n32], files)?;
-        self.dir_scan.encode(enc, &self.n_files.buffer, 0, &self.dir_counts.buffer, &self.dir_bases.buffer)?;
-        enc.run("pb_args", None, &[&self.dir_scan.total.buffer, &self.dir_args.buffer], &[0], Grid::Groups(1))?;
-        enc.run("pp_dirs", None, &[u_files, u_data, &self.dir_bases.buffer, &self.rows.buffer, &self.groups.buffer, &self.guarded.buffer, &self.bad.buffer], &[n32], files)?;
-        let by_row = Grid::Indirect(&self.dir_args.buffer, 0);
-        let dir_total = &self.dir_scan.total.buffer;
-        enc.run("pp_dir_keys", None, &[u_files, u_data, &self.bases.buffer, &self.keys.buffer, &self.dir_bases.buffer, dir_total, &self.rows.buffer, &self.dir_keys.buffer], &[n32], by_row)?;
-        enc.run("pp_guards", None, &[&self.guarded.buffer, &self.dir_bases.buffer, &self.dir_keys.buffer, &self.guards.buffer], &[n32], files)
+        enc.run("pp_dir_counts", None, &[u_files, u_data, &self.dir_counts, &self.bad], &[n32], files)?;
+        self.dir_scan.encode(enc, &self.n_files, 0, &self.dir_counts, &self.dir_bases)?;
+        enc.run("pb_args", None, &[&self.dir_scan.total, &self.dir_args], &[0], Grid::Groups(1))?;
+        enc.run("pp_dirs", None, &[u_files, u_data, &self.dir_bases, &self.rows, &self.groups, &self.guarded, &self.bad], &[n32], files)?;
+        let by_row = Grid::Indirect(&self.dir_args, 0);
+        let dir_total = &self.dir_scan.total;
+        enc.run("pp_dir_keys", None, &[u_files, u_data, &self.bases, &self.keys, &self.dir_bases, dir_total, &self.rows, &self.dir_keys], &[n32], by_row)?;
+        enc.run("pp_guards", None, &[&self.guarded, &self.dir_bases, &self.dir_keys, &self.guards], &[n32], files)
     }
 
     /// The results, read back for tests (after the command buffer is done).
@@ -286,7 +295,7 @@ impl Front {
             }
             let total = *self.scan.total.host().cast::<u32>();
             let dir_total = *self.dir_scan.total.host().cast::<u32>() as usize;
-            let read = |b: &MappedBuffer| std::slice::from_raw_parts(b.host().cast::<u32>(), n).to_vec();
+            let read = |b: &Buf| std::slice::from_raw_parts(b.host().cast::<u32>(), n).to_vec();
             Ok(Evaluated {
                 bases: read(&self.bases),
                 total,
@@ -332,7 +341,9 @@ pub fn run(f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<usize, Error
 
 /// The front passes over `unit`, read back (`nodes`: each node as the device's reader gives it).
 pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
-    let front = Front::new(unit, nodes)?;
+    let arena = Arena::new();
+    let front = Front::new(&arena, unit, nodes)?;
+    arena.lease()?;
     run(|enc| front.encode(enc, unit))?;
     front.read()
 }

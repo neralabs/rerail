@@ -270,6 +270,8 @@ pub(crate) fn attempt(pointer: usize, kernel: &str, grid: [u64; 3], group: [u64;
 
 pub trait CheckedComputeEncoder {
     fn checked_set_buffers(&self, command: &CommandBufferRef, buffers: &[&BufferRef]);
+    /// `checked_set_buffers` of buffers each at a byte offset: stores at offsets in one block.
+    fn checked_set_buffers_at(&self, command: &CommandBufferRef, buffers: &[(&BufferRef, u64)]);
     fn checked_dispatch_threads(&self, command: &CommandBufferRef, grid: MTLSize, group: MTLSize);
     fn checked_dispatch_thread_groups(
         &self,
@@ -299,6 +301,19 @@ impl CheckedComputeEncoder for ComputeCommandEncoderRef {
                         .iter()
                         .map(|buffer| (buffer.as_ptr() as usize, buffer.length()))
                         .collect(),
+                );
+            }
+        });
+    }
+    fn checked_set_buffers_at(&self, command: &CommandBufferRef, buffers: &[(&BufferRef, u64)]) {
+        for (index, (buffer, at)) in buffers.iter().enumerate() {
+            self.set_buffer(index as u64, Some(buffer), *at);
+        }
+        EVALUATION.with_borrow(|slot| {
+            if let Some(evaluation) = slot {
+                evaluation.borrow_mut().bindings.insert(
+                    (command.as_ptr() as usize, self.as_ptr() as usize),
+                    buffers.iter().map(|(buffer, _)| (buffer.as_ptr() as usize, buffer.length())).collect(),
                 );
             }
         });

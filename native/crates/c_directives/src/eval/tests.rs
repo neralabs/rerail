@@ -75,6 +75,18 @@ fn the_evaluator_copies_no_tape() {
     assert!(msl.contains("clif_tape_start") && msl.contains("clif_tape_line"), "the evaluator reads through the CLIF reads");
 }
 
+/// R4 of decision 0460: an evaluation's stores are at offsets in one block, its arena
+/// (`pp_blocks::Arena`), leased from the GPU pool within the one budget: neither the front passes
+/// nor the expansion makes a buffer of its own.
+#[test]
+fn the_arena_is_one_block() {
+    for (name, rust) in [("pp_eval.rs", include_str!("../../../metal/src/pp_eval.rs")), ("pp_expand.rs", include_str!("../../../metal/src/pp_expand.rs"))] {
+        assert!(!rust.contains("MappedBuffer"), "{name} makes a buffer of its own");
+    }
+    let blocks = include_str!("../../../metal/src/pp_blocks.rs");
+    assert!(blocks.contains("lease_block_within("), "the arena is leased within the budget");
+}
+
 /// The device's reader gives every node of every file as `View` does, and each identifier leaf's
 /// key is its bytes' (`name_key`), every other node's 0; the unit's node bases are the files'
 /// counts' prefix sum.

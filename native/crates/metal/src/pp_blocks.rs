@@ -6,11 +6,156 @@
 //!
 //! Scratch is placed when a block is made, for a capacity the host knows (the arena's), so
 //! encoding never allocates. A count past the capacity is the caller's to refuse before.
+//!
+//! Every store an evaluation's passes use is at an offset in one block, its arena (decision 0460
+//! §3, `Arena`): leased once a run within the one budget, and bound at each store's offset.
 
 use crate::Error;
 use crate::launch::CheckedComputeEncoder;
-use crate::runtime::{MappedBuffer, pipeline_named_constant};
+use crate::runtime::pipeline_named_constant;
 use metal::{BufferRef, CommandBufferRef, MTLSize};
+use std::cell::{Cell, OnceCell, RefCell};
+use std::rc::Rc;
+
+/// A store's alignment in its arena: every binding offset and every type's.
+const ALIGN: usize = 256;
+
+/// An evaluation's arena (decision 0460 §3): one `rerail_blocks::Block`, leased from the GPU pool
+/// within the one budget (`lease_block_within`). Its stores are laid out as the passes' structures
+/// declare them (`zeroed`, `from_slice`), then the block is leased once (`lease`), before any pass
+/// is encoded; a store's initial words are written into it then. A rung is a larger arena.
+#[derive(Clone, Default)]
+pub struct Arena(Rc<Inner>);
+
+#[derive(Default)]
+struct Inner {
+    /// The layout's end: the bytes the stores take.
+    end: Cell<usize>,
+    /// The stores' initial words, by offset, written when the block is leased.
+    init: RefCell<Vec<(usize, Vec<u8>)>>,
+    leased: OnceCell<Leased>,
+}
+
+struct Leased {
+    _block: rerail_blocks::Block,
+    buffer: metal::Buffer,
+    /// The stores' first byte in the block (past its header), and in the host's mapping.
+    base: usize,
+    host: *mut u8,
+}
+
+/// A store: `len` bytes at offset `at` of its arena's layout.
+#[derive(Clone)]
+pub struct Buf {
+    arena: Arena,
+    at: usize,
+    len: usize,
+}
+
+impl Arena {
+    pub fn new() -> Arena {
+        Arena::default()
+    }
+
+    fn place(&self, len: usize) -> Buf {
+        let at = self.0.end.get();
+        self.0.end.set(at + len.next_multiple_of(ALIGN));
+        Buf { arena: self.clone(), at, len }
+    }
+
+    /// A store of `count` `T`s (at least one), zero.
+    pub fn zeroed<T>(&self, count: usize) -> Result<Buf, Error> {
+        assert!(self.0.leased.get().is_none(), "a store declared after its arena was leased");
+        let len = count.max(1).checked_mul(size_of::<T>()).ok_or(Error::BackendCapacity)?;
+        Ok(self.place(len))
+    }
+
+    /// A store of `values` (at least one `T`'s room).
+    pub fn from_slice<T: Copy>(&self, values: &[T]) -> Result<Buf, Error> {
+        let b = self.zeroed::<T>(values.len())?;
+        // SAFETY: `T` is plain data; its bytes are read once, here.
+        let bytes = unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), size_of_val(values)) };
+        // copy: not block data (a pass's control words or the layout's test input, written into its store)
+        self.0.init.borrow_mut().push((b.at, bytes.to_vec()));
+        Ok(b)
+    }
+
+    /// The bytes the arena's stores take.
+    pub fn bytes(&self) -> usize {
+        self.0.end.get()
+    }
+
+    /// Leases the arena's block, every store zero but for its initial words. Refused
+    /// (`BackendCapacity`) where the budget does not hold it: the caller runs a smaller batch.
+    pub fn lease(&self) -> Result<(), Error> {
+        if self.0.leased.get().is_some() {
+            return Ok(());
+        }
+        let bytes = self.bytes().max(ALIGN);
+        let device = crate::device()?;
+        let block = rerail_accel::gpu::shared::lease_block_within(rerail_blocks::block::kind::SCRATCH, bytes + 2 * ALIGN + 4096)
+            .map_err(|_| Error::BackendCapacity)?;
+        // Zeroed: a pooled slab may hold an earlier block's bytes.
+        let base = block.try_alloc(bytes, ALIGN).ok_or(Error::BackendCapacity)?;
+        let buffer = block.gpu_buffer(&device);
+        let host = block.base_ptr();
+        for (at, words) in self.0.init.borrow_mut().drain(..) {
+            // SAFETY: the store's range lies inside the block's allocation `base..base + bytes`.
+            // copy: not block data (a store's initial words)
+            unsafe { std::ptr::copy_nonoverlapping(words.as_ptr(), host.add(base + at), words.len()) };
+        }
+        let _ = self.0.leased.set(Leased { _block: block, buffer, base, host });
+        Ok(())
+    }
+
+    fn leased(&self) -> &Leased {
+        self.0.leased.get().expect("an arena's store read before its arena was leased")
+    }
+}
+
+impl Buf {
+    /// The store's first byte in the host's mapping (after its arena is leased).
+    pub fn host(&self) -> *mut u8 {
+        let l = self.arena.leased();
+        // SAFETY: inside the block's allocation.
+        unsafe { l.host.add(l.base + self.at) }
+    }
+
+    /// The store's length in bytes.
+    pub fn byte_length(&self) -> usize {
+        self.len
+    }
+}
+
+/// What a pass binds: a buffer, at a byte offset.
+pub trait Bound {
+    fn bound(&self) -> (&BufferRef, u64);
+}
+
+impl Bound for Buf {
+    fn bound(&self) -> (&BufferRef, u64) {
+        let l = self.arena.leased();
+        (&l.buffer, (l.base + self.at) as u64)
+    }
+}
+
+impl<T: Bound + ?Sized> Bound for &T {
+    fn bound(&self) -> (&BufferRef, u64) {
+        (**self).bound()
+    }
+}
+
+impl Bound for BufferRef {
+    fn bound(&self) -> (&BufferRef, u64) {
+        (self, 0)
+    }
+}
+
+impl Bound for metal::Buffer {
+    fn bound(&self) -> (&BufferRef, u64) {
+        (self, 0)
+    }
+}
 
 /// The evaluator's one source: the tape's view and its reads written once in CLIF
 /// (`<ukl/reads/tape.h>`, the view read where the batch holds it), the front passes
@@ -36,7 +181,7 @@ pub fn source() -> Result<&'static str, Error> {
 #[derive(Clone, Copy)]
 pub enum Grid<'b> {
     Groups(u64),
-    Indirect(&'b BufferRef, u64),
+    Indirect(&'b dyn Bound, u64),
 }
 
 /// The threads of a group.
@@ -53,27 +198,28 @@ pub struct Enc<'a> {
 impl Enc<'_> {
     /// Kernel `name` (with `constant` at function constant 0) over `buffers`, then the words
     /// `words` each at the next index.
-    pub fn run(&self, name: &str, constant: Option<u32>, buffers: &[&BufferRef], words: &[u32], grid: Grid<'_>) -> Result<(), Error> {
+    pub fn run(&self, name: &str, constant: Option<u32>, buffers: &[&dyn Bound], words: &[u32], grid: Grid<'_>) -> Result<(), Error> {
         let pipe = pipeline_named_constant(self.source, name, constant)?;
         let e = self.command.new_compute_command_encoder();
         e.set_compute_pipeline_state(&pipe);
-        e.checked_set_buffers(self.command, buffers);
+        let bound: Vec<(&BufferRef, u64)> = buffers.iter().map(|b| b.bound()).collect();
+        e.checked_set_buffers_at(self.command, &bound);
         for (k, w) in words.iter().enumerate() {
             e.set_bytes((buffers.len() + k) as u64, 4, std::ptr::from_ref(w).cast());
         }
         let group = MTLSize::new(TG, 1, 1);
         match grid {
             Grid::Groups(g) => e.checked_dispatch_thread_groups(self.command, MTLSize::new(g.max(1), 1, 1), group),
-            Grid::Indirect(b, at) => e.checked_dispatch_thread_groups_indirect(self.command, b, at, group),
+            Grid::Indirect(b, at) => {
+                let (b, base) = b.bound();
+                e.checked_dispatch_thread_groups_indirect(self.command, b, base + at, group)
+            }
         }
         e.end_encoding();
         Ok(())
     }
 }
 
-fn zeroed(n: usize) -> Result<MappedBuffer, Error> {
-    MappedBuffer::zeroed::<u32>(&crate::device()?, n.max(1))
-}
 
 /// An exclusive scan of up to `capacity` u32s, its total in `total`. Only the levels the
 /// capacity needs are encoded: 1 launch to 1,024 elements, 3 to 2^20, 5 past it. Level 0 is
@@ -82,44 +228,44 @@ fn zeroed(n: usize) -> Result<MappedBuffer, Error> {
 pub struct Scan {
     levels: u32,
     blocks: u64,
-    plan: MappedBuffer,
-    sums1: MappedBuffer,
-    out1: MappedBuffer,
-    sums2: MappedBuffer,
-    out2: MappedBuffer,
-    pub total: MappedBuffer,
+    plan: Buf,
+    sums1: Buf,
+    out1: Buf,
+    sums2: Buf,
+    out2: Buf,
+    pub total: Buf,
 }
 
 impl Scan {
-    pub fn new(capacity: usize) -> Result<Self, Error> {
+    pub fn new(arena: &Arena, capacity: usize) -> Result<Self, Error> {
         let n1 = capacity.div_ceil(BLOCK).max(1);
         let n2 = n1.div_ceil(BLOCK).max(1);
         if n2 > BLOCK {
             return Err(Error::BackendCapacity);
         }
         let levels = if capacity <= BLOCK { 1 } else if capacity <= BLOCK * BLOCK { 2 } else { 3 };
-        Ok(Scan { levels, blocks: n1 as u64, plan: zeroed(20)?, sums1: zeroed(n1)?, out1: zeroed(n1)?, sums2: zeroed(n2)?, out2: zeroed(n2)?, total: zeroed(1)? })
+        Ok(Scan { levels, blocks: n1 as u64, plan: arena.zeroed::<u32>(20)?, sums1: arena.zeroed::<u32>(n1)?, out1: arena.zeroed::<u32>(n1)?, sums2: arena.zeroed::<u32>(n2)?, out2: arena.zeroed::<u32>(n2)?, total: arena.zeroed::<u32>(1)? })
     }
 
     /// `out` = the exclusive scan of `input`'s first `n[at]` words.
-    pub fn encode(&self, enc: &Enc<'_>, n: &BufferRef, at: u32, input: &BufferRef, out: &BufferRef) -> Result<(), Error> {
-        let plan = &self.plan.buffer;
+    pub fn encode(&self, enc: &Enc<'_>, n: &dyn Bound, at: u32, input: &dyn Bound, out: &dyn Bound) -> Result<(), Error> {
+        let plan = &self.plan;
         let level0 = Grid::Groups(self.blocks);
         match self.levels {
             // One block: its sum is the total.
-            1 => enc.run("pb_scan_block", None, &[input, out, &self.total.buffer, plan, n], &[0, at], level0),
+            1 => enc.run("pb_scan_block", None, &[input, out, &self.total, plan, n], &[0, at], level0),
             // Blocks, then one block of their sums.
             2 => {
-                enc.run("pb_scan_block", None, &[input, out, &self.sums1.buffer, plan, n], &[0, at], level0)?;
-                enc.run("pb_scan_block", None, &[&self.sums1.buffer, &self.out1.buffer, &self.total.buffer, plan, plan], &[1, 0], Grid::Groups(1))?;
-                enc.run("pb_scan_add", None, &[out, &self.out1.buffer, plan], &[0], Grid::Indirect(plan, 52))
+                enc.run("pb_scan_block", None, &[input, out, &self.sums1, plan, n], &[0, at], level0)?;
+                enc.run("pb_scan_block", None, &[&self.sums1, &self.out1, &self.total, plan, plan], &[1, 0], Grid::Groups(1))?;
+                enc.run("pb_scan_add", None, &[out, &self.out1, plan], &[0], Grid::Indirect(plan, 52))
             }
             _ => {
-                enc.run("pb_scan_block", None, &[input, out, &self.sums1.buffer, plan, n], &[0, at], level0)?;
-                enc.run("pb_scan_block", None, &[&self.sums1.buffer, &self.out1.buffer, &self.sums2.buffer, plan, plan], &[1, 0], Grid::Indirect(plan, 28))?;
-                enc.run("pb_scan_block", None, &[&self.sums2.buffer, &self.out2.buffer, &self.total.buffer, plan, plan], &[2, 0], Grid::Indirect(plan, 40))?;
-                enc.run("pb_scan_add", None, &[&self.out1.buffer, &self.out2.buffer, plan], &[1], Grid::Indirect(plan, 64))?;
-                enc.run("pb_scan_add", None, &[out, &self.out1.buffer, plan], &[0], Grid::Indirect(plan, 52))
+                enc.run("pb_scan_block", None, &[input, out, &self.sums1, plan, n], &[0, at], level0)?;
+                enc.run("pb_scan_block", None, &[&self.sums1, &self.out1, &self.sums2, plan, plan], &[1, 0], Grid::Indirect(plan, 28))?;
+                enc.run("pb_scan_block", None, &[&self.sums2, &self.out2, &self.total, plan, plan], &[2, 0], Grid::Indirect(plan, 40))?;
+                enc.run("pb_scan_add", None, &[&self.out1, &self.out2, plan], &[1], Grid::Indirect(plan, 64))?;
+                enc.run("pb_scan_add", None, &[out, &self.out1, plan], &[0], Grid::Indirect(plan, 52))
             }
         }
     }
@@ -135,34 +281,34 @@ pub enum SegOp {
 /// An inclusive segmented scan of up to `capacity` u32s, each with a head flag (a word, 0 or 1).
 pub struct SegScan {
     blocks: u64,
-    plan: MappedBuffer,
-    seen0: MappedBuffer,
-    levels: [(MappedBuffer, MappedBuffer, MappedBuffer, MappedBuffer); 2],
-    last: (MappedBuffer, MappedBuffer, MappedBuffer, MappedBuffer),
+    plan: Buf,
+    seen0: Buf,
+    levels: [(Buf, Buf, Buf, Buf); 2],
+    last: (Buf, Buf, Buf, Buf),
 }
 
 impl SegScan {
-    pub fn new(capacity: usize) -> Result<Self, Error> {
+    pub fn new(arena: &Arena, capacity: usize) -> Result<Self, Error> {
         let n1 = capacity.div_ceil(BLOCK).max(1);
         let n2 = n1.div_ceil(BLOCK).max(1);
         if n2 > BLOCK {
             return Err(Error::BackendCapacity);
         }
         // A level's aggregates (values, flags), its scan, and its `seen`.
-        let level = |n: usize| -> Result<_, Error> { Ok((zeroed(n)?, zeroed(n)?, zeroed(n)?, zeroed(n)?)) };
-        Ok(SegScan { blocks: n1 as u64, plan: zeroed(20)?, seen0: zeroed(capacity)?, levels: [level(n1)?, level(n2)?], last: level(1)? })
+        let level = |n: usize| -> Result<_, Error> { Ok((arena.zeroed::<u32>(n)?, arena.zeroed::<u32>(n)?, arena.zeroed::<u32>(n)?, arena.zeroed::<u32>(n)?)) };
+        Ok(SegScan { blocks: n1 as u64, plan: arena.zeroed::<u32>(20)?, seen0: arena.zeroed::<u32>(capacity)?, levels: [level(n1)?, level(n2)?], last: level(1)? })
     }
 
     /// `out` = the inclusive scan of `input`'s first `n[at]` words, cut at `heads`.
-    pub fn encode(&self, enc: &Enc<'_>, op: SegOp, n: &BufferRef, at: u32, input: &BufferRef, heads: &BufferRef, out: &BufferRef) -> Result<(), Error> {
-        let plan = &self.plan.buffer;
+    pub fn encode(&self, enc: &Enc<'_>, op: SegOp, n: &dyn Bound, at: u32, input: &dyn Bound, heads: &dyn Bound, out: &dyn Bound) -> Result<(), Error> {
+        let plan = &self.plan;
         let c = Some(op as u32);
         let ([(v1, f1, o1, s1), (v2, f2, o2, s2)], (v3, f3, _, _)) = (&self.levels, &self.last);
-        enc.run("pb_seg_block", c, &[input, heads, out, &self.seen0.buffer, &v1.buffer, &f1.buffer, plan, n], &[0, at], Grid::Groups(self.blocks))?;
-        enc.run("pb_seg_block", c, &[&v1.buffer, &f1.buffer, &o1.buffer, &s1.buffer, &v2.buffer, &f2.buffer, plan, plan], &[1, 0], Grid::Indirect(plan, 28))?;
-        enc.run("pb_seg_block", c, &[&v2.buffer, &f2.buffer, &o2.buffer, &s2.buffer, &v3.buffer, &f3.buffer, plan, plan], &[2, 0], Grid::Indirect(plan, 40))?;
-        enc.run("pb_seg_add", c, &[&o1.buffer, &s1.buffer, &o2.buffer, plan], &[1], Grid::Indirect(plan, 64))?;
-        enc.run("pb_seg_add", c, &[out, &self.seen0.buffer, &o1.buffer, plan], &[0], Grid::Indirect(plan, 52))
+        enc.run("pb_seg_block", c, &[input, heads, out, &self.seen0, &v1, &f1, plan, n], &[0, at], Grid::Groups(self.blocks))?;
+        enc.run("pb_seg_block", c, &[&v1, &f1, &o1, &s1, &v2, &f2, plan, plan], &[1, 0], Grid::Indirect(plan, 28))?;
+        enc.run("pb_seg_block", c, &[&v2, &f2, &o2, &s2, &v3, &f3, plan, plan], &[2, 0], Grid::Indirect(plan, 40))?;
+        enc.run("pb_seg_add", c, &[&o1, &s1, &o2, plan], &[1], Grid::Indirect(plan, 64))?;
+        enc.run("pb_seg_add", c, &[out, &self.seen0, &o1, plan], &[0], Grid::Indirect(plan, 52))
     }
 }
 
@@ -170,43 +316,42 @@ impl SegScan {
 /// before the sort, by `iota`).
 pub struct Sort {
     tiles: u64,
-    plan: MappedBuffer,
-    hist: MappedBuffer,
-    scanned: MappedBuffer,
+    plan: Buf,
+    hist: Buf,
+    scanned: Buf,
     scan: Scan,
-    pub keys_b: MappedBuffer,
-    pub vals_a: MappedBuffer,
-    pub vals_b: MappedBuffer,
+    pub keys_b: Buf,
+    pub vals_a: Buf,
+    pub vals_b: Buf,
 }
 
 impl Sort {
-    pub fn new(capacity: usize) -> Result<Self, Error> {
+    pub fn new(arena: &Arena, capacity: usize) -> Result<Self, Error> {
         let h = capacity.div_ceil(TG as usize).max(1) * 256;
-        let device = crate::device()?;
         Ok(Sort {
             tiles: capacity.div_ceil(TG as usize).max(1) as u64,
-            plan: zeroed(8)?,
-            hist: zeroed(h)?,
-            scanned: zeroed(h)?,
-            scan: Scan::new(h)?,
-            keys_b: MappedBuffer::zeroed::<u64>(&device, capacity.max(1))?,
-            vals_a: zeroed(capacity)?,
-            vals_b: zeroed(capacity)?,
+            plan: arena.zeroed::<u32>(8)?,
+            hist: arena.zeroed::<u32>(h)?,
+            scanned: arena.zeroed::<u32>(h)?,
+            scan: Scan::new(arena, h)?,
+            keys_b: arena.zeroed::<u64>(capacity)?,
+            vals_a: arena.zeroed::<u32>(capacity)?,
+            vals_b: arena.zeroed::<u32>(capacity)?,
         })
     }
 
     /// Sorts `keys` (the first `n[at]`) by their low `bits` bits, a multiple of 8, stably. The
     /// keys end in `keys` and their payloads in `vals_a` (the passes are even), or in `keys_b` and
     /// `vals_b`: `sorted` says which.
-    pub fn encode(&self, enc: &Enc<'_>, n: &BufferRef, at: u32, keys: &BufferRef, bits: u32) -> Result<(), Error> {
-        let plan = &self.plan.buffer;
-        enc.run("pb_iota", None, &[&self.vals_a.buffer, plan, n], &[at], Grid::Groups(self.tiles))?;
+    pub fn encode(&self, enc: &Enc<'_>, n: &dyn Bound, at: u32, keys: &dyn Bound, bits: u32) -> Result<(), Error> {
+        let plan = &self.plan;
+        enc.run("pb_iota", None, &[&self.vals_a, plan, n], &[at], Grid::Groups(self.tiles))?;
         for p in 0..bits.div_ceil(8) {
-            let (a, b): ([&BufferRef; 2], [&BufferRef; 2]) = ([keys, &self.vals_a.buffer], [&self.keys_b.buffer, &self.vals_b.buffer]);
+            let (a, b): ([&dyn Bound; 2], [&dyn Bound; 2]) = ([keys, &self.vals_a], [&self.keys_b, &self.vals_b]);
             let ([ki, vi], [ko, vo]) = if p % 2 == 0 { (a, b) } else { (b, a) };
-            enc.run("pb_hist", None, &[ki, &self.hist.buffer, plan], &[8 * p], Grid::Indirect(plan, 16))?;
-            self.scan.encode(enc, plan, 2, &self.hist.buffer, &self.scanned.buffer)?;
-            enc.run("pb_scatter", None, &[ki, vi, ko, vo, &self.scanned.buffer, plan], &[8 * p], Grid::Indirect(plan, 16))?;
+            enc.run("pb_hist", None, &[ki, &self.hist, plan], &[8 * p], Grid::Indirect(plan, 16))?;
+            self.scan.encode(enc, plan, 2, &self.hist, &self.scanned)?;
+            enc.run("pb_scatter", None, &[ki, vi, ko, vo, &self.scanned, plan], &[8 * p], Grid::Indirect(plan, 16))?;
         }
         Ok(())
     }

@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::launch::{LaunchScope, commit_checked, wait_checked};
+use crate::runtime::MappedBuffer;
 
 /// Sizes that cross a SIMD group (32), a group (256), a scan block (1024) and a second level
 /// (1024 blocks).
@@ -24,8 +25,23 @@ fn buf<T: Copy>(v: &[T]) -> MappedBuffer {
     if v.is_empty() { MappedBuffer::zeroed::<T>(&device, 1).unwrap() } else { MappedBuffer::from_slice(&device, v).unwrap() }
 }
 
-fn read<T: Copy>(b: &MappedBuffer, n: usize) -> Vec<T> {
-    unsafe { std::slice::from_raw_parts(b.host().cast::<T>(), n).to_vec() }
+/// A store the host reads after a run: a test's own buffer, or one of an arena's.
+trait Host {
+    fn host_bytes(&self) -> *mut u8;
+}
+impl Host for MappedBuffer {
+    fn host_bytes(&self) -> *mut u8 {
+        self.host()
+    }
+}
+impl Host for Buf {
+    fn host_bytes(&self) -> *mut u8 {
+        self.host()
+    }
+}
+
+fn read<T: Copy>(b: &impl Host, n: usize) -> Vec<T> {
+    unsafe { std::slice::from_raw_parts(b.host_bytes().cast::<T>(), n).to_vec() }
 }
 
 /// Runs `f`'s encoding in one command buffer, and waits.
@@ -45,7 +61,9 @@ fn the_scan_equals_the_host() {
     for &n in &SIZES {
         let input: Vec<u32> = (0..n).map(|_| (r.next() % 5) as u32).collect();
         let (inb, out, count) = (buf(&input), MappedBuffer::zeroed::<u32>(&crate::device().unwrap(), n.max(1)).unwrap(), buf(&[0u32, n as u32]));
-        let scan = Scan::new(n).unwrap();
+        let arena = Arena::new();
+        let scan = Scan::new(&arena, n).unwrap();
+        arena.lease().unwrap();
         run(|e| scan.encode(e, &count.buffer, 1, &inb.buffer, &out.buffer));
         let mut acc = 0u32;
         let want: Vec<u32> = input.iter().map(|&x| { let a = acc; acc += x; a }).collect();
@@ -63,7 +81,9 @@ fn the_segmented_scans_equal_the_host() {
             let heads: Vec<u32> = (0..n).map(|_| u32::from(r.next() % sparse == 0)).collect();
             let dev = crate::device().unwrap();
             let (inb, hb, out, count) = (buf(&input), buf(&heads), MappedBuffer::zeroed::<u32>(&dev, n.max(1)).unwrap(), buf(&[n as u32]));
-            let seg = SegScan::new(n).unwrap();
+            let arena = Arena::new();
+            let seg = SegScan::new(&arena, n).unwrap();
+            arena.lease().unwrap();
             run(|e| seg.encode(e, op, &count.buffer, 0, &inb.buffer, &hb.buffer, &out.buffer));
             let mut acc = 0u32;
             let want: Vec<u32> = input
@@ -87,7 +107,9 @@ fn the_sort_is_stable_and_equals_the_host() {
             let mask = if bits == 64 { u64::MAX } else { (1u64 << bits) - 1 };
             let keys: Vec<u64> = (0..n).map(|_| (r.next() % distinct.max(1)).wrapping_mul(0x9e37_79b9) & mask).collect();
             let (kb, count) = (buf(&keys), buf(&[n as u32]));
-            let sort = Sort::new(n).unwrap();
+            let arena = Arena::new();
+            let sort = Sort::new(&arena, n).unwrap();
+            arena.lease().unwrap();
             run(|e| sort.encode(e, &count.buffer, 0, &kb.buffer, bits));
             let (got_k, got_v) = if Sort::in_input(bits) { (read::<u64>(&kb, n), read::<u32>(&sort.vals_a, n)) } else { (read::<u64>(&sort.keys_b, n), read::<u32>(&sort.vals_b, n)) };
             let mut want: Vec<(u64, u32)> = keys.iter().enumerate().map(|(i, &k)| (k, i as u32)).collect();

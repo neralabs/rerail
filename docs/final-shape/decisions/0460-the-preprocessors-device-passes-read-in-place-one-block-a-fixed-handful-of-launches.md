@@ -194,3 +194,19 @@ with the unit, because each primitive's number of levels was chosen by its capac
     (`RERAIL_PP_COUNT=500`) gives 999 units the serial pass's tokens, with 1 refused for `#line`,
     as before. That slice still takes up to 146 launches, which steps 3–5 bring down to a fixed
     handful.
+- **Step 3** (this commit): an evaluation's stores are in one block, its arena
+  (`pp_blocks::Arena`).
+  - The passes' structures (`Front`, `Defs`, `Vis`, `Exp`, and the scans and sorts inside them)
+    declare their stores in it (`zeroed`, `from_slice`): each a `Buf`, an offset in the layout.
+  - The arena is then leased once, before any pass is encoded. It is a
+    `rerail_blocks::Block` from the GPU pool, within the one budget (`lease_block_within`). A
+    refusal is `BackendCapacity`.
+  - A pass binds each store as the block's buffer at its offset (`Bound`,
+    `checked_set_buffers_at`). Indirect arguments are read at their store's offset.
+  - The unit's views are a store of the arena (`Front::files`), and its documents are the
+    gathered slab.
+  - A rung is a new, larger arena.
+  - The 31-binding limit still holds while each store is its own binding. The column merges
+    it forced go with step 5, where a kernel binds the arena once and reads each store at its
+    offset.
+  - R4's guard is `the_arena_is_one_block`. All 14 evaluator tests and 5 block tests pass.
