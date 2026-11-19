@@ -40,7 +40,7 @@ use rusqlite::{Connection, params};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 /// One trusted file in this many is hashed again each process (`RERAIL_VALIDATE_EVERY`).
 pub const VALIDATE_EVERY: u64 = 64;
@@ -393,7 +393,7 @@ impl Observer {
 
     /// Whether `path` is one of rerail's own files (decision 0284): this observer's or the process's.
     fn is_own(&self, path: &Path) -> bool {
-        self.own.iter().any(|o| owned_by(o, path)) || OWN.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|o| owned_by(o, path))
+        self.own.iter().any(|o| owned_by(o, path)) || rerail_prof::code_rule_dsl::logic::profile::machine::<OwnFiles>().0.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|o| owned_by(o, path))
     }
 
     /// The kind and stat of an own file, asked of the system each time: no answer is kept (decision 0284).
@@ -1529,13 +1529,16 @@ const CANONICAL: &str = "canonical:";
 /// The prefix of a directory runs wrote their outputs into, as `observer_meta` keeps it (`own_output`).
 const OWN_OUTPUT: &str = "own:";
 
-/// rerail's own files the process names (decision 0284, `own`): the cost statistics' file.
-static OWN: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+/// rerail's own files the machine names (decision 0284, `own`): the cost statistics' file, the machine's (decision
+/// 0442).
+#[derive(Default)]
+struct OwnFiles(Mutex<Vec<PathBuf>>);
 
-/// Names `path` as one of rerail's own files for every observer of the process (decision 0284): it, what is under
+/// Names `path` as one of rerail's own files for every observer on the machine (decision 0284): it, what is under
 /// it, and every file named after it beside it (`<path>-wal`, `<path>.upkeep`) are outside the observer.
 pub fn own(path: &Path) {
-    let mut own = OWN.lock().unwrap_or_else(|e| e.into_inner());
+    let held = rerail_prof::code_rule_dsl::logic::profile::machine::<OwnFiles>();
+    let mut own = held.0.lock().unwrap_or_else(|e| e.into_inner());
     for p in spellings(path) {
         if !own.contains(&p) {
             own.push(p);
@@ -1897,12 +1900,14 @@ impl DigestRead {
     }
 }
 
-static OBSERVERS: OnceLock<Mutex<HashMap<Option<PathBuf>, Observer>>> = OnceLock::new();
+/// The shared object's observers, one per store (decision 0442).
+#[derive(Default)]
+struct Observers(Mutex<HashMap<Option<PathBuf>, Observer>>);
 
 /// Waits until every observer's queued writes are in its store: the run's end, beside the content store's writer.
 pub fn written() {
-    if let Some(all) = OBSERVERS.get() {
-        all.lock().unwrap_or_else(|e| e.into_inner()).values().for_each(Observer::written);
+    if let Some(all) = rerail_prof::code_rule_dsl::logic::profile::shared_object().and_then(|shared| shared.get_if_any::<Observers>()) {
+        all.0.lock().unwrap_or_else(|e| e.into_inner()).values().for_each(Observer::written);
     }
 }
 
@@ -1910,17 +1915,17 @@ pub fn written() {
 /// test's own). Every run's end waits on each observer the process holds (`written`), so one kept past its store's
 /// life is a cost to every later run.
 pub fn forget(store: &Path) {
-    let gone = OBSERVERS.get().and_then(|all| all.lock().unwrap_or_else(|e| e.into_inner()).remove(&Some(store.to_path_buf())));
+    let gone = rerail_prof::code_rule_dsl::logic::profile::shared::<Observers>().0.lock().unwrap_or_else(|e| e.into_inner()).remove(&Some(store.to_path_buf()));
     if let Some(observer) = gone {
         observer.written();
     }
 }
 
-/// Runs `f` with the observer of the P0 store at `store` (`None`: in memory, for the process). One observer per
-/// store, for the process.
+/// Runs `f` with the observer of the P0 store at `store` (`None`: in memory, for the shared object). One observer per
+/// store, for the shared object.
 pub fn with<T>(store: Option<&Path>, f: impl FnOnce(&mut Observer) -> T) -> T {
-    let all = OBSERVERS.get_or_init(Default::default);
-    let mut all = all.lock().unwrap_or_else(|e| e.into_inner());
+    let all = rerail_prof::code_rule_dsl::logic::profile::shared::<Observers>();
+    let mut all = all.0.lock().unwrap_or_else(|e| e.into_inner());
     let key = store.map(Path::to_path_buf);
     let observer = all.entry(key.clone()).or_insert_with(|| Observer::open(key.as_deref()));
     f(observer)

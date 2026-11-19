@@ -104,3 +104,46 @@ by any caller in the process, so two callers of different trust could not be kep
   (mostly the profile's counters and settings), 89 are shared by design (interners, caches of callers' programs, the
   store's registries) and 93 are the machine's (the pool, the device's pipelines and memory ledger, the learned cost
   and price model, the process's sampler). The three moving classes are moved group by group (step 5).
+- Step 5, as done (2026-11-19). `global-state.txt` holds only `stays` (293 entries); no class that moves is left.
+  - What moved:
+    - The machine's: the pool's accounts, the device and its pipelines, the price and cost tables, the lanes, the
+      batch pricer, the roofline, the CPU slot for workspace work.
+    - The shared object's: every interner (call names, contracts, the facts' symbols, the front's relation names,
+      relation numbers, the typing rounds' large constants); every store registry (atoms by file and the in-memory
+      atoms, file identities, canonical paths, connections and handles, frames' counts and snapshots, the journal's
+      streams, observers, writers and their account, the content stores, setfix's symbols and stored tables); the
+      caches of callers' programs; the join statistics and their search job.
+    - The run's: the git calls' state, the lanes' counts, the profile's counters.
+  - Two objects on one store behave as two processes do: each has its own writer, atoms, snapshots and connections
+    (a thread's connections are kept by object and path), and the store's lease keeps them apart.
+  - A thread the engine starts reads its starter's object: `exec::service`, the compile queue's jobs, the warm-up,
+    the join search's upkeep job (registered once per object and holding it), a workspace's tasks and its sync
+    methods (`within`).
+  - Hot readers borrow a shared value (`with_shared`, as `with_local`): no lock and no count of references, so the
+    sharded relation numbers (decision 0279 §7) stay free of a shared word.
+  - The front's `Name` is equal by address, or by its text where the names come from two tables or a static, so a
+    name a static holds still equals the same name from an object.
+  - The Node host: the addon's caller is the Node environment. It makes one `Machine` and keeps it in its instance
+    data, and each workspace it makes is on a `Shared` of its own on that machine, so an environment's workspaces
+    share one pool, one CPU slot and one learned model. A worker thread's environment has its own. A Rust caller with
+    no environment (`CodeRuleDslWorkspace::new`) takes `default_shared`.
+  - The strict run (`RERAIL_STRICT_RUN=1`) logs each read outside any run once, by type, with its backtrace, to the
+    engine's stderr.
+- Step 5, the departures:
+  - A read outside any run is not refused, as Decision 2 says. In a product build it takes an object of its own that
+    nothing keeps; in a test build, the tests' one. The strict run names each such read.
+  - The CPU job pool is rayon's global pool, the process's. A job carries its caller's run and object, so nothing
+    crosses between callers through it, but two machines in one process share its threads. So the threads' CPU
+    accounts (`THREADS`, `EXITED`, `EXITED_GAPS`) stay with the threads, the process's, and do not move into
+    `Machine`.
+  - Stays, each with its reason in `global-state.txt`:
+    - the heap sampler and the footprint sampler (they measure the process, as the OS reports it);
+    - `RESERVED` (the process's own mappings, its address space);
+    - `POLICY` (the block allocator's policy, registered at load);
+    - process-unique name and object counters;
+    - test-only counters;
+    - `WARM_FAULTS` (the exit status an atexit handler reads);
+    - `WAVES` (an id counter);
+    - the leaked names of the engine's own counters and fallback reasons;
+    - the typing settings' interner. It holds immutable values and a `Reading` compares them by value, so no id of
+      it can differ between callers.

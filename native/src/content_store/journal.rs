@@ -354,14 +354,14 @@ mod fsevents {
         cookie_dir: PathBuf,
         /// The id it was started from: it holds every event after it.
         from: u64,
-        /// The run it was last synchronised for (`EPOCH`), and its cookie's event's id: every change before it has an
+        /// The run it was last synchronised for (the streams' epoch), and its cookie's event's id: every change before it has an
         /// earlier id, and was told before it.
         synced: Option<(u64, u64)>,
         used: u64,
     }
 
     // SAFETY: the stream and queue are FSEvents' and libdispatch's handles, usable from any thread; they are only
-    // touched under `LIVE`'s lock.
+    // touched under the streams' lock.
     unsafe impl Send for Live {}
 
     impl Drop for Live {
@@ -377,14 +377,19 @@ mod fsevents {
         }
     }
 
-    static LIVE: Mutex<Vec<Live>> = Mutex::new(Vec::new());
-    /// The outermost run under way (`next_epoch`): a stream is synchronised once for it.
-    static EPOCH: AtomicU64 = AtomicU64::new(0);
+    /// The shared object's streams (decision 0442), and its outermost run under way (`next_epoch`): a stream is
+    /// synchronised once for it.
+    #[derive(Default)]
+    struct Streams(Mutex<Vec<Live>>, AtomicU64);
+
+    fn streams() -> Arc<Streams> {
+        rerail_prof::code_rule_dsl::logic::profile::shared::<Streams>()
+    }
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
     /// A new outermost run: a question after this waits for a cookie of its own, once per stream.
     pub(super) fn next_epoch() {
-        EPOCH.fetch_add(1, Ordering::Relaxed);
+        streams().1.fetch_add(1, Ordering::Relaxed);
     }
 
     fn start(roots: &[PathBuf], cookie_dir: &Path, from: u64) -> Result<Live, &'static str> {
@@ -417,7 +422,7 @@ mod fsevents {
         }
     }
 
-    /// Waits, once for the run (`EPOCH`), until `live` has been told every change made before now: a cookie written
+    /// Waits, once for the run (the streams' epoch), until `live` has been told every change made before now: a cookie written
     /// now has a later id than each, and comes after them. The cookie's id: what it has been told up to it is
     /// complete, so a replay from it misses nothing (and no id need be asked of the system).
     fn sync(live: &mut Live, epoch: u64) -> Result<u64, &'static str> {
@@ -490,7 +495,8 @@ mod fsevents {
                 _ => groups.push((r, c)),
             }
         }
-        let mut all = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        let held = streams();
+        let mut all = held.0.lock().unwrap_or_else(|e| e.into_inner());
         for (root, from) in groups {
             if all.len() >= STREAMS {
                 break;
@@ -516,8 +522,9 @@ mod fsevents {
         if real.len() != roots.len() {
             return Since::Lost { cursor: Some(now()), why: "a root is not readable" };
         }
-        let epoch = EPOCH.load(Ordering::Relaxed);
-        let mut all = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        let streams = streams();
+        let epoch = streams.1.load(Ordering::Relaxed);
+        let mut all = streams.0.lock().unwrap_or_else(|e| e.into_inner());
         // A stream that lost track answers nothing more: a question under its roots replays afresh.
         all.retain(|l| l.shared.seen.lock().unwrap_or_else(|e| e.into_inner()).lost.is_none());
         // The stream that holds every change under the roots since the cursor, else one started for them from it.

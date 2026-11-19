@@ -203,7 +203,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/placement.rs", "DEVICE"),
     // Profiling: the placements a recording run made, and the writer's jobs by kind.
     ("code_rule_dsl/logic/plan/placement.rs", "RECORDED"),
-    ("content_store/write_back.rs", "BY_KIND"),
     // The coverage check's census of the shipped rule files, read once by a test process.
     ("code_rule_dsl/logic/plan/coverage.rs", "CENSUS"),
     // The process's interned relation names (`front::Name`): one allocation per distinct name, not a result kept.
@@ -226,8 +225,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix/device.rs", "ARENA"),
     ("code_rule_dsl/logic/lanes.rs", "DONE"),
     ("code_rule_dsl/logic/lanes.rs", "QUEUED"),
-    ("code_rule_dsl/logic/native/setfix.rs", "STORED"),
-    ("code_rule_dsl/logic/native/setfix.rs", "SYMS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
     // This thread's reservation of atoms (decision 0114 §4): which pending atoms no committed row may hold yet, not a
     // result kept.
@@ -247,7 +244,6 @@ const STATE: &[(&str, &str)] = &[
     // The language tags the store's dictionaries are chosen by (RER-131): set once as the library loads.
     ("content_store/compression.rs", "LANGUAGE_TAGS"),
     // The store handles open in this process, by path (RER-131): a registry of open things.
-    ("content_store/connection.rs", "HANDLES"),
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
     // A test's own store, the template's path and the threads said to ask off a test's (`test_store`): which files
@@ -283,17 +279,12 @@ const STATE: &[(&str, &str)] = &[
     // The rule files' entries a thread read before its run (0275), taken by the run's manifest: a queue.
     ("code_rule_dsl/logic/plan/corpus/combined.rs", "READ_BEFORE"),
     // rerail's own files the process names to its observers (0284): a registry.
-    ("content_store/observe.rs", "OWN"),
     // Profiling (0288): the command's clocks, the process's start, the run thread's phases, each step's decisions.
     ("code_rule_dsl/logic/profile.rs", "COMMAND"),
     ("code_rule_dsl/logic/profile.rs", "DECIDING"),
     ("code_rule_dsl/logic/profile/life.rs", "ENTERED"),
-    ("content_store/atoms.rs", "CANONICAL"),
     // Each database file's identity, read once a file: a registry, as CANONICAL is.
-    ("content_store/atoms.rs", "IDENTITIES"),
-    ("content_store/atoms.rs", "REGISTRY"),
     ("content_store/compression.rs", "ENCODER"),
-    ("content_store/connection.rs", "ALL_CONNECTIONS"),
     ("content_store/connection.rs", "ATTEMPT_WAITED"),
     ("content_store/connection.rs", "BUSY_ATTEMPT_HOOK"),
     ("content_store/connection.rs", "BUSY_DEADLINE_OVERRIDE"),
@@ -304,10 +295,8 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
     // The run each frame space last counted in this process, so a run's programs count it once.
-    ("content_store/frames.rs", "COUNTED"),
     // The store's frames as this process holds them, ahead of SQLite (decision 0104): the facts themselves, read
     // once before a run's first wave, not a cache of anything else.
-    ("content_store/frames.rs", "SNAPSHOTS"),
     // The device's automata and test tables for regex and text stages, held while the thread runs (a command buffer
     // may read them).
     ("code_rule_dsl/logic/native/setfix/device.rs", "AUTOMATA"),
@@ -318,9 +307,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "BATCH"),
     // A registry of an open thing: the holders of the rule files' shared tape-cache handle, and the handle.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "READING"),
-    ("content_store/observe.rs", "OBSERVERS"),
     // The journal's open streams, one a root (decision 0105): open things.
-    ("content_store/journal.rs", "LIVE"),
     // A job's own plans and observations (decisions 0113, 0116), taken into the run's as the job ends: the run's own
     // state on the job's thread, gone with it.
     ("code_rule_dsl/logic/plan.rs", "OWN_PLANS"),
@@ -331,7 +318,6 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),
-    ("content_store/write_back.rs", "WRITERS"),
     // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND"),
 ];

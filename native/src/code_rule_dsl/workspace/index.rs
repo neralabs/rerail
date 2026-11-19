@@ -727,7 +727,7 @@ impl WorkspaceIndexTask {
         repository: &git_workspace::GitWorkspace,
         mut index: RepositoryIndex,
     ) -> Result<String> {
-        let Some(_slot) = cpu_slot().try_lock() else {
+        let Some(_slot) = cpu_slot().try_lock_arc() else {
             self.lock()?.repository_index = Some(index);
             return Err(invalid(WORKSPACE_BUSY));
         };

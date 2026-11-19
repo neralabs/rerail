@@ -8,7 +8,7 @@ use super::persisted::{decode_local_result, encode_local_result, grammar_version
 use super::results::{
     RESULT_PAGE_EVICTED_RESTORES, RESULT_PAGE_SORTS, RESULT_PAGE_WITNESSES_VISITED,
 };
-use super::storage::{CONTENT_STORES, StorageContext, index_stored_tapes, shared_content_store};
+use super::storage::{ContentStores, StorageContext, index_stored_tapes, shared_content_store};
 use super::*;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::content_store::{ContentStore, GitTree, HashKey};
@@ -37,7 +37,7 @@ pub(super) fn git(root: &std::path::Path, arguments: &[&str]) {
 }
 
 #[test]
-fn content_store_registry_shares_one_process_store() {
+fn content_store_registry_shares_one_store_per_shared_object() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -52,7 +52,7 @@ fn content_store_registry_shares_one_process_store() {
     assert!(StdArc::ptr_eq(&first.1, &second.1));
     drop(first);
     drop(second);
-    CONTENT_STORES.lock().unwrap().remove(&path);
+    crate::code_rule_dsl::logic::profile::shared::<ContentStores>().0.lock().unwrap().remove(&path);
     for suffix in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
     }
@@ -344,7 +344,7 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
 fn a_panic_holding_the_cpu_slot_leaves_the_next_apply_free_to_run() {
     let _slot = WORKSPACE_TEST_SLOT.lock();
     let panicked = crate::panic_boundary::contain_panic::<()>("apply", || {
-        let _held = super::api::cpu_slot().lock();
+        let _held = super::api::cpu_slot().lock_arc();
         panic!("apply panicked holding the CPU slot");
     });
     assert!(panicked.is_err());

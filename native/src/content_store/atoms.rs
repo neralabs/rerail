@@ -28,7 +28,7 @@ use std::fs::{File, TryLockError};
 use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Weak};
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 mod map;
@@ -403,11 +403,12 @@ const LARGE_SEGMENT: usize = 1 << 20;
 
 /// The identity read of each database file, by its path and (device, inode, creation time): `Atoms::identity`. A file
 /// made again at a path may have the inode the deleted one had; it was not made at the same time.
-static IDENTITIES: LazyLock<Mutex<HashMap<String, ((u64, u64, u128), Option<i64>)>>> = LazyLock::new(Default::default);
+#[derive(Default)]
+struct Identities(Mutex<HashMap<String, ((u64, u64, u128), Option<i64>)>>);
 
 /// The database at `path` was made a store (`schema::initialize`): the identity read of it before (none) is gone.
 pub(crate) fn forget_identity(path: &str) {
-    IDENTITIES.lock().remove(path);
+    rerail_prof::code_rule_dsl::logic::profile::shared::<Identities>().0.lock().remove(path);
 }
 
 /// The most bytes of atoms one segment holds (`write_pending`): a commit's new atoms are written as several, so
@@ -511,7 +512,8 @@ fn lease_free() -> bool {
 /// store's. A write behind the run that meets it is dropped, as a cache's miss.
 pub const DIVERGED_TEXT: &str = "this process's atoms forked from the store's and this write's are not mapped (decision 0170)";
 
-static REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Weak<Atoms>>>> = LazyLock::new(Default::default);
+#[derive(Default)]
+struct AtomsByFile(Mutex<HashMap<PathBuf, Weak<Atoms>>>);
 /// The atoms of in-memory databases: one set for the shared object (decision 0442), as the planner's symbols had:
 /// another object's in-memory databases have their own, and read none of these texts.
 struct MemoryAtoms(Arc<Atoms>);
@@ -529,13 +531,15 @@ fn memory() -> Arc<Atoms> {
 /// A path's registry key: its canonical form, resolved once per path (a `realpath` per stratum was 2.5% of a corpus
 /// run's main thread). A path that does not resolve yet is not remembered.
 pub(super) fn key(path: &Path) -> PathBuf {
-    static CANONICAL: LazyLock<Mutex<HashMap<PathBuf, PathBuf>>> = LazyLock::new(Default::default);
-    if let Some(key) = CANONICAL.lock().get(path) {
+    #[derive(Default)]
+    struct CanonicalPaths(Mutex<HashMap<PathBuf, PathBuf>>);
+    let held_ = rerail_prof::code_rule_dsl::logic::profile::shared::<CanonicalPaths>();
+    if let Some(key) = held_.0.lock().get(path) {
         return key.clone();
     }
     match std::fs::canonicalize(path) {
         Ok(key) => {
-            CANONICAL.lock().insert(path.to_path_buf(), key.clone());
+            rerail_prof::code_rule_dsl::logic::profile::shared::<CanonicalPaths>().0.lock().insert(path.to_path_buf(), key.clone());
             key
         }
         Err(_) => path.to_path_buf(),
@@ -643,7 +647,8 @@ impl Atoms {
     /// This process's atoms of the database at `path`, as it holds them (`install` checks they are the database's).
     fn for_path(path: &Path) -> Arc<Atoms> {
         let key = key(path);
-        let mut registry = REGISTRY.lock();
+        let held_ = rerail_prof::code_rule_dsl::logic::profile::shared::<AtomsByFile>();
+        let mut registry = held_.0.lock();
         if let Some(atoms) = registry.get(&key).and_then(Weak::upgrade) {
             return atoms;
         }
@@ -663,7 +668,8 @@ impl Atoms {
 
     pub(crate) fn for_database(path: &Path, identity: Option<i64>) -> Arc<Atoms> {
         let key = key(path);
-        let mut registry = REGISTRY.lock();
+        let held_ = rerail_prof::code_rule_dsl::logic::profile::shared::<AtomsByFile>();
+        let mut registry = held_.0.lock();
         if let Some(atoms) = registry.get(&key).and_then(Weak::upgrade) {
             let held = if atoms.path.as_ref() == Some(&key) { atoms.identity == identity } else { identity.is_none() };
             if held {
@@ -689,14 +695,14 @@ impl Atoms {
         #[cfg(not(unix))]
         let file: Option<(String, (u64, u64, u128))> = None;
         if let Some((path, at)) = &file
-            && let Some((held, id)) = IDENTITIES.lock().get(path)
+            && let Some((held, id)) = rerail_prof::code_rule_dsl::logic::profile::shared::<Identities>().0.lock().get(path)
             && held == at
         {
             return Ok(*id);
         }
         let id = Self::identity_read(connection)?;
         if let Some((path, at)) = file {
-            IDENTITIES.lock().insert(path, (at, id));
+            rerail_prof::code_rule_dsl::logic::profile::shared::<Identities>().0.lock().insert(path, (at, id));
         }
         Ok(id)
     }
@@ -716,7 +722,7 @@ impl Atoms {
     /// Makes `path`'s database read and write these atoms in this process: a run's working database
     /// (its SQL's scratch) whose symbols are the store's (decision 0052).
     pub fn share(self: &Arc<Self>, path: &Path) {
-        REGISTRY.lock().insert(key(path), Arc::downgrade(self));
+        rerail_prof::code_rule_dsl::logic::profile::shared::<AtomsByFile>().0.lock().insert(key(path), Arc::downgrade(self));
     }
 
     /// This process's atoms of `connection`'s main database.

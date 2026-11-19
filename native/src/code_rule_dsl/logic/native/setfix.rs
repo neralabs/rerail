@@ -180,11 +180,12 @@ impl Interner {
     }
 }
 
-/// The process's symbols of each database, kept from run to run with their arena: a run need not read a large
+/// The shared object's symbols of each database (decision 0442), kept from run to run with their arena: a run need not read a large
 /// store's atoms again. They hold no file open: the store's last handle closes them (`ContentStore`'s drop).
 /// `RERAIL_LEVELS_ON_CYCLES`: a leveled component keeps levels only on its relations on a cycle (`open`).
-static SYMS: LazyLock<Mutex<HashMap<String, Arc<RwLock<Interner>>>>> = LazyLock::new(Default::default);
-/// The symbols of `conn`'s database: the process's arena of it.
+#[derive(Default)]
+struct DatabaseSymbols(Mutex<HashMap<String, Arc<RwLock<Interner>>>>);
+/// The symbols of `conn`'s database: the shared object's arena of it.
 pub fn symbols(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
     let conn = conn.db();
     // A connection's symbols are found once (by its path) and kept for it until it closes (`forget_scope`).
@@ -250,7 +251,8 @@ fn on(conn: impl Scoped) -> Arc<OnConn> {
 fn symbols_by_path(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
     let conn = conn.db();
     let key = conn_path(conn).to_string();
-    let mut syms = SYMS.lock().unwrap();
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<DatabaseSymbols>();
+    let mut syms = held_.0.lock().unwrap();
     let atoms = crate::content_store::atoms::Atoms::for_connection(conn.sql()?);
     // A store created again at the same path has new atoms (`Atoms::for_database`, checked by `Atoms::attach`).
     if let Some(s) = syms.get(&key) && Arc::ptr_eq(&s.read().unwrap().atoms, &atoms) {
@@ -3909,7 +3911,7 @@ pub fn forget_inputs_of(conn: &Connection, tables: &[String]) {
     let path = conn_path(conn).to_string();
     let reads = |key: &InputKey| key.sql.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| tables.iter().any(|t| t == w));
     on(conn).inputs.lock().retain(|key, _| !reads(key));
-    STORED.lock().unwrap().retain(|(p, t), _| *p != path || !t.rsplit('.').next().is_some_and(|n| tables.iter().any(|x| x == n)));
+    crate::code_rule_dsl::logic::profile::shared::<StoredTables>().0.lock().unwrap().retain(|(p, t), _| *p != path || !t.rsplit('.').next().is_some_and(|n| tables.iter().any(|x| x == n)));
 }
 
 /// Drops every native relation of `conn`'s runs: a chunk's, once its exports are written to the cross-file part.
@@ -5486,14 +5488,14 @@ pub fn forget_inputs(conn: &Connection) {
     let changing = on.changing.lock().clone();
     let Some(changing) = changing else {
         on.inputs.lock().clear();
-        STORED.lock().unwrap().retain(|(p, _), _| *p != path);
+        crate::code_rule_dsl::logic::profile::shared::<StoredTables>().0.lock().unwrap().retain(|(p, _), _| *p != path);
         return;
     };
     // Kept: base inputs (`b:` specs) that read none of the relations that change between runs; their rows and
     // indexes are the same in the next run. Derived inputs (`d:`, a SQL stratum's table) are made again.
     let reads_changing = |sel: &str| sel.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| changing.contains(w));
     on.inputs.lock().retain(|key, _| key.base && !reads_changing(&key.sql));
-    STORED.lock().unwrap().retain(|(p, table), _| *p != path || (!table.starts_with("main.") && !table.starts_with("temp.") && !reads_changing(table)));
+    crate::code_rule_dsl::logic::profile::shared::<StoredTables>().0.lock().unwrap().retain(|(p, table), _| *p != path || (!table.starts_with("main.") && !table.starts_with("temp.") && !reads_changing(table)));
 }
 
 // Relations whose rows change between the native runs on a connection (`OnConn::changing`, `keep_inputs`): while
@@ -5861,12 +5863,14 @@ pub fn table_source(conn: &Connection, schema: &str, name: &str) -> Option<Arc<d
     stored_table(conn, schema, name, &need)
 }
 /// The stored tables read this run, by database and `schema.table` (dropped with the inputs, `forget_inputs`).
-static STORED: LazyLock<Mutex<HashMap<(String, String), Option<Arc<Stored>>>>> = LazyLock::new(Default::default);
+#[derive(Default)]
+struct StoredTables(Mutex<HashMap<(String, String), Option<Arc<Stored>>>>);
 /// The stored table `schema.name` with the columns named in `need` loaded (`None`: not one, or not integers).
 fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
     if schema == "temp" || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') { return None; }
     let key = (conn_path(conn).to_string(), format!("{schema}.{name}"));
-    let t = STORED.lock().unwrap().get(&key).cloned();
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<StoredTables>();
+    let t = held_.0.lock().unwrap().get(&key).cloned();
     let t = match t {
         Some(t) => t?,
         None => {
@@ -5874,13 +5878,13 @@ fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> O
             let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{}", crate::code_rule_dsl::logic::sql::ident(name))).ok()?.column_names().map(str::to_owned).collect();
             let k = columns.len();
             let t = Arc::new(Stored::new(columns, (0..k).map(|_| std::sync::OnceLock::new()).collect()));
-            STORED.lock().unwrap().insert(key.clone(), Some(t.clone()));
+            crate::code_rule_dsl::logic::profile::shared::<StoredTables>().0.lock().unwrap().insert(key.clone(), Some(t.clone()));
             t
         }
     };
     let need: Vec<usize> = need.iter().map(|c| t.columns.iter().position(|n| n == c.trim())).collect::<Option<_>>()?;
     if !t.load(conn, &format!("{schema}.{name}"), &need) {
-        STORED.lock().unwrap().insert(key, None);
+        crate::code_rule_dsl::logic::profile::shared::<StoredTables>().0.lock().unwrap().insert(key, None);
         return None;
     }
     Some(t as Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)

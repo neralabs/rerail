@@ -74,10 +74,26 @@ impl Default for CodeRuleDslWorkspace {
     }
 }
 
-#[napi]
+/// The Node environment's machine (decision 0442). The addon's caller is the environment: it makes one machine and
+/// keeps it in its instance data, so every workspace it makes shares its pool, its CPU slot and its learned model,
+/// each workspace on a shared object of its own. Another environment (a worker thread) has its own.
+fn environment_machine(env: &napi::Env) -> Result<Arc<crate::code_rule_dsl::logic::profile::Machine>> {
+    if let Some(machine) = env.get_instance_data::<Arc<crate::code_rule_dsl::logic::profile::Machine>>()? {
+        return Ok(Arc::clone(machine));
+    }
+    let machine = crate::code_rule_dsl::logic::profile::Machine::new();
+    env.set_instance_data(Arc::clone(&machine), (), |_| {})?;
+    Ok(machine)
+}
+
 impl CodeRuleDslWorkspace {
-    #[napi(constructor)]
+    /// A workspace on the tests' shared object (a product build's: one of its own), for a caller with no Node
+    /// environment.
     pub fn new() -> Self {
+        Self::on(crate::code_rule_dsl::logic::profile::default_shared())
+    }
+
+    fn on(shared: Arc<crate::code_rule_dsl::logic::profile::Shared>) -> Self {
         let state = WorkspaceState {
             instance: WORKSPACE_INSTANCES.fetch_add(1, Ordering::Relaxed),
             ..WorkspaceState::default()
@@ -88,8 +104,17 @@ impl CodeRuleDslWorkspace {
             server_graph: AtomicBool::new(false),
             package_manifests: AtomicBool::new(false),
             closed: Arc::new(AtomicBool::new(false)),
-            shared: crate::code_rule_dsl::logic::profile::default_shared(),
+            shared,
         }
+    }
+}
+
+#[napi]
+impl CodeRuleDslWorkspace {
+    /// A workspace on a shared object of its own, on the environment's machine (`environment_machine`).
+    #[napi(constructor)]
+    pub fn construct(env: napi::Env) -> Result<Self> {
+        Ok(Self::on(crate::code_rule_dsl::logic::profile::Shared::on(&environment_machine(&env)?)))
     }
 
     /// Attaches the content store file at `store_path` to the Git repository containing `root`.
@@ -349,7 +374,7 @@ impl CodeRuleDslWorkspace {
         if self.closed.load(Ordering::Acquire) || request_json.len() > 8192 {
             return Ok(None);
         }
-        let Some(_slot) = cpu_slot().try_lock() else {
+        let Some(_slot) = cpu_slot().try_lock_arc() else {
             return Ok(None);
         };
         // Upkeep yields to the apply (decision 0190 §8).
@@ -938,11 +963,13 @@ pub struct WorkspaceApplyTask {
 #[napi]
 pub const WORKSPACE_BUSY: &str = "WORKSPACE_BUSY";
 
-/// One apply at a time across the process's workspaces. It guards no data, so it is a mutex a
-/// panic does not poison: an apply that panics while holding it frees it for the next one.
-pub fn cpu_slot() -> &'static parking_lot::Mutex<()> {
-    static SLOT: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
-    &SLOT
+/// One apply at a time across the machine's workspaces (decision 0442: the machine's, so a Node environment's
+/// workspaces share it). It guards no data, so it is a mutex a panic does not poison: an apply that panics while
+/// holding it frees it for the next one.
+pub fn cpu_slot() -> Arc<parking_lot::Mutex<()>> {
+    #[derive(Default)]
+    struct CpuSlot(Arc<parking_lot::Mutex<()>>);
+    Arc::clone(&crate::code_rule_dsl::logic::profile::machine::<CpuSlot>().0)
 }
 impl Task for WorkspaceApplyTask {
     type Output = ResultText;
@@ -951,7 +978,7 @@ impl Task for WorkspaceApplyTask {
         crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
             // The task's run, on the workspace's shared object (decision 0442).
             let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
-            let Some(_slot) = cpu_slot().try_lock() else {
+            let Some(_slot) = cpu_slot().try_lock_arc() else {
                 return Err(invalid(WORKSPACE_BUSY));
             };
             // Upkeep yields to the apply (decision 0190 §8): its steps stop, their work left due.
