@@ -91,7 +91,9 @@ print()
 # How many levels of commas do we do?  We can have a maximum of 2^num_levels arguments 
 # This is necessary because we can't do recursive macro calls in the C preprocessor, so to
 # emulate it we need to have multiple macros.
-num_levels=5
+# Six (Rerail, decision 0440): 64 rows, for the batch runtime's kernel (31 buffers, its thread and, on OpenCL and
+# CUDA, the indirect launch's row: 33).
+num_levels=6
 
 for level in range(0, num_levels):
     print(f"#define __UKL_CALL_2ARGS_{level}(Fn, a1, a2) Fn(__UKL_SINGLE_ARG(a1), __UKL_SINGLE_ARG(a2))")

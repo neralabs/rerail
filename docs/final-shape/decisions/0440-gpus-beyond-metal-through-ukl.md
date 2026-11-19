@@ -1056,6 +1056,26 @@ stands on:
 - **Next in C:** the batch runtime and the sweep (with the JIT's generated text), then the runner and the program
   backend on the lane, so the label passes run on the CPU and OpenCL too.
 
+**C: the batch runtime, the sweep and the JIT's text in UKL (2026-11-19).**
+- **The runtime** (`batch_runtime.uglykl`, was `metal_batch_runtime.metal`) is C: a node's reads are functions of the
+  node (`Node_kind`, …) where they were methods, the tables' lookups functions (`node_at`, `line_of`, `file_at`), and
+  every reference a pointer, its uses through it. `run_batch` is a kernel of 31 rows in the old slots' order. The
+  compare-and-swap loops retry on a weak failure, as the lattice's. C has no braced value outside a declaration:
+  each is a declared local.
+- **The sweep** (`label_sweep.uglykl`) is a kernel of its own on the same rows. It took `run_batch`'s parameter
+  text spliced in, which rows have no use for.
+- **The JIT's text** (`jit_support`) is C: a step function for each opcode the programs use (a template's
+  instantiation chose them before), and the context passed by pointer. A step works on copies of the task's
+  state under the names the opcode bodies use, and writes them back when it finishes. A step that stops the task
+  writes nothing back, as the interpreter's `return` ends the task there.
+- **64 rows a kernel.** The macros (`ukl_auto_macro_gen.py`, six levels of commas, was five) took 32 arguments,
+  and `run_batch` on OpenCL and CUDA has 33 (its buffers, its thread and the indirect launch's row).
+- Both forms (packed and resident) and the sweep compile on Metal, the CPU and OpenCL. On the Metal runner, the
+  engine's Metal tests of the program backend, the semantic conformance (the interpreter and the JIT), the label
+  passes, the sweep and the resident interpreter pass on the M3 (149), and the device layer's, UKL's and the
+  forest's (125).
+- **Next in C:** the runner and the program backend on the lane, so these run on the CPU and OpenCL.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.
