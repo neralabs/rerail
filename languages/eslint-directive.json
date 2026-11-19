@@ -1,0 +1,25 @@
+{
+  "format": "rerail.language/v1",
+  "id": "eslint-directive",
+  "status": "supported",
+  "family": "format",
+  "builtWith": "typescript",
+  "dialects": [
+    {
+      "label": "eslint-directive",
+      "variant": "EslintDirective",
+      "suffixes": [".eslint-directive"],
+      "parser": "literal",
+      "grammar": "native:eslint-directive",
+      "tapeTag": 17
+    }
+  ],
+  "capabilities": {
+    "scope": "refused",
+    "value": "refused",
+    "arguments": "refused",
+    "calls": "refused",
+    "formatArgs": "refused"
+  },
+  "suppressions": []
+}

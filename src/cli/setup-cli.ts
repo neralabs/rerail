@@ -26,7 +26,7 @@ import { PACK_COMPILE_CHECKS_FILE } from "../engine/catalog/pack-compile-checks.
 import { MACHINE_ID_FILE, REMOTE_CONFIG_FILE, REMOTE_OUTBOX_FILE, REMOTE_TOKENS_FOLDER } from "../engine/storage/rerail-home.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
 import { LOCKS_DIR } from "../engine/native/file-lock.js";
-import { contentStoreOverride, legacyWindowsContentStoreDirectory, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
+import { contentStoreFiles, contentStoreOverride, legacyWindowsContentStoreDirectory, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import {
   AUTOSTART_CLAIM_FILE,
   autostartOff,
@@ -322,7 +322,7 @@ function contentStoreDeletion(machine: DaemonMachine | undefined): DataDeletion 
   const store = contentStoreOverride();
   if (store === undefined || inMainCache(store)) return { remove: [], notes: [] };
   const holder = cacheHolder(dirname(store), machine);
-  const files = ["", "-wal", "-shm", "-journal"].map(suffix => `${store}${suffix}`).filter(pathExists);
+  const files = contentStoreFiles(store).filter(pathExists);
   if (holder !== undefined && files.length > 0) {
     return { remove: [], notes: [`Kept ${store} (the content cache): another Rerail daemon, pid ${holder}, still uses it. ${heldCacheCleanup(store)}`] };
   }
@@ -926,17 +926,20 @@ export interface SetupIo extends RepositorySetupIo {
 
 /**
  * The terminal lane needs a TTY on both stdin and stdout, and no `--relay`: set-up never waits on input that a coding
- * agent, or a pipe, will not type. `/rerail-start` and every answer printed for a coding agent pass `--relay`.
+ * agent, or a pipe, will not type. `/rerail-start` and every answer printed for a coding agent pass `--relay`. A command
+ * that never `asks` (`rerail stop`, `--json`) gets the terminal lane without a reader, so what is typed ahead stays for
+ * the shell.
  */
-export function setupIo(args: readonly string[] = []): SetupIo {
+export function setupIo(args: readonly string[] = [], asks: boolean = !args.includes(JSON_FLAG)): SetupIo {
   const say = (text: string): void => {
     process.stdout.write(`${text}\n`);
   };
   if (args.includes(SETUP_FLAGS.relay) || !process.stdin.isTTY || !process.stdout.isTTY) {
     return { lane: "agent", relayed: args.includes(SETUP_FLAGS.relay), say, close: () => {} };
   }
-  // One reader for the run: lines for the folder and pack prompts, keys for each question's menu. Each question drops
-  // what was typed before it was on screen.
+  if (!asks) return { lane: "terminal", say, close: () => {} };
+  // One reader for the run, from its start: lines for the folder and pack prompts, keys for each question's menu. What
+  // is typed while no question is on screen is dropped.
   const input = new TerminalInput(process.stdin, text => process.stdout.write(text), undefined, () => process.stdout.columns);
   return {
     lane: "terminal",

@@ -1,0 +1,1 @@
+(?P<ENTRY>(?:\bimport_module|\bload_python_module|\bimportlib\.import_module)\(\s*['\"](?P<module>[^'\"]+)['\"]\s*\)\.(?P<attr>[A-Za-z_][A-Za-z0-9_]*))

@@ -1,0 +1,29 @@
+.policy "eslint-no-sparse-arrays" revision 4
+.description "Avoid holes in array literals from consecutive commas; they create sparse arrays and usually come from a typo."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+// ESLint's no-sparse-arrays: a hole in an array literal, reported at the comma that closes it. A hole is a
+// comma right after `[` or after another comma (comments are not tokens). One trailing comma is not a hole.
+//   [,]   [1,, 2]   [a, , ,]      → reported, once per hole
+//   [1, 2,]   [, a] = xs  (a pattern, not a literal)     fine
+// No options.
+.violation no_sparse_arrays(at: span) code "no-sparse-arrays" "Unexpected comma in middle of array."
+    suppress eslint "no-sparse-arrays"
+    suppress oxlint "no-sparse-arrays"
+    suppress biome "lint/suspicious/noSparseArray"
+no_sparse_arrays(t) :- hole(_, t).
+
+// hole(a, t): comma t of array a closes a hole. sep(a, c): c is one of a's commas, after an element or a hole.
+//   [ /* x */ , ⏎ , ]    both commas are holes: the first follows `[`, the second a hole
+// A gap with a hole is never the word the grammar implies, so the tape keeps all its tokens: the commas, and the
+// `[` when the gap is the first.
+.stored hole "a gap holding a hole differs from the implied word, so the tape keeps every token in it"
+.stored sep "a comma after an element is stored only where its gap holds a hole or ends the array"
+.decl hole(a: node, t: span)
+hole(a, t) :- kind(a, "array"), first_token(a, b), text(b, "["), token_after(b, t), text(t, ",").
+hole(a, t) :- sep(a, c), token_after(c, t), text(t, ",").
+.decl sep(a: node, c: span)
+sep(a, c) :- hole(a, c).
+sep(a, c) :- kind(a, "array"), child(a, x, _), !kind(x, "comment"), token_after(x, c), text(c, ",").

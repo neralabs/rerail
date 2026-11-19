@@ -1,6 +1,5 @@
 import { execFileSync, fork } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
-import Database from "better-sqlite3";
 import { EventEmitter, once } from "node:events";
 import { existsSync, opendirSync, type Dir, type Dirent } from "node:fs";
 import * as fsPromises from "node:fs/promises";
@@ -34,6 +33,8 @@ import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engin
 import * as native from "../../../src/engine/native/native.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
+import { queryContentStore } from "../../support/engine/content-store-query.js";
+import { GIT_OPEN_AGAIN_MS, nativeGitAccess } from "../../../src/engine/native/git-access.js";
 
 
 vi.mock("node:fs/promises", { spy: true });
@@ -163,10 +164,10 @@ async function writeAuditTree(root: string, git: boolean): Promise<void> {
   if (!git) return;
   const nested = join(root, "api", "nested");
   execFileSync("git", ["init", "--quiet"], { cwd: nested });
-  execFileSync("git", ["add", "."], { cwd: nested });
+  execFileSync("git", ["add", "--", ".gitignore", "d.py"], { cwd: nested });
   execFileSync("git", gitCommit, { cwd: nested });
   execFileSync("git", ["init", "--quiet"], { cwd: root });
-  execFileSync("git", ["add", "."], { cwd: root });
+  execFileSync("git", ["add", "--", ".gitignore", ".rerailignore", "api/a.py", "api/tmp/b.py", "api/nested", "api/skip/f.py", "api/build/g.py", "tmp/ws/api/a.py"], { cwd: root });
   execFileSync("git", gitCommit, { cwd: root });
 }
 
@@ -249,13 +250,10 @@ function listingInOrder(directory: Dir, names: readonly string[]): Dir {
   return Object.defineProperty(directory, Symbol.asyncIterator, { value: entries });
 }
 
-/** Clean directories the shared content store records as complete. */
+/** Clean directories the shared content store records as complete, read in another process (`queryContentStore`). */
 function completedDirectories(): number {
-  const store = new Database(process.env.RERAIL_CONTENT_STORE_PATH!, { readonly: true });
-  try {
-    const count: unknown = store.prepare("SELECT count(*) FROM completed_directory_reuse").pluck().get();
-    return typeof count === "number" ? count : Number.NaN;
-  } finally { store.close(); }
+  const [row] = queryContentStore(process.env.RERAIL_CONTENT_STORE_PATH!, "SELECT count(*) AS n FROM completed_directory_reuse");
+  return typeof row?.n === "number" ? row.n : Number.NaN;
 }
 
 /** Another process that takes the content store's write lock (`lock`) and gives it back (`release`) on request. */
@@ -697,7 +695,7 @@ describe("mechanical code rule regressions", () => {
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
       await writeFile(join(root, "api", "binary.py"), "NEEDLE\0\n");
       execFileSync("git", ["init", "--quiet"], { cwd: root });
-      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["add", "--", ".gitignore", "api/a.py", "api/binary.py"], { cwd: root });
       execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
       await writeFile(join(root, "api", "ignored.py"), "NEEDLE\n");
       await enforcer.openWorkspace("git-repository-audit");
@@ -780,7 +778,7 @@ describe("mechanical code rule regressions", () => {
         await mkdir(join(root, "web"));
         for (const [path, content] of Object.entries(files)) await writeFile(join(root, path), content);
         execFileSync("git", ["init", "--quiet"], { cwd: root });
-        execFileSync("git", ["add", "."], { cwd: root });
+        execFileSync("git", ["add", "--", "capabilities.json", ...Object.keys(files)], { cwd: root });
         execFileSync("git", gitCommit, { cwd: root });
         await enforcer.openWorkspace("source-gap-contract");
         const [auditId] = await enforcer.audit("source-gap-contract", { scope: "repository", mode: "log" });
@@ -856,7 +854,7 @@ describe("mechanical code rule regressions", () => {
       await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
       execFileSync("git", ["init", "--quiet"], { cwd: root });
-      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["add", "--", ".gitignore", "api/a.py"], { cwd: root });
       execFileSync("git", gitCommit, { cwd: root });
       await enforcer.openWorkspace("failing-index");
       for (let scan = 0; scan < 2; scan += 1) {
@@ -910,7 +908,7 @@ describe("mechanical code rule regressions", () => {
       await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
       await writeFile(join(root, "api", "a.py"), "safe()\n");
       execFileSync("git", ["init", "--quiet"], { cwd: root });
-      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["add", "--", ".gitignore", "api/a.py"], { cwd: root });
       execFileSync("git", gitCommit, { cwd: root });
       await enforcer.openWorkspace("released-source");
       const [auditId] = await enforcer.audit("released-source", { scope: "repository", mode: "log" });
@@ -956,7 +954,7 @@ describe("mechanical code rule regressions", () => {
       await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
       execFileSync("git", ["init", "--quiet"], { cwd: root });
-      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["add", "--", ".gitignore", "api/a.py"], { cwd: root });
       execFileSync("git", gitCommit, { cwd: root });
       await enforcer.openWorkspace("stopped-index");
       const [auditId] = await enforcer.audit("stopped-index", { scope: "repository", mode: "log" });
@@ -1278,7 +1276,7 @@ describe("mechanical code rule regressions", () => {
     const source = join(await realpath(root), "api", "once.py");
     await writeFile(source, "NEEDLE\n");
     execFileSync("git", ["init", "--quiet"], { cwd: root });
-    execFileSync("git", ["add", "."], { cwd: root });
+    execFileSync("git", ["add", "--", "capabilities.json", "api/once.py"], { cwd: root });
     execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
     const reads = vi.spyOn(fsPromises, "readFile");
     try {
@@ -1317,6 +1315,87 @@ describe("mechanical code rule regressions", () => {
     expect(await repositoryAuditPaths(join(checkout, "out/ws"), true)).toEqual([]);
   }, 60_000);
 
+  it("tries a refused Git ignore matcher once and logs it once, however many paths ask", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-refused-ignore-"));
+    roots.push(root);
+    const access = nativeGitAccess();
+    const opens = vi.spyOn(access, "openGitIgnoreMatcher").mockImplementation(() => {
+      throw new Error("detected dubious ownership");
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const enforcer = new NativeCodeRuleEnforcer(testCodeRuleCatalog([needleCodeRule(1)]), {
+      workspaceRoot: root,
+      steerDelivery: { requestSteer: async () => undefined },
+      followGitignore: true,
+    });
+    try {
+      expect(["a.py", "b.log", "build"].map(path => enforcer.ignoresPath(path, path === "build"))).toEqual([false, false, false]);
+      expect(opens).toHaveBeenCalledTimes(1);
+      expect(stderr.mock.calls.filter(([text]) => String(text).includes("cannot read Git ignore rules"))).toHaveLength(1);
+    } finally {
+      opens.mockRestore();
+      stderr.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("opens the Git ignore matcher again once GIT_OPEN_AGAIN_MS has passed after an open that timed out, not at every path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-timed-out-ignore-"));
+    roots.push(root);
+    const access = nativeGitAccess();
+    const timedOut = Object.assign(new Error("opening Git's ignore rules gave no answer within 10 s"), { code: "GitReadTimedOut" });
+    const ignoresLogs = { ignored: (path: string) => path.endsWith(".log"), ignoredBy: () => null };
+    const opens = vi.spyOn(access, "openGitIgnoreMatcher").mockImplementationOnce(() => { throw timedOut; }).mockImplementation(() => ignoresLogs);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let clock = 1_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const enforcer = new NativeCodeRuleEnforcer(testCodeRuleCatalog([needleCodeRule(1)]), {
+      workspaceRoot: root,
+      steerDelivery: { requestSteer: async () => undefined },
+      followGitignore: true,
+    });
+    try {
+      expect(["a.log", "b.log", "c.log"].map(path => enforcer.ignoresPath(path, false))).toEqual([false, false, false]);
+      expect(opens).toHaveBeenCalledTimes(1);
+      clock += GIT_OPEN_AGAIN_MS;
+      expect(["d.log", "e.py"].map(path => enforcer.ignoresPath(path, false))).toEqual([true, false]);
+      expect(opens).toHaveBeenCalledTimes(2);
+      expect(stderr.mock.calls.filter(([text]) => String(text).includes("gave no answer within"))).toHaveLength(1);
+    } finally {
+      now.mockRestore();
+      opens.mockRestore();
+      stderr.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("logs each distinct failure of a Git ignore question once", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-failing-ignore-"));
+    roots.push(root);
+    const access = nativeGitAccess();
+    const failing = {
+      ignored: (path: string) => { throw new Error(path.startsWith("locked/") ? "cannot read Git excludes for locked: Permission denied" : "cannot read Git index"); },
+      ignoredBy: () => null,
+    };
+    const opens = vi.spyOn(access, "openGitIgnoreMatcher").mockImplementation(() => failing);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const enforcer = new NativeCodeRuleEnforcer(testCodeRuleCatalog([needleCodeRule(1)]), {
+      workspaceRoot: root,
+      steerDelivery: { requestSteer: async () => undefined },
+      followGitignore: true,
+    });
+    try {
+      for (const path of ["locked/a.py", "locked/b.py", "c.py", "d.py"]) expect(enforcer.ignoresPath(path, false)).toBe(false);
+      const logged = stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes("cannot read Git ignore rules"));
+      expect(logged).toEqual([expect.stringContaining("Permission denied"), expect.stringContaining("cannot read Git index")]);
+      expect(opens).toHaveBeenCalledTimes(1);
+    } finally {
+      opens.mockRestore();
+      stderr.mockRestore();
+      await enforcer.close();
+    }
+  });
+
   it("audits a workspace root reached through a symlink as its target, with or without Git", async () => {
     const plain = await mkdtemp(join(tmpdir(), "rerail-scan-plain-"));
     const checkout = await mkdtemp(join(tmpdir(), "rerail-scan-git-"));
@@ -1344,7 +1423,7 @@ describe("mechanical code rule regressions", () => {
         await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
         if (root === checkout) {
           execFileSync("git", ["init", "--quiet"], { cwd: root });
-          execFileSync("git", ["add", "."], { cwd: root });
+          execFileSync("git", ["add", "--", "api/a.py"], { cwd: root });
           execFileSync("git", gitCommit, { cwd: root });
         }
         // Untracked and not gitignored; `tmp/` is also outside Rerail's Git status.
@@ -1447,7 +1526,7 @@ describe("mechanical code rule regressions", () => {
     try {
       await writeFile(join(root, "api", "a.py"), "safe()\n");
       execFileSync("git", ["init", "--quiet"], { cwd: root });
-      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["add", "--", "capabilities.json", "api/a.py"], { cwd: root });
       execFileSync("git", gitCommit, { cwd: root });
       restore = await unreadableDirectory(join(root, "api", "new"));
       await enforcer.openWorkspace("unreadable-untracked");
@@ -1476,7 +1555,7 @@ describe("mechanical code rule regressions", () => {
       await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
       execFileSync("git", ["init", "--quiet"], { cwd: root });
-      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["add", "--", ".gitignore", "api/a.py"], { cwd: root });
       execFileSync("git", gitCommit, { cwd: root });
       await enforcer.openWorkspace("busy-store-completion");
       const before = completedDirectories();
@@ -1503,7 +1582,7 @@ describe("mechanical code rule regressions", () => {
       await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
       await writeFile(join(root, "api", "a.py"), "safe()\n");
       execFileSync("git", ["init", "--quiet"], { cwd: root });
-      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["add", "--", ".gitignore", "api/a.py"], { cwd: root });
       execFileSync("git", gitCommit, { cwd: root });
       // The store is a cache: an attach that waits out its write deadline runs without reuse instead of failing.
       await holder.request("lock");
@@ -1537,7 +1616,7 @@ describe("mechanical code rule regressions", () => {
       await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
       execFileSync("git", ["init", "--quiet"], { cwd: root });
-      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["add", "--", ".gitignore", "api/a.py"], { cwd: root });
       execFileSync("git", gitCommit, { cwd: root });
       await enforcer.openWorkspace("failed-completion");
       const before = completedDirectories();
@@ -1642,7 +1721,7 @@ describe("mechanical code rule regressions", () => {
     const { root, enforcer } = await fixture({ audits: recorder, timingLog: line => lines.push(line) });
     await writeFile(join(root, "api", "once.py"), "NEEDLE\n");
     execFileSync("git", ["init", "--quiet"], { cwd: root });
-    execFileSync("git", ["add", "."], { cwd: root });
+    execFileSync("git", ["add", "--", "capabilities.json", "api/once.py"], { cwd: root });
     execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
     try {
       await enforcer.openWorkspace("timed-audit");
@@ -1662,7 +1741,7 @@ describe("mechanical code rule regressions", () => {
     const { root, enforcer } = await fixture({ audits: recorder });
     await writeFile(join(root, "api", "once.py"), "NEEDLE\n");
     execFileSync("git", ["init", "--quiet"], { cwd: root });
-    execFileSync("git", ["add", "."], { cwd: root });
+    execFileSync("git", ["add", "--", "capabilities.json", "api/once.py"], { cwd: root });
     execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {

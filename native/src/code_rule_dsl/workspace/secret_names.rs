@@ -21,14 +21,14 @@ pub struct SecretNamePatterns {
 
 /// `SecretNamePatterns`, compiled.
 #[derive(Default)]
-pub(super) struct SecretNames {
+pub struct SecretNames {
     file: Option<Regex>,
     /// Lowercased.
     folders: Vec<String>,
 }
 
 impl SecretNames {
-    pub(super) fn compile(patterns: &SecretNamePatterns) -> Result<Self> {
+    pub fn compile(patterns: &SecretNamePatterns) -> Result<Self> {
         let file = if patterns.files.is_empty() {
             None
         } else {
@@ -113,7 +113,7 @@ fn glob_source(glob: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{SecretNamePatterns, SecretNames};
 
     /// The shapes `SENSITIVE_FILE_NAMES` uses; `path-boundary.test.ts` judges the same paths.

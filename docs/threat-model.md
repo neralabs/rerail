@@ -31,7 +31,7 @@ flowchart TD
     Tok[access-token / daemon.json]
     Ver[versions/, packs/]
   end
-  Cache[(~/.cache/rerail<br/>content-v1.sqlite)]
+  Cache[(~/.cache/rerail<br/>content-v5.sqlite)]
   Ledger[(repo/.rerail/sessions)]
   D[Daemon :4737<br/>HTTP API · MCP · dashboard]
   E[Native engine<br/>parsers · rules · model]
@@ -61,7 +61,7 @@ What Rerail holds that is worth attacking, and where it lives.
 | --- | --- | --- |
 | Session history: prompts, replies, tool inputs, **raw tool outputs** | `rerail.sqlite` (`RerailRuntime.persistEvent`) | Whatever the agent saw, secrets included, unredacted. |
 | Pre-edit source text and session ledgers | `<repo>/.rerail/sessions/<sha256(session)>/events.jsonl` | Source and prompt text in the working tree; `rewind` restores from it. |
-| Source copies, syntax trees, check results | `~/.cache/rerail/content-v1.sqlite` (Windows: `%USERPROFILE%\AppData\Local\rerail\content-v1.sqlite`) | A second copy of every file the engine read. |
+| Source copies, syntax trees, check results | `~/.cache/rerail/content-v5.sqlite` (Windows: `%USERPROFILE%\AppData\Local\rerail\content-v5.sqlite`) | A second copy of every file the engine read. |
 | Rule catalog: rules, packs, settings, start state | `rerail.sqlite` | Decides what reaches every future session, and whether Rerail is armed. |
 | Daemon access capability | `~/.rerail/access-token`, `daemon.json` (0600) | Full `person` API: all repositories, unredacted transcripts, every write. |
 | Executable code Rerail launches | `~/.rerail/versions/<v>/`, `current`, `bin/rerail`, `update-state.json`, `RERAIL_ENGINE_PATH` | Runs on every hook, daemon start and CLI call. |
@@ -233,8 +233,31 @@ without hooks or network.
     going first, but not every route (T11).
   - Every call sets `core.fsmonitor=false` and `core.hooksPath=/dev/null`, `GIT_TERMINAL_PROMPT=0` and
     `GIT_NO_LAZY_FETCH=1` where relevant, and a 10 s timeout.
-  - No network commands; `cat-file --batch` runs no textconv. The native side runs no git process and no
-    `.gitattributes` filter drivers.
+  - No network commands; `cat-file --batch` runs no textconv.
+- **Git read in process** (`native/src/git_access/`): the engine opens every repository it reads through one opener.
+  It starts no Git process and runs no filter driver a repository or user configures: the config files outside the
+  repository are the ones Rerail's Git names, and the reads drop every `filter.*` section before they convert a file.
+  It refuses a repository Git refuses (another user's outside `safe.directory`, a config file Git cannot parse). Before
+  gix reads them it refuses the top-level config files (system, installation, global, the repository's `config` and
+  `config.worktree`), `info/exclude`, `info/attributes` and the global exclude and attribute files when one holds more
+  than 100 MiB or is neither a regular file nor a folder (a FIFO or a device, which a read would wait on for ever); the
+  null device (`GIT_CONFIG_GLOBAL=/dev/null`, `NUL` on Windows) reads as empty, as Git reads it. In another user's
+  repository only the config files gix reads to open it (the common `config`, also for a linked worktree, and
+  `config.worktree`) are measured before `safe.directory` lets it through (a stat, which opens nothing); the rest once
+  it has. Not measured: files a config pulls in through
+  `include.path` or `includeIf`, which gix reads whole as Git does; the `.git` file and `commondir`, which gix's
+  discovery reads first; and a `.gitignore` or `.gitattributes` inside the worktree, which gix reads whole where Git
+  skips one over 100 MiB (like Git, gix does not follow one that is a symbolic link). Each open of a repository runs on
+  a thread of its own under a 10 s limit, and a panic in one is an error for that open only; while an open of a root
+  that outran its limit has not ended, a later open of that root fails at once, so a disk that stops answering holds
+  one thread per root path as the host names it. A lane whose ignore rules timed out sees none for a minute and then
+  opens them again, so a disk that answers only slowly costs the JS thread one 10 s wait a minute, not one a path. A
+  repository Git refused stays refused until the process's owner of Git reads changes: where Rerail's Git did not
+  answer its asks, the process asks again after a minute, and only an answer that differs makes a new owner, under
+  which lanes open their rules again. The store's walk and status after the open, and an ignore question, run on the
+  caller's thread with no limit of their own: a walk asks one or two ignore questions per file, and a question's disk
+  reads are a stat of the index and the `.gitignore` of a folder the walk has just listed. The repository index walk
+  opens its rules under the same 10 s limit.
 - **SQL** uses bound parameters (Drizzle, `better-sqlite3`, `rusqlite`); raw SQL is only constants and quoted
   migration DDL.
 - **Embedding model** SHA-256 is checked against `model/manifest.json` before loading (`native/src/model.rs`).
@@ -409,7 +432,7 @@ the same capability across restarts.
 recorded daemon with `recordedDaemonAlive`. A pid owned by another OS user (`EPERM`) cannot be this user's daemon: the
 state is stale and no capability is sent. On Windows the state's engine pipe must also exist, since a live daemon always
 holds it, and the engine on that pipe must answer a random challenge with an HMAC keyed by the capability
-(`engineCapabilityProof` in `src/runtime/engine-proof.ts`), which never shows it the capability. That holds for a pid
+(`engineCapabilityProof` in `src/runtime/daemon/engine-proof.ts`), which never shows it the capability. That holds for a pid
 this user may signal as for one it may not (this user's elevated daemon), so on Windows a reused pid of the person's
 own, with the pipe name and the port held by another user, gets nothing: the state is dropped unprobed. An engine that
 says nothing within the wait is taken for a busy daemon: its state is kept, and it is sent no capability, the shutdown
@@ -731,7 +754,13 @@ should not widen it.
 - Git calls inherit `GIT_*`, and an absolute `PATH` entry outside the repository decides which `git` runs. "The
   repository" is only the nearest one above the process's working folder, so entries in an outer checkout around a
   nested worktree or submodule are not skipped, nor is any repository's when the process started outside it. The
-  daemon finds Git once, from the folder and `PATH` it started with, and keeps it.
+  daemon finds Git once, from the folder and `PATH` it started with, and keeps it. The daemon alone looks again, from the
+  same folder, `PATH` and repository and by the same checks, only when a start of the Git it kept finds no program
+  there. That call waits for the look only within its time limit and until it is stopped: then it fails as its start
+  did, and the look goes on for the calls after it. A hook or a command never looks again: such a start fails that
+  call, and the next process looks for Git afresh at its first call. The daemon alone also asks whether the home share
+  `HOMEDRIVE` and `HOMEPATH` name is a folder, to put that home's `bin` on `PATH` as Git for Windows' launcher does; a
+  hook's or a command's Git gets both homes' `bin`, the share's first.
 - If the recorded `node` is gone, the hook falls back to `node` on `PATH`, which a version manager or direnv can shim.
   Where set-up found another `node` first on `PATH`, Claude Code's hooks on Windows run `cmd.exe /d /c` by its
   System32 path, which looks for that fallback `node.exe` on `PATH` alone, never in the hook's working folder
@@ -838,7 +867,7 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
 - **Engine socket** lives in `tmpdir()/rerail-<uid>/`, checked before `listen` to be the person's own, 0700 and not a
   symlink (`src/runtime/engine-service.ts`). On Windows it is a named pipe, which any local user could create first
   under its predictable name. The daemon asks the holder to answer a random challenge with an HMAC keyed by the access
-  capability (`src/runtime/engine-proof.ts`), so the holder never sees the capability; one that cannot answer is not
+  capability (`src/runtime/daemon/engine-proof.ts`), so the holder never sees the capability; one that cannot answer is not
   this home's engine, and the engine listens on that name with a random suffix. On Linux another user can create that
   folder first; the daemon then
   listens in a `run` folder beside its database under the 0700 Rerail home (`chooseEngineSocketPath`) and records the

@@ -1,0 +1,12 @@
+.policy "sqlfluff-cv08-convention-left-join" revision 2
+.description "Use LEFT JOIN instead of RIGHT JOIN in SQL, swapping the table order; joins that all read left to right are easier to follow."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's CV08 (convention.left_join). A RIGHT JOIN, reported at the join; write it as a LEFT JOIN with
+// the tables swapped:
+//   SELECT * FROM a RIGHT JOIN b ON a.k = b.k            reported
+//   SELECT * FROM b LEFT JOIN a ON a.k = b.k             fine
+.violation CV08(at: node) code "CV08" "Use LEFT JOIN instead of RIGHT JOIN."
+    suppress sqlfluff "CV08", "L055", "all", "convention", "convention.left_join"
+CV08(j) :- kind(j, "join"), child(j, k, _), kind(k, "keyword_right").

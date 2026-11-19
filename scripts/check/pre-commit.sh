@@ -39,3 +39,6 @@ fi
 npm run --silent check
 npm run --silent check:ui-tokens
 npm run --silent check:reference
+# The engine's `test-hooks` feature carries what its dev-dependencies turn on, so the CLI and the tests build
+# their dependencies once (native/Cargo.toml).
+python3 scripts/check/check_dev_features.py

@@ -1,0 +1,58 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-log001-direct-logger-instantiation",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use logging.getLogger() instead of instantiating Logger directly; a directly created logger is not part of the logger tree and bypasses logging configuration.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "direct-logger-instantiation",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "any": [
+       {
+        "kind": "identifier"
+       },
+       {
+        "kind": "attribute"
+       }
+      ],
+      "resolves": {
+       "import": [
+        "logging.Logger"
+       ]
+      },
+      "inside": {
+       "stopBy": {
+        "not": {
+         "kind": "parenthesized_expression"
+        }
+       },
+       "kind": "call"
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "LOG001",
+    "message": "Use `logging.getLogger(name)` instead of `Logger(...)`; a direct instance skips the logger tree and its configuration. Keep it only if a detached logger is intended.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "LOG001"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

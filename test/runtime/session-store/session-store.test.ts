@@ -147,6 +147,9 @@ describe("SQLite session persistence", () => {
     });
     const session = { host: "claude-code" as const, sessionId: "live-session", cwd: root };
     await runtime.ingest({ kind: "session-start", eventId: "start", session });
+    // A first start does not wait for its evaluator: each tool call or turn end answered while it still opens records a
+    // `code-rules-pending` event, which this stream does not hold.
+    await runtime.codeRulesOpened(session.sessionId);
     await runtime.ingest({ kind: "user-prompt", eventId: "user", sessionId: session.sessionId, text: "inspect this" });
     await runtime.ingest({ kind: "assistant-message", eventId: "assistant", sessionId: session.sessionId, messageId: "message-1", text: "checking" });
     await runtime.ingest({ kind: "call", eventId: "call", toolCallId: "call-1", sessionId: session.sessionId, toolName: "read", input: { path: "src/a.ts" } });
@@ -662,7 +665,9 @@ describe("SQLite session persistence", () => {
       runtime.recordSteer(legacy.sessionId, "new-only");
       expect(reader.hud(legacy.sessionId).steeringCount).toBeNull();
       await runtime.ingest({ kind: "session-start", session, eventId: "start" });
-      // The evaluator, whose catalog the coverage reads, opens behind the session start; a turn boundary waits for it.
+      // The evaluator, whose catalog the coverage reads, opens behind the session start, and a first start's turn
+      // boundary does not wait for it.
+      await runtime.codeRulesOpened(session.sessionId);
       await runtime.ingest({ kind: "turn-end", sessionId: session.sessionId, eventId: "opened", text: "" });
       expect(reader.hud(session.sessionId).steeringCount).toBe(0);
       const baseline = reader.hud(session.sessionId).activeRuleCount;

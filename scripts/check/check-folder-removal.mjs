@@ -23,6 +23,9 @@ export const HELPER = "test/support/platform/remove-folder.ts";
 /** Files left to remove folders themselves, each with the reason. */
 export const EXEMPT = new Map([
   ["test/scripts/ensure-sqlite.test.mjs", "runs under `node --test`, which cannot load the TypeScript helper"],
+  ["test/scripts/sql-execution-budget.test.mjs", "runs under `node --test`, which cannot load the TypeScript helper"],
+  ["test/scripts/sql-profile.test.mjs", "runs under `node --test`, which cannot load the TypeScript helper"],
+  ["test/scripts/sql-profile/session-parity.test.mjs", "runs under `node --test`, which cannot load the TypeScript helper"],
   ["test/support/platform/remove-folder.test.ts", "shows the one try the helper replaces failing while a process runs in the folder"],
   ["test/support/temporary/run-folder.ts", "runs in vitest's own process, not in a test: it makes writable a read-only folder a killed test left, puts back the owner file of a run folder it removed only in part, and leaves a folder it cannot remove for the next run after about 1 s of tries for its own and 100 ms for an ended run's, which the end of each run waits for, where the helper retries over 5.5 s"],
 ]);
