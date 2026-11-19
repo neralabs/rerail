@@ -111,8 +111,13 @@ impl GitIgnore {
             .sources
             .as_ref()
             .and_then(|read| Sources::read(&self.repository, &read.worktree));
-        let (index, stack) = index_and_exclude_stack(&self.repository)?;
-        (self.sources, self.index, self.stack) = (sources, index, stack);
+        let index = IndexFile::read(&self.repository)?;
+        // Rules that cannot be read again leave the stack and sources read before, so questions
+        // are answered by them and the new index is read once.
+        if let Ok(stack) = exclude_stack(&self.repository, &index.file) {
+            (self.sources, self.stack) = (sources, stack);
+        }
+        self.index = index;
         Ok(())
     }
 
@@ -333,15 +338,23 @@ fn index_and_exclude_stack(
     repository: &gix::Repository,
 ) -> std::result::Result<(IndexFile, gix::worktree::Stack), String> {
     let index = IndexFile::read(repository)?;
-    let stack = repository
+    let stack = exclude_stack(repository, &index.file)?;
+    Ok((index, stack))
+}
+
+/// `repository`'s exclude stack, reading a `.gitignore` the worktree lacks from `index`.
+fn exclude_stack(
+    repository: &gix::Repository,
+    index: &gix::index::File,
+) -> std::result::Result<gix::worktree::Stack, String> {
+    Ok(repository
         .excludes(
-            &index.file,
+            index,
             None,
             gix::worktree::stack::state::ignore::Source::WorktreeThenIdMappingIfNotSkipped,
         )
         .map_err(|error| format!("cannot read Git excludes: {error}"))?
-        .detach();
-    Ok((index, stack))
+        .detach())
 }
 
 /// The index as a matcher last read it, with its file's stamp then. gix's shared index is read
@@ -1387,6 +1400,93 @@ mod tests {
         assert!(held._file.is_none(), "no slot, nothing held");
         assert_eq!(stamp, FileStamp::of(&index), "stamped by a stat");
         assert!(Slot::within(&COUNT, 1).is_some(), "the slot came back");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// While it lives, a file this process cannot read: one with no permissions on Unix, one held
+    /// open with no sharing on Windows.
+    struct Unreadable {
+        #[cfg(windows)]
+        _file: std::fs::File,
+    }
+
+    impl Unreadable {
+        /// `file` made unreadable; `None` where it stays readable, as to a process that reads any
+        /// file.
+        #[cfg(unix)]
+        fn make(file: &Path) -> Option<Self> {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o000)).unwrap();
+            std::fs::read(file).is_err().then_some(Self {})
+        }
+
+        #[cfg(windows)]
+        fn make(file: &Path) -> Option<Self> {
+            use std::os::windows::fs::OpenOptionsExt;
+            let file = std::fs::File::options()
+                .read(true)
+                .share_mode(0)
+                .open(file)
+                .ok()?;
+            Some(Self { _file: file })
+        }
+    }
+
+    /// Rules that cannot be read again with a new index leave the ones the matcher read: it answers
+    /// by them with the new index, reads that index once, and says an open now would not read them.
+    #[test]
+    fn keeps_its_rules_when_they_cannot_be_read_again_with_a_new_index() {
+        let root = fixture(
+            "rules-unread",
+            &[
+                (".gitignore", "b.py\n"),
+                ("named", "a.py\n"),
+                ("a.py", ""),
+                ("b.py", ""),
+            ],
+        );
+        git(&root, &["init", "--initial-branch=main"]);
+        let root = root.canonicalize().unwrap();
+        git(
+            &root,
+            &[
+                "config",
+                "core.excludesFile",
+                &config_path(&root.join("named")),
+            ],
+        );
+        let next = root.join(".git/next-index");
+        git_with_index(&root, &next, &["add", "-f", "b.py"]);
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert!(
+            ignore.ignored("a.py", false).unwrap(),
+            "the excludes file's rule"
+        );
+        assert!(ignore.ignored("b.py", false).unwrap());
+
+        if let Some(_unreadable) = Unreadable::make(&root.join("named")) {
+            let index = root.join(".git/index");
+            std::fs::rename(&next, &index).unwrap();
+            assert!(
+                ignore.ignored("a.py", false).unwrap(),
+                "the rules read before"
+            );
+            assert!(!ignore.ignored("b.py", false).unwrap(), "the new index");
+            // Bytes no index holds, in the same file at the same size and time: only a read sees
+            // them.
+            let time = modified(&index);
+            let len = std::fs::metadata(&index).unwrap().len();
+            std::fs::write(&index, vec![0; usize::try_from(len).unwrap()]).unwrap();
+            set_modified(&index, time);
+            assert!(
+                ignore.ignored("a.py", false).unwrap(),
+                "the new index read once"
+            );
+            assert!(
+                !ignore.sources_unchanged(),
+                "an open now cannot read the rules"
+            );
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 }
