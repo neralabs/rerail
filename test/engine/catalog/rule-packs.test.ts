@@ -456,7 +456,9 @@ describe("recommendRulePacks", () => {
     const root = await temporaryDirectory("rerail-sparse-");
     writeFiles(root, { "README.md": "hi\n", "api/acme_api/app.py": "app = None\n", "web/src/main.ts": "export {};\n" });
     const withAcme = await withTestPacks(true);
-    const git = (...args: string[]) => execFileSync("git", ["-C", root, ...args], { stdio: "pipe" });
+    // Git with none of the person's or machine's config: a global commit.gpgsign would sign the commit, with gpg.
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: join(root, "no-gitconfig"), GIT_CONFIG_NOSYSTEM: "1" };
+    const git = (...args: string[]) => execFileSync("git", ["-C", root, ...args], { stdio: "pipe", env });
     git("init", "-q");
     git("add", "README.md", "api/acme_api/app.py", "web/src/main.ts");
     git("-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-q", "-m", "base");
