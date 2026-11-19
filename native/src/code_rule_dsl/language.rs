@@ -461,7 +461,11 @@ pub fn rule_pattern(
             PatternSource::Contextual { context, selector } => pattern_key(context, Some(selector)),
         },
     );
-    if let Some(pattern) = COMPILED.lock().ok().and_then(|compiled| compiled.get(&key).cloned()) {
+    if let Some(pattern) = COMPILED
+        .lock()
+        .ok()
+        .and_then(|compiled| compiled.get(&key).cloned())
+    {
         return Ok(pattern);
     }
     let pattern = match source {

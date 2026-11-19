@@ -183,8 +183,13 @@ fn regex_clause(pattern: &str) -> Option<Clause> {
     /// rule keeps a bounded set.
     const KEPT: usize = 1 << 14;
     type Found = std::collections::HashMap<Box<str>, Option<Clause>>;
-    static FOUND: std::sync::LazyLock<std::sync::Mutex<Found>> = std::sync::LazyLock::new(Default::default);
-    if let Some(found) = FOUND.lock().ok().and_then(|found| found.get(pattern).cloned()) {
+    static FOUND: std::sync::LazyLock<std::sync::Mutex<Found>> =
+        std::sync::LazyLock::new(Default::default);
+    if let Some(found) = FOUND
+        .lock()
+        .ok()
+        .and_then(|found| found.get(pattern).cloned())
+    {
         return found;
     }
     let found = literals(pattern);
