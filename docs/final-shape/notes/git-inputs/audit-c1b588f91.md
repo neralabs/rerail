@@ -111,3 +111,4 @@ Later checks found further problems in policy inspection, worker store selection
 The [scope and cache notes](analysis-scopes.md) record the repair behavior and the fresh-process measurements.
 The [headless regressions](../../../../test/cli/headless-scan.test.ts) exercise the scan interface.
 The [scope store tests](../../../../native/src/content_store/corpus_runs/tests.rs) inspect durable ownership after publication, cancellation, and deletion.
+The [follow-up audit at `ec9066ed9`](audit-ec9066ed9.md) records additional fixtures and open issues.
