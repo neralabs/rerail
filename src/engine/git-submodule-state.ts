@@ -446,14 +446,14 @@ function commonDirectory(gitFolder: string): string | undefined {
   const file = join(gitFolder, "commondir");
   if (!existsSync(file)) return gitFolder;
   const named = textOf(file)?.replace(/[\r\n]+$/u, "");
-  return named === undefined || named === "" ? undefined : resolve(gitFolder, named);
+  return named === undefined ? undefined : resolve(gitFolder, named);
 }
 
 /** Whether Git takes the `HEAD` at `path` (`validate_headref`): a link into `refs/`, `ref: refs/…`, or an object id first. */
 function validHead(path: string): boolean {
   const stats = lstatOf(path);
   if (stats?.isSymbolicLink() === true) return linkOf(path)?.startsWith("refs/") === true;
-  const text = stats === undefined ? undefined : headText(path);
+  const text = headText(path);
   return text !== undefined && (/^ref:[ \t\n\r]*refs\//u.test(text) || /^[0-9a-fA-F]{40}/u.test(text));
 }
 
