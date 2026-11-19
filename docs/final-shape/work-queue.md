@@ -2837,17 +2837,27 @@ submitted" now hold device memory at once.
     slot of the run's program, handed to each run by `Hooks::normalized`), not one each: each chunk's own
     version held every analysis again. Test: corpus::tests::a_runs_chunks_normalize_the_program_once (2 and 8
     chunks normalize the same number of times; with the hand-over off, 20 against 8). Under Relax, then cargo on a
-    Linux host (4c281bc2d made the engine build there again). Its profiled pair (ab75) is not run yet: the M3 ran
-    out of disk in its build twice (the host's own use), the M1 Max is unreachable, and Linux has no Metal.
+    Linux host (4c281bc2d made the engine build there again). ab75 (M3, t68, ab74's two chunk sizes): 635.8 G /
+    11 chunks against 679.7 G / 17, ~7.3 G a chunk, as ab74's ~7.2 G: no change a chunk. Both runs are 16-23 G
+    under ab74, but the host's load fell (73 and 85 then, 41 and 35 now), and instructions follow load (above).
+    The normalize was never the 12 ms a chunk measured in isolation: its span's own CPU is 0.00 s in both
+    pairs, its allocation 3-4 MB a run, now 0. Kept, as one version a run is the shape; it saves nothing
+    measurable.
   - (ii, what is left, from ab71's samples at 16 chunks) The stratum's program-only setup (its cycles, gates,
     levels, the rules it leaves out, types) is under 1% of `native_stratum_`'s own samples: made once a run, it
     would save almost nothing. Its samples outside the drive go to planning (`plan_rule_reused_in` 2,969, of
     which `plan_search` 1,976: searches, not a kept plan taken), opening (`Fx::open` 2,396: binding the joins to
     the chunk's relations, `join_rule_bound` 1,973, `view` and `InRel::index` in it) and, inside opening,
     `Interner::for_loading` waiting on the shared symbols' lock (2,004 samples parked behind `sym_atom` and
-    `sym_cat`'s writes) to clone an arena handle that never changes. Next: whether a plan another chunk searched
-    is taken by the chunks after it (the plan cache's counts at 9 and 17 chunks), then the joins' binding; the
-    lock is wall time, not instructions, and is fixed apart (the handle kept outside the lock).
+    `sym_cat`'s writes) to clone an arena handle that never changes. The lock is wall time, not instructions, and
+    is fixed apart (the handle kept outside the lock).
+  - (ii, planning, ab75's plan cache at 11 and 17 chunks) Searches 2,872 -> 4,238, but nodes searched only
+    482,936 -> 524,104 (+8.5%), and the planning spans grow ~0.2 s in all (re-price 0.06 -> 0.16 s, a kept plan's
+    sizes 0.08 -> 0.15). Searched with no plan kept: 1,421 and 1,429, once a key a run, as it should be. What
+    grows with the chunks: a kept order priced under a search that ran a search's work (0123 §7), searched
+    again each chunk, 1,058 -> 2,142, and "the distributions moved" 393 -> 667. Small: planning is not where a
+    chunk's 7 G goes. The growth 11 -> 17 by span is the joins' runs (`engine run (joins)` +1.63 s, `native`
+    +0.43, morsels +0.31), then spec +0.26 and issued components +0.26. Next: the joins' fixed setup a run.
   - (accounting, before 7562bf8a94) Thread CPU counts the jobs rayon's own joins steal: the text tests' "0.366 -> 1.795 s CPU" is
     other chunks' work run inside `Searchers::evaluate`'s `par_iter` (its own samples are equal, 365 -> 7284
     of which 6800 stolen); span `own_s` under any `par_iter` is inflated the same way. `exec::helped` covers
