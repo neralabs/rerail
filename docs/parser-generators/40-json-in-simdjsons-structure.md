@@ -593,6 +593,22 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 26, done: no format 15 cells in the format 16 run, in the generated Rust
+
+After step 25, each node's word still wrote format 15's cells beside the ops' own: its offset
+and its block's base (`push_off`), and at its close its size and tail (`close_cells`). Only
+format 15's image reads them, and the edits (a wrap, a fold, a reread). A format 16 run has no
+image, and `coded`, which it needs, holds only where no word edits a node made. So in a format
+16 run the node words' methods (`open`, `leaf`, `close`, `accept`) make none of them
+(`cells16`). Each node's cells are now written once, by the ops.
+
+What each node still writes besides the tape is its working row (kind and field, start, end):
+the open stack and the call numbers (`keep_ret`) live in the rows of the open nodes, and a
+leaf's row is read once, by `leaf16`. simdjson keeps only its open containers on its stack.
+
+**The check:** the four methods of the format 16 source make no format 15 cell, and the bytes
+are still the JIT's on all 82 files. Keeping the leaf's cells in fails it.
+
 ## Step 25, done: format 16 written by the writer's ops at each node word, in the generated Rust
 
 Step 24 left one copy: format 15's columns follow the code column, a column's place known only
@@ -629,7 +645,7 @@ loader gives back a library already loaded at its path, so the second source ran
 code. Each source now gets a directory of its own.
 
 **Not yet:** the Rust's format 16 run still writes format 15's working columns (sizes, offsets,
-tails, block bases), which nothing reads in it. That is the next step.
+tails, block bases), which nothing reads in it. Step 26 takes them out.
 
 ## Step 24, done: each node's code as it is made, in the generated Rust
 

@@ -348,6 +348,13 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     if let Ok(dir) = std::env::var("RERAIL_DUMP_TIER2") {
         std::fs::write(std::path::Path::new(&dir).join("simdjson16.rs"), &src16).expect("writes the source");
     }
+    // Written once: no format 15 cell (an offset, a block's base, a size, a tail) beside the ops' cells.
+    // (The edits' methods, which no word of this program calls, keep theirs.)
+    let body = |name: &str| src16.split(name).nth(1).and_then(|rest| rest.split("\n    }\n").next()).unwrap_or_else(|| panic!("{name}")).to_string();
+    for name in ["    fn open(", "    fn leaf<", "    fn close<", "    fn accept("] {
+        let b = body(name);
+        assert!(!b.contains("self.push_off(") && !b.contains("self.close_cells(") && !b.contains("_c.add("), "no format 15 cells in a format 16 run's {name}");
+    }
     let entry16 = aot_entry(&src16);
     // SAFETY: as the format 15 entry's, on the format 16 run's harness (`write16`: the writer and numbers set).
     unsafe { aot.parser.sixteen_mut().expect("a format 16 tier 2").set_entry(entry16, 4) };

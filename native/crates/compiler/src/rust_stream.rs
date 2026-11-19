@@ -1396,6 +1396,7 @@ $COMMIT_CLOSE        Ok(())
             format!("\n                let mut k = k;\n                while sk < self.supers && *Self::col(self.snode, sk) == i {{\n                    k |= match *Self::col(self.skind, sk) {{ {}, _ => 0 }};\n                    sk += 1;\n                }}", arms.join(", ")),
         )
     };
+    let s = cells16(x, &s);
     out.push_str(&s.replace("$CLASS_FIRST", &first).replace("$CLASS_BITS", &bits).replace(
         "$COMMIT_CLOSE",
         if x.sixteen {
@@ -1585,6 +1586,7 @@ $COMMIT_ALL        let total = self.finish(nodes);
         .enumerate()
         .map(|(j, cl)| format!("\n                (place as *mut u16).write_unaligned({cl});\n                if key >> {} & 1 != 0 {{\n                    place = place.add(2);\n                    count += 1;\n                }}", 16 + j))
         .collect();
+    let src = cells16(x, src);
     let src = if x.sixteen {
         // The root closed in the ops, and no image: the host finishes the writer (`CompiledStream::write16`).
         // Values past format 15's widths do not reach format 16.
@@ -1594,6 +1596,25 @@ $COMMIT_ALL        let total = self.finish(nodes);
         src.to_string()
     };
     out.push_str(&src.replace("$COMMIT_ALL", if x.coded { "" } else { "        self.commit(nodes);\n" }).replace("$AT_END", &x.at_end("self")).replace("$PROVISIONAL", &provisional).replace("$FEW", few).replace("$IS_EXTRA", &is_extra).replace("$CLASS_PUT", &put));
+}
+
+/// The node words' templates of a format 16 run (`Facts::sixteen`): without format 15's cells (each node's offset
+/// and its block's base, its size and tail), which only format 15's image and the edits read, and a format 16
+/// run has neither (`coded` holds only where no word edits a node made). The ops write format 16's own.
+fn cells16(x: &Facts<'_>, t: &str) -> String {
+    if !x.sixteen {
+        return t.to_string();
+    }
+    let mut out = t.to_string();
+    for line in [
+        "        self.push_off(n, start, n + 1);\n",
+        "        let kept = self.nodes - self.pending;\n        self.close_cells(at, kept - at, kept - 1, end);\n",
+        "        self.close_cells(n, 1, n, end);\n",
+        "        self.close_cells(root, nodes - root, nodes - 1, self.len);\n",
+    ] {
+        out = out.replace(line, "");
+    }
+    out
 }
 
 /// `RETAG m=3`: reading `i` over the node made last at the innermost level and the nodes inside
