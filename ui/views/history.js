@@ -147,7 +147,7 @@ function createViolation(item) {
   if (item.day !== undefined) return h("div.day", null, item.day);
   return h("div.ev.hr", null,
     h("span.when.num"),
-    h("div.what", null, h("div.wl", null, h("span.loc.mono"), h("span.badge.hoc")), h("small.diff", { hidden: true }),
+    h("div.what", null, h("div.wl", null, h("span.loc.mono"), h("span.hoc")), h("small.diff", { hidden: true }),
       h("div.hsaid", { hidden: true }, h("span.k", null, "Agent said"), h("span.v"))),
     h("button.open", { "data-act": "session", title: "Open this session" }));
 }
@@ -162,13 +162,13 @@ const ROW_OUTCOME = {
 /** Log only, Declined (a note answered its steer), else Steered. */
 const rowOutcome = x => (x.logged ? "logged" : (x.declinedReasons?.length ?? 0) > 0 ? "declined" : "steered");
 
-/** The row's outcome badge, and under a declined one the coding agent's reasons, one per line. */
+/** The row's outcome (its dot and label, and a declined row's tint), and under a declined one the agent's reasons. */
 function updateOutcome(node, x) {
   const outcome = rowOutcome(x), [label, tip] = ROW_OUTCOME[outcome];
-  const badge = node.querySelector(".hoc");
-  badge.dataset.outcome = outcome;
-  setText(badge, label);
-  setAttr(badge, "title", tip);
+  node.dataset.outcome = outcome;
+  const mark = node.querySelector(".hoc");
+  setText(mark, label);
+  setAttr(mark, "title", tip);
   const said = node.querySelector(".hsaid");
   setAttr(said, "hidden", outcome !== "declined");
   setText(said.lastChild, outcome === "declined" ? x.declinedReasons.join("\n") : "");

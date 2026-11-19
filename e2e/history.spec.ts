@@ -90,13 +90,13 @@ test.describe("History by rule over a mature repository", () => {
     await expect(rule.locator(".c b")).toHaveText("1");
     await expect(content(page).locator(".hsum .tsum")).toContainText("1 declined");
 
-    const declined = violationRows(page).filter({ has: page.locator('.hoc[data-outcome="declined"]') });
+    const declined = content(page).locator('.hist .ev[data-outcome="declined"]');
     await expect(declined).toHaveCount(1);
     await expect(declined.locator(".hoc")).toHaveText("Declined");
     await expect(declined.locator(".hsaid .k")).toHaveText("Agent said");
     await expect(declined.locator(".hsaid .v")).not.toBeEmpty();
     // Its other violations were steered and not declined.
-    await expect(violationRows(page).locator('.hoc[data-outcome="steered"]').first()).toHaveText("Steered");
+    await expect(content(page).locator('.hist .ev[data-outcome="steered"] .hoc').first()).toHaveText("Steered");
 
     // Under Steered, the rule counts its steered violations alone, as its summary line does.
     await chips.filter({ hasText: "Steered" }).click();

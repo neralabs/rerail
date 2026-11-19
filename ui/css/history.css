@@ -138,12 +138,17 @@ body[data-panel="open"] .hist > aside{display:none}
 .hist .ev .loc.muted{font-family:inherit;font-style:italic;color:var(--muted-foreground)}
 .hist .ev .diff{display:block;margin-top:2px;font-size:12px;color:var(--muted-foreground);overflow-wrap:anywhere}
 .hist .ev .diff[hidden]{display:none}
-/* Its outcome beside where it is: Log only, Steered, or Declined in red with the coding agent's reasons, one per line. */
-.hist .ev .hoc{flex:none}
-.hist .ev .hoc[data-outcome="logged"]{background:var(--log-bg);color:var(--log-fg)}
-.hist .ev .hoc[data-outcome="steered"]{background:var(--steer-bg);color:var(--steer-fg)}
-.hist .ev .hoc[data-outcome="declined"]{background:var(--danger-subtle);color:var(--danger-foreground)}
-/* What the agent said, quoted as the header quotes what it was told, in the declined badge's red. */
+/* Its outcome beside where it is: a dot in History by session's rail colours (grey Log only, amber Steered, red
+ * Declined) and a plain label. Only a declined row, the one to act on, is tinted, with the agent's reasons in it. */
+.hist .ev .hoc{display:inline-flex;align-items:center;gap:6px;flex:none;font-size:12px;color:var(--muted-foreground);white-space:nowrap}
+.hist .ev .hoc::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--log-fg);opacity:.7}
+.hist .ev[data-outcome="steered"] .hoc::before{background:var(--steer-fg);opacity:1}
+.hist .ev[data-outcome="declined"] .hoc::before{background:var(--danger-foreground);opacity:1}
+.hist .ev[data-outcome="declined"] .hoc{color:var(--danger-foreground)}
+.hist .ev[data-outcome="declined"]{margin:0 -12px;padding:10px 12px;border-top-color:transparent;border-radius:var(--radius-lg);background:var(--danger-subtle)}
+.hist .ev[data-outcome="declined"] + .ev{border-top-color:transparent}
+.hist .ev[data-outcome="declined"] .hsaid{background:var(--card)}
+/* What the agent said, quoted as the header quotes what it was told, in the declined row's red. */
 .hsaid{display:flex;flex-direction:column;gap:2px;margin-top:8px;padding:6px 10px;border-left:2px solid var(--danger-foreground);background:var(--danger-subtle);border-radius:0 var(--radius-md) var(--radius-md) 0}
 .hsaid[hidden]{display:none}
 .hsaid .k{font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.05em;color:var(--danger-foreground)}
