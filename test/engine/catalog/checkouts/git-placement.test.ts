@@ -666,6 +666,23 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expect(worktreeRegistry(main)).toBeUndefined();
   });
 
+  it("places such a checkout once for lists around config writes that place no checkout, and again once one does", async () => {
+    const root = await temporaryRoot();
+    const main = await gitFolderLinked(join(root, "main"), join(root, "main.git"));
+    git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
+    expect(registryPlacements(main)).toBe(1);
+    git(main, "remote", "add", "origin", join(root, "elsewhere.git"));
+    git(main, "config", "branch.linked.merge", "refs/heads/linked");
+    expect(registryPlacements(main)).toBe(0);
+
+    git(main, "config", "core.repositoryformatversion", "1");
+    git(main, "config", "extensions.worktreeConfig", "true");
+    expect(registryPlacements(main)).toBe(1);
+    git(main, "config", "--worktree", "core.bare", "true");
+    expect(gitsAnswer(main).git).toBe(false);
+    expect(worktreeRegistry(main)).toBeUndefined();
+  });
+
   it.skipIf(process.platform === "win32")("places such a checkout whose HEAD is a link again only once the link stops naming a ref", async () => {
     // Git for Windows writes no HEAD link; a link Git reads there needs a privilege a person may not have.
     const root = await temporaryRoot();

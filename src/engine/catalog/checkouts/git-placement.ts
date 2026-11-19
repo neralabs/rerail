@@ -453,12 +453,21 @@ function namedBehind(realFolder: string, dotGit: string, facts: string, resolved
 
 /**
  * A Git folder's facts as Git reads them to place a checkout: its identity, what Git takes of its `HEAD` ({@link
- * headRaw}), `commondir` and `config.worktree`, and the common Git folder's ({@link commonRaw}).
+ * headRaw}), `commondir`, the lines of `config.worktree` that place a checkout ({@link configRaw}), and the common Git
+ * folder's ({@link commonRaw}).
  */
 function gitFolderRaw(gitFolder: string | undefined): string {
   if (gitFolder === undefined) return "-";
   const commondir = fileText(join(gitFolder, "commondir"));
-  return [gitFolder, described(look(gitFolder)), headRaw(join(gitFolder, "HEAD")), textFact(commondir), textFact(fileText(join(gitFolder, "config.worktree"))), commonRaw(gitFolder, commondir)].join("\n");
+  return [gitFolder, described(look(gitFolder)), headRaw(join(gitFolder, "HEAD")), textFact(commondir), configRaw(join(gitFolder, "config.worktree")), commonRaw(gitFolder, commondir)].join("\n");
+}
+
+/**
+ * The lines of a config file that place a checkout, as a checkout its files describe is kept under ({@link
+ * ConfigFacts.signature}); `?` when it cannot be read. A remote, an upstream or a user name written there moves nothing.
+ */
+function configRaw(path: string): string {
+  return configFactsAt(path)?.signature ?? "?";
 }
 
 /**
@@ -472,13 +481,16 @@ function headRaw(head: string): string {
   return `taken:${headTaken(fileText(head))}`;
 }
 
-/** The common Git folder `commondir` names (else the Git folder): its real path, identity, `objects`, `refs` and `config`. */
+/**
+ * The common Git folder `commondir` names (else the Git folder): its real path, identity, `objects`, `refs` and the
+ * lines of `config` that place a checkout ({@link configRaw}).
+ */
 function commonRaw(gitFolder: string, commondir: FileText | "none" | undefined): string {
   const named = isText(commondir) ? readPath(commondir.text) : undefined;
   const common = named === undefined ? gitFolder : realOf(resolve(gitFolder, named));
   if (common === undefined) return "?";
   const reached = `objects:${reachable(join(common, "objects"))} refs:${reachable(join(common, "refs"))}`;
-  return [common, described(look(common)), reached, textFact(fileText(join(common, "config")))].join("\n");
+  return [common, described(look(common)), reached, configRaw(join(common, "config"))].join("\n");
 }
 
 /**
