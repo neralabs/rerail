@@ -540,11 +540,15 @@ fn round() -> Prog {
     let g_chain = b.input("g_chain");
     let g_arm = b.input("g_arm");
     let t_reach = b.input("t_reach");
-    // Every arm of an instance in the tree, tested at its position.
+    // The arms read: of an instance in the tree, in a group active in the state the round
+    // starts from (an arm under an inactive group is never read), each tested at its position.
+    // One a group made active this round is read in the next.
     let id_code = b.gather(x.d_code, x.id_dir);
     let is_arm = b.eqc(id_code, code::TEST);
     let id_tree = b.gather(x.intree, x.id_inst);
-    let am = b.and(is_arm, id_tree);
+    let id_pact = b.gather_or(x.a_prev, x.id_gidx, 0);
+    let am0 = b.and(is_arm, id_tree);
+    let am = b.and(am0, id_pact);
     let ai = b.compact(am);
     let a_inst = b.gather(x.id_inst, ai);
     let a_dir = b.gather(x.id_dir, ai);
@@ -1069,6 +1073,8 @@ struct Host<'u, 'a> {
     unit: &'u mut Unit<'a>,
     /// A function's refusal: its reason's code plus one.
     refused: i64,
+    /// The tests and expansions on the words (`words`), else on the spike's lean reading.
+    words: Option<&'u mut words::Words>,
 }
 
 impl Calls for Host<'_, '_> {
@@ -1078,7 +1084,10 @@ impl Calls for Host<'_, '_> {
             F_TEST => {
                 // Its value and refusal, then each definition it looked up.
                 let mut looked = Vec::new();
-                let (v, r) = self.unit.test(a[0], a[1], a[2], keys, vals, &mut looked);
+                let (v, r) = match self.words.as_deref_mut() {
+                    Some(w) => w.test(self.unit, a[0], a[1], a[2], keys, vals, &mut looked),
+                    None => self.unit.test(a[0], a[1], a[2], keys, vals, &mut looked),
+                };
                 out.extend([0, i64::from(v), r]);
                 for (s, d) in looked {
                     out.extend([1, s, d]);
@@ -1091,7 +1100,11 @@ impl Calls for Host<'_, '_> {
             F_EVENTS => self.unit.events(a[0], a[1], a[2], keys, vals, out),
             F_EXPAND => {
                 let mut toks = Vec::new();
-                match self.unit.expand(a[0], a[1], a[2], a[3], a[4], a[5], keys, vals, &mut toks) {
+                let r = match self.words.as_deref_mut() {
+                    Some(w) => w.expand(self.unit, a[0], a[1], a[2], a[3], a[4], a[5], keys, vals, &mut toks),
+                    None => self.unit.expand(a[0], a[1], a[2], a[3], a[4], a[5], keys, vals, &mut toks),
+                };
+                match r {
                     Ok(counted) => {
                         for h in toks {
                             out.extend([h, 0]);
@@ -1151,12 +1164,28 @@ pub fn run(cfg: Config, io: &mut dyn Files, path: &str) -> (Outcome, Stats) {
         Ok(u) => u,
         Err(why) => return (Err(why), Stats::default()),
     };
-    let out = read(&mut unit);
+    let out = read(&mut unit, None);
     let stats = unit.stats.clone();
     (out, stats)
 }
 
-fn read(unit: &mut Unit) -> Outcome {
+/// `run`, its tests and expansions on the words (decision 0422), run by `run_words`
+/// (`expand::native`, or the interpreter).
+pub fn run_words(cfg: Config, io: &mut dyn Files, path: &str, run_words: words::Run) -> (Outcome, Stats, words::WordStats) {
+    let mut w = match words::Words::new(&cfg, run_words) {
+        Ok(w) => w,
+        Err(why) => return (Err(why), Stats::default(), Default::default()),
+    };
+    let mut unit = match Unit::new(cfg, io, path) {
+        Ok(u) => u,
+        Err(why) => return (Err(why), Stats::default(), Default::default()),
+    };
+    let out = read(&mut unit, Some(&mut w));
+    let stats = unit.stats.clone();
+    (out, stats, w.stats.clone())
+}
+
+fn read(unit: &mut Unit, mut words: Option<&mut words::Words>) -> Outcome {
     // Each instance as first entered: its own group active, nothing else.
     let fresh = |unit: &Unit, from: usize, a: &mut Vec<i64>| {
         let inst = unit.instances();
@@ -1177,7 +1206,7 @@ fn read(unit: &mut Unit) -> Outcome {
         for (k, n) in MEMO.iter().enumerate() {
             cols.insert(n, std::mem::take(&mut memo.0[k]));
         }
-        let mut o = ROUND.run(&cols, &mut Host { unit: &mut *unit, refused: 0 })?;
+        let mut o = ROUND.run(&cols, &mut Host { unit: &mut *unit, refused: 0, words: words.as_deref_mut() })?;
         for (k, n) in MEMO.iter().enumerate() {
             memo.0[k] = o.remove(n).expect("the memo's outputs");
         }
@@ -1201,20 +1230,20 @@ fn read(unit: &mut Unit) -> Outcome {
             if o["unsupported"][0] > 0 {
                 return Err(unit.reason(o["unsupported"][0] - 1));
             }
-            return text_of(unit, &state, &b_sym, &b_val);
+            return text_of(unit, words, &state, &b_sym, &b_val);
         }
         state = next;
     }
     Err("past the rounds' bound")
 }
 
-fn text_of(unit: &mut Unit, state: &State, b_sym: &[i64], b_val: &[i64]) -> Outcome {
+fn text_of(unit: &mut Unit, mut words: Option<&mut words::Words>, state: &State, b_sym: &[i64], b_val: &[i64]) -> Outcome {
     unit.generation += 1;
     let mut cols = columns(unit, state, b_sym, b_val);
     cols.insert("t_kind", unit.cols.t_kind.clone());
     cols.insert("t_sym", unit.cols.t_sym.clone());
     cols.insert("fnlike", unit.fnlike());
-    let mut host = Host { unit: &mut *unit, refused: 0 };
+    let mut host = Host { unit: &mut *unit, refused: 0, words: words.as_deref_mut() };
     let o = TEXT.run(&cols, &mut host)?;
     let refused = host.refused;
     if refused > 0 {
@@ -1224,7 +1253,7 @@ fn text_of(unit: &mut Unit, state: &State, b_sym: &[i64], b_val: &[i64]) -> Outc
         return Err(SHAPE[o["shape"][0] as usize]);
     }
     unit.stats.output = o["out"].len() as u64;
-    Ok(o["out"].iter().map(|&h| unit.spelling(h)).collect())
+    Ok(o["out"].iter().map(|&h| if h < 0 && let Some(w) = words.as_deref() { w.made(h).to_vec() } else { unit.spelling(h) }).collect())
 }
 
 /// The columns a run reads.
@@ -1272,3 +1301,5 @@ fn columns(unit: &mut Unit, s: &State, b_sym: &[i64], b_val: &[i64]) -> HashMap<
 
 #[cfg(test)]
 mod tests;
+
+pub mod words;

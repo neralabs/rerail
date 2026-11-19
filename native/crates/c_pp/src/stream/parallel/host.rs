@@ -111,6 +111,8 @@ pub struct Unit<'a> {
     reach: (usize, HashSet<u32>),
     pragma: u32,
     reasons: Vec<&'static str>,
+    /// By definition: the file and directive that define it (a built-in's: none).
+    def_dir: std::collections::HashMap<u32, (u32, u32)>,
     pub stats: Stats,
 }
 
@@ -133,7 +135,7 @@ impl<'a> Unit<'a> {
         let builtins: Vec<(u32, u64, u32)> = pp.macros.iter().enumerate().filter(|&(_, &d)| d != 0).map(|(s, &d)| (s as u32, 0, d)).collect();
         let tu = Tu::new(&mut pp, builtin, main);
         let pragma = pp.syms.get(b"_Pragma");
-        let mut unit = Unit { pp, tu, builtins, number: Vec::new(), files: Vec::new(), cols: Cols::default(), vis: None, generation: 0, made: Vec::new(), reach: (usize::MAX, HashSet::new()), pragma, reasons: Vec::new(), stats: Stats::default() };
+        let mut unit = Unit { pp, tu, builtins, number: Vec::new(), files: Vec::new(), cols: Cols::default(), vis: None, generation: 0, made: Vec::new(), reach: (usize::MAX, HashSet::new()), pragma, reasons: Vec::new(), def_dir: Default::default(), stats: Stats::default() };
         unit.sync();
         Ok(unit)
     }
@@ -167,7 +169,8 @@ impl<'a> Unit<'a> {
         self.reasons.get(k as usize).copied().unwrap_or("an unknown reason")
     }
 
-    fn reason_code(&mut self, why: &'static str) -> i64 {
+    /// A refusal's reason as a code (`reason`).
+    pub fn reason_code(&mut self, why: &'static str) -> i64 {
         match self.reasons.iter().position(|&r| r == why) {
             Some(k) => k as i64,
             None => {
@@ -233,7 +236,10 @@ impl<'a> Unit<'a> {
                     Act::Test => (code::TEST, -1, 0),
                     Act::Include if dir.kind == Kind::Import => (code::IMPORT, -1, 0),
                     Act::Include => (code::INCLUDE, -1, 0),
-                    Act::Define(k) => (code::DEFINE, i64::from(self.pp.defs[k as usize].name), i64::from(k) + 1),
+                    Act::Define(k) => {
+                        self.def_dir.insert(k, (file as u32, d as u32));
+                        (code::DEFINE, i64::from(self.pp.defs[k as usize].name), i64::from(k) + 1)
+                    }
                     Act::Undef(s) => (code::UNDEF, i64::from(s), 0),
                     Act::Push(s) => (code::PUSH, i64::from(s), 0),
                     Act::Pop(s) => (code::POP, i64::from(s), 0),
@@ -401,6 +407,110 @@ impl<'a> Unit<'a> {
         let k = self.cols.f_textbase.partition_point(|&b| b <= handle) - 1;
         let tab = self.tu.tabs[self.files[k] as usize].as_ref().unwrap();
         self.pp.text(&tab.text[(handle - self.cols.f_textbase[k]) as usize]).to_vec()
+    }
+
+    // The views the words' readings of one element take (`rerail_c_directives::passes::words`).
+
+    /// The pass's files (a token's `buf` less one): each one's path and phase-2 text.
+    pub fn file(&self, k: usize) -> (&str, &[u8]) {
+        let f = &self.pp.files[k];
+        (&f.path, f.text())
+    }
+
+    pub fn nfiles(&self) -> usize {
+        self.pp.files.len()
+    }
+
+    /// File `k`'s line table in phase-2 positions, as the words read one (`pp_words::File::lines`):
+    /// for each newline of its source, the last phase-2 position before the line after it.
+    pub fn lines(&self, k: usize) -> Vec<u32> {
+        let f = &self.pp.files[k];
+        let n = f.text().len() as u32;
+        let mut out = Vec::new();
+        let mut i = 0;
+        let src = &f.src;
+        while let Some(nl) = rerail_simd8::micro::find(src, i, b'\n') {
+            // The first phase-2 position past the newline, less one.
+            let (mut lo, mut hi) = (0u32, n + 1);
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                if mid < n && f.orig(mid) <= nl as u32 { lo = mid + 1 } else { hi = mid }
+            }
+            out.push(lo.wrapping_sub(1));
+            i = nl + 1;
+        }
+        out
+    }
+
+    /// Instance `inst`'s file (the pass's number) and the files it is included through.
+    pub fn instance(&self, inst: i64) -> (u32, &[u32]) {
+        let i = &self.tu.insts[inst as usize];
+        (i.file, &i.chain)
+    }
+
+    /// Text tokens `first..=last` (numbers) of instance `inst`'s file, and the one after them
+    /// up to `stop` (`None` past it).
+    pub fn text_toks(&self, inst: i64, first: i64, last: i64, stop: i64) -> (&[Tk], Option<&Tk>) {
+        let file = self.tu.insts[inst as usize].file;
+        let base = self.cols.f_textbase[self.number[file as usize] as usize];
+        let tab = self.tu.tabs[file as usize].as_ref().unwrap();
+        let (a, b) = ((first - base) as usize, (last - base) as usize);
+        (&tab.text[a..=b], (last < stop).then(|| &tab.text[b + 1]))
+    }
+
+    /// Directive `dir` (a number) of instance `inst`'s file: its kind and its line's tokens.
+    pub fn directive(&self, inst: i64, dir: i64) -> (Kind, &[Tk]) {
+        let file = self.tu.insts[inst as usize].file;
+        let d = (dir - self.cols.f_dirbase[self.number[file as usize] as usize]) as usize;
+        let tab = self.tu.tabs[file as usize].as_ref().unwrap();
+        (tab.dirs[d].kind, &tab.dirs[d].line)
+    }
+
+    /// Definition `d`'s `#define` line's tokens after `define` (a built-in's: none), and the
+    /// symbols of the identifiers its body holds.
+    pub fn definition(&self, d: u32) -> Option<(&[Tk], impl Iterator<Item = u32> + '_)> {
+        let &(file, k) = self.def_dir.get(&d)?;
+        let tab = self.tu.tabs[file as usize].as_ref().unwrap();
+        let names = self.pp.defs[d as usize].body.iter().filter(|t| t.kind == P::Ident).map(|t| t.sym);
+        Some((&tab.dirs[k as usize].line[..], names))
+    }
+
+    /// A symbol's spelling, and the symbol of a spelling.
+    pub fn sym_text(&self, s: u32) -> &[u8] {
+        self.pp.syms.text(s)
+    }
+
+    pub fn sym(&mut self, b: &[u8]) -> u32 {
+        self.pp.syms.get(b)
+    }
+
+    /// A token's spelling.
+    pub fn tok_text(&self, t: &Tk) -> &[u8] {
+        self.pp.text(t)
+    }
+
+    /// Whether a header name is found from file `from` (`__has_include`, `__has_include_next`
+    /// where `next`), as the lean pass's `Files` finds it.
+    pub fn found(&mut self, from: u32, name: &[u8], angle: bool, next: bool) -> bool {
+        let f = &self.pp.files[from as usize];
+        let (includer, next_after) = (f.path.clone(), next.then_some(f.found_by));
+        self.pp.io.find(name, angle, &includer, next_after).is_some()
+    }
+
+    /// `text` lexed as a file of its own (a `_Pragma`'s, as `pragma_text` lexes one): the file's
+    /// number and its tokens.
+    pub fn lex(&mut self, path: String, text: Vec<u8>) -> (u32, Vec<Tk>) {
+        let pf = self.pp.add_file(path, text, None);
+        let super::super::Src::File { mut lx, .. } = self.pp.file_src(pf) else { unreachable!() };
+        let mut toks = Vec::new();
+        loop {
+            let t = lx.next();
+            if t.kind == P::Eof {
+                break;
+            }
+            toks.push(self.pp.file_tok(t, pf));
+        }
+        (pf, toks)
     }
 
     /// Positions' bits below a token's.

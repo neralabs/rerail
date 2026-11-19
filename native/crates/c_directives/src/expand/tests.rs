@@ -1122,7 +1122,12 @@ fn a_run_that_asks_records_the_names_it_missed() {
     let c = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
     for asks in [true, false] {
         let env = pp_words::Env { counter: 5, asks, ..pp_words::Env::DEFAULT };
-        for (who, r) in [("interpreter", pp_words::run(program().unwrap(), &files, &env, &bounds)), ("JIT", c.run(program().unwrap(), &files, &env, &bounds))] {
+        let mut runs = vec![("interpreter", pp_words::run(program().unwrap(), &files, &env, &bounds)), ("JIT", c.run(program().unwrap(), &files, &env, &bounds))];
+        if let Some(b) = aot_build() {
+            // SAFETY: `aot_build` checked the build is these words' for this interface.
+            runs.push(("rustc's build", unsafe { rerail_compiler::native_cpu_pp::run_aot(b.run, program().unwrap(), &files, &env, &bounds) }));
+        }
+        for (who, r) in runs {
             let e = r.unwrap_or_else(|r| panic!("{who}: {r:?}"));
             let out: Vec<&[u8]> = e.toks.iter().map(|t| e.text(&files, t)).collect();
             assert_eq!(out, [&b"X"[..], b"5", b"1", b"6", b"defined"], "{who}");

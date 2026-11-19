@@ -34,9 +34,16 @@ fn both(files: &[(&str, &str)]) -> (Outcome, Stats) {
     let mut pp = Pp::new(cfg.clone(), &mut s_io, &mut serial);
     assert!(pp.run("main.c"));
     drop(pp);
-    let (out, stats) = run(cfg, &mut io(files), "main.c");
+    let (out, stats) = run(cfg.clone(), &mut io(files), "main.c");
     if let Ok(o) = &out {
         assert_eq!(show(o), show(&serial.0), "the programs against the serial pass");
+    }
+    // The same calls on the words (the interpreter): the same outcome.
+    let (w_out, _, _) = run_words(cfg, &mut io(files), "main.c", rerail_compiler::pp_words::run);
+    match (&out, &w_out) {
+        (Ok(a), Ok(b)) => assert_eq!(show(b), show(a), "the words' calls against the lean calls"),
+        (Err(_), Err(_)) => {}
+        _ => panic!("the lean calls: {:?}\nthe words' calls: {:?}", out.as_ref().map(|o| show(o)), w_out.as_ref().map(|o| show(o))),
     }
     (out, stats)
 }
@@ -153,6 +160,8 @@ fn the_corpus_by_the_programs() {
     let first: usize = env("RERAIL_PP_FIRST").and_then(|s| s.parse().ok()).unwrap_or(0);
     let count: usize = env("RERAIL_PP_COUNT").and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
     let each = env("RERAIL_PP_EACH").is_some();
+    // The calls on the words' CPU path (`expand::native`), else the lean calls.
+    let words = env("RERAIL_PP_WORDS").is_some();
     let mut wrong = 0;
     for lang in env("RERAIL_PP_LANGS").unwrap_or("c,cpp".into()).split(',') {
         let mut prof = Profile::new(if lang == "cpp" { Lang::cpp() } else { Lang::c() });
@@ -164,9 +173,10 @@ fn the_corpus_by_the_programs() {
             let p = path.to_string_lossy().into_owned();
             let settled = prof.settle(&p);
             let mut io = Search::new(settled.dirs.clone(), read_fs);
-            let (out, st) = run(settled.cfg.clone(), &mut io, &p);
+            let t0 = std::time::Instant::now();
+            let (out, st, ws) = if words { run_words(settled.cfg.clone(), &mut io, &p, crate::expand::native) } else { let (o, s) = run(settled.cfg.clone(), &mut io, &p); (o, s, Default::default()) };
             if each {
-                println!("{p}: {}; {st:?}", out.as_ref().map_or_else(|w| w.to_string(), |o| if *o == settled.tokens { "same".into() } else { "DIFFERS".into() }));
+                println!("{p}: {} ms; {}; {st:?} {ws:?}", t0.elapsed().as_millis(), out.as_ref().map_or_else(|w| w.to_string(), |o| if *o == settled.tokens { "same".into() } else { "DIFFERS".into() }));
             }
             match out {
                 Ok(o) if o == settled.tokens => same += 1,
