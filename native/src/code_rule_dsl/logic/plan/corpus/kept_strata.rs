@@ -392,7 +392,6 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
     let (inputs, rels) = next.parts();
     let digests: HashMap<&str, u64> = inputs.iter().map(|(r, d, _)| (*r, *d)).collect();
     let mut puts = Vec::new();
-    let mut kept = Vec::new();
     let mut written = 0usize;
     for (rel, digest, source) in inputs {
         let Some((f, was)) = part.frames.get(rel) else { continue };

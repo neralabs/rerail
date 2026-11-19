@@ -28,7 +28,7 @@ fn a_kept_relation_is_read_where_it_lies() {
     let entry = |r: &str| bound.entry(r, &[3; 32], super::super::DOCS_PART).expect("its entry");
     let whole = entry("whole");
     assert_eq!((whole.digest(), whole.reads(), whole.len(), whole.width()), (77, vec![("q".to_owned(), 9)], 3, 2));
-    let in_chain = bound.view().get(&rerail_blocks::kept::FactKey { rel: "whole", ident: &[3; 32], part: super::super::DOCS_PART }).expect("kept").rows;
+    let in_chain = bound.view().entry(&rerail_blocks::kept::FactKey { rel: "whole", ident: &[3; 32], part: super::super::DOCS_PART }).expect("kept").rows;
     assert!(std::ptr::eq(whole.packed(), in_chain), "the entry's rows where they lie in the chain");
     let rel = whole.rel(&atoms).expect("bound");
     assert!(rel.view_kind().is_some() && rel.in_block().is_none(), "a view of the entry, no rows of its own");

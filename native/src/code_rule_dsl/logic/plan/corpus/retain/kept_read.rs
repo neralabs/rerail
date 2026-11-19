@@ -68,7 +68,7 @@ unsafe impl Sync for Entry {}
 
 impl Entry {
     fn kept(&self) -> Kept<'_> {
-        self.bound.view().get(&FactKey { rel: &self.rel, ident: &self.ident, part: self.part }).expect("an entry of its space")
+        self.bound.view().entry(&FactKey { rel: &self.rel, ident: &self.ident, part: self.part }).expect("an entry of its space")
     }
     /// Its rows where they lie.
     pub(in crate::code_rule_dsl) fn packed(&self) -> &rerail_blocks::packed::Packed {
