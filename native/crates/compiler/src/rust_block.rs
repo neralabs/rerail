@@ -596,7 +596,7 @@ impl<'a> Gen<'a> {
                     let _ = write!(out, "\n                // {name}\n                {k} => {{\n                    let l = first_bit(&{}, s).unwrap_or(s).max(s);{check}\n                    l\n                }}", self.mask(o));
                 }
                 EndRule::Next(i) => {
-                    let _ = write!(out, "\n                // {name}\n                {k} => {{\n                    let l = s + usize::from(s + 1 < n && pair{i}(src[s], src[s + 1]));{check}\n                    l\n                }}");
+                    let _ = write!(out, "\n                // {name}\n                {k} => {{\n                    let l = next{i}(src, s, n);{check}\n                    l\n                }}");
                 }
             }
         }
@@ -653,8 +653,17 @@ impl<'a> Gen<'a> {
         let _ = writeln!(out, "        {}\n    }}\n}}\n", if unplaced.is_empty() { "false".to_owned() } else { unplaced.join("\n            || ") });
         self.readers(out);
         self.checks_code(out);
-        for i in 0..r.nexts.len() {
+        for (i, t) in r.nexts.iter().enumerate() {
             let _ = writeln!(out, "/// Whether `a` then `b` is a pair of table {i}.\nfn pair{i}(a: u8, b: u8) -> bool {{\n    let row = usize::from(PAIR{i}_ROW[usize::from(a)]);\n    PAIR{i}_SETS.get(row).is_some_and(|set| set[usize::from(b) / 64] >> (b % 64) & 1 == 1)\n}}\n");
+            // A token's last byte by its first and the next, then the one after where a triple
+            // goes on from the pair, as the lean lexer reads `===` after `==`.
+            let pair = if t.thirds.is_empty() {
+                "s + 1".to_owned()
+            } else {
+                let arms: Vec<String> = t.thirds.iter().map(|&[a, b, c]| format!("({}, {}, Some(&{}))", byte_lit(a), byte_lit(b), byte_lit(c))).collect();
+                format!("match (src[s], b, src.get(s + 2).filter(|_| s + 2 < n)) {{\n            {} => s + 2,\n            _ => s + 1,\n        }}", arms.join("\n            | "))
+            };
+            let _ = writeln!(out, "/// The last byte of a token of table {i} from `s`: its first, the next where they are a pair{}.\nfn next{i}(src: &[u8], s: usize, n: usize) -> usize {{\n    match src.get(s + 1) {{\n        Some(&b) if s + 1 < n && pair{i}(src[s], b) => {pair},\n        _ => s,\n    }}\n}}\n", if t.thirds.is_empty() { "" } else { ", the one after where the three are a triple" });
         }
     }
 
@@ -690,7 +699,7 @@ impl<'a> Gen<'a> {
                 Some(EndRule::Run(o)) => format!("Ok(run_end(&{}, s))", self.mask(*o)),
                 Some(EndRule::Pair(o)) => format!("Ok(s + usize::from(bit(&{}, s)))", self.mask(*o)),
                 Some(EndRule::Last(o)) => format!("Ok(first_bit(&{}, s).unwrap_or(s))", self.mask(*o)),
-                Some(EndRule::Next(j)) => format!("Ok(s + usize::from(s + 1 < n && pair{j}(src[s], src[s + 1])))"),
+                Some(EndRule::Next(j)) => format!("Ok(next{j}(src, s, n))"),
             };
             let _ = writeln!(out, "    {other}\n}}\n");
             if !rd.parts_in_tier1() {

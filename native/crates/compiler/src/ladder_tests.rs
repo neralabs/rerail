@@ -191,6 +191,44 @@ tree t {
     assert_eq!(check_documents("loses", &c, b"ab.(),/* \n", &[], &fixed, &|_, _, _, _| None), None);
 }
 
+/// A pair table's triples (`pairs P = "AB" … "ABC"`, decision 0451): a token of one byte, a
+/// pair, or a pair and the byte after, as the lean lexer reads `===` after `==`. Bitlex's
+/// reference and every executor.
+#[test]
+fn a_pair_table_with_triples() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class word      = 'a'..'z'
+class punct     = '=' '!' '.' '<'
+mask name       = fill(word, ~word)
+error "a byte no token takes" by tokens when ~ws & ~name & ~punct
+token simple_identifier = start name & ~prev(name) run word
+pairs op        = "==" "!=" ".." "===" "!==" "..<"
+mask second     = prev(op) | prev(op_three, 2)
+token punct     = start punct & ~second pair op
+keywords punct { "=" "!" "." "<" "==" "!=" ".." "===" "!==" "..<" } required
+skip ws
+tree t {
+  node source_file whole = (item)*
+  choice item           = simple_identifier | strict | loose | range | '=' | '!' | '.' | '<' | '!=' | '..' | '!=='
+  node strict           = '==='
+  node loose            = '=='
+  node range            = '..<'
+}
+"#;
+    let c = compile_step("triples", source);
+    let fixed = ["a === b", "a !== b", "a ..< b", "a == b", "a != b", "a .. b", "a==b===c", "a..<b..c", "a = ! . <", "a=== b", "a !=== b", "!!== ===!"];
+    let count = |d: &str, k: &str| reference(&c, d.as_bytes()).expect("parses").iter().filter(|n| n.0 == c.ids.of(k)).count();
+    assert_eq!(fixed[..10].iter().map(|d| count(d, "strict")).collect::<Vec<_>>(), [1, 0, 0, 0, 0, 0, 1, 0, 0, 1]);
+    assert_eq!(fixed[..10].iter().map(|d| count(d, "range")).collect::<Vec<_>>(), [0, 0, 1, 0, 0, 0, 0, 1, 0, 0]);
+    // A triple whose last byte starts a pair with the next is an error (the token loop reads
+    // `!==` `=`, the mask a run's every other byte).
+    for d in ["a !=== b", "a ==== b", "a!===b"] {
+        assert!(reference(&c, d.as_bytes()).is_none(), "{d}");
+    }
+    assert_eq!(check_documents("triples", &c, b"ab=!.< ", &[], &fixed, &|_, _, _, _| None), None);
+}
+
 /// A token mark's run that counts depths (Q222), as the lean parser's `type_args_end` does: a
 /// `<` opens type arguments where its `>` closes the depth and a `(` follows, with `<` `>` and
 /// `(` `)` counted between. The reference's nodes equal the interpreter's and Cranelift's.

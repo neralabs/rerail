@@ -313,9 +313,11 @@ pub struct Lowering {
     pub tokens: Vec<(String, Val, Option<TokenEnd>)>,
     /// Each token kind's end rule (`run R`, `pair P`, decision 0177): whether a pair, its mask.
     pub token_rules: HashMap<String, (bool, Val)>,
-    /// Each token kind's pairs (`pair "AB" …`, `TokenRule::Pairs`): on the CPU, its first byte
-    /// and the next (`EndRule::Next`), not its mask.
-    pub token_pairs: HashMap<String, Vec<[u8; 2]>>,
+    /// Each token kind's pairs and triples (`pair P`, `TokenRule::Pairs`): on the CPU, its
+    /// first byte and the next, and the one after (`EndRule::Next`), not its mask.
+    pub token_pairs: HashMap<String, Vec<Vec<u8>>>,
+    /// The starts of a `pair P` kind's triples (`P_three`), where it has any.
+    pub token_threes: HashMap<String, Val>,
     /// The tokens read by a reader (`read K | …`, `records::Reader`): each region's opener,
     /// closer, last byte's offset from the closer, and what no closer means.
     pub token_reads: HashMap<String, Vec<(Val, Val, i8, crate::records::ReadNone)>>,
@@ -483,6 +485,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         tokens: Vec::new(),
         token_rules: HashMap::default(),
         token_pairs: HashMap::default(),
+        token_threes: HashMap::default(),
         token_reads: HashMap::default(),
         token_closer_last: HashMap::default(),
         token_parts: HashMap::default(),
@@ -925,8 +928,12 @@ impl Lowering {
                                     (true, e)
                                 }
                                 ::bitlex::syntax::TokenRule::Pair(e) => (true, e),
-                                ::bitlex::syntax::TokenRule::Pairs { pairs, mask } => {
+                                ::bitlex::syntax::TokenRule::Pairs { pairs, mask, three } => {
                                     self.token_pairs.insert(kind.clone(), pairs.clone());
+                                    if let Some(t) = three {
+                                        let v = self.ahead(t)?;
+                                        self.token_threes.insert(kind.clone(), v);
+                                    }
                                     (true, mask)
                                 }
                                 ::bitlex::syntax::TokenRule::Read(_) | ::bitlex::syntax::TokenRule::ReadParts(..) | ::bitlex::syntax::TokenRule::Inside(..) => unreachable!(),
@@ -4033,7 +4040,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let mut reader_starts: Vec<(usize, Val)> = Vec::new();
     let mut nexts: Vec<crate::records::PairTable> = Vec::new();
     // Each table's pairs, to find it again.
-    let mut tabled: Vec<Vec<[u8; 2]>> = Vec::new();
+    let mut tabled: Vec<Vec<Vec<u8>>> = Vec::new();
     let mut ends = vec![crate::records::NO_RULE; 256];
     if !low.token_escapes.is_empty() && !(looped && (!low.token_rules.is_empty() || !low.token_reads.is_empty())) {
         return Err("token tests (`escape … at KIND`) need the token loop".into());
@@ -4059,10 +4066,11 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             let at = match tabled.iter().position(|x| x == pairs) {
                 Some(at) => at,
                 None => {
-                    let mut t = crate::records::PairTable { row: vec![0; 256], sets: vec![[0; 4]] };
+                    let thirds = pairs.iter().filter(|p| p.len() == 3).map(|p| [p[0], p[1], p[2]]).collect();
+                    let mut t = crate::records::PairTable { row: vec![0; 256], sets: vec![[0; 4]], thirds };
                     for first in 0..256usize {
                         let mut set = [0u64; 4];
-                        for p in pairs.iter().filter(|p| usize::from(p[0]) == first) {
+                        for p in pairs.iter().filter(|p| p.len() == 2 && usize::from(p[0]) == first) {
                             set[usize::from(p[1]) / 64] |= 1 << (p[1] % 64);
                         }
                         if set != [0; 4] {
@@ -4339,6 +4347,11 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 if pair {
                     let second = low.and(t.1, v)?;
                     bytes_of.push((low.prev(second, 1)?, true));
+                    // A triple's third byte.
+                    if let Some(&three) = low.token_threes.get(&t.0) {
+                        let third = low.and(t.1, three)?;
+                        bytes_of.push((low.prev(third, 2)?, true));
+                    }
                 } else {
                     bytes_of.push((v, true));
                 }

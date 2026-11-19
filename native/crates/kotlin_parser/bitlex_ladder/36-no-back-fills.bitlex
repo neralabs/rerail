@@ -216,9 +216,6 @@ escape "a name `L`, `u`, `U`, `uL` or `UL`" when w & alpha & ~prev(w) & sfx_text
 escape "a number that ends in `_`" when (n_last | h_last | b_last) & underscore
 mask number     = fill(num_start, ~w) | nb
 error "a byte no token takes" by tokens when code & ~ws & ~word_run & ~number & ~punct
-# Operators of three bytes are not read yet.
-# `===`, `!==` and `..<`: a token of three bytes, a row of its own.
-mask three      = code & (text("===") | text("!==") | text("..<"))
 
 # A word ends here (no word byte after it) and starts here (none before it).
 mask kw_start   = w & ~prev(w)
@@ -408,11 +405,12 @@ token "'"       = start o_chr read chr parts {
                     character_escape_seq = c_esc & ~next(u_letter) bytes 2
                   } else char_content
 token backtick_name = start o_tick read tick
-pairs two_start = "->" "==" "!=" "<=" ">=" "&&" "||" "++" "--" "+=" "-=" "*=" "/=" "%=" "::" "?." "?:" ".." "!!"
-mask second     = prev(two_start) & code
-mask p_start    = code & punct & ~second & ~nb & ~three & ~prev(three) & ~prev(three, 2)
+# An operator: one byte, a pair, or a pair and the byte after (`===`, `!==`, `..<`), as the
+# lean lexer reads its first byte, then the next two.
+pairs two_start = "->" "==" "!=" "<=" ">=" "&&" "||" "++" "--" "+=" "-=" "*=" "/=" "%=" "::" "?." "?:" ".." "!!" "===" "!==" "..<"
+mask second     = (prev(two_start) | prev(two_start_three, 2)) & code
+mask p_start    = code & punct & ~second & ~nb
 token punct     = start p_start pair two_start
-token op3       = start three last prev(three, 2)
 
 # The hard keywords: no name. (`by` and `constructor` are soft, as in tree-sitter-kotlin.)
 keywords simple_identifier {
@@ -424,8 +422,7 @@ keywords simple_identifier {
   "expect" "data" "inner" "value" "actual" "set" "get" "override" "suspend" "annotation" "sealed" "lateinit" "tailrec" "operator" "infix" "inline" "external" "public" "private" "internal" "protected" "abstract" "final" "open" "const" "reified" "field" "property" "receiver" "param" "setparam" "delegate" "companion" "init" "dynamic" "where" "catch" "finally" "enum" "file" "out"
 }
 keywords interpolated_identifier { } soft { "expect" "data" "inner" "value" "actual" "set" "get" "override" "suspend" "annotation" "sealed" "lateinit" "tailrec" "operator" "infix" "inline" "external" "public" "private" "internal" "protected" "abstract" "final" "open" "const" "vararg" "noinline" "crossinline" "reified" "field" "property" "receiver" "param" "setparam" "delegate" "companion" "constructor" "init" "dynamic" "where" "catch" "finally" "enum" "out" }
-keywords op3 { "===" "!==" "..<" } required
-keywords punct { "." "*" "/" "," ":" "(" ")" "{" "}" "[" "]" ";" "<" ">" "=" "+" "-" "!" "?" "%" "@" "->" "==" "!=" "<=" ">=" "&&" "||" "++" "--" "+=" "-=" "*=" "/=" "%=" "?." "?:" ".." "!!" "::" } required
+keywords punct { "." "*" "/" "," ":" "(" ")" "{" "}" "[" "]" ";" "<" ">" "=" "+" "-" "!" "?" "%" "@" "->" "==" "!=" "<=" ">=" "&&" "||" "++" "--" "+=" "-=" "*=" "/=" "%=" "?." "?:" ".." "!!" "::" "===" "!==" "..<" } required
 
 skip ws
 

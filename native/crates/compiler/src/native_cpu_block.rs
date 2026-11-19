@@ -2524,6 +2524,8 @@ pub struct RecordTables {
     pub pairs: Vec<(usize, usize)>,
     /// Each pair table holds no pair (`pair empty`, 0355): its tokens are one byte, no row read.
     pub pairless: Vec<bool>,
+    /// Each pair table's triples (`PairTable::thirds`): a pair and the byte after, three bytes.
+    pub thirds: Vec<Vec<[u8; 3]>>,
     /// Where each first byte's entry is, eight bytes each (`TOKEN_*`): its kind, its end rule,
     /// whether a word starts with it, its pair row. A token's one load, as the lean lexer's
     /// `TOKEN`. Where the codes are in the entries (`punct_in_entry`), 512 of them, as the lean
@@ -2739,7 +2741,10 @@ impl RecordTables {
                 let one = lookup(&[b as u8]);
                 let twos: Vec<u64> = (0..=255u8).filter(|&c| pt.holds(b as u8, c)).map(|c| lookup(&[b as u8, c])).collect();
                 let two = twos.first().copied().unwrap_or(0);
-                if one >> 32 == 0 && two >> 32 == 0 && twos.iter().all(|&x| x == two) {
+                // A byte that starts a triple (`===` after `==`): its codes not by its length
+                // alone, so looked up.
+                let triple = pt.thirds.iter().any(|t| t[0] == b as u8);
+                if one >> 32 == 0 && two >> 32 == 0 && twos.iter().all(|&x| x == two) && !triple {
                     *e = (one, two, true);
                 }
             }
@@ -2828,7 +2833,7 @@ impl RecordTables {
         let punct = 8 * words.len();
         words.extend(punct_codes.iter().map(|&(one, two, _)| one | two << 32));
         let rare_unpaired = rare.is_some_and(|n| (0..256).all(|b| n[0][b & 15] & n[1][b >> 4] == 0 || entries[b] == entries[b | 256]));
-        Ok(RecordTables { words, slots, tails, rest, rare, ends: ends_of, rare_unpaired, table, starts: r.starts, lasts: r.lasts, pairs, pairless, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry, lean })
+        Ok(RecordTables { words, slots, tails, rest, rare, ends: ends_of, rare_unpaired, table, starts: r.starts, lasts: r.lasts, pairs, pairless, thirds: r.nexts.iter().map(|t| t.thirds.clone()).collect(), token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry, lean })
     }
 }
 
@@ -4398,7 +4403,8 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 Some(w) => {
                     let bit = f.ins().ushr(w, sh);
                     let bit = f.ins().band_imm(bit, 1);
-                    f.ins().iadd(s, bit)
+                    let l = f.ins().iadd(s, bit);
+                    third_last(f, t, c, s, raw, l, pi)
                 }
                 None => next_last(f, t, c, s, raw, entry, pi),
             };
@@ -5315,7 +5321,9 @@ fn fused_of(r: &crate::records::Records, filters: &[Option<i64>], native: Option
 pub fn lean_starts(r: &crate::records::Records, native: &crate::block_native::BlockNative, skip: u16, kn: usize, kr: usize) -> Option<bool> {
     use crate::records::EndRule;
     let (EndRule::Next(pi), EndRule::Run(o)) = (r.rules[kn], r.rules[kr]) else { return None };
-    let pt = r.nexts.get(usize::from(pi))?;
+    // A triple (`PairTable::thirds`) ends a byte past its pair's second: the pair word's starts
+    // do not say where the token after it starts.
+    let pt = r.nexts.get(usize::from(pi)).filter(|t| t.thirds.is_empty())?;
     let alone = |o: u16| crate::native_cpu_bytes::needs(native, o).filter(|n| n.lo == 0 && n.hi == 0);
     let (word, space) = (alone(o)?, alone(skip)?);
     let of = |x: u8, k: usize| r.ends.get(usize::from(x)).is_some_and(|&e| usize::from(e) == k);
@@ -5578,7 +5586,30 @@ fn next_last(f: &mut FunctionBuilder<'_>, t: &RecordTables, c: &FileCols, s: Val
     let bit = f.ins().band_imm(bit, 1);
     let inside = f.ins().uextend(types::I64, inside);
     let bit = f.ins().band(bit, inside);
-    f.ins().iadd(s, bit)
+    let l = f.ins().iadd(s, bit);
+    third_last(f, t, c, s, raw, l, i)
+}
+
+/// A pair's last `l` on by one where the token's three bytes are one of table `i`'s triples
+/// (`PairTable::thirds`) inside the file, as the lean lexer reads `===` after `==`: its three
+/// bytes compared with each triple's, from the token's first eight (`raw`).
+fn third_last(f: &mut FunctionBuilder<'_>, t: &RecordTables, c: &FileCols, s: Value, raw: Value, l: Value, i: u16) -> Value {
+    let Some(thirds) = t.thirds.get(usize::from(i)).filter(|x| !x.is_empty()) else { return l };
+    let three = f.ins().band_imm(raw, 0xff_ffff);
+    let mut any = None;
+    for &[a, b, x] in thirds {
+        let k = i64::from(a) | i64::from(b) << 8 | i64::from(x) << 16;
+        let eq = f.ins().icmp_imm(IntCC::Equal, three, k);
+        any = Some(match any {
+            Some(y) => f.ins().bor(y, eq),
+            None => eq,
+        });
+    }
+    let i2 = f.ins().iadd_imm(s, 2);
+    let inside = f.ins().icmp(IntCC::UnsignedLessThan, i2, c.len);
+    let hit = f.ins().band(any.expect("a triple"), inside);
+    let hit = f.ins().uextend(types::I64, hit);
+    f.ins().iadd(l, hit)
 }
 
 /// A reader's arm with no closer after its opener (`ReadNone`): its last on to `ended`, its

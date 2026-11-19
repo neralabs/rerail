@@ -286,11 +286,14 @@ pub enum EndRule {
 
 /// A kind's two-byte spellings (`EndRule::Next`): by a token's first byte its row (`row`, 256
 /// of them; row 0 none), and by the next byte, its bit in the row's set (`sets`, 256 bits): a
-/// two-byte token where it holds, one load each, as the lean lexer's table of tokens.
+/// two-byte token where it holds, one load each, as the lean lexer's table of tokens. Its
+/// three-byte spellings (`thirds`, a few): a pair and the byte after, as the lean lexer reads
+/// `===` from `==`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct PairTable {
     pub row: Vec<u8>,
     pub sets: Vec<[u64; 4]>,
+    pub thirds: Vec<[u8; 3]>,
 }
 
 impl PairTable {
@@ -298,6 +301,15 @@ impl PairTable {
     pub fn holds(&self, a: u8, b: u8) -> bool {
         let row = usize::from(self.row.get(usize::from(a)).copied().unwrap_or(0));
         self.sets.get(row).is_some_and(|set| set[usize::from(b) / 64] >> (b % 64) & 1 == 1)
+    }
+
+    /// The last byte of a token from `s`: its first, the next where they are a pair, the one
+    /// after where the three are a triple.
+    pub fn last(&self, bytes: &[u8], s: usize) -> usize {
+        match (bytes.get(s), bytes.get(s + 1)) {
+            (Some(&a), Some(&b)) if self.holds(a, b) => s + 1 + usize::from(bytes.get(s + 2).is_some_and(|&c| self.thirds.contains(&[a, b, c]))),
+            _ => s,
+        }
     }
 }
 
@@ -550,7 +562,7 @@ pub fn last_by_rule(records: &Records, rule: EndRule, s: usize, bytes: &[u8], ou
         EndRule::Read(_) => None,
         EndRule::Next(i) => {
             let t = records.nexts.get(usize::from(i))?;
-            Some(s + usize::from(bytes.get(s + 1).is_some_and(|&b| t.holds(bytes[s], b))))
+            Some(t.last(bytes, s))
         }
         EndRule::Last(o) => {
             let w = words(o);

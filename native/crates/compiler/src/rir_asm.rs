@@ -737,12 +737,19 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let r = program.records.as_mut().ok_or(format!("block {at} recnext before its records"))?;
                 let hex = line.word()?;
                 let row = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<Vec<u8>, _>>().map_err(|_| "a bad pair row")?;
-                r.nexts.push(crate::records::PairTable { row, sets: Vec::new() });
+                r.nexts.push(crate::records::PairTable { row, sets: Vec::new(), thirds: Vec::new() });
             } else if first == "recpairs" {
                 // `recpairs W0 W1 W2 W3`: a set of the last table's (`PairTable::sets`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recpairs before its records"))?;
                 let set = [line.number("")?, line.number("")?, line.number("")?, line.number("")?];
                 r.nexts.last_mut().ok_or(format!("block {at} recpairs before its table"))?.sets.push(set);
+            } else if first == "recthird" {
+                // `recthird ABC`: a triple of the last table's (`PairTable::thirds`), in hex.
+                let r = program.records.as_mut().ok_or(format!("block {at} recthird before its records"))?;
+                let hex = line.word()?;
+                let b = |i: usize| hex.get(2 * i..2 * i + 2).and_then(|x| u8::from_str_radix(x, 16).ok()).ok_or("a bad triple");
+                let t = [b(0)?, b(1)?, b(2)?];
+                r.nexts.last_mut().ok_or(format!("block {at} recthird before its table"))?.thirds.push(t);
             } else if first == "recreader" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recreader before its records"))?;
                 let other: u8 = line.number("")?;

@@ -1846,11 +1846,15 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                 let _ = writeln!(out, "  block {at} recrule {how} {o}");
             }
             // `block N recnext ROWS` each `next` rule's table's rows (a byte a first byte), then
-            // `block N recpairs W0 W1 W2 W3` each of its sets (`PairTable`).
+            // `block N recpairs W0 W1 W2 W3` each of its sets, and `block N recthird ABC` each
+            // of its triples (`PairTable`).
             for n in &r.nexts {
                 let _ = writeln!(out, "  block {at} recnext {}", hex(&n.row));
                 for set in &n.sets {
                     let _ = writeln!(out, "  block {at} recpairs {} {} {} {}", set[0], set[1], set[2], set[3]);
+                }
+                for t in &n.thirds {
+                    let _ = writeln!(out, "  block {at} recthird {}", hex(t));
                 }
             }
             // `block N recreader OTHER` each reader, then `block N recarm K OPENER CLOSER OFF

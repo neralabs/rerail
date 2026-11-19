@@ -83,9 +83,11 @@ pub enum TokenRule {
     Run(Expr),
     /// One byte, or two where the mask holds at its first.
     Pair(Expr),
-    /// `pair P`, `P` a `pairs P = "AB" …`: one byte, or two where its first and the next are
-    /// one of the pairs, as a lexer reads its next byte; `P` its mask.
-    Pairs { pairs: Vec<[u8; 2]>, mask: Expr },
+    /// `pair P`, `P` a `pairs P = "AB" … "ABC" …`: one byte, or two where its first and the
+    /// next are one of the pairs, or three where those and the byte after are one of the
+    /// triples, as a lexer reads its next bytes; `P` its mask, `three` its triples' starts
+    /// (`P_three`), where it has triples.
+    Pairs { pairs: Vec<Vec<u8>>, mask: Expr, three: Option<Expr> },
     /// `read K | …`: a region's token, read from its opener to its closer (decision 0177): the
     /// region whose opener holds at its first byte, then its closer's first byte after it; its
     /// last byte the closer's last (`outside`: the byte before it). A lexer's reader of a
@@ -270,7 +272,13 @@ impl TokenRule {
                 let t = or(s.clone(), after);
                 and(t.clone(), not(call("next", vec![and(t, not(s.clone()))])))
             }
-            TokenRule::Pair(p) | TokenRule::Pairs { mask: p, .. } => or(and(s.clone(), not(p.clone())), call("prev", vec![and(s.clone(), p.clone())])),
+            TokenRule::Pair(p) | TokenRule::Pairs { mask: p, three: None, .. } => or(and(s.clone(), not(p.clone())), call("prev", vec![and(s.clone(), p.clone())])),
+            // A triple's last: two after its start; a pair's, one.
+            TokenRule::Pairs { mask: p, three: Some(t), .. } => {
+                let two = call("prev", vec![and(and(s.clone(), p.clone()), not(t.clone()))]);
+                let three = Expr::Call("prev".into(), vec![Arg::E(and(s.clone(), t.clone())), Arg::N(2)]);
+                or(and(s.clone(), not(p.clone())), or(two, three))
+            }
             // Each region's last byte, from its fill (`Regions::body`): the closer's last, or
             // the byte before an `outside` closer; with `else E bytes M`, `E`'s `M`th byte.
             TokenRule::Read(regions) => {
@@ -923,7 +931,7 @@ struct P {
     after: Vec<Stmt>,
     classed: Vec<u8>,
     /// The `pairs` read so far, by name, for a token's `pair` (`TokenRule::Pairs`).
-    pair_sets: Vec<(String, Vec<[u8; 2]>)>,
+    pair_sets: Vec<(String, Vec<Vec<u8>>, bool)>,
 }
 
 type R<T> = Result<T, String>;
@@ -1548,17 +1556,23 @@ impl P {
         }
         Ok(out)
     }
-    /// `pairs P = "AB" …`: the mask of the pairs' first bytes, a run's every other from the
-    /// left (`two & ~escaped(two)`, `two` each pair's first byte where its second is next), of
-    /// hidden classes one a byte; the list kept for a token's `pair P` (`TokenRule::Pairs`).
+    /// `pairs P = "AB" … "ABC" …`: the mask of the pairs' first bytes, a run's every other from
+    /// the left (`two & ~escaped(two)`, `two` each pair's first byte where its second is next), of
+    /// hidden classes one a byte; with triples, `P_three` too: where `P` holds and a triple's
+    /// three bytes are, its token three bytes. Each triple's first two bytes are a pair, as a
+    /// lexer reads its next byte, then the one after. The list kept for a token's `pair P`
+    /// (`TokenRule::Pairs`).
     fn pairs(&mut self, name_of: String) -> R<Stmt> {
-        let mut pairs: Vec<[u8; 2]> = vec![];
+        let mut pairs: Vec<Vec<u8>> = vec![];
         while let Some(Tok::Str(_)) = self.peek() {
             let w = self.string()?;
-            let [a, b] = w[..] else {
-                return self.err("a pair of two bytes");
-            };
-            pairs.push([a, b]);
+            if w.len() != 2 && w.len() != 3 {
+                return self.err("a pair of two bytes, or a triple of three");
+            }
+            pairs.push(w);
+        }
+        if pairs.iter().any(|t| t.len() == 3 && !pairs.iter().any(|p| p[..] == t[..2])) {
+            return self.err("a triple whose first two bytes are no pair");
         }
         let name = |b: u8| format!("pair_byte_{b:02x}");
         for &b in pairs.iter().flatten() {
@@ -1569,9 +1583,18 @@ impl P {
         }
         let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
         let next = |e: Expr| Expr::Call("next".into(), vec![Arg::E(e)]);
-        let two = pairs.iter().map(|&[a, b]| and(Expr::Name(name(a)), next(Expr::Name(name(b))))).reduce(|x, y| Expr::Or(Box::new(x), Box::new(y))).ok_or("a pair")?;
+        let or = |x: Expr, y: Expr| Expr::Or(Box::new(x), Box::new(y));
+        let two = pairs.iter().filter(|p| p.len() == 2).map(|p| and(Expr::Name(name(p[0])), next(Expr::Name(name(p[1]))))).reduce(or).ok_or("a pair")?;
+        let two_of = two.clone();
         let mask = and(two.clone(), Expr::Not(Box::new(Expr::Call("escaped".into(), vec![Arg::E(two)]))));
-        self.pair_sets.push((name_of.clone(), pairs));
+        let next2 = |e: Expr| Expr::Call("next".into(), vec![Arg::E(e), Arg::N(2)]);
+        let three = pairs.iter().filter(|p| p.len() == 3).map(|p| and(and(Expr::Name(name(p[0])), next(Expr::Name(name(p[1])))), next2(Expr::Name(name(p[2]))))).reduce(or);
+        let has_three = three.is_some();
+        if let Some(t) = three {
+            self.after.push(Stmt::Mask(format!("{name_of}_three"), and(t, Expr::Name(name_of.clone()))));
+            self.after.push(Stmt::Mask(format!("{name_of}_two"), two_of));
+        }
+        self.pair_sets.push((name_of.clone(), pairs, has_three));
         Ok(Stmt::Mask(name_of, mask))
     }
     /// `munch K over O { "L" [-> KIND] … }`: operator tokens by longest match over each run of
@@ -2101,8 +2124,8 @@ impl P {
                 } else if self.eat_kw("pair") {
                     let e = self.expr()?;
                     match &e {
-                        Expr::Name(n) => match self.pair_sets.iter().find(|(m, _)| m == n) {
-                            Some((_, pairs)) => Some(TokenRule::Pairs { pairs: pairs.clone(), mask: e.clone() }),
+                        Expr::Name(n) => match self.pair_sets.iter().find(|(m, _, _)| m == n) {
+                            Some((_, pairs, three)) => Some(TokenRule::Pairs { pairs: pairs.clone(), mask: e.clone(), three: three.then(|| Expr::Name(format!("{n}_three"))) }),
                             None => Some(TokenRule::Pair(e)),
                         },
                         _ => Some(TokenRule::Pair(e)),
@@ -2179,6 +2202,15 @@ impl P {
                 };
                 if let Some(r) = &rule {
                     last = Some(r.last(&start));
+                }
+                // A triple whose last byte starts a pair with the byte after (`!===`, `====`):
+                // the mask's every other byte of a run (`P`) is then not the left-to-right
+                // reading the token loop makes, a pair after the triple. No such text is a
+                // language's, so it is an error, the same on every target.
+                if let Some(TokenRule::Pairs { mask: Expr::Name(n), three: Some(t), .. }) = &rule {
+                    let after = Expr::Call("next".into(), vec![Arg::E(Expr::Name(format!("{n}_two"))), Arg::N(2)]);
+                    let at = Expr::And(Box::new(Expr::And(Box::new(start.clone()), Box::new(t.clone()))), Box::new(after));
+                    self.after.push(Stmt::Error(format!("{kind}: a triple's last byte starts a pair"), at));
                 }
                 // A region read in parts: its other rows after it (`Parts::rows`).
                 if let Some(TokenRule::ReadParts(rs, parts)) = &rule {

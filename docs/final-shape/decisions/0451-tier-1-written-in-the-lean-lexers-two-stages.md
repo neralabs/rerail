@@ -218,3 +218,47 @@ its place, in the deepest node holding that token and the next.
 tests moved into `lost_at`, which tier 2 reads at the token. The token-level shape is next:
 `lost_at` asks whether the token after the comment is one of the tokens of `semi`'s `unless
 before`, and the token loop knows that from the record's kind and word, as it knows a `before`.
+
+## Gap B, step 3: `===`, `!==` and `..<` in the pair table (2026-11-19)
+
+The lean lexer reads these operators by their first byte, then the next two. For `=`, it gives
+`===` where the next byte is `=` and the third is `=` too, `==` where only the next is, and `=`
+otherwise. The grammar read them another way: `three`, a mask of their text at every byte
+(22 values a block); a row of their own (`op3`); and three terms in `p_start` that kept their
+inner bytes from starting a token.
+
+Now they are entries of the pair table, the lean lexer's shape:
+- **Bitlex.** `pairs P = "AB" … "ABC" …` takes three-byte entries. A triple's first two bytes
+  must be a pair. The lowering makes `P_three`, the starts of `P` where a triple's bytes are.
+  `pair P`'s last byte is then two past `P_three`'s starts. `TokenRule::Pairs` carries it.
+- **The table.** `PairTable::thirds` holds the triples. `PairTable::last` is a token's last byte:
+  its first byte; the next, where the two are a pair; the one after, where the three are a
+  triple. Text form: `recthird ABC`.
+- **Every executor:**
+  - `records::last_by_rule` uses `PairTable::last`.
+  - The JIT adds a compare of the token's three bytes to each triple (`third_last`), on both
+    the table path and the pair-word path.
+  - The generated Rust writes `next{i}(src, s, n)`. It matches the three bytes after the pair,
+    as the lean lexer's `match` does.
+  - The prover counts a triple's third byte as a token byte, for the blank marks.
+- **Kotlin.** The three operators are in `two_start`, and their words in `keywords punct`.
+  `three`, `op3` and the `p_start` terms are gone. `second` is `prev(two_start) |
+  prev(two_start_three, 2)`.
+
+**One limit, now an error.** `P` is every other byte of a run of pair starts
+(`two & ~escaped(two)`). That is the left-to-right reading, except where a triple's last byte
+starts a pair with the byte after it (`!===`, `====`). There the token loop reads `!==` and
+then `=`, and the mask reads the run another way. No language has such text, and Kotlin's lean
+parser refuses it. So a token that meets it is an error on every target: `K: a triple's last
+byte starts a pair`, from `P_two` (the run's starts before escaping). The JIT's lean starts
+(`lean_starts`) read the pair word's starts, so they are off for a table with triples. That
+table's tokens end as the table says.
+
+**Tests:**
+- `ladder_tests::a_pair_table_with_triples`: the reference, the interpreter and Cranelift on
+  generated documents and fixed ones; `!===` and `====` are refused.
+- Kotlin's three-byte operators (step 17) and the rest pass (52). The corpus is unchanged: 448
+  the same, 43 refused, 0 differ. `aot_tapes_are_the_jits` passes.
+
+**Stage 1:** `three` is gone from the token-level probe. The block program went from 1,564
+operations to 1,559.
