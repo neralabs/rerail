@@ -316,9 +316,26 @@ fn concurrent_analysis_runs_order_snapshots_and_isolate_staging() {
     for (owner, snapshot) in [(&older.owner, snapshots[0]), (&newer.owner, snapshots[1]), (&abandoned.owner, snapshots[0])] {
         store.own_analysis_snapshot(owner, "workspace", snapshot).unwrap();
     }
+    let manifests = |membership: &str| {
+        let db = store.connection.lock().unwrap();
+        db.prepare("SELECT r.path FROM analysis_scope_manifest a JOIN corpus_manifests m USING(manifest_id)
+            JOIN corpus_roots r USING(root_id) WHERE a.scope=?1 ORDER BY r.path").unwrap()
+            .query_map([membership], |row| row.get::<_, String>(0)).unwrap().collect::<Result<Vec<_>, _>>().unwrap()
+    };
+    for (owner, private) in [(&abandoned.owner, "/aborted"), (&newer.owner, "/kept")] {
+        for root in [private, "/shared"] {
+            store.record_corpus_run_retaining(root, &[], 1, 1, [1; 32], &[], None, None, 100, None, Some(owner)).unwrap();
+        }
+    }
+    assert_eq!(manifests(abandoned.owner.membership()), ["/aborted", "/shared"]);
+    assert_eq!(manifests(newer.owner.membership()), ["/kept", "/shared"]);
     abandoned.finish(false).unwrap();
+    assert!(manifests(abandoned.owner.membership()).is_empty());
+    assert_eq!(manifests(newer.owner.membership()), ["/kept", "/shared"]);
+    assert!(store.corpus_run_of("/aborted").unwrap().is_none());
     newer.finish(true).unwrap();
     older.finish(true).unwrap();
+    assert_eq!(manifests(scope), ["/kept", "/shared"]);
     let db = store.connection.lock().unwrap();
     let rows = db.prepare("SELECT scope,snapshot_id FROM analysis_scope_workspace_snapshot").unwrap()
         .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();

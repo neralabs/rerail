@@ -605,15 +605,17 @@ Problem(@place("git",1), root, id, reason) :- git_tree_walk_error(_,root,id,reas
   it("identifies duplicate tree entries and rejects malformed commit metadata at selection", async () => {
     const root = checkout();
     const blob = git(root, "rev-parse", "HEAD:a.py");
-    const entry = Buffer.concat([Buffer.from("100644 same.py\0"), Buffer.from(blob, "hex")]);
     const literal = (kind: string, input: Buffer | string) => execFileSync("git",
       ["hash-object", "-t", kind, "--literally", "-w", "--stdin"], { cwd: root, input, encoding: "utf8" }).trim();
-    const duplicate = literal("tree", Buffer.concat([entry, entry]));
+    // Only one target contains NEEDLE. Choosing the clean entry would lose the finding.
+    const clean = literal("blob", "x = 1\n");
+    const duplicate = literal("tree", Buffer.concat([clean, blob].flatMap(id =>
+      [Buffer.from("100644 same.py\0"), Buffer.from(id, "hex")])));
     const source = new (loadNativeBinding().GitRevisionSource)(root, duplicate, "malformed");
     expect(() => source.readDirectory(".")).toThrow(/duplicate entry.*same\.py/u);
     const tree = execFileSync("git", ["mktree"], { cwd: root, input: `040000 tree ${duplicate}\tbad\n`, encoding: "utf8" }).trim();
     const result = await scan(root, { revision: tree, analysisScope: "malformed" });
-    expect(result.status).toBe("failed");
+    expect(result).toMatchObject({ status: "failed", cache: { publication: "aborted" } });
     expect(result.failures).toContainEqual(expect.objectContaining({ path: "bad", message: expect.stringContaining(duplicate) }));
     const commit = literal("commit", `tree ${tree}\n\nmissing signatures\n`);
     await expect(scan(root, { revision: commit, analysisScope: "malformed" })).rejects.toThrow(`malformed Git commit ${commit}`);

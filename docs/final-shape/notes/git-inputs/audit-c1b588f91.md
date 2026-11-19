@@ -99,10 +99,10 @@ Fix cases 1–8 and 13–16 first. These cases can select the wrong source, supp
 | Cases | Commit | Evidence |
 | --- | --- | --- |
 | 1–2 | `a2d8c22f2` | The report identifies the checkout with the trailing space. Both path interfaces preserve the leading space and report the violation. |
-| 3–4, 9–12 | `6bfa331f2` | The scan rejects duplicate entries and malformed commits. Selector tests check Git's answer. A byte-name child remains reachable by ID. |
+| 3–4, 9–12 | `6bfa331f2` | Two entries have the same name and different blob IDs. Only one blob contains a violation. The scan identifies the malformed subtree and aborts publication. The scan also rejects malformed commits. Selector tests check Git's answer. A byte-name child remains reachable by ID. |
 | 5 | `0a770a110`, `65a745ab2` | Headless and standalone reports keep the successful policy's findings in both orders. [The standalone working-tree ownership fixture](audit-ec9066ed9.md#working-tree-batch-publication-case-58) checks a separate effect of the failed batch. |
 | 6–8 | `68ccbe8ac`, `be7e18211` | Overlapping runs keep opposite tracking answers. A small worker pool could still stall. Four Linux runs now return with one, two, three, or four workers. Eight runs on two workers returned the expected forty answers over five batches. Removing and restoring a split index changes warm answers. A literal Unix backslash survives lookup. |
-| 13–14, 16 | `a91b1bf7f` | Reverse completion preserves the newer directory snapshot. Aborting one run preserves the other run's rows. A failed ownership query reaches the release worker. |
+| 13–14, 16 | `a91b1bf7f` | Reverse completion preserves the newer directory snapshot. Two scopes reuse one scan ID and stage a shared manifest and a private manifest each. Aborting one preserves the other's two staged manifests through publication. A failed ownership query reaches the release worker. |
 | 15, 17–18 | `1150e5031` | Two runs share a source view and publish separate manifests. The view retracts a repaired subtree error and applies a replacement language registry. |
 | 19 | `b19722b7f` | An unrelated pack or a rewritten multi-pack index causes zero tree decodes. Damaging and restoring the supplying pack changes the answer. |
 | 20 | `5fb92bb6e` | A cold scan builds three binding contributions. An unused decorator change builds zero. A matching change builds one and produces the sibling finding. |
