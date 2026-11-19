@@ -1667,4 +1667,27 @@ describe("rules whose finding in one file can depend on another", () => {
       "test:plain": false, "test:budget": true, "test:pairs": true, "test:calls": true, "n-no-missing-import": true,
     });
   });
+
+  it("marks a rule that reports only past a count of its findings, or that runs a relational plan, as reading other files", () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_RELATIONAL_RULES", "1");
+    try {
+      const violation = { code: "X", anchor: "witness.span", message: "x" };
+      const scope = { include: ["**/*.py"], exclude: [] };
+      const files = { evidence: { as: "file", query: { ast: { language: "python", rule: { kind: "module" } } }, project: { path: "file.path" } } };
+      const rules = [
+        codeRuleSchema.parse({ format: "rerail.policy/v1", id: "test:gated", revision: 1, mode: "block", scope, clauses: [
+          { id: "gate", define: { report_when: { count: { gt: 3 } } } },
+          { id: "c", forbid: { regex: { pattern: "NEEDLE", source: "file.content" } }, violation },
+        ] }),
+        codeRuleSchema.parse({ format: "rerail.policy/v1", id: "test:relational", revision: 1, mode: "block", scope, clauses: [
+          { id: "rows", relational: { inputs: { files }, query: "SELECT __path path,__start start_byte,__end end_byte FROM files", key: ["path"] }, violation },
+        ] }),
+      ];
+      const catalog = testCodeRuleCatalog(rules, writeCapabilities(temporaryRoot()));
+      expect(catalog.quarantined()).toEqual([]);
+      expect(Object.fromEntries(catalog.snapshot().codeRules.map(rule => [rule.id, rule.crossFile]))).toEqual({ "test:gated": true, "test:relational": true });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });

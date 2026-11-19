@@ -111,12 +111,14 @@ function liveOutcome(held: HeldOutcome): CompileOutcome | undefined {
 }
 
 /** The terms of a rule whose finding in one file can depend on another file the workspace holds. */
-const CROSS_FILE_TERMS = new Set(["budget", "require_each", "calls", "importTarget"]);
+const CROSS_FILE_TERMS = new Set(["budget", "require_each", "calls", "importTarget", "relational", "report_when"]);
 
 /**
  * Whether a rule's finding in one file can depend on other files the workspace holds: a `budget` or `require_each`
  * clause counts or pairs matches across files, a `calls` term follows calls into them, an `importTarget` term reads the
- * file an import names. Where none does, the order files are checked in changes no finding.
+ * file an import names, a `relational` clause queries relations over many files, and a `report_when` bound reports a
+ * document's findings only once their count over the workspace passes it. Where none does, the order files are checked
+ * in changes no finding.
  */
 function readsOtherFiles(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(readsOtherFiles);
