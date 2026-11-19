@@ -61,6 +61,7 @@ It does not assert that the object remains in the local Git directory forever.
 The object kind is `commit`, `tree`, `blob`, or `tag`.
 The payload's bytes remain unchanged under the full object ID.
 A content handle refers to those bytes in the ordinary source store.
+To acquire a handle and read a byte range, see [Read bytes through a Git content handle](../../../rule-syntax/git.md#read-bytes-through-a-git-content-handle).
 
 The library derives commit trees, parents, and tag targets from decoded object data.
 A commit has one tree. A root commit has a complete empty parent family.

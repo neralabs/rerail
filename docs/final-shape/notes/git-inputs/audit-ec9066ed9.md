@@ -2,7 +2,7 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Twenty-three of the 28 follow-up findings have verified results. Five remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+Twenty-four of the 28 follow-up findings have verified results. Four remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
 
 | Open finding | What still needs to pass |
 | --- | --- |
@@ -10,7 +10,20 @@ Twenty-three of the 28 follow-up findings have verified results. Five remain ope
 | 42. Removed stores | Retire a route by store identity. Apply its outstanding stop if that store returns. Preserve a different store at the same path. |
 | Bound commit metadata | Request the bound commit when a rule reads its metadata. Verify root commits, non-root commits and unavailable objects under negation. |
 | Commit diagnostic locations | Identify the repository, commit and optional field in the report. Distinguish a commit finding from a finding in a file named `git`. |
-| Content handles | Read verified content through a rule-visible handle. Check reuse across revisions and the result for a missing object. |
+
+## Verified Git content handles
+
+The standalone CLI returned the same bytes as `git cat-file` for a blob, tree, commit and annotated tag.
+A request for an unopened repository returned `repository-not-open`.
+The binary fixture returned `00ff1325` for its first four bytes. Reads stopped at the end of the blob.
+A negative offset returned `invalid-range`. An unacquired handle returned zero rows.
+
+The first scan verified the Git payload once. A fresh process at an unrelated commit reused the same stored source with zero payload verifications.
+Each scan published under a different scope. Collection preserved the bytes after the first scope was released and removed them after the last release.
+Removing the warmed blob produced `missing`. Replacing it with a valid blob under the wrong ID produced `unreadable`.
+Restoring the original object restored the bytes. Repacking the repository preserved them.
+All 15 standalone revision tests and both headless content and provenance tests passed on macOS.
+[Rule example](../../../rule-syntax/git.md#read-bytes-through-a-git-content-handle) · [Standalone regression](../../../../native/tests/git_revision_cli.rs) · [Headless regression](../../../../test/cli/headless-scan.test.ts)
 
 ## Selected document provenance
 

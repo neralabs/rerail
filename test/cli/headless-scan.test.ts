@@ -598,6 +598,34 @@ Origin(@place(p,1), v, b, g, profile, cat("", t)) :- git_source_file(v, p, _, b)
     expect(await read(["copy.py", "a.py"])).toEqual(both);
   }, 90_000);
 
+  it("reads binary object content from the selected revision through a rule handle", async () => {
+    const root = checkout();
+    const file = join(root, "example.bin"), policy = join(root, "signature.rr");
+    writeFileSync(file, Buffer.from([0, 255, 19, 37, 65]));
+    git(root, "add", "--", "example.bin");
+    git(root, "commit", "-qm", "binary signature");
+    const oid = git(root, "rev-parse", "HEAD:example.bin");
+    const example = readFileSync(resolve("docs/rule-syntax/git.md"), "utf8").split("```rr\n")
+      .map(block => block.split("\n```")[0]!).find(block => block.includes(".output signature"))!;
+    writeFileSync(policy, example + `
+.policy "signature" revision 1
+.violation Signature(at: span, bytes: symbol) "{bytes}"
+Signature(@place("a.py",1), data) :- signature(data).
+.violation Unavailable(at: span, object: symbol, reason: symbol) "{object} {reason}"
+Unavailable(@place("a.py",1), id, why) :- git_content_error(_,id,why).
+`);
+    writeFileSync(file, "working copy");
+    const check = async (expected: string) => {
+      const report = await scan(root, { revision: "HEAD", analysisScope: "binary-signature", rr: [policy] });
+      expect(report.violations.filter(f => f.ruleId === "signature").map(f => f.message), JSON.stringify(report.failures)).toEqual([expected]);
+    };
+    await check("00ff1325");
+    const object = join(root, ".git", "objects", oid.slice(0, 2), oid.slice(2)), moved = object + ".offline";
+    renameSync(object, moved);
+    try { await check(oid + " missing"); } finally { renameSync(moved, object); }
+    await check("00ff1325");
+  }, 60_000);
+
   it("reports completeness for the requested tree and exposes failures for an incomplete walk", async () => {
     const root = checkout();
     const missing = "1".repeat(40);

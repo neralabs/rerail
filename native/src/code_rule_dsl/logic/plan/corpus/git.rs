@@ -121,6 +121,17 @@ impl Git {
         read(repo, self.storage.get_or_init(|| storage::Storage::of(repo)).as_ref())
     }
 
+    pub(super) fn payload(&self, key: &str, oid: &str) -> Result<(String, Vec<u8>, String), &'static str> {
+        self.with_repository(key, |repo, storage| {
+            let id = Self::object_id(repo, oid)?;
+            let stamp = storage.and_then(|s| s.object(id)).unwrap_or_else(|| "unverified".to_owned());
+            let object = snapshot::verified_object(repo, id).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }
+            })?;
+            Ok((object.kind.to_string(), object.detach().data, stamp))
+        })
+    }
+
     fn read_object(&self, repo: &gix::Repository, storage: Option<&storage::Storage>, oid: &str) -> Result<Vec<Record>, &'static str> {
         let id = Self::object_id(repo, oid)?;
         let observed = storage.and_then(|storage| storage.object(id));
@@ -288,7 +299,7 @@ fn non_unicode_git_locations_keep_the_original_path_units() {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(super) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -481,7 +492,7 @@ pub(super) fn still(root: &Path, input: &str, previous: &str) -> bool {
 /// can run before any source inventory is available.
 pub(super) fn metadata_only(program: &Program) -> bool {
     let needed = super::world::needed(program);
-    if !needed.iter().any(|rel| INPUTS.contains(&rel.as_str()) || super::analysis_history::is_input(rel) || rel == super::analysis_history::ANSWER) {
+    if !needed.iter().any(|rel| INPUTS.contains(&rel.as_str()) || super::analysis_history::is_input(rel) || rel == super::analysis_history::ANSWER || rel == super::git_content::ANSWER) {
         return false;
     }
     let heads: std::collections::BTreeSet<_> = program.rules.iter().map(|rule| rule.head.rel.as_str()).collect();
@@ -494,7 +505,7 @@ pub(super) fn metadata_only(program: &Program) -> bool {
             || program.facts.contains_key(rel.as_str())
             || INPUTS.contains(&rel.as_str())
             || super::analysis_history::is_input(rel)
-            || rel == super::analysis_history::ANSWER
+            || rel == super::analysis_history::ANSWER || rel == super::git_content::ANSWER
             || super::source_languages::is_input(rel)
             // A declared relation with no producers is empty, unless a phase can supply it.
             || (program.decls.contains_key(rel.as_str()) && !rel.contains("__") && !program.inputs.contains(rel))

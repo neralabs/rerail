@@ -127,7 +127,7 @@ impl World {
         World { roots, root: root.to_path_buf(), budget, ..World::default() }
     }
 
-    fn git(&mut self) -> &super::git::Git {
+    pub(super) fn git(&mut self) -> &super::git::Git {
         self.git.get_or_insert_with(|| super::git::Git::new(&self.root))
     }
 

@@ -1,0 +1,38 @@
+#include "git.rr"
+
+.decl git_content_request(repo: symbol, oid: symbol) extensible
+.decl git_content_read_request(content: symbol, offset: number, length: number) extensible
+.decl git_payload_request(repo: symbol, oid: symbol, offset: number, length: number)
+.decl git_payload_of(repo: symbol, oid: symbol, offset: number, length: number, kind: symbol, content: symbol, size: number, bytes: symbol, status: symbol, storage: symbol)
+
+git_payload_request(r, id, 0, 0) :- git_content_request(r, id).
+.decl git_content_key(repo: symbol, oid: symbol, version: symbol)
+git_content_key(r, id, "git-content-v1") :- git_content_request(r, id).
+
+.decl git_content_record(repo: symbol, oid: symbol, version: symbol, kind: symbol, content: symbol, size: number)
+git_content_record(r,id,v,k,h,n) :-
+    git_content_key(r,id,v), git_payload_request(r,id,0,0), git_payload_of(r,id,0,0,k,h,n,_,"ok",_).
+.cache git_content_record by git_content_key
+
+.decl git_object(repo: symbol, oid: symbol, kind: symbol, content: symbol)
+git_object(r,id,k,h) :- git_content_record(r,id,_,k,h,_).
+.decl git_blob_content(repo: symbol, blob: symbol, content: symbol)
+git_blob_content(r,id,h) :- git_object(r,id,"blob",h).
+.decl git_content_size(content: symbol, size: number)
+git_content_size(h,n) :- git_content_record(_,_,_,_,h,n).
+
+.decl git_content_error(repo: symbol, oid: symbol, reason: symbol)
+git_content_error(r,id,why) :-
+    git_content_request(r,id), git_payload_request(r,id,0,0), git_payload_of(r,id,0,0,_,_,_,_,why,_), why != "ok".
+
+git_payload_request(r,id,off,n) :- git_object(r,id,_,h), git_content_read_request(h,off,n), off >= 0, n >= 0.
+.decl git_content_bytes(content: symbol, offset: number, length: number, bytes: symbol)
+git_content_bytes(h,off,n,bytes) :-
+    git_content_read_request(h,off,n), git_object(r,id,_,h), git_payload_request(r,id,off,n),
+    git_payload_of(r,id,off,n,_,h,_,bytes,"ok",_).
+
+.decl git_content_read_error(content: symbol, offset: number, length: number, reason: symbol)
+git_content_read_error(h,off,n,"invalid-range") :- git_content_size(h,_), git_content_read_request(h,off,n), (off < 0 ; n < 0).
+git_content_read_error(h,off,n,why) :-
+    git_content_read_request(h,off,n), git_object(r,id,_,h), git_payload_request(r,id,off,n),
+    git_payload_of(r,id,off,n,_,_,_,_,why,_), why != "ok".
