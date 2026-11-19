@@ -1314,6 +1314,32 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
     }
   });
 
+  it("reports unavailable run history while returning findings from independent policies", async () => {
+    const root = checkout(), home = root + "-home", mount = join(home, "mounted"), store = join(mount, "store.sqlite");
+    mkdirSync(mount, { recursive: true });
+    const current = join(home, "current.rr"), history = join(home, "history.rr");
+    writeFileSync(current, '#include "git.rr"\n.policy "current" revision 1\n.violation Current(at: span) "current"\nCurrent(@place("a.py",1)) :- git_root_repo(_).\n');
+    writeFileSync(history, '#include "analysis.rr"\n.policy "history" revision 1\n.violation Seen(at: span) "known"\nSeen(@place("a.py",1)) :- analysis_named_scope("release",s), analysis_scope_run(s,_).\n');
+    const read = () => scan(root, { revision: "HEAD", analysisScope: "lookup", rr: [history, current] });
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+    try {
+      expect((await read()).violations.map(row => row.message)).toEqual(["current"]);
+      await scan(root, { revision: "HEAD", analysisScope: "release", rr: [current] });
+      expect((await read()).violations.map(row => row.message).sort()).toEqual(["current", "known"]);
+      loadNativeBinding().retireUpkeepUnder?.(mount);
+      const saved = join(home, "saved");
+      renameSync(mount, saved);
+      writeFileSync(mount, "offline");
+      const offline = await read();
+      expect(offline.status).toBe("failed");
+      expect(offline.failures.map(row => row.message).join(" ")).toMatch(/history requires a readable content store/u);
+      expect(offline.violations.map(row => row.message)).toEqual(["current"]);
+      rmSync(mount);
+      renameSync(saved, mount);
+      expect((await read()).violations.map(row => row.message).sort()).toEqual(["current", "known"]);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it("collects a named-only custom store after restart and deletion of its last scope", async () => {
     const root = checkout(), home = root + "-home", store = join(home, "custom.sqlite"), databasePath = join(home, "rerail.sqlite");
     vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);

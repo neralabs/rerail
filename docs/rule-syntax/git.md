@@ -94,6 +94,8 @@ If the readable history has no match, the search reports its read failure.
 ## Relations
 
 Include `analysis.rr` to look up completed scans in the active content store.
+A rule that reads run history requires a readable store. If the store is unavailable, that rule reports an error.
+Other policies in the scan can still report findings. A readable store with no matching runs supplies zero rows.
 This query returns the commits scanned under `release` in the current repository.
 
 ```rr
