@@ -22,9 +22,14 @@ SOUFFLE = shutil.which("souffle") or "/opt/homebrew/bin/souffle"
 FACTS_BIN = os.path.join(HERE, "target", "release", "rrlab-facts")
 FN_DIR = os.path.join(HERE, "target", "functors")
 ECMA = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx")
-# The folders the engine's walks skip (its `file` facts, the corpus): the host's IGNORED_DIRECTORIES, read from its source.
-with open(os.path.join(REPO, "src", "engine", "code-rule", "ignored-directories.ts")) as _f:
-    SKIP_DIRS = set(re.findall(r'"([^"]+)"', _f.read().split("new Set([", 1)[1].split("]);", 1)[0]))
+# The folders the engine's walks skip (its `file` facts, the corpus): the host's IGNORED_DIRECTORIES, as the data the
+# engine reads, from rrlab's own checkout (RRLAB_RR may name another one's rules).
+_IGNORED = os.path.join(HERE, "..", "..", "..", "..", "native", "src", "ignored_directories.generated.json")
+try:
+    with open(_IGNORED) as _f:
+        SKIP_DIRS = set(json.load(_f))
+except (OSError, ValueError) as _e:
+    raise SystemExit(f"rrlab: cannot read the ignored directories from {os.path.normpath(_IGNORED)}: {_e}")
 csv.field_size_limit(1 << 30)
 
 
