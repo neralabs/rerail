@@ -433,16 +433,31 @@ fn file_clock() -> std::time::SystemTime {
         )
 }
 
-/// Whether `now`, from the file clock, has left the step that gave `modified`: any later time for
-/// a time with a fraction of a second, and two seconds on for a whole second, the time of a file
-/// system whose clock steps by one or two seconds.
+/// Whether `now`, from the file clock, has left the step that gave `modified`, as its digits show
+/// it ([`time_step`]).
 #[cfg(target_os = "linux")]
 fn past_step(modified: std::time::SystemTime, now: std::time::SystemTime) -> bool {
-    let whole = modified
+    now > modified + time_step(modified)
+}
+
+/// The step of the file system that gave `time`, read from its digits: a file system keeps times
+/// to a step of its own (a nanosecond on ext4, 100 ns on NTFS, 10 ms on exFAT, one or two seconds
+/// on FAT), so a time's nanoseconds are a multiple of it. The step is taken as the largest power of
+/// ten that divides them, and two seconds for a whole second; a time of a finer file system that
+/// ends in zeros by chance is left a little later.
+#[cfg(target_os = "linux")]
+fn time_step(time: std::time::SystemTime) -> std::time::Duration {
+    let nanos = time
         .duration_since(std::time::UNIX_EPOCH)
-        .is_ok_and(|since| since.subsec_nanos() == 0);
-    let step = std::time::Duration::from_secs(if whole { 2 } else { 0 });
-    now > modified + step
+        .map_or(0, |since| since.subsec_nanos());
+    if nanos == 0 {
+        return std::time::Duration::from_secs(2);
+    }
+    let mut step = 1;
+    while nanos % (step * 10) == 0 {
+        step *= 10;
+    }
+    std::time::Duration::from_nanos(u64::from(step))
 }
 
 impl FileStamp {
@@ -1372,14 +1387,20 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// A time with a fraction of a second is left at the next reading of the clock; a whole second,
-    /// which a clock of one or two seconds a step gives, two seconds on.
+
+    /// A time is left once the clock has passed it by the step its digits show: a nanosecond time at
+    /// the next reading, a time of 100 ns steps (NTFS) or of 10 ms steps (exFAT) a step on, and a
+    /// whole second, which a file system of one or two seconds a step gives, two seconds on.
     #[cfg(target_os = "linux")]
     #[test]
     fn says_when_the_file_clock_has_left_a_files_time() {
         let at = |seconds: u64, nanos: u32| std::time::UNIX_EPOCH + Duration::new(seconds, nanos);
-        assert!(!past_step(at(10, 500), at(10, 500)));
-        assert!(past_step(at(10, 500), at(10, 501)));
+        assert!(!past_step(at(10, 501), at(10, 501)));
+        assert!(past_step(at(10, 501), at(10, 502)));
+        assert!(!past_step(at(10, 234_567_800), at(10, 234_567_850)));
+        assert!(past_step(at(10, 234_567_800), at(10, 234_567_901)));
+        assert!(!past_step(at(10, 10_000_000), at(10, 15_000_000)));
+        assert!(past_step(at(10, 10_000_000), at(10, 20_000_001)));
         assert!(!past_step(at(10, 0), at(12, 0)));
         assert!(past_step(at(10, 0), at(12, 1)));
     }
