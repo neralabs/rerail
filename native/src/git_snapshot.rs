@@ -556,6 +556,11 @@ pub fn contains(path: &Path) -> bool {
     view(path).is_some()
 }
 
+/// The root against which a policy read records repository-relative include paths.
+pub fn view_root(path: &Path) -> Option<PathBuf> {
+    view(path).map(|view| view.root.clone())
+}
+
 /// A scoped object-store view. Its stable root is an identity used by the engine's path-keyed stores.
 /// No directory is created at that path, either when the view opens or while it is read.
 #[derive(Debug)]

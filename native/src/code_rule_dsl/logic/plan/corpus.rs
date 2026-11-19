@@ -3537,7 +3537,7 @@ fn run_observed(
     let _combined_pins = durable.is_some().then(|| combined::Pins::new(store, &texts));
     // And the rule files' entries read before the run (`rr::read_file`, decision 0275), by the outermost run: a nested
     // one (phase 0's) did not read them.
-    let mut rule_files = if durable.is_some() && !nested { combined::take_read_before() } else { Vec::new() };
+    let mut rule_files = if durable.is_some() && !nested && !phase0::active() { combined::take_read_before() } else { Vec::new() };
     if durable.is_some() {
         rule_files.extend(given.phase.program_entry);
     }

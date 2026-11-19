@@ -275,11 +275,16 @@ pub fn read_policy(path: &Path) -> Result<(super::logic::front::Program, Vec<sup
 }
 
 pub fn read_policy_after(path: &Path, inspected: Option<&[super::logic::rr::LibraryFile]>) -> Result<(super::logic::front::Program, Vec<super::logic::rr::LibraryFile>), String> {
-    let (program, files) = super::logic::rr::read_file_after(path, inspected).map_err(|e| e.to_string())?;
-    if !program.outputs.iter().any(|name| super::logic::rr::is_diagnostic(name)) {
+    let read = inspect_policy_after(path, inspected)?;
+    Ok((read.program, read.files))
+}
+
+pub fn inspect_policy_after(path: &Path, inspected: Option<&[super::logic::rr::LibraryFile]>) -> Result<super::logic::rr::ReadProgram, String> {
+    let read = super::logic::rr::inspect_file_after(path, inspected).map_err(|e| e.to_string())?;
+    if !read.program.outputs.iter().any(|name| super::logic::rr::is_diagnostic(name)) {
         return Err(format!("{}: no .violation declarations", path.display()));
     }
-    Ok((program, files))
+    Ok(read)
 }
 
 pub fn policy_inputs(files: &[super::logic::rr::LibraryFile]) -> serde_json::Value {

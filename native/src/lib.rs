@@ -262,14 +262,15 @@ pub fn content_store_file_name() -> &'static str {
 #[cfg(not(feature = "headless"))]
 #[napi]
 pub fn inspect_rr_policy(path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
-    LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()), None)?.inspection()
+    code_rule_dsl::logic::plan::corpus::combined::inspect_separately(||
+        LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()), None)?.inspection())
 }
 
 #[cfg(not(feature = "headless"))]
 #[derive(Clone)]
 enum PolicyLocation {
     Worktree { path: std::path::PathBuf, library: std::path::PathBuf },
-    Git(std::sync::Arc<git_workspace::snapshot::Snapshot>),
+    Git { snapshot: std::sync::Arc<git_workspace::snapshot::Snapshot>, inputs: Option<code_rule_dsl::logic::rr::GitPolicyInputs> },
 }
 
 #[cfg(not(feature = "headless"))]
@@ -284,11 +285,11 @@ struct LoadedRrPolicy {
 impl LoadedRrPolicy {
     fn read(path: &str, snapshot: Option<std::sync::Arc<git_workspace::snapshot::Snapshot>>, inspected: Option<&[code_rule_dsl::logic::rr::LibraryFile]>) -> Result<Self> {
         let path = rr_policy_path(path, snapshot.as_deref())?;
+        let code_rule_dsl::logic::rr::ReadProgram { program, files, git } = tools::inspect_policy_after(&path, inspected).map_err(Error::from_reason)?;
         let location = match snapshot {
-            Some(snapshot) => PolicyLocation::Git(snapshot),
+            Some(snapshot) => PolicyLocation::Git { snapshot, inputs: git },
             None => PolicyLocation::Worktree { path: path.clone(), library: code_rule_dsl::logic::rr::library_root() },
         };
-        let (program, files) = tools::read_policy_after(&path, inspected).map_err(Error::from_reason)?;
         Ok(Self { location, program, files })
     }
 
@@ -321,7 +322,7 @@ impl LoadedRrPolicies {
     #[napi]
     pub fn load(&self, path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
         let key = policy_file_path(&path)?;
-        let read = || {
+        let read = || code_rule_dsl::logic::plan::corpus::combined::inspect_separately(|| {
             let inspected = if source.is_none() && self.store.is_some() {
                 self.programs.lock().unwrap_or_else(|err| err.into_inner()).get(key)
                     .and_then(|versions| versions.get(&None)).map(|policy| policy.files.clone())
@@ -329,12 +330,12 @@ impl LoadedRrPolicies {
             let policy = LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()), inspected.as_deref())?;
             let inspection = policy.inspection()?;
             let origin = match &policy.location {
-                PolicyLocation::Git(snapshot) => Some(snapshot.source_key()),
+                PolicyLocation::Git { snapshot, .. } => Some(snapshot.source_key()),
                 PolicyLocation::Worktree { .. } => None,
             };
             self.programs.lock().unwrap_or_else(|err| err.into_inner()).entry(key.to_owned()).or_default().insert(origin, policy);
             Ok(inspection)
-        };
+        });
         match &self.store {
             Some(store) => code_rule_dsl::logic::plan::corpus::with_tape_cache_path(store, None, read),
             None => read(),
@@ -469,8 +470,12 @@ impl napi::Task for ScanRrPolicies {
                 let report = if ephemeral {
                     None
                 } else {
-                    if preloaded && let PolicyLocation::Worktree { path, library } = &location {
-                        code_rule_dsl::logic::rr::retain_read_program(path, library, &files, &program);
+                    if preloaded {
+                        match &location {
+                            PolicyLocation::Worktree { path, library } => code_rule_dsl::logic::rr::retain_read_program(path, library, &files, &program),
+                            PolicyLocation::Git { snapshot, inputs: Some(inputs) } => inputs.retain(snapshot.root(), &files, &program),
+                            PolicyLocation::Git { inputs: None, .. } => {}
+                        }
                     }
                     match tools::run_program_checked(program.clone(), &files, root, &out, &options) {
                         Ok(report) => Some(Ok(report)),

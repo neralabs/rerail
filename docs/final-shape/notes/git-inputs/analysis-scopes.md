@@ -205,6 +205,15 @@ A scan can execute a policy inspected for another store. It retains the program 
 If an include changes after inspection, the scan executes the inspected version. The next inspection reads the new version.
 A native policy catalog can inspect the same relative path in several Git revisions.
 An explicit policy source selects the inspected entry for that repository, revision, and directory.
+A historical source scan still uses today's policy unless the caller supplies a separate Git policy source.
+For an explicit Git policy, the compiled program depends on its bytes, its resolved includes, the selected rule library and the compiler.
+The stored include graph uses repository-relative paths for Git inputs. A new process binds those paths to the policy revision it opened.
+A change elsewhere in the tree preserves the compiled program. A change in an included rule can produce different findings.
+A failed read of a required Git blob fails inspection, including after a successful inspection of that policy.
+Inspection checks the targets of includes and the library paths where it previously found no file.
+If a library file appears there, it takes precedence over the file beside the policy.
+Each consuming scope retains the compiled version it used, including when the catalog opened a different store.
+Restoring earlier include bytes can reuse an earlier compiled version while a scope still retains it.
 Catalog lookup accepts the same file name with repeated separators or a `.` component.
 A Git policy path must name a file inside its selected source. A trailing separator requires a directory and gives a policy path error.
 Without a policy source, evaluation uses the inspected working-tree policy, or the only inspected Git policy for that path.

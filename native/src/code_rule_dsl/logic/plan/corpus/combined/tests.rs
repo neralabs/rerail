@@ -1,5 +1,14 @@
     use super::*;
 
+    #[test]
+    fn catalog_inspection_does_not_attach_its_entries_to_another_run() {
+        inspect_separately(|| {
+            read_before_the_run([1; 32]);
+            inspect_separately(|| read_before_the_run([2; 32]));
+            assert_eq!(take_read_before(), vec![[1; 32]]);
+        });
+    }
+
     /// A batch's earlier run records its manifest and starts the store's collection while the pack's run has combined
     /// its program and queued it, and names it only in its own manifest, later. The entry is pinned until that run
     /// ends (`Pins`): the collection meanwhile keeps it. Before, it took the entry, and every batch combined its pack

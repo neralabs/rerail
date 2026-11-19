@@ -24,6 +24,8 @@ pub mod aggregate_demand {
     use std::collections::{BTreeMap, BTreeSet};
 }
 pub mod from_tape;
+mod git_policy;
+pub use git_policy::GitPolicyInputs;
 pub mod images;
 pub mod module_image;
 pub use rerail_rr::code_rule_dsl::logic::rr::lower;
@@ -1114,7 +1116,7 @@ fn builtin_resolve(statements: Vec<syntax::Statement>) -> Result<(Files, Vec<syn
     if t_shape {
         seen.push(core);
     } else {
-        visit(&core, &mut out, &mut read_files, &mut seen, false)?;
+        visit(&core, &mut out, &mut read_files, &mut seen, false, &mut |_, _| {})?;
     }
     for (item, line) in includes {
         let syntax::Item::Include(name) = item else { unreachable!("an include") };
@@ -1122,7 +1124,7 @@ fn builtin_resolve(statements: Vec<syntax::Statement>) -> Result<(Files, Vec<syn
         if !path.exists() {
             return Err(Error::Syntax(format!("line {line}: #include {name:?}: no such file in the library")));
         }
-        visit(&path, &mut out, &mut read_files, &mut seen, true)?;
+        visit(&path, &mut out, &mut read_files, &mut seen, true, &mut |_, _| {})?;
     }
     Ok((out, own))
 }
@@ -1237,13 +1239,28 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     read_file_after(path, None)
 }
 
+pub fn read_file_after(path: &Path, inspected: Option<&[LibraryFile]>) -> Result<(Program, Vec<LibraryFile>), Error> {
+    let read = inspect_file_after(path, inspected)?;
+    Ok((read.program, read.files))
+}
+
+pub struct ReadProgram {
+    pub program: Program,
+    pub files: Vec<LibraryFile>,
+    pub git: Option<GitPolicyInputs>,
+}
+
 /// A repeated inspection in the same catalog can use the reader's current in-process program.
 /// Execution attaches the inspected graph to its destination store, including after collection.
-pub fn read_file_after(path: &Path, inspected: Option<&[LibraryFile]>) -> Result<(Program, Vec<LibraryFile>), Error> {
-    if crate::git_workspace::snapshot::contains(path) {
-        let (modules, files) = builtin_program(path)?;
-        return Ok((lower_files_dropping(path, modules, true)?, files));
+pub fn inspect_file_after(path: &Path, inspected: Option<&[LibraryFile]>) -> Result<ReadProgram, Error> {
+    if let Some(root) = crate::git_workspace::snapshot::view_root(path) {
+        return git_policy::read(&root, path);
     }
+    let (program, files) = read_worktree_file(path, inspected)?;
+    Ok(ReadProgram { program, files, git: None })
+}
+
+fn read_worktree_file(path: &Path, inspected: Option<&[LibraryFile]>) -> Result<(Program, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
     static PROGRAMS: OnceLock<Mutex<HashMap<(PathBuf, PathBuf), (Vec<LibraryFile>, Program)>>> = OnceLock::new();
@@ -1711,9 +1728,10 @@ pub type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
 
 /// `path` and what it includes, each once (`seen`), includes first, added to `out`; every library file read or
 /// probed, to `read_files`. An `included` file's `.output`s are left out, as are those of what it includes.
-fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>, included: bool) -> Result<(), Error> {
+fn visit(requested: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>, included: bool, resolved: &mut impl FnMut(&Path, &Path)) -> Result<(), Error> {
     use crate::git_workspace::snapshot as source;
-    let path = source::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let path = source::canonicalize(requested).map_err(|e| Error::Syntax(format!("{}: {e}", requested.display())))?;
+    resolved(requested, &path);
     if seen.contains(&path) {
         return Ok(());
     }
@@ -1750,7 +1768,7 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
         if !source::is_file(&found) || pinned && !bundled && !source::contains(&found) {
             return Err(Error::Syntax(format!("{}:{line}: #include {name:?}: no such file", path.display())));
         }
-        visit(&found, out, read_files, seen, true)?;
+        visit(&found, out, read_files, seen, true, resolved)?;
     }
     out.push((path, rest));
     Ok(())
@@ -1868,6 +1886,10 @@ fn probe(library: &Path, name: &str, target: &Path, files: &mut Vec<LibraryFile>
 
 /// `program` for phase 0's own reads.
 fn builtin_program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
+    builtin_program_resolved(path, &mut |_, _| {})
+}
+
+fn builtin_program_resolved(path: &Path, resolved: &mut impl FnMut(&Path, &Path)) -> Result<(Files, Vec<LibraryFile>), Error> {
     let (mut out, mut read_files) = (Vec::new(), Vec::new());
     // `core.rr` is every program's prelude (the base relations and built-ins), included or not; except a program in
     // T's shape (decision 0046), which declares its base relations itself (`doc` among them), and whose libraries
@@ -1877,10 +1899,13 @@ fn builtin_program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
         .iter()
         .any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
     if !t_shape {
-        visit(&library().join("core.rr"), &mut out, &mut read_files, &mut Vec::new(), false)?;
+        visit(&library().join("core.rr"), &mut out, &mut read_files, &mut Vec::new(), false, resolved)?;
     }
-    let mut seen = vec![library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?];
-    visit(path, &mut out, &mut read_files, &mut seen, false)?;
+    let prelude = library().join("core.rr");
+    let core = prelude.canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
+    resolved(&prelude, &core);
+    let mut seen = vec![core];
+    visit(path, &mut out, &mut read_files, &mut seen, false, resolved)?;
     Ok((out, read_files))
 }
 

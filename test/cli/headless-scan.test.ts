@@ -2782,6 +2782,76 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
     }
   }, 30_000);
 
+  it("reopens a verified Git policy graph in a fresh process across revisions and destination stores", async () => {
+    const root = checkout(), home = root + "-home", policy = "policies/check.rr", child = "policies/selected.rr";
+    mkdirSync(home);
+    const library = join(home, "library");
+    cpSync(process.env.RERAIL_RR_LIB ?? join(process.cwd(), "docs/rule-syntax/lib"), library, { recursive: true });
+    mkdirSync(join(root, "policies"));
+    writeFileSync(join(root, policy), '#include "selected.rr"\n.policy "words" revision 1\n.violation Seen(at: span,w: symbol) "{w}"\nSeen(@place("a.py",1),w) :- selected_word(w).\n');
+    const word = (text: string) => `.decl selected_word(w: symbol)\nselected_word("${text}").\n`;
+    const commit = (message: string, ...files: string[]) => {
+      git(root, "add", "--", ...files);
+      git(root, "commit", "-qm", message);
+      return git(root, "rev-parse", "HEAD");
+    };
+    writeFileSync(join(root, child), word("one"));
+    const first = commit("policy", policy, child);
+    writeFileSync(join(root, "elsewhere"), "irrelevant");
+    const other = commit("unrelated", "elsewhere");
+    writeFileSync(join(root, child), word("two"));
+    const changed = commit("include", child);
+    const script = `import { loadNativeBinding } from "./src/engine/native/native.ts";
+const [root, policy, revision, store, destination, scope] = process.argv.slice(2);
+const engine = loadNativeBinding(), view = new engine.GitRevisionSource(root, revision, scope), catalog = new engine.LoadedRrPolicies(store);
+try {
+  const inputs = JSON.parse(catalog.load(policy, view)).programInputs;
+  const run = new engine.AnalysisScopeRun(destination, scope, false, "run-" + process.pid, 0);
+  const [report] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, destination, "", run, undefined, view, view, catalog));
+  if (report.error) throw Error(report.error);
+  if (run.finish(true) != null) throw Error("Failed to publish the scope");
+  console.log(JSON.stringify({ words: report.diagnostics.map(d => d.message), hashes: inputs.filter(f => f.sha256).map(f => f.sha256) }));
+} catch (error) { console.log(JSON.stringify({ error: String(error) })); }`;
+    let request = 0;
+    const read = (revision: string, inspect = "inspect", execute = "execute", scope = "review") => {
+      const profile = join(home, "profile-" + ++request);
+      const result = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, policy,
+        revision, join(home, inspect + ".sqlite"), join(home, execute + ".sqlite"), scope], {
+        input: script, encoding: "utf8", env: { ...process.env, RERAIL_PROFILE: profile, RERAIL_RR_LIB: library },
+      }));
+      if (result.error) return result;
+      const counters = readFileSync(join(profile, "profile.txt"), "utf8");
+      return { ...result, compiles: Number(counters.match(/^\s*count\s+(\d+)\s+rr\.git_policy_compiles$/mu)?.[1] ?? 0),
+        graphHits: Number(counters.match(/^\s*count\s+(\d+)\s+rr\.git_policy_graph_hits$/mu)?.[1] ?? 0) };
+    };
+    const expected = (text: string, compiles: number, graphHits: number) => ({
+      words: [text], hashes: expect.arrayContaining([createHash("sha256").update(word(text)).digest("hex")]), compiles, graphHits,
+    });
+    expect(read(first)).toEqual(expected("one", 1, 0));
+    expect(read(first)).toEqual(expected("one", 0, 1));
+    expect(read(other, "execute", "execute")).toEqual(expected("one", 0, 1));
+    expect(read(changed)).toEqual(expected("two", 1, 0));
+    expect(read(first)).toEqual(expected("one", 0, 1));
+    const blob = git(root, "rev-parse", first + ":" + child);
+    const object = join(root, ".git", "objects", blob.slice(0, 2), blob.slice(2));
+    renameSync(object, join(home, "removed-blob"));
+    expect(read(first).error).toMatch(/selected\.rr/u);
+    renameSync(join(home, "removed-blob"), object);
+    expect(read(first)).toEqual(expected("one", 0, 1));
+    writeFileSync(join(library, "selected.rr"), word("bundled"));
+    expect(read(first)).toEqual(expected("bundled", 1, 0));
+    rmSync(join(library, "selected.rr"));
+    expect(read(first)).toEqual(expected("one", 0, 0));
+    expect(read(first, "execute", "execute", "second")).toEqual(expected("one", 0, 1));
+    const engine = loadNativeBinding(), store = join(home, "execute.sqlite");
+    engine.deleteAnalysisScope(store, "review", false);
+    await engine.collectAnalysisCacheAsync(store);
+    expect(read(first, "execute", "execute", "second")).toEqual(expected("one", 0, 1));
+    engine.deleteAnalysisScope(store, "second", false);
+    await engine.collectAnalysisCacheAsync(store);
+    expect(read(first, "execute", "execute")).toEqual(expected("one", 1, 0));
+  }, 90_000);
+
   it("runs the inspected policy after an include changes and refreshes it on the next inspection", async () => {
     const root = checkout(), home = root + "-home";
     mkdirSync(home);

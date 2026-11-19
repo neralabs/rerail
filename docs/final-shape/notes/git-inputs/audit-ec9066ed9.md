@@ -2,18 +2,33 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Twenty of the 28 follow-up findings have verified results. Eight remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+Twenty-one of the 28 follow-up findings have verified results. Seven remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
 
 | Open finding | What still needs to pass |
 | --- | --- |
 | 11. Large Git blobs | Skip a binary after a bounded prefix read. Distinguish large text from an unreadable blob for loose and packed objects. |
 | 23. Scope stop after restore | Recover the committed stop, acquisition cutoff and affected store identities after restoring the control database. Exercise crashes on both sides of acknowledgement. |
 | 42. Removed stores | Retire a route by store identity. Apply its outstanding stop if that store returns. Preserve a different store at the same path. |
-| 52. Git-backed policies | Reopen a compiled policy after restart. Count lowerings when its blobs stay the same and when an include changes. |
 | Bound commit metadata | Request the bound commit when a rule reads its metadata. Verify root commits, non-root commits and unavailable objects under negation. |
 | Commit diagnostic locations | Identify the repository, commit and optional field in the report. Distinguish a commit finding from a finding in a file named `git`. |
 | Content handles | Read verified content through a rule-visible handle. Check reuse across revisions and the result for a missing object. |
 | Selected document provenance | Join the selected path, blob, grammar, tape and document. Test two paths with identical bytes and a scan that excludes one. |
+
+## Compiled Git policies
+
+In case 52, each inspection and scan started a new Node process. The catalog inspected a Git policy that included a rule from the same revision.
+The scan published to a second store. These are the observed counts from the policy compiler.
+
+| Input change | Findings and compilations |
+| --- | --- |
+| First inspection, restart, then an unrelated commit | All three reported `one`. Only the first inspection compiled the policy. The third read the execution store's copy. |
+| Change the included rule, then return to the first commit | The change reported `two` after one compilation. The first commit reported `one` with zero compilations. |
+| Remove the included blob, then restore it | Warm inspection failed and named the missing include. Restoration reused the saved graph with zero compilations. |
+| Add a higher-priority library include, then remove it | The library supplied `bundled` after one compilation. Removing it restored `one` with zero compilations. |
+| Delete one of two scopes and collect, then delete the last scope and collect | The surviving scope reopened the graph with zero compilations. After the last deletion, the next scan compiled once. |
+
+The final check initially failed. Two manifests for the rule library had claimed the Git policy during compiler startup.
+The consuming scan now records ownership of the inspected policy. [Public catalog regression](../../../../test/cli/headless-scan.test.ts) · [Cache contract](analysis-scopes.md)
 
 ## Scope-keyed history
 

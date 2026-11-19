@@ -40,6 +40,9 @@ const IMAGE: &str = "rr_combined_image";
 /// The relation holding the read record: (path, sha256 hex, or "" for a miss).
 const READ_FILE: &str = "rr_combined_read_file";
 
+/// Paths followed during include resolution, including aliases and the implicit prelude.
+const RESOLVES: &str = "rr_combined_resolves";
+
 /// The source the entry of texts `key` is kept under: a small text naming the key.
 fn source_text(key: &[u8; 32]) -> String {
     format!("rerail/combined\0{}", hex(key))
@@ -123,22 +126,28 @@ pub(in crate::code_rule_dsl) fn text_header_key(src: &str) -> [u8; 32] {
 /// as `LibraryFile::unchanged` checks it, by its `stat` while that holds and by its bytes' sha256 when it moved: the
 /// first key that settles it.
 pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, Vec<LibraryFile>)>> {
-    let Some((digest, read)) = read_record(store, key)? else { return Ok(None) };
-    if !LibraryFile::inputs_match(&read) {
+    let Some(read) = read_record(store, key)? else { return Ok(None) };
+    if !LibraryFile::inputs_match(&read.files) {
         return Ok(None);
     }
-    Ok(program_text::load(store, &digest, lists)?.map(|(program, _)| (program, read)))
+    Ok(program_text::load(store, &read.program, lists)?.map(|(program, _)| (program, read.files)))
 }
 
 /// A process hit already checked these inputs. Match them against this store's entry and verify its program is available.
 pub(in crate::code_rule_dsl) fn retains_read(store: &ContentStore, key: &[u8; 32], files: &[LibraryFile]) -> StoreResult<bool> {
     use crate::code_rule_dsl::prof;
-    let Some((digest, read)) = prof::time("rr.inspect.read_record", || read_record(store, key))? else { return Ok(false) };
-    if read != files { return Ok(false); }
-    prof::time("rr.inspect.image_available", || program_text::available(store, &digest))
+    let Some(read) = prof::time("rr.inspect.read_record", || read_record(store, key))? else { return Ok(false) };
+    if read.files != files { return Ok(false); }
+    prof::time("rr.inspect.image_available", || program_text::available(store, &read.program))
 }
 
-fn read_record(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<([u8; 32], Vec<LibraryFile>)>> {
+pub(in crate::code_rule_dsl) struct ReadRecord {
+    pub program: [u8; 32],
+    pub files: Vec<LibraryFile>,
+    pub resolutions: Vec<(PathBuf, PathBuf)>,
+}
+
+pub(in crate::code_rule_dsl) fn read_record(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<ReadRecord>> {
     // The store's entry, or, where the store has none, the one the engine ships (decision 0264).
     let entry = match store.source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? {
         Some(source) => {
@@ -169,7 +178,12 @@ fn read_record(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<([u8;
     }
     let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(|r| r.as_slice()) else { return Ok(None) };
     let Some(digest) = unhex(&digest) else { return Ok(None) };
-    Ok(Some((digest, read)))
+    let mut resolutions = Vec::new();
+    for row in facts.get(RESOLVES).into_iter().flatten() {
+        let [Value::Str(path), Value::Str(target)] = row.as_slice() else { return Ok(None) };
+        resolutions.push((PathBuf::from(path.as_str()), PathBuf::from(target.as_str())));
+    }
+    Ok(Some(ReadRecord { program: digest, files: read, resolutions }))
 }
 
 thread_local! {
@@ -192,6 +206,19 @@ pub(super) fn take_read_before() -> Vec<[u8; 32]> {
     READ_BEFORE.with_borrow_mut(std::mem::take)
 }
 
+/// Catalogs inspect policies on a different thread, and sometimes in a different store, from execution.
+/// Only the consumer of an inspected policy names its entries in a run's manifest.
+pub fn inspect_separately<T>(inspect: impl FnOnce() -> T) -> T {
+    struct Restore(Vec<[u8; 32]>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            READ_BEFORE.with_borrow_mut(|keys| *keys = std::mem::take(&mut self.0));
+        }
+    }
+    let _restore = Restore(take_read_before());
+    inspect()
+}
+
 fn unhex(text: &str) -> Option<[u8; 32]> {
     if text.len() != 64 {
         return None;
@@ -207,11 +234,21 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
 /// encoded here, written by the store's writer in the run's record as `what` (decisions 0102, 0306). A program that
 /// does not read back as written is not kept: the next run combines it again.
 pub(in crate::code_rule_dsl) fn record(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], program: &Program, images: &[HashKey]) {
+    record_resolved(store, what, key, read, program, images, &[]);
+}
+
+pub(in crate::code_rule_dsl) fn record_resolved(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], program: &Program, images: &[HashKey], resolutions: &[(PathBuf, PathBuf)]) {
     let Some(encoded) = program_text::encode(program) else { return };
     let mut facts = Facts::new();
     facts.insert(PROGRAM.to_owned(), vec![[Value::Str(hex(&encoded.digest).into())].into()]);
     let rows = read.iter().map(|f| [Value::Str(f.path.to_string_lossy().into_owned().into()), Value::Str(f.sha256.map(|d| hex(&d)).unwrap_or_default().into())].into()).collect();
     facts.insert(READ_FILE.to_owned(), rows);
+    if !resolutions.is_empty() {
+        let rows = resolutions.iter().map(|(path, target)| [
+            Value::Str(path.to_string_lossy().into_owned().into()), Value::Str(target.to_string_lossy().into_owned().into()),
+        ].into()).collect();
+        facts.insert(RESOLVES.to_owned(), rows);
+    }
     let images = images.iter().filter_map(|k| k.sha256_bytes()).map(|d| [Value::Str(hex(&d).into())].into()).collect();
     facts.insert(IMAGE.to_owned(), images);
     let entry = program_facts::encode(&facts);
