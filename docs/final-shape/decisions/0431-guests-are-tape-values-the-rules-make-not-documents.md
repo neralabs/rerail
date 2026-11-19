@@ -113,6 +113,27 @@ code may be named by which rules asked for it, or in what order.
    an unchanged program parses nothing; a file read from the memo has its programs and its parsed strings' tapes, so a
    cross-file rule reads them.
 
+8. **A tape value is read on lookup** (the user, 2026-11-19: "yes, please go ahead with that"; "if we need, I am okay
+   with having a 'dynamic tape cache' so long as it's GPU-compatible (eg, uses the rolling LRU cache pattern we
+   designed elsewhere)"). `@parse` is a deterministic function: its tape is found by its text's sha (step 4a) or
+   parsed. `parsed(s, g, r) :- rr_embed_req(s, g), r = @rr_parse(s, g)` is a rule of the program, run in its
+   fixpoint, and a string inside a value is the same rule again. Nothing runs before the program, and there is no
+   fixpoint per parse: each iteration's new texts are parsed together, in parallel, a cache hit costing nothing.
+   - Why the rounds existed: a view is bound before the run as a reader of the batch, and a scan lists only the tapes
+     the batch holds, so every tape a rule might scan had to be in the batch first. But a value's nodes are reached
+     only through a guest relation (0058's hiding), which binds them: a rule looks them up and never scans for them.
+   - So each view answers a value's node on lookup, from the run's value tapes, in rows past those its scan reads.
+     No scan lists a value, which is 0058's hiding by layout.
+   - The value tapes are the batch's: a table that only grows, each tape admitted at its first lookup and projected
+     once into the batch's block. On the device the same table is a rolling cache (0353 step 4b's: generations of a
+     hash index and an arena, a miss loaded into the head, a hit in the oldest moved to it), so a run's values need
+     not fit at once.
+   - The planner keeps a value's nodes on lookups (`made_on_lookup`).
+   - The memo files a value's rows with the files that asked for it (R7).
+   Not taken: the program itself run in rounds (each round derives again the strata that read the new rows); a hook
+   after the stratum that completes the requests (a loop back over base relations in the strata driver); the slice
+   kept with its work shared (the slice stays).
+
 ## Requirements, each with its test
 
 | | Requirement | Test |
@@ -126,6 +147,7 @@ code may be named by which rules asked for it, or in what order.
 | R7 | A file read from the memo has its programs and tape values for a cross-file rule: a value's rows are base rows of each file that asked for it (`owners`, `askers`), kept in its entry and restored with it | `a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule` |
 | R8 | CPU and Metal give the same rows, the device reading the same tapes | the Metal path's parity tests, with both kinds |
 | R9 | A finding placed at a tape value's node is refused: the lowering derives `rr_unplaced(clause)`, and the run fails naming the clauses | `a_finding_at_a_tape_values_node_is_refused` |
+| R10 | A string a rule parses is parsed in the program's fixpoint (§8): no slice and no round runs for it, the batch never grows by a value, each value is admitted once at its first lookup (`Report::values_admitted`), a string inside a value too; no scan lists a value's nodes | `tape_values_are_read_in_the_fixpoint` |
 
 The tests for R1–R4 are in `logic/rr/tests.rs`, R6's in `logic/plan/corpus/tests.rs`, ignored until their step lands (`#[ignore = "0431 …"]`). 0055's tests
 keep their meaning, rewritten for `guest_of` and the file's programs where they read `guest(g, …)`.
@@ -143,7 +165,8 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
    runs named, read before the first wave (the run's grammar's with the files', the others' by the tags the program's
    requests name, every tag where one is not a constant), else parsed and queued for the store with its text, which
    the manifest names (R6; Q30's "a guest's tape is not stored" is superseded). 4b, done: the batch grows by a round's
-   documents (§6, R5). Then `@parse` as a functor in the fixpoint; `parsed` and `sub_tape` of strings derived by the
+   documents (§6, R5). 4c: `@parse` as a functor in the fixpoint, a value read on lookup (§8, R10), the
+   CPU first, then the device's rolling cache; `parsed` and `sub_tape` of strings derived by the
    program; tape values stored and loaded before the waves (R4, R6, R7, R5's annotations). The embed slice and its
    rounds stay for the grammar's programs until step 3.
 5. PostHog cold on CPU and Metal against 1ca497070's 32.1 s and 34.4 s of guests, findings unchanged (29,747,

@@ -1954,6 +1954,35 @@ names(x) :- ann(m), kind(m, "identifier"), text(m, x).
     assert_eq!(names, ["Foo", "List", "Optional", "int"].map(str::to_owned).into(), "both rounds' values are read");
 }
 
+/// Decision 0431 R10: a string a rule parses is parsed in the program's fixpoint (§8). No slice round runs and the
+/// batch never grows: each value is admitted once at its first lookup, `'Foo'` (a string inside an annotation's value)
+/// in the same run, and parsed once. A scan lists no value's nodes (`flat`: a.py's identifiers alone).
+#[test]
+#[ignore = "0431 step 4c"]
+fn tape_values_are_read_in_the_fixpoint() {
+    let program = r#"
+.language python
+.decl ann(n: node)
+ann(r) :- string_annotation(s), parsed(s, "annotation", r).
+ann(r) :- ann(s), kind(s, "string"), parsed(s, "annotation", r).
+ann(c) :- ann(p), child(p, c, _).
+.decl names(x: symbol)
+names(x) :- ann(m), kind(m, "identifier"), text(m, x).
+.decl flat(x: symbol)
+flat(x) :- kind(m, "identifier"), text(m, x).
+.output names, flat
+"#;
+    let files = [("a.py", "x: \"List[int]\" = []\ndef f(a: \"Optional['Foo']\"): pass\n")];
+    let (report, names) = batch_run("r10-names", &files, program, "names");
+    assert_eq!((report.slice_runs, report.batch_grown), (0, 0), "no slice round, no batch grown");
+    assert_eq!(report.values_admitted, 3, "the two annotations' values and 'Foo''s, each admitted once");
+    assert_eq!(report.guest_parses, 3, "each value parsed once");
+    let set = |rows: Vec<Vec<String>>| rows.into_iter().map(|r| r.join("\t")).collect::<std::collections::BTreeSet<String>>();
+    assert_eq!(set(names), ["Foo", "List", "Optional", "int"].map(str::to_owned).into(), "both levels' values are read");
+    let (_, flat) = batch_run("r10-flat", &files, program, "flat");
+    assert_eq!(set(flat), ["a", "f", "x"].map(str::to_owned).into(), "no scan lists a value's nodes");
+}
+
 /// Decision 0431 R6, a guard of today's: within one run, equal texts are parsed once, whichever files hold them.
 #[test]
 fn equal_texts_are_parsed_once_a_run() {
