@@ -2326,7 +2326,9 @@ fn names_its_store() -> bool {
     std::env::var_os("RERAIL_TAPE_CACHE").is_some() || STORE.read().expect("the process's store").is_some()
 }
 
-/// The path `tape_cache` opens (`None`: `RERAIL_TAPE_CACHE=off`).
+/// The path `tape_cache` opens. `None`: `RERAIL_TAPE_CACHE=off`, or the store it names belongs to another process past
+/// this one's wait (`owner::refusal`, said once as it was refused), and the process runs without a store; `tape_cache`,
+/// the run's opener, fails with that error.
 pub fn tape_cache_path() -> Option<std::path::PathBuf> {
     #[cfg(any(test, feature = "test-hooks"))]
     if let Some(path) = TEST_TAPE_CACHE.with(|p| p.borrow().clone()).or_else(test_store::handed) {
@@ -2367,7 +2369,7 @@ fn default_store() -> &'static std::path::PathBuf {
 
 /// A store of this engine build's in `$TMPDIR/<dir>/`: `<build>.sqlite`, or `<build>-<key>.sqlite` for one `key` (a
 /// project) of several. Another build's files there, unused for a day, are removed (with their `-wal`, `-shm` and
-/// lock files, which start with the same name), unless a live process owns their store (`owner`).
+/// lock files, which start with the same name), unless a live process owns their store (`owner::remove_unowned`).
 pub fn build_store(dir: &str, key: Option<&str>) -> std::path::PathBuf {
     use std::hash::{Hash, Hasher};
     let dir = std::env::temp_dir().join(dir);
@@ -2375,13 +2377,15 @@ pub fn build_store(dir: &str, key: Option<&str>) -> std::path::PathBuf {
     let build = crate::code_rule_dsl::build_ids::engine();
     let build = &build[..build.len().min(16)];
     let day = std::time::Duration::from_secs(24 * 3600);
-    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > day);
-        if !name.starts_with(build) && old && !owner::owned_elsewhere(&dir, &name) {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
+    let old: Vec<String> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > day))
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| !name.starts_with(build))
+        .collect();
+    owner::remove_unowned(&dir, &old);
     match key {
         // The hasher's keys are fixed: within a build, a project's name is the same in every process.
         Some(key) => {
