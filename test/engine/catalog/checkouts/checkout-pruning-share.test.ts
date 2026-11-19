@@ -22,7 +22,10 @@ const HANG_MS = 1_000;
 /** The longest a pass may hold the thread it runs on, well below {@link HANG_MS}. */
 const HELD_BOUND_MS = 250;
 
-const share = vi.hoisted(() => ({ root: "\0", waiting: 0, listings: 0, gitHangs: false }));
+/** `lookedAt`: called as a call to the share begins waiting. */
+const share = vi.hoisted(() => ({
+  root: "\0", waiting: 0, listings: 0, gitHangs: false, lookedAt: undefined as (() => void) | undefined,
+}));
 
 function onShare(path: unknown): boolean {
   return String(path).startsWith(share.root);
@@ -47,6 +50,7 @@ vi.mock("node:fs/promises", async importOriginal => {
     (path: unknown, ...rest: A): Promise<R> => {
       if (!onShare(path)) return call(path, ...rest);
       share.waiting += 1;
+      share.lookedAt?.();
       return Promise.withResolvers<R>().promise;
     };
   return {
@@ -105,6 +109,7 @@ afterEach(async () => {
   share.waiting = 0;
   share.listings = 0;
   share.gitHangs = false;
+  share.lookedAt = undefined;
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
@@ -149,14 +154,21 @@ async function settledWithin<T>(work: Promise<T>, ms: number): Promise<T | "stil
   return await Promise.race([work, sleep(ms, "still waiting" as const)]);
 }
 
-/** `count` passes over `database`, as the daemon runs them, each given up after `ms`; what they forgot. */
-async function passesGivingUp(database: RerailDatabase, count: number, ms: number): Promise<string[][]> {
+/**
+ * `count` passes over `database`, as the daemon runs them, each given up once `giveUp` of it resolves; what they
+ * forgot.
+ */
+async function passesGivingUp(
+  database: RerailDatabase,
+  count: number,
+  giveUp: (pass: number) => Promise<unknown>,
+): Promise<string[][]> {
   const unanswered: UnansweredLooks = { looking: undefined };
   const forgotten: string[][] = [];
   for (let pass = 0; pass < count; pass += 1) {
     const abort = new AbortController();
     const pruning = pruneCheckouts(database, { signal: abort.signal, unanswered });
-    await sleep(ms);
+    await giveUp(pass);
     abort.abort();
     forgotten.push(await pruning);
   }
@@ -223,7 +235,7 @@ describe("a pruning pass over a share that does not answer", () => {
     const before = recorded();
     share.root = join(root, "share");
 
-    expect(await passesGivingUp(database, 4, 200)).toEqual([[], [], [], []]);
+    expect(await passesGivingUp(database, 4, () => sleep(200))).toEqual([[], [], [], []]);
     expect(share.waiting).toBe(1);
     expect(recorded()).toEqual(before);
   }, 10_000);
@@ -236,9 +248,14 @@ describe("a pruning pass over a share that does not answer", () => {
     git(main, "worktree", "lock", away);
     const before = recorded();
     share.root = join(root, "share");
+    const lookedAt = Promise.withResolvers<void>();
+    share.lookedAt = lookedAt.resolve;
 
-    // Each pass waits long enough for Git to answer and the pass to look at the worktree Git names.
-    expect(await passesGivingUp(database, 3, HANG_MS + 300)).toEqual([[], [], []]);
+    // The first pass is given up once Git has answered and the pass waits on the worktree Git names on the share,
+    // however long Git took. A pass given up before Git answered ends its Git, and the next pass rightly runs Git
+    // again: with a fixed wait of Git's 1 s and 300 ms more, a loaded Windows runner gave up the first pass that early.
+    const giveUp = (pass: number): Promise<unknown> => (pass === 0 ? lookedAt.promise : sleep(200));
+    expect(await passesGivingUp(database, 3, giveUp)).toEqual([[], [], []]);
     expect(share.listings).toBe(1);
     expect(share.waiting).toBe(1);
     expect(recorded()).toEqual(before);
@@ -250,7 +267,7 @@ describe("a pruning pass over a share that does not answer", () => {
     share.root = join(root, "share");
     share.gitHangs = true;
 
-    expect(await passesGivingUp(database, 4, 200)).toEqual([[], [], [], []]);
+    expect(await passesGivingUp(database, 4, () => sleep(200))).toEqual([[], [], [], []]);
     expect(share.listings).toBe(1);
     expect(recorded()).toEqual(before);
   }, 10_000);
