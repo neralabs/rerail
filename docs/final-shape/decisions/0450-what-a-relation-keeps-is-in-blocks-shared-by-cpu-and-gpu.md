@@ -105,6 +105,10 @@ Asked why the device caches relations at all, the user set the rule (2026-11-19)
    - **2d.** The verdict cache: the one rolling cache, keyed by (test, symbol), filled by running the test's
      automaton over the symbol's bytes; read by the CPU's text tests and the kernels. The device's verdicts by
      column, its names uploaded (`texts`, `unions`) and `column_symbols` go.
+     Chosen by the user (2026-11-19): an entry holds 64 symbols, keyed by (test, symbol >> 6): 64 verdict bits and
+     a 64-bit mask of those known, so 32 bytes cover 64 symbols and neighbours share an entry's LRU life. The cache
+     is the Machine's (`Shared`, decision 0442), passed in, never global; it lives across a session's runs, as
+     symbols are the store's ids and a test is keyed by its automaton's slot (`text::automata`).
    - **2e.** The text functions' outputs (`mapped`), by (functions, symbol). Their representation is decided
      when 2d is in: an output is a text, not a verdict.
 3. Views' indexes go in the chunk block, and the copies are no longer cached. R4.
@@ -168,3 +172,23 @@ pending into a new buffer.
   `text_functions_on_the_device_are_the_cpus` among them.
 - hogql cold, profiling, format 15, load 52-59: Metal 75.6 B against 2a's 76.0 B, peak 1,335 against 1,369 MB, no
   stratum refused; CPU 84.6 B, 348 MB. 1,629 findings in every run.
+
+## Built (2026-11-19, step 2d, the reads and the CPU)
+
+- `verdict_get` and `verdict_put` in CLIF (`rerail_clif::verdict_reads`), over the rolling cache's `cache_get`: an
+  entry of 64 symbols of one test, its payload two masks (known to pass, known to fail), each verdict one atomic or,
+  so a copy into the head may miss a verdict and never misreports one; the dead entry keeps none. The Rust backend
+  gained CLIF's atomics (load, store, add, or, compare-and-swap, fence; u32s), both backends an atomic or.
+- The cache is the store's atoms' (`content_store::atoms::Verdicts`, `Atoms::verdicts`): 0442's `Shared` is not on
+  this branch, and the store's atoms are the per-caller state it moves there. Three generations of 32,768 entries
+  (2 M symbols of a test each), made when a test first asks; `Spec::init_zeroed` writes only its header, stamps
+  and guard, so pages of entries never taken are never touched (`init`'s whole fill had added 35-50 MB to hogql's
+  peak, one cache per `Atoms`).
+- A test's id is its plans' key named in the automata block's index (`text::table::test_id`, `automata::id`): the
+  same for the CPU's matcher and the device's table, and nothing is built for it.
+- The CPU's `Step::Test` of constant patterns reads the verdict, else tests the name and keeps the verdict.
+- Tests: `a_verdict_kept_is_found_and_the_cache_keeps_what_is_read` (the reads, the bound, LRU),
+  `a_cpu_text_test_reads_and_keeps_its_verdicts_in_the_stores_cache` (a verdict put before the run is the one the
+  rule takes). The 16 setfix device tests pass on a Mac with the regenerated kernel sources.
+- hogql cold, CPU, profiling, format 15, load 36-42, interleaved with 2c: 83.9 and 84.4 B against 83.9 and 84.3 B,
+  peak 382 and 397 MB against 380 and 389 MB; 1,629 findings.

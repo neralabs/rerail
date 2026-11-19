@@ -131,6 +131,9 @@ pub const READS: &[Read] = &[
     // An atom's string in a directory of runs of atoms (decision 0450 step 2b): the descriptor is an `AtomsDirRoot`.
     Read { family: Family::Relation, name: "atoms_len", params: &[I32], ret: I32, hot: true, body: crate::atoms_reads::atoms_len },
     Read { family: Family::Relation, name: "atoms_at", params: &[I32], ret: I64, hot: true, body: crate::atoms_reads::atoms_at },
+    // A text test's verdict for a symbol in the one rolling cache (decision 0450 step 2d): the descriptor is the cache.
+    Read { family: Family::Relation, name: "verdict_get", params: &[I32, I32], ret: I32, hot: false, body: crate::verdict_reads::verdict_get },
+    Read { family: Family::Relation, name: "verdict_put", params: &[I32, I32, I32], ret: I32, hot: false, body: crate::verdict_reads::verdict_put },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
@@ -1366,7 +1369,7 @@ fn wide(b: &mut B<'_, '_>, lo: Value, hi: Value) -> Value {
 }
 
 /// A cache's u32 at `p + offset`, read or written by any thread.
-fn cache_load(b: &mut B<'_, '_>, p: Value, offset: i32) -> Value {
+pub(crate) fn cache_load(b: &mut B<'_, '_>, p: Value, offset: i32) -> Value {
     let p = b.f.ins().iadd_imm(p, i64::from(offset));
     b.f.ins().atomic_load(I32, MemFlags::trusted(), p)
 }
@@ -1399,7 +1402,7 @@ fn cache_count(b: &mut B<'_, '_>, cache: Value, offset: i32) {
 /// on a miss, an entry of the head claimed, indexed, `fill`ed (its payload: `fill` gives whether it fits) and
 /// completed. A full head turns the spare into the head. After `TRIES` tries without room, a failure counted and the
 /// dead entry given.
-fn cache_get(b: &mut B<'_, '_>, cache: Value, key: Value, fill: &dyn Fn(&mut B<'_, '_>, Value) -> Value) -> Value {
+pub(crate) fn cache_get(b: &mut B<'_, '_>, cache: Value, key: Value, fill: &dyn Fn(&mut B<'_, '_>, Value) -> Value) -> Value {
     use crate::view::cache as c;
     let gens = cache_load(b, cache, c::GENS);
     let shift = cache_load(b, cache, c::SHIFT);

@@ -86,6 +86,7 @@ inline void clif_st64(device const uchar* t,ulong a,ulong x){if((a&7ul)==0ul)*(d
 inline uint clif_ald(device const uchar* t,ulong a){return atomic_load_explicit((device atomic_uint*)(t+a),memory_order_relaxed);}
 inline void clif_ast(device const uchar* t,ulong a,uint x){atomic_store_explicit((device atomic_uint*)(t+a),x,memory_order_relaxed);}
 inline uint clif_aadd(device const uchar* t,ulong a,uint x){return atomic_fetch_add_explicit((device atomic_uint*)(t+a),x,memory_order_relaxed);}
+inline uint clif_aor(device const uchar* t,ulong a,uint x){return atomic_fetch_or_explicit((device atomic_uint*)(t+a),x,memory_order_relaxed);}
 // A strong compare-and-swap: the value seen, which is `e` where it swapped (a weak one's spurious failure tried again,
 // a bounded number of times, then reported as a value other than `e`).
 inline uint clif_acas(device const uchar* t,ulong a,uint e,uint n){for(uint k=0u;k<64u;k++){uint x=e;if(atomic_compare_exchange_weak_explicit((device atomic_uint*)(t+a),&x,n,memory_order_relaxed,memory_order_relaxed))return e;if(x!=e)return x;}return ~e;}
@@ -784,8 +785,12 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::AtomicLoad => set(format!("clif_ald(t,{})", wide_addr(&args[0]))),
         Opcode::AtomicStore => format!("clif_ast(t,{},uint({}));", wide_addr(&args[1]), args[0]),
         Opcode::AtomicRmw => {
-            let InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Add, .. } = data else { return Err("an atomic other than an add".into()) };
-            set(format!("clif_aadd(t,{},uint({}))", wide_addr(&args[0]), args[1]))
+            let how = match data {
+                InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Add, .. } => "clif_aadd",
+                InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Or, .. } => "clif_aor",
+                _ => return Err("an atomic other than an add or an or".into()),
+            };
+            set(format!("{how}(t,{},uint({}))", wide_addr(&args[0]), args[1]))
         }
         Opcode::AtomicCas => set(format!("clif_acas(t,{},uint({}),uint({}))", wide_addr(&args[0]), args[1], args[2])),
         Opcode::Fence => "clif_fence();".to_owned(),

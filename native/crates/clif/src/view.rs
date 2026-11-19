@@ -272,11 +272,19 @@ pub mod cache {
         /// `buf` (`bytes()` long, 8-aligned) made an empty cache: its header, each generation stamped (the live
         /// ones at the first epoch, the spare at the next), nothing taken.
         pub fn init(&self, buf: &mut [u8]) -> Result<(), String> {
+            if buf.len() >= self.bytes() {
+                buf[..self.bytes()].fill(0);
+            }
+            self.init_zeroed(buf)
+        }
+
+        /// `init` of a `buf` whose bytes are zero already (fresh anonymous memory): only the header, the stamps and
+        /// the guard written, so the pages of entries never taken are never touched (decision 0450 step 2d).
+        pub fn init_zeroed(&self, buf: &mut [u8]) -> Result<(), String> {
             if buf.len() < self.bytes() || !self.slots.is_power_of_two() || self.gens < 3 {
                 return Err(format!("a cache of {} bytes for {self:?}", buf.len()));
             }
             let word = |v: usize| u32::try_from(v).map_err(|_| format!("a cache past 4 GiB: {self:?}"));
-            buf.fill(0);
             let mut put = |at: usize, v: u32| buf[at..at + 4].copy_from_slice(&v.to_le_bytes());
             let epoch = self.gens;
             put(EPOCH as usize, epoch);

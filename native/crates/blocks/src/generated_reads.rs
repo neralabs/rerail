@@ -629,6 +629,1770 @@ v52 = v51.wrapping_add(v46);
 return v3;
 }
 
+#[inline(never)]
+unsafe fn f58(len: u64, a0: u64, a1: u32, a2: u32) -> u32 {
+    let mut v0: u64 = 0;
+    let mut v1: u32 = 0;
+    let mut v2: u32 = 0;
+    let mut v3: u64 = 0;
+    let mut v4: u64 = 0;
+    let mut v5: u64 = 0;
+    let mut v6: u32 = 0;
+    let mut v7: u64 = 0;
+    let mut v8: u64 = 0;
+    let mut v9: u64 = 0;
+    let mut v10: u32 = 0;
+    let mut v11: u64 = 0;
+    let mut v12: u32 = 0;
+    let mut v13: u64 = 0;
+    let mut v14: u64 = 0;
+    let mut v15: u32 = 0;
+    let mut v16: u64 = 0;
+    let mut v17: u32 = 0;
+    let mut v18: u64 = 0;
+    let mut v19: u32 = 0;
+    let mut v20: u64 = 0;
+    let mut v21: u32 = 0;
+    let mut v22: u64 = 0;
+    let mut v23: u64 = 0;
+    let mut v24: u32 = 0;
+    let mut v25: u64 = 0;
+    let mut v26: u64 = 0;
+    let mut v27: u32 = 0;
+    let mut v28: u32 = 0;
+    let mut v29: u32 = 0;
+    let mut v30: u32 = 0;
+    let mut v31: u64 = 0;
+    let mut v32: u32 = 0;
+    let mut v33: u32 = 0;
+    let mut v34: u64 = 0;
+    let mut v35: u32 = 0;
+    let mut v36: u32 = 0;
+    let mut v37: u32 = 0;
+    let mut v38: u8 = 0;
+    let mut v39: u32 = 0;
+    let mut v40: u32 = 0;
+    let mut v41: u32 = 0;
+    let mut v42: u64 = 0;
+    let mut v43: u64 = 0;
+    let mut v44: u64 = 0;
+    let mut v45: u64 = 0;
+    let mut v46: u32 = 0;
+    let mut v47: u8 = 0;
+    let mut v48: u32 = 0;
+    let mut v49: u8 = 0;
+    let mut v50: u32 = 0;
+    let mut v51: u32 = 0;
+    let mut v52: u32 = 0;
+    let mut v53: u64 = 0;
+    let mut v54: u64 = 0;
+    let mut v55: u64 = 0;
+    let mut v56: u32 = 0;
+    let mut v57: u8 = 0;
+    let mut v58: u32 = 0;
+    let mut v59: u8 = 0;
+    let mut v60: u32 = 0;
+    let mut v61: u8 = 0;
+    let mut v62: u32 = 0;
+    let mut v63: u8 = 0;
+    let mut v64: u64 = 0;
+    let mut v65: u32 = 0;
+    let mut v66: u8 = 0;
+    let mut v67: u32 = 0;
+    let mut v68: u64 = 0;
+    let mut v69: u32 = 0;
+    let mut v70: u32 = 0;
+    let mut v71: u64 = 0;
+    let mut v72: u32 = 0;
+    let mut v73: u32 = 0;
+    let mut v74: u64 = 0;
+    let mut v75: u64 = 0;
+    let mut v76: u64 = 0;
+    let mut v77: u64 = 0;
+    let mut v78: u64 = 0;
+    let mut v79: u64 = 0;
+    let mut v80: u64 = 0;
+    let mut v81: u8 = 0;
+    let mut v82: u64 = 0;
+    let mut v83: u32 = 0;
+    let mut v84: u8 = 0;
+    let mut v85: u8 = 0;
+    let mut v86: u64 = 0;
+    let mut v87: u32 = 0;
+    let mut v88: u32 = 0;
+    let mut v89: u64 = 0;
+    let mut v90: u32 = 0;
+    let mut v91: u32 = 0;
+    let mut v92: u64 = 0;
+    let mut v93: u32 = 0;
+    let mut v94: u32 = 0;
+    let mut v95: u8 = 0;
+    let mut v96: u8 = 0;
+    let mut v97: u32 = 0;
+    let mut v98: u8 = 0;
+    let mut v99: u64 = 0;
+    let mut v100: u32 = 0;
+    let mut v101: u8 = 0;
+    let mut v102: u8 = 0;
+    let mut v103: u32 = 0;
+    let mut v104: u64 = 0;
+    let mut v105: u32 = 0;
+    let mut v106: u32 = 0;
+    let mut v107: u64 = 0;
+    let mut v108: u32 = 0;
+    let mut v109: u64 = 0;
+    let mut v110: u32 = 0;
+    let mut v111: u32 = 0;
+    let mut v112: u64 = 0;
+    let mut v113: u32 = 0;
+    let mut v114: u32 = 0;
+    let mut v115: u32 = 0;
+    let mut v116: u32 = 0;
+    let mut v117: u8 = 0;
+    let mut v118: u8 = 0;
+    let mut v119: u8 = 0;
+    let mut v120: u64 = 0;
+    let mut v121: u64 = 0;
+    let mut v122: u32 = 0;
+    let mut v123: u32 = 0;
+    let mut v124: u32 = 0;
+    let mut v125: u64 = 0;
+    let mut v126: u64 = 0;
+    let mut v127: u64 = 0;
+    let mut v128: u64 = 0;
+    let mut v129: u32 = 0;
+    let mut v130: u8 = 0;
+    let mut v131: u32 = 0;
+    let mut v132: u8 = 0;
+    let mut v133: u32 = 0;
+    let mut v134: u32 = 0;
+    let mut v135: u32 = 0;
+    let mut v136: u64 = 0;
+    let mut v137: u64 = 0;
+    let mut v138: u64 = 0;
+    let mut v139: u32 = 0;
+    let mut v140: u8 = 0;
+    let mut v141: u32 = 0;
+    let mut v142: u8 = 0;
+    let mut v143: u32 = 0;
+    let mut v144: u8 = 0;
+    let mut v145: u32 = 0;
+    let mut v146: u64 = 0;
+    let mut v147: u64 = 0;
+    let mut v148: u64 = 0;
+    let mut v149: u64 = 0;
+    let mut v150: u64 = 0;
+    let mut v151: u64 = 0;
+    let mut v152: u8 = 0;
+    let mut v153: u32 = 0;
+    let mut v154: u32 = 0;
+    let mut v155: u64 = 0;
+    let mut v156: u32 = 0;
+    let mut v157: u8 = 0;
+    let mut v158: u64 = 0;
+    let mut v159: u64 = 0;
+    let mut v160: u64 = 0;
+    let mut v161: u64 = 0;
+    let mut v162: u64 = 0;
+    let mut v163: u64 = 0;
+    let mut v164: u32 = 0;
+    let mut v165: u32 = 0;
+    let mut v166: u32 = 0;
+    let mut v167: u64 = 0;
+    let mut v168: u32 = 0;
+    let mut v169: u8 = 0;
+    let mut v170: u8 = 0;
+    let mut v171: u8 = 0;
+    let mut v172: u32 = 0;
+    let mut v173: u32 = 0;
+    let mut v174: u64 = 0;
+    let mut v175: u64 = 0;
+    let mut v176: u64 = 0;
+    let mut v177: u64 = 0;
+    let mut v178: u64 = 0;
+    let mut v179: u64 = 0;
+    let mut v180: u8 = 0;
+    let mut v181: u64 = 0;
+    let mut v182: u64 = 0;
+    let mut v183: u64 = 0;
+    let mut v184: u64 = 0;
+    let mut v185: u64 = 0;
+    let mut v186: u32 = 0;
+    let mut v187: u8 = 0;
+    let mut v188: u64 = 0;
+    let mut v189: u64 = 0;
+    let mut v190: u32 = 0;
+    let mut v191: u32 = 0;
+    let mut v192: u32 = 0;
+    let mut v193: u64 = 0;
+    let mut v194: u64 = 0;
+    let mut v195: u64 = 0;
+    let mut v196: u64 = 0;
+    let mut v197: u32 = 0;
+    let mut v198: u8 = 0;
+    let mut v199: u64 = 0;
+    let mut v200: u32 = 0;
+    let mut v201: u8 = 0;
+    let mut v202: u32 = 0;
+    let mut v203: u64 = 0;
+    let mut v204: u32 = 0;
+    let mut v205: u32 = 0;
+    let mut v206: u32 = 0;
+    let mut v207: u32 = 0;
+    let mut v208: u64 = 0;
+    let mut v209: u64 = 0;
+    let mut v210: u64 = 0;
+    let mut v211: u64 = 0;
+    let mut v212: u32 = 0;
+    let mut v213: u32 = 0;
+    let mut v214: u8 = 0;
+    let mut v215: u32 = 0;
+    let mut v216: u64 = 0;
+    let mut v217: u64 = 0;
+    let mut v218: u64 = 0;
+    let mut v219: u32 = 0;
+    let mut v220: u64 = 0;
+    let mut v221: u64 = 0;
+    let mut v222: u8 = 0;
+    let mut v223: u32 = 0;
+    let mut v224: u64 = 0;
+    let mut v225: u32 = 0;
+    let mut v226: u64 = 0;
+    let mut v227: u64 = 0;
+    let mut v228: u32 = 0;
+    let mut v229: u32 = 0;
+    let mut v230: u32 = 0;
+    let mut v231: u64 = 0;
+    let mut v232: u64 = 0;
+    let mut v233: u64 = 0;
+    let mut v234: u64 = 0;
+    let mut v235: u32 = 0;
+    let mut v236: u8 = 0;
+    let mut v237: u32 = 0;
+    let mut v238: u8 = 0;
+    let mut v239: u32 = 0;
+    let mut v240: u32 = 0;
+    let mut v241: u32 = 0;
+    let mut v242: u64 = 0;
+    let mut v243: u64 = 0;
+    let mut v244: u64 = 0;
+    let mut v245: u32 = 0;
+    let mut v246: u8 = 0;
+    let mut v247: u32 = 0;
+    let mut v248: u8 = 0;
+    let mut v249: u32 = 0;
+    let mut v250: u8 = 0;
+    let mut v251: u32 = 0;
+    let mut v252: u64 = 0;
+    let mut v253: u64 = 0;
+    let mut v254: u64 = 0;
+    let mut v255: u64 = 0;
+    let mut v256: u64 = 0;
+    let mut v257: u64 = 0;
+    let mut v258: u8 = 0;
+    let mut v259: u32 = 0;
+    let mut v260: u32 = 0;
+    let mut v261: u64 = 0;
+    let mut v262: u32 = 0;
+    let mut v263: u8 = 0;
+    let mut v264: u64 = 0;
+    let mut v265: u64 = 0;
+    let mut v266: u64 = 0;
+    let mut v267: u64 = 0;
+    let mut v268: u64 = 0;
+    let mut v269: u64 = 0;
+    let mut v270: u32 = 0;
+    let mut v271: u32 = 0;
+    let mut v272: u32 = 0;
+    let mut v273: u64 = 0;
+    let mut v274: u32 = 0;
+    let mut v275: u8 = 0;
+    let mut v276: u8 = 0;
+    let mut v277: u8 = 0;
+    let mut v278: u32 = 0;
+    let mut v279: u32 = 0;
+    let mut v280: u64 = 0;
+    let mut v281: u32 = 0;
+    let mut v282: u64 = 0;
+    let mut v283: u64 = 0;
+    let mut v284: u32 = 0;
+    let mut v285: u32 = 0;
+    let mut v286: u32 = 0;
+    let mut v287: u64 = 0;
+    let mut v288: u64 = 0;
+    let mut v289: u64 = 0;
+    let mut v290: u64 = 0;
+    let mut v291: u32 = 0;
+    let mut v292: u8 = 0;
+    let mut v293: u64 = 0;
+    let mut v294: u32 = 0;
+    let mut v295: u8 = 0;
+    let mut v296: u32 = 0;
+    let mut v297: u64 = 0;
+    let mut v298: u32 = 0;
+    let mut v299: u32 = 0;
+    let mut v300: u32 = 0;
+    let mut v301: u32 = 0;
+    let mut v302: u64 = 0;
+    let mut v303: u64 = 0;
+    let mut v304: u64 = 0;
+    let mut v305: u64 = 0;
+    let mut v306: u32 = 0;
+    let mut v307: u32 = 0;
+    let mut v308: u8 = 0;
+    let mut v309: u32 = 0;
+    let mut v310: u64 = 0;
+    let mut v311: u64 = 0;
+    let mut v312: u64 = 0;
+    let mut v313: u32 = 0;
+    let mut v314: u64 = 0;
+    let mut v315: u64 = 0;
+    let mut v316: u8 = 0;
+    let mut v317: u32 = 0;
+    let mut v318: u64 = 0;
+    let mut v319: u32 = 0;
+    let mut v320: u32 = 0;
+    let mut v321: u8 = 0;
+    let mut v322: u32 = 0;
+    let mut v323: u64 = 0;
+    let mut v324: u32 = 0;
+    let mut v325: u64 = 0;
+    let mut v326: u32 = 0;
+    let mut v327: u64 = 0;
+    let mut v328: u64 = 0;
+    let mut v329: u64 = 0;
+    let mut v330: u32 = 0;
+    let mut v331: u64 = 0;
+    let mut v332: u64 = 0;
+    let mut v333: u8 = 0;
+    let mut v334: u32 = 0;
+    let mut v335: u32 = 0;
+    let mut v336: u32 = 0;
+    let mut v337: u64 = 0;
+    let mut v338: u64 = 0;
+    let mut v339: u32 = 0;
+    let mut v340: u32 = 0;
+    let mut v341: u32 = 0;
+    let mut v342: u32 = 0;
+    let mut v343: u32 = 0;
+    let mut v344: u64 = 0;
+    let mut v345: u32 = 0;
+    let mut v346: u64 = 0;
+    let mut v347: u32 = 0;
+    let mut v348: u32 = 0;
+    let mut v349: u32 = 0;
+    let mut v350: u8 = 0;
+    let mut v351: u8 = 0;
+    let mut v352: u32 = 0;
+    let mut v353: u32 = 0;
+    let mut v354: u32 = 0;
+    let mut v355: u32 = 0;
+    let mut v356: u32 = 0;
+    v0 = a0;
+    v1 = a1;
+    v2 = a2;
+    let mut d: u32 = 0;
+v3 = v1 as u64;
+v4 = v3.wrapping_add(1i64 as u64);
+v5 = v4.wrapping_shl(32);
+v6 = v2.wrapping_shr(6);
+v7 = v6 as u64;
+v8 = v5 | v7;
+v9 = v0.wrapping_add(4i64 as u64);
+v10 = unsafe { (*((v9 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v11 = v0.wrapping_add(12i64 as u64);
+v12 = unsafe { (*((v11 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v13 = v12 as u64;
+v14 = v0.wrapping_add(16i64 as u64);
+v15 = unsafe { (*((v14 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v16 = v0.wrapping_add(20i64 as u64);
+v17 = unsafe { (*((v16 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v18 = v0.wrapping_add(24i64 as u64);
+v19 = unsafe { (*((v18 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v20 = v0.wrapping_add(8i64 as u64);
+v21 = unsafe { (*((v20 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v22 = v8.wrapping_mul(-7046029254386353131i64 as u64);
+v23 = v22.wrapping_shr(32);
+v24 = v23 as u32;
+v25 = v8.wrapping_mul(-4417276706812531889i64 as u64);
+v26 = v25.wrapping_shr(48);
+v27 = v26 as u32;
+v28 = v27 | (1i64 as u32);
+v29 = v28.wrapping_shl(16);
+v30 = v15.wrapping_add(-1i64 as u32);
+v33 = 0i64 as u32;
+{ v32 = v33; 'b1: loop {
+v34 = v0.wrapping_add(0i64 as u64);
+v35 = unsafe { (*((v34 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v36 = v10.wrapping_add(-1i64 as u32);
+{ v37 = v33; 'b2: loop {
+'m85: {
+'m59: {
+v38 = ((v37 as u32) < (v36 as u32)) as u8;
+if v38 != 0 { 'm30: {
+v39 = v35.wrapping_sub(v37);
+v40 = v39 % v10;
+v41 = v40.wrapping_mul(v17);
+v42 = v41 as u64;
+v43 = v42.wrapping_add(64i64 as u64);
+v44 = v0.wrapping_add(v43);
+v45 = v44.wrapping_add(0i64 as u64);
+v46 = unsafe { (*((v45 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v47 = ((v46 as u32) == (v39 as u32)) as u8;
+if v47 != 0 { { v48 = v33; 'b5: loop {
+v49 = ((v48 as u32) < ((16i64 as u32) as u32)) as u8;
+if v49 != 0 { 'b6: loop {
+v50 = v24.wrapping_add(v48);
+v51 = v50 & v30;
+v52 = v51.wrapping_mul(4i64 as u32);
+v53 = v52 as u64;
+v54 = v44.wrapping_add(v53);
+v55 = v54.wrapping_add(16i64 as u64);
+v56 = unsafe { (*((v55 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v57 = ((v56 as u32) == ((0i64 as u32) as u32)) as u8;
+if v57 != 0 { break 'm30; } else { 'm29: {
+v58 = v56 & (-65536i64 as u32);
+v59 = ((v58 as u32) == (v29 as u32)) as u8;
+if v59 != 0 { v60 = v56 & (65535i64 as u32);
+v61 = ((v60 as u32) == ((0i64 as u32) as u32)) as u8;
+if v61 != 0 { { v62 = v33; 'b10: loop {
+v63 = ((v62 as u32) < ((65536i64 as u32) as u32)) as u8;
+if v63 != 0 { core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v64 = v54.wrapping_add(16i64 as u64);
+v65 = unsafe { (*((v64 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v66 = ((v65 as u32) != (v56 as u32)) as u8;
+v67 = v62.wrapping_add(1i64 as u32);
+if v66 != 0 { continue 'b6; } else { v62 = v67; continue 'b10; }
+ } else { 'm14: {
+v68 = v0.wrapping_add(48i64 as u64);
+v69 = unsafe { (*((v68 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+if v69 != 0 { v70 = 1i64 as u32;
+v71 = v0.wrapping_add(60i64 as u64);
+v72 = unsafe { (*((v71 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v70, core::sync::atomic::Ordering::SeqCst) };
+{ break 'm14; }
+ } else { break 'm14; }
+}
+{ break 'm59; }
+ }
+}
+ }
+ } else { 'm31: {
+v73 = v60.wrapping_add(-1i64 as u32);
+v74 = v73 as u64;
+v75 = v74.wrapping_shl(v13 as u32);
+v76 = v19 as u64;
+v77 = v75.wrapping_add(v76);
+v78 = v44.wrapping_add(v77);
+v79 = v78.wrapping_add(0i64 as u64);
+v80 = ld::<u64>(v0, len, (v79 as usize)) as u64;
+v81 = ((v80 as u64) == (v8 as u64)) as u8;
+v82 = v78.wrapping_add(8i64 as u64);
+v83 = unsafe { (*((v82 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v84 = ((v83 as u32) == (v46 as u32)) as u8;
+v85 = v81 & v84;
+if v85 != 0 { 'm18: {
+v89 = v0.wrapping_add(48i64 as u64);
+v90 = unsafe { (*((v89 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+if v90 != 0 { v91 = 1i64 as u32;
+v92 = v0.wrapping_add(52i64 as u64);
+v93 = unsafe { (*((v92 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v91, core::sync::atomic::Ordering::SeqCst) };
+{ break 'm18; }
+ } else { break 'm18; }
+}
+{ let t = (v78, v37, v46); v86 = t.0; v87 = t.1; v88 = t.2; break 'm31; }
+ } else { v94 = v46 | (2147483648i64 as u32);
+v95 = ((v83 as u32) == (v94 as u32)) as u8;
+v96 = v81 & v95;
+if v96 != 0 { v97 = v33; 'b20: loop {
+v98 = ((v97 as u32) < ((65536i64 as u32) as u32)) as u8;
+if v98 != 0 { core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v99 = v78.wrapping_add(8i64 as u64);
+v100 = unsafe { (*((v99 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v101 = ((v100 as u32) == (v46 as u32)) as u8;
+v102 = ((v100 as u32) == (v94 as u32)) as u8;
+v103 = v97.wrapping_add(1i64 as u32);
+if v101 != 0 { 'm25: {
+v104 = v0.wrapping_add(48i64 as u64);
+v105 = unsafe { (*((v104 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+if v105 != 0 { v106 = 1i64 as u32;
+v107 = v0.wrapping_add(56i64 as u64);
+v108 = unsafe { (*((v107 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v106, core::sync::atomic::Ordering::SeqCst) };
+{ break 'm25; }
+ } else { break 'm25; }
+}
+{ let t = (v78, v37, v46); v86 = t.0; v87 = t.1; v88 = t.2; break 'm31; }
+ } else { if v102 != 0 { v97 = v103; continue 'b20; } else { break 'm29; }
+ }
+ } else { 'm28: {
+v109 = v0.wrapping_add(48i64 as u64);
+v110 = unsafe { (*((v109 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+if v110 != 0 { v111 = 1i64 as u32;
+v112 = v0.wrapping_add(60i64 as u64);
+v113 = unsafe { (*((v112 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v111, core::sync::atomic::Ordering::SeqCst) };
+{ break 'm28; }
+ } else { break 'm28; }
+}
+{ break 'm59; }
+ }
+}
+ } else { break 'm29; }
+ }
+}
+v116 = v36.wrapping_add(-1i64 as u32);
+v117 = ((v87 as u32) == (v116 as u32)) as u8;
+v118 = ((v36 as u32) > ((1i64 as u32) as u32)) as u8;
+v119 = v117 & v118;
+if v119 != 0 { 'm57: {
+v121 = 0i64 as u64;
+v122 = 0i64 as u32;
+v123 = v35 % v10;
+v124 = v123.wrapping_mul(v17);
+v125 = v124 as u64;
+v126 = v125.wrapping_add(64i64 as u64);
+v127 = v0.wrapping_add(v126);
+v128 = v127.wrapping_add(0i64 as u64);
+v129 = unsafe { (*((v128 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v130 = ((v129 as u32) == (v35 as u32)) as u8;
+if v130 != 0 { { v131 = v122; 'b34: loop {
+'m51: {
+v132 = ((v131 as u32) < ((16i64 as u32) as u32)) as u8;
+if v132 != 0 { v133 = v24.wrapping_add(v131);
+v134 = v133 & v30;
+v135 = v134.wrapping_mul(4i64 as u32);
+v136 = v135 as u64;
+v137 = v127.wrapping_add(v136);
+v138 = v137.wrapping_add(16i64 as u64);
+v139 = unsafe { match (*((v138 as usize) as *const core::sync::atomic::AtomicU32)).compare_exchange(v122, v29, core::sync::atomic::Ordering::SeqCst, core::sync::atomic::Ordering::SeqCst) { Ok(x) | Err(x) => x } };
+v140 = ((v139 as u32) == ((0i64 as u32) as u32)) as u8;
+if v140 != 0 { { 'b42: loop {
+v154 = 1i64 as u32;
+v155 = v127.wrapping_add(4i64 as u64);
+v156 = unsafe { (*((v155 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v154, core::sync::atomic::Ordering::SeqCst) };
+v157 = ((v156 as u32) < (v21 as u32)) as u8;
+if v157 != 0 { v158 = v156 as u64;
+v159 = v158.wrapping_shl(v13 as u32);
+v160 = v19 as u64;
+v161 = v159.wrapping_add(v160);
+v162 = v127.wrapping_add(v161);
+v163 = v162.wrapping_add(8i64 as u64);
+v164 = unsafe { (*((v163 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v165 = v164 & (2147483648i64 as u32);
+v166 = v35 | (2147483648i64 as u32);
+v167 = v162.wrapping_add(8i64 as u64);
+v168 = unsafe { match (*((v167 as usize) as *const core::sync::atomic::AtomicU32)).compare_exchange(v164, v166, core::sync::atomic::Ordering::SeqCst, core::sync::atomic::Ordering::SeqCst) { Ok(x) | Err(x) => x } };
+v169 = ((v168 as u32) == (v164 as u32)) as u8;
+v170 = ((v165 as u32) == ((0i64 as u32) as u32)) as u8;
+v171 = v169 & v170;
+if v171 != 0 { core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+unsafe { core::ptr::write_unaligned((v162 as usize) as *mut u64, v8) };
+core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v172 = v156.wrapping_add(1i64 as u32);
+v173 = v29 | v172;
+unsafe { (*((v138 as usize) as *const core::sync::atomic::AtomicU32)).store(v173 as u32, core::sync::atomic::Ordering::SeqCst) };
+v174 = 1i64 as u64;
+v175 = v174.wrapping_shl(v13 as u32);
+v176 = v175.wrapping_add(-16i64 as u64);
+v178 = 16i64 as u64;
+v179 = v176.wrapping_add(16i64 as u64);
+{ v177 = v178; 'b46: loop {
+v180 = ((v177 as u64) < (v179 as u64)) as u8;
+if v180 != 0 { v181 = v86.wrapping_add(v177);
+v182 = ld::<u64>(v0, len, (v181 as usize)) as u64;
+v183 = v162.wrapping_add(v177);
+unsafe { core::ptr::write_unaligned((v183 as usize) as *mut u64, v182) };
+v184 = v177.wrapping_add(8i64 as u64);
+{ v177 = v184; continue 'b46; }
+ } else { core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v185 = v86.wrapping_add(8i64 as u64);
+v186 = unsafe { (*((v185 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v187 = ((v186 as u32) == (v88 as u32)) as u8;
+if v187 != 0 { core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v189 = v162.wrapping_add(8i64 as u64);
+unsafe { (*((v189 as usize) as *const core::sync::atomic::AtomicU32)).store(v35 as u32, core::sync::atomic::Ordering::SeqCst) };
+{ v120 = v162; break 'm57; }
+ } else { v188 = v162.wrapping_add(8i64 as u64);
+unsafe { (*((v188 as usize) as *const core::sync::atomic::AtomicU32)).store(v122 as u32, core::sync::atomic::Ordering::SeqCst) };
+{ v120 = v121; break 'm57; }
+ }
+ }
+}
+ }
+ } else { continue 'b42; }
+ } else { unsafe { (*((v138 as usize) as *const core::sync::atomic::AtomicU32)).store(v122 as u32, core::sync::atomic::Ordering::SeqCst) };
+{ break 'm51; }
+ }
+}
+ }
+ } else { 'm40: {
+v141 = v139 & (-65536i64 as u32);
+v142 = ((v141 as u32) == (v29 as u32)) as u8;
+if v142 != 0 { 'm39: {
+v143 = v139 & (65535i64 as u32);
+v144 = ((v143 as u32) == ((0i64 as u32) as u32)) as u8;
+if v144 != 0 { break 'm39; } else { v145 = v143.wrapping_add(-1i64 as u32);
+v146 = v145 as u64;
+v147 = v146.wrapping_shl(v13 as u32);
+v148 = v19 as u64;
+v149 = v147.wrapping_add(v148);
+v150 = v127.wrapping_add(v149);
+v151 = ld::<u64>(v0, len, (v150 as usize)) as u64;
+v152 = ((v151 as u64) == (v8 as u64)) as u8;
+if v152 != 0 { break 'm39; } else { break 'm40; }
+ }
+}
+{ v120 = v121; break 'm57; }
+ } else { break 'm40; }
+}
+v153 = v131.wrapping_add(1i64 as u32);
+{ v131 = v153; continue 'b34; }
+ }
+ } else { break 'm51; }
+}
+v190 = v35.wrapping_add(1i64 as u32);
+v191 = v190 % v10;
+v192 = v191.wrapping_mul(v17);
+v193 = v192 as u64;
+v194 = v193.wrapping_add(64i64 as u64);
+v195 = v0.wrapping_add(v194);
+v196 = v195.wrapping_add(0i64 as u64);
+v197 = unsafe { (*((v196 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v198 = ((v197 as u32) == (v190 as u32)) as u8;
+if v198 != 0 { v199 = v0.wrapping_add(0i64 as u64);
+v200 = unsafe { match (*((v199 as usize) as *const core::sync::atomic::AtomicU32)).compare_exchange(v35, v190, core::sync::atomic::Ordering::SeqCst, core::sync::atomic::Ordering::SeqCst) { Ok(x) | Err(x) => x } };
+v201 = ((v200 as u32) == (v35 as u32)) as u8;
+if v201 != 0 { v202 = 1i64 as u32;
+v203 = v0.wrapping_add(44i64 as u64);
+v204 = unsafe { (*((v203 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v202, core::sync::atomic::Ordering::SeqCst) };
+v205 = v35.wrapping_add(2i64 as u32);
+v206 = v205 % v10;
+v207 = v206.wrapping_mul(v17);
+v208 = v207 as u64;
+v209 = v208.wrapping_add(64i64 as u64);
+v210 = v0.wrapping_add(v209);
+v211 = v210.wrapping_add(0i64 as u64);
+unsafe { (*((v211 as usize) as *const core::sync::atomic::AtomicU32)).store(v122 as u32, core::sync::atomic::Ordering::SeqCst) };
+core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v212 = v30.wrapping_add(1i64 as u32);
+{ v213 = v122; 'b54: loop {
+v214 = ((v213 as u32) < (v212 as u32)) as u8;
+if v214 != 0 { v215 = v213.wrapping_mul(4i64 as u32);
+v216 = v215 as u64;
+v217 = v210.wrapping_add(v216);
+v218 = v217.wrapping_add(16i64 as u64);
+unsafe { (*((v218 as usize) as *const core::sync::atomic::AtomicU32)).store(v122 as u32, core::sync::atomic::Ordering::SeqCst) };
+v219 = v213.wrapping_add(1i64 as u32);
+{ v213 = v219; continue 'b54; }
+ } else { v220 = v210.wrapping_add(4i64 as u64);
+unsafe { (*((v220 as usize) as *const core::sync::atomic::AtomicU32)).store(v122 as u32, core::sync::atomic::Ordering::SeqCst) };
+core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v221 = v210.wrapping_add(0i64 as u64);
+unsafe { (*((v221 as usize) as *const core::sync::atomic::AtomicU32)).store(v205 as u32, core::sync::atomic::Ordering::SeqCst) };
+{ v120 = v121; break 'm57; }
+ }
+}
+ }
+ } else { v120 = v121; break 'm57; }
+ } else { v120 = v121; break 'm57; }
+}
+ }
+ } else { v120 = v121; break 'm57; }
+}
+v222 = ((v120 as u64) != ((0i64 as u64) as u64)) as u8;
+if v222 != 0 { v223 = 1i64 as u32;
+v224 = v0.wrapping_add(40i64 as u64);
+v225 = unsafe { (*((v224 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v223, core::sync::atomic::Ordering::SeqCst) };
+{ v31 = v120; break 'm85; }
+ } else { v31 = v86; break 'm85; }
+ } else { v31 = v86; break 'm85; }
+ }
+ } else { break 'm29; }
+}
+v114 = v48.wrapping_add(1i64 as u32);
+{ v48 = v114; continue 'b5; }
+ }
+}
+ } else { break 'm30; }
+}
+ }
+ } else { break 'm30; }
+}
+v115 = v37.wrapping_add(1i64 as u32);
+{ v37 = v115; continue 'b2; }
+ } else { break 'm59; }
+}
+'m81: {
+v227 = 0i64 as u64;
+v228 = 0i64 as u32;
+v229 = v35 % v10;
+v230 = v229.wrapping_mul(v17);
+v231 = v230 as u64;
+v232 = v231.wrapping_add(64i64 as u64);
+v233 = v0.wrapping_add(v232);
+v234 = v233.wrapping_add(0i64 as u64);
+v235 = unsafe { (*((v234 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v236 = ((v235 as u32) == (v35 as u32)) as u8;
+if v236 != 0 { { v237 = v228; 'b61: loop {
+'m75: {
+v238 = ((v237 as u32) < ((16i64 as u32) as u32)) as u8;
+if v238 != 0 { v239 = v24.wrapping_add(v237);
+v240 = v239 & v30;
+v241 = v240.wrapping_mul(4i64 as u32);
+v242 = v241 as u64;
+v243 = v233.wrapping_add(v242);
+v244 = v243.wrapping_add(16i64 as u64);
+v245 = unsafe { match (*((v244 as usize) as *const core::sync::atomic::AtomicU32)).compare_exchange(v228, v29, core::sync::atomic::Ordering::SeqCst, core::sync::atomic::Ordering::SeqCst) { Ok(x) | Err(x) => x } };
+v246 = ((v245 as u32) == ((0i64 as u32) as u32)) as u8;
+if v246 != 0 { { 'b69: loop {
+v260 = 1i64 as u32;
+v261 = v233.wrapping_add(4i64 as u64);
+v262 = unsafe { (*((v261 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v260, core::sync::atomic::Ordering::SeqCst) };
+v263 = ((v262 as u32) < (v21 as u32)) as u8;
+if v263 != 0 { v264 = v262 as u64;
+v265 = v264.wrapping_shl(v13 as u32);
+v266 = v19 as u64;
+v267 = v265.wrapping_add(v266);
+v268 = v233.wrapping_add(v267);
+v269 = v268.wrapping_add(8i64 as u64);
+v270 = unsafe { (*((v269 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v271 = v270 & (2147483648i64 as u32);
+v272 = v35 | (2147483648i64 as u32);
+v273 = v268.wrapping_add(8i64 as u64);
+v274 = unsafe { match (*((v273 as usize) as *const core::sync::atomic::AtomicU32)).compare_exchange(v270, v272, core::sync::atomic::Ordering::SeqCst, core::sync::atomic::Ordering::SeqCst) { Ok(x) | Err(x) => x } };
+v275 = ((v274 as u32) == (v270 as u32)) as u8;
+v276 = ((v271 as u32) == ((0i64 as u32) as u32)) as u8;
+v277 = v275 & v276;
+if v277 != 0 { core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+unsafe { core::ptr::write_unaligned((v268 as usize) as *mut u64, v8) };
+core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v278 = v262.wrapping_add(1i64 as u32);
+v279 = v29 | v278;
+unsafe { (*((v244 as usize) as *const core::sync::atomic::AtomicU32)).store(v279 as u32, core::sync::atomic::Ordering::SeqCst) };
+v280 = 0i64 as u64;
+unsafe { core::ptr::write_unaligned(((v268 as usize).wrapping_add(16isize as usize)) as *mut u64, v280) };
+unsafe { core::ptr::write_unaligned(((v268 as usize).wrapping_add(24isize as usize)) as *mut u64, v280) };
+v281 = 1i64 as u32;
+if v281 != 0 { core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v283 = v268.wrapping_add(8i64 as u64);
+unsafe { (*((v283 as usize) as *const core::sync::atomic::AtomicU32)).store(v35 as u32, core::sync::atomic::Ordering::SeqCst) };
+{ v226 = v268; break 'm81; }
+ } else { v282 = v268.wrapping_add(8i64 as u64);
+unsafe { (*((v282 as usize) as *const core::sync::atomic::AtomicU32)).store(v228 as u32, core::sync::atomic::Ordering::SeqCst) };
+{ v226 = v227; break 'm81; }
+ }
+ } else { continue 'b69; }
+ } else { unsafe { (*((v244 as usize) as *const core::sync::atomic::AtomicU32)).store(v228 as u32, core::sync::atomic::Ordering::SeqCst) };
+{ break 'm75; }
+ }
+}
+ }
+ } else { 'm67: {
+v247 = v245 & (-65536i64 as u32);
+v248 = ((v247 as u32) == (v29 as u32)) as u8;
+if v248 != 0 { 'm66: {
+v249 = v245 & (65535i64 as u32);
+v250 = ((v249 as u32) == ((0i64 as u32) as u32)) as u8;
+if v250 != 0 { break 'm66; } else { v251 = v249.wrapping_add(-1i64 as u32);
+v252 = v251 as u64;
+v253 = v252.wrapping_shl(v13 as u32);
+v254 = v19 as u64;
+v255 = v253.wrapping_add(v254);
+v256 = v233.wrapping_add(v255);
+v257 = ld::<u64>(v0, len, (v256 as usize)) as u64;
+v258 = ((v257 as u64) == (v8 as u64)) as u8;
+if v258 != 0 { break 'm66; } else { break 'm67; }
+ }
+}
+{ v226 = v227; break 'm81; }
+ } else { break 'm67; }
+}
+v259 = v237.wrapping_add(1i64 as u32);
+{ v237 = v259; continue 'b61; }
+ }
+ } else { break 'm75; }
+}
+v284 = v35.wrapping_add(1i64 as u32);
+v285 = v284 % v10;
+v286 = v285.wrapping_mul(v17);
+v287 = v286 as u64;
+v288 = v287.wrapping_add(64i64 as u64);
+v289 = v0.wrapping_add(v288);
+v290 = v289.wrapping_add(0i64 as u64);
+v291 = unsafe { (*((v290 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v292 = ((v291 as u32) == (v284 as u32)) as u8;
+if v292 != 0 { v293 = v0.wrapping_add(0i64 as u64);
+v294 = unsafe { match (*((v293 as usize) as *const core::sync::atomic::AtomicU32)).compare_exchange(v35, v284, core::sync::atomic::Ordering::SeqCst, core::sync::atomic::Ordering::SeqCst) { Ok(x) | Err(x) => x } };
+v295 = ((v294 as u32) == (v35 as u32)) as u8;
+if v295 != 0 { v296 = 1i64 as u32;
+v297 = v0.wrapping_add(44i64 as u64);
+v298 = unsafe { (*((v297 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v296, core::sync::atomic::Ordering::SeqCst) };
+v299 = v35.wrapping_add(2i64 as u32);
+v300 = v299 % v10;
+v301 = v300.wrapping_mul(v17);
+v302 = v301 as u64;
+v303 = v302.wrapping_add(64i64 as u64);
+v304 = v0.wrapping_add(v303);
+v305 = v304.wrapping_add(0i64 as u64);
+unsafe { (*((v305 as usize) as *const core::sync::atomic::AtomicU32)).store(v228 as u32, core::sync::atomic::Ordering::SeqCst) };
+core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v306 = v30.wrapping_add(1i64 as u32);
+{ v307 = v228; 'b78: loop {
+v308 = ((v307 as u32) < (v306 as u32)) as u8;
+if v308 != 0 { v309 = v307.wrapping_mul(4i64 as u32);
+v310 = v309 as u64;
+v311 = v304.wrapping_add(v310);
+v312 = v311.wrapping_add(16i64 as u64);
+unsafe { (*((v312 as usize) as *const core::sync::atomic::AtomicU32)).store(v228 as u32, core::sync::atomic::Ordering::SeqCst) };
+v313 = v307.wrapping_add(1i64 as u32);
+{ v307 = v313; continue 'b78; }
+ } else { v314 = v304.wrapping_add(4i64 as u64);
+unsafe { (*((v314 as usize) as *const core::sync::atomic::AtomicU32)).store(v228 as u32, core::sync::atomic::Ordering::SeqCst) };
+core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v315 = v304.wrapping_add(0i64 as u64);
+unsafe { (*((v315 as usize) as *const core::sync::atomic::AtomicU32)).store(v299 as u32, core::sync::atomic::Ordering::SeqCst) };
+{ v226 = v227; break 'm81; }
+ }
+}
+ }
+ } else { v226 = v227; break 'm81; }
+ } else { v226 = v227; break 'm81; }
+}
+ }
+ } else { v226 = v227; break 'm81; }
+}
+v316 = ((v226 as u64) != ((0i64 as u64) as u64)) as u8;
+if v316 != 0 { v317 = 1i64 as u32;
+v318 = v0.wrapping_add(36i64 as u64);
+v319 = unsafe { (*((v318 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v317, core::sync::atomic::Ordering::SeqCst) };
+{ v31 = v226; break 'm85; }
+ } else { v320 = v32.wrapping_add(1i64 as u32);
+v321 = ((v320 as u32) < ((4i64 as u32) as u32)) as u8;
+if v321 != 0 { v32 = v320; continue 'b1; } else { v322 = 1i64 as u32;
+v323 = v0.wrapping_add(32i64 as u64);
+v324 = unsafe { (*((v323 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v322, core::sync::atomic::Ordering::SeqCst) };
+v325 = v0.wrapping_add(28i64 as u64);
+v326 = unsafe { (*((v325 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v327 = v326 as u64;
+v328 = v0.wrapping_add(v327);
+{ v31 = v328; break 'm85; }
+ }
+ }
+}
+'m88: {
+v329 = v0.wrapping_add(28i64 as u64);
+v330 = unsafe { (*((v329 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v331 = v330 as u64;
+v332 = v0.wrapping_add(v331);
+v333 = ((v31 as u64) == (v332 as u64)) as u8;
+v334 = v2.wrapping_shr(5);
+v335 = v334 & (1i64 as u32);
+v336 = v335.wrapping_shl(2);
+v337 = v336 as u64;
+v338 = v31.wrapping_add(v337);
+v339 = v2 & (31i64 as u32);
+v340 = 1i64 as u32;
+v341 = v340.wrapping_shl(v339 as u32);
+if v333 != 0 { v343 = 0i64 as u32;
+{ v342 = v343; break 'm88; }
+ } else { v344 = v338.wrapping_add(16i64 as u64);
+v345 = unsafe { (*((v344 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v346 = v338.wrapping_add(24i64 as u64);
+v347 = unsafe { (*((v346 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v348 = v345 & v341;
+v349 = v347 & v341;
+v350 = ((v348 as u32) != ((0i64 as u32) as u32)) as u8;
+v351 = ((v349 as u32) != ((0i64 as u32) as u32)) as u8;
+v352 = 2i64 as u32;
+v353 = 1i64 as u32;
+v354 = 0i64 as u32;
+v355 = if v351 != 0 { v353 } else { v354 };
+v356 = if v350 != 0 { v352 } else { v355 };
+{ v342 = v356; break 'm88; }
+ }
+}
+return v342;
+}
+ }
+}
+ }
+}
+
+#[inline(never)]
+unsafe fn f59(len: u64, a0: u64, a1: u32, a2: u32, a3: u32) -> u32 {
+    let mut v0: u64 = 0;
+    let mut v1: u32 = 0;
+    let mut v2: u32 = 0;
+    let mut v3: u32 = 0;
+    let mut v4: u64 = 0;
+    let mut v5: u64 = 0;
+    let mut v6: u64 = 0;
+    let mut v7: u32 = 0;
+    let mut v8: u64 = 0;
+    let mut v9: u64 = 0;
+    let mut v10: u64 = 0;
+    let mut v11: u32 = 0;
+    let mut v12: u64 = 0;
+    let mut v13: u32 = 0;
+    let mut v14: u64 = 0;
+    let mut v15: u64 = 0;
+    let mut v16: u32 = 0;
+    let mut v17: u64 = 0;
+    let mut v18: u32 = 0;
+    let mut v19: u64 = 0;
+    let mut v20: u32 = 0;
+    let mut v21: u64 = 0;
+    let mut v22: u32 = 0;
+    let mut v23: u64 = 0;
+    let mut v24: u64 = 0;
+    let mut v25: u32 = 0;
+    let mut v26: u64 = 0;
+    let mut v27: u64 = 0;
+    let mut v28: u32 = 0;
+    let mut v29: u32 = 0;
+    let mut v30: u32 = 0;
+    let mut v31: u32 = 0;
+    let mut v32: u64 = 0;
+    let mut v33: u32 = 0;
+    let mut v34: u32 = 0;
+    let mut v35: u64 = 0;
+    let mut v36: u32 = 0;
+    let mut v37: u32 = 0;
+    let mut v38: u32 = 0;
+    let mut v39: u8 = 0;
+    let mut v40: u32 = 0;
+    let mut v41: u32 = 0;
+    let mut v42: u32 = 0;
+    let mut v43: u64 = 0;
+    let mut v44: u64 = 0;
+    let mut v45: u64 = 0;
+    let mut v46: u64 = 0;
+    let mut v47: u32 = 0;
+    let mut v48: u8 = 0;
+    let mut v49: u32 = 0;
+    let mut v50: u8 = 0;
+    let mut v51: u32 = 0;
+    let mut v52: u32 = 0;
+    let mut v53: u32 = 0;
+    let mut v54: u64 = 0;
+    let mut v55: u64 = 0;
+    let mut v56: u64 = 0;
+    let mut v57: u32 = 0;
+    let mut v58: u8 = 0;
+    let mut v59: u32 = 0;
+    let mut v60: u8 = 0;
+    let mut v61: u32 = 0;
+    let mut v62: u8 = 0;
+    let mut v63: u32 = 0;
+    let mut v64: u8 = 0;
+    let mut v65: u64 = 0;
+    let mut v66: u32 = 0;
+    let mut v67: u8 = 0;
+    let mut v68: u32 = 0;
+    let mut v69: u64 = 0;
+    let mut v70: u32 = 0;
+    let mut v71: u32 = 0;
+    let mut v72: u64 = 0;
+    let mut v73: u32 = 0;
+    let mut v74: u32 = 0;
+    let mut v75: u64 = 0;
+    let mut v76: u64 = 0;
+    let mut v77: u64 = 0;
+    let mut v78: u64 = 0;
+    let mut v79: u64 = 0;
+    let mut v80: u64 = 0;
+    let mut v81: u64 = 0;
+    let mut v82: u8 = 0;
+    let mut v83: u64 = 0;
+    let mut v84: u32 = 0;
+    let mut v85: u8 = 0;
+    let mut v86: u8 = 0;
+    let mut v87: u64 = 0;
+    let mut v88: u32 = 0;
+    let mut v89: u32 = 0;
+    let mut v90: u64 = 0;
+    let mut v91: u32 = 0;
+    let mut v92: u32 = 0;
+    let mut v93: u64 = 0;
+    let mut v94: u32 = 0;
+    let mut v95: u32 = 0;
+    let mut v96: u8 = 0;
+    let mut v97: u8 = 0;
+    let mut v98: u32 = 0;
+    let mut v99: u8 = 0;
+    let mut v100: u64 = 0;
+    let mut v101: u32 = 0;
+    let mut v102: u8 = 0;
+    let mut v103: u8 = 0;
+    let mut v104: u32 = 0;
+    let mut v105: u64 = 0;
+    let mut v106: u32 = 0;
+    let mut v107: u32 = 0;
+    let mut v108: u64 = 0;
+    let mut v109: u32 = 0;
+    let mut v110: u64 = 0;
+    let mut v111: u32 = 0;
+    let mut v112: u32 = 0;
+    let mut v113: u64 = 0;
+    let mut v114: u32 = 0;
+    let mut v115: u32 = 0;
+    let mut v116: u32 = 0;
+    let mut v117: u32 = 0;
+    let mut v118: u8 = 0;
+    let mut v119: u8 = 0;
+    let mut v120: u8 = 0;
+    let mut v121: u64 = 0;
+    let mut v122: u64 = 0;
+    let mut v123: u32 = 0;
+    let mut v124: u32 = 0;
+    let mut v125: u32 = 0;
+    let mut v126: u64 = 0;
+    let mut v127: u64 = 0;
+    let mut v128: u64 = 0;
+    let mut v129: u64 = 0;
+    let mut v130: u32 = 0;
+    let mut v131: u8 = 0;
+    let mut v132: u32 = 0;
+    let mut v133: u8 = 0;
+    let mut v134: u32 = 0;
+    let mut v135: u32 = 0;
+    let mut v136: u32 = 0;
+    let mut v137: u64 = 0;
+    let mut v138: u64 = 0;
+    let mut v139: u64 = 0;
+    let mut v140: u32 = 0;
+    let mut v141: u8 = 0;
+    let mut v142: u32 = 0;
+    let mut v143: u8 = 0;
+    let mut v144: u32 = 0;
+    let mut v145: u8 = 0;
+    let mut v146: u32 = 0;
+    let mut v147: u64 = 0;
+    let mut v148: u64 = 0;
+    let mut v149: u64 = 0;
+    let mut v150: u64 = 0;
+    let mut v151: u64 = 0;
+    let mut v152: u64 = 0;
+    let mut v153: u8 = 0;
+    let mut v154: u32 = 0;
+    let mut v155: u32 = 0;
+    let mut v156: u64 = 0;
+    let mut v157: u32 = 0;
+    let mut v158: u8 = 0;
+    let mut v159: u64 = 0;
+    let mut v160: u64 = 0;
+    let mut v161: u64 = 0;
+    let mut v162: u64 = 0;
+    let mut v163: u64 = 0;
+    let mut v164: u64 = 0;
+    let mut v165: u32 = 0;
+    let mut v166: u32 = 0;
+    let mut v167: u32 = 0;
+    let mut v168: u64 = 0;
+    let mut v169: u32 = 0;
+    let mut v170: u8 = 0;
+    let mut v171: u8 = 0;
+    let mut v172: u8 = 0;
+    let mut v173: u32 = 0;
+    let mut v174: u32 = 0;
+    let mut v175: u64 = 0;
+    let mut v176: u64 = 0;
+    let mut v177: u64 = 0;
+    let mut v178: u64 = 0;
+    let mut v179: u64 = 0;
+    let mut v180: u64 = 0;
+    let mut v181: u8 = 0;
+    let mut v182: u64 = 0;
+    let mut v183: u64 = 0;
+    let mut v184: u64 = 0;
+    let mut v185: u64 = 0;
+    let mut v186: u64 = 0;
+    let mut v187: u32 = 0;
+    let mut v188: u8 = 0;
+    let mut v189: u64 = 0;
+    let mut v190: u64 = 0;
+    let mut v191: u32 = 0;
+    let mut v192: u32 = 0;
+    let mut v193: u32 = 0;
+    let mut v194: u64 = 0;
+    let mut v195: u64 = 0;
+    let mut v196: u64 = 0;
+    let mut v197: u64 = 0;
+    let mut v198: u32 = 0;
+    let mut v199: u8 = 0;
+    let mut v200: u64 = 0;
+    let mut v201: u32 = 0;
+    let mut v202: u8 = 0;
+    let mut v203: u32 = 0;
+    let mut v204: u64 = 0;
+    let mut v205: u32 = 0;
+    let mut v206: u32 = 0;
+    let mut v207: u32 = 0;
+    let mut v208: u32 = 0;
+    let mut v209: u64 = 0;
+    let mut v210: u64 = 0;
+    let mut v211: u64 = 0;
+    let mut v212: u64 = 0;
+    let mut v213: u32 = 0;
+    let mut v214: u32 = 0;
+    let mut v215: u8 = 0;
+    let mut v216: u32 = 0;
+    let mut v217: u64 = 0;
+    let mut v218: u64 = 0;
+    let mut v219: u64 = 0;
+    let mut v220: u32 = 0;
+    let mut v221: u64 = 0;
+    let mut v222: u64 = 0;
+    let mut v223: u8 = 0;
+    let mut v224: u32 = 0;
+    let mut v225: u64 = 0;
+    let mut v226: u32 = 0;
+    let mut v227: u64 = 0;
+    let mut v228: u64 = 0;
+    let mut v229: u32 = 0;
+    let mut v230: u32 = 0;
+    let mut v231: u32 = 0;
+    let mut v232: u64 = 0;
+    let mut v233: u64 = 0;
+    let mut v234: u64 = 0;
+    let mut v235: u64 = 0;
+    let mut v236: u32 = 0;
+    let mut v237: u8 = 0;
+    let mut v238: u32 = 0;
+    let mut v239: u8 = 0;
+    let mut v240: u32 = 0;
+    let mut v241: u32 = 0;
+    let mut v242: u32 = 0;
+    let mut v243: u64 = 0;
+    let mut v244: u64 = 0;
+    let mut v245: u64 = 0;
+    let mut v246: u32 = 0;
+    let mut v247: u8 = 0;
+    let mut v248: u32 = 0;
+    let mut v249: u8 = 0;
+    let mut v250: u32 = 0;
+    let mut v251: u8 = 0;
+    let mut v252: u32 = 0;
+    let mut v253: u64 = 0;
+    let mut v254: u64 = 0;
+    let mut v255: u64 = 0;
+    let mut v256: u64 = 0;
+    let mut v257: u64 = 0;
+    let mut v258: u64 = 0;
+    let mut v259: u8 = 0;
+    let mut v260: u32 = 0;
+    let mut v261: u32 = 0;
+    let mut v262: u64 = 0;
+    let mut v263: u32 = 0;
+    let mut v264: u8 = 0;
+    let mut v265: u64 = 0;
+    let mut v266: u64 = 0;
+    let mut v267: u64 = 0;
+    let mut v268: u64 = 0;
+    let mut v269: u64 = 0;
+    let mut v270: u64 = 0;
+    let mut v271: u32 = 0;
+    let mut v272: u32 = 0;
+    let mut v273: u32 = 0;
+    let mut v274: u64 = 0;
+    let mut v275: u32 = 0;
+    let mut v276: u8 = 0;
+    let mut v277: u8 = 0;
+    let mut v278: u8 = 0;
+    let mut v279: u32 = 0;
+    let mut v280: u32 = 0;
+    let mut v281: u64 = 0;
+    let mut v282: u32 = 0;
+    let mut v283: u64 = 0;
+    let mut v284: u64 = 0;
+    let mut v285: u32 = 0;
+    let mut v286: u32 = 0;
+    let mut v287: u32 = 0;
+    let mut v288: u64 = 0;
+    let mut v289: u64 = 0;
+    let mut v290: u64 = 0;
+    let mut v291: u64 = 0;
+    let mut v292: u32 = 0;
+    let mut v293: u8 = 0;
+    let mut v294: u64 = 0;
+    let mut v295: u32 = 0;
+    let mut v296: u8 = 0;
+    let mut v297: u32 = 0;
+    let mut v298: u64 = 0;
+    let mut v299: u32 = 0;
+    let mut v300: u32 = 0;
+    let mut v301: u32 = 0;
+    let mut v302: u32 = 0;
+    let mut v303: u64 = 0;
+    let mut v304: u64 = 0;
+    let mut v305: u64 = 0;
+    let mut v306: u64 = 0;
+    let mut v307: u32 = 0;
+    let mut v308: u32 = 0;
+    let mut v309: u8 = 0;
+    let mut v310: u32 = 0;
+    let mut v311: u64 = 0;
+    let mut v312: u64 = 0;
+    let mut v313: u64 = 0;
+    let mut v314: u32 = 0;
+    let mut v315: u64 = 0;
+    let mut v316: u64 = 0;
+    let mut v317: u8 = 0;
+    let mut v318: u32 = 0;
+    let mut v319: u64 = 0;
+    let mut v320: u32 = 0;
+    let mut v321: u32 = 0;
+    let mut v322: u8 = 0;
+    let mut v323: u32 = 0;
+    let mut v324: u64 = 0;
+    let mut v325: u32 = 0;
+    let mut v326: u64 = 0;
+    let mut v327: u32 = 0;
+    let mut v328: u64 = 0;
+    let mut v329: u64 = 0;
+    let mut v330: u64 = 0;
+    let mut v331: u32 = 0;
+    let mut v332: u64 = 0;
+    let mut v333: u64 = 0;
+    let mut v334: u8 = 0;
+    let mut v335: u32 = 0;
+    let mut v336: u32 = 0;
+    let mut v337: u32 = 0;
+    let mut v338: u64 = 0;
+    let mut v339: u64 = 0;
+    let mut v340: u32 = 0;
+    let mut v341: u32 = 0;
+    let mut v342: u32 = 0;
+    let mut v343: u32 = 0;
+    let mut v344: u32 = 0;
+    let mut v345: u8 = 0;
+    let mut v346: u64 = 0;
+    let mut v347: u64 = 0;
+    let mut v348: u64 = 0;
+    let mut v349: u64 = 0;
+    let mut v350: u32 = 0;
+    let mut v351: u32 = 0;
+    v0 = a0;
+    v1 = a1;
+    v2 = a2;
+    v3 = a3;
+    let mut d: u32 = 0;
+v4 = v1 as u64;
+v5 = v4.wrapping_add(1i64 as u64);
+v6 = v5.wrapping_shl(32);
+v7 = v2.wrapping_shr(6);
+v8 = v7 as u64;
+v9 = v6 | v8;
+v10 = v0.wrapping_add(4i64 as u64);
+v11 = unsafe { (*((v10 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v12 = v0.wrapping_add(12i64 as u64);
+v13 = unsafe { (*((v12 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v14 = v13 as u64;
+v15 = v0.wrapping_add(16i64 as u64);
+v16 = unsafe { (*((v15 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v17 = v0.wrapping_add(20i64 as u64);
+v18 = unsafe { (*((v17 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v19 = v0.wrapping_add(24i64 as u64);
+v20 = unsafe { (*((v19 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v21 = v0.wrapping_add(8i64 as u64);
+v22 = unsafe { (*((v21 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v23 = v9.wrapping_mul(-7046029254386353131i64 as u64);
+v24 = v23.wrapping_shr(32);
+v25 = v24 as u32;
+v26 = v9.wrapping_mul(-4417276706812531889i64 as u64);
+v27 = v26.wrapping_shr(48);
+v28 = v27 as u32;
+v29 = v28 | (1i64 as u32);
+v30 = v29.wrapping_shl(16);
+v31 = v16.wrapping_add(-1i64 as u32);
+v34 = 0i64 as u32;
+{ v33 = v34; 'b1: loop {
+v35 = v0.wrapping_add(0i64 as u64);
+v36 = unsafe { (*((v35 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v37 = v11.wrapping_add(-1i64 as u32);
+{ v38 = v34; 'b2: loop {
+'m85: {
+'m59: {
+v39 = ((v38 as u32) < (v37 as u32)) as u8;
+if v39 != 0 { 'm30: {
+v40 = v36.wrapping_sub(v38);
+v41 = v40 % v11;
+v42 = v41.wrapping_mul(v18);
+v43 = v42 as u64;
+v44 = v43.wrapping_add(64i64 as u64);
+v45 = v0.wrapping_add(v44);
+v46 = v45.wrapping_add(0i64 as u64);
+v47 = unsafe { (*((v46 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v48 = ((v47 as u32) == (v40 as u32)) as u8;
+if v48 != 0 { { v49 = v34; 'b5: loop {
+v50 = ((v49 as u32) < ((16i64 as u32) as u32)) as u8;
+if v50 != 0 { 'b6: loop {
+v51 = v25.wrapping_add(v49);
+v52 = v51 & v31;
+v53 = v52.wrapping_mul(4i64 as u32);
+v54 = v53 as u64;
+v55 = v45.wrapping_add(v54);
+v56 = v55.wrapping_add(16i64 as u64);
+v57 = unsafe { (*((v56 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v58 = ((v57 as u32) == ((0i64 as u32) as u32)) as u8;
+if v58 != 0 { break 'm30; } else { 'm29: {
+v59 = v57 & (-65536i64 as u32);
+v60 = ((v59 as u32) == (v30 as u32)) as u8;
+if v60 != 0 { v61 = v57 & (65535i64 as u32);
+v62 = ((v61 as u32) == ((0i64 as u32) as u32)) as u8;
+if v62 != 0 { { v63 = v34; 'b10: loop {
+v64 = ((v63 as u32) < ((65536i64 as u32) as u32)) as u8;
+if v64 != 0 { core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v65 = v55.wrapping_add(16i64 as u64);
+v66 = unsafe { (*((v65 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v67 = ((v66 as u32) != (v57 as u32)) as u8;
+v68 = v63.wrapping_add(1i64 as u32);
+if v67 != 0 { continue 'b6; } else { v63 = v68; continue 'b10; }
+ } else { 'm14: {
+v69 = v0.wrapping_add(48i64 as u64);
+v70 = unsafe { (*((v69 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+if v70 != 0 { v71 = 1i64 as u32;
+v72 = v0.wrapping_add(60i64 as u64);
+v73 = unsafe { (*((v72 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v71, core::sync::atomic::Ordering::SeqCst) };
+{ break 'm14; }
+ } else { break 'm14; }
+}
+{ break 'm59; }
+ }
+}
+ }
+ } else { 'm31: {
+v74 = v61.wrapping_add(-1i64 as u32);
+v75 = v74 as u64;
+v76 = v75.wrapping_shl(v14 as u32);
+v77 = v20 as u64;
+v78 = v76.wrapping_add(v77);
+v79 = v45.wrapping_add(v78);
+v80 = v79.wrapping_add(0i64 as u64);
+v81 = ld::<u64>(v0, len, (v80 as usize)) as u64;
+v82 = ((v81 as u64) == (v9 as u64)) as u8;
+v83 = v79.wrapping_add(8i64 as u64);
+v84 = unsafe { (*((v83 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v85 = ((v84 as u32) == (v47 as u32)) as u8;
+v86 = v82 & v85;
+if v86 != 0 { 'm18: {
+v90 = v0.wrapping_add(48i64 as u64);
+v91 = unsafe { (*((v90 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+if v91 != 0 { v92 = 1i64 as u32;
+v93 = v0.wrapping_add(52i64 as u64);
+v94 = unsafe { (*((v93 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v92, core::sync::atomic::Ordering::SeqCst) };
+{ break 'm18; }
+ } else { break 'm18; }
+}
+{ let t = (v79, v38, v47); v87 = t.0; v88 = t.1; v89 = t.2; break 'm31; }
+ } else { v95 = v47 | (2147483648i64 as u32);
+v96 = ((v84 as u32) == (v95 as u32)) as u8;
+v97 = v82 & v96;
+if v97 != 0 { v98 = v34; 'b20: loop {
+v99 = ((v98 as u32) < ((65536i64 as u32) as u32)) as u8;
+if v99 != 0 { core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v100 = v79.wrapping_add(8i64 as u64);
+v101 = unsafe { (*((v100 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v102 = ((v101 as u32) == (v47 as u32)) as u8;
+v103 = ((v101 as u32) == (v95 as u32)) as u8;
+v104 = v98.wrapping_add(1i64 as u32);
+if v102 != 0 { 'm25: {
+v105 = v0.wrapping_add(48i64 as u64);
+v106 = unsafe { (*((v105 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+if v106 != 0 { v107 = 1i64 as u32;
+v108 = v0.wrapping_add(56i64 as u64);
+v109 = unsafe { (*((v108 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v107, core::sync::atomic::Ordering::SeqCst) };
+{ break 'm25; }
+ } else { break 'm25; }
+}
+{ let t = (v79, v38, v47); v87 = t.0; v88 = t.1; v89 = t.2; break 'm31; }
+ } else { if v103 != 0 { v98 = v104; continue 'b20; } else { break 'm29; }
+ }
+ } else { 'm28: {
+v110 = v0.wrapping_add(48i64 as u64);
+v111 = unsafe { (*((v110 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+if v111 != 0 { v112 = 1i64 as u32;
+v113 = v0.wrapping_add(60i64 as u64);
+v114 = unsafe { (*((v113 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v112, core::sync::atomic::Ordering::SeqCst) };
+{ break 'm28; }
+ } else { break 'm28; }
+}
+{ break 'm59; }
+ }
+}
+ } else { break 'm29; }
+ }
+}
+v117 = v37.wrapping_add(-1i64 as u32);
+v118 = ((v88 as u32) == (v117 as u32)) as u8;
+v119 = ((v37 as u32) > ((1i64 as u32) as u32)) as u8;
+v120 = v118 & v119;
+if v120 != 0 { 'm57: {
+v122 = 0i64 as u64;
+v123 = 0i64 as u32;
+v124 = v36 % v11;
+v125 = v124.wrapping_mul(v18);
+v126 = v125 as u64;
+v127 = v126.wrapping_add(64i64 as u64);
+v128 = v0.wrapping_add(v127);
+v129 = v128.wrapping_add(0i64 as u64);
+v130 = unsafe { (*((v129 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v131 = ((v130 as u32) == (v36 as u32)) as u8;
+if v131 != 0 { { v132 = v123; 'b34: loop {
+'m51: {
+v133 = ((v132 as u32) < ((16i64 as u32) as u32)) as u8;
+if v133 != 0 { v134 = v25.wrapping_add(v132);
+v135 = v134 & v31;
+v136 = v135.wrapping_mul(4i64 as u32);
+v137 = v136 as u64;
+v138 = v128.wrapping_add(v137);
+v139 = v138.wrapping_add(16i64 as u64);
+v140 = unsafe { match (*((v139 as usize) as *const core::sync::atomic::AtomicU32)).compare_exchange(v123, v30, core::sync::atomic::Ordering::SeqCst, core::sync::atomic::Ordering::SeqCst) { Ok(x) | Err(x) => x } };
+v141 = ((v140 as u32) == ((0i64 as u32) as u32)) as u8;
+if v141 != 0 { { 'b42: loop {
+v155 = 1i64 as u32;
+v156 = v128.wrapping_add(4i64 as u64);
+v157 = unsafe { (*((v156 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v155, core::sync::atomic::Ordering::SeqCst) };
+v158 = ((v157 as u32) < (v22 as u32)) as u8;
+if v158 != 0 { v159 = v157 as u64;
+v160 = v159.wrapping_shl(v14 as u32);
+v161 = v20 as u64;
+v162 = v160.wrapping_add(v161);
+v163 = v128.wrapping_add(v162);
+v164 = v163.wrapping_add(8i64 as u64);
+v165 = unsafe { (*((v164 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v166 = v165 & (2147483648i64 as u32);
+v167 = v36 | (2147483648i64 as u32);
+v168 = v163.wrapping_add(8i64 as u64);
+v169 = unsafe { match (*((v168 as usize) as *const core::sync::atomic::AtomicU32)).compare_exchange(v165, v167, core::sync::atomic::Ordering::SeqCst, core::sync::atomic::Ordering::SeqCst) { Ok(x) | Err(x) => x } };
+v170 = ((v169 as u32) == (v165 as u32)) as u8;
+v171 = ((v166 as u32) == ((0i64 as u32) as u32)) as u8;
+v172 = v170 & v171;
+if v172 != 0 { core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+unsafe { core::ptr::write_unaligned((v163 as usize) as *mut u64, v9) };
+core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v173 = v157.wrapping_add(1i64 as u32);
+v174 = v30 | v173;
+unsafe { (*((v139 as usize) as *const core::sync::atomic::AtomicU32)).store(v174 as u32, core::sync::atomic::Ordering::SeqCst) };
+v175 = 1i64 as u64;
+v176 = v175.wrapping_shl(v14 as u32);
+v177 = v176.wrapping_add(-16i64 as u64);
+v179 = 16i64 as u64;
+v180 = v177.wrapping_add(16i64 as u64);
+{ v178 = v179; 'b46: loop {
+v181 = ((v178 as u64) < (v180 as u64)) as u8;
+if v181 != 0 { v182 = v87.wrapping_add(v178);
+v183 = ld::<u64>(v0, len, (v182 as usize)) as u64;
+v184 = v163.wrapping_add(v178);
+unsafe { core::ptr::write_unaligned((v184 as usize) as *mut u64, v183) };
+v185 = v178.wrapping_add(8i64 as u64);
+{ v178 = v185; continue 'b46; }
+ } else { core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v186 = v87.wrapping_add(8i64 as u64);
+v187 = unsafe { (*((v186 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v188 = ((v187 as u32) == (v89 as u32)) as u8;
+if v188 != 0 { core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v190 = v163.wrapping_add(8i64 as u64);
+unsafe { (*((v190 as usize) as *const core::sync::atomic::AtomicU32)).store(v36 as u32, core::sync::atomic::Ordering::SeqCst) };
+{ v121 = v163; break 'm57; }
+ } else { v189 = v163.wrapping_add(8i64 as u64);
+unsafe { (*((v189 as usize) as *const core::sync::atomic::AtomicU32)).store(v123 as u32, core::sync::atomic::Ordering::SeqCst) };
+{ v121 = v122; break 'm57; }
+ }
+ }
+}
+ }
+ } else { continue 'b42; }
+ } else { unsafe { (*((v139 as usize) as *const core::sync::atomic::AtomicU32)).store(v123 as u32, core::sync::atomic::Ordering::SeqCst) };
+{ break 'm51; }
+ }
+}
+ }
+ } else { 'm40: {
+v142 = v140 & (-65536i64 as u32);
+v143 = ((v142 as u32) == (v30 as u32)) as u8;
+if v143 != 0 { 'm39: {
+v144 = v140 & (65535i64 as u32);
+v145 = ((v144 as u32) == ((0i64 as u32) as u32)) as u8;
+if v145 != 0 { break 'm39; } else { v146 = v144.wrapping_add(-1i64 as u32);
+v147 = v146 as u64;
+v148 = v147.wrapping_shl(v14 as u32);
+v149 = v20 as u64;
+v150 = v148.wrapping_add(v149);
+v151 = v128.wrapping_add(v150);
+v152 = ld::<u64>(v0, len, (v151 as usize)) as u64;
+v153 = ((v152 as u64) == (v9 as u64)) as u8;
+if v153 != 0 { break 'm39; } else { break 'm40; }
+ }
+}
+{ v121 = v122; break 'm57; }
+ } else { break 'm40; }
+}
+v154 = v132.wrapping_add(1i64 as u32);
+{ v132 = v154; continue 'b34; }
+ }
+ } else { break 'm51; }
+}
+v191 = v36.wrapping_add(1i64 as u32);
+v192 = v191 % v11;
+v193 = v192.wrapping_mul(v18);
+v194 = v193 as u64;
+v195 = v194.wrapping_add(64i64 as u64);
+v196 = v0.wrapping_add(v195);
+v197 = v196.wrapping_add(0i64 as u64);
+v198 = unsafe { (*((v197 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v199 = ((v198 as u32) == (v191 as u32)) as u8;
+if v199 != 0 { v200 = v0.wrapping_add(0i64 as u64);
+v201 = unsafe { match (*((v200 as usize) as *const core::sync::atomic::AtomicU32)).compare_exchange(v36, v191, core::sync::atomic::Ordering::SeqCst, core::sync::atomic::Ordering::SeqCst) { Ok(x) | Err(x) => x } };
+v202 = ((v201 as u32) == (v36 as u32)) as u8;
+if v202 != 0 { v203 = 1i64 as u32;
+v204 = v0.wrapping_add(44i64 as u64);
+v205 = unsafe { (*((v204 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v203, core::sync::atomic::Ordering::SeqCst) };
+v206 = v36.wrapping_add(2i64 as u32);
+v207 = v206 % v11;
+v208 = v207.wrapping_mul(v18);
+v209 = v208 as u64;
+v210 = v209.wrapping_add(64i64 as u64);
+v211 = v0.wrapping_add(v210);
+v212 = v211.wrapping_add(0i64 as u64);
+unsafe { (*((v212 as usize) as *const core::sync::atomic::AtomicU32)).store(v123 as u32, core::sync::atomic::Ordering::SeqCst) };
+core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v213 = v31.wrapping_add(1i64 as u32);
+{ v214 = v123; 'b54: loop {
+v215 = ((v214 as u32) < (v213 as u32)) as u8;
+if v215 != 0 { v216 = v214.wrapping_mul(4i64 as u32);
+v217 = v216 as u64;
+v218 = v211.wrapping_add(v217);
+v219 = v218.wrapping_add(16i64 as u64);
+unsafe { (*((v219 as usize) as *const core::sync::atomic::AtomicU32)).store(v123 as u32, core::sync::atomic::Ordering::SeqCst) };
+v220 = v214.wrapping_add(1i64 as u32);
+{ v214 = v220; continue 'b54; }
+ } else { v221 = v211.wrapping_add(4i64 as u64);
+unsafe { (*((v221 as usize) as *const core::sync::atomic::AtomicU32)).store(v123 as u32, core::sync::atomic::Ordering::SeqCst) };
+core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v222 = v211.wrapping_add(0i64 as u64);
+unsafe { (*((v222 as usize) as *const core::sync::atomic::AtomicU32)).store(v206 as u32, core::sync::atomic::Ordering::SeqCst) };
+{ v121 = v122; break 'm57; }
+ }
+}
+ }
+ } else { v121 = v122; break 'm57; }
+ } else { v121 = v122; break 'm57; }
+}
+ }
+ } else { v121 = v122; break 'm57; }
+}
+v223 = ((v121 as u64) != ((0i64 as u64) as u64)) as u8;
+if v223 != 0 { v224 = 1i64 as u32;
+v225 = v0.wrapping_add(40i64 as u64);
+v226 = unsafe { (*((v225 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v224, core::sync::atomic::Ordering::SeqCst) };
+{ v32 = v121; break 'm85; }
+ } else { v32 = v87; break 'm85; }
+ } else { v32 = v87; break 'm85; }
+ }
+ } else { break 'm29; }
+}
+v115 = v49.wrapping_add(1i64 as u32);
+{ v49 = v115; continue 'b5; }
+ }
+}
+ } else { break 'm30; }
+}
+ }
+ } else { break 'm30; }
+}
+v116 = v38.wrapping_add(1i64 as u32);
+{ v38 = v116; continue 'b2; }
+ } else { break 'm59; }
+}
+'m81: {
+v228 = 0i64 as u64;
+v229 = 0i64 as u32;
+v230 = v36 % v11;
+v231 = v230.wrapping_mul(v18);
+v232 = v231 as u64;
+v233 = v232.wrapping_add(64i64 as u64);
+v234 = v0.wrapping_add(v233);
+v235 = v234.wrapping_add(0i64 as u64);
+v236 = unsafe { (*((v235 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v237 = ((v236 as u32) == (v36 as u32)) as u8;
+if v237 != 0 { { v238 = v229; 'b61: loop {
+'m75: {
+v239 = ((v238 as u32) < ((16i64 as u32) as u32)) as u8;
+if v239 != 0 { v240 = v25.wrapping_add(v238);
+v241 = v240 & v31;
+v242 = v241.wrapping_mul(4i64 as u32);
+v243 = v242 as u64;
+v244 = v234.wrapping_add(v243);
+v245 = v244.wrapping_add(16i64 as u64);
+v246 = unsafe { match (*((v245 as usize) as *const core::sync::atomic::AtomicU32)).compare_exchange(v229, v30, core::sync::atomic::Ordering::SeqCst, core::sync::atomic::Ordering::SeqCst) { Ok(x) | Err(x) => x } };
+v247 = ((v246 as u32) == ((0i64 as u32) as u32)) as u8;
+if v247 != 0 { { 'b69: loop {
+v261 = 1i64 as u32;
+v262 = v234.wrapping_add(4i64 as u64);
+v263 = unsafe { (*((v262 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v261, core::sync::atomic::Ordering::SeqCst) };
+v264 = ((v263 as u32) < (v22 as u32)) as u8;
+if v264 != 0 { v265 = v263 as u64;
+v266 = v265.wrapping_shl(v14 as u32);
+v267 = v20 as u64;
+v268 = v266.wrapping_add(v267);
+v269 = v234.wrapping_add(v268);
+v270 = v269.wrapping_add(8i64 as u64);
+v271 = unsafe { (*((v270 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v272 = v271 & (2147483648i64 as u32);
+v273 = v36 | (2147483648i64 as u32);
+v274 = v269.wrapping_add(8i64 as u64);
+v275 = unsafe { match (*((v274 as usize) as *const core::sync::atomic::AtomicU32)).compare_exchange(v271, v273, core::sync::atomic::Ordering::SeqCst, core::sync::atomic::Ordering::SeqCst) { Ok(x) | Err(x) => x } };
+v276 = ((v275 as u32) == (v271 as u32)) as u8;
+v277 = ((v272 as u32) == ((0i64 as u32) as u32)) as u8;
+v278 = v276 & v277;
+if v278 != 0 { core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+unsafe { core::ptr::write_unaligned((v269 as usize) as *mut u64, v9) };
+core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v279 = v263.wrapping_add(1i64 as u32);
+v280 = v30 | v279;
+unsafe { (*((v245 as usize) as *const core::sync::atomic::AtomicU32)).store(v280 as u32, core::sync::atomic::Ordering::SeqCst) };
+v281 = 0i64 as u64;
+unsafe { core::ptr::write_unaligned(((v269 as usize).wrapping_add(16isize as usize)) as *mut u64, v281) };
+unsafe { core::ptr::write_unaligned(((v269 as usize).wrapping_add(24isize as usize)) as *mut u64, v281) };
+v282 = 1i64 as u32;
+if v282 != 0 { core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v284 = v269.wrapping_add(8i64 as u64);
+unsafe { (*((v284 as usize) as *const core::sync::atomic::AtomicU32)).store(v36 as u32, core::sync::atomic::Ordering::SeqCst) };
+{ v227 = v269; break 'm81; }
+ } else { v283 = v269.wrapping_add(8i64 as u64);
+unsafe { (*((v283 as usize) as *const core::sync::atomic::AtomicU32)).store(v229 as u32, core::sync::atomic::Ordering::SeqCst) };
+{ v227 = v228; break 'm81; }
+ }
+ } else { continue 'b69; }
+ } else { unsafe { (*((v245 as usize) as *const core::sync::atomic::AtomicU32)).store(v229 as u32, core::sync::atomic::Ordering::SeqCst) };
+{ break 'm75; }
+ }
+}
+ }
+ } else { 'm67: {
+v248 = v246 & (-65536i64 as u32);
+v249 = ((v248 as u32) == (v30 as u32)) as u8;
+if v249 != 0 { 'm66: {
+v250 = v246 & (65535i64 as u32);
+v251 = ((v250 as u32) == ((0i64 as u32) as u32)) as u8;
+if v251 != 0 { break 'm66; } else { v252 = v250.wrapping_add(-1i64 as u32);
+v253 = v252 as u64;
+v254 = v253.wrapping_shl(v14 as u32);
+v255 = v20 as u64;
+v256 = v254.wrapping_add(v255);
+v257 = v234.wrapping_add(v256);
+v258 = ld::<u64>(v0, len, (v257 as usize)) as u64;
+v259 = ((v258 as u64) == (v9 as u64)) as u8;
+if v259 != 0 { break 'm66; } else { break 'm67; }
+ }
+}
+{ v227 = v228; break 'm81; }
+ } else { break 'm67; }
+}
+v260 = v238.wrapping_add(1i64 as u32);
+{ v238 = v260; continue 'b61; }
+ }
+ } else { break 'm75; }
+}
+v285 = v36.wrapping_add(1i64 as u32);
+v286 = v285 % v11;
+v287 = v286.wrapping_mul(v18);
+v288 = v287 as u64;
+v289 = v288.wrapping_add(64i64 as u64);
+v290 = v0.wrapping_add(v289);
+v291 = v290.wrapping_add(0i64 as u64);
+v292 = unsafe { (*((v291 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v293 = ((v292 as u32) == (v285 as u32)) as u8;
+if v293 != 0 { v294 = v0.wrapping_add(0i64 as u64);
+v295 = unsafe { match (*((v294 as usize) as *const core::sync::atomic::AtomicU32)).compare_exchange(v36, v285, core::sync::atomic::Ordering::SeqCst, core::sync::atomic::Ordering::SeqCst) { Ok(x) | Err(x) => x } };
+v296 = ((v295 as u32) == (v36 as u32)) as u8;
+if v296 != 0 { v297 = 1i64 as u32;
+v298 = v0.wrapping_add(44i64 as u64);
+v299 = unsafe { (*((v298 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v297, core::sync::atomic::Ordering::SeqCst) };
+v300 = v36.wrapping_add(2i64 as u32);
+v301 = v300 % v11;
+v302 = v301.wrapping_mul(v18);
+v303 = v302 as u64;
+v304 = v303.wrapping_add(64i64 as u64);
+v305 = v0.wrapping_add(v304);
+v306 = v305.wrapping_add(0i64 as u64);
+unsafe { (*((v306 as usize) as *const core::sync::atomic::AtomicU32)).store(v229 as u32, core::sync::atomic::Ordering::SeqCst) };
+core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v307 = v31.wrapping_add(1i64 as u32);
+{ v308 = v229; 'b78: loop {
+v309 = ((v308 as u32) < (v307 as u32)) as u8;
+if v309 != 0 { v310 = v308.wrapping_mul(4i64 as u32);
+v311 = v310 as u64;
+v312 = v305.wrapping_add(v311);
+v313 = v312.wrapping_add(16i64 as u64);
+unsafe { (*((v313 as usize) as *const core::sync::atomic::AtomicU32)).store(v229 as u32, core::sync::atomic::Ordering::SeqCst) };
+v314 = v308.wrapping_add(1i64 as u32);
+{ v308 = v314; continue 'b78; }
+ } else { v315 = v305.wrapping_add(4i64 as u64);
+unsafe { (*((v315 as usize) as *const core::sync::atomic::AtomicU32)).store(v229 as u32, core::sync::atomic::Ordering::SeqCst) };
+core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+v316 = v305.wrapping_add(0i64 as u64);
+unsafe { (*((v316 as usize) as *const core::sync::atomic::AtomicU32)).store(v300 as u32, core::sync::atomic::Ordering::SeqCst) };
+{ v227 = v228; break 'm81; }
+ }
+}
+ }
+ } else { v227 = v228; break 'm81; }
+ } else { v227 = v228; break 'm81; }
+}
+ }
+ } else { v227 = v228; break 'm81; }
+}
+v317 = ((v227 as u64) != ((0i64 as u64) as u64)) as u8;
+if v317 != 0 { v318 = 1i64 as u32;
+v319 = v0.wrapping_add(36i64 as u64);
+v320 = unsafe { (*((v319 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v318, core::sync::atomic::Ordering::SeqCst) };
+{ v32 = v227; break 'm85; }
+ } else { v321 = v33.wrapping_add(1i64 as u32);
+v322 = ((v321 as u32) < ((4i64 as u32) as u32)) as u8;
+if v322 != 0 { v33 = v321; continue 'b1; } else { v323 = 1i64 as u32;
+v324 = v0.wrapping_add(32i64 as u64);
+v325 = unsafe { (*((v324 as usize) as *const core::sync::atomic::AtomicU32)).fetch_add(v323, core::sync::atomic::Ordering::SeqCst) };
+v326 = v0.wrapping_add(28i64 as u64);
+v327 = unsafe { (*((v326 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v328 = v327 as u64;
+v329 = v0.wrapping_add(v328);
+{ v32 = v329; break 'm85; }
+ }
+ }
+}
+'m88: {
+v330 = v0.wrapping_add(28i64 as u64);
+v331 = unsafe { (*((v330 as usize) as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+v332 = v331 as u64;
+v333 = v0.wrapping_add(v332);
+v334 = ((v32 as u64) == (v333 as u64)) as u8;
+v335 = v2.wrapping_shr(5);
+v336 = v335 & (1i64 as u32);
+v337 = v336.wrapping_shl(2);
+v338 = v337 as u64;
+v339 = v32.wrapping_add(v338);
+v340 = v2 & (31i64 as u32);
+v341 = 1i64 as u32;
+v342 = v341.wrapping_shl(v340 as u32);
+if v334 != 0 { v344 = 0i64 as u32;
+{ v343 = v344; break 'm88; }
+ } else { v345 = ((v3 as u32) == ((2i64 as u32) as u32)) as u8;
+v346 = 16i64 as u64;
+v347 = 24i64 as u64;
+v348 = if v345 != 0 { v346 } else { v347 };
+v349 = v339.wrapping_add(v348);
+v350 = unsafe { (*((v349 as usize) as *const core::sync::atomic::AtomicU32)).fetch_or(v342, core::sync::atomic::Ordering::SeqCst) };
+v351 = 1i64 as u32;
+{ v343 = v351; break 'm88; }
+ }
+}
+return v343;
+}
+ }
+}
+ }
+}
+
 /// The read `rows_col` of the relation (or rows) whose descriptor is at `desc`.
 ///
 /// # Safety
@@ -759,6 +2523,26 @@ pub unsafe fn atoms_at(desc: *const u8, a1: u32) -> u64 {
     unsafe { f57(u64::MAX, desc as u64, a1) }
 }
 
+/// The read `verdict_get` of the relation (or rows) whose descriptor is at `desc`.
+///
+/// # Safety
+/// `desc` is a live descriptor of its kind in a block, and the read's arguments are in its bounds.
+#[inline(always)]
+pub unsafe fn verdict_get(desc: *const u8, a1: u32, a2: u32) -> u32 {
+    // SAFETY: the caller's.
+    unsafe { f58(u64::MAX, desc as u64, a1, a2) }
+}
+
+/// The read `verdict_put` of the relation (or rows) whose descriptor is at `desc`.
+///
+/// # Safety
+/// `desc` is a live descriptor of its kind in a block, and the read's arguments are in its bounds.
+#[inline(always)]
+pub unsafe fn verdict_put(desc: *const u8, a1: u32, a2: u32, a3: u32) -> u32 {
+    // SAFETY: the caller's.
+    unsafe { f59(u64::MAX, desc as u64, a1, a2, a3) }
+}
+
 
 /// This source's fingerprint (`rust::fingerprint` of what comes before).
-pub const SOURCE: u64 = 0xadad97990d508f1f;
+pub const SOURCE: u64 = 0x9c968cb64b091673;

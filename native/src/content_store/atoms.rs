@@ -286,6 +286,8 @@ pub struct Atoms {
     state: rerail_accel::sharded::Sharded<State>,
     /// The store's guest keys as this process holds them (decision 0391), shared as the atoms are.
     guest_keys: Arc<super::guest_keys::GuestKeys>,
+    /// The text tests' verdicts for these atoms (decision 0450 step 2d), shared as the atoms are.
+    verdicts: std::sync::OnceLock<Verdicts>,
     /// Held (the lock file, exclusively locked) while this process may give out pending ids.
     /// Lock order: `lease`, then `reader`, then `state`.
     lease: Mutex<Option<File>>,
@@ -354,6 +356,63 @@ static RESERVED: LazyLock<parking_lot::Mutex<HashMap<usize, std::collections::BT
 /// Reservations nest: a component this thread runs while its own waits (a job the wait runs, such as another
 /// component's, while a join's morsels finish) reserves its atoms as its own, and the waiting one's reservation
 /// goes on when it ends.
+/// The text tests' verdicts for a store's atoms (decision 0450 step 2d): the one rolling cache of `rerail_clif::view::
+/// cache`, in a block of its own, read and written through the reads written once in CLIF (`verdict_get`,
+/// `verdict_put`) by the CPU's text tests and the kernels. An entry holds 64 symbols of one test; three generations of
+/// `VERDICT_ENTRIES` entries bound it (LRU: an entry read is copied into the head).
+pub struct Verdicts {
+    block: rerail_blocks::block::Block,
+    at: usize,
+}
+
+/// A generation's entries: 2 M symbols of a test, 1 MB of the block (its pages taken as entries are written).
+pub const VERDICT_ENTRIES: u32 = 1 << 15;
+
+/// A verdict (`rerail_clif::verdict_reads`): none yet, the symbol fails, it passes.
+pub const UNKNOWN: u32 = 0;
+pub const FAILS: u32 = 1;
+pub const PASSES: u32 = 2;
+
+// SAFETY: the cache's words are read and written by its reads' atomics alone.
+unsafe impl Send for Verdicts {}
+unsafe impl Sync for Verdicts {}
+
+impl Verdicts {
+    fn new() -> Verdicts {
+        use rerail_clif::view::cache::Spec;
+        let spec = Spec::new(3, VERDICT_ENTRIES, 32);
+        let block = rerail_blocks::block::Block::anon(rerail_blocks::block::kind::SCRATCH, spec.bytes() + 2 * 4096);
+        let at = block.alloc(spec.bytes(), 256);
+        // SAFETY: the cache's bytes, in the block, which no reader has yet: zero, as a fresh mapping gives them.
+        spec.init_zeroed(unsafe { std::slice::from_raw_parts_mut(block.ptr::<u8>(at), spec.bytes()) }).expect("a cache of its size");
+        Verdicts { block, at }
+    }
+
+    /// The cache's first byte on the host (what its reads take), and its offset in its block (a kernel binds the
+    /// block there).
+    pub fn cache(&self) -> *const u8 {
+        self.block.ptr::<u8>(self.at).cast_const()
+    }
+    pub fn at(&self) -> usize {
+        self.at
+    }
+    pub fn block(&self) -> &rerail_blocks::block::Block {
+        &self.block
+    }
+
+    /// Test `test`'s verdict for `sym`: `PASSES`, `FAILS` or `UNKNOWN`.
+    pub fn get(&self, test: u32, sym: u32) -> u32 {
+        // SAFETY: a cache `new` made, in the block it keeps.
+        unsafe { rerail_blocks::generated_reads::verdict_get(self.cache(), test, sym) }
+    }
+
+    /// Keeps `test`'s verdict for `sym` (`PASSES` or `FAILS`); whether the cache had room.
+    pub fn put(&self, test: u32, sym: u32, passes: bool) -> bool {
+        // SAFETY: as `get`'s.
+        unsafe { rerail_blocks::generated_reads::verdict_put(self.cache(), test, sym, if passes { PASSES } else { FAILS }) != 0 }
+    }
+}
+
 pub fn reserving(arena: &Arc<Atoms>) -> Reservation {
     Reservation(RESERVING.with_borrow_mut(|r| r.replace((Arc::as_ptr(arena) as usize, Vec::new()))))
 }
@@ -473,6 +532,7 @@ impl Atoms {
             // Atom 0, the empty string, is every store's.
             state: rerail_accel::sharded::Sharded::new(State { atoms, since: None, map: None }),
             guest_keys: Arc::default(),
+            verdicts: std::sync::OnceLock::new(),
             lease: Mutex::new(None),
             leased: AtomicBool::new(false),
             wanted: Mutex::new((None, false)),
@@ -506,6 +566,11 @@ impl Atoms {
     /// again, by this process or another: it has another identity). A store has atoms of its own; another database
     /// (a run's scratch) may borrow a store's (`share`).
     /// The store's guest keys as this process holds them (decision 0391).
+    /// The text tests' verdicts for these atoms (decision 0450 step 2d), made when a test first asks.
+    pub fn verdicts(&self) -> &Verdicts {
+        self.verdicts.get_or_init(Verdicts::new)
+    }
+
     pub(crate) fn guest_keys(&self) -> Arc<super::guest_keys::GuestKeys> {
         Arc::clone(&self.guest_keys)
     }

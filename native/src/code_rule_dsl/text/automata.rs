@@ -23,6 +23,8 @@ pub const ALIGN: usize = 256;
 const EMPTY: u32 = 0;
 const MADE: u32 = 1;
 const REFUSED: u32 = 2;
+/// A key named only: its slot is an id (a text test's, for its verdicts: decision 0450 step 2d).
+const NAMED: u32 = 3;
 
 /// A slot: its key's hash, its key (bytes in the block), its value (an automaton's bytes, or a refusal's message),
 /// four words of the automaton's numbers, and its state.
@@ -161,6 +163,32 @@ pub fn get_or_make(key: &str, make: impl FnOnce() -> Result<(Vec<u8>, [u32; 4]),
     a.read(k, state)
 }
 
+/// The id of `key`: its slot in the index, named the first time any thread asks. The same key gives the same id in
+/// the process, whoever asks, the CPU's text tests and the device's alike. `None` when the index is full.
+pub fn id(key: &str) -> Option<u32> {
+    let a = &*AUTOMATA;
+    let h = hash(key);
+    match a.probe(key, h)? {
+        (k, state) if state != EMPTY => return Some(k as u32),
+        _ => {}
+    }
+    let _w = a.write.lock().expect("automata");
+    let (k, state) = a.probe(key, h)?;
+    if state != EMPTY {
+        return Some(k as u32);
+    }
+    let key_at = a.put(key.as_bytes(), 8)?;
+    // SAFETY: as `get_or_make`'s.
+    unsafe {
+        let s = a.block.ptr::<Slot>(a.slots + k * std::mem::size_of::<Slot>());
+        (*s).hash = h;
+        (*s).key_at = key_at as u64;
+        (*s).key_len = key.len() as u64;
+        (*s).state.store(NAMED, Release);
+    }
+    Some(k as u32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,5 +214,9 @@ mod tests {
         let no = format!("refused:{:p}", &SLOTS);
         assert_eq!(get_or_make(&no, || Err("a backtracking pattern".into())), Err("a backtracking pattern".into()));
         assert_eq!(get_or_make(&no, || panic!("made again")), Err("a backtracking pattern".into()));
+        let named = format!("named:{:p}", &SLOTS);
+        let i = id(&named).unwrap();
+        assert_eq!(std::thread::spawn(move || id(&named)).join().unwrap(), Some(i), "one id for a key, from any thread");
+        assert_ne!(id(&format!("other:{:p}", &SLOTS)), Some(i));
     }
 }

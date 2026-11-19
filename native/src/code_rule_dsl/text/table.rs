@@ -70,9 +70,20 @@ fn hir(plan: &Plan) -> Option<Hir> {
     })
 }
 
+/// The plans' key: the text layer's canonical keys, in order.
+fn plans_key(plans: &[Arc<Lowered>]) -> String {
+    plans.iter().map(|p| p.key.0.as_str()).collect::<Vec<_>>().join(",")
+}
+
+/// The id of the test of `plans` (any of them matching), for its verdicts in the rolling cache (decision 0450 step
+/// 2d): the same for the CPU's matcher of those plans and the device's table of them. Nothing is built for it.
+pub fn test_id(plans: &[Arc<Lowered>]) -> Option<u32> {
+    super::automata::id(&format!("test:{}", plans_key(plans)))
+}
+
 /// The table of `plans` (any of them matching), made once per set of plans into the automata block.
 pub fn table(plans: &[Arc<Lowered>]) -> Result<Arc<Table>, String> {
-    let key = format!("table:{}", plans.iter().map(|p| p.key.0.as_str()).collect::<Vec<_>>().join(","));
+    let key = format!("table:{}", plans_key(plans));
     let a = super::automata::get_or_make(&key, || build(plans).map(|(bytes, [states, classes, start])| (bytes, [states, classes, start, 0])))?;
     Ok(Arc::new(Table { states: a.words[0], classes: a.words[1], start: a.words[2], automaton: a }))
 }

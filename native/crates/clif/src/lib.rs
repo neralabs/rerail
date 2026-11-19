@@ -22,6 +22,9 @@ pub mod id_reads;
 pub mod inline;
 #[cfg(feature = "ir")]
 pub mod jit;
+/// The text tests' verdicts in the rolling cache (decision 0450 step 2d).
+#[cfg(feature = "ir")]
+pub mod verdict_reads;
 /// The atoms' reads (decision 0450 step 2b).
 #[cfg(feature = "ir")]
 pub mod atoms_reads;

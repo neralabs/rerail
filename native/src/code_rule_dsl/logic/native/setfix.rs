@@ -85,6 +85,8 @@ mod base_probe;
 mod inputs_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod blocks_compare_tests;
+#[cfg(test)]
+mod verdict_tests;
 use spec::{Arg, ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
 pub mod closure;
 pub mod table;
@@ -6256,7 +6258,9 @@ pub enum Step {
     DocOf { out: usize, n: Key, bind: bool },
     /// `@op(s, p) = want`, a text test (`strings::TESTS`) of symbol `s`'s name: by `matcher` when the pattern is a
     /// constant that compiles (once, with the spec), else by `strings::test` of symbol `p`'s name.
-    Test { op: &'static str, s: Key, p: Key, matcher: Option<Arc<crate::code_rule_dsl::logic::strings::Matcher>>, want: bool },
+    /// A text test; `test`, its id for its verdicts in the store's rolling cache (decision 0450 step 2d), when its
+    /// patterns are constants.
+    Test { op: &'static str, s: Key, p: Key, matcher: Option<Arc<crate::code_rule_dsl::logic::strings::Matcher>>, test: Option<u32>, want: bool },
     /// `a` is (`want`) or is not one of the constants `set` (`@equals(x, {…})`, `@in(x, {…})` once lowered).
     In { a: Key, set: Vec<i64>, want: bool },
     /// `out = join x by (k…) sep s : { atom }`: the matching rows' distinct (k…, x), ordered by k… then x (numbers by
@@ -6717,7 +6721,8 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                     }
                     Key::Slot(_) => None,
                 };
-                steps.push(Step::Test { op, s, p, matcher, want: *want });
+                let test = matcher.as_ref().and_then(|m| crate::code_rule_dsl::text::table::test_id(&m.plans));
+                steps.push(Step::Test { op, s, p, matcher, test, want: *want });
             }
             JoinItem::DocOf { out: o, n } => {
                 let (Some(Key::Slot(o)), Some(n)) = (tok(o, syms), tok(n, syms)) else { return Err(err("bad docof")) };
@@ -6736,7 +6741,8 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                 let matcher = strings::Matcher::new(op, &patterns).ok().map(Arc::new);
                 // A set that does not compile matches nothing, as SQL's `str_test`.
                 let p = Key::Const(syms.id(&patterns.join(&strings::SET_SEP.to_string())));
-                steps.push(Step::Test { op, s, p, matcher, want: *want });
+                let test = matcher.as_ref().and_then(|m| crate::code_rule_dsl::text::table::test_id(&m.plans));
+                steps.push(Step::Test { op, s, p, matcher, test, want: *want });
             }
             JoinItem::In { a, want, set } => {
                 let Some(a) = tok(a, syms) else { return Err(err("a membership test of `_`")) };
@@ -7560,11 +7566,24 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 if *bind { slots[*out] = d } else if slots[*out] != d { return }
                 go(cx, i + 1, slots);
             }
-            Step::Test { op, s, p, matcher, want } => {
-                let s = cx.syms.name(val(slots, *s));
-                let hit = match matcher {
-                    Some(m) => m.is_match(&s),
-                    None => crate::code_rule_dsl::logic::strings::test(op, &s, &cx.syms.name(val(slots, *p))),
+            Step::Test { op, s, p, matcher, test, want } => {
+                let v = val(slots, *s);
+                let hit = match (matcher, test, u32::try_from(v)) {
+                    // The verdict kept for the symbol, else made and kept (decision 0450 step 2d).
+                    (Some(m), Some(t), Ok(sym)) => {
+                        let verdicts = cx.syms.atoms.verdicts();
+                        match verdicts.get(*t, sym) {
+                            crate::content_store::atoms::PASSES => true,
+                            crate::content_store::atoms::FAILS => false,
+                            _ => {
+                                let hit = m.is_match(&cx.syms.name(v));
+                                verdicts.put(*t, sym, hit);
+                                hit
+                            }
+                        }
+                    }
+                    (Some(m), ..) => m.is_match(&cx.syms.name(v)),
+                    (None, ..) => crate::code_rule_dsl::logic::strings::test(op, &cx.syms.name(v), &cx.syms.name(val(slots, *p))),
                 };
                 if hit == *want { go(cx, i + 1, slots) }
             }
