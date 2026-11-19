@@ -5289,3 +5289,13 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   every column) kept none relative; the split store's columns took 117.8 MB against 94.7 MB best. An order column
   after column 0 is now relative and searched within column 0's range (`ColDec::held`): ep2's facts file 140 →
   120 MB, rows 0 differ.
+
+### Q265. `ane::tests::exact_random_shapes` fails on the M3: Core ML places a matmul on the CPU
+
+- **What** (2026-11-19, found running rerail-accel's tests for Q203 item 5): `lane.refusal(k)` is
+  `Some("Core ML would not run every operation on the Neural Engine: ios18.matmul on <MLCPUComputeDevice …>")`
+  for one of the test's random shapes (`accel/src/ane/tests.rs:179`), on the farm's M3. The other 84 tests pass;
+  the change under test touched no ANE code.
+- **Next**: find the shape Core ML refuses (the test's seed and its rows, width and bits), and make the lane's
+  refusal check (its compile-time placement probe) refuse it before the test asserts it runs, or the test draw
+  shapes the lane accepts on every Apple Neural Engine generation the platform list names.

@@ -447,17 +447,18 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     } else {
         let _ = writeln!(
             r,
-            "{:<40} {:>7} {:>7} {:>7} {:>10} {:>10} {:>10} {:>6} {:>10} {:>10} {:>10}  longest job run",
-            "wait", "waits", "helped", "jobs", "wait ms", "jobs ms", "jobs cpu", "late", "late ms<=", "late max", "late exact"
+            "{:<40} {:>7} {:>7} {:>7} {:>8} {:>10} {:>10} {:>10} {:>6} {:>10} {:>10} {:>10}  longest job run",
+            "wait", "waits", "helped", "jobs", "declined", "wait ms", "jobs ms", "jobs cpu", "late", "late ms<=", "late max", "late exact"
         );
         for (site, w) in &waits {
             let _ = writeln!(
                 r,
-                "{:<40} {:>7} {:>7} {:>7} {:>10.1} {:>10.1} {:>10.1} {:>6} {:>10.2} {:>10.2} {:>10.2}  {:.2} ms {}",
+                "{:<40} {:>7} {:>7} {:>7} {:>8} {:>10.1} {:>10.1} {:>10.1} {:>6} {:>10.2} {:>10.2} {:>10.2}  {:.2} ms {}",
                 short(site, 40),
                 w.waits,
                 w.helping,
                 w.jobs,
+                w.declined,
                 w.wall * 1e3,
                 w.jobs_wall * 1e3,
                 w.jobs_cpu * 1e3,
