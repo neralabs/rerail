@@ -110,14 +110,19 @@ async function inFolder(folder: string, body: () => Promise<void>): Promise<void
 }
 
 describe("environmentForNode", () => {
+  // A Node by a path that names one file on this machine: on Windows one with a drive, since a name from the root of the
+  // current drive gets that drive (the case above).
+  const otherNode = process.platform === "win32" ? String.raw`C:\opt\other\bin\node` : "/opt/other/bin/node";
+  const otherBin = dirname(otherNode);
+
   it("puts the chosen Node's directory first on PATH so npm's env shebang resolves to it", () => {
-    const env = environmentForNode("/opt/other/bin/node", { PATH: "/usr/bin", HOME: "/home/x" });
-    expect(env).toEqual({ PATH: `/opt/other/bin${delimiter}/usr/bin`, HOME: "/home/x" });
+    const env = environmentForNode(otherNode, { PATH: "/usr/bin", HOME: "/home/x" });
+    expect(env).toEqual({ PATH: `${otherBin}${delimiter}/usr/bin`, HOME: "/home/x" });
   });
 
   it("keeps the platform's own PATH key and handles an empty PATH", () => {
-    expect(environmentForNode("/opt/other/bin/node", { Path: "" })).toEqual({ Path: "/opt/other/bin" });
-    expect(environmentForNode("/opt/other/bin/node", {})).toEqual({ PATH: "/opt/other/bin" });
+    expect(environmentForNode(otherNode, { Path: "" })).toEqual({ Path: otherBin });
+    expect(environmentForNode(otherNode, {})).toEqual({ PATH: otherBin });
   });
 
   it("leaves the environment alone for a name PATH cannot resolve, and resolves one it can", async () => {
