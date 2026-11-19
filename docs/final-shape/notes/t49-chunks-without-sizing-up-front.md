@@ -10,12 +10,21 @@ fails, and on Metal a failed wave stops the run (decision 0382 §6).
 The question for this spike: can the engine stop sizing up front, either by growing a chunk as it goes or by
 shrinking it once its real size is known?
 
-Short answer: the sizing up front is forced by how the Metal budget counts memory. It charges the full length of every
-buffer and block reserved, while real memory is the pages written. Counted by what is written, the device stops
-limiting chunk size on hogql, and growing chunks cost what large fixed ones do.
+Short answer:
+- The guess is forced by how memory is counted, not by memory. On Apple's unified memory the engine keeps two budgets
+  (the run's line, 1 GB, and Metal's, 512 MB "on top") with two measures: the footprint, and the full length of every
+  Metal buffer. Neither is what the engine writes, and each sees the other's memory.
+- Big chunks are the cheap ones: on hogql, 262,144-node chunks retire 71-72 B against the default sizing's 86-87 B,
+  the same as before oscar's merge (69-70 B). That is the whole of Q259's rise.
+- Big chunks need more memory than today's small ones (2.2-2.5 GB peak against 0.9 GB), part of it real (about
+  390 MB of rows), part of it idle buffers and reservations a single budget of bytes written would not keep.
+
+A first version of this note said big chunks needed no more memory, and that Metal cut chunks short. Both came from
+runs where my script passed two variables as one (zsh does not split `$XENV`): those runs had the default sizing and
+budget. §3 and §4 are measured again, and §7's first two questions are answered.
 
 All runs: posthog/hogql cold (437 files, 2.6 M nodes), 1,629 findings each, profiling build of 95d4d439a plus the
-spike's switch, M-series Mac at load 15-40, two runs each.
+spike's switch, an M-series Mac at load 15-40, two runs each, format 15.
 
 ## 1. What limits a chunk on Metal
 
@@ -26,7 +35,7 @@ At 131,072-node chunks, a refusal saw:
 |---|---|
 | Leased by relational work (live leases) | 380 |
 | Of which the tape residency's slab | 64 |
-| In no ledger (the matcher's workspaces, kernels) | about 150 |
+| In no ledger (no-copy wraps of memory already held, §2) | about 150 |
 | Idle in the pool | 0 |
 | **The driver's count, against a 512 MB budget** | **595** |
 
@@ -41,65 +50,45 @@ start in a default Metal run:
 | Leased on the device in all | | 261-288 MB, plus 30-111 MB idle |
 
 About 70 MB of rows hold 260-290 MB of the 512 MB budget. A chunk's own growth is small (2-47 MB on the device at
-4,000-108,000 nodes). It is the fixed room around it that leaves the wave nothing.
+4,000-108,000 nodes); the fixed room around it leaves the wave nothing.
 
 ## 2. What the driver counts, and what memory is
 
-A probe (`scripts/dev/metal/footprint.swift` and `nocopy.swift`) wrapped reserved memory in no-copy Metal buffers and compared the driver's count
+Probes (`scripts/dev/metal/footprint.swift`, `nocopy.swift`, `gpuwrite.swift`) compared the driver's count
 (`currentAllocatedSize`) with the process's physical footprint:
 
 | Step | Footprint | Driver's count |
 |---|---|---|
 | Wrap 1 GB of reserved, untouched memory | +0 MB | +1,024 MB |
 | The host writes 16 MB of it | +16 MB | +1,024 MB |
-| The GPU fills 64 MB of it | +130 MB | +1,024 MB |
-| The GPU reads 1 MB at 900 MB (untouched) | +131 MB | +1,025 MB |
 | `newBuffer` of 256 MB, untouched | +0 MB | +256 MB |
+| The first command buffer of the process | +114 MB | +0 MB |
+| A GPU fill of 64 MB of a `newBuffer` | +64 MB | (counted at creation) |
+| A GPU fill of 512 MB of an untouched wrap | +0 MB | (counted at the wrap) |
+| The host then reads those 512 MB (they hold the GPU's bytes) | +512 MB | +0 MB |
 
-- The driver counts lengths. Real memory is the pages written, for a wrapped reservation and for an ordinary buffer.
-- The GPU reads untouched pages of a wrapped reservation.
+- The driver counts lengths: a wrap of memory already held counts again, and reserved room counts as if written.
+  The ~150 MB "in no ledger" of §1 is such wraps: `rerail_blocks`' device wraps (`block.rs`, `gpu.rs`), the executor's
+  wraps of host columns (`accel/src/gpu/mod.rs`), metal_join's starts. The driver's own setup is under 1 MB.
+- The footprint misses pages the GPU writes into a wrap until the host touches them. It cannot be the device's
+  measure either.
+- What the engine writes is the one count that sees all of it: `Block::used` for blocks, a lease's written end for
+  the rest. The engine knows it whichever processor wrote.
+- The first version's "GPU-written pages counted twice" was the first command buffer's one-time 114 MB.
 - Wrapping costs 3 µs for a prefix and 23 µs for 256 MB.
-- Open: the GPU's 64 MB fill added 114 MB to the footprint, as if pages the GPU writes counted twice there. Measure
-  it before relying on the footprint for GPU-written blocks.
 
-## 3. Chunks with the device budget counting what is real
+## 3. What a chunk's size costs
 
-The same hogql run with the Metal budget at 4 GB, so the device's count no longer cuts anything and only the host's
-footprint (real memory) bounds the run:
+Metal binding, the budget lifted to 4 GB so nothing is refused:
 
-| Metal binding | Instructions | Peak footprint | Refusals |
+| Metal | Instructions | Peak footprint | Chunks |
 |---|---|---|---|
-| 512 MB budget, default sizing | 89-92 B | 907-944 MB | 0 (after Q260) |
+| 512 MB budget, default sizing | 86-87 B | 894-914 MB | 75-84 |
 | 512 MB, fixed 65,536-node chunks or more | - | - | every run stops |
-| 4 GB budget, fixed 262,144-node chunks | 86-87 B | 906-927 MB | 0 |
-| 4 GB budget, chunks that grow (below) | 85-86 B | 897-910 MB | 0 |
-| 4 GB budget, default sizing | 94-98 B | 2,109-2,141 MB | 0 |
+| 4 GB, fixed 262,144-node chunks | 71-72 B | 2,227-2,493 MB | 16 |
+| 4 GB, default sizing | 94-98 B | 2,109-2,141 MB | 90-93 |
 
-- 262,144-node chunks need no more real memory than the default's small ones: the 512 MB they failed was reserved
-  length.
-- The default sizing at 4 GB runs more chunks at once (its headroom grows with the budget), and its peak doubles.
-
-## 4. Chunks that grow
-
-The spike's switch, `RERAIL_CHUNK_GROW=double` (`plan/corpus.rs`, marked SPIKE): the first chunk is 4,096 nodes,
-and each next is twice the last, held to what the latest chunk added a node on the host and on the device (the
-driver's peak while it ran), against the run's headroom and three quarters of the Metal budget. One chunk at a
-time. No prior, and no worst-of-run measure (decision 47785e475 keeps the most bytes a node seen in the run).
-
-| | Instructions | Peak | Chunks |
-|---|---|---|---|
-| CPU binding, default | 86-87 B | 342-349 MB | 27 |
-| CPU binding, growing | 96 B | 246-249 MB | 64-66 |
-| Metal 512 MB, growing | 90-93 B | 900-941 MB | 170-186 |
-| Metal 4 GB, growing | 85-86 B | 897-910 MB | 72-73 |
-
-- At 512 MB the device starts every chunk at 357-413 MB of the 384 MB allowed, so growth often stops at once: the
-  fixed reservations of §1 decide, not the chunk.
-- With the device counted by what is real (4 GB here), growing chunks match large fixed ones.
-- On the CPU, growth reached 262,144 nodes within three chunks. Its extra chunks are short batches (the end of a
-  load's inputs), which no sizing rule changes.
-
-What a chunk's size costs, on the CPU binding at fixed sizes:
+CPU binding, fixed sizes:
 
 | Chunk nodes | Chunks | Stratum runs | Instructions | Peak |
 |---|---|---|---|---|
@@ -108,15 +97,39 @@ What a chunk's size costs, on the CPU binding at fixed sizes:
 | 131,072 | 24 | 1,277 | 86-87 B | 327-367 MB |
 | 262,144 (the most) | 16-17 | 867 | 82-86 B | 338-409 MB |
 
-Above about 32,000 nodes the per-chunk work stops showing. Below it, it is about 0.16 B of instructions a chunk.
+- On Metal, chunk size is the whole of the rise since oscar's merge: 71-72 B at 262,144 nodes.
+- On Metal a 262,144-node chunk leases 1.0-1.4 GB for about 390 MB of rows written (a run's 19 blocks, 359 MB of
+  822 MB), and keeps 300-477 MB idle, which a 4 GB budget lets the pool hold. The peak's largest rise (1.5 GB) is in
+  the guests' `ann_ctx` stratum.
+- Metal and the CPU cut the same 16 chunks at 262,144 nodes.
+
+## 4. Chunks that grow
+
+The spike's switch, `RERAIL_CHUNK_GROW=double` (`plan/corpus.rs`, marked SPIKE): the first chunk is 4,096 nodes,
+and each next is twice the last, held to what the latest chunk added a node on the host (footprint) and on the device
+(the driver's peak while it ran). One chunk at a time.
+
+| | Instructions | Peak | Chunks |
+|---|---|---|---|
+| CPU binding | 96 B | 246-249 MB | 64-66 |
+| Metal, 512 MB budget | 90-93 B | 900-941 MB | 170-186 |
+| Metal, 4 GB budget | 106 B | 1,940-1,983 MB | 240-244 |
+
+It fails for the reason of §2, measured from both sides:
+- On Metal at 512 MB the device starts each chunk at 357-413 MB of the 384 MB allowed (§1's reservations), so growth
+  stops at once.
+- At 4 GB the device's blocks and idle buffers stay in the footprint (one memory), which starts each chunk at
+  0.7-1.5 GB, past the run's 1 GB line, so the host's fit is 0.
+- On the CPU it reached 262,144 nodes within three chunks; its extra chunks are short batches.
+
+Growing works only once there is one budget with one count.
 
 ## 5. Growing and shrinking a block without copying
 
 A block's references are offsets within it, so its base address does not matter. Growth needs no copy either:
 - Reserve a large range of address space for the block (free on a 64-bit machine). Pages become memory as rows are
   written.
-- Hand Metal a no-copy buffer over the range. The driver's count is then not the budget's measure: the budget counts
-  the bytes written (`Block::used`, which the engine already knows), or the footprint.
+- Hand Metal a no-copy buffer over the range once. The budget counts the bytes written, not the wrap's length.
 - Shrink by releasing the unused tail's pages (`madvise`). Nothing points past the written end.
 
 Today a block is a fixed lease (64 MB or 16 MB), and a tail whose block is full moves to another by one copy
@@ -125,19 +138,19 @@ a relation's segments chain without copying.
 
 ## 6. Recommendation
 
-1. The Metal budget counts bytes written, not lengths reserved. Every ledger then agrees with real memory: the GPU
-   pool's leases, `rerail-metal`'s pool, the residency's slabs, and Q260's driver check.
-2. Row blocks are reserved large and grown in place: one reservation a block, wrapped once for the device, its tail's
+1. One memory budget, counted by what the engine wrote: blocks' written bytes, leases' written ends, the heap's live
+   bytes. Not the footprint, not the driver's lengths. The GPU pool's idle buffers are kept within it.
+2. Row blocks reserved large and grown in place: one reservation a block, wrapped once for the device, its tail's
    pages released when it closes. The `FACTS_BYTES` choice goes.
-3. Chunks grow from small, each from the latest chunk's measure (this spike's rule), with no up-front size. A wave
-   that still does not fit splits by documents (0334's split, which exists for the matcher's roots).
+3. Chunks grow from small, each from the latest chunk's measure in that one count, with no up-front size. A wave that
+   still does not fit splits by documents (0334's split, which exists for the matcher's roots).
 
-Before any of it: the open questions below.
+## 7. The open questions, answered
 
-## 7. Open
-
-- The GPU-written pages counted twice in the footprint (§2).
-- Metal runs cut 71-75 chunks at a 262,144-node target (median 20,148 nodes), against 16 on the CPU. Something on
-  the Metal path cuts chunks short; find it.
-- The tip retires 85-87 B at large chunks, against 69-70 B before oscar's merge. Chunking explains the default
-  sizing's extra 5-10 B, not that gap (Q259).
+- GPU-written pages counted twice: no. It was the first command buffer's one-time 114 MB. But the footprint misses
+  GPU-written wrapped pages, so the budget counts what the engine wrote (§2).
+- Metal cutting chunks short: no. Those runs had the default sizing (my script's bug). Metal cuts 16 chunks at
+  262,144 nodes, as the CPU does.
+- The 15 B after oscar's merge: chunk size, all of it (§3).
+- New: what the guests' `ann_ctx` stratum holds at a big chunk (the peak's 1.5 GB rise), measured as part of
+  step 1.

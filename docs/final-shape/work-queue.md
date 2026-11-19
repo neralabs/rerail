@@ -5316,11 +5316,10 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Step 5's size no longer fits Metal**: at RERAIL_CHUNK_NODES=262144 the tip's label wave holds 887-1,044 MB of the
   driver against the 512 MB budget, and the run stops (0382 §6; django-bugs' Q245). Before 1f88389be those refusals
   ran the waves on the CPU unseen (39-59 a run), so step 5's 71 B already carried them.
-- **Corrected by t49** (the spike on chunks without sizing up front): chunking explains part, not all. With the
-  Metal budget lifted, fixed 262,144-node chunks retire 85-87 B. That is 5-10 B below the default's 89-98 B, and
-  still 15 B above the 69-70 B before oscar's merge. The rest is unattributed.
-- **Do**: profile 47ac05ff2 against the tip, both at 262,144-node chunks with RERAIL_METAL_MB=4096, to find the
-  remaining 15 B.
+- **Attributed** (t49 §3, with the settings applied; an earlier "correction" here came from runs where my script
+  passed none): chunk size is the whole rise. With the Metal budget at 4 GB, 262,144-node chunks retire 71-72 B on
+  Metal, against 86-87 B at the default sizing and 69-70 B before oscar's merge. They peak at 2.2-2.5 GB against 0.9 GB.
+- **Do**: Q261, which lets chunks be large without a guess.
 
 ### Q260. A Metal buffer refused by the driver's count, with idle buffers holding the room, stopped hogql
 
@@ -5340,15 +5339,15 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Open**: what the 110 MB no ledger counts is (kernels' buffers, the kernel store's?). django-bugs' Q245 (a big
   chunk's wave refused at 1 and 4 GB) may be this refusal.
 
-### Q261. The Metal budget counts lengths reserved, not memory: chunks are sized up front to fit it (t49)
+### Q261. One memory budget counted by what the engine writes; blocks grown in place; chunks grown (t49)
 
-- **Seen** (t49, hogql): the driver's count, and every ledger, charges a buffer's whole length. Real memory is the
-  pages written. Row blocks are leased whole (64 MB or 16 MB) and hold about 70 MB of rows in 260-290 MB of the
-  512 MB budget. So the chunk sizing guesses up front, and 65,536-node chunks or more stop every Metal run. With the
-  budget at 4 GB, 262,144-node chunks run in the same 906-927 MB peak footprint as the default's small ones.
+- **Seen** (t49): on unified memory the engine keeps two budgets with two measures, the footprint (the run's 1 GB
+  line) and the driver's lengths (Metal's 512 MB). Neither is what the engine writes, and each sees the other's memory.
+  Row blocks are leased whole (64 MB or 16 MB): about 70 MB of rows hold 260-290 MB of the Metal budget, and no-copy
+  wraps of memory already held count again (about 150 MB). The footprint misses pages the GPU writes into a wrap. So
+  chunks are guessed small, and big ones, the cheap ones (71-72 B against 86-87 B on hogql), are refused.
 - **Do**, in t49 §6's order:
-  1. The budget counts bytes written.
-  2. Row blocks are reserved large, wrapped once for the device, grown in place, and their tails released.
-  3. Chunks grow from small by the latest measure (`RERAIL_CHUNK_GROW=double`, the spike's switch).
-  First t49 §7's open questions: GPU-written pages counted twice in the footprint, and Metal's short chunks.
-
+  1. One budget counted by bytes written (blocks' used, leases' written ends, the heap's live bytes); the pool's idle
+     buffers within it.
+  2. Row blocks reserved large, wrapped once, grown in place, their tails released.
+  3. Chunks grown from small by the latest measure in that count.
