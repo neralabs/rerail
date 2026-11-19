@@ -3,7 +3,9 @@ import { once } from "node:events";
 
 /**
  * A stand-in for a process that holds the Windows pipe `path` with one instance at most and does nothing else: Node
- * cannot cap a pipe's instances, so PowerShell makes it. Returns once the instance exists; `end` ends the holder.
+ * cannot cap a pipe's instances, so PowerShell makes it. Returns once the instance exists; `end` ends the holder. The
+ * handshake ends on the holder's first output or its exit, whichever comes first; a holder that wrote anything else
+ * is ended before the error that says so leaves, so no failed start leaves a PowerShell waiting on its input.
  */
 export async function oneInstanceHolder(path: string): Promise<{ end: () => Promise<void> }> {
   // The pipe's name as PowerShell takes it: the path without `\\.\pipe\`.
@@ -21,8 +23,16 @@ export async function oneInstanceHolder(path: string): Promise<{ end: () => Prom
     windowsHide: true,
   });
   const closed = once(holder, "close");
-  const first = await Promise.race([once(holder.stdout!, "data"), closed]);
-  if (!/^holding/u.test(String(first[0]))) throw new Error(`the one-instance pipe holder did not start: ${String(first[0])}`);
+  // A holder that has exited takes no input: ending its stdin then fails with EPIPE, and `closed` says it ended.
+  holder.stdin!.on("error", () => undefined);
+  try {
+    const first = await Promise.race([once(holder.stdout!, "data"), closed]);
+    if (!/^holding/u.test(String(first[0]))) throw new Error(`the one-instance pipe holder did not start: ${String(first[0])}`);
+  } catch (error) {
+    holder.kill();
+    await closed.catch(() => undefined);
+    throw error;
+  }
   return {
     end: async () => {
       holder.stdin!.end();
