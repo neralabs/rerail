@@ -145,6 +145,61 @@ awaited(c) :- kind(c, "call"), child(w, c, 0), kind(w, "await").
             Box.make()
             Box().size()
         ```
+    .fixture "app/__init__.py" ```
+        # package
+        ```
+    .fixture "app/compat.py" ```
+        import functools
+
+
+        def cache(f):
+            @functools.wraps(f)
+            def w(*args):
+                return f(*args)
+
+            return w
+        ```
+    .fixture "app/both.py" ```
+        try:
+            from fastlib import cache
+        except ImportError:
+            from .compat import cache
+
+
+        @cache
+        def computed():
+            return 1
+
+
+        def use():
+            computed()
+        ```
+    .fixture "app/diamond.py" ```
+        import functools
+
+
+        class A:
+            @functools.lru_cache(maxsize=None)
+            def who(self):
+                return "A"
+
+
+        class B(A):
+            pass
+
+
+        class C(A):
+            def who(self):
+                return "C"
+
+
+        class D(B, C):
+            pass
+
+
+        def use():
+            D().who()
+        ```
 .end
 
 // A decorator imported from outside the run: the call targets the def and is open.
@@ -193,4 +248,22 @@ awaited(c) :- kind(c, "call"), child(w, c, 0), kind(w, "await").
     .expect no open_at(51)
     .expect no targeted(52)
     .expect open_at(52)
+.end
+
+// A decorator imported from outside the run and from a module of the run (`except ImportError: from .compat import
+// cache`) may be the run's: the call targets its wrapper (`w`, app/compat.py:6), not the def.
+.test a_decorator_the_run_also_defines_gives_its_wrapper uses decorated
+    .decl both_target(l: number, f: number)
+    both_target(l, f) :- call_target(c, d), docof(c, k), doc(k, "app/both.py", _), line(c, l), line(d, f).
+    .expect both_target(13, 6)
+    .expect no both_target(13, 8)
+.end
+
+// A method under an outside decorator is resolved in C3 order: in the diamond D(B, C) over A, `D().who()` runs
+// C.who (line 15), never A's `@lru_cache` who (line 6), which C overrides.
+.test an_outside_decorated_method_follows_the_method_order uses decorated
+    .decl diamond_target(l: number, f: number)
+    diamond_target(l, f) :- call_target(c, d), docof(c, k), doc(k, "app/diamond.py", _), line(c, l), line(d, f).
+    .expect diamond_target(24, 15)
+    .expect no diamond_target(24, 6)
 .end

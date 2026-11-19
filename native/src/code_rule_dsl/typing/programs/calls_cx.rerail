@@ -271,8 +271,13 @@ dleaf(e, x) :- dexpr(_, e), kind(e, "call"), field(e, "function", g), attr_of(g,
 .decl replacing_dec(e: node)
 replacing_dec(e) :- dleaf(e, x), suffix("property", x).
 .decl outside_dec(e: node)
-outside_dec(e) :- dpart(e, h), nameref(h, x), look(h, x, s), ext_import(s, x), !rasg(s, x, _, _), !rdefn(s, x, _),
-    !replacing_dec(e).
+outside_dec(e) :- dpart(e, h), nameref(h, x), look(h, x, s), ext_import(s, x), !run_import(s, x), !rasg(s, x, _, _),
+    !rdefn(s, x, _), !replacing_dec(e).
+// run_import(s, x): scope s imports x from a module of the run too (`try: from lib import x` / `except ImportError:
+// from .compat import x`): the decorator may be the run's, read through `decfn`.
+.decl run_import(s: node, x: symbol)
+run_import(s, x) :- rifrom(s, x, m, _), docof(s, d9), rr_cx_sees(d9, m).
+run_import(s, x) :- ribind(s, x, q), !rifrom(s, x, _, _), docof(s, d9), rr_cx_sees(d9, q).
 // inner_dec(f): f has a decorator neither transparent nor from outside the run.
 .decl inner_dec(f: node)
 inner_dec(f) :- opaque_dec(f, e), !outside_dec(e).
@@ -991,7 +996,7 @@ vopen(c) :- vpos(c), ifn(c, f), !rclosed(f), method(f, _), retparam(f, _, _).
 .decl call_target(c: node, f: node)
 call_target(c, f) :- callee(c, e), pv(e, "fn", f), !mro_dropped(e, f).
 call_target(c, f) :- wcall(c, f, _).
-call_target(c, f) :- callee(c, e), pv(e, "dfn", f).
+call_target(c, f) :- callee(c, e), pv(e, "dfn", f), !mro_dropped(e, f).
 // Method resolution order. `found` is the union over every base, depth first, so in a diamond (`class D(B, C)`,
 // both from `A`) `D.who` finds `A.who` through `B` and `C.who` through `C`. C3 gives `C.who`. A definition found
 // on a class that another candidate class subclasses is never the one called, so it is dropped here, at the
@@ -1003,10 +1008,14 @@ mro_cand(n, c, at) :- alook(n, c, a), found(c, a, at).
 // Per receiver class c: a late-bound `self` may be several classes, each with its own resolution.
 .decl mro_shadowed(n: node, c: node, at: node)
 mro_shadowed(n, c, at) :- mro_cand(n, c, at), mro_cand(n, c, x), x != at, anc(x, at).
+// method_kind(k): a binding of kind k is a function a method lookup may find, its own or one under outside decorators.
+.decl method_kind(k: symbol)
+method_kind("fn"). method_kind("dfn").
 .decl mro_kept(n: node, f: node)
-mro_kept(n, f) :- mro_cand(n, c, at), !mro_shadowed(n, c, at), attr_of(n, _, a), bv(at, a, "fn", f).
+mro_kept(n, f) :- mro_cand(n, c, at), !mro_shadowed(n, c, at), attr_of(n, _, a), bv(at, a, k, f), method_kind(k).
 .decl mro_dropped(n: node, f: node)
-mro_dropped(n, f) :- mro_cand(n, c, at), mro_shadowed(n, c, at), attr_of(n, _, a), bv(at, a, "fn", f), !mro_kept(n, f).
+mro_dropped(n, f) :- mro_cand(n, c, at), mro_shadowed(n, c, at), attr_of(n, _, a), bv(at, a, k, f), method_kind(k),
+    !mro_kept(n, f).
 .decl mro_ambiguous(n: node)
 mro_ambiguous(n) :- mro_cand(n, c, x), mro_cand(n, c, y), x != y, !mro_shadowed(n, c, x), !mro_shadowed(n, c, y).
 call_target(c, f) :- callee(c, e), pv(e, "cls", k), found(k, "__init__", at), bv(at, "__init__", "fn", f).
