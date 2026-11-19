@@ -106,6 +106,8 @@ pub(super) enum Kind {
     Frames(Box<super::frames::FramesWrite>),
     /// A space's memo entries in their segments (`queue_memo_segments`).
     Memo(Box<super::frames::memo_pack::MemoWrite>),
+    /// A space's next kept file (`queue_kept`, decisions 0401 F6, 0402 K4).
+    Kept(Box<super::kept_facts::KeptWrite>),
     /// Sources and tapes gathered into segments, or each in its own rows where no segment could be placed.
     Objects(Box<super::object_segments::ObjectsWrite>),
     /// The pending atoms; `queued` clears the flag that keeps a second flush from being queued meanwhile.
@@ -136,6 +138,7 @@ impl Work {
             Kind::Record { text, bytes } => super::record::apply(store, text, bytes),
             Kind::Frames(w) => w.run(store),
             Kind::Memo(w) => w.run(store),
+            Kind::Kept(w) => w.run(store),
             Kind::Objects(w) => w.run(store),
             Kind::Atoms { queued } => {
                 if *queued {
@@ -1302,10 +1305,8 @@ mod tests {
             if r.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
                 go_rx.recv().unwrap();
                 s.intern_atoms(&["b"])?;
-                s.connection.lock().map_err(StoreError::Invalid)?.execute(
-                    "INSERT INTO atom_segment(first, ends, bytes) VALUES (2, x'01000000', CAST('z' AS BLOB))",
-                    [],
-                )?;
+                let connection = s.connection.lock().map_err(StoreError::Invalid)?;
+                crate::content_store::atoms::stored::append_as_another(&connection, &["z".to_owned()])?;
             }
             s.flush_atoms()
         }));

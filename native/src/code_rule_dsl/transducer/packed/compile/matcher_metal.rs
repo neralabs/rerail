@@ -40,6 +40,23 @@ pub(in crate::code_rule_dsl) fn wave_labelled(
     Ok((views, outcome))
 }
 
+/// The sources of the wave's pattern kernels on Metal for a batch of `format`, in the plan's order (`metal`'s passes:
+/// the patterns as `levels` visits them, and the fact case when a clause has facts).
+pub(in crate::code_rule_dsl) fn wave_pattern_sources(this: &LoweredWave, format: u32) -> Result<Vec<String>, Error> {
+    let clauses = this.clauses.iter().collect::<Vec<_>>();
+    let mut patterns = Vec::new();
+    let mut facts = false;
+    levels(&clauses, |clause, id| {
+        match clause.labels.def(id) {
+            Label::Fact(..) => facts = true,
+            Label::Pattern(pattern, _) | Label::Constrained(pattern, _, _) => patterns.push(pattern.ast_pattern.as_ref().ok_or(Error::UnsupportedPattern)?),
+            _ => {}
+        }
+        Ok(())
+    })?;
+    Ok(metal_program_backend::label_passes::pattern_sources(&patterns, facts, format))
+}
+
 /// Each clause's matches of the batch from `roots` (the candidates its root program starts from: listed, or its
 /// domain's nodes where it runs), every clause's passes and roots in one command buffer.
 ///
@@ -59,7 +76,7 @@ pub(in crate::code_rule_dsl) fn wave_roots(this: &LoweredWave, tapes: &[TapeDoc]
 /// deepest clause's per phase, not their sum. `active` (per clause, per tape): where a clause's
 /// passes start, none elsewhere (`LoweredWave::labelled`).
 ///
-/// A rule over codes runs in a file only where the file's presence (decision 0399 §4) may hold one of its domain's
+/// A rule over codes runs in a file only where the file's presence (decision 0434 §4) may hold one of its domain's
 /// kinds and the kind each `KIND` entry test names (`may_have_roots`): elsewhere it has no roots, and the device's
 /// passes skip the file (`Roots::runs_in`).
 fn metal<'a>(
@@ -513,7 +530,7 @@ fn apart<'a>(
     Ok(outcome)
 }
 
-/// Whether `tape` may have a node of `domain` that passes the entry tests `entry`, by its presence (decision 0399 §4):
+/// Whether `tape` may have a node of `domain` that passes the entry tests `entry`, by its presence (decision 0434 §4):
 /// `false` where it has none of the domain's kinds, or not the kind a `KIND` test names. A label domain reads as every
 /// node (its kinds are bounded before this is asked).
 fn may_have_roots(tape: &TapeDoc, domain: &Domain, entry: &[(u8, u16)]) -> bool {

@@ -2009,11 +2009,11 @@ pub(in crate::code_rule_dsl) struct DevRel {
     /// A view read in place (decision 0353 step 4d): its rows are read through the views' reads, and its relation
     /// (of no columns) holds its indexes alone.
     pub(in crate::code_rule_dsl) view: Option<crate::code_rule_dsl::facts::vtab::ViewInPlace>,
-    /// Its descriptor's arity and base rows when it was made (Q186): a descriptor found otherwise later was
+    /// Its descriptor's arity and base rows when it was made (Q265): a descriptor found otherwise later was
     /// overwritten, not misread.
     made: (u32, u32),
     /// The relation's holder, for one read where it lies in its block (`in_block`): what an index built into it keeps
-    /// until its batch is done (`Building`, Q189).
+    /// until its batch is done (`Building`, Q268).
     kept: Option<crate::code_rule_dsl::facts::rows::Part>,
 }
 
@@ -2339,12 +2339,12 @@ fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
 struct Building {
     home: std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>,
     rel: *const rerail_blocks::relation::Relation,
-    /// The relation, held until the batch's work, which writes its index into it, is done (Q189): its last holder
+    /// The relation, held until the batch's work, which writes its index into it, is done (Q268): its last holder
     /// otherwise gives its descriptor and chunks back to the block's free list (`Held`'s drop, decision 0342) while the
     /// index is still being built, and the free list's links and the next relation made there are written over it.
     _holds: Option<crate::code_rule_dsl::facts::rows::Part>,
     room: rerail_blocks::relation::IndexRoom,
-    /// The relation's descriptor as it was once the index was reserved (Q186): checked before the index is marked
+    /// The relation's descriptor as it was once the index was reserved (Q265): checked before the index is marked
     /// built, so a descriptor something overwrote meanwhile names what changed instead of being followed.
     before: Vec<u8>,
 }
@@ -2372,7 +2372,7 @@ impl Building {
         let changed: Vec<usize> = (0..now.len() / 8).filter(|&k| now[8 * k..8 * k + 8] != self.before[8 * k..8 * k + 8]).map(|k| 8 * k).collect();
         let h = self.home.block.header();
         panic!(
-            "a relation's descriptor overwritten while its index was built (Q186): {origin}, at {} of a block of kind {} ({} used of {}), index {} (buckets at {}, rows at {}, {} rows); bytes changed at {changed:?}\n  before {}\n  now    {}",
+            "a relation's descriptor overwritten while its index was built (Q265): {origin}, at {} of a block of kind {} ({} used of {}), index {} (buckets at {}, rows at {}, {} rows); bytes changed at {changed:?}\n  before {}\n  now    {}",
             self.home.block.offset_of(self.rel), h.kind, self.home.block.used(), self.home.block.reserved(), self.room.index, self.room.offs, self.room.rows, self.room.rows_n, words(&self.before), words(&now)
         );
     }
@@ -2575,7 +2575,7 @@ pub(in crate::code_rule_dsl) struct Batch {
 /// A relation a batch's kernels write (`Batch::written`).
 struct Written {
     home: std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>,
-    /// The relation, held until the batch is done, as `Building`'s (Q189): its descriptor is read then, and the
+    /// The relation, held until the batch is done, as `Building`'s (Q268): its descriptor is read then, and the
     /// kernels write its rows meanwhile.
     _holds: Option<crate::code_rule_dsl::facts::rows::Part>,
     at: u64,
@@ -2613,7 +2613,7 @@ impl Batch {
                 let now = r.rows.needed.load(std::sync::atomic::Ordering::Relaxed);
                 (now != w.needed).then(|| {
                     let held = r.rows.reserved.load(std::sync::atomic::Ordering::Relaxed);
-                    format!("{}: {} rows past its chunks (Q186), a relation of {} rows its device side says, {} its chunks hold, {} claimed, {} columns, at {} of a block of kind {}",
+                    format!("{}: {} rows past its chunks (Q265), a relation of {} rows its device side says, {} its chunks hold, {} claimed, {} columns, at {} of a block of kind {}",
                             w.what, now.wrapping_sub(w.needed), w.rows, held, r.rows.len.load(std::sync::atomic::Ordering::Relaxed), r.rows.ncols, w.at, w.home.block.header().kind)
                 })
             })
@@ -2647,7 +2647,12 @@ impl Batch {
             self.submit_open()?;
         }
         if self.pass.is_none() {
-            let command = queue()?.new_command_buffer().to_owned();
+            // Made in a pool of its own: `new_command_buffer` gives an autoreleased buffer, and a worker thread has no
+            // pool to release it. Each one so left held a slot of the queue's (64) after its batch let it go, and a
+            // run of many device strata stopped in `commandBuffer` with every slot taken (Q170).
+            let queue = queue()?;
+            let command = metal::objc::rc::autoreleasepool(|| queue.new_command_buffer().to_owned());
+            rerail_accel::exec::command_opened();
             // SAFETY: the command buffer is owned by `self.open` and outlives the pass, which `commit` ends and drops
             // before the command buffer (the field order of the take there).
             let r: &'static metal::CommandBufferRef = unsafe { &*(command.as_ref() as *const metal::CommandBufferRef) };
@@ -2663,6 +2668,7 @@ impl Batch {
         self.done.dispatches += pass.dispatches() as u32;
         pass.end();
         let command = self.open.take().expect("an open command buffer");
+        rerail_accel::exec::command_committed();
         let s = Submitted::commit(&command)?;
         self.committed.push(s);
         self.done.submissions += 1;
@@ -2725,11 +2731,11 @@ impl Batch {
         let home = rel.home.clone().expect("an index of a relation, not of words");
         let r = rel.relation();
         if r.base_rows != 0 {
-            // Q186: what was read, and where, so a writer that missed its own buffer can be named.
+            // Q265: what was read, and where, so a writer that missed its own buffer can be named.
             let h = home.block.header();
             let origin = if rel.view.is_some() { "a view read in place" } else if rel.part.is_some() { "the device's own" } else { "a relation in its block" };
             panic!(
-                "an index of a full relation (Q186): {origin} of {} rows, {} columns, at {} of a block of kind {} (magic {:#x}, {} used of {}); its header: arity {}, base rows {} ({:#x}), {} indexes, {} order keys; when made: arity {}, base rows {}\n  descriptor {}",
+                "an index of a full relation (Q265): {origin} of {} rows, {} columns, at {} of a block of kind {} (magic {:#x}, {} used of {}); its header: arity {}, base rows {} ({:#x}), {} indexes, {} order keys; when made: arity {}, base rows {}\n  descriptor {}",
                 rel.rows, rel.cols, rel.at, h.kind, h.magic, home.block.used(), home.block.reserved(), r.arity, r.base_rows, r.base_rows, r.nindex.load(std::sync::atomic::Ordering::Relaxed), r.nokey, rel.made.0, rel.made.1,
                 Building::descriptor(std::ptr::from_ref(r)).as_chunks::<8>().0.iter().map(|w| format!("{:016x}", u64::from_le_bytes(*w))).collect::<Vec<_>>().join(" ")
             );
@@ -3029,12 +3035,12 @@ impl Batch {
     }
 
     /// A head's rows written in place (decision 0325 step 4): `src`'s first rows (as many as slot `count` of `totals`
-    /// holds, at most `cap`; `cap` of them with no slot) into rows `0..` of `dst`, a relation in its block whose
-    /// chunks hold `cap` rows. Each column of the head is a column of `src` or a constant (`cols`). The batch keeps
-    /// `dst`'s block until its work completes.
+    /// holds, at most `cap`; `cap` of them with no slot) into rows `at..` of `dst`, a relation in its block whose
+    /// chunks hold `at + cap` rows (the head's own tail past its rows, decision 0384 step 3). Each column of the head
+    /// is a column of `src` or a constant (`cols`). The batch keeps `dst`'s block until its work completes.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn place_rows(&mut self, src: Rows<'_>, cap: usize, count: Option<usize>, totals: &Words, cols: &[Col], dst: DevRel) -> Result<(), Error> {
-        self.copy(src, cap, count.map(|c| (c, totals)), cols, Rows::Rel(&dst), 0)?;
+    pub(in crate::code_rule_dsl) fn place_rows(&mut self, src: Rows<'_>, cap: usize, count: Option<usize>, totals: &Words, cols: &[Col], dst: DevRel, at: usize) -> Result<(), Error> {
+        self.copy(src, cap, count.map(|c| (c, totals)), cols, Rows::Rel(&dst), at)?;
         self.keep.push(dst.buffer);
         Ok(())
     }
@@ -3185,7 +3191,10 @@ impl Drop for Batch {
     /// guard, whose thread-local a batch dropped in a thread's teardown (a wave left open) can no longer read.
     fn drop(&mut self) {
         drop(self.pass.take());
-        drop(self.open.take());
+        if self.open.take().is_some() {
+            // Not this thread's to commit any more (decision 0386's count).
+            rerail_accel::exec::command_committed();
+        }
         for s in self.committed.drain(..) {
             s.wait();
         }

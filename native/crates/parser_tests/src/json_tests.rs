@@ -89,12 +89,12 @@ fn tree_sitter_json_with(bytes: &[u8], tokens: bool) -> Option<Vec<Named>> {
 
 /// Ids back to names, for comparing with tree-sitter.
 fn named(c: &Compiled, nodes: &[IdNode]) -> Vec<Named> {
-    let names: HashMap<u16, String> = c.ids.0.borrow().iter().map(|(n, &i)| (i, n.clone())).collect();
+    let (kinds, fields) = c.ids.names();
     nodes
         .iter()
         .map(|n| {
-            let field = if n.1 == 0 { String::new() } else { names[&n.1].trim_start_matches("field ").to_owned() };
-            (names[&n.0].clone(), field, n.3, n.4, n.5)
+            let field = if n.1 == 0 { String::new() } else { fields[&n.1].clone() };
+            (kinds[&n.0].clone(), field, n.3, n.4, n.5)
         })
         .collect()
 }
@@ -504,6 +504,13 @@ fn json_shapes() {
             eprintln!("  gated region: gate %{} = {gate:?} ({}){pre}, {} values zero without it, {} skipped", r.gate, of.join(", "), r.zero.len(), r.members.len());
         }
         eprintln!("  machine code: {} instructions in the function", machine(&c.parser.tier1.disassembly));
+        // The hot loop as `json_loop_keeps_values_in_registers` counts it, to set beside
+        // simdjson's (`scripts/dev/simdjson-stage1-loop`); `RERAIL_DUMP_LOOP`: a directory for it.
+        let hot = clif_text::machine_loop(&c.parser.tier1.loops_disassembly());
+        eprintln!("  hot loop: {} instructions, {} stack loads or stores", hot.len(), clif_text::loop_costs(&hot).0);
+        if let Ok(dir) = std::env::var("RERAIL_DUMP_LOOP") {
+            std::fs::write(format!("{dir}/{name}.s"), hot.join("\n")).expect("writes");
+        }
         eprintln!("tier 2: {} words {words:?}", c.native.structural.len());
         eprintln!("  switches {}, strings {}", c.native.switches.len(), c.native.strings.len());
         eprintln!("  machine code: {} instructions in the function", machine(&c.parser.tier2.disassembly));
@@ -547,6 +554,19 @@ fn json_tier1_vectors_equal_the_interpreter() {
             }
             files.push(f);
         }
+        // A byte order mark, then a string or a comment that runs into the next block: the full
+        // body takes the file's start check as zero (`Plan::full`), and the edge part's carries
+        // are the next block's (0383).
+        for at in 0..80 {
+            let escapes = [&b"\""[..], &[b'\\'; 70], b"\" 1"].concat();
+            let bodies: [&[u8]; 4] = [b"\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\" 1", b"/* xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx */ 1", &escapes, b"1.5e3"];
+            for body in bodies {
+                let mut f = b"\xef\xbb\xbf".to_vec();
+                f.extend(std::iter::repeat_n(b' ', at));
+                f.extend_from_slice(body);
+                files.push(f);
+            }
+        }
         // One non-ASCII sequence at each offset around the first two block edges.
         for at in 0..140 {
             for seq in [&b"\xe2\x82\xac"[..], b"\x80", b"\xf0\x9f\x98\x80"] {
@@ -562,6 +582,54 @@ fn json_tier1_vectors_equal_the_interpreter() {
         let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
         assert_eq!(c.parser.tier1.run_files(&refs), block.run_files(&refs), "{name}: the batch");
         assert!(c.parser.tier1.ascii_branch, "{name}: no ASCII test");
+    }
+}
+
+/// The values the full body gets wrong on an edge block (`native_cpu_edge`, 0383): JSON's are
+/// its checks at the stream's ends and what reads them, word operations all, a third of the
+/// body's or fewer, and found in one pass of the analysis. The byte order mark is the host's
+/// (0389): stripped before the passes, as simdjson strips it, the program the passes run has no
+/// check of it, and no value differs for it through block 0.
+#[test]
+fn json_edge_values_are_its_ends_checks() {
+    for name in ["14-json", "15-jsonc"] {
+        let c = form(name);
+        let (prefix, stripped) = native_cpu_block::host_stripped(&c.native.block_programs[0]).expect("the host strips the byte order mark");
+        assert_eq!(prefix, b"\xef\xbb\xbf", "{name}: the prefix");
+        assert_eq!(c.parser.tier1.prefix, prefix, "{name}: tier 1 strips it");
+        let native = &stripped;
+        let t = std::time::Instant::now();
+        let plan = native_cpu_block::State::of(native).plan;
+        let found = native_cpu_edge::edge_values(native, &plan.lanes, &plan.full).expect("bounded");
+        let took = t.elapsed();
+        println!("{name}: outputs needing no cut {:?}", found.cut_free);
+        let edge = found.differs;
+        let at: Vec<usize> = (0..edge.len()).filter(|&x| edge[x]).collect();
+        println!("{name}: {} of {} values differ on an edge block, found in {took:?}: {at:?}", at.len(), edge.len());
+        assert!(at.iter().all(|&x| !matches!(native.insts[x], block_native::BlockInst::EqByte(_) | block_native::BlockInst::Class { .. } | block_native::BlockInst::Pair { .. })), "{name}: a byte test differs");
+        // A ratchet on the values the edge part makes again, apart from the body's size: lower
+        // it as the compiler improves. (It was a third of the body's; the body shrank as the
+        // number and `\u` checks went to tier 2, 0398 and 0399, and the edge's count less.)
+        let most = if name == "14-json" { EDGE_VALUES_14 } else { EDGE_VALUES_15 };
+        assert!(at.len() <= most, "{name}: {} of {} differ (budget {most})", at.len(), edge.len());
+    }
+}
+
+/// The values an edge block differs in (a ratchet): 14-json's 90 before 0389, 47 after, 41 with
+/// its number and `\u` checks tier 2's.
+const EDGE_VALUES_14: usize = 41;
+/// 15-jsonc's: 63 before 0389, 64 after, 56 with its checks tier 2's.
+const EDGE_VALUES_15: usize = 56;
+
+/// JSON's tier 1 has no general body (0383): its full body runs on the edge blocks too, with
+/// its edge part, as simdjson's stage 1 runs one body and a `finish()`.
+#[test]
+fn json_tier1_has_no_general_body() {
+    for name in ["14-json", "15-jsonc"] {
+        let c = form(name);
+        for (k, pass) in c.parser.tier1.passes.iter().enumerate().filter(|(_, p)| !p.back) {
+            assert!(!pass.general, "{name}: tier 1's pass {k} calls a general body");
+        }
     }
 }
 

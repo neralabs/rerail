@@ -1,5 +1,5 @@
 //! Format 16 (decision 0156 §1), written and read in place (decision 0293), block-major and written in one pass
-//! (decision 0399). Ported from the lab (`native/lab/tape16`: `f16`, `f16w`, `code8`, `repeat`), which measured it.
+//! (decision 0434). Ported from the lab (`native/lab/tape16`: `f16`, `f16w`, `code8`, `repeat`), which measured it.
 //!
 //! A tape is five arrays over a document's nodes in preorder, at widths fixed for the language, in blocks of `Z`
 //! nodes at a fixed stride (each block its own five columns, the last block at its own rows):
@@ -39,7 +39,7 @@ pub struct Lang {
     /// Slots, gaps, lengths, in bytes.
     widths: [usize; 3],
     revision: u8,
-    /// Each number's kind and field: what a presence's bits are (decision 0399 §4).
+    /// Each number's kind and field: what a presence's bits are (decision 0434 §4).
     kind_field: Vec<(u16, u16)>,
 }
 
@@ -149,7 +149,7 @@ mod tables {
 }
 
 /// A stored format 16 tape's magic (its first 6 bytes are every stored tape's: the store reads the language tag
-/// after them, `LANGUAGE`). Block-major (decision 0399).
+/// after them, `LANGUAGE`). Block-major (decision 0434).
 pub const MAGIC16: &[u8; 8] = b"TMPTAPB6";
 /// A stored 16z tape's magic.
 pub const MAGIC16Z: &[u8; 8] = b"TMPTAPBZ";
@@ -222,7 +222,7 @@ fn stride_of(w: [usize; 3], cw: usize) -> usize {
     Z * before(w, 4) + Z / K * cw
 }
 
-/// One document's format 16 tape, held as stored (`as_bytes`) and read where it lies (decision 0399): the header,
+/// One document's format 16 tape, held as stored (`as_bytes`) and read where it lies (decision 0434): the header,
 /// blocks of `Z` nodes at a fixed stride (each its codes, slots, gaps, lengths and checkpoints, the last block at
 /// its own rows), then the tail: the four side lists (codes' low parts, then escaped slots, gaps, lengths), their
 /// part starts, and the newline index. The last block, each side list and the newline index are followed by 8 bytes
@@ -556,12 +556,12 @@ fn mask(w: usize) -> u64 {
 
 // ---- the writer ------------------------------------------------------------------------------------------
 
-/// The writer whose ops are the CLIF ones (decision 0399 §6).
+/// The writer whose ops are the CLIF ones (decision 0434 §6).
 pub mod ops;
 #[cfg(any(test, feature = "reference"))]
 pub mod reference;
 
-/// The writer: the ops in CLIF, through their Rust (decision 0399 §6, R16).
+/// The writer: the ops in CLIF, through their Rust (decision 0434 §6, R16).
 pub use ops::Writer;
 
 /// A node's cells as `write` takes them: its code's number in the language's table, its span, and one past its
@@ -580,14 +580,14 @@ pub enum Written {
     F16Z(Tape16Z),
 }
 
-/// What a writer's `finish` gives: the tape, and its presence beside it (decision 0399 §4).
+/// What a writer's `finish` gives: the tape, and its presence beside it (decision 0434 §4).
 pub struct Finished {
     pub tape: Written,
     pub presence: Presence,
 }
 
 /// The kinds and fields a tape's nodes have, as bitmaps over its language's kinds and fields (`Lang::presence_words`):
-/// the document's, and, where the writer was asked for them, each block's (decision 0399 §4). Not part of the tape:
+/// the document's, and, where the writer was asked for them, each block's (decision 0434 §4). Not part of the tape:
 /// the store keeps it beside the document, to leave out what an anchor cannot touch before the tape is read.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Presence {
@@ -627,7 +627,7 @@ fn bit(words: &[u64], k: u16) -> bool {
 /// Format 16, or 16z where `z`, written over a document's `n` nodes in preorder by the writer's ops (`Writer`):
 /// `node(i)` is node `i`'s cells, asked once each, in order; a node closes when the pass reaches its subtree's end.
 /// `Err` where a node's values break the tape's bounds: no tape is made of it.
-/// A tape writer's ops (decision 0399 §2): the writer's (`Writer`, the ops in CLIF), or the reference writer's.
+/// A tape writer's ops (decision 0434 §2): the writer's (`Writer`, the ops in CLIF), or the reference writer's.
 pub(crate) trait WriterOps: Sized {
     fn open(&mut self, number: u32, start: u64) -> usize;
     fn close(&mut self, end: u64);
@@ -862,9 +862,8 @@ impl F16<'_> {
     pub fn line_start(&self, k: u32) -> u32 {
         reads::tape_line_start(self.bytes, &self.view, k)
     }
-    /// The source's lines: one more than its newlines (the view's `line_count`, not its `lines`, the index's place).
-    #[allow(clippy::misnamed_getters)]
-    pub fn lines(&self) -> u32 {
+    /// The source's lines: one more than its newlines.
+    pub fn line_count(&self) -> u32 {
         self.view.line_count
     }
     /// Block `b`'s code bytes: its first column.
@@ -960,7 +959,7 @@ const ZLENS: usize = 4;
 const ZKINDS: usize = 5;
 const ZEND: usize = 6;
 
-/// One document's format 16 tape stored in fixed blocks of `Z` nodes (0156 §2.1; decision 0399 §3), held as
+/// One document's format 16 tape stored in fixed blocks of `Z` nodes (0156 §2.1; decision 0434 §3), held as
 /// stored (`as_bytes`):
 ///
 /// - the header of the format 16 tape it decodes to, its magic `MAGIC16Z`, and where its own regions lie;
@@ -1398,7 +1397,7 @@ impl Tape for F16Z<'_> {
 }
 
 /// LZ4's block format (`lz4-sys`): `LZ4_decompress_safe` to read; HC level 4 to write in the reference writer (0156
-/// §2.1 chose 9; decision 0399 §6 takes 4, which the writer's ops in CLIF port exactly, and write by).
+/// §2.1 chose 9; decision 0434 §6 takes 4, which the writer's ops in CLIF port exactly, and write by).
 mod lz4 {
     use std::os::raw::c_char;
 
@@ -1469,7 +1468,7 @@ mod tests {
         plain
     }
 
-    /// Block-major (decision 0399, R3): block 0 past the header, the blocks at their stride, the last at its own
+    /// Block-major (decision 0434, R3): block 0 past the header, the blocks at their stride, the last at its own
     /// rows and no padding, the tail right after it.
     fn compact(p: &Placement) {
         assert_eq!((p.blocks, p.stride), (HEAD16, Z * (1 + p.widths[0] + p.widths[1] + p.widths[2]) + Z / K * p.cw));
@@ -1497,7 +1496,7 @@ mod tests {
     /// Every byte's line and every line's start, as counting the source's newlines says.
     fn lines_answer(t: &F16<'_>, source: &[u8]) {
         let starts: Vec<u32> = std::iter::once(0).chain(source.iter().enumerate().filter(|(_, b)| **b == b'\n').map(|(i, _)| i as u32 + 1)).collect();
-        assert_eq!(t.lines() as usize, starts.len(), "lines");
+        assert_eq!(t.line_count() as usize, starts.len(), "lines");
         for (k, &s) in starts.iter().enumerate() {
             assert_eq!(t.line_start(k as u32), s, "line {k}'s start");
         }
@@ -2029,7 +2028,7 @@ mod tests {
         assert!(t.reader(&other).is_err());
     }
 
-    /// A tape of one block is the regions end to end (decision 0399, R2): each column at the node count's offset
+    /// A tape of one block is the regions end to end (decision 0434, R2): each column at the node count's offset
     /// from the header, the tail after.
     #[test]
     fn one_block_is_the_regions() {
@@ -2067,7 +2066,7 @@ mod tests {
         }
     }
 
-    /// The ops write the tape `write` writes from the same nodes, in 16 and 16z (decision 0399, R5); with the nodes
+    /// The ops write the tape `write` writes from the same nodes, in 16 and 16z (decision 0434, R5); with the nodes
     /// hinted, the format 16 tape is the writer's own room, the last block moved down and the tail appended in
     /// place (R4); the presence is the nodes' kinds and fields, each block's and the document's (R10).
     #[test]
@@ -2136,7 +2135,7 @@ mod tests {
         }
     }
 
-    /// The edits that reach a node before the window (decision 0399 §2): each inner node opened with another code
+    /// The edits that reach a node before the window (decision 0434 §2): each inner node opened with another code
     /// and the node before's start, then retagged and its start set once its first child is open, gives the tape of
     /// the nodes written right, in 16 and 16z, escaped codes and gaps among them (R6).
     #[test]
@@ -2189,7 +2188,7 @@ mod tests {
 
     /// A 16z writer's block is final once its nodes are closed, the node after it has opened and the frontier is
     /// past it: the blocks under the open root finish as the parse leaves them, the root's last, and a final block's
-    /// room serves the next (decision 0399, R9).
+    /// room serves the next (decision 0434, R9).
     #[test]
     fn blocks_finish_when_closed() {
         let entries: Vec<Entry> = (0..4u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
@@ -2288,7 +2287,7 @@ mod tests {
         }
     }
 
-    /// Decision 0399 §6, R16: the crate's writer is the ops in CLIF, the hand-written one the tests' oracle: a node
+    /// Decision 0434 §6, R16: the crate's writer is the ops in CLIF, the hand-written one the tests' oracle: a node
     /// that breaks the tape's bounds is the ops' failure, kept as its code and node (the reference keeps a message),
     /// and `write_from` writes the reference's tape, in 16 and 16z.
     #[test]
@@ -2316,7 +2315,7 @@ mod tests {
         }
     }
 
-    /// Decision 0399 §6, R13: the writer's ops in CLIF, through their Rust, write the reference writer's tape and
+    /// Decision 0434 §6, R13: the writer's ops in CLIF, through their Rust, write the reference writer's tape and
     /// presence from the same ops: escaped codes and values, late closes, a commit at every node or none, `retag`
     /// and `set_start`, a presence a block; and a tape of one node, and of none.
     #[test]
@@ -2324,7 +2323,7 @@ mod tests {
         writes_the_references_tape(|lang, source, z, blocks, nodes| Writer::new(lang, source, 3, z, blocks, nodes / 3));
     }
 
-    /// Decision 0399 §6, R15: the writer's ops compiled by the JIT write the reference writer's tape and presence:
+    /// Decision 0434 §6, R15: the writer's ops compiled by the JIT write the reference writer's tape and presence:
     /// R13's cases.
     #[test]
     fn the_jit_ops_write_the_references_tape() {
@@ -2336,7 +2335,7 @@ mod tests {
         });
     }
 
-    /// Decision 0399 §6, R15: the writer's ops in MSL, on the device, write the reference writer's tape and
+    /// Decision 0434 §6, R15: the writer's ops in MSL, on the device, write the reference writer's tape and
     /// presence: R13's cases.
     #[cfg(target_os = "macos")]
     #[test]
@@ -2424,7 +2423,7 @@ mod tests {
         assert!(kinds.iter().all(|&k| k > 0), "16z's pieces of every kind (raw, LZ4, repeat): {kinds:?}");
     }
 
-    /// Decision 0399 §6, R14: an op that breaks the tape's bounds fails in the ops as in the reference, and the
+    /// Decision 0434 §6, R14: an op that breaks the tape's bounds fails in the ops as in the reference, and the
     /// writer makes no tape: `broken_nodes_make_no_tape`'s cases, and an edit of a final block.
     #[test]
     fn the_clif_ops_fail_as_the_reference() {
@@ -2467,7 +2466,7 @@ mod tests {
         }
     }
 
-    /// Decision 0399 §6, R14: a part with no room fails its op as full, naming the part, and the op writes nothing
+    /// Decision 0434 §6, R14: a part with no room fails its op as full, naming the part, and the op writes nothing
     /// past the part's capacity and its 8 bytes of room: the tape's blocks, the open nodes, a block's entries, the
     /// laid side lists, the side areas given back.
     #[test]
@@ -2492,7 +2491,7 @@ mod tests {
         assert_eq!(cases, 7);
     }
 
-    /// Decision 0399 §6: the writer's LZ4 compressor in CLIF writes liblz4's `LZ4_compress_HC(.., 4)` bytes, for
+    /// Decision 0434 §6: the writer's LZ4 compressor in CLIF writes liblz4's `LZ4_compress_HC(.., 4)` bytes, for
     /// pieces of every kind (empty, short, random, runs, a tape's columns, longer than a chain's 64 KB reach), each
     /// through one compressor whose tables earlier pieces left, as the writer reuses them.
     #[test]

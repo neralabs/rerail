@@ -95,24 +95,13 @@ pub fn gpu_seconds(command: &CommandBufferRef) -> f64 {
     (end - start).max(0.0)
 }
 
-/// A Metal library, function or pipeline that does not compile is fatal (decision 0382): the run stops, naming the
-/// kernel and the compiler's message, and no caller runs another path (the CPU's) on it.
-#[track_caller]
-pub fn compile_failed(name: &str, what: &str, error: impl std::fmt::Display) -> ! {
-    panic!("Metal: the {what} of `{name}` does not compile (decision 0382: fatal): {error}")
-}
-
 /// The threads of a join kernel's group: every dispatch's (`Pass::dispatch*`).
 pub const GROUP: u64 = 256;
 
-/// Compiles `name` from `source` on the shared device; an error only where there is no device.
+/// `name` of `source` on the shared device: through the store of compiled kernels (decision 0395).
 pub fn compile(source: &str, name: &str) -> Result<ComputePipelineState, String> {
-    let device = device()?;
-    Ok(objc::rc::autoreleasepool(|| {
-        let library = device.new_library_with_source(source, &metal::CompileOptions::new()).unwrap_or_else(|e| compile_failed(name, "library", e));
-        let f = library.get_function(name, None).unwrap_or_else(|e| compile_failed(name, "function", e));
-        device.new_compute_pipeline_state_with_function(&f).unwrap_or_else(|e| compile_failed(name, "pipeline", e))
-    }))
+    device()?;
+    Ok(super::kernels::pipeline_fixed(source, name, None))
 }
 
 thread_local! {
@@ -129,44 +118,21 @@ pub fn scratch_set(set: usize) -> usize {
 }
 
 /// The pipeline `name` of the variant `variant`, its source made by `source` the first time: kept by the one
-/// manager (decision 0100 §2), so every thread finds it compiled.
-///
-/// A variant's source is compiled once, into one library, and each of its kernels is made from that library: a
-/// sort's five kernels cost one compile, not five.
+/// manager (decision 0100 §2), so every thread finds it compiled, and in the store of compiled kernels (decision
+/// 0395). A variant's source is compiled once, into one library, and each of its kernels made from that library.
 pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> Result<ComputePipelineState, String> {
     shared::pipeline(&format!("join {variant} {name}"), || {
-        let library = library(variant, source)?;
-        let device = device()?;
-        Ok(objc::rc::autoreleasepool(|| {
-            let f = library.get_function(name, None).unwrap_or_else(|e| compile_failed(name, "function", e));
-            let pipe = device.new_compute_pipeline_state_with_function(&f).unwrap_or_else(|e| compile_failed(name, "pipeline", e));
-            // Every dispatch of a join kernel is of groups of 256 threads: a kernel whose registers allow fewer
-            // cannot run them (a dispatch past its most is undefined). Such a pipeline is not made, and as one that
-            // does not compile, the run stops (decision 0382): no caller runs another path on it.
-            let most = pipe.max_total_threads_per_threadgroup();
-            if most < GROUP {
-                compile_failed(name, "pipeline", format!("at most {most} threads a group, its dispatches' {GROUP}"));
-            }
-            pipe
-        }))
+        device()?;
+        let pipe = super::kernels::pipeline_fixed(&source(), name, None);
+        // Every dispatch of a join kernel is of groups of 256 threads: a kernel whose registers allow fewer cannot run
+        // them (a dispatch past its most is undefined). As a kernel that does not compile, the run stops (decision
+        // 0382): no caller runs another path on it.
+        let most = pipe.max_total_threads_per_threadgroup();
+        if most < GROUP {
+            panic!("Metal: the pipeline of `{name}` does not compile (decision 0382: fatal): at most {most} threads a group, its dispatches' {GROUP}");
+        }
+        Ok(pipe)
     })
-    .inspect_err(|e| eprintln!("rerail: the Metal pipeline {variant} {name} is not made: {e}"))
-}
-
-/// The library of a variant's source, compiled the first time (a thread that asks meanwhile waits for it).
-fn library(variant: &str, source: impl FnOnce() -> String) -> Result<metal::Library, String> {
-    type Lib = std::sync::Arc<std::sync::Mutex<Option<metal::Library>>>;
-    static LIBS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, Lib>>> = std::sync::OnceLock::new();
-    let slot = std::sync::Arc::clone(LIBS.get_or_init(Default::default).lock().expect("the libraries").entry(variant.to_owned()).or_default());
-    let mut s = slot.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(l) = &*s {
-        return Ok(l.clone());
-    }
-    let device = device()?;
-    // A shipped kernel that does not compile is a bug, and fatal (decision 0382).
-    let l = objc::rc::autoreleasepool(|| device.new_library_with_source(&source(), &metal::CompileOptions::new()).unwrap_or_else(|e| compile_failed(variant, "library", e)));
-    *s = Some(l.clone());
-    Ok(l)
 }
 
 /// The radix sort's kernels of a lead column of `width`, and the gather of a column of `width`.

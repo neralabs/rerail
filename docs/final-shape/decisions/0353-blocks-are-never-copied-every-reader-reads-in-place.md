@@ -294,7 +294,7 @@ findings 1,629 in each; 73.5 B instructions (median) against 80.2 B.
 Where spans are made, the nodes' and tokens' place rows are still made beside the spans' (the spans' are derived
 facts; the nodes' are copies of tape answers), and bound in place of the view. The view already covers the whole
 source and its lines (`Locs::positions`, the `ExtraSpan::Line` ids); the other spans (`src_line_lf`, `tape_line`,
-matches, comments, `rx_span`) have their byte ranges only in `Extra`. Q184: those ranges written once into the
+matches, comments, `rx_span`) have their byte ranges only in `Extra`. Q216: those ranges written once into the
 batch's block, and the view reading them past its own positions, so nothing makes a node's place.
 
 **Step 3's other relations of row 7** (2026-11-17), each checked against "Not copies":
@@ -304,7 +304,7 @@ batch's block, and the view reading them past its own positions, so nothing make
 - `intval` and `op_t` are read by no core.rr library rule; in core.rr's shape `NodeRows` runs only where a program
   reads them. In T's shape they come with `NodeRows`' eager `text`, `name` and `str`, deferred with Q121.
 - What row 7 keeps: `core_rr`'s and `NodeRows`' eager derived values (`text`, `name`, `value`'s literals, T's
-  rows), deferred (Q121), and the nodes' place rows beside spans (Q184).
+  rows), deferred (Q121), and the nodes' place rows beside spans (Q216).
 
 Found on the way and fixed:
 - `Locs::token_spans` copied every token's start and end into a `Vec` on a span's first read: unmarked, and missed by
@@ -557,7 +557,7 @@ Each step ends with:
            its poll advanced the builder, which rang the bell it waited on whether or not anything moved. It
            rings only when a step moved (`corpus::Builder::advance`).
          - hogql cold, the Metal binding, profiling builds, load 8–55: 16z, findings 1,629 in 72 runs (one more
-           run panicked, Q186), 99–117 B instructions, median 105 B; format 15, 1,629 in 32 runs, 65–75 B,
+           run panicked, Q265), 99–117 B instructions, median 105 B; format 15, 1,629 in 32 runs, 65–75 B,
            median 73 B (the runs that compiled the kernels apart: 135 B and 93 B). Statistics on: 2,187 decodes
            for 2,820 blocks, 18.7 M hits, no failure, no duplicate.
        - The kernels' part, decided (user, 2026-11-18): "a generic rolling GPU cache to amortize the cost": an LRU

@@ -42,6 +42,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+mod listing;
+
 /// One trusted file in this many is hashed again each process (`RERAIL_VALIDATE_EVERY`).
 pub const VALIDATE_EVERY: u64 = 64;
 
@@ -100,6 +102,10 @@ impl Stat {
 /// A directory's entries: (name, is a directory), sorted by name.
 pub type Listing = Arc<Vec<(String, bool)>>;
 
+/// Directories whose answers a listing named, each with the entries the journal records in its place
+/// (`Observer::listing_told`).
+type Told = HashMap<PathBuf, Vec<PathBuf>>;
+
 /// What the observer knows of a path: its stat when observed, and the answer computed then.
 #[derive(Clone, Debug)]
 struct Entry {
@@ -149,6 +155,9 @@ pub struct Counts {
     pub mismatched: u64,
     /// Digests taken from a clean Git blob's alias, unread.
     pub git: u64,
+    /// Directories listed to check a small root's answers (decision 0400), and the answers they named as changed.
+    pub checked_dirs: u64,
+    pub checked_named: u64,
 }
 
 impl Counts {
@@ -165,6 +174,8 @@ impl Counts {
             validated: self.validated - before.validated,
             mismatched: self.mismatched - before.mismatched,
             git: self.git - before.git,
+            checked_dirs: self.checked_dirs - before.checked_dirs,
+            checked_named: self.checked_named - before.checked_named,
         }
     }
 }
@@ -173,7 +184,7 @@ impl std::fmt::Display for Counts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} stats, {} paths resolved, {} trusted by the journal ({} forgotten as changed), {} answers reused, {} files hashed ({} KB), {} directories listed, {} checked again ({} changed under the same stat), {} from Git blobs",
+            "{} stats, {} paths resolved, {} trusted by the journal ({} forgotten as changed), {} answers reused, {} files hashed ({} KB), {} directories listed, {} checked again ({} changed under the same stat), {} from Git blobs, {} directories listed to check a root ({} answers named)",
             self.stats,
             self.resolved,
             self.trusted,
@@ -184,7 +195,9 @@ impl std::fmt::Display for Counts {
             self.listed,
             self.validated,
             self.mismatched,
-            self.git
+            self.git,
+            self.checked_dirs,
+            self.checked_named
         )
     }
 }
@@ -236,6 +249,17 @@ pub struct Observer {
     own: Vec<PathBuf>,
     /// Output directories named this run under no root the store has a cursor for yet (`own_output`).
     unreported: Vec<PathBuf>,
+    /// The observer's own journal of the roots checked by their listings (decision 0400): each path named, with the
+    /// generation of the check that named it (`observed_changes`, read a part at a time with the answers), the last
+    /// generation, and the oldest a record may ask from (collection drops older rows).
+    changes: BTreeMap<PathBuf, u64>,
+    generation: u64,
+    floor: u64,
+    /// The most answers a root checked by its listings may hold (`list_max`; a test of the journal sets 0).
+    list_max: usize,
+    /// How long a larger root's replay may be started again for its marker before the root is checked by its
+    /// listings instead (`journal::since`): none in a run; a test of the journal sets a few seconds.
+    journal_settle: std::time::Duration,
 }
 
 /// A root a run watches.
@@ -255,6 +279,32 @@ struct Root {
     pending: Option<(Option<[u8; 16]>, String)>,
     /// The paths under it this run checked by `stat` or recorded (not trusted only).
     checked: HashSet<PathBuf>,
+    /// Checked by its directories' listings (decision 0400), not asked of the journal: its cursor is the observer's
+    /// own journal's (`L<generation>`).
+    listed: bool,
+}
+
+/// Whether the answer `e` still holds for what is at its path now (`None`: nothing), by a listing (decision 0400):
+/// the same kind and stat, a directory's size aside (a listing gives none; its entries changing change its times), and
+/// recorded safely after the path last changed (`Entry::holds`).
+fn listed_holds(e: &Entry, now: Option<(Kind, Stat)>) -> bool {
+    match now {
+        None => e.kind == Kind::Missing,
+        Some((kind, stat)) => e.kind == kind && e.holds(&if kind == Kind::File { stat } else { Stat { size: e.stat.size, ..stat } }),
+    }
+}
+
+/// What is at `path`, by one `stat` that follows a link (`None`: nothing there).
+fn kind_and_stat(path: &Path) -> Option<(Kind, Stat)> {
+    let m = std::fs::metadata(path).ok()?;
+    let kind = if m.is_file() {
+        Kind::File
+    } else if m.is_dir() {
+        Kind::Dir
+    } else {
+        Kind::Other
+    };
+    Some((kind, Stat::of(&m)))
 }
 
 fn now_ns() -> i64 {
@@ -294,7 +344,8 @@ CREATE TABLE IF NOT EXISTS observed(path TEXT PRIMARY KEY, kind INTEGER NOT NULL
   mtime_ns INTEGER, ctime_ns INTEGER, digest BLOB, listing BLOB, recorded_ns INTEGER) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS git_alias(blob BLOB PRIMARY KEY, digest BLOB NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS observer_meta(key TEXT PRIMARY KEY, value INTEGER) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS run_record(key TEXT PRIMARY KEY, consulted TEXT NOT NULL, outputs BLOB NOT NULL) WITHOUT ROWID;";
+CREATE TABLE IF NOT EXISTS run_record(key TEXT PRIMARY KEY, consulted TEXT NOT NULL, outputs BLOB NOT NULL) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS observed_changes(path TEXT PRIMARY KEY, gen INTEGER NOT NULL) WITHOUT ROWID;";
 
 impl Observer {
     /// An observer over the store at `path` (`<path>` is the P0 store itself), or over none. What is read here is
@@ -349,7 +400,13 @@ impl Observer {
         if let Some(k) = db.as_ref() {
             own.extend(k.meta.keys().filter_map(|k| k.strip_prefix(OWN_OUTPUT)).flat_map(|d| spellings(Path::new(d))));
         }
-        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new() }
+        // The observer's own journal's last generation and the oldest a record may ask from (decision 0400).
+        let meta_int = |key: &str| db.as_ref().and_then(|k| k.meta.get(key)).and_then(|v| match v {
+            rusqlite::types::Value::Integer(i) => u64::try_from(*i).ok(),
+            _ => None,
+        });
+        let (generation, floor) = (meta_int(LISTING_GEN).unwrap_or(0), meta_int(LISTING_FLOOR).unwrap_or(0));
+        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new(), changes: BTreeMap::new(), generation, floor, list_max: list_max(), journal_settle: std::time::Duration::ZERO }
     }
 
     /// Records `dir` as a directory a run writes its outputs into: rerail's own (decision 0284), for this observer
@@ -480,6 +537,14 @@ impl Observer {
                     None => None,
                 };
                 self.entries.entry(PathBuf::from(path)).or_insert(Entry { kind: Kind::of_code(kind), stat: Stat { dev, ino, size, mtime_ns, ctime_ns }, digest: digest.and_then(|d| d.try_into().ok()).unwrap_or_default(), listing, recorded_ns });
+            }
+        }
+        // The observer's own journal's rows for the part (decision 0400).
+        if let Ok(mut st) = reader.prepare_cached("SELECT path, gen FROM observed_changes WHERE path = ?1 OR (path >= ?2 AND path < ?3)")
+            && let Ok(rows) = st.query_map(params![at, from, to], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+        {
+            for (path, generation) in rows.flatten() {
+                self.changes.entry(PathBuf::from(path)).or_insert(generation as u64);
             }
         }
         let key = format!("{CANONICAL}{at}");
@@ -818,12 +883,22 @@ impl Observer {
                 rusqlite::types::Value::Integer(i) => Some(i.to_string()),
                 _ => None,
             });
-            match super::journal::since(std::slice::from_ref(&root), cursor.as_deref(), &cookies) {
+            // A small root is checked by its directories' listings (decision 0400): what FSEvents replays to a new
+            // process is not all that changed before it (t46), and listing each directory that holds an answer costs
+            // less than waiting for the replay.
+            if self.listable(&root) {
+                self.check_listed(root, volume, cursor.as_deref());
+                continue;
+            }
+            match super::journal::since(std::slice::from_ref(&root), cursor.as_deref(), &cookies, self.journal_settle) {
+                // The replay may not hold every change made before this run (its marker was not in its history):
+                // the root is checked by its listings, keeping the journal's cursor (decision 0400, step 2).
+                super::journal::Since::Behind { cursor: next } => self.check_behind(root, volume, &next),
                 super::journal::Since::Changed { paths, cursor: next } => {
                     // News of rerail's own files is no news (decision 0284): each run writes them.
                     let paths: Vec<PathBuf> = paths.into_iter().filter(|p| !self.is_own(p)).collect();
                     self.forget(&root, &paths, volume, &next);
-                    self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default() });
+                    self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: false });
                 }
                 super::journal::Since::Lost { cursor, .. } => {
                     let mut pending = cursor.map(|c| (volume, c));
@@ -859,10 +934,217 @@ impl Observer {
                         checked.extend(r.checked);
                         resolved.extend(r.resolved);
                     }
-                    self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: pending.as_ref().map(|(_, c)| c.clone()), path: root, asked: self.flushes, trusted: false, pending, checked, resolved });
+                    self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: pending.as_ref().map(|(_, c)| c.clone()), path: root, asked: self.flushes, trusted: false, pending, checked, resolved, listed: false });
                 }
             }
         }
+    }
+
+    /// Whether `root` is checked by its directories' listings (decision 0400): where this system lists entries with
+    /// their stats, and the root holds at most `list_max` answers (its part of the store read first, `watch`).
+    fn listable(&self, root: &Path) -> bool {
+        let max = self.list_max;
+        listing::SUPPORTED && max > 0 && self.entries.range::<Path, _>((std::ops::Bound::Included(root), std::ops::Bound::Unbounded)).take_while(|(k, _)| k.starts_with(root)).take(max + 1).count() <= max
+    }
+
+    /// Checks the answers kept under `root` against its directories' listings, forgets those that no longer hold,
+    /// and trusts the rest for this run (decision 0400). What it names goes in the observer's own journal under the
+    /// next generation; the root's cursor is that journal's. Naming nothing writes nothing, but a root's first
+    /// cursor of that journal (a warm run writes none).
+    fn check_listed(&mut self, root: PathBuf, volume: Option<[u8; 16]>, stored: Option<&str>) {
+        let (exact, whole, told) = self.listing_named(&root);
+        let (exact, whole): (Vec<PathBuf>, Vec<PathBuf>) = (exact.into_iter().filter(|p| !self.is_own(p)).collect(), whole.into_iter().filter(|p| !self.is_own(p)).collect());
+        self.counts.checked_named += (exact.len() + whole.len()) as u64;
+        // Kept under the volume's id where the system names one, as a journal's cursor is; else under none.
+        let volume = volume.unwrap_or([0; 16]);
+        if exact.is_empty() && whole.is_empty() {
+            let next = format!("L{}", self.generation);
+            if stored.and_then(listing_cursor).is_none() {
+                self.store_listing_cursor(&root, volume, &next);
+            }
+            self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: true });
+            return;
+        }
+        self.generation += 1;
+        let next = format!("L{}", self.generation);
+        self.forget_named(&root, &exact, &whole, &told, volume, &next);
+        self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: true });
+    }
+
+    /// A larger root whose replay was `Behind` (decision 0400, step 2): checked by its listings as a small root is,
+    /// what they name forgotten and logged as `check_listed` does, the root's cursor the journal's (`next`, every
+    /// change after it told to the next replay). Naming nothing writes nothing: the stored cursor stays, and the next
+    /// replay from it names again what this run found holding, a path looked at again, never one missed.
+    fn check_behind(&mut self, root: PathBuf, volume: Option<[u8; 16]>, next: &str) {
+        let (exact, whole, told) = self.listing_named(&root);
+        let (exact, whole): (Vec<PathBuf>, Vec<PathBuf>) = (exact.into_iter().filter(|p| !self.is_own(p)).collect(), whole.into_iter().filter(|p| !self.is_own(p)).collect());
+        self.counts.checked_named += (exact.len() + whole.len()) as u64;
+        if !(exact.is_empty() && whole.is_empty()) {
+            self.generation += 1;
+            self.forget_named(&root, &exact, &whole, &told, volume.unwrap_or([0; 16]), next);
+        }
+        self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next.to_owned()), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: false });
+    }
+
+    /// The answers under `root` that no longer hold, by its directories' listings: those to forget alone (`exact`),
+    /// and the symbolic links that changed, forgotten with what is under them and their canonical forms (`whole`).
+    /// Each directory holding an answer is listed once; the root itself, and each link, is `stat`ed on its own.
+    /// `told`: of `exact`, each directory still a directory whose kept listing changed (`listing_told`), with the
+    /// entries the journal names in its place.
+    fn listing_named(&mut self, root: &Path) -> (Vec<PathBuf>, Vec<PathBuf>, Told) {
+        let kept: Vec<(PathBuf, Entry)> = self.entries.range::<Path, _>((std::ops::Bound::Included(root), std::ops::Bound::Unbounded)).take_while(|(k, _)| k.starts_with(root)).map(|(k, e)| (k.clone(), e.clone())).collect();
+        let (mut exact, mut whole, mut told) = (Vec::new(), Vec::new(), Told::new());
+        let mut by_dir: BTreeMap<PathBuf, Vec<(PathBuf, Entry)>> = BTreeMap::new();
+        for (path, e) in kept {
+            match path.parent().filter(|_| path != root) {
+                Some(dir) => by_dir.entry(dir.to_path_buf()).or_default().push((path, e)),
+                None => {
+                    self.counts.stats += 1;
+                    let now = kind_and_stat(&path);
+                    if !listed_holds(&e, now) && !self.racy_settles(&path, &e, now) {
+                        if let Some(entries) = self.listing_told(&path, &e, now) {
+                            told.insert(path.clone(), entries);
+                        }
+                        exact.push(path);
+                    }
+                }
+            }
+        }
+        for (dir, kids) in by_dir {
+            self.counts.checked_dirs += 1;
+            let listed = match listing::entries(&dir) {
+                Ok(list) => list.into_iter().collect::<HashMap<_, _>>(),
+                // Nothing can be under a directory that is gone or is not one: an answer that it is missing holds.
+                Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory) => {
+                    exact.extend(kids.into_iter().filter(|(_, e)| e.kind != Kind::Missing).map(|(p, _)| p));
+                    continue;
+                }
+                Err(_) => {
+                    exact.extend(kids.into_iter().map(|(p, _)| p));
+                    continue;
+                }
+            };
+            for (path, e) in kids {
+                let Some(name) = path.file_name() else {
+                    exact.push(path);
+                    continue;
+                };
+                match listed.get(name) {
+                    None if e.kind == Kind::Missing => {}
+                    None => exact.push(path),
+                    Some(Some(now)) => {
+                        if !listed_holds(&e, Some(*now)) && !self.racy_settles(&path, &e, Some(*now)) {
+                            if let Some(entries) = self.listing_told(&path, &e, Some(*now)) {
+                                told.insert(path.clone(), entries);
+                            }
+                            exact.push(path);
+                        }
+                    }
+                    // A symbolic link (or an entry the listing gave no stat for): its answer is of what it names.
+                    Some(None) => {
+                        self.counts.stats += 1;
+                        if !listed_holds(&e, kind_and_stat(&path)) {
+                            whole.push(path);
+                        }
+                    }
+                }
+            }
+        }
+        (exact, whole, told)
+    }
+
+    /// For a directory's answer that no longer holds, while it is still a directory and its listing was kept: the
+    /// entries the journal names in its place, those added, removed or now of another kind (none: the same entries,
+    /// only its times moved). Its answer is forgotten all the same (its listing is listed again), but what changed
+    /// under it is those entries, not every path below it: a reader of the journal takes a path named as changed
+    /// with all under it (the cone's `still`, decision 0105), and so did FSEvents' replay name the entry, not its
+    /// directory. `None`: the directory itself is named (gone, of another kind, no listing kept, or unlistable).
+    fn listing_told(&self, dir: &Path, e: &Entry, now: Option<(Kind, Stat)>) -> Option<Vec<PathBuf>> {
+        let old = e.listing.as_ref().filter(|_| e.kind == Kind::Dir && matches!(now, Some((Kind::Dir, _))))?;
+        let new = self.read_listing(dir, false)?;
+        let (old, new): (HashSet<&(String, bool)>, HashSet<&(String, bool)>) = (old.iter().collect(), new.iter().collect());
+        let names: BTreeSet<&str> = old.symmetric_difference(&new).map(|(n, _)| n.as_str()).collect();
+        Some(names.into_iter().map(|n| dir.join(n)).collect())
+    }
+
+    /// Stores `cursor` as `root`'s, the observer's own journal's (`check_listed`).
+    fn store_listing_cursor(&mut self, root: &Path, volume: [u8; 16], cursor: &str) {
+        let Some(k) = self.db.as_mut() else { return };
+        let key = cursor_key(root, volume);
+        k.meta.insert(key.clone(), rusqlite::types::Value::Text(cursor.to_owned()));
+        k.stored.insert(key.clone(), cursor.to_owned());
+        let cursor = cursor.to_owned();
+        k.writer.send(move |db| {
+            let _ = db.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
+        });
+    }
+
+    /// Forgets the answers a root's listings named (`listing_named`): each of `exact` alone, each of `whole` with
+    /// what is under it and its canonical forms; records each in the observer's own journal under the current
+    /// generation, with the root's cursor and the generation, in one transaction.
+    /// A directory of `exact` in `told` is recorded as its entries `told` names (`listing_told`).
+    fn forget_named(&mut self, root: &Path, exact: &[PathBuf], whole: &[PathBuf], told: &Told, volume: [u8; 16], cursor: &str) {
+        let generation = self.generation;
+        let mut forgotten = 0u64;
+        for p in exact {
+            forgotten += u64::from(self.entries.remove(p.as_path()).is_some());
+            self.canon.remove(p.as_path());
+        }
+        for g in whole {
+            let keys: Vec<PathBuf> = self.entries.range::<Path, _>((std::ops::Bound::Included(g.as_path()), std::ops::Bound::Unbounded)).take_while(|(k, _)| k.starts_with(g)).map(|(k, _)| k.clone()).collect();
+            forgotten += keys.iter().filter(|k| self.entries.remove(k.as_path()).is_some()).count() as u64;
+            let keys: Vec<PathBuf> = self.canon.range::<Path, _>((std::ops::Bound::Included(g.as_path()), std::ops::Bound::Unbounded)).take_while(|(k, _)| k.starts_with(g)).map(|(k, _)| k.clone()).collect();
+            for k in keys {
+                self.canon.remove(&k);
+            }
+        }
+        if !self.new_canon.is_empty() {
+            let named: BTreeSet<&Path> = exact.iter().chain(whole).map(PathBuf::as_path).collect();
+            self.new_canon.retain(|(k, _)| !named.contains(k.as_path()) && !k.ancestors().any(|a| whole.iter().any(|w| w == a)));
+        }
+        // What the journal records: each path named, a directory whose entries changed as those entries.
+        let logged: Vec<PathBuf> = exact.iter().flat_map(|p| told.get(p).cloned().unwrap_or_else(|| vec![p.clone()])).chain(whole.iter().cloned()).collect();
+        for p in &logged {
+            self.changes.insert(p.clone(), generation);
+        }
+        self.counts.forgotten += forgotten;
+        let Some(k) = self.db.as_mut() else { return };
+        let key = cursor_key(root, volume);
+        k.meta.insert(key.clone(), rusqlite::types::Value::Text(cursor.to_owned()));
+        k.meta.insert(LISTING_GEN.to_owned(), rusqlite::types::Value::Integer(generation as i64));
+        k.stored.insert(key.clone(), cursor.to_owned());
+        super::hazards::warm_fault("the observer forgot answers its listings named changed", || {
+            format!("{}: {} paths named changed ({}), {forgotten} answers forgotten", root.display(), exact.len() + whole.len(), exact.iter().chain(whole).take(3).map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "))
+        });
+        k.deleted = true;
+        let (exact, whole, cursor) = (exact.to_vec(), whole.to_vec(), cursor.to_owned());
+        let logged = logged;
+        k.writer.send(move |db| {
+            let Ok(tx) = db.transaction() else { return };
+            {
+                let Ok(mut one) = tx.prepare_cached("DELETE FROM observed WHERE path = ?1") else { return };
+                let Ok(mut canon_one) = tx.prepare_cached("DELETE FROM run_record WHERE key = ?1") else { return };
+                for p in &exact {
+                    let _ = one.execute([p.to_string_lossy()]);
+                    let _ = canon_one.execute([format!("{CANONICAL}{}", p.display())]);
+                }
+                let Ok(mut del) = tx.prepare_cached("DELETE FROM observed WHERE path = ?1 OR (path >= ?2 AND path < ?3)") else { return };
+                let Ok(mut canon) = tx.prepare_cached("DELETE FROM run_record WHERE key = ?1 OR (key >= ?2 AND key < ?3)") else { return };
+                for g in &whole {
+                    let at = g.to_string_lossy();
+                    let _ = del.execute(params![at, format!("{at}/"), format!("{at}/\u{10ffff}")]);
+                    let at = format!("{CANONICAL}{}", g.display());
+                    let _ = canon.execute(params![at, format!("{at}/"), format!("{at}/\u{10ffff}")]);
+                }
+                let Ok(mut log) = tx.prepare_cached("INSERT OR REPLACE INTO observed_changes VALUES (?1, ?2)") else { return };
+                for p in &logged {
+                    let _ = log.execute(params![p.to_string_lossy(), generation as i64]);
+                }
+                let _ = tx.execute_cached("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
+                let _ = tx.execute_cached("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![LISTING_GEN, generation as i64]);
+            }
+            let _ = tx.commit();
+        });
     }
 
     /// The root `root` is asked as: the widest stored root above it on the same volume, else itself. A journal's
@@ -927,12 +1209,26 @@ impl Observer {
             if covered {
                 continue;
             }
-            match super::journal::since(std::slice::from_ref(root), Some(cursor), &cookies) {
+            // A root checked by its listings: what its checks named after the record's generation (decision 0400),
+            // the root checked for this run first. A record from before the oldest kept generation is not answered.
+            if let Some(g) = listing_cursor(cursor) {
+                self.watch(std::slice::from_ref(root));
+                let at = self.abs(root);
+                let r = self.roots.iter().find(|r| r.asked == self.flushes && r.listed && under(&at, &r.path))?;
+                if g < self.floor {
+                    return None;
+                }
+                now[i] = r.cursor.clone();
+                named.extend(self.changes.range::<Path, _>((std::ops::Bound::Included(at.as_path()), std::ops::Bound::Unbounded)).take_while(|(k, _)| k.starts_with(&at)).filter(|(_, n)| **n > g).map(|(k, _)| k.clone()));
+                continue;
+            }
+            match super::journal::since(std::slice::from_ref(root), Some(cursor), &cookies, self.journal_settle) {
                 super::journal::Since::Changed { paths, cursor } => {
                     named.extend(paths.into_iter().filter(|p| !self.is_own(p)));
                     now[i] = Some(cursor);
                 }
-                super::journal::Since::Lost { .. } => return None,
+                // What the replay names may not be all since the record: it is not answered.
+                super::journal::Since::Lost { .. } | super::journal::Since::Behind { .. } => return None,
             }
         }
         // A covered root's cursor moves with the one that covers it.
@@ -1190,29 +1486,50 @@ impl Observer {
                 waiting.push(path);
                 continue;
             }
-            let Some((kind, stat)) = Self::own_stat(&path) else { continue };
-            if kind != e.kind || stat != e.stat {
-                continue;
-            }
-            let (digest, listing) = match kind {
-                Kind::File => {
-                    let Ok(bytes) = std::fs::read(&path) else { continue };
-                    self.counts.hashed += 1;
-                    self.counts.bytes += bytes.len() as u64;
-                    (Sha256::digest(&bytes).into(), None)
-                }
-                Kind::Dir => {
-                    let Some(l) = self.read_listing(&path, false) else { continue };
-                    self.counts.listed += 1;
-                    (listing_digest(&l), Some(l))
-                }
-                _ => continue,
-            };
-            if digest == e.digest && Self::own_stat(&path).is_some_and(|(_, s)| s == e.stat) {
-                self.remember(&path, Entry { listing: listing.or(e.listing), recorded_ns: now, ..e });
-            }
+            self.settle_one(&path, e, now);
         }
         self.racy.extend(waiting);
+    }
+
+    /// Whether `e`, the racy answer at `path`, is still what is there: the same stat, and the same bytes (or listing)
+    /// read now. Recorded again by `now` where the window has passed (`settle_racy`); inside it, left racy (a later
+    /// write in the same tick keeps the stat), but what a reader read is what is there now. Sound as `settle_racy`
+    /// is: a write after this read changes the stat.
+    fn settle_one(&mut self, path: &Path, e: Entry, now: i64) -> bool {
+        let Some((kind, stat)) = Self::own_stat(path) else { return false };
+        if kind != e.kind || stat != e.stat {
+            return false;
+        }
+        let (digest, listing) = match kind {
+            Kind::File => {
+                let Ok(bytes) = std::fs::read(path) else { return false };
+                self.counts.hashed += 1;
+                self.counts.bytes += bytes.len() as u64;
+                (Sha256::digest(&bytes).into(), None)
+            }
+            Kind::Dir => {
+                let Some(l) = self.read_listing(path, false) else { return false };
+                self.counts.listed += 1;
+                (listing_digest(&l), Some(l))
+            }
+            _ => return false,
+        };
+        if digest == e.digest && Self::own_stat(path).is_some_and(|(_, s)| s == e.stat) {
+            if e.stat.mtime_ns.max(e.stat.ctime_ns) < now - RACY_NS {
+                self.remember(path, Entry { listing: listing.or(e.listing), recorded_ns: now, ..e });
+            }
+            return true;
+        }
+        false
+    }
+
+    /// Whether the answer `e` at `path` fails its listing's check (`listed_holds`) for its recording inside the racy
+    /// window alone, and its bytes read now are still the answer's (`settle_one`): a path written just before one run
+    /// and not since is not named to the next as changed (a run's end inside the window leaves its answer racy).
+    fn racy_settles(&mut self, path: &Path, e: &Entry, now: Option<(Kind, Stat)>) -> bool {
+        let Some((kind, stat)) = now else { return false };
+        let same = e.kind == kind && (if kind == Kind::File { stat } else { Stat { size: e.stat.size, ..stat } }) == e.stat;
+        same && e.racy() && self.settle_one(path, e.clone(), now_ns())
     }
 
     /// The digest of `dir`'s listing, as `listing` gives it.
@@ -1429,6 +1746,29 @@ fn text_cursor(v: &rusqlite::types::Value) -> Option<String> {
 /// stored again (a timestamp, `profile::WARM_WRITES_ALLOWED`), at most once in this many events. A replay from a
 /// cursor 2 million events old cost nothing measurable, from one 7 million old 0.6 to 2 s for its first ask.
 const CURSOR_AGE: u64 = 1 << 20;
+
+/// The most answers a root may hold and still be checked by its directories' listings rather than the journal
+/// (decision 0400, `RERAIL_LIST_MAX`).
+const LIST_MAX: usize = 20_000;
+
+/// How many of the observer's own journal's generations collection keeps (decision 0400): a record from before
+/// them is not answered (`changed_since` gives `None`), and is made again.
+const LIST_KEEP: u64 = 1 << 16;
+
+/// The observer's own journal's last generation and the oldest it answers from, in `observer_meta`.
+const LISTING_GEN: &str = "listing:generation";
+const LISTING_FLOOR: &str = "listing:floor";
+
+/// A cursor of the observer's own journal: `L` and its generation.
+fn listing_cursor(text: &str) -> Option<u64> {
+    text.strip_prefix('L')?.parse().ok()
+}
+
+/// `LIST_MAX`, or `RERAIL_LIST_MAX`.
+fn list_max() -> usize {
+    static MAX: OnceLock<usize> = OnceLock::new();
+    *MAX.get_or_init(|| std::env::var("RERAIL_LIST_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(LIST_MAX))
+}
 
 /// How many paths the journal may name under a root, none of them an answer kept, while its stored cursor stays: a
 /// replay from the stored cursor names them all again each run, so past this many it is stored again (a timestamp,
@@ -1658,6 +1998,8 @@ pub struct Swept {
     pub records: usize,
     /// Output directories recorded as rerail's own that are gone (decision 0284).
     pub outputs: usize,
+    /// Rows of the observer's own journal under no root kept, or older than the generations it keeps (decision 0400).
+    pub changes: usize,
 }
 
 /// Collects the observer's store at `path` (`store_beside`), with the content store's collection (decision 0053),
@@ -1669,6 +2011,9 @@ pub struct Swept {
 ///   root (`watch_above`), so one under none is of a name no run uses;
 /// - a whole-run cutoff's record (`reuse::CUTOFF`) that names no plan `live` says is live (a run of another build,
 ///   whose manifests the content store no longer keeps), and one from before records named their plans.
+///
+/// - a row of the observer's own journal (decision 0400) under no root kept, or `LIST_KEEP` generations old: the
+///   floor moves up with it, and a record from before it is not answered (`changed_since`).
 ///
 /// Then the WAL is folded into the database and truncated. Other records (`constants:`, `cone-rounds:`) stay.
 pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Result<Swept> {
@@ -1759,7 +2104,20 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
         let mut st = db.prepare(&format!("SELECT key FROM observer_meta WHERE key LIKE '{OWN_OUTPUT}%'"))?;
         st.query_map([], |r| r.get::<_, String>(0))?.flatten().filter(|k| k.strip_prefix(OWN_OUTPUT).is_some_and(|d| !Path::new(d).exists())).collect()
     };
+    // The observer's own journal: its rows under no root kept, and those older than the generations it keeps.
+    let generation: i64 = db.query_row("SELECT value FROM observer_meta WHERE key = ?1", [LISTING_GEN], |r| r.get(0)).unwrap_or(0);
+    let floor = generation.saturating_sub(LIST_KEEP as i64);
+    let changes: Vec<String> = match db.prepare("SELECT path, gen FROM observed_changes") {
+        Ok(mut st) => st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?.flatten().filter(|(p, g)| *g < floor || !held(Path::new(p))).map(|(p, _)| p).collect(),
+        Err(_) => Vec::new(),
+    };
     let tx = db.transaction()?;
+    for path in &changes {
+        swept.changes += tx.execute("DELETE FROM observed_changes WHERE path = ?1", [path])?;
+    }
+    if floor > 0 {
+        tx.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![LISTING_FLOOR, floor])?;
+    }
     for key in &dropped {
         swept.cursors += tx.execute("DELETE FROM observer_meta WHERE key = ?1", [key])?;
     }
@@ -1936,6 +2294,15 @@ pub fn hex(d: &[u8; 32]) -> String {
 mod tests {
     use super::*;
 
+    /// An observer that asks the journal for every root (decision 0105), as these tests were written for: no root
+    /// is checked by its listings (decision 0400), whose tests open `Observer::open`.
+    fn journal_observer(store: &Path) -> Observer {
+        let mut o = Observer::open(Some(store));
+        o.list_max = 0;
+        o.journal_settle = std::time::Duration::from_secs(5);
+        o
+    }
+
     /// `under` answers as `Path::starts_with` for every pair of a set of paths, odd spellings among them.
     #[test]
     fn under_answers_as_path_starts_with() {
@@ -1964,7 +2331,7 @@ mod tests {
         }
         let store = base.join("store.files");
         let run = |files: &[PathBuf]| {
-            let mut o = Observer::open(Some(&store));
+            let mut o = journal_observer(&store);
             o.begin();
             o.watch(std::slice::from_ref(&root));
             let listing = o.listing(&root.join("pkg")).unwrap();
@@ -2021,7 +2388,7 @@ mod tests {
             db.prepare("SELECT value FROM observer_meta WHERE key LIKE 'journal:%'").unwrap().query_map([], |r| r.get::<_, rusqlite::types::Value>(0)).unwrap().flatten().filter_map(|v| text_cursor(&v)).collect()
         };
         let run = |first: bool, n: u32| {
-            let mut o = Observer::open(Some(&store));
+            let mut o = journal_observer(&store);
             o.begin();
             if first {
                 o.own_output(&out);
@@ -2049,7 +2416,7 @@ mod tests {
         assert_eq!((names.as_slice(), kept), (["pkg".to_owned()].as_slice(), 0));
         assert_eq!(cursor(), before, "and moves no stored cursor: nothing written");
         // A record made in the second run holds: what changed since under its root is rerail's own.
-        let mut o = Observer::open(Some(&store));
+        let mut o = journal_observer(&store);
         o.begin();
         assert_eq!(o.changed_since("rec", std::slice::from_ref(&root), &marked), Some(Vec::new()));
         o.flush();
@@ -2069,7 +2436,7 @@ mod tests {
         let real = std::fs::canonicalize(&base).unwrap();
         let (root, elsewhere) = (real.join("root"), real.join("scratch/out"));
         let store = real.join("store.files");
-        Observer::open(Some(&store)).written();
+        journal_observer(&store).written();
         Connection::open(&store).unwrap().execute("INSERT INTO observer_meta VALUES (?1, '1')", [cursor_key_text("aa", &root)]).unwrap();
         let recorded = || -> Vec<String> {
             let db = Connection::open(&store).unwrap();
@@ -2077,7 +2444,7 @@ mod tests {
             keys.sort();
             keys
         };
-        let mut o = Observer::open(Some(&store));
+        let mut o = journal_observer(&store);
         o.own_output(&root.join("out"));
         o.own_output(&root.join("out/phase-sources"));
         o.own_output(&elsewhere);
@@ -2085,7 +2452,7 @@ mod tests {
         assert_eq!(recorded(), [format!("{OWN_OUTPUT}{}", root.join("out").display())]);
         assert!(o.is_own(&root.join("out/phase-sources/x.csv")) && o.is_own(&elsewhere.join("x.csv")), "all three are own for the process");
         drop(o);
-        let mut o = Observer::open(Some(&store));
+        let mut o = journal_observer(&store);
         o.own_output(&root.join("out"));
         o.written();
         assert_eq!(recorded().len(), 1, "the next process knows it: nothing written again");
@@ -2110,7 +2477,7 @@ mod tests {
         aged(&file);
         let store = base.join("store.files");
         let run = |watch: &Path| {
-            let mut o = Observer::open(Some(&store));
+            let mut o = journal_observer(&store);
             o.begin();
             o.watch(&[watch.to_path_buf()]);
             let asked: Vec<(PathBuf, bool)> = o.roots.iter().map(|r| (r.path.clone(), r.trusted)).collect();
@@ -2141,7 +2508,7 @@ mod tests {
         std::fs::create_dir_all(&scratch).unwrap();
         std::fs::write(scratch.join("a.py"), "x = 1\n").unwrap();
         let store = base.join("store.files");
-        let mut o = Observer::open(Some(&store));
+        let mut o = journal_observer(&store);
         o.own.push(base.join("scratch"));
         o.begin();
         assert!(o.listing(&scratch).is_some());
@@ -2173,7 +2540,7 @@ mod tests {
         let other = root.join("b.rr");
         std::fs::write(&other, "y.\n").unwrap();
         aged(&other);
-        let mut o = Observer::open(Some(&store));
+        let mut o = journal_observer(&store);
         o.begin();
         // Asked under the inner root before the outer one is watched, and under both after.
         o.watch(&[root.join("lib")]);
@@ -2211,7 +2578,7 @@ mod tests {
         std::fs::write(&file, "x.\n").unwrap();
         aged(&file);
         let store = base.join("store.files");
-        let mut o = Observer::open(Some(&store));
+        let mut o = journal_observer(&store);
         o.begin();
         o.watch(&[root.join("lib")]);
         assert!(o.canonical(&file).is_some());
@@ -2246,7 +2613,7 @@ mod tests {
         let store = base.join("store.files");
         let asked = [root.join("pkg/m1.py"), link.clone(), root.join("pkg/../pkg/m2.py")];
         let run = || {
-            let mut o = Observer::open(Some(&store));
+            let mut o = journal_observer(&store);
             o.begin();
             o.watch(std::slice::from_ref(&root));
             let got: Vec<Option<PathBuf>> = asked.iter().map(|p| o.canonical(p)).collect();
@@ -2291,7 +2658,7 @@ mod tests {
         // again (safe, and not what this test is of).
         std::thread::sleep(std::time::Duration::from_millis(300));
         // ctime is not settable: wait out the racy window by recording later than it.
-        let mut first = Observer::open(Some(&store));
+        let mut first = journal_observer(&store);
         first.validate_every = 0;
         let d1 = first.digest(&file).unwrap();
         // Recorded with a time after ctime + RACY_NS, as a later run would.
@@ -2301,7 +2668,7 @@ mod tests {
         first.dirty = first.entries.keys().cloned().collect();
         first.flush();
         first.written();
-        let mut second = Observer::open(Some(&store));
+        let mut second = journal_observer(&store);
         second.validate_every = 0;
         assert_eq!(second.digest(&file), Some(d1));
         assert_eq!((second.counts.hashed, second.counts.reused), (0, 1), "unchanged: one stat, no read");
@@ -2456,14 +2823,14 @@ mod tests {
             assert!(crate::git_workspace::discover(root).unwrap().clean_blob_unread("a.py").is_some(), "{}: a.py proven clean by its stat", root.display());
         }
         let store = dir.path().join("p0.files");
-        let mut o = Observer::open(Some(&store));
+        let mut o = journal_observer(&store);
         o.validate_every = 0;
         o.git(&repo).unwrap();
         let d = o.digest(&repo.join("a.py")).unwrap();
         assert_eq!((o.counts.hashed, o.counts.git), (1, 0), "first sight of the blob: read once, remembered");
         o.flush();
         o.written();
-        let mut fresh = Observer::open(Some(&store));
+        let mut fresh = journal_observer(&store);
         fresh.validate_every = 0;
         fresh.git(&clone).unwrap();
         assert_eq!(fresh.digest(&clone.join("a.py")), Some(d));
@@ -2511,7 +2878,7 @@ mod tests {
             let db = Connection::open(&store).ok()?;
             db.query_row("SELECT value FROM observer_meta WHERE key = ?1", [&key], |r| r.get::<_, rusqlite::types::Value>(0)).ok().as_ref().and_then(text_cursor)
         };
-        let mut o = Observer::open(Some(&store));
+        let mut o = journal_observer(&store);
         o.db.as_mut().unwrap().stored.insert(key.clone(), "1000".into());
         o.forget(root, &[], Some(volume), &(1000 + CURSOR_AGE - 1).to_string());
         o.written();
@@ -2536,7 +2903,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
         let store = base.join("store.files");
-        let o = Observer::open(Some(&store));
+        let o = journal_observer(&store);
         o.written();
         let mode = |p: &Path| std::fs::metadata(p).map(|m| m.permissions().mode() & 0o777).ok();
         assert_eq!(mode(&store), Some(0o600));
@@ -2563,7 +2930,7 @@ mod tests {
             let db = Connection::open(&store).ok()?;
             db.query_row("SELECT value FROM observer_meta WHERE key = ?1", [&key], |r| r.get::<_, rusqlite::types::Value>(0)).ok().as_ref().and_then(text_cursor)
         };
-        let mut o = Observer::open(Some(&store));
+        let mut o = journal_observer(&store);
         o.db.as_mut().unwrap().stored.insert(key.clone(), "1000".into());
         // The root's part of the store read first, as `watch` reads it.
         o.ensure(root);
@@ -2589,7 +2956,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
         let store = base.join("store.files");
-        let mut o = Observer::open(Some(&store));
+        let mut o = journal_observer(&store);
         let record = |cursors: &[&str]| encode_lists(&[cursors, &["/r", "/r/.git"], &["/r/.git/HEAD"]]);
         o.put_run_record("git-files:/r", &record(&["1", "1"]), b"2\na.py");
         o.refresh_record("git-files:/r", &["9".into(), "9".into()]);
@@ -2597,7 +2964,7 @@ mod tests {
         let want = (record(&["9", "9"]), b"2\na.py".to_vec());
         assert_eq!(o.run_record("git-files:/r"), Some(want.clone()));
         drop(o);
-        assert_eq!(Observer::open(Some(&store)).run_record("git-files:/r"), Some(want));
+        assert_eq!(journal_observer(&store).run_record("git-files:/r"), Some(want));
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -2610,7 +2977,7 @@ mod tests {
         let store = dir.path().join("p0.files");
         let entry = |size| Entry { kind: Kind::File, stat: Stat { size, ..Stat::default() }, digest: [0; 32], listing: None, recorded_ns: 0 };
         let paths = ["/x/a/f", "/x/a/g", "/y/b/f", "/y/b/g"].map(PathBuf::from);
-        let mut first = Observer::open(Some(&store));
+        let mut first = journal_observer(&store);
         for p in &paths {
             first.entries.insert(p.clone(), entry(1));
             first.dirty.push(p.clone());
@@ -2618,7 +2985,7 @@ mod tests {
         first.flush();
         first.written();
         drop(first);
-        let mut o = Observer::open(Some(&store));
+        let mut o = journal_observer(&store);
         assert!(o.entries.is_empty(), "nothing read at open");
         assert_eq!(o.known(&paths[0]).map(|e| e.stat.size), Some(1));
         let held: Vec<&Path> = o.entries.keys().map(PathBuf::as_path).collect();
@@ -2658,7 +3025,7 @@ mod tests {
         std::fs::create_dir_all(given.join("root/inner")).unwrap();
         let real = std::fs::canonicalize(&given).unwrap();
         let store = real.join("store.files");
-        Observer::open(Some(&store)).written();
+        journal_observer(&store).written();
         let (root, inner, gone) = (real.join("root"), real.join("root/inner"), real.join("gone"));
         let dotted = real.join("root/../root");
         let s = |p: &Path| p.to_string_lossy().into_owned();
@@ -2717,7 +3084,7 @@ mod tests {
         assert_eq!(records, [format!("{CANONICAL}{}", s(&fresh)), format!("{CANONICAL}{}", s(&root.join("a.py"))), "cone-rounds:live".to_owned(), "constants:live".to_owned(), "cutoff:kept".to_owned()]);
         let n = usize::from(alias.is_some());
         assert_eq!(keys(&format!("SELECT key FROM observer_meta WHERE key LIKE '{OWN_OUTPUT}%'")), [format!("{OWN_OUTPUT}{}", s(&inner))]);
-        assert_eq!(swept, Swept { cursors: 3 + n, answers: 2 + n, records: 6, outputs: 1 });
+        assert_eq!(swept, Swept { cursors: 3 + n, answers: 2 + n, records: 6, outputs: 1, changes: 0 });
         assert_eq!(std::fs::metadata(real.join("store.files-wal")).map_or(0, |m| m.len()), 0, "the WAL folded in");
         drop(db);
         let _ = std::fs::remove_dir_all(&given);
@@ -2729,6 +3096,255 @@ mod tests {
         assert_eq!(decode_listing(&encode_listing(&l).unwrap()).unwrap(), l);
         assert_eq!(decode_listing(&encode_listing(&[]).unwrap()).unwrap(), Vec::<(String, bool)>::new());
         assert!(encode_listing(&[("a\nb".to_owned(), false)]).is_none());
+    }
+
+    /// A tree for the listing tests (decision 0400): `root/pkg/m0.py` … `m4.py`, each past the racy window.
+    fn listing_tree(name: &str) -> (PathBuf, PathBuf, Vec<PathBuf>) {
+        let base = std::env::temp_dir().join(format!("rerail-listing-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("root");
+        std::fs::create_dir_all(root.join("pkg")).unwrap();
+        let files: Vec<PathBuf> = (0..5).map(|i| root.join(format!("pkg/m{i}.py"))).collect();
+        for f in &files {
+            std::fs::write(f, "x = 1\n").unwrap();
+            aged(f);
+        }
+        aged_dir(&root.join("pkg"));
+        // Setting a time moves the ctime to now: past the racy window of that, the first run's answers hold.
+        std::thread::sleep(std::time::Duration::from_nanos(RACY_NS as u64 + 50_000_000));
+        (base, root, files)
+    }
+
+    /// A directory's times set back past the racy window, as `aged` does a file's mtime (its ctime is the setting's).
+    fn aged_dir(dir: &Path) {
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        std::fs::File::open(dir).unwrap().set_modified(old).unwrap();
+    }
+
+    /// One run of a new process's observer over `root`: its listing of `pkg`, each file's digest, its counts.
+    fn listing_run(store: &Path, root: &Path, files: &[PathBuf]) -> (Counts, Option<Listing>, Vec<Option<[u8; 32]>>) {
+        let mut o = Observer::open(Some(store));
+        o.begin();
+        o.watch(&[root.to_path_buf()]);
+        let listing = o.listing(&root.join("pkg"));
+        let digests = files.iter().map(|f| o.digest(f)).collect();
+        o.flush();
+        o.written();
+        (o.counts, listing, digests)
+    }
+
+    /// R1: a second run over an unchanged small root makes no `stat` of a file (one of the root itself, whose answer
+    /// no listing of its own holds): it lists the two directories holding answers and trusts every answer.
+    #[cfg(unix)]
+    #[test]
+    fn a_small_root_is_checked_by_listings_not_stats() {
+        let (base, root, files) = listing_tree("unchanged");
+        let store = base.join("store.files");
+        let (first, listing, digests) = listing_run(&store, &root, &files);
+        assert!(first.stats >= 6 && first.trusted == 0, "the first run checks every path: {first}");
+        // Past the racy window of the first run's own recording (the directory's answer too).
+        std::thread::sleep(std::time::Duration::from_nanos(RACY_NS as u64 + 50_000_000));
+        let (second, again, same) = listing_run(&store, &root, &files);
+        assert_eq!((second.stats, second.trusted, second.checked_dirs, second.checked_named, second.hashed), (1, 6, 2, 0, 0), "nothing changed: no stat ({second})");
+        assert_eq!((again, same), (listing, digests));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// R2: an edit is named and only it, also one that keeps the size and mtime (its ctime moves); a removed file is
+    /// named, and its directory's own answer (its listing), not its siblings'. A new file needs no answer named: its
+    /// directory's is.
+    #[cfg(unix)]
+    #[test]
+    fn a_listing_names_an_edited_file_and_no_other() {
+        let (base, root, files) = listing_tree("edited");
+        let store = base.join("store.files");
+        listing_run(&store, &root, &files);
+        std::thread::sleep(std::time::Duration::from_nanos(RACY_NS as u64 + 50_000_000));
+        let (_, listing, digests) = listing_run(&store, &root, &files);
+        // The same size and mtime, other bytes: only the ctime says so.
+        let mtime = std::fs::metadata(&files[2]).unwrap().modified().unwrap();
+        std::fs::write(&files[2], "x = 2\n").unwrap();
+        std::fs::File::options().write(true).open(&files[2]).unwrap().set_modified(mtime).unwrap();
+        std::thread::sleep(std::time::Duration::from_nanos(RACY_NS as u64 + 50_000_000));
+        let (third, same_listing, after) = listing_run(&store, &root, &files);
+        assert_eq!((third.checked_named, third.hashed, third.stats), (1, 1, 2), "the edited file alone is named and read again: {third}");
+        assert_ne!(after[2], digests[2]);
+        assert_eq!([after[0], after[1], after[3], after[4]], [digests[0], digests[1], digests[3], digests[4]]);
+        assert_eq!(same_listing, listing);
+        std::fs::remove_file(&files[4]).unwrap();
+        std::fs::write(root.join("pkg/new.py"), "y = 1\n").unwrap();
+        std::thread::sleep(std::time::Duration::from_nanos(RACY_NS as u64 + 50_000_000));
+        let (fourth, listing, after) = listing_run(&store, &root, &files);
+        // The removed file and the directory's own answer; the others hold and are not read.
+        assert_eq!((fourth.checked_named, fourth.hashed), (2, 0), "{fourth}");
+        assert_eq!(after[4], None);
+        let names: Vec<String> = listing.unwrap().iter().map(|(n, _)| n.clone()).collect();
+        assert_eq!(names, ["m0.py", "m1.py", "m2.py", "m3.py", "new.py"]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// R3: an answer that a path is missing holds while its directory is gone; when a directory is removed, each
+    /// answer under it is named, and none is read back.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_that_cannot_be_listed_names_what_it_held() {
+        let (base, root, mut files) = listing_tree("gone");
+        files.push(root.join("absent/x.py"));
+        let store = base.join("store.files");
+        listing_run(&store, &root, &files);
+        std::thread::sleep(std::time::Duration::from_nanos(RACY_NS as u64 + 50_000_000));
+        let (second, _, digests) = listing_run(&store, &root, &files);
+        assert_eq!((second.checked_named, second.stats), (0, 1), "a missing path under a missing directory holds: {second}");
+        assert_eq!(digests[5], None);
+        std::fs::remove_dir_all(root.join("pkg")).unwrap();
+        let (third, listing, after) = listing_run(&store, &root, &files);
+        assert!(third.checked_named >= 6, "the directory and each file under it: {third}");
+        assert_eq!((listing, after.iter().flatten().count()), (None, 0));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// R4: an answer recorded inside the racy window is named by the listing: its file may have changed in the tick
+    /// it was recorded in. The listing's own stat of the file, with the answer recorded just inside the window and
+    /// just past it (a run timed against the window would depend on the host's load).
+    #[cfg(unix)]
+    #[test]
+    fn a_racy_answer_is_named_by_the_listing() {
+        let (base, root, files) = listing_tree("racy");
+        std::fs::write(&files[0], "x = 3\n").unwrap();
+        let name = files[0].file_name().unwrap().to_owned();
+        let listed = listing::entries(&root.join("pkg")).unwrap().into_iter().find(|(n, _)| *n == name).and_then(|(_, l)| l);
+        let Some((Kind::File, stat)) = listed else { panic!("the file is listed with its stat: {listed:?}") };
+        let changed = stat.mtime_ns.max(stat.ctime_ns);
+        let answer = |recorded_ns: i64| Entry { kind: Kind::File, stat, digest: [0; 32], listing: None, recorded_ns };
+        assert!(!listed_holds(&answer(changed + RACY_NS / 2), listed), "recorded inside the window: named");
+        assert!(listed_holds(&answer(changed + RACY_NS + 1), listed), "recorded past it: holds");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// R5: a listing's stat of an entry is `std::fs::metadata`'s: a file's (a compressed one too, on macOS), a
+    /// directory's but for its size; a symbolic link is left to be `stat`ed on its own.
+    #[cfg(unix)]
+    #[test]
+    fn the_bulk_listing_gives_what_stat_gives() {
+        let base = std::env::temp_dir().join(format!("rerail-listing-stat-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("dir/sub")).unwrap();
+        std::fs::write(base.join("dir/a.py"), "a = 1\n").unwrap();
+        std::fs::write(base.join("dir/empty"), "").unwrap();
+        std::os::unix::fs::symlink("a.py", base.join("dir/link")).unwrap();
+        let big = base.join("big.txt");
+        std::fs::write(&big, "abcdefgh".repeat(16 * 1024)).unwrap();
+        // A file the file system keeps compressed (APFS): its size is its bytes', not its blocks'.
+        #[cfg(target_os = "macos")]
+        {
+            let made = std::process::Command::new("ditto").arg("--hfsCompression").arg(&big).arg(base.join("dir/compressed.txt")).status();
+            assert!(made.is_ok_and(|s| s.success()), "ditto made the compressed copy");
+        }
+        let listed = listing::entries(&base.join("dir")).unwrap();
+        let mut names: Vec<String> = listed.iter().map(|(n, _)| n.to_string_lossy().into_owned()).collect();
+        names.sort();
+        let mut want = vec!["a.py", "empty", "link", "sub"];
+        if cfg!(target_os = "macos") {
+            want.insert(1, "compressed.txt");
+        }
+        assert_eq!(names, want);
+        for (name, got) in &listed {
+            let path = base.join("dir").join(name);
+            let name = name.to_string_lossy();
+            let m = std::fs::symlink_metadata(&path).unwrap();
+            if m.file_type().is_symlink() {
+                assert_eq!(*got, None, "{name}: a link is stat'ed alone");
+                continue;
+            }
+            let (kind, stat) = got.unwrap_or_else(|| panic!("{name}: no stat from the listing"));
+            let want = Stat::of(&m);
+            if m.is_dir() {
+                assert_eq!((kind, stat), (Kind::Dir, Stat { size: 0, ..want }), "{name}");
+            } else {
+                assert_eq!((kind, stat), (Kind::File, want), "{name}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// R6: a run record made at a root's cursor of the observer's own journal is told of what changed after it, over
+    /// later runs, and of nothing before it.
+    #[cfg(unix)]
+    #[test]
+    fn a_run_record_is_answered_from_the_observers_own_journal() {
+        let (base, root, files) = listing_tree("record");
+        let store = base.join("store.files");
+        let run = |edit: Option<&Path>, asked: &[String]| -> (String, Vec<Option<Vec<PathBuf>>>) {
+            if let Some(f) = edit {
+                std::fs::write(f, "x = 9\n").unwrap();
+                aged(f);
+                // Past the racy window of the edit's ctime: the answer this run records holds for the next.
+                std::thread::sleep(std::time::Duration::from_nanos(RACY_NS as u64 + 50_000_000));
+            }
+            let mut o = Observer::open(Some(&store));
+            o.begin();
+            let cursor = o.mark(&[root.clone()]).unwrap().remove(0);
+            for f in &files {
+                o.digest(f);
+            }
+            let told = asked.iter().map(|c| o.changed_since("test-record", &[root.clone()], &[c.clone()]).map(|mut v| { v.sort(); v })).collect();
+            o.flush();
+            o.written();
+            (cursor, told)
+        };
+        let (_, _) = run(None, &[]);
+        std::thread::sleep(std::time::Duration::from_nanos(RACY_NS as u64 + 50_000_000));
+        let (c1, _) = run(None, &[]);
+        assert!(listing_cursor(&c1).is_some(), "the root's cursor is the observer's own: {c1}");
+        let (c2, told) = run(Some(&files[1]), std::slice::from_ref(&c1));
+        assert_eq!(told, [Some(vec![files[1].clone()])]);
+        let (_, told) = run(Some(&files[3]), &[c1.clone(), c2.clone()]);
+        assert_eq!(told, [Some(vec![files[1].clone(), files[3].clone()]), Some(vec![files[3].clone()])]);
+        let (c4, told) = run(None, &[c2]);
+        assert_eq!(told, [Some(vec![files[3].clone()])], "nothing changed since: the same answer");
+        let (_, told) = run(None, &[c4]);
+        assert_eq!(told, [Some(vec![])]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// R8: the observer's journal tells a reader what changed, as FSEvents' replay did: a file added to a listed
+    /// directory is named, not the directory (whose answer, its listing, is forgotten all the same; a reader takes a
+    /// path named with all under it, as the cone's `still` does); and a file written just before one run and not since
+    /// is not named to the next while its answer is still inside the racy window, its bytes being the answer's.
+    #[cfg(unix)]
+    #[test]
+    fn the_journal_names_an_added_entry_and_not_a_racy_answer_that_holds() {
+        let (base, root, files) = listing_tree("told");
+        let store = base.join("store.files");
+        let pkg = root.join("pkg");
+        let run = |asked: &[String]| -> (String, Vec<Option<Vec<PathBuf>>>, Counts) {
+            let mut o = Observer::open(Some(&store));
+            o.begin();
+            let cursor = o.mark(&[root.clone()]).unwrap().remove(0);
+            o.listing(&pkg);
+            for f in &files {
+                o.digest(f);
+            }
+            let told = asked.iter().map(|c| o.changed_since("test-told", &[root.clone()], &[c.clone()]).map(|mut v| { v.sort(); v })).collect();
+            o.flush();
+            o.written();
+            (cursor, told, o.counts)
+        };
+        run(&[]);
+        std::thread::sleep(std::time::Duration::from_nanos(RACY_NS as u64 + 50_000_000));
+        let (c1, _, _) = run(&[]);
+        std::fs::write(pkg.join("new.py"), "y = 1\n").unwrap();
+        let (c2, told, counts) = run(std::slice::from_ref(&c1));
+        assert_eq!(told, [Some(vec![pkg.join("new.py")])], "the entry added, not its directory");
+        assert_eq!(counts.checked_named, 1, "the directory's answer is forgotten: {counts}");
+        // Written now: the next run records its answer inside the window; the one after reads it again and names
+        // nothing, its bytes unchanged.
+        std::fs::write(&files[1], "x = 7\n").unwrap();
+        let (c3, told, _) = run(std::slice::from_ref(&c2));
+        assert_eq!(told, [Some(vec![files[1].clone()])]);
+        let (_, told, counts) = run(std::slice::from_ref(&c3));
+        assert_eq!(told, [Some(vec![])], "the racy answer's bytes are still the file's: {counts}");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
 

@@ -463,8 +463,13 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                     vars.push((v.to_string(), decl.get(c).map_or_else(|| "int".to_owned(), |(_, ty)| ty.to_string())));
                 }
             }
-            let name = format!("rr_shown_agg{}", helpers.len());
-            let head = Atom { rel: name.into(), args: vars.iter().map(|(v, _)| Term::Var(v.clone().into())).collect(), neg: false, gated: false };
+            // Named by what it holds (`hide::helper_names`), not by its place among the program's helpers.
+            let pairs: Vec<(String, i64)> = cols.iter().filter_map(|&c| match inner.args.get(c) {
+                Some(Term::Var(v)) => Some((v.to_string(), bound_of(Some(c) == doc_col))),
+                _ => None,
+            }).collect();
+            let key = super::preparation::hide::helper_key(&inner.rel, &inner.args.iter().map(|t| t.to_string()).collect::<Vec<_>>(), &pairs, &vars);
+            let head = Atom { rel: key.as_str().into(), args: vars.iter().map(|(v, _)| Term::Var(v.clone().into())).collect(), neg: false, gated: false };
             // The aggregate's own wildcards stay wildcards: its named variables are correlated.
             let args = head.args.iter().map(|t| match t {
                 Term::Var(v) if v.starts_with("rr_shown_agg_c") => Term::Wild,
@@ -474,6 +479,22 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             helpers.push((head, vars, std::iter::once(Literal::Atom(inner)).chain(bounds).collect()));
         }
     }
+    // Each helper named by its text's rank (`hide::helper_names`): two of one text are one helper.
+    let names = super::preparation::hide::helper_names(helpers.iter().map(|(h, ..)| h.rel.to_string()));
+    for rule in prog.rules.iter_mut() {
+        for l in &mut rule.body {
+            if let Literal::Agg { atom, .. } = l
+                && let Some(n) = names.get(atom.rel.as_str())
+            {
+                atom.rel = n.as_str().into();
+            }
+        }
+    }
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let helpers: Vec<_> = helpers.into_iter().filter_map(|(mut head, vars, body)| {
+        head.rel = names[head.rel.as_str()].as_str().into();
+        seen.insert(head.rel.to_string()).then_some((head, vars, body))
+    }).collect();
     for (head, vars, body) in helpers {
         prog.decls.insert(head.rel.clone(), vars.iter().map(|(c, t)| (c.into(), t.into())).collect());
         prog.rules.push(crate::code_rule_dsl::logic::front::Rule { head, body: body.into() });
@@ -1010,10 +1031,10 @@ pub mod tests {
         let out = tree.rules.iter().find(|r| r.head.rel == "out").unwrap().to_string();
         assert!(out.contains("!rr_in_python_rows_def_or_class("), "{out}");
         let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("hide", v);
-        p.program(&mut super::super::preparation::hide::Hide { bound: 1 << 30 });
+        p.program(&mut super::super::preparation::hide::Hide::new(1 << 30));
         let (v, _) = p.finish().unwrap();
         let (tv, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).unwrap();
-        assert_eq!((tv.size(), tv.digest()), (v.size(), v.digest()), "{}", crate::code_rule_dsl::logic::program_image::differences(&tv, &v));
+        assert!(crate::code_rule_dsl::logic::program_image::same_program(&tv, &v), "{}", crate::code_rule_dsl::logic::program_image::differences(&tv, &v));
     }
 
     /// A relation read with guest variables in two columns its rules bind apart is copied once, with both seeded:

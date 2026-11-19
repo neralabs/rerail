@@ -1022,7 +1022,7 @@ fn clause_matchers(code_rule: &CompiledCodeRule, clause: usize) -> &[GrammarMatc
 /// which clauses run around them; its anchor index selects the roots; its scope tables join the
 /// file's, which hold every document's. Marks in `settled` the slots that ran to an answer.
 #[allow(clippy::too_many_arguments)]
-/// Whether the document may hold a root of `grammar`'s clause, by its presence (decision 0399 §4): a clause none of
+/// Whether the document may hold a root of `grammar`'s clause, by its presence (decision 0434 §4): a clause none of
 /// whose root kinds the document has matches nothing in it, and no anchor index is built for it.
 fn admits_presence(doc: &tape::TapeDoc, grammar: &GrammarMatcher) -> bool {
     let admits = grammar.anchors.root_kinds().is_none_or(|kinds| kinds.iter().any(|&kind| doc.may_have_kind(kind)));

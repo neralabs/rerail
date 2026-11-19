@@ -74,7 +74,7 @@ impl Reads {
     }
 }
 
-/// The writer's ops (decision 0399 §6) compiled by the JIT, each its own exported function, calling the others: what
+/// The writer's ops (decision 0434 §6) compiled by the JIT, each its own exported function, calling the others: what
 /// a test runs against their Rust and the reference writer (R15). Each takes the state's address, then its own
 /// parameters, in the platform's C convention.
 pub struct Writer {

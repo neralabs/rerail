@@ -84,6 +84,10 @@ pub enum BlockInst {
     Load(u16),
     /// The bytes inside the stream at a delay (`block::BlockOp::Within`), from its length.
     Within(u8),
+    /// The file's positions before the stream (`block::BlockOp::Prefix`): the low `n` bits of
+    /// the first block where the file starts with `word`'s `n` bytes. From the file's first
+    /// word, compared once (`native_cpu_block::stream_start`).
+    Prefix(u8, u64),
     /// The bytes whose position is `r` mod `k` (`block::BlockOp::Phase`), from the position.
     Phase(u8, u8),
     /// Plane `j` of each byte's position (`block::BlockOp::Position`), from the position.
@@ -145,6 +149,7 @@ impl BlockNative {
                 BlockOp::Fill(a, b) => BlockInst::Fill(a, b),
                 BlockOp::BackFill(a, b) => BlockInst::BackFill(a, b),
                 BlockOp::Within(d) => BlockInst::Within(d),
+                BlockOp::Prefix(n, w) => BlockInst::Prefix(n, w),
                 BlockOp::Phase(k, r) => BlockInst::Phase(k, r),
                 BlockOp::Position(j) => BlockInst::Position(j),
                 BlockOp::Carry(a) => BlockInst::Carry(a),
@@ -191,7 +196,7 @@ impl BlockNative {
 
     /// A walk with its values renamed by `m`.
     fn walk_renamed(w: &crate::block::Walk, m: impl Fn(u16) -> u16) -> crate::block::Walk {
-        let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: m(k.opener), closer: m(k.closer), open: m(k.open), fill: m(k.fill), empty: k.empty.map(|(e, n)| (m(e), n)), ..*k }).collect();
+        let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: m(k.opener), closer: m(k.closer), open: m(k.open), fill: m(k.fill), empty: k.empty.map(|(e, n)| (m(e), n)), or: k.or.map(|(c, n)| (m(c), n)), ..*k }).collect();
         crate::block::Walk { group: w.group, hidden: m(w.hidden), kinds }
     }
 
@@ -562,7 +567,7 @@ impl BlockNative {
         let mut pure = vec![false; n];
         for x in 0..n {
             pure[x] = match self.insts[x] {
-                BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) | BlockInst::Pair { .. } => true,
+                BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::Prefix(..) | BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) | BlockInst::Pair { .. } => true,
                 BlockInst::Not(_) | BlockInst::And(..) | BlockInst::Or(..) | BlockInst::Xor(..) | BlockInst::AndNot(..) | BlockInst::Prev(..) | BlockInst::Early(..) => self.insts[x].operands().into_iter().all(|o| pure[o]),
                 _ => false,
             };

@@ -504,7 +504,7 @@ pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
 /// are then made on the host. A batch with a guest was refused, and its views read on the host for an upload (28 MB
 /// on posthog/hogql).
 // copy (0353 step 4): the line starts and the spans past the nodes copied into the chunk for the `Loc` views. It goes:
-// the views' reads read the lines in place, and the spans where they are written once (Q184).
+// the views' reads read the lines in place, and the spans where they are written once (Q216).
 pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
     static LOCS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the Loc views' lines and spans put into the chunk (fill_locs)");
     *chunk.locs.get_or_init(|| LOCS.time(|| in_block(&chunk.block, || {

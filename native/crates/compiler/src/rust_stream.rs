@@ -235,6 +235,11 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
     let bytewise = n.block_programs.first().map(crate::native_cpu_bytes::Bytewise::of);
     let mut windows = String::new();
     for (i, c) in n.local_checks.iter().enumerate() {
+        // A token's check (decision 0398) is the CPU's and the interpreter's: no grammar that
+        // goes through Rust has one yet (the `.rr` grammar checks none).
+        if c.token {
+            return Err(format!("check {i}: a token's check is not generated as Rust yet"));
+        }
         let o = mask_output(n, c.mask)?;
         let word = match bytewise.as_ref().filter(|b| b.can(o as u16)) {
             Some(b) => {
@@ -1239,8 +1244,13 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
         match el.offset {
             0 => writeln!(body, "        let c = unsafe {{ *self.codes.add(here * self.rs) }};\n        if !({}) {{ return false; }}", test(el)).unwrap(),
             o if o < 0 => {
-                // The record before, past the extras (an offset of -1).
-                writeln!(body, "        let mut j = here;\n        let c = loop {{\n            if j == 0 {{ return false; }}\n            j -= 1;\n            let c = unsafe {{ *self.codes.add(j * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n        if !({}) {{ return false; }}", test(el)).unwrap();
+                // The record before, past the extras (an offset of -1). None before: an `end`
+                // element (`after ~E`) holds there, any other fails.
+                if el.end {
+                    writeln!(body, "        let mut j = here;\n        let c = loop {{\n            if j == 0 {{ break None; }}\n            j -= 1;\n            let c = unsafe {{ *self.codes.add(j * self.rs) }};\n            if {free} {{ break Some(c); }}\n        }};\n        if let Some(c) = c {{ if !({}) {{ return false; }} }}", test(el)).unwrap();
+                } else {
+                    writeln!(body, "        let mut j = here;\n        let c = loop {{\n            if j == 0 {{ return false; }}\n            j -= 1;\n            let c = unsafe {{ *self.codes.add(j * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n        if !({}) {{ return false; }}", test(el)).unwrap();
+                }
             }
             o => {
                 // No record left: an `end` element holds there (it is the last), any other fails.
@@ -1364,6 +1374,7 @@ fn check(out: &mut String, on_p: &mut String, i: usize, c: &LocalCheck, word: &s
             LocalOp::Xor(a, b) => format!("{} ^ {}", v(a, t), v(b, t)),
             LocalOp::AndNot(a, b) => format!("{} & !{}", v(a, t), v(b, t)),
             LocalOp::Prev(a, s) => format!("({} << {s}) | (if q - {t} >= 1 {{ {} >> {} }} else {{ 0 }})", v(a, t), v(a, t + 1), 64 - u32::from(s)),
+            LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last => return Err(format!("check {i}: a token's check's op in a local check")),
         };
         writeln!(body, "        let v{k}_{t}: u64 = {e};").unwrap();
     }
@@ -1729,6 +1740,7 @@ mod tests {
                     LocalOp::Xor(a, b) => v(ops, usize::from(a), bytes, q) ^ v(ops, usize::from(b), bytes, q),
                     LocalOp::AndNot(a, b) => v(ops, usize::from(a), bytes, q) & !v(ops, usize::from(b), bytes, q),
                     LocalOp::Prev(a, s) => (v(ops, usize::from(a), bytes, q) << s) | if q >= 1 { v(ops, usize::from(a), bytes, q - 1) >> (64 - u32::from(s)) } else { 0 },
+                    LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last => unreachable!(),
                 }
             }
             v(ops, ops.len() - 1, bytes, q)

@@ -818,7 +818,7 @@ impl<'a> P<'a> {
         }
         while !matches!(self.peek(), T::Eof | T::CloseTag) {
             self.statement(STMT)?;
-            // A top-level statement is final: its nodes are committed (passed to format 16's ops; decision 0399 §2).
+            // A top-level statement is final: its nodes are committed (passed to format 16's ops; decision 0434 §2).
             self.w.commit();
         }
         if self.peek() == T::CloseTag {

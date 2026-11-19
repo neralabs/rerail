@@ -19,7 +19,7 @@ pub struct TapeView {
     /// measured from the node's own start. Format 16: the slot, gap and length widths at bits 0, 4
     /// and 8, the checkpoints' at 12, and the four side lists' value widths at 16, 20, 24 and 28.
     pub widths: u32,
-    /// Format 15's columns (code, size, base, off, tail). Format 16 (block-major, decision 0399): block
+    /// Format 15's columns (code, size, base, off, tail). Format 16 (block-major, decision 0434): block
     /// 0's start, then the bytes a row holds before the slots, the gaps, the lengths and the checkpoints
     /// (a block of R rows holds column r at `R * columns[r]` from its start).
     pub columns: [u32; 5],
@@ -96,7 +96,7 @@ pub const F16_BLOCK: u32 = 256;
 pub const F16_PART: u32 = 1024;
 pub const F16_SUB: u32 = F16_PART / F16_BLOCK;
 /// A 16z tape's format in its view (decision 0353 step 4b): format 16 stored a block of `F16Z_BLOCK` nodes at a
-/// time in `F16Z_PIECES` pieces (decision 0399 §3), read in place, a block decoded where a read falls into an entry
+/// time in `F16Z_PIECES` pieces (decision 0434 §3), read in place, a block decoded where a read falls into an entry
 /// of a rolling cache (`cache`). Its view's `columns` are the piece index's offset (each piece's start in the
 /// payload, a u32; then each one's length; then each one's kind, a byte), the side lists' part starts' (list `k`'s
 /// `blocks + 1` u32s, list after list), the checkpoints' (raw, `F16Z_BLOCK / F16_K` a block), the cache's entry
@@ -106,7 +106,7 @@ pub const F16_SUB: u32 = F16_PART / F16_BLOCK;
 /// per are format 16's.
 pub const F16Z_FORMAT: u32 = 1016;
 pub const F16Z_BLOCK: u32 = 1024;
-/// The pieces a 16z block is stored in (decision 0399 §3): codes, slots, gaps, lengths, each its array's column in
+/// The pieces a 16z block is stored in (decision 0434 §3): codes, slots, gaps, lengths, each its array's column in
 /// the block then its side list's part.
 pub const F16Z_PIECES: u32 = 4;
 

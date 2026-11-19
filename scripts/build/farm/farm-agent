@@ -16,6 +16,14 @@ From the daemon:
   the file (an extended attribute), and `seen` reports those while the file is as written.
 - {"op": "have", "id", "paths"}: replies {"op": "had", "id", "seen"}, each path's [mtime_ns, size]
   (null when missing): what an earlier connection already wrote.
+- {"op": "unlisted", "id", "root", "listed"}: replies {"op": "unlisted!", "id", "files"}, each file
+  under `root`'s copy that the daemon wrote (it carries the attribute) and `listed` does not name,
+  with its `seen`. The daemon asks it for a checkout before a test command runs, with what it just
+  synced there, and keeps those the build machine no longer has (`remove`). Files a command here
+  made carry no attribute and are never named.
+- {"op": "remove", "id", "root", "files"}: removes each of `files` (a path: its `seen`, as
+  `unlisted` named it) while it is still that file the daemon wrote, and the directories that
+  leaves empty, up to `root`'s copy. Replies {"op": "removed", "id", "paths"}: those removed.
 - {"op": "same", "id", "files"}: `files` maps paths of this host's own (a crate in its cargo
   registry, at the path it has on the build machine too) to their sha256 there. Replies {"op":
   "same?", "id", "differ"}: those missing or different here. Only read: a compile then reads that
@@ -166,6 +174,46 @@ def put(header, payload):
         raise OSError(e, "setxattr failed", kept)
     os.chmod(tmp, header.get("mode", 0o644) & 0o7777)
     os.replace(tmp, kept)
+
+
+def has_tag(path):
+    return libc.getxattr(path.encode(), XATTR, None, 0, 0, 0x0001) > 0  # XATTR_NOFOLLOW
+
+
+def unlisted(header):
+    """The files the daemon wrote under `root`'s copy that `listed` does not name (`unlisted`)."""
+    top, listed, files = at(header["root"]), set(header["listed"]), {}
+    for d, _, names in os.walk(top):
+        for n in names:
+            kept = os.path.join(d, n)
+            path = kept[len(ROOT):]
+            if path in listed or ".farm-" in n or os.path.islink(kept) or not has_tag(kept):
+                continue
+            files[path] = seen(kept)
+    send({"op": "unlisted!", "id": header["id"], "files": files})
+
+
+def remove(header):
+    """Removes the files the build machine no longer has (`remove`): only while each is the very
+    file the daemon wrote, so a file sent again since stays."""
+    top, removed = at(header["root"]), []
+    for path, was in header["files"].items():
+        kept = at(path)
+        if not kept.startswith(top + "/") or not has_tag(kept) or seen(kept) != was:
+            continue
+        try:
+            os.unlink(kept)
+        except OSError:
+            continue
+        removed.append(path)
+        d = os.path.dirname(kept)
+        while d != top and d.startswith(top + "/"):
+            try:
+                os.rmdir(d)
+            except OSError:
+                break
+            d = os.path.dirname(d)
+    send({"op": "removed", "id": header["id"], "paths": removed})
 
 
 def mapper(prefixes):
@@ -780,8 +828,7 @@ def prune_root(days, keep=(), root=ROOT, every_file=False):
             except OSError:
                 pass
 
-    def sent(path):
-        return libc.getxattr(path.encode(), XATTR, None, 0, 0, 0x0001) > 0  # XATTR_NOFOLLOW
+    sent = has_tag
 
     def walk(d, top=False):
         """The newest use of anything under `d` (0: nothing in it); removes what is idle in it."""
@@ -876,6 +923,11 @@ while True:
         threading.Thread(target=run, args=(header,), daemon=True).start()
     elif header["op"] == "same":
         send({"op": "same?", "id": header["id"], "differ": [p for p, h in header["files"].items() if sha(p) != h]})
+    elif header["op"] == "unlisted":
+        # In a thread of its own: the walk takes a moment, and other compiles' puts go on meanwhile.
+        threading.Thread(target=unlisted, args=(header,), daemon=True).start()
+    elif header["op"] == "remove":
+        remove(header)
     elif header["op"] == "have":
         send({"op": "had", "id": header["id"], "seen": [seen(at(p), touch=True) for p in header["paths"]]})
     elif header["op"] == "ping":

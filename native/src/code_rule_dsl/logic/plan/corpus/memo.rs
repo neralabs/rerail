@@ -269,10 +269,14 @@ pub(super) fn space_digest(ids: &BTreeMap<String, [u8; 32]>, local: &crate::code
 }
 
 /// Where the memo's space `space` names the whole file-local program whose entries it holds last (`set_last_program`).
+/// Under the space's plan (`plan_digest`: the engine build, the grammar, the node ids' scheme), as its entries are
+/// (`local_space`): another build's entries are not this build's hits, so its last program, and the statistics kept
+/// under it, are not this build's either (Q102). Before, a new build read the old build's keeper, whose counts
+/// trusted entries it could not read, and gave it up at the edited file.
 fn last_key(space: &[u8; 32]) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail.corpus-local-last/v1\0");
-    hash.update(space);
+    hash.update(b"rerail.corpus-local-last/v2\0");
+    hash.update(plan_digest(space));
     hash.finalize().into()
 }
 
@@ -615,10 +619,19 @@ impl Frame {
     }
 }
 
-/// Holds the atoms an entry's symbols name (`image::hold`), as it is read before a run's waves.
+/// Holds the atoms an entry's symbols name (`image::hold`), as it is read before a run's waves: none of an entry whose
+/// symbols this process holds already. The profile says how many it read.
 pub(super) fn hold<'a>(store: &ContentStore, blobs: impl IntoIterator<Item = &'a crate::content_store::MemoBlob>) -> StoreResult<()> {
     let bytes: Vec<_> = blobs.into_iter().map(|b| &b.bytes).collect();
-    image::hold(&bytes, &store.atoms_handle())
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    let read = image::hold(&bytes, &store.atoms_handle())?;
+    crate::code_rule_dsl::prof::count("corpus.memo_entries_held_read", read);
+    crate::code_rule_dsl::logic::profile::decision("the memo's entries' atoms, before the first wave (decision 0397)", || {
+        format!("{read} of {} entries read; the others' symbols held already", bytes.len())
+    });
+    Ok(())
 }
 
 /// The newest corpus run of `root`: the relations its memo plan holds, by name, as recorded (`.decl` columns as

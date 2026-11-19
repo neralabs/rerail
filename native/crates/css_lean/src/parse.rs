@@ -398,7 +398,7 @@ impl<'a> P<'a> {
                 break;
             }
             self.item(false)?;
-            // A top-level rule is final: its nodes are committed (passed to format 16's ops; decision 0399 §2).
+            // A top-level rule is final: its nodes are committed (passed to format 16's ops; decision 0434 §2).
             self.w.commit();
         }
         self.flush(usize::MAX);

@@ -1342,7 +1342,7 @@ impl<'a> P<'a> {
                 let n = w.push(key(k), s);
                 stack.push((n, e, i + size as usize));
                 // The nodes are written in order and never edited: committed (passed to format 16's ops; decision
-                // 0399 §2) every 256.
+                // 0434 §2) every 256.
                 if n % 256 == 255 {
                     w.commit();
                 }

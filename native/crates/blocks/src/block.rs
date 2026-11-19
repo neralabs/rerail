@@ -29,6 +29,10 @@ pub mod kind {
     pub const OUTPUTS: u32 = 4;
     pub const JOURNAL: u32 = 5;
     pub const SCRATCH: u32 = 6;
+    /// The store's atoms (decision 0401): strings and their hash table.
+    pub const ATOMS: u32 = 7;
+    /// A space's kept facts (decision 0401 F1).
+    pub const KEPT: u32 = 8;
 }
 
 structure! {
@@ -92,6 +96,9 @@ pub struct Block {
     reserved: usize,
     ext: Arc<Extent>,
     file: Option<File>,
+    /// Its memory is a file's mapping, not a reservation (`mem::reserve`): counted neither way. A mapping read-only
+    /// holds no descriptor (`map_file`), so this is not `file.is_some()`.
+    mapped: bool,
     writable: bool,
     /// A slab's owner, when the block lives in one: dropped with the block, which never unmaps it.
     backing: Option<Box<dyn Backing>>,
@@ -154,6 +161,7 @@ impl Block {
             base,
             reserved,
             ext: Arc::new(Extent { top: AtomicUsize::new(top), free: AtomicUsize::new(0) }),
+            mapped: file.is_some(),
             file,
             writable,
             backing,
@@ -247,7 +255,7 @@ impl Block {
     /// free list. Only an anonymous block's: a pooled slab's pages are the device buffer's, and a file's are written
     /// back.
     fn spare_pages(&self, at: usize, size: usize) -> Option<(*mut u8, usize)> {
-        if self.backing.is_some() || self.file.is_some() {
+        if self.backing.is_some() || self.mapped {
             return None;
         }
         let p = self.base as usize + at;
@@ -514,6 +522,73 @@ impl Block {
         Frozen(Arc::new(b))
     }
 
+    /// Maps the block in the file at `path` as it is, open or frozen (a store's block that one process appends to and
+    /// others read up to an end they are told, decision 0401): its magic and kind checked, its whole file mapped,
+    /// writable or not. Read-only, it keeps no descriptor: the mapping outlives it, and a store's reader holds none of
+    /// its files open. Without shared mappings (WASI) the file is read into memory, and a writer writes it back itself
+    /// (`bytes`).
+    pub fn map_file(path: &Path, kind: u32, writable: bool) -> io::Result<Block> {
+        let invalid = |what: String| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {what}", path.display()));
+        let f = std::fs::OpenOptions::new().read(true).write(writable).open(path)?;
+        let len = f.metadata()?.len() as usize;
+        if len < size_of::<Header>() {
+            return Err(invalid(format!("{len} bytes, shorter than a header")));
+        }
+        #[cfg(unix)]
+        let b = {
+            let prot = if writable { libc::PROT_READ | libc::PROT_WRITE } else { libc::PROT_READ };
+            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, prot, libc::MAP_SHARED, f.as_raw_fd(), 0) };
+            if p == libc::MAP_FAILED {
+                return Err(io::Error::last_os_error());
+            }
+            let mut b = Block::make(p.cast(), len, len, Some(f), writable, None);
+            if !writable {
+                b.file = None;
+            }
+            b
+        };
+        #[cfg(not(unix))]
+        let b = {
+            let mut f = f;
+            let reserved = len.div_ceil(PAGE) * PAGE;
+            let p = crate::mem::reserve(reserved);
+            std::io::Read::read_exact(&mut f, unsafe { std::slice::from_raw_parts_mut(p, len) })?;
+            Block::make(p, reserved, len, None, writable, None)
+        };
+        let h = b.header();
+        if h.magic != MAGIC || h.kind != kind {
+            return Err(invalid(format!("not a block of kind {kind}")));
+        }
+        if h.state != OPEN && h.state != FROZEN {
+            return Err(invalid(format!("state {}", h.state)));
+        }
+        Ok(b)
+    }
+
+    /// What is written in a block mapped from its file on the disk: its dirty pages written back, then the file
+    /// flushed (a barrier on macOS, `fdatasync` elsewhere). Nothing to do for a block with no file.
+    #[cfg(unix)]
+    pub fn sync_mapped(&self) -> io::Result<()> {
+        // SAFETY: the block's own mapping, its whole length.
+        if unsafe { libc::msync(self.base.cast(), self.reserved, libc::MS_SYNC) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let Some(f) = &self.file else { return Ok(()) };
+        #[cfg(target_os = "macos")]
+        let done = unsafe { libc::fcntl(f.as_raw_fd(), libc::F_BARRIERFSYNC) };
+        #[cfg(not(target_os = "macos"))]
+        let done = unsafe { libc::fdatasync(f.as_raw_fd()) };
+        if done != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// The file a block maps, when it maps one.
+    pub fn mapped_file(&self) -> Option<&File> {
+        self.file.as_ref()
+    }
+
     /// Maps a block's file read-only, valid only if it was frozen whole: magic, kind, state, and the length its
     /// header says is the file's.
     pub fn open_file(path: &Path, kind: u32) -> Result<Frozen, String> {
@@ -550,7 +625,7 @@ impl Drop for Block {
     fn drop(&mut self) {
         if self.backing.is_none() {
             // A file's mapping was never `reserve`'s: it is unmapped without counting.
-            if self.file.is_some() {
+            if self.mapped {
                 crate::mem::uncounted(self.reserved);
             }
             unsafe { crate::mem::release(self.base, self.reserved) };

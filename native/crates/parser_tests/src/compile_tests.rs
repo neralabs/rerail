@@ -2,7 +2,7 @@
 //! (`tools/bitlex`): each named mask of the compiled block program equals the evaluator's mask on
 //! every input and every executor (`docs/parser-generators/13-tape-on-the-gpu.md` §7, step 2).
 
-use crate::block_tests::{Executors, executors, inputs, runs};
+use crate::block_tests::{Executors, inputs, runs};
 #[allow(unused_imports)]
 use rerail_compiler::*;
 use rerail_compiler::program::Words as Program;
@@ -71,11 +71,12 @@ fn forward_masks_equal_the_evaluator_on_every_executor() {
     let compiled = bitlex_compile::compile(&stmts, &names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
     let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
     let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    let ex = Executors::new(&p);
     let mut cases = inputs();
     cases.push(br#"{"a\"b": [1, -2.5e3, "x\\"], "c": true}"#.to_vec());
     for bytes in cases {
         let want = evaluated(&stmts, &bytes, &names);
-        for (executor, got) in executors(&p, &bytes) {
+        for (executor, got) in ex.every(&bytes) {
             for (k, name) in names.iter().enumerate() {
                 assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {} bytes\n{}", bytes.len(), compiled.rows);
             }
@@ -97,12 +98,14 @@ fn classes_pack_into_shared_products() {
     assert!(compiled.rows.contains("= eq 0x22"), "{}", compiled.rows);
 }
 
-/// What the compiler does not handle yet is refused by name, not guessed.
+/// What the compiler does not handle yet is refused by name, not guessed: `line_has`, which the
+/// evaluator has and the masks do not (`text`, the operation this test named first, is compiled
+/// since 0332's Kotlin step 2).
 #[test]
 fn unsupported_operations_are_refused() {
-    let stmts = ::bitlex::syntax::parse("class a = 'a'\nmask b = text(\"ab\") & a\n").expect("parses");
+    let stmts = ::bitlex::syntax::parse("class a = 'a'\nmask b = line_has(a, a) & a\n").expect("parses");
     let error = bitlex_compile::compile(&stmts, &["b"], None).expect_err("refused");
-    assert!(error.contains("text"), "{error}");
+    assert!(error.contains("line_has"), "{error}");
 }
 
 /// Errors and escapes are the fallback output: on every input and every executor its bits equal
@@ -127,6 +130,7 @@ fn errors_and_escapes_are_the_fallback_output() {
     let compiled = bitlex_compile::compile(&stmts, &names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
     let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
     let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    let ex = Executors::new(&p);
     let mut cases = inputs();
     cases.extend([b"{\"a/b\": 1}".to_vec(), b"{\"a\": 1} // c".to_vec(), b"\"a\nb\"".to_vec(), b"/".to_vec()]);
     let (mut clean, mut falls) = (0, 0);
@@ -143,7 +147,7 @@ fn errors_and_escapes_are_the_fallback_output() {
         // The program has no tokens, so the evaluator's "in no token" errors are not its own.
         let falls_back = out.errors.iter().any(|e| !e.contains("is in no token"));
         assert_eq!(want.iter().any(|&w| w != 0), falls_back, "{} bytes: {:?}", bytes.len(), out.errors);
-        for (executor, got) in executors(&p, &bytes) {
+        for (executor, got) in ex.every(&bytes) {
             // The fallback's outputs, one per delay, ORed: the OR of the masks.
             let mut any = vec![0u64; bytes.len().div_ceil(64)];
             for &k in &compiled.fallbacks {
@@ -230,11 +234,12 @@ fn later_masks_equal_the_evaluator_on_every_executor() {
     assert!(compiled.rows.contains("delay 5"), "the largest next is 5 bytes\n{}", compiled.rows);
     let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
     let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    let ex = Executors::new(&p);
     let mut cases = inputs();
     cases.extend([b"1e+5 2E-x 3e 4e9 \"\\\\\\\"\0".to_vec(), vec![0u8; 70], b"\"\"\"".to_vec()]);
     for bytes in cases {
         let want = evaluated(&stmts, &bytes, &names);
-        for (executor, got) in executors(&p, &bytes) {
+        for (executor, got) in ex.every(&bytes) {
             for (k, name) in names.iter().enumerate() {
                 assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {} bytes\n{}", bytes.len(), compiled.rows);
             }
@@ -442,9 +447,14 @@ fn json_msl_is_one_kernel() {
             let msl = generate_with(&native, width, strategy);
             assert_eq!(msl.matches("kernel void ").count(), 1);
             let lines = msl.lines().count();
+            // Counted on the form generated: `Planes` writes each class out as the planes' logic.
+            let insts = match strategy {
+                ClassStrategy::Lookup => native.insts.len(),
+                ClassStrategy::Planes => native.planes_form().insts.len(),
+            };
             // A fixed preamble (the kernel's arguments, tables and stores), then a few lines per
             // instruction in each of three bodies (general, full group, ASCII full group).
-            assert!(lines < 200 + 15 * native.insts.len(), "{}-byte {strategy:?}: {lines} lines for {} instructions", width.bytes(), native.insts.len());
+            assert!(lines < 200 + 15 * insts, "{}-byte {strategy:?}: {lines} lines for {insts} instructions", width.bytes());
         }
     }
 }
@@ -799,9 +809,13 @@ fn json_loop_keeps_values_in_registers() {
 /// and Cranelift spills two values elsewhere. 667 and 4 with 0381: a class one `cmtst` (24
 /// fewer), the escaped quotes' rounds behind a branch (5), no complement of a complement (5),
 /// the bitmask's weights one load, the constants made at the body's head, and a total read
-/// back from its row at the step's end, not held through the body.
-const JSON_LOOP: usize = 667;
-const JSON_LOOP_STACK: usize = 4;
+/// back from its row at the step's end, not held through the body. 673 and 7 with 0383: the
+/// full body runs on the edge blocks too, its edge part behind one cold branch at its end, so
+/// the loop has no general body. The branch's test is a load of the edge slot (+1), and the
+/// edge part reads two of the body's early words, the string's, which then live to the body's
+/// end (one spill, +2). The head's test, outside this loop, is one compare where it was two.
+const JSON_LOOP: usize = 673;
+const JSON_LOOP_STACK: usize = 7;
 
 // --- Tier 1 is simdjson's stage 1 (decision 0071) ---------------------------------------------
 //
@@ -980,17 +994,20 @@ fn only_the_compiler_reads_tier2s_states() {
                 continue;
             }
             let text = std::fs::read_to_string(&path).expect("reads a source file");
-            // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`, `readers[i].arms`, a part's
-            // `parted[0].arms`) are not the table's, nor a shape's or a count's (`shape.arms`, `cols.arms`,
-            // `c.arms`): an `.arms` is the table's only after another name.
-            let table_arms = |line: &str| {
-                line.match_indices(".arms").any(|(at, _)| {
+            // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`, `readers[i].arms`,
+            // and `self.arms` in `Reader`'s own methods) and tier 1's counts of arms read in place
+            // (`shape.arms`, `cols.arms`, `c.arms`) are not the table's: a `.arms` is the table's
+            // unless its receiver is one of those. The table's own `self.arms` is in `grammar.rs`.
+            let other_arms = |line: &str| {
+                line.match_indices(".arms").all(|(at, _)| {
                     let before = &line[..at];
-                    let name = &before[before.trim_end_matches(|c: char| c.is_alphanumeric() || c == '_').len()..];
-                    !before.ends_with(']') && !["rd", "reader", "shape", "cols", "c"].contains(&name)
+                    let receiver = before.rsplit(|c: char| !(c.is_alphanumeric() || c == '_')).next().unwrap_or_default();
+                    // `readers[…].arms`: the indexed list before the `.arms` is the readers'.
+                    let indexed = before.ends_with(']') && before.rfind("readers[").is_some_and(|k| !before[k..].contains(".arms"));
+                    ["rd", "reader", "shape", "cols", "c", "self"].contains(&receiver) || indexed
                 })
             };
-            let table_line = |line: &str| table_arms(line) || needles[1..].iter().any(|n| line.contains(n));
+            let table_line = |line: &str| needles[1..].iter().any(|n| line.contains(n)) || (line.contains(".arms") && !other_arms(line));
             if text.lines().any(table_line) {
                 readers.push(path.display().to_string());
             }
@@ -1009,33 +1026,36 @@ fn json_with_check(with: Option<&str>) -> Result<(Program, bitlex_compile::Compi
     json_compiled_text(&text)
 }
 
-/// JSON's number check (doc 18 §4) is tier 1's: masks computed with the rest of the block
-/// program, a state's mask per state of its byte machine, joining the fallback. One `fill` per
-/// run (the integer, the fraction, the exponent) and one for the tokens it leaves to tier 2's
-/// keywords; `prev`s by one byte, and logic; no other carry. Tier 2 has no word for it. Its
-/// size is a ratchet: lower it as the compiler improves.
+/// JSON's number check (doc 18 §4) is a token's check (decision 0398), as simdjson's stage 2
+/// parses a number: tier 2 runs it over each number's bytes, and tier 1 makes none of it (its
+/// program is the one with no check). One `fill` per run (the integer, the fraction, the
+/// exponent) and one for the span it checks; `prev`s by one byte, and logic. Its size is a
+/// ratchet: lower it as the compiler improves.
 #[test]
-fn json_number_check_is_tier1_masks() {
-    use rerail_compiler::block::BlockOp::*;
+fn json_number_check_is_a_tokens_check() {
+    use rerail_compiler::program::LocalOp;
     let (with, _) = json_compiled();
     let (without, _) = json_with_check(None).expect("compiles without the check");
-    let (a, b) = (&with.block_programs[0], &without.block_programs[0]);
-    let fills = |p: &block::BlockProgram| p.ops.iter().filter(|op| matches!(op, Fill(..))).count();
-    let added: Vec<&block::BlockOp> = a.ops.iter().filter(|op| !b.ops.contains(op)).collect();
-    let other: Vec<&&block::BlockOp> = added.iter().filter(|op| !matches!(op, Eq(_) | Class { .. } | Const(_) | Within(_) | Not(_) | And(..) | Or(..) | AndNot(..) | Prev(_, 1) | Fill(..))).collect();
-    eprintln!("json number check: {} operations, {} fills", a.ops.len() - b.ops.len(), fills(a) - fills(b));
-    assert_eq!((fills(a) - fills(b), other.len()), (4, 0), "{other:?}");
-    assert!(a.ops.len() - b.ops.len() <= JSON_NUMBER_CHECK_OPS, "{} operations (budget {JSON_NUMBER_CHECK_OPS})", a.ops.len() - b.ops.len());
+    assert_eq!(with.block_programs[0].ops, without.block_programs[0].ops, "tier 1 makes the check");
+    let checks: Vec<&rerail_compiler::program::LocalCheck> = with.local_checks.iter().filter(|c| c.token).collect();
+    assert_eq!(checks.len(), 1, "{:?}", with.local_checks);
+    let ops = &checks[0].ops;
+    let fills = ops.iter().filter(|op| matches!(op, LocalOp::Fill(..))).count();
+    let other: Vec<&LocalOp> = ops.iter().filter(|op| !matches!(op, LocalOp::Bytes(_) | LocalOp::Not(_) | LocalOp::And(..) | LocalOp::Or(..) | LocalOp::AndNot(..) | LocalOp::Prev(_, 1) | LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last)).collect();
+    eprintln!("json number check: {} operations, {fills} fills", ops.len());
+    assert_eq!((fills, other.len()), (4, 0), "{other:?}");
+    assert!(ops.len() <= JSON_NUMBER_CHECK_OPS, "{} operations (budget {JSON_NUMBER_CHECK_OPS})", ops.len());
     let text = rir::disassemble(&with);
-    assert!(!text.lines().any(|l| l.split_whitespace().nth(1) == Some("CHECK")), "tier 2 checks a token");
+    assert!(text.lines().any(|l| l.split_whitespace().nth(1) == Some("CHECK")), "tier 2 checks no token");
 }
 
 /// The check's operations (a ratchet). 100 as a program of its own run per number in tier 2;
 /// 43 as masks in tier 1, its arms into a state on the same bytes sharing one `prev`; 44 when its
-/// span fills from the starts it takes.
-const JSON_NUMBER_CHECK_OPS: usize = 44;
+/// span fills from the starts it takes; 48 as a token's check (0398): its own `start`, `last`
+/// and byte sets, which tier 1's shared.
+const JSON_NUMBER_CHECK_OPS: usize = 48;
 
-/// JSON's number check, as tier 1's masks, equals the reference's grammar on every word of up
+/// JSON's number check, a token's check, equals the reference's grammar on every word of up
 /// to five bytes over `-01.eEx`, and on longer ones: a file of the word alone is parsed, both
 /// tiers on their interpreters, exactly when the reference parses it, to the same nodes.
 #[test]
@@ -1182,9 +1202,11 @@ fn json_tier2_is_transducer_words() {
     }
     // The keywords (`true`, `false`, `null`) are a switch's targets, a row each.
     assert!(text.lines().any(|l| l.trim_start().starts_with("switch ") && l.contains(" word s")), "no switch names a keyword");
-    for banned in ["FORK", "CHILD", "NEXT", "DESCEND", "CAPTURE", "EMIT", "CHECK"] {
+    for banned in ["FORK", "CHILD", "NEXT", "DESCEND", "CAPTURE", "EMIT"] {
         assert!(!words.iter().any(|l| l.split_whitespace().nth(1) == Some(banned)), "{banned}:\n{}", words.join("\n"));
     }
+    // A `CHECK` is a number's: a token's check over its bytes (decision 0398).
+    assert!(p.local_checks.iter().all(|c| c.token), "a check of tier 1's mask: {:?}", p.local_checks);
 }
 
 /// JSON's tier 2, on the words' interpreter, writes the reference parser's nodes, and goes to
@@ -1214,16 +1236,15 @@ fn json_compiled_path_equals_the_interpreters() {
     let tier2 = native_cpu_stream::compile(&native).expect("tier 2 compiles");
     // JSON has no wraps and no chained returns: it pays for neither (no wrap columns). Its loop
     // heads are the stream's. The table is written as it goes (each row's parent and extra flag
-    // with the row), and JSON defers no leaf: no call, no pass at its end. A token's end is its
-    // record's (`records`): no search.
+    // with the row), and JSON defers no leaf: no pass over the table, at its end or before. A
+    // token's end is its record's (`records`): no search. Its calls are the tape's rare steps
+    // (decision 0140: a block's base, a commit of codes, the image's end), none a table pass.
     assert!(!tier2.wraps);
     assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
-    // Its calls are the tape's (8a1762be0: tier 2 writes the tape): a block's offsets, a commit,
-    // a code taken back, the image's end, each rare (`TableFns`), the module's ids 1 to 4. A pass
-    // over the table (a wrap's `shift`, a drop's) would be declared before them, and the tape's
-    // ids past 4.
-    let callees: Vec<u32> = tier2.clif.lines().filter_map(|l| l.trim().split_once(" = colocated u0:")).filter(|(k, _)| k.starts_with("fn")).filter_map(|(_, rest)| rest.split_whitespace().next()?.parse().ok()).collect();
-    assert!(callees.iter().all(|&id| (1..=4).contains(&id)), "no pass over the table: {callees:?}");
+    // Its calls are the tape's rare steps and the outlined checks (a number's, decision 0398, rare code
+    // out of the arm's): every one an outlined function's, none a pass over the table.
+    assert_eq!(tier2.table_passes, 0, "no pass over the table");
+    assert!(tier2.own_calls > 0 && rerail_compiler::clif_text::callees(&tier2.clif).len() == tier2.own_calls, "every call an outlined function's: {}", tier2.own_calls);
     let files = json_tier2_files();
     for f in &files {
         let want1 = p.block_programs[0].run_files(&[f]).remove(0);

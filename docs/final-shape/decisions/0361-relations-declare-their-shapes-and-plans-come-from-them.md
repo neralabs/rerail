@@ -1,6 +1,6 @@
 # 0361. Relations declare their shapes, and plans come from them
 
-Status: decided (2026-11-17), to build. The user: "a directive which allows us to add enough data to the
+Status: decided (2026-11-17), being built: steps 1, 2, 3 and 7 built (2026-11-18). The user: "a directive which allows us to add enough data to the
 relations in the .rr files that we can provide good default shapes for them (or at least name an algorithm or
 something) so that we don't need to pay for planning, or only in exceptional circumstances."
 
@@ -163,3 +163,109 @@ Measured at 300 files (cold58 against cold56, load 70–110):
 
 When `.layout` lands (steps 1–2), a declared `order(i dense in p)` may let the engine choose a running walk over
 the sort. The form itself needs no declared fact.
+
+## Steps 1 and 2: the `.layout` line, and `core.rr`'s base relations (2026-11-18)
+
+**The line.** `.layout r fact…` names a declared relation, then its facts. It is one line, as every `.rr` setting
+is (a setting runs to the end of its line, or on past a trailing comma). So the example above is written as several
+lines, which add up:
+
+```
+.decl child(p: node, c: node, i: number)
+.layout child key(c) key(p, i) fanout(p -> c, few)
+.layout child order(i dense in p) tree(p -> c) local
+```
+
+The facts, as `front::layout_facts` reads them:
+
+| Fact | Written |
+|---|---|
+| a key | `key(c)`, `key(p, i)` |
+| a fan-out | `fanout(p -> c, one)`, `few`, `many`, or a measured `~4` |
+| a size | `size(per n)`, `size(<= 2 per n)`, `size(per document)`, `size(per kind)`, `size(small)` |
+| local | `local` |
+| an order | `order(i dense in p)`, `order(i in p)` |
+| a tree | `tree(p -> c)` |
+| an algorithm | `by reach`, `by walk(child)`, `by running(i in p)` |
+
+The line is checked where it is lowered (`rr::lower::layout`): the relation must be declared, in the module or the
+modules it includes, and each column a fact names must be one of its columns. Either error names the line.
+
+**Carried.** A relation's facts are `Program::layouts`, by relation, each fact once in the order first written, its
+columns by place. Every carrier of 0137's `.shape` carries them too:
+- a module's merge (`rr::lower::merge`);
+- `combine`'s renaming (`rr::lower::rename`, `corpus::link`), which renames the relation and a walk's relation;
+- a part's header (`preparation::parts`);
+- the program's facts and its image: one about row a fact, `layout(p, rel, k, fact)`, the fact with its columns as
+  `$k` (`LayoutFact::placed`), read back by `program_facts` and by `About::of` (`About::layouts`).
+
+The plan choices' key is the version's digest, which sums every about relation, so a changed layout makes new
+choices with no change there.
+
+**`core.rr`.** The base relations that the tree makes, declared from what the tree guarantees:
+
+| Relation | Facts |
+|---|---|
+| `node(d, n, kind, start, end)` | key(n), size(per n), local |
+| `kind(n, k)` | key(n), size(per n), local |
+| `child(p, c, i)` | key(c), key(p, i), fanout(p -> c, few), order(i dense in p), tree(p -> c), local |
+| `field(p, f, c)` | key(c), fanout(p -> c, few), tree(p -> c), local |
+| `text(n, s)`, `docof(n, d)`, `line(n, l)`, `name(n, s)`, `visit_index(n, i)` | key(n), local |
+
+`node_order`, named in step 2's list, is not a `core.rr` relation (it is the engine's, `facts::core`); it is left
+until a rule reads it by name.
+
+Nothing reads the facts yet: steps 1 and 2 change no plan and no finding.
+
+**Tests.** `rr::tests::a_layout_line_states_a_relations_facts_by_its_columns` (every fact form, several lines adding
+up, a repeated fact kept once, each fact read back from its placed form), `a_layout_line_names_a_declared_relations_columns`
+(an undeclared relation, an unknown column, no fact, a bad class and an unknown fact, each a syntax error with its
+line), and `layouts_are_carried_with_the_program` (`core.rr`'s facts on a policy's program, through the image's facts
+and back, in `About::layouts`, and through `combine`). With them, 189 tests of the code the steps touch (`rr::tests`,
+`program_image`, `program_facts`, `link`, `parts`, `program_text`) and the slow tier's lowering checks over every
+pack pass (M1 Max). The slow tier's `rule_syntax_files_pass_check_rr` fails on `c/includes.rr`, as it does without
+these steps (Q210).
+
+## Step 3: facts inferred over the rules (2026-11-18)
+
+`program_image::layouts::Layouts` is an analysis of the version (decision 0281's pass manager), so it is computed
+once a version and kept with it. Each relation has its declared facts and, in dependency order, what its rules give
+from the facts of what they read. Each fact carries its origin: declared, inferred from the relation's one rule, or
+inferred from all its rules.
+
+**What a rule gives its head.** Inference works over the body's dependencies:
+- each positive atom's keys (the key's variables determine the atom's);
+- each equality (`x = f(y)`: `y` determines `x`);
+- each `nearest` (a node determines its nearest ancestor).
+
+From them:
+
+| Fact | Holds of the head where |
+|---|---|
+| key | one atom's key variables are in the head and determine every head variable (a projection keeping the key, a join along a key, a filter) |
+| fan-out, tree | their columns are in the head and determine its row (so its rows are at most the atom's; a forest's edges kept are a forest) |
+| order | the same; dense only where the rule is the atom renamed (a filter leaves gaps) |
+| local | every atom is local, every node the head holds is an atom's (or `nearest`'s), and the atoms holding nodes are joined by them |
+
+A relation of one node column at most is local by its shape.
+
+**Where it stops.** The decision's rule is "a union keeps a fact only if every branch has it". That is sound for
+`local`, which the analysis keeps across a union and, supposing its component local, across a recursion (by
+induction on the rounds). It is not sound for a key: two branches may give one key two rows. So a union or a recursion
+keeps its declared facts and `local` alone. An aggregate's head, a matcher's, a native's, a request's answer and the
+program's facts take their declared facts alone.
+
+**EXPLAIN.** A profiled run lists every relation's facts among its decisions (`relation layouts (decision 0361)`),
+one line a relation, each fact with its columns named and its origin. For example
+`f: key(c) (by rule #0000), tree(p -> c) (by rule #0000)`.
+
+**Measured** on a Python policy's program (`python/ast.rr` and `core.rr`): 273 derived relations, of which 109 take
+facts. 18 are keyed, and 108 are local. Before unions, recursions and the one-node shape were counted for `local`, it
+was 48 (41 local).
+
+**Tests.**
+- `program_image::tests::layouts::`, five tests: a projection, a filter and a rename; a join along a key and a cross
+  product; unions and recursions, and a union with one non-local branch; EXPLAIN's text; the Python program's counts.
+- `plan::tests::explain_lists_each_relations_layout`: the lines in a planner run's decisions.
+
+With them, 268 tests of the planner, the image, the profile and `rr` pass (M1 Max).

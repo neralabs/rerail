@@ -1408,6 +1408,8 @@ fn drop_unread(prog: &mut Program) -> Vec<String> {
     }
     let unread: Vec<String> = reads.keys().filter(|r| !live.contains(**r)).map(|r| (*r).to_owned()).collect::<BTreeSet<_>>().into_iter().collect();
     prog.rules.retain(|r| !unread.iter().any(|x| x == &r.head.rel));
+    // A request relation dropped has no rules, so no entry in the request record (decision 0331: an entry a rule).
+    prog.asked_by.retain(|req, _| !unread.contains(req));
     unread
 }
 

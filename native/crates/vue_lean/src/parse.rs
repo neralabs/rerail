@@ -321,7 +321,7 @@ impl<'a> P<'a> {
                 first = Some(self.w.start(root + 1));
             }
             // A text, interpolation or tag read is final (an element it ends is closed, as a node passed on may
-            // be): its nodes are committed (passed to format 16's ops; decision 0399 §2).
+            // be): its nodes are committed (passed to format 16's ops; decision 0434 §2).
             self.w.commit();
             if self.at >= self.src.len() {
                 // An element open at the end is an error: the scanner finds no token there.

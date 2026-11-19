@@ -561,7 +561,7 @@ impl B<'_, '_> {
         )
     }
     /// `by_format` for a read of the tape's whole, not of a node (its newline index): a 16z tape holds it raw, where
-    /// its view names it, so a 16z tape's body is format 16's, read in place of the stored bytes (decision 0399).
+    /// its view names it, so a 16z tape's body is format 16's, read in place of the stored bytes (decision 0434).
     fn by_format_whole(&mut self, ty: ir::Type, sixteen: impl Fn(&mut Self) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
         let sixteen = &sixteen;
         self.by_formats(ty, |b| sixteen(b), |b| sixteen(b), fifteen)
@@ -798,7 +798,7 @@ impl B<'_, '_> {
     /// Format 16's column `r` (0 codes, 1 slots, 2 gaps, 3 lengths, 4 checkpoints) in block `b`: where it
     /// starts. Blocks are `F16_PART` nodes at the view's stride from block 0's start, each its columns end to
     /// end at its rows (the last block's are fewer: `nodes - b * F16_PART`), column `r` at `rows *
-    /// columns[r]` (decision 0399).
+    /// columns[r]` (decision 0434).
     fn block_column(&mut self, r: i32, b: Value) -> Value {
         let blocks = self.column(0);
         let stride = self.view(at::STRIDE);
@@ -1776,7 +1776,7 @@ fn cache_take(
 }
 
 /// Block `block` of the reader's 16z tape decoded into the cache entry `slot` (`size` bytes), as a format 16 tape
-/// of one block (decision 0399 §3's stored form read through 0353 step 4b's cache): each of its `F16Z_PIECES`
+/// of one block (decision 0434 §3's stored form read through 0353 step 4b's cache): each of its `F16Z_PIECES`
 /// pieces (codes, slots, gaps, lengths) decoded where its view places it, the array's column then its side list's
 /// part (an LZ4 piece by `z_lz4`, a raw one copied, a repeat as the piece it names), its checkpoints copied, each
 /// side list's one part's starts after them, and its view. Column `q` lies at `nb * C[q]` (`nb` its nodes), `C[q]`

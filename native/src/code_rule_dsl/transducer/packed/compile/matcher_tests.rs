@@ -313,7 +313,7 @@ fn a_recursive_utility_inside_another_settles() {
     assert_eq!(program.roots(&tape).unwrap(), expected);
 }
 
-/// Decision 0399 §4, step 6: on Metal, a label pass over codes runs only in the files whose presence may hold its
+/// Decision 0434 §4, step 6: on Metal, a label pass over codes runs only in the files whose presence may hold its
 /// domain's kinds. The nested-recursion clause's passes start at lists, parentheses and binary operators; a file with
 /// none of them is ruled out, and the roots are the CPU's.
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
@@ -429,7 +429,6 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
 /// same ones) is counted, not compared: it runs as walks in production.
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
 #[test]
-#[ignore = "Q135: on an M1 Max one clause (PYI056 add-to-all) differs, at oscar da5892e9c too"]
 fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
     use super::compile_matcher::Backend;
     use metal_program_backend::label_passes::INTERPRET_ONLY;

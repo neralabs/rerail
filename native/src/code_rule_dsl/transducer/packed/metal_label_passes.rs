@@ -1057,12 +1057,15 @@ fn pipelines(format: u32) -> Result<Vec<ComputePipelineState>, Error> {
     // The library once (its front end, with the first kernel), then the others side by side: each pipeline is a
     // back-end compile of its own, and Metal's compiler service runs them at once (work queue Q181: format 16's took 67
     // s one after another, 23 s together, on a loaded M3 Max). A kernel that fails to compile panics on its thread,
-    // and the panic goes on here (decision 0382). A batch of 16z tapes compiles the reads with 16z's bodies
-    // (`reads_z`); the others without them.
+    // and the panic goes on here (decision 0382). Each compile waits on the device's compiler, so its thread is a
+    // device's worker, scoped as the executor's are (`exec::scoped`, decision 0100 §12). A batch of 16z tapes compiles
+    // the reads with 16z's bodies (`reads_z`); the others without them. Both sources are fixed, so their pipelines are
+    // the ones the engine ships (`pipeline_named_fixed`, decision 0395).
     let source = &SOURCES[usize::from(reads_z(format))];
-    let first = pipeline_of(source, KERNELS[0], format)?;
+    let fixed = |name: &str| rerail_metal::runtime::pipeline_named_fixed(source, name, Some(format));
+    let first = fixed(KERNELS[0])?;
     let rest = rerail_accel::exec::scoped(|scope| {
-        let compiles = KERNELS[1..].iter().map(|name| scope.spawn(move || pipeline_of(source, name, format))).collect::<Vec<_>>();
+        let compiles = KERNELS[1..].iter().map(|name| scope.spawn(move || fixed(name))).collect::<Vec<_>>();
         compiles.into_iter().map(|compile| compile.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))).collect::<Result<Vec<_>, _>>()
     })?;
     let pipelines = std::iter::once(first).chain(rest).collect::<Vec<_>>();
@@ -1098,6 +1101,26 @@ fn pattern_pipelines(patterns: &[&PackedPattern], facts: bool, format: u32) -> R
         names.extend(group_names);
     }
     Ok(Some((pipelines, names)))
+}
+
+/// The sources of the pattern kernels a plan of `patterns` compiles for a batch of `format` (`pattern_pipelines`),
+/// in its order: each reads the format's tapes (`tape_view`).
+pub(in crate::code_rule_dsl) fn pattern_sources(patterns: &[&PackedPattern], facts: bool, format: u32) -> Vec<String> {
+    if patterns.is_empty() && !facts {
+        return Vec::new();
+    }
+    let groups = patterns.chunks(patterns::GROUP).collect::<Vec<_>>();
+    let groups = if groups.is_empty() { vec![&[][..]] } else { groups };
+    groups.into_iter().enumerate().map(|(group, members)| patterns::source(members, group * patterns::GROUP, format).0).collect()
+}
+
+/// Whether the pattern kernels of `sources` (`pattern_sources`) are at hand without a compile (decision 0395):
+/// otherwise the wave runs on the CPU, and the kernels are compiled as the mode says
+/// (`rerail_accel::gpu::kernels::Mode`). The label kernels are the interpreter's, fixed (shipped): never pending.
+/// `format` is the batch's tape format, the kernels' function constant (`pattern_pipeline`).
+pub(in crate::code_rule_dsl) fn patterns_ready(sources: &[String], format: u32) -> bool {
+    // Each asked, so every one missing is recorded, not only the first.
+    sources.iter().map(|source| rerail_accel::gpu::kernels::ready(source, patterns::KERNEL, Some(format)).is_some()).fold(true, |all, ready| all && ready)
 }
 
 /// One group's pattern kernel, compiled once per distinct source.
@@ -1707,7 +1730,7 @@ fn encode(
         crate::code_rule_dsl::prof::count("gpu.node_past_batch", 1);
         static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         if !SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            eprintln!("rerail: a label pass took a node past its batch's {} (decision 0403, Q186): not written; the passes on the interpreter", runner.nodes);
+            eprintln!("rerail: a label pass took a node past its batch's {} (decision 0403, Q265): not written; the passes on the interpreter", runner.nodes);
         }
     }
     // A micro walk that outgrew its frames: the passes again on the interpreter.

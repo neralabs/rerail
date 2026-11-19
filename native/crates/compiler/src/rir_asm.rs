@@ -446,7 +446,15 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
         }
         "switch" => switch_row(parts, line)?,
         "reading" => reading_row(parts, line)?,
-        "ppop" => parts.pp.ops.push(line.number("s")?),
+        "ppop" => {
+            let s = line.number("s")?;
+            if line.peek_word().as_deref() == Some("cpp") {
+                line.word()?;
+                parts.pp.cpp_ops.push(s);
+            } else {
+                parts.pp.ops.push(s);
+            }
+        }
         "ppsuffix" => parts.pp.suffix = true,
         "ppcpp" => parts.pp.cpp = true,
         "rule" => {
@@ -595,12 +603,13 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 }
                 program.rounds.push(group);
             } else if first == "region" {
-                // `block N region G %opener %closer %open %fill B [outside] [else %e M]`: a
+                // `block N region G %opener %closer %open %fill B [outside] [else %e M] [or %c M]
+                // [after MASK]`: a
                 // kind of a walk of rounds group G (`crate::block::Walk`), kinds in order.
                 let group: u16 = line.number("")?;
                 let (opener, closer, open, fill): (u16, u16, u16, u16) = (line.number("%")?, line.number("%")?, line.number("%")?, line.number("%")?);
                 let bytes: u8 = line.number("")?;
-                let (mut outside, mut empty) = (false, None);
+                let (mut outside, mut empty, mut or, mut after) = (false, None, None, 0u16);
                 while let Some(w) = line.peek_word() {
                     if w == "outside" {
                         line.word()?;
@@ -608,11 +617,17 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     } else if w == "else" {
                         line.word()?;
                         empty = Some((line.number("%")?, line.number("")?));
+                    } else if w == "or" {
+                        line.word()?;
+                        or = Some((line.number("%")?, line.number("")?));
+                    } else if w == "after" {
+                        line.word()?;
+                        after = line.number("")?;
                     } else {
-                        return Err(format!("block {at} region: `outside` or `else %e M`, not {w}"));
+                        return Err(format!("block {at} region: `outside`, `else %e M`, `or %c M` or `after MASK`, not {w}"));
                     }
                 }
-                let kind = crate::block::WalkKind { opener, closer, open, fill, bytes, outside, empty };
+                let kind = crate::block::WalkKind { opener, closer, open, fill, bytes, outside, empty, or, after };
                 match program.walks.last_mut() {
                     Some(w) if w.group == group => w.kinds.push(kind),
                     _ => {
@@ -924,6 +939,9 @@ pub fn head_rows(out: &mut String, program: &Words) {
     for s in &program.pp.ops {
         let _ = writeln!(out, "  ppop s{s}");
     }
+    for s in &program.pp.cpp_ops {
+        let _ = writeln!(out, "  ppop s{s} cpp");
+    }
     if program.pp.suffix {
         let _ = writeln!(out, "  ppsuffix");
     }
@@ -990,6 +1008,10 @@ pub fn disassemble(program: &Words) -> String {
 /// A local check's words (`localcheck`, `reclocal`): `mM dD` and its ops.
 fn local_check(line: &mut Line<'_>) -> Result<crate::program::LocalCheck, String> {
     use crate::program::LocalOp;
+    let token = line.peek_word().as_deref() == Some("t");
+    if token {
+        line.word()?;
+    }
     let mask: u16 = line.number("m")?;
     let delay: u8 = line.number("d")?;
     let mut ops = Vec::new();
@@ -997,6 +1019,10 @@ fn local_check(line: &mut Line<'_>) -> Result<crate::program::LocalCheck, String
                 line.word()?;
                 let bad = || format!("a bad local op `{w}`");
                 let (tag, rest) = w.split_at(1);
+                if rest.is_empty() && (tag == "s" || tag == "l") {
+                    ops.push(if tag == "s" { LocalOp::Start } else { LocalOp::Last });
+                    continue;
+                }
                 let nums = |r: &str| -> Result<Vec<u64>, String> { r.split('.').map(|x| u64::from_str_radix(x, if tag == "b" || tag == "c" { 16 } else { 10 }).map_err(|_| bad())).collect() };
                 let v = nums(rest)?;
                 let two = |v: &[u64]| -> Result<(u16, u16), String> { if v.len() == 2 { Ok((v[0] as u16, v[1] as u16)) } else { Err(bad()) } };
@@ -1010,10 +1036,11 @@ fn local_check(line: &mut Line<'_>) -> Result<crate::program::LocalCheck, String
                     "x" => { let (a, b) = two(&v)?; LocalOp::Xor(a, b) }
                     "m" => { let (a, b) = two(&v)?; LocalOp::AndNot(a, b) }
                     "p" => { let (a, k) = two(&v)?; LocalOp::Prev(a, k as u8) }
+                    "f" => { let (a, b) = two(&v)?; LocalOp::Fill(a, b) }
                     _ => return Err(bad()),
                 });
             }
-            Ok(crate::program::LocalCheck { mask, delay, ops })
+            Ok(crate::program::LocalCheck { mask, delay, ops, token })
 }
 
 #[cfg(test)]

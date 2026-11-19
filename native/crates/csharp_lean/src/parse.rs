@@ -1166,7 +1166,7 @@ impl<'a> P<'a> {
         let root = self.w.push(key(K::CompilationUnit, f::NONE, C_NONE, false), first);
         while self.peek() != T::Eof {
             self.toplevel()?;
-            // A top-level declaration is final: its nodes are committed (passed to format 16's ops; decision 0399 §2).
+            // A top-level declaration is final: its nodes are committed (passed to format 16's ops; decision 0434 §2).
             self.w.commit();
         }
         let t = self.tok();

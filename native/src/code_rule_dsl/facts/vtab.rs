@@ -275,6 +275,10 @@ pub trait Source: Send + Sync {
     fn failure(&self) -> Option<String> {
         None
     }
+    /// `failure`, as known now: never makes rows to find it (a reader that read some asks after it read them).
+    fn failed(&self) -> Option<String> {
+        None
+    }
     fn indexed(&self, column: usize) -> bool;
     /// Whether an upper bound on `upper` also bounds `lower` (an end bounds its start).
     fn range_upper_compatible(&self, _lower: usize, _upper: usize) -> bool {

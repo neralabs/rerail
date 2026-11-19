@@ -485,6 +485,8 @@ fn lower_module_seeded_as(statements: Vec<Statement>, seeds: &Seeds, as_version:
     // `.shape` binds to the rule just before it (O-join-shape-directives): its heads, then each directive and its line.
     let mut last_heads: Option<Vec<String>> = None;
     let mut shapes: Vec<(crate::code_rule_dsl::logic::front::Shape, usize)> = Vec::new();
+    // `.layout r …` (decision 0361): read once every declaration is, as `r`'s columns name its facts.
+    let mut layouts: Vec<(String, usize)> = Vec::new();
     for (item, line) in statements {
         let at = |e: Error| match e {
             Error::Syntax(m) => Error::Syntax(format!("line {line}: {m}")),
@@ -532,6 +534,7 @@ fn lower_module_seeded_as(statements: Vec<Statement>, seeds: &Seeds, as_version:
                     shapes.push((crate::code_rule_dsl::logic::front::Shape::parse(h, &text).map_err(|m| Error::Syntax(format!("line {line}: {m}")))?, line));
                 }
             }
+            Item::Setting { key, text } if key == "layout" => layouts.push((text, line)),
             Item::Setting { key, text } => l.prog.settings.push((key, text)),
             Item::Violation { name, cols, code, code_in, tag, suppress, fixes, message, .. } => l.violation(name, cols, code, code_in, tag, suppress, fixes, message).map_err(at)?,
             Item::Clause { heads, body, edits } => {
@@ -546,6 +549,10 @@ fn lower_module_seeded_as(statements: Vec<Statement>, seeds: &Seeds, as_version:
                 clauses.push((heads, body, edits, line));
             }
         }
+    }
+    for (text, line) in layouts {
+        let (rel, facts) = layout(&l.prog, &text).map_err(|m| Error::Syntax(format!("line {line}: `.layout {}`: {m}", text.trim())))?;
+        crate::code_rule_dsl::logic::front::add_layout(l.prog.layouts.entry(rel).or_default(), facts);
     }
     drop(reading);
     let stated: BTreeSet<String> = l.prog.inputs.iter().filter(|r| !seeded.inputs.contains(*r)).cloned().collect();
@@ -610,6 +617,16 @@ fn lower_module_seeded_as(statements: Vec<Statement>, seeds: &Seeds, as_version:
         Out::Version(w) => Some(w.version(&l.prog)?),
     };
     Ok(Module { l, written, docof, places, version })
+}
+
+/// A `.layout` line's relation and facts (decision 0361): the relation must be declared, and each fact names its
+/// columns.
+fn layout(prog: &crate::code_rule_dsl::logic::front::Program, text: &str) -> Result<(String, Vec<crate::code_rule_dsl::logic::front::LayoutFact>), String> {
+    let text = text.trim();
+    let (rel, rest) = text.split_once(|c: char| c.is_whitespace()).unwrap_or((text, ""));
+    let cols = prog.decls.get(rel).ok_or_else(|| format!("`{rel}` is not declared"))?;
+    let col = |w: &str| cols.iter().position(|(c, _)| c.as_str() == w).ok_or_else(|| format!("`{rel}` has no column `{w}`"));
+    Ok((rel.to_owned(), crate::code_rule_dsl::logic::front::layout_facts(rest, &col)?))
 }
 
 /// `lower_module_in`, its rules written as a version in the walk: a library's module (`rr::lower_library`).
@@ -1094,6 +1111,9 @@ pub fn append_parts(a: &mut Program, b: Program, stated: &mut usize, b_stated: u
         a.tapes.entry(rel).or_default().extend(cols);
     }
     a.shapes.extend(b.shapes);
+    for (rel, facts) in b.layouts {
+        crate::code_rule_dsl::logic::front::add_layout(a.layouts.entry(rel).or_default(), facts);
+    }
 }
 
 /// A name's place in a helper's columns: its text, a helper's (`rr_<stem><n>`) as its stem and number.
@@ -1179,6 +1199,13 @@ fn rename_relations(prog: &mut Program, rename: &std::collections::HashMap<Strin
             *r = to(r);
         }
     }
+    prog.layouts = std::mem::take(&mut prog.layouts)
+        .into_iter()
+        .map(|(rel, mut facts)| {
+            facts.iter_mut().for_each(|f| f.rename(&to));
+            (to(&rel), facts)
+        })
+        .collect();
     for shape in &mut prog.shapes {
         shape.head = to(&shape.head);
         shape.lit = to(&shape.lit);
@@ -4914,12 +4941,13 @@ pub fn made_on_request(rel: &str) -> bool {
 }
 
 /// Whether rules of `head` are the on-request rewrite's own (decision 0174): an attribute's answer, its requests, a
-/// widened copy. They are no reader of anything a program adds: a library's cone (`rr::with_cone`) is taken without
+/// widened copy, a request's readers' asks (decision 0291, `{req}_by_{reader}_{col}`, which `undo_on_request` removes). They are no reader of anything a program adds: a library's cone (`rr::with_cone`) is taken without
 /// them, or it reached, from a relation a program adds to, the widened copies of its readers, their requests, the
 /// attribute's answer and then every reader of the attribute (five of the Python pack's programs took 1,300 of the
 /// library's rules each).
 pub fn on_request_rule(head: &str) -> bool {
-    head.starts_with("rr_wide_") || ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.rel == head || a.req == head)
+    head.starts_with("rr_wide_")
+        || ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.rel == head || a.req == head || head.strip_prefix(a.req).is_some_and(|rest| rest.starts_with("_by_")))
 }
 
 /// What answers an attribute's request for a node.

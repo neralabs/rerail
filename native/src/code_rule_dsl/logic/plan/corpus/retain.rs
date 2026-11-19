@@ -34,6 +34,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use crate::code_rule_dsl::logic::native::component::InRel;
 use crate::content_store::{ContentStore, EncodedFrame, FramePut, FrameRel, FrameRows, FrameStored};
+use crate::content_store::kept_facts::{KeptPut, KeptRows, KeptWhat};
 use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
 
 /// A relation as the last run derived it: the engine's relation, and its decoded rows when it is an output.
@@ -581,11 +582,11 @@ pub(in crate::code_rule_dsl) fn after(
     let mut bytes: usize = rels.values().map(Kept::bytes).sum();
     let mut past: HashMap<String, Kept> = HashMap::new();
     for (rel, width, held) in derived {
-        // An index's relation (the reach index, decision 0119), or a view of an input's columns (Q37), is made again
-        // in less than reading it back costs: not kept, so it never takes the budget from the relations whose rows
-        // are work. Kept where the part stays in memory (`indexes`: a chunk's guest rounds, decision 0331), so its
-        // next run's delta is made against it and its readers are maintained.
-        if (held.view.is_some() || held.viewed) && !indexes {
+        // An index's relation (the reach index, decision 0119), or a view of an input's columns (Q37, 0329), is made
+        // again in less than reading it back costs: not kept, so it never takes the budget from the relations whose
+        // rows are work. An index's relation is kept where the part stays in memory (`indexes`: a chunk's guest
+        // rounds, decision 0331), so its next run's delta is made against it and its readers are maintained.
+        if (held.view.is_some() || held.viewed) && !(indexes && held.held_source().is_some()) {
             continue;
         }
         let k = Kept { rel: held, width, output: outputs.get(&rel).cloned() };
@@ -752,8 +753,26 @@ impl Retained {
         let mut late = self.late.borrow_mut();
         let (mut rows, mut n) = self.admitted.get();
         for (rel, key) in wanted.into_iter().zip(&keys) {
-            let Some(got) = admitted.get(key).and_then(|f| f.rows().ok()) else { return Ok(false) };
             let Some(width) = prog.fields()?.arity(rel) else { return Ok(false) };
+            // Read in place where it lies in the chain (decision 0402 step 6): a relation with no levels part to
+            // carry, in a process whose ids are the store's (`AdmittedFrame::kept_rows`).
+            if width > 0
+                && !levels.contains_key(&(key.0.clone(), LEVELS_PART))
+                && let Some(frame) = admitted.get(key)
+                && frame.types().is_some_and(|t| t.len() == width)
+                && let Some(in_place) = frame.kept_rows()
+            {
+                let types = engine_types(frame.types().map(<[u8]>::to_vec).unwrap_or_default());
+                let kept = InRel::over_source(Arc::new(kept_source::KeptSource::new(in_place)), types);
+                rows += kept.len();
+                n += 1;
+                if kept_stats::on() {
+                    self.take_stats(frames, &admitted, rel, &kept);
+                }
+                late.insert(rel.clone(), Kept { rel: kept, width, output: None });
+                continue;
+            }
+            let Some(got) = admitted.get(key).and_then(|f| f.rows().ok()) else { return Ok(false) };
             if got.types.len() != width {
                 return Ok(false);
             }
@@ -892,7 +911,7 @@ impl Retained {
             }
         }
         let mut lines = Vec::new();
-        let mut totals = [("supports", 0usize, 0usize, 0usize, 0usize), ("other", 0, 0, 0, 0)];
+        let mut totals = [("kept", 0usize, 0usize, 0usize, 0usize)];
         let mut dedup_only = (0usize, 0usize, 0usize, 0usize);
         let mut by_size: Vec<(&String, &Kept)> = self.rels.iter().collect();
         by_size.sort_by_key(|(_, k)| std::cmp::Reverse(k.rel.held_bytes().2));
@@ -910,7 +929,7 @@ impl Retained {
             let probed = shapes.get(rel.as_str());
             let sets = probed.map_or(0, BTreeMap::len);
             let proposed = sets * n * 9 / 2 + if sets == 0 { n * 6 } else { 0 } + k * 256;
-            let t = &mut totals[usize::from(!super::supports::is_support(rel))];
+            let t = &mut totals[0];
             t.1 += n;
             t.2 += now;
             t.3 += proposed;
@@ -1009,14 +1028,13 @@ impl Retained {
         out.sort();
         out
     }
-    /// What the kept relations hold, by kind of relation (a counting support, `h__sup…`, or any other): rows,
+    /// What the kept relations hold: rows,
     /// values, levels, and indexes and sets, in bytes (`InRel::held_bytes`). `RERAIL_KEPT_BYTES` prints it.
-    pub(in crate::code_rule_dsl) fn held(&self) -> [(&'static str, usize, usize, usize, usize); 2] {
-        let mut out = [("supports", 0, 0, 0, 0), ("other", 0, 0, 0, 0)];
-        for (rel, k) in &self.rels {
-            let at = usize::from(!super::supports::is_support(rel));
+    pub(in crate::code_rule_dsl) fn held(&self) -> [(&'static str, usize, usize, usize, usize); 1] {
+        let mut out = [("kept", 0, 0, 0, 0)];
+        for k in self.rels.values() {
             let (values, levels, index) = k.rel.held_bytes();
-            let o = &mut out[at];
+            let o = &mut out[0];
             o.1 += k.rel.rows();
             o.2 += values;
             o.3 += levels;
@@ -1076,6 +1094,12 @@ impl Source for Renamed {
     }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.0.expect_lookups(column, keys);
+    }
+    fn failure(&self) -> Option<String> {
+        self.0.failure()
+    }
+    fn failed(&self) -> Option<String> {
+        self.0.failed()
     }
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         let names = self.0.columns();
@@ -1402,11 +1426,10 @@ fn granule_bit(g: i64) -> u64 {
 fn granules_of(mask: u64) -> Vec<i64> {
     (1..=GRANULES).filter(|g| mask & granule_bit(*g) != 0).collect()
 }
-/// The part of a derived relation's frames that holds its rows' levels (decision 0090), one row each in its rows'
-/// order, with their frame's digest: a new process maintains a recursive stratum by levels only if its kept
-/// relations have them. Read where its digest and count match the rows'; without it, the rows have no levels. Not -1:
-/// parts -1 to -k are a relation's delta frames (decision 0117 step 4), and a frame put whole removes them.
-const LEVELS_PART: i64 = i64::MIN + 1;
+/// The part of a derived relation's frames that holds its rows' levels (decision 0090; the store's, which binds it
+/// from a kept entry's levels): a new process maintains a recursive stratum by levels only if its kept relations
+/// have them. Read where its digest and count match the rows'; without it, the rows have no levels.
+const LEVELS_PART: i64 = crate::content_store::FRAME_LEVELS_PART;
 
 /// `rel`'s kept rows `got` (its frame's part `key`) as a relation, with the levels `levels` holds for it when their
 /// digest is its frame's and their count its rows'; else with none. `None`: the levels do not fit the rows.
@@ -1986,7 +2009,8 @@ impl Lazy {
     fn made(&self) -> &(Arc<dyn Source>, Option<String>) {
         let made = self.made.get_or_init(|| match self.decode() {
             Ok(s) => (s, None),
-            Err(why) => (crate::code_rule_dsl::logic::native::component::columns_source(self.names.clone(), vec![Some(Vec::new()); self.width]), Some(why)),
+            // No column held: every row of its count reads 0 (a reader of it fails with `why`, `failed`).
+            Err(why) => (crate::code_rule_dsl::logic::native::component::columns_source(self.names.clone(), vec![None; self.width]), Some(why)),
         });
         if !self.parts.lock().is_empty() {
             self.parts.lock().clear();
@@ -2010,6 +2034,10 @@ impl Source for Lazy {
     fn failure(&self) -> Option<String> {
         let (inner, why) = self.made();
         why.clone().or_else(|| inner.failure())
+    }
+    fn failed(&self) -> Option<String> {
+        let (inner, why) = self.made.get()?;
+        why.clone().or_else(|| inner.failed())
     }
     fn row_stream(&self, range: std::ops::Range<usize>, reverse: bool) -> Option<Box<dyn crate::code_rule_dsl::facts::vtab::RowStream>> {
         self.inner().row_stream(range, reverse)
@@ -2282,6 +2310,9 @@ impl Source for Traced {
     }
     fn failure(&self) -> Option<String> {
         self.inner.failure()
+    }
+    fn failed(&self) -> Option<String> {
+        self.inner.failed()
     }
     fn indexed(&self, column: usize) -> bool {
         self.inner.indexed(column)
@@ -2775,6 +2806,9 @@ impl Retained {
         let mut retags: Vec<crate::content_store::FrameRetag> = Vec::new();
         let mut delta_out: Vec<crate::content_store::FrameDelta> = Vec::new();
         let mut delta_rows = 0usize;
+        // The space's kept facts as blocks (decision 0401 F6), put beside each frame until the frames are retired; the
+        // frames with no entry (a relation handed off, its rows dropped) counted.
+        let mut kept: Vec<KeptPut> = Vec::new();
         // The relations written whole, each one's rows copied, digested and (when its rows are not the stored
         // ones) encoded in a job of its own (MLDB's per-item `parallelMap`): the loop below decides in its order,
         // with each one's digest at hand. A relation not done here (a delta written after its frame, whose reads
@@ -2825,6 +2859,7 @@ impl Retained {
                     now.insert(rel.clone(), stored.digest);
                     match read_digests {
                         Some(rd) if rd != stored.reads => {
+                            kept.push(kept_reads(name, DOCS_PART, rd.clone()));
                             retags.push(crate::content_store::FrameRetag { rel: name.clone(), part: DOCS_PART, reads: rd });
                         }
                         _ => {}
@@ -2848,6 +2883,7 @@ impl Retained {
                         now.insert(rel.clone(), d);
                         written += ng + na;
                         delta_rows += ng + na;
+                        kept.push(kept_rows(name, d, rd.clone(), frame_types(prog, domains, rel, k.rel.types()), &k.rel));
                         delta_out.push(crate::content_store::FrameDelta { rel: name.clone(), digest: d, reads: rd.clone(), types: frame_types(prog, domains, rel, k.rel.types()), gone: gone.clone(), added: added.clone() });
                         continue;
                     }
@@ -2861,9 +2897,12 @@ impl Retained {
                     }
                     // Its rows are the stored ones: only its reads changed.
                     let Some(bytes) = h.bytes else {
+                        kept.push(kept_reads(name, DOCS_PART, read_digests.clone()));
                         retags.push(crate::content_store::FrameRetag { rel: name.clone(), part: DOCS_PART, reads: read_digests });
                         continue;
                     };
+                    // Its rows were kept at the hand-off (`Handed::of`), with no reads: its reads now.
+                    kept.push(kept_reads(name, DOCS_PART, read_digests.clone()));
                     written += h.n;
                     if let Some(level) = h.levels {
                         puts.push(FramePut { rel: name.clone(), part: LEVELS_PART, digest: h.d, reads: Vec::new(), rows: FrameRows { types: vec![b'i'], rows: level.into_iter().map(i64::from).collect(), n: h.n } }.encoded());
@@ -2914,6 +2953,7 @@ impl Retained {
                     puts.push(FramePut { rel: name.clone(), part: LEVELS_PART, digest: d, reads: Vec::new(), rows: FrameRows { types: vec![b'i'], rows: level.into_iter().map(i64::from).collect(), n } }.encoded());
                 }
                 let types = frame_types(prog, domains, rel, k.rel.types());
+                kept.push(kept_rows(name, d, read_digests.clone(), types.clone(), &k.rel));
                 puts.push(match (bytes, rows) {
                     (Some(bytes), _) => derived_frame(name, d, read_digests, types, n, bytes),
                     (None, Some(rows)) => FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types, rows, n } }.encoded(),
@@ -2925,7 +2965,7 @@ impl Retained {
             eprintln!("rerail: derived frames written: {} relations ({} rows) whose rows changed; {} ({} rows) whose rows are the same and whose reads changed; {} unchanged retagged; {} deltas ({delta_rows} rows) written after their frames", tally[0].0, tally[0].1, tally[1].0, tally[1].1, retags.len(), delta_out.len());
         }
         if kept_stats::on() {
-            self.stats_puts(was, &now, &mut puts);
+            self.stats_puts(was, &now, &mut puts, &mut kept);
         }
         // Behind the run (decision 0104): the part's fixpoint is reached, and these are its results for the next run;
         // a wait for the writer's room here holds no wave. Each frame was encoded as it was made (`FramePut::encoded`).
@@ -2940,7 +2980,9 @@ impl Retained {
         // documents' table), its digests and granules are of content, so a forked process's frames are written as the
         // store numbers them, and read back as the reader does. Keyed by this process's numbering, they were dropped
         // after a fork, and every next run derived the cross part again.
-        crate::code_rule_dsl::logic::profile::behind(|| store.queue_placed_retagged(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key)), placer));
+        crate::code_rule_dsl::logic::profile::behind(|| store.queue_placed_retagged(was.space, puts.into_iter().map(|e| e.in_chain()).collect(), retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key)), placer));
+        crate::code_rule_dsl::logic::profile::decision("the kept facts as blocks, beside the frames (decision 0401 step 6)", || format!("this program: {} entries put", kept.len()));
+        crate::code_rule_dsl::logic::profile::behind(|| store.queue_kept(was.space, kept));
         Ok(written)
     }
 }
@@ -2978,13 +3020,16 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
     let one_input = |rel: &String, source: &Arc<dyn Source>| -> Option<(u64, usize)> {
         let _in = carry.enter();
         let _span = crate::code_rule_dsl::logic::profile::span(|| "an input's frames (job)".into());
-        let queue = |puts: Vec<EncodedFrame>| {
+        let queue = |puts: Vec<EncodedFrame>, kept: Vec<KeptPut>| {
             if !puts.is_empty() {
-                store.queue_encoded_retagged(was.space, puts, Vec::new(), Vec::new(), Vec::new(), None);
+                store.queue_encoded_retagged(was.space, puts.into_iter().map(|e| e.in_chain()).collect(), Vec::new(), Vec::new(), Vec::new(), None);
             }
+            store.queue_kept(was.space, kept);
         };
         let atoms: &crate::content_store::atoms::Atoms = atoms_ref;
         let mut puts: Vec<EncodedFrame> = Vec::new();
+        // Each frame's entry in the space's kept facts (decision 0401 F6), until the frames are retired.
+        let mut kept: Vec<KeptPut> = Vec::new();
         let mut written = 0;
         let name = was.names.get(rel)?;
         let width = source.columns().len();
@@ -2997,18 +3042,22 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
         if let Some(columns) = input_stats.get(rel).filter(|_| kept_stats::on()) {
             let all: kept_stats::ByDigest = [((rel.clone(), digest), kept_stats::KeptStat::Measured((columns.clone(), Vec::new(), BTreeSet::new())))].into_iter().collect();
             let words = kept_stats::to_words(&kept_stats::encode(&all));
-            puts.push(FramePut { rel: name.clone(), part: kept_stats::PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'], n: words.len(), rows: words } }.encoded());
+            let put = FramePut { rel: name.clone(), part: kept_stats::PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'], n: words.len(), rows: words } };
+            kept.push(kept_flat(&put));
+            puts.push(put.encoded());
         }
         if was.inputs.get(rel).is_some_and(|(d, _)| *d == digest) {
-            queue(puts);
+            queue(puts, kept);
             return Some((digest, written));
         }
         // A relation of no columns is its count: one document's entry, its digest the input's (`digest`).
         if width == 0 {
             let n = source.len() as u64;
             let rows = vec![0, (digest ^ n.wrapping_mul(0xff51_afd7_ed55_8ccd)) as i64, n as i64];
-            puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'; 3], n: 1, rows } }.encoded());
-            queue(puts);
+            let put = FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'; 3], n: 1, rows } };
+            kept.push(kept_flat(&put));
+            puts.push(put.encoded());
+            queue(puts, kept);
             return Some((digest, written));
         }
         let g = group_col(prog, locations, rel).min(width - 1);
@@ -3091,6 +3140,10 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
                 }
             };
             written += n;
+            // The granule's rows for its entry: gathered once more beside the frame's bytes until the frames go.
+            let mut granule_rows: Vec<i64> = Vec::with_capacity(n * width);
+            each(&mut |w: &[i64]| granule_rows.extend_from_slice(w));
+            kept.push(kept_flat(&FramePut { rel: name.clone(), part, digest: 0, reads: Vec::new(), rows: FrameRows { types: types.clone(), rows: granule_rows, n } }));
             puts.push(match placer.place_rows(width, part, &each) {
                 Some(p) => FramePut::placed_as(name.clone(), part, 0, Vec::new(), types.clone(), n, p),
                 None => {
@@ -3106,8 +3159,11 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
         // The granules its rows lie in, recorded with its documents' frame (`GRANULES_READ`): a run that reads none of
         // its owners admits them from this, decoding no frame (`kept_inputs`, Q91).
         let mask = table.iter().fold(0u64, |m, (d, _)| m | granule_bit(granule(*d)));
-        puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: vec![(GRANULES_READ.to_owned(), mask)], rows: FrameRows { types: docs_types(atom_owner), n: table.len(), rows } }.encoded());
-        store.queue_placed_retagged(was.space, puts, Vec::new(), Vec::new(), Vec::new(), None, placer);
+        let put = FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: vec![(GRANULES_READ.to_owned(), mask)], rows: FrameRows { types: docs_types(atom_owner), n: table.len(), rows } };
+        kept.push(kept_flat(&put));
+        puts.push(put.encoded());
+        store.queue_placed_retagged(was.space, puts.into_iter().map(|e| e.in_chain()).collect(), Vec::new(), Vec::new(), Vec::new(), None, placer);
+        store.queue_kept(was.space, kept);
         Some((digest, written))
     };
     let framed_inputs: Vec<Option<(u64, usize)>> = {
@@ -3151,6 +3207,52 @@ fn held_placed(held: &InRel, width: usize, placer: &crate::content_store::FrameP
 }
 
 /// A frame of a derived relation from its bytes as made (`WholeBytes`).
+/// A derived relation lent to the keep (decision 0401 F6): its rows as one relation in its block, its dead bits and
+/// its levels, held until the store's writer has copied them.
+struct LentRel {
+    rel: Arc<InRel>,
+    block: crate::code_rule_dsl::facts::rows::InBlock,
+}
+
+impl KeptRows for LentRel {
+    fn relation(&self) -> &rerail_blocks::relation::Relation {
+        self.block.relation()
+    }
+    fn dead(&self) -> &[u64] {
+        self.rel.dead_bits()
+    }
+    fn levels(&self) -> &[u32] {
+        self.rel.levels()
+    }
+}
+
+/// `rel`'s entry: its rows lent whole. `None` for a relation with no block of its rows (a view, no columns).
+pub(in crate::code_rule_dsl) fn kept_rows(name: &FrameRel, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rel: &Arc<InRel>) -> KeptPut {
+    let what = match rel.in_block() {
+        Some(block) => KeptWhat::Rows(Box::new(LentRel { rel: Arc::clone(rel), block })),
+        // Rows not in a block: its live rows read once, flat, with their levels.
+        None => {
+            let w = types.len();
+            let mut rows = Vec::with_capacity(rel.len() * w);
+            rel.each_live_batch(0, rel.len(), |b| rows.extend_from_slice(b));
+            let n = if w == 0 { rel.rows() } else { rows.len() / w };
+            KeptWhat::Flat { widths: vec![8; w], rows, n, levels: rel.live_levels(), given: false }
+        }
+    };
+    KeptPut { rel: name.name.clone(), ident: name.ident, part: DOCS_PART, digest, reads, types, what }
+}
+
+/// A frame's rows as an entry of their own (an input's granule or documents, statistics' words).
+pub(in crate::code_rule_dsl) fn kept_flat(put: &FramePut) -> KeptPut {
+    let FrameRows { types, rows, n } = &put.rows;
+    KeptPut { rel: put.rel.name.clone(), ident: put.rel.ident, part: put.part, digest: put.digest, reads: put.reads.clone(), types: types.clone(), what: KeptWhat::Flat { widths: vec![8; types.len()], rows: rows.clone(), n: *n, levels: None, given: true } }
+}
+
+/// The entry's rows as they are, with `reads` (a frame's retag).
+fn kept_reads(name: &FrameRel, part: i64, reads: Vec<(String, u64)>) -> KeptPut {
+    KeptPut { rel: name.name.clone(), ident: name.ident, part, digest: 0, reads, types: Vec::new(), what: KeptWhat::Reads }
+}
+
 fn derived_frame(name: &FrameRel, d: u64, reads: Vec<(String, u64)>, types: Vec<u8>, n: usize, bytes: WholeBytes) -> EncodedFrame {
     match bytes {
         WholeBytes::Placed(p) => FramePut::placed_as(name.clone(), DOCS_PART, d, reads, types, n, p),
@@ -3175,13 +3277,19 @@ pub(in crate::code_rule_dsl) struct Handed {
 impl Handed {
     /// `held`'s frame as `write_frames` makes one written whole, encoded into the part's write (`placer`, which
     /// `write_frames` queues); `None` for a relation of no rows of its own (a view). `was`: its stored frame's digest.
-    pub(in crate::code_rule_dsl) fn of(store: &ContentStore, prog: &Placed, domains: &lower::Domains, rel: &str, held: &InRel, was: Option<u64>, placer: &crate::content_store::FramePlacer) -> Option<Handed> {
+    /// Its kept entry (decision 0402) is queued here, its rows lent to the store's writer until packed; the part's
+    /// write puts its reads (`kept_reads`).
+    pub(in crate::code_rule_dsl) fn of(store: &ContentStore, prog: &Placed, domains: &lower::Domains, rel: &str, held: &Arc<InRel>, was_frames: Option<&InFrames>, placer: &crate::content_store::FramePlacer) -> Option<Handed> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "a relation handed off, its frame made".into());
         let n = held.rows();
         let types = frame_types(prog, domains, rel, held.types());
         let atoms = store.atoms_handle();
         let d = held_digest(&Cells::new(&atoms, &types), held)?;
+        let was = was_frames.and_then(|w| w.derived_digest(rel));
         let bytes = (was != Some(d)).then(|| held_placed(held, types.len(), placer));
+        if bytes.is_some() && let Some(w) = was_frames && let Some(name) = w.names.get(rel) {
+            store.queue_kept(w.space, vec![kept_rows(name, d, Vec::new(), types.clone(), held)]);
+        }
         Some(Handed { n, types, d, bytes, levels: held.live_levels() })
     }
 }
@@ -3201,7 +3309,7 @@ impl Retained {
 
     /// Each kept relation's statistics of its rows now, as a part of its frame under the rows' digest (`now`, as
     /// the frames name them; decision 0120 §3).
-    fn stats_puts(&self, was: &InFrames, now: &HashMap<String, u64>, puts: &mut Vec<EncodedFrame>) {
+    fn stats_puts(&self, was: &InFrames, now: &HashMap<String, u64>, puts: &mut Vec<EncodedFrame>, kept: &mut Vec<KeptPut>) {
         let mut by: HashMap<&str, kept_stats::ByDigest> = HashMap::new();
         let at_of = |rel: &str| self.framed(rel).map(|k| Arc::as_ptr(&k.rel) as *const u8 as usize);
         let late = self.late_stats.borrow();
@@ -3228,11 +3336,14 @@ impl Retained {
             if std::env::var_os("RERAIL_KEPT_STATS_TRACE").is_some() {
                 eprintln!("rerail: kept statistics written: {rel} ({} entries)", all.len());
             }
-            puts.push(FramePut { rel: name.clone(), part: kept_stats::PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'], n: words.len(), rows: words } }.encoded());
+            let put = FramePut { rel: name.clone(), part: kept_stats::PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'], n: words.len(), rows: words } };
+            kept.push(kept_flat(&put));
+            puts.push(put.encoded());
         }
     }
 }
 
+mod kept_source;
 mod kept_stats;
 
 #[cfg(test)]

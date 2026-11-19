@@ -4,7 +4,7 @@
 
 use crate::code_rule_dsl::logic::program_image::manager::{Run, Cx, Pipeline, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::Version;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
 mod merge;
@@ -288,7 +288,8 @@ pub fn runs_digest(front: &Run) -> [u8; 32] {
 /// A pipeline named `name` over `version`, kept to be stored: run `again` from `last` when `version` is an edit of
 /// its input (`rebase`), else from scratch.
 fn kept(name: &'static str, version: Arc<Version>, last: Option<Run>) -> Result<Pipeline<'static>, String> {
-    if let Some(last) = last
+    // Its versions a few edits deep made flat (decision 0385), so a ninth edit in a row runs again too.
+    if let Some(last) = last.map(crate::code_rule_dsl::logic::program_image::manager::Run::shallow)
         && let Some(v) = crate::code_rule_dsl::logic::program_image::manager::rebase(last.input(), &version)?
     {
         crate::code_rule_dsl::logic::profile::decision("the last run (decision 0333)", || format!("{name}: run again over an edit of the last run's input ({} rules)", crate::code_rule_dsl::logic::program_image::manager::Delta::of(last.input(), &v).size()));

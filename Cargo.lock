@@ -3159,6 +3159,7 @@ dependencies = [
  "rayon",
  "rerail-blocks",
  "rerail-forest",
+ "rustc-hash",
  "sha2 0.10.9",
 ]
 
@@ -3177,10 +3178,12 @@ name = "rerail-c-directives"
 version = "0.1.0"
 dependencies = [
  "bitlex",
+ "rerail-c-directives",
  "rerail-c-lean",
  "rerail-c-pp",
  "rerail-compiler",
  "rerail-metal",
+ "rerail-pp-aot",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -3575,6 +3578,7 @@ dependencies = [
  "bitlex",
  "rerail-compiler",
  "rerail-kotlin-lean",
+ "rerail-kotlin-parser",
  "rerail-tape-format",
 ]
 
@@ -4217,6 +4221,13 @@ version = "0.1.0"
 dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
+]
+
+[[package]]
+name = "rerail-pp-aot"
+version = "0.1.0"
+dependencies = [
+ "rerail-compiler",
 ]
 
 [[package]]

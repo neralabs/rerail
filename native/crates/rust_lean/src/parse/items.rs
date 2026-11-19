@@ -38,7 +38,7 @@ impl<'a> P<'a> {
                 break;
             }
             if mode == Stmts::File {
-                // A top-level item is final: its nodes are committed (passed to format 16's ops; decision 0399 §2).
+                // A top-level item is final: its nodes are committed (passed to format 16's ops; decision 0434 §2).
                 self.w.commit();
             }
         }

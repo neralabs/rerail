@@ -171,7 +171,7 @@ impl<'a> P<'a> {
                 _ => self.text()?,
             }
             // A tag, entity or text read is final (an element it ends is closed, as a node passed on may be): its
-            // nodes are committed (passed to format 16's ops; decision 0399 §2).
+            // nodes are committed (passed to format 16's ops; decision 0434 §2).
             self.w.commit();
         }
         self.close(root, self.src.len());

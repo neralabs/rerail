@@ -2388,6 +2388,47 @@ fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
     assert_eq!(lead(&order).as_deref(), Some("ann_str"), "2,455 fragments, each scanning every string, are searched again");
 }
 
+/// A recheck (decision 0364 stage 3) runs a rule once per candidate row, its head's variables bound before its first
+/// step: the planner prices its orders from that binding and one row (Q208), and keeps the order apart from the
+/// rule's own. `r(x) :- a(x, y), c(y).`: alone, `c`'s 10 rows lead and probe `a`'s million by `y`; with `x` bound,
+/// `a` probed by `x` gives a row, which `c` tests. The recheck's plan, once it ran under a search's work, is taken
+/// as it is kept.
+#[test]
+fn a_recheck_is_priced_with_its_head_bound_and_kept_apart() {
+    let p = parse(".decl a(x: number, y: number)\n.decl c(y: number)\n.decl r(x: number)\nr(x) :- a(x, y), c(y).\n.output r\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    for (rel, rows, ndv) in [("a", 1_000_000.0, vec![1_000_000.0, 100_000.0]), ("c", 10.0, vec![10.0])] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), (rows / n).max(1.0));
+        }
+    }
+    model.stats.nodes = 1_000_000.0;
+    let r = &p.rules[0];
+    let _plans = KeepPlans::start(None);
+    let placed = body::Placed::of_program(&p).unwrap();
+    let fields = placed.fields().unwrap();
+    let alone = body::alone(&r).unwrap();
+    let own = body::nth(&alone, 0);
+    let bound = own.with_head_bound();
+    let lead = |order: &[Step]| r.body[order[0].at].atom().map(|a| a.rel.to_string());
+    let ((order, _, _), _) = model.plan_rule_reused(fields, &own, None).unwrap();
+    assert_eq!(lead(&order).as_deref(), Some("c"), "alone, the small relation leads");
+    let ((order, work, _), _) = model.plan_rule_reused(fields, &bound, None).unwrap();
+    assert_eq!(lead(&order).as_deref(), Some("a"), "with its head bound, the atom it binds leads: {work}");
+    assert!(work < 10.0, "a few rows a candidate: {work}");
+    // Ran under a search's work: taken as it is kept, its order the same; and kept apart from the rule's own, which
+    // a shared key would have taken as it is too.
+    model.ran_as_planned(&bound, None, 2.0);
+    let ((again, _, _), _) = model.plan_rule_reused(fields, &bound, None).unwrap();
+    assert_eq!(lead(&again).as_deref(), Some("a"));
+    let ((alone_again, _, _), _) = model.plan_rule_reused(fields, &own, None).unwrap();
+    assert_eq!(lead(&alone_again).as_deref(), Some("c"), "the rule's own order is its own");
+}
+
 /// Smoking gun 10's cold case (t34, 2026-11-13): with no kept plan, `frag_str` is planned before the guest round
 /// makes `doc_role`'s rows. Empty when priced, `doc_role(d, 7)` first looked as cheap as a row, and `ann_str`
 /// crossed with it read every string per role row (7.1 M rows, none kept). A cross product after relations that
@@ -2993,4 +3034,23 @@ fn the_searchs_own_steps_are_the_records_features() {
     }
     explaining(was);
     joins::set_pricer(None);
+}
+
+/// EXPLAIN lists each relation's layout, declared or inferred, among the decisions of the run that plans the program
+/// (`make_plan`, decision 0361 step 3).
+#[test]
+fn explain_lists_each_relations_layout() {
+    // `e` the program's facts, which the planner sizes itself.
+    let p = parse(".decl e(p: node, c: node, i: number)\ne(1, 2, 0).\ne(1, 3, 1).\n.layout e key(c) tree(p -> c)\n.decl f(c: node, p: node)\n.output f\nf(c, p) :- e(p, c, _).\n").unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(Stats::empty(&p));
+    crate::code_rule_dsl::logic::profile::set(true);
+    crate::code_rule_dsl::logic::profile::reset();
+    let _model = make_plan(&body::Placed::of_program(&p).unwrap(), &db, inputs).unwrap();
+    let lines: Vec<String> = crate::code_rule_dsl::logic::profile::decisions().into_keys().filter(|(t, _)| t == "relation layouts (decision 0361)").map(|(_, x)| x).collect();
+    crate::code_rule_dsl::logic::profile::set(false);
+    assert!(lines.iter().any(|l| l == "e: key(c) (declared), tree(p -> c) (declared)"), "{lines:?}");
+    assert!(lines.iter().any(|l| l.starts_with("f: key(c) (by rule #0000), tree(p -> c) (by rule #0000)")), "{lines:?}");
 }

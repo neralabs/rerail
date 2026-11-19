@@ -385,8 +385,8 @@ pub struct TapeImage {
     /// an image read from bytes, whose store pairs it with its source.
     pub source_digest: Option<[u8; 32]>,
     /// The kinds and fields the tape's nodes have, the document's and each block's, where a format 16 writer made the
-    /// image (decision 0399 §4): what a planner reads to leave out a clause the document cannot hold a root of. `None`
-    /// for format 15, or an image read from the store (the store does not keep it yet: 0399 step 6, part 3).
+    /// image (decision 0434 §4): what a planner reads to leave out a clause the document cannot hold a root of. `None`
+    /// for format 15, or an image read from the store (the store does not keep it yet: 0434 step 6, part 3).
     pub presence: Option<Arc<rerail_tape_format::f16::Presence>>,
 }
 
@@ -992,7 +992,7 @@ pub struct Visit {
     pub kind_alias: Option<(String, bool)>,
 }
 
-/// Where the cursor walk writes a tree's nodes, in preorder (decision 0399 §2): format 15's pending nodes
+/// Where the cursor walk writes a tree's nodes, in preorder (decision 0434 §2): format 15's pending nodes
 /// (`Pendings`), or format 16's ops (`formats::TreeOps`). The walk is the same for both.
 pub trait TreeOut {
     /// Node `v` under `parent` (an index this gave), open, a member of the supertypes `classes`: its index.
@@ -1651,7 +1651,7 @@ impl TapeImage {
         Self::walked(grammar, source, count, budget, |out| rerail_tape_format::with_tape!(self.tape(), |t| Self::kept(&t, segments, out, budget)))
     }
 
-    /// The tape `walk` writes in preorder, in the run's format (decision 0399 §2): by format 16's ops where the run
+    /// The tape `walk` writes in preorder, in the run's format (decision 0434 §2): by format 16's ops where the run
     /// stores 16 or 16z and the language has a table, no format 15 node made; else format 15's nodes, packed at
     /// `finish`. `nodes` is about the nodes `walk` writes. Where format 16 cannot hold the nodes (a code the table
     /// lacks, said once a language), `walk` runs again for format 15.
@@ -2788,7 +2788,7 @@ impl TapeDoc {
     }
 
     /// Whether a node of the document may have kind `kind` (`transducer_kind`'s), by its image's presence (decision
-    /// 0399 §4), read before any node is: `false` only where the writer saw no node of that kind. An error node's
+    /// 0434 §4), read before any node is: `false` only where the writer saw no node of that kind. An error node's
     /// kind is `ERROR_SYMBOL`, which no presence holds, so it is always possible.
     pub fn may_have_kind(&self, kind: u16) -> bool {
         kind == ERROR_SYMBOL || self.image.presence.as_ref().is_none_or(|p| p.has_kind(kind))

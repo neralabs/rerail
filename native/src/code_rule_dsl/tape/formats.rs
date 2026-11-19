@@ -80,7 +80,7 @@ thread_local! {
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// The format 15 images this thread converted to format 16 or 16z (`TapeImage::in_format`): a parser's tape
-    /// made in format 15 first, which no format 16 run's parser does (decision 0399, R12).
+    /// made in format 15 first, which no format 16 run's parser does (decision 0434, R12).
     static CONVERTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -209,7 +209,7 @@ pub fn run_16(language: GrammarDialect) -> Option<(&'static Lang, u8, bool)> {
     Some((lang, tag, format == Format::F16Z))
 }
 
-/// The cursor walk's format 16 output (`tape::TreeOut`; decision 0399 §2): each node given to format 16's ops as the
+/// The cursor walk's format 16 output (`tape::TreeOut`; decision 0434 §2): each node given to format 16's ops as the
 /// walk opens and closes it, its number the language's for its code, looked up once a code a document. A code the
 /// table lacks, or a node past format 16's bounds, makes `finish` `None` (said once a language): the walk is run
 /// again for format 15.
@@ -309,7 +309,7 @@ impl super::TreeOut for TreeOps {
     }
 }
 
-/// The sink a lean parser's writer is given (`rerail_*_lean::tape_into`; decisions 0293, 0399): the tape in the run's
+/// The sink a lean parser's writer is given (`rerail_*_lean::tape_into`; decisions 0293, 0434): the tape in the run's
 /// format. Where the run stores format 16 or 16z, the writer passes its nodes to format 16's ops as the parse commits
 /// them, each key numbered in the language's table through its code (`code_of`): no format 15 column is made. Format
 /// 15's columns (`TapeImage::written`) where the run stores 15, the language has no format 16 table, a code is not in
