@@ -180,55 +180,74 @@ pub(super) fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super
 /// Whether the positive atoms `cut` leaves fall apart: two of them share no variable through the others (or
 /// through an equality).
 fn disconnected(r: &R<'_>, cut: &dyn Fn(usize) -> bool) -> bool {
-    // A document variable does not connect: a document has a row for each of its nodes, so atoms joined only by
-    // their documents (`docof($s, $e9), rr_cx_reach($d9, $e9)` and a row of `$d9`'s) are a product per pair of
-    // documents. 4,719 `anc` rows times the annotations of every document they reach made 24M rows (O136).
-    let mut documents: BTreeSet<String> = BTreeSet::new();
-    for i in 0..r.lits.len() {
-        let Some(a) = r.atom(i).filter(|a| !a.neg()) else { continue };
-        let rel = r.rel(a);
-        let terms: Vec<TermRef<'_>> = match rel {
-            "docof" => a.args().nth(1).into_iter().collect(),
-            x if x.starts_with("rr_cx_") => a.args().collect(),
-            _ => Vec::new(),
-        };
-        documents.extend(terms.into_iter().filter_map(|t| t.var()).map(|s| r.name(s).to_owned()));
-    }
+    let documents = documents(r);
     let joins = |j: usize| match r.lits[j].view() {
         Lit::Atom(a) => !a.neg() && !cut(j),
         Lit::Cmp { op: CmpOp::Eq, .. } => true,
         _ => false,
     };
-    // A document is tied to nodes where a kept atom reads it beside a node (`docof($n, $d)`, `node($d, $n, …)`). A part
-    // that meets the rest only at a document no kept atom ties is a row for every document: with `docof($n, $d)` cut,
-    // simplify's `exists_0($d)` (`modnode($d, $m), !star($m)`) made python/calls' `builtin_ref` split every builtin
-    // reference times every document (129.7M rows on edx-platform's 4,459 files). Such a part is a group of its own.
-    let tied: BTreeSet<String> = (0..r.lits.len())
-        .filter(|&j| matches!(r.lits[j].view(), Lit::Atom(_)) && joins(j))
-        .map(|j| r.lit_vars(j))
-        .filter(|vs| vs.iter().any(|v| !documents.contains(v)))
-        .flat_map(|vs| vs.into_iter().filter(|v| documents.contains(v)))
-        .collect();
+    let tied = tied(r, &documents, &joins);
     let mut groups: Vec<BTreeSet<String>> = Vec::new();
-    for j in 0..r.lits.len() {
-        if !joins(j) {
-            continue;
+    for j in (0..r.lits.len()).filter(|&j| joins(j)) {
+        let vars = joining_vars(r, j, &documents, &tied);
+        if !vars.is_empty() {
+            join_group(&mut groups, vars);
         }
-        let own = r.lit_vars(j);
-        let mut vars: BTreeSet<String> = own.iter().filter(|v| !documents.contains(*v)).cloned().collect();
-        if vars.is_empty() && matches!(r.lits[j].view(), Lit::Atom(_)) {
-            vars = own.into_iter().filter(|v| !tied.contains(v)).collect();
-        }
-        if vars.is_empty() {
-            continue;
-        }
-        let (mut joined, rest): (Vec<_>, Vec<_>) = groups.into_iter().partition(|g| !g.is_disjoint(&vars));
-        let mut all = vars;
-        joined.iter_mut().for_each(|g| all.append(g));
-        groups = rest;
-        groups.push(all);
     }
     groups.len() > 1
+}
+
+/// The document variables of `r`'s positive atoms: `docof`'s document and every column of an `rr_cx_` relation. A
+/// document variable does not connect: a document has a row for each of its nodes, so atoms joined only by their
+/// documents (`docof($s, $e9), rr_cx_reach($d9, $e9)` and a row of `$d9`'s) are a product per pair of documents.
+/// 4,719 `anc` rows times the annotations of every document they reach made 24M rows (O136).
+fn documents(r: &R<'_>) -> BTreeSet<String> {
+    let columns = |a: AtomRef<'_>| -> Vec<Option<Slot>> {
+        match r.rel(a) {
+            "docof" => a.args().nth(1).map(|t| t.var()).into_iter().collect(),
+            x if x.starts_with("rr_cx_") => a.args().map(|t| t.var()).collect(),
+            _ => Vec::new(),
+        }
+    };
+    (0..r.lits.len()).filter_map(|i| r.atom(i).filter(|a| !a.neg())).flat_map(columns).flatten().map(|s| r.name(s).to_owned()).collect()
+}
+
+/// The documents the kept atoms (`joins`) tie to nodes: read beside a node (`docof($n, $d)`, `node($d, $n, …)`), or
+/// beside a tied document in an atom of documents only (`rr_cx_reach($d, $e)`, `$d` tied, ties `$e`). A part that
+/// meets the rest only at a document nothing kept ties is a row for every document: with `docof($n, $d)` cut,
+/// simplify's `exists_0($d)` (`modnode($d, $m), !star($m)`) made python/calls' `builtin_ref` split every builtin
+/// reference times every document (129.7M rows on edx-platform's 4,459 files).
+fn tied(r: &R<'_>, documents: &BTreeSet<String>, joins: &dyn Fn(usize) -> bool) -> BTreeSet<String> {
+    let kept = (0..r.lits.len()).filter(|&j| matches!(r.lits[j].view(), Lit::Atom(_)) && joins(j)).map(|j| r.lit_vars(j));
+    let (beside, only): (Vec<_>, Vec<_>) = kept.partition(|vs| vs.iter().any(|v| !documents.contains(v)));
+    let mut tied: BTreeSet<String> = beside.into_iter().flatten().filter(|v| documents.contains(v)).collect();
+    loop {
+        let more: Vec<String> = only.iter().filter(|vs| !vs.is_disjoint(&tied)).flatten().filter(|v| !tied.contains(*v)).cloned().collect();
+        if more.is_empty() {
+            return tied;
+        }
+        tied.extend(more);
+    }
+}
+
+/// The variables literal `j` joins the rest by: its own less the documents; for an atom of documents only, those no
+/// kept atom ties (`tied`), so such a part is a group of its own.
+fn joining_vars(r: &R<'_>, j: usize, documents: &BTreeSet<String>, tied: &BTreeSet<String>) -> BTreeSet<String> {
+    let own = r.lit_vars(j);
+    let vars: BTreeSet<String> = own.iter().filter(|v| !documents.contains(*v)).cloned().collect();
+    if !vars.is_empty() || !matches!(r.lits[j].view(), Lit::Atom(_)) {
+        return vars;
+    }
+    own.into_iter().filter(|v| !tied.contains(v)).collect()
+}
+
+/// `vars` into `groups`: one group of them and every group they meet.
+fn join_group(groups: &mut Vec<BTreeSet<String>>, vars: BTreeSet<String>) {
+    let (joined, rest): (Vec<_>, Vec<_>) = std::mem::take(groups).into_iter().partition(|g| !g.is_disjoint(&vars));
+    let mut all = vars;
+    joined.into_iter().for_each(|mut g| all.append(&mut g));
+    *groups = rest;
+    groups.push(all);
 }
 
 /// Whether the body of `rule` less its demanded reads (`cut(j)`) is small: every kept positive literal is reached
@@ -495,5 +514,24 @@ mod tests {
             "#;
         assert!(apart(p, 0, "docof"), "cutting docof leaves ex($d) a product with every document");
         assert!(!apart(p, 0, "builtin"), "docof kept ties $d to $n");
+    }
+
+    /// A tie carries through an atom of documents only: `docof` ties `$d`, `rr_cx_reach($d, $e)` then ties `$e`, and
+    /// `ex($e)` only filters. With `docof` cut, nothing ties `$d` and the chain is a part of its own.
+    #[test]
+    fn a_tie_carries_through_an_atom_of_documents_only() {
+        let p = r#"
+            .decl walk(n: node, x: number, m: node)
+            .decl builtin(x: number)
+            .decl docof(n: node, d: number)
+            .decl rr_cx_reach(d: number, e: number)
+            .decl ex(d: number)
+            .decl out(n: node, x: number)
+            .input walk, builtin, docof, rr_cx_reach, ex
+            .output out
+            out($n, $x) :- walk($n, $x, $m), builtin($x), docof($n, $d), rr_cx_reach($d, $e), ex($e).
+            "#;
+        assert!(!apart(p, 0, "builtin"), "docof ties $d, rr_cx_reach ties $e");
+        assert!(apart(p, 0, "docof"), "nothing kept ties $d");
     }
 }

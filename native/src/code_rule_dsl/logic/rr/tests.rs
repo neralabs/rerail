@@ -3919,9 +3919,9 @@ const SPLIT_REFERENCES: usize = 4;
 
 /// python/calls over `SPLIT_MODULES` modules of `SPLIT_REFERENCES` builtin references each: no demand split's rows grow
 /// as the references times the modules (`plan::demand::over::disconnected`). `builtin_ref`'s split with `docof` cut
-/// was every reference against every module (`pre_<i>` and `demand_docof`: 4,097 rows here, 129.7M on edx-platform's
-/// 4,459 files). The profile is the process's, so the run is a child process of its own (`demand_split_child`), its
-/// rows read from its `heads.tsv`.
+/// was every reference against every module (8,801 rows of work in its `pre_<i>` here, over the 4,096 of references
+/// times modules; 129.7M rows on edx-platform's 4,459 files). The profile is the process's, so the run is a child
+/// process of its own (`demand_split_child`), its rows read from its `heads.tsv`.
 #[test]
 fn a_demand_split_stays_linear_in_the_modules() {
     let directory = tempfile::tempdir().unwrap();
@@ -3965,6 +3965,8 @@ fn a_demand_split_stays_linear_in_the_modules() {
 #[test]
 #[ignore = "child process of a_demand_split_stays_linear_in_the_modules"]
 fn demand_split_child() {
-    let var = |k: &str| std::path::PathBuf::from(std::env::var_os(k).unwrap());
+    let var = |k: &str| {
+        std::path::PathBuf::from(std::env::var_os(k).unwrap_or_else(|| panic!("{k} unset: run by a_demand_split_stays_linear_in_the_modules")))
+    };
     crate::code_rule_dsl::tools::run_rr(&var("DEMAND_SPLIT_RULE"), &var("DEMAND_SPLIT_ROOT"), &var("DEMAND_SPLIT_OUT"), &serde_json::Value::Null).unwrap();
 }
