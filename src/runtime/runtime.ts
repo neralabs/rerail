@@ -2128,7 +2128,13 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   #claimAgain(sessionId: string): void {
     const state = this.#sessions.get(sessionId);
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;
-    this.#controls.claimAgain(sessionId, this.#ownerDelivery(), state.ownerClaim);
+    try {
+      this.#controls.claimAgain(sessionId, this.#ownerDelivery(), state.ownerClaim);
+    } catch (error) {
+      // The write that put the row back saved its event first: the claim's failure is said here, as the control scan's
+      // are, and never reaches that write's caller, which would report a failed write for an event Rerail holds.
+      process.stderr.write(`rerail: could not write the claim on session ${sessionId} again: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
   }
 
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */

@@ -92,6 +92,28 @@ function claimElsewhere(databasePath: string, sessionId: string, token: string):
   }
 }
 
+const CLAIM_REFUSED = "this claim write is refused";
+
+/** Runs `statement` through a connection of its own, as another program would. */
+function runElsewhere(databasePath: string, statement: string): void {
+  const database = new Database(databasePath);
+  try {
+    database.pragma("busy_timeout = 5000");
+    database.exec(statement);
+  } finally {
+    database.close();
+  }
+}
+
+/**
+ * Makes the database refuse every write of a session's claim, as a write that meets SQLITE_BUSY past its wait or an
+ * I/O error fails, until the function it returns lets them through again.
+ */
+function refuseClaimWrites(databasePath: string): () => void {
+  runElsewhere(databasePath, `CREATE TRIGGER refuse_claim_writes BEFORE INSERT ON policy_session_owners BEGIN SELECT RAISE(ABORT, '${CLAIM_REFUSED}'); END`);
+  return () => runElsewhere(databasePath, "DROP TRIGGER refuse_claim_writes");
+}
+
 describe("The runtime's audit control polling", () => {
   // The daemon holds every open session of the machine; reading each one's settings and queue four times a second
   // kept an idle daemon at about 1.5% of a core with three sessions open, and more with each session.
@@ -211,6 +233,24 @@ describe("The runtime's audit control polling", () => {
       runtime.recordSteer("gone", "while-closing");
       await closing;
       expect(ownerRow(databasePath, "gone")).toBeUndefined();
+    } finally {
+      await runtime.dispose();
+    }
+  }, 20_000);
+
+  // The claim is written after the event and the row are saved: a hook told that its event failed would report a
+  // failed write for an event Rerail holds.
+  it("records a session's event that put its row back when the claim written with it fails, and says why", async () => {
+    const { runtime, databasePath } = await idleRuntime(["gone"]);
+    try {
+      removeSessionRow(databasePath, "gone");
+      const allowClaimWrites = refuseClaimWrites(databasePath);
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      await runtime.ingest({ kind: "user-prompt", eventId: "after-removal", sessionId: "gone", text: "go on" });
+      allowClaimWrites();
+      expect(recorded(databasePath, "gone", "after-removal")).toEqual({ session: { endedAt: null }, events: { count: 1 } });
+      expect(stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes(CLAIM_REFUSED)))
+        .toEqual([expect.stringMatching(/^rerail: .*gone/)]);
     } finally {
       await runtime.dispose();
     }
