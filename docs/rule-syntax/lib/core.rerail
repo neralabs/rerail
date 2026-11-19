@@ -729,8 +729,13 @@
 //                                              repositories laid out differently (the scripts' --application-root).
 // .requires "data-layer:a", "data-layer:b"    a suite policy: one finding per member policy that fails, or that
 //                                              ends unknown on any file. Members run as usual.
-// .scope tests false                          drops documents with a `test` or `tests` path part. Walks always
-//                                              skip .git, .venv, venv, __pycache__ and tmp.
+// .scope tests false                          drops documents with a `test` or `tests` path part. Walks (the
+//                                              corpus, file()) always skip the host's ignored directories, at
+//                                              any depth: .git, .hg, .svn, .rerail, .venv, __pycache__,
+//                                              node_modules, dist, build, .next, .turbo, coverage, target and
+//                                              vendor (src/engine/code-rule/ignored-directories.ts). Hidden
+//                                              ones (.github) are read. In a Git work tree, the corpus also
+//                                              leaves out what Git ignores.
 // .references {"siblingLinks": […], "constructorFields": {…}, "scope": {…}}
 //                                              the reference graph's links, as the policy's `references` gives
 //                                              them, over the files of `scope` (default: every file).

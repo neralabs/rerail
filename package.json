@@ -151,6 +151,7 @@
     "generate:schema": "node --import tsx scripts/generate/schema/schema-sql.ts",
     "generate:languages": "node --import tsx scripts/generate/languages/registry.ts",
     "generate:packs": "node --import tsx scripts/generate/packs/pack-list.ts",
+    "generate:ignored-directories": "node --import tsx scripts/generate/walk/ignored-directories.ts",
     "package:check": "npm run build && npm pack --dry-run",
     "version:packs": "changeset version && node scripts/release/sync-pack-lockfile.mjs",
     "prepare": "node scripts/dev/install-git-hooks.mjs",
