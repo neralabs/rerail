@@ -1063,10 +1063,16 @@ impl Tape for F16<'_> {
     }
     /// The code bytes 64 at a time through a 256-entry table; a byte past the cutoff is decoded only when the set
     /// holds a number past it.
-    fn match_groups(&self, set: &CodeSet, mut f: impl FnMut(usize, u64)) {
+    fn match_groups(&self, set: &CodeSet, f: impl FnMut(usize, u64)) {
+        self.match_groups_in(set, &|_| true, f);
+    }
+    fn match_groups_in(&self, set: &CodeSet, block: &dyn Fn(u32) -> bool, mut f: impl FnMut(usize, u64)) {
         let (byte, tail) = byte_table(self.lang, set);
         let mut groups = [0u64; PART / 64];
         for part in 0..(self.view.nodes as usize).div_ceil(PART) {
+            if !block(part as u32) {
+                continue;
+            }
             let chunk = self.block_codes(part);
             let count = part_groups(chunk, self.lang, set, &byte, tail.then_some((self.bytes, &self.view, part)), &mut groups);
             for (g, &m) in groups[..count].iter().enumerate() {
@@ -1547,10 +1553,17 @@ impl Tape for F16Z<'_> {
     }
     /// A block at a time: each decoded once, its code bytes read as format 16's are. The block's groups are taken
     /// before `f` is called, so `f` may read the tape.
-    fn match_groups(&self, set: &CodeSet, mut f: impl FnMut(usize, u64)) {
+    fn match_groups(&self, set: &CodeSet, f: impl FnMut(usize, u64)) {
+        self.match_groups_in(set, &|_| true, f);
+    }
+    fn match_groups_in(&self, set: &CodeSet, block: &dyn Fn(u32) -> bool, mut f: impl FnMut(usize, u64)) {
         let (byte, tail) = byte_table(self.lang, set);
         let mut groups = [0u64; Z / 64];
         for b in 0..self.t.p.n.div_ceil(Z) {
+            // A block left out is not decompressed.
+            if !block(b as u32) {
+                continue;
+            }
             // A block is one part, its side lists' part 0.
             let count = self.with(b, |r, v| {
                 let at = v.columns[0] as usize;

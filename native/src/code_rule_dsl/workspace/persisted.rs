@@ -415,8 +415,8 @@ fn presence_selects(store: &crate::content_store::ContentStore, source: crate::c
         if matcher.document.is_some() {
             return None;
         }
-        // An error root is always possible (`TapeDoc::may_have_kind`).
-        if matcher.anchors.root_kinds()?.iter().any(|&kind| kind == tape::ERROR_SYMBOL || has(kind)) {
+        // An ERROR root's kind is `ERROR_CODE` in the presence (`presence_kind`).
+        if matcher.anchors.root_kinds()?.iter().any(|&kind| has(tape::presence_kind(kind))) {
             return Some(false);
         }
     }

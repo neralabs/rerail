@@ -106,6 +106,14 @@ impl Roots {
             && entry.iter().all(|&(op, arg)| if op == super::super::KIND { kind == arg } else { classes.contains(&arg) })
     }
 
+    /// Whether block `b` of `tape` may hold a root of a rule over codes, by the tape's presence (decision 0434 §4,
+    /// step 6): one of its kinds, and each kind its tests name. The kernels' `rule_may_in`, the same read
+    /// (`tape_has_kind`); a supertype test the presence does not tell.
+    fn may_in(kinds: &Option<Vec<u16>>, entry: &[(u8, u16)], tape: &TapeDoc, b: usize) -> bool {
+        kinds.as_ref().is_none_or(|kinds| kinds.iter().any(|&kind| tape.block_may_have_kind(b, kind)))
+            && entry.iter().all(|&(op, arg)| op != super::super::KIND || tape.block_may_have_kind(b, arg))
+    }
+
     /// This rule as the sweep tests it at a node's code (`sweep_admits`): {kind count or NONE,
     /// kinds, test count, tests (op << 16 | argument)}. A sweep's passes have rules over codes.
     fn device_rule(&self) -> Result<Vec<u32>, Error> {
@@ -128,7 +136,7 @@ impl Roots {
                     return Box::new(std::iter::empty());
                 }
                 let mut nodes = Vec::new();
-                tape.transducer_nodes_where(|kind, classes| Self::admits(kinds, entry, kind, classes), &mut nodes);
+                tape.transducer_nodes_where_in(|kind, classes| Self::admits(kinds, entry, kind, classes), &|b| Self::may_in(kinds, entry, tape, b as usize), &mut nodes);
                 Box::new(nodes.into_iter())
             }
         }

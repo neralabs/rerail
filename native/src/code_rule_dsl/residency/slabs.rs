@@ -298,6 +298,8 @@ fn place(
             view.side = [0, 0, zv.side[2], zv.side[3]];
             (view.cut, view.per) = (zv.cut, zv.per);
             (view.lines, view.line_count) = (here(zv.lines)?, zv.line_count);
+            // The presence after the tape, in its home (decision 0434 §4, step 6): the kernels' `tape_has_kind`.
+            view.presence = if zv.presence == 0 { 0 } else { here(zv.presence)? };
             view.codes = slab_table(table, lang, grammar, plan, offset, &mut new_table)?;
         }
         resident::Stored::F16 => {
@@ -315,6 +317,7 @@ fn place(
             view.format = 16;
             (view.widths, view.columns, view.stride, view.side, view.parts) = (placed.widths, placed.columns, placed.stride, placed.side, placed.parts);
             (view.cut, view.per, view.lines, view.line_count) = (placed.cut, placed.per, placed.lines, placed.line_count);
+            view.presence = placed.presence;
             view.codes = slab_table(table, lang, grammar, plan, offset, &mut new_table)?;
         }
     }

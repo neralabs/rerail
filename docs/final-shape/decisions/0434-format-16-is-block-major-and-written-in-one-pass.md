@@ -440,6 +440,18 @@ read written once in CLIF, from the same view (`TapeView`) as the tape: the host
 workspace's selector, the CPU's root walks, which skip the blocks too) and the kernels (`root_mask_in`, the rule's
 kinds a mask over the presence's words) read the same words. No host-made answer is handed to the device.
 
+**Built (2026-11-19).** The home, as stored: a format 16 or 16z tape's stored bytes are its home (`emit` gives the
+extent), so the presence is in the same frame as the tape, placed, admitted and loaded with it; nothing else holds
+it (the kept-facts entry of part 3 went). `F16_LAYOUT` 5. The read: `tape_has_kind(block, kind)` (CLIF; block
+`NONE`, or one past those held, reads the document's; a tape without a presence answers 1). Its readers: the host's
+`Tape::has_kind` (`may_have_kind`, `block_may_have_kind`, the selector's `StoredPresence` over an unloaded frame,
+`Roots::may_in` for the CPU's root walk, which then reads no code of a block left out) and the kernels'
+`rule_may_in`, which `root_mask_in` asks once a group of 64 nodes before reading any code. An ERROR node's kind is
+`ERROR_CODE` in the presence (`presence_kind`, on both). The tests: `ops_write_the_tape` (every block and kind, 16
+and 16z, against the writer's own), `a_stored_tape_holds_the_presence_its_writer_made`,
+`metal_passes_skip_the_blocks_their_presence_rules_out` (a presence made to lie about one block: the device and
+the host both leave that block's roots out).
+
 ## Requirements, each with its test
 
 | | Requirement | Test |

@@ -2397,6 +2397,15 @@ holds the design, its requirements (R1–R12) and its steps.
     frame alone.
   - P5 (kernels): `root_mask_in` and `root_admits` by the read, per block; the two ignored Metal tests on again, with a
     device count.
+- **Done** (2026-11-19, step 6, the one home): P1–P4 in 51624c270. A tape's stored bytes are its home, tape then
+  presence, one frame (layout 5): the room, the residency and a warm load carry it with no second structure; the
+  selector reads it in place in a raw or plain frame (16z's), a zstd frame (format 16's) asks the search index.
+  P5 here: the kernels' `root_mask_in` tests `rule_may_in` (the rule's kinds and KIND tests by `tape_has_kind`) once
+  a group, before any code; the host's `Roots::nodes` (`Roots::may_in`, `match_groups_in`: a block left out is not
+  read, in 16z not decompressed) and `nodes_of_kinds` read the same words; an ERROR root's kind is `ERROR_CODE` in
+  the presence on both (`presence_kind`). `root_admits` (one node of an anchor's row) does not: its one read is the
+  code's. The two Metal tests are on, the block skip's proved by a presence that lies (`with_block_kinds_cleared`):
+  the device and the host both believe it. Not by count: a device counter would be a structure for the test alone.
 - **Next**: SQL commits at its statements once `claim` decides a program's held tokens as they come; C, C++, Go,
   Kotlin, Scala and Swift take a `Sink` when their tables come; simdjson's index writer (a CPU no
   kernel runs on) on the ops.

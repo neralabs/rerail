@@ -313,16 +313,9 @@ fn a_recursive_utility_inside_another_settles() {
     assert_eq!(program.roots(&tape).unwrap(), expected);
 }
 
-/// Decision 0434 §4, step 6: on Metal, a label pass over codes runs only in the files whose presence may hold its
-/// domain's kinds. The nested-recursion clause's passes start at lists, parentheses and binary operators; a file with
-/// none of them is ruled out, and the roots are the CPU's.
+/// The nested-recursion clause: its passes start at assignments, lists, parentheses and binary operators.
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
-#[test]
-#[ignore = "0434 step 6: the kernels read the presence in place, from the tape's room (Q263); the host's per-file bits went"]
-fn metal_passes_skip_the_files_their_presence_rules_out() {
-    use super::compile_matcher::Backend;
-    // The device's count of the (rule, file) pairs its presence reads rule out comes with the kernels' read.
-    let take_presence_ruled_out = || 0_usize;
+fn nested_recursion() -> LoweredMatcher {
     let policy = r#"{
         "format": "rerail.policy/v1", "id": "nested-recursion", "revision": 1, "mode": "steer",
         "scope": { "include": ["**/*"], "exclude": [] },
@@ -345,58 +338,72 @@ fn metal_passes_skip_the_files_their_presence_rules_out() {
     }"#;
     let compiled = CodeRuleDslRuntime::compile(policy.to_owned(), "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
     let (_, grammar) = python_matchers(&compiled).next().expect("a Python clause");
-    let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
+    LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles")
+}
+
+/// Decision 0434 §4, step 6: a label pass over codes reads only the files whose presence may hold its domain's kinds,
+/// on Metal as on the host, by the one read of the presence in the tape's home (`tape_has_kind`). A file with none of
+/// the clause's kinds is ruled out by the host's read, and the device's roots are the CPU's.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn metal_passes_skip_the_files_their_presence_rules_out() {
+    use super::compile_matcher::Backend;
+    let program = nested_recursion();
     let tapes = [python_tape("x = ['a'] + b\ny = (['a'] + b) + c\n"), python_tape("pass\n")];
     assert!(tapes.iter().all(TapeDoc::has_presence), "a format 16 parse lays its presence in the tape's home");
-    take_presence_ruled_out();
+    let kind = |name: &str| ast_grep_language::LanguageExt::get_ts_language(&GrammarDialect::Python).id_for_node_kind(name, true);
+    for name in ["assignment", "list", "binary_operator", "parenthesized_expression"] {
+        assert!(tapes[0].may_have_kind(kind(name)), "the lists' file has its {name}");
+        assert!(!tapes[1].may_have_kind(kind(name)), "`pass` has no {name}");
+    }
     let metal = program.roots_metal(&tapes).expect("the passes run on Metal").0;
-    let ruled_out = take_presence_ruled_out();
-    assert!(ruled_out > 0, "the file without lists or operators is ruled out");
     assert_eq!(metal, program.roots_batch(Backend::Cpu, &tapes).expect("the CPU's roots"));
     assert!(!metal[0].is_empty() && metal[1].is_empty(), "{metal:?}");
 }
 
-/// Decision 0434 step 6, the device's block skip: a pass over codes reads no codes in a block whose presence holds
-/// none of its kinds. A file of three blocks whose lists and operators are all in its last: the first two are left
-/// out, and the roots are the CPU's.
+/// `tape` with block `block`'s kinds cleared in its presence, in its home as stored: a presence that lies, so that a
+/// reader of it is seen to read it.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+fn with_block_kinds_cleared(tape: &TapeDoc, block: usize) -> TapeDoc {
+    use rerail_tape_format::f16::{Tape16, Tape16Z};
+    let mut bytes = tape.image.to_bytes().expect("the tape's stored bytes");
+    let presence = match Tape16::from_bytes(bytes.clone()) {
+        Ok(t) => t.presence_bytes().map(<[u8]>::len),
+        Err(_) => Tape16Z::from_bytes(bytes.clone()).expect("a format 16 or 16z tape").presence_bytes().map(<[u8]>::len),
+    };
+    let at = bytes.len() - presence.expect("the tape's presence");
+    let word = |o: usize| u32::from_le_bytes(bytes[at + o..at + o + 4].try_into().unwrap()) as usize;
+    let (kinds, fields, count) = (word(0), word(4), word(8));
+    assert!(block + 1 < count, "block {block} of {count} presences");
+    let from = at + 16 + (1 + block) * (kinds + fields) * 8;
+    bytes[from..from + kinds * 8].fill(0);
+    let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
+    let image = TapeImage::from_bytes(&bytes, &grammar).expect("the tape, read back");
+    TapeDoc::restore(Arc::clone(&tape.source), grammar, &image, &|| false).expect("restored tape")
+}
+
+/// Decision 0434 §4, step 6, the device's block skip: a pass over codes reads no codes in a block whose presence holds
+/// none of its kinds, by the read the host makes (`tape_has_kind`), of the presence in the tape's room. A presence
+/// that says the first block holds no kind at all is believed on the device and on the host: the roots of that block
+/// go, and the others are as found with the true presence.
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
 #[test]
-#[ignore = "0434 step 6: the kernels read each block's presence in place, from the tape's room (Q263); the host's bits went"]
 fn metal_passes_skip_the_blocks_their_presence_rules_out() {
     use super::compile_matcher::Backend;
-    // The device's count of the (rule, block) pairs its presence reads rule out comes with the kernels' read.
-    let take_blocks_ruled_out = || 0_usize;
-    let policy = r#"{
-        "format": "rerail.policy/v1", "id": "nested-recursion", "revision": 1, "mode": "steer",
-        "scope": { "include": ["**/*"], "exclude": [] },
-        "clauses": [{
-            "id": "nested",
-            "forbid": { "ast": {
-                "language": "python",
-                "utils": {
-                    "list-expr": { "any": [
-                        { "kind": "list" },
-                        { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "list-expr" } },
-                        { "matches": "list-add" }
-                    ] },
-                    "list-add": { "kind": "binary_operator", "has": { "stopBy": "neighbor", "matches": "list-expr" } }
-                },
-                "rule": { "kind": "assignment", "has": { "stopBy": "neighbor", "matches": "list-add" } }
-            } },
-            "violation": { "anchor": "witness.span", "code": "NESTED", "message": "A list concatenation." }
-        }]
-    }"#;
-    let compiled = CodeRuleDslRuntime::compile(policy.to_owned(), "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
-    let (_, grammar) = python_matchers(&compiled).next().expect("a Python clause");
-    let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
-    let source = format!("{}x = ['a'] + b\ny = (['a'] + b) + c\n", "pass\n".repeat(2600));
-    let tapes = [python_tape(&source)];
-    assert!(tapes[0].transducer_len() > 2 * crate::code_rule_dsl::tape::PRESENCE_BLOCK, "{} nodes", tapes[0].transducer_len());
-    take_blocks_ruled_out();
-    let metal = program.roots_metal(&tapes).expect("the passes run on Metal").0;
-    assert!(take_blocks_ruled_out() >= 2, "the blocks of `pass` alone are left out");
-    assert_eq!(metal, program.roots_batch(Backend::Cpu, &tapes).expect("the CPU's roots"));
-    assert!(!metal[0].is_empty(), "{metal:?}");
+    use crate::code_rule_dsl::tape::PRESENCE_BLOCK;
+    let program = nested_recursion();
+    let source = format!("x = ['a'] + b\n{}y = (['a'] + b) + c\n", "pass\n".repeat(2600));
+    let truthful = python_tape(&source);
+    assert!(truthful.transducer_len() > 2 * PRESENCE_BLOCK, "{} nodes", truthful.transducer_len());
+    let found = program.roots_metal(std::slice::from_ref(&truthful)).expect("the passes run on Metal").0;
+    assert_eq!(found, program.roots_batch(Backend::Cpu, std::slice::from_ref(&truthful)).expect("the CPU's roots"));
+    let first = PRESENCE_BLOCK as u32;
+    assert!(found[0].iter().any(|&r| r < first) && found[0].iter().any(|&r| r >= first), "{found:?}");
+    let lying = with_block_kinds_cleared(&truthful, 0);
+    let assignment = ast_grep_language::LanguageExt::get_ts_language(&GrammarDialect::Python).id_for_node_kind("assignment", true);
+    assert!(!lying.block_may_have_kind(0, assignment) && lying.block_may_have_kind(2, assignment), "the host reads the lie");
+    let believed = program.roots_metal(std::slice::from_ref(&lying)).expect("the passes run on Metal").0;
+    assert_eq!(believed[0], found[0].iter().copied().filter(|&r| r >= first).collect::<BTreeSet<_>>(), "the device reads the lie");
 }
 
 /// S2's parity gate (O23, F1): every lowered clause's passes run on Metal over the whole batch of

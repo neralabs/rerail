@@ -395,6 +395,12 @@ pub fn stored_presence(bytes: &[u8], tag: u8) -> Option<StoredPresence<'_>> {
     StoredPresence::of(bytes, rerail_tape_format::f16::lang(tag)?)
 }
 
+/// The kind a presence records for a node of kind `kind`: its own, an ERROR node's `ERROR_CODE` (the tape's folded
+/// code, decision 0434 §4). The kernels' `presence_kind`.
+pub fn presence_kind(kind: u16) -> u16 {
+    if kind == ERROR_SYMBOL { ERROR_CODE } else { kind }
+}
+
 /// Nodes a block's presence covers (`f16::PART`): block `b` is nodes `PRESENCE_BLOCK * b ..`.
 pub const PRESENCE_BLOCK: usize = rerail_tape_format::f16::PART;
 
@@ -2810,14 +2816,27 @@ impl TapeDoc {
     /// kind is `ERROR_SYMBOL`, which no presence holds, so it is always possible.
     pub fn may_have_kind(&self, kind: u16) -> bool {
         use rerail_tape_format::tape::Tape;
-        kind == ERROR_SYMBOL || rerail_tape_format::with_tape!(self.tape(), |t| t.has_kind(u32::MAX, kind))
+        rerail_tape_format::with_tape!(self.tape(), |t| t.has_kind(u32::MAX, presence_kind(kind)))
     }
 
     /// Whether block `b` (nodes `PRESENCE_BLOCK * b ..`) may hold a node of kind `kind`: as `may_have_kind`, by the
     /// block's presence where the tape holds it, else the document's (the same read as the kernels', `tape_has_kind`).
     pub fn block_may_have_kind(&self, b: usize, kind: u16) -> bool {
         use rerail_tape_format::tape::Tape;
-        kind == ERROR_SYMBOL || rerail_tape_format::with_tape!(self.tape(), |t| t.has_kind(u32::try_from(b).unwrap_or(u32::MAX - 1), kind))
+        rerail_tape_format::with_tape!(self.tape(), |t| t.has_kind(u32::try_from(b).unwrap_or(u32::MAX - 1), presence_kind(kind)))
+    }
+
+    /// `transducer_nodes_where` in the blocks `block` admits alone (`block_may_have_kind` tells them): a block left
+    /// out has none of its codes read (the kernels' `rule_may_in`, the same read).
+    pub fn transducer_nodes_where_in(&self, admits: impl Fn(u16, &[u16]) -> bool, block: &dyn Fn(u32) -> bool, out: &mut Vec<u32>) {
+        let t = self.t();
+        let set = t.table().set(|e| admits(kind_of(e), &e.classes));
+        t.match_groups_in(&set, block, |base, mut m| {
+            while m != 0 {
+                out.push((base + m.trailing_zeros() as usize) as u32);
+                m &= m - 1;
+            }
+        });
     }
 
     /// Whether the tape's home holds its presence (decision 0434 §4, step 6): a format 16 or 16z writer's.
