@@ -5,17 +5,21 @@ Found while running the `django-practice-*` rules over 32 open-source Django app
 Paths are relative to the repository root. Each section is self-contained: symptom, reproduction, where it is in the
 code, evidence, the workaround used, and a suggested fix. "Not confirmed" marks what was inferred and not proven.
 
-| # | Bug | Area | Status |
-|---|---|---|---|
-| 1 | Runs deadlock at 0% CPU | engine: `logic/strings.rs`, rayon | Reproduced many times; mechanism partly inferred |
-| 2 | A huge module of string literals never finishes | engine guests / `python/names.rerail` annotations | Reproduced |
-| 3 | Module names are taken from the repository root (src layouts) | engine `doc` facts vs Python imports | Reproduced with a 3-file probe |
-| 4 | `sym_of` drops relative imports of two or more dots | `lib/python/imports.rerail` | Reproduced; root cause found |
-| 5 | One tape cache per machine: concurrent runs fail | engine `tape_cache_path` | Reproduced |
-| 6 | Very large repositories do not finish | engine, scale | Observed once (PostHog) |
-| 7 | `sym_of` has no row for an attribute of a class of the same module | `lib/python/names.rerail` | Reproduced with a probe; cause found |
-| 8 | A call to a def under an outside decorator has no call target | `lib/python/calls.rerail` | Reproduced with a probe |
-| 9 | Rules that read the call graph take hours on large repositories | `python/calls` typing program, scale | Observed; not profiled |
+The last column is each bug on main after the final-shape engine landed (2026-11-19): read from the code, and for 3, 4,
+7, 8 and 10 run as a probe rule with its own test (`rerail-engine test-rr`). Bug 10 is new on main.
+
+| # | Bug | Area | Status | On main, 2026-11-19 |
+|---|---|---|---|---|
+| 1 | Runs deadlock at 0% CPU | engine: `logic/strings.rs`, rayon | Reproduced many times; mechanism partly inferred | Fixed: `Vocabulary::rows` releases `seen` before it evaluates, and takes it again to insert |
+| 2 | A huge module of string literals never finishes | engine guests / `python/names.rerail` annotations | Reproduced | Likely fixed: python/names asks for annotation guests only in annotation contexts (`ann_ctx`); not re-run on netbox |
+| 3 | Module names are taken from the repository root (src layouts) | engine `doc` facts vs Python imports | Reproduced with a 3-file probe | Fixed: a module is named from its package root (probe passes); a folder without `__init__.py` keeps its path's name |
+| 4 | `sym_of` drops relative imports of two or more dots | `lib/python/imports.rerail` | Reproduced; root cause found | Fixed: `impmod` resolves any number of dots through `rel_base` (probe passes) |
+| 5 | One tape cache per machine: concurrent runs fail | engine `tape_cache_path` | Reproduced | Partly: the default store is per build and working directory; runs started from one directory still share it |
+| 6 | Very large repositories do not finish | engine, scale | Observed once (PostHog) | Not re-measured |
+| 7 | `sym_of` has no row for an attribute of a class of the same module | `lib/python/names.rerail` | Reproduced with a probe; cause found | Present (probe fails as described) |
+| 8 | A call to a def under an outside decorator has no call target | `lib/python/calls.rerail` | Reproduced with a probe | Present (probe fails as described) |
+| 9 | Rules that read the call graph take hours on large repositories | `python/calls` typing program, scale | Observed; not profiled | Not re-measured; the typing program is unchanged |
+| 10 | A negated tree axis is read wrong below a node a sym_of relation found | engine: lowering or demand of `!inside`/`within_stop` | Reproduced with a probe; bisected to a merge | Present; worked around in `python/django` |
 
 ---
 
@@ -329,3 +333,73 @@ call graph, not the rules' own relations, dominates. The same program runs for a
 
 **Suggested fix.** Profile the typing program on one large repository (`RERAIL_PROFILE=<dir>`); running several
 call-graph rules in one `run-policies` call may share its cost (not measured).
+
+---
+
+## 10. A negated tree axis is read wrong below a node a sym_of relation found
+
+**Symptom.** `within_stop(n, b, S)` holds although a node of S sits between n and b, and `!inside(n, _, S)` holds
+although n has an ancestor in S, when b comes from a relation that reads `sym_of` and the rule also reads
+`within(n, b)`. The same b found without `sym_of` gives the right answer. On the engine of main, three rules' cases
+failed: atomic-around-caught-db-error and enqueue-on-commit reported code in a def nested inside an atomic block, and
+select-for-update-outside-atomic missed a lock in an `on_commit` callback defined inside one. The rules passed their
+cases on the engine they were written on (`91c2df8863`).
+
+**Reproduce.** `rerail-engine test-rr probe.rerail`:
+
+````text
+.policy "probe-negated-axis" revision 1
+.language python
+.scope include "**/*.py"
+#include "python/names.rerail"
+.violation Unused(at: node) code "U" "unused"
+Unused(n) :- kind(n, "nothing_has_this_kind").
+.test nested_def
+    .fixture "a.py" ```
+        from django.db import transaction
+
+
+        def nested_def(order):
+            with transaction.atomic():
+                def later():
+                    try:
+                        order.save()
+                    except E:
+                        pass
+                return later
+        ```
+    .decl bt(b: node)
+    bt(b) :- kind(w, "with_statement"), field(w, "body", b), has(w, c, "call"), field(c, "function", f),
+        text(f, "transaction.atomic").
+    .decl bs(b: node)
+    bs(b) :- kind(w, "with_statement"), field(w, "body", b), has(w, c, "call"), field(c, "function", f),
+        sym_of(f, "django.db.transaction.atomic").
+    .decl x_text(l: number)
+    x_text(l) :- kind(t, "try_statement"), bt(b), within(t, b), !inside(t, _, "function_definition"), line(t, l).
+    .decl x_sym(l: number)
+    x_sym(l) :- kind(t, "try_statement"), bs(b), within(t, b), !inside(t, _, "function_definition"), line(t, l).
+    .expect count x_text = 0
+    .expect count x_sym = 0
+.end
+````
+
+`x_text` has no row; `x_sym` has (7), though the `try` on line 7 is inside the defs of lines 4 and 6
+(`inside(t, f, "function_definition")` in the same rule shape gives both). `bt` and `bs` hold the same node. Without
+`within(t, b)`, `x_sym` is right. `within_stop(t, b, "function_definition")` over `bs` is wrong the same way: its
+lowering (`logic/rr/lower.rs`, `within`) is `within(n, a)` and either `!rr_inside_<S>(n, _)` or the nearest stop not
+below a.
+
+**When.** The engine at `91c2df8863` gives no `x_sym` row. Along the first parents of the final-shape engine's
+history, `7529228ce3` is right and the merge after it, `bddab770c8` (the serverplan-quality hub), is wrong; the six
+commits after that merge do not build or do not run the probe on their own, and the hub's own commits do not build
+alone, so the commit inside the hub is not found. Not confirmed: whether the negated axis atom gets no rows for an n
+bound late (a demand or negation split that never asks for n's ancestors) or is lowered without them.
+
+**Workaround used.** `python/django` writes "n runs when b's code runs" without a negation:
+`within(n, b), nearest(n, s, dj_scope_stop), within(b, s)`, where `dj_scope_stop` is the def, lambda and class kinds
+and the module, so every node has a nearest one (`dj_in_atomic`, `dj_in_transaction`, and the rules that walked a
+loop's or a try's body with `within_stop`).
+
+**Suggested fix.** Find which pass drops the negated axis's rows for a late-bound node: run the probe with the
+lowered program and plan printed (`rerail-engine dump --rule probe.rerail`) on both engines and compare how
+`!rr_inside_function_definition(t, _)` is evaluated.
