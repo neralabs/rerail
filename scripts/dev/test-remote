@@ -143,15 +143,18 @@ def choose(named, oses, roots):
                     continue
                 # This checkout's commands on one host share its target directory there, and cargo
                 # builds for them one at a time: a host where none runs goes first.
-                free.append((farm.host_os(host) != "macos", not use.sends, -idle / len(paths), -farm.spare(host), host, got, use))
+                # (a host short of disk last: it keeps only its recently used targets, and drops
+                # even those under its floor)
+                free.append((farm.host_os(host) != "macos", bool(farm.health(host).get("short")), not use.sends,
+                             -idle / len(paths), -farm.spare(host), host, got, use))
         if free:
             # A Mac first: a Linux host's run is another platform's build.
-            free.sort(key=lambda f: f[:4])
+            free.sort(key=lambda f: f[:5])
             for f in free[1:]:
-                f[5].release()
                 f[6].release()
+                f[7].release()
             best = free[0]
-            return best[4], best[5], best[6], None
+            return best[5], best[6], best[7], None
         if not said:
             say("every test slot of every usable host is taken"
                 + (f", or this checkout's copy there runs another command from other files ({', '.join(other_tree)})" if other_tree else "")

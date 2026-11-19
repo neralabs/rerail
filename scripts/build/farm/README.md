@@ -409,7 +409,12 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
 - **Disk.** `test-remote`'s target directories (one per checkout, by a hash of its path) are
   cleaned after each command (above), go after 3 unused days, and the least recently used go while
   the host has less than `min_free_gb` + 40 GB free: pruning only to `min_free_gb` left the host
-  just above it, and the next build took it under. Never one a command is running in: each command
+  just above it, and the next build took it under. Within that headroom only targets unused for 2
+  hours go; one used more recently goes only under `min_free_gb` itself, and `test-remote` sends a
+  command to a host short of disk last. Before farm 36 any went: an M3 whose own data held it at
+  50-60 GB free (the farm's part of it 67 GB) had every target no command held removed by each
+  minute's sweep, and its checkouts' next commands rebuilt them whole, never reaching their tests
+  (2026-11-18). Never one a command is running in: each command
   holds its target's lock (`targets.noindex/.locks`) until it ends, and pruning skips a held one
   (farm 21; before, a checkout's run on a short disk removed another's target mid-build).
   The targets together stay under `max_target_gb` (150 GB): over it, the least recently used no
