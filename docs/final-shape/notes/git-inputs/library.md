@@ -193,14 +193,17 @@ A relational declaration alone does not specify when its native source is reques
 The implementation needs a binding-mode contract for each keyed public view.
 For example, bound `(repo, commit)` in `git_message` must reach an object request through the library rules.
 
-There are two compatible implementation techniques:
+The library declares the request, completeness relation and member relations together.
+For each member, the first columns have the same types and order as the request key.
+A rule can bind those columns with literals, a fact, a selection, or the result of another lookup.
+The compiler derives a request for each bound key. Rules can still populate the request relation directly for batch enumeration.
+The repository and object ID remain visible in both forms.
 
-1. Existing demand translation propagates bound keys through the library to its request relations.
-2. A library phase derives explicit object requests from finite selection inputs, then exports complete result families.
-
-The first technique gives ergonomic direct lookup. The second makes whole-selection analysis explicit.
-A first implementation must demonstrate both access needs with existing engine mechanisms.
-A new implicit repository slot or a native implementation of each public relation does not satisfy this contract.
+For example, `git_source_commit(r,c), !git_parent(r,c,_,_)` requests the selected commit.
+The absence test needs a successful commit decode for that same repository and object ID.
+It succeeds for a readable root, and gives zero rows for a child, a tree, or a missing commit.
+The error relation records a failed object read. A text-based trailer test also requires a decodable commit message.
+A rule that binds a parent's ID can query that parent's metadata, even when it belongs to a different snapshot.
 
 Each requested key has a complete success family or an explicit failure/incomplete outcome.
 A complete zero-parent family permits root-commit reasoning.
