@@ -267,7 +267,7 @@ mod tests {
                 assert_eq!(at, None, "{:?} from {from}", String::from_utf8_lossy(&b));
             }
             // `first_of`, of one, two and three bytes
-            for set in [[b'`'; 3], [b'*', b'/', b'/'], [b'"', b'\\', b'\n']] {
+            for set in [[b'`'; 3], *b"*//", *b"\"\\\n"] {
                 let want = b[from..].iter().position(|c| set.contains(c)).map_or(n.max(from), |e| from + e);
                 assert_eq!(first_of(&b, from, set), want, "{set:?} {:?} from {from}", String::from_utf8_lossy(&b));
                 for be in backends() {

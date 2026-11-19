@@ -229,12 +229,17 @@ const STATE: &[(&str, &str)] = &[
     // The SQL lane's executor, and the work a thread's device wave runs when flushed (`lanes::wave`).
     ("code_rule_dsl/logic/lanes.rs", "SQL"),
     ("code_rule_dsl/logic/lanes.rs", "DEFERRED"),
-    // The device's wave on this thread (decision 0113 §3): its open command buffer, the waves flushed, the strata
-    // waiting for theirs; and the rule being compiled's arena-text slots. State of the run, not a result kept.
-    ("code_rule_dsl/logic/native/setfix/device.rs", "WAVE"),
+    // The device's waves on this thread (decision 0113 §3; the open one is the job's, `lanes::OPEN`): the waves
+    // flushed, the strata waiting for theirs; and the rule being compiled's arena-text slots. State of the run, not a
+    // result kept.
     ("code_rule_dsl/logic/native/setfix/device.rs", "FLUSHED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "ARENA"),
+    // The component being compiled's own columns of arena texts (decision 0307), set around its plans' compile
+    // (`own_texts`): a call's context, as `BINDER` and `ARENA`.
+    ("code_rule_dsl/logic/native/setfix/device.rs", "OWN_TEXTS"),
+    // The job's open device submission its strata share (`lanes::open`): an open thing, as `WAVE`.
+    ("code_rule_dsl/logic/lanes.rs", "OPEN"),
     // Which connections hold tables or views a run left in SQL: state of the connections, not a result kept.
     ("code_rule_dsl/logic/plan.rs", "TEMP_LEFT"),
     // Each live connection's path and symbols, by its scope; dropped when it closes (`setfix::forget_scope`).
@@ -327,6 +332,18 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
+    // Debugging aids, each under its switch, and the switches read once: `RERAIL_HEAP_AT`'s text; the trees a thread
+    // decoded from versions (a count and the last's place); `RERAIL_KEPT_DOCS`'s exports, the rows it counted in and
+    // out by document and by file, and the file being counted. Records of a run, no result read back.
+    ("code_rule_dsl/logic/profile/memory.rs", "AT"),
+    ("code_rule_dsl/logic/program_image/version.rs", "DECODED"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "LISTED"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_DOCS"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_ROWS"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "COUNTING"),
+    // The world's rows (`rr::lower::World`), made once the languages are installed: a registry of what is
+    // installed, as `FUNCTORS`.
+    ("code_rule_dsl/logic/rr/lower.rs", "ALL"),
     ("code_rule_dsl/logic/profile/roofline.rs", "ROOFS"),
     ("code_rule_dsl/logic/rr.rs", "CORE"),
     ("code_rule_dsl/logic/rr.rs", "READS"),
@@ -364,6 +381,11 @@ const STATE: &[(&str, &str)] = &[
     // The store's frames as this process holds them, ahead of SQLite (decision 0104): the facts themselves, read
     // once before a run's first wave, not a cache of anything else.
     ("content_store/frames.rs", "SNAPSHOTS"),
+    // Each record kind's apply function, registered by its kind: a registry.
+    ("content_store/record.rs", "KINDS"),
+    // The stores forgotten (`ContentStore::forget`), by path and file, so the frames job leaves them: state of the
+    // stores' lifetimes, no result.
+    ("content_store/upkeep.rs", "GONE"),
     // The device's automata and test tables for regex and text stages, held while the thread runs (a command buffer
     // may read them).
     ("code_rule_dsl/logic/native/setfix/device.rs", "AUTOMATA"),
@@ -408,7 +430,6 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "COMBINED", "2"),
     ("code_rule_dsl/logic/plan/corpus.rs", "PREPARED", "2"),
     ("code_rule_dsl/logic/plan/choices.rs", "KEPT", "2"),
-    ("code_rule_dsl/logic/plan/corpus/guests.rs", "KEPT", "3"),
     // The session a thread's runs use (decision 0204: the caller's `Handle`, bound for its runs; was `SESSION`, the
     // process's): what it keeps between runs is still a cache to move.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", "3"),
@@ -428,7 +449,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/text.rs", "NAMES", "7"),
 ];
 /// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised.
-const NOT_YET_MAPS_PIN: usize = 24;
+const NOT_YET_MAPS_PIN: usize = 22;
 
 fn src() -> PathBuf {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")
@@ -498,7 +519,26 @@ fn maps() -> BTreeSet<(String, String)> {
     let mut out = BTreeSet::new();
     for f in fs {
         let text = std::fs::read_to_string(&f).unwrap_or_default();
-        let lines: Vec<&str> = text.lines().collect();
+        let mut lines: Vec<&str> = text.lines().collect();
+        // A file's inline tests (`#[cfg(test)] mod … {`, to its closing brace) are tests, as a test file is: blanked.
+        let mut i = 0;
+        while i + 1 < lines.len() {
+            if lines[i].trim() == "#[cfg(test)]" && lines[i + 1].trim_start().starts_with("mod ") && lines[i + 1].trim_end().ends_with('{') {
+                let mut depth = 0i64;
+                let mut j = i + 1;
+                while j < lines.len() {
+                    depth += lines[j].matches('{').count() as i64 - lines[j].matches('}').count() as i64;
+                    lines[j] = "";
+                    j += 1;
+                    if depth <= 0 {
+                        break;
+                    }
+                }
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
         for (i, l) in lines.iter().enumerate() {
             let Some(c) = head.captures(l) else { continue };
             // The declaration up to its `=`, over a few lines.

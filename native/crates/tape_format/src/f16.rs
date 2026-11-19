@@ -847,7 +847,7 @@ impl F16<'_> {
         reads::tape_line_start(self.bytes, &self.view, k)
     }
     /// The source's lines: one more than its newlines.
-    pub fn lines(&self) -> u32 {
+    pub fn line_count(&self) -> u32 {
         self.view.line_count
     }
     /// Each node's code byte.
@@ -1471,7 +1471,7 @@ mod tests {
     /// Every byte's line and every line's start, as counting the source's newlines says.
     fn lines_answer(t: &F16<'_>, source: &[u8]) {
         let starts: Vec<u32> = std::iter::once(0).chain(source.iter().enumerate().filter(|(_, b)| **b == b'\n').map(|(i, _)| i as u32 + 1)).collect();
-        assert_eq!(t.lines() as usize, starts.len(), "lines");
+        assert_eq!(t.line_count() as usize, starts.len(), "lines");
         for (k, &s) in starts.iter().enumerate() {
             assert_eq!(t.line_start(k as u32), s, "line {k}'s start");
         }

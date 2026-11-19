@@ -4505,8 +4505,20 @@ native join it falls back to the planner's whole-rule order.
 - **Tables done** (2026-11-18, 0402 steps 1–3): `frame_segments` and `object_segments` are where rows lie
   (fact store, as `memo_packs`); `guest_keys` is names (0391); `observed_changes` is the observer's journal
   (0400). Both table guards pass.
-- **Next**: the maps of `every_kept_map_is_state_or_listed`: classify each by its decision (0103, 0104), or move it
-  where the guard says. A map that is a cache is to be rules, not a list entry ([[caches-are-ordinary-rules]]).
+- **Maps done** (2026-11-18). Each map the guard named is a call's or a run's open state, not a cache, and is
+  listed in `STATE` with why: `device.rs OWN_TEXTS` (a text a call owns, until it returns), `lanes.rs OPEN` (the
+  open wave), `memory.rs AT`, `version.rs DECODED`, `keptstats.rs` `LISTED`, `KEPT_DOCS`, `KEPT_ROWS` and
+  `COUNTING` (a run's counters, read at its end), `rr/lower.rs ALL`, `record.rs KINDS`, `upkeep.rs GONE`. Two
+  entries named maps that were gone (`device.rs WAVE`, `guests.rs KEPT`): cut, the pin at 22. The scan
+  (`maps()`) read a file's inline `#[cfg(test)] mod` as code; it blanks it now, as it skips a test file. All four
+  guards pass.
+- **With it**: `c_lean`'s clippy error (`cpp.rs` 1440, a `while` that ran once) and the rest of `c_lean`, `c_pp`,
+  `simd8` and `tape_format`'s warnings. On the way, `c_directives`' two Metal tests failed: the device refused
+  every program whose start reads ahead (`early`, 0330; `prefix`, 0335), and `metal_read` returned `None` for it,
+  so the corpus test counted a refusal as agreement. Metal runs both now (0330, 0335: a shift in the file's first
+  word; its first bytes compared there), `metal_read` returns the device's error, and the corpus test fails on
+  it: 3,075 files the same, 60 refused, Metal differs on 0. Every ladder step runs on Metal (0 refused, was 14
+  and 15). `parser_tests`' `a_files_start_on_metal_is_the_interpreters`.
 
 ### Q217. Relations that declare their output sorted (decision 0402 K7)
 
