@@ -120,29 +120,48 @@ thread_local! {
 }
 
 /// Each named job's expected wall seconds: a running mean of its last runs ([`as_job`]), for a wait with a deadline
-/// to know which jobs fit the time it has ([`declines`]).
-static JOB_WALL: std::sync::Mutex<BTreeMap<&'static str, f64>> = std::sync::Mutex::new(BTreeMap::new());
+/// to know which jobs fit the time it has ([`declines`]). One atomic a name (its `f64`'s bits, `u64::MAX` before its
+/// first run), found once a thread through `WALL_OF`: a lock taken at every job's end was contended (ab71: 0.5 s).
+static JOB_WALL: std::sync::Mutex<BTreeMap<&'static str, &'static std::sync::atomic::AtomicU64>> = std::sync::Mutex::new(BTreeMap::new());
+
+thread_local! {
+    /// This thread's view of `JOB_WALL`, by the name's address.
+    static WALL_OF: std::cell::RefCell<std::collections::HashMap<(usize, usize), &'static std::sync::atomic::AtomicU64>> = std::cell::RefCell::new(Default::default());
+}
+
+fn wall_of(name: &'static str) -> &'static std::sync::atomic::AtomicU64 {
+    let key = (name.as_ptr() as usize, name.len());
+    WALL_OF.with(|m| {
+        *m.borrow_mut().entry(key).or_insert_with(|| {
+            *JOB_WALL.lock().unwrap_or_else(|p| p.into_inner()).entry(name).or_insert_with(|| Box::leak(Box::new(std::sync::atomic::AtomicU64::new(u64::MAX))))
+        })
+    })
+}
 
 /// A job's expected wall seconds from its runs so far; `None` before its first.
 pub fn expected_wall(name: &'static str) -> Option<f64> {
-    JOB_WALL.lock().unwrap_or_else(|p| p.into_inner()).get(name).copied()
+    let bits = wall_of(name).load(std::sync::atomic::Ordering::Relaxed);
+    (bits != u64::MAX).then(|| f64::from_bits(bits))
 }
 
 /// Runs `f` as the job `name`: a wait that runs it for another knows what made it late ([`waits`]), and its wall
 /// joins the job's expected wall ([`expected_wall`]). The job runs in a job scope of its own ([`in_job_scope`]).
 pub fn as_job<R>(name: &'static str, f: impl FnOnce() -> R) -> R {
-    // A job declined inside this one (by a wait of its own) is not the help that ran this one.
+    // A job declined inside this one (by a wait of its own) is not the help that ran this one; and a job that runs
+    // was judged to fit its helper's deadline, so its own waits have none (a steal inside them that declined would
+    // be stolen again at once, with no wait's pause between).
     let declined = DECLINED.with(|d| d.replace(false));
+    let by = HELP_BY.with(|h| h.replace(None));
     let t0 = Instant::now();
     let r = in_job_scope(f);
     let wall = t0.elapsed().as_secs_f64();
-    {
-        let mut w = JOB_WALL.lock().unwrap_or_else(|p| p.into_inner());
-        let e = w.entry(name).or_insert(wall);
-        *e = 0.7 * *e + 0.3 * wall;
-    }
+    let w = wall_of(name);
+    let was = w.load(std::sync::atomic::Ordering::Relaxed);
+    let mean = if was == u64::MAX { wall } else { 0.7 * f64::from_bits(was) + 0.3 * wall };
+    w.store(mean.to_bits(), std::sync::atomic::Ordering::Relaxed);
     LAST_JOB.with(|j| j.set(name));
     DECLINED.with(|d| d.set(declined));
+    HELP_BY.with(|h| h.set(by));
     r
 }
 
@@ -336,7 +355,7 @@ impl Waiting {
             return false;
         }
         let outer = HELP_BY.with(std::cell::Cell::get);
-        HELP_BY.with(|h| h.set(Some(outer.map_or(by, |o| o.min(by)))));
+        HELP_BY.with(|h| h.set(Some(by)));
         DECLINED.with(|d| d.set(false));
         let ran = self.help();
         if !ran && DECLINED.with(|d| d.replace(false)) {

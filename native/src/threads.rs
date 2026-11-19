@@ -204,7 +204,11 @@ pub mod tests {
                 assert!(late < Duration::from_millis(50), "the batch's continuation {late:?} late: the long job ran in its wait");
                 let ran = std::sync::atomic::AtomicBool::new(false);
                 super::scope(|jobs| {
-                    jobs.spawn("a test's short job", |_| ran.store(true, std::sync::atomic::Ordering::SeqCst));
+                    // A job that runs in the wait has no deadline of its own: a long job its own wait meets runs.
+                    jobs.spawn("a test's short job", |_| {
+                        assert!(!rerail_accel::exec::declines("a test's long job", 0.0), "a deadline carried into a job run in the wait");
+                        ran.store(true, std::sync::atomic::Ordering::SeqCst);
+                    });
                     let mut wait = Waiting::new("a test's batch");
                     let by = Instant::now() + Duration::from_millis(50);
                     while !ran.load(std::sync::atomic::Ordering::SeqCst) && Instant::now() < by {
