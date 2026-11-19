@@ -3465,7 +3465,14 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
     // input's encoded frames were held at once beside the inputs' rows (270 MB at a cold run's peak, 300 files).
     let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
     let carry = &carry;
-    let one_input = |rel: &String, source: &Arc<dyn Source>| -> Option<(u64, usize)> {
+    // One placer for every input's frames: each job places its granules' frames in it as it encodes them, and the
+    // frames are queued together once the jobs end, in the inputs' order. A placer per input made a segment file per
+    // input (each leased, mapped, named and written back): 1,317 files on 91 files of the data layer's repository,
+    // 1,111 of them under 8 KB, 12% of the run's CPU.
+    let estimate: usize = inputs.iter().map(|(_, s)| s.len() * s.columns().len() * 2).sum();
+    let shared_placer = store.frame_placer(inputs.len() * 4 + 16, estimate.min(64 << 20));
+    let placer = &shared_placer;
+    let one_input = |rel: &String, source: &Arc<dyn Source>| -> Option<(u64, usize, Vec<EncodedFrame>)> {
         let _in = carry.enter();
         let _span = crate::code_rule_dsl::logic::profile::span(|| "an input's frames (job)".into());
         let queue = |puts: Vec<EncodedFrame>, kept: Vec<KeptPut>| {
@@ -3496,7 +3503,7 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
         }
         if was.inputs.get(rel).is_some_and(|(d, _)| *d == digest) {
             queue(puts, kept);
-            return Some((digest, written));
+            return Some((digest, written, Vec::new()));
         }
         // A relation of no columns is its count: one document's entry, its digest the input's (`digest`).
         if width == 0 {
@@ -3506,7 +3513,7 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
             kept.push(kept_flat(&put));
             puts.push(put.encoded());
             queue(puts, kept);
-            return Some((digest, written));
+            return Some((digest, written, Vec::new()));
         }
         let g = group_col(prog, locations, rel).min(width - 1);
         let atom_owner = types.len() == width && atom_owners(&types, g);
@@ -3560,7 +3567,6 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
         }
         // Each granule's frame is encoded straight into this job's segments as its rows are read (Q89): neither a copy
         // of its rows nor its bytes are made on the heap; the job's frames are queued with them when it ends.
-        let placer = store.frame_placer(changed.len() + 2, source.len() * width * 2);
         for part in changed.iter().copied() {
             let by_id = ids.remove(&part).unwrap_or_default();
             let mut owners = owners_of.remove(&part).unwrap_or_default();
@@ -3610,19 +3616,24 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
         let put = FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: vec![(GRANULES_READ.to_owned(), mask)], rows: FrameRows { types: docs_types(atom_owner), n: table.len(), rows } };
         kept.push(kept_flat(&put));
         puts.push(put.encoded());
-        store.queue_placed_retagged(was.space, puts, Vec::new(), Vec::new(), Vec::new(), None, placer);
         store.queue_kept(was.space, kept);
-        Some((digest, written))
+        Some((digest, written, puts))
     };
-    let framed_inputs: Vec<Option<(u64, usize)>> = {
+    let mut framed_inputs: Vec<Option<(u64, usize, Vec<EncodedFrame>)>> = {
         use rayon::prelude::*;
         inputs.par_iter().map(|(rel, source)| one_input(rel, source)).collect()
     };
+    let placed: Vec<EncodedFrame> = framed_inputs.iter_mut().flatten().flat_map(|(_, _, puts)| std::mem::take(puts)).collect();
+    // None placed (every input as it was): nothing queued, as a run that changed nothing writes nothing.
+    if !placed.is_empty() {
+        let _in = carry.enter();
+        store.queue_placed_retagged(was.space, placed, Vec::new(), Vec::new(), Vec::new(), None, shared_placer);
+    }
     // Whether an input's frames were queued: then the derived relations' are queued with the program's hold even
     // when none of theirs changed.
     let mut inputs_queued = false;
     for ((rel, _), done) in inputs.iter().zip(framed_inputs) {
-        let Some((digest, n)) = done else { continue };
+        let Some((digest, n, _)) = done else { continue };
         now.insert(rel.clone(), digest);
         inputs_queued |= was.inputs.get(rel).is_none_or(|(d, _)| *d != digest);
         written += n;

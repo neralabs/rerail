@@ -5219,6 +5219,41 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   - The peak: 2.4 GB on 91 files before 5, 0.80 GB after.
   - The rest by policy (`each.sh`), then the 901-file sample, once the per-file cost is known from the 91.
 
+### Q246. The 50 policies at 901 files: what a file costs, and what ended the runs (2026-11-19)
+
+- **The samples' root files**: `s100` and `s10` hold their `.py` files alone, the root's other 25 files moved to
+  `rootfiles/` (with them, `bounded-composed-graph-paths` ran 13 strata and found BCGP001s none of the earlier
+  measurements had). The real repository has them: a measurement of it is not comparable with these.
+- **A chunk of a block failed under two threads** (`facts/rows.rs`, `open_chunk`). `BlockVec::realloc` checked the
+  open block's room under its lock and took the chunk after letting it go: another thread's chunk took the room
+  between, or the free list's room was not one piece, and the run panicked ("an open block with room holds 2540944
+  bytes", the 901 files, 17 s in). The check and the take are one step under the lock now, a new open block when
+  that one has no such chunk.
+- **The chunks the memory line makes** (`RUN_MB`, 1,024 MB): the footprint near 1 GB leaves each chunk the 8,192-node
+  floor, 116 chunks for the 901 files, each running the whole program: 364,000 strata, killed at 240 s. With
+  `RERAIL_RUN_MB=4000`, 13 chunks: 43,900 strata, 377 s of strata CPU, still killed at 240 s. The cost is per file and
+  linear (91 files: 37 s of strata; 901: about 10 times), spread over every rule (the largest, `unparen`, 11 s in 40
+  runs): about 0.3-0.4 s of CPU a file, an hour for the 9,010.
+- **A segment file per input's frames** (`retain.rs`, `write_input_frames`): each input's job made its own
+  `FramePlacer`, so a segment file each (leased, mapped, named, written back): 1,317 files in the frames directory on
+  91 files, 1,111 of them under 8 KB, 12-15% of the run's CPU in `Deferrable::create` and the writes (`sample`). One
+  placer serves every input's job now (its writer under its lock; the encoding outside it), its frames queued once
+  in the inputs' order, none when none was placed: 48 files; 261.5 → 248.3 G instructions, 5.7 → 2.2 s system,
+  findings the same (53).
+- **Fixed on the way** (Linux, the farm's hosts): a listed root's cursor (decision 0400) is kept under no volume
+  where the system names none, but was read by the volume alone, so every warm run wrote it again; and a root under a
+  stored one was folded into it only by the volumes' ids, which Linux has none of (with the journal off, a Mac
+  neither): by the device now. `the_run_after_a_cold_one_writes_nothing` passes on Linux. The journal test
+  `a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change` is the Mac's alone, as the other journal
+  tests are.
+- **Open, in order:**
+  - The per-file cost: the joins are 43% of the CPU (`run_seed`), spread over the rules; a stratum's fixed costs on
+    each chunk the rest. Next: the strata a chunk runs that no file of it needs, and the per-chunk planning.
+  - The memory line that cuts chunks to the floor: what holds the 1 GB before the first chunk.
+  - `an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing` fails 4 of 5 on the M3
+    at load 35-107 (`0 trusted by the journal`: the run's own question timed out, and the answer was checked by
+    `stat`), as Q223's test does: the journal's timing at load.
+
 ### Q243. At 2,410 files the mode is priced above a derive for deltas of 0.1% of the rows read
 
 - **Found** (2026-11-19, t43 step 20): at steps 02-03, `rr_agg37` (mode 98,707 against a derive's 70,337) and
