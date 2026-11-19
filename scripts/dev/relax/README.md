@@ -322,3 +322,8 @@ These must hold. A change to the fork, the patches or the commands that breaks o
   the farm's own prune keeps the disk free.
 - Relax checks only the functions a test reaches. A variant that a test never calls compiles
   "fine" under Relax.
+- Relax's ahead type checks (bodies checked off the main thread before a test reaches them) can
+  fill its type interner (`relax: type interner full`, 2^26 types) on code rustc accepts: since
+  0276's term writes in `logic/rr/lower.rs` (2026-11-19), the engine's runs stop so, at random
+  items. `RELAX_TYCK_AHEAD=0` checks only the bodies a run reaches, and those runs pass. Which
+  body explodes is not found yet; cargo is the check for code no test reaches.
