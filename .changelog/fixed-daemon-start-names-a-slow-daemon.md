@@ -1,1 +1,1 @@
-`rerail daemon start` no longer says the daemon did not become ready while it goes on to serve. A daemon that has not answered within 15 seconds is named as still starting and left running; starting again waits for it, and names the process to end if it still has not answered, as before.
+`rerail daemon start` no longer says the daemon did not become ready while it goes on to serve. A daemon that has not answered within 15 seconds is named by its pid as one that may still be starting, and left running; `rerail status` shows it running once it answers.

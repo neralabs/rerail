@@ -334,7 +334,7 @@ describe("the daemons of a Rerail home", () => {
     expect(recorded).toBe(first.pid);
   }, 90_000);
 
-  it("says a daemon slow to come up still starts, and names the start that waits for it, which uses it, never a second", async () => {
+  it("says a daemon slow to come up may still be starting, and names the status that shows it once it answers; a start uses it, never a second", async () => {
     await writeFile(join(home, DAEMON_PORT_FILE), JSON.stringify({ port: await freePort() }));
     const slowStart = join(home, "slow-start");
     env = watchedEnvironment(home, undefined, slowStart);
@@ -346,12 +346,13 @@ describe("the daemons of a Rerail home", () => {
     waits.startMs = undefined;
     await until(() => existsSync(`${slowStart}.held`), 30_000);
     const [launched] = liveDaemons(home);
-    // The start names the daemon it leaves running and the command that waits for it, never a failed start.
-    expect(first).toContain(`Rerail daemon (pid ${launched}) is still starting: it has not answered within 3s, and this start leaves it running. `
-      + "Run rerail daemon start again to wait for it.");
-    expect(first).not.toMatch(/did not become ready|end that process/u);
-    // That command finds the daemon holding the home and daemon.json not written yet; once it has looked for
-    // daemon.json, the daemon goes on and writes it, and the start uses it.
+    // The start names the daemon it leaves running and the command that shows it once it answers, never a failed start,
+    // and no second start, which waits for a daemon only in some states.
+    expect(first).toContain(`Rerail daemon (pid ${launched}) has not answered within 3s and may still be starting; this start leaves it running. `
+      + "Once it answers, rerail status shows it running.");
+    expect(first).not.toMatch(/did not become ready|end that process|start again/u);
+    // A start finds the daemon holding the home and daemon.json not written yet; once it has looked for daemon.json,
+    // the daemon goes on and writes it, and the start uses it.
     reads.ended = path => {
       if (path !== stateFile) return;
       reads.ended = undefined;
@@ -359,11 +360,10 @@ describe("the daemons of a Rerail home", () => {
     };
     const second = await startDaemon(control(), { dev: true, env });
     expect(second).toMatchObject({ started: false, daemon: { state: { pid: launched } } });
-    // The same command, run through the built CLI as the person reads it, finds that daemon serving.
+    // The command the line names, run through the built CLI as the person reads it, shows that daemon running.
     const said = await runNamedCommands([first]);
-    expect([...said.keys()]).toEqual(["daemon start"]);
-    expect(said.get("daemon start")).toContain("The Rerail daemon is already running.\nRerail daemon ");
-    expect(said.get("daemon start")).toContain(`(pid ${launched},`);
+    expect([...said.keys()]).toEqual(["status"]);
+    expect(said.get("status")).toMatch(new RegExp(`Rerail daemon \\S+ running at \\S+ \\(pid ${launched},`, "u"));
     await until(() => !existsSync(`${slowStart}.held`), 40_000);
     const { live, recorded } = await settled();
     expect(live).toEqual([launched]);
@@ -371,8 +371,8 @@ describe("the daemons of a Rerail home", () => {
   }, 120_000);
 
   // Two states of a start met in one home: another program holds the engine pipe's name with a pipe that allows one
-  // instance, and the daemon is slow to come up. The start says the daemon still starts, by its pid, never that it
-  // exited on the pipe or did not become ready, and the next start finds it serving on the fallback pipe.
+  // instance, and the daemon is slow to come up. The start says the daemon may still be starting, by its pid, never
+  // that it exited on the pipe or did not become ready, and the next start finds it serving on the fallback pipe.
   it.runIf(process.platform === "win32")("starts a daemon slow to come up beside a one-instance pipe on its engine pipe's name, and the next start uses it", async () => {
     await writeFile(join(home, DAEMON_PORT_FILE), JSON.stringify({ port: await freePort() }));
     const slowStart = join(home, "slow-start");
@@ -386,7 +386,7 @@ describe("the daemons of a Rerail home", () => {
       waits.startMs = undefined;
       await until(() => existsSync(`${slowStart}.held`), 30_000);
       const [launched] = liveDaemons(home);
-      expect(first).toContain(`Rerail daemon (pid ${launched}) is still starting: it has not answered within 3s`);
+      expect(first).toContain(`Rerail daemon (pid ${launched}) has not answered within 3s and may still be starting`);
       expect(first).not.toMatch(/EBUSY|exited|did not become ready|end that process/u);
       releaseSlowStart(slowStart);
       const second = await startDaemon(control(), { dev: true, env });

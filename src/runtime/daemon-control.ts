@@ -861,13 +861,13 @@ async function lookupHomeDaemon(home: string, machine: DaemonMachine, unrecorded
 
 /**
  * What a start says when a daemon holds `home` and has not recorded itself within the start's wait, by how long that
- * daemon has held the home ({@link holderComingUp}). One that took it less than a start's wait ago is still coming up,
- * as the start that launched it said ({@link unansweredLaunch}): this start leaves it running too, and telling the person
- * to end it would undo what that start said. One that has held it longer has had that start's whole wait and this
- * one's without answering: the start names the process to end, as a stop does, and says it leaves it running.
+ * daemon has held the home ({@link holderComingUp}). One that took it less than a start's wait ago may still be coming
+ * up, as the start that launched it said ({@link unansweredLaunch}): this start leaves it running too, and telling the
+ * person to end it would undo what that start said. One that has held it longer has had that start's whole wait and
+ * this one's without answering: the start names the process to end, as a stop does, and says it leaves it running.
  */
 function holderNotRecorded(home: string): string {
-  if (holderComingUp(home)) return stillStarting(homeDaemonHolder(home), join(home, DAEMON_LOG_FILE));
+  if (holderComingUp(home)) return mayStillStart(homeDaemonHolder(home), join(home, DAEMON_LOG_FILE));
   return `${unrecordedDaemonProblem(home)} This start leaves that process running.`;
 }
 
@@ -1228,26 +1228,28 @@ async function exitedLaunch(exit: string, { logFile, logOffset }: LaunchRecords)
 
 /**
  * What a start says of the daemon it launched when that daemon has not answered within `START_TIMEOUT_MS`: how it
- * exited, asked once more since it may have exited during the last poll; else that it still runs, by its pid, and
- * that this start leaves it running, with what it wrote so far. A daemon slow to come up, on a busy machine or while
- * another program holds a file it reads, goes on to serve, and the next start uses it: a start that said it failed
- * would tell the person nothing runs while one does.
+ * exited, asked once more since it may have exited during the last poll; else that it may still be starting, by its
+ * pid, and that this start leaves it running, with what it wrote so far. A daemon slow to come up, on a busy machine or
+ * while another program holds a file it reads, goes on to serve: a start that said it failed would tell the person
+ * nothing runs while one does.
  */
 async function unansweredLaunch(launched: LaunchedDaemon, records: LaunchRecords): Promise<Error> {
   const exit = launched.exitReason();
   if (exit !== undefined) return await exitedLaunch(exit, records);
   const output = await tailFile(records.logFile, records.logOffset, 20);
-  return new Error(`${stillStarting(launched.pid, records.logFile)}${output === "" ? "" : `:\n${output}`}`);
+  return new Error(`${mayStillStart(launched.pid, records.logFile)}${output === "" ? "" : `:\n${output}`}`);
 }
 
 /**
  * What a start says of the daemon `pid` that has not answered within its wait, whether it launched it or found it
- * holding the home: it still starts, the start leaves it running, and the start run again waits for it once more, then
- * finds it serving or names the process to end ({@link holderNotRecorded}).
+ * holding the home: it may still be starting, the start leaves it running, and `rerail status` shows it running once it
+ * answers. It names no second start, which waits again only for a daemon that holds the home, has not written
+ * daemon.json and, on Windows, has its engine pipe listed: one that has written daemon.json and does not answer is
+ * named to stop, and on Windows a start beside one whose pipe is not listed yet launches a second daemon, which exits.
  */
-function stillStarting(pid: number | undefined, logFile: string): string {
-  return `Rerail daemon${pid === undefined ? "" : ` (pid ${pid})`} is still starting: it has not answered within `
-    + `${START_TIMEOUT_MS / 1_000}s, and this start leaves it running. Run rerail daemon start again to wait for it. `
+function mayStillStart(pid: number | undefined, logFile: string): string {
+  return `Rerail daemon${pid === undefined ? "" : ` (pid ${pid})`} has not answered within ${START_TIMEOUT_MS / 1_000}s `
+    + "and may still be starting; this start leaves it running. Once it answers, rerail status shows it running. "
     + `See ${logFile}`;
 }
 
