@@ -657,3 +657,18 @@ gap is then the kept run's own overheads, not θ:
 - `load` copying and hashing the inputs it reads from the frames (1.7 s);
 - the input delta's owner reads (about 1.4 s, step 14).
 
+## Step 16: a wave's kept puts are one block per space
+
+Step 15's 2.9 s in the kept-facts writer was 112 jobs a run. Each input's job (`write_input_frames`) queued its own
+kept puts, so each wrote a delta of the space and carried the previous delta's entries into it: carrying took 1.5 s
+and finishing and syncing the blocks 1.0 s (new spans under "store writer: kept facts"). This is 0401 F2's
+cumulative delta, written once per input rather than once per wave.
+
+`queue_kept` now gathers the puts into the run's wave (`write_back::Gather`, as the tapes and the record are
+gathered). When the wave is sealed, each space's puts are one block. A key put twice in the wave starts a second
+block, so the puts apply in order (`a_waves_kept_puts_are_one_block_per_space`). Outside a run it is a job of its
+own, as before.
+
+O125 step 05, kept, on the M1 Max (load 13): 3 jobs and 0.115 s, against 112 jobs and 2.95 s. Kept instructions
+at 01-05 are 181, 163, 217, 152 and 323 G, against step 15's 189, 170, 233, 161 and 327 G.
+

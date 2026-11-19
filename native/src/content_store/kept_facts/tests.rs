@@ -151,3 +151,32 @@ fn a_rolled_back_write_is_not_the_spaces() {
     assert_eq!(read(&path, &c).iter().map(|(r, _, d, _)| (r.as_str(), *d)).collect::<Vec<_>>(), [("p", 1), ("q", 3)]);
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+/// A wave's kept puts are gathered and written as one block per space when it is sealed: queued as a job each,
+/// every input's puts wrote a delta of its own, each carrying the entries of the one before (O125 step 05: 112
+/// deltas a run). A key put twice in the wave is written in order: its later put is what the space keeps.
+#[test]
+fn a_waves_kept_puts_are_one_block_per_space() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.sqlite");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    store.queue_kept(SPACE, vec![put("base", 0, 1, flat(&(0..40_000).collect::<Vec<i64>>()))]);
+    store.written().unwrap();
+    let before = files(&path);
+    {
+        let _waves = crate::content_store::write_back::run_waves();
+        for (i, rel) in ["a", "b", "c", "d"].into_iter().enumerate() {
+            store.queue_kept(SPACE, vec![put(rel, 0, 10 + i as u64, flat(&[i as i64, 1]))]);
+        }
+        store.queue_kept(SPACE, vec![put("a", 0, 20, flat(&[7, 7]))]);
+    }
+    store.written().unwrap();
+    let c = Connection::open(&path).unwrap();
+    let got: Vec<(String, u64, Vec<Vec<i64>>)> = read(&path, &c).into_iter().map(|(r, _, d, rows)| (r, d, rows)).filter(|(r, _, _)| r != "base").collect();
+    assert_eq!(got, [("a".into(), 20, vec![vec![7, 7]]), ("b".into(), 11, vec![vec![1, 1]]), ("c".into(), 12, vec![vec![2, 1]]), ("d".into(), 13, vec![vec![3, 1]])]);
+    // The four relations in one delta, the key put again in a second: two writes, where five jobs wrote five.
+    let row = space_row(&c, &SPACE).unwrap().unwrap();
+    assert!(row.delta.is_some(), "deltas over the base: {row:?}");
+    let made = files(&path).into_iter().filter(|f| !before.contains(f)).count();
+    assert_eq!(made, 2, "two deltas made in the wave: {:?} after {before:?}", files(&path));
+}

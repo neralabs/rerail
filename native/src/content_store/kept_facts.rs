@@ -155,9 +155,11 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
     let io = |e: std::io::Error| StoreError::Io(e);
     let dir = space_dir(store, space);
     private_dir(&dir).map_err(io)?;
+    let opened = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: the space's blocks opened".into());
     let row = space_row(t, space)?.unwrap_or_default();
     sweep(&dir, &row);
     let old = KeptSpace::open(store, space, &row)?;
+    drop(opened);
     let view = old.view();
     let replaced: HashSet<FactKey<'_>> = puts.iter().map(KeptPut::key).collect();
     // Each put's bytes (what a delta weighs against its base), and the room its copy takes in the block.
@@ -192,9 +194,12 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
     let making = dir.join(format!("{name}.new"));
     let base_tag = if roll { None } else { old.base.as_ref().map(KeptFacts::tag) };
     let mut w = KeptW::create(&making, tag, base_tag, reserve).map_err(io)?;
+    let carrying = rerail_prof::code_rule_dsl::logic::profile::span(move || format!("kept facts: entries carried ({})", if roll { "a new base" } else { "a delta" }));
     for k in &entries {
         w.carry(k, None).map_err(io)?;
     }
+    drop(carrying);
+    let putting = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: the puts written".into());
     // A delta carries what its predecessor recorded as gone, unless put again now.
     if !roll && let Some(d) = &old.delta {
         for key in d.gone_keys().filter(|k| !replaced.contains(k)) {
@@ -238,9 +243,12 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
             }
         }
     }
+    drop(putting);
+    let finishing = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: the block finished and synced".into());
     w.finish().map_err(io)?;
     std::fs::rename(&making, dir.join(&name)).map_err(io)?;
     sync_dir(&dir).map_err(io)?;
+    drop(finishing);
     let (base, delta) = if roll { (Some((name, tag)), None) } else { (row.base.clone(), Some((name, tag))) };
     t.prepare_cached(
         "INSERT INTO main.facts_blocks(space, base, base_tag, delta, delta_tag) VALUES (?1, ?2, ?3, ?4, ?5)
@@ -256,21 +264,83 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
     Ok(())
 }
 
-/// A space's next block, queued for the store's writer (`ContentStore::queue_kept`).
+/// The next blocks of a wave's spaces, queued for the store's writer (`ContentStore::queue_kept`): each space's puts
+/// as one block, in order (a batch per space, a second where a key is put again).
 pub(super) struct KeptWrite {
-    space: [u8; 32],
-    puts: Vec<KeptPut>,
+    writes: Vec<([u8; 32], Vec<KeptPut>)>,
 }
 
 impl KeptWrite {
     pub(super) fn run(&mut self, store: &super::ContentStore) -> StoreResult<()> {
-        let puts = std::mem::take(&mut self.puts);
         let path = store.database_path.clone();
-        store.immediate_transaction_once(|t| {
-            // Forked (decision 0170): the copies' atom columns are mapped to the store's ids in this transaction.
-            let map = |v: &mut [i64]| store.atoms.to_store(t, super::ProcessIds::of_process(v)).map(drop);
-            write_space(&path, t, &self.space, puts, store.atoms.forked().then_some(&map as &dyn Fn(&mut [i64]) -> StoreResult<()>))
-        })
+        for (space, puts) in std::mem::take(&mut self.writes) {
+            store.immediate_transaction_once(|t| {
+                // Forked (decision 0170): the copies' atom columns are mapped to the store's ids in this transaction.
+                let map = |v: &mut [i64]| store.atoms.to_store(t, super::ProcessIds::of_process(v)).map(drop);
+                write_space(&path, t, &space, puts, store.atoms.forked().then_some(&map as &dyn Fn(&mut [i64]) -> StoreResult<()>))
+            })?;
+        }
+        Ok(())
+    }
+}
+
+/// A wave's kept puts while they are gathered (`write_back::Gather`): written as one block per space when the wave is
+/// sealed. Queued as a job each, every input's puts wrote a delta of its own, each carrying the one before's entries
+/// again (O125 step 05: 112 deltas, 1.5 s carrying them, 1.0 s finishing and syncing them).
+#[derive(Default)]
+struct KeptGather {
+    /// Each space's batches: a put whose key a batch holds starts the next, so the puts apply in the order queued.
+    spaces: Vec<([u8; 32], Vec<(Vec<KeptPut>, HashSet<(String, [u8; 32], i64)>)>)>,
+    bytes: usize,
+}
+
+impl KeptGather {
+    fn add(&mut self, space: [u8; 32], puts: Vec<KeptPut>, bytes: usize) {
+        self.bytes += bytes;
+        let at = match self.spaces.iter().position(|(s, _)| *s == space) {
+            Some(at) => at,
+            None => {
+                self.spaces.push((space, Vec::new()));
+                self.spaces.len() - 1
+            }
+        };
+        let batches = &mut self.spaces[at].1;
+        for p in puts {
+            let key = (p.rel.clone(), p.ident, p.part);
+            match batches.last_mut() {
+                Some((puts, keys)) if !keys.contains(&key) => {
+                    keys.insert(key);
+                    puts.push(p);
+                }
+                _ => batches.push((vec![p], [key].into_iter().collect())),
+            }
+        }
+    }
+}
+
+impl super::write_back::Gather for KeptGather {
+    fn keys(&self) -> Vec<(super::write_back::Key, Option<super::write_back::Held>)> {
+        Vec::new()
+    }
+    fn held(&self, _key: &super::write_back::Key) -> Option<super::write_back::Held> {
+        None
+    }
+    fn holds(&self, _key: &super::write_back::Key) -> bool {
+        false
+    }
+    fn bytes(&self) -> usize {
+        self.bytes
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+    fn close(self: Box<Self>) -> Option<super::write_back::Closed> {
+        let writes: Vec<([u8; 32], Vec<KeptPut>)> = self.spaces.into_iter().flat_map(|(space, batches)| batches.into_iter().map(move |(puts, _)| (space, puts))).collect();
+        if writes.is_empty() {
+            return None;
+        }
+        let job = super::write_back::Work(super::write_back::Kind::Kept(Box::new(KeptWrite { writes })));
+        Some(super::write_back::Closed { what: "kept facts", bytes: self.bytes, keys: Vec::new(), syms: super::write_back::Syms::Mapped, job })
     }
 }
 
@@ -285,7 +355,12 @@ impl super::ContentStore {
             KeptWhat::Flat { rows, .. } => rows.len() * 8,
             _ => 0,
         }).sum::<usize>() + puts.len() * 64;
-        let write = KeptWrite { space, puts };
+        // Gathered in the run's wave (one block per space as it is sealed); outside a run, a job of its own.
+        let mut puts = Some(puts);
+        if self.gather("kept facts", KeptGather::default, |g| g.add(space, puts.take().expect("the puts"), held)) {
+            return;
+        }
+        let write = KeptWrite { writes: vec![(space, puts.take().expect("the puts"))] };
         self.write_back_syms(super::write_back::Syms::Mapped, "kept facts", held, Vec::new(), super::write_back::Work(super::write_back::Kind::Kept(Box::new(write))));
     }
 
