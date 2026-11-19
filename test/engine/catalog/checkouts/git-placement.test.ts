@@ -945,6 +945,12 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expect(worktreeRegistry(inner)?.worktrees).toEqual(gitsRegistry(inner));
     expect(gitsRegistry(inner)).toHaveLength(1);
     for (let use = 0; use < 3; use += 1) expect(worktreeRegistry(outer)?.worktrees).toEqual(gitsRegistry(outer));
+
+    // The trip dropped the acceptance naming the repository above and Git placed the checkout in the folder between, so
+    // the next ask gives the folder between's list with no Git process.
+    const started = vi.mocked(runGit).mock.calls.length;
+    expect(worktreeRegistry(inner)?.worktrees).toEqual(gitsRegistry(inner));
+    expect(vi.mocked(runGit).mock.calls.length).toBe(started);
   });
 
   it("lists as Git does a bare repository's worktree, a work tree whose Git folder is kept apart, a submodule, a folder in a checkout and a checkout whose .git is a link", async () => {
