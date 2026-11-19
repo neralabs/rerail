@@ -251,39 +251,42 @@ mod ops {
         pub params: &'static [ir::Type],
         pub ret: ir::Type,
         pub public: bool,
+        /// An op a public one calls at every node (or the compressor at every position): inlined where it is
+        /// called. Another (a failure, a block's or a piece's work) stays a call, out of the per-node path.
+        pub hot: bool,
         body: fn(&mut W<'_, '_>),
     }
 
     /// Every op: the public ones, then the ones they call.
     pub const OPS: &[Op] = &[
-        Op { name: "w_open", params: &[I32, I64], ret: I32, public: true, body: open },
-        Op { name: "w_close", params: &[I64], ret: I32, public: true, body: close },
-        Op { name: "w_leaf", params: &[I32, I64, I64], ret: I32, public: true, body: leaf },
-        Op { name: "w_commit", params: &[], ret: I32, public: true, body: commit },
-        Op { name: "w_retag", params: &[I32, I32], ret: I32, public: true, body: retag },
-        Op { name: "w_set_start", params: &[I32, I64], ret: I32, public: true, body: set_start },
-        Op { name: "w_finish", params: &[], ret: I32, public: true, body: finish },
-        Op { name: "w_finish_blocks", params: &[], ret: I32, public: true, body: finish_blocks },
-        Op { name: "w_finish_tail", params: &[], ret: I32, public: true, body: finish_tail },
-        Op { name: "w_fail", params: &[I32, I32], ret: I32, public: false, body: fail_op },
-        Op { name: "w_put", params: &[I32, I32, I64], ret: I32, public: false, body: put },
-        Op { name: "w_value", params: &[I32, I32], ret: I64, public: false, body: value },
-        Op { name: "w_put_code", params: &[I32, I32], ret: I32, public: false, body: put_code },
-        Op { name: "w_new_block", params: &[I32], ret: I32, public: false, body: new_block },
-        Op { name: "w_settle", params: &[I32], ret: I32, public: false, body: settle },
-        Op { name: "w_finalize", params: &[I32, I32], ret: I32, public: false, body: finalize },
-        Op { name: "w_lay", params: &[I32, I32, I32], ret: I32, public: false, body: lay },
-        Op { name: "w_find", params: &[I64, I32, I32], ret: I32, public: false, body: find },
-        Op { name: "w_copy", params: &[I64, I64, I64], ret: I32, public: false, body: copy },
-        Op { name: "w_zero", params: &[I64, I64], ret: I32, public: false, body: zero },
-        Op { name: "w_fill", params: &[I64, I64, I64], ret: I32, public: false, body: fill },
-        Op { name: "w_zblock", params: &[I32, I32], ret: I32, public: false, body: zblock },
-        Op { name: "w_zpiece", params: &[I32, I64, I64], ret: I32, public: false, body: zpiece },
-        Op { name: "w_zfinish", params: &[I32], ret: I32, public: false, body: zfinish },
-        Op { name: "w_lz4", params: &[I64, I64, I64], ret: I64, public: true, body: lz4 },
-        Op { name: "w_lz4_find", params: &[I64, I64, I64, I64, I64], ret: I64, public: false, body: lz4_find },
-        Op { name: "w_hash", params: &[I64, I64], ret: I64, public: false, body: hash },
-        Op { name: "w_eq", params: &[I64, I64, I64], ret: I32, public: false, body: eq },
+        Op { name: "w_open", params: &[I32, I64], ret: I32, public: true, hot: false, body: open },
+        Op { name: "w_close", params: &[I64], ret: I32, public: true, hot: false, body: close },
+        Op { name: "w_leaf", params: &[I32, I64, I64], ret: I32, public: true, hot: false, body: leaf },
+        Op { name: "w_commit", params: &[], ret: I32, public: true, hot: false, body: commit },
+        Op { name: "w_retag", params: &[I32, I32], ret: I32, public: true, hot: false, body: retag },
+        Op { name: "w_set_start", params: &[I32, I64], ret: I32, public: true, hot: false, body: set_start },
+        Op { name: "w_finish", params: &[], ret: I32, public: true, hot: false, body: finish },
+        Op { name: "w_finish_blocks", params: &[], ret: I32, public: true, hot: false, body: finish_blocks },
+        Op { name: "w_finish_tail", params: &[], ret: I32, public: true, hot: false, body: finish_tail },
+        Op { name: "w_fail", params: &[I32, I32], ret: I32, public: false, hot: false, body: fail_op },
+        Op { name: "w_put", params: &[I32, I32, I64], ret: I32, public: false, hot: true, body: put },
+        Op { name: "w_value", params: &[I32, I32], ret: I64, public: false, hot: true, body: value },
+        Op { name: "w_put_code", params: &[I32, I32], ret: I32, public: false, hot: true, body: put_code },
+        Op { name: "w_new_block", params: &[I32], ret: I32, public: false, hot: false, body: new_block },
+        Op { name: "w_settle", params: &[I32], ret: I32, public: false, hot: true, body: settle },
+        Op { name: "w_finalize", params: &[I32, I32], ret: I32, public: false, hot: false, body: finalize },
+        Op { name: "w_lay", params: &[I32, I32, I32], ret: I32, public: false, hot: false, body: lay },
+        Op { name: "w_find", params: &[I64, I32, I32], ret: I32, public: false, hot: false, body: find },
+        Op { name: "w_copy", params: &[I64, I64, I64], ret: I32, public: false, hot: false, body: copy },
+        Op { name: "w_zero", params: &[I64, I64], ret: I32, public: false, hot: false, body: zero },
+        Op { name: "w_fill", params: &[I64, I64, I64], ret: I32, public: false, hot: false, body: fill },
+        Op { name: "w_zblock", params: &[I32, I32], ret: I32, public: false, hot: false, body: zblock },
+        Op { name: "w_zpiece", params: &[I32, I64, I64], ret: I32, public: false, hot: false, body: zpiece },
+        Op { name: "w_zfinish", params: &[I32], ret: I32, public: false, hot: false, body: zfinish },
+        Op { name: "w_lz4", params: &[I64, I64, I64], ret: I64, public: true, hot: false, body: lz4 },
+        Op { name: "w_lz4_find", params: &[I64, I64, I64, I64, I64], ret: I64, public: false, hot: true, body: lz4_find },
+        Op { name: "w_hash", params: &[I64, I64], ret: I64, public: false, hot: false, body: hash },
+        Op { name: "w_eq", params: &[I64, I64, I64], ret: I32, public: false, hot: false, body: eq },
     ];
 
     pub fn op(name: &str) -> Option<&'static Op> {
@@ -338,8 +341,8 @@ mod ops {
     pub fn rust_source() -> Result<String, String> {
         let funcs = funcs();
         let entries: Vec<(u32, &str)> = funcs.iter().filter(|(_, _, op)| op.public).map(|(k, _, op)| (*k, op.name)).collect();
-        let funcs: Vec<(u32, Function, bool)> = funcs.into_iter().map(|(k, f, op)| (k, f, !op.public)).collect();
-        let body = crate::rust::translate_reads(&funcs, &entries, Family::Relation)?;
+        let funcs: Vec<(u32, Function, bool)> = funcs.into_iter().map(|(k, f, op)| (k, f, op.hot)).collect();
+        let body = crate::rust::translate_ops(&funcs, &entries)?;
         let mut out = String::from(
             "// Generated by rerail_clif::writer::rust_source from the tape's writer in CLIF (decision 0399 §6). Do not\n\
              // edit: `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_writer_is_this` writes it again.\n\

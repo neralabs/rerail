@@ -267,9 +267,15 @@ written by the ops' Rust and by the reference, gives the same bytes in 16 and in
 difference the tests had not: the tail's padding before the part starts was left as the last block's moved
 columns, not zeros. Cost (M5 Max, the lab's opt-level 3, dl-10, instructions retired a node, the format 15
 tape's reads included): python 16 by the ops 836 against the reference's 728, 16z 1,189 against 1,081; json
-796 against 699, 1,078 against 985. So the ops' Rust costs 10–15% more than the hand-written writer, once the
-host reserves only where an op can need room (a close only when its node's block is behind the last begun);
-that gap is R16's to close before the host's writer becomes the ops. The compressor inserts each position into its hash chain, as
+796 against 699, 1,078 against 985. So the ops' Rust cost 10–15% more than the hand-written writer, once the
+host reserves only where an op can need room (a close only when its node's block is behind the last begun).
+The gap was the translator's: it checked each load of a part's cell against a tape's span (`ld`), a span the
+writer does not have (its parts are buffers of their own; the ops passed `u64::MAX`), so every cell load paid a
+compare and a branch that bounded nothing. `rust::translate_ops` translates the ops with plain loads: their
+bounds are the host's reservations. And an op is inlined only where it is `hot`, run at every node (`w_put`,
+`w_value`, `w_put_code`, `w_settle`) or at every position (`w_lz4_find`); a block's or a piece's work stays a
+call. Then, over dl-10's 9.5 M nodes in all its languages: 16 by the ops 678 instructions a node against the
+reference's 708, 16z 865 against 1,010. The compressor inserts each position into its hash chain, as
 liblz4's does: the codec's work, not a scan of the text.
 
 **Done (2026-11-18): the ops on the JIT and on the device (R15).** `rerail_clif::writer::msl_source` writes the

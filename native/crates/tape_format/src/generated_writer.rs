@@ -199,9 +199,9 @@ v36 = v14.wrapping_add(-1i64 as u32);
 v37 = v36 as u64;
 v38 = v37.wrapping_mul(24i64 as u64);
 v39 = v35.wrapping_add(v38);
-v40 = ld::<u32>(v0, len, (v39 as usize)) as u32;
-v41 = ld::<u32>(v0, len, ((v39 as usize).wrapping_add(4isize as usize))) as u32;
-v42 = ld::<u32>(v0, len, ((v39 as usize).wrapping_add(8isize as usize))) as u32;
+v40 = unsafe { core::ptr::read_unaligned((v39 as usize) as *const u32) };
+v41 = unsafe { core::ptr::read_unaligned(((v39 as usize).wrapping_add(4isize as usize)) as *const u32) };
+v42 = unsafe { core::ptr::read_unaligned(((v39 as usize).wrapping_add(8isize as usize)) as *const u32) };
 v43 = v41.wrapping_add(1i64 as u32);
 unsafe { core::ptr::write_unaligned(((v39 as usize).wrapping_add(4isize as usize)) as *mut u32, v43) };
 unsafe { core::ptr::write_unaligned(((v39 as usize).wrapping_add(8isize as usize)) as *mut u32, v3) };
@@ -248,7 +248,7 @@ v72 = v0.wrapping_add(v71);
 v73 = v28 as u64;
 v74 = v73.wrapping_mul(16i64 as u64);
 v75 = v72.wrapping_add(v74);
-v76 = ld::<u32>(v0, len, (v75 as usize)) as u32;
+v76 = unsafe { core::ptr::read_unaligned((v75 as usize) as *const u32) };
 v77 = v76 as u64;
 v78 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(104isize as usize)) as *const u32) };
 v79 = v78 & (2i64 as u32);
@@ -279,7 +279,7 @@ v103 = v102.wrapping_shl(v100 as u32);
 v104 = v103.wrapping_add(-1i64 as u64);
 v105 = -1i64 as u64;
 v106 = if v101 != 0 { v105 } else { v104 };
-v107 = ld::<u64>(v0, len, (v99 as usize)) as u64;
+v107 = unsafe { core::ptr::read_unaligned((v99 as usize) as *const u64) };
 v108 = v107 & !v106;
 v109 = v2 & v106;
 v110 = v108 | v109;
@@ -376,8 +376,8 @@ v9 = v0.wrapping_add(v8);
 v10 = v7 as u64;
 v11 = v10.wrapping_mul(24i64 as u64);
 v12 = v9.wrapping_add(v11);
-v13 = ld::<u32>(v0, len, (v12 as usize)) as u32;
-v14 = ld::<u64>(v0, len, ((v12 as usize).wrapping_add(16isize as usize))) as u64;
+v13 = unsafe { core::ptr::read_unaligned((v12 as usize) as *const u32) };
+v14 = unsafe { core::ptr::read_unaligned(((v12 as usize).wrapping_add(16isize as usize)) as *const u64) };
 v15 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(24isize as usize)) as *const u64) };
 v16 = ((v1 as u64) < (v14 as u64)) as u8;
 v17 = ((v1 as u64) > (v15 as u64)) as u8;
@@ -555,7 +555,7 @@ v8 = v0.wrapping_add(v7);
 v9 = v5 as u64;
 v10 = v9.wrapping_mul(16i64 as u64);
 v11 = v8.wrapping_add(v10);
-v12 = ld::<u32>(v0, len, ((v11 as usize).wrapping_add(8isize as usize))) as u32;
+v12 = unsafe { core::ptr::read_unaligned(((v11 as usize).wrapping_add(8isize as usize)) as *const u32) };
 v13 = ((v12 as u32) != ((0i64 as u32) as u32)) as u8;
 if v13 != 0 { v14 = 3i64 as u32;
 return unsafe { f1048585(len, v0, v14, v1) };
@@ -568,7 +568,7 @@ v21 = v0.wrapping_add(v20);
 v22 = v18 as u64;
 v23 = v22.wrapping_mul(16i64 as u64);
 v24 = v21.wrapping_add(v23);
-v25 = ld::<u32>(v0, len, ((v24 as usize).wrapping_add(4isize as usize))) as u32;
+v25 = unsafe { core::ptr::read_unaligned(((v24 as usize).wrapping_add(4isize as usize)) as *const u32) };
 v26 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(272isize as usize)) as *const u64) };
 v27 = v0.wrapping_add(v26);
 v28 = v25 as u64;
@@ -583,13 +583,13 @@ v36 = v35.wrapping_mul(10240i64 as u64);
 v37 = v30.wrapping_add(v36);
 v38 = v37.wrapping_add(16i64 as u64);
 v39 = v37.wrapping_add(2064i64 as u64);
-v40 = ld::<u32>(v0, len, (v34 as usize)) as u32;
+v40 = unsafe { core::ptr::read_unaligned((v34 as usize) as *const u32) };
 v41 = unsafe { f1048593(len, v0, v38, v40, v19) };
 v42 = ((v41 as u32) < (v40 as u32)) as u8;
 v43 = v41 as u64;
 v44 = v43.wrapping_mul(2i64 as u64);
 v45 = v38.wrapping_add(v44);
-v46 = ld::<u16>(v0, len, (v45 as usize)) as u32;
+v46 = unsafe { core::ptr::read_unaligned((v45 as usize) as *const u16) } as u32;
 v47 = ((v46 as u32) == (v19 as u32)) as u8;
 v48 = v42 & v47;
 if v48 != 0 { v49 = v40.wrapping_add(-1i64 as u32);
@@ -599,7 +599,7 @@ if v51 != 0 { v53 = v50.wrapping_add(1i64 as u32);
 v54 = v53 as u64;
 v55 = v54.wrapping_mul(2i64 as u64);
 v56 = v38.wrapping_add(v55);
-v57 = ld::<u16>(v0, len, (v56 as usize)) as u32;
+v57 = unsafe { core::ptr::read_unaligned((v56 as usize) as *const u16) } as u32;
 v58 = v50 as u64;
 v59 = v58.wrapping_mul(2i64 as u64);
 v60 = v38.wrapping_add(v59);
@@ -607,7 +607,7 @@ unsafe { core::ptr::write_unaligned((v60 as usize) as *mut u16, v57 as u16) };
 v61 = v53 as u64;
 v62 = v61.wrapping_mul(8i64 as u64);
 v63 = v39.wrapping_add(v62);
-v64 = ld::<u64>(v0, len, (v63 as usize)) as u64;
+v64 = unsafe { core::ptr::read_unaligned((v63 as usize) as *const u64) };
 v65 = v50 as u64;
 v66 = v65.wrapping_mul(8i64 as u64);
 v67 = v39.wrapping_add(v66);
@@ -774,7 +774,7 @@ if v11 != 0 { v13 = v7.wrapping_add(-1i64 as u32);
 v14 = v13 as u64;
 v15 = v14.wrapping_mul(24i64 as u64);
 v16 = v5.wrapping_add(v15);
-v17 = ld::<u32>(v0, len, (v16 as usize)) as u32;
+v17 = unsafe { core::ptr::read_unaligned((v16 as usize) as *const u32) };
 v18 = ((v17 as u32) == (v1 as u32)) as u8;
 v20 = if v18 != 0 { v13 } else { v9 };
 { let t = (v13, v20); v7 = t.0; v9 = t.1; continue 'b1; }
@@ -791,7 +791,7 @@ v30 = v0.wrapping_add(v29);
 v31 = v27 as u64;
 v32 = v31.wrapping_mul(16i64 as u64);
 v33 = v30.wrapping_add(v32);
-v34 = ld::<u32>(v0, len, ((v33 as usize).wrapping_add(8isize as usize))) as u32;
+v34 = unsafe { core::ptr::read_unaligned(((v33 as usize).wrapping_add(8isize as usize)) as *const u32) };
 v35 = ((v34 as u32) != ((0i64 as u32) as u32)) as u8;
 if v35 != 0 { v36 = 3i64 as u32;
 return unsafe { f1048585(len, v0, v36, v1) };
@@ -809,7 +809,7 @@ v48 = v0.wrapping_add(v47);
 v49 = v45 as u64;
 v50 = v49.wrapping_mul(16i64 as u64);
 v51 = v48.wrapping_add(v50);
-v52 = ld::<u32>(v0, len, ((v51 as usize).wrapping_add(8isize as usize))) as u32;
+v52 = unsafe { core::ptr::read_unaligned(((v51 as usize).wrapping_add(8isize as usize)) as *const u32) };
 v53 = ((v52 as u32) != ((0i64 as u32) as u32)) as u8;
 if v53 != 0 { v54 = 3i64 as u32;
 return unsafe { f1048585(len, v0, v54, v41) };
@@ -827,7 +827,7 @@ return unsafe { f1048585(len, v0, v56, v41) };
 v58 = v9 as u64;
 v59 = v58.wrapping_mul(24i64 as u64);
 v60 = v5.wrapping_add(v59);
-v61 = ld::<u64>(v0, len, ((v60 as usize).wrapping_add(16isize as usize))) as u64;
+v61 = unsafe { core::ptr::read_unaligned(((v60 as usize).wrapping_add(16isize as usize)) as *const u64) };
 v62 = 1i64 as u32;
 v63 = 0i64 as u64;
 v64 = ((v1 as u32) != ((0i64 as u32) as u32)) as u8;
@@ -879,7 +879,7 @@ v88 = v0.wrapping_add(v87);
 v89 = v83 as u64;
 v90 = v89.wrapping_mul(16i64 as u64);
 v91 = v88.wrapping_add(v90);
-v92 = ld::<u32>(v0, len, (v91 as usize)) as u32;
+v92 = unsafe { core::ptr::read_unaligned((v91 as usize) as *const u32) };
 v93 = v92 as u64;
 v94 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(104isize as usize)) as *const u32) };
 v95 = v94 & (2i64 as u32);
@@ -910,7 +910,7 @@ v119 = v118.wrapping_shl(v116 as u32);
 v120 = v119.wrapping_add(-1i64 as u64);
 v121 = -1i64 as u64;
 v122 = if v117 != 0 { v121 } else { v120 };
-v123 = ld::<u64>(v0, len, (v115 as usize)) as u64;
+v123 = unsafe { core::ptr::read_unaligned((v115 as usize) as *const u64) };
 v124 = v123 & !v122;
 v125 = v2 & v122;
 v126 = v124 | v125;
@@ -1022,7 +1022,7 @@ v21 = v0.wrapping_add(v20);
 v22 = v17 as u64;
 v23 = v22.wrapping_mul(16i64 as u64);
 v24 = v21.wrapping_add(v23);
-v25 = ld::<u32>(v0, len, ((v24 as usize).wrapping_add(8isize as usize))) as u32;
+v25 = unsafe { core::ptr::read_unaligned(((v24 as usize).wrapping_add(8isize as usize)) as *const u32) };
 v26 = ((v25 as u32) == ((0i64 as u32) as u32)) as u8;
 if v26 != 0 { v27 = v17.wrapping_mul(1024i64 as u32);
 v28 = v5.wrapping_sub(v27);
@@ -1383,7 +1383,7 @@ v28 = v0.wrapping_add(v27);
 v29 = v23 as u64;
 v30 = v29.wrapping_mul(16i64 as u64);
 v31 = v28.wrapping_add(v30);
-v32 = ld::<u32>(v0, len, (v31 as usize)) as u32;
+v32 = unsafe { core::ptr::read_unaligned((v31 as usize) as *const u32) };
 v33 = v32 as u64;
 v34 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(104isize as usize)) as *const u32) };
 v35 = v34 & (2i64 as u32);
@@ -1481,8 +1481,8 @@ v122 = ((v121 as u32) < (v5 as u32)) as u8;
 if v122 != 0 { v124 = v121 as u64;
 v125 = v124.wrapping_mul(32i64 as u64);
 v126 = v119.wrapping_add(v125);
-v127 = ld::<u32>(v0, len, (v126 as usize)) as u32;
-v128 = ld::<u32>(v0, len, ((v126 as usize).wrapping_add(4isize as usize))) as u32;
+v127 = unsafe { core::ptr::read_unaligned((v126 as usize) as *const u32) };
+v128 = unsafe { core::ptr::read_unaligned(((v126 as usize).wrapping_add(4isize as usize)) as *const u32) };
 v129 = v127 as u64;
 v130 = v128 as u64;
 v131 = v117.wrapping_add(v129);
@@ -1501,8 +1501,8 @@ v143 = ((v142 as u32) < (v5 as u32)) as u8;
 if v143 != 0 { v145 = v142 as u64;
 v146 = v145.wrapping_mul(32i64 as u64);
 v147 = v119.wrapping_add(v146);
-v148 = ld::<u32>(v0, len, ((v147 as usize).wrapping_add(8isize as usize))) as u32;
-v149 = ld::<u32>(v0, len, ((v147 as usize).wrapping_add(12isize as usize))) as u32;
+v148 = unsafe { core::ptr::read_unaligned(((v147 as usize).wrapping_add(8isize as usize)) as *const u32) };
+v149 = unsafe { core::ptr::read_unaligned(((v147 as usize).wrapping_add(12isize as usize)) as *const u32) };
 v150 = v148 as u64;
 v151 = v149 as u64;
 v152 = v117.wrapping_add(v150);
@@ -1521,8 +1521,8 @@ v164 = ((v163 as u32) < (v5 as u32)) as u8;
 if v164 != 0 { v166 = v163 as u64;
 v167 = v166.wrapping_mul(32i64 as u64);
 v168 = v119.wrapping_add(v167);
-v169 = ld::<u32>(v0, len, ((v168 as usize).wrapping_add(16isize as usize))) as u32;
-v170 = ld::<u32>(v0, len, ((v168 as usize).wrapping_add(20isize as usize))) as u32;
+v169 = unsafe { core::ptr::read_unaligned(((v168 as usize).wrapping_add(16isize as usize)) as *const u32) };
+v170 = unsafe { core::ptr::read_unaligned(((v168 as usize).wrapping_add(20isize as usize)) as *const u32) };
 v171 = v169 as u64;
 v172 = v170 as u64;
 v173 = v117.wrapping_add(v171);
@@ -1541,8 +1541,8 @@ v185 = ((v184 as u32) < (v5 as u32)) as u8;
 if v185 != 0 { v187 = v184 as u64;
 v188 = v187.wrapping_mul(32i64 as u64);
 v189 = v119.wrapping_add(v188);
-v190 = ld::<u32>(v0, len, ((v189 as usize).wrapping_add(24isize as usize))) as u32;
-v191 = ld::<u32>(v0, len, ((v189 as usize).wrapping_add(28isize as usize))) as u32;
+v190 = unsafe { core::ptr::read_unaligned(((v189 as usize).wrapping_add(24isize as usize)) as *const u32) };
+v191 = unsafe { core::ptr::read_unaligned(((v189 as usize).wrapping_add(28isize as usize)) as *const u32) };
 v192 = v190 as u64;
 v193 = v191 as u64;
 v194 = v117.wrapping_add(v192);
@@ -1571,7 +1571,7 @@ v216 = ((v209 as u32) < (v5 as u32)) as u8;
 if v216 != 0 { v217 = v209 as u64;
 v218 = v217.wrapping_mul(32i64 as u64);
 v219 = v119.wrapping_add(v218);
-v220 = ld::<u32>(v0, len, ((v219 as usize).wrapping_add(4isize as usize))) as u32;
+v220 = unsafe { core::ptr::read_unaligned(((v219 as usize).wrapping_add(4isize as usize)) as *const u32) };
 v221 = v315.wrapping_add(v220);
 { v316 = v221; break 'm27; }
  } else { v316 = v315; break 'm27; }
@@ -1589,7 +1589,7 @@ v232 = ((v225 as u32) < (v5 as u32)) as u8;
 if v232 != 0 { v233 = v225 as u64;
 v234 = v233.wrapping_mul(32i64 as u64);
 v235 = v119.wrapping_add(v234);
-v236 = ld::<u32>(v0, len, ((v235 as usize).wrapping_add(12isize as usize))) as u32;
+v236 = unsafe { core::ptr::read_unaligned(((v235 as usize).wrapping_add(12isize as usize)) as *const u32) };
 v237 = v319.wrapping_add(v236);
 { v320 = v237; break 'm32; }
  } else { v320 = v319; break 'm32; }
@@ -1607,7 +1607,7 @@ v248 = ((v241 as u32) < (v5 as u32)) as u8;
 if v248 != 0 { v249 = v241 as u64;
 v250 = v249.wrapping_mul(32i64 as u64);
 v251 = v119.wrapping_add(v250);
-v252 = ld::<u32>(v0, len, ((v251 as usize).wrapping_add(20isize as usize))) as u32;
+v252 = unsafe { core::ptr::read_unaligned(((v251 as usize).wrapping_add(20isize as usize)) as *const u32) };
 v253 = v323.wrapping_add(v252);
 { v324 = v253; break 'm37; }
  } else { v324 = v323; break 'm37; }
@@ -1625,7 +1625,7 @@ v264 = ((v257 as u32) < (v5 as u32)) as u8;
 if v264 != 0 { v265 = v257 as u64;
 v266 = v265.wrapping_mul(32i64 as u64);
 v267 = v119.wrapping_add(v266);
-v268 = ld::<u32>(v0, len, ((v267 as usize).wrapping_add(28isize as usize))) as u32;
+v268 = unsafe { core::ptr::read_unaligned(((v267 as usize).wrapping_add(28isize as usize)) as *const u32) };
 v269 = v327.wrapping_add(v268);
 { v328 = v269; break 'm42; }
  } else { v328 = v327; break 'm42; }
@@ -1728,7 +1728,7 @@ return v309;
  }
 }
 
-#[inline(always)]
+#[inline(never)]
 unsafe fn f1048585(len: u64, a0: u64, a1: u32, a2: u32) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
@@ -1913,7 +1913,7 @@ v11 = v0.wrapping_add(v10);
 v12 = v4 as u64;
 v13 = v12.wrapping_mul(16i64 as u64);
 v14 = v11.wrapping_add(v13);
-v15 = ld::<u32>(v0, len, ((v14 as usize).wrapping_add(4isize as usize))) as u32;
+v15 = unsafe { core::ptr::read_unaligned(((v14 as usize).wrapping_add(4isize as usize)) as *const u32) };
 v16 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(272isize as usize)) as *const u64) };
 v17 = v0.wrapping_add(v16);
 v18 = v15 as u64;
@@ -1928,7 +1928,7 @@ v26 = v25.wrapping_mul(10240i64 as u64);
 v27 = v20.wrapping_add(v26);
 v28 = v27.wrapping_add(16i64 as u64);
 v29 = v27.wrapping_add(2064i64 as u64);
-v30 = ld::<u32>(v0, len, (v24 as usize)) as u32;
+v30 = unsafe { core::ptr::read_unaligned((v24 as usize) as *const u32) };
 v31 = ((v3 as u64) >= (v9 as u64)) as u8;
 v32 = if v31 != 0 { v9 } else { v3 };
 if v31 != 0 { 'm7: {
@@ -1937,7 +1937,7 @@ v34 = ((v33 as u32) < (v30 as u32)) as u8;
 v35 = v33 as u64;
 v36 = v35.wrapping_mul(2i64 as u64);
 v37 = v28.wrapping_add(v36);
-v38 = ld::<u16>(v0, len, (v37 as usize)) as u32;
+v38 = unsafe { core::ptr::read_unaligned((v37 as usize) as *const u16) } as u32;
 v39 = ((v38 as u32) == (v5 as u32)) as u8;
 v40 = v34 & v39;
 if v40 != 0 { v41 = v33 as u64;
@@ -1951,7 +1951,7 @@ if v45 != 0 { v47 = v44.wrapping_add(-1i64 as u32);
 v48 = v47 as u64;
 v49 = v48.wrapping_mul(2i64 as u64);
 v50 = v28.wrapping_add(v49);
-v51 = ld::<u16>(v0, len, (v50 as usize)) as u32;
+v51 = unsafe { core::ptr::read_unaligned((v50 as usize) as *const u16) } as u32;
 v52 = v44 as u64;
 v53 = v52.wrapping_mul(2i64 as u64);
 v54 = v28.wrapping_add(v53);
@@ -1959,7 +1959,7 @@ unsafe { core::ptr::write_unaligned((v54 as usize) as *mut u16, v51 as u16) };
 v55 = v47 as u64;
 v56 = v55.wrapping_mul(8i64 as u64);
 v57 = v29.wrapping_add(v56);
-v58 = ld::<u64>(v0, len, (v57 as usize)) as u64;
+v58 = unsafe { core::ptr::read_unaligned((v57 as usize) as *const u64) };
 v59 = v44 as u64;
 v60 = v59.wrapping_mul(8i64 as u64);
 v61 = v29.wrapping_add(v60);
@@ -1989,7 +1989,7 @@ v70 = v30.wrapping_add(-1i64 as u32);
 v71 = v70 as u64;
 v72 = v71.wrapping_mul(2i64 as u64);
 v73 = v28.wrapping_add(v72);
-v74 = ld::<u16>(v0, len, (v73 as usize)) as u32;
+v74 = unsafe { core::ptr::read_unaligned((v73 as usize) as *const u16) } as u32;
 v75 = ((v74 as u32) >= (v5 as u32)) as u8;
 if v75 != 0 { 'm15: {
 v76 = unsafe { f1048593(len, v0, v28, v30, v5) };
@@ -1997,7 +1997,7 @@ v77 = ((v76 as u32) < (v30 as u32)) as u8;
 v78 = v76 as u64;
 v79 = v78.wrapping_mul(2i64 as u64);
 v80 = v28.wrapping_add(v79);
-v81 = ld::<u16>(v0, len, (v80 as usize)) as u32;
+v81 = unsafe { core::ptr::read_unaligned((v80 as usize) as *const u16) } as u32;
 v82 = ((v81 as u32) == (v5 as u32)) as u8;
 v83 = v77 & v82;
 if v83 != 0 { v84 = v30.wrapping_add(-1i64 as u32);
@@ -2007,7 +2007,7 @@ if v86 != 0 { v88 = v85.wrapping_add(1i64 as u32);
 v89 = v88 as u64;
 v90 = v89.wrapping_mul(2i64 as u64);
 v91 = v28.wrapping_add(v90);
-v92 = ld::<u16>(v0, len, (v91 as usize)) as u32;
+v92 = unsafe { core::ptr::read_unaligned((v91 as usize) as *const u16) } as u32;
 v93 = v85 as u64;
 v94 = v93.wrapping_mul(2i64 as u64);
 v95 = v28.wrapping_add(v94);
@@ -2015,7 +2015,7 @@ unsafe { core::ptr::write_unaligned((v95 as usize) as *mut u16, v92 as u16) };
 v96 = v88 as u64;
 v97 = v96.wrapping_mul(8i64 as u64);
 v98 = v29.wrapping_add(v97);
-v99 = ld::<u64>(v0, len, (v98 as usize)) as u64;
+v99 = unsafe { core::ptr::read_unaligned((v98 as usize) as *const u64) };
 v100 = v85 as u64;
 v101 = v100.wrapping_mul(8i64 as u64);
 v102 = v29.wrapping_add(v101);
@@ -2047,7 +2047,7 @@ v109 = v0.wrapping_add(v108);
 v110 = v4 as u64;
 v111 = v110.wrapping_mul(16i64 as u64);
 v112 = v109.wrapping_add(v111);
-v113 = ld::<u32>(v0, len, (v112 as usize)) as u32;
+v113 = unsafe { core::ptr::read_unaligned((v112 as usize) as *const u32) };
 v114 = v113 as u64;
 v115 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(104isize as usize)) as *const u32) };
 v116 = v115 & (2i64 as u32);
@@ -2074,7 +2074,7 @@ v136 = v135.wrapping_shl(v133 as u32);
 v137 = v136.wrapping_add(-1i64 as u64);
 v138 = -1i64 as u64;
 v139 = if v134 != 0 { v138 } else { v137 };
-v140 = ld::<u64>(v0, len, (v132 as usize)) as u64;
+v140 = unsafe { core::ptr::read_unaligned((v132 as usize) as *const u64) };
 v141 = v140 & !v139;
 v142 = v32 & v139;
 v143 = v141 | v142;
@@ -2177,7 +2177,7 @@ v11 = v0.wrapping_add(v10);
 v12 = v3 as u64;
 v13 = v12.wrapping_mul(16i64 as u64);
 v14 = v11.wrapping_add(v13);
-v15 = ld::<u32>(v0, len, (v14 as usize)) as u32;
+v15 = unsafe { core::ptr::read_unaligned((v14 as usize) as *const u32) };
 v16 = v15 as u64;
 v17 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(104isize as usize)) as *const u32) };
 v18 = v17 & (2i64 as u32);
@@ -2205,7 +2205,7 @@ v39 = v38.wrapping_shl(v36 as u32);
 v40 = v39.wrapping_add(-1i64 as u64);
 v41 = -1i64 as u64;
 v42 = if v37 != 0 { v41 } else { v40 };
-v43 = ld::<u64>(v0, len, (v35 as usize)) as u64;
+v43 = unsafe { core::ptr::read_unaligned((v35 as usize) as *const u64) };
 v44 = v43 & v42;
 v45 = v1 as u64;
 v46 = v45.wrapping_shl(3);
@@ -2218,7 +2218,7 @@ v51 = v0.wrapping_add(v50);
 v52 = v3 as u64;
 v53 = v52.wrapping_mul(16i64 as u64);
 v54 = v51.wrapping_add(v53);
-v55 = ld::<u32>(v0, len, ((v54 as usize).wrapping_add(4isize as usize))) as u32;
+v55 = unsafe { core::ptr::read_unaligned(((v54 as usize).wrapping_add(4isize as usize)) as *const u32) };
 v56 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(272isize as usize)) as *const u64) };
 v57 = v0.wrapping_add(v56);
 v58 = v55 as u64;
@@ -2232,13 +2232,13 @@ v65 = v64.wrapping_mul(10240i64 as u64);
 v66 = v60.wrapping_add(v65);
 v67 = v66.wrapping_add(16i64 as u64);
 v68 = v66.wrapping_add(2064i64 as u64);
-v69 = ld::<u32>(v0, len, (v63 as usize)) as u32;
+v69 = unsafe { core::ptr::read_unaligned((v63 as usize) as *const u32) };
 v70 = unsafe { f1048593(len, v0, v67, v69, v4) };
 v71 = ((v70 as u32) < (v69 as u32)) as u8;
 if v71 != 0 { v72 = v70 as u64;
 v73 = v72.wrapping_mul(8i64 as u64);
 v74 = v68.wrapping_add(v73);
-v75 = ld::<u64>(v0, len, (v74 as usize)) as u64;
+v75 = unsafe { core::ptr::read_unaligned((v74 as usize) as *const u64) };
 return v75;
  } else { return v44;
  }
@@ -2339,7 +2339,7 @@ v7 = v0.wrapping_add(v6);
 v8 = v3 as u64;
 v9 = v8.wrapping_mul(16i64 as u64);
 v10 = v7.wrapping_add(v9);
-v11 = ld::<u32>(v0, len, (v10 as usize)) as u32;
+v11 = unsafe { core::ptr::read_unaligned((v10 as usize) as *const u32) };
 v12 = v11 as u64;
 v13 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(104isize as usize)) as *const u32) };
 v14 = v13 & (2i64 as u32);
@@ -2367,7 +2367,7 @@ v32 = v0.wrapping_add(v31);
 v33 = v3 as u64;
 v34 = v33.wrapping_mul(16i64 as u64);
 v35 = v32.wrapping_add(v34);
-v36 = ld::<u32>(v0, len, ((v35 as usize).wrapping_add(4isize as usize))) as u32;
+v36 = unsafe { core::ptr::read_unaligned(((v35 as usize).wrapping_add(4isize as usize)) as *const u32) };
 v37 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(272isize as usize)) as *const u64) };
 v38 = v0.wrapping_add(v37);
 v39 = v36 as u64;
@@ -2382,7 +2382,7 @@ v47 = v46.wrapping_mul(10240i64 as u64);
 v48 = v41.wrapping_add(v47);
 v49 = v48.wrapping_add(16i64 as u64);
 v50 = v48.wrapping_add(2064i64 as u64);
-v51 = ld::<u32>(v0, len, (v45 as usize)) as u32;
+v51 = unsafe { core::ptr::read_unaligned((v45 as usize) as *const u32) };
 v52 = unsafe { f1048593(len, v0, v49, v51, v4) };
 { v53 = v51; 'b3: loop {
 v54 = ((v53 as u32) > (v52 as u32)) as u8;
@@ -2390,7 +2390,7 @@ if v54 != 0 { v56 = v53.wrapping_add(-1i64 as u32);
 v57 = v56 as u64;
 v58 = v57.wrapping_mul(2i64 as u64);
 v59 = v49.wrapping_add(v58);
-v60 = ld::<u16>(v0, len, (v59 as usize)) as u32;
+v60 = unsafe { core::ptr::read_unaligned((v59 as usize) as *const u16) } as u32;
 v61 = v53 as u64;
 v62 = v61.wrapping_mul(2i64 as u64);
 v63 = v49.wrapping_add(v62);
@@ -2398,7 +2398,7 @@ unsafe { core::ptr::write_unaligned((v63 as usize) as *mut u16, v60 as u16) };
 v64 = v56 as u64;
 v65 = v64.wrapping_mul(8i64 as u64);
 v66 = v50.wrapping_add(v65);
-v67 = ld::<u64>(v0, len, (v66 as usize)) as u64;
+v67 = unsafe { core::ptr::read_unaligned((v66 as usize) as *const u64) };
 v68 = v53 as u64;
 v69 = v68.wrapping_mul(8i64 as u64);
 v70 = v50.wrapping_add(v69);
@@ -2424,7 +2424,7 @@ v78 = 0i64 as u32;
 return v78;
 }
 
-#[inline(always)]
+#[inline(never)]
 unsafe fn f1048589(len: u64, a0: u64, a1: u32) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
@@ -2574,7 +2574,7 @@ unsafe { core::ptr::write_unaligned(((v0 as usize).wrapping_add(456isize as usiz
 v19 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(440isize as usize)) as *const u64) };
 v20 = v0.wrapping_add(v19);
 v21 = v20.wrapping_add(v18);
-v22 = ld::<u32>(v0, len, (v21 as usize)) as u32;
+v22 = unsafe { core::ptr::read_unaligned((v21 as usize) as *const u32) };
 v23 = v22 as u64;
 { v117 = v23; break 'm7; }
  }
@@ -2631,7 +2631,7 @@ unsafe { core::ptr::write_unaligned(((v0 as usize).wrapping_add(312isize as usiz
 v56 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(296isize as usize)) as *const u64) };
 v57 = v0.wrapping_add(v56);
 v58 = v57.wrapping_add(v55);
-v59 = ld::<u32>(v0, len, (v58 as usize)) as u32;
+v59 = unsafe { core::ptr::read_unaligned((v58 as usize) as *const u32) };
 { v118 = v59; break 'm23; }
  }
 }
@@ -2668,7 +2668,7 @@ v81 = v0.wrapping_add(v80);
 v82 = v1 as u64;
 v83 = v82.wrapping_mul(16i64 as u64);
 v84 = v81.wrapping_add(v83);
-v85 = ld::<u32>(v0, len, ((v84 as usize).wrapping_add(4isize as usize))) as u32;
+v85 = unsafe { core::ptr::read_unaligned(((v84 as usize).wrapping_add(4isize as usize)) as *const u32) };
 v86 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(272isize as usize)) as *const u64) };
 v87 = v0.wrapping_add(v86);
 v88 = v85 as u64;
@@ -2772,7 +2772,7 @@ v3 = v0.wrapping_add(v2);
 v4 = v1 as u64;
 v5 = v4.wrapping_mul(16i64 as u64);
 v6 = v3.wrapping_add(v5);
-v7 = ld::<u32>(v0, len, ((v6 as usize).wrapping_add(8isize as usize))) as u32;
+v7 = unsafe { core::ptr::read_unaligned(((v6 as usize).wrapping_add(8isize as usize)) as *const u32) };
 v8 = v1.wrapping_add(1i64 as u32);
 v9 = v8.wrapping_mul(1024i64 as u32);
 v10 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(128isize as usize)) as *const u32) };
@@ -2794,7 +2794,7 @@ v27 = v26.wrapping_shr(1);
 v28 = v27 as u64;
 v29 = v28.wrapping_mul(24i64 as u64);
 v30 = v20.wrapping_add(v29);
-v31 = ld::<u32>(v0, len, (v30 as usize)) as u32;
+v31 = unsafe { core::ptr::read_unaligned((v30 as usize) as *const u32) };
 v32 = ((v31 as u32) < (v9 as u32)) as u8;
 v33 = v27.wrapping_add(1i64 as u32);
 v34 = if v32 != 0 { v33 } else { v21 };
@@ -2806,7 +2806,7 @@ if v37 != 0 { v38 = v21.wrapping_add(-1i64 as u32);
 v39 = v38 as u64;
 v40 = v39.wrapping_mul(24i64 as u64);
 v41 = v20.wrapping_add(v40);
-v42 = ld::<u32>(v0, len, (v41 as usize)) as u32;
+v42 = unsafe { core::ptr::read_unaligned((v41 as usize) as *const u32) };
 v43 = v1.wrapping_mul(1024i64 as u32);
 v44 = ((v42 as u32) >= (v43 as u32)) as u8;
 v45 = 0i64 as u32;
@@ -2824,7 +2824,7 @@ return unsafe { f1048591(len, v0, v1, v46) };
  }
 }
 
-#[inline(always)]
+#[inline(never)]
 unsafe fn f1048591(len: u64, a0: u64, a1: u32, a2: u32) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
@@ -3021,7 +3021,7 @@ v10 = v0.wrapping_add(v9);
 v11 = v1 as u64;
 v12 = v11.wrapping_mul(16i64 as u64);
 v13 = v10.wrapping_add(v12);
-v14 = ld::<u32>(v0, len, (v13 as usize)) as u32;
+v14 = unsafe { core::ptr::read_unaligned((v13 as usize) as *const u32) };
 v15 = v14 as u64;
 v16 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(104isize as usize)) as *const u32) };
 v17 = v16 & (2i64 as u32);
@@ -3037,7 +3037,7 @@ v26 = v0.wrapping_add(v25);
 v27 = v1 as u64;
 v28 = v27.wrapping_mul(16i64 as u64);
 v29 = v26.wrapping_add(v28);
-v30 = ld::<u32>(v0, len, ((v29 as usize).wrapping_add(4isize as usize))) as u32;
+v30 = unsafe { core::ptr::read_unaligned(((v29 as usize).wrapping_add(4isize as usize)) as *const u32) };
 v31 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(272isize as usize)) as *const u64) };
 v32 = v0.wrapping_add(v31);
 v33 = v30 as u64;
@@ -3052,7 +3052,7 @@ v41 = v40.wrapping_mul(10240i64 as u64);
 v42 = v35.wrapping_add(v41);
 v43 = v42.wrapping_add(16i64 as u64);
 v44 = v42.wrapping_add(2064i64 as u64);
-v45 = ld::<u32>(v0, len, (v39 as usize)) as u32;
+v45 = unsafe { core::ptr::read_unaligned((v39 as usize) as *const u32) };
 v46 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(72isize as usize)) as *const u32) };
 v47 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(76isize as usize)) as *const u32) };
 v48 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(176isize as usize)) as *const u64) };
@@ -3077,7 +3077,7 @@ v66 = ((v65 as u32) < (v2 as u32)) as u8;
 if v66 != 0 { 'm8: {
 v68 = v65 as u64;
 v69 = v24.wrapping_add(v68);
-v70 = ld::<u8>(v0, len, (v69 as usize)) as u32;
+v70 = unsafe { core::ptr::read_unaligned((v69 as usize) as *const u8) } as u32;
 v71 = ((v70 as u32) >= (v46 as u32)) as u8;
 if v71 != 0 { 'm7: {
 v73 = ((v178 as u32) < (v45 as u32)) as u8;
@@ -3085,12 +3085,12 @@ if v73 != 0 { 'm6: {
 v74 = v178 as u64;
 v75 = v74.wrapping_mul(2i64 as u64);
 v76 = v43.wrapping_add(v75);
-v77 = ld::<u16>(v0, len, (v76 as usize)) as u32;
+v77 = unsafe { core::ptr::read_unaligned((v76 as usize) as *const u16) } as u32;
 v78 = ((v77 as u32) == (v65 as u32)) as u8;
 if v78 != 0 { v79 = v178 as u64;
 v80 = v79.wrapping_mul(8i64 as u64);
 v81 = v44.wrapping_add(v80);
-v82 = ld::<u64>(v0, len, (v81 as usize)) as u64;
+v82 = unsafe { core::ptr::read_unaligned((v81 as usize) as *const u64) };
 v83 = v82 as u32;
 { v180 = v83; break 'm6; }
  } else { v180 = v36; break 'm6; }
@@ -3112,7 +3112,7 @@ v92 = ((v91 as u64) < (v51 as u64)) as u8;
 if v92 != 0 { v93 = v90 as u64;
 v94 = v93.wrapping_mul(4i64 as u64);
 v95 = v49.wrapping_add(v94);
-v96 = ld::<u32>(v0, len, (v95 as usize)) as u32;
+v96 = unsafe { core::ptr::read_unaligned((v95 as usize) as *const u32) };
 { v97 = v96; break 'm10; }
  } else { v97 = v36; break 'm10; }
 }
@@ -3130,7 +3130,7 @@ v107 = v98 & (63i64 as u32);
 v108 = v107 as u64;
 v109 = 1i64 as u64;
 v110 = v109.wrapping_shl(v108 as u32);
-v111 = ld::<u64>(v0, len, (v106 as usize)) as u64;
+v111 = unsafe { core::ptr::read_unaligned((v106 as usize) as *const u64) };
 v112 = v111 | v110;
 unsafe { core::ptr::write_unaligned((v106 as usize) as *mut u64, v112) };
 v113 = v99.wrapping_shr(6);
@@ -3142,7 +3142,7 @@ v118 = v99 & (63i64 as u32);
 v119 = v118 as u64;
 v120 = 1i64 as u64;
 v121 = v120.wrapping_shl(v119 as u32);
-v122 = ld::<u64>(v0, len, (v117 as usize)) as u64;
+v122 = unsafe { core::ptr::read_unaligned((v117 as usize) as *const u64) };
 v123 = v122 | v121;
 unsafe { core::ptr::write_unaligned((v117 as usize) as *mut u64, v123) };
 if v57 != 0 { v124 = 0i64 as u64;
@@ -3155,7 +3155,7 @@ v130 = v98 & (63i64 as u32);
 v131 = v130 as u64;
 v132 = 1i64 as u64;
 v133 = v132.wrapping_shl(v131 as u32);
-v134 = ld::<u64>(v0, len, (v129 as usize)) as u64;
+v134 = unsafe { core::ptr::read_unaligned((v129 as usize) as *const u64) };
 v135 = v134 | v133;
 unsafe { core::ptr::write_unaligned((v129 as usize) as *mut u64, v135) };
 v136 = v99.wrapping_shr(6);
@@ -3167,7 +3167,7 @@ v141 = v99 & (63i64 as u32);
 v142 = v141 as u64;
 v143 = 1i64 as u64;
 v144 = v143.wrapping_shl(v142 as u32);
-v145 = ld::<u64>(v0, len, (v140 as usize)) as u64;
+v145 = unsafe { core::ptr::read_unaligned((v140 as usize) as *const u64) };
 v146 = v145 | v144;
 unsafe { core::ptr::write_unaligned((v140 as usize) as *mut u64, v146) };
 { break 'm12; }
@@ -3200,7 +3200,7 @@ v165 = v0.wrapping_add(v164);
 v166 = v1 as u64;
 v167 = v166.wrapping_mul(16i64 as u64);
 v168 = v165.wrapping_add(v167);
-v169 = ld::<u32>(v0, len, ((v168 as usize).wrapping_add(4isize as usize))) as u32;
+v169 = unsafe { core::ptr::read_unaligned(((v168 as usize).wrapping_add(4isize as usize)) as *const u32) };
 unsafe { core::ptr::write_unaligned((v163 as usize) as *mut u32, v169) };
 unsafe { core::ptr::write_unaligned(((v0 as usize).wrapping_add(312isize as usize)) as *mut u64, v155) };
 v170 = 4294967295i64 as u32;
@@ -3226,7 +3226,7 @@ return v176;
  }
 }
 
-#[inline(always)]
+#[inline(never)]
 unsafe fn f1048592(len: u64, a0: u64, a1: u32, a2: u32, a3: u32) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
@@ -3362,7 +3362,7 @@ v5 = v0.wrapping_add(v4);
 v6 = v1 as u64;
 v7 = v6.wrapping_mul(16i64 as u64);
 v8 = v5.wrapping_add(v7);
-v9 = ld::<u32>(v0, len, ((v8 as usize).wrapping_add(4isize as usize))) as u32;
+v9 = unsafe { core::ptr::read_unaligned(((v8 as usize).wrapping_add(4isize as usize)) as *const u32) };
 v10 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(272isize as usize)) as *const u64) };
 v11 = v0.wrapping_add(v10);
 v12 = v9 as u64;
@@ -3376,7 +3376,7 @@ v19 = v18.wrapping_mul(10240i64 as u64);
 v20 = v14.wrapping_add(v19);
 v21 = v20.wrapping_add(16i64 as u64);
 v22 = v20.wrapping_add(2064i64 as u64);
-v23 = ld::<u32>(v0, len, (v17 as usize)) as u32;
+v23 = unsafe { core::ptr::read_unaligned((v17 as usize) as *const u32) };
 v24 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(320isize as usize)) as *const u64) };
 v25 = v0.wrapping_add(v24);
 v26 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(336isize as usize)) as *const u64) };
@@ -3413,7 +3413,7 @@ v55 = ((v54 as u32) < (v23 as u32)) as u8;
 v56 = v54 as u64;
 v57 = v56.wrapping_mul(2i64 as u64);
 v58 = v21.wrapping_add(v57);
-v59 = ld::<u16>(v0, len, (v58 as usize)) as u32;
+v59 = unsafe { core::ptr::read_unaligned((v58 as usize) as *const u16) } as u32;
 v60 = v59.wrapping_shr(8);
 v61 = ((v60 as u32) == (v51 as u32)) as u8;
 v62 = v55 & v61;
@@ -3434,7 +3434,7 @@ v72 = ((v71 as u32) < (v23 as u32)) as u8;
 if v72 != 0 { v74 = v71 as u64;
 v75 = v74.wrapping_mul(2i64 as u64);
 v76 = v21.wrapping_add(v75);
-v77 = ld::<u16>(v0, len, (v76 as usize)) as u32;
+v77 = unsafe { core::ptr::read_unaligned((v76 as usize) as *const u16) } as u32;
 v78 = v71 as u64;
 v79 = v78.wrapping_mul(1i64 as u64);
 v80 = v70.wrapping_add(v79);
@@ -3448,7 +3448,7 @@ v85 = ((v84 as u32) < (v23 as u32)) as u8;
 if v85 != 0 { v87 = v84 as u64;
 v88 = v87.wrapping_mul(8i64 as u64);
 v89 = v22.wrapping_add(v88);
-v90 = ld::<u64>(v0, len, (v89 as usize)) as u64;
+v90 = unsafe { core::ptr::read_unaligned((v89 as usize) as *const u64) };
 v91 = v84 as u64;
 v92 = v91.wrapping_mul(v31);
 v93 = v82.wrapping_add(v92);
@@ -3459,7 +3459,7 @@ v97 = v96.wrapping_shl(v94 as u32);
 v98 = v97.wrapping_add(-1i64 as u64);
 v99 = -1i64 as u64;
 v100 = if v95 != 0 { v99 } else { v98 };
-v101 = ld::<u64>(v0, len, (v93 as usize)) as u64;
+v101 = unsafe { core::ptr::read_unaligned((v93 as usize) as *const u64) };
 v102 = v101 & !v100;
 v103 = v90 & v100;
 v104 = v102 | v103;
@@ -3513,7 +3513,7 @@ return v126;
  }
 }
 
-#[inline(always)]
+#[inline(never)]
 unsafe fn f1048593(len: u64, a0: u64, a1: u64, a2: u32, a3: u32) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u64 = 0;
@@ -3546,7 +3546,7 @@ v11 = v10.wrapping_shr(1);
 v12 = v11 as u64;
 v13 = v12.wrapping_mul(2i64 as u64);
 v14 = v1.wrapping_add(v13);
-v15 = ld::<u16>(v0, len, (v14 as usize)) as u32;
+v15 = unsafe { core::ptr::read_unaligned((v14 as usize) as *const u16) } as u32;
 v16 = ((v15 as u32) < (v3 as u32)) as u8;
 v17 = v11.wrapping_add(1i64 as u32);
 v18 = if v16 != 0 { v17 } else { v5 };
@@ -3558,7 +3558,7 @@ v19 = if v16 != 0 { v6 } else { v11 };
  }
 }
 
-#[inline(always)]
+#[inline(never)]
 unsafe fn f1048594(len: u64, a0: u64, a1: u64, a2: u64, a3: u64) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u64 = 0;
@@ -3600,7 +3600,7 @@ v6 = v5.wrapping_add(8i64 as u64);
 v7 = ((v6 as u64) <= (v3 as u64)) as u8;
 if v7 != 0 { v9 = v2.wrapping_add(v5);
 v10 = v1.wrapping_add(v5);
-v11 = ld::<u64>(v0, len, (v9 as usize)) as u64;
+v11 = unsafe { core::ptr::read_unaligned((v9 as usize) as *const u64) };
 unsafe { core::ptr::write_unaligned((v10 as usize) as *mut u64, v11) };
 v12 = v5.wrapping_add(8i64 as u64);
 { v5 = v12; continue 'b1; }
@@ -3609,7 +3609,7 @@ v14 = v3.wrapping_sub(v5);
 v15 = ((v14 as u64) != ((0i64 as u64) as u64)) as u8;
 if v15 != 0 { v16 = v2.wrapping_add(v5);
 v17 = v1.wrapping_add(v5);
-v18 = ld::<u64>(v0, len, (v16 as usize)) as u64;
+v18 = unsafe { core::ptr::read_unaligned((v16 as usize) as *const u64) };
 v19 = v14.wrapping_shl(3);
 v20 = ((v14 as u64) >= ((8i64 as u64) as u64)) as u8;
 v21 = 1i64 as u64;
@@ -3617,7 +3617,7 @@ v22 = v21.wrapping_shl(v19 as u32);
 v23 = v22.wrapping_add(-1i64 as u64);
 v24 = -1i64 as u64;
 v25 = if v20 != 0 { v24 } else { v23 };
-v26 = ld::<u64>(v0, len, (v17 as usize)) as u64;
+v26 = unsafe { core::ptr::read_unaligned((v17 as usize) as *const u64) };
 v27 = v26 & !v25;
 v28 = v18 & v25;
 v29 = v27 | v28;
@@ -3632,7 +3632,7 @@ return v30;
  }
 }
 
-#[inline(always)]
+#[inline(never)]
 unsafe fn f1048595(len: u64, a0: u64, a1: u64, a2: u64) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u64 = 0;
@@ -3663,7 +3663,7 @@ return v10;
  }
 }
 
-#[inline(always)]
+#[inline(never)]
 unsafe fn f1048596(len: u64, a0: u64, a1: u64, a2: u64, a3: u64) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u64 = 0;
@@ -3714,7 +3714,7 @@ v18 = v17.wrapping_shl(v15 as u32);
 v19 = v18.wrapping_add(-1i64 as u64);
 v20 = -1i64 as u64;
 v21 = if v16 != 0 { v20 } else { v19 };
-v22 = ld::<u64>(v0, len, (v14 as usize)) as u64;
+v22 = unsafe { core::ptr::read_unaligned((v14 as usize) as *const u64) };
 v23 = v22 & !v21;
 v24 = v3 & v21;
 v25 = v23 | v24;
@@ -3729,7 +3729,7 @@ return v26;
  }
 }
 
-#[inline(always)]
+#[inline(never)]
 unsafe fn f1048597(len: u64, a0: u64, a1: u32, a2: u32) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
@@ -3875,7 +3875,7 @@ v4 = v0.wrapping_add(v3);
 v5 = v1 as u64;
 v6 = v5.wrapping_mul(16i64 as u64);
 v7 = v4.wrapping_add(v6);
-v8 = ld::<u32>(v0, len, (v7 as usize)) as u32;
+v8 = unsafe { core::ptr::read_unaligned((v7 as usize) as *const u32) };
 v9 = v8 as u64;
 v10 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(104isize as usize)) as *const u32) };
 v11 = v10 & (2i64 as u32);
@@ -3911,9 +3911,9 @@ v41 = v26.wrapping_mul(v40);
 v42 = v28 as u64;
 v43 = v42.wrapping_mul(8i64 as u64);
 v44 = v25.wrapping_add(v43);
-v45 = ld::<u32>(v0, len, (v44 as usize)) as u32;
+v45 = unsafe { core::ptr::read_unaligned((v44 as usize) as *const u32) };
 v46 = v45 as u64;
-v47 = ld::<u32>(v0, len, ((v44 as usize).wrapping_add(4isize as usize))) as u32;
+v47 = unsafe { core::ptr::read_unaligned(((v44 as usize).wrapping_add(4isize as usize)) as *const u32) };
 v48 = v47 as u64;
 v49 = v41.wrapping_add(v48);
 v50 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(240isize as usize)) as *const u64) };
@@ -4019,7 +4019,7 @@ v129 = v0.wrapping_add(v128);
 v130 = v1 as u64;
 v131 = v130.wrapping_mul(16i64 as u64);
 v132 = v129.wrapping_add(v131);
-v133 = ld::<u32>(v0, len, (v132 as usize)) as u32;
+v133 = unsafe { core::ptr::read_unaligned((v132 as usize) as *const u32) };
 unsafe { core::ptr::write_unaligned((v127 as usize) as *mut u32, v133) };
 unsafe { core::ptr::write_unaligned(((v0 as usize).wrapping_add(456isize as usize)) as *mut u64, v119) };
 v134 = 0i64 as u32;
@@ -4031,7 +4031,7 @@ return v134;
  }
 }
 
-#[inline(always)]
+#[inline(never)]
 unsafe fn f1048598(len: u64, a0: u64, a1: u32, a2: u64, a3: u64) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
@@ -4163,21 +4163,21 @@ v26 = v0.wrapping_add(v25);
 v27 = v24 as u64;
 v28 = v27.wrapping_mul(4i64 as u64);
 v29 = v26.wrapping_add(v28);
-v30 = ld::<u32>(v0, len, (v29 as usize)) as u32;
+v30 = unsafe { core::ptr::read_unaligned((v29 as usize) as *const u32) };
 { let t = (v30, v16, v20); v31 = t.0; v86 = t.1; v101 = t.2; 'b2: loop {
 v32 = ((v31 as u32) != ((4294967295i64 as u32) as u32)) as u8;
 if v32 != 0 { 'm15: {
 v34 = v31 as u64;
 v35 = v34.wrapping_mul(32i64 as u64);
 v36 = v9.wrapping_add(v35);
-v37 = ld::<u64>(v0, len, ((v36 as usize).wrapping_add(24isize as usize))) as u64;
-v38 = ld::<u32>(v0, len, ((v36 as usize).wrapping_add(8isize as usize))) as u32;
+v37 = unsafe { core::ptr::read_unaligned(((v36 as usize).wrapping_add(24isize as usize)) as *const u64) };
+v38 = unsafe { core::ptr::read_unaligned(((v36 as usize).wrapping_add(8isize as usize)) as *const u32) };
 v39 = ((v37 as u64) == (v20 as u64)) as u8;
 v40 = ((v38 as u32) == (v15 as u32)) as u8;
 v41 = v39 & v40;
 if v41 != 0 { 'm11: {
-v42 = ld::<u32>(v0, len, ((v36 as usize).wrapping_add(12isize as usize))) as u32;
-v43 = ld::<u32>(v0, len, (v36 as usize)) as u32;
+v42 = unsafe { core::ptr::read_unaligned(((v36 as usize).wrapping_add(12isize as usize)) as *const u32) };
+v43 = unsafe { core::ptr::read_unaligned((v36 as usize) as *const u32) };
 v44 = v43 as u64;
 v45 = v5.wrapping_add(v44);
 v46 = v45.wrapping_add(120i64 as u64);
@@ -4192,7 +4192,7 @@ if v51 != 0 { v52 = unsafe { f1048600(len, v0, v6, v3, v7) };
  } else { v53 = v86; break 'm8; }
 }
 'm10: {
-v54 = ld::<u32>(v0, len, ((v36 as usize).wrapping_add(4isize as usize))) as u32;
+v54 = unsafe { core::ptr::read_unaligned(((v36 as usize).wrapping_add(4isize as usize)) as *const u32) };
 v55 = v54 as u64;
 v56 = ((v53 as u64) == (v55 as u64)) as u8;
 if v56 != 0 { v57 = unsafe { f1048603(len, v0, v46, v7, v53) };
@@ -4222,7 +4222,7 @@ return v65;
  }
  } else { let t = (v86, v101); v87 = t.0; v102 = t.1; break 'm15; }
 }
-v66 = ld::<u32>(v0, len, ((v36 as usize).wrapping_add(16isize as usize))) as u32;
+v66 = unsafe { core::ptr::read_unaligned(((v36 as usize).wrapping_add(16isize as usize)) as *const u32) };
 { let t = (v66, v87, v102); v31 = t.0; v86 = t.1; v101 = t.2; continue 'b2; }
  } else { unsafe { core::ptr::write_unaligned((v29 as usize) as *mut u32, v1) };
 { let t = (v86, v30, v101); v95 = t.0; v98 = t.1; v100 = t.2; break 'm17; }
@@ -4265,7 +4265,7 @@ v84 = 0i64 as u32;
 return v84;
 }
 
-#[inline(always)]
+#[inline(never)]
 unsafe fn f1048599(len: u64, a0: u64, a1: u32) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
@@ -4529,7 +4529,7 @@ v42 = ((v35 as u32) < (v1 as u32)) as u8;
 if v42 != 0 { v43 = v35 as u64;
 v44 = v43.wrapping_mul(32i64 as u64);
 v45 = v6.wrapping_add(v44);
-v46 = ld::<u32>(v0, len, ((v45 as usize).wrapping_add(4isize as usize))) as u32;
+v46 = unsafe { core::ptr::read_unaligned(((v45 as usize).wrapping_add(4isize as usize)) as *const u32) };
 v47 = v220.wrapping_add(v46);
 { v221 = v47; break 'm7; }
  } else { v221 = v220; break 'm7; }
@@ -4548,7 +4548,7 @@ v59 = ((v52 as u32) < (v1 as u32)) as u8;
 if v59 != 0 { v60 = v52 as u64;
 v61 = v60.wrapping_mul(32i64 as u64);
 v62 = v6.wrapping_add(v61);
-v63 = ld::<u32>(v0, len, ((v62 as usize).wrapping_add(12isize as usize))) as u32;
+v63 = unsafe { core::ptr::read_unaligned(((v62 as usize).wrapping_add(12isize as usize)) as *const u32) };
 v64 = v224.wrapping_add(v63);
 { v225 = v64; break 'm12; }
  } else { v225 = v224; break 'm12; }
@@ -4567,7 +4567,7 @@ v76 = ((v69 as u32) < (v1 as u32)) as u8;
 if v76 != 0 { v77 = v69 as u64;
 v78 = v77.wrapping_mul(32i64 as u64);
 v79 = v6.wrapping_add(v78);
-v80 = ld::<u32>(v0, len, ((v79 as usize).wrapping_add(20isize as usize))) as u32;
+v80 = unsafe { core::ptr::read_unaligned(((v79 as usize).wrapping_add(20isize as usize)) as *const u32) };
 v81 = v228.wrapping_add(v80);
 { v229 = v81; break 'm17; }
  } else { v229 = v228; break 'm17; }
@@ -4586,7 +4586,7 @@ v93 = ((v86 as u32) < (v1 as u32)) as u8;
 if v93 != 0 { v94 = v86 as u64;
 v95 = v94.wrapping_mul(32i64 as u64);
 v96 = v6.wrapping_add(v95);
-v97 = ld::<u32>(v0, len, ((v96 as usize).wrapping_add(28isize as usize))) as u32;
+v97 = unsafe { core::ptr::read_unaligned(((v96 as usize).wrapping_add(28isize as usize)) as *const u32) };
 v98 = v232.wrapping_add(v97);
 { v233 = v98; break 'm22; }
  } else { v233 = v232; break 'm22; }
@@ -4619,15 +4619,15 @@ v121 = ((v120 as u64) < (v16 as u64)) as u8;
 if v121 != 0 { v123 = v120.wrapping_mul(32i64 as u64);
 v124 = v14.wrapping_add(v123);
 v125 = v120.wrapping_shl(2);
-v126 = ld::<u32>(v0, len, (v124 as usize)) as u32;
+v126 = unsafe { core::ptr::read_unaligned((v124 as usize) as *const u32) };
 v127 = v3.wrapping_add(v113);
 v128 = v127.wrapping_add(v125);
 unsafe { core::ptr::write_unaligned((v128 as usize) as *mut u32, v126) };
-v129 = ld::<u32>(v0, len, ((v124 as usize).wrapping_add(4isize as usize))) as u32;
+v129 = unsafe { core::ptr::read_unaligned(((v124 as usize).wrapping_add(4isize as usize)) as *const u32) };
 v130 = v3.wrapping_add(v115);
 v131 = v130.wrapping_add(v125);
 unsafe { core::ptr::write_unaligned((v131 as usize) as *mut u32, v129) };
-v132 = ld::<u32>(v0, len, ((v124 as usize).wrapping_add(12isize as usize))) as u32;
+v132 = unsafe { core::ptr::read_unaligned(((v124 as usize).wrapping_add(12isize as usize)) as *const u32) };
 v133 = v3.wrapping_add(v117);
 v134 = v133.wrapping_add(v120);
 unsafe { core::ptr::write_unaligned((v134 as usize) as *mut u8, v132 as u8) };
@@ -5784,13 +5784,13 @@ v13 = v12 as u64;
 v15 = ((v14 as u64) < (v11 as u64)) as u8;
 if v15 != 0 { v17 = v14.wrapping_sub(v10);
 v18 = v1.wrapping_add(v17);
-v19 = ld::<u32>(v0, len, (v18 as usize)) as u32;
+v19 = unsafe { core::ptr::read_unaligned((v18 as usize) as *const u32) };
 v20 = v19.wrapping_mul(-1640531535i64 as u32);
 v21 = v20.wrapping_shr(17);
 v22 = v21 as u64;
 v23 = v22.wrapping_shl(2);
 v24 = v7.wrapping_add(v23);
-v25 = ld::<u32>(v0, len, (v24 as usize)) as u32;
+v25 = unsafe { core::ptr::read_unaligned((v24 as usize) as *const u32) };
 v26 = v25 as u64;
 v27 = v14.wrapping_sub(v26);
 v28 = 65535i64 as u64;
@@ -5811,13 +5811,13 @@ v38 = v11.wrapping_add(-65535i64 as u64);
 v39 = if v37 != 0 { v10 } else { v38 };
 v40 = v2.wrapping_sub(v3);
 v41 = v1.wrapping_add(v2);
-v42 = ld::<u32>(v0, len, (v41 as usize)) as u32;
+v42 = unsafe { core::ptr::read_unaligned((v41 as usize) as *const u32) };
 v43 = v42.wrapping_mul(-1640531535i64 as u32);
 v44 = v43.wrapping_shr(17);
 v45 = v44 as u64;
 v46 = v45.wrapping_shl(2);
 v47 = v7.wrapping_add(v46);
-v48 = ld::<u32>(v0, len, (v47 as usize)) as u32;
+v48 = unsafe { core::ptr::read_unaligned((v47 as usize) as *const u32) };
 v49 = v48 as u64;
 v50 = 8i64 as u64;
 v51 = 0i64 as u64;
@@ -5831,17 +5831,17 @@ v60 = v52.wrapping_sub(v10);
 v62 = v3.wrapping_add(v203);
 v63 = v62.wrapping_add(-1i64 as u64);
 v64 = v1.wrapping_add(v63);
-v65 = ld::<u16>(v0, len, (v64 as usize)) as u32;
+v65 = unsafe { core::ptr::read_unaligned((v64 as usize) as *const u16) } as u32;
 v66 = v65 as u64;
 v67 = v60.wrapping_sub(v40);
 v68 = v67.wrapping_add(v203);
 v69 = v68.wrapping_add(-1i64 as u64);
 v70 = v1.wrapping_add(v69);
-v71 = ld::<u16>(v0, len, (v70 as usize)) as u32;
+v71 = unsafe { core::ptr::read_unaligned((v70 as usize) as *const u16) } as u32;
 v72 = v71 as u64;
 v73 = ((v66 as u64) == (v72 as u64)) as u8;
 v74 = v1.wrapping_add(v60);
-v75 = ld::<u32>(v0, len, (v74 as usize)) as u32;
+v75 = unsafe { core::ptr::read_unaligned((v74 as usize) as *const u32) };
 v76 = ((v75 as u32) == (v42 as u32)) as u8;
 v77 = v73 & v76;
 if v77 != 0 { v78 = v3.wrapping_sub(v2);
@@ -5858,9 +5858,9 @@ v90 = v89.wrapping_add(-4i64 as u64);
 v91 = v60.wrapping_add(v82);
 v92 = v91.wrapping_add(-4i64 as u64);
 v93 = v1.wrapping_add(v90);
-v94 = ld::<u32>(v0, len, (v93 as usize)) as u32;
+v94 = unsafe { core::ptr::read_unaligned((v93 as usize) as *const u32) };
 v95 = v1.wrapping_add(v92);
-v96 = ld::<u32>(v0, len, (v95 as usize)) as u32;
+v96 = unsafe { core::ptr::read_unaligned((v95 as usize) as *const u32) };
 v97 = v94 ^ v96;
 v98 = ((v97 as u32) != ((0i64 as u32) as u32)) as u8;
 v99 = v97.leading_zeros() as u32;
@@ -5883,9 +5883,9 @@ v114 = v113.wrapping_add(-4i64 as u64);
 v115 = v60.wrapping_add(v82);
 v116 = v115.wrapping_add(-4i64 as u64);
 v117 = v1.wrapping_add(v114);
-v118 = ld::<u32>(v0, len, (v117 as usize)) as u32;
+v118 = unsafe { core::ptr::read_unaligned((v117 as usize) as *const u32) };
 v119 = v1.wrapping_add(v116);
-v120 = ld::<u32>(v0, len, (v119 as usize)) as u32;
+v120 = unsafe { core::ptr::read_unaligned((v119 as usize) as *const u32) };
 v121 = v118 ^ v120;
 v122 = v121.leading_zeros() as u32;
 v123 = v122.wrapping_shr(3);
@@ -5912,9 +5912,9 @@ if v138 != 0 { 'm17: {
 v140 = v128.wrapping_add(v132);
 v141 = v129.wrapping_add(v132);
 v142 = v1.wrapping_add(v140);
-v143 = ld::<u64>(v0, len, (v142 as usize)) as u64;
+v143 = unsafe { core::ptr::read_unaligned((v142 as usize) as *const u64) };
 v144 = v1.wrapping_add(v141);
-v145 = ld::<u64>(v0, len, (v144 as usize)) as u64;
+v145 = unsafe { core::ptr::read_unaligned((v144 as usize) as *const u64) };
 v146 = v143 ^ v145;
 v147 = ((v146 as u64) != ((0i64 as u64) as u64)) as u8;
 if v147 != 0 { v148 = v146.trailing_zeros() as u64;
@@ -5941,7 +5941,7 @@ v165 = v164.wrapping_shl(v162 as u32);
 v166 = v165.wrapping_add(-1i64 as u64);
 v167 = -1i64 as u64;
 v168 = if v163 != 0 { v167 } else { v166 };
-v169 = ld::<u64>(v0, len, (v159 as usize)) as u64;
+v169 = unsafe { core::ptr::read_unaligned((v159 as usize) as *const u64) };
 v170 = v169 & v168;
 v171 = v158.wrapping_shl(3);
 v172 = ((v158 as u64) >= ((8i64 as u64) as u64)) as u8;
@@ -5950,7 +5950,7 @@ v174 = v173.wrapping_shl(v171 as u32);
 v175 = v174.wrapping_add(-1i64 as u64);
 v176 = -1i64 as u64;
 v177 = if v172 != 0 { v176 } else { v175 };
-v178 = ld::<u64>(v0, len, (v161 as usize)) as u64;
+v178 = unsafe { core::ptr::read_unaligned((v161 as usize) as *const u64) };
 v179 = v178 & v177;
 v180 = v170 ^ v179;
 v181 = v180.trailing_zeros() as u64;
@@ -5980,7 +5980,7 @@ if v189 != 0 { v190 = v11.wrapping_sub(v52);
 v191 = v52 & (65535i64 as u64);
 v192 = v191.wrapping_shl(1);
 v193 = v8.wrapping_add(v192);
-v194 = ld::<u16>(v0, len, (v193 as usize)) as u32;
+v194 = unsafe { core::ptr::read_unaligned((v193 as usize) as *const u16) } as u32;
 v195 = v194 as u64;
 v196 = v52.wrapping_sub(v195);
 { let t = (v196, v202, v204, v206, v208); v52 = t.0; v53 = t.1; v203 = t.2; v205 = t.3; v207 = t.4; continue 'b4; }
@@ -5997,7 +5997,7 @@ return v203;
  }
 }
 
-#[inline(always)]
+#[inline(never)]
 unsafe fn f1048602(len: u64, a0: u64, a1: u64, a2: u64) -> u64 {
     let mut v0: u64 = 0;
     let mut v1: u64 = 0;
@@ -6040,7 +6040,7 @@ v3 = 0i64 as u64;
 v5 = v4.wrapping_add(8i64 as u64);
 v6 = ((v5 as u64) <= (v2 as u64)) as u8;
 if v6 != 0 { v8 = v1.wrapping_add(v4);
-v9 = ld::<u64>(v0, len, (v8 as usize)) as u64;
+v9 = unsafe { core::ptr::read_unaligned((v8 as usize) as *const u64) };
 v11 = v35 ^ v9;
 v12 = v11.wrapping_mul(-7046029254386353131i64 as u64);
 v13 = v12.wrapping_shr(29);
@@ -6058,7 +6058,7 @@ v23 = v22.wrapping_shl(v20 as u32);
 v24 = v23.wrapping_add(-1i64 as u64);
 v25 = -1i64 as u64;
 v26 = if v21 != 0 { v25 } else { v24 };
-v27 = ld::<u64>(v0, len, (v19 as usize)) as u64;
+v27 = unsafe { core::ptr::read_unaligned((v19 as usize) as *const u64) };
 v28 = v27 & v26;
 v30 = v35 ^ v28;
 v31 = v30.wrapping_mul(-7046029254386353131i64 as u64);
@@ -6073,7 +6073,7 @@ return v34;
  }
 }
 
-#[inline(always)]
+#[inline(never)]
 unsafe fn f1048603(len: u64, a0: u64, a1: u64, a2: u64, a3: u64) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u64 = 0;
@@ -6125,9 +6125,9 @@ v4 = 0i64 as u64;
 v6 = v5.wrapping_add(8i64 as u64);
 v7 = ((v6 as u64) <= (v3 as u64)) as u8;
 if v7 != 0 { v9 = v1.wrapping_add(v5);
-v10 = ld::<u64>(v0, len, (v9 as usize)) as u64;
+v10 = unsafe { core::ptr::read_unaligned((v9 as usize) as *const u64) };
 v11 = v2.wrapping_add(v5);
-v12 = ld::<u64>(v0, len, (v11 as usize)) as u64;
+v12 = unsafe { core::ptr::read_unaligned((v11 as usize) as *const u64) };
 v13 = ((v10 as u64) != (v12 as u64)) as u8;
 v14 = 0i64 as u32;
 if v13 != 0 { return v14;
@@ -6144,7 +6144,7 @@ v23 = v22.wrapping_shl(v20 as u32);
 v24 = v23.wrapping_add(-1i64 as u64);
 v25 = -1i64 as u64;
 v26 = if v21 != 0 { v25 } else { v24 };
-v27 = ld::<u64>(v0, len, (v18 as usize)) as u64;
+v27 = unsafe { core::ptr::read_unaligned((v18 as usize) as *const u64) };
 v28 = v27 & v26;
 v29 = v17.wrapping_shl(3);
 v30 = ((v17 as u64) >= ((8i64 as u64) as u64)) as u8;
@@ -6153,7 +6153,7 @@ v32 = v31.wrapping_shl(v29 as u32);
 v33 = v32.wrapping_add(-1i64 as u64);
 v34 = -1i64 as u64;
 v35 = if v30 != 0 { v34 } else { v33 };
-v36 = ld::<u64>(v0, len, (v19 as usize)) as u64;
+v36 = unsafe { core::ptr::read_unaligned((v19 as usize) as *const u64) };
 v37 = v36 & v35;
 v38 = ((v28 as u64) == (v37 as u64)) as u8;
 v39 = 1i64 as u32;
@@ -6267,4 +6267,4 @@ pub unsafe fn w_lz4(desc: *const u8, a1: u64, a2: u64, a3: u64) -> u64 {
 
 
 /// This source's fingerprint (`rust::fingerprint` of what comes before).
-pub const SOURCE: u64 = 0x507e8af7abdf7715;
+pub const SOURCE: u64 = 0x9cbff15ee4eaa8a0;
