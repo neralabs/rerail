@@ -47,6 +47,46 @@ reference: `javascript/eslint-curly.rerail`, `eslint-one-var.rerail`, `eslint-st
   in NOTES (a known divergence of the JSON, a harness gap).
 - Where the tool itself is installed (ESLint, ruff, clippy), run it on counterexamples for ground truth.
 
+## Checking against the original
+
+`npm run translations:check -- --pack <pack>` (scripts/ship/translations.ts) runs every rule of the pack twice: its
+JSON original, `packs/<pack>/rules/<id>.json`, through the product's path, and its translation, every `.rerail` here
+whose `.policy` line names `<id>` (a rule whose clauses span languages is one file per language: `<id>.rerail`,
+`<id>.<language>.rerail`), through `rerail-engine run-policies`. It compares each rule's findings as sets of (rule,
+path, line, code), the column too where both sides give one (translations give none today), on the pack's examples
+(`pack.json`), its recorded fixtures and its real-code corpora (`scripts/ship/corpora.json`; the `rerail` pack's is
+this repository at a pinned commit). Each rule comes out `same`, `different` (per corpus, how many keys only one side
+reports, with samples), `untranslated` (no `.rerail`) or `failed` (check-rr's refusal or a run's failure, with the
+engine's message). `--rules a,b` narrows a run to some rules; `--corpora`, `--engine` and `--out` say where things are.
+
+Each pack declares what it expects in `equivalence.json` here:
+
+```json
+{
+  "format": "rerail.translation-equivalence/v1",
+  "pack": "<pack>",
+  "equivalent": true,
+  "untranslated": { "<rule-id>": "<the engine's refusal, or the feature the language lacks>" },
+  "different": {
+    "<rule-id>": {
+      "reason": "<why the findings differ>",
+      "right": "original | translation | neither",
+      "counts": { "<corpus>": { "originalOnly": 0, "translationOnly": 0 } }
+    }
+  }
+}
+```
+
+`equivalent: true` says every translated rule reports what its original does, except the rules in `different`; the
+benchmark's `.rerail` verdict gates on it, and so does the suite: it fails when a translated rule differs and is not
+listed, when a listed rule's counts changed on a corpus the run compared or the rule is the same now, when a rule
+without a translation is not in `untranslated` (or one there is translated now), when an entry has no reason or no
+side, when a corpus could not be compared, and when any rule failed. Fix the translation, or explain the difference;
+never widen a count to make the gate pass. `--write-differences` rewrites `different` and `untranslated` from the run,
+keeping the reasons already there and leaving new entries for you to explain. A pack declaring `equivalent: false` is
+reported, not gated: its file records what the suite found ("recorded by the suite, not yet explained", right
+`unknown`), and `incomplete` names a corpus that run could not compare.
+
 ## NOTES
 
 One `packs/<pack>/NOTES-<batch>.md` per batch: for each rule, what it follows (tool or JSON) where they differ, with a
