@@ -156,6 +156,12 @@ pub fn library() -> PathBuf {
         .unwrap_or_else(rerail_store::source_tree::rule_library)
 }
 
+/// The directory whose include resolution is part of a program read. Preserve a missing root as a distinct input.
+pub fn library_root() -> PathBuf {
+    let path = library();
+    path.canonicalize().or_else(|_| std::path::absolute(&path)).unwrap_or(path)
+}
+
 /// A program's `.rr` text. Its `#include`s name library files (decision 0089), read as `parse_file` reads them:
 /// `core.rr` first unless the text is in T's shape, each file once, includes first. A text that includes nothing is
 /// read as it is, without `core.rr`.
@@ -1240,14 +1246,16 @@ pub fn read_file_after(path: &Path, inspected: Option<&[LibraryFile]>) -> Result
     }
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
-    static PROGRAMS: OnceLock<Mutex<HashMap<PathBuf, (Vec<LibraryFile>, Program)>>> = OnceLock::new();
+    static PROGRAMS: OnceLock<Mutex<HashMap<(PathBuf, PathBuf), (Vec<LibraryFile>, Program)>>> = OnceLock::new();
     let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let cache = PROGRAMS.get_or_init(Default::default);
-    let cached = cache.lock().expect("the program cache").get(&key)
+    let library = library_root();
+    let entry = (key.clone(), library.clone());
+    let cached = cache.lock().expect("the program cache").get(&entry)
         .filter(|(files, _)| LibraryFile::inputs_match(files)).cloned();
     if let Some((files, program)) = cached {
         if inspected != Some(files.as_slice()) {
-            retain_current_read(&key, &files, &program);
+            retain_current_read(&key, &library, &files, &program);
         }
         files.iter().for_each(noted);
         crate::code_rule_dsl::prof::count("rr.program_reused", 1);
@@ -1255,11 +1263,11 @@ pub fn read_file_after(path: &Path, inspected: Option<&[LibraryFile]>) -> Result
     }
     // Decision 0275: rederived until a key hits. The file's sha (by its `stat` while that holds), then the entry kept
     // under its path and sha, taken while every file it read still reads as recorded (by `stat`, then sha).
-    let kept = kept_program(&key);
+    let kept = kept_program(&key, &library);
     if let Some((_, _, Some((program, files)))) = &kept {
         crate::code_rule_dsl::prof::count("rr.program_stored", 1);
         files.iter().for_each(noted);
-        cache.lock().expect("the program cache").insert(key.clone(), (files.clone(), program.clone()));
+        cache.lock().expect("the program cache").insert(entry, (files.clone(), program.clone()));
         return Ok((program.clone(), files.clone()));
     }
     // The kept statements alone copied from the process's (`read_shared`): each policy copied its libraries whole,
@@ -1273,7 +1281,7 @@ pub fn read_file_after(path: &Path, inspected: Option<&[LibraryFile]>) -> Result
         super::plan::corpus::combined::record(&store, "a rule file's program", &entry, &files, &program, &[]);
         super::plan::corpus::combined::read_before_the_run(entry);
     }
-    cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
+    cache.lock().expect("the program cache").insert(entry, (files.clone(), program.clone()));
     Ok((program, files))
 }
 
@@ -1328,20 +1336,20 @@ pub fn kept_header_found(src: &str) -> Option<Program> {
 /// (`kept_program`): for the tests of decision 0275.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn kept_program_found(path: &Path) -> Option<(Program, Vec<LibraryFile>)> {
-    kept_program(path).and_then(|(_, _, found)| found)
+    kept_program(path, &library_root()).and_then(|(_, _, found)| found)
 }
 
 /// Attach an inspected program to the store selected by its consumer. The inputs belong to that inspection.
-pub fn retain_read_program(path: &Path, files: &[LibraryFile], program: &Program) {
+pub fn retain_read_program(path: &Path, library: &Path, files: &[LibraryFile], program: &Program) {
     if LibraryFile::inputs_match(files) {
-        retain_current_read(path, files, program);
+        retain_current_read(path, library, files, program);
     }
 }
 
-fn retain_current_read(path: &Path, files: &[LibraryFile], program: &Program) {
+fn retain_current_read(path: &Path, library: &Path, files: &[LibraryFile], program: &Program) {
     use super::plan::corpus::combined;
     let Some(sha) = files.iter().find(|file| file.path == path).and_then(|file| file.sha256) else { return };
-    let Some((key, Some(store))) = rule_file_store(path, &sha) else { return };
+    let Some((key, Some(store))) = rule_file_store(path, library, &sha) else { return };
     let Ok(_held) = store.hold_collection() else { return };
     store.settle(&combined::queued(&key));
     if !combined::retains_read(&store, &key, files).unwrap_or(false) {
@@ -1350,18 +1358,18 @@ fn retain_current_read(path: &Path, files: &[LibraryFile], program: &Program) {
     combined::read_before_the_run(key);
 }
 
-fn rule_file_store(path: &Path, sha: &[u8; 32]) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>)> {
+fn rule_file_store(path: &Path, library: &Path, sha: &[u8; 32]) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>)> {
     use super::plan::corpus::{combined, phases};
     if !cfg!(feature = "tape-cache") || super::plan::corpus::phase0::active() { return None; }
-    Some((combined::rule_file_key(path, sha), phases::reading_store()))
+    Some((combined::rule_file_key(path, library, sha), phases::reading_store()))
 }
 
 /// The entry of the rule file at `path` and the program whose recorded inputs still hold.
 #[allow(clippy::type_complexity)]
-fn kept_program(path: &Path) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(Program, Vec<LibraryFile>)>)> {
+fn kept_program(path: &Path, library: &Path) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(Program, Vec<LibraryFile>)>)> {
     use super::plan::corpus::combined;
     let sha = super::plan::corpus::observe(|o| o.digest(path))?;
-    let (key, store) = rule_file_store(path, &sha)?;
+    let (key, store) = rule_file_store(path, library, &sha)?;
     let found = if let Some(store) = &store {
         let _held = store.hold_collection().ok()?;
         store.settle(&combined::queued(&key));

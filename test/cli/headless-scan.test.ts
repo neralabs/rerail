@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, toNamespacedPath } from "node:path";
 import { deflateSync } from "node:zlib";
@@ -2134,6 +2134,44 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
     expect(inspect()).toBe(createHash("sha256").update(word("two")).digest("hex"));
     expect(await run(true)).toEqual(["two"]);
   });
+
+  it("uses the selected include library across catalogs and processes and preserves an inspected policy", () => {
+    const root = checkout(), home = root + "-home", policy = join(home, "policy.rr");
+    mkdirSync(home);
+    const library = process.env.RERAIL_RR_LIB ?? join(process.cwd(), "docs/rule-syntax/lib");
+    for (const word of ["one", "two"]) {
+      const dir = join(home, word);
+      cpSync(library, dir, { recursive: true });
+      writeFileSync(join(dir, "word.rr"), `.decl ref_message(w: symbol)\nref_message("${word}").\n`);
+    }
+    writeFileSync(policy, '#include "word.rr"\n.policy "words" revision 1\n.violation Seen(at: span,w: symbol) "{w}"\nSeen(@place("a.py",1),w) :- ref_message(w).\n');
+    const script = `import { basename, join } from "node:path";
+import { loadNativeBinding } from "./src/engine/native/native.ts";
+const [root, home, policy, store, first, second] = process.argv.slice(2);
+const engine = loadNativeBinding(), view = new engine.GitRevisionSource(root, "HEAD", "words");
+const pinned = new engine.LoadedRrPolicies(store), next = new engine.LoadedRrPolicies(store);
+function inspect(catalog, name) {
+  process.env.RERAIL_RR_LIB = join(home, name);
+  return JSON.parse(catalog.load(policy)).programInputs.find(row => basename(row.path) === "word.rr" && row.sha256).path;
+}
+async function message(catalog) {
+  const [run] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, store, "", undefined, undefined, view, undefined, catalog));
+  if (run.error) throw Error(run.error);
+  return run.diagnostics.map(row => row.message);
+}
+const result = [inspect(pinned, first), await message(pinned)];
+if (second) result.push(inspect(next, second), await message(next), await message(pinned), inspect(pinned, second), await message(pinned));
+console.log(JSON.stringify(result));`;
+    const read = (store: string, ...names: string[]) => JSON.parse(execFileSync(process.execPath,
+      ["--import", "tsx", "--input-type=module", "-", root, home, policy, store, ...names],
+      { input: script, encoding: "utf8" }));
+    for (const [a, b] of [["one", "two"], ["two", "one"]] as const) {
+      const store = join(home, a + ".sqlite"), first = join(home, a, "word.rr"), second = join(home, b, "word.rr");
+      expect(read(store, a)).toEqual([first, [a]]);
+      expect(read(store, b)).toEqual([second, [b]]);
+      expect(read(store, a, b)).toEqual([first, [a], second, [b], [a], second, [b]]);
+    }
+  }, 30_000);
 
   it("retains the inventory plans of a reused view after scope deletion and across stores", async () => {
     const root = checkout(), home = root + "-home";

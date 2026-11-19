@@ -77,10 +77,12 @@ pub(super) fn lookup(store: &ContentStore, key: &[u8; 32], lists: &crate::code_r
 /// The key of a rule file's entry (decision 0275): the program `rr::read_file` reads of the file at `path` (canonical)
 /// whose bytes' sha256 is `sha256`. The path is in it: the files an include finds beside it are another directory's
 /// elsewhere, and the read record names this one's.
-pub(in crate::code_rule_dsl) fn rule_file_key(path: &std::path::Path, sha256: &[u8; 32]) -> [u8; 32] {
+pub(in crate::code_rule_dsl) fn rule_file_key(path: &std::path::Path, library: &std::path::Path, sha256: &[u8; 32]) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail/rule-file\0");
-    hash.update(path.to_string_lossy().as_bytes());
+    hash.update(b"rerail/rule-file/v2\0");
+    hash.update(library.as_os_str().as_encoded_bytes());
+    hash.update(b"\0");
+    hash.update(path.as_os_str().as_encoded_bytes());
     hash.update(b"\0");
     hash.update(sha256);
     hash.finalize().into()
@@ -90,7 +92,9 @@ pub(in crate::code_rule_dsl) fn rule_file_key(path: &std::path::Path, sha256: &[
 /// is the entry's read record, checked as a rule file's is.
 pub(in crate::code_rule_dsl) fn text_header_key(src: &str) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail/text-header\0");
+    hash.update(b"rerail/text-header/v2\0");
+    hash.update(rr::library_root().as_os_str().as_encoded_bytes());
+    hash.update(b"\0");
     hash.update(src.as_bytes());
     hash.finalize().into()
 }

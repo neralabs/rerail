@@ -141,13 +141,14 @@ pub fn graph(seed: &Seed) -> std::result::Result<Arc<Graph>, Error> {
 
 /// The include graphs for `seeds`, each kept in this process while it holds; those not kept are derived by one run
 /// of `bootstrap.rr` over all of them (a pack's programs are one run, not one each).
-static KEPT: OnceLock<Mutex<HashMap<Seed, Arc<Graph>>>> = OnceLock::new();
+static KEPT: OnceLock<Mutex<HashMap<(Option<Dirs>, Seed), Arc<Graph>>>> = OnceLock::new();
 
 pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
+    let dirs = Dirs::here();
     let kept = KEPT.get_or_init(Default::default);
     let mut found: Vec<Option<Arc<Graph>>> = {
         let map = kept.lock().expect("phase 0's graphs");
-        seeds.iter().map(|s| map.get(s).cloned()).collect()
+        seeds.iter().map(|s| map.get(&(dirs.clone(), s.clone())).cloned()).collect()
     };
     for g in found.iter_mut() {
         if g.as_ref().is_some_and(|g| !g.holds()) {
@@ -211,7 +212,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
                 *g = accepted.get(seed).cloned();
             }
         }
-        kept.lock().expect("phase 0's graphs").extend(accepted);
+        kept.lock().expect("phase 0's graphs").extend(accepted.into_iter().map(|(seed, graph)| ((dirs.clone(), seed), graph)));
     }
     if !wanted.is_empty() {
         if std::env::var_os("RERAIL_PHASE0_TRACE").is_some() {
@@ -240,7 +241,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
         let keep = true;
         if keep {
             let mut map = kept.lock().expect("phase 0's graphs");
-            map.extend(made.iter().map(|(s, g)| (s.clone(), Arc::clone(g))));
+            map.extend(made.iter().map(|(s, g)| ((dirs.clone(), s.clone()), Arc::clone(g))));
         }
         for (g, seed) in found.iter_mut().zip(seeds) {
             if g.is_none() {
@@ -298,12 +299,13 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs
         whole.phases.insert(text_key(0), named);
     }
     let graph = whole.of(seed, 0);
-    KEPT.get_or_init(Default::default).lock().expect("phase 0's graphs").insert(seed.clone(), Arc::new(graph));
+    KEPT.get_or_init(Default::default).lock().expect("phase 0's graphs").insert((Some(dirs.clone()), seed.clone()), Arc::new(graph));
     true
 }
 
 /// The rule library and the engine's phase programs' directory, canonical, as `bootstrap.rr` is handed them: found
 /// once by a caller that keeps many texts (`keep_text`).
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub(in crate::code_rule_dsl) struct Dirs {
     pub(in crate::code_rule_dsl) lib: PathBuf,
     pub(in crate::code_rule_dsl) phases: PathBuf,

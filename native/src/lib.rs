@@ -280,7 +280,7 @@ pub fn inspect_rr_policy(path: String, source: Option<&rerail_w::code_rule_dsl::
 #[cfg(not(feature = "headless"))]
 #[derive(Clone)]
 enum PolicyLocation {
-    Worktree(std::path::PathBuf),
+    Worktree { path: std::path::PathBuf, library: std::path::PathBuf },
     Git(std::sync::Arc<git_workspace::snapshot::Snapshot>),
 }
 
@@ -296,11 +296,11 @@ struct LoadedRrPolicy {
 impl LoadedRrPolicy {
     fn read(path: &str, snapshot: Option<std::sync::Arc<git_workspace::snapshot::Snapshot>>, inspected: Option<&[code_rule_dsl::logic::rr::LibraryFile]>) -> Result<Self> {
         let path = rr_policy_path(path, snapshot.as_deref())?;
-        let (program, files) = tools::read_policy_after(&path, inspected).map_err(Error::from_reason)?;
         let location = match snapshot {
             Some(snapshot) => PolicyLocation::Git(snapshot),
-            None => PolicyLocation::Worktree(path),
+            None => PolicyLocation::Worktree { path: path.clone(), library: code_rule_dsl::logic::rr::library_root() },
         };
+        let (program, files) = tools::read_policy_after(&path, inspected).map_err(Error::from_reason)?;
         Ok(Self { location, program, files })
     }
 
@@ -342,7 +342,7 @@ impl LoadedRrPolicies {
             let inspection = policy.inspection()?;
             let origin = match &policy.location {
                 PolicyLocation::Git(snapshot) => Some(snapshot.source_key()),
-                PolicyLocation::Worktree(_) => None,
+                PolicyLocation::Worktree { .. } => None,
             };
             self.programs.lock().unwrap_or_else(|err| err.into_inner()).entry(key.to_owned()).or_default().insert(origin, policy);
             Ok(inspection)
@@ -467,8 +467,8 @@ impl napi::Task for ScanRrPolicies {
                 let report = if ephemeral {
                     None
                 } else {
-                    if preloaded && let PolicyLocation::Worktree(path) = &location {
-                        code_rule_dsl::logic::rr::retain_read_program(path, &files, &program);
+                    if preloaded && let PolicyLocation::Worktree { path, library } = &location {
+                        code_rule_dsl::logic::rr::retain_read_program(path, library, &files, &program);
                     }
                     match tools::run_program_checked(program.clone(), &files, root, &out, &options) {
                         Ok(report) => Some(Ok(report)),

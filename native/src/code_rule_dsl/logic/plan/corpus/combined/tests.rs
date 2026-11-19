@@ -76,11 +76,11 @@
         let program = rr::parse(text).unwrap();
         let digest = Sha256::digest(text.as_bytes()).into();
         let files = [LibraryFile { path: path.clone(), sha256: Some(digest) }];
-        let key = rule_file_key(&path, &digest);
+        let key = rule_file_key(&path, &rr::library_root(), &digest);
         let database = dir.path().join("store.sqlite");
         super::super::with_tape_cache_path(&database, None, || {
             let store = ContentStore::open(&database).unwrap();
-            rr::retain_read_program(&path, &files, &program);
+            rr::retain_read_program(&path, &rr::library_root(), &files, &program);
             store.settle(&queued(&key));
             assert!(retains_read(&store, &key, &files).unwrap());
 
@@ -93,7 +93,7 @@
             assert!(read_record(&store, &key).unwrap().is_some());
             assert!(!retains_read(&store, &key, &files).unwrap());
 
-            rr::retain_read_program(&path, &files, &program);
+            rr::retain_read_program(&path, &rr::library_root(), &files, &program);
             store.settle(&queued(&key));
             assert!(retains_read(&store, &key, &files).unwrap());
             assert!(lookup_read(&store, &key, &Default::default()).unwrap().is_some());

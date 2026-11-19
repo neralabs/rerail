@@ -376,6 +376,9 @@ The cache-architecture guard must also pass, including its prohibition on new pr
 ### Inspecting and running a local policy
 
 An inspection uses the rule-program reader for the current policy and its includes.
+The selected library directory participates in the compiled file and text-header keys.
+The include graph uses the selected rule and phase directories. A stored graph image can relocate its library paths and check their contents.
+Changing the library directory affects the next inspection. An inspected program retains its original library key if execution uses another store.
 The reader checks both files it read and missing files that could change include resolution.
 The scan keeps the program from that inspection until execution finishes.
 If an include changes, a second inspection sees the edit. The first scan still executes its inspected program.
