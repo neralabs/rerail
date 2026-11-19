@@ -179,20 +179,27 @@ impl Pool {
         let slab_limit = slab_idle_limit();
         let room = idle_room(need);
         while self.held > room || self.held_slabs > slab_limit {
-            let slabs_only = self.held <= room;
-            let oldest = self
-                .idle
-                .iter()
-                .filter(|(c, v)| !v.is_empty() && (!slabs_only || **c >= SLAB_MIN))
-                .min_by_key(|(_, v)| v[0].0)
-                .map(|(c, _)| *c);
-            let Some(c) = oldest else { break };
-            self.idle.get_mut(&c).unwrap().remove(0);
-            self.held -= c;
-            if c >= SLAB_MIN {
-                self.held_slabs -= c;
+            if !self.release_oldest(self.held <= room) {
+                break;
             }
         }
+    }
+
+    /// Releases the least recently returned idle buffer (a slab's, with `slabs_only`): whether there was one.
+    fn release_oldest(&mut self, slabs_only: bool) -> bool {
+        let oldest = self
+            .idle
+            .iter()
+            .filter(|(c, v)| !v.is_empty() && (!slabs_only || **c >= SLAB_MIN))
+            .min_by_key(|(_, v)| v[0].0)
+            .map(|(c, _)| *c);
+        let Some(c) = oldest else { return false };
+        self.idle.get_mut(&c).unwrap().remove(0);
+        self.held -= c;
+        if c >= SLAB_MIN {
+            self.held_slabs -= c;
+        }
+        true
     }
 
     fn take(&mut self, class: usize) -> Option<Buffer> {
@@ -491,6 +498,27 @@ pub fn make_room(need: usize) -> bool {
     }
 }
 
+/// Makes room on the device for `need` more bytes by the driver's own count (`allocated`: every buffer the device
+/// holds, among them this pool's idle ones and what no ledger counts, such as kernels' constant buffers): the same
+/// order as `make_room`, idle buffers released least recently returned first, then the evictor's holdings, until
+/// `allocated() + need` fits the Metal budget. Whether it fits now. The ledger's count (`make_room`) can leave the
+/// idle buffers room that the driver's count no longer has; a buffer the budget refused then, though idle buffers
+/// held the room, stopped the run once a failed Metal wave stopped it (decision 0382 §6).
+pub fn make_device_room(need: usize, allocated: impl Fn() -> usize) -> bool {
+    let fits = || allocated().saturating_add(need) <= crate::budget::metal();
+    loop {
+        if fits() {
+            return true;
+        }
+        if pool().lock().expect("the pool").release_oldest(false) {
+            continue;
+        }
+        if !EVICTOR.get().is_some_and(|f| f()) {
+            return false;
+        }
+    }
+}
+
 /// A lease that keeps within the Metal budget (`crate::budget::metal`, decision 0126): refused, as a capacity
 /// refusal its caller runs on the CPU (or splits its batch), when the leases and the ledger's reservations would
 /// pass it after room is made (`make_room`). The device joins' buffers are leased so: without it, their waves and
@@ -617,6 +645,32 @@ mod tests {
         drop(first);
         drop(refused);
         assert!(lease_within(64 << 20).is_ok(), "fits again once the first is dropped");
+        crate::budget::METAL_TEST.with(|m| m.set(0));
+    }
+
+    /// Room by the driver's count, which holds bytes no ledger does: the idle buffers give way until a buffer fits,
+    /// though the ledger's count (`make_room`) left them room; with none left to give, it does not fit.
+    #[test]
+    fn the_driver_count_makes_room_from_idle_buffers() {
+        if get().is_none() {
+            return;
+        }
+        let _big = big_leases();
+        drop(lease(64 << 20).unwrap());
+        let idle = || held_bytes().1;
+        assert!(idle() >= 64 << 20, "the dropped 64 MB lease is idle");
+        let (live, _) = held_bytes();
+        // 80 MB the driver counts and no ledger does; the budget 100 MB past what idles.
+        let budget = idle() + (100 << 20);
+        crate::budget::METAL_TEST.with(|m| m.set(budget.max(live + other() + (1 << 20))));
+        let unledgered = 80 << 20;
+        let need = 48 << 20;
+        let allocated = || idle() + unledgered;
+        assert!(allocated() + need > crate::budget::metal(), "the driver's count is past the budget");
+        assert!(make_device_room(need, allocated), "the idle buffers give way");
+        assert!(allocated() + need <= crate::budget::metal());
+        // Nothing to give: the driver's count is the budget, past every idle buffer.
+        assert!(!make_device_room(need, || crate::budget::metal()), "no room made from nothing");
         crate::budget::METAL_TEST.with(|m| m.set(0));
     }
 

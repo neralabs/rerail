@@ -505,11 +505,14 @@ impl MappedBuffer {
     ) -> Result<Self, Error> {
         // A lock over no data: a panic elsewhere while it was held leaves nothing to distrust.
         let _allocation = METAL_ALLOCATION_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if length as u64 > device.max_buffer_length()
-            || driver_bytes(device)
-                .saturating_add(length as u64)
-                > metal_buffer_limit() as u64
-        {
+        // Past the budget by the driver's count: room made first, as every lease's is (idle buffers, then the
+        // residency's slabs), and refused only when none is left to give.
+        let over = || driver_bytes(device).saturating_add(length as u64) > metal_buffer_limit() as u64;
+        if length as u64 <= device.max_buffer_length() && over() {
+            rerail_prof::count("capacity.metal_driver_room_made", 1);
+            rerail_accel::gpu::shared::make_device_room(length, || usize::try_from(driver_bytes(device)).unwrap_or(usize::MAX));
+        }
+        if length as u64 > device.max_buffer_length() || over() {
             if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
                 eprintln!(
                     "TEMPO_METAL_DRIVER_REJECT bytes={length} reserved={} driver={} maximumBuffer={} caller={}",
