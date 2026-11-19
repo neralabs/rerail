@@ -1659,7 +1659,7 @@ fn asked_of(v: &Arc<Version>, asked: &super::about::Asked) -> Arc<Version> {
 /// last run's record of that step on, so the run's output states the record a run from scratch states. An edit that
 /// adds a request's rule runs the step whole, its record carried from its input.
 #[test]
-#[ignore = "Q249: the rerun states one about part more than a run from scratch, at the edit adding a request rule"]
+#[ignore = "Q291: the rerun states one about part more than a run from scratch, at the edit adding a request rule"]
 fn a_request_record_over_an_edit_is_a_run_from_scratchs() {
     use super::manager::{Pipeline, Ran, rebase};
     let fresh = |v: &Arc<Version>| Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();
