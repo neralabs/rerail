@@ -1,4 +1,0 @@
-^(?:Connection|LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|SyncDatabaseConnection|SyncVersionedDatabaseConnection|Transaction|VersionedConnection|WriteTransaction)$
-^(?:Connection|SyncDatabaseConnection|SyncVersionedDatabaseConnection|VersionedConnection)$
-^(?:LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|SchemaTransaction|Transaction|WriteTransaction)$
-^(?:self)$
