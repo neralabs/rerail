@@ -22,6 +22,9 @@ Eight successive retirements of unused stores left zero active routes, retired r
 All 13 selected macOS scope and recovery tests passed. The Windows 11 Pro ARM64 guest ran seven tests on NTFS at `0276dee45e`.
 All seven passed in 119.15 seconds, including both orders of store replacement and the interrupted replay.
 The volume-swap fixture closes each scan process before moving its directory so that NTFS can release the SQLite handles.
+The complete macOS headless suite passed 155 tests in 692.57 seconds with a 60-second default test timeout.
+It skipped one Linux-only test for distinct symlink targets with non-UTF-8 names.
+TypeScript and the import-boundary check passed. The repository structure check retained the same 15 failing metrics as its baseline.
 [CLI commands](../../../headless-scan.md#scan-historical-source) · [Recovery contract](analysis-scopes.md#retire-an-offline-store) · [Regression tests](../../../../test/cli/headless-scan.test.ts)
 
 ## Oversized Git blobs
