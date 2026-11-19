@@ -119,9 +119,17 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
 });
 
 describe("processStartedAtThroughEngine", () => {
-  const noEngine = (): never => {
-    throw new Error("the engine is asked on Windows only");
-  };
+  /**
+   * An engine that answers every pid with a start and records each pid it is asked for. A read on a system the engine
+   * does not serve shows by both that it never asked: an engine that throws could not show it, since the read takes any
+   * throw for no answer.
+   */
+  const answeringEngine = (asked: number[]) => () => ({
+    processStartedAt: (pid: number) => {
+      asked.push(pid);
+      return 1_700_000_000_000;
+    },
+  });
 
   it("reads a Windows process's start through the engine, which starts no process", () => {
     const spawned = vi.mocked(childProcess.spawnSync).mock.calls.length;
@@ -159,17 +167,23 @@ describe("processStartedAtThroughEngine", () => {
     expect(processStartedAtThroughEngine(process.pid, 2_000, "win32", () => ({}))).toBeUndefined();
   });
 
-  it("reads Linux's start from /proc without the engine, and none on a system it does not read", () => {
-    expect(processStartedAtThroughEngine(process.pid, 2_000, "darwin", noEngine)).toBeUndefined();
-    if (process.platform !== "linux") return;
-    // Linux reads /proc whatever time is left, as processStartedAt does. Each read counts the start back from the clock
-    // at its own moment, so two reads can differ by the time they took and by /proc's 10 ms resolution, and no more.
+  it("reads no start on a system it does not read, and asks the engine nothing", () => {
+    const asked: number[] = [];
+    expect(processStartedAtThroughEngine(process.pid, 2_000, "darwin", answeringEngine(asked))).toBeUndefined();
+    expect(asked).toEqual([]);
+  });
+
+  it.runIf(process.platform === "linux")("reads Linux's start from /proc whatever time is left, and asks the engine nothing", () => {
+    const asked: number[] = [];
+    // As processStartedAt does. Each read counts the start back from the clock at its own moment, so two reads can
+    // differ by the time they took and by /proc's 10 ms resolution, and no more.
     const before = Date.now();
-    const started = processStartedAtThroughEngine(process.pid, 0, "linux", noEngine);
+    const started = processStartedAtThroughEngine(process.pid, 0, "linux", answeringEngine(asked));
     const again = processStartedAt(process.pid, 0, "linux");
     const took = Date.now() - before;
     expect(started).toBeDefined();
     expect(Math.abs(started! - again!)).toBeLessThanOrEqual(took + 20);
+    expect(asked).toEqual([]);
   });
 
   it.runIf(process.platform === "win32")("reads when this process and a later one started through the engine built here", async () => {
