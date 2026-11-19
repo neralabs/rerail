@@ -739,3 +739,19 @@ base rows now include `ast_depth`, R6's measure key (step 10), which is this wor
 apart. By the recorded runs, cold went from 307 G (2026-11-17) to 323 G at step 1 (stages 2-6, 2026-11-18) and to
 about 361 G after the hub's merge (step 12): most of the rise came with the merge.
 
+## Step 19: a new process's input deltas are views of ids, not copied rows
+
+A changed input's delta was rows copied into new relations: each side's rows read into hash sets of `Vec<i64>`, their
+differences sorted into a `Relation` (`delta_relation`), on the session path and the guests' rounds alike. Now
+`retain::rows_delta` names the rows added and gone by their ids, as views over the new and old sources
+(`InRel::picked`, as the session's patches are): each row is read once, with a 128-bit hash (Fx and `row_digest`),
+and the two sides are matched sorted by it. `delta_relation` is gone. R2's kept test now asserts `rows_copied == 0`
+on the new-process path too.
+
+What a new process still decodes is counted apart: `shape::rows_decoded`, the kept rows and the changed inputs' old
+rows decoded from the frames (0353's frames copy), 1,162,276 rows at O125 step 05. A test asserting it is 0 is
+ignored with its reason until the reads bind the kept blocks (0401 step 7, on the branches being aligned).
+
+O125 kept, M1 Max (loaded, 10-15): 01 171.7 G, 02 154.9, 03 209.9, 04 143.2, 05 320.9, 06 160.6, 07 173.6, 08 229.7,
+findings equal to cold at every step. Step 05's matching went from 1.60 s to 0.96 s.
+

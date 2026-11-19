@@ -138,6 +138,7 @@ pub mod shape {
     static INPUTS_FROM_ENTRIES: AtomicUsize = AtomicUsize::new(0);
     static INPUTS_HASHED_WHOLE: AtomicUsize = AtomicUsize::new(0);
     static INPUTS_READ_WHOLE: AtomicUsize = AtomicUsize::new(0);
+    static ROWS_DECODED: AtomicUsize = AtomicUsize::new(0);
     static DRIVERS_UNLED: AtomicUsize = AtomicUsize::new(0);
 
     /// The counts so far.
@@ -171,6 +172,9 @@ pub mod shape {
         /// R2 (0353): a new process's changed inputs whose old rows `retain::Retained::load` read whole from the
         /// frames (copied into columns, every row hashed), not their changed documents' alone (`retain::OldInput`).
         pub inputs_read_whole: usize,
+        /// 0353's frames copy: rows a new process decoded from the frames into memory (`retain::Retained::load`), its
+        /// kept relations' and its changed inputs' old rows. Read in place once the kept blocks are bound (0401 step 7).
+        pub rows_decoded: usize,
     }
 
     pub fn now() -> Shape {
@@ -186,6 +190,7 @@ pub mod shape {
             inputs_from_entries: INPUTS_FROM_ENTRIES.load(Relaxed),
             inputs_hashed_whole: INPUTS_HASHED_WHOLE.load(Relaxed),
             inputs_read_whole: INPUTS_READ_WHOLE.load(Relaxed),
+            rows_decoded: ROWS_DECODED.load(Relaxed),
         }
     }
 
@@ -204,6 +209,7 @@ pub mod shape {
             inputs_from_entries: n.inputs_from_entries - before.inputs_from_entries,
             inputs_hashed_whole: n.inputs_hashed_whole - before.inputs_hashed_whole,
             inputs_read_whole: n.inputs_read_whole - before.inputs_read_whole,
+            rows_decoded: n.rows_decoded - before.rows_decoded,
         }
     }
 
@@ -224,6 +230,9 @@ pub mod shape {
     }
     pub fn input_read_whole() {
         INPUTS_READ_WHOLE.fetch_add(1, Relaxed);
+    }
+    pub fn rows_decoded(n: usize) {
+        ROWS_DECODED.fetch_add(n, Relaxed);
     }
     pub fn input_from_entries() {
         INPUTS_FROM_ENTRIES.fetch_add(1, Relaxed);

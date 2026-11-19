@@ -34,7 +34,7 @@ pub(in crate::code_rule_dsl) struct Ran {
 
 /// An input's delta given by the caller, who knows how its rows changed (the guests' rounds, decision 0331): from its
 /// old rows and its new, the rows gone and the rows new. `None` leaves it to `retain::document_delta`.
-pub(in crate::code_rule_dsl) type Delta<'d> = &'d dyn Fn(&str, &dyn Source, &dyn Source) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>;
+pub(in crate::code_rule_dsl) type Delta<'d> = &'d dyn Fn(&str, &Arc<dyn Source>, &Arc<dyn Source>) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>;
 
 /// Runs `prog` over `inputs` on `db`, maintaining what `kept` holds of it (of the same `key`); `keep` the relations
 /// the caller reads after (held, not inlined). Each input is given with its digest, and whether it is bound already
@@ -110,10 +110,10 @@ pub(in crate::code_rule_dsl) fn run_with(
         let kept = kept.as_ref()?;
         let new = by_name.get(rel)?;
         let old = kept.input_source(rel)?;
-        if let Some(given) = delta.and_then(|d| d(rel, old.as_ref(), new.as_ref())) {
+        if let Some(given) = delta.and_then(|d| d(rel, old, new)) {
             return Some(given);
         }
-        let (delta, docs) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref(), retain::group_col(&placed, &no_locations, rel), &retain::cells_of(&atoms, &placed, &prog.domains, rel, new.columns().len()))?;
+        let (delta, docs) = retain::document_delta(rel, old, kept.input_docs(rel).map(|d| d.as_ref()), new, retain::group_col(&placed, &no_locations, rel), &retain::cells_of(&atoms, &placed, &prog.domains, rel, new.columns().len()))?;
         input_docs.insert(rel.to_owned(), docs);
         Some(delta)
     };

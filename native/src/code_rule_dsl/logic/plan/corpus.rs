@@ -6351,7 +6351,7 @@ fn run_observed(
                                 modules.bind(db, rel, Arc::clone(source))?;
                             }
                             let _round = crate::code_rule_dsl::logic::profile::span(move || if round_at == 0 { "the slice's first round".into() } else { format!("a later round, maintained (round {})", round_at + 1) });
-                            let by_owner = |rel: &str, old: &dyn crate::code_rule_dsl::facts::vtab::Source, new: &dyn crate::code_rule_dsl::facts::vtab::Source| {
+                            let by_owner = |rel: &str, old: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, new: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>| {
                                 let node = slice_f.columns(rel).and_then(|c| c.iter().position(|(_, t)| *t == "node"));
                                 node.and_then(|g| retain::owners_delta(rel, old, new, g, &|d| round_new.contains(&d))).or_else(|| retain::grown_delta(rel, old, new))
                             };
@@ -9132,7 +9132,7 @@ fn run_observed(
                         };
                         let _s = crate::code_rule_dsl::logic::profile::span(|| "session/input delta by document".into());
                         let same = same_docs.as_ref().filter(|_| !semijoin.contains(rel));
-                        let Some((delta, docs)) = retain::document_delta_except(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref(), retain::group_col(&cross_placed, &split.locations, rel), &retain::cells_of(&store.atoms_handle(), &cross_placed, &cross.domains, rel, new.columns().len()), same, kept.input_ranges(rel).map(|r| r.as_ref())) else {
+                        let Some((delta, docs)) = retain::document_delta_except(rel, old, kept.input_docs(rel).map(|d| d.as_ref()), new, retain::group_col(&cross_placed, &split.locations, rel), &retain::cells_of(&store.atoms_handle(), &cross_placed, &cross.domains, rel, new.columns().len()), same, kept.input_ranges(rel).map(|r| r.as_ref())) else {
                             if trace { eprintln!("rerail: input delta of {rel}: not by document (old columns {:?}, new {:?}, {} and {} rows), diffed by rules", old.columns(), new.columns(), old.len(), new.len()); }
                             if live {
                                 eprintln!("RERAIL_STRATA_LIVE input delta {rel}: by the rules (no document delta)");
@@ -9346,6 +9346,7 @@ fn run_observed(
                             (maintained.maintained, maintained.recursive) = got.maintained;
                             maintained.again = got.again.clone();
                             maintained.derived_again = maintained.again.len();
+                            if !maintained.again.is_empty() {
                             crate::code_rule_dsl::logic::profile::decision("strata derived again, by reason (0364 R3, R4)", || {
                                 let mut by: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
                                 for (rel, why) in &maintained.again {
@@ -9353,6 +9354,7 @@ fn run_observed(
                                 }
                                 by.iter().map(|(why, rels)| format!("{why}: {} ({}{})", rels.len(), rels.iter().take(6).copied().collect::<Vec<_>>().join(", "), if rels.len() > 6 { ", …" } else { "" })).collect::<Vec<_>>().join("; ")
                             });
+                            }
                             crate::code_rule_dsl::logic::profile::decision("maintenance driven by deltas (decision 0117 step 3)", || {
                                 format!("{reached} of {of} strata reached by a changed read: {} maintained ({} recursive), {} derived again; {quiet} not reached, held as kept", maintained.maintained, maintained.recursive, maintained.derived_again)
                             });

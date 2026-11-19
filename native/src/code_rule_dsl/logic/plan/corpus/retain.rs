@@ -192,7 +192,7 @@ pub(in crate::code_rule_dsl) fn cells_of<'a>(atoms: &'a crate::content_store::at
 /// one (`r__plus :- r, !r__old`), which read each base relation whole every run however few files changed. Exact
 /// whatever the documents are: one whose rows all moved is a document that differs. `None` when the two hold other
 /// columns. Each is named as the planner reads its statistics (`sql_col` of `rel__plus`, `rel__minus`).
-pub(in crate::code_rule_dsl) fn document_delta(rel: &str, old: &dyn Source, was: Option<&DocDigests>, new: &dyn Source, g: usize, cells: &Cells) -> Option<((Arc<dyn Source>, Arc<dyn Source>), Arc<DocDigests>)> {
+pub(in crate::code_rule_dsl) fn document_delta(rel: &str, old: &Arc<dyn Source>, was: Option<&DocDigests>, new: &Arc<dyn Source>, g: usize, cells: &Cells) -> Option<((Arc<dyn Source>, Arc<dyn Source>), Arc<DocDigests>)> {
     document_delta_except(rel, old, was, new, g, cells, None, None)
 }
 
@@ -205,7 +205,7 @@ pub(in crate::code_rule_dsl) fn document_delta(rel: &str, old: &dyn Source, was:
 /// `old_ranges`: each owner's rows in `old` (a kept input's layout), by which the old rows of a document that
 /// differs are read, not found by reading every row's owner.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::code_rule_dsl) fn document_delta_except(rel: &str, old: &dyn Source, was: Option<&DocDigests>, new: &dyn Source, g: usize, cells: &Cells, same: Option<&rustc_hash::FxHashSet<i64>>, old_ranges: Option<&Ranges>) -> Option<((Arc<dyn Source>, Arc<dyn Source>), Arc<DocDigests>)> {
+pub(in crate::code_rule_dsl) fn document_delta_except(rel: &str, old: &Arc<dyn Source>, was: Option<&DocDigests>, new: &Arc<dyn Source>, g: usize, cells: &Cells, same: Option<&rustc_hash::FxHashSet<i64>>, old_ranges: Option<&Ranges>) -> Option<((Arc<dyn Source>, Arc<dyn Source>), Arc<DocDigests>)> {
     use rustc_hash::FxHashSet;
     let width = new.columns().len();
     // By position: both are the relation's rows in its declared order, whatever their sources name the columns
@@ -281,7 +281,7 @@ pub(in crate::code_rule_dsl) fn document_delta_except(rel: &str, old: &dyn Sourc
     let was = match was {
         Some(w) => w,
         None => {
-            taken = by_doc(old, &mut row);
+            taken = by_doc(old.as_ref(), &mut row);
             &taken
         }
     };
@@ -296,84 +296,125 @@ pub(in crate::code_rule_dsl) fn document_delta_except(rel: &str, old: &dyn Sourc
         None => {
             super::maintain::shape::input_hashed_whole();
             let _s = crate::code_rule_dsl::logic::profile::span(|| "document delta: every row hashed".into());
-            by_doc(new, &mut row)
+            by_doc(new.as_ref(), &mut row)
         }
     };
     let differ: FxHashSet<i64> = was.iter().filter(|(d, h)| now.get(*d) != Some(*h)).map(|(d, _)| *d).chain(now.keys().filter(|d| !was.contains_key(*d)).copied()).collect();
-    let rows_of = |s: &dyn Source, row: &mut [i64]| -> FxHashSet<Vec<i64>> {
-        let mut out = FxHashSet::default();
-        if differ.is_empty() {
-            return out;
-        }
-        // The rows of the documents that differ, where the source finds them without reading every row (a kept
-        // input's by its owners' ranges, a view's by its documents: `rows_owned`); else every row's owner is read.
-        let owned = |v: i64| differ.contains(&super::memo::document_of(v));
-        if let Some(rows) = s.rows_owned(g, &owned) {
-            for r in rows {
-                s.row_at(r, &all, row);
-                out.insert(row.to_vec());
-            }
-            return out;
-        }
-        s.documents_of(g, &mut |r, d| {
-            if differ.contains(&d) {
-                s.row_at(r, &all, row);
-                out.insert(row.to_vec());
-            }
-        });
-        out
-    };
-    // Rows `rs` of `s` whose document differs, each once.
-    let picked = |s: &dyn Source, rs: &mut dyn Iterator<Item = usize>, row: &mut [i64]| -> FxHashSet<Vec<i64>> {
-        let mut out = FxHashSet::default();
-        for r in rs {
+    // The rows of the documents that differ, each with its values' hash, read once: where the source finds them
+    // without reading every row (a kept input's by its owners' ranges, a view's by its documents: `rows_owned`), else
+    // every row's owner is read.
+    let hashed = |s: &dyn Source, rs: &mut dyn Iterator<Item = usize>, check: bool, row: &mut [i64]| -> Vec<((u64, u64), usize)> {
+        rs.filter_map(|r| {
             s.row_at(r, &all, row);
-            if differ.contains(&owner_of(row, g)) {
-                out.insert(row.to_vec());
-            }
-        }
-        out
+            (!check || differ.contains(&owner_of(row, g))).then(|| (row_hash(row), r))
+        })
+        .collect()
     };
-    let gone = {
+    let ids_of = |s: &dyn Source, row: &mut [i64]| -> Vec<((u64, u64), usize)> {
+        if differ.is_empty() {
+            return Vec::new();
+        }
+        let owned = |v: i64| differ.contains(&super::memo::document_of(v));
+        let rows = s.rows_owned(g, &owned).unwrap_or_else(|| {
+            let mut out = Vec::new();
+            s.documents_of(g, &mut |r, d| {
+                if differ.contains(&d) {
+                    out.push(r);
+                }
+            });
+            out
+        });
+        hashed(s, &mut rows.into_iter(), false, row)
+    };
+    let gone_ids = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "document delta: the old rows of the documents that differ".into());
         match old_ranges {
             Some(ranges) => {
                 let mut rs = differ.iter().filter_map(|d| ranges.get(d)).flat_map(|&(at, n)| at as usize..(at + n) as usize);
-                picked(old, &mut rs, &mut row)
+                hashed(old.as_ref(), &mut rs, true, &mut row)
             }
-            None => rows_of(old, &mut row),
+            None => ids_of(old.as_ref(), &mut row),
         }
     };
-    let made = {
+    let made_ids = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "document delta: the new rows of the documents that differ".into());
         match &new_others {
-            Some(others) => picked(new, &mut others.iter().copied(), &mut row),
-            None => rows_of(new, &mut row),
+            Some(others) => hashed(new.as_ref(), &mut others.iter().copied(), true, &mut row),
+            None => ids_of(new.as_ref(), &mut row),
         }
     };
-    Some(((delta_relation(rel, width, &mut made.difference(&gone)), delta_relation(rel, width, &mut gone.difference(&made))), Arc::new(now)))
+    Some((rows_delta(rel, width, old, &gone_ids, new, &made_ids), Arc::new(now)))
 }
 
-/// A version of `rel` (its rows gone, or added) holding `rows`, sorted, its columns named as the relation is
-/// (`sql_col`).
-fn delta_relation<'r>(rel: &str, width: usize, rows: &mut dyn Iterator<Item = &'r Vec<i64>>) -> Arc<dyn Source> {
-    let names: Vec<String> = (0..width).map(|c| crate::code_rule_dsl::logic::plan::sql_col(rel, c)).collect();
-    let mut out = crate::code_rule_dsl::facts::vtab::Relation::new(&names.iter().map(String::as_str).collect::<Vec<_>>());
-    let mut rows: Vec<&Vec<i64>> = rows.collect();
-    rows.sort_unstable();
-    for r in rows {
-        out.push(r);
+/// A row's values' hash, by which `rows_delta` matches the rows of two sources: two independent 64-bit hashes (Fx,
+/// and the frames' `row_digest`), so a row is matched by 128 bits, read once. A document's change is already judged
+/// by a 64-bit sum of its rows' digests (`DocDigests`).
+fn row_hash(row: &[i64]) -> (u64, u64) {
+    use std::hash::{Hash, Hasher};
+    let mut h = rustc_hash::FxHasher::default();
+    row.hash(&mut h);
+    (h.finish(), crate::code_rule_dsl::logic::plan::row_digest(row))
+}
+
+/// Each row of `ids` of `s` with its hash (`row_hash`).
+fn hashed_rows(s: &dyn Source, width: usize, ids: impl Iterator<Item = usize>) -> Vec<((u64, u64), usize)> {
+    let all: Vec<usize> = (0..width).collect();
+    let mut row = vec![0i64; width];
+    ids.map(|r| {
+        s.row_at(r, &all, &mut row);
+        (row_hash(&row), r)
+    })
+    .collect()
+}
+
+/// The rows of `made` (of `new`) that no row of `gone` (of `old`) holds, added, and those of `gone` that no row of
+/// `made` holds, gone, as views of their ids over each source (0364 R2: an input's change named by its rows'
+/// places, no row copied). Both sides come with their rows' hashes (`row_hash`), taken as each row was read; the
+/// two sides are matched by them, sorted. A row held twice on one side counts once.
+fn rows_delta(rel: &str, width: usize, old: &Arc<dyn Source>, gone: &[((u64, u64), usize)], new: &Arc<dyn Source>, made: &[((u64, u64), usize)]) -> (Arc<dyn Source>, Arc<dyn Source>) {
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "document delta: the rows matched".into());
+    let (mut gone, mut made) = (gone.to_vec(), made.to_vec());
+    gone.sort_unstable();
+    made.sort_unstable();
+    gone.dedup_by_key(|x| x.0);
+    made.dedup_by_key(|x| x.0);
+    let (mut plus, mut minus): (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
+    let (mut i, mut j) = (0, 0);
+    while i < gone.len() || j < made.len() {
+        match (gone.get(i), made.get(j)) {
+            (Some(g), Some(m)) if g.0 == m.0 => {
+                i += 1;
+                j += 1;
+            }
+            (Some(g), Some(m)) if g.0 < m.0 => {
+                minus.push(g.1 as u32);
+                i += 1;
+            }
+            (Some(g), None) => {
+                minus.push(g.1 as u32);
+                i += 1;
+            }
+            (_, Some(m)) => {
+                plus.push(m.1 as u32);
+                j += 1;
+            }
+            (None, None) => break,
+        }
     }
-    Arc::new(out) as Arc<dyn Source>
+    plus.sort_unstable();
+    minus.sort_unstable();
+    let names = || (0..width).map(|c| crate::code_rule_dsl::logic::plan::sql_col(rel, c)).collect::<Vec<_>>();
+    use crate::code_rule_dsl::logic::native::component::InRel;
+    (InRel::picked(Arc::clone(new), plus, names()), InRel::picked(Arc::clone(old), minus, names()))
 }
 
 /// An input's delta when its rows only grew (`maintained::Delta`; the guests' rounds, decision 0331): a later round's
 /// batch is the round before's with new documents, so a base relation holds the rows it held and the new documents'.
 /// When the old rows are the new ones' first rows, in order (the batch builds documents in order, and a round's
 /// documents come last), its new rows are the rest: one pass over the old rows' values, no row hashed. Otherwise the
-/// two are compared as sets of rows, which is exact whatever moved. `None` when the two hold other columns.
-pub(in crate::code_rule_dsl) fn grown_delta(rel: &str, old: &dyn Source, new: &dyn Source) -> Option<(Arc<dyn Source>, Arc<dyn Source>)> {
-    use rustc_hash::FxHashSet;
+/// two are compared as sets of rows (`rows_delta`), which is exact whatever moved. `None` when the two hold other
+/// columns.
+pub(in crate::code_rule_dsl) fn grown_delta(rel: &str, old: &Arc<dyn Source>, new: &Arc<dyn Source>) -> Option<(Arc<dyn Source>, Arc<dyn Source>)> {
     let width = new.columns().len();
     if old.columns().len() != width {
         return None;
@@ -386,29 +427,18 @@ pub(in crate::code_rule_dsl) fn grown_delta(rel: &str, old: &dyn Source, new: &d
             new.row_at(r, &all, &mut b);
             a == b
         });
-    let rows = |s: &dyn Source, range: std::ops::Range<usize>| -> Vec<Vec<i64>> {
-        range
-            .map(|r| {
-                let mut row = vec![0i64; width];
-                s.row_at(r, &all, &mut row);
-                row
-            })
-            .collect()
-    };
     if prefix {
-        let made = rows(new, old.len()..new.len());
-        return Some((delta_relation(rel, width, &mut made.iter()), delta_relation(rel, width, &mut std::iter::empty())));
+        let made: Vec<usize> = (old.len()..new.len()).collect();
+        return Some(rows_delta(rel, width, old, &[], new, &hashed_rows(new.as_ref(), width, made.into_iter())));
     }
-    let was: FxHashSet<Vec<i64>> = rows(old, 0..old.len()).into_iter().collect();
-    let now: FxHashSet<Vec<i64>> = rows(new, 0..new.len()).into_iter().collect();
-    Some((delta_relation(rel, width, &mut now.difference(&was)), delta_relation(rel, width, &mut was.difference(&now))))
+    Some(rows_delta(rel, width, old, &hashed_rows(old.as_ref(), width, 0..old.len()), new, &hashed_rows(new.as_ref(), width, 0..new.len())))
 }
 
 /// An input's delta when the rows it gained are all of new documents and it lost none (the guests' rounds, decision
 /// 0322): the rows whose node column `g` is of a document `is_new` names, with nothing gone. One pass over that
 /// column, against `grown_delta`'s hashing of every row old and new. `None` unless the rows add up: the old less
 /// none, with those, are the rows now.
-pub(in crate::code_rule_dsl) fn owners_delta(rel: &str, old: &dyn Source, new: &dyn Source, g: usize, is_new: &dyn Fn(i64) -> bool) -> Option<(Arc<dyn Source>, Arc<dyn Source>)> {
+pub(in crate::code_rule_dsl) fn owners_delta(rel: &str, old: &Arc<dyn Source>, new: &Arc<dyn Source>, g: usize, is_new: &dyn Fn(i64) -> bool) -> Option<(Arc<dyn Source>, Arc<dyn Source>)> {
     let width = new.columns().len();
     if old.columns().len() != width || g >= width {
         return None;
@@ -425,16 +455,7 @@ pub(in crate::code_rule_dsl) fn owners_delta(rel: &str, old: &dyn Source, new: &
         });
         fresh
     });
-    let all: Vec<usize> = (0..width).collect();
-    let made: Vec<Vec<i64>> = fresh
-        .into_iter()
-        .map(|r| {
-            let mut row = vec![0; width];
-            new.row_at(r, &all, &mut row);
-            row
-        })
-        .collect();
-    (old.len() + made.len() == new.len()).then(|| (delta_relation(rel, width, &mut made.iter()), delta_relation(rel, width, &mut std::iter::empty())))
+    (old.len() + fresh.len() == new.len()).then(|| rows_delta(rel, width, old, &[], new, &hashed_rows(new.as_ref(), width, fresh.into_iter())))
 }
 
 /// Which strata a run evaluates: those not `clean`.
@@ -1410,11 +1431,11 @@ pub mod tests {
         let old = source(&[[node(1, 0), 10], [node(1, 1), 11], [node(2, 0), 20], [node(2, 1), 21], [node(3, 0), 30]]);
         let new = source(&[[node(2, 0), 20], [node(2, 1), 22], [node(1, 1), 11], [node(1, 0), 10], [node(4, 0), 40]]);
         let rows = |s: &Arc<dyn Source>| (0..s.len()).map(|r| vec![s.value(r, 0), s.value(r, 1)]).collect::<BTreeSet<_>>();
-        let ((plus, minus), docs) = document_delta("r", old.as_ref(), None, new.as_ref(), 0, &crate::code_rule_dsl::logic::plan::Cells::plain(2)).unwrap();
+        let ((plus, minus), docs) = document_delta("r", &old, None, &new, 0, &crate::code_rule_dsl::logic::plan::Cells::plain(2)).unwrap();
         assert_eq!(rows(&plus), BTreeSet::from([vec![node(2, 1), 22], vec![node(4, 0), 40]]));
         assert_eq!(rows(&minus), BTreeSet::from([vec![node(2, 1), 21], vec![node(3, 0), 30]]));
         // The next run: `new` is old, its hashes kept; nothing changed.
-        let ((plus, minus), _) = document_delta("r", new.as_ref(), Some(&docs), source(&[[node(1, 0), 10], [node(1, 1), 11], [node(2, 0), 20], [node(2, 1), 22], [node(4, 0), 40]]).as_ref(), 0, &crate::code_rule_dsl::logic::plan::Cells::plain(2)).unwrap();
+        let ((plus, minus), _) = document_delta("r", &new, Some(&docs), &source(&[[node(1, 0), 10], [node(1, 1), 11], [node(2, 0), 20], [node(2, 1), 22], [node(4, 0), 40]]), 0, &crate::code_rule_dsl::logic::plan::Cells::plain(2)).unwrap();
         assert_eq!((plus.len(), minus.len()), (0, 0));
     }
 
@@ -2904,6 +2925,7 @@ impl Retained {
             crate::code_rule_dsl::logic::profile::decision("fact admission", || "frames changed during admission; recompute the cut and derive again".into());
             return Ok(None);
         };
+        super::maintain::shape::rows_decoded(rows);
         let count = rels.len() + sources.len();
         // A relation whose statistics part was stored for the rows it has now takes them, under the address it has
         // in this process: it is not counted or measured again (decision 0120 §3).

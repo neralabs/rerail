@@ -216,6 +216,23 @@ fn r2_a_new_process_hashes_only_the_changed_documents_rows_of_its_inputs() {
         // Its changed inputs' old rows of the unchanged documents are their new rows, read in place
         // (`retain::OldInput`, 0353): only the changed documents' rows are read from the frames.
         assert_eq!(ran.shape.inputs_read_whole, 0, "R2: after {what}, no changed input's old rows are read whole from the frames");
+        // An input's delta names its rows where they lie, old and new (`retain::rows_delta`), as a session's does.
+        assert_eq!(ran.shape.rows_copied, 0, "R2: after {what}, a new process copies no row to state a change");
+    }
+}
+
+/// R2 in a new process, whole: its kept rows are read where they lie, not decoded from the frames into memory (0353's
+/// frames copy, `shape::rows_decoded`). Met when the reads bind the kept blocks (0401 step 7, being merged).
+#[test]
+#[ignore = "R2: a new process decodes its kept rows from the frames until the kept blocks are read in place (0401 step 7)"]
+fn r2_a_new_process_reads_its_kept_rows_in_place() {
+    let mut s = kinds("r2-in-place");
+    s.run_kept();
+    for (file, body, what) in SMALL_EDITS {
+        s.write(file, body);
+        let ran = s.run_kept();
+        assert_eq!(ran.rows, s.fresh(), "R10: after {what}, the kept run's outputs are a fresh run's");
+        assert_eq!(ran.shape.rows_decoded, 0, "R2: after {what}, no kept row is decoded from the frames");
     }
 }
 
