@@ -4,7 +4,7 @@
 // wrapped here so a test can hand back the lstat a file had before such a rewrite, or the lstat of an owner changed
 // with chown.
 import { execFileSync, spawnSync } from "node:child_process";
-import { lstatSync, mkdirSync, realpathSync, type Stats } from "node:fs";
+import { lstatSync, mkdirSync, realpathSync, symlinkSync, type Stats } from "node:fs";
 import { mkdtemp, open, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -29,6 +29,7 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   vi.mocked(lstatSync).mockReset();
   vi.mocked(lstatSync).mockImplementation(realLstat);
+  vi.unstubAllEnvs();
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
@@ -49,9 +50,9 @@ function repository(path: string): string {
   return realpathSync.native(path);
 }
 
-function gitsAnswer(folder: string): RepositoryIdentityLocation {
+function gitsAnswer(folder: string, env: NodeJS.ProcessEnv = process.env): RepositoryIdentityLocation {
   const requested = resolve(folder);
-  const result = spawnSync("git", ["-C", requested, "rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"], { encoding: "utf8" });
+  const result = spawnSync("git", ["-C", requested, "rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"], { encoding: "utf8", env });
   if (result.status !== 0) return { git: false, workspaceRoot: requested, identityPath: join(requested, ".rerail", "repository-id"), main: true };
   const [top, common, gitDirectory] = result.stdout.trim().split("\n").map(line => resolve(line.trim()));
   return { git: true, workspaceRoot: top!, identityPath: join(common!, "rerail-repository-id"), main: common === gitDirectory };
@@ -74,6 +75,29 @@ async function rewriteInPlace(path: string, text: string): Promise<void> {
   } finally {
     await file.close();
   }
+}
+
+/** `stats` with its owner another account's, as `chown` would leave it. */
+function anotherAccounts(stats: Stats): Stats {
+  return Object.assign(Object.create(Object.getPrototypeOf(stats) as object) as Stats, stats, { uid: stats.uid + 1 });
+}
+
+/** Has every Git process Rerail starts read the folders as another account's, with no safe.directory entry to trust them. */
+function gitSeesAnotherOwner(root: string): void {
+  vi.stubEnv("GIT_CONFIG_GLOBAL", join(root, "no.gitconfig"));
+  vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
+  const actual = vi.mocked(runGit).getMockImplementation()!;
+  vi.mocked(runGit).mockImplementation((cwd, args, options) => {
+    process.env["GIT_TEST_ASSUME_DIFFERENT_OWNER"] = "1";
+    try {
+      return actual(cwd, args, options);
+    } finally {
+      delete process.env["GIT_TEST_ASSUME_DIFFERENT_OWNER"];
+    }
+  });
+  cleanups.push(async () => {
+    vi.mocked(runGit).mockImplementation(actual);
+  });
 }
 
 /** From now on, an lstat of `path` gives `stats`, as if nothing had changed there since. */
@@ -143,10 +167,42 @@ describe.skipIf(process.platform === "win32")("a kept answer on POSIX, where an 
     const placed = placements(main);
     const stats = realLstat(main);
 
-    lstatKeeps(main, Object.assign(Object.create(Object.getPrototypeOf(stats) as object) as Stats, stats, { uid: stats.uid + 1 }));
+    lstatKeeps(main, anotherAccounts(stats));
     expect(repositoryIdentityLocation(main)).toEqual(answer);
     expect(repositoryIdentityLocation(main)).toEqual(answer);
     // Git takes another account's folder only through safe.directory, read from files outside the stamp.
     expect({ answer, gitAfterTheFirst: placements(main) - placed }).toEqual({ answer: gitsAnswer(main), gitAfterTheFirst: 2 });
+  });
+
+  // Git reads the owner of the folder it changed into by that folder's real path, never a link's own.
+  it("asks Git for a worktree reached through a link the user owns whose real folder is another account's", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "aa"));
+    const real = join(root, "w");
+    git(main, "worktree", "add", "--quiet", "-b", "w", real);
+    const link = join(root, "L");
+    symlinkSync(real, link);
+    expect(repositoryIdentityLocation(main)).toEqual(gitsAnswer(main));
+
+    lstatKeeps(real, anotherAccounts(realLstat(real)));
+    gitSeesAnotherOwner(root);
+    const refused = gitsAnswer(link, { ...process.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: "1" });
+    expect(refused.git).toBe(false);
+    expect(repositoryIdentityLocation(link)).toEqual(refused);
+  });
+
+  it("places a worktree reached through a link another account owns from its files when its real folder is the user's", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "aa"));
+    const real = join(root, "w");
+    git(main, "worktree", "add", "--quiet", "-b", "w", real);
+    const link = join(root, "L");
+    symlinkSync(real, link);
+    expect(repositoryIdentityLocation(main)).toEqual(gitsAnswer(main));
+    const placed = placements(link);
+
+    lstatKeeps(link, anotherAccounts(realLstat(link)));
+    expect(repositoryIdentityLocation(link)).toEqual(gitsAnswer(link));
+    expect(placements(link) - placed).toBe(0);
   });
 });

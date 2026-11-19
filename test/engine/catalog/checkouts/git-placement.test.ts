@@ -620,6 +620,26 @@ describe("a kept answer follows the folders' owners, and the user's trust in ano
   });
 });
 
+describe("an entry Git reads through a link is read through it", () => {
+  it.skipIf(process.platform !== "win32")("asks Git for a worktree reached through a junction whose real folder the engine does not take for the user's", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    const real = join(root, "w");
+    git(main, "worktree", "add", "--quiet", "-b", "w", real);
+    const link = join(root, "L");
+    linkFolder(real, link);
+    expect(expectGitsAnswers(main)).toBe(1);
+    vi.stubEnv("GIT_CONFIG_GLOBAL", join(root, "no.gitconfig"));
+    vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
+    vi.mocked(pathsOwnedByCurrentUser).mockImplementation(paths => !paths.some(path => path.toLowerCase() === real.toLowerCase()));
+    gitSeesAnotherOwner();
+
+    expect(repositoryIdentityLocation(link)).toEqual(gitsAnswer(link, { ...process.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: "1" }));
+    expect(repositoryIdentityLocation(link).git).toBe(false);
+    expect(vi.mocked(pathsOwnedByCurrentUser).mock.lastCall?.[0][0]).toBe(real);
+  });
+});
+
 /** `git worktree list` in `checkout`, read as `worktreeRegistry` reads it. */
 function gitsRegistry(checkout: string): string[] {
   const result = spawnSync("git", ["-C", checkout, "worktree", "list", "--porcelain"], { encoding: "utf8" });

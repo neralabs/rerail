@@ -172,7 +172,8 @@ interface NamedGitFolder {
 }
 
 interface FoundGitFolder extends NamedGitFolder {
-  readonly owned: boolean;
+  /** The lstats of the `.git` entry and of the Git folder it is or names, whose owners Git reads. */
+  readonly entries: readonly Stats[];
 }
 
 const GITDIR = "gitdir: ";
@@ -188,8 +189,8 @@ function gitFolderOf(folder: string, entry: Stats): NamedGitFolder | undefined {
 }
 
 /**
- * {@link gitFolderOf} the `.git` entry in `folder`, when the Git folder is there, with whether Git takes the folders for
- * the user's ({@link ownedAsGitTakes}), read now; its stamp adds that folder's identity and that fact.
+ * {@link gitFolderOf} the `.git` entry in `folder`, when the Git folder is there, with the lstats of both, read now; its
+ * stamp adds that folder's identity.
  */
 function gitFolderAt(folder: string): FoundGitFolder | undefined {
   const entry = look(join(folder, ".git"));
@@ -197,8 +198,7 @@ function gitFolderAt(folder: string): FoundGitFolder | undefined {
   const named = gitFolderOf(folder, entry);
   const gitFolder = named === undefined ? undefined : look(named.gitFolder);
   if (named === undefined || !isFolder(gitFolder)) return undefined;
-  const owned = ownedAsGitTakes(folder, named.gitFolder, [entry, gitFolder]);
-  return { ...named, owned, stamp: [named.stamp, gitFolder.ino, `owned:${owned}`].join("\n") };
+  return { ...named, entries: [entry, gitFolder], stamp: [named.stamp, gitFolder.ino].join("\n") };
 }
 
 interface CommonFolder {
@@ -234,13 +234,14 @@ function withCommon(folder: string, entry: FoundGitFolder, common: CommonFolder)
   const facts = gitFolderFacts(folder, entry.gitFolder, common.linked ?? entry.gitFolder);
   if (facts === undefined) return undefined;
   const { realFolder, realCommon, takenByGit, config } = facts;
+  const owned = ownedAsGitTakes(realFolder, entry.gitFolder, entry.entries);
   return {
     folder,
-    stamp: [realFolder, realCommon, entry.stamp, common.stamp, `taken:${takenByGit}`, config.signature].join("\n"),
+    stamp: [realFolder, realCommon, entry.stamp, `owned:${owned}`, common.stamp, `taken:${takenByGit}`, config.signature].join("\n"),
     gitFile: entry.file,
     gitFolder: entry.gitFolder,
     linkedCommon: common.linked,
-    owned: entry.owned,
+    owned,
     ...facts,
   };
 }
@@ -331,17 +332,25 @@ function namesBack(inputs: PlacementInputs): boolean {
 /**
  * Whether Git, which refuses a repository whose folders another user owns unless `safe.directory` names it, takes the
  * folder, its `.git` entry and the Git folder that entry is or names (`entries`: the lstats of the last two) as the
- * current user's. On POSIX it compares their owner with the effective user as Git does ({@link ownedByUser}). Windows
- * gives Node no owner: there the engine reads each one's owner as Git for Windows does
- * ({@link pathsOwnedByCurrentUser}), and a network path, or no engine that can tell, counts as another's. No Git
- * process: one lstat, and on Windows one engine call.
+ * current user's. Git reads the folder it changed into by its real path, so a link's own owner never stands in for the
+ * folder's: `realFolder` is that real path. On POSIX it compares their owner with the effective user as Git does
+ * ({@link ownedByUser}). Windows gives Node no owner: there the engine reads each one's owner as Git for Windows does
+ * ({@link ownersTaken}), and a network path, or no engine that can tell, counts as another's. No Git process: one
+ * lstat, and on Windows one engine call.
  */
-function ownedAsGitTakes(folder: string, gitFolder: string, entries: readonly Stats[]): boolean {
-  const top = look(folder);
+function ownedAsGitTakes(realFolder: string, gitFolder: string, entries: readonly Stats[]): boolean {
+  const top = look(realFolder);
   if (!isEntry(top)) return false;
   if (process.platform !== "win32") return [top, ...entries].every(stats => ownedByUser(stats.uid));
-  const paths = [folder, join(folder, ".git"), gitFolder];
-  return paths.every(plainlyResolved) && pathsOwnedByCurrentUser(paths) === true;
+  return ownersTaken([realFolder, join(realFolder, ".git"), gitFolder]) === true;
+}
+
+/**
+ * Whether Git for Windows takes every one of `paths` as the user's, read by the engine ({@link pathsOwnedByCurrentUser}):
+ * false for a network path, undefined when no engine can tell.
+ */
+function ownersTaken(paths: readonly string[]): boolean | undefined {
+  return paths.every(plainlyResolved) ? pathsOwnedByCurrentUser(paths) : false;
 }
 
 /**
