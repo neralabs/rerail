@@ -584,8 +584,8 @@ audit errors, and Rerail's `daemon.log` lines. Rule matching and steers use the 
   there by the path the tool named or by its real path in its checkout, so a file reached through a link to a folder
   (`conf -> .aws`) or by a Windows short name of a folder or a file (`AWS~1`, `WP-CON~1.PHP`) is judged as the file
   it is. As with text that holds a secret, the session keeps in memory the text of a file secret-like only by its real
-  path, so `rewind` can still put it back unless the daemon restarts first, since the ledger keeps only the hash and
-  size. A finding in a secret-like file that a session still owes its agent when its memory
+  path, so at the runtime `rewind` can still put back a write that names the link path, unless the daemon restarts
+  first, since the ledger keeps only the hash and size. A finding in a secret-like file that a session still owes its agent when its memory
   is freed, or when the daemon stops or restarts, is kept in the ledger without its message or fix, as its steer
   withholds them. Each steer and finding it owes then keeps the SHA-256 of each file it names, as a preimage does, so
   a file changed meanwhile drops it.
