@@ -178,6 +178,8 @@ outermost call becomes the queue's first items.
   threadgroup memory), a search, and an expand. Each count is a device word, and each plan
   kernel writes the next dispatches' indirect arguments. Each equals the host from 0 to 1.1 M
   elements (`pp_blocks::tests`).
-  - **Its launches:** a scan is 6, and a sort pass is 8, so a 64-bit sort is 66. The setup's
-    sorts are kept narrow for that reason (a name is a dense id, not its 64-bit hash, where a
-    sort orders by it).
+  - **Its launches:** a scan is 6, and a sort pass is 8, so a 64-bit sort is 66 of the
+    evaluation's 200. So the evaluation has one sort: the visibility rows, made in position
+    order and sorted stably by their name's key alone, so equal names stay in position order.
+    No other pass sorts: duplicate parameters are compared in their definition's SIMD group,
+    and a `(`'s `)` is found in a pyramid of depth minima (below).
