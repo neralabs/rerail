@@ -277,7 +277,11 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // One function, as `walk_document`: the nesting on a stack of its own (`s.ret`, as
     // `is_array[depth]`), not the machine's; the loops a value is entered at from an array, an
     // object and the document are dispatched (`match d`), as simdjson's `goto`s into them.
-    assert!(src.matches("\nfn r").count() == 1 && src.contains("match s.ret[s.depth as usize] {"), "one function, an explicit stack");
+    assert!(src.matches("\nfn r").count() == 1 && src.contains("match ret {"), "one function, an explicit stack");
+    // One stack, the nodes': a call's number kept in its container's row (`keep_ret`), read back
+    // by the `CLOSE` before its `RETURN`; no call stack of its own, and no `CLOSE` tests for a
+    // node open (`OneFn::stacked`). The depth counts as simdjson's, for its limit alone.
+    assert!(!src.contains("s.ret[") && src.contains("s.keep_ret(") && !src.contains("close::<true, false>") && !src.contains("close::<false, false>"), "one stack");
     let again: std::collections::BTreeSet<usize> = native
         .structural
         .iter()

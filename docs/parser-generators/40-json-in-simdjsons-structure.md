@@ -593,6 +593,35 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 22, done: one stack, the nodes', in the generated Rust
+
+There were two stacks: the calls' (`s.ret`, `s.depth`) and the open nodes' (`s.open`, `s.nopen`).
+Each had a test: `depth == DEPTH` at a call, `nopen == 0` at every `CLOSE`. simdjson has one,
+`open_containers[depth]` with `is_array[depth]`.
+
+The two don't nest alike: the tree has more levels than the calls (the document node, a pair,
+a string with its parts), so they can't share one counter. But each call's container brackets
+the call. Its `OPEN` comes just before the `PUSH`, and its `CLOSE` just before the `RETURN`. So
+`rust_stream` checks this (`stacked`):
+- each `PUSH` right after its container's `OPEN` (only a supertype or field word between);
+- each `RETURN` right after a `CLOSE`;
+- each rule's opens and closes counting alike on every path, a call counting as the close of the
+  container before it: 0 at the `RETURN`'s `CLOSE`, at least 1 at every other `CLOSE` and every
+  `PUSH`.
+
+Where it holds:
+- the `PUSH` keeps its number in the container's row (`keep_ret`), in the `end` that nothing
+  reads before the `CLOSE` writes it;
+- the `CLOSE` before the `RETURN` takes it back (`taken_ret`), and the return matches on it;
+- no `CLOSE` tests for an open node (`close::<_, true>`): the count proves one is open.
+
+The call stack is gone, and the open-node test with it. `s.depth` stays for one thing, the limit
+on nesting, as simdjson's `depth >= max_depth`.
+
+The Rust trees test asserts no `s.ret`, a `keep_ret`, and every `CLOSE` sure. Keeping the number
+in the node below the container fails it at the first file. **Not tested:** a program for which
+`stacked` is false. JSON's holds, and no other form makes its records in tier 2.
+
 ## Step 21, done: no record field written that no word reads, in the generated Rust
 
 simdjson's `advance()` writes nothing but the index. Each token here wrote record fields:
@@ -721,7 +750,7 @@ the Rust it writes:
 The next six, from reading the Rust after step 19 (each a step, its assertion and a mutation):
 1. Done in step 20.
 2. Done in step 21.
-3. One stack for the nesting: the return's number in the open node's entry, one depth, one test.
+3. Done in step 22.
 4. No test of the string opener's length right after it is set.
 5. `part_stop` 32 bytes a step, and which stop it found from its masks, not the byte read again.
 6. The tape written once: each node's code as it is made, the columns where the image has them.

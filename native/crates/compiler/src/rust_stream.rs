@@ -120,6 +120,85 @@ struct OneFn {
     /// Each call's places after it: where its rule's returns go back to (its target, and the one
     /// after only where a `RETURN` gives `again`).
     after: HashMap<usize, Vec<usize>>,
+    /// The calls nested as the containers (`stacked`): a call's number kept in its container's
+    /// row, and no `CLOSE` that can find no node open.
+    stacked: bool,
+}
+
+/// Whether the calls nest as the nodes (`OneFn::stacked`): each `PUSH` right after its
+/// container's `OPEN` (a supertype or field word between), each `RETURN` right after the `CLOSE`
+/// of that container, and each rule's opens and closes counted alike on every way, a call the
+/// close of the container before it: 0 at a `RETURN`'s `CLOSE`, and at least 1 at every other
+/// `CLOSE` and every `PUSH`. Then that `CLOSE` closes the node the call's `OPEN` made, the
+/// container's row holds the call's number until it (its end is not read before), and no
+/// `CLOSE` finds no node open. Only words whose nodes this counts: no wrap, fold or drop.
+fn stacked(x: &Facts<'_>) -> bool {
+    let words = &x.native.structural;
+    let Some(one) = &x.one else { return false };
+    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); words.len()];
+    for pc in 0..words.len() {
+        for t in plain_succ(x, pc) {
+            preds[t].push(pc);
+        }
+    }
+    let only_from = |pc: usize, q: usize| preds[pc].as_slice() == [q];
+    for &(pc, _) in &one.sites {
+        let mut q = pc;
+        loop {
+            if q == 0 || !only_from(q, q - 1) {
+                return false;
+            }
+            q -= 1;
+            match words[q].operation {
+                Op::Open { .. } => break,
+                Op::NodeSuper { .. } | Op::NodeField { .. } => {}
+                _ => return false,
+            }
+        }
+    }
+    for &r in one.returns.keys() {
+        if r == 0 || !only_from(r, r - 1) || !matches!(words[r - 1].operation, Op::Close { .. }) {
+            return false;
+        }
+    }
+    // Each rule from its first word (the document's from word 0): a count a word, the same on
+    // every way.
+    let mut entries: Vec<usize> = vec![0];
+    entries.extend(one.sites.iter().map(|&(pc, _)| crate::native_cpu_stream::callee(x.native, pc)));
+    entries.sort_unstable();
+    entries.dedup();
+    for e in entries {
+        let mut at: HashMap<usize, i64> = HashMap::from([(e, 0)]);
+        let mut work = vec![e];
+        while let Some(pc) = work.pop() {
+            let c = at[&pc];
+            let after = match words[pc].operation {
+                Op::Open { .. } => c + 1,
+                Op::Close { .. } => {
+                    let last = plain_succ(x, pc).iter().any(|&t| matches!(words[t].operation, Op::Return { .. }));
+                    if (last && c != 0 && e != 0) || (!last && c < 1) {
+                        return false;
+                    }
+                    c - 1
+                }
+                Op::Push { .. } if c < 1 => return false,
+                Op::Push { .. } => c - 1,
+                Op::Token { .. } | Op::Switch { .. } | Op::Leaf { .. } | Op::NodeSuper { .. } | Op::NodeField { .. } | Op::Span { .. } | Op::Check { .. } | Op::Goto { .. } | Op::Return { .. } | Op::Accept | Op::Stop | Op::Empty { .. } => c,
+                _ => return false,
+            };
+            for t in plain_succ(x, pc) {
+                match at.get(&t) {
+                    Some(&v) if v != after => return false,
+                    Some(_) => {}
+                    None => {
+                        at.insert(t, after);
+                        work.push(t);
+                    }
+                }
+            }
+        }
+    }
+    true
 }
 
 impl OneFn {
@@ -172,7 +251,7 @@ impl OneFn {
             arms.sort_unstable();
             arms.dedup();
         }
-        OneFn { sites: sites.into_iter().zip(number).collect(), returns, after }
+        OneFn { sites: sites.into_iter().zip(number).collect(), returns, after, stacked: false }
     }
 }
 
@@ -258,6 +337,10 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
         let one = OneFn::of(native, &|w| plain_succ(&facts, w));
         facts.one = Some(one);
         facts.entries = vec![0];
+        let st = stacked(&facts);
+        if let Some(one) = &mut facts.one {
+            one.stacked = st;
+        }
     }
     if let Some(fx) = &facts.fetch {
         for pc in 0..words.len() {
@@ -864,11 +947,24 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
         self.nodes = n + 1;
     }
 
+    /// A call's number, kept in its container's row (the node open last), whose end the `CLOSE`
+    /// writes (`OneFn::stacked`).
+    #[inline(always)]
+    fn keep_ret(&mut self, k: u32) {
+        unsafe { (*self.row(*Self::col(self.open, self.nopen - 1))).end = k };
+    }
+
+    /// The number `keep_ret` kept in the node open last, before its `CLOSE`.
+    #[inline(always)]
+    fn taken_ret(&self) -> u32 {
+        unsafe { (*self.row(*Self::col(self.open, self.nopen - 1))).end }
+    }
+
     /// `CLOSE`: its end, size and tail; the pending extras after it are its parent's. A node
     /// closed at the top level: the nodes before it are final, their codes committed.
     #[inline(always)]
-    fn close<const THIS: bool>(&mut self, this_end: u32) -> R {
-        if self.nopen == 0 {
+    fn close<const THIS: bool, const SURE: bool>(&mut self, this_end: u32) -> R {
+        if !SURE && self.nopen == 0 {
             return Err(false);
         }
         self.nopen -= 1;
@@ -1817,12 +1913,16 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
             // `depth++`).
             Op::Push { .. } => {
                 let k = one.sites.iter().find(|&&(p, _)| p == pc).expect("a site").1;
+                if one.stacked {
+                    // In its container's row, until the `CLOSE` before the return reads it.
+                    return Ok(format!("if s.depth == DEPTH {{ return Err(false); }}\ns.depth += 1;\ns.keep_ret({k});\n{}", jump(0)?));
+                }
                 return Ok(format!("if s.depth == DEPTH {{ return Err(false); }}\ns.ret[s.depth as usize] = {k};\ns.depth += 1;\n{}", jump(0)?));
             }
             // A return: the site off the stack, then its place (`scope_end`).
             Op::Return { .. } => {
                 let arms = one.returns.get(&pc).map_or(&[][..], Vec::as_slice);
-                let mut m = String::from("s.depth -= 1;\nmatch s.ret[s.depth as usize] {\n");
+                let mut m = String::from(if one.stacked { "s.depth -= 1;\nmatch ret {\n" } else { "s.depth -= 1;\nmatch s.ret[s.depth as usize] {\n" });
                 for (i, &(k, _)) in arms.iter().enumerate() {
                     writeln!(m, "{k} => {{ {} }}", jump(i)?).unwrap();
                 }
@@ -1844,7 +1944,13 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
         Op::Word { string, test: true } => format!("if s.word() == {} {{ {} }} else {{ {} }}", u32::from(string) + 1, jump(0)?, jump(1)?),
         Op::Word { string, test: false } => format!("if s.word() != {} {{ return Err(false); }}\n{}", u32::from(string) + 1, jump(0)?),
         Op::Open { kind } => format!("s.open({});\n{}", u32::from(kind) | u32::from(field_after(x, pc).unwrap_or(0)) << 16, jump(0)?),
-        Op::Close { this } => format!("s.close::<{this}>({})?;\n{}", if this { end } else { "0" }, jump(0)?),
+        Op::Close { this } => {
+            let sure = x.one.as_ref().is_some_and(|o| o.stacked);
+            // The `CLOSE` before a `RETURN`: the call's number from its container's row first.
+            let before = plain_succ(x, pc).iter().any(|&t| matches!(n.structural[t].operation, Op::Return { .. }));
+            let take = if sure && before { "ret = s.taken_ret();\n" } else { "" };
+            format!("{take}s.close::<{this}, {sure}>({})?;\n{}", if this { end } else { "0" }, jump(0)?)
+        }
         Op::Leaf { kind, deferred, extra } => {
             let f = u32::from(field_after(x, pc).unwrap_or(0)) << 16;
             let constant = known.filter(|_| kind == WORD_KIND).map(|c| n.word_kinds.iter().find(|&&(w, _)| u32::from(w) + 1 == (c >> 8) & 0xff).map(|&(_, k)| u32::from(k)));
@@ -1946,7 +2052,9 @@ fn rule(out: &mut String, x: &Facts<'_>, entry: usize) -> Result<(), String> {
     let emit = |node: usize, jump: &dyn Fn(usize) -> Result<String, String>| -> Result<String, String> { word(x, nodes[node], jump) };
     let body = shape.tree(&emit, 0)?;
     let params = if x.context { ", mut word: u32, mut flags: u32" } else { "" };
-    writeln!(out, "/// The rule entered at word {entry}.\n#[inline(never)]\nfn r{entry}(s: &mut S{params}) -> Result<bool, bool> {{\n    let mut d: u32 = 0;\n{body}}}\n").unwrap();
+    // The call's number a `RETURN` matches on, from its container's row (`OneFn::stacked`).
+    let ret = if x.one.as_ref().is_some_and(|o| o.stacked) { "    let mut ret: u32 = 0;\n" } else { "" };
+    writeln!(out, "/// The rule entered at word {entry}.\n#[inline(never)]\nfn r{entry}(s: &mut S{params}) -> Result<bool, bool> {{\n    let mut d: u32 = 0;\n{ret}{body}}}\n").unwrap();
     Ok(())
 }
 
