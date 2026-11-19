@@ -183,6 +183,18 @@ fn place_relation(v: &str) -> String {
     format!("rr_place_{v}")
 }
 
+/// The rule a writing walk writes into, its variables `unset(x)` binds empty, and the negated test held back
+/// (`Lowerer::open`). A lowerer is copied (its seeds) with no rule open.
+#[derive(Default)]
+struct Writing(Option<(crate::code_rule_dsl::logic::program_image::Open, BTreeSet<String>, Option<Literal>)>);
+
+impl Clone for Writing {
+    fn clone(&self) -> Self {
+        assert!(self.0.is_none(), "a lowerer is copied with no rule open");
+        Writing(None)
+    }
+}
+
 #[derive(Clone, Default)]
 struct Lowerer {
     /// The rules the walk writes onto its header, a text's version (`Written`, decision 0377 step 3).
@@ -193,6 +205,9 @@ struct Lowerer {
     /// While a writing walk replays the clause: the next name of `log` it reads. Its rule writes then do nothing:
     /// the deciding walk wrote them.
     replay: Option<usize>,
+    /// The rule a writing walk writes into (`emit`), its variables `unset(x)` binds empty (`unset_vars`), and the
+    /// negated test held back until the next literal shows whether it merges with it (`merge_negated_test`).
+    open: Writing,
     /// Its header (decision 0276 §3): a module's declarations, inputs, facts and fields as the walk states them, its
     /// rules then written onto it (`Written`); the scope's, seeded; the modules' linked so far.
     prog: crate::code_rule_dsl::logic::program_image::Builder<'static>,
@@ -348,42 +363,52 @@ impl Written {
 /// `rule` put on `b` literal by literal (`Builder::open_rule`), open for `Written::close`. (Until each lowering
 /// writes its literals itself, decision 0276 A3.)
 fn put_rule(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'static>, rule: &Rule) -> Result<crate::code_rule_dsl::logic::program_image::Open, String> {
-    use crate::code_rule_dsl::logic::program_image::{CmpOp, T};
-    fn t(x: &Term) -> T<'_> {
-        match x {
-            Term::Var(v) => T::Var(v.as_ref()),
-            Term::Wild => T::Wild,
-            Term::Int(i) => T::Int(*i),
-            Term::Str(s) => T::Str(s.as_ref()),
-            Term::Top => T::Top,
-            Term::Call(f, args) => T::Call(f.as_ref(), args.iter().map(t).collect()),
-            Term::Branded(b) => T::Branded(*b),
-        }
-    }
-    fn ts(args: &[Term]) -> Vec<T<'_>> {
-        args.iter().map(t).collect()
-    }
     let mut o = b.open_rule();
     b.put_head(&mut o, rule.head.rel.as_ref(), &ts(&rule.head.args));
     for l in rule.body.iter() {
-        match l {
-            Literal::Atom(a) => b.put_atom(&mut o, a.rel.as_ref(), &ts(&a.args), a.neg, a.gated),
-            Literal::Cmp { l, op, r } => {
-                let Some(op) = CmpOp::of(op) else {
-                    b.abandon_rule(o);
-                    return Err(format!("comparison {op:?}"));
-                };
-                b.put_cmp(&mut o, t(l), op, t(r));
-            }
-            Literal::Agg { var, op, over, atom } => b.put_agg(&mut o, var, op, over.as_deref(), atom.rel.as_ref(), &ts(&atom.args)),
-            Literal::Nearest { n, a, kindset } => b.put_nearest(&mut o, n, a, kindset),
-            Literal::Ast { document, node, matcher, captures } => {
-                let caps: Vec<(&str, &str)> = captures.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
-                b.put_ast(&mut o, document, node, matcher, &caps);
-            }
+        if let Err(e) = put_literal(b, &mut o, l) {
+            b.abandon_rule(o);
+            return Err(e);
         }
     }
     Ok(o)
+}
+
+/// Term `x` to write (`Builder::put_*`).
+fn t(x: &Term) -> crate::code_rule_dsl::logic::program_image::T<'_> {
+    use crate::code_rule_dsl::logic::program_image::T;
+    match x {
+        Term::Var(v) => T::Var(v.as_ref()),
+        Term::Wild => T::Wild,
+        Term::Int(i) => T::Int(*i),
+        Term::Str(s) => T::Str(s.as_ref()),
+        Term::Top => T::Top,
+        Term::Call(f, args) => T::Call(f.as_ref(), args.iter().map(t).collect()),
+        Term::Branded(b) => T::Branded(*b),
+    }
+}
+
+fn ts(args: &[Term]) -> Vec<crate::code_rule_dsl::logic::program_image::T<'_>> {
+    args.iter().map(t).collect()
+}
+
+/// Literal `l` written into rule `o`, open on `b`.
+fn put_literal(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'static>, o: &mut crate::code_rule_dsl::logic::program_image::Open, l: &Literal) -> Result<(), String> {
+    use crate::code_rule_dsl::logic::program_image::CmpOp;
+    match l {
+        Literal::Atom(a) => b.put_atom(o, a.rel.as_ref(), &ts(&a.args), a.neg, a.gated),
+        Literal::Cmp { l, op, r } => {
+            let Some(op) = CmpOp::of(op) else { return Err(format!("comparison {op:?}")) };
+            b.put_cmp(o, t(l), op, t(r));
+        }
+        Literal::Agg { var, op, over, atom } => b.put_agg(o, var, op, over.as_deref(), atom.rel.as_ref(), &ts(&atom.args)),
+        Literal::Nearest { n, a, kindset } => b.put_nearest(o, n, a, kindset),
+        Literal::Ast { document, node, matcher, captures } => {
+            let caps: Vec<(&str, &str)> = captures.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+            b.put_ast(o, document, node, matcher, &caps);
+        }
+    }
+    Ok(())
 }
 
 /// A helper relation's stem, column types and rules (their templates: variables numbered in order, so the fresh
@@ -1987,6 +2012,71 @@ impl Lowerer {
         self.out.n
     }
 
+    /// Opens a rule of the walk: head `rel(args)`, its body's `unset(x)` binding `unset` empty (`unset_vars`); its
+    /// literals are `emit`'s, then `end_rule`.
+    fn begin_rule(&mut self, rel: &str, mut args: Vec<Term>, unset: BTreeSet<String>) {
+        args.iter_mut().for_each(|t| unset_term(t, &unset));
+        let mut o = self.prog.open_rule();
+        self.prog.put_head(&mut o, rel, &ts(&args));
+        self.open.0 = Some((o, unset, None));
+    }
+
+    /// Literal `l` of the open rule (`begin_rule`), when one is: its `unset` applied, and a negated test merged with
+    /// the one before it.
+    fn emit(&mut self, l: Literal) -> Result<(), Error> {
+        let Some((_, unset, held)) = self.open.0.as_mut() else { return Ok(()) };
+        let is_unset = matches!(&l, Literal::Atom(a) if a.rel == "unset" && !a.neg);
+        let Some(l) = unset_literal(l, unset)? else {
+            // `unset(x)` goes; the tests either side of it are not adjacent.
+            if is_unset && let Some(h) = held.take() {
+                self.put_open(&h)?;
+            }
+            return Ok(());
+        };
+        let l = match held.as_mut() {
+            Some(h) => match merge_negated_test(h, l) {
+                None => return Ok(()),
+                Some(l) => {
+                    let h = held.take().expect("held");
+                    self.put_open(&h)?;
+                    l
+                }
+            },
+            None => l,
+        };
+        if negated_test(&l).is_some() {
+            self.open.0.as_mut().expect("open").2 = Some(l);
+            return Ok(());
+        }
+        self.put_open(&l)
+    }
+
+    fn put_open(&mut self, l: &Literal) -> Result<(), Error> {
+        let (o, ..) = self.open.0.as_mut().expect("a rule open");
+        put_literal(&mut self.prog, o, l).map_err(Error::Syntax)
+    }
+
+    /// Ends the open rule (`begin_rule`).
+    fn end_rule(&mut self) -> Result<(), Error> {
+        if let Some(h) = self.open.0.as_mut().and_then(|(_, _, h)| h.take()) {
+            if let Err(e) = self.put_open(&h) {
+                let (o, ..) = self.open.0.take().expect("open");
+                self.prog.abandon_rule(o);
+                return Err(e);
+            }
+        }
+        let (o, ..) = self.open.0.take().expect("a rule open");
+        self.close(o);
+        Ok(())
+    }
+
+    /// Leaves the open rule out (an error while it was written).
+    fn drop_rule(&mut self) {
+        if let Some((o, ..)) = self.open.0.take() {
+            self.prog.abandon_rule(o);
+        }
+    }
+
     /// Ends rule `o`, open on the header (`Builder::open_rule`), as one the walk wrote; left out in a replay.
     fn close(&mut self, o: crate::code_rule_dsl::logic::program_image::Open) {
         if self.replay.is_some() {
@@ -2227,11 +2317,18 @@ impl Lowerer {
                 self.replay = None;
                 let (_, alts) = replayed?;
                 let chosen: Vec<Literal> = alts.into_iter().zip(&picks).flat_map(|(mut a, &p)| a.swap_remove(p)).collect();
-                let (args, body) = unset(args.clone(), merge_negated_tests(chosen))?;
+                let unset = unset_vars(&chosen)?;
                 if let Some(m) = &head.modal {
                     self.modal.insert(self.written(), m.clone());
                 }
-                self.write(Rule { head: Atom { rel: rel.clone().into(), args: args.into(), neg: false, gated: false }, body: body.into() });
+                self.begin_rule(&rel, args.clone(), unset);
+                for l in chosen {
+                    if let Err(e) = self.emit(l) {
+                        self.drop_rule();
+                        return Err(e);
+                    }
+                }
+                self.end_rule()?;
             }
         }
         Ok(())
@@ -4513,67 +4610,84 @@ pub(super) fn float_key(f: f64) -> i64 {
 pub(super) const UNSET: i64 = -1;
 
 fn unset(mut head: Vec<Term>, body: Vec<Literal>) -> Result<(Vec<Term>, Vec<Literal>), Error> {
-    let mut vars = BTreeSet::new();
-    let mut rest = Vec::new();
+    let vars = unset_vars(&body)?;
+    head.iter_mut().for_each(|t| unset_term(t, &vars));
+    let mut rest = Vec::with_capacity(body.len());
     for l in body {
-        match l {
-            Literal::Atom(a) if a.rel == "unset" && !a.neg => match a.args.as_slice() {
+        rest.extend(unset_literal(l, &vars)?);
+    }
+    Ok((head, rest))
+}
+
+/// The variables a body's `unset(x)` bind to the empty value.
+fn unset_vars(body: &[Literal]) -> Result<BTreeSet<String>, Error> {
+    let mut vars = BTreeSet::new();
+    for l in body {
+        if let Literal::Atom(a) = l
+            && a.rel == "unset"
+            && !a.neg
+        {
+            match a.args.as_slice() {
                 [Term::Var(v)] => {
                     vars.insert(v.to_string());
                 }
                 [Term::Wild] => {}
                 _ => return not_yet("`unset` of a value"),
-            },
-            Literal::Atom(a) if a.rel == "unset" => match a.args.as_slice() {
-                [x @ Term::Var(_)] => rest.push(Literal::Cmp { l: x.clone(), op: "!=", r: Term::Int(UNSET) }),
-                _ => return not_yet("`!unset` of a value"),
-            },
-            l => rest.push(l),
+            }
         }
     }
+    Ok(vars)
+}
+
+/// `t` with each of `vars` the empty value.
+fn unset_term(t: &mut Term, vars: &BTreeSet<String>) {
+    match t {
+        Term::Var(v) if vars.contains(v.as_str()) => *t = Term::Int(UNSET),
+        Term::Call(_, args) => args.iter_mut().for_each(|a| unset_term(a, vars)),
+        _ => {}
+    }
+}
+
+/// Literal `l` of a body whose `unset(x)` bind `vars` (`unset_vars`) to the empty value: `unset(x)` goes, `!unset(x)`
+/// is `x != -1`, each of `vars` is the empty value, and the empty value's text is "". `None` where it goes.
+fn unset_literal(l: Literal, vars: &BTreeSet<String>) -> Result<Option<Literal>, Error> {
+    let mut l = match l {
+        Literal::Atom(a) if a.rel == "unset" && !a.neg => return Ok(None),
+        Literal::Atom(a) if a.rel == "unset" => match a.args.as_slice() {
+            [x @ Term::Var(_)] => Literal::Cmp { l: x.clone(), op: "!=", r: Term::Int(UNSET) },
+            _ => return not_yet("`!unset` of a value"),
+        },
+        l => l,
+    };
     if vars.is_empty() {
-        return Ok((head, rest));
+        return Ok(Some(l));
     }
-    fn put(t: &mut Term, vars: &BTreeSet<String>) {
-        match t {
-            Term::Var(v) if vars.contains(v.as_str()) => *t = Term::Int(UNSET),
-            Term::Call(_, args) => args.iter_mut().for_each(|a| put(a, vars)),
-            _ => {}
+    match &mut l {
+        Literal::Atom(a) => a.args.iter_mut().for_each(|t| unset_term(t, vars)),
+        Literal::Cmp { l, r, .. } => {
+            unset_term(l, vars);
+            unset_term(r, vars);
         }
-    }
-    head.iter_mut().for_each(|t| put(t, &vars));
-    for l in &mut rest {
-        match l {
-            Literal::Atom(a) => a.args.iter_mut().for_each(|t| put(t, &vars)),
-            Literal::Cmp { l, r, .. } => {
-                put(l, &vars);
-                put(r, &vars);
-            }
-            // An aggregate's body (its helper atom) reads the unset variable from outside: it reads the empty value
-            // there too. Its result and `over` are its own, never unset.
-            Literal::Agg { var, over, atom, .. } if !vars.contains(var) && over.as_ref().is_none_or(|o| !vars.contains(o)) => {
-                atom.args.iter_mut().for_each(|t| put(t, &vars));
-            }
-            other if !other.vars().is_disjoint(&vars) => return not_yet("`unset` in an aggregate, `nearest` or `ast`"),
-            _ => {}
+        // An aggregate's body (its helper atom) reads the unset variable from outside: it reads the empty value
+        // there too. Its result and `over` are its own, never unset.
+        Literal::Agg { var, over, atom, .. } if !vars.contains(var) && over.as_ref().is_none_or(|o| !vars.contains(o)) => {
+            atom.args.iter_mut().for_each(|t| unset_term(t, vars));
         }
+        other if !other.vars().is_disjoint(vars) => return not_yet("`unset` in an aggregate, `nearest` or `ast`"),
+        _ => {}
     }
     // The empty value's text is "".
-    let rest = rest
-        .into_iter()
-        .filter_map(|l| match l {
-            Literal::Atom(a) if a.rel == "text" && a.args.first() == Some(&Term::Int(UNSET)) => {
-                let t = a.args.get(1).cloned().unwrap_or(Term::Wild);
-                match (t, a.neg) {
-                    (Term::Wild, false) => None,
-                    (Term::Wild, true) => Some(Literal::Cmp { l: Term::Int(1), op: "=", r: Term::Int(0) }),
-                    (t, neg) => Some(Literal::Cmp { l: t, op: if neg { "!=" } else { "=" }, r: Term::Str(String::new().into()) }),
-                }
+    Ok(match l {
+        Literal::Atom(a) if a.rel == "text" && a.args.first() == Some(&Term::Int(UNSET)) => {
+            let t = a.args.get(1).cloned().unwrap_or(Term::Wild);
+            match (t, a.neg) {
+                (Term::Wild, false) => None,
+                (Term::Wild, true) => Some(Literal::Cmp { l: Term::Int(1), op: "=", r: Term::Int(0) }),
+                (t, neg) => Some(Literal::Cmp { l: t, op: if neg { "!=" } else { "=" }, r: Term::Str(String::new().into()) }),
             }
-            l => Some(l),
-        })
-        .collect();
-    Ok((head, rest))
+        }
+        l => Some(l),
+    })
 }
 
 /// `re` with each named group made non-capturing (`(?P<x>…)`, `(?<x>…)` → `(?:…)`): what a test that binds nothing
@@ -4926,31 +5040,48 @@ fn grounds(body: &[Literal], vars: &[String]) -> bool {
 pub fn merge_negated_tests(body: Vec<Literal>) -> Vec<Literal> {
     let mut out: Vec<Literal> = Vec::new();
     for literal in body {
-        let negated_test = |l: &Literal| match l {
-            Literal::Cmp { l: Term::Call(op, args), op: "=", r: Term::Int(0) } if args.len() == 2 && crate::code_rule_dsl::logic::strings::is_test(op) && op != "rx" && op != "irx" => Some((op.clone(), args[0].clone(), args[1].clone())),
-            _ => None,
-        };
-        if let (Some((op, s, p)), Some(last)) = (negated_test(&literal), out.last_mut())
-            && let Some((last_op, last_s, last_p)) = negated_test(last)
-            && op == last_op
-            && s == last_s
-            && matches!(p, Term::Str(_))
-        {
-            let mut patterns = match last_p {
-                Term::Call(f, items) if f == SET => items,
-                Term::Str(_) => [last_p].into(),
-                _ => {
-                    out.push(literal);
-                    continue;
+        match out.last_mut() {
+            Some(last) => {
+                if let Some(l) = merge_negated_test(last, literal) {
+                    out.push(l);
                 }
-            };
-            patterns.push(p);
-            *last = Literal::Cmp { l: Term::Call(op, [s, Term::Call(SET.to_owned().into(), patterns)].into()), op: "=", r: Term::Int(0) };
-            continue;
+            }
+            None => out.push(literal),
         }
-        out.push(literal);
     }
     out
+}
+
+/// A negated test of a string, `!glob("a", s)` (`op(s, p) = 0`): its operation, string and pattern.
+fn negated_test(l: &Literal) -> Option<(&str, &Term, &Term)> {
+    match l {
+        Literal::Cmp { l: Term::Call(op, args), op: "=", r: Term::Int(0) } if args.len() == 2 && crate::code_rule_dsl::logic::strings::is_test(op) && op != "rx" && op != "irx" => Some((op, &args[0], &args[1])),
+        _ => None,
+    }
+}
+
+/// `literal` merged into `last` where both negate one test of one string, the second of a constant pattern (`!glob("a",
+/// s), !glob("b", s)` is one negated test of the set); else `literal` back, to follow it.
+fn merge_negated_test(last: &mut Literal, literal: Literal) -> Option<Literal> {
+    let mergeable = match (negated_test(&literal), negated_test(last)) {
+        (Some((op, s, p)), Some((last_op, last_s, last_p))) => {
+            op == last_op && s == last_s && matches!(p, Term::Str(_)) && (matches!(last_p, Term::Str(_)) || matches!(last_p, Term::Call(f, _) if f == SET))
+        }
+        _ => false,
+    };
+    if !mergeable {
+        return Some(literal);
+    }
+    let (Literal::Cmp { l: Term::Call(op, args), .. }, Literal::Cmp { l: Term::Call(_, new), .. }) = (std::mem::replace(last, Literal::Cmp { l: Term::Wild, op: "=", r: Term::Wild }), literal) else { unreachable!("negated tests") };
+    let [s, last_p]: [Term; 2] = args.to_vec().try_into().expect("a test of two");
+    let p = new[1].clone();
+    let mut patterns = match last_p {
+        Term::Call(f, items) if f == SET => items,
+        last_p => [last_p].into(),
+    };
+    patterns.push(p);
+    *last = Literal::Cmp { l: Term::Call(op, [s, Term::Call(SET.to_owned().into(), patterns)].into()), op: "=", r: Term::Int(0) };
+    None
 }
 
 /// `@place(path, line)` (`core.rr`) outside a `.violation`'s head: a place with no node, as a `loc` value:

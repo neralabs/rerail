@@ -489,6 +489,11 @@ Progress (2026-11-18):
       literal's the most significant, the order the products had), then `merge_negated_tests` and `unset` over that
       one body. No list of bodies is made. The eight tests: 131 s. Left: each literal's lowering still returns its
       alternatives as trees, which the replay picks from; next, the literal writes only the picked alternative.
+    - *Done (A3.3 stage 3, the emit).* A clause's rule is opened with its head (`begin_rule`, `unset`'s variables,
+      found by a scan of the chosen alternatives, written empty), each literal goes in through `emit` (its `unset`
+      applied, `unset_literal`; a negated test held until the next literal shows whether it merges,
+      `merge_negated_test`), then `end_rule`. The per-literal pieces are what `unset` and `merge_negated_tests` now
+      run over a whole body for the helpers that still make one.
   - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
     (`Tree::rule`) goes.
   - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,
