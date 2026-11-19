@@ -623,10 +623,10 @@ pub fn service<T: Send + 'static>(name: &str, stack: Option<usize>, f: impl FnOn
     }
     let named = name.to_owned();
     // The service reads its starter's shared and machine values (decision 0442), and keeps no run of its alive: it
-    // may outlive it.
-    let shared = rerail_context::shared_here();
+    // may outlive it. One started outside any run (the process's signal watcher, from `main`) has none to carry.
+    let shared = rerail_context::shared_object();
     b.spawn(move || {
-        let _within = rerail_context::within(shared);
+        let _within = shared.map(rerail_context::within);
         let pools = pools();
         struct Listed(String, Arc<Pools>);
         impl Drop for Listed {

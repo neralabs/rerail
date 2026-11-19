@@ -296,6 +296,9 @@ impl<T: Clone + Send + Sync + 'static, G: 'static> Part for Shared<T, G> {
 
 /// The modules whose thread-locals are carried, each taking its own.
 const CARRIERS: &[fn(&mut Capture)] = &[
+    // The run first: entered first, it is put back last, so every other part's guard drops inside it (a plans
+    // guard's drop counts into the run).
+    super::run::carried,
     super::plan::corpus::carried,
     super::plan::corpus::phases::carried,
     super::plan::corpus::inputs::carried,
@@ -310,7 +313,6 @@ const CARRIERS: &[fn(&mut Capture)] = &[
     super::plan::corpus::switches::carried,
     super::plan::corpus::session::carried,
     super::native::setfix::carried,
-    super::run::carried,
     #[cfg(any(test, feature = "test-hooks"))]
     super::plan::corpus::test_store::carried,
     carried_elsewhere,

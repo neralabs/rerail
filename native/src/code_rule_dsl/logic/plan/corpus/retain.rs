@@ -2790,9 +2790,10 @@ impl Retained {
             use rayon::prelude::*;
             let atoms = &atoms;
             let placer = &placer;
-            // Under the span open here, on whichever thread runs it: rayon's loops open none of their own.
+            // In the run and under the span open here, on whichever thread runs it: rayon's loops carry neither.
             let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
             whole.into_par_iter().filter_map(|(rel, k)| {
+                let _in = carry.enter();
                 let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || "a relation's frame, digested and encoded".into());
                 if k.rel.levels_shape().2 {
                     return None;
@@ -3111,7 +3112,12 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
     };
     let framed_inputs: Vec<Option<(u64, usize)>> = {
         use rayon::prelude::*;
-        inputs.par_iter().map(|(rel, source)| one_input(rel, source)).collect()
+        // In the run, on whichever thread runs it: its frames' placement reads the machine's device memory.
+        let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
+        inputs.par_iter().map(|(rel, source)| {
+            let _in = carry.enter();
+            one_input(rel, source)
+        }).collect()
     };
     // Whether an input's frames were queued: then the derived relations' are queued with the program's hold even
     // when none of theirs changed.
