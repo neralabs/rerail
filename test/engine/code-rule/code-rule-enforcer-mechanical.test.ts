@@ -830,6 +830,24 @@ describe("mechanical code rule regressions", () => {
         await enforcer.close();
       }
     }, 60_000);
+
+    it("and keeps the tool calls' answer when a scan of the repository ends outside repository scope", async () => {
+      const { root, enforcer } = await fixture({ scope: "touched-files", mode: "steer" });
+      try {
+        for (const name of ["a", "r"]) await writeFile(join(root, "api", `${name}.py`), "NEEDLE\n");
+        await enforcer.openWorkspace("scan-keeps-answer");
+        await enforcer.auditGeneratedEdits("scan-keeps-answer", {
+          revision: 1,
+          checkpoints: ["edit"],
+          edits: [{ path: "api/a.py", language: "python", generatedText: "NEEDLE\n" }],
+        });
+        await settled(enforcer);
+        await enforcer.audit("scan-keeps-answer", { scope: "repository", mode: "log" });
+        const status = await settled(enforcer);
+
+        expect(status.violations.map(violation => violation.path)).toEqual(["api/a.py"]);
+      } finally { await enforcer.close(); }
+    });
   });
 
   it("credits a steer to the distinct rules whose steer and block violations it rendered", async () => {
