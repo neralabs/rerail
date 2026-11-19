@@ -781,7 +781,7 @@ function cachedEntries(root, cached, lock, verify, dryRun) {
   }
   if (digest === lock.sha256) return { entries: verify(compressed), discarded: undefined };
   if (!dryRun) rmSync(cached, { force: true });
-  return { entries: undefined, discarded: relative(root, cached) };
+  return { entries: undefined, discarded: repositoryPath(cached, root) };
 }
 
 /** cachedEntries for the test data archive `lock` names, from ARCHIVE_CACHE. */

@@ -81,7 +81,10 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    instead.
 2. **Choose the kind.** A code rule checks files; read [references/code-rules.md](references/code-rules.md). A conversation rule
    checks a command the agent runs; read [references/conversation-rules.md](references/conversation-rules.md). Conversation
-   rules are in internal testing: Rerail's latest release ships code rules only.
+   rules are experimental and off unless `RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1` is set; Rerail's latest release ships
+   code rules only. Write one only when the person asks for a rule over a command, and only while `rerail rules test`
+   accepts the draft: when it answers that conversation rules are experimental and off, tell the person in one line and
+   offer a code rule if one would do.
    - Give it the id `local:<short-kebab-name>` and `revision` 1.
    - Set `mode`. Use `steer` when you are sure of the rule. Use `log` when the repo pass or the meaning leaves doubt. Never use
      `block`.
@@ -127,7 +130,7 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
      What it checks   <in plain words>
      Where it runs    When I edit a file under <folder> | When I run <command> | When you or I say <…>
      Applies to       All of <this repo's name> | This worktree only (<its folder name>)
-     What happens     Steer: I'm told in the session and fix it. I'm not stopped.
+     What happens     Steer: Rerail tells me as I work, and I fix it. I'm not stopped.
      How often        Every time | The first time only
      Tested           Would have caught <N> places in this repo | Would have caught <N> places under <folder>/
 
@@ -147,14 +150,15 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
      name them in place of "in this repo": "Would have caught 2 places under src/, web/ (…)". A command rule gets no repo
      pass, so its Tested row gives the cases: "Caught 4 of 4 cases, let 5 of 5 through". That alone is no reason for
      `Not sure`.
-   - **Log rules.** The What happens row reads "Log: Rerail keeps a record. I'm not told."
+   - **Log rules.** The What happens row reads "Log: Rerail only records it, for you to review. I'm not told."
    - **Rows you are unsure of.** Mark the row `Not sure`. Below the card, show one line from this repo that the rule catches and
      one that it misses, and set the rule to Log.
    - **Rules from the shortlist.** Put one line above the card: `From: <the evidence, e.g. "you corrected this 3 times">`.
    - **Architecture rules.** Put the history result above the card in one line: `Checked against history: caught the first
      draft of #123; quiet on its merge and on 15 recent merged PRs.`
-   - **Conversation rules** (command or similarity). Put one line above the card: `Internal testing: this kind of rule is not
-     part of Rerail's latest release yet.`
+   - **Conversation rules** (command or similarity). Put one line above the card: `Experimental: this kind of rule is not
+     part of Rerail's latest release, and runs only while RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1 is set for the daemon, or
+     for Pi itself when Pi runs Rerail in process.`
    - **"Change something".** Offer Steer and Log, each with what it means; All of the repo or this worktree only (its rule
      runs nowhere else, not in the main checkout nor other worktrees); and any other row the person names.
    - **"Show me the rule".** Print the rule JSON, then ask again.

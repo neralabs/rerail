@@ -9,6 +9,7 @@
 extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 pub use rerail_store::content_store;
+pub use rerail_store::git_access;
 pub use rerail_store::git_workspace;
 extern crate self as rerail_lang_php;
 #[path = "../../../src/code_rule_dsl"]
@@ -216,6 +217,7 @@ pub mod code_rule_dsl {
     pub use rerail_w::code_rule_dsl::hooks;
     pub use rerail_w::code_rule_dsl::identifier;
     pub use rerail_lang::code_rule_dsl::json;
+    pub use rerail_lang::code_rule_dsl::regexes;
     #[path = "language"]
     pub mod language {
         pub use rerail_lang::code_rule_dsl::language::*;

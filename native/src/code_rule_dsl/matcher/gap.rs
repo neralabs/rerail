@@ -25,7 +25,7 @@ use crate::code_rule_dsl::matcher::AstMatcher;
 use crate::code_rule_dsl::tape::tokens::TokenGrammar;
 pub use crate::code_rule_dsl::tape::tokens::stored_gaps;
 use ast_grep_core::{Doc, Node};
-use regex::Regex;
+use crate::code_rule_dsl::regexes::Regex;
 use std::cell::RefCell;
 use std::rc::Rc;
 use crate::code_rule_dsl::tape::tokens::Gaps;

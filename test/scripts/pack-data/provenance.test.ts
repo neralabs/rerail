@@ -5,18 +5,19 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, test } from "vitest";
 
 import { assertProvenanceWritten, LICENSES, PROVENANCE, provenanceTexts, variantEntries, writeProvenance, type ProvenanceEntry } from "../../../scripts/pack-data/provenance.mjs";
 import { COMMIT, LICENCE_TEXT, PACK, PROJECT, scratchCheckout, TOOL, TOOL_DIRECTORY, type ScratchCheckout } from "./support/provenance-root.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const REPOSITORY = resolve(import.meta.dirname, "..", "..", "..");
 const roots: string[] = [];
 
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeFolderSync(root);
 });
 
 function checkout(options?: ScratchCheckout): string {

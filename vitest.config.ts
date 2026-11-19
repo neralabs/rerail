@@ -32,13 +32,21 @@ export default defineConfig({
     // RERAIL_DEVICE_SECRET_STORE keeps activation tests, and every CLI they spawn, out of the system keychain.
     // RERAIL_MODIFY_PATH keeps set-up out of the shell startup files and the Windows user Path.
     env: { RERAIL_AUTOSTART: "0", RERAIL_DEVICE_SECRET_STORE: "file", RERAIL_MODIFY_PATH: "0" },
+    // Points the temp folder at one folder per run, which the run removes when it ends and the next run removes if a
+    // kill ended this one first, so no test's temporary folder outlives the run.
+    globalSetup: ["./test/support/temporary/run-folder.ts"],
     // The setup file mutates process.env to give every test file its own catalog home. Forked
     // workers prevent that environment from racing with concurrently executing test files.
     pool: "forks",
+    // Windows starts a process and opens a file several times slower than Linux and macOS: a test that starts git, a
+    // session runtime and a daemon takes 2 to 9 s there in a whole run, past the 5 s default, so the limits are wider.
+    ...(process.platform === "win32" ? { testTimeout: 30_000, hookTimeout: 60_000 } : {}),
     setupFiles: ["./test/support/setup-rerail-home.ts"],
     // Not vitest suites: upstream tools' copied tests are fixture data for the expected findings, real-code samples
-    // extracted under .rerail/ include upstream projects' test files, and ensure-sqlite's and the SQL profiling tests run
-    // under `node --test` (`npm run test:scripts`, `npm run test:profiling`).
+    // extracted under .rerail/ include upstream projects' test files, ensure-sqlite's, the transducer design's and the
+    // SQL profiling tests run under `node --test` (`npm run test:scripts`, `npm run test:profiling`), and nested
+    // worktrees under .worktrees/ are other checkouts with their own builds. `npm test` scans with `--dir test`, against
+    // which a pattern that starts with `test/` matches nothing: each pattern here starts with `**/` or a folder outside test/.
     exclude: [
       "**/node_modules/**",
       "**/dist/**",
@@ -51,6 +59,8 @@ export default defineConfig({
       "**/scripts/sql-profile/**",
       "**/scripts/sql-execution-budget.test.mjs",
       ...(process.env.RERAIL_RELATIONAL_TESTS === "1" ? [] : psAddonExclusions),
+      ".worktrees/**",
+      "**/docs/transducer-design.test.mjs",
     ],
   },
 });

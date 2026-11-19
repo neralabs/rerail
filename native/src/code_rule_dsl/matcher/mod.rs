@@ -47,6 +47,7 @@ pub mod value;
 
 use super::budget;
 use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
+use crate::code_rule_dsl::regexes::Regex;
 pub use analysis::RequiredText;
 #[cfg_attr(not(any(test, feature = "test-hooks")), allow(unused_imports))]
 pub use lower::{Axis, Fact, FactFound, MatchTree, Stop, DocumentGate, gated_match_tree, match_tree};
@@ -82,7 +83,6 @@ pub use nth_child::{named_sibling_visits, reset_named_sibling_visits};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use parse::parse_fact_tree;
 pub use parse::{HostTest, ParseTest};
-use regex::Regex;
 pub use relation::{FieldRelation, Related, StopBy, stop_rule};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use relation::{set_answers_off, set_same_key_off};
@@ -300,6 +300,7 @@ pub enum AstMatcher {
     /// members, which the tape stores per node (decision 0025). Membership is contextual (an
     /// `identifier` assigned to is a `pattern`, not an `expression`), not a function of the kind.
     Supertype(Supertype),
+    /// The node's text matches; the terms that write one pattern share its regex (`regexes`).
     Regex(Regex),
     All(Vec<AstMatcher>),
     Any(Vec<AstMatcher>),

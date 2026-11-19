@@ -512,8 +512,9 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             }
         }
     }
-    // The t31 rewrites ask the operation a token stood for: six more queries (RER-131).
-    assert_eq!(queries.len(), 1674, "pinned catalog query inventory");
+    // The t31 rewrites ask the operation a token stood for: six more queries (RER-131); main's pack fixes (#743)
+    // six more.
+    assert_eq!(queries.len(), 1680, "pinned catalog query inventory");
     // Every catalog grammar needs a fixture here; an unknown language fails rather than being skipped.
     let fixtures = [
         (
@@ -553,6 +554,11 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             "vue",
             GrammarDialect::TypeScript,
             "function route(a: any, b: any, c: any): number {\n  if (a) return 1;\n  if (b) return 2;\n  if (c) return 3;\n  for (const x of a) { if (x) return 4; }\n  while (b) { if (c) break; }\n  return a && b ? 5 : 6;\n}\n",
+        ),
+        (
+            "java",
+            GrammarDialect::Java,
+            "class Router {\n    int route(boolean a, boolean b, boolean c, int[] v) {\n        if (a) return 1;\n        if (b) return 2;\n        if (c) return 3;\n        for (int x : v) { if (x > 0) return 4; }\n        return a && b ? 5 : 6;\n    }\n}\n",
         ),
     ];
     for (query, _) in &queries {

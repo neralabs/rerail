@@ -8,7 +8,6 @@ import {
   linkSync,
   lstatSync,
   mkdirSync,
-  openSync,
   readdirSync,
   readFileSync,
   readSync,
@@ -16,7 +15,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { physicalPath } from "./checkout-control.js";
+import { checkoutRealpath, physicalPath } from "./checkout-control.js";
+import { openNoFollowSync } from "../no-follow.js";
 import { GitUnavailableError, gitText, runGit } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
@@ -34,8 +34,11 @@ function nonGitLocation(requested: string): RepositoryIdentityLocation {
   return { git: false, workspaceRoot: requested, identityPath: join(requested, ".rerail", "repository-id"), main: true };
 }
 
+/** The file in Git's common metadata directory that holds a clone's id, shared by every linked worktree. */
+export const GIT_IDENTITY_FILE = "rerail-repository-id";
+
 /**
- * Where `workspace`'s clone id lives: `rerail-repository-id` in Git's common metadata directory, shared by every
+ * Where `workspace`'s clone id lives: {@link GIT_IDENTITY_FILE} in Git's common metadata directory, shared by every
  * linked worktree, or `.rerail/repository-id` outside Git (or when Git is not installed).
  */
 export function repositoryIdentityLocation(workspace: string): RepositoryIdentityLocation {
@@ -44,8 +47,13 @@ export function repositoryIdentityLocation(workspace: string): RepositoryIdentit
   return result === undefined || result.status !== 0 ? nonGitLocation(requested) : gitLocation(requested, result.stdout);
 }
 
-/** Git's top level, common directory and Git directory for `requested`; undefined when Git is not installed. */
+/**
+ * Git's top level, common directory and Git directory for `requested`; undefined when Git is not installed, or when Git
+ * would find no repository there ({@link outsideGit}), so a folder outside Git, asked about on every hook event of a
+ * session working in it, starts no Git process.
+ */
 function locateInGit(requested: string): ReturnType<typeof runGit> | undefined {
+  if (outsideGit(requested)) return undefined;
   try {
     return runGit(requested, ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"]);
   } catch (error) {
@@ -54,12 +62,56 @@ function locateInGit(requested: string): ReturnType<typeof runGit> | undefined {
   }
 }
 
+/**
+ * What Git's search for a repository finds in a folder: a `.git` folder, file or link, or the `HEAD` every Git folder
+ * holds (a bare repository, a folder inside a `.git`, a Git folder kept apart from its work tree).
+ */
+const GIT_MARKERS = [".git", "HEAD"];
+
+/**
+ * Whether Git, asked about `folder`, finds no repository, read from the disk without starting Git: `GIT_DIR` is unset in
+ * the environment Rerail runs Git in, and no folder from `folder` up to its root holds one of {@link GIT_MARKERS}, by
+ * the path as written and by its real path (Git searches up from the folder it changed into, and whether that folder's
+ * name keeps a link's path or resolves it differs by system). False wherever the disk cannot tell: a folder that does
+ * not resolve, an entry that cannot be read. So it skips Git only where Git has nothing to find; where a `.git` is there
+ * and Git still answers no repository (another owner's, past `GIT_CEILING_DIRECTORIES`, an empty `.git` folder), Git is
+ * asked as before.
+ */
+export function outsideGit(folder: string): boolean {
+  if (process.env.GIT_DIR !== undefined) return false;
+  const written = resolve(folder);
+  let real: string;
+  try {
+    real = checkoutRealpath(written);
+  } catch {
+    return false;
+  }
+  return noMarkerUpFrom(written) && (real === written || noMarkerUpFrom(real));
+}
+
+/** Whether no folder from `start` up to its root holds one of {@link GIT_MARKERS}, or an entry that cannot be read. */
+function noMarkerUpFrom(start: string): boolean {
+  for (let current = start; ; current = dirname(current)) {
+    if (GIT_MARKERS.some(name => entryMayBeThere(join(current, name)))) return false;
+    if (dirname(current) === current) return true;
+  }
+}
+
+/** Whether `path` names an entry of any kind, a broken link included; true when it cannot be read either way. */
+function entryMayBeThere(path: string): boolean {
+  try {
+    return lstatSync(path, { throwIfNoEntry: false }) !== undefined;
+  } catch {
+    return true;
+  }
+}
+
 function gitLocation(requested: string, stdout: string): RepositoryIdentityLocation {
   const [top, commonDirectory, gitDirectory] = stdout.trim().split("\n").map(line => resolve(line.trim()));
   if (top === undefined || commonDirectory === undefined || gitDirectory === undefined) {
     throw new Error(`could not resolve Git common directory for ${requested}`);
   }
-  return { git: true, workspaceRoot: top, identityPath: join(commonDirectory, "rerail-repository-id"), main: commonDirectory === gitDirectory };
+  return { git: true, workspaceRoot: top, identityPath: join(commonDirectory, GIT_IDENTITY_FILE), main: commonDirectory === gitDirectory };
 }
 
 /** A recorded checkout's Git registry, as `git worktree list` last gave it, and what the registry then held. */
@@ -164,7 +216,7 @@ const MAX_IDENTITY_BYTES = 128;
 function readIdentityFile(identityPath: string): string | undefined {
   let descriptor: number;
   try {
-    descriptor = openSync(identityPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    descriptor = openNoFollowSync(identityPath, fsConstants.O_RDONLY);
   } catch (error) {
     if (errorCode(error) === "ENOENT") return undefined;
     throw new Error(`Rerail repository identity at ${identityPath} is not a regular file`);

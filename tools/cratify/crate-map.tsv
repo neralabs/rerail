@@ -23,6 +23,7 @@ lines	rerail-lang
 json	rerail-lang
 budget	rerail-lang
 value::text_regex	rerail-lang
+regexes	rerail-lang
 
 # Facts
 facts	rerail-facts

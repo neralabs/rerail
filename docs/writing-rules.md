@@ -61,7 +61,9 @@ rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]
 <details>
 <summary>What it lists, with sample output</summary>
 
-It covers the last 30 days, across every coding agent and every worktree of the repository.
+It covers the last 30 days, across every coding agent and every worktree of the repository. A session that started
+earlier counts when it was still active in that time, and only what it did then is counted; a correction still shows
+the calls just before it, even ones from before that time.
 
 | It lists | Which can become |
 |---|---|
@@ -89,14 +91,15 @@ It covers the last 30 days, across every coding agent and every worktree of the 
 Code rules check the files the agent edits; command rules check the commands it runs.
 
 - **A code rule** is a `rerail.policy/v1` document: globs for scope, clauses that match text, paths or syntax.
-- **A command rule** is a conversation rule that matches `input.command`.
+- **A command rule** is a conversation rule that matches `input.command`. Conversation rules are
+  [internal testing](internal-testing.md) and experimental: none runs unless `RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1`.
 
 <details>
 <summary>What each kind catches</summary>
 
 - **Code rules** catch cross-layer imports, a call that bypasses a helper, a blocking call in async code, an old path
   still written in a `Justfile`, or a file in the wrong folder. A clause is a `regex` over a file's text or path, a
-  `file` query, or a syntax query over Python, JavaScript, TypeScript, PHP or Blade.
+  `file` query, or a syntax query over Python, JavaScript, TypeScript, PHP, Blade, Rust, SQL, Vue or Java.
 - **Command rules** catch force pushes, `--no-verify` or publishing.
 
 </details>

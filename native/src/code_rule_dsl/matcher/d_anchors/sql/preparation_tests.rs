@@ -555,7 +555,7 @@ fn file_scoped_values_do_not_scan_unrelated_files() {
     let dialect = GrammarDialect::TypeScript;
     let doc = tests::document("target(value);", dialect);
     let fid = store.put("requested.ts", &doc).unwrap();
-    let regex = regex::Regex::new("^target$").unwrap();
+    let regex = crate::code_rule_dsl::regexes::Regex::new("^target$").unwrap();
     let plan = AnchorPlan {
         root_kinds: Some(std::collections::BTreeSet::from([dialect
             .kinds()

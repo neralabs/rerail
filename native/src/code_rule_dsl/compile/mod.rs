@@ -974,8 +974,14 @@ fn compile_query_as(
                 .get("transform")
                 .map(|value| {
                     let reading = Reading::new(grammars[0].1, options.clone(), python.clone());
-                    transform::compile_transform(value, &transform_path, limits, &reading)
-                        .map(Arc::new)
+                    transform::compile_transform(
+                        value,
+                        &transform_path,
+                        limits,
+                        &reading,
+                        code_rule_language,
+                    )
+                    .map(Arc::new)
                 })
                 .transpose()?;
             // A transform variable needs a name no capture of the query uses; said before any

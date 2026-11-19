@@ -298,6 +298,163 @@ fn a_file_set_without_a_root_resolves_among_its_own_files() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn a_root_is_read_at_its_own_path() {
+    assert_eq!(
+        on_disk(Path::new("/home/me/./repo/")).base(),
+        "/home/me/repo"
+    );
+    // The file system's own root and a relative path are no root: files are read at /workspace.
+    assert_eq!(on_disk(Path::new("/")).base(), "/workspace");
+    assert_eq!(on_disk(Path::new("repo")).base(), "/workspace");
+    // A root at /workspace is still a root on disk: the view's folder there is what disk has.
+    let root = Path::new("/workspace");
+    assert_eq!(on_disk(root).is_directory("/workspace"), root.is_dir());
+}
+
+/// A Windows root, as `set_root` takes one (an absolute path the platform accepts), is read at its
+/// path with `/` separators below a `/`, a verbatim prefix dropped.
+#[cfg(windows)]
+#[test]
+fn a_windows_root_is_read_at_a_slash_separated_path() {
+    for (root, base) in [
+        (r"C:\Users\me\repo\", "/C:/Users/me/repo"),
+        ("C:/Users/me/repo", "/C:/Users/me/repo"),
+        (r"c:\Users\me\repo", "/C:/Users/me/repo"),
+        (r"\\?\C:\Users\me\repo", "/C:/Users/me/repo"),
+        (r"\\server\share\repo", "/server/share/repo"),
+        (r"\\?\UNC\server\share\repo", "/server/share/repo"),
+        (r"C:\", "/C:"),
+        // Not absolute on Windows, so no root: files are read at /workspace.
+        (r"\Users\me\repo", "/workspace"),
+        (r"C:repo", "/workspace"),
+    ] {
+        assert_eq!(on_disk(Path::new(root)).base(), base, "{root}");
+    }
+}
+
+/// Below a Windows root, a drive path or the verbatim path `canonicalize` gives, a relative file
+/// and an installed package resolve on disk, each at its `/`-separated path.
+#[cfg(windows)]
+#[test]
+fn a_windows_root_resolves_the_files_on_disk_below_it() {
+    let directory = TempDir::new("windows-root");
+    for (path, text) in [
+        ("b.mjs", ""),
+        ("lib/c.js", ""),
+        ("node_modules/pkg/package.json", r#"{ "main": "main.js" }"#),
+        ("node_modules/pkg/main.js", ""),
+    ] {
+        directory.write(path, text);
+    }
+    let verbatim = directory.0.clone();
+    let drive = PathBuf::from(verbatim.to_str().unwrap().strip_prefix(r"\\?\").unwrap());
+    for root in [&drive, &verbatim] {
+        let view = on_disk(root);
+        for (specifier, file) in [
+            ("./b.mjs", "b.mjs"),
+            ("./lib/c.js", "lib/c.js"),
+            ("pkg", "node_modules/pkg/main.js"),
+        ] {
+            let found = target(&view, "a.mjs", specifier, Style::Import);
+            assert_eq!(
+                (found.file_path.as_deref(), found.error.as_deref()),
+                (Some(view.absolute(file).as_str()), None),
+                "{specifier} below {root:?}"
+            );
+        }
+        assert_eq!(
+            outcome(&view, "a.mjs", "./missing.mjs", Style::Import),
+            (true, true)
+        );
+    }
+}
+
+/// On Windows a specifier written as a Windows absolute path names the file there, as
+/// enhanced-resolve reads one: a drive path with either separator or letter case, and a device
+/// path.
+#[cfg(windows)]
+#[test]
+fn windows_absolute_specifiers_name_the_files_on_disk() {
+    let directory = TempDir::new("windows-specifiers");
+    directory.write("b.mjs", "");
+    let drive = directory.0.to_str().unwrap().strip_prefix(r"\\?\").unwrap();
+    let view = on_disk(Path::new(drive));
+    let lower = format!("{}{}", drive[..1].to_ascii_lowercase(), &drive[1..]);
+    for specifier in [
+        format!(r"{drive}\b.mjs"),
+        format!("{}/b.mjs", drive.replace('\\', "/")),
+        format!(r"{lower}\b.mjs"),
+        format!(r"\\?\{drive}\b.mjs"),
+    ] {
+        let found = target(&view, "a.mjs", &specifier, Style::Import);
+        assert_eq!(
+            (found.file_path.as_deref(), found.error.as_deref()),
+            (Some(view.absolute("b.mjs").as_str()), None),
+            "{specifier}"
+        );
+    }
+    let missing = format!(r"{drive}\missing.mjs");
+    assert_eq!(
+        outcome(&view, "a.mjs", &missing, Style::Import),
+        (false, true)
+    );
+}
+
+/// On Windows a relative target never reads a file outside the root, through a `\..` or a drive
+/// in a name, which Windows reads as a separator and a path of its own.
+#[cfg(windows)]
+#[test]
+fn a_relative_target_never_leaves_a_windows_root() {
+    let directory = TempDir::new("windows-outside");
+    directory.write("root/a.mjs", "");
+    directory.write("outside.mjs", "");
+    let view = on_disk(&directory.0.join("root"));
+    let outside = directory.0.join("outside.mjs");
+    let outside = outside.to_str().unwrap().strip_prefix(r"\\?\").unwrap();
+    let outcomes = [
+        r"./sub\..\..\outside.mjs".to_owned(),
+        format!("./{outside}"),
+    ]
+    .map(|specifier| outcome(&view, "a.mjs", &specifier, Style::Import));
+    assert_eq!(outcomes, [(true, true), (true, true)]);
+}
+
+/// On Windows a tsconfig `extends` and a `paths` target written as a Windows absolute path name
+/// the file there, as get-tsconfig's `path.isAbsolute` and eslint-plugin-n's `path.resolve` read
+/// one.
+#[cfg(windows)]
+#[test]
+fn windows_absolute_tsconfig_paths_name_the_files_on_disk() {
+    let directory = TempDir::new("windows-tsconfig");
+    let drive = directory.0.to_str().unwrap().strip_prefix(r"\\?\").unwrap();
+    let json = |path: String| path.replace('\\', r"\\");
+    let tsconfig = format!(
+        r#"{{ "extends": "{}", "compilerOptions": {{ "paths": {{ "@c": ["{}"] }} }} }}"#,
+        json(format!(r"{drive}\base")),
+        json(format!(r"{drive}\lib\c.ts")),
+    );
+    for (path, text) in [
+        ("lib/c.ts", ""),
+        (
+            "base.json",
+            r#"{ "compilerOptions": { "allowImportingTsExtensions": true } }"#,
+        ),
+        ("tsconfig.json", tsconfig.as_str()),
+    ] {
+        directory.write(path, text);
+    }
+    let view = on_disk(Path::new(drive));
+    // The `paths` target resolves; the `extends` base is read, so its allowImportingTsExtensions
+    // leaves `.js` naming no `.ts` file.
+    assert_eq!(outcome(&view, "x.ts", "@c", Style::Import), (true, false));
+    assert_eq!(
+        outcome(&view, "x.ts", "./lib/c.js", Style::Import),
+        (true, true)
+    );
+}
+
 #[test]
 fn holding_a_file_changes_resolution_only_where_disk_below_the_root_differs() {
     let directory = TempDir::new("held");

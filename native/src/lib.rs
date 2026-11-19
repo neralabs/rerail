@@ -26,6 +26,15 @@ pub use code_rule_dsl::tools;
 #[cfg(test)]
 pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 pub use rerail_store::content_store;
+/// Every in-process Git read (`native/src/git_access`): the opener, its setup and its pool are the store's
+/// (`rerail-store`), which the workspace discovery and the ignore matcher open through; the Node-API object that
+/// installs the setup is the engine's.
+pub mod git_access {
+    pub use rerail_store::git_access::*;
+    pub mod owner;
+    #[cfg(test)]
+    mod tests;
+}
 pub use rerail_w::git_ignore;
 pub use rerail_store::git_workspace;
 pub use rerail_store::source_tree;
@@ -38,8 +47,9 @@ pub use rerail_logic::threads;
 #[cfg(target_family = "wasm")]
 pub mod reactor;
 mod rules;
+pub mod tree_watch;
 
-use model::{ModelFingerprint, load_model, verify_model};
+use model::{ModelFingerprint, shared_model, verify_model};
 use napi::{Error, Result, Status, bindgen_prelude::Float32Array};
 use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
@@ -343,7 +353,6 @@ static SQLITE_ALLOCATOR: extern "C" fn() = {
 #[napi]
 pub struct ConversationEngine {
     encoder: ModelEncoder,
-    fingerprint: ModelFingerprint,
     rules: RuleSet,
 }
 
@@ -357,22 +366,20 @@ impl ConversationEngine {
                 "max_input_tokens must be positive",
             ));
         }
-        let loaded = load_model(Path::new(&model_path))?;
-        let dimensions = loaded.fingerprint.dimensions as usize;
+        let model = shared_model(Path::new(&model_path))?;
+        let dimensions = model.fingerprint.dimensions as usize;
         Ok(Self {
             encoder: ModelEncoder {
-                model: loaded.model,
-                tokenizer: loaded.tokenizer,
+                model,
                 max_input_tokens: max_input_tokens as usize,
             },
-            fingerprint: loaded.fingerprint,
             rules: RuleSet::empty(dimensions),
         })
     }
 
     #[napi]
     pub fn fingerprint(&self) -> ModelFingerprint {
-        self.fingerprint.clone()
+        self.encoder.model.fingerprint.clone()
     }
     #[napi(catch_unwind)]
     pub fn embed_texts(&self, texts: Vec<String>) -> Result<Vec<Float32Array>> {
@@ -385,7 +392,7 @@ impl ConversationEngine {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
-        let vectors = self.encoder.model.encode_with_args(
+        let vectors = self.encoder.model.model.encode_with_args(
             &texts,
             Some(self.encoder.max_input_tokens),
             texts.len(),
@@ -396,7 +403,7 @@ impl ConversationEngine {
                 "embedding count did not match text count",
             ));
         }
-        let dimensions = self.fingerprint.dimensions as usize;
+        let dimensions = self.encoder.model.fingerprint.dimensions as usize;
         vectors
             .into_iter()
             .map(|vector| {
@@ -420,6 +427,7 @@ impl ConversationEngine {
             .map(|text| {
                 let encoding = self
                     .encoder
+                    .model
                     .tokenizer
                     .encode(text.as_str(), false)
                     .map_err(|error| {
@@ -468,6 +476,7 @@ impl ConversationEngine {
                 }
                 let encoding = self
                     .encoder
+                    .model
                     .tokenizer
                     .encode(text.as_str(), false)
                     .map_err(|error| {

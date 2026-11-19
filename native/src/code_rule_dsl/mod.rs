@@ -255,6 +255,11 @@ mod compile {
         #[allow(unused_imports)]
         use std::sync::{Arc, Weak};
     }
+    pub mod shared {
+        pub use rerail_w::code_rule_dsl::compile::shared::*;
+        #[cfg(all(test, not(windows)))]
+        pub mod tests;
+    }
     pub mod order {
         pub use rerail_w::code_rule_dsl::compile::order::*;
         #[cfg(test)]
@@ -3459,6 +3464,13 @@ mod scope {
     #[allow(unused_imports)]
     use crate::code_rule_dsl::identifier::{name_in};
 }
+pub mod regexes {
+    pub use rerail_lang::code_rule_dsl::regexes::*;
+    #[cfg(test)]
+    pub mod tests;
+    #[allow(unused_imports)]
+    use std::sync::Arc;
+}
 pub use rerail_lang::code_rule_dsl::semver;
 // The first slice's entry points (06 S6), called by hosts through `slice::napi::CodeRuleSlice`.
 mod slice;
@@ -4401,6 +4413,8 @@ impl CodeRuleDslRuntime {
         let canonical_value = canonicalize_value(document);
         let canonical = serde_json::to_string(&canonical_value).map_err(json_error)?;
         let digest = format!("sha256:{}", hex_digest(canonical.as_bytes()));
+        // The regexes only validation took, or a rejected document's, go as this ends (`regexes`).
+        let _compiling = regexes::compiling();
         let (id, rule_mode, scope, clauses, required, report_count_gt) =
             compile_document(&canonical_value, &capabilities)?;
         Ok(CompiledCodeRuleDsl {

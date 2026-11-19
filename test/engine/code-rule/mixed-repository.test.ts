@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,13 +9,14 @@ import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-
 import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { testCodeRuleCatalog } from "../../support/repository-rules.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 // T6 of the language-pack standard (docs/design/rerail-language-conformance.md): Python, TypeScript, PHP and Blade
 // in one repository, through the built addon and the TypeScript host, by Git index and by directory walk.
 
 const FIXTURE = fixturesPath("host", "mixed-repository");
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeFolder(root))); });
 
 async function directory(prefix: string): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), prefix)));
