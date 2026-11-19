@@ -5251,6 +5251,17 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   "bound node products by their readers: unbounded node Cartesian product in `base`" (18) and "in `res`: the read in
   `res` has no connected demand" (1). Not PR #508's: the same with Q241's and Q244's ports and without them.
 - **Done when**: the 30 pass, the product bound at its producer (no relation computed in full to be filtered).
+- **Done** (2026-11-19). The products the pass refused are bounded by declared fan-outs:
+  - `pv(o, "cls", c) :- attr_of(_, o, _), builtin_ref(o, "object"), qv("builtins.object", "cls", c)` (calls.rr) pairs
+    each reference to `object` with the few class nodes of one qualified name.
+  - `res(p, "mod", r) :- kind(p, "crate"), modn(r, "crate")` (calls_rust.rr) pairs each `crate` path with the
+    crate's root.
+  `product_demand::fixed_vars` counts a variable as fixed when it is reached from constants (and fixed variables)
+  through a relation's declared key or a fan-out of one, few or at most 16 rows (`.layout`, 0361), as a variable
+  set to a constant already was. calls.rr declares `.layout qv fanout(q, k -> v, few)`, and calls_rust.rr
+  declares `.layout modn fanout(q -> m, few)` (the program models one crate: a qualified name is one module).
+  A refusal now names its product rules and the read it could not key. The 30 oracle tests pass on the M1 Max, with
+  the pass's 11 tests (one new), the RIR dumps, the production contracts and the file-local typing tests.
 
 ### Q250. Four observer tests fail at the hub's tip
 
