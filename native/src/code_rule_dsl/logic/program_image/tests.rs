@@ -2036,7 +2036,7 @@ mod layouts {
     }
 }
 
-/// A relation's facts are a set (decision 0442 K3): the same facts in another order are the same program, its digest
+/// A relation's facts are a set (decision 0456 K3): the same facts in another order are the same program, its digest
 /// and each relation's identity unchanged. A phase's export maintained from kept rows comes in their canonical order,
 /// one derived anew in another; the cone's rounds' space is named by the program's digest, and its kept relations by
 /// their identities, so an order-sensitive digest lost every kept round when a library file went.

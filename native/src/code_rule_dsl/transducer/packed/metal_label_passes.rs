@@ -1043,9 +1043,10 @@ fn pipelines(format: u32) -> Result<Vec<ComputePipelineState>, Error> {
     // The library once (its front end, with the first kernel), then the others side by side: each pipeline is a
     // back-end compile of its own, and Metal's compiler service runs them at once (work queue Q181: format 16's took 67
     // s one after another, 23 s together, on a loaded M3 Max). A kernel that fails to compile panics on its thread,
-    // and the panic goes on here (decision 0382).
+    // and the panic goes on here (decision 0382). Each compile waits on the device's compiler, so its thread is a
+    // device's worker, scoped as the executor's are (`exec::scoped`, decision 0100 §12).
     let first = pipeline_of(&SOURCE, KERNELS[0], format)?;
-    let rest = std::thread::scope(|scope| {
+    let rest = rerail_accel::exec::scoped(|scope| {
         let compiles = KERNELS[1..].iter().map(|name| scope.spawn(move || pipeline_of(&SOURCE, name, format))).collect::<Vec<_>>();
         compiles.into_iter().map(|compile| compile.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))).collect::<Result<Vec<_>, _>>()
     })?;

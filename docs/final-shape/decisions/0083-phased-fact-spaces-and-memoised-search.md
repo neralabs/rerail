@@ -485,7 +485,7 @@ The steps:
    files itself (`exports`, `resolve_export`, the module graph), which `sources.rr` and `types.rr` do once.
 
 **Measured on the run path (2026-11-18, M5 Max, debug build, strict).** The data-layer rules
-(`docs/rule-syntax/data-layer`) over corpus0's first 50 and 300 files, with `versioned-table-names` left out (Q242:
+(`docs/rule-syntax/data-layer`) over corpus0's first 50 and 300 files, with `versioned-table-names` left out (Q283:
 the hub's inline pricing makes it run past 590 s, with or without the phases):
 
 | Run | Files | Wall | Findings | Notes |
@@ -493,7 +493,7 @@ the hub's inline pricing makes it run past 590 s, with or without the phases):
 | Cold | 50 | 103 s | 48 | P2's struct and types phases run first |
 | Warm | 50 | 0.24 s | 48 | nothing computed |
 | One-file edit | 50 | 16 s | 48 | equals a from-scratch run of the edited files |
-| Cold | 300 (83,863 lines) | 122 s | 59 | peak RSS 1.9 GB; `RERAIL_WRITE_QUEUE_MB=512` (Q243) |
+| Cold | 300 (83,863 lines) | 122 s | 59 | peak RSS 1.9 GB; `RERAIL_WRITE_QUEUE_MB=512` (Q284) |
 | One-file edit | 300 | 32 s | 59 | 299 of 300 files from the memo; the cross part 16.7 s, as cold |
 
 The analysis phase's typing on the 50 files (a probe rule over `possible_type` and `call_target`): 8,587 nodes

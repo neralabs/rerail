@@ -588,7 +588,7 @@ pub(in crate::code_rule_dsl) fn after(
         // again in less than reading it back costs: not kept, so it never takes the budget from the relations whose
         // rows are work. An index's relation is kept where the part stays in memory (`indexes`: a chunk's guest
         // rounds, decision 0331), so its next run's delta is made against it and its readers are maintained. A kept
-        // relation read where it lies (decision 0442 step 6b), which a round's maintain mode passes on unchanged, is
+        // relation read where it lies (decision 0456 step 6b), which a round's maintain mode passes on unchanged, is
         // a relation's rows: kept (dropped, it was neither held nor current, and the next round gave up, "not kept").
         if (held.view.is_some() || held.viewed) && !held.kept_in_place() && !(indexes && held.held_source().is_some()) {
             continue;
@@ -2756,7 +2756,7 @@ pub(in crate::code_rule_dsl) fn kept_put(name: &KeptRel, digest: u64, reads: Vec
 }
 
 /// Rows not held as a relation, as an entry of their own (an input's granule or documents, statistics' words): `n`
-/// rows of `types.len()` columns, flat, kept as given (decision 0442): read by position, in their order, every row.
+/// rows of `types.len()` columns, flat, kept as given (decision 0456): read by position, in their order, every row.
 fn kept_flat(name: &KeptRel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Vec<i64>, n: usize) -> KeptPut {
     KeptPut { rel: name.name.clone(), ident: name.ident, part, digest, reads, what: KeptWhat::Flat { widths: vec![8; types.len()], rows, n, levels: None, given: true }, types }
 }

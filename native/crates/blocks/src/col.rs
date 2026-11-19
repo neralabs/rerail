@@ -7,7 +7,7 @@
 //!   A sorted column with repeats, as a canonical order's leading column is.
 //! - `LINE`: `v - (base + i * slope / 2^16)`, less `rmin`, in `bits` bits (MLDB's `Predictor`): a column that grows
 //!   with its position, as ids in canonical order do.
-//! - `GROUPS` (decision 0442 K2): groups of 128 values, each its own minimum (`bits` bits, less `base`) and width;
+//! - `GROUPS` (decision 0456 K2): groups of 128 values, each its own minimum (`bits` bits, less `base`) and width;
 //!   a value is its group's minimum and its residual, packed at the group's width from the group's bit offset (each
 //!   group's width and offset one `rbits`-bit entry). The random-access counterpart of a delta varint: a sorted id
 //!   column's 128 values span a small range, and a group that crosses a document costs that group alone.
@@ -947,7 +947,7 @@ mod tests {
         assert_eq!(&tags[..3], &[PACK, RUNS, LINE]);
     }
 
-    /// K-R1 (decision 0442): `GROUPS` reads back every value, is chosen for node ids clustered by document (sorted,
+    /// K-R1 (decision 0456): `GROUPS` reads back every value, is chosen for node ids clustered by document (sorted,
     /// and in a run's order), and searches as a scan does.
     #[test]
     fn groups_reads_every_value() {

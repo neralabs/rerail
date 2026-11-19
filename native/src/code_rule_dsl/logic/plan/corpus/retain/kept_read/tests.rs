@@ -9,9 +9,9 @@ fn name(r: &str) -> KeptRel {
     KeptRel { name: r.into(), ident: [3; 32] }
 }
 
-/// F-R1, K-R8a (decisions 0401 F3, 0442 step 6b): a kept relation bound by a new reader is a view of its entry where
+/// F-R1, K-R8a (decisions 0401 F3, 0456 step 6b): a kept relation bound by a new reader is a view of its entry where
 /// it lies in the space's mapped chain, its rows in canonical order, not a copy; one whose entry keeps its levels
-/// (decision 0090) is read in with them, in the entry's rows' order. A relation's dead rows are not kept (0442 K3:
+/// (decision 0090) is read in with them, in the entry's rows' order. A relation's dead rows are not kept (0456 K3:
 /// its live rows are packed). Bound again with no commit between, the space is the same mapping; the relation
 /// outlives the binding it came from.
 #[test]
@@ -46,7 +46,7 @@ fn a_kept_relation_is_read_where_it_lies() {
     assert_eq!(view.len(), 3, "the view holds the mapping");
 }
 
-/// A kept input's granules (decision 0401 F3; put as given, 0442 K6) bound as one relation: a view of each granule's
+/// A kept input's granules (decision 0401 F3; put as given, 0456 K6) bound as one relation: a view of each granule's
 /// entry where it lies, one after another, every row in the order put; a probe of any column finds its rows across
 /// the granules. Granules of another width are not gathered.
 #[test]

@@ -51,7 +51,7 @@ const NOT_CACHES: &[&str] = &[
 ];
 
 /// The relations' own storage between runs: every kept relation's rows as a chain of packed files beside the store,
-/// named by `facts_chain` (decisions 0401, 0442). A per-file memo entry is its file's rows as one image in a segment (`memo_entries`,
+/// named by `facts_chain` (decisions 0401, 0456). A per-file memo entry is its file's rows as one image in a segment (`memo_entries`,
 /// `memo_packs`: decision 0240 §4). A cache's rows are kept here as any relation's are, never in a table of their own.
 const RELATIONS: &[&str] = &["facts_chain", "memo_entries", "memo_packs"];
 

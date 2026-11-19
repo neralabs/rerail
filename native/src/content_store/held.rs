@@ -43,7 +43,7 @@ struct Snapshot {
     admitted: HashSet<[u8; 32]>,
     /// The memo entries admitted (`admit_memo_entries`) and written since, by space and part (decision 0240 §4).
     memo: HashMap<[u8; 32], HashMap<i64, Arc<MemoBlob>>>,
-    /// Each space's chain of kept files (decision 0442) as its `facts_chain` rows name it: read before a run's first
+    /// Each space's chain of kept files (decision 0456) as its `facts_chain` rows name it: read before a run's first
     /// wave (`ContentStore::preload_kept`, decision 0104), and replaced by this process's writer as it commits a
     /// space's next block. `None` until read. A run binding a space inside its waves asks no SQL (`kept_row`).
     kept: Option<HashMap<[u8; 32], super::kept_facts::ChainRows>>,

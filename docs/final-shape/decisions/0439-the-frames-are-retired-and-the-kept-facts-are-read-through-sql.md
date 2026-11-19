@@ -45,19 +45,19 @@ SQL       -> SELECT ... FROM frames      SQL       -> SELECT ... FROM kept_facts
      `id` (the row's place in its entry), `c0` … `c15` (NULL past its width). `space = ?`, `rel = ?` and `part = ?`
      choose the entries; `c0 = ?` is a binary search where `c0` leads an entry's order.
 
-   Merged with 0442 (2026-11-19): this was `kept_rows(space, rel, ident, part)`, a table-valued function over one
-   entry, its key required. 0442's `kept_facts` asks the same with constraints, and also across entries and spaces,
+   Merged with 0456 (2026-11-19): this was `kept_rows(space, rel, ident, part)`, a table-valued function over one
+   entry, its key required. 0456's `kept_facts` asks the same with constraints, and also across entries and spaces,
    so it joins as a relation does; `kept_rows` went, and `kept_facts` took its `id`.
 
    A cursor steps over an entry's rows in the mapping and reads each value where it lies (`Packed::get`). Nothing is
-   collected into rows (0353). An entry holds its live rows only (0442 K3: a killed or dropped row is not packed). An `s` column
+   collected into rows (0353). An entry holds its live rows only (0456 K3: a killed or dropped row is not packed). An `s` column
    holds the store's atom ids, as `atoms` answers them, so the two join.
 
 ## Required behavior, asserted
 
 - F-R5: `the_kept_relations_read_through_sql_equal_their_entries`: entries, digests, types, reads and rows' counts
   equal the chain's; each entry's rows through `kept_facts` equal its rows; a killed row is left out; a column past
-  the width is NULL; an entry not kept has no rows. `kept_facts_are_a_virtual_table` (0442 K-R10): the constraints,
+  the width is NULL; an entry not kept has no rows. `kept_facts_are_a_virtual_table` (0456 K-R10): the constraints,
   `level`, `id`, and the range `c0 = ?` reads.
 - `a_store_of_before_loses_the_retired_tables_and_their_segments` (item 3).
 - `a_run_that_begins_stops_a_sweep_of_many_small_deletes`, now over 3,000 memo entries (item 4).
@@ -93,10 +93,10 @@ frames. With the blocks this tree first kept, they were not: 211 MB on disk over
 MB (a block's columns were 8-byte words with their indexes, where a frame's were varints; one space's base was 121
 MB of it, and each space kept the delta it replaced until its next write, 28 MB).
 
-Merging decision 0442 (the user's "kept facts are packed chunks, appended to a chain of mapped files", built on a
+Merging decision 0456 (the user's "kept facts are packed chunks, appended to a chain of mapped files", built on a
 sibling branch as 0402; merge dc113d27e) meets it. The same 50 files with the profiling build, at load 18 on the M5:
 a cold run's chain takes 31.6 MB over 7 spaces in 14 files; after the cold run, a warm one, the edit adding a
 function and a warm one after it, 38.9 MB over 20 spaces in 35 files, of which 5.0 MB are 7 files a merge replaced,
-removed by their space's next write (0442 K4), so 33.9 MB the chain names. The biggest space is 26.2 MB after the
+removed by their space's next write (0456 K4), so 33.9 MB the chain names. The biggest space is 26.2 MB after the
 cold run. Cold 7.9 s and 215.8 G instructions, the edit 2.5 s and 37.3 G at a 526 MB peak (load 18, where the
 numbers above were at load 36), the edited tree cold 7.6 s; all 589 outputs equal, with 48 findings.

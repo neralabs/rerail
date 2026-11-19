@@ -1,4 +1,4 @@
-//! A space's kept facts bound where they lie (decisions 0401 F3, 0442 K6, 0438). A process maps a space's chain of
+//! A space's kept facts bound where they lie (decisions 0401 F3, 0456 K6, 0438). A process maps a space's chain of
 //! packed files once for each commit of it (`Bound::of`), and a kept entry it binds (a clean derived relation, a kept
 //! input's granules, a delta's old rows) is an engine relation over the mapping: a view of the entry's `Packed`
 //! (`KeptSource`), its values read where they lie. No row is decoded or copied (0353), but for a relation whose levels
@@ -98,7 +98,7 @@ impl Entry {
         self.rel_as(types, atoms)
     }
     /// `rel`, held under the engine's `types` (its own, of the entry's width): a view of the entry where it lies
-    /// (decision 0442 step 6b), or, when the entry keeps its rows' levels, its rows read in with them.
+    /// (decision 0456 step 6b), or, when the entry keeps its rows' levels, its rows read in with them.
     pub(in crate::code_rule_dsl) fn rel_as(&self, types: Vec<u8>, atoms: &Atoms) -> Option<Arc<InRel>> {
         let rows = self.packed();
         let k = rows.arity as usize;

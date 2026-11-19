@@ -428,7 +428,7 @@ pub struct Rel { table: String, types: Vec<u8>, pub k: usize, pub n: usize, data
              /// level or above is no row (`dead`), as a row present only below the candidate's level supports it.
              /// `u32::MAX`: none.
              cap: u32,
-             /// Declared sorted (`.decl … sorted`, decision 0442 K7): its live rows laid out in canonical order (its
+             /// Declared sorted (`.decl … sorted`, decision 0456 K7): its live rows laid out in canonical order (its
              /// columns in turn) when its component is done (`InRel::moved`).
              ordered: bool }
 
@@ -705,7 +705,7 @@ impl Rel {
             if gone_rows.contains(&row) { removed.extend_from_slice(&row); } else if rel.push(&row) && levels { *rel.level.last_mut().expect("a level pushed") = old.level[id]; }
         }
         if !levels { rel.level.clear(); }
-        // A kept relation read in place (decision 0442 step 6, a view of its entry) is counted by its view.
+        // A kept relation read in place (decision 0456 step 6, a view of its entry) is counted by its view.
         if old.k == k {
             rel.from = Some(Origin::Compacted { at: old as *const InRel as usize, old_n: old.len(), kept: rel.n, removed });
         }
@@ -1940,7 +1940,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     let mut leveled = false;
     // The relations whose statistics are kept as their rows come (`Line::Stats`).
     let mut counted: Vec<usize> = Vec::new();
-    // The relations declared sorted (`Line::Sorted`, decision 0442 K7).
+    // The relations declared sorted (`Line::Sorted`, decision 0456 K7).
     let ordered: Vec<usize> = spec.lines.iter().find_map(|l| if let Line::Sorted(r) = l { Some(r.clone()) } else { None }).unwrap_or_default();
     let mut cyclic: Vec<usize> = Vec::new();
     let mut kept_old = false;
@@ -5159,7 +5159,7 @@ impl InRel {
     fn moved(mut rel: Rel) -> InRel {
         rel.index_rest();
         rel.count_dead();
-        // Declared sorted (decision 0442 K7): laid out in canonical order, unless its rows are numbered as the kept
+        // Declared sorted (decision 0456 K7): laid out in canonical order, unless its rows are numbered as the kept
         // relation it started from numbers them (its versions are read by id, decision 0364).
         if rel.ordered && rel.from.is_none() && rel.lat.is_none() && rel.k > 0 {
             return InRel::in_canonical_order(rel);
@@ -5167,7 +5167,7 @@ impl InRel {
         InRel { vers: Default::default(), viewed: false, keyed: None, k: rel.k, n: rel.n, rows: rel.data.freeze(rel.n), view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains: rel.idx, sorted: rel.sorted,
                 sketches: rel.sketches, serves: rel.serves, dead: rel.dead.into(), ndead: rel.ndead, summaries: rel.summaries, measured: Default::default(), counted: Default::default(), tables: Default::default(), name: std::sync::OnceLock::from(rel.table), from: rel.from, uid: Default::default(), level: rel.level.into(), stats: rel.stats }
     }
-    /// `rel`'s live rows in canonical order (its columns in turn, as the keep orders a kept relation, decision 0442
+    /// `rel`'s live rows in canonical order (its columns in turn, as the keep orders a kept relation, decision 0456
     /// K3): one sort here, so the keep sorts nothing and its readers probe its leading columns as a range of rows in
     /// place (`runs::Sorted` over every row, on its columns but the last: on every column an order is the dedup
     /// order, which leads with a hash). Its levels follow their rows; its orders are made again as probed.
@@ -5477,12 +5477,14 @@ impl InRel {
     }
     /// Its live rows of ids `lo..hi`, row-major, read where they lie a batch at a time into one scratch of at most
     /// `LIVE_BATCH` rows (`f` per batch): a frame's digest and bytes are made from these, with no copy of the relation
-    /// (`retain::held_frame`). `None` for a view.
+    /// (`retain::held_frame`). A view's rows are read through it, where they lie (a kept relation bound in place,
+    /// decision 0456 step 6b, has no rows of its own and no dead ones).
     pub fn each_live_batch(&self, lo: usize, hi: usize, mut f: impl FnMut(&[i64])) -> Option<()> {
         let k = self.k;
-        // A view's rows read through it where they lie (a kept relation bound in place, decision 0442 step 6).
+        // A view's rows read through it where they lie (a kept relation bound in place, decision 0456 step 6).
         if self.view.is_some() {
             let hi = hi.min(self.len());
+            // copy: not block data: a batch of a view's values handed to the reader, never kept.
             let mut buf: Vec<i64> = Vec::with_capacity(LIVE_BATCH.min(hi.saturating_sub(lo)) * k);
             let mut id = lo;
             while id < hi {
@@ -5516,7 +5518,7 @@ impl InRel {
         }
         Some(())
     }
-    /// Its live rows, row-major.
+    /// Its live rows, row-major (a view's read through it, `each_live_batch`).
     pub fn live_rows(&self) -> Option<Vec<i64>> {
         if self.view.is_some() {
             let mut out = Vec::with_capacity(self.len() * self.k);
@@ -5669,7 +5671,7 @@ impl InRel {
         self.rows.in_block().filter(|b| b.rows as usize == self.n)
     }
     /// Row `id`'s value in column `c`, read where it lies: its own rows', or a view's through it (a kept relation
-    /// bound in place, decision 0442 step 6).
+    /// bound in place, decision 0456 step 6).
     pub fn value(&self, id: usize, c: usize) -> i64 {
         match &self.view { None => self.rows.value(id as u32, self.k, c), Some(_) => self.at(id).at(c) }
     }
@@ -7251,7 +7253,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     }
                     else if ix.sorted && let Some(v) = &rel.view {
                         // From where the last probe of this step was (`hints`, unused by a source otherwise): probes
-                        // in the column's order are a merge over it (decision 0442 K7).
+                        // in the column's order are a merge over it (decision 0456 K7).
                         let (c, k) = (v.cols[ix.cols[ix.lead]], key[ix.lead]);
                         (Rows::Source(v), match v.src.sorted_range_at(c, k, &mut hints[0]) { Some(r) => Cands::Range(r.start, r.end), None => Cands::Slice(v.src.sorted_rows(c, k).unwrap_or(&[])) })
                     }
@@ -8370,7 +8372,7 @@ pub mod posted_tests {
         }
     }
 
-    /// K-R11 (decision 0442 K7): a relation declared sorted is laid out in canonical order when its component is
+    /// K-R11 (decision 0456 K7): a relation declared sorted is laid out in canonical order when its component is
     /// done: its live rows (a dead one left out) in its columns' order, known sorted on its leading column for the
     /// whole of them, so an order on it is its rows in place.
     #[test]
@@ -8388,7 +8390,7 @@ pub mod posted_tests {
         assert_eq!((r.ndead, r.sorted.within(&[0], 2, 0, r.n as u32)), (0, vec![(0, 4)]));
     }
 
-    /// Decision 0442 K7: a source whose rows lie in an order (`Source::order`, a kept relation read in place) is known
+    /// Decision 0456 K7: a source whose rows lie in an order (`Source::order`, a kept relation read in place) is known
     /// sorted over every row on its order's columns but the last (as a relation laid out in order is), so a scan of
     /// it for the next step's probes is not sorted again; one with no order is known in none.
     #[test]
@@ -8411,6 +8413,35 @@ pub mod posted_tests {
         assert!(r.sorted.within_key(2, Some(0), &[0, 1], 0, 4).is_empty(), "not in the dedup order");
         assert!(r.sorted.within_key(2, None, &[1], 0, 4).is_empty(), "not by its second alone");
         assert!(InRel::over_source(src, b"ii".to_vec()).sorted.within_key(2, None, &[0], 0, 4).is_empty(), "a source with no order");
+    }
+
+    /// A relation over a source (a kept relation bound in place, decision 0456 step 6b) has no rows of its own: its
+    /// values, its live rows and their batches are read through it, as a held relation's are (a value of it once
+    /// panicked, "row 0 of a relation of 0 rows", and its live rows were none, so a kept stratum's put held no rows).
+    #[test]
+    fn a_relation_over_a_source_reads_its_rows_through_it() {
+        let src = super::columns_source(vec!["a".into(), "b".into()], vec![Some(vec![1, 2, 5]), Some(vec![3, 4, 0])]);
+        let r = InRel::over_source(src, b"ii".to_vec());
+        assert_eq!((r.len(), r.rows()), (3, 3));
+        assert_eq!((0..3).map(|i| [r.value(i, 0), r.value(i, 1)]).collect::<Vec<_>>(), [[1, 3], [2, 4], [5, 0]], "its values");
+        assert_eq!(r.live_rows().as_deref(), Some(&[1, 3, 2, 4, 5, 0][..]), "its live rows");
+        let mut batches = Vec::new();
+        assert!(r.each_live_batch(1, 9, |b| batches.push(b.to_vec())).is_some());
+        assert_eq!(batches, [vec![2, 4, 5, 0]], "rows 1.. in one batch, bounded by its rows");
+        let cells = crate::code_rule_dsl::logic::plan::Cells::plain(2);
+        // Its digest is its rows', as the same rows held flat have (a sum, blind to their order): a kept relation
+        // bound in place and passed on unchanged is its entry, not re-kept. Re-kept (its rows changed), every row is
+        // put, read through it: rr-align's 4e3d12466 re-kept views by a frame and `kept_rows`, which take a relation
+        // in a block, and lost their rows (7d8103eed's warm-run losses, which it met by naming a view by its reads).
+        use crate::code_rule_dsl::logic::plan::corpus::retain;
+        let flat = InRel::from_flat(vec![5, 0, 1, 3, 2, 4], 3, b"ii".to_vec());
+        let d = retain::held_digest(&cells, &r);
+        assert!(d.is_some() && d == retain::held_digest(&cells, &flat), "a view's digest is its rows'");
+        let put = retain::kept_put(&crate::content_store::KeptRel { name: "r".into(), ident: [1; 32] }, 0, Vec::new(), b"ii".to_vec(), &r);
+        match put.what {
+            crate::content_store::kept_facts::KeptWhat::Flat { rows, n, .. } => assert_eq!((rows, n), (vec![1, 3, 2, 4, 5, 0], 3), "every row of the view kept"),
+            _ => panic!("a view is kept as its rows"),
+        }
     }
 
     /// Statistics read from a kept relation's postings are those measured from its rows, with dead rows left out.
@@ -8541,6 +8572,27 @@ pub mod posted_tests {
         assert_eq!(flat(&mut removed), rows_of(&minus));
     }
 
+    /// A relation the maintain mode starts from a kept one read in place (decision 0456 step 6, a view of its
+    /// entry: `n` 0, its rows its source's) has its version: its rows then are the view's (ep2's edit runs had none,
+    /// "no version after its maintain mode").
+    #[test]
+    fn a_relation_started_from_a_view_has_its_version() {
+        let src = crate::code_rule_dsl::logic::native::component::columns_source(vec!["a".into(), "b".into()], vec![Some(vec![1, 2, 3]), Some(vec![10, 20, 30])]);
+        let old = InRel::over_source(src, b"ii".to_vec());
+        let mut new = Rel::compacted("t", b"ii", &old, None);
+        new.push(&[4, 40]);
+        let new = Arc::new(InRel::moved(new));
+        assert_eq!(new.start().map(|(n, dead)| (n, dead.len())), Some((3, 0)), "its start: the view's rows");
+        assert_eq!(new.version_delta(), Some((vec![4, 40], Vec::new())));
+        assert_eq!(new.delta_since(&old), Some((vec![4, 40], Vec::new())));
+        let mark = old.mark();
+        let change = new.delta_ids_since_mark(&mark).expect("started from the view");
+        assert_eq!(change.counts(), (0, 1), "since its mark: one row added, none gone");
+        let mut added = Vec::new();
+        change.each(1, &mut |r| added.extend_from_slice(r)); // copy: not block data (the test's expected rows)
+        assert_eq!(added, vec![4, 40]);
+    }
+
     /// A relation derived again past θ is made a version of its kept rows (0364 R2, `InRel::rebased`): the rows it no
     /// longer derives marked dead, those it newly derives added, so its change is its marks, read in place, for its
     /// readers and for the frames alike. A kept relation with too many rows dead is compacted first, and its change
@@ -8579,22 +8631,6 @@ pub mod posted_tests {
             assert_eq!(new.delta_ids_since(&old).expect("started from old").counts(), (2, 2), "dead {dead}: the frames read the same change");
             assert_eq!(new.rows(), now.rows());
         }
-    }
-
-    /// A relation the maintain mode starts from a kept one read in place (decision 0442 step 6, a view of its
-    /// entry: `n` 0, its rows its source's) has its version: its rows then are the view's (ep2's edit runs had none,
-    /// "no version after its maintain mode").
-    #[test]
-    fn a_relation_started_from_a_view_has_its_version() {
-        let src = crate::code_rule_dsl::logic::native::component::columns_source(vec!["a".into(), "b".into()], vec![Some(vec![1, 2, 3]), Some(vec![10, 20, 30])]);
-        let old = InRel::over_source(src, b"ii".to_vec());
-        let mut new = Rel::compacted("t", b"ii", &old, None);
-        new.push(&[4, 40]);
-        let new = Arc::new(InRel::moved(new));
-        assert_eq!(new.start().map(|(n, dead)| (n, dead.len())), Some((3, 0)), "its start: the view's rows");
-        assert_eq!(new.version_delta(), Some((vec![4, 40], Vec::new())));
-        assert_eq!(new.delta_since(&old), Some((vec![4, 40], Vec::new())));
-        assert_eq!(new.delta_ids_since_mark(&old.mark()).map(|d| d.counts()), Some((0, 1)), "its change from a mark of the view: one row added");
     }
 
     /// A maintained relation's delta from the relation it started as: the rows it marked dead, and those it added

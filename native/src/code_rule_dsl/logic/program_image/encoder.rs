@@ -37,7 +37,7 @@ pub enum CellText<'a> {
 /// A fact relation's hash: its name, whether it is of the `.about` rows, and its rows. A relation's facts are a set,
 /// so their hash is of the rows whatever their order (each row hashed alone, the hashes summed): the same facts in
 /// another order are the same program (`Version::digest`), as a phase's export maintained from kept rows (read in
-/// their canonical order, decision 0442 K3) gives the same rows as one derived anew, in another order. The `.about`
+/// their canonical order, decision 0456 K3) gives the same rows as one derived anew, in another order. The `.about`
 /// rows are hashed in their order.
 pub fn facts_hash<'a, Row: Iterator<Item = CellText<'a>>>(rel: &str, about: bool, rows: impl Iterator<Item = Row>) -> u64 {
     let mut h = hasher();

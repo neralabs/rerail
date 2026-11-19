@@ -46,7 +46,7 @@ const FACT_STORE: &[&str] = &[
     "node",
     "tape",
     "node_type",
-    // A space's kept facts (decisions 0401, 0442): which files its chain has.
+    // A space's kept facts (decisions 0401, 0456): which files its chain has.
     "facts_chain",
     // The per-file memo's entries (decision 0240 §4): where each one's bytes are in the pack beside the store, and the
     // packs. They replace the memo's frames (`local`, `local_out`): the same entries, no new cache.

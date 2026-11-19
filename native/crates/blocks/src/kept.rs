@@ -1,14 +1,14 @@
-//! A space's kept facts (decisions 0401, 0442): the relations its last runs derived, each with what a run checks
+//! A space's kept facts (decisions 0401, 0456): the relations its last runs derived, each with what a run checks
 //! before it binds one (its rows' digest, the relations it was derived from and their digests, its columns' value
 //! types), in a chain of frozen files beside the store, mapped by every process that reads the space.
 //!
 //! Each file is a block whose root holds a directory of entries sorted by key (`rel`, `ident`, `part`): an entry is
 //! found by a binary search in place, and a relation's entries (its documents' and its granules') are adjacent. An
-//! entry's rows are a `packed::Packed` (0442 K1): its live rows in canonical order, each column an `IntCol` in the
+//! entry's rows are a `packed::Packed` (0456 K1): its live rows in canonical order, each column an `IntCol` in the
 //! bits its values need, and its rows' levels. A packed relation is one contiguous range of its file with relative
 //! references only, so a roll-up moves it by `memcpy`.
 //!
-//! A space's chain is appended to (0442 K4): a commit writes one file of what it puts, never rewriting an older one.
+//! A space's chain is appended to (0456 K4): a commit writes one file of what it puts, never rewriting an older one.
 //! An entry is the relation's rows, or a gone entry (no longer kept), or a reads-only entry (new reads, the rows the
 //! newest older entry's). `KeptChain` reads the files as one, newest first.
 
@@ -676,7 +676,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    /// K-R4 (decision 0442): a later file's entry replaces an earlier one's, a gone entry hides it, a reads-only
+    /// K-R4 (decision 0456): a later file's entry replaces an earlier one's, a gone entry hides it, a reads-only
     /// entry reads the earlier rows with its own reads; a relation's parts come in key order; a roll-up copies the
     /// live entries whole and reads the same.
     #[test]

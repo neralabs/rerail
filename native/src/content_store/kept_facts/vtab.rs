@@ -1,4 +1,4 @@
-//! The store's kept relations through SQL (decisions 0401 F5, 0442 K8, 0439), read where they lie in each space's chain
+//! The store's kept relations through SQL (decisions 0401 F5, 0456 K8, 0439), read where they lie in each space's chain
 //! of mapped files. Two eponymous tables, beside `atoms`:
 //!
 //! - `kept_entries(space, rel, ident, part, digest, rows, types, reads)`: each entry a space's chain reads (each key's

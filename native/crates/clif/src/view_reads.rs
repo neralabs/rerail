@@ -8,14 +8,6 @@
 //! (`tape_number`, `tape_start`, `tape_end`); a kind is its code's, by the derived table of the tape's codes.
 
 use crate::ids::Run;
-#[cfg(feature = "ir")]
-use crate::reads::B;
-#[cfg(feature = "ir")]
-use cranelift_codegen::ir::{
-    InstBuilder, Value,
-    condcodes::IntCC,
-    types::{I32, I64},
-};
 
 /// A document's entry for its views' reads (`ViewDoc` in the kernels).
 #[repr(C)]
@@ -168,6 +160,20 @@ pub fn msl() -> String {
     }
     s
 }
+// The reads themselves, in CLIF: with the IR (`ir`) alone. The entry's layout above is the view's too, which the
+// tape crate reads without the IR.
+#[cfg(feature = "ir")]
+pub use reads_ir::*;
+
+#[cfg(feature = "ir")]
+mod reads_ir {
+use super::*;
+use crate::reads::B;
+use cranelift_codegen::ir::{
+    InstBuilder, Value,
+    condcodes::IntCC,
+    types::{I32, I64},
+};
 
 #[cfg(feature = "ir")]
 impl B<'_, '_> {
@@ -539,4 +545,5 @@ pub fn loc_col(b: &mut B<'_, '_>) -> Value {
 #[cfg(feature = "ir")]
 pub fn loc_docof(b: &mut B<'_, '_>) -> Value {
     b.loc(Place::Docof)
+}
 }

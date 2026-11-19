@@ -91,7 +91,7 @@ fn files(path: &Path) -> Vec<String> {
     out
 }
 
-/// K-R5 (decision 0442): a write appends one file of its puts only (a relation's live rows packed, a granule's
+/// K-R5 (decision 0456): a write appends one file of its puts only (a relation's live rows packed, a granule's
 /// rows, a reads-only entry, a gone entry), read with the chain as one; small writes merge into the newest small
 /// file; a write as big as the chain merges every file into one, read the same, and a reader of the old chain reads
 /// it still; the files a commit replaced go at the next write.
@@ -241,7 +241,7 @@ fn the_kept_relations_read_through_sql_equal_their_entries() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
-/// K-R8a's and K-R9's store halves (decision 0442 step 5-6): an entry's levels follow its rows into canonical order;
+/// K-R8a's and K-R9's store halves (decision 0456 step 5-6): an entry's levels follow its rows into canonical order;
 /// an entry put as given (an input's granule, read by position) is read in its order, every row. (Their frames
 /// halves went with the frames, decision 0439.)
 #[test]
@@ -264,7 +264,7 @@ fn levels_follow_their_rows_and_an_entry_put_as_given_keeps_its_order() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
-/// K-R10 (decision 0442 step 6, 0401 F5): the kept facts are a virtual table: a space's relation's rows by `rel` and
+/// K-R10 (decision 0456 step 6, 0401 F5): the kept facts are a virtual table: a space's relation's rows by `rel` and
 /// `part`, newest entry only, a gone one absent; `c0 = ?` a range of the entry; columns past the arity NULL.
 #[test]
 fn kept_facts_are_a_virtual_table() {
@@ -297,7 +297,7 @@ fn kept_facts_are_a_virtual_table() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
-/// Decision 0442's open question, over a real store (`RERAIL_KEPT_STORE`): what each column of the chain would take
+/// Decision 0456's open question, over a real store (`RERAIL_KEPT_STORE`): what each column of the chain would take
 /// under the candidate encodings. Leading columns and the rest apart; GROUPS' group widths; sample values. Run with
 /// `--ignored --nocapture`; prints its report.
 #[test]

@@ -11,7 +11,7 @@
 //! that ran and came out different), and a stratum that comes out the same leaves its readers clean (early cutoff).
 //! On the pack that is 351 strata run, 16.6 s.
 //!
-//! Kept as the store's kept facts (`content_store::kept_facts`, decisions 0104, 0442), in the corpus root's cross-file
+//! Kept as the store's kept facts (`content_store::kept_facts`, decisions 0104, 0456), in the corpus root's cross-file
 //! fact space: each derived relation under its identity (`plan::identities`: its rules, and what they read, down to
 //! the inputs), with its digest, its rows and the digest each relation its stratum read had then. A stratum is clean
 //! when its relations are kept under their identities and each read has the digest it had. So a relation two

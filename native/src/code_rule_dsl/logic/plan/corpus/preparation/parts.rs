@@ -335,10 +335,59 @@ fn part_header(v: &Version, part: &Part, read_elsewhere: &BTreeSet<String>, made
 /// A part's key (decision 0345 §5), without building it: the engine, the dialect, the switches its passes read, the
 /// shared header's digest (`common_of`), its own header's per-relation fields, and its rules' hashes in order (a
 /// rule's hash is its text's: its relations by name).
-fn key_of(head: &Selected<'_>, common: &[u8; 32], shared: &BTreeSet<String>, inputs_shared: usize, rules: &[crate::code_rule_dsl::logic::program_image::RuleRef<'_>], part: &Part, dialect: crate::code_rule_dsl::language::GrammarDialect) -> [u8; 32] {
+/// A relation's per-relation fields in a version: what a part's key hashes of each of its own relations.
+#[derive(Default, Debug)]
+struct RelFields {
+    decl: Option<Option<Vec<(String, String)>>>,
+    nullary: bool,
+    lattice: Option<front::ast::LatticeDecl>,
+    facts: Option<Vec<front::List<Value>>>,
+    qualifiers: Option<BTreeSet<String>>,
+    tapes: Option<BTreeSet<usize>>,
+    /// Its places in the demand list.
+    demand: Vec<usize>,
+}
+
+/// Each relation's per-relation fields of a version, as text, read once a run: a part's key reads its own relations'
+/// here (`key_of`), not the whole program's lists. Read per part over the program (`per_relation` on `Selected`),
+/// every key listed each field of all the program's relations and kept its own: on a warm ep2 run 904 keys over
+/// 3,988 relations, 0.55 s and 460 MB of the run's 1.06 s prepare (the warm run 20.7 G before 0276 §3, 34 G after).
+struct ByRelation(BTreeMap<String, String>);
+
+impl ByRelation {
+    fn of(v: &Version) -> ByRelation {
+        let mut m: BTreeMap<String, RelFields> = BTreeMap::new();
+        for r in v.declared_names() {
+            let cols = v.columns_of(&r);
+            m.entry(r).or_default().decl = Some(cols);
+        }
+        for r in v.nullary() {
+            m.entry(r).or_default().nullary = true;
+        }
+        for (r, l) in v.lattice() {
+            m.entry(r).or_default().lattice = Some(l);
+        }
+        for r in ProgramFields::fact_names(v) {
+            let rows = v.fact_rows(&r);
+            m.entry(r).or_default().facts = Some(rows);
+        }
+        for (r, q) in v.qualifiers() {
+            m.entry(r).or_default().qualifiers = Some(q);
+        }
+        for (r, t) in v.tapes() {
+            m.entry(r).or_default().tapes = Some(t);
+        }
+        for (i, r) in v.demand().into_iter().enumerate() {
+            m.entry(r).or_default().demand.push(i);
+        }
+        ByRelation(m.into_iter().map(|(r, f)| (r, format!("{f:?}"))).collect())
+    }
+}
+
+fn key_of(head: &Selected<'_>, by: &ByRelation, common: &[u8; 32], shared: &BTreeSet<String>, inputs_shared: usize, rules: &[crate::code_rule_dsl::logic::program_image::RuleRef<'_>], part: &Part, dialect: crate::code_rule_dsl::language::GrammarDialect) -> [u8; 32] {
     use sha2::Digest as _;
     let mut h = sha2::Sha256::new();
-    h.update(b"rerail/part/v5\0");
+    h.update(b"rerail/part/v6\0");
     h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     h.update(format!("\0{dialect:?}\0").as_bytes());
     for s in SWITCHES {
@@ -347,8 +396,18 @@ fn key_of(head: &Selected<'_>, common: &[u8; 32], shared: &BTreeSet<String>, inp
     // The fields every part shares (`common_of`, and the shared relations' and the program's inputs: `with_shared`)
     // were hashed once; the part's own are its relations' and what it adds to the inputs.
     h.update(common);
-    let inputs = head.input_names();
-    let own = (per_relation(head, &|r| !shared.contains(r)), &inputs[inputs_shared.min(inputs.len())..], head.output_names());
+    // Its own relations' fields, each as the version holds it (`ByRelation`), and the words its interface adds.
+    for r in head.own.names.iter().filter(|r| !shared.contains(*r)) {
+        if let Some(fields) = by.0.get(r) {
+            h.update(r.as_bytes());
+            h.update(b"\0");
+            h.update(fields.as_bytes());
+            h.update(b"\0");
+        }
+    }
+    let words: Vec<_> = head.own.words.iter().filter(|(r, _)| !shared.contains(*r)).collect();
+    let inputs = &head.own.inputs;
+    let own = (words, &inputs[inputs_shared.min(inputs.len())..], &head.own.outputs);
     h.update(format!("{own:?}").as_bytes());
     h.update((part.rules.len() as u64).to_le_bytes());
     for &i in &part.rules {
@@ -884,6 +943,7 @@ fn link_front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gr
     let shared = shared_of(&version, &made_by_parts);
     let common_digest = with_shared(&common_digest, &version, &shared);
     let inputs_shared = version.input_names().len();
+    let by = ByRelation::of(&version);
     // Every part's header and key, read from the program alone: all the kept link asks of a part that did not change.
     let (heads, keys): (Vec<Own>, Vec<[u8; 32]>) = parts
         .iter()
@@ -893,7 +953,7 @@ fn link_front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gr
             let head = part_header(&version, part, &read_elsewhere, &made_by_parts, &shared);
             let key = {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "a part's key".into());
-                key_of(&Selected { v: &version, own: &head }, &common_digest, &shared, inputs_shared, &rules, part, dialect)
+                key_of(&Selected { v: &version, own: &head }, &by, &common_digest, &shared, inputs_shared, &rules, part, dialect)
             };
             (head, key)
         })
@@ -1423,6 +1483,7 @@ pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl
     let common_digest = common_of(&v1);
     let shared = shared_of(&v1, &made_by_parts);
     let common_digest = with_shared(&common_digest, &v1, &shared);
+    let by1 = ByRelation::of(&v1);
     let (inputs_shared, outputs) = (v1.input_names().len(), v1.output_names());
     // Each part's own header, with its interface: what it is given of the split, and how its outputs are read.
     let s_heads = crate::code_rule_dsl::logic::profile::span(|| "the parts' headers and interfaces".into());
@@ -1486,7 +1547,7 @@ pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl
         }
         let key = {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "a part's key".into());
-            after_key(key_of(&Selected { v: &v1, own: &head }, &common_digest, &shared, inputs_shared, &rules, &parts[j], dialect), factorize)
+            after_key(key_of(&Selected { v: &v1, own: &head }, &by1, &common_digest, &shared, inputs_shared, &rules, &parts[j], dialect), factorize)
         };
         let kept_part = {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "a part after lowering, from the store".into());

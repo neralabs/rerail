@@ -132,7 +132,7 @@ fn decl<'v>(f: &Fields<'v>, rel: &str) -> Option<Vec<(&'v str, &'v str)>> {
 }
 
 /// A relation's facts, sorted by each row's text: a set, its text the same whatever order the program holds its rows
-/// in (a phase's export maintained from kept rows comes in their canonical order, decision 0442 K3), as its hash is
+/// in (a phase's export maintained from kept rows comes in their canonical order, decision 0456 K3), as its hash is
 /// (`encoder::facts_hash`). A tree's facts sorted by their rows' text give the same text (`sorted_facts`).
 fn facts<'v>(f: &Fields<'v>, rel: &str) -> Option<Vec<Vec<Value<'v>>>> {
     let v = f.v;

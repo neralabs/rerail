@@ -1231,7 +1231,7 @@ mod tests {
         let mut threes: Vec<u32> = fork2.group(i, key(3)).iter().copied().filter(|&id| fork2.get(id, 0) == 3).collect();
         threes.sort_unstable();
         assert_eq!(threes, (0..160).filter(|id| id % 10 == 3).collect::<Vec<u32>>(), "every id down the chain");
-        // Kept, a continuation is packed with every row it reads (decision 0442 K3: `kept_facts::columns`, tested
+        // Kept, a continuation is packed with every row it reads (decision 0456 K3: `kept_facts::columns`, tested
         // there as `a_continuation_is_kept_with_every_row_it_reads`).
     }
 

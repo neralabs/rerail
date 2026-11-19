@@ -27,7 +27,7 @@ pub(super) const SCHEMA_VERSION: i64 = 7;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
 pub const STORE_FILE_NAME: &str = "content-v7.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at. 7: a space's kept facts are a chain of packed files (decision 0442),
+/// The floor `STORE_FILE_NAME` was introduced at. 7: a space's kept facts are a chain of packed files (decision 0456),
 /// and there are no frames (decision 0439), which an older binary would read as a store that keeps nothing, and a
 /// kept column may be a node id split at its granule, which it would read as wrong values; 6: the atoms are blocks in files beside the store (decision 0401:
 /// `atom_blocks`), which an older binary would read as a store with no atoms; 5: a frame's row points at its bytes in a segment beside the store
@@ -464,7 +464,7 @@ CREATE TABLE IF NOT EXISTS atom_blocks (
     tag INTEGER NOT NULL
 ) STRICT;
 
--- A space's kept facts (decisions 0401, 0442 K4-K5): a chain of frozen files in `<store>.facts/<space>/`,
+-- A space's kept facts (decisions 0401, 0456 K4-K5): a chain of frozen files in `<store>.facts/<space>/`,
 -- oldest first, each with its maker's tag (a file not its row's is refused). A run's write appends a
 -- row; a merge replaces the newest rows with one. Metadata only: the rows are in the files.
 CREATE TABLE IF NOT EXISTS facts_chain (
@@ -850,7 +850,7 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
 ///
 /// - The frames (decision 0104's first form of the kept facts, and their bookkeeping of decisions 0117, 0138, 0227
 ///   and 0295 §4): the kept facts are blocks (decision 0439). A floor-7 store made where frames were still kept as
-///   metadata beside the chain (decision 0442 step 6a) has them.
+///   metadata beside the chain (decision 0456 step 6a) has them.
 const RETIRED_TABLES: &[&str] = &["frames", "frame_segments", "frame_part_used", "frame_spaces", "frame_confirmed", "frame_used", "frame_program_used"];
 
 /// Whether the store holds a table of `RETIRED_TABLES`.

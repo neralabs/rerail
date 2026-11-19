@@ -1,7 +1,10 @@
-# 0442: Kept facts are packed chunks, appended to a chain of mapped files
+# 0456: Kept facts are packed chunks, appended to a chain of mapped files
 
 Numbered 0402 where it was written (the sibling branch `final-rerail-shape-rr-align`), beside 0402 "Byte-pair
-rules are one lookup"; renumbered 0442 when merged, past the highest number in any worktree.
+rules are one lookup"; renumbered 0442 when merged, and 0456 when that number turned out to be taken
+(cost-classifier's 0442, "no process-global state"), past the highest number in any worktree. The sibling branch
+renumbered it 0417 at its own hub merge (c8ec6ba92); merged back (535cc2c8b), it is 0456 in both, and a citation of
+0417 or 0442 for the kept facts on either branch is this decision.
 
 Status: decided by the user (2026-11-18: "I would prefer a single format if possible … We certainly shouldn't be
 storing 8-byte quantities … please go ahead and design and build this"). Replaces 0401 F1, F2 and F6's copy of a
@@ -206,7 +209,7 @@ layout, not a promise the rules must keep: the engine makes it true.
 - The engine is told by its component's spec (`sorted <rels>`), from the `.decl`'s qualifier (decision 0099's
   list, `front::QUALIFIERS`).
 
-**Merge joins** (2026-11-18, Q217). A join of two relations in order on the join key is a merge: the outer side
+**Merge joins** (2026-11-18, Q251). A join of two relations in order on the join key is a merge: the outer side
 scanned in order and the inner side read forward from where the last key's rows began. The engine had both
 halves: a scan whose rows are known sorted on the next probe's key is not sorted again (`scan_order`, decision
 0187), and a probe of a sorted order keeps a cursor (`candidates()`' hints, `Index::find_at`). Two gaps stopped a
@@ -351,7 +354,7 @@ sorted or a cursor's probe has no work to save there.
 4. (measured) ep2: the chain's bytes against the frames', K-R7.
 5. (built) Bind kept relations from the chain in place of the frames; K-R8a, K-R8.
 6. (built) The frames hold no rows (6a, K-R9); kept relations read in place (6b); the virtual table (6c, K-R10).
-7. (built) Sorted outputs (K7, K-R11; Q217).
+7. (built) Sorted outputs (K7, K-R11; Q251).
 
 ## Merged with 0439 (2026-11-19)
 
@@ -371,7 +374,7 @@ What 0439 supersedes, and how each step's intent is kept:
   derived again, as in 0438, not read through a map of ids.
 - **Every frame write puts its entry (the `every_frame_write_puts_its_kept_entry` guard).** Nothing writes a
   frame, so the guard is gone; every keep is a `queue_kept`, and a wave's puts are one file a space
-  (`KeptGather`, Q243).
+  (`KeptGather`, Q284).
 - **Step 6c (the virtual table).** `kept_facts` as here (K-R10), with `kept_entries` beside it (0439 F-R5: each
   entry's key, digest, rows, types and reads). 0439's `kept_rows(space, rel, ident, part)` is `kept_facts`'s
   `space`, `rel`, `ident` and `part` constraints, and its `id` (a row's place in its entry) is `kept_facts`'s; the

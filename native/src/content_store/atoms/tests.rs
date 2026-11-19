@@ -592,7 +592,7 @@ fn atoms_another_process_stored_past_this_ones_end_are_mapped_after_a_fork() {
     let kept = store.open_kept(&space, &row).unwrap();
     let view = kept.view();
     let entry = rerail_blocks::kept::KeptRead::get(&view, &rerail_blocks::kept::FactKey { rel: "r", ident: &[1; 32], part: 0 }).expect("the entry");
-    // In canonical order (decision 0442 K3): by the store's ids.
+    // In canonical order (decision 0456 K3): by the store's ids.
     let rows: Vec<Vec<i64>> = (0..3).map(|id| entry.row(id)).collect();
     assert_eq!(rows, [vec![1, 1], vec![3, 3], vec![4, 2]], "the store's ids (b 4, y 3, a 1), each integer with its row");
     // The other process's `z` is held here under an id of this process's.
