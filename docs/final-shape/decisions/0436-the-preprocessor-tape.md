@@ -185,3 +185,13 @@ passes' arrays (user, 2026-11-18). The serial pass is the reference for the outp
     files give the lean writer's tape byte for byte on Cranelift, and Metal's tapes (tier 1 on
     the device) are Cranelift's; 62 are refused, and go to the lean writer; 0 differ. The
     interpreter equals Cranelift on the unit shapes (`the_grammars_pp_tape_is_the_lean_writers`).
+- **Step 4, the evaluator, first passes** (`rerail_metal::pp_eval`, `pp_eval.metal`): a v9np
+  reader in MSL that reads a tape's columns where they are (a node's key, start, end and size,
+  as `View` reads them), and over a unit's files:
+  - `pp_counts` (each file's nodes) and `pp_scan` (their prefix sum, the total, and the next
+    dispatch's arguments), so the passes after it are sized on the device;
+  - `pp_names`: each identifier leaf's key, its bytes 8 at a time, one thread a node.
+
+  The host loads the files into one buffer and lists them (`Unit::load`), then encodes. On
+  803 corpus files (2.2 M nodes), the device's reader gives every node as `View` does and every
+  key is the CPU's (`the_names_pass_reads_the_tapes_in_place`).

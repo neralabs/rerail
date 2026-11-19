@@ -14,6 +14,8 @@ pub mod block_program;
 pub mod buffer_observation;
 pub mod launch;
 pub mod launch_budget;
+/// The preprocessor's evaluator over tapes (decision 0436): plain MSL passes.
+pub mod pp_eval;
 /// The preprocessing words on the device (decision 0348, stage 5).
 pub mod pp_on;
 /// Pre-pinned blocks (decision 0039): the device's scratch buffers, made once and reused.
