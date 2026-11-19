@@ -263,6 +263,8 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     let u = words.iter().position(|w| w.as_slice() == b"\\u").expect("the escape \\u") + 1;
     let calls = src.matches("s.check_1()?;").count();
     assert!(calls > 0 && src.matches(&format!("{u} => {{ s.check_1()?;")).count() == calls, "the \\u checks in the \\u arm alone");
+    // No room check a token: the harness sizes the tape from the input once, as simdjson's.
+    assert!(!aot.parser.tier2.room_checked() && !src.contains("room()?"), "no room check a token");
     let entry = aot_entry(&src);
     // SAFETY: the source is this program's tier 2 (from its own native IR), reading and writing
     // `Ctx` as the JIT's does; it counts its calls open itself.

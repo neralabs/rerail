@@ -586,6 +586,13 @@ The trees test gained bad `\u` escapes, and a file of every other escape beside 
 pair. The Rust trees test asserts that the checks are called in the `\u` arm alone. Voiding
 every check fails it, at `"\u12g4"`.
 
+## Step 17, done: no room check a token, in the generated Rust
+
+The harness sizes this program's tape from the input once (`Bounds::unchecked`), for the JIT and
+for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's room at every
+token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
+Rust trees test asserts that the source has none.
+
 ## The generated Rust next to simdjson's stage 2
 
 The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` writes it as
@@ -596,7 +603,7 @@ The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` write
 |---|---|---|
 | `walk_document`: one function, its states labels (`object_begin`, `object_continue`, `scope_end`) | a function per grammar rule (`r0`, the document; `r32`, the object; `r46`, the array) | no |
 | nesting on a stack of its own (`is_array[depth]`); `scope_end` goes back to the state of the scope it returns to | nesting by recursion (`r46(s)?`, `s.depth`). A call returns `Ok(again)`, and the caller then switches on the same token again | no |
-| `advance()`: the next index | `token_all()`: a room check on the tape each token, the end's test, `last_end`, `live` | no |
+| `advance()`: the next index | `token_all()`: the end's test, the next start, `last_end` | yes, since step 17 (no room check: the tape sized from the input once) |
 | `switch (*value)` | `match s.byte(s.start)`, the record made in the arm | yes |
 | one switch a value; `case '['`: `]` peeked for, then `array_begin` and the one value switch | the array's loop was entered at each value's place from two switches (the first value's, which also takes `]`, and the one after `,`), so the arms set `d` and the loop's `match d` took them apart again; every switch also had a path on the kind | yes, since step 15: the first value's switch takes `]`, then sends every other byte to the one value switch; the kind path only where a call returns to switch on its token again |
 | `case ','`, `case ']'` in the continue states | each punctuation byte straight to its place, every other byte refused | yes |
@@ -612,7 +619,7 @@ the Rust it writes:
 1. Done in step 14.
 2. Done in step 15.
 3. Done in step 16.
-4. No room check a token: the tape sized from the input once, as the JIT's.
+4. Done in step 17.
 5. One function, the nesting on a stack of its own, as `walk_document`.
 
 ## Order

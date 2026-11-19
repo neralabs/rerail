@@ -69,6 +69,8 @@ struct Facts<'a> {
     fetch: Option<Fetched>,
     /// The supertype classes the tape's codes carry (`native_cpu_stream::supertype_classes`).
     classes: Vec<u16>,
+    /// The tape sized from the input once (`Bounds::unchecked`): no room check a token.
+    unchecked: bool,
 }
 
 /// The facts of a program whose tier 2 makes the records (`Records::fetched_in_tier2`).
@@ -145,7 +147,8 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
     if fetch.is_some() && (flagged || native.extras.len() > 0) {
         return Err("records made in tier 2, with a token's taking flagged or extras: not yet ahead of time".into());
     }
-    let facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes };
+    let unchecked = crate::native_cpu_stream::bounds(native).unchecked(crate::native_cpu_stream::marks_of(words));
+    let facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked };
     if let Some(fx) = &facts.fetch {
         for pc in 0..words.len() {
             if matches!(words[pc].operation, Op::Token { .. }) && fx.seen[pc] == [true, true] {
@@ -1670,7 +1673,7 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
     Ok(match n.structural[pc].operation {
         Op::Token { any, extras, .. } if x.flagged || taken => format!("s.{}()?;\n{}", token_name(any, extras), jump(0)?),
         // No token to take here: the next word switches on the one untaken.
-        Op::Token { .. } => format!("s.room()?;\n{}", jump(0)?),
+        Op::Token { .. } => format!("{}{}", if x.unchecked { "" } else { "s.room()?;\n" }, jump(0)?),
         Op::Switch { table } => switch_plan(x, &n.switches[usize::from(table)]).fill(jump)?,
         Op::Span { last: false, len } => format!("if s.start + {len} != s.rec_end {{ return Err(false); }}\n{}{}", if x.flagged { "s.end = s.rec_end;\ns.need = true;\n" } else { "" }, jump(0)?),
         Op::Span { last: true, .. } => format!("{}{}", if x.flagged { "s.end = s.rec_end;\ns.need = true;\n" } else { "" }, jump(0)?),
@@ -1828,13 +1831,14 @@ fn fetched_token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>) -> Resul
         None => "u64::MAX".into(),
     };
     let end_code = x.end_kind.map_or(String::new(), |k| format!("\n            self.code = {k};"));
+    // The tape's room for the path to the next token, unless the tape is sized from the input.
+    let room = if x.unchecked { "" } else { "        self.room()?;\n" };
     writeln!(
         out,
         "    /// `TOKEN`: the next token's start; its record is made where it is switched on.
     #[inline(always)]
     fn {name}(&mut self) -> R {{
-        self.room()?;
-        if self.at_end {{
+{room}        if self.at_end {{
             return Err(false);
         }}
         self.last_end = self.rec_end;
@@ -2307,8 +2311,7 @@ fn part_plan(x: &Facts<'_>, fx: &Fetched, pc: usize) -> Plan {
     to[0] = pf.part;
     let by_word = arms(&mut p, "s.word()", &to);
     p.code = format!(
-        "s.room()?;
-s.last_end = s.rec_end;
+        "{}s.last_end = s.rec_end;
 let at = s.part_at;
 let i = s.part_stop(at)?;
 if i != at {{
@@ -2333,6 +2336,7 @@ s.code = S::CODES2[usize::from(s.byte(i + 1))];
 s.part_at = i + 2;
 {by_word}}}
 ",
+        if x.unchecked { "" } else { "s.room()?;\n" },
         pf.closer_code
     );
     p

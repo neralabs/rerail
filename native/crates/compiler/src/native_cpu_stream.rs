@@ -254,7 +254,7 @@ impl Bounds {
 }
 
 /// The marks `MARK` tests (`CompiledStream::marks`).
-fn marks_of(words: &[crate::native_ir::StructuralBlock]) -> u64 {
+pub(crate) fn marks_of(words: &[crate::native_ir::StructuralBlock]) -> u64 {
     words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0)
 }
 
