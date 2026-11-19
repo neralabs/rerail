@@ -5311,6 +5311,22 @@ Open:
   `required_text.rs`, `language.rs`, `probes.rs` and `lib.rs` hunks came with the merge; token_census.rs,
   token_automata.rs, tokens.rs and tokens_tests.rs are the hub's.
 - **Done when**: the four are ported onto the hub's token tests, or measured on the hub and judged not worth it.
+- **Done** (2026-11-19): ported, without their process-wide memo maps (decision 0104: a repeat is fixed by flow).
+  - Taken: the census read in place (`decode_census`'s `&'static str`, `Lang::distinct`); the automata indexed and a
+    kind's read when a walk first needs it (`token_automata::index`, `tokens::Kind`); the token-test walk reading
+    the document in place, recording each relation and asking `gap_test` only where a token test reads it
+    (`Walk::lowered`), utilities keyed by their context; a test's whole-token regex compiled only where it reaches a
+    token, its gaps read from the set it reached (`Reach`, `Lang::implied_where`).
+  - Not as memos: `rule_pattern`'s process table became `language::Patterns`, one compilation of a query's
+    (`compile_query_as`, through `UtilScope::pattern`), gone with it; `Reach` is found per test; `TextProbe::compile`
+    and `regex_clause` derive again where asked, as before #508. The repeat those two met is the shared utilities
+    compiled again for each grammar and `languageOptions` (`compile::shared`), to fix there.
+  - The three memos had come in with the merge (clean hunks outside the check's directories):
+    `check_no_new_caches.py` now reads all of `code_rule_dsl/`.
+  - Hub-side answers kept: `lowered` is `gap_test` alone (Tim's also counts `gap_split` and the token's own
+    `follows`/`precedes`, RER-131 work the hub has not taken).
+  - Tests (Linux): the token, census, automata, pattern, compile, prefilter and anchors filter, 520 of 528, the same 8
+    failing at c2365d280 without the port (Q254).
 
 ### Q252. Two Metal parity tests fail at the hub's tip on the M3
 
@@ -5333,3 +5349,13 @@ Open:
   (at `-j 4` one to three of its own fail, a different set each run, also at 5fbc02057).
 - **Done when**: Q221's bound reads `wait` again with the observer tests passing, and the FSEvents tests pass
   together (a test group of their own, or streams that do not share `fseventsd`'s latency).
+
+### Q254. Eight token and anchor tests fail at the hub's tip on Linux
+
+- **Seen** (2026-11-19, spark, c2365d280 and with Q251's port alike): `anchors::tests::all_catalog_ast_rules_select_
+  identically_on_native_and_restored_tape`, `compare::tests::tokens_compare_reads_the_tokens_a_tape_leaves_out`,
+  `prefilter::lab::a_capture_replays_to_the_candidates_of_its_statement` (a replay store without its atoms blocks),
+  `compile_matcher_tests::ast_pattern_captures_are_pinned` and `…verdicts_reuse_their_bindings` (`pyflakes/F601.py`:
+  pack test data), `violations::tests::a_token_neighbour_is_not_the_stored_node_past_an_implied_token`,
+  `…gap_test_groups_anchor_at_the_implied_token`, `token_readers::no_rule_reads_a_token_the_tape_may_leave_out`.
+- **Done when**: each passes.

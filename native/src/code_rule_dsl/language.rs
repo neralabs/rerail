@@ -439,48 +439,44 @@ pub fn pattern_source(key: &str) -> PatternSource<'_> {
 
 /// A rule's pattern compiled for `language`, the grammar of the document its clause reads (an
 /// embedded clause's is its program's: `ast.embedded`).
-///
-/// A pattern is compiled once a process for its language (`COMPILED`) and copied out after: its tree is
-/// tree-sitter's parse of its text written as a tape (`tape::pattern_doc`, RER-131), which costs a parse, an
-/// encode and a restore, and compiling one rule asks for the same pattern several times (the comparisons'
-/// captures, `compile::compare`, for each of its dialects; the matcher), as a pack's rules share patterns
-/// (`$X`, `$A.$B($$$ARGS)`). A pattern is its text's and its language's alone. One that does not compile is
-/// compiled again when asked, for its error.
 pub fn rule_pattern(
     source: PatternSource<'_>,
     language: GrammarDialect,
 ) -> Result<Pattern, PatternError> {
-    type Compiled = std::collections::HashMap<(GrammarDialect, String), Pattern>;
-    /// Past this many, a pattern is compiled and not kept: a daemon that compiles rule after rule keeps a bounded
-    /// set (a shipped pack's patterns number in the low thousands).
-    const KEPT: usize = 1 << 14;
-    static COMPILED: LazyLock<std::sync::Mutex<Compiled>> = LazyLock::new(Default::default);
-    let key = (
-        language,
-        match source {
-            PatternSource::Plain(text) => pattern_key(text, None),
-            PatternSource::Contextual { context, selector } => pattern_key(context, Some(selector)),
-        },
-    );
-    if let Some(pattern) = COMPILED
-        .lock()
-        .ok()
-        .and_then(|compiled| compiled.get(&key).cloned())
-    {
-        return Ok(pattern);
-    }
-    let pattern = match source {
+    match source {
         PatternSource::Plain(text) => Pattern::try_new(text, language),
         PatternSource::Contextual { context, selector } => {
             Pattern::contextual(context, selector, language)
         }
-    }?;
-    if let Ok(mut compiled) = COMPILED.lock()
-        && compiled.len() < KEPT
-    {
-        compiled.insert(key, pattern.clone());
     }
-    Ok(pattern)
+}
+
+/// The patterns one compilation of a query has compiled, by language and text (`pattern_key`). A pattern's tree is
+/// tree-sitter's parse of its text written as a tape (`tape::pattern_doc`, RER-131): a parse, an encode and a
+/// restore. A query asks for the same pattern several times (the comparisons' captures for each of its dialects,
+/// its declared captures, the matcher), so its compilation compiles each once and hands out copies. The table is
+/// the compilation's and goes with it: nothing outlives the query (no process-wide memo, decision 0104). One that
+/// does not compile is compiled again when asked, for its error.
+#[derive(Default)]
+pub struct Patterns(std::cell::RefCell<std::collections::HashMap<(GrammarDialect, String), Pattern>>);
+
+impl Patterns {
+    /// `rule_pattern`, compiled once for this compilation.
+    pub fn get(&self, source: PatternSource<'_>, language: GrammarDialect) -> Result<Pattern, PatternError> {
+        let key = (
+            language,
+            match source {
+                PatternSource::Plain(text) => pattern_key(text, None),
+                PatternSource::Contextual { context, selector } => pattern_key(context, Some(selector)),
+            },
+        );
+        if let Some(pattern) = self.0.borrow().get(&key) {
+            return Ok(pattern.clone());
+        }
+        let pattern = rule_pattern(source, language)?;
+        self.0.borrow_mut().insert(key, pattern.clone());
+        Ok(pattern)
+    }
 }
 
 /// One grammar dialect: the file label hosts and the store use, its file suffixes (the host's

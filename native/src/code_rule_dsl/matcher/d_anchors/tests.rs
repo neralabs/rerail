@@ -31,6 +31,7 @@ pub(super) fn compile_rule(
         // W's UtilScope also scopes embedded documents.
         documents: None,
         side: crate::code_rule_dsl::compile::documents::Side::Host,
+        patterns: None,
     };
     crate::code_rule_dsl::compile::compile_ast_rule(rule, language, path, gaps, &utils)
 }

@@ -252,6 +252,7 @@ impl Table {
             documents: None,
             instances: Some(&instances),
             side: Side::Host,
+            patterns: None,
         };
         let compile = || {
             missing
