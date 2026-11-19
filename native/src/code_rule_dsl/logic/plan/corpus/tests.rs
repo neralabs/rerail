@@ -1839,6 +1839,53 @@ names(x) :- string_annotation(n), parsed(n, "annotation", r), within(m, r), kind
     (dir, run)
 }
 
+/// Decision 0431 R5's run: `program` (`.rr`, with its includes) over `files` in a store of its own, giving the report.
+fn batch_run(name: &str, files: &[(&str, &str)], program: &str) -> super::Report {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    let ws = dir.join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    for (path, text) in files {
+        std::fs::write(ws.join(path), text).unwrap();
+    }
+    let rule = dir.join("program.rr");
+    std::fs::write(&rule, program).unwrap();
+    let flat = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run(&flat, &ws, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    report
+}
+
+/// Decision 0431 R5: a program the grammar holds is made with its file, so the chunk's batch is built once: an HTML
+/// file's scripts, which a rule reads, add no second batch.
+#[test]
+#[ignore = "0431 step 3: a file's programs made with it"]
+fn a_files_programs_build_no_second_batch() {
+    let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n";
+    let report = batch_run("r5-programs", &[("a.html", html)], r#"
+.language html
+#include "html/embeds.rr"
+.decl calls(x: symbol)
+calls(x) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x).
+.output calls
+"#);
+    assert_eq!(report.batch_rebuilds, 0, "the scripts are a.html's, made with it");
+}
+
+/// Decision 0431 R5: a string a rule parses is a tape value the fixpoint makes, so the chunk's batch is built once.
+#[test]
+#[ignore = "0431 step 4: @parse in the fixpoint"]
+fn tape_values_build_no_second_batch() {
+    let report = batch_run("r5-values", &[("a.py", "x: \"List[int]\" = []\ndef f(a: \"Optional['Foo']\"): pass\n")], r#"
+.language python
+.decl names(x: symbol)
+names(x) :- string_annotation(s), parsed(s, "annotation", r), within(m, r), kind(m, "identifier"), text(m, x).
+.output names
+"#);
+    assert_eq!(report.batch_rebuilds, 0, "the annotations' tapes, and the one nested in them, are values the fixpoint makes");
+}
+
 /// Decision 0431 R6, a guard of today's: within one run, equal texts are parsed once, whichever files hold them.
 #[test]
 fn equal_texts_are_parsed_once_a_run() {

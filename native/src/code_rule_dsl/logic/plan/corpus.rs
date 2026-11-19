@@ -322,6 +322,8 @@ pub struct Report {
     pub guests_unseen: usize,
     /// The guest texts parsed (decision 0431 R6): a text a run parsed before is not parsed again.
     pub guest_parses: usize,
+    /// Decision 0431 R5: the chunks' batches built again after their first (with guests), the run's total.
+    pub batch_rebuilds: usize,
     /// The rounds the cone ran from the last run's final round (decision 0145); 0 when it ran the gated fixpoint.
     pub cone_rounds: usize,
     /// The requests a language's answer answered this run (`language::Answerer`), each with its key's first column (a
@@ -5573,6 +5575,7 @@ fn run_observed(
     let partials: parking_lot::Mutex<HashMap<i64, memo::Entry>> = parking_lot::Mutex::new(HashMap::new());
     let partial_hits = std::sync::atomic::AtomicUsize::new(0);
     let guests_unseen = std::sync::atomic::AtomicUsize::new(0);
+    let batch_rebuilds = std::sync::atomic::AtomicUsize::new(0);
     // The file-local program pruned to each set of relations partial hits miss (`cone_of`), made once a run.
     let cones: parking_lot::Mutex<HashMap<BTreeSet<String>, Arc<lower::Lowered>>> = parking_lot::Mutex::new(HashMap::new());
     let build_doc = |d: &i64, path: &String, module: Option<Arc<str>>, unbuilt: Unbuilt| -> Result<(Option<memo::Content>, Option<[u8; 32]>, syntax::Document)> {
@@ -6367,11 +6370,13 @@ fn run_observed(
                     // Made from the entries, the batch is built once, after the last round: no slice reads it between.
                     if replay.is_none() {
                         let _rebuild = crate::code_rule_dsl::logic::profile::span(|| "batch with guests".into());
+                        batch_rebuilds.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         sources = syntax::with_matchers(&store, docs.clone(), &sets, &chunk_matchers, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()))?;
                     }
                 }
                 if replay.is_some() && docs.len() > documents_len {
                     let _rebuild = crate::code_rule_dsl::logic::profile::span(|| "batch with guests".into());
+                    batch_rebuilds.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let narrowed = cone.as_ref().map(|wanted| cone_projection(wanted));
                     sources = syntax::with_matchers(&store, docs.clone(), &sets, &chunk_matchers, &vocabulary, binding, narrowed.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
                 }
@@ -10034,7 +10039,7 @@ fn run_observed(
     if !nested && !phase0::active() {
         crate::code_rule_dsl::logic::profile::run_ends(crate::code_rule_dsl::logic::profile::snapshot());
     }
-    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), guest_parses: guest_parses.parsed(), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), guest_parses: guest_parses.parsed(), batch_rebuilds: batch_rebuilds.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }

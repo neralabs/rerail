@@ -93,7 +93,7 @@ code may be named by which rules asked for it, or in what order.
 | R2 | `guest_of(n, s)` names the string a tape value's node was parsed at | `guest_of_names_the_string_a_node_was_parsed_from` |
 | R3 | One text is one tape and one set of nodes at every place; a tape value's node is no file's | `one_tape_at_two_places_is_one_set_of_nodes` |
 | R4 | No string is parsed unless a rule asks for it | `a_string_no_rule_asks_for_is_not_parsed` |
-| R5 | The batch is built once a chunk | written with step 3, on the report's count of builds |
+| R5 | The batch is built once a chunk (`Report::batch_rebuilds` is 0): a file's programs (step 3), tape values (step 4) | `a_files_programs_build_no_second_batch`, `tape_values_build_no_second_batch` |
 | R6 | A text a run parsed is not parsed again: after an edit elsewhere in its file, in a new file, after a rule's edit (`Report::guest_parses`) | `an_edit_elsewhere_parses_no_text_the_last_run_parsed`, `a_new_file_with_a_text_parsed_before_parses_nothing`, `an_edited_rule_parses_no_text_the_last_run_parsed`; guard `equal_texts_are_parsed_once_a_run` |
 | R7 | A file read from the memo has its programs and tape values for a cross-file rule | written with step 4 |
 | R8 | CPU and Metal give the same rows, the device reading the same tapes | the Metal path's parity tests, with both kinds |
