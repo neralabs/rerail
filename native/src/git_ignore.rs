@@ -441,7 +441,7 @@ fn file_clock() -> std::time::SystemTime {
 /// it ([`time_step`]).
 #[cfg(target_os = "linux")]
 fn past_step(modified: std::time::SystemTime, now: std::time::SystemTime) -> bool {
-    now > modified + time_step(modified)
+    now >= modified + time_step(modified)
 }
 
 /// The step of the file system that gave `time`, read from its digits: a file system keeps times
@@ -813,6 +813,8 @@ mod tests {
         git(&root, &["init", "--initial-branch=main"]);
         git(&root, &["add", ".gitignore"]);
         let index = root.join(".git/index");
+        // A time every file clock has left, so the stamp of the read is kept.
+        set_modified(&index, modified(&index) - Duration::from_secs(5));
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         assert!(ignore.ignored("e.py", false).unwrap());
 
@@ -1411,8 +1413,8 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// A time is left once the clock has passed it by the step its digits show: a nanosecond time at
-    /// the next reading, a time of 100 ns steps (NTFS) or of 10 ms steps (exFAT) a step on, and a
+    /// A time is left once the clock reads the next step its digits show: a nanosecond time at the
+    /// next nanosecond, a time of 100 ns steps (NTFS) or of 10 ms steps (exFAT) a step on, and a
     /// whole second, which a file system of one or two seconds a step gives, two seconds on.
     #[cfg(target_os = "linux")]
     #[test]
@@ -1420,12 +1422,12 @@ mod tests {
         let at = |seconds: u64, nanos: u32| std::time::UNIX_EPOCH + Duration::new(seconds, nanos);
         assert!(!past_step(at(10, 501), at(10, 501)));
         assert!(past_step(at(10, 501), at(10, 502)));
-        assert!(!past_step(at(10, 234_567_800), at(10, 234_567_850)));
-        assert!(past_step(at(10, 234_567_800), at(10, 234_567_901)));
-        assert!(!past_step(at(10, 10_000_000), at(10, 15_000_000)));
-        assert!(past_step(at(10, 10_000_000), at(10, 20_000_001)));
-        assert!(!past_step(at(10, 0), at(12, 0)));
-        assert!(past_step(at(10, 0), at(12, 1)));
+        assert!(!past_step(at(10, 234_567_800), at(10, 234_567_899)));
+        assert!(past_step(at(10, 234_567_800), at(10, 234_567_900)));
+        assert!(!past_step(at(10, 10_000_000), at(10, 19_999_999)));
+        assert!(past_step(at(10, 10_000_000), at(10, 20_000_000)));
+        assert!(!past_step(at(10, 0), at(11, 999_999_999)));
+        assert!(past_step(at(10, 0), at(12, 0)));
     }
 
     /// While it lives, a file this process cannot read: one with no permissions on Unix, one held
@@ -1482,6 +1484,8 @@ mod tests {
         );
         let next = root.join(".git/next-index");
         git_with_index(&root, &next, &["add", "-f", "b.py"]);
+        // A time every file clock has left, so the stamp of its read is kept.
+        set_modified(&next, modified(&next) - Duration::from_secs(5));
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         assert!(
             ignore.ignored("a.py", false).unwrap(),
