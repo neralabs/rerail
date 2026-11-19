@@ -67,16 +67,25 @@ server.listen(path, () => {${TAKE_EVERY_INSTANCE}
 /**
  * {@link BUSY_ENGINE} whose event loop stays stopped until the test writes to its input. Once its loop runs again, Node
  * accepts each connection it held and sets up a new instance of the pipe before it hands the connection over: the
- * engine prints `free` at the first, its own word that an instance is free. Given milliseconds, its loop then stops
- * that long again, so a proof that connects to the freed instance is answered only that long after `free`.
+ * engine prints `free` at the first, its own word that an instance is free. Given milliseconds, it answers the first
+ * proof that long after the proof's request arrives, with its loop running, so the answer's delay is counted from the
+ * proof's own connection, whichever instance that took: a proof's check of a busy pipe opens a freed instance and
+ * closes it at once, and an engine whose loop stopped right after freeing one would take no new connection until it
+ * ran again.
  */
 const HELD_ENGINE = `${PROVING_SERVER}
+const answerHold = Number(process.argv[3] ?? 0);
+if (answerHold > 0) {
+  const answer = server.listeners("request")[0];
+  server.removeAllListeners("request");
+  server.once("request", (request, response) => {
+    server.on("request", answer);
+    setTimeout(() => answer(request, response), answerHold);
+  });
+}
 server.listen(path, () => {${TAKE_EVERY_INSTANCE}
   readSync(0, Buffer.alloc(1));
-  server.once("connection", () => {
-    writeSync(1, "free\\n");
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.argv[3] ?? 0));
-  });
+  server.once("connection", () => writeSync(1, "free\\n"));
   for (const fd of taken) closeSync(fd);
 });`;
 
@@ -468,11 +477,10 @@ describe.runIf(process.platform === "win32")("the engine proof, against a busy e
   }, 45_000);
 
   // A command keeps its 2 s from the ask however late its connect comes: here every instance stays taken until 1.9 s
-  // after the ask, and the engine answers 1 s after it frees one, past the command's 2 s. The command's limit then has
-  // 0.1 s left, and a limit counted from the connect would have 2 s: the engine's answer falls 0.9 s past the one and
-  // 1 s inside the other, so a loaded machine that delays either process by less than that cannot change the verdict.
-  // The proof asked once the engine's loop runs again shows that the engine does answer, so the first proof's silence
-  // is its limit's.
+  // after the ask, and the engine answers the proof 1 s after its request arrives, past the command's 2 s. The
+  // command's limit then has 0.1 s left, and a limit counted from the connect would have 2 s: the engine's answer
+  // falls 0.9 s past the one and 1 s inside the other, whenever the proof connects. The proof asked next is answered
+  // at once, so the first proof's silence is its limit's.
   it("answers a command silent 2 s from its ask when an instance frees 1.9 s in to an engine that answers 1 s later", async () => {
     const path = pipePath("late");
     const engine = startNode(HELD_ENGINE, [PROOF_MODULE, path, "1000"], true, true);
@@ -484,7 +492,7 @@ describe.runIf(process.platform === "win32")("the engine proof, against a busy e
     engine.stdin!.write("go\n");
     expect(await line()).toBe("free");
     expect(await command).toBe("silent");
-    expect(await engineCapabilityProof(path, "capability", 2_000), "a proof asked once the engine's loop runs again").toBe("proved");
+    expect(await engineCapabilityProof(path, "capability", 2_000), "a proof asked next").toBe("proved");
   }, 45_000);
 
   // The same through what a hook's start check asks of the daemon daemon.json records, here this process with the
