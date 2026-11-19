@@ -14,8 +14,9 @@
  * Two cases go red on causes that left a person's sessions with "rules unavailable" or edits unchecked: a session opened
  * from VS Code, which spells the drive letter `c:` (Windows), and subagents whose hooks run at once while the daemon is
  * slow to answer. The last case checks that a session's edits are still checked after its daemon restarts. One more
- * writes the file through a Bash command while another process keeps it from being read until the check at the
- * command's result is over: the agent's next command is steered on it.
+ * writes the file through a Bash command while another process keeps it from being read, from its first byte until the
+ * session's record shows that the check at the command's result could not read it: the agent's next command is
+ * steered on it.
  */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
@@ -26,7 +27,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { text } from "node:stream/consumers";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ENTRY_POINTS } from "../src/engine/index.js";
 import { DAEMON_STATE_FILE, type DaemonState } from "../src/runtime/index.js";
 import { removeFolder } from "../test/support/platform/remove-folder.js";
@@ -141,34 +142,45 @@ async function endTurn(session: Session): Promise<HookAnswer> {
   return await hook({ ...common, hook_event_name: "Stop", prompt_id: "prompt-1", last_assistant_message: "Done." }, session.projectDir, session.env);
 }
 
-/** A Bash command of the session: PreToolUse, what it does (`run`), PostToolUse; the PostToolUse answer. */
-async function runCommand(session: Session, toolUseId: string, run: () => Promise<void>): Promise<HookAnswer> {
+/** A Bash command of the session: PreToolUse, what it does (`run`), PostToolUse; both hooks' answers. */
+async function runCommand(session: Session, toolUseId: string, run: () => Promise<void>): Promise<readonly HookAnswer[]> {
   const tool = { tool_name: "Bash", tool_use_id: toolUseId, tool_input: { command: "python3 scripts/generate.py" } };
   const common = { session_id: session.id, cwd: session.projectDir, ...tool };
-  expect((await hook({ ...common, hook_event_name: "PreToolUse" }, session.projectDir, session.env)).stderr).toBe("");
+  const pre = await hook({ ...common, hook_event_name: "PreToolUse" }, session.projectDir, session.env);
+  expect(pre.stderr).toBe("");
   await run();
   const tool_response = { stdout: "", stderr: "", interrupted: false, isImage: false };
-  return await hook({ ...common, hook_event_name: "PostToolUse", tool_response }, session.projectDir, session.env);
+  return [pre, await hook({ ...common, hook_event_name: "PostToolUse", tool_response }, session.projectDir, session.env)];
 }
 
 /**
- * Another process that keeps the file at `HOLD_PATH` from being read until its input ends, saying `held` once it does
- * and `released` once it let go. On Windows it opens the file with no sharing, as a program that scans or copies a file
- * may: libuv's UV_FS_O_EXLOCK flag, which `fs.constants` does not name. Elsewhere no process can hold a file from reads
- * without changing its times, so it takes the search permission off the file's folder.
+ * Another process that writes `HOLD_TEXT` to a new file at `HOLD_PATH` and keeps it from being read, from its first
+ * byte, until its input ends, saying `held` once it holds the written file and `released` once it let go. So no walk
+ * can read the file before the check at the command's result, however the daemon's walks fall. On Windows it creates
+ * and writes the file through one handle with no sharing, as a program that scans or copies a file may hold it:
+ * libuv's UV_FS_O_EXLOCK flag, which `fs.constants` does not name; the file keeps the write's times when it closes.
+ * Elsewhere no process can hold a file from reads without changing its times, which the walk reads as a later write:
+ * it writes the file in a folder of its own outside the checkout (`HOLD_STAGING`), takes the search permission off that
+ * folder and moves it into place, which leaves the file's times as the write set them.
  */
 const HOLDER = `
-import { chmodSync, closeSync, constants, openSync, statSync } from "node:fs";
-import { dirname } from "node:path";
+import { chmodSync, closeSync, constants, mkdirSync, openSync, renameSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 const path = process.env.HOLD_PATH;
+const folder = dirname(path);
 let release;
 if (process.platform === "win32") {
-  const fd = openSync(path, constants.O_RDONLY | 0x10000000);
+  mkdirSync(folder, { recursive: true });
+  const fd = openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | 0x10000000);
+  writeSync(fd, process.env.HOLD_TEXT);
   release = () => closeSync(fd);
 } else {
-  const folder = dirname(path);
-  const mode = statSync(folder).mode & 0o777;
-  chmodSync(folder, mode & ~0o111);
+  const staged = join(process.env.HOLD_STAGING, basename(folder));
+  mkdirSync(staged, { recursive: true });
+  writeFileSync(join(staged, basename(path)), process.env.HOLD_TEXT);
+  const mode = statSync(staged).mode & 0o777;
+  chmodSync(staged, mode & ~0o111);
+  renameSync(staged, folder);
   release = () => chmodSync(folder, mode);
 }
 process.stdout.write("held\\n");
@@ -176,10 +188,10 @@ process.stdin.resume();
 process.stdin.on("end", () => { release(); process.stdout.write("released\\n"); });
 `;
 
-/** Starts `HOLDER` on `file` and returns once nothing can read the file, with what lets it go. */
-async function holdFromReads(file: string): Promise<() => Promise<void>> {
+/** Starts `HOLDER` writing `content` to `file` and returns once the file is written and nothing can read it, with what lets it go. */
+async function holdFromReads(file: string, content: string): Promise<() => Promise<void>> {
   const child = spawn(process.execPath, ["--input-type=module", "-e", HOLDER], {
-    env: environment({ HOLD_PATH: file }), stdio: ["pipe", "pipe", "inherit"], windowsHide: true,
+    env: environment({ HOLD_PATH: file, HOLD_TEXT: content, HOLD_STAGING: join(root, "staged") }), stdio: ["pipe", "pipe", "inherit"], windowsHide: true,
   });
   let said = "";
   child.stdout.setEncoding("utf8");
@@ -203,14 +215,42 @@ function expectSteered(answer: HookAnswer, file: string): void {
   expect(contextOf(answer)).toContain(basename(file));
 }
 
+/** The steer reached the coding agent in one of a command's hook answers, and each hook answered without an error. */
+function expectSteeredInOne(answers: readonly HookAnswer[], file: string): void {
+  for (const answer of answers) expect(answer.stderr).toBe("");
+  expect(answers.map(contextOf).filter(context => context.includes(`[${RULE}]`)).join("\n")).toContain(basename(file));
+}
+
+interface SupportBundle {
+  session: {
+    audits: Array<{ violations: Array<{ ruleId: string; path: string }>; failures: Array<{ path: string | null }> }>;
+  };
+}
+
+let bundles = 0;
+
+/** The session's record as `rerail support-bundle` writes it, each time to a file of its own. */
+async function supportBundle(session: Session): Promise<SupportBundle> {
+  bundles += 1;
+  const bundleFile = join(root, `${session.id}-${bundles}.json`);
+  await rerail(["support-bundle", "--session", session.id, "--output", bundleFile]);
+  return JSON.parse(await readFile(bundleFile, "utf8")) as SupportBundle;
+}
+
+/** Waits until the session's record holds a failure to read `file`: a check of the session met the held file. */
+async function expectReadFailed(session: Session, file: string): Promise<void> {
+  await vi.waitFor(async () => {
+    const failed = (await supportBundle(session)).session.audits.flatMap(audit => audit.failures).map(failure => basename(failure.path ?? ""));
+    expect(failed).toContain(basename(file));
+  }, { timeout: 60_000, interval: 250 });
+}
+
 /** `rerail session` counts the session's rules, and the support bundle logs the rule's violation in each file. */
 async function expectRulesFired(session: Session, files: readonly string[]): Promise<void> {
   const status = await rerail(["session", "claude-code", session.id]);
   expect(status).not.toContain("rules unavailable");
   expect(status).toMatch(/\d+ rules? · steered \d+× in this session/u);
-  const bundleFile = join(root, `${session.id}.json`);
-  await rerail(["support-bundle", "--session", session.id, "--output", bundleFile]);
-  const bundle = JSON.parse(await readFile(bundleFile, "utf8")) as { session: { audits: Array<{ violations: Array<{ ruleId: string; path: string }> }> } };
+  const bundle = await supportBundle(session);
   const logged = bundle.session.audits.flatMap(audit => audit.violations).filter(violation => violation.ruleId === RULE).map(violation => basename(violation.path));
   expect(new Set(logged)).toEqual(new Set(files.map(file => basename(file))));
 }
@@ -280,13 +320,14 @@ describe("the Claude Code hook against a daemon of this build", () => {
     const file = join(repo, "src", "app", "held", "held_write.py");
     await startSession(session);
     let release = async (): Promise<void> => undefined;
-    await runCommand(session, "toolu_held_write", async () => {
-      await mkdir(dirname(file), { recursive: true });
-      await writeFile(file, tooComplex("held_write"));
-      release = await holdFromReads(file);
-    });
-    await release();
-    expectSteered(await runCommand(session, "toolu_after_held_write", async () => undefined), file);
+    try {
+      await runCommand(session, "toolu_held_write", async () => { release = await holdFromReads(file, tooComplex("held_write")); });
+      // The state the steer below is about: the session's checks met the file only held, and recorded the failed read.
+      await expectReadFailed(session, file);
+    } finally {
+      await release();
+    }
+    expectSteeredInOne(await runCommand(session, "toolu_after_held_write", async () => undefined), file);
     await endTurn(session);
     await expectRulesFired(session, [file]);
   }, 120_000);
