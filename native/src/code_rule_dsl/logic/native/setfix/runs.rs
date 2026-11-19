@@ -373,14 +373,16 @@ pub(super) fn cmp_ids<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], t
 }
 
 /// The span of `tags` (sorted) equal to `t`, searched from `from`: a galloping search forward from there, or (with
-/// `place`) from where an even spread of tags would put it.
+/// `place`) from where an even spread of tags would put it. Its end gallops too, so a span costs reads logarithmic in
+/// its length: a tag thousands of rows share (a leading value most rows hold) was walked to its end once per row a
+/// sorted batch searched, every row of the batch reading the rest of the span. Generic so a test counts the reads.
 #[inline]
-fn tag_span(tags: &[u16], t: u16, from: usize, place: bool) -> (usize, usize) {
+fn tag_span<T: Copy + Ord + Into<u64>>(tags: &[T], t: T, from: usize, place: bool) -> (usize, usize) {
     let n = tags.len();
     if from >= n {
         return (n, n);
     }
-    let mut at = if place { from.max(((t as usize) * n) >> 16) } else { from };
+    let mut at = if place { from.max(((t.into() as usize) * n) >> 16) } else { from };
     // Back while the place is past the span's start (it can be, placed by interpolation).
     let mut step = 1;
     while at > from && tags[at.min(n - 1)] >= t {
@@ -395,11 +397,7 @@ fn tag_span(tags: &[u16], t: u16, from: usize, place: bool) -> (usize, usize) {
     let lo = if bound > 1 { at + bound / 2 } else { at };
     let hi = (at + bound - 1).min(n);
     let s = lo + tags[lo..hi].partition_point(|&x| x < t);
-    let mut e = s;
-    while e < n && tags[e] == t {
-        e += 1;
-    }
-    (s, e)
+    (s, s + gallop(&tags[s..], 0, |&x| x == t))
 }
 
 /// An order on the columns `cols` (every key set it answers is a prefix of them).
@@ -1843,5 +1841,55 @@ pub mod tests {
         let merged = Run::merge(&rows, k, &cols, &a, &b);
         assert_eq!(merged.ids.to_vec(), want);
         assert_eq!(merged.tags, run.tags);
+    }
+
+    /// A tag counted at each comparison (`tag_span` reads tags only by comparing them).
+    #[derive(Clone, Copy, Debug)]
+    struct Read(u16);
+    thread_local! {
+        static READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+    impl PartialEq for Read {
+        fn eq(&self, o: &Read) -> bool {
+            READS.with(|r| r.set(r.get() + 1));
+            self.0 == o.0
+        }
+    }
+    impl Eq for Read {}
+    impl PartialOrd for Read {
+        fn partial_cmp(&self, o: &Read) -> Option<Ordering> {
+            Some(self.cmp(o))
+        }
+    }
+    impl Ord for Read {
+        fn cmp(&self, o: &Read) -> Ordering {
+            READS.with(|r| r.set(r.get() + 1));
+            self.0.cmp(&o.0)
+        }
+    }
+    impl From<Read> for u64 {
+        fn from(t: Read) -> u64 {
+            t.0 as u64
+        }
+    }
+
+    /// A span of one tag is found in reads logarithmic in its length, from any place in it: `held_sorted` searches a
+    /// sorted batch's rows from where the last one ended, and a batch of rows sharing a leading value (so a tag) read
+    /// the rest of the span for each row when its end was walked: 1,000 rows over a span of 2^20 read 524M tags.
+    #[test]
+    fn a_tag_span_costs_reads_logarithmic_in_its_length() {
+        let span = 1usize << 20;
+        let tags: Vec<Read> = std::iter::repeat_n(Read(1), 10).chain(std::iter::repeat_n(Read(5), span)).chain(std::iter::repeat_n(Read(9), 10)).collect();
+        let rows = 1000;
+        READS.with(|r| r.set(0));
+        for i in 0..rows {
+            let from = 10 + i * (span / rows);
+            assert_eq!(tag_span(&tags, Read(5), from, false), (from, 10 + span));
+        }
+        assert_eq!(tag_span(&tags, Read(5), 0, true), (10, 10 + span));
+        assert_eq!(tag_span(&tags, Read(9), 0, true), (10 + span, 20 + span));
+        let reads = READS.with(|r| r.get());
+        // About 4 log2(2^20) reads a search; the walk read about rows * span / 2.
+        assert!(reads <= (rows as u64 + 2) * 100, "{reads} tag reads for {rows} searches of a span of {span}");
     }
 }
