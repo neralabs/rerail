@@ -34,7 +34,7 @@ struct View {
     inventory: Mutex<Option<(u64, Arc<Inventory>)>>,
     observed_trees: Mutex<std::collections::HashMap<gix::ObjectId, ObservedTree>>,
     source_errors: Mutex<std::collections::BTreeMap<String, String>>,
-    paths: Mutex<Option<Vec<String>>>,
+    paths: Mutex<Option<Vec<PathBuf>>>,
     host_languages: OnceLock<SourceLanguages>,
 }
 
@@ -51,7 +51,9 @@ pub struct Inventory {
     pub trees: Vec<crate::content_store::GitTree>,
     pub languages: std::collections::BTreeMap<String, String>,
     pub invalid_paths: Vec<String>,
-    pub tree_observations: std::collections::BTreeMap<HashKey, String>,
+    pub tree_failures: Vec<SourceFailure>,
+    pub tree_observations: std::collections::BTreeMap<gix::ObjectId, String>,
+    pub selection: String,
 }
 
 #[derive(Clone, Debug)]
@@ -68,14 +70,20 @@ impl RawTreeEntry {
 
 fn decode_tree(tree: gix::Tree<'_>) -> io::Result<Arc<[RawTreeEntry]>> {
     rerail_prof::count("git.tree_decodes", 1);
-    tree.iter().map(|entry| {
+    let entries = tree.iter().map(|entry| {
         let entry = entry.map_err(error)?;
         let name = entry.filename().as_bytes();
         if name.is_empty() || name == b"." || name == b".." || name.contains(&b'/') {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid Git entry name"));
         }
         Ok(RawTreeEntry { name: name.to_vec(), mode: entry.mode().value(), target: entry.id().detach() })
-    }).collect()
+    }).collect::<io::Result<Vec<_>>>()?;
+    Ok(sorted_entries(entries))
+}
+
+fn sorted_entries(mut entries: Vec<RawTreeEntry>) -> Arc<[RawTreeEntry]> {
+    entries.sort_unstable_by(|left, right| left.name.cmp(&right.name));
+    entries.into()
 }
 
 pub fn raw_entry_name(hex: &str) -> Option<Vec<u8>> {
@@ -171,7 +179,7 @@ impl View {
         }
         let key = super::hash_key(id.as_ref()).ok()?;
         let (_, inventory) = self.saved_inventory()?;
-        if inventory.tree_observations.get(&key)?.as_str() != stamp {
+        if inventory.tree_observations.get(&id)?.as_str() != stamp {
             return None;
         }
         let index = inventory.trees.binary_search_by_key(&key, |tree| tree.id).ok()?;
@@ -183,7 +191,8 @@ impl View {
             let width = if entry.target.is_git_sha256() { 32 } else { 20 };
             let target = gix::ObjectId::from_bytes_or_panic(&entry.target.key_bytes()[8..8 + width]);
             Some(RawTreeEntry { name, mode: entry.mode, target })
-        }).collect::<Option<Arc<[RawTreeEntry]>>>()?;
+        }).collect::<Option<Vec<_>>>()?;
+        let entries = sorted_entries(entries);
         observed.insert(id, ObservedTree { stamp: stamp.to_owned(), entries: Arc::clone(&entries) });
         Some(entries)
     }
@@ -224,7 +233,8 @@ impl View {
         while let Some(component) = components.next() {
             let tree = self.tree_entries(repo, storage, id)?;
             let name = component.as_os_str().as_encoded_bytes();
-            let Some(entry) = tree.iter().find(|entry| entry.name == name) else { return Ok(None) };
+            let Ok(index) = tree.binary_search_by(|entry| entry.name.as_slice().cmp(name)) else { return Ok(None) };
+            let entry = &tree[index];
             if components.peek().is_none() {
                 return Ok(Some(entry.clone()));
             }
@@ -247,11 +257,19 @@ impl View {
     }
 
     fn inventory(&self, store: Option<&Path>) -> Result<Arc<Inventory>, InventoryError> {
-        let (epoch, observed) = {
-            let state = self.current_repository().map_err(|error| error.to_string())?;
-            (state.epoch, state.storage.is_some())
-        };
-        if observed && let Some((saved_epoch, value)) = self.saved_inventory() && saved_epoch == epoch {
+        let (epoch, observed, saved) = self.with_repo(|_, storage, epoch| {
+            let saved = self.saved_inventory().filter(|(saved_epoch, inventory)| {
+                *saved_epoch == epoch && inventory.tree_failures.is_empty() && storage.is_some_and(|storage| {
+                    inventory.tree_observations.iter().all(|(id, stamp)| {
+                        storage.object(*id).as_ref() == Some(stamp)
+                    })
+                })
+            });
+            (epoch, storage.is_some(), saved)
+        }).map_err(|error| error.to_string())?;
+        if let Some((_, value)) = saved
+            && inventory_selection(&self.root).as_ref() == Some(&value.selection)
+        {
             return Ok(value);
         }
         let read = READ_INVENTORY.get().ok_or("Git tree inventory reader is unavailable")?;
@@ -304,21 +322,7 @@ impl View {
         if full.as_os_str().is_empty() {
             return Ok(Entry::Dir(self.tree));
         }
-        let key = full
-            .to_string_lossy()
-            .replace(std::path::MAIN_SEPARATOR, "/");
-        self.with_repo(|repo, storage, epoch| {
-            if storage.is_some()
-                && let Some((saved_epoch, inventory)) = self.saved_inventory()
-                && saved_epoch == epoch
-                && let Ok(index) = inventory.files.binary_search_by(|file| file.path.as_str().cmp(&key))
-            {
-                let blob = inventory.files[index].blob;
-                let width = if blob.is_git_sha256() { 32 } else { 20 };
-                return Ok(Entry::File(gix::ObjectId::from_bytes_or_panic(
-                    &blob.key_bytes()[8..8 + width],
-                )));
-            }
+        self.with_repo(|repo, storage, _| {
             let entry = self.lookup_tree_entry(repo, storage, &full)?.ok_or_else(missing)?;
             if entry.is_tree() {
                 Ok(Entry::Dir(entry.target))
@@ -369,6 +373,9 @@ impl Snapshot {
     }
 
     pub fn restrict_paths(&self, paths: Vec<String>) {
+        let paths = paths.iter().map(|path| {
+            Path::new(path).components().filter(|part| *part != Component::CurDir).collect()
+        }).collect();
         *self.view.paths.lock().unwrap_or_else(|err| err.into_inner()) = Some(paths);
     }
 
@@ -400,8 +407,15 @@ impl Snapshot {
         let invalid = self.invalid_paths().into_iter().map(|path| SourceFailure {
             path, message: "Git path has invalid UTF-8".to_owned(),
         });
+        let tree_failures = self.view.saved_inventory().map_or_else(Vec::new, |(_, inventory)| {
+            inventory.tree_failures.iter().map(|failure| {
+                let path = Path::new(&failure.path).strip_prefix(&self.view.prefix)
+                    .map_or_else(|_| failure.path.clone(), |path| path.to_string_lossy().into_owned());
+                SourceFailure { path, message: failure.message.clone() }
+            }).collect()
+        });
         let unreadable = self.view.source_errors.lock().unwrap_or_else(|e| e.into_inner());
-        invalid.chain(unreadable.iter().map(|(path, message)| SourceFailure {
+        invalid.chain(tree_failures).chain(unreadable.iter().map(|(path, message)| SourceFailure {
             path: path.clone(), message: message.clone(),
         })).collect()
     }
@@ -651,10 +665,10 @@ pub fn root_observed(root: &Path) -> bool {
     }).unwrap_or(false))
 }
 
-pub fn remember_root(root: &Path, stamp: String, entries: Arc<[RawTreeEntry]>) {
+pub fn remember_root(root: &Path, stamp: String, entries: Vec<RawTreeEntry>) {
     if let Some(v) = view(root) {
         v.observed_trees.lock().unwrap_or_else(|err| err.into_inner())
-            .insert(v.tree, ObservedTree { stamp, entries });
+            .insert(v.tree, ObservedTree { stamp, entries: sorted_entries(entries) });
     }
 }
 
@@ -671,7 +685,7 @@ pub fn with_repository<T>(root: &Path, f: impl FnOnce(&gix::Repository, Option<&
 
 pub struct InventoryFilter {
     prefix: PathBuf,
-    paths: Option<Vec<String>>,
+    paths: Option<Vec<PathBuf>>,
     rules: super::IgnoreRules,
     coverage: ignore_coverage::IgnoreCoverage,
 }
@@ -685,7 +699,7 @@ impl InventoryFilter {
         }
         if let Some(paths) = &self.paths {
             let under = relative.strip_prefix(&self.prefix).ok()?;
-            if !paths.iter().any(|p| under.starts_with(p) || (directory && Path::new(p).starts_with(under))) {
+            if !paths.iter().any(|p| under.starts_with(p) || (directory && p.starts_with(under))) {
                 return None;
             }
         }
@@ -775,6 +789,12 @@ pub fn source_object(root: &Path, path: &str) -> Option<gix::ObjectId> {
 pub fn record_source_error(root: &Path, path: &str, message: String) {
     if let Some(view) = view(root) {
         view.source_errors.lock().unwrap_or_else(|e| e.into_inner()).insert(path.to_owned(), message);
+    }
+}
+
+pub fn clear_source_error(root: &Path, path: &str) {
+    if let Some(view) = view(root) {
+        view.source_errors.lock().unwrap_or_else(|e| e.into_inner()).remove(path);
     }
 }
 

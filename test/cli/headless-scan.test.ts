@@ -327,6 +327,77 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     expect(report.failures).toEqual([expect.objectContaining({ code: "adapter-error", path: "gaps/a.py" })]);
   });
 
+  it("reports each placement of a missing subtree and keeps findings in readable files", async () => {
+    const root = checkout();
+    const blob = git(root, "rev-parse", "HEAD:a.py");
+    const missing = "1".repeat(40);
+    const tree = execFileSync("git", ["mktree", "--missing"], {
+      cwd: root,
+      input: `100644 blob ${blob}\ta.py\n040000 tree ${missing}\tfirst\n040000 tree ${missing}\tsecond\n`,
+      encoding: "utf8",
+    }).trim();
+    const report = await scan(root, { revision: tree, analysisScope: "partial-tree" });
+    expect(report.status).toBe("failed");
+    expect(report.violations.map(finding => finding.path)).toEqual(["a.py"]);
+    expect(report.failures.map(failure => [failure.path, failure.message])).toEqual([
+      ["first", `cannot inventory Git tree ${missing}: missing`],
+      ["second", `cannot inventory Git tree ${missing}: missing`],
+    ]);
+  });
+
+  it("rechecks loose parent trees and clears repaired errors in a reused revision view", async () => {
+    const root = checkout();
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src/nested.py"), "nested()\n");
+    writeFileSync(join(root, "plain.py"), "plain()\n");
+    git(root, "add", "src/nested.py", "plain.py");
+    git(root, "commit", "-qm", "two readable files");
+    const home = `${root}-home`;
+    mkdirSync(home);
+    const policy = join(home, "calls.rr");
+    writeFileSync(policy, `
+#include "core.rr"
+.policy "calls" revision 1
+.language python
+.violation Call(at: node) "call"
+Call(n) :- kind(n, "call").
+`);
+    const engine = loadNativeBinding();
+    const source = new engine.GitRevisionSource(root, "HEAD", "repair");
+    const store = join(home, "content.sqlite");
+    let sequence = 0;
+    const evaluate = async (): Promise<string[]> => {
+      const [report] = JSON.parse(await engine.scanRrPoliciesAsync(
+        [policy], root, store, join(home, `output-${sequence++}`), undefined, undefined, source,
+      ));
+      return report.diagnostics.map((finding: { path: string }) => finding.path).sort();
+    };
+    const corrupt = (revision: string, bad: string) => {
+      const oid = git(root, "rev-parse", revision);
+      const path = join(root, ".git", "objects", oid.slice(0, 2), oid.slice(2));
+      const original = readFileSync(path);
+      chmodSync(path, 0o644);
+      writeFileSync(path, deflateSync(Buffer.from(bad)));
+      return () => writeFileSync(path, original);
+    };
+
+    expect(await evaluate()).toEqual(["plain.py", "src/nested.py"]);
+    const restoreTree = corrupt("HEAD:src", "tree 0\0");
+    expect(() => source.readFile("src/nested.py", 100)).toThrow(/checksum/u);
+    expect(await evaluate()).toEqual(["plain.py"]);
+    expect(source.sourceFailures()).toEqual([expect.objectContaining({ path: "src" })]);
+    restoreTree();
+    expect(await evaluate()).toEqual(["plain.py", "src/nested.py"]);
+    expect(source.sourceFailures()).toEqual([]);
+
+    const restoreBlob = corrupt("HEAD:src/nested.py", "blob 1\0x");
+    expect(await evaluate()).toEqual(["plain.py"]);
+    expect(source.sourceFailures()).toEqual([expect.objectContaining({ path: "src/nested.py" })]);
+    restoreBlob();
+    expect(await evaluate()).toEqual(["plain.py", "src/nested.py"]);
+    expect(source.sourceFailures()).toEqual([]);
+  });
+
   it.each(["commit", "tag"])("rejects a selected Git %s with a mismatched checksum", async kind => {
     const root = checkout();
     if (kind === "tag") git(root, "tag", "-am", "audit tag", "selected");

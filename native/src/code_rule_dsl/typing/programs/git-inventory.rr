@@ -29,14 +29,17 @@ source_language_request(path) :- inventory_file(path, _, _).
 .decl inventory_language(path: symbol, language: symbol)
 inventory_language(p, g) :- source_language(p, g).
 
-.decl inventory_error(tree: symbol, reason: symbol)
-inventory_error(t, reason) :- inventory_directory(r, _, t, _), git_object_error(r, t, reason).
-inventory_error(t, "not-a-tree") :-
-    inventory_directory(r, _, t, _), git_object_kind(r, t, kind), kind != "tree".
+.decl inventory_error(path: symbol, tree: symbol, reason: symbol)
+inventory_error(p, t, reason) :- inventory_directory(r, p, t, _), git_object_error(r, t, reason).
+inventory_error(p, t, "not-a-tree") :-
+    inventory_directory(r, p, t, _), git_object_kind(r, t, kind), kind != "tree".
+.decl inventory_readable_directory(path: symbol, tree: symbol)
+inventory_readable_directory(p, t) :- inventory_directory(r, p, t, _), git_object_kind(r, t, "tree").
 .decl inventory_path_error(path: symbol)
 inventory_path_error(p) :- git_inventory_child_of(_, _, _, _, _, "bytes", p).
 
-.output inventory_directory
+.output inventory_readable_directory
+.output git_inventory_selection
 .output inventory_file
 .output git_tree_entry
 .output git_tree_entry_bytes

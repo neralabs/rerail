@@ -124,6 +124,8 @@ You can also supply a local policy file using `--rr`.
 
 Git symlinks and submodules do not enter the source scan.
 The runner reports missing objects and makes no fetch.
+If a subtree is unreadable, the report gives its path and marks the scan as failed.
+The scan still reports findings from readable files.
 For `--revision` and `--rules-ref`, explicit relative Git paths start at the checkout root.
 The flags accept Git commit message searches such as `HEAD^{/^Release}`.
 A revision error identifies the expression and the cause of the failed lookup.

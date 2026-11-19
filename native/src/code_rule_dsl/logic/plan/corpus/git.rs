@@ -344,7 +344,7 @@ fn source_checks(root: &Path, paths: &[String]) -> super::Result<SourceChecks> {
     let image = super::run_fact_image(&program, root, &options)?;
     let outputs = Outputs::of(&image).map_err(super::Error::Plan)?;
     let invalid = || super::Error::Plan("invalid Git source observation".into());
-    let checked = outputs.rows("git_selected_source_readable").into_iter().map(|row| {
+    let checked: std::collections::HashMap<_, _> = outputs.rows("git_selected_source_readable").into_iter().map(|row| {
         let (Cell::Text(path), Cell::Text(repo), Cell::Text(oid), Cell::Text(digest), Cell::Text(stamp)) =
             (row.get(0), row.get(1), row.get(2), row.get(3), row.get(4)) else { return Err(invalid()) };
         let blob = gix::ObjectId::from_hex(oid.as_bytes()).map_err(|_| invalid())?;
@@ -352,6 +352,9 @@ fn source_checks(root: &Path, paths: &[String]) -> super::Result<SourceChecks> {
         let digest = digest.as_bytes().try_into().map_err(|_| invalid())?;
         Ok((path.to_owned(), SourceObservation { repo: repo.to_owned(), blob, digest, stamp: stamp.to_owned() }))
     }).collect::<super::Result<_>>()?;
+    for path in checked.keys() {
+        snapshot::clear_source_error(root, path);
+    }
     let failures = outputs.rows("git_selected_source_error").iter()
         .filter_map(|row| Some((row.get(0).text()?.to_owned(), row.get(1).text()?.to_owned()))).collect();
     Ok((checked, failures))
@@ -452,7 +455,7 @@ pub(super) fn prime_root(root: &Path) -> super::Result<()> {
             entries.push(RawTreeEntry { name, mode: mode as u16, target });
         }
     }
-    snapshot::remember_root(root, stamp.to_owned(), entries.into());
+    snapshot::remember_root(root, stamp.to_owned(), entries);
     Ok(())
 }
 
@@ -483,9 +486,12 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>) -> 
         other => InventoryError::Source(other.to_string()),
     })?;
     let outputs = Outputs::of(&image)?;
-    if let Some(row) = outputs.rows("inventory_error").first() {
-        return Err(format!("cannot inventory Git tree {}: {}", row.get(0).text().unwrap_or(""), row.get(1).text().unwrap_or("unknown error")).into());
-    }
+    let invalid = || "invalid Git inventory fact".to_owned();
+    let tree_failures = outputs.rows("inventory_error").into_iter().map(|row| {
+        let (Cell::Text(path), Cell::Text(tree), Cell::Text(reason)) = (row.get(0), row.get(1), row.get(2))
+            else { return Err(invalid()) };
+        Ok(snapshot::SourceFailure { path: path.to_owned(), message: format!("cannot inventory Git tree {tree}: {reason}") })
+    }).collect::<Result<_, String>>()?;
     let key = |oid: &str| {
         let id = gix::ObjectId::from_hex(oid.as_bytes()).map_err(|err| err.to_string())?;
         match id {
@@ -507,8 +513,8 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>) -> 
         }
     }
     let mut trees = Vec::new();
-    for row in outputs.rows("inventory_directory") {
-        let (Cell::Text(prefix), Cell::Text(tree)) = (row.get(1), row.get(2))
+    for row in outputs.rows("inventory_readable_directory") {
+        let (Cell::Text(prefix), Cell::Text(tree)) = (row.get(0), row.get(1))
         else { return Err("invalid Git directory fact".into()) };
         trees.push(GitTree { id: key(tree)?, prefix: prefix.to_owned(), entries: entries.get(tree).cloned().unwrap_or_default() });
     }
@@ -536,7 +542,10 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>) -> 
     let tree_observations = outputs.rows("inventory_tree_observation").into_iter().map(|row| {
         let (Cell::Text(tree), Cell::Text(stamp)) = (row.get(0), row.get(1))
             else { return Err("invalid Git tree observation".to_owned()) };
-        Ok((key(tree)?, stamp.to_owned()))
+        let id = gix::ObjectId::from_hex(tree.as_bytes()).map_err(|_| invalid())?;
+        Ok((id, stamp.to_owned()))
     }).collect::<Result<_, String>>()?;
-    Ok(snapshot::Inventory { files, trees, languages, invalid_paths, tree_observations })
+    let selection = outputs.rows("git_inventory_selection").first()
+        .and_then(|row| row.get(0).text()).ok_or_else(invalid)?.to_owned();
+    Ok(snapshot::Inventory { files, trees, languages, invalid_paths, tree_failures, tree_observations, selection })
 }
