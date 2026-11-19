@@ -83,7 +83,6 @@ const KEPT = new Map([
   // kept-records
   ["docs/rule-syntax/packs/python-main/source/", "main's 537 Python rules as the workbench translated them: the source of each `.rerail` rule beside it"],
   ["docs/rule-syntax/nested-routers.json", "the source rule of the workbench's nested-routers drafts beside it (nested-routers.b1.rerail, .b2.rerail)"],
-  ["docs/rule-engine-direction/experiments/m2m7/", "an experiment record: the rules its measurements were taken on, as they were"],
   // engine-layout
   ["accel/src/ane/fixtures/", "the 2 KB coremltools outputs the Neural Engine writer's test embeds (`include_bytes!`), and the script that wrote them"],
   ["native/src/code_rule_dsl/logic/profile/fixtures/outer-binding.tsv", "the profile analysis's test table, embedded by `include_str!` beside its test"],

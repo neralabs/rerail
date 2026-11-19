@@ -3,7 +3,7 @@
 Status: draft for review. This document is normative for the set-mode transducer IR, its fusion transformations, and the operations fusion needs.
 
 Inputs:
-- `research/fusion.md` and `experiments/fusion/`, the CPU measurements;
+- `research/fusion.md` and `experiments/fusion/` (removed; at 7efcac9c67), the CPU measurements;
 - `research/metal-recursion.md`, the stratified range execution;
 - `research/transducer-ir.md`;
 - `spec.md` §6–§9 and §11;

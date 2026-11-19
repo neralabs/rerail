@@ -18,7 +18,7 @@ The other files here:
 - `decisions/`: decision records, each citing the prior work it consulted.
 - `spec.md`: the normative specification (§0–§19), with `spec-transducer.md` (the transducer IR), `spec-indexes.md` (exact index DDL), `spec-fusion.md` (transducer fusion) and `spec-tooling.md` (memory limits, debugging, testing, profiling).
 - `research/`: the evidence behind each spec section: tape regularity and v8/v9np measurements, the transducer IR, the SQL/transducer boundary, Metal recursion and device-side enqueue, fusion, the fusion opportunity and cost model on the data-layer rules, heavy-rule execution profiles, regex lowering and trigram indexes (`regex.md`), the heavy relational inputs (`heavy-inputs.md`), the latest SSC fragment work (`ssc-fragments.md`), Tempo tape residency (`tempo-residency.md`), measurements M1 and M2/M7, the data-layer rule shape fixes with their measured costs (`shape-fixes.md`), and the workstream scan.
-- `experiments/`: the code and raw output for each research document. Database files are not checked in.
+- `experiments/` (removed; at 7efcac9c67): the code and raw output for each research document. Database files are not checked in.
 
 ## Product targets
 
