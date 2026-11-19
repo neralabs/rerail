@@ -1710,6 +1710,68 @@ describe("CodeRuleBridge", () => {
     ]);
   });
 
+  // A command still runs as the first walk to miss the file it wrote begins: the walk at the result of a command run
+  // beside it. Its call ends after that walk began, so the walk at its result, which misses the file again, keeps it, and
+  // the walk that reads the file takes the write as the session's, by its stamp, and checks it.
+  it("checks the write of a command still running as the first walk to miss the file began, though the walk at its result missed it too", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+
+    await bridge.begin("shell-1", "Bash", { command: "python3 generate.py" });
+    await writeFile(path, "x = 1\n");
+    heldFromReads(path, 20);
+    // The command beside it begins after the write's stamp: only the first command ran when the file was written.
+    await awaitClockAfter(path);
+    await bridge.begin("shell-2", "Bash", { command: "ls" });
+    await bridge.finish("shell-2");
+    await bridge.finish("shell-1");
+    discovery.opens.delete(path);
+    await bridge.begin("shell-3", "Bash", { command: "ls" });
+    await bridge.finish("shell-3");
+    expect(audited(auditGeneratedEdits)).toEqual([
+      { mode: undefined, edits: [{ path: "src/a.py", generatedText: undefined, readError: expect.stringContaining("EBUSY") }] },
+      { mode: undefined, edits: [{ path: "src/a.py", generatedText: "x = 1\n", readError: undefined }] },
+    ]);
+  });
+
+  // A walk that could not list a folder tried no read of a file the session had seen there. The walk after it lists the
+  // folder but cannot read the file, which a command wrote meanwhile: that is the file's first miss, so it keeps the
+  // command's call, and the walk that reads the file takes the write as the session's, by its stamp, and checks it.
+  it("checks the write of a command that ended after a walk could not list the file's folder, though the next walk could not read the file", async () => {
+    const root = await workspace();
+    const deep = join(root, "deep");
+    const path = join(deep, "a.py");
+    await mkdir(deep);
+    await writeFile(path, "x = 0\n");
+    await awaitClockAfter(path);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+
+    discovery.directories.set(deep, [async () => { throw new Error(`EMFILE: too many open files, opendir '${deep}'`); }]);
+    await bridge.begin("shell-1", "Bash", { command: "ls" });
+    await bridge.finish("shell-1");
+    const now = await mkdtemp(join(tmpdir(), "rerail-policy-now-"));
+    directories.push(now);
+    await awaitClockAfter(now);
+    await bridge.begin("shell-2", "Bash", { command: "python3 generate.py" });
+    await writeFile(path, "x = 1\n");
+    heldFromReads(path, 20);
+    await bridge.finish("shell-2");
+    discovery.opens.delete(path);
+    await bridge.begin("shell-3", "Bash", { command: "ls" });
+    await bridge.finish("shell-3");
+    expect(audited(auditGeneratedEdits)).toEqual([
+      { mode: undefined, edits: [{ path: "deep/a.py", generatedText: undefined, readError: expect.stringContaining("EBUSY") }] },
+      { mode: undefined, edits: [{ path: "deep/a.py", generatedText: "x = 1\n", readError: undefined }] },
+    ]);
+  });
+
   // An edit tool's result could not read the file it wrote, nor could the walk after it: the next walk that reads the
   // file takes the write as the session's, by its stamp, and checks it.
   it("checks an edit tool's write that neither its result nor the walk after it could read at the next walk, as the session's", async () => {

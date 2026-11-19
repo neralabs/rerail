@@ -86,6 +86,15 @@ export class ToolCallWindows {
     this.#finished = this.#finished.filter(window => kept(window.ended));
   }
 
+  /**
+   * Whether no call ran since `ends` calls had ended (`ends` as a walk began): none has ended since and none runs. A call
+   * that ran as the walk began, or began during it, would still run or have ended, so no call wrote a file the walk
+   * could not read before the walk tried it.
+   */
+  quietSince(ends: number): boolean {
+    return this.#ends === ends && this.#running.size === 0;
+  }
+
   /** Whether a call ran at some point from `from` to `to`; `from` equal to `to` asks about one stamp. */
   ranDuring(from: number, to: number): boolean {
     for (const { start } of this.#running.values()) if (start <= to) return true;
