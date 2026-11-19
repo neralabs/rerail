@@ -5547,6 +5547,6 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
   `ViewDoc::file`, `ChunkDoc::file`), but `node(d, n, …)`'s `d` stays the program's own key, which `doc_role`,
   `doc_root` and `guest` name it by. Where a program's `docof` is `node`'s projection (T's programs over nodes,
   `rr::lower::projections`; `whole::Projected` in a combined part), a program's node has its own key for `docof`.
-- **Do**: decide with the guest documents' end (0431 step 3's rest): either the guest relations name a program by its
-  file and place, so `node`'s `d` can be the file, or the projection is not taken where a batch holds programs.
+- **Decided** (2026-11-19, the user: "pick a for the decision"): the guest relations name a program by its file and
+  place (`parsed(at, grammar, root)`), so `node`'s `d` is the file (0431 §4).
 - **Done when**: `docof` of a program's node is its file in a T program too, with a test.

@@ -6,7 +6,8 @@ data"; "parsed strings are only for annotations and maybe format strings, not al
 the facts that the program produces and not changed next time it's run?". On a guest's node ids: (a), a node of a
 parsed string is named by its tape ("do a"); and the split below ("okay, I agree with that"). Supersedes 0055's guest
 documents (§4, "What was built" 3–4) and 0391 (guest keys) but for a file's programs (§4). On a program's node ids,
-§4's second choice, a key of its own from 0391's registry (2026-11-19, the user: "okay, let's try b"). Keeps 0055's model of a tape as content, 0058 (hiding,
+§4's second choice, a key of its own from 0391's registry (2026-11-19, the user: "okay, let's try b"). On how a
+rule names a program, by its file and place (§4, Q267's first choice; 2026-11-19, the user: "pick a for the decision"). Keeps 0055's model of a tape as content, 0058 (hiding,
 normalized strings, `@parse`), 0104 (no SQL in the waves), 0353 (blocks never copied), 0426 (format 16, unchanged).
 Work queue Q261.
 
@@ -81,6 +82,14 @@ code may be named by which rules asked for it, or in what order.
    Made the file's, every rule reaching a program through `guest(g, …), node(g, …)` lost it. core.rr's `docof` reads
    the places' view, the file's; where a program lowers `docof` as `node`'s projection (T's, `rr::lower::projections`),
    a program's node has its own key there (Q267).
+   **A program is named by its file and place** (decided 2026-11-19, the user: "pick a for the decision", Q267's
+   first choice). The guest relations that named a program by its key go (`guest`, `doc_role`, `doc_root`): a rule
+   reaches a program as it reaches a parsed string, `parsed(at, grammar, root)` at the host node it stands at, then
+   `within`, `child` and the views; `node`'s document column is its file's, as `docof` is, and a lookup by document
+   finds a file's programs' rows with its own (a lookup kept to one document, 0329's `lookup_in`, is kept to the file
+   and its programs). The key of its own stays underneath, in a node's id alone: hiding's one comparison and the
+   batch's order keys are on it. The other choice, `node`'s document left a program's key where a batch holds
+   programs, kept a program a document to the rules.
    As built (step 3, the programs at load): a file's programs are made with its chunk's batch, before any rule runs:
    each embedding its language declares (`GrammarDialect::embeds`) builds them from the file's tape, read in place
    where its facts hold it (`Guests::programs`; `embed::host`), so the batch is built once with them, no slice round
