@@ -970,8 +970,14 @@ export interface RunGitOptions {
   env?: Readonly<Record<string, string | undefined>>;
 }
 
-/** A repository's own config can't run programs through Rerail's git calls: no fsmonitor, no hooks. */
-const SAFE_CONFIG: readonly string[] = ["-c", "core.fsmonitor=false", "-c", `core.hooksPath=${process.platform === "win32" ? "NUL" : "/dev/null"}`];
+/**
+ * What every Git call sets so that a repository's own config cannot start these programs through it: no fsmonitor, no
+ * hooks, and no signature check, which `git reflog` and `git log` make under `log.showSignature` by starting
+ * `gpg.program` for each signed commit they list.
+ */
+const SAFE_CONFIG: readonly string[] = [
+  "-c", "core.fsmonitor=false", "-c", `core.hooksPath=${process.platform === "win32" ? "NUL" : "/dev/null"}`, "-c", "log.showSignature=false",
+];
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
@@ -996,8 +1002,9 @@ function timeLeft(limitMs: number): () => number {
 }
 
 /**
- * `git -C <cwd> <args>` with fsmonitor and hooks disabled, in {@link gitEnvironment} (no optional locks, no lazy fetch
- * of a partial clone's missing objects), and a 10 s default timeout; throws {@link GitUnavailableError} when Git is
+ * `git -C <cwd> <args>` with fsmonitor, hooks and signature checks disabled ({@link SAFE_CONFIG}), in
+ * {@link gitEnvironment} (no optional locks, no lazy fetch of a partial clone's missing objects), and a 10 s default
+ * timeout; throws {@link GitUnavailableError} when Git is
  * missing, never on a non-zero exit. When the Git kept for the process is gone, it runs once more with the Git found
  * again ({@link ProcessGit.replacedNow}): the look and that second start get what is left of the call's time limit
  * ({@link timeLeft}), since the call blocks the thread and a look may wait on a folder far longer; with none left, the

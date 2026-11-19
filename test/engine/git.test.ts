@@ -138,6 +138,28 @@ describe("gitHead and headMovedOnlyByCommits", () => {
     await expect(gitHead(root)).resolves.toBeUndefined();
   });
 
+  it("reads HEAD's reflog without starting the signing program the repository's config names", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const marker = join(root, ".git", "signer-ran");
+    const from = git(root, "rev-parse", "HEAD").trim();
+    // A commit with a signature header, which `git reflog` checks under log.showSignature by starting gpg.program.
+    const commit = [
+      `tree ${git(root, "rev-parse", "HEAD^{tree}").trim()}`, `parent ${from}`, "author Rerail <rerail@local> 1700000000 +0000",
+      "committer Rerail <rerail@local> 1700000000 +0000", "gpgsig -----BEGIN PGP SIGNATURE-----", " ", " unsigned", " -----END PGP SIGNATURE-----", "",
+      "signed", "",
+    ].join("\n");
+    const id = execFileSync("git", ["hash-object", "-t", "commit", "-w", "--stdin"], { cwd: root, input: commit, encoding: "utf8" }).trim();
+    git(root, "update-ref", "-m", "commit: signed", "HEAD", id);
+    // A stand-in for the program: it writes a line to a file of the test's own, and fails.
+    const program = join(root, ".git", "signer");
+    await writeFile(program, `#!/bin/sh\necho ran >> '${marker.replaceAll("\\", "/")}'; exit 1\n`, { mode: 0o755 });
+    git(root, "config", "log.showSignature", "true");
+    git(root, "config", "gpg.program", program.replaceAll("\\", "/"));
+
+    await expect(headMovedOnlyByCommits(root, from)).resolves.toBe(true);
+    expect(existsSync(marker)).toBe(false);
+  });
+
   it("tells commits from anything else that moved HEAD since a commit", async () => {
     const root = await repository({ "a.py": "1\n" });
     const seed = (await gitHead(root))!;
