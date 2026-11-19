@@ -1,0 +1,5 @@
+{
+  "title": "datetime.now() without a time zone",
+  "rule": "ruff-dtz005-call-datetime-now-without-tzinfo",
+  "note": "DTZ005 flags datetime.now() with no tz: a naive datetime in local time. Passing timezone.utc, or a ZoneInfo, makes it aware."
+}

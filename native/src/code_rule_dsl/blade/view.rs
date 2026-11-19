@@ -55,21 +55,24 @@
 
 use crate::code_rule_dsl::blade::forte::ParseError;
 use crate::code_rule_dsl::blade::forte::tree::{BladeNode, BladeTree, parse_tree};
-use crate::code_rule_dsl::embed::{Program, segments::SegmentMap};
+use crate::code_rule_dsl::embed::{Parse, Program, segments::SegmentMap};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::php_literal::literal_end;
 use ast_grep_core::source::SgNode;
-use ast_grep_language::LanguageExt;
 use std::ops::Range;
-#[cfg(test)]
-use tree_sitter::Node as TsNode;
-use tree_sitter::{Parser, Tree};
+#[cfg(any(test, feature = "test-hooks"))]
+use tree_sitter::{Node as TsNode, Tree};
 
 /// The embedded PHP program and its map back to the template.
-pub(crate) struct View {
+pub struct View {
     text: String,
     segments: SegmentMap,
-    tree: Tree,
+    /// The program read: the lean PHP parser's tape (decision 0198), or tree-sitter-php's tree
+    /// where it refuses.
+    parse: Parse,
+    /// tree-sitter-php's tree of the program, for tests that read it (`root`).
+    #[cfg(any(test, feature = "test-hooks"))]
+    tree: std::sync::OnceLock<Tree>,
     /// The template's syntax errors, sorted: Forte's, but where Forte read a directive's arguments
     /// Blade does not (`Emitter::stray_arguments`), those of the template Blade reads there
     /// instead.
@@ -275,17 +278,17 @@ pub(crate) fn compiles(name: &str) -> bool {
 }
 
 /// A template as Blade reads it (`View::read`).
-pub(crate) struct Read {
+pub struct Read {
     /// Its syntax errors: Forte's, except in the arguments Forte read after a line break, which
     /// Blade reads as text: there, that text's (`syntax_errors`).
-    pub(crate) syntax_errors: Vec<Range<usize>>,
+    pub syntax_errors: Vec<Range<usize>>,
     /// The program it embeds; `None` where it embeds none.
-    pub(crate) view: Option<View>,
+    pub view: Option<View>,
 }
 
 /// Why a template could not be read (`View::read`).
 #[derive(Debug)]
-pub(crate) enum ReadError {
+pub enum ReadError {
     /// The budget interrupted it (polled before each sub-template is parsed, `Emitter::template`).
     Interrupted,
     /// Forte stopped at a limit on a template the template holds: nothing about its syntax.
@@ -294,7 +297,7 @@ pub(crate) enum ReadError {
 
 impl View {
     /// The template `tree` as Blade reads it: its syntax errors, and the program it embeds.
-    pub(crate) fn read(
+    pub fn read(
         tree: &BladeTree,
         template: &str,
         budget: &dyn Fn() -> bool,
@@ -329,18 +332,18 @@ impl View {
                 view: None,
             });
         }
-        let mut parser = Parser::new();
-        let program = parser
-            .set_language(&GrammarDialect::Php.get_ts_language())
-            .ok()
-            .and_then(|()| parser.parse(&emitter.out, None));
+        // The lean parser first; tree-sitter-php where it refuses (one behavior: tree-sitter's
+        // tape, or a refusal).
+        let program = Parse::read(GrammarDialect::Php, &emitter.out, budget);
         let view = program.map(|program| {
             let mut segments = emitter.segments;
             segments.index();
             Self {
                 text: emitter.out,
                 segments,
-                tree: program,
+                parse: program,
+                #[cfg(any(test, feature = "test-hooks"))]
+                tree: std::sync::OnceLock::new(),
                 syntax_errors: syntax_errors.clone(),
             }
         });
@@ -352,42 +355,55 @@ impl View {
 
     /// The view as the template's embedded program (`compiled-view`): PHP, read through the
     /// template's syntax errors.
-    pub(crate) fn into_program(self) -> Program {
+    pub fn into_program(self) -> Program {
         Program {
             dialect: GrammarDialect::Php,
-            tree: self.tree,
+            parse: self.parse,
             text: self.text,
             segments: self.segments,
             host_errors: self.syntax_errors,
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn root(&self) -> TsNode<'_> {
-        self.tree.root_node()
+    /// tree-sitter-php's tree of the program (made here where the lean parser read it).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn root(&self) -> TsNode<'_> {
+        let tree = self.tree.get_or_init(|| match &self.parse {
+            Parse::Tree(tree) => tree.clone(),
+            Parse::Tape(_) => {
+                Parse::tree_sitter(GrammarDialect::Php, &self.text).expect("tree-sitter-php parses")
+            }
+        });
+        tree.root_node()
+    }
+
+    /// Whether the lean parser read the program (decision 0198).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn read_by_the_lean_parser(&self) -> bool {
+        matches!(self.parse, Parse::Tape(_))
     }
 
     /// The program's text.
-    #[cfg(test)]
-    pub(crate) fn text(&self) -> &str {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn text(&self) -> &str {
         &self.text
     }
 
     /// Where the program's text stands in the template.
-    #[cfg(test)]
-    pub(crate) fn segments(&self) -> &SegmentMap {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn segments(&self) -> &SegmentMap {
         &self.segments
     }
 
     /// The template's syntax errors as Blade reads them.
-    #[cfg(test)]
-    pub(crate) fn syntax_errors(&self) -> &[Range<usize>] {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn syntax_errors(&self) -> &[Range<usize>] {
         &self.syntax_errors
     }
 
     /// The template ranges the program copies byte for byte, in program order.
-    #[cfg(test)]
-    pub(crate) fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
         self.segments.copied()
     }
 }

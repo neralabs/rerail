@@ -1,0 +1,3 @@
+(?i)cache|holder|memo|pool|registry|token|tokens
+(?s)^\[\s*(?:#[^\n]*\n\s*)*\]$
+Cache$

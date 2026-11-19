@@ -473,7 +473,7 @@ describe("recommendRulePacks", () => {
     const root = await temporaryDirectory("rerail-deleted-ts-");
     writeFiles(root, { "app/main.py": "print(1)\n", "legacy/index.ts": "export {};\n" });
     execFileSync("git", ["init", "-q", root]);
-    execFileSync("git", ["-C", root, "add", "."]);
+    execFileSync("git", ["-C", root, "add", "app/main.py", "legacy/index.ts"]);
     rmSync(join(root, "legacy/index.ts"));
 
     expect(recommendRulePacks(root, await withTestPacks())).toEqual([]);
@@ -485,7 +485,7 @@ describe("recommendRulePacks", () => {
     const withAcme = await withTestPacks(true);
     const git = (...args: string[]) => execFileSync("git", ["-C", root, ...args], { stdio: "pipe" });
     git("init", "-q");
-    git("add", ".");
+    git("add", "README.md", "api/acme_api/app.py", "web/src/main.ts");
     git("-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-q", "-m", "base");
     git("sparse-checkout", "set", "--no-cone", "/README.md");
 
@@ -542,7 +542,7 @@ describe("recommendRulePacks", () => {
       "big/package.json": `${typescriptManifest.slice(0, -1)}, "padding": "${"x".repeat(1024 * 1024)}"}`,
     });
     execFileSync("git", ["init", "-q", root]);
-    execFileSync("git", ["-C", root, "add", "."]);
+    execFileSync("git", ["-C", root, "add", "app/main.py", "big/package.json"]);
     const from = await withTestPacks();
     expect(recommendRulePacks(root, from)).toEqual([]);
 
@@ -551,7 +551,7 @@ describe("recommendRulePacks", () => {
     mkdirSync(join(root, "device"));
     symlinkOrSkip(context, join(parent, "outside/package.json"), join(root, "linked/package.json"));
     symlinkOrSkip(context, "/dev/zero", join(root, "device/package.json"));
-    execFileSync("git", ["-C", root, "add", "."]);
+    execFileSync("git", ["-C", root, "add", "linked/package.json", "device/package.json"]);
     expect(recommendRulePacks(root, from)).toEqual([]);
     writeFileSync(join(root, "package.json"), typescriptManifest);
     expect(recommendRulePacks(root, from).map(({ pack: found, reason }) => [found.id, reason])).toEqual([["lang-ts", "matches the typescript dependency in package.json"]]);

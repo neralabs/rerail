@@ -1,0 +1,51 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f842-unused-annotation",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove local variables that are annotated but never assigned or read; the annotation alone does nothing.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unused-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$N",
+            "binds": {
+              "form": "annotation",
+              "scope": [
+                "function",
+                "lambda"
+              ],
+              "latest": true,
+              "used": false
+            },
+            "not": {
+              "regex": "^(?:_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9])$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F842",
+        "message": "Local variable `$N` is annotated but never used",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F842"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

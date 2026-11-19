@@ -1,0 +1,58 @@
+[
+  {
+    "id": "existing-resolution-subset",
+    "path": "impl/probe.py",
+    "source": "with open_read_plan(conn) as plan:\n    result.resolve()\n",
+    "expected_codes": ["PSE-020"],
+    "existing_example_regex_projection": true
+  },
+  {
+    "id": "provider-plan-opener",
+    "path": "impl/probe.py",
+    "source": "with open_provider_write_plan(conn) as plan:\n    result.resolve_async()\n",
+    "expected_codes": ["PSE-020"],
+    "existing_example_regex_projection": false
+  },
+  {
+    "id": "raw-database-call",
+    "path": "impl/probe.py",
+    "source": "with open_write_plan(conn) as plan:\n    conn.execute_raw(sql)\n",
+    "expected_codes": ["PSE-030"],
+    "existing_example_regex_projection": false
+  },
+  {
+    "id": "legacy-callback",
+    "path": "impl/probe.py",
+    "source": "with open_write_plan(conn) as plan:\n    conn.write(callback)\n",
+    "expected_codes": ["PSE-040"],
+    "existing_example_regex_projection": false
+  },
+  {
+    "id": "network-side-effect",
+    "path": "impl/probe.py",
+    "source": "with open_write_plan(conn) as plan:\n    requests.get(url)\n",
+    "expected_codes": ["PSE-050"],
+    "existing_example_regex_projection": false
+  },
+  {
+    "id": "eager-value-access",
+    "path": "impl/probe.py",
+    "source": "with open_read_plan(conn) as plan:\n    result.resolved_value\n",
+    "expected_codes": ["PSE-010"],
+    "existing_example_regex_projection": false
+  },
+  {
+    "id": "allowed-plan-execution",
+    "path": "impl/probe.py",
+    "source": "with open_write_plan(conn) as plan:\n    plan.execute()\n",
+    "expected_codes": [],
+    "existing_example_regex_projection": false
+  },
+  {
+    "id": "outside-plan-scope",
+    "path": "impl/probe.py",
+    "source": "with unrelated_context() as context:\n    result.resolve()\n",
+    "expected_codes": [],
+    "existing_example_regex_projection": false
+  }
+]

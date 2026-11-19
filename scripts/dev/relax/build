@@ -1,0 +1,83 @@
+#!/bin/sh
+# Builds the Relax this repository uses (docs/final-shape/notes/t37, §3): makepad/relax at COMMIT,
+# with std.patch (the std items the engine needs that Relax's std lacked) and rerail.patch (an Open
+# run shares sealed crates' code under RELAX_SHARED_OPEN=1; a stubbed build script is a script,
+# not a hard link of Relax; a closure built in a closure no longer fails E0310 behind an impl
+# Trait capturing two lifetimes; a build script's rerun key holds the native outputs it reaches,
+# not the receipt's path, so an engine edit reruns no other script: see the patch). rerail.patch is the fork's commits, kept on
+# the `rerail` branch of neralabs/relax (private) (git diff of the std commit to the last). It installs to ~/.local/share/rerail-relax, outside
+# every worktree:
+#
+#   v/<version>/   the patched source tree of one version, never changed once built. The binary
+#                  reads its std from the tree it was built from, so no RELAX_STD is needed.
+#   bin/relax      the binary of the current version
+#   src            a link to the current version's tree (scripts/dev/live-test-remote sends its std)
+#
+# A version is COMMIT and the patches' hash. While a Relax session of the installed binary runs,
+# the new version is built but not switched to (a running session re-executes bin/relax and reads
+# std from src): run this again once they end, or pass --now.
+# Usage: scripts/dev/relax/build [--now]
+set -eu
+COMMIT=5b2d68c26a51a24376eb367f052b913e57fd3db9
+now=
+[ "${1:-}" = "--now" ] && now=1
+here=$(cd "$(dirname "$0")" && pwd)
+# The repository's toolchain: outside the checkout rustup would pick its default.
+toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$here/../../../rust-toolchain.toml")
+share=$HOME/.local/share/rerail-relax
+cache=$HOME/Library/Caches/rerail-relax
+repo=$cache/repo.git
+patches=$(cat "$here/std.patch" "$here/rerail.patch" | shasum -a 256 | cut -c1-12)
+version=$(echo "$COMMIT" | cut -c1-12)-$patches
+tree=$share/v/$version
+mkdir -p "$share/bin" "$share/v"
+[ -d "$repo" ] || git clone -q --bare https://github.com/makepad/relax "$repo"
+git --git-dir="$repo" cat-file -e "$COMMIT^{commit}" 2>/dev/null || git --git-dir="$repo" fetch -q origin "$COMMIT"
+if [ ! -f "$tree/.built" ]; then
+  # A tree left by a run that stopped is made again.
+  if [ -e "$tree" ]; then mv "$tree" "${TMPDIR:-/tmp}/rerail-relax-partial-$version.$$"; fi
+  git --git-dir="$repo" worktree prune
+  git --git-dir="$repo" worktree add -q --detach "$tree" "$COMMIT"
+  (cd "$tree" && git apply "$here/std.patch" && git apply "$here/rerail.patch")
+  (cd "$tree" && PATH=$HOME/.cargo/bin:$PATH RUSTC_WRAPPER= nice -n 19 cargo "+$toolchain" build -q --release \
+    -p relax-runner --bin relax --target-dir "$cache/target")
+  install -m 0755 "$cache/target/release/relax" "$tree/relax"
+  # Relax's own builds, superseded ones out (its cargo target, as every worktree's)
+  "$here/../clean-target" "$cache/target" | tail -1
+  touch "$tree/.built"
+fi
+# Versions pile up (about 110 MB each, one per change of a patch): kept are the installed one,
+# the newest other (to go back to), and any a process runs from (its binary or std under it).
+# A version is rebuilt exactly from COMMIT and the patches, so nothing else is lost. Not
+# old-src: an earlier script's checkout, which can hold edits.
+prune_versions() {
+  keep_other=$(for d in "$share"/v/*-*/; do d=${d%/}; [ "$d" != "$tree" ] && [ -f "$d/.built" ] && echo "$(stat -f %m "$d/.built") $d"; done | sort -rn | sed -n '1s/^[0-9]* //p')
+  for d in "$share"/v/*-*/; do
+    d=${d%/}
+    case "$(basename "$d")" in *[!0-9a-f-]*) continue ;; esac
+    [ "$d" = "$tree" ] || [ "$d" = "$keep_other" ] && continue
+    if pgrep -f "$d/" >/dev/null; then echo "relax: kept $(basename "$d"): a process runs from it"; continue; fi
+    # (moved out first, then deleted there: deletes outside /tmp are refused on this machine)
+    gone=/tmp/ai-trash/rerail-relax-$(basename "$d")-$$
+    mkdir -p /tmp/ai-trash && mv "$d" "$gone" && rm -rf "$gone" && echo "relax: removed version $(basename "$d")"
+  done
+  git --git-dir="$repo" worktree prune
+}
+if [ "$(readlink "$share/src" 2>/dev/null)" = "$tree" ] && cmp -s "$tree/relax" "$share/bin/relax"; then
+  prune_versions
+  echo "relax: $share/bin/relax is version $version"
+  exit 0
+fi
+running=$(pgrep -f "$share/bin/relax" || true)
+if [ -n "$running" ] && [ -z "$now" ]; then
+  echo "relax: version $version is built ($tree/relax), not switched to: Relax sessions are running" >&2
+  echo "       (pids $(echo $running | tr '\n' ' ')); run this again once they end, or with --now" >&2
+  exit 75
+fi
+install -m 0755 "$tree/relax" "$share/bin/relax.tmp"
+mv "$share/bin/relax.tmp" "$share/bin/relax"
+# The checkout an earlier version of this script made at src: kept beside, never removed here.
+if [ -d "$share/src" ] && [ ! -L "$share/src" ]; then mv "$share/src" "$share/v/old-src"; fi
+ln -sfh "$tree" "$share/src"
+prune_versions
+echo "relax: $share/bin/relax is version $version (std: $tree/libs/relax/compiler/std)"

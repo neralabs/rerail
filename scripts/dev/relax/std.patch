@@ -1,0 +1,61 @@
+diff --git a/libs/relax/compiler/std/core/arch/aarch64.rs b/libs/relax/compiler/std/core/arch/aarch64.rs
+index 6f9b892..ba9071f 100644
+--- a/libs/relax/compiler/std/core/arch/aarch64.rs
++++ b/libs/relax/compiler/std/core/arch/aarch64.rs
+@@ -2446,6 +2446,12 @@ pub fn vdivq_f64(a: float64x2_t, b: float64x2_t) -> float64x2_t {
+     float64x2_t(r)
+ }
+ 
++#[rustc_legacy_const_generics(1)]
++#[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
++pub fn vdup_lane_u32<const N: i32>(a: uint32x2_t) -> uint32x2_t {
++    uint32x2_t([a.0[N as usize]; 2])
++}
++
+ #[rustc_legacy_const_generics(1)]
+ #[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
+ pub fn vdupq_laneq_f32<const N: i32>(a: float32x4_t) -> float32x4_t {
+diff --git a/libs/relax/compiler/std/core/array.rs b/libs/relax/compiler/std/core/array.rs
+index 749a50b..03391cc 100644
+--- a/libs/relax/compiler/std/core/array.rs
++++ b/libs/relax/compiler/std/core/array.rs
+@@ -271,6 +271,11 @@ pub struct IntoIter<T, const N: usize> {
+ }
+ 
+ impl<T, const N: usize> IntoIter<T, N> {
++    /// rustc: deprecated since 1.59 for `IntoIterator::into_iter`, which it is.
++    #[deprecated(since = "1.59.0", note = "use `IntoIterator::into_iter` instead")]
++    pub fn new(array: [T; N]) -> Self {
++        IntoIter { data: ManuallyDrop::new(array), start: 0, end: N }
++    }
+     fn base(&self) -> *const T {
+         &*self.data as *const [T; N] as *const T
+     }
+diff --git a/libs/relax/compiler/std/core/slice/iter.rs b/libs/relax/compiler/std/core/slice/iter.rs
+index 616a1c0..27e3ff7 100644
+--- a/libs/relax/compiler/std/core/slice/iter.rs
++++ b/libs/relax/compiler/std/core/slice/iter.rs
+@@ -2367,3 +2367,9 @@ pub fn split_last_chunk_mut<T, const N: usize>(s: &mut [T]) -> Option<(&mut [T],
+     // SAFETY: splitting preserves disjointness; the cast preserves alignment and extent.
+     Some((a, unsafe { &mut *(b.as_mut_ptr() as *mut [T; N]) }))
+ }
++
++impl<T> crate::convert::AsRef<[T]> for Iter<'_, T> {
++    fn as_ref(&self) -> &[T] {
++        self.as_slice()
++    }
++}
+diff --git a/libs/relax/compiler/std/core/vec/into_iter.rs b/libs/relax/compiler/std/core/vec/into_iter.rs
+index 96ce1e0..cce7a75 100644
+--- a/libs/relax/compiler/std/core/vec/into_iter.rs
++++ b/libs/relax/compiler/std/core/vec/into_iter.rs
+@@ -138,3 +138,9 @@ unsafe impl<#[may_dangle] T, A: Allocator> Drop for IntoIter<T, A> {
+         unsafe { crate::ptr::drop_in_place(crate::ptr::slice_from_raw_parts_mut(im::ptr_add_mut(guard.0.buf.as_ptr(), guard.0.start), guard.0.end - guard.0.start)) };
+     }
+ }
++
++impl<T, A: Allocator> crate::convert::AsRef<[T]> for IntoIter<T, A> {
++    fn as_ref(&self) -> &[T] {
++        self.as_slice()
++    }
++}

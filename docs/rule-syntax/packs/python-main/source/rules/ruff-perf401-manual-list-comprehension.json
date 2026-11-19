@@ -1,0 +1,781 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-perf401-manual-list-comprehension",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use a list comprehension or extend instead of appending to a list inside a for loop; it is shorter and faster.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "manual-list-comprehension",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "list-expr": {
+              "any": [
+                {
+                  "kind": "list"
+                },
+                {
+                  "kind": "list_comprehension"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "list-expr"
+                  }
+                },
+                {
+                  "kind": "named_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^:=$"
+                    },
+                    "matches": "list-expr"
+                  }
+                },
+                {
+                  "kind": "conditional_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "precedes": {
+                          "stopBy": "neighbor",
+                          "regex": "^if$"
+                        },
+                        "matches": "list-expr"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "^else$"
+                        },
+                        "matches": "list-expr"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "boolean_operator",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^(and|or)$"
+                          },
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "matches": "list-expr"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "binary_operator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\+$"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^\\+$"
+                          },
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "matches": "list-expr"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "list-callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "list"
+                    ],
+                    "import": [
+                      "builtins.list"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "list-callee"
+                  }
+                }
+              ]
+            },
+            "list-init": {
+              "any": [
+                {
+                  "matches": "list-expr"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "list-callee",
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "argument_list"
+                        },
+                        {
+                          "kind": "generator_expression"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "list-ann": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "list"
+                    ],
+                    "import": [
+                      "builtins.list"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.List",
+                      "_typeshed.List",
+                      "typing_extensions.List"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "subscript"
+                    },
+                    {
+                      "kind": "generic_type"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "matches": "list-ann"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "list-ann"
+                  }
+                }
+              ]
+            },
+            "list-bound": {
+              "kind": "identifier",
+              "any": [
+                {
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "value": {
+                        "matches": "list-init"
+                      },
+                      "site": {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "type"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "annotation": {
+                        "matches": "list-ann"
+                      },
+                      "site": {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "list_splat_pattern"
+                              },
+                              {
+                                "kind": "dictionary_splat_pattern"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "site": {
+                        "any": [
+                          {
+                            "kind": "as_pattern",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "precedes": {
+                                "stopBy": "neighbor",
+                                "regex": "^as$"
+                              },
+                              "matches": "list-init"
+                            }
+                          },
+                          {
+                            "kind": "function_definition",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "return_type",
+                              "kind": "type",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "list-ann"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "plain-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$L"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "plain-name"
+                  }
+                }
+              ]
+            },
+            "call": {
+              "kind": "call",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "kind": "attribute",
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "object",
+                          "matches": "plain-name"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "attribute",
+                          "kind": "identifier",
+                          "regex": "^append$"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "arguments",
+                    "any": [
+                      {
+                        "kind": "generator_expression",
+                        "pattern": "$A"
+                      },
+                      {
+                        "kind": "argument_list",
+                        "count": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "comment"
+                                },
+                                {
+                                  "regex": "^[(),]$"
+                                }
+                              ]
+                            }
+                          },
+                          "min": 1,
+                          "max": 1
+                        },
+                        "has": {
+                          "stopBy": "neighbor",
+                          "pattern": "$A",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "regex": "^[(),]$"
+                              },
+                              {
+                                "kind": "keyword_argument"
+                              },
+                              {
+                                "kind": "dictionary_splat"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "only-stmt": {
+              "not": {
+                "any": [
+                  {
+                    "follows": {
+                      "stopBy": "end",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^;$"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "precedes": {
+                      "stopBy": "end",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^;$"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "loop-target": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$T",
+                  "binds": {
+                    "outer": false
+                  }
+                },
+                {
+                  "kind": "tuple_pattern",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "loop-target"
+                  }
+                }
+              ]
+            },
+            "ref": {
+              "kind": "identifier",
+              "pattern": "$L",
+              "not": {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "attribute",
+                      "kind": "attribute"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "any": [
+                        {
+                          "kind": "keyword_argument"
+                        },
+                        {
+                          "kind": "default_parameter"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "lambda_parameters"
+                        },
+                        {
+                          "kind": "list_splat_pattern"
+                        },
+                        {
+                          "kind": "dictionary_splat_pattern"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "has-ref": {
+              "any": [
+                {
+                  "matches": "ref"
+                },
+                {
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "ref"
+                  }
+                }
+              ]
+            },
+            "post-ref": {
+              "kind": "identifier",
+              "resolves": {
+                "binding": {
+                  "site": {
+                    "pattern": "$SITE"
+                  }
+                }
+              },
+              "compare": {
+                "left": "SITE",
+                "right": "FOR",
+                "op": "eq",
+                "text": "node"
+              }
+            },
+            "has-post-ref": {
+              "any": [
+                {
+                  "matches": "post-ref"
+                },
+                {
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "post-ref"
+                  }
+                }
+              ]
+            },
+            "loop": {
+              "kind": "for_statement",
+              "pattern": "$FOR",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "left",
+                "matches": "loop-target"
+              },
+              "all": [
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "precedes": {
+                          "stopBy": "end",
+                          "matches": "has-post-ref"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "not": {
+                            "kind": "module"
+                          },
+                          "precedes": {
+                            "stopBy": "end",
+                            "matches": "has-post-ref"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "function_definition"
+                    },
+                    "any": [
+                      {
+                        "precedes": {
+                          "stopBy": "end",
+                          "matches": "has-nonlocal"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": {
+                            "kind": "block",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "function_definition"
+                            }
+                          },
+                          "precedes": {
+                            "stopBy": "end",
+                            "matches": "has-nonlocal"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "loop-direct": {
+              "matches": "loop",
+              "any": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^async$"
+                  }
+                },
+                {
+                  "not": {
+                    "compare": {
+                      "left": "A",
+                      "right": "T",
+                      "op": "eq",
+                      "text": "structure"
+                    }
+                  }
+                }
+              ]
+            },
+            "has-nonlocal": {
+              "any": [
+                {
+                  "kind": "nonlocal_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "pattern": "$T"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "nonlocal_statement",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "pattern": "$T"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": "call"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "expression_statement",
+                  "matches": "only-stmt",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "block",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "matches": "loop-direct"
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "block",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "if_statement",
+                          "matches": "only-stmt",
+                          "not": {
+                            "any": [
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "field": "alternative",
+                                  "any": [
+                                    {
+                                      "kind": "elif_clause"
+                                    },
+                                    {
+                                      "kind": "else_clause"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "field": "condition",
+                                  "matches": "has-ref"
+                                }
+                              }
+                            ]
+                          },
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "block",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "matches": "loop"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "L": {
+              "matches": "list-bound"
+            },
+            "A": {
+              "not": {
+                "matches": "has-ref"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PERF401",
+        "message": "Replace this loop with a list comprehension; if `$L` is not a fresh empty list assigned just before the loop, use `$L.extend(...)` of a generator (of a list comprehension under `async for`).",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PERF401"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

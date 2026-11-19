@@ -1,0 +1,19 @@
+.policy "clippy-builtin-type-shadow" revision 3
+.description "Don't name a Rust generic type parameter after a primitive type such as u32 or bool; it shadows the real type inside the item."
+.language rust
+.mode steer
+.scope include "**/*"
+
+// Clippy's builtin_type_shadow (style): a generic type parameter named like a primitive type, which hides
+// the primitive inside the item.
+//   fn foo<u32>(a: u32) -> u32          reported at the parameter `u32`
+//   fn foo<T: Into<u32>>(a: T)          not reported: a bound names the real u32
+.violation builtin_type_shadow(at: node) code "builtin_type_shadow"
+    "Rename this type parameter, e.g. T instead of u32, so it doesn't shadow the primitive type."
+    suppress clippy "clippy::builtin_type_shadow", "clippy::all", "clippy::style", "warnings"
+builtin_type_shadow(n) :- kind(p, "type_parameter"), field(p, "name", n), text(n, x), primitive(x).
+.decl primitive(x: symbol)
+primitive("i8"). primitive("i16"). primitive("i32"). primitive("i64"). primitive("i128"). primitive("isize").
+primitive("u8"). primitive("u16"). primitive("u32"). primitive("u64"). primitive("u128"). primitive("usize").
+primitive("f16"). primitive("f32"). primitive("f64"). primitive("f128").
+primitive("bool"). primitive("char"). primitive("str").

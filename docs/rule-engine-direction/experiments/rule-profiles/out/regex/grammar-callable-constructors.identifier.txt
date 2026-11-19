@@ -1,0 +1,6 @@
+^(?:Any)$
+^(?:Callable)$
+^(?:SimpleNamespace)$
+^(?:__init__)$
+^(?:render)$
+^(?:self)$
