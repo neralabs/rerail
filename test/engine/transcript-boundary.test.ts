@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { type EncodingOption, mkdirSync, mkdtempSync, type PathLike, realpathSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join, relative, resolve, sep } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   agentTranscriptPayload, callNamesDeniedPath, callNamesSecretPath, WITHHELD_INPUT, WITHHELD_OUTPUT, WITHHELD_PAYLOAD,
 } from "../../src/engine/transcript-boundary.js";
@@ -10,8 +10,158 @@ import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const roots: string[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0)) removeFolderSync(root);
 });
+
+/** An empty checkout folder, removed after the test. */
+function checkout(prefix: string): string {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  roots.push(root);
+  return root;
+}
+
+/**
+ * Calls that name URLs as agents do; 192.0.2.1 is a documentation address (RFC 5737) no host answers on, and
+ * `archive.example`, `proxy.example` and `a.example` documentation names (RFC 2606). On Windows each URL's host and
+ * path name a network share; on Linux and macOS they are a local path.
+ */
+const URL_INPUTS = [
+  { command: "curl -s https://192.0.2.1/api/v1 | jq ." },
+  { url: "https://192.0.2.1/docs/a.md" },
+  { command: "git clone ssh://git@192.0.2.1:2222/team/app.git" },
+  { command: "curl http://user:pw@192.0.2.1:8080/notes.txt?page=2" },
+  // A scheme after a bracket, an emphasis mark, a list's number or dash, or in another URL's path: a Markdown link,
+  // bold text, a list item with no space, an archived page, a proxy.
+  { content: "See [https://192.0.2.1/api/v2](https://192.0.2.1/api/v2), **https://192.0.2.1/b** or _https://192.0.2.1/i_." },
+  { content: "Links\n1.https://192.0.2.1/l/1\n-https://192.0.2.1/l/2" },
+  { url: "https://archive.example/web/2020/https://192.0.2.1/docs/b.md" },
+  { content: "Archived as archive.example/web/2020/https://192.0.2.1/docs/c.md" },
+  { url: "http://localhost:8080/https://192.0.2.1/api/v3" },
+  // A scheme after any other character that is no letter or digit: a comment with no space, curly quotes, guillemets,
+  // full-width brackets, text in another script, a package spec, a URL in another's query or fragment, an HTML
+  // comment, a percent sign; and backslashes after the scheme, which URL parsers read as slashes.
+  { content: "#https://192.0.2.1/s/1" },
+  { content: "See “https://192.0.2.1/s/2”, «https://192.0.2.1/s/3» or （https://192.0.2.1/s/4）." },
+  { content: "詳細はhttps://192.0.2.1/s/5を参照" },
+  { command: "npm install pkg@https://192.0.2.1/s/6/pkg.tgz" },
+  { url: "https://proxy.example/?https://192.0.2.1/s/7" },
+  { url: "https://a.example/#https://192.0.2.1/s/8" },
+  { content: "<!--https://192.0.2.1/s/9-->" },
+  { content: "%https://192.0.2.1/s/10" },
+  { content: "https:\\\\192.0.2.1\\s\\11" },
+  // A scheme after a digit or a percent-encoded character: a share link's text, a mail link's body, a URL glued to a
+  // step's number or to a timestamp.
+  { url: "https://share.example/intent?text=Read%20https://192.0.2.1/p/1" },
+  { url: "mailto:a@mail.example?body=See%20https://192.0.2.1/p/2" },
+  { content: "ステップ1https://192.0.2.1/p/3" },
+  { content: "2026-11-13T00:00:00Zhttps://192.0.2.1/p/4" },
+  // A placeholder for the scheme: a shell variable, a JavaScript template, a Python f-string, printf and format
+  // strings; and nothing before the `:`.
+  { command: "curl -s \"${API_SCHEME}://192.0.2.1/v1/users\"" },
+  { content: "fetch(`${scheme}://192.0.2.1/p/5`)" },
+  { content: "requests.get(f\"{scheme}://192.0.2.1/p/6\")" },
+  { content: "printf(\"%s://192.0.2.1/p/7\", scheme)" },
+  { content: "base = \"{}://192.0.2.1/p/8\"" },
+  { content: "://192.0.2.1/p/9" },
+  // Hand-written device paths whose `.` and `..` names, or a name's trailing period, hide the network redirector: the
+  // lookup drops them (`path.resolve` the names, Windows the period after `\\.\`) and opens `\\.\UNC\192.0.2.1\d\1`.
+  { content: "https://./../UNC/192.0.2.1/d/1" },
+  { content: "https:\\\\.\\.\\UNC\\192.0.2.1\\d\\2" },
+  { content: "https://./x/../../UNC/192.0.2.1/d/3" },
+  { content: "https:\\\\?\\GLOBALROOT\\Device\\x\\..\\Mup\\192.0.2.1\\d\\4" },
+  { content: "https://./UNC./192.0.2.1/d/5" },
+];
+
+/**
+ * Calls that name URLs whose host and path land under the automount root `/net` on Linux and macOS, spelled as the
+ * scheme rule there reads them for certain: plain, a Markdown link, bold, a numbered list item, a comment, curly
+ * quotes; and through `..`, a `.` host or an empty host, which `path.resolve` takes to `/net` as well.
+ */
+const AUTOMOUNT_URL_INPUTS = [
+  { command: "curl -s https://net/192.0.2.1/api/v1 | jq ." },
+  { url: "https://net/192.0.2.1/docs/a.md" },
+  { content: "See [https://net/192.0.2.1/api/v2](https://net/192.0.2.1/api/v2) or **https://net/192.0.2.1/b**." },
+  { content: "1.https://net/192.0.2.1/l/1\n-https://net/192.0.2.1/l/2\n#https://net/192.0.2.1/c\n“https://net/192.0.2.1/q”" },
+  { content: "<!--https://net/192.0.2.1/h-->" },
+  { url: "https://a.example/../net/192.0.2.1/n/1" },
+  { url: "https://./net/192.0.2.1/n/2" },
+  { url: "https:///net/192.0.2.1/n/3" },
+];
+
+/**
+ * A Windows device path (`\\?\`, `\\.\`) with no network redirector on its way, which stays on this machine. Windows
+ * drops a name's trailing period after `\\.\`, so `\\.\UNC.\host` goes to the redirector too.
+ */
+const localDevice = (path: string): boolean =>
+  /^\\\\[.?]\\/u.test(path) && !/\\(?:unc|mup|rdpdr|\w*redirector)\.?(?:\\|$)/iu.test(path);
+
+/** A share on Windows, or a path under `/net` elsewhere, on the loopback host, which stays on this machine. */
+const loopback = (path: string): boolean => /^(?:\\\\|\/net\/)(?:localhost|127(?:\.\d{1,3}){3})(?:[\\/]|$)/iu.test(path);
+
+/** Whether a lookup would reach another machine: a network share on Windows, or a path under `/net` elsewhere. */
+const reachesAnotherMachine = (path: string): boolean =>
+  (path.startsWith("\\\\") || /^\/net\//iu.test(path)) && !localDevice(path) && !loopback(path);
+
+/**
+ * A checkout `repo`, with a session folder `repo/packages/app` in it, and a secret folder `home/.aws` beside it. Links
+ * to that folder sit in the checkout (`repo/docs/cfg`), in the home folder (`home/cfg`), in the temp folder
+ * (`temp/cfg`) and in another folder (`out/cfg`); for the rest of the test `homedir()` and `tmpdir()` name `home` and
+ * `temp`. A link to a folder is a junction on Windows, which needs no privilege to make.
+ */
+function linksToSecretFolder(): { base: string; repo: string; app: string } {
+  const base = checkout("rerail-transcript-links-");
+  const repo = join(base, "repo");
+  const app = join(repo, "packages", "app");
+  const secrets = join(base, "home", ".aws");
+  for (const folder of [app, join(repo, "docs"), join(base, "temp"), join(base, "out"), secrets]) mkdirSync(folder, { recursive: true });
+  writeFileSync(join(secrets, "config"), "[default]\n");
+  for (const folder of [join(repo, "docs"), join(base, "home"), join(base, "temp"), join(base, "out")]) {
+    linkFolder(secrets, join(folder, "cfg"));
+  }
+  for (const name of ["HOME", "USERPROFILE"]) vi.stubEnv(name, join(base, "home"));
+  for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, join(base, "temp"));
+  return { base, repo, app };
+}
+
+/** `path` as a URL's path, spelled as an agent writes one: `/home/me/a.txt`, `/C:/Users/me/a.txt`. */
+const urlPath = (path: string): string => `${path.startsWith("/") ? "" : "/"}${path.split(sep).join("/")}`;
+
+/**
+ * Records each path `realpathSync.native` is asked for. A path that would reach another machine, or the loopback host,
+ * is refused, not looked up: on Windows a `\\` path other than a device path names a share, and the lookup waits about
+ * 21 s for a host that does not answer; under `/net` an automounter may mount the named host's exports.
+ */
+function recordLookups(): string[] {
+  const lookUp = realpathSync.native;
+  const lookups: string[] = [];
+  vi.spyOn(realpathSync, "native").mockImplementation((path: PathLike, options?: EncodingOption) => {
+    lookups.push(String(path));
+    if (reachesAnotherMachine(String(path)) || loopback(String(path))) {
+      throw Object.assign(new Error(`ENOENT: no such file or directory, realpath '${String(path)}'`), { code: "ENOENT" });
+    }
+    return lookUp(path, options);
+  });
+  return lookups;
+}
+
+/**
+ * `path` on Windows spelled in the device namespace with no drive colon (`\\?\GLOBALROOT\Device\HarddiskVolume3\...`),
+ * its volume found by looking up each spelling until one leads where `path` does.
+ */
+function onVolume(path: string): string {
+  const target = realpathSync.native(path);
+  for (let volume = 1; volume <= 64; volume += 1) {
+    const spelled = `\\\\?\\GLOBALROOT\\Device\\HarddiskVolume${volume}${path.slice(2)}`;
+    try {
+      if (realpathSync.native(spelled) === target) return spelled;
+    } catch {
+      // No volume by that number, or the path is not on it.
+    }
+  }
+  throw new Error(`no HarddiskVolume device holds ${path}`);
+}
 
 describe("the transcript boundary for coding agents", () => {
   it("finds a hidden or secret-like path wherever a call's input carries it", () => {
@@ -124,6 +274,235 @@ describe("the transcript boundary for coding agents", () => {
     expect(agentTranscriptPayload("call", read, root)).toBe(read);
     // The hidden path itself, named, is still outside.
     expect(callNamesDeniedPath({ command: "cat node_modules/.pnpm/left-pad@1.3.0/node_modules/left-pad/index.js" }, root)).toBe(true);
+  });
+
+  it("withholds a call that names a link to a secret in the temp folder, the home folder or another folder outside the checkout", () => {
+    const { base, repo } = linksToSecretFolder();
+    recordLookups();
+    for (const link of [join(tmpdir(), "cfg"), join(homedir(), "cfg"), join(base, "out", "cfg")]) {
+      const named = join(link, "config");
+      // By absolute path, by `..` path, as a `file:` URL or another URL with no host, which names a path here, and as
+      // the word a `:` joins to a URL's host.
+      for (const input of [
+        { command: `cat ${named}` },
+        { file_path: named },
+        { command: `cat ${relative(repo, named)}` },
+        { command: `curl file://${urlPath(named)}` },
+        { command: `DOCKER_HOST=unix://${urlPath(named)} docker ps` },
+        { command: `git clone git+file://${urlPath(named)}` },
+        { command: `sqlite3 sqlite:///${urlPath(named)}` },
+        { command: `curl https://192.0.2.1:${relative(repo, named)}` },
+      ]) {
+        expect(callNamesSecretPath(input, repo), JSON.stringify(input)).toBe(true);
+        expect(agentTranscriptPayload("call", { toolName: "Bash", input }, repo), JSON.stringify(input))
+          .toEqual({ toolName: "Bash", input: WITHHELD_INPUT });
+      }
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("looks up a local path that starts with `//` after the `:` of a word or a path, as in a `PATH` list", () => {
+    const { base, repo } = linksToSecretFolder();
+    const lookups = recordLookups();
+    // On Linux and macOS `//<base>/out/cfg/config` is the local path `<base>/out/cfg/config`; on Windows it is a share.
+    const named = `/${join(base, "out", "cfg", "config")}`;
+    for (const command of [
+      `PATH=/usr/bin:${named}`, `LD_LIBRARY_PATH=/opt/app/lib:${named}`, `NODE_PATH=/usr/lib/node_modules:${named}`,
+      `PATH=/srv/http:${named}`, `cat ~/notes.md:${named}`, `PATH=https://192.0.2.1/bin:${named}`,
+      // After a single word, and after a path that ends in a web scheme's name.
+      `PATH=bin:${named}`, `LD_LIBRARY_PATH=lib:${named}`, `PYTHONPATH=src:${named}`, `CLASSPATH=classes:${named}`,
+      `MANPATH=man:${named}`, `PATH=//opt/https:${named}`, `PATH=8080/http:${named}`, `PATH=lib.d/https:${named}`,
+      `ls a.b/https:${named}`,
+    ]) {
+      expect(callNamesSecretPath({ command }, repo), command).toBe(true);
+      expect(agentTranscriptPayload("call", { toolName: "Bash", input: { command } }, repo), command)
+        .toEqual({ toolName: "Bash", input: WITHHELD_INPUT });
+    }
+    // A `/net` path in such a list is looked up as well, as on `main`: only a URL's host and path under `/net` is not.
+    // `~ftp` is the home folder of the user `ftp`, `.https` a hidden folder, `libhttp` a folder whose name ends in one.
+    const netLists = [
+      "PATH=/usr/bin://net/192.0.2.1/bin", "PATH=bin://net/192.0.2.1/bin", "PATH=//opt/https://net/192.0.2.1/bin",
+      "PATH=~ftp://net/192.0.2.1/bin", "PATH=~http://net/192.0.2.1/bin", "PATH=.https://net/192.0.2.1/bin",
+      "PATH=libhttp://net/192.0.2.1/bin",
+    ];
+    for (const command of netLists) expect(callNamesSecretPath({ command }, repo), command).toBe(false);
+    expect(lookups.filter(reachesAnotherMachine)).toEqual(netLists.map(() => "/net/192.0.2.1/bin"));
+  });
+
+  it("judges a link elsewhere in the checkout when the session runs in a subfolder of it", () => {
+    const { repo, app } = linksToSecretFolder();
+    for (const input of [{ command: "cat ../../docs/cfg/config" }, { command: `cat ${join(repo, "docs", "cfg", "config")}` }]) {
+      expect(callNamesSecretPath(input, app), JSON.stringify(input)).toBe(true);
+    }
+  });
+
+  it("starts no lookup that reaches another machine for a URL's host and path, judges it by name, and looks up every other path-shaped word", () => {
+    const base = checkout("rerail-transcript-lookups-");
+    const root = join(base, "repo");
+    mkdirSync(root);
+    const lookups = recordLookups();
+    for (const input of [...URL_INPUTS, ...AUTOMOUNT_URL_INPUTS]) {
+      expect(callNamesSecretPath(input, root), JSON.stringify(input)).toBe(false);
+      // A coding agent reading the session's events has each stored call judged in the same checkout.
+      const call = { toolName: "Bash", input };
+      expect(agentTranscriptPayload("call", call, root), JSON.stringify(input)).toBe(call);
+    }
+    expect(callNamesDeniedPath({ url: "https://192.0.2.1/app/.env" }, root)).toBe(true);
+    expect(callNamesSecretPath({ url: "https://192.0.2.1/config/secrets.json" }, root)).toBe(true);
+    expect(lookups.filter(reachesAnotherMachine)).toEqual([]);
+    // Every other path-shaped word is looked up as before: in the checkout, out of it, a `\\server\share` path, also
+    // after a `:` and a space, a `file:` URL's host and path, a path a `:` joins to a URL, as in a list, and a path
+    // after a URL with no host.
+    const share = "\\\\198.51.100.1\\share\\notes.txt";
+    const mapped = "\\\\198.51.100.2\\share\\notes.txt";
+    const filed = "//198.51.100.3/share/notes.txt";
+    const listed = join(base, "bin", "tool.sh");
+    const socket = join(base, "run", "app.sock");
+    for (const command of [
+      "cat docs/guide.md", `cat ${join(base, "notes.txt")}`, `type ${share}`, `net use Z: ${mapped}`, `curl file:${filed}`,
+      `PATH=https://192.0.2.1/bin:${listed}`, "curl https://192.0.2.1:docs/joined.md", `DOCKER_HOST=unix://${urlPath(socket)} docker ps`,
+    ]) {
+      expect(callNamesSecretPath({ command }, root), command).toBe(false);
+    }
+    expect(lookups).toEqual(expect.arrayContaining([
+      join(root, "docs", "guide.md"), join(base, "notes.txt"), resolve(root, share), resolve(root, mapped), resolve(root, filed),
+      listed, join(root, "docs", "joined.md"), socket,
+    ]));
+  });
+
+  it("spends none of a call's lookups on a URL that would reach another machine, so a link named after many is still followed", () => {
+    const { repo } = linksToSecretFolder();
+    recordLookups();
+    // On Windows every such URL's host and path name a share; on Linux and macOS these land under `/net`.
+    const urls = Array.from({ length: 80 }, (_, index) => `https://net/192.0.2.1/v${index}`);
+    expect(callNamesSecretPath({ content: [...urls, "cat docs/cfg/config"].join("\n") }, repo)).toBe(true);
+  });
+
+  it.runIf(process.platform === "win32")("looks up an escaped drive path as its single-backslash spelling: never as a share, never on another drive", () => {
+    const { base, repo } = linksToSecretFolder();
+    const lookups = recordLookups();
+    const named = join(base, "out", "cfg", "config");
+    const escaped = named.replaceAll("\\", "\\\\");
+    // As JSON, C#, Python or a quoted shell string escape it (`"C:\\Users\\me\\a.txt"`), with `//` after the drive, in
+    // brackets, and after the escaped long-path prefix `\\?\`.
+    for (const input of [
+      { content: JSON.stringify({ path: named }) }, { command: `cat ${named.replace(":\\", "://").replaceAll("\\", "/")}` },
+      { content: `[${escaped}](x)` }, { content: JSON.stringify(`\\\\?\\${named}`) },
+    ]) {
+      expect(callNamesSecretPath(input, repo), JSON.stringify(input)).toBe(true);
+      expect(agentTranscriptPayload("call", { toolName: "Write", input }, repo), JSON.stringify(input))
+        .toEqual({ toolName: "Write", input: WITHHELD_INPUT });
+    }
+    expect(lookups.filter(reachesAnotherMachine)).toEqual([]);
+    // Each escaped spelling is looked up where `main` looks up the single-backslash one: after a Markdown mark, and on a
+    // drive other than the checkout's, whose path `main` looks up on the checkout's drive.
+    const lookedUp = (content: string): string[] => {
+      lookups.splice(0);
+      callNamesSecretPath({ content }, repo);
+      return [...lookups];
+    };
+    const other = /^q/iu.test(repo) ? "R" : "Q";
+    expect(lookedUp(`${other}:\\data\\a.txt`)).toEqual([repo, resolve(repo, "\\data\\a.txt")]);
+    for (const [spelled, single] of [
+      [`**${escaped}**`, `**${named}**`], [`${other}:\\\\data\\\\a.txt`, `${other}:\\data\\a.txt`],
+      [`${other}://data/a.txt`, `${other}:\\data\\a.txt`],
+    ] as const) {
+      expect(lookedUp(spelled), spelled).toEqual(lookedUp(single));
+    }
+  });
+
+  it.runIf(process.platform === "win32")("looks up a device path or a loopback share right after a `:` as `main` does, and skips only a share on another machine there", () => {
+    const { base, repo } = linksToSecretFolder();
+    const device = onVolume(join(base, "out", "cfg", "config"));
+    const lookups = recordLookups();
+    // A device path names a local file with no drive colon, so a link reached through one is followed after a `:` too.
+    for (const spelled of [device, device.replaceAll("\\", "/"), device.replace("?", ".")]) {
+      const input = { command: `ls path:${spelled}` };
+      expect(callNamesSecretPath(input, repo), spelled).toBe(true);
+      expect(agentTranscriptPayload("call", { toolName: "Bash", input }, repo), spelled)
+        .toEqual({ toolName: "Bash", input: WITHHELD_INPUT });
+    }
+    const lookedUp = (content: string): string[] => {
+      lookups.splice(0);
+      callNamesSecretPath({ content }, repo);
+      return [...lookups];
+    };
+    // `main` looks up each of these words wherever it stands: the long-path prefix before a drive (`\\?\C:\x`, cut at
+    // its `:`), the `?` and `.` hosts with either separator, a share on the loopback host, and the network redirector
+    // with no host after it, which names no machine. So does this check, right after a scheme, a word or a drive letter
+    // and its `:`, and after a space.
+    const here = [
+      "\\\\?\\C", "//?/GLOBALROOT/Device/x", "\\\\.\\pipe\\x", "//./net/192.0.2.1/n", "\\/?\\x\\y", "\\\\localhost\\c$\\x",
+      "//127.0.0.1/c$/x", "//127.1.2.3/c$/x", "\\\\?\\UNC", "//./UNC/", "\\\\?\\GLOBALROOT\\Device\\Mup",
+    ];
+    const texts = here.flatMap(word => ["https:", "path:", "C:", "x "].map(before => [`${before}${word}`, word] as const));
+    expect(Object.fromEntries(texts.map(([text]) => [text, lookedUp(text)])))
+      .toEqual(Object.fromEntries(texts.map(([text, word]) => [text, [repo, resolve(repo, word)]])));
+    // A word that names another machine is skipped right after a `:`, and looked up as on `main` after a space: a share,
+    // one on a name that only starts like the loopback host's, the long-path prefix before a share, and a device path
+    // that goes on to the network redirector, also where its `.` and `..` names or a name's trailing period hide it.
+    const remote = [
+      "\\\\192.0.2.1\\s\\x", "//localhost.example/s/x", "\\\\127.0.0.256\\s\\x", "//127.0.0.1./s/x",
+      "\\\\?\\UNC\\192.0.2.1\\s\\x", "//./UNC/192.0.2.1/s/x", "\\\\?\\GLOBALROOT\\Device\\Mup\\192.0.2.1\\s\\x", "//?/GLOBALROOT/Global??/UNC/192.0.2.1/s/x",
+      "//./../UNC/192.0.2.1/s/x", "\\\\.\\.\\UNC\\192.0.2.1\\s\\x", "//./x/../../UNC/192.0.2.1/s/x",
+      "\\\\?\\GLOBALROOT\\Device\\x\\..\\Mup\\192.0.2.1\\s\\x", "//./UNC./192.0.2.1/s/x",
+    ];
+    expect(Object.fromEntries(remote.map(word => [word, lookedUp(`https:${word}`)])))
+      .toEqual(Object.fromEntries(remote.map(word => [word, []])));
+    expect(Object.fromEntries(remote.map(word => [word, lookedUp(`x ${word}`)])))
+      .toEqual(Object.fromEntries(remote.map(word => [word, [repo, resolve(repo, word)]])));
+  });
+
+  it.runIf(process.platform === "win32")("looks up a share on the loopback host right after a `:` however its address is written, as `main` does", () => {
+    const root = checkout("rerail-transcript-loopback-spellings-");
+    const lookups = recordLookups();
+    const lookedUp = (content: string): string[] => {
+      lookups.splice(0);
+      callNamesSecretPath({ content }, root);
+      return [...lookups];
+    };
+    // The address parser reads `127.1`, `2130706433`, `0x7f000001` and `127.0.0.01` as 127.0.0.1, with no name lookup;
+    // a device path through the network redirector to the loopback host stays on this machine too.
+    const here = [
+      "//127.1/c$/x", "\\\\2130706433\\c$\\x", "//0x7f000001/c$/x", "\\\\127.0.0.01\\c$\\x", "//LOCALHOST/c$/x",
+      "\\\\?\\UNC\\localhost\\c$\\x", "//./UNC/127.1/c$/x", "\\\\?\\GLOBALROOT\\Device\\Mup\\127.0.0.1\\c$\\x",
+    ];
+    const texts = here.flatMap(word => ["https:", "path:", "x "].map(before => [`${before}${word}`, word] as const));
+    expect(Object.fromEntries(texts.map(([text]) => [text, lookedUp(text)])))
+      .toEqual(Object.fromEntries(texts.map(([text, word]) => [text, [root, resolve(root, word)]])));
+  });
+
+  it.skipIf(process.platform === "win32")("looks up a URL's host and path under `/net` on the loopback host, which stays on this machine", () => {
+    const root = checkout("rerail-transcript-loopback-");
+    const lookups = recordLookups();
+    // The address parser reads `127.1`, `2130706433`, `0x7f000001` and `127.0.0.01` as 127.0.0.1, with no name lookup.
+    const here = ["localhost", "LOCALHOST", "127.0.0.1", "127.1.2.3", "127.1", "2130706433", "0x7f000001", "127.0.0.01"];
+    // A host with any other character is read as a name, which may name another machine: `127.0.0.1.` too, which the
+    // URL parser would read as 127.0.0.1.
+    for (const host of [...here, "192.0.2.1", "localhost.example", "127.0.0.256", "127.0.0.1."]) {
+      expect(callNamesSecretPath({ command: `curl https://net/${host}/api/v1` }, root), host).toBe(false);
+    }
+    expect(lookups.filter(path => path !== root)).toEqual(here.map(host => `/net/${host}/api/v1`));
+  });
+
+  it.runIf(process.platform === "linux")("looks up a URL's host and path under `/NET`, which on Linux is a folder of its own, not the automount root", () => {
+    const root = checkout("rerail-transcript-net-case-");
+    const lookups = recordLookups();
+    for (const command of ["ls https://NET/192.0.2.1/x", "curl http://Net/192.0.2.1/x"]) {
+      expect(callNamesSecretPath({ command }, root), command).toBe(false);
+    }
+    expect(lookups.filter(path => path !== root)).toEqual(["/NET/192.0.2.1/x", "/Net/192.0.2.1/x"]);
+  });
+
+  it.runIf(process.platform === "win32")("answers at once for a URL on Windows, where its host and path would name a network share", () => {
+    const root = checkout("rerail-transcript-share-");
+    // Each lookup of a share is recorded and refused, so the test reaches no host whatever the check does.
+    const lookups = recordLookups();
+    for (const input of [...URL_INPUTS, ...AUTOMOUNT_URL_INPUTS]) {
+      const started = performance.now();
+      expect(callNamesSecretPath(input, root), JSON.stringify(input)).toBe(false);
+      expect(performance.now() - started, JSON.stringify(input)).toBeLessThan(50);
+    }
+    expect(lookups.filter(reachesAnotherMachine)).toEqual([]);
   });
 
   it("judges only secret-like names as secret, not every hidden path", () => {

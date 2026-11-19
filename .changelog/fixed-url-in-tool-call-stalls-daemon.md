@@ -1,0 +1,1 @@
+On Windows, a web URL in a coding agent's tool call (`curl https://example.com/api`) no longer stalls the Rerail daemon for about 21 seconds, during which it answered no hook in any session. A path written with doubled backslashes (`"C:\\Users\\me"` in JSON) is now checked as `C:\Users\me` is. The check for secret-like paths read both as network shares.

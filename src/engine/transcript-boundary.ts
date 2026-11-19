@@ -1,3 +1,4 @@
+import { posix, win32 } from "node:path";
 import { checkoutPathBoundary, deniedByPathBoundary, sensitiveByName, type CheckoutPathBoundary } from "./path-boundary.js";
 
 /**
@@ -33,8 +34,166 @@ const INPUT_STRINGS = 512;
 /** How many of a tool input's path-shaped tokens are resolved on disk, in input order; the rest by name alone. */
 const INPUT_RESOLUTIONS = 64;
 
-/** Shell, prose and brace-glob delimiters around a token that may be a path. */
-const TOKEN_BREAK = /[\s"'`|;&<>(),:={}]+/u;
+/**
+ * Shell, prose and brace-glob delimiters around a token that may be a path. The split keeps them, at odd indexes, so
+ * the run of delimiters right before a token can be read ({@link lookupOf}).
+ */
+const TOKEN_BREAK = /([\s"'`|;&<>(),:={}]+)/u;
+
+/**
+ * On Windows, a token that names a share as `path.resolve` reads it: two separators of either kind, a host, a separator
+ * and a share (`//host/api`, `\\host\api`).
+ */
+const SHARE = /^[\\/]{2}[^\\/]+[\\/]+[^\\/]/u;
+
+/** The loopback host by name or by an IPv4 address in `127.0.0.0/8`, as the URL parser writes them. */
+const LOOPBACK = /^(?:localhost|127(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})$/u;
+
+/** A host made of ASCII letters and digits in names joined by dots, which an address parser may read as an address. */
+const ADDRESS_SPELLING = /^[a-z\d]+(?:\.[a-z\d]+)*$/iu;
+
+/**
+ * Whether `host` is the loopback host. The URL parser reads it as the system's address parser does, with no name
+ * lookup: `127.1`, `2130706433`, `0x7f000001` and `127.0.0.01` are `127.0.0.1`, and `LOCALHOST` is `localhost`. A host
+ * with any other character, or one the URL parser refuses (`127.0.0.256`), is a name, which names another machine.
+ */
+const isLoopback = (host: string): boolean =>
+  ADDRESS_SPELLING.test(host) && LOOPBACK.test(URL.parse(`http://${host}/`)?.hostname ?? "");
+
+/** Whether a lookup that reaches `host` leaves this machine: it reaches a host, and not the loopback host. */
+const onAnotherMachine = (host: string | undefined): boolean => host !== undefined && !isLoopback(host);
+
+/** The Windows device namespace's own folders, each followed by its separators: `GLOBALROOT\`, `Device\`, `Global\`. */
+const NAMESPACE_FOLDER = String.raw`(?:GLOBALROOT|Global|GLOBAL\?\?|\?\?|DosDevices|Device)[\\/]+`;
+
+/** A path in the Windows device namespace, host `?` or `.`: `\\?\GLOBALROOT\Device\HarddiskVolume3\x`, `\\.\pipe\x`. */
+const DEVICE = /^[\\/]{2}[.?][\\/]/u;
+
+/**
+ * The host a Windows device path reaches when the first name past the namespace's own folders is the network
+ * redirector, `UNC`, `Mup`, `RdpDr` or a name ending in `Redirector`: `host` in `\\?\UNC\host\share` and
+ * `\\?\GLOBALROOT\Device\Mup\host\share`. The redirector with no name after it (`\\?\UNC`) names no machine.
+ */
+const REDIRECTED_HOST = new RegExp(
+  String.raw`^[\\/]{2}[.?][\\/]+(?:${NAMESPACE_FOLDER})*(?:UNC|Mup|RdpDr|\w*Redirector)[\\/]+([^\\/]+)`,
+  "iu",
+);
+
+/** A share's host: `host` in `\\host\share`. */
+const SHARE_HOST = /^[\\/]{2}([^\\/]+)/u;
+
+/**
+ * On Windows, the host the lookup of a share-shaped path reaches, read from the path it opens
+ * ({@link openedOnWindows}): a share's host, or the host past the network redirector in a device path; none for a
+ * device path that stays in this machine's own namespace.
+ */
+const hostReached = (opened: string): string | undefined =>
+  (DEVICE.test(opened) ? REDIRECTED_HOST : SHARE_HOST).exec(opened)?.[1];
+
+/** A name's one trailing period, which Windows drops from a path after `\\.\`: `\\.\UNC.\host` opens `\\.\UNC\host`. */
+const TRAILING_PERIOD = /(?<=[^\\.])\.(?=\\|$)/gu;
+
+/**
+ * On Windows, the path a lookup of the share-shaped `path` opens: `path.resolve` drops its `.` and `..` names, right
+ * after a `\\?\` or `\\.\` prefix too (`//./../UNC/host` is `\\.\UNC\host`), and Windows drops a name's trailing period
+ * after `\\.\`. A share or device path is absolute, so the checkout it is resolved in does not change it.
+ */
+function openedOnWindows(path: string): string {
+  const resolved = win32.resolve(path);
+  return resolved.startsWith("\\\\.\\") ? resolved.replace(TRAILING_PERIOD, "") : resolved;
+}
+
+/**
+ * On Windows, whether `path` names another machine's share, read from the path its lookup opens: looking one up makes
+ * Windows resolve the host's name and open a connection to it, and the lookup waits about 21 s for a host that does
+ * not answer. A device path that stays in this machine's namespace, and a share on the loopback host however its
+ * address is written (`\\127.1\c$`, `\\?\UNC\localhost\c$`), stay on this machine.
+ */
+const namesAnotherMachine = (path: string): boolean =>
+  SHARE.test(path) && onAnotherMachine(hostReached(openedOnWindows(path)));
+
+/**
+ * A Windows drive letter at the end of the token before a lone `:`, with no ASCII letter or digit before it, read from
+ * the token's last two characters: `C` in `"C:\\Users\\me"` written in JSON, in `**C`, in `[C` and in the escaped
+ * long-path prefix `\\\\?\\C`.
+ */
+const DRIVE_AT_END = /(?:^|[^a-z\d])[a-z]$/iu;
+
+/** A run of path separators, which Windows reads as one. */
+const SEPARATOR_RUN = /([\\/])[\\/]+/gu;
+
+/** The `file` scheme at the end of the token before a `:`, read from its last four characters. */
+const FILE_AT_END = /file$/iu;
+
+/**
+ * On Windows, whether a share on another machine after the run of `delimiters` and the token `before` them may be a
+ * URL's host and path: it comes right after a `:`, whatever stands before it, a scheme (`https://host/x`), a
+ * placeholder (`${SCHEME}://`, `{}://`), a digit or `%20` glued to a scheme, or nothing. The text cannot tell a URL's
+ * host and path from a share there. A `file:` URL with a host names a share outright, and is looked up.
+ */
+const urlAfter = (delimiters: string, before: string): boolean =>
+  delimiters.endsWith(":") && !FILE_AT_END.test(before.slice(-4));
+
+/**
+ * On Windows, what `path`, after the run of `delimiters` and the token `before` them, is looked up as: a share on
+ * another machine ({@link namesAnotherMachine}) that may be a URL's host and path ({@link urlAfter}) is not looked up.
+ * The one exception is a drive letter before a lone `:`: the share is then the rest of a drive path written with doubled
+ * separators (`"C:\\Users\\me"` in JSON, `C://Users/me`), looked up as `C:\Users\me` is, its path on the checkout's
+ * drive. A device path or a loopback share is looked up wherever it stands, as any other token.
+ */
+function windowsLookup(delimiters: string, before: string, path: string): string | undefined {
+  if (!urlAfter(delimiters, before) || !namesAnotherMachine(path)) return path;
+  return delimiters === ":" && DRIVE_AT_END.test(before.slice(-2)) ? path.replace(SEPARATOR_RUN, "$1") : undefined;
+}
+
+/**
+ * On Linux and macOS, the host under the automount root `/net`: macOS's default `/net -hosts` map, and autofs on Linux,
+ * mount `<host>`'s exports when a path there is looked up, and `/net/localhost` and `/net/127.1` stay on this machine.
+ * macOS's default file system ignores letter case, so `/NET` is the automount root there too; on Linux `/NET` is a
+ * folder of its own.
+ */
+const AUTOMOUNTED_HOST = new RegExp(String.raw`^/net/([^/]+)`, process.platform === "darwin" ? "iu" : "u");
+
+/**
+ * On Linux and macOS, a web URL's scheme with only marks before it in its token, or a list's number (`https`, `[https`,
+ * `**https`, `#https`, `“https`, `<!--https`, `1.https`). Every character but an ASCII letter, a digit or a slash is a
+ * mark here, `-`, `_`, `+` and the letters of other scripts too (`詳細はhttps`), so a list entry spelled that way
+ * (`PATH=-https://net/fs/bin`) reads as a URL as well. An ASCII letter, digit or slash before it, or a token that
+ * starts with `~` or `.`, leaves the token in doubt: it may be a path in a list (`PATH=bin://net/fs/bin`,
+ * `PATH=/srv/http://net/fs/bin`, `PATH=.https://net/fs/bin`, or `PATH=~ftp://net/fs/bin` with the home folder of the
+ * user `ftp`), and a path in doubt is looked up.
+ */
+const CERTAIN_SCHEME = /^(?:\d+\.)?(?![~.])[^a-z\d\\/]*(?:https?|wss?|ftps?)$/iu;
+
+/**
+ * Whether an absolute `path` lands under the automount root on a host other than the loopback host once
+ * `path.resolve` normalizes it, as the lookup does: `//net/<host>/x`, and `//a.example/../net/<host>/x`,
+ * `//./net/<host>/x` and `///net/<host>/x` too. Only a path that holds `net` is normalized.
+ */
+const automounted = (path: string): boolean =>
+  path.startsWith("/") && /net/iu.test(path) && onAnotherMachine(AUTOMOUNTED_HOST.exec(posix.normalize(path))?.[1]);
+
+/**
+ * On Linux and macOS, what `path`, after the run of `delimiters` and the token `before` them, is looked up as: a `//`
+ * path is a local path here, looked up as any other, unless it is certainly a URL's host and path under `/net`.
+ */
+const posixLookup = (delimiters: string, before: string, path: string): string | undefined =>
+  delimiters === ":" && CERTAIN_SCHEME.test(before) && automounted(path) ? undefined : path;
+
+/**
+ * Each platform reads a token after a `:` as its paths resolve. On Windows a `//` token is a share, which reaches
+ * another machine unless its host is this machine by its spelling ({@link hostReached}), so a share on another
+ * machine right after a `:` is skipped, unless a `file:` URL or a drive letter comes before. On Linux and macOS it is a
+ * local path, so a token in doubt is looked up, as are the entries of a list such as `PATH=bin://home/me/bin`.
+ */
+const lookupAfter = process.platform === "win32" ? windowsLookup : posixLookup;
+
+/**
+ * What the token at `index` of `parts` (`path`, its brackets dropped) is looked up as on disk: undefined for a URL's
+ * host and path that would reach another machine, read from the delimiters right before it and the token before them.
+ */
+const lookupOf = (parts: readonly string[], index: number, path: string): string | undefined =>
+  lookupAfter(parts[index - 1] ?? "", parts[index - 2] ?? "", path);
 
 /** A segment that is no name: `.`, `..` and runs of dots, or a JavaScript spread or prose ellipsis (`...props`). */
 const NOT_A_NAME = /^(?:\.+|\.{3}.*)$/u;
@@ -51,18 +210,33 @@ interface TokenJudge {
   readonly boundary: CheckoutPathBoundary | undefined;
 }
 
+/** The name a token is judged by: its segments that are names, joined by `/`; none when it has no letter or no name. */
+function nameOf(path: string): string | undefined {
+  if (!/[A-Za-z]/u.test(path)) return undefined;
+  const segments = path.split(/[\\/]+/u).filter(segment => segment !== "" && !NOT_A_NAME.test(segment));
+  return segments.length === 0 ? undefined : segments.join("/");
+}
+
+/** Whether a path-shaped token leads, through a link, to a secret-like path; a bare word is not looked up, nor is none. */
+function leadsToSecret(path: string | undefined, boundary: CheckoutPathBoundary | undefined): boolean {
+  // Where a link leads is judged secret-like or not, never hidden: `node_modules/pkg` leads into `.pnpm/`.
+  if (path === undefined || boundary === undefined || !PATH_SHAPED.test(path)) return false;
+  const led = boundary.leadsTo(path);
+  return led !== undefined && sensitiveByName(led);
+}
+
 function textNamesPath(text: string, { judge, boundary }: TokenJudge): boolean {
-  for (const token of text.split(TOKEN_BREAK)) {
+  const parts = text.split(TOKEN_BREAK);
+  for (let index = 0; index < parts.length; index += 2) {
     // A bracket class is read as its letters, so `[.]env` is judged as `.env`.
-    const path = token.replace(/[[\]]/gu, "");
-    if (!/[A-Za-z]/u.test(path)) continue;
-    const segments = path.split(/[\\/]+/u).filter(segment => segment !== "" && !NOT_A_NAME.test(segment));
-    if (segments.length === 0) continue;
-    if (judge(segments.join("/"))) return true;
-    // Where a link leads is judged secret-like or not, never hidden: `node_modules/pkg` leads into `.pnpm/`.
-    if (boundary === undefined || !PATH_SHAPED.test(path)) continue;
-    const led = boundary.leadsTo(path);
-    if (led !== undefined && sensitiveByName(led)) return true;
+    const path = (parts[index] ?? "").replace(/[[\]]/gu, "");
+    const name = nameOf(path);
+    if (name === undefined) continue;
+    // A URL's host and path that would reach another machine are judged by name and not looked up: on Windows
+    // `//host/api` resolves to the network share `\\host\api`, and the lookup waits for that host, about 21 s for one
+    // that never answers. Every other token is looked up, an escaped drive path the split cut at its `:` as its
+    // single-separator spelling.
+    if (judge(name) || leadsToSecret(lookupOf(parts, index, path), boundary)) return true;
   }
   return false;
 }
@@ -93,9 +267,17 @@ const callNames = (input: unknown, judge: (path: string) => boolean, root: strin
  * With the checkout the call ran in (`root`), a path is also outside when it links to a secret-like one
  * ({@link sensitiveByName}), so `cat docs/a.md` is outside when `docs/a.md` links to `.env`, while a link into a hidden
  * folder alone (pnpm's `node_modules/pkg` into `.pnpm/`) is not; only a path-shaped token (`docs/a.md`, `.envrc`,
- * `notes.txt`) is resolved, the first `INPUT_RESOLUTIONS` distinct ones, and a bare word by its name alone.
- * It reads names, not a shell: a path built at run time (`cat $(echo .e)nv`) is not seen. An input deeper or larger
- * than it reads counts as naming one.
+ * `notes.txt`) is resolved, the first `INPUT_RESOLUTIONS` distinct ones, and a bare word by its name alone, as is a
+ * URL's host and path where a lookup would reach another machine: on Windows a share on another machine right after a
+ * `:`, where `//host/api` in `https://host/api` or `${SCHEME}://host/api` names a network share, and on Linux and
+ * macOS a web URL under the automount root `/net` (`https://net/host/api`) on a host other than the loopback one. Every
+ * other path-shaped token is resolved: a `file:` URL's host and path, a URL's path with no host
+ * (`unix:///run/app.sock`), on Windows a device path (`\\?\...`) and a share on the loopback host wherever they stand,
+ * and a drive path written with doubled separators (`"C:\\Users\\me"` in JSON) as `C:\Users\me` is. On Linux and macOS
+ * a `//` path is a local one. On Windows a share on another machine that does not follow a `:`, and a `file:` URL with
+ * a host, are resolved too, so they still reach that machine, and wait about 21 s for one that does not answer. It
+ * reads names, not a shell: a path built at run time (`cat $(echo .e)nv`) is not seen. An input deeper or larger than
+ * it reads counts as naming one.
  */
 export function callNamesDeniedPath(input: unknown, root?: string): boolean {
   return callNames(input, deniedByPathBoundary, root);

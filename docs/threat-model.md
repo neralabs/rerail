@@ -535,7 +535,16 @@ boundary judges paths by secret-like name and, where a checkout is known, by sym
 - **Symlink targets count** wherever a checkout root is known (`checkoutPathBoundary`): a tracked
   `docs/a.md -> ../.env` is secret-like. Targets are judged by secret-like name only, so a pnpm `node_modules/<pkg>`
   link into `.pnpm/` passes. Only path-shaped words (a `/` or `\`, a leading `.` or `~`, or a dot-extension) are
-  looked up on disk; every word is still judged by name.
+  looked up on disk, and not a word that may be a URL's host and path where the lookup would reach another machine:
+  on Windows a share on another machine right after a `:`, whatever stands before it (`//host/api` in
+  `https://host/api` or `${SCHEME}://host/api`), and on Linux and macOS a web URL's host and path under the automount
+  root `/net` (`/NET` too on macOS) on a host other than the loopback one. Every other path-shaped word is looked up:
+  a `file:` URL's host and path, a URL's with no host (`unix:///run/app.sock`), on Linux and macOS a `//` word as a
+  local path, and on Windows a device path (`\\?\...`, `\\.\...`) that does not go on to the network redirector and a
+  share on the loopback host wherever they stand, and a drive path written with doubled backslashes
+  (`"C:\\Users\\me"` in JSON) as `C:\Users\me` is. A word is read as its lookup opens it, so `.` and `..` names do not
+  hide the redirector, and the loopback host in any spelling the address parser reads (`127.1`, `2130706433`) is
+  this machine. Every word is still judged by name.
 
 </details>
 
@@ -548,6 +557,13 @@ boundary judges paths by secret-like name and, where a checkout is known, by sym
   only, not symlink target.
 - A link named without a separator, leading dot or extension (`notes -> .env`, read as `cat notes`) is not looked up
   on disk, so its target is not judged.
+- On Windows a share on another machine that does not follow a `:` (`type \\host\share\x`,
+  `src="//cdn.example.com/x.js"`), and a `file:` URL with a host, are still looked up as paths. Their lookup reaches
+  that machine, against G5, and holds the daemon about 21 s when the host does not answer. So does the lookup of a
+  path on a mapped network drive, of a link in the checkout that leads to a share, or of a device path that reaches a
+  share by a route the check does not read (a DOS device name the person defined, a logon session's own device
+  folder, a redirector under another name), wherever it stands. On macOS, and on Linux with an
+  automounted `/net`, a `/net/<host>/x` word that is not certainly a web URL is looked up the same way.
 
 </details>
 
