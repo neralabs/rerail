@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, toNamespacedPath } from "node:path";
+import { basename, dirname, join, resolve, toNamespacedPath } from "node:path";
 import { deflateSync } from "node:zlib";
 import Database from "better-sqlite3";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
@@ -231,7 +231,18 @@ Seen(@place("git",1), oid) :- git_revision(r, "HEAD", oid), git_revision(r, ":a.
     const root = checkout(), home = root + "-home";
     const tmp = join(home, "temp");
     mkdirSync(tmp, { recursive: true });
-    writeFileSync(join(root, ".rerail/rules/policy.rr"), '#include "core.rr"\n.policy "calls" revision 1\n.language python\n.violation C(at: node) "call"\nC(n) :- kind(n, "call").\n');
+    mkdirSync(join(root, "constants"));
+    const sentinel = join(root, "constants", "keep.txt");
+    writeFileSync(sentinel, "user file");
+    writeFileSync(join(root, ".rerail/rules/policy.rr"), `#include "core.rr"
+.policy "calls" revision 1
+.language python
+.decl label(s: symbol)
+label("always").
+label(s) :- file_line("a.py", _, s).
+.violation C(at: node) "call"
+C(n) :- label("always"), kind(n, "call").
+`);
     writeFileSync(join(root, "a.py"), "NEEDLE()\n");
     git(root, "add", "a.py");
     git(root, "commit", "-qm", "two kinds of findings");
@@ -239,6 +250,7 @@ Seen(@place("git",1), oid) :- git_revision(r, "HEAD", oid), git_revision(r, ":a.
       import {watch} from "node:fs";
       import {runHeadlessScan} from "./src/cli/headless-scan.ts";
       const [repo, databasePath, temp] = process.argv.slice(2);
+      process.chdir(repo);
       const created = new Set();
       const watcher = watch(temp, (_, name) => { if (name?.startsWith("rerail-scan-") || name?.startsWith("rerail-phase-")) created.add(name); });
       try {
@@ -247,9 +259,12 @@ Seen(@place("git",1), oid) :- git_revision(r, "HEAD", oid), git_revision(r, ":a.
         console.log(JSON.stringify({ created: [...created], status: report.status, rules: report.violations.map(v => v.ruleId).sort(), failures: report.failures }));
       } finally { watcher.close(); }`;
     const result = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, join(home, "home.sqlite"), tmp], {
-      input: script, encoding: "utf8", env: { ...process.env, TMPDIR: tmp, TMP: tmp, TEMP: tmp, RERAIL_CONTENT_STORE_PATH: join(home, "content.sqlite") },
+      input: script, encoding: "utf8", env: {
+        ...process.env, TMPDIR: tmp, TMP: tmp, TEMP: tmp, RERAIL_RR_LIB: resolve("docs/rule-syntax/lib"), RERAIL_CONTENT_STORE_PATH: join(home, "content.sqlite"),
+      },
     });
     expect(JSON.parse(result)).toEqual({ created: [], status: "completed", rules: ["calls", "needle"], failures: [] });
+    expect(readFileSync(sentinel, "utf8")).toBe("user file");
   }, 45_000);
 
   it("scans a historical commit and tree with today's policy and historical paths", async () => {

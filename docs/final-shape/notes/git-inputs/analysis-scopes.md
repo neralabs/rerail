@@ -74,6 +74,11 @@ Each embedded rule program has an identity derived from its library text and the
 The phase reads the compiled program from the selected store and names its entry in the consuming run.
 Another process can reuse that entry while a scope owns the run.
 
+Nested evaluations that fold constant relations return their result as an in-memory output image.
+Library rules that read a typing program's outputs use the same in-memory interface.
+They must preserve existing files in the invocation directory and in the caller's output directory.
+The stored result contains only the requested constant relations.
+
 A policy can read a Git revision and a later policy can use that same answer to request a commit.
 When the engine saves an answer for reuse, it saves the rows even if the first policy uses them only in its output.
 On upgrade, the engine rechecks entries written with the earlier native-answer format before it reuses them.

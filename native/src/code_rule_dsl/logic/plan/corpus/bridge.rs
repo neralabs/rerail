@@ -97,10 +97,8 @@ fn add_spans(prog: &mut Program, columns: &BTreeMap<&str, Vec<bool>>) {
     }
 }
 
-/// The facts of the bridged relations `prog` reads, by relation, and each program's run. `scratch` holds the
-/// programs' runs (`<scratch>/typing-<program>`).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing) -> Result<(Facts, Runs)> {
+/// The facts of the bridged relations `prog` reads, by relation, and each program's run.
+pub(crate) fn facts(prog: &Program, root: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing) -> Result<(Facts, Runs)> {
     let wanted = wanted(prog);
     let mut by_program: BTreeMap<&str, Vec<&Bridged>> = BTreeMap::new();
     for b in &wanted {
@@ -139,13 +137,14 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         // each, rules added to the program read (decision 0249), never text after its text.
         let mut handed = program.clone();
         add_spans(&mut handed, &columns);
-        let out = scratch.join(format!("typing-{name}"));
         // The program's language is its name's: `calls_rust` reads the `.rs` files, the others the `.py` files.
         let typing = Typing { rust: Some(name.ends_with("_rust")), ..typing.clone() };
-        let report = super::run_read(&handed, root, &out, modes, binding, chunk_nodes, &typing, &serde_json::Value::Null)?;
+        let mut image = Vec::new();
+        let report = super::run_read_handing(&handed, None, root, Path::new(""), modes, binding,
+            chunk_nodes, &typing, &serde_json::Value::Null, Some(&mut image))?;
         // The outputs' image, read where it is: a node by its document's path and value, nothing parsed.
         use crate::code_rule_dsl::logic::plan::output;
-        let outputs = output::Outputs::open(&out).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
+        let outputs = output::Outputs::of(&image).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
         let rel = |r: &str| outputs.get(r).ok_or_else(|| Error::Plan(format!("{name}: {r}: not in its outputs")));
         let node_key = |v: output::Value<'_>| match v {
             output::Value::Node(output::Node::Of { path: Some(p), value, .. }) => Ok((value, p.to_owned())),
@@ -178,8 +177,6 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
                 held.push(args);
             }
         }
-        drop(outputs);
-        let _ = std::fs::remove_dir_all(&out);
         runs.push((name.to_owned(), report));
     }
     Ok((facts, runs))

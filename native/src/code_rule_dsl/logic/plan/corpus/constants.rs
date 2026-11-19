@@ -119,7 +119,6 @@ pub(super) fn fold(
     read: Option<&Program>,
     added: &super::added::Added,
     root: &Path,
-    scratch: &Path,
     modes: &str,
     binding: crate::code_rule_dsl::typing::file_local::Binding,
     chunk_nodes: usize,
@@ -142,7 +141,7 @@ pub(super) fn fold(
     let ((image, consulted), plans) = match was_kept {
         Some(kept) => kept,
         None => {
-            let (derived, plans) = derive(programs, read, root, scratch, modes, binding, chunk_nodes, typing, options, &wanted)?;
+            let (derived, plans) = derive(programs, read, root, modes, binding, chunk_nodes, typing, options, &wanted)?;
             keep(&key, &derived.0, &derived.1, &plans)?;
             (derived, plans)
         }
@@ -176,7 +175,7 @@ pub(super) fn fold(
     Ok((consulted, plans))
 }
 
-/// The constants' outputs (one base image of the wanted relations' copies, `output::base_of`) and what their run
+/// The constants' outputs (one base image of the wanted relations' copies) and what their run
 /// consulted.
 type Derived = (Vec<u8>, Vec<(String, String, String)>);
 
@@ -187,7 +186,6 @@ fn derive(
     programs: &[&str],
     read: Option<&Program>,
     root: &Path,
-    scratch: &Path,
     modes: &str,
     binding: crate::code_rule_dsl::typing::file_local::Binding,
     chunk_nodes: usize,
@@ -198,11 +196,12 @@ fn derive(
     let mut own = if options.is_object() { options.clone() } else { serde_json::json!({}) };
     own[OWN] = serde_json::Value::Array(wanted.iter().map(|r| serde_json::Value::String(r.clone())).collect());
     own["inputFiles"] = serde_json::json!([]);
-    let out = scratch.join("constants");
-    let report: Report = super::run_handed(programs, read, None, root, None, &out, modes, binding, chunk_nodes, typing, &own, None, Default::default())?;
+    let mut captured = Vec::new();
+    let report: Report = super::run_handed(programs, read, None, root, None, Path::new(""), modes, binding,
+        chunk_nodes, typing, &own, Some(&mut captured), Default::default())?;
     let copies: Vec<String> = wanted.iter().map(|rel| copy(rel)).collect();
-    let image = crate::code_rule_dsl::logic::plan::output::base_of(&out, copies.iter().map(String::as_str)).map_err(|e| super::super::Error::Plan(format!("the run's constants: {e}")))?;
-    let _ = std::fs::remove_dir_all(&out);
+    let stack = super::output::Image::stack(&captured).map_err(super::Error::Plan)?;
+    let image = super::output::selected_base(&stack, copies.iter().map(String::as_str));
     Ok(((image, report.consulted), report.plans))
 }
 

@@ -3092,7 +3092,7 @@ fn run_observed(
     let phase_one = crate::threads::scope(|jobs| {
         let prog = &prog;
         let bridged_slot = &bridged_slot;
-        jobs.spawn("typing programs", move |_| *bridged_slot.lock() = Some(bridge::facts(prog, root, out, modes, binding, chunk_nodes, typing)));
+        jobs.spawn("typing programs", move |_| *bridged_slot.lock() = Some(bridge::facts(prog, root, modes, binding, chunk_nodes, typing)));
         Ok::<_, Error>(if t_facts.is_none()
             && !git_metadata_only
             && options.get("inputFiles").is_none()
@@ -3193,7 +3193,7 @@ fn run_observed(
                 constants::as_outputs(prog, &wanted.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect::<Vec<_>>());
                 Ok(Default::default())
             }
-            None => constants::fold(prog, programs, read, added, root, out, modes, binding, chunk_nodes, typing, options),
+            None => constants::fold(prog, programs, read, added, root, modes, binding, chunk_nodes, typing, options),
         }
     };
     phase("combine", 0);

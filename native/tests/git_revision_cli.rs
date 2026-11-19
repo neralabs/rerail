@@ -123,6 +123,36 @@ fn json(output: Output, code: i32) -> serde_json::Value {
 }
 
 #[test]
+fn nested_rule_evaluations_preserve_existing_output_files() {
+    let f = Checkout::new();
+    let out = f.area.path().join("output");
+    let constants = out.join("constants");
+    fs::create_dir_all(&constants).unwrap();
+    let sentinel = constants.join("keep.txt");
+    fs::write(&sentinel, "user file").unwrap();
+    let typing = out.join("typing-calls");
+    fs::create_dir(&typing).unwrap();
+    fs::write(typing.join("keep.txt"), "typing file").unwrap();
+    fs::write(f.repo.join("call.py"), "unknown_call()\n").unwrap();
+    f.git(&["add", "call.py"]);
+    f.git(&["commit", "-qm", "call for the typing program"]);
+    let rule = f.area.path().join("settings.rr");
+    fs::write(&rule, r#"#include "python/calls.rr"
+.decl label(s: symbol)
+label(s) :- file_line("a.py", _, s).
+.decl found(s: symbol)
+found(s) :- label(s), call_open(n).
+.output found
+"#).unwrap();
+    let result = f.run("logic", &[&rule, &f.repo, &out], Some("constants"));
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert_eq!(fs::read_to_string(sentinel).unwrap(), "user file");
+    assert_eq!(fs::read_to_string(typing.join("keep.txt")).unwrap(), "typing file");
+    assert!(f.run("csv", &[&out], None).status.success());
+    assert_eq!(fs::read_to_string(out.join("found.csv")).unwrap(), "x = 1\n");
+}
+
+#[test]
 fn failed_batch_reports_each_policy_in_argument_order() {
     let f = Checkout::new();
     let out = f.area.path().join("batch");

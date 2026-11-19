@@ -1369,13 +1369,18 @@ pub fn shown(dir: &Path, rel: &str) -> std::io::Result<Vec<Vec<String>>> {
 /// A base of the stack in `dir`'s relations `names` (those it holds), each as the stack reads it.
 pub fn base_of<'a>(dir: &Path, names: impl Iterator<Item = &'a str>) -> std::io::Result<Vec<u8>> {
     let stack = read(dir).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {e}", dir.display())))?;
+    Ok(selected_base(&stack, names))
+}
+
+/// A single output image containing the named relations from an in-memory or mapped stack.
+pub(super) fn selected_base<'a>(stack: &[Image], names: impl Iterator<Item = &'a str>) -> Vec<u8> {
     let mut image = Builder::new(stack.last().map_or(0, Image::flags), false);
     for name in names {
-        if let Some(view) = find(&stack, name) {
+        if let Some(view) = find(stack, name) {
             image.take(name, &view);
         }
     }
-    Ok(image.finish())
+    image.finish()
 }
 
 /// The stack in `dir` written out as `.csv` files in `to`, one per relation (for scripts that read them).
