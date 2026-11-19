@@ -8,6 +8,7 @@ const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 afterEach(() => {
   Object.defineProperty(process, "platform", platform);
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 type OwnerRead = NativeBinding["pathsOwnedByCurrentUser"];
@@ -19,6 +20,8 @@ type OwnerRead = NativeBinding["pathsOwnedByCurrentUser"];
 async function askedOnWindows(ownerRead: OwnerRead, asks: ReadonlyArray<readonly string[]>): Promise<{ answers: Array<boolean | undefined>; reports: string[] }> {
   vi.resetModules();
   const native = await import("../../../src/engine/native/native.js");
+  // The engine of this machine stays the one loaded while the platform reads as Windows.
+  vi.stubEnv("RERAIL_ENGINE_PATH", native.resolveNativeBindingPath());
   const binding = native.loadNativeBinding();
   const had = Object.getOwnPropertyDescriptor(binding, "pathsOwnedByCurrentUser");
   const written = vi.spyOn(process.stderr, "write").mockImplementation(() => true);

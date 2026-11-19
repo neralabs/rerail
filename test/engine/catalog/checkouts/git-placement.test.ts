@@ -650,16 +650,20 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     const root = await temporaryRoot();
     const main = repository(join(root, "main"));
     const other = repository(join(root, "other"));
-    git(main, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    const worktree = join(root, "w");
+    git(main, "worktree", "add", "--quiet", "-b", "w", worktree);
     git(other, "worktree", "add", "--quiet", "-b", "w", join(root, "ow"));
     const link = join(root, "w.git");
     linkFolder(join(main, ".git", "worktrees", "w"), link);
-    await rewriteInPlace(join(root, "w", ".git"), `gitdir: ${link}\n`);
-    expect(registryPlacements(join(root, "w"))).toBe(1);
+    await rewriteInPlace(join(worktree, ".git"), `gitdir: ${link}\n`);
+    expect(registryPlacements(worktree)).toBe(1);
 
+    // Git refuses the folder once the link names another worktree's Git folder.
     await relink(link, join(other, ".git", "worktrees", "w"));
-    expect(registryPlacements(join(root, "w"))).toBe(1);
-    expect(worktreeRegistry(join(root, "w"))?.commonDirectory).toBe(physicalPath(join(other, ".git")));
+    expect(gitsAnswer(worktree).git).toBe(false);
+    expect(worktreeRegistry(worktree)).toBeUndefined();
+    await relink(link, join(main, ".git", "worktrees", "w"));
+    expect(registryPlacements(worktree)).toBe(1);
   });
 
   it("lists as Git does once a checkout's .git link names another Git folder, and none once that Git folder moves", async () => {
