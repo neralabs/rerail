@@ -587,12 +587,15 @@ impl Observer {
     /// recording run took, so the journal names it: neither the racy rule nor a stat check is needed.
     fn trusted(&mut self, path: &Path) -> Option<Entry> {
         self.watch_above(path);
-        if !self.roots.iter().any(|r| r.trusted && r.asked == self.flushes && under(&path, &r.path)) {
+        let held: Vec<bool> = self.roots.iter().filter(|r| r.trusted && r.asked == self.flushes && under(&path, &r.path)).map(|r| r.listed).collect();
+        if held.is_empty() {
             return None;
         }
         let e = self.known(path)?;
-        // Recorded within the journal's settle window: its silence may hide a merged event (Q189).
-        if self.settling(&e) {
+        // Recorded within the journal's settle window: its silence may hide a merged event (Q189). A root checked by
+        // its listings (decision 0400) does not go by the journal's silence: the check compared each answer's stat
+        // this run, so its answers are trusted as checked.
+        if !held.contains(&true) && self.settling(&e) {
             return None;
         }
         self.counts.trusted += 1;
@@ -678,11 +681,13 @@ impl Observer {
             return false;
         }
         let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else { return false };
-        if !self.roots.iter().any(|r| r.trusted && r.asked == self.flushes && under(&dir, &r.path)) || self.known(path).is_some() {
+        let held: Vec<bool> = self.roots.iter().filter(|r| r.trusted && r.asked == self.flushes && under(&dir, &r.path)).map(|r| r.listed).collect();
+        if held.is_empty() || self.known(path).is_some() {
             return false;
         }
-        // A listing recorded within the journal's settle window is not trusted for an absence (Q189): `stat` says.
-        if self.known(dir).is_some_and(|e| self.settling(&e)) {
+        // A listing recorded within the journal's settle window is not trusted for an absence (Q189): `stat` says. One
+        // under a root checked by its listings was checked this run (`trusted`).
+        if !held.contains(&true) && self.known(dir).is_some_and(|e| self.settling(&e)) {
             return false;
         }
         let listing = match self.known(dir).filter(|e| e.kind == Kind::Dir).and_then(|e| e.listing) {
@@ -985,7 +990,7 @@ impl Observer {
     /// next generation; the root's cursor is that journal's. Naming nothing writes nothing, but a root's first
     /// cursor of that journal (a warm run writes none).
     fn check_listed(&mut self, root: PathBuf, volume: Option<[u8; 16]>, stored: Option<&str>) {
-        let (exact, whole) = self.listing_named(&root);
+        let (exact, whole, entered) = self.listing_named(&root);
         let (exact, whole): (Vec<PathBuf>, Vec<PathBuf>) = (exact.into_iter().filter(|p| !self.is_own(p)).collect(), whole.into_iter().filter(|p| !self.is_own(p)).collect());
         self.counts.checked_named += (exact.len() + whole.len()) as u64;
         // Kept under the volume's id where the system names one, as a journal's cursor is; else under none.
@@ -1000,7 +1005,7 @@ impl Observer {
         }
         self.generation += 1;
         let next = format!("L{}", self.generation);
-        self.forget_named(&root, &exact, &whole, volume, &next);
+        self.forget_named(&root, &exact, &whole, &entered, volume, &next);
         self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: true });
     }
 
@@ -1009,12 +1014,12 @@ impl Observer {
     /// change after it told to the next replay). Naming nothing writes nothing: the stored cursor stays, and the next
     /// replay from it names again what this run found holding, a path looked at again, never one missed.
     fn check_behind(&mut self, root: PathBuf, volume: Option<[u8; 16]>, next: &str) {
-        let (exact, whole) = self.listing_named(&root);
+        let (exact, whole, entered) = self.listing_named(&root);
         let (exact, whole): (Vec<PathBuf>, Vec<PathBuf>) = (exact.into_iter().filter(|p| !self.is_own(p)).collect(), whole.into_iter().filter(|p| !self.is_own(p)).collect());
         self.counts.checked_named += (exact.len() + whole.len()) as u64;
         if !(exact.is_empty() && whole.is_empty()) {
             self.generation += 1;
-            self.forget_named(&root, &exact, &whole, volume.unwrap_or([0; 16]), next);
+            self.forget_named(&root, &exact, &whole, &entered, volume.unwrap_or([0; 16]), next);
         }
         self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next.to_owned()), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: false });
     }
@@ -1022,7 +1027,12 @@ impl Observer {
     /// The answers under `root` that no longer hold, by its directories' listings: those to forget alone (`exact`),
     /// and the symbolic links that changed, forgotten with what is under them and their canonical forms (`whole`).
     /// Each directory holding an answer is listed once; the root itself, and each link, is `stat`ed on its own.
-    fn listing_named(&mut self, root: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    ///
+    /// A path named changed is changed with what is under it, as the journal names one (`forget`, `changed_since`'s
+    /// readers). A directory whose answer, its listing, alone changed is no such path: an entry made or removed in it
+    /// changes its `stat`, not the files under it. Of each, `entered` gives the entries its listing gained or lost,
+    /// named in its place; the directory's own answer is forgotten (`exact`) all the same.
+    fn listing_named(&mut self, root: &Path) -> (Vec<PathBuf>, Vec<PathBuf>, BTreeMap<PathBuf, Vec<PathBuf>>) {
         let kept: Vec<(PathBuf, Entry)> = self.entries.range::<Path, _>((std::ops::Bound::Included(root), std::ops::Bound::Unbounded)).take_while(|(k, _)| k.starts_with(root)).map(|(k, e)| (k.clone(), e.clone())).collect();
         let (mut exact, mut whole) = (Vec::new(), Vec::new());
         let mut by_dir: BTreeMap<PathBuf, Vec<(PathBuf, Entry)>> = BTreeMap::new();
@@ -1031,7 +1041,8 @@ impl Observer {
                 Some(dir) => by_dir.entry(dir.to_path_buf()).or_default().push((path, e)),
                 None => {
                     self.counts.stats += 1;
-                    if !listed_holds(&e, kind_and_stat(&path)) {
+                    let now = kind_and_stat(&path);
+                    if !listed_holds(&e, now) && !self.racy_holds(&path, &e, now) {
                         exact.push(path);
                     }
                 }
@@ -1060,7 +1071,7 @@ impl Observer {
                     None if e.kind == Kind::Missing => {}
                     None => exact.push(path),
                     Some(Some(now)) => {
-                        if !listed_holds(&e, Some(*now)) {
+                        if !listed_holds(&e, Some(*now)) && !self.racy_holds(&path, &e, Some(*now)) {
                             exact.push(path);
                         }
                     }
@@ -1074,7 +1085,48 @@ impl Observer {
                 }
             }
         }
-        (exact, whole)
+        let mut entered = BTreeMap::new();
+        for dir in &exact {
+            let Some(was) = self.entries.get(dir).filter(|e| e.kind == Kind::Dir).and_then(|e| e.listing.clone()) else { continue };
+            let Some(now) = self.read_listing(dir, false) else { continue };
+            let (was, now): (BTreeSet<&(String, bool)>, BTreeSet<&(String, bool)>) = (was.iter().collect(), now.iter().collect());
+            let named: BTreeSet<&str> = was.symmetric_difference(&now).map(|(n, _)| n.as_str()).collect();
+            entered.insert(dir.clone(), named.into_iter().map(|n| dir.join(n)).filter(|p| !self.is_own(p)).collect());
+        }
+        (exact, whole, entered)
+    }
+
+    /// Whether `e`, an answer its `stat` cannot vouch for only because it was recorded inside the racy window, holds
+    /// by what is at `path` now: the same bytes (or listing). Its path is then not named changed: it was read again,
+    /// not changed (a file written just before the run that read it, and checked by the next). Past the window, the
+    /// answer is trusted from now on, as `settle_racy` trusts it.
+    fn racy_holds(&mut self, path: &Path, e: &Entry, now: Option<(Kind, Stat)>) -> bool {
+        let Some((kind, stat)) = now else { return false };
+        if kind != e.kind || !e.racy() || e.stat != (if kind == Kind::File { stat } else { Stat { size: e.stat.size, ..stat } }) {
+            return false;
+        }
+        let read_ns = now_ns();
+        let (digest, listing) = match kind {
+            Kind::File => {
+                let Ok(bytes) = std::fs::read(path) else { return false };
+                self.counts.hashed += 1;
+                self.counts.bytes += bytes.len() as u64;
+                (Sha256::digest(&bytes).into(), None)
+            }
+            Kind::Dir => {
+                let Some(l) = self.read_listing(path, false) else { return false };
+                self.counts.listed += 1;
+                (listing_digest(&l), Some(l))
+            }
+            Kind::Other | Kind::Missing => return false,
+        };
+        if digest != e.digest {
+            return false;
+        }
+        if e.stat.mtime_ns.max(e.stat.ctime_ns) < read_ns - RACY_NS {
+            self.remember(path, Entry { listing: listing.or_else(|| e.listing.clone()), recorded_ns: read_ns, ..e.clone() });
+        }
+        true
     }
 
     /// Stores `cursor` as `root`'s, the observer's own journal's (`check_listed`).
@@ -1092,7 +1144,10 @@ impl Observer {
     /// Forgets the answers a root's listings named (`listing_named`): each of `exact` alone, each of `whole` with
     /// what is under it and its canonical forms; records each in the observer's own journal under the current
     /// generation, with the root's cursor and the generation, in one transaction.
-    fn forget_named(&mut self, root: &Path, exact: &[PathBuf], whole: &[PathBuf], volume: [u8; 16], cursor: &str) {
+    fn forget_named(&mut self, root: &Path, exact: &[PathBuf], whole: &[PathBuf], entered: &BTreeMap<PathBuf, Vec<PathBuf>>, volume: [u8; 16], cursor: &str) {
+        // What the change log names: each path forgotten, but a directory whose listing alone changed by the entries
+        // it gained or lost (`listing_named`).
+        let logged: Vec<PathBuf> = exact.iter().filter(|p| !entered.contains_key(*p)).chain(entered.values().flatten()).chain(whole).cloned().collect();
         let generation = self.generation;
         let mut forgotten = 0u64;
         for p in exact {
@@ -1111,7 +1166,7 @@ impl Observer {
             let named: BTreeSet<&Path> = exact.iter().chain(whole).map(PathBuf::as_path).collect();
             self.new_canon.retain(|(k, _)| !named.contains(k.as_path()) && !k.ancestors().any(|a| whole.iter().any(|w| w == a)));
         }
-        for p in exact.iter().chain(whole) {
+        for p in &logged {
             self.changes.insert(p.clone(), generation);
         }
         self.counts.forgotten += forgotten;
@@ -1125,6 +1180,7 @@ impl Observer {
         });
         k.deleted = true;
         let (exact, whole, cursor) = (exact.to_vec(), whole.to_vec(), cursor.to_owned());
+        let logged = logged;
         k.writer.send(move |db| {
             let Ok(tx) = db.transaction() else { return };
             {
@@ -1143,7 +1199,7 @@ impl Observer {
                     let _ = canon.execute(params![at, format!("{at}/"), format!("{at}/\u{10ffff}")]);
                 }
                 let Ok(mut log) = tx.prepare_cached("INSERT OR REPLACE INTO observed_changes VALUES (?1, ?2)") else { return };
-                for p in exact.iter().chain(&whole) {
+                for p in &logged {
                     let _ = log.execute(params![p.to_string_lossy(), generation as i64]);
                 }
                 let _ = tx.execute_cached("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
@@ -2283,12 +2339,18 @@ pub fn hex(d: &[u8; 32]) -> String {
 mod tests {
     use super::*;
 
+    /// How long a test's journal may take to answer (`journal_observer`).
+    const JOURNAL_TEST_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
+
     /// An observer that asks the journal for every root (decision 0105), as these tests were written for: no root
     /// is checked by its listings (decision 0400), whose tests open `Observer::open`.
     fn journal_observer(store: &Path) -> Observer {
         let mut o = Observer::open(Some(store));
         o.list_max = 0;
-        o.journal_settle = std::time::Duration::from_secs(5);
+        // The journal's answer, however late: on a loaded host `fseventsd` was seen to deliver a stream's cookie, or
+        // to flush the run's marker into its history, more than 5 s late (Q223), and the root was then `Lost`, checked
+        // by its `stat`s. What the tests check is the journal's answer.
+        o.journal_settle = JOURNAL_TEST_BUDGET;
         // Trust at once: these runs follow each other within the settle window, as no test can wait it out; and the
         // journal's answer whatever it costs.
         o.settle_ns = 0;
@@ -2366,6 +2428,10 @@ mod tests {
         let store = base.join("store.files");
         let run = |settle: i64| {
             let mut o = Observer::open(Some(&store));
+            // By the journal: a root this small is otherwise checked by its listing (decision 0400), which finds the
+            // edit whatever the journal says.
+            o.list_max = 0;
+            o.journal_settle = JOURNAL_TEST_BUDGET;
             o.settle_ns = settle;
             o.wait_least_ns = 2_000_000_000;
             o.begin();
@@ -2381,11 +2447,13 @@ mod tests {
         run(0);
         // The edit, then the cursor moved past its event: the journal names nothing since.
         let edit_and_hide = |text: &str| {
+            let before = super::super::journal::current_id();
             std::fs::write(&file, text).unwrap();
             aged(&file);
-            std::thread::sleep(std::time::Duration::from_millis(500));
             let volume = super::super::journal::volume(&root).expect("a volume");
-            let id = super::super::journal::current_id().to_string();
+            // An id past the edit's events, which a loaded host may give later than the edit (Q223): a live stream's
+            // sync, so a question from it is told what came after that sync alone, as a merged replay tells it.
+            let id = super::super::journal::id_past(&root, before, &cookie_dir(&store)).expect("the journal answers").to_string();
             let db = Connection::open(&store).unwrap();
             db.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![cursor_key(&root, volume), id]).unwrap();
         };

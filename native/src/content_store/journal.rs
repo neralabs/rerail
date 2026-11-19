@@ -77,6 +77,17 @@ pub fn current_id() -> u64 {
     fsevents::current_id()
 }
 
+/// An id every change under `root` made before now has (FSEvents'): the cookie id of a replay from `from`, which
+/// comes after each change's event (`fsevents::sync`), where `current_id` may be taken before a late event's id is
+/// given (`observe`'s Q189 test, on a loaded host).
+#[cfg(all(test, target_os = "macos"))]
+pub fn id_past(root: &Path, from: u64, cookie_dir: &Path) -> Option<u64> {
+    match fsevents::since(std::slice::from_ref(&root.to_path_buf()), Some(from), cookie_dir, std::time::Duration::from_secs(20)) {
+        Since::Changed { cursor, .. } | Since::Behind { cursor } => Some(cursor),
+        Since::Lost { .. } => None,
+    }
+}
+
 /// A new outermost run begins: a question asked after this is answered with every change made before it (each kept
 /// stream waits for a cookie once, `fsevents::sync`). Runs inside it share its answer.
 pub fn next_epoch() {
@@ -633,6 +644,9 @@ mod fsevents {
         let mut all = LIVE.lock().unwrap_or_else(|e| e.into_inner());
         // A replay whose history lacks its marker is started again, from the same cursor, while `settle` allows.
         let deadline = Instant::now() + settle;
+        // How long the question may wait for its cookie: the caller's bound (Q221: a run waits no longer than
+        // checking its kept answers by `stat` costs), else `WAIT`; a test's settle budget is the least it waits.
+        let budget = wait.unwrap_or(WAIT).max(settle);
         let mut again: Option<String> = None;
         let (at, synced) = loop {
             // A stream that lost track answers nothing more: a question under its roots replays afresh.
@@ -667,7 +681,7 @@ mod fsevents {
             let t = Instant::now();
             let fresh = all[at].synced.is_none_or(|(e, _)| e != epoch);
             let first = all[at].synced.is_none();
-            let r = sync(&mut all[at], epoch, WAIT.max(settle));
+            let r = sync(&mut all[at], epoch, budget);
             if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
                 let live = &all[at];
                 let (n, history, cookie) = live.shared.seen.lock().map(|s| (s.events.len(), s.history_at, s.cookie_at)).unwrap_or((0, None, None));

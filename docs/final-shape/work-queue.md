@@ -2854,6 +2854,26 @@ reuses another's sync.
   `wait.unwrap_or(WAIT.max(settle))` that one passes, but four others fail (`a_watched_root_is_not_statted_..`: 6
   stats, the cookie later than the tests' 2 s `wait_least`, so the root is `Lost`). The bound and the tests' floor
   have to be settled together; not changed there.
+- **Fixed, the header edit** (2026-11-19, Typing-support): the test's root is small, so it is checked by its
+  listings (decision 0400), not by the journal. Two faults there:
+  - A directory whose listing changed (a header made in `ws/`) was named in the change log, and a named path
+    means it and all under it (`forget`, the cone's `still`): every unit under `ws/` was asked again. The listing
+    check now names the entries the listing gained or lost (`listing_named`'s `entered`), and forgets the
+    directory's own answer as before.
+  - An answer recorded inside the racy window (a header written just before the run that read it) was named
+    changed without being read. It is now read again (`racy_holds`): the same bytes hold.
+  The header-edit test passes in every run since.
+- **Fixed, the bound**: `fsevents::since_within` applies the caller's `wait` (Q221), with a test's settle budget
+  as its least. The journal tests' budget is 20 s (`JOURNAL_TEST_BUDGET`), and Q189's test hides its edit behind a
+  live stream's sync (`journal::id_past`), not `current_id`, which a loaded host can give before the edit's event
+  has its id.
+- **Still open, the journal tests on a loaded host**: on the M3 (load 20-55), `fseventsd` was seen to deliver a
+  stream's cookie up to 4.8 s late, and one stream delivered no event for 20 s while new ones had their cookies in
+  0.5 s. The root is then `Lost` and checked by `stat`, which is correct, but the journal tests assert the journal's
+  answer. 1 to 4 of the 34 fail in a run (Q189's test, `rerails_own_files_are_outside_the_observer`,
+  `a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change`,
+  `an_inner_root_is_answered_by_the_root_above_it`); 34 of 34 passed in one run. Waiting at most 2 s per stream
+  and starting another was tried, and is worse: slow but live streams were dropped, and every new one was slow too.
 - **Done when**: the test passes 20 of 20 on a host at load, or names why a run cannot answer.
 - **Record**: —
 
@@ -5282,6 +5302,11 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
     asserted.
   All four are decision 0400's listing checks, and 27 of the 31 observer tests pass. Not PR #508's.
 - **Done when**: all four pass.
+- **Fixed** (2026-11-19, Typing-support): Q189's settle window (`JOURNAL_SETTLE_NS`, 120 s) was applied to every
+  root, also one checked by its listings, whose answers the listing check compared by `stat` that run and which
+  never goes by the journal's silence. Every answer recorded in the last 120 s was then `stat`ed again (the tests'
+  7 and 9 stats). `trusted` and `missing` now skip the window under a listed root. All four pass on the M3, in every
+  run since.
 
 ### Q251. 0364 R7 is red: after a use is added, two recheck lines are unpriced
 
