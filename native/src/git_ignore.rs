@@ -2257,7 +2257,11 @@ pub mod tests {
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         assert_eq!(reads_over(&mut ignore, 100, true), 0, "the same bytes");
         git(&root, &["add", "-f", "gen/t.py"]);
-        assert_eq!(reads_over(&mut ignore, 100, false), 1, "Git's write, read once");
+        assert_eq!(
+            reads_over(&mut ignore, 100, false),
+            1,
+            "Git's write, read once"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -2273,7 +2277,11 @@ pub mod tests {
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         assert_eq!(reads_over(&mut ignore, 100, true), 0, "the same bytes");
         git(&root, &["add", "-f", "gen/t.py"]);
-        assert_eq!(reads_over(&mut ignore, 100, false), 1, "Git's write, read once");
+        assert_eq!(
+            reads_over(&mut ignore, 100, false),
+            1,
+            "Git's write, read once"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -2290,7 +2298,11 @@ pub mod tests {
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         assert_eq!(reads_over(&mut ignore, 100, true), 0, "no index all along");
         git(&root, &["add", "-f", "gen/t.py"]);
-        assert_eq!(reads_over(&mut ignore, 100, false), 1, "Git's index, read once");
+        assert_eq!(
+            reads_over(&mut ignore, 100, false),
+            1,
+            "Git's index, read once"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
