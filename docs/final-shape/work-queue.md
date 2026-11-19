@@ -2847,6 +2847,13 @@ racy), and a sync kept within an epoch answers a later run that did not advance 
 kept). Find which run's epoch the second run's questions carried when it asked for none: a missed edit, if a run
 reuses another's sync.
 
+- **Found** (2026-11-19, Typing-support): the merge 9a522e124 says "the cookie's wait is the caller's bound, else
+  `WAIT.max(settle)`", but `fsevents::since_within` calls `sync(.., WAIT.max(settle))` and never reads `wait` (the
+  build's `unused variable: wait`, journal.rs). So Q184/Q221's bound is not applied. On an M-series farm host at
+  HEAD, 6 of the 40 journal/observe tests fail, `the_journal_names_what_changed_since_its_cursor` among them. With
+  `wait.unwrap_or(WAIT.max(settle))` that one passes, but four others fail (`a_watched_root_is_not_statted_..`: 6
+  stats, the cookie later than the tests' 2 s `wait_least`, so the root is `Lost`). The bound and the tests' floor
+  have to be settled together; not changed there.
 - **Done when**: the test passes 20 of 20 on a host at load, or names why a run cannot answer.
 - **Record**: —
 

@@ -581,6 +581,12 @@ Progress (2026-11-18):
     (every rule, by default) picks the rules it rewrites, and the rest are kept as ranges. The name move of a lowered
     program (`plan::lower`), simplify's units and column projection, and the nullary relations' unit column are one
     call each.
+  - *Done (the prepared key).* The key is the linked program's version identity (`manager::identity`: its digest,
+    size and rules' hashes in order), the language, the cross memo, factorizing and the preparing switches; not the
+    texts' digest with `{:?}` prints of the facts, inputs and outputs. A finding's words are not in the version (the
+    combine is kept under the masked texts, 0225 §3), so a message edit finds the program prepared. Locked by
+    `a_message_edit_finds_the_program_prepared_and_a_rule_edit_does_not`. The run's `front::Lists`, read by the
+    print alone, goes.
 
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 

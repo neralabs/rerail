@@ -3315,8 +3315,8 @@ fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
 #[test]
 fn a_later_run_reads_the_prepared_plans_an_earlier_one_made() {
     use crate::code_rule_dsl::logic::program_image::manager::VersionAnalyses as _;
-    let p = prepared_program();
-    let build = || p.clone();
+    // Each build is a new version of the same program, parsed again: the later run's is not the earlier one's.
+    let build = prepared_program;
     let held = {
         let _plans = KeepPlans::start(None);
         assert!(super::prepared_to_store().is_none(), "none made yet");

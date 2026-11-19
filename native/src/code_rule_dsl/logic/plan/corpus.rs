@@ -3206,9 +3206,6 @@ fn run_observed(
     // last as the run ends, and the store takes each in one transaction.
     let _waves = crate::content_store::write_back::run_waves();
     let programs = given.programs;
-    // The run's distinct lists (decision 0172): every program it reads from a stored text takes its lists from here,
-    // so the lists its programs have in common are made once. It goes with the run.
-    let lists = Arc::new(front::Lists::default());
     let process_cpu = || { let u = usage(); u.0 + u.1 };
     let process_started = process_cpu();
     // The store's writer held from the run's start to its end (decision 0102): the handles the run opens and closes on
@@ -3744,13 +3741,12 @@ fn run_observed(
     let prepared_key: [u8; 32] = {
         use sha2::Digest as _;
         let mut hash = sha2::Sha256::new();
-        hash.update(texts);
-        // The version's facts, inputs and outputs (its rules are the texts'), as values.
-        let facts: Vec<(String, Vec<front::List<front::Value>>)> = v.fact_names().into_iter().map(|rel| {
-            let rows = v.fact_values(&rel, &lists).unwrap_or_default();
-            (rel, rows)
-        }).collect();
-        hash.update(format!("{label}\0{facts:?}\0{:?}\0{:?}\0{}", v.input_names(), v.output_names(), cross_declared.is_some()).as_bytes());
+        hash.update(b"rerail.prepared/v2\0");
+        // The linked program as the run prepares it (0276 §2): its version's identity, which holds its rules (in
+        // order), declarations, facts, inputs and outputs. Its messages are not in it (the combine is kept under the
+        // masked texts, decision 0225 §3), so an edit of a message's words finds it prepared.
+        hash.update(crate::code_rule_dsl::logic::program_image::manager::identity(&v));
+        hash.update(format!("{label}\0{}", cross_declared.is_some()).as_bytes());
         // Whether exports are handed on factorized (decision 0099): another choice is another prepared program, and
         // another file-local part, so another per-file memo key.
         if !factorizing {

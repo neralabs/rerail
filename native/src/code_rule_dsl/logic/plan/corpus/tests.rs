@@ -1921,3 +1921,28 @@ fn a_programs_nearest_over_a_library_relation_of_kinds_finds_in_a_pack_what_it_f
     assert_eq!(alone, [["function_declaration"]]);
     assert_eq!(together, alone);
 }
+
+/// The prepared program is keyed by the linked program's version (0276 §2): an edit of a finding's words alone finds
+/// it prepared (decision 0225 §3: the words are the writer's), and an edit of a rule prepares another.
+#[test]
+fn a_message_edit_finds_the_program_prepared_and_a_rule_edit_does_not() {
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("prepared-key");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "assert x\nwhile y:\n    pass\n").unwrap();
+    let policy = |words: &str, kind: &str| {
+        format!(".policy \"p\" revision 1\n.language python\n.violation P(at: node) \"{words}\"\nP(n) :- kind(n, \"{kind}\").\n")
+    };
+    let keys = |text: &str| {
+        super::run(text, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        super::with_prepared(|kept| kept.keys().copied().collect::<std::collections::BTreeSet<_>>())
+    };
+    super::with_prepared(|kept| kept.clear());
+    let first = keys(&policy("one", "assert_statement"));
+    assert!(!first.is_empty(), "the run kept its prepared program");
+    assert_eq!(keys(&policy("two words", "assert_statement")), first, "the words alone changed: the same key");
+    let edited = keys(&policy("one", "while_statement"));
+    assert_eq!(edited.difference(&first).count(), 1, "a rule edit prepares another program");
+    let _ = std::fs::remove_dir_all(&dir);
+}
