@@ -1,6 +1,6 @@
 # A repository start places each worktree without one Git process per worktree
 
-For [pull request #813](https://github.com/neralabs/rerail/pull/813), head c881238bc. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #813](https://github.com/neralabs/rerail/pull/813), head 96f4a1171. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #813](https://github.com/neralabs/rerail/pull/813), head c8812
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 1,912 lines in 10 files: 911 ship, 9 run in every test run, 992 are tests and text | Careful. A code owner approves: it edits `ci.yml`. | Nothing. CI runs the whole set; no pull request needs it. | 3 |
+| 2,716 lines in 11 files: 1,186 ship, 9 run in every test run, 1,521 are tests and text | Careful. A code owner approves: it edits `ci.yml`. | Nothing. CI runs the whole set; no pull request needs it. | 3 |
 
 ## 2. Intent, and the gap
 
@@ -32,7 +32,7 @@ Found on 15 November 2026 in a load of 16 sessions on a busy Windows 11 machine;
 
 ## 3. Where to look
 
-<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Windows owners read by engine, high risk, 242 lines; B, Placements read and kept, medium risk, 678 lines. Read first: git-placement.ts, repository-identity.ts, path_owner.rs. To skim: 991 lines of tests and 1 line of one release note.">
+<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Windows owners read by engine, high risk, 260 lines; B, Placements read and kept, medium risk, 935 lines. Read first: git-placement.ts, repository-identity.ts, path_owner.rs. To skim: 1,520 lines of tests and 1 line of one release note.">
 
 1. **Read first**, 10 min: `git-placement.ts`: `placementInputs`, `linkedWorktreeFromFiles`, `configOf`. Can Git place a folder otherwise while every fact here reads the same?
 2. **Read first**, 6 min: `repository-identity.ts`: `placed`, `answersInputs`, `worktreeRegistry`. Is every kept answer dropped once its stamp moves?
@@ -57,25 +57,25 @@ Start at change A: it touches `ci.yml` and adds an engine read. CI runs the whol
 
 <details><summary><b>5. The changes</b></summary>
 
-**A. Windows owners read by engine**, high risk. On Windows a worktree is placed from its files: 1.3 ms a kept ask against a 41.8 ms Git process.
+**A. Windows owners read by engine**, high risk. On Windows a worktree is placed from its files: 0.62 ms a kept ask against a 33.2 ms Git process.
 
 - **Problem:** Node gives no file owner on Windows, and Git refuses a repository whose folders another account owns. Without an owner read, change A would have to ask Git on Windows, where a Git process costs most.
 - **Who meets it:** Everyone on Windows with linked worktrees, at each start, as in change B.
 - **What it does:** `path_owner.rs` reads each path's owner as Git for Windows does: the user, or the Administrators group while the process's token is a member. `pathsOwnedByCurrentUser` in `native.ts` calls it; `ci.yml` adds its tests to the Windows engine step.
 - **Risk:** High. It touches `.github/workflows/ci.yml`, which `REVIEW.md` lists as high-risk, and a wrong owner answer would place a folder Git refuses.
 - **Check:** Does `path_owner.rs` take an owner exactly when Git for Windows does? An engine built before it lacks the function, and Rerail asks Git then.
-- **Picture:** On Windows 11 one ask about a worktree's placement costs 41.8 ms at main, a Git process, and about 1.3 ms with this change, 27 file calls and one engine call, over 110 worktrees.
-- **Method:** 110 worktrees and the main checkout, each placed once, then asked again in passes on one Windows 11 desktop beside other test runs; median per ask, 3 passes at `main` and 20 here, two runs each.
+- **Picture:** On Windows 11 one ask about a worktree's placement costs 33.2 ms at main, a Git process, and 0.62 ms with this change, 27 file calls and one engine call, over 110 worktrees.
+- **Method:** 110 worktrees and the main checkout, each placed once, then asked again in passes on one Windows 11 virtual machine beside other test runs; median per ask, 3 passes at `main` and 20 here.
 
-**B. Placements read and kept**, medium risk. A start with 72 and 38 worktrees: the daemon's thread ran 2 Git processes, against 2,859 (Linux) and 2,564 (Windows).
+**B. Placements read and kept**, medium risk. A start with 72 and 38 worktrees: the daemon's thread ran 2 Git processes, against 2,648 (Linux) and 2,781 (Windows).
 
 - **Problem:** Every session in a repository with many worktrees makes the daemon start one Git process per worktree at each change of the recorded checkouts. The daemon answers nothing while Git runs.
-- **Who meets it:** Everyone with linked worktrees, at every start and every newly recorded worktree. A preload on the daemon counted 2,859 processes in a five-minute start at `main` f41b8fe6c on Linux x64 and 2,564 on Windows 11.
+- **Who meets it:** Everyone with linked worktrees, at every start and every newly recorded worktree. A preload on the daemon counted 2,648 processes in a five-minute start at `main` 7ff56e15e on Linux x64 and 2,781 on Windows 11.
 - **What it does:** `placementInputs` reads what Git reads to place a folder. `linkedWorktreeFromFiles` places a linked worktree of a repository Git placed. `repositoryIdentityLocation` keeps Git's answer while its stamp holds. `worktreeRegistry` keeps one list per repository.
 - **Risk:** Medium. A wrong placement would have a file judged by another checkout's rules, or by none.
-- **Check:** Can Git's answer move while the stamp stays the same? The stamp holds both real paths, the texts of `.git` and `commondir`, the lines of `config` and `config.worktree` that place a checkout, whether `HEAD`, `objects` and `refs` make a Git folder Git takes, and the folders' owners, read at every use. Another account's folders are asked of Git at every placement.
-- **Picture:** A start with 72 and 38 worktrees and 16 sessions on Linux x64: the daemon ran 2,859 Git processes on its thread at main f41b8fe6c and 2 with this change, one git worktree list per repository.
-- **Method:** a preload on the daemon recorded each `spawnSync` with its caller, 16 sessions, starts in repositories of 72 and 38 worktrees, five minutes after the first start, `main` then the change on one Linux machine shared with other test runs, one run each.
+- **Check:** Can Git's answer move while the stamp stays the same? The stamp holds both real paths, the texts of `.git` and `commondir`, the config lines that place a checkout, whether `HEAD`, `objects` and `refs` make a Git folder, and the owners of the real folder, its `.git` and its Git folder, read at every use. A checkout those files cannot describe keeps Git's acceptance for the list under the raw facts Git reads there.
+- **Picture:** A start with 72 and 38 worktrees and 16 sessions on Linux x64: the daemon ran 2,648 Git processes on its thread at main 7ff56e15e and 2 with this change, one git worktree list per repository.
+- **Method:** a preload on the daemon recorded each `spawnSync` with its caller, 16 sessions, starts in repositories of 72 and then 38 worktrees, counted over the five minutes after, `main` then the change on one Linux machine shared with other test runs.
 
 </details>
 
@@ -110,15 +110,15 @@ Before: At main a session asks where a worktree is, the daemon starts a Git proc
 
 <details><summary><b>7. How it fits</b></summary>
 
-It stands on `main` at 7ff56e15e. The pull request that keeps the daemon answering while sessions start builds on it. Three open pull requests add lines where this one does: #756 in `native.ts`, #805 in `ci.yml`, the draft #508 in three files. Keep both sides.
+It stands on `main` at cf5d520e4. The pull request that keeps the daemon answering while sessions start builds on it. Three open pull requests add lines where this one does: #756 in `native.ts`, #805 in `ci.yml`, the draft #508 in three files. Keep both sides.
 
-This pull request is based on main at 7ff56e15e and needs no other change. In trial merges it adds one conflict with #756 in native.ts, one with #805 in ci.yml, one in each of three files with the draft #508, and none with #812, #621 and #677.
+This pull request is based on main at cf5d520e4 and needs no other change. In trial merges it adds one conflict with #756 in native.ts, one with #805 in ci.yml, one in each of two files with the draft #508, and none with #812, #816 and #677.
 
-**Open pull requests that share a file.** Trial merges with c881238bc at the pull requests' heads of 19 November, 00:05 UTC; this head holds `main` 7ff56e15e. #756 (ours): `native.ts` conflicts, each adding an optional engine function at the same place: keep both. #805: both edit the Windows job's engine steps in `ci.yml`: keep #805's steps and add this change's one test filter. #508 (draft): one conflict in each of `ci.yml`, `lib.rs` and `native.ts`: keep both. #812 (ours) and #621 share `native.ts` with no conflict this head adds. #677 shares no file.
+**Open pull requests that share a file.** Trial merges with 96f4a1171 at the pull requests' heads of 19 November 2026; this head holds `main` cf5d520e4. #756 (ours): `native.ts` conflicts, each adding an optional engine function at the same place: keep both. #805: both edit the Windows job's engine steps in `ci.yml`: keep #805's steps and add this change's one test filter. #508 (draft): `ci.yml` and `native.ts` conflict, each adding lines at the same place: keep both. #812 and #816 (ours) share a file with no conflict this head adds. #677 shares no file.
 
 </details>
 
-<details><summary><b>8. What is not covered</b>: 3 not verified, 4 limits that stay</summary>
+<details><summary><b>8. What is not covered</b>: 3 not verified, 5 limits that stay</summary>
 
 1. **CI** runs the whole set on the pull request; the runs here are the changed modules' test files.
 2. **The start on a Windows 11 machine with every core busy** ran at `main` only: 96.6 s without an answer and 685 failed hooks, one daemon.
@@ -130,6 +130,7 @@ This pull request is based on main at 7ff56e15e and needs no other change. In tr
 - `CheckoutOwners`' own answers are as on `main`: after `core.bare` is set in `config.worktree`, a file's owner stays until the recorded checkouts change.
 - A worktree registered by a relative path (Git 2.48) under a link retargeted at a renamed folder keeps its old list until a worktree is added or removed.
 - Under a lookup variable the list's kept acceptance follows the checkout's own files and the variables' values, not the folders they name, as `main` keeps its first answer.
+- A folder between a checkout and the repository above it, made a repository, leaves the checkout's list as the repository above's until that registry changes, as on `main`; Git's list of it is never stored for the repository above.
 
 </details>
 
@@ -143,12 +144,12 @@ The description is the record: "How you tested it" holds the failing tests, the 
 
 | Where | What ran | Result |
 |---|---|---|
-| Windows 11 and Linux x64 | The start with 72 and 38 worktrees, 16 sessions, `main` f41b8fe6c then this change, one daemon each | Git on the daemon's thread 2,859 against 2 (Linux x64), 2,564 against 2 (Windows 11); hooks over 12 s 17 and 80 at `main`, none with this change; 55 failure records at `main` on Windows 11, none with this change. |
-| Windows 11, Node 24.21.0 | The 82 test files of the changed modules and their importers, compared with `main`'s results there, engine of this head's tree | 2,155 passed, 958 failed, 5 skipped. Four failures not in `main`'s: two pack tests for data the machine lacks, and two of `main`'s set-up health check cases stopped at their limit beside four runs; both passed 3 of 3 at `main` and here on the same machine. |
+| Windows 11 and Linux x64 | The start with 72 and 38 worktrees, 16 sessions, `main` 7ff56e15e then 86308dd8f's code, one daemon each | Two runs on each system: Git on the daemon's thread 2,648 to 2,859 against 2 (Linux x64), 2,710 to 2,781 against 2 to 4 (Windows 11); on Windows 11 hooks over 12 s 76 to 80 at `main`, 3 to 27 with this change, and failure records 46 to 65 against 0 to 9. |
+| Windows 11, Node 24.21.0 | The 70 test files of the changed modules and their importers, compared with `main`'s results there, engine of this head's tree | 1,934 passed, 957 failed, 10 skipped. Three failures not in `main`'s: two pack tests for data the machine lacks, and one case whose Windows premise this head rewrote, where its test file passes. |
 | Windows 11 and Linux x64 | A real daemon and Claude Code's hooks: 12 changes while it runs, 150 same-size rewrites, sessions of nine events | Windows 11, at 12b6cff39's code: no wrong placement or worktree list; `main` gave wrong lists after `core.bare`, `core.worktree` and a `.git` folder made over a `.git` file. Same-size rewrites: 0 of 9,044 wrong at 12b6cff39's code, 0 of 1,573 at `main`. Linux x64: the same, and 0 of 9,266 same-size answers wrong at 12b6cff39's code, 0 of 1,106 at `main`. |
-| Windows 11 | Cost of one placement ask over 110 worktrees, median of passes, three builds at once | `main` 41.8 ms (a Git process); 92f0bb4a4 0.98 ms; the head 1.28 ms, 26.9 file calls and one engine call. |
-| Linux x64 | CI's integration job, the 90 test files, the change's two test files 20 runs in a row, each line taken out | Integration 90 passed; the files fail only for pack data the machine lacks; 0 of 20 runs failed; each of 19 single-line changes of the change's lines fails a case, here and on Windows 11, and each of five more for the newest cases fails the case meant for it. |
+| Windows 11 and Linux x64 | Cost of one placement ask over 110 worktrees, and of the worktree list of a checkout whose `.git` is a link, median of passes | Kept ask: `main` 33.2 ms and 1.05 ms (a Git process); 86308dd8f's code 0.62 ms and 55 µs. The link checkout's list: the reviewed head 41.5 ms and 1.04 ms (a Git process); 86308dd8f's code 0.93 ms and 86 µs. |
+| Linux x64 | CI's integration job, the 70 test files at this head and at `main`, the new cases 20 runs in a row, each line taken out | Integration 90 passed; the files fail only for pack data the machine lacks, as at `main`; 0 of 20 runs failed; of 71 single-line changes of the review's lines, 55 fail a case on Linux x64 and 51 on Windows 11, and of the last two fixes' lines 9 of 13 and 10 of 11. |
 
-**Sources.** Rerail at `main` f41b8fe6c for each quoted intent. Each count from a run named in the description's "How you tested it".
+**Sources.** Rerail at `main` 7ff56e15e for each quoted intent. Each count from a run named in the description's "How you tested it".
 
 </details>
