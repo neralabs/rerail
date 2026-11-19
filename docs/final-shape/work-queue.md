@@ -5373,7 +5373,16 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   tail moves (WASI keeps sized blocks); the device's wrap still grows with the used extent (0266 §12); the count
   and a chunk's held bytes leave out free lists. hogql Metal 70.9-72.6 B (one 75.5 B), device refusals 2-6 stratum
   runs a run, against 76.6-81.1 B and 14-49.
-- **Open**: a new binary's first run (15 chunks, the cone's rounds); on Metal, a chunk's held bytes differ between
-  runs (14-36 MB for one chunk; the CPU's never), so the chunks at once differ (0445, "Measured"); (c), the threads'
+- **Explained** (2026-11-19): a new binary's first run is the build's image store cold (decision 0264, `rr::images::
+  store`, one store a build): the first run prepares the rules' images, phase 0 over the rules (the cone's rounds,
+  chunks of 675, 1,400 and 6,898 nodes, the relation `kind` inlined), and later runs read them. With a store of its
+  own a run (`RERAIL_IMAGE_STORE=project`) every run is that first run: the same 15 chunks and inline choices in 3
+  of 3, the corpus's own choices as a warm run's. Measurements set it (the harness did not).
+- **Partly done** (fa53bc6a6): a chunk's held bytes leave out a device run's own blocks, and the chunk drops the
+  device's copies of its dead relations on its thread as it ends; `FLUSHED` no longer keeps every wave.
+- **Open**: on Metal, a chunk's held bytes still differ between runs (one chunk 19-50 MB): a chunk's device strata
+  run in pool jobs on ~18 threads, and each thread's `RESIDENT` entry of a relation read in place holds its `Part`
+  until that thread's next device stratum. The user asked (2026-11-19) why the device caches relations at all:
+  analysis given, design not yet chosen. (c), the threads'
   coordination; the Metal peak footprint at big chunks (1.36-1.47 GB, the count's
   most 1.15 GB), whose largest rise t49 found in the guests' `ann_ctx` stratum.
