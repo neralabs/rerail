@@ -1141,6 +1141,21 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expect(gitsRegistry(inner)).toEqual(gitsRegistry(middle));
   });
 
+  it("reads no folder above the repository above such a checkout five folders down: a HEAD and a .git made there start no Git process", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    const inner = join(outer, "a", "b", "c", "d", "inner");
+    mkdirSync(inner, { recursive: true });
+    expect(registryPlacements(inner)).toBe(1);
+
+    await writeFile(join(root, "HEAD"), "ref: refs/heads/main\n");
+    mkdirSync(join(root, ".git"));
+    const started = vi.mocked(runGit).mock.calls.length;
+    for (let use = 0; use < 3; use += 1) expect(worktreeRegistry(inner)?.worktrees).toEqual(gitsRegistry(inner));
+    expect(vi.mocked(runGit).mock.calls.length).toBe(started);
+  });
+
   it("lists as Git does once the .git link of a checkout whose real path cannot be read names another repository's Git folder", async () => {
     const root = await temporaryRoot();
     const main = await gitFolderLinked(join(root, "main"), join(root, "main.git"));
