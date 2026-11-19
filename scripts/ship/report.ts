@@ -1,9 +1,11 @@
 // report.md of the ship / no-ship report (report-model.ts), in levels a reader opens only as far as the question needs:
-// the verdict on one line; per candidate one row per pack, naming its worst metric and the rule behind it; each pack's
-// metrics by corpus behind <details>, open where the pack fails; inside, the rules a slowdown is attributed to, and the
-// raw runs with the command that reproduces the cell. GitHub renders the <details>; every pack has an anchor.
+// the verdict on one line; per candidate one row per pack with its three slices side by side (A all rules × all files,
+// B one rule × all files, C all rules × one file); each pack's slices behind <details>, open where the pack fails:
+// A's metrics by corpus, B's fixed cost, rule statistics and worst rules, C's three files, and the raw runs with the
+// command that reproduces the cell. Every failing item names the phase that moved. GitHub renders the <details>; every
+// pack has an anchor.
 
-import { type CandidateItem, type CellItem, formatMs, type ItemStatus, type MetricItem, metricLabel, type PackItem, type Report, signedMs } from "./report-model.js";
+import { type CandidateItem, type CellItem, formatMs, type ItemStatus, type MetricItem, metricLabel, type OneFileItem, type OneRuleItem, type PackItem, type Report, type RuleItem, type RuleStatsItem, signedMs, type SliceStatus, type TimeItem } from "./report-model.js";
 import { COST_NOTE, costRows, multipleColumn } from "./metric-report.js";
 import type { WaitItem, WaitMetricItem, WaitsSection } from "./waits-model.js";
 
@@ -19,8 +21,8 @@ function times(ratio: number | null): string {
   return ratio === null || !Number.isFinite(ratio) ? "–" : `${ratio.toFixed(2)}×`;
 }
 
-function statusWord(status: ItemStatus | "no_baseline"): string {
-  return { fail: "**FAIL**", noisy: "pass ≈", pass: "pass", not_compared: "n/a", no_baseline: "no baseline" }[status];
+function statusWord(status: ItemStatus | SliceStatus | "incomplete" | "no_baseline"): string {
+  return { fail: "**FAIL**", noisy: "pass ≈", pass: "pass", not_compared: "n/a", missing: "**missing**", incomplete: "**incomplete**", no_baseline: "no baseline" }[status];
 }
 
 /** A ratio as a table shows it: bold when it fails, ≈ when it failed only at the median (noise). */
@@ -33,18 +35,34 @@ function anchor(p: PackItem): string {
   return `${p.candidate}-${p.pack}`;
 }
 
-function packRow(p: PackItem): string {
-  const column = (corpus: "fixtures" | "real"): string => {
-    const entry = p.summary.wall_cold[corpus];
-    if (entry === undefined) return "– | –";
-    if (!entry.completed) return "**did not finish** | –";
-    return `${entry.ratio === null ? "n/a" : markedRatio(entry.ratio, entry.status)} | ${times(entry.net_ratio)}`;
-  };
-  const worst = p.summary.worst === null ? "–" : `${p.summary.worst.corpus} · ${metricLabel(p.summary.worst.metric)} ${markedRatio(p.summary.worst.ratio, p.summary.worst.status)}`;
-  return `| [${p.pack}](#${anchor(p)}) | ${statusWord(p.status)} | ${column("fixtures")} | ${column("real")} | ${worst} | ${p.summary.hint ?? ""} |`;
+function percent(value: number | null): string {
+  return value === null ? "–" : `${Math.round(value * 100)}%`;
 }
 
-const ORDER: Record<PackItem["status"], number> = { fail: 0, noisy: 1, not_compared: 2, pass: 3, no_baseline: 4 };
+/** The summary table's row: each slice's figures side by side, the findings per slice, the box's load. */
+function packRow(p: PackItem): string {
+  const a = (corpus: "fixtures" | "real"): string => {
+    const entry = p.summary.wall_cold[corpus];
+    if (entry === undefined) return "–";
+    if (!entry.completed) return "**did not finish**";
+    return entry.ratio === null ? "n/a" : markedRatio(entry.ratio, entry.status);
+  };
+  const { B, C } = p.summary.slices;
+  const s = B.stats;
+  const fixed = (["fixtures", "real"] as const).filter((corpus) => corpus in B.fixed_wall).map((corpus) => times(B.fixed_wall[corpus] ?? null)).join(" · ") || "–";
+  const b = B.status === "missing" ? [statusWord("missing"), "–", "–", "–", "–"] : [String(B.rules), fixed, s === null ? "–" : `${times(s.median_ratio)} · ${times(s.p95_ratio)}`, s === null ? "–" : `${s.failing.length > 0 ? `**${s.failing.length}**` : "0"} / ${s.over_bar_before.length}`, s === null ? "–" : String(s.over_alert.length)];
+  const c = (["largest", "median", "small"] as const).map((label) => {
+    const file = C.files.find((f) => f.label === label);
+    return file === undefined ? (C.status === "missing" ? statusWord("missing") : "–") : markedRatio(file.worst_ratio, file.metrics_status);
+  });
+  const findingsA = { same: "same", no_worse: "no worse", worse: "**worse**", not_compared: "–" }[p.summary.findings];
+  const findingsB = B.findings.identical + B.findings.differing === 0 ? "–" : B.findings.differing > 0 ? `**${B.findings.differing} differ**` : `${B.findings.identical} same`;
+  const findingsC = C.files.length === 0 ? "–" : C.files.some((f) => f.findings_same === false) ? `**${C.files.filter((f) => f.findings_same === false).length} differ**` : `${C.files.filter((f) => f.findings_same === true).length} same`;
+  const load = `${p.summary.load.load_max === null ? "–" : p.summary.load.load_max.toFixed(1)} · ${percent(p.summary.load.sibling_busy_max)}`;
+  return `| [${p.pack}](#${anchor(p)}) | ${statusWord(p.status)} | ${a("fixtures")} | ${a("real")} | ${b.join(" | ")} | ${c.join(" | ")} | ${findingsA} · ${findingsB} · ${findingsC} | ${load} | ${(p.summary.hint ?? "").replaceAll("|", "\\|")} |`;
+}
+
+const ORDER: Record<PackItem["status"], number> = { fail: 0, incomplete: 1, noisy: 2, not_compared: 3, pass: 4, no_baseline: 5 };
 
 function sortedPacks(packs: readonly PackItem[]): PackItem[] {
   return [...packs].sort((a, b) => ORDER[a.status] - ORDER[b.status] || (b.summary.worst?.ratio ?? 0) - (a.summary.worst?.ratio ?? 0) || (a.pack < b.pack ? -1 : 1));
@@ -101,28 +119,84 @@ function cellMetric(cell: CellItem | undefined, metric: string): string {
   return m === undefined ? "–" : `${cell.chunked === null || m.status === "not_compared" ? "" : "chunked "}${metricText(m)}`;
 }
 
-function drillSection(cell: CellItem): string[] {
-  const drill = cell.drill;
-  if (drill === null) return [];
-  const measure = drill.measure === "evaluate_ms" ? "in-process evaluation time" : "process wall time";
-  const row = (r: (typeof drill.rules)[number]): string => {
-    const share = r.share === null ? "" : ` (${r.share < 0 ? "−" : ""}${Math.abs(Math.round(r.share * 100))}%)`;
-    return `| \`${r.rule}\` | ${figure("ms", r.baseline_ms)} | ${figure("ms", r.candidate_ms)} | ${r.added_ms === null ? "a side failed" : `${signedMs(r.added_ms)}${share}`} | ${multipleColumn(r)} |`;
-  };
-  const header = ["| Rule | Baseline | Candidate | Added | Multiple of the median rule (baseline → candidate) |", "|---|---|---|---|---|"];
-  const startup = drill.startup.baseline_ms === null && drill.startup.candidate_ms === null ? "" : ` Empty rule set: ${figure("ms", drill.startup.baseline_ms)} → ${figure("ms", drill.startup.candidate_ms)}.`;
+function timeText(t: TimeItem | undefined): string {
+  if (t === undefined || t.status === "not_compared") return "–";
+  const confirm = t.confirm === null ? "" : `; confirmation ${times(t.confirm.ratio)}`;
+  const floor = t.time_status === "under_floor" ? " (under the floor)" : "";
+  return `${figure("ms", t.baseline_ms)} → ${figure("ms", t.candidate_ms)} ${markedRatio(t.ratio, t.status)}${floor}${confirm}`;
+}
+
+function ruleRow(r: RuleItem): string {
+  const share = r.share === null ? "" : ` (${r.share < 0 ? "−" : ""}${Math.abs(Math.round(r.share * 100))}%)`;
+  const findings = r.findings === null ? "–" : r.findings.status === "pass" ? "same" : `**${r.findings.baseline_only} / ${r.findings.candidate_only} differ**`;
+  return `| \`${r.rule}\` | ${timeText(r.time)} | ${r.added_ms === null ? "a side failed" : `${signedMs(r.added_ms)}${share}`} | ${statusWord(r.status)} | ${findings} | ${(r.locator ?? (r.completion.status === "fail" ? r.completion.reason : "")).replaceAll("|", "\\|")} | ${multipleColumn(r)} |`;
+}
+
+const RULE_HEADER = ["| Rule | compile + evaluate, baseline → candidate | Added | Status | Findings | Phase that moved | Multiple of the median rule |", "|---|---|---|---|---|---|---|"];
+
+function statsText(s: RuleStatsItem): string {
+  return `ratio median ${times(s.median_ratio)}, p95 ${times(s.p95_ratio)}; over the bar before confirmation and the floor: ${s.over_bar_before.length}; counted (still over after confirmation, moved at least the floor): ${s.failing.length > 0 ? `**${s.failing.length}**` : "0"}; over 1.5× (moved at least the floor): ${s.over_alert.length}`;
+}
+
+/** Slice B on one corpus: the fixed cost, the rule statistics, the worst rules, every rule over the bar, all rules. */
+function oneRuleSection(b: OneRuleItem): string[] {
+  const label = `Slice B, ${CORPUS_LABEL[b.corpus].toLowerCase()}`;
+  if (b.reason !== null) return [`${label}: ${b.reason}.`, ""];
+  const fixed = b.fixed;
+  const time = (name: string): TimeItem | undefined => fixed?.times.find((t) => t.name === name);
+  const worst = b.stats.worst.map((w) => `\`${w.rule}\` ${formatMs(w.baseline_ms)} → ${formatMs(w.candidate_ms)} ${times(w.ratio)}`).join(", ");
+  const over = b.rules.filter((r) => r.time.over_before);
   const lines = [
-    `<details${cell.status === "fail" ? " open" : ""}><summary>Rules, ${CORPUS_LABEL[cell.corpus].toLowerCase()}: ${cell.hint ?? `${signedMs(drill.total_added_ms)} in all`}</summary>`,
+    `<details${b.status === "fail" ? " open" : ""}><summary>${label}: ${statusWord(b.status)} · ${b.rules.length} rules · fixed cost ${times(time("wall-cold")?.ratio ?? null)} · ${b.stats.failing.length} counted over the bar${b.hint === null ? "" : ` · ${b.hint}`}</summary>`,
     "",
-    `Each rule alone, ${drill.reps} cold run${drill.reps === 1 ? "" : "s"} per side (median), ${measure}.${startup} Added in all: ${signedMs(drill.total_added_ms)}.`,
+    `Each rule alone and the empty rule set, ${b.runs_per_side} cold run${b.runs_per_side === 1 ? "" : "s"} per side (median), alternating, a fresh store each; a rule's time is product-run.ts's compile + evaluate.${b.unmeasured.length > 0 ? ` **Not timed on both sides: ${b.unmeasured.map((r) => `\`${r}\``).join(", ")}.**` : ""}`,
     "",
-    ...header,
-    ...drill.rules.slice(0, TOP_RULES).map(row),
+    "| Fixed cost (empty rule set) | Baseline → candidate |",
+    "|---|---|",
+    ...["wall-cold", "load", "compile", "evaluate"].map((name) => `| ${name === "wall-cold" ? "wall cold" : name} | ${timeText(time(name))} |`),
+    ...(fixed?.locator == null ? [] : [`| phase that moved | ${fixed.locator} |`]),
+    ...(fixed !== null && fixed.completion.status === "fail" ? [`| completed | **no**: ${fixed.completion.reason.replaceAll("|", "\\|")} |`] : []),
+    "",
+    `Rules: ${statsText(b.stats)}. Findings: ${b.findings.identical} identical, ${b.findings.differing > 0 ? `**${b.findings.differing} differ**` : "0 differ"}${b.findings.not_compared > 0 ? `, ${b.findings.not_compared} not compared` : ""}. Load (1-minute) median ${b.load.load_median ?? "–"}, max ${b.load.load_max ?? "–"} over ${b.load.runs} runs; busiest idle sibling CPU ${b.load.sibling_busy_max === null ? "– (not pinned)" : percent(b.load.sibling_busy_max)}.`,
+    "",
+    `${TOP_RULES} worst rules: ${worst || "–"}.`,
     "",
   ];
-  if (drill.rules.length > TOP_RULES) lines.push(`<details><summary>All ${drill.rules.length} rules</summary>`, "", ...header, ...drill.rules.map(row), "", "</details>", "");
+  if (over.length > 0) lines.push(`<details${b.status === "fail" ? " open" : ""}><summary>${over.length} rule${over.length === 1 ? "" : "s"} over the bar before confirmation and the floor</summary>`, "", ...RULE_HEADER, ...over.map(ruleRow), "", "</details>", "");
+  if (b.rules.length > 0) lines.push(`<details><summary>All ${b.rules.length} rules, the largest added time first</summary>`, "", ...RULE_HEADER, ...b.rules.map(ruleRow), "", "</details>", "");
   lines.push("</details>", "");
   return lines;
+}
+
+/** Slice C: the three files side by side, one column each. */
+function oneFileSection(files: readonly OneFileItem[]): string[] {
+  if (files.length === 0) return [];
+  const head = ["Metric", ...files.map((f) => `${f.label}: \`${f.path}\` (${(f.bytes / 1024).toFixed(1)} KB)`)];
+  const metricCell = (f: OneFileItem, metric: string): string => {
+    if (f.reason !== null) return f.reason;
+    const m = f.metrics.find((x) => x.metric === metric);
+    return m === undefined ? "–" : `${metricText(m)}${m.locator === null || m.status !== "fail" ? "" : ` — ${m.locator}`}`;
+  };
+  const findings = (f: OneFileItem): string => (f.findings === null ? "–" : f.findings.status === "pass" ? `same (${f.findings.both})` : `**${f.findings.baseline_only} baseline only, ${f.findings.candidate_only} candidate only**`);
+  const completed = (f: OneFileItem): string => (f.completion === null ? (f.reason ?? "–") : f.completion.status === "fail" ? `**no**: ${f.completion.reason}` : f.completion.kind === "both-failed" ? `neither side: ${f.completion.reason}` : "both");
+  const load = (f: OneFileItem): string => `${[...f.load.baseline, ...f.load.candidate].map((l) => l ?? "–").join(", ") || "–"}; sibling ${f.sibling_busy_max === null ? "–" : percent(f.sibling_busy_max)}`;
+  const row = (label: string, cell: (f: OneFileItem) => string): string => `| ${label} | ${files.map((f) => cell(f).replaceAll("|", "\\|")).join(" | ")} |`;
+  return [
+    `<details${files.some((f) => f.status === "fail") ? " open" : ""}><summary>Slice C: ${files.map((f) => `${f.label} ${statusWord(f.status)}`).join(" · ")}</summary>`,
+    "",
+    "All of the pack's rules on one file of its real-code corpus, cold then warm on the same store, alternating.",
+    "",
+    `| ${head.join(" | ")} |`,
+    `|${head.map(() => "---").join("|")}|`,
+    ...["wall-cold", "wall-warm", "cpu-cold", "cpu-warm", "rss-cold", "rss-warm"].map((metric) => row(metricLabel(metric), (f) => metricCell(f, metric))),
+    row("Findings", findings),
+    row("Completed", completed),
+    row("Rules failing on the candidate only", (f) => (f.rule_failures.length === 0 ? "–" : f.rule_failures.map((r) => `\`${r.rule}\`: ${r.reason}`).join("; "))),
+    row("Load at each run; busiest sibling", load),
+    "",
+    "</details>",
+    "",
+  ];
 }
 
 function rawSection(cell: CellItem): string[] {
@@ -162,9 +236,13 @@ function packSection(p: PackItem, capsVary: boolean): string[] {
     })
     .filter((x) => x !== null);
   const findings = { same: "findings same", no_worse: "findings no worse", worse: "**findings worse**", not_compared: "findings not compared" }[p.summary.findings];
-  const summary = [`<b>${p.pack}: ${p.status === "fail" ? "FAIL" : p.status === "noisy" ? "pass ≈" : p.status.replace("_", " ")}</b>`, ...glance, findings, p.summary.completed ? "completed" : "**did not finish**"].join(" · ");
-  const lines = [`<a id="${anchor(p)}"></a>`, `<details${p.status === "fail" ? " open" : ""}><summary>${summary}</summary>`, ""];
+  const slices = (["A", "B", "C"] as const).map((slice) => `${slice} ${statusWord(p.summary.slices[slice].status)}`);
+  const summary = [`<b>${p.pack}: ${statusWord(p.status).replaceAll("*", "")}</b>`, ...slices, ...glance, findings, p.summary.completed ? "completed" : "**did not finish**"].join(" · ");
+  const open = p.status === "fail" || p.status === "incomplete";
+  const lines = [`<a id="${anchor(p)}"></a>`, `<details${open ? " open" : ""}><summary>${summary}</summary>`, ""];
   if (p.status === "no_baseline") return [...lines, "The baseline ships no such pack.", "", "</details>", ""];
+  if (p.incomplete.length > 0) lines.push("**Incomplete**: it never passes while a slice is missing.", "", ...p.incomplete.map((m) => `- slice ${m.slice}: ${m.reason}`), "");
+  lines.push("Slice A, all rules × all files:", "");
   const head = ["Metric", ...corpora.map((corpus) => CORPUS_LABEL[corpus])];
   lines.push(`| ${head.join(" | ")} |`, `|${head.map(() => "---").join("|")}|`);
   for (const metric of ["wall-cold", "wall-warm", "cpu-cold", "cpu-warm", "rss-cold", "rss-warm"]) lines.push(`| ${metricLabel(metric)} | ${corpora.map((corpus) => cellMetric(cell(corpus), metric)).join(" | ")} |`);
@@ -176,7 +254,8 @@ function packSection(p: PackItem, capsVary: boolean): string[] {
     lines.push(`<details open><summary><b>${p.coverage.missing.length} rule${p.coverage.missing.length === 1 ? "" : "s"} the baseline ships cannot run</b></summary>`, "", ...p.coverage.missing.map((m) => `- \`${m.rule}\`: ${m.reason}`), "", "</details>", "");
   }
   if (p.coverage.extra.length > 0) lines.push(`Rules only the candidate ships: ${p.coverage.extra.map((r) => `\`${r}\``).join(", ")}.`, "");
-  for (const c of p.cells) lines.push(...drillSection(c));
+  for (const b of p.one_rule) lines.push(...oneRuleSection(b));
+  lines.push(...oneFileSection(p.one_file));
   for (const c of p.cells) if (c.metrics.length > 0) lines.push(...rawSection(c));
   lines.push("</details>", "");
   return lines;
@@ -187,9 +266,9 @@ function itemsTable(title: string, items: CandidateItem["failures"], open: boole
   return [
     `<details${open ? " open" : ""}><summary>${title}</summary>`,
     "",
-    "| Item | Reason | Biggest contributor |",
-    "|---|---|---|",
-    ...items.map((f) => `| \`${f.id}\` | ${f.reason.replaceAll("|", "\\|")} | ${(f.hint ?? "").replaceAll("|", "\\|")} |`),
+    "| Item | Slice | Reason | Phase that moved | Biggest contributor |",
+    "|---|---|---|---|---|",
+    ...items.map((f) => `| \`${f.id}\` | ${f.slice ?? "–"} | ${f.reason.replaceAll("|", "\\|")} | ${(f.locator ?? "–").replaceAll("|", "\\|")} | ${(f.hint ?? "").replaceAll("|", "\\|")} |`),
     "",
     "</details>",
     "",
@@ -201,19 +280,19 @@ function candidateSection(c: CandidateItem, capsVary: boolean): string[] {
   const lines = [
     `## ${c.candidate}: ${c.status}`,
     "",
-    `${c.description.charAt(0).toUpperCase()}${c.description.slice(1)}. ${c.counts.failing_packs} of ${c.counts.packs} packs fail${c.counts.noisy_packs > 0 ? `; ${c.counts.noisy_packs} pass only after confirmation (≈)` : ""}.`,
+    `${c.description.charAt(0).toUpperCase()}${c.description.slice(1)}. ${c.counts.failing_packs} of ${c.counts.packs} packs fail${c.counts.incomplete_packs > 0 ? `; ${c.counts.incomplete_packs} incomplete (a slice missing)` : ""}${c.counts.noisy_packs > 0 ? `; ${c.counts.noisy_packs} pass only after confirmation (≈)` : ""}.`,
     "",
-    "| Pack | Status | Fixtures, wall cold | Fixtures, net | Real code, wall cold | Real code, net | Worst metric | Biggest contributor |",
-    "|---|---|---|---|---|---|---|---|",
+    "| Pack | Status | A fixtures, wall cold | A real code, wall cold | B rules | B fixed cost, wall cold (fixtures · real) | B rule ratio, median · p95 | B over 1.15×, counted / before filter | B over 1.5× | C largest | C median | C small | Findings A · B · C | Load max · busiest sibling | Biggest contributor |",
+    "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ...packs.map(packRow),
     "",
-    "Bold: fails the bar (each failing metric shows its confirmation ratio when confirmation runs were made). ≈: failed at the median and passed its confirmation runs; reported, not counted. Net: wall cold less each side's start-up (its empty rule set on the same corpus), candidate over baseline; reported, not judged.",
+    "Bold: fails the bar (each failing figure shows its confirmation ratio when confirmation runs were made). ≈: failed at the median and passed its confirmation runs; reported, not counted. B: each rule alone, its compile + evaluate time; counted over the bar only when still over after confirmation and moved by at least 20 ms. C: each file's worst metric ratio. Load: the highest 1-minute load at any run's start, and the busiest idle sibling CPU, over all three slices.",
     "",
     ...itemsTable(`All ${c.failures.length} failing items`, c.failures, false),
     ...itemsTable(`${c.noisy.length} noisy items: failed at the median, passed confirmation`, c.noisy, false),
   ];
-  for (const p of packs.filter((p) => p.status === "fail" || p.status === "noisy")) lines.push(...packSection(p, capsVary));
-  const rest = packs.filter((p) => p.status !== "fail" && p.status !== "noisy");
+  for (const p of packs.filter((p) => p.status === "fail" || p.status === "incomplete" || p.status === "noisy")) lines.push(...packSection(p, capsVary));
+  const rest = packs.filter((p) => p.status !== "fail" && p.status !== "incomplete" && p.status !== "noisy");
   if (rest.length > 0) lines.push(`<details><summary>${rest.length} other packs</summary>`, "", ...rest.flatMap((p) => packSection(p, capsVary)), "</details>", "");
   return lines;
 }
@@ -221,10 +300,12 @@ function candidateSection(c: CandidateItem, capsVary: boolean): string[] {
 function headline(c: CandidateItem): string {
   const worst = sortedPacks(c.packs)[0];
   const lead =
-    c.status === "FAIL" && worst !== undefined && worst.summary.worst !== null
-      ? ` · worst: ${worst.pack} ${worst.summary.worst.corpus} ${metricLabel(worst.summary.worst.metric)} ${times(worst.summary.worst.ratio)}${worst.summary.hint === null ? "" : ` (${worst.summary.hint})`}`
-      : "";
-  return `- **${c.candidate}: ${c.status}** · ${c.counts.failing_packs} of ${c.counts.packs} packs fail${lead}`;
+    c.status !== "FAIL" || worst === undefined
+      ? ""
+      : worst.summary.worst !== null && worst.summary.worst.status === "fail"
+        ? ` · worst: ${worst.pack} ${worst.summary.worst.corpus} ${metricLabel(worst.summary.worst.metric)} ${times(worst.summary.worst.ratio)}${worst.summary.hint === null ? "" : ` (${worst.summary.hint})`}`
+        : ` · worst: ${worst.pack}${worst.summary.hint === null ? "" : ` (${worst.summary.hint})`}`;
+  return `- **${c.candidate}: ${c.status}** · ${c.counts.failing_packs} of ${c.counts.packs} packs fail${c.counts.incomplete_packs > 0 ? `, ${c.counts.incomplete_packs} incomplete` : ""}${lead}`;
 }
 
 function runSection(report: Report, baseline: string): string[] {
@@ -235,7 +316,7 @@ function runSection(report: Report, baseline: string): string[] {
     `- Started ${report.run.started_at ?? "–"}, reported ${report.run.finished_at}, by ${report.run.invoked_by ?? "an unknown caller"}.`,
     `- Command: \`${report.run.command ?? "–"}\`; harness at \`${short(report.run.harness_sha)}\`.`,
     `- Baseline ${baseline}; candidate \`${short(report.candidate.sha)}\`.`,
-    `- Bar: ${report.bar.runs_per_side === 1 ? "each metric's single run per side" : `each metric's median of ${report.bar.runs_per_side} runs`} at most ${report.bar.max_ratio.toFixed(2)}× the baseline's; ${report.bar.confirm_runs > 0 ? `a failing cell runs ${report.bar.confirm_runs} confirmation repetition${report.bar.confirm_runs === 1 ? "" : "s"}` : "no confirmation runs were recorded"}; ${report.bar.drill_reps > 0 ? `a confirmed slowdown is attributed to rules with ${report.bar.drill_reps} cold runs per rule and side` : "rule attribution, where shown, states its own runs"}.`,
+    `- Bar: per slice, every figure at most ${report.bar.max_ratio.toFixed(2)}× the baseline's. A: ${report.bar.runs_per_side === 1 ? "each metric's single run per side" : `each metric's median of ${report.bar.runs_per_side} runs per side`}. B: each rule alone and the empty rule set, ${report.bar.rule_runs > 0 ? `${report.bar.rule_runs} cold runs per side` : "its recorded cold runs"}; a rule counts only when still over after confirmation and moved by at least ${report.bar.rule_floor_ms} ms; over ${report.bar.rule_alert_ratio.toFixed(1)}× is counted apart. C: ${report.bar.file_runs > 0 ? `${report.bar.file_runs} runs per side` : "its recorded runs"} of each file, cold then warm. ${report.bar.confirm_runs > 0 ? `Anything over runs ${report.bar.confirm_runs} confirmation repetition${report.bar.confirm_runs === 1 ? "" : "s"} per side` : "No confirmation runs were recorded"}.`,
     `- CPUs ${report.bar.pinned_cpus.join(" / ") || "–"} (${report.bar.threads.join(", ") || "–"} threads, one per physical core, siblings idle where the platform pins); caps ${report.bar.caps.memory.join(", ") || "–"} memory, ${report.bar.caps.time_s.join(", ") || "–"} s.`,
     "",
   ];
@@ -408,8 +489,9 @@ export function renderReport(report: Report): string {
     ...report.candidates.map(headline),
     ...(report.waits === null ? [] : [waitsHeadline(report.waits)]),
     "",
-    `Candidate \`${report.candidate.sha.slice(0, 10)}\` against baseline ${baseline} · gate: ${[...report.verdict.gate, ...(report.waits === null ? [] : ["waits"])].join(", ")} · bar: every metric ≤ ${report.bar.max_ratio.toFixed(2)}× the baseline, findings no worse, every run completes.`,
+    `Candidate \`${report.candidate.sha.slice(0, 10)}\` against baseline ${baseline} · gate: ${[...report.verdict.gate, ...(report.waits === null ? [] : ["waits"])].join(", ")} · bar, per pack and slice (A all rules × all files, B each rule alone, C all rules × one file): every figure ≤ ${report.bar.max_ratio.toFixed(2)}× the baseline (a B rule counts when still over after confirmation and moved ≥ ${report.bar.rule_floor_ms} ms), findings the same, every run completes; a pack missing a slice is incomplete.`,
     "",
+    ...(report.verdict.partial.length === 0 ? [] : [`**Partial run**: ${report.verdict.partial.join("; ")}. A partial verdict is never PASS.`, ""]),
     // Runs measured with less than Linux's pinning and kernel caps say so before any figure is read.
     ...report.bar.methods.filter((m) => m.gaps.length > 0).map((m) => `Measured on ${m.method.platform} (${m.runs} runs): ${m.gaps.map((gap) => gap.split(":")[0]).join("; ")}; details under "Run, inputs and method".`),
     ...(report.bar.methods.some((m) => m.gaps.length > 0) ? [""] : []),

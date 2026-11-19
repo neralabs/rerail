@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The shippability bar: a candidate engine is no worse than main's on every rule pack main ships. One run gives two
-// verdicts, one per candidate, each PASS or FAIL per pack, corpus and metric (docs in scripts/README.md, "ship/"):
+// verdicts, one per candidate, each PASS, FAIL, INCOMPLETE or PARTIAL (docs in scripts/README.md, "ship/"):
 //
 //   ships  the candidate checkout's engine on its packs as they ship (packs/<pack>/rules/*.json), through the product's
 //          own path (conformance/languages/runner.ts evaluateWorkspace, as the candidate has it: product-run.ts);
@@ -19,20 +19,44 @@
 //       @neralabs/rerail@<version>'s prebuilt engines and JavaScript put in place, so the baseline is never built:
 //       `npm ci` is all it needs. Needs git, npm and the pack data cache (AWS); runs anywhere.
 //   node --import tsx scripts/ship/shipbar.ts run --baseline <dir | ref> --out <dir> [--candidate <dir>] [--corpora <dir>]
-//       [--packs a,b] [--corpus fixtures|real|all] [--runs 1] [--cpus 8-11] [--mem-cap 24G] [--time-cap 2700]
-//       [--pack-cap <pack>=<memory>,<seconds>]... [--rr-chunk 50] [--candidates ships] [--gate ships] [--confirm 1]
-//       [--drill 2] [--drill-candidates ships] [--build]
-//       Defaults are the quick run: one run per side, a failing cell run once more, the shipped packs only (add
-//       `--candidates ships,rr` for the `.rerail` rewrites, `--runs 3 --confirm 3` for medians).
+//       [--packs a,b] [--corpus fixtures|real|all] [--runs 1] [--rule-runs 2] [--file-runs 3] [--confirm 3]
+//       [--cpus 8-11] [--mem-cap 24G] [--time-cap 2700] [--pack-cap <pack>=<memory>,<seconds>]... [--rr-chunk 50]
+//       [--candidates ships] [--gate ships] [--build]
+//       Measures the three slices of every pack it is given, always (Method), the shipped packs only by default (add
+//       `--candidates ships,rr` for the `.rerail` rewrites, which measure slice A only and so never PASS).
 //       Linux, macOS or Windows (platform.ts: how each pins, caps and measures, recorded in every run row): prepares what
 //       is missing, measures every pack and corpus, then writes the report. Resumable: a run already in a cell's logs is
-//       not made again.
+//       not made again. --packs and --corpus narrow the run: its verdict is then PARTIAL, never PASS.
 //       --pack-cap raises (or lowers) one pack's caps for both sides, say python=56G,14400 so a slow run that finishes
 //       gives a number; every run records the caps it ran under. Mind the box's memory: a 56G cap leaves no room for
 //       another heavy stream on a 64 GB box.
 //   node --import tsx scripts/ship/shipbar.ts verdict --baseline <dir> --out <dir> [--candidate <dir>] [--corpora <dir>]
-//       [--packs a,b] [--candidates ships,rr] [--gate ships,rr]
-//       report.json and report.md from the runs under <out>/runs (several runs' directories merged, say).
+//       [--packs a,b] [--corpus fixtures|real|all] [--candidates ships,rr] [--gate ships,rr]
+//       report.json and report.md from the runs under <out>/runs (several runs' directories merged, say: one per box,
+//       each box given some packs). Narrowed by --packs or --corpus, the verdict is PARTIAL; a pack whose runs lack a
+//       slice is INCOMPLETE.
+//   node --import tsx scripts/ship/shipbar.ts fanout --hosts build-1,build-2 --baseline <release:version | ref | dir>
+//       --out <dir> [--candidate <dir>] [--corpora <dir>] [--packs a,b] [--name <work dir on the hosts>]
+//       [--workers 0-3/4-7/8-11/12-15] [--stores /dev/shm/shipbar-<name>] [--runs 3] [--rule-runs 2] [--file-runs 3]
+//       [--confirm 3] [--mem-cap 24G] [--time-cap 2700] [--pack-cap <pack>=<memory>,<seconds>]... [--poll 180] [--from <phase>]
+//       [--ssh "<remote shell command>"]
+//       From the Mac, the whole bar over Linux hosts (fanout.ts): prepare (as `prepare`); plan every unit (A by
+//       repetition, B by chunks of rules, C by file, none longer than about fanout.ts UNIT_BUDGET_S) and assign them to
+//       the hosts longest first; sync the baseline, the candidate, the corpora and this harness to ~/work/<name>/ on
+//       each host (rsync over the remote shell: `ssh`, or --ssh / SHIPBAR_SSH, a wrapper taking `<host> <command>` as
+//       ssh does); build both sides on the first host (`npm ci --ignore-scripts && npm
+//       run build:native`); copy the two engines to the others (sha256 checked) and `npm ci` there; on each host one
+//       detached `host` process measures (then confirms) with a worker per CPU set; pull every host's out/ and merge it
+//       into <out>/runs; report. Each phase's start and end are in <out>/fanout/state.json, and a finished phase is not
+//       made again when the command is run again (--from <phase> makes it and every later one again). Both checkouts
+//       must hold their Git LFS files. Linux hosts only; the Mac runs prepare and the report, and polls.
+//   node --import tsx scripts/ship/shipbar.ts host --plan <plan.json> --host <name> --workers 0-3/4-7 (and run's options)
+//   node --import tsx scripts/ship/shipbar.ts work --plan <plan.json> --host <name> --worker <i> --cpus 0-3 --phase measure|confirm
+//       A fan-out's processes on a host: `host` verifies the corpora once, then starts a `work` process per CPU set
+//       and waits for them, for measure then confirm. Each worker takes this host's units longest first, each claimed by
+//       an atomic mkdir of out/claims/<phase>/<unit>, and runs it through run's own code into the same cell logs, so
+//       `verdict` over the merged runs/ gives the report. Slice B and C confirm their rules and files as they go; the
+//       confirm phase confirms slice A's cells, whose repetitions all ran on this host.
 //   node --import tsx scripts/ship/shipbar.ts waits --prepare --out <dir> [--record]
 //       the replayed session (scripts/ship/waits.json) built from this checkout's git history into <out>/sessions/,
 //       checked against its pinned hash (--record pins it). Runs where the history is; copy <out>/sessions over.
@@ -46,23 +70,42 @@
 //
 // Exit status of run and verdict: 0 only when every candidate in --gate (default: every one in --candidates) passes.
 //
-// Method. Per pack and corpus, each side runs N times, interleaved (the side order rotates each repetition), all on
-// the same --cpus (one hardware thread per physical core, the cores' other threads left idle and their load recorded;
-// macOS cannot pin, and its runs say so), each process under the same memory cap and time cap, with RERAIL_THREADS the
-// number of --cpus. Cold: a fresh, empty RERAIL_TAPE_CACHE store and engine temporary directory; warm: a second process
-// on that store right after. A side that fails a cold run makes no further run of that
-// pack and corpus. Each metric is the median of the side's completed runs: wall, CPU (user + sys) and peak RSS, cold
-// and warm, each failing above 1.10 times main's. A cell whose median fails runs --confirm more repetitions of main and
-// that candidate (confirm.jsonl): a metric failing again is confirmed, one passing is noisy, reported and not counted.
-// A confirmed slowdown of a candidate in --drill-candidates is then attributed to rules (rules.jsonl): each rule alone,
-// and an empty rule set, --drill cold runs per side, alternating; the product path's in-process evaluation time, or
-// process wall time on the `.rerail` side. Findings come from each side's first cold run on the same corpus
-// directory and are scored by one function (verdict.ts) against the tool's upstream recording with main's
-// divergences.json, on (rule, path, line, code) keys: the candidate keeps every true positive of main's and adds no
-// false positive main lacks. Real code has no truth: its agreement is reported and does not gate. Each product side
-// also runs an empty rule set, cold and warm (fixed.jsonl), and each corpus's workload is counted once (workload/):
-// the report shows start-up, net times, phases and workload beside the gross figures, never judged (metric.ts). The
-// report (report-model.ts, schema ship-no-ship/report/v1) is rendered as Markdown by report.ts.
+// Method. The benchmark is three slices per pack, all always measured, candidate against main:
+//
+//   A  all rules × all files: per corpus (fixtures, real code), runs/<pack>/<corpus>/runs.jsonl;
+//   B  one rule × all files: per corpus, the empty rule set and every rule main ships that the candidate ships, each
+//      alone, runs/<pack>/<corpus>/one-rule.jsonl;
+//   C  all rules × one file: three files of the pack's real-code corpus by bytes among its source extensions
+//      (verdict.ts SOURCE_EXTENSIONS): the largest, the median and a small one (5th percentile),
+//      runs/<pack>/one-file/<label>/runs.jsonl, the files named in runs/<pack>/one-file/files.json.
+//
+// Every process runs on the same --cpus (one hardware thread per physical core, the cores' other threads left idle
+// and their load recorded with the box's load average in every row; macOS cannot pin, and its runs say so), under the
+// same memory cap and time cap, with RERAIL_THREADS the number of --cpus. Cold: a fresh, empty RERAIL_TAPE_CACHE store
+// and engine temporary directory; warm: a second process on that store right after. The side order alternates each
+// repetition. A side that fails a cold run makes no further run of that cell. The bar, per slice (verdict.ts):
+//
+//   A  each side --runs times cold then warm; each metric (wall, CPU (user + sys) and peak RSS, cold and warm) is the
+//      median of the side's completed runs and fails above 1.15 times main's. Findings come from each side's first
+//      cold run and are scored against the tool's upstream recording with main's divergences.json, on (rule, path,
+//      line, code) keys: the candidate keeps every true positive of main's and adds no false positive main lacks. Real
+//      code has no truth: its agreement is reported and does not gate.
+//   B  each rule alone --rule-runs cold runs per side on a fresh store each; its time is product-run.ts's in-process
+//      compile + evaluate (median), failing above 1.15 times main's only when still over after its confirmation runs
+//      and moved by at least 20 ms (verdict.ts RULE_FLOOR_MS; a rule moved by less is not confirmed: it cannot count).
+//      The empty rule set is the fixed cost: its cold wall and its load, compile and evaluate times, each judged
+//      alike. Each rule's findings must be the same set on both sides, and the candidate may not fail a rule main runs.
+//   C  each file --file-runs times per side, cold then warm on the same store, judged as A's metrics are; its findings
+//      must be the same set on both sides.
+//
+// Anything over the bar runs --confirm more repetitions per side (A: the cell, confirm.jsonl; B: the rule,
+// one-rule-confirm.jsonl; C: the file, confirm.jsonl): a figure passing them is noisy, reported and not counted. Every
+// run must complete where main's does, and every rule main ships must run on the candidate. Every failing item names
+// the phase that moved (load, compile, evaluate, store, startup: verdict.ts locate), from product-run.ts's phases and
+// the empty rule set's runs. A pack missing any slice is INCOMPLETE and never passes. Each product side also runs an
+// empty rule set over each A corpus, cold and warm (fixed.jsonl), and each corpus's workload is counted once
+// (workload/): the report shows start-up, net times, phases and workload beside the gross figures, never judged
+// (metric.ts). The report (report-model.ts, schema ship-no-ship/report/v2) is rendered as Markdown by report.ts.
 //
 // A `.rerail` pack run that does not complete is recorded with how far it got (policies started, elapsed, peak RSS); then
 // its rules run in fixed chunks of --rr-chunk (0: none), each chunk its own process under the same caps, cold then
@@ -70,14 +113,16 @@
 // report; its completion still fails. Every completed `.rerail` run records whether run-policies ran its policies combined
 // (groups of several, the result's `runs[].together`) or alone, and any fallback the engine printed.
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join, matchesGlob, relative, resolve, sep } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { engineJson } from "./engine-json.js";
+import { claimName, detached, type Done, mergeTrees, type PackInput, type Plan, planFanout, type PlannedUnit, remoteShell, retry, rsync as rsyncOver, ssh as sshOver } from "./fanout.js";
 import { cachedWorkload, type CellCost, cellCost, engineBinary, type Phases, readPhases, readWorkload, ruleSet } from "./metric.js";
 import { busiest, cpuList, LINUX_METHOD, type MachineInfo, methodCounts, openPlatform, parseProcStat, type Platform, type RunMethod } from "./platform.js";
 import { buildReport, type RunMeta } from "./report-model.js";
@@ -94,16 +139,23 @@ import {
   compareMetric,
   type CompletionVerdict,
   type Divergence,
+  type FileLabel,
   findingKey,
   grouping,
   type FindingsVerdict,
+  judgeTime,
+  locate,
   type MetricVerdict,
   median,
   missingRules,
+  needsConfirmation,
   newRuleFailures,
+  pickFiles,
   type RunOutcome,
   scoreFindings,
-  TOLERANCE_PERCENT,
+  SOURCE_EXTENSIONS,
+  type TimeVerdict,
+  SLICES_TOLERANCE_PERCENT,
 } from "./verdict.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -567,8 +619,8 @@ interface RunRow {
   evaluateMs: number | null;
   /** product-run.ts's load, compile and evaluate times (metric.ts); null on the `.rerail` side or a failure. */
   phases?: Phases | null;
-  /** rules.jsonl: the rule this run timed alone, "(none)" for the empty rule set; null elsewhere. */
-  drillRule: string | null;
+  /** Slice B (one-rule*.jsonl): the rule this run timed alone, "(none)" for the empty rule set; null elsewhere. */
+  rule: string | null;
 }
 
 interface Settings {
@@ -585,17 +637,31 @@ interface Settings {
   memCap: string;
   timeCapS: number;
   packCaps: Record<string, { memCap: string; timeCapS: number }>;
-  /** Confirmation repetitions of a cell whose median fails (0: none). */
+  /** Confirmation repetitions per side of anything over the bar: an A cell, a B rule, a C file (0: none). */
   confirm: number;
-  /** Cold runs per side of each rule alone, for a confirmed slowdown (0: no drill-down). */
-  drill: number;
-  drillCandidates: Candidate[];
+  /** Slice B: cold runs per side of each rule alone (at least 2). */
+  ruleRuns: number;
+  /** Slice C: cold-then-warm repetitions per side of each file. */
+  fileRuns: number;
   /** Rules per chunk when a `.rerail` pack run does not complete (0: no chunked runs). */
   rrChunk: number;
+  /** Where the runs' stores go (`--stores`, say a tmpfs), mirroring runs/; unset: in each cell. */
+  stores: string | undefined;
 }
 
+/**
+ * A cell's rows. Several workers may append to one cell's logs (a fan-out's repetitions and rule chunks): a last line
+ * still being written, with no newline yet, is not read.
+ */
 function readRows(path: string): RunRow[] {
-  return existsSync(path) ? readFileSync(path, "utf8").split("\n").filter((line) => line !== "").map((line) => ({ method: LINUX_METHOD, ...(JSON.parse(line) as Omit<RunRow, "method">) })) : [];
+  if (!existsSync(path)) return [];
+  const lines = readFileSync(path, "utf8").split("\n");
+  return lines.slice(0, -1).filter((line) => line !== "").map((line) => ({ method: LINUX_METHOD, ...(JSON.parse(line) as Omit<RunRow, "method">) }));
+}
+
+/** A run's store directory: in its cell, or at the same place under --stores. */
+function storeDir(settings: Settings, cell: string, name: string): string {
+  return settings.stores === undefined ? join(cell, name) : join(settings.stores, relative(settings.out, cell), name);
 }
 
 /** <cell>/rr-excluded.json: the `.rerail` rules that failed alone on this corpus, each with why, left out of its runs. */
@@ -625,16 +691,18 @@ interface Process {
   /** The store directory: emptied for a cold run, reused by the warm run after it. */
   store: string;
   /**
-   * The cell file its row goes to: runs.jsonl, confirm.jsonl, rules.jsonl, alone.jsonl for a `.rerail` rule alone, or
-   * chunks.jsonl for a chunk.
+   * The cell file its row goes to: runs.jsonl, confirm.jsonl, fixed.jsonl, one-rule.jsonl, one-rule-confirm.jsonl,
+   * alone.jsonl for a `.rerail` rule alone, or chunks.jsonl for a chunk.
    */
   log: string;
   /** run-policies: the rule ids it runs, in order. */
   rules: readonly string[];
   /** The product path: a directory holding the rules to run instead of the pack's. */
   rulesDir?: string;
-  /** rules.jsonl: the rule this run times alone, "(none)" for the empty rule set. */
-  drillRule?: string;
+  /** Slice B: the rule this run times alone, "(none)" for the empty rule set. */
+  rule?: string;
+  /** Where in the cell a completed run keeps its result (its findings), when not the first cold run's default. */
+  findingsAs?: string;
   /** A chunked run's chunk index. */
   chunk?: number;
 }
@@ -716,13 +784,14 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
     wallMs: Math.round(wall * 1000), cpuMs: Math.round(cpuS * 1000), rssKB: rss,
     load: measured.load, pinnedBusy: measured.pinnedBusy, siblingBusy: measured.siblingBusy, method: settings.platform.method,
     cpus: settings.cpus.join(","), threads: settings.cpus.length, host: hostname(),
-    memCap: caps.memCap, timeCapS: caps.timeCapS, command: command.join(" "), started, evaluateMs, phases, drillRule: p.drillRule ?? null,
+    memCap: caps.memCap, timeCapS: caps.timeCapS, command: command.join(" "), started, evaluateMs, phases, rule: p.rule ?? null,
   };
   appendFileSync(join(cell, p.log), `${JSON.stringify(row)}\n`);
-  // Kept: the first cold run's findings (and every failure's stderr). The rest is scratch.
+  // Kept: the first cold run's findings, a slice B run's where asked (and every failure's stderr). The rest is scratch.
   rmSync(rundir, { recursive: true, force: true });
   rmSync(join(cell, `${tag}.stdout`), { force: true });
   if (tag === `${side}.cold1` && p.log === "runs.jsonl" && completed) renameSync(result, join(cell, `${side}.findings.json`));
+  else if (p.findingsAs !== undefined && completed) renameSync(result, join(cell, p.findingsAs));
   else if (p.chunk !== undefined && mode === "cold" && rep === 1 && completed) renameSync(result, join(cell, `rr.chunk${p.chunk}.findings.json`));
   else rmSync(result, { force: true });
   if (completed) rmSync(stderrFile, { force: true });
@@ -739,7 +808,7 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
  */
 function excludeIfFailsAlone(settings: Settings, cell: string, pack: string, corpus: string, rr: RrRules, failed: RunRow): boolean {
   if (failed.culprit === null || failed.exit === 137 || /content store hard limit/.test(failed.reason ?? "")) return false;
-  const store = join(cell, "rr.alone.store");
+  const store = storeDir(settings, cell, "rr.alone.store");
   const alone = measure(settings, cell, { side: "rr", mode: "cold", rep: 0, tag: `rr.alone.${failed.culprit}`, store, log: "alone.jsonl", rules: [failed.culprit] }, pack, corpus, rr);
   rmSync(store, { recursive: true, force: true });
   if (alone.completed) return false;
@@ -751,15 +820,16 @@ function excludeIfFailsAlone(settings: Settings, cell: string, pack: string, cor
   return true;
 }
 
-/** One pack and corpus: N repetitions, the side order rotating, each side cold then warm on its own fresh store. */
-function measureCell(settings: Settings, pack: string, corpus: Corpus, sides: readonly Side[], rr: RrRules | undefined): void {
-  const cell = join(settings.out, "runs", pack, corpus);
+/**
+ * One cell (an A pack and corpus, or a C file): `runs` repetitions, the side order rotating, each side cold then warm on
+ * its own fresh store, into <cell>/runs.jsonl.
+ */
+function measureCell(settings: Settings, cell: string, dir: string, pack: string, reps: readonly number[], sides: readonly Side[], rr: RrRules | undefined): void {
   mkdirSync(cell, { recursive: true });
-  const dir = corpusDirectory(settings.corpora, pack, corpus);
-  for (let rep = 1; rep <= settings.runs; rep += 1) {
+  for (const rep of reps) {
     const order = sides.map((_, i) => sides[(i + rep - 1) % sides.length]!);
     for (const side of order) {
-      const store = join(cell, `${side}.r${rep}.store`);
+      const store = storeDir(settings, cell, `${side}.r${rep}.store`);
       const proc = (mode: "cold" | "warm"): Process => ({ side, mode, rep, tag: `${side}.${mode}${rep}`, store, log: "runs.jsonl", rules: side === "rr" ? rrIds(rr!, cell) : [] });
       const done = (): RunRow[] => readRows(join(cell, "runs.jsonl")).filter((row) => row.side === side);
       for (;;) {
@@ -806,7 +876,7 @@ function measureChunks(settings: Settings, cell: string, pack: string, corpus: s
     chunks.forEach((rules, chunk) => {
       const rows = readRows(join(cell, "chunks.jsonl")).filter((row) => row.chunk === chunk);
       if (rows.some((row) => row.mode === "cold" && !row.completed)) return;
-      const store = join(cell, `rr.chunk${chunk}.store`);
+      const store = storeDir(settings, cell, `rr.chunk${chunk}.store`);
       const proc = (mode: "cold" | "warm"): Process => ({ side: "rr", mode, rep, tag: `rr.chunk${chunk}.${mode}${rep}`, store, log: "chunks.jsonl", rules, chunk });
       // Cold then warm on its store, as a pair: a repetition resumed after its cold run is not completed with a warm one
       // on a store that is gone.
@@ -821,17 +891,17 @@ function measureChunks(settings: Settings, cell: string, pack: string, corpus: s
  * Each product side's start-up on this corpus (metric.ts T0): an empty rule set, cold then warm, --runs repetitions
  * interleaved as the cell's, into fixed.jsonl. Reported beside the gross metrics, never judged.
  */
-function measureFixed(settings: Settings, pack: string, corpus: Corpus, sides: readonly Side[]): void {
+function measureFixed(settings: Settings, pack: string, corpus: Corpus, sides: readonly Side[], reps: readonly number[]): void {
   const cell = join(settings.out, "runs", pack, corpus);
   const dir = corpusDirectory(settings.corpora, pack, corpus);
   const empty = join(settings.out, "empty-rules");
   mkdirSync(empty, { recursive: true });
   const product = sides.filter((side) => side !== "rr");
-  for (let rep = 1; rep <= settings.runs; rep += 1) {
+  for (const rep of reps) {
     for (const side of product.map((_, i) => product[(i + rep - 1) % product.length]!)) {
       const tag = (mode: "cold" | "warm"): string => `fixed.${side}.${mode}${rep}`;
       if (readRows(join(cell, "fixed.jsonl")).some((row) => row.tag === tag("cold"))) continue;
-      const store = join(cell, `fixed.${side}.r${rep}.store`);
+      const store = storeDir(settings, cell, `fixed.${side}.r${rep}.store`);
       const proc = (mode: "cold" | "warm"): Process => ({ side, mode, rep, tag: tag(mode), store, log: "fixed.jsonl", rules: [], rulesDir: empty });
       if (measure(settings, cell, proc("cold"), pack, dir, undefined).completed) measure(settings, cell, proc("warm"), pack, dir, undefined);
       rmSync(store, { recursive: true, force: true });
@@ -840,14 +910,13 @@ function measureFixed(settings: Settings, pack: string, corpus: Corpus, sides: r
 }
 
 /**
- * A cell whose median fails a metric runs again before the report counts it: --confirm more repetitions of main and of
- * each candidate failing there, interleaved as the first ones, into confirm.jsonl. A metric failing again is
- * confirmed; passing, it is noisy. Only cells where both sides completed every run are confirmed: a cell that did not
- * complete fails on completion, which more runs do not change.
+ * A cell (an A pack and corpus, or a C file) whose median fails a metric runs again before the report counts it:
+ * --confirm more repetitions of main and of each candidate failing there, interleaved as the first ones, into
+ * confirm.jsonl. A metric failing again is confirmed; passing, it is noisy. Only cells where both sides completed every
+ * run are confirmed: a cell that did not complete fails on completion, which more runs do not change.
  */
-function confirmCell(settings: Settings, pack: string, corpus: Corpus, candidates: readonly Candidate[], rr: RrRules | undefined): void {
+function confirmCell(settings: Settings, cell: string, dir: string, pack: string, candidates: readonly Candidate[], rr: RrRules | undefined): void {
   if (settings.confirm === 0) return;
-  const cell = join(settings.out, "runs", pack, corpus);
   const rows = readRows(join(cell, "runs.jsonl"));
   const main = rows.filter((row) => row.side === "main");
   if (main.length === 0 || main.some((row) => !row.completed)) return;
@@ -856,7 +925,6 @@ function confirmCell(settings: Settings, pack: string, corpus: Corpus, candidate
     return mine.length > 0 && mine.every((row) => row.completed) && measuredMetrics(main, mine, [], []).some((m) => m.verdict.status === "fail");
   });
   if (failing.length === 0) return;
-  const dir = corpusDirectory(settings.corpora, pack, corpus);
   const sides: Side[] = ["main", ...failing];
   for (let rep = 1; rep <= settings.confirm; rep += 1) {
     const order = sides.map((_, i) => sides[(i + rep - 1) % sides.length]!);
@@ -864,7 +932,7 @@ function confirmCell(settings: Settings, pack: string, corpus: Corpus, candidate
       const tag = (mode: "cold" | "warm"): string => `confirm.${side}.${mode}${rep}`;
       // A repetition already made (or started: its cold run logged) is not made again.
       if (readRows(join(cell, "confirm.jsonl")).some((row) => row.tag === tag("cold"))) continue;
-      const store = join(cell, `confirm.${side}.r${rep}.store`);
+      const store = storeDir(settings, cell, `confirm.${side}.r${rep}.store`);
       const proc = (mode: "cold" | "warm"): Process => ({ side, mode, rep, tag: tag(mode), store, log: "confirm.jsonl", rules: side === "rr" ? rrIds(rr!, cell) : [] });
       if (measure(settings, cell, proc("cold"), pack, dir, rr).completed) measure(settings, cell, proc("warm"), pack, dir, rr);
       rmSync(store, { recursive: true, force: true });
@@ -872,48 +940,135 @@ function confirmCell(settings: Settings, pack: string, corpus: Corpus, candidate
   }
 }
 
-/** Whether a candidate's wall or CPU time fails in a cell after confirmation: a slowdown worth attributing to rules. */
-function confirmedSlowdown(cell: string, candidate: Candidate): boolean {
-  const rows = readRows(join(cell, "runs.jsonl"));
-  const confirm = readRows(join(cell, "confirm.jsonl"));
-  const measured = measuredMetrics(rows.filter((row) => row.side === "main"), rows.filter((row) => row.side === candidate), confirm.filter((row) => row.side === "main"), confirm.filter((row) => row.side === candidate));
-  return measured.some((m) => !m.verdict.metric.startsWith("rss") && m.verdict.status === "fail" && (m.confirm === null || m.confirm.verdict.status === "fail"));
+// ---------------------------------------------------------------- slice B: one rule × all files
+
+/** Slice B's empty rule set: the fixed cost, timed alone as each rule is. */
+const NO_RULE = "(none)";
+/** Slice B's files in a pack and corpus's cell: its first runs, its confirmation runs and each run's kept findings. */
+const ONE_RULE = { runs: "one-rule.jsonl", confirm: "one-rule-confirm.jsonl", findings: "one-rule.findings" } as const;
+
+/** Slice B's rules of a pack: the empty rule set, then every rule main ships that the candidate ships too. */
+function oneRuleSet(settings: { baseline: Checkout; candidate: Checkout }, pack: string): string[] {
+  const candidate = new Set(shippedRules(settings.candidate.dir, pack));
+  return [NO_RULE, ...shippedRules(settings.baseline.dir, pack).filter((rule) => candidate.has(rule))];
+}
+
+/** Slice B's rows grouped by the rule they timed. */
+function byRule(rows: readonly RunRow[]): Map<string, RunRow[]> {
+  const out = new Map<string, RunRow[]>();
+  for (const row of rows) {
+    if (row.rule === null) continue;
+    const list = out.get(row.rule);
+    if (list === undefined) out.set(row.rule, [row]);
+    else list.push(row);
+  }
+  return out;
 }
 
 /**
- * A confirmed slowdown attributed to rules: the empty rule set (start-up) and each rule both sides have, alone, as
- * --drill cold runs per side, alternating, into rules.jsonl. The product path times its own evaluation in process;
- * the `.rerail` side's run-policies takes no empty set and is timed by process wall.
+ * Slice B's judged times of one rule from its first and confirmation runs: its compile + evaluate time; for the empty
+ * rule set (the fixed cost) its cold wall and each of its load, compile and evaluate times.
  */
-function drillCell(settings: Settings, pack: string, corpus: Corpus, candidate: Candidate, rr: RrRules | undefined): void {
-  if (settings.drill === 0 || !settings.drillCandidates.includes(candidate)) return;
+function oneRuleTimes(rule: string, rows: readonly RunRow[], confirm: readonly RunRow[]): TimeVerdict[] {
+  const values = (from: readonly RunRow[], side: Side, pick: (row: RunRow) => number): number[] => from.filter((row) => row.side === side && row.completed && row.phases != null).map(pick);
+  const time = (name: string, pick: (row: RunRow) => number): TimeVerdict => judgeTime(name, values(rows, "main", pick), values(rows, "ships", pick), values(confirm, "main", pick), values(confirm, "ships", pick));
+  if (rule !== NO_RULE) return [time("compile+evaluate", (row) => row.phases!.compile_ms + row.phases!.evaluate_ms)];
+  return [time("wall-cold", (row) => row.wallMs), time("load", (row) => row.phases!.load_ms), time("compile", (row) => row.phases!.compile_ms), time("evaluate", (row) => row.phases!.evaluate_ms)];
+}
+
+/**
+ * Slice B on one pack and corpus: the empty rule set and each rule both sides ship (or `rules` of them: a fan-out's
+ * chunk), alone, --rule-runs cold runs per side, the side order alternating, each on a fresh store and with a rules
+ * directory holding only that rule, into one-rule.jsonl; the first run's findings kept in
+ * one-rule.findings/<side>.<rule>.json. A time over the bar by at least the floor runs --confirm more such runs per side
+ * (one-rule-confirm.jsonl). A side whose run of a rule fails makes no further run of it.
+ */
+function measureOneRule(settings: Settings, pack: string, corpus: Corpus, rules: readonly string[] = oneRuleSet(settings, pack)): void {
+  if (rules.length === 0) return;
   const cell = join(settings.out, "runs", pack, corpus);
-  if (!confirmedSlowdown(cell, candidate)) return;
   const dir = corpusDirectory(settings.corpora, pack, corpus);
-  const mainRules = shippedRules(settings.baseline.dir, pack);
-  const rules = candidate === "rr" ? rrIds(rr!, cell) : shippedRules(settings.candidate.dir, pack).filter((rule) => mainRules.includes(rule));
-  const scratch = join(cell, "rules.scratch");
-  for (const rule of ["(none)", ...rules]) {
-    for (let rep = 1; rep <= settings.drill; rep += 1) {
-      const order: Side[] = rep % 2 === 1 ? ["main", candidate] : [candidate, "main"];
-      for (const side of order) {
-        if (side === "rr" && rule === "(none)") continue;
-        const tag = `rule.${side}.${rule}.${rep}`;
-        if (readRows(join(cell, "rules.jsonl")).some((row) => row.tag === tag)) continue;
-        let rulesDir: string | undefined;
-        if (side !== "rr") {
-          rulesDir = join(scratch, `${side}.${rule}`);
-          mkdirSync(rulesDir, { recursive: true });
-          const link = join(rulesDir, `${rule}.json`);
-          if (rule !== "(none)" && !existsSync(link)) symlinkSync(join(side === "main" ? settings.baseline.dir : settings.candidate.dir, "packs", pack, "rules", `${rule}.json`), link);
-        }
-        const store = join(scratch, `${side}.store`);
-        measure(settings, cell, { side, mode: "cold", rep, tag, store, log: "rules.jsonl", rules: side === "rr" ? [rule] : [], ...(rulesDir === undefined ? {} : { rulesDir }), drillRule: rule }, pack, dir, rr);
+  // Each chunk its own scratch: other workers may time other rules of the same cell meanwhile.
+  const scratch = join(cell, "one-rule.scratch", rules[0]!);
+  const stores = storeDir(settings, cell, join("one-rule.stores", rules[0]!));
+  mkdirSync(join(cell, ONE_RULE.findings), { recursive: true });
+  const logged = { [ONE_RULE.runs]: byRule(readRows(join(cell, ONE_RULE.runs))), [ONE_RULE.confirm]: byRule(readRows(join(cell, ONE_RULE.confirm))) };
+  const runRule = (rule: string, log: typeof ONE_RULE.runs | typeof ONE_RULE.confirm, reps: number): void => {
+    const confirming = log === ONE_RULE.confirm;
+    for (let rep = 1; rep <= reps; rep += 1) {
+      for (const side of (rep % 2 === 1 ? ["main", "ships"] : ["ships", "main"]) as Side[]) {
+        const tag = `${confirming ? "one-confirm" : "one"}.${side}.${rule}.${rep}`;
+        const rows = (logged[log].get(rule) ?? []).filter((row) => row.side === side);
+        if (rows.some((row) => row.tag === tag || !row.completed)) continue;
+        const rulesDir = join(scratch, `${side}.rules`);
+        rmSync(rulesDir, { recursive: true, force: true });
+        mkdirSync(rulesDir, { recursive: true });
+        if (rule !== NO_RULE) copyFileSync(join(side === "main" ? settings.baseline.dir : settings.candidate.dir, "packs", pack, "rules", `${rule}.json`), join(rulesDir, `${rule}.json`));
+        const store = join(stores, `${side}.store`);
+        const findingsAs = rep === 1 && !confirming && rule !== NO_RULE ? { findingsAs: join(ONE_RULE.findings, `${side}.${rule}.json`) } : {};
+        const row = measure(settings, cell, { side, mode: "cold", rep, tag, store, log, rules: [], rulesDir, rule, ...findingsAs }, pack, dir, undefined);
+        const list = logged[log].get(rule);
+        if (list === undefined) logged[log].set(rule, [row]);
+        else list.push(row);
         rmSync(store, { recursive: true, force: true });
       }
     }
+  };
+  for (const rule of rules) {
+    runRule(rule, ONE_RULE.runs, settings.ruleRuns);
+    const first = logged[ONE_RULE.runs].get(rule) ?? [];
+    const confirmed = logged[ONE_RULE.confirm].get(rule) ?? [];
+    if (settings.confirm > 0 && first.every((row) => row.completed) && oneRuleTimes(rule, first, confirmed).some((time) => needsConfirmation(time))) runRule(rule, ONE_RULE.confirm, settings.confirm);
   }
   rmSync(scratch, { recursive: true, force: true });
+  rmSync(stores, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------- slice C: all rules × one file
+
+interface OneFile {
+  label: FileLabel;
+  /** The file's path in the pack's real-code corpus. */
+  path: string;
+  bytes: number;
+}
+
+/** runs/<pack>/one-file/files.json: slice C's files of a pack, picked once from its real-code corpus. */
+function oneFilesPath(out: string, pack: string): string {
+  return join(out, "runs", pack, "one-file", "files.json");
+}
+
+function pickOneFiles(settings: { out: string; corpora: string }, pack: string): OneFile[] {
+  const path = oneFilesPath(settings.out, pack);
+  if (existsSync(path)) return readJson<OneFile[]>(path);
+  const root = corpusDirectory(settings.corpora, pack, "real");
+  let picked: OneFile[] = [];
+  try {
+    picked = pickFiles(pack, listFiles(root).map((file) => ({ path: file, bytes: statSync(join(root, file)).size })));
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+  if (picked.length === 0) fail(`slice C: the real-code corpus of ${pack} holds no file with its source extensions (${SOURCE_EXTENSIONS[pack]!.join(", ")})`);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(picked, null, 1));
+  return picked;
+}
+
+/**
+ * Slice C on one file of a pack: alone in a corpus directory of its own (runs/<pack>/one-file/<label>/corpus, at its
+ * path in the real-code corpus), all of the pack's rules, --file-runs repetitions per side, cold then warm on the same
+ * store, the side order alternating; anything over the bar confirmed as an A cell is.
+ */
+function measureOneFile(settings: Settings, pack: string, file: OneFile): void {
+  const cell = join(settings.out, "runs", pack, "one-file", file.label);
+  const dir = join(cell, "corpus");
+  if (!existsSync(join(dir, file.path))) copyInto(join(corpusDirectory(settings.corpora, pack, "real"), file.path), join(dir, file.path));
+  measureCell(settings, cell, dir, pack, repetitions(settings.fileRuns), ["main", "ships"], undefined);
+  confirmCell(settings, cell, dir, pack, ["ships"], undefined);
+}
+
+/** Repetitions 1..n. */
+function repetitions(n: number): number[] {
+  return Array.from({ length: n }, (_, i) => i + 1);
 }
 
 // ---------------------------------------------------------------- the verdict
@@ -924,13 +1079,78 @@ export interface MeasuredMetric {
   mainRuns: number[];
   candidateRuns: number[];
   confirm: { verdict: MetricVerdict; mainRuns: number[]; candidateRuns: number[] } | null;
+  /** The phase that moved (verdict.ts locate), for a metric failing at its first runs; absent or null otherwise. */
+  locator?: string | null;
 }
 
-/** One rule alone on each side: the median of its drill-down runs, null where that side's runs failed. */
+/** One rule alone on each side: its median time (ms), null where that side's runs failed. */
 export interface RuleTiming {
   rule: string;
   main: number | null;
   candidate: number | null;
+}
+
+/** A slice B rule's or a slice C file's findings on both sides: the bar is the same set. */
+export interface SameFindings {
+  both: number;
+  mainOnly: number;
+  candidateOnly: number;
+  samples: string[];
+}
+
+/** Slice B: one rule, or the empty rule set (the fixed cost), alone on one corpus. */
+export interface OneRuleTiming {
+  rule: string;
+  /** A rule: its compile + evaluate time; the empty rule set: its cold wall, load, compile and evaluate times. */
+  times: TimeVerdict[];
+  /** The phase that moved, where a time is over the bar at its first runs; null otherwise. */
+  locator: string | null;
+  completion: CompletionVerdict;
+  /** null where a side kept no findings (the empty rule set; a failed run). */
+  findings: SameFindings | null;
+  /** The candidate's compile error or engine failure on this rule, where main has none. */
+  ruleFailure: string | null;
+  /** Each side's median cold wall (ms) and peak RSS (KB) of its first runs: reported, not judged. */
+  wallMs: { main: number | null; candidate: number | null };
+  rssKB: { main: number | null; candidate: number | null };
+}
+
+/** The box while a slice's runs ran: the 1-minute load average at each run's start and the busiest idle sibling CPU. */
+export interface LoadSummary {
+  runs: number;
+  loadMedian: number | null;
+  loadMax: number | null;
+  siblingBusyMax: number | null;
+}
+
+/** Slice B on one corpus: the empty rule set and every rule main ships that the candidate ships, each alone. */
+export interface OneRuleVerdict {
+  corpus: Corpus;
+  /** Why it is not compared ("" when it is): not measured, or the pack has no fixtures corpus. */
+  note: string;
+  /** Of the rules it should time, those with no run on a side: the slice is incomplete while any remain. */
+  unmeasured: string[];
+  /** Cold runs per side of each rule (the most any rule made). */
+  runs: number;
+  fixed: OneRuleTiming | null;
+  rules: OneRuleTiming[];
+  load: LoadSummary;
+}
+
+/** Slice C: all of the pack's rules on one file of its real-code corpus. */
+export interface OneFileVerdict {
+  label: FileLabel;
+  path: string;
+  bytes: number;
+  /** Why it is not compared ("" when it is). */
+  note: string;
+  completion: (CompletionVerdict & { stoppedOn: string | null }) | null;
+  metrics: MeasuredMetric[];
+  findings: SameFindings | null;
+  ruleFailures: { rule: string; reason: string }[];
+  load: { main: (number | null)[]; candidate: (number | null)[] };
+  siblingBusyMax: number | null;
+  runs: { main: number; candidate: number };
 }
 
 export interface CellVerdict {
@@ -944,7 +1164,7 @@ export interface CellVerdict {
   metrics: MeasuredMetric[];
   /** fixtures: the set-wise findings bar, with each side's TP/FP/FN; real: agreement only. */
   findings: (Omit<FindingsVerdict, "lostTp" | "newFp"> & { lostTp: number; newFp: number; samples: string[]; main: Counts; candidate: Counts }) | null;
-  agreement: { both: number; mainOnly: number; candidateOnly: number; samples: string[] } | null;
+  agreement: SameFindings | null;
   load: { main: (number | null)[]; candidate: (number | null)[] };
   /** The busiest idle sibling CPU over the cell's runs; null when none of them was pinned. */
   siblingBusyMax: number | null;
@@ -953,8 +1173,6 @@ export interface CellVerdict {
   runs: { main: number; candidate: number };
   /** How many rules each side ran: main's shipped rules; the candidate's shipped rules, or the `.rerail` rules that run. */
   rules: { main: number; candidate: number };
-  /** A confirmed slowdown's rules, each timed alone (rules.jsonl); null where none was made. */
-  drill: { measure: "evaluate_ms" | "wall_ms"; reps: number; startup: { main: number | null; candidate: number | null }; rules: RuleTiming[] } | null;
   /** metric.ts: start-up, net times, phases and workload; null where the cell was not measured. */
   cost: CellCost | null;
   /** The caps the cell's runs ran under (both sides alike). */
@@ -982,7 +1200,14 @@ export interface PackVerdict {
   noBaseline: boolean;
   missing: { rule: string; reason: string }[];
   extra: string[];
+  /** Slice A: all rules × all files, one cell per corpus in scope. */
   cells: CellVerdict[];
+  /** Slice B: one rule × all files, one per corpus in scope; empty where the candidate does not measure it. */
+  oneRule: OneRuleVerdict[];
+  /** Slice C: all rules × one file, the three files of the real-code corpus; empty where not measured. */
+  oneFile: OneFileVerdict[];
+  /** Why this candidate measures no slice B or C by design (the `.rerail` rewrites: slice A only); null otherwise. */
+  slicesNote: string | null;
 }
 
 export interface CandidateVerdict {
@@ -1002,6 +1227,8 @@ export interface Verdict {
   machines: MachineInfo[];
   candidates: CandidateVerdict[];
   gate: Candidate[];
+  /** How the run was narrowed (--packs, --corpus): the verdict is then partial, never PASS; empty when it was not. */
+  partial: string[];
 }
 
 /** A side's findings from its first cold run, as keys: [rule, path, line, code]. */
@@ -1020,8 +1247,8 @@ function sideFindings(cell: string, side: Side, rr: RrRules | undefined, file = 
   return keys;
 }
 
-function ruleFailuresOf(cell: string, side: Side): Map<string, string> {
-  const path = join(cell, `${side}.findings.json`);
+function ruleFailuresOf(cell: string, side: Side, file = `${side}.findings.json`): Map<string, string> {
+  const path = join(cell, file);
   const failures = new Map<string, string>();
   if (side === "rr" || !existsSync(path)) return failures;
   const result = readJson<{ compileErrors: { rule: string; error: string }[]; failures: { rule: string; code: string; message: string }[] }>(path);
@@ -1079,34 +1306,114 @@ function measuredMetrics(main: readonly RunRow[], candidate: readonly RunRow[], 
     const confirmedMain = metricValues(confirmMain, metric);
     const confirmedCandidate = metricValues(confirmCandidate, metric);
     return {
-      verdict: compareMetric(metric, mainRuns, candidateRuns),
+      verdict: compareMetric(metric, mainRuns, candidateRuns, SLICES_TOLERANCE_PERCENT),
       mainRuns,
       candidateRuns,
-      confirm: confirmedMain.length > 0 && confirmedCandidate.length > 0 ? { verdict: compareMetric(metric, confirmedMain, confirmedCandidate), mainRuns: confirmedMain, candidateRuns: confirmedCandidate } : null,
+      confirm: confirmedMain.length > 0 && confirmedCandidate.length > 0 ? { verdict: compareMetric(metric, confirmedMain, confirmedCandidate, SLICES_TOLERANCE_PERCENT), mainRuns: confirmedMain, candidateRuns: confirmedCandidate } : null,
     };
   });
 }
 
-/** A cell's drill-down for one candidate from rules.jsonl: each rule's median time alone on both sides. */
-function drillOf(cell: string, candidate: Candidate): CellVerdict["drill"] {
-  const rows = readRows(join(cell, "rules.jsonl")).filter((row) => row.side === "main" || row.side === candidate);
-  if (!rows.some((row) => row.side === candidate)) return null;
-  const measure = candidate === "rr" ? "wall_ms" : "evaluate_ms";
-  const time = (rule: string, side: Side): number | null => {
-    const values = rows.filter((row) => row.drillRule === rule && row.side === side && row.completed).flatMap((row) => (measure === "evaluate_ms" ? (row.evaluateMs === null ? [] : [row.evaluateMs]) : [row.wallMs]));
-    return values.length > 0 ? median(values) : null;
-  };
-  const rules = [...new Set(rows.flatMap((row) => (row.drillRule === null || row.drillRule === "(none)" ? [] : [row.drillRule])))].sort();
+/** Each run's outcome, as the completion bar reads it. */
+function outcomes(rows: readonly RunRow[]): RunOutcome[] {
+  return rows.map((row) => (row.completed ? { completed: true } : { completed: false, reason: `${row.tag}: ${row.reason ?? ""}${row.stoppedOn === null ? "" : `; stopped on ${row.stoppedOn}`}` }));
+}
+
+/** Both sides' findings keys compared as sets: how many both have, and samples of each side's own. */
+function sameFindings(main: Set<string> | undefined, candidate: Set<string> | undefined): SameFindings | null {
+  if (main === undefined || candidate === undefined) return null;
+  const a = agreement(main, candidate);
+  const sample = (label: string, keys: string[]): string[] => keys.slice(0, 3).map((k) => `${label} ${k.replaceAll("\u0000", " ")}`);
+  return { both: a.both, mainOnly: a.mainOnly.length, candidateOnly: a.candidateOnly.length, samples: [...sample("main only", a.mainOnly), ...sample("candidate only", a.candidateOnly)] };
+}
+
+/** Each metric failing at its first runs, with the phase that moved (verdict.ts locate). */
+function withLocators(metrics: readonly MeasuredMetric[], main: readonly RunRow[], candidate: readonly RunRow[], fixed: { main: readonly RunRow[]; candidate: readonly RunRow[] } | undefined): MeasuredMetric[] {
+  return metrics.map((m) => {
+    if (m.verdict.status !== "fail") return m;
+    const coldPasses = metrics.find((x) => x.verdict.metric === m.verdict.metric.replace("-warm", "-cold"))?.verdict.status === "pass";
+    return { ...m, locator: locate(m.verdict.metric, main, candidate, { coldPasses, ...(fixed === undefined ? {} : { fixed }) }) };
+  });
+}
+
+function loadSummary(rows: readonly RunRow[]): LoadSummary {
+  const loads = rows.flatMap((row) => (row.load === null ? [] : [row.load]));
   return {
-    measure,
-    reps: Math.max(...rows.map((row) => row.rep)),
-    startup: { main: time("(none)", "main"), candidate: time("(none)", candidate) },
-    rules: rules.map((rule) => ({ rule, main: time(rule, "main"), candidate: time(rule, candidate) })),
+    runs: rows.length,
+    loadMedian: loads.length > 0 ? Math.round(median(loads) * 100) / 100 : null,
+    loadMax: loads.length > 0 ? Math.max(...loads) : null,
+    siblingBusyMax: rows.some((row) => row.siblingBusy !== null) ? Math.max(0, ...rows.map((row) => row.siblingBusy ?? 0)) : null,
   };
 }
 
+/** Slice B on one pack and corpus, from one-rule.jsonl and one-rule-confirm.jsonl. */
+function oneRuleVerdict(settings: { baseline: Checkout; candidate: Checkout; out: string }, lock: CorporaLock, pack: string, corpus: Corpus): OneRuleVerdict {
+  const empty: OneRuleVerdict = { corpus, note: "", unmeasured: [], runs: 0, fixed: null, rules: [], load: loadSummary([]) };
+  const fixtures = lock.fixtures[pack];
+  if (corpus === "fixtures" && fixtures !== undefined && "absent" in fixtures) return { ...empty, note: `no fixtures corpus: ${fixtures.absent}` };
+  const cell = join(settings.out, "runs", pack, corpus);
+  const all = readRows(join(cell, ONE_RULE.runs));
+  if (all.length === 0) return { ...empty, note: "not measured" };
+  const rows = byRule(all);
+  const confirm = byRule(readRows(join(cell, ONE_RULE.confirm)));
+  const runs = Math.max(...all.map((row) => row.rep));
+  const expected = oneRuleSet(settings, pack);
+  const timing = (rule: string): OneRuleTiming => {
+    const mine = rows.get(rule) ?? [];
+    const times = oneRuleTimes(rule, mine, confirm.get(rule) ?? []);
+    const main = mine.filter((row) => row.side === "main");
+    const candidate = mine.filter((row) => row.side === "ships");
+    const medianOf = (side: readonly RunRow[], pick: (row: RunRow) => number): number | null => (side.some((row) => row.completed) ? median(side.filter((row) => row.completed).map(pick)) : null);
+    const file = (side: Side): string => join(ONE_RULE.findings, `${side}.${rule}.json`);
+    return {
+      rule,
+      times,
+      locator: times.some((t) => t.overBefore) ? locate("wall-cold", main, candidate, rule === NO_RULE ? {} : { only: ["compile", "evaluate"] }) : null,
+      completion: compareCompletion(outcomes(main), outcomes(candidate), runs),
+      findings: rule === NO_RULE ? null : sameFindings(sideFindings(cell, "main", undefined, file("main")), sideFindings(cell, "ships", undefined, file("ships"))),
+      ruleFailure: rule === NO_RULE ? null : (newRuleFailures(ruleFailuresOf(cell, "main", file("main")), ruleFailuresOf(cell, "ships", file("ships")))[0]?.reason ?? null),
+      wallMs: { main: medianOf(main, (row) => row.wallMs), candidate: medianOf(candidate, (row) => row.wallMs) },
+      rssKB: { main: medianOf(main, (row) => row.rssKB), candidate: medianOf(candidate, (row) => row.rssKB) },
+    };
+  };
+  return {
+    corpus,
+    note: "",
+    unmeasured: expected.filter((rule) => !(["main", "ships"] as const).every((side) => rows.get(rule)?.some((row) => row.side === side))),
+    runs,
+    fixed: rows.has(NO_RULE) ? timing(NO_RULE) : null,
+    rules: expected.filter((rule) => rule !== NO_RULE && rows.has(rule)).map(timing),
+    load: loadSummary([...all, ...[...confirm.values()].flat()]),
+  };
+}
+
+/** Slice C on one pack: each of its three files, from runs/<pack>/one-file/<label>/. */
+function oneFileVerdicts(settings: { out: string }, pack: string): OneFileVerdict[] {
+  const path = oneFilesPath(settings.out, pack);
+  if (!existsSync(path)) return [];
+  return readJson<OneFile[]>(path).map((file): OneFileVerdict => {
+    const cell = join(settings.out, "runs", pack, "one-file", file.label);
+    const all = readRows(join(cell, "runs.jsonl"));
+    const main = all.filter((row) => row.side === "main");
+    const mine = all.filter((row) => row.side === "ships");
+    const base: OneFileVerdict = { ...file, note: "", completion: null, metrics: [], findings: null, ruleFailures: [], load: { main: [], candidate: [] }, siblingBusyMax: null, runs: { main: main.length, candidate: mine.length } };
+    if (main.length === 0 || mine.length === 0) return { ...base, note: "not measured" };
+    const confirm = readRows(join(cell, "confirm.jsonl"));
+    const measured = [...all, ...confirm];
+    return {
+      ...base,
+      completion: { ...compareCompletion(outcomes(main), outcomes(mine), 2 * Math.max(...all.map((row) => row.rep))), stoppedOn: mine.find((row) => !row.completed)?.stoppedOn ?? null },
+      metrics: withLocators(measuredMetrics(main, mine, confirm.filter((row) => row.side === "main"), confirm.filter((row) => row.side === "ships")), main, mine, undefined),
+      findings: sameFindings(sideFindings(cell, "main", undefined), sideFindings(cell, "ships", undefined)),
+      ruleFailures: newRuleFailures(ruleFailuresOf(cell, "main"), ruleFailuresOf(cell, "ships")),
+      load: { main: main.map((row) => row.load), candidate: mine.map((row) => row.load) },
+      siblingBusyMax: measured.some((row) => row.siblingBusy !== null) ? Math.max(0, ...measured.map((row) => row.siblingBusy ?? 0)) : null,
+    };
+  });
+}
+
 function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpora: string; out: string; runs: number }, lock: CorporaLock, pack: string, corpus: Corpus, candidate: Candidate, rr: RrRules | undefined): CellVerdict {
-  const empty: CellVerdict = { corpus, note: "", blocked: null, completion: null, ruleFailures: [], metrics: [], findings: null, agreement: null, load: { main: [], candidate: [] }, siblingBusyMax: null, methods: [], runs: { main: 0, candidate: 0 }, rules: { main: 0, candidate: 0 }, drill: null, cost: null, caps: { memCap: [], timeCapS: [] }, chunked: null, progress: null, grouping: null, fallback: [] };
+  const empty: CellVerdict = { corpus, note: "", blocked: null, completion: null, ruleFailures: [], metrics: [], findings: null, agreement: null, load: { main: [], candidate: [] }, siblingBusyMax: null, methods: [], runs: { main: 0, candidate: 0 }, rules: { main: 0, candidate: 0 }, cost: null, caps: { memCap: [], timeCapS: [] }, chunked: null, progress: null, grouping: null, fallback: [] };
   const fixtures = lock.fixtures[pack];
   if (corpus === "fixtures" && fixtures !== undefined && "absent" in fixtures) return { ...empty, note: `no fixtures corpus: ${fixtures.absent}` };
   const cell = join(settings.out, "runs", pack, corpus);
@@ -1116,11 +1423,12 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
   if (main.length === 0) return { ...empty, note: "not measured" };
   if (candidate === "rr" && rr !== undefined && rrIds(rr, cell).length === 0) return { ...empty, blocked: "no rule of the pack runs on the .rerail side on this corpus" };
   if (mine.length === 0) return { ...empty, note: "candidate not measured" };
-  const outcome = (rows: RunRow[]): RunOutcome[] => rows.map((row) => (row.completed ? { completed: true } : { completed: false, reason: `${row.tag}: ${row.reason ?? ""}${row.stoppedOn === null ? "" : `; stopped on ${row.stoppedOn}`}` }));
-  const completion = { ...compareCompletion(outcome(main), outcome(mine), 2 * settings.runs), stoppedOn: mine.find((row) => !row.completed)?.stoppedOn ?? null };
+  const completion = { ...compareCompletion(outcomes(main), outcomes(mine), 2 * settings.runs), stoppedOn: mine.find((row) => !row.completed)?.stoppedOn ?? null };
   const ruleFailures = candidate === "rr" ? [] : newRuleFailures(ruleFailuresOf(cell, "main"), ruleFailuresOf(cell, candidate));
   const confirm = readRows(join(cell, "confirm.jsonl"));
-  let metrics = measuredMetrics(main, mine, confirm.filter((row) => row.side === "main"), confirm.filter((row) => row.side === candidate));
+  const fixedRows = readRows(join(cell, "fixed.jsonl"));
+  const fixed = { main: fixedRows.filter((row) => row.side === "main"), candidate: fixedRows.filter((row) => row.side === candidate) };
+  let metrics = withLocators(measuredMetrics(main, mine, confirm.filter((row) => row.side === "main"), confirm.filter((row) => row.side === candidate)), main, mine, fixed);
   // A `.rerail` whole-pack run that did not complete: its figures from the chunked run, if one was made (measureChunks).
   const chunks = candidate === "rr" && !mine.every((row) => row.completed) ? readChunks(cell) : undefined;
   const chunkRows = chunks === undefined ? [] : readRows(join(cell, "chunks.jsonl"));
@@ -1139,7 +1447,7 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
     metrics = metrics.map((m) => {
       const [what, mode] = m.verdict.metric.split("-") as ["wall" | "cpu" | "rss", "cold" | "warm"];
       const candidateRuns = sums.filter((s) => s.mode === mode).map((s) => (what === "wall" ? s.wallMs : what === "cpu" ? s.cpuMs : s.rssKB));
-      const verdict = compareMetric(m.verdict.metric, m.mainRuns, candidateRuns);
+      const verdict = compareMetric(m.verdict.metric, m.mainRuns, candidateRuns, SLICES_TOLERANCE_PERCENT);
       return { ...m, verdict: verdict.reason === "" ? verdict : { ...verdict, reason: `${verdict.reason} (chunked: the sum of ${chunks.length} chunk runs)` }, candidateRuns };
     });
   }
@@ -1153,19 +1461,13 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
   const chunkKeys = chunkFiles?.map((file) => sideFindings(cell, "rr", rr, file));
   const candidateKeys = only(chunkKeys === undefined ? sideFindings(cell, candidate, rr) : chunkKeys.some((keys) => keys === undefined) ? undefined : new Set(chunkKeys.flatMap((keys) => [...keys!])));
   let findings: CellVerdict["findings"] = null;
-  let agree: CellVerdict["agreement"] = null;
-  if (mainKeys !== undefined && candidateKeys !== undefined) {
-    if (corpus === "fixtures") {
-      const { expected, restrict, divergences } = fixtureKeys(settings.baseline.dir, settings.candidate.dir, settings.corpora, pack, ruleIds);
-      const m = scoreFindings(expected, restrict(mainKeys), divergences);
-      const c = scoreFindings(expected, restrict(candidateKeys), divergences);
-      const compared = compareFindings(m, c);
-      const counts = (s: typeof m): Counts => ({ tp: s.tp.size, fp: s.fp.size, fn: s.fn.size, explainedFp: s.explainedFp, explainedFn: s.explainedFn });
-      findings = { status: compared.status, reason: compared.reason, lostTp: compared.lostTp.length, newFp: compared.newFp.length, samples: [...compared.lostTp.slice(0, 5).map((k) => `lost TP ${k.replaceAll("\u0000", " ")}`), ...compared.newFp.slice(0, 5).map((k) => `new FP ${k.replaceAll("\u0000", " ")}`)], main: counts(m), candidate: counts(c) };
-    } else {
-      const a = agreement(mainKeys, candidateKeys);
-      agree = { both: a.both, mainOnly: a.mainOnly.length, candidateOnly: a.candidateOnly.length, samples: [...a.mainOnly.slice(0, 3).map((k) => `main only ${k.replaceAll("\u0000", " ")}`), ...a.candidateOnly.slice(0, 3).map((k) => `candidate only ${k.replaceAll("\u0000", " ")}`)] };
-    }
+  if (mainKeys !== undefined && candidateKeys !== undefined && corpus === "fixtures") {
+    const { expected, restrict, divergences } = fixtureKeys(settings.baseline.dir, settings.candidate.dir, settings.corpora, pack, ruleIds);
+    const m = scoreFindings(expected, restrict(mainKeys), divergences);
+    const c = scoreFindings(expected, restrict(candidateKeys), divergences);
+    const compared = compareFindings(m, c);
+    const counts = (s: typeof m): Counts => ({ tp: s.tp.size, fp: s.fp.size, fn: s.fn.size, explainedFp: s.explainedFp, explainedFn: s.explainedFn });
+    findings = { status: compared.status, reason: compared.reason, lostTp: compared.lostTp.length, newFp: compared.newFp.length, samples: [...compared.lostTp.slice(0, 5).map((k) => `lost TP ${k.replaceAll("\u0000", " ")}`), ...compared.newFp.slice(0, 5).map((k) => `new FP ${k.replaceAll("\u0000", " ")}`)], main: counts(m), candidate: counts(c) };
   }
   // `!= null`: rows of an earlier version of this script have no progress or grouping.
   const failedWhole = mine.find((row) => !row.completed && row.progress != null);
@@ -1181,17 +1483,16 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
     ruleFailures,
     metrics,
     findings,
-    agreement: agree,
+    agreement: corpus === "real" ? sameFindings(mainKeys, candidateKeys) : null,
     load: { main: main.map((row) => row.load), candidate: mine.map((row) => row.load) },
     siblingBusyMax: measuredRows.some((row) => row.siblingBusy !== null) ? Math.max(0, ...measuredRows.map((row) => row.siblingBusy ?? 0)) : null,
     methods: methodCounts(measuredRows).map((m) => m.method),
     runs: { main: main.length, candidate: mine.length },
     rules: { main: mainRules.length, candidate: candidate === "rr" && rr !== undefined ? rrIds(rr, cell).length : shippedRules(settings.candidate.dir, pack).length },
-    drill: drillOf(cell, candidate),
     cost: cellCost({
-      baseline: { runs: main, fixed: readRows(join(cell, "fixed.jsonl")).filter((row) => row.side === "main"), rules: ruleSet(join(settings.baseline.dir, "packs", pack, "rules")) },
+      baseline: { runs: main, fixed: fixed.main, rules: ruleSet(join(settings.baseline.dir, "packs", pack, "rules")) },
       // The .rerail side has no start-up run; its rule set is main's rules it runs.
-      candidate: { runs: mine, fixed: readRows(join(cell, "fixed.jsonl")).filter((row) => row.side === candidate), rules: candidate === "rr" ? ruleSet(join(settings.baseline.dir, "packs", pack, "rules"), new Set(ran)) : ruleSet(join(settings.candidate.dir, "packs", pack, "rules")) },
+      candidate: { runs: mine, fixed: fixed.candidate, rules: candidate === "rr" ? ruleSet(join(settings.baseline.dir, "packs", pack, "rules"), new Set(ran)) : ruleSet(join(settings.candidate.dir, "packs", pack, "rules")) },
       workload: readWorkload(settings.out, relative(settings.corpora, corpusDirectory(settings.corpora, pack, corpus))),
     }),
     caps: { memCap: [...new Set(measuredRows.map((row) => row.memCap))], timeCapS: [...new Set(measuredRows.map((row) => row.timeCapS))] },
@@ -1206,9 +1507,18 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
   };
 }
 
-function computeVerdict(settings: { baseline: Checkout; candidate: Checkout; corpora: string; out: string; runs: number }, packs: readonly string[], candidateOnly: readonly string[], corpusKinds: readonly Corpus[], candidates: readonly Candidate[], gate: readonly Candidate[]): Verdict {
+/** Every run row of a pack's slices under `out`: A's and B's per corpus, C's per file. */
+function sliceRows(out: string, pack: string, corpusKinds: readonly Corpus[]): RunRow[] {
+  const files = existsSync(oneFilesPath(out, pack)) ? readJson<OneFile[]>(oneFilesPath(out, pack)) : [];
+  return [
+    ...corpusKinds.flatMap((corpus) => ["runs.jsonl", "confirm.jsonl", ONE_RULE.runs, ONE_RULE.confirm].flatMap((log) => readRows(join(out, "runs", pack, corpus, log)))),
+    ...(corpusKinds.includes("real") ? files.flatMap((file) => ["runs.jsonl", "confirm.jsonl"].flatMap((log) => readRows(join(out, "runs", pack, "one-file", file.label, log)))) : []),
+  ];
+}
+
+function computeVerdict(settings: { baseline: Checkout; candidate: Checkout; corpora: string; out: string; runs: number }, packs: readonly string[], candidateOnly: readonly string[], corpusKinds: readonly Corpus[], candidates: readonly Candidate[], gate: readonly Candidate[], partial: readonly string[]): Verdict {
   const lock = readJson<CorporaLock>(join(settings.corpora, "corpora.lock.json"));
-  const rows = packs.flatMap((pack) => corpusKinds.flatMap((corpus) => readRows(join(settings.out, "runs", pack, corpus, "runs.jsonl"))));
+  const rows = packs.flatMap((pack) => sliceRows(settings.out, pack, corpusKinds));
   const distinct = <T>(values: T[]): T[] => [...new Set(values)];
   const verdicts: CandidateVerdict[] = candidates.map((candidate) => {
     const packVerdicts: PackVerdict[] = packs.map((pack) => {
@@ -1227,14 +1537,23 @@ function computeVerdict(settings: { baseline: Checkout; candidate: Checkout; cor
       }
       const missing = candidate === "rr" && rr === undefined ? [{ rule: "*", reason: "the .rerail side was not measured" }] : missingRules(mainRules, available);
       const extra = candidate === "ships" ? [...available.keys()].filter((rule) => !mainRules.includes(rule)) : [];
-      return { pack, noBaseline: false, missing, extra, cells: corpusKinds.map((corpus) => cellVerdict(settings, lock, pack, corpus, candidate, rr)) };
+      return {
+        pack,
+        noBaseline: false,
+        missing,
+        extra,
+        cells: corpusKinds.map((corpus) => cellVerdict(settings, lock, pack, corpus, candidate, rr)),
+        oneRule: candidate === "ships" ? corpusKinds.map((corpus) => oneRuleVerdict(settings, lock, pack, corpus)) : [],
+        oneFile: candidate === "ships" && corpusKinds.includes("real") ? oneFileVerdicts(settings, pack) : [],
+        slicesNote: candidate === "rr" ? "the .rerail rewrites measure slice A only" : null,
+      };
     });
-    for (const pack of candidateOnly) packVerdicts.push({ pack, noBaseline: true, missing: [], extra: [], cells: [] });
+    for (const pack of candidateOnly) packVerdicts.push({ pack, noBaseline: true, missing: [], extra: [], cells: [], oneRule: [], oneFile: [], slicesNote: null });
     return { candidate, description: CANDIDATES[candidate], packs: packVerdicts };
   });
   const machinesDir = join(settings.out, "machines");
   return {
-    tolerancePercent: TOLERANCE_PERCENT,
+    tolerancePercent: SLICES_TOLERANCE_PERCENT,
     runs: settings.runs,
     baseline: settings.baseline,
     candidate: settings.candidate,
@@ -1250,6 +1569,7 @@ function computeVerdict(settings: { baseline: Checkout; candidate: Checkout; cor
     machines: existsSync(machinesDir) ? readdirSync(machinesDir).filter((name) => name.endsWith(".json")).sort().map((name) => readJson<MachineInfo>(join(machinesDir, name))) : [],
     candidates: verdicts,
     gate: [...gate],
+    partial: [...partial],
   };
 }
 
@@ -1265,12 +1585,12 @@ function writeReport(verdict: Verdict, out: string, meta: RunMeta): number {
 
 /**
  * The run's metadata: when it ran (its logs' first run to now), who started it and how, this harness's commit, and the
- * confirmation and drill-down settings `run` recorded (none, for runs made before it recorded them).
+ * repetitions `run` recorded (none, for runs made before it recorded them).
  */
 function runMeta(out: string, packs: readonly string[], corpusKinds: readonly Corpus[]): RunMeta {
   const settingsPath = join(out, "settings.json");
-  const recorded = existsSync(settingsPath) ? readJson<{ invokedBy?: string | null; command?: string; confirm?: number; drill?: number }>(settingsPath) : {};
-  const packStarts = packs.flatMap((pack) => corpusKinds.flatMap((corpus) => ["runs.jsonl", "confirm.jsonl", "rules.jsonl"].flatMap((log) => readRows(join(out, "runs", pack, corpus, log)).map((row) => row.started))));
+  const recorded = existsSync(settingsPath) ? readJson<{ invokedBy?: string | null; command?: string; confirm?: number; ruleRuns?: number; fileRuns?: number }>(settingsPath) : {};
+  const packStarts = packs.flatMap((pack) => sliceRows(out, pack, corpusKinds).map((row) => row.started));
   const starts = [...packStarts, ...readWaitRuns(out).map((row) => row.started)].sort();
   return {
     startedAt: starts[0] ?? null,
@@ -1279,8 +1599,373 @@ function runMeta(out: string, packs: readonly string[], corpusKinds: readonly Co
     command: recorded.command ?? null,
     harnessSha: checkoutSha(SELF),
     confirmRuns: recorded.confirm ?? 0,
-    drillReps: recorded.drill ?? 0,
+    ruleRuns: recorded.ruleRuns ?? 0,
+    fileRuns: recorded.fileRuns ?? 0,
   };
+}
+
+// ---------------------------------------------------------------- measuring processes
+
+interface SettingsBase {
+  baseline: Checkout;
+  candidate: Checkout;
+  corpora: string;
+  out: string;
+  runs: number;
+}
+
+interface MeasureOptions {
+  cpus: string;
+  memCap: string;
+  timeCapS: number;
+  packCaps: readonly string[];
+  confirm: number;
+  ruleRuns: number;
+  fileRuns: number;
+  rrChunk: number;
+  stores: string | undefined;
+}
+
+/** A measuring process's settings (`run`, a fan-out's `work`), the process pinned to its CPUs on Linux. */
+function openSettings(base: SettingsBase, platform: Platform, engine: string | undefined, packs: readonly string[], o: MeasureOptions): Settings {
+  let cpus: number[] = [];
+  let siblings: number[] = [];
+  try {
+    cpus = cpuList(o.cpus);
+    siblings = platform.siblings(cpus);
+  } catch (error) {
+    fail(`--cpus ${o.cpus}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  // platform.ts pins each measured run; on Linux this process's own work between runs (check-rr, workload counts,
+  // hashing, writing) stays on the stream's cores too, so concurrent streams on one box do not spill onto each other's
+  // idle hyperthread siblings. Its children inherit the mask.
+  if (process.platform === "linux" && run("taskset", ["-a", "-cp", cpus.join(","), String(process.pid)]).status !== 0) fail(`could not pin this process to CPUs ${cpus.join(",")}`);
+  const packCaps: Settings["packCaps"] = {};
+  for (const spec of o.packCaps) {
+    const match = /^([a-z0-9-]+)=(\d+[KMGT]?),(\d+)$/.exec(spec);
+    if (match === null) fail(`--pack-cap ${spec}: <pack>=<memory cap>,<time cap in s>, e.g. python=56G,14400`);
+    if (!packs.includes(match[1]!)) fail(`--pack-cap ${spec}: main ships no pack ${match[1]}`);
+    packCaps[match[1]!] = { memCap: match[2]!, timeCapS: Number(match[3]) };
+  }
+  return { ...base, engine, cpus, siblings, platform, memCap: o.memCap, timeCapS: o.timeCapS, packCaps, confirm: o.confirm, ruleRuns: o.ruleRuns, fileRuns: o.fileRuns, rrChunk: o.rrChunk, stores: o.stores };
+}
+
+/** One unit of a fan-out's plan, through run's own code into the same cell logs. */
+function runUnit(settings: Settings, u: PlannedUnit): void {
+  if (u.slice === "A") {
+    const dir = corpusDirectory(settings.corpora, u.pack, u.corpus);
+    if (u.rep === 1) cachedWorkload(settings.out, relative(settings.corpora, dir), dir, engineBinary(settings.candidate.dir));
+    measureCell(settings, join(settings.out, "runs", u.pack, u.corpus), dir, u.pack, [u.rep!], ["main", "ships"], undefined);
+    measureFixed(settings, u.pack, u.corpus, ["main", "ships"], [u.rep!]);
+  } else if (u.slice === "B") {
+    measureOneRule(settings, u.pack, u.corpus, u.rules!);
+  } else {
+    const file = pickOneFiles(settings, u.pack).find((f) => f.label === u.label) ?? fail(`${u.id}: no such file in ${oneFilesPath(settings.out, u.pack)}`);
+    measureOneFile(settings, u.pack, file);
+  }
+}
+
+/**
+ * A fan-out worker: this host's units of `phase`, longest first, each claimed by an atomic mkdir of
+ * out/claims/<phase>/<unit> (a unit another worker claimed is skipped), its claim marked done when it ends.
+ */
+function workUnits(settings: Settings, plan: Plan, host: string, worker: number, phase: "measure" | "confirm"): void {
+  const claims = join(settings.out, "claims", phase);
+  mkdirSync(claims, { recursive: true });
+  const todo: { id: string; est: number | null; run: () => void }[] =
+    phase === "measure"
+      ? plan.units.filter((u) => u.host === host).map((u) => ({ id: u.id, est: u.est, run: () => runUnit(settings, u) }))
+      : plan.confirm.filter((c) => c.host === host).map((c) => ({ id: c.id, est: null, run: () => confirmCell(settings, join(settings.out, "runs", c.pack, c.corpus), corpusDirectory(settings.corpora, c.pack, c.corpus), c.pack, ["ships"], undefined) }));
+  for (const unit of todo) {
+    const claim = join(claims, claimName(unit.id));
+    try {
+      mkdirSync(claim);
+    } catch {
+      continue;
+    }
+    const started = Date.now();
+    unit.run();
+    writeFileSync(join(claim, "done"), "");
+    appendFileSync(join(settings.out, "units.jsonl"), `${JSON.stringify({ unit: unit.id, phase, host, worker, cpus: settings.cpus.join(","), est: unit.est, started: new Date(started).toISOString(), seconds: Math.round((Date.now() - started) / 100) / 10 })}\n`);
+  }
+}
+
+/**
+ * A fan-out's host: the corpora verified and both sides checked built once, then a `work` process per CPU set for the
+ * measure phase, then again for the confirm phase; out/host.json holds each phase's start, end and workers' exits.
+ * A claim left without its done mark (a worker that died) is cleared first, so its unit runs again, resuming.
+ */
+async function hostRun(base: SettingsBase, plan: Plan, host: string, workers: readonly string[], forward: readonly string[]): Promise<number> {
+  const packs = [...new Set(plan.units.filter((u) => u.host === host).map((u) => u.pack))];
+  verifyCorpora(base.corpora, packs, CORPORA);
+  requireBuilt(base.baseline.dir, { product: true, engine: false }, false);
+  requireBuilt(base.candidate.dir, { product: true, engine: false }, false);
+  const platform = requirePlatform(base.out);
+  mkdirSync(join(base.out, "machines"), { recursive: true });
+  writeFileSync(join(base.out, "machines", `${hostname()}.json`), JSON.stringify(platform.machine(), null, 1));
+  mkdirSync(join(base.out, "logs"), { recursive: true });
+  const record: Record<string, unknown> = { host, hostname: hostname(), workers };
+  let failed = false;
+  for (const phase of ["measure", "confirm"] as const) {
+    const claims = join(base.out, "claims", phase);
+    for (const name of existsSync(claims) ? readdirSync(claims) : []) if (!existsSync(join(claims, name, "done"))) rmSync(join(claims, name), { recursive: true, force: true });
+    const start = new Date();
+    const exits = await Promise.all(
+      workers.map((cpus, worker) => {
+        const log = openSync(join(base.out, "logs", `${phase}-${worker}.log`), "a");
+        const child = spawn(process.execPath, [...process.execArgv, fileURLToPath(import.meta.url), "work", ...forward, "--worker", String(worker), "--cpus", cpus, "--phase", phase], { stdio: ["ignore", log, log] });
+        const { promise, resolve: exited } = Promise.withResolvers<number>();
+        child.on("close", (code) => {
+          closeSync(log);
+          exited(code ?? 1);
+        });
+        return promise;
+      }),
+    );
+    failed ||= exits.some((code) => code !== 0);
+    const seconds = Math.round((Date.now() - start.getTime()) / 1000);
+    record[phase] = { start: start.toISOString(), end: new Date().toISOString(), seconds, exits };
+    writeFileSync(join(base.out, "host.json"), JSON.stringify(record, null, 1));
+    console.log(`shipbar host ${host}: ${phase} done in ${seconds} s, worker exits ${exits.join(" ")}`);
+  }
+  return failed ? 1 : 0;
+}
+
+// ---------------------------------------------------------------- the fan-out from the Mac
+
+interface FanoutOptions {
+  hosts: string[];
+  /** The work directory on each host: ~/work/<name>. */
+  name: string;
+  workers: string[];
+  baselineSpec: string;
+  packDataCache: string | undefined;
+  candidate: Checkout;
+  out: string;
+  corpora: string;
+  requested: string[] | undefined;
+  runs: number;
+  confirm: number;
+  ruleRuns: number;
+  fileRuns: number;
+  memCap: string;
+  timeCapS: number;
+  packCaps: string[];
+  stores: string;
+  pollS: number;
+  /** Make this phase and every later one again (`--from sync` after a checkout changed, say). */
+  from: string | undefined;
+  /** The remote shell, as words: `ssh`, or --ssh / SHIPBAR_SSH (fanout.ts remoteShell). */
+  shell: string[];
+  command: string;
+}
+
+/** A fan-out's phases, in order. */
+const FANOUT_PHASES = ["prepare", "plan", "sync", "build", "distribute", "measure", "merge"];
+
+/** What a checkout's sync leaves out: history, dependencies and builds (each host installs and builds its own). */
+const CHECKOUT_EXCLUDES = ["--exclude=/.git", "--exclude=/node_modules", "--exclude=/target", "--exclude=/native/target", "--exclude=/native/*.node", "--exclude=/dist", "--exclude=/.rerail/pack-data", "--exclude=/.worktrees"];
+
+/** The host scripts a fan-out starts detached; each marks its start and writes its exit status for the Mac to poll. */
+function hostScripts(o: FanoutOptions): Record<string, string> {
+  const quote = (arg: string): string => `'${arg.replaceAll("'", "'\\''")}'`;
+  const options = [
+    ...["--baseline", "../baseline", "--candidate", ".", "--corpora", "../corpora", "--out", "../out", "--plan", "../out/plan.json"],
+    ...["--runs", String(o.runs), "--confirm", String(o.confirm), "--rule-runs", String(o.ruleRuns), "--file-runs", String(o.fileRuns)],
+    ...["--mem-cap", o.memCap, "--time-cap", String(o.timeCapS), "--stores", o.stores, ...o.packCaps.flatMap((cap) => ["--pack-cap", cap])],
+  ];
+  const head = (step: string): string => `#!/bin/bash\ncd "$(dirname "$0")/.." || exit 1\nrm -f fanout/${step}.exit\ndate -u +%FT%TZ > fanout/${step}.started\n`;
+  return {
+    // Both sides at once, through the host's compiler cache; then the engines' sha256, for the other hosts to check.
+    "build.sh": `${head("build")}side() { ( cd "$1" && npm ci --ignore-scripts && npm run build:native ) > "fanout/build-$1.log" 2>&1; }\nside baseline & b=$!\nside candidate & c=$!\nwait $b; eb=$?\nwait $c; ec=$?\nsha256sum baseline/native/rerail_engine.linux-*.node candidate/native/rerail_engine.linux-*.node > fanout/build.sha 2> fanout/build-sha.log\necho "$eb $ec" > fanout/build.exit\n`,
+    // The engines built on the first host are in place: install the dependencies and check the engines.
+    "install.sh": `${head("install")}side() { ( cd "$1" && npm ci --ignore-scripts ) > "fanout/install-$1.log" 2>&1; }\nside baseline & b=$!\nside candidate & c=$!\nwait $b; eb=$?\nwait $c; ec=$?\nsha256sum -c fanout/build.sha > fanout/install-sha.log 2>&1; es=$?\necho "$eb $ec $es" > fanout/install.exit\n`,
+    "host.sh": `${head("host")}cd candidate\nnode --import tsx ../harness/scripts/ship/shipbar.ts host --host "$1" --workers ${quote(o.workers.join("/"))} ${options.map(quote).join(" ")} > ../fanout/host.log 2>&1\necho $? > ../fanout/host.exit\n`,
+  };
+}
+
+async function fanoutRun(o: FanoutOptions): Promise<number> {
+  const root = join(o.out, "fanout");
+  mkdirSync(root, { recursive: true });
+  const statePath = join(root, "state.json");
+  const state: { phases: Record<string, { start: string; end?: string; seconds?: number }> } = existsSync(statePath) ? readJson(statePath) : { phases: {} };
+  // --from <phase>: that phase and every later one made again.
+  if (o.from !== undefined) {
+    const at = FANOUT_PHASES.indexOf(o.from);
+    if (at < 0) fail(`--from ${o.from}: one of ${FANOUT_PHASES.join(", ")}`);
+    for (const name of FANOUT_PHASES.slice(at)) delete state.phases[name];
+  }
+  const save = (): void => writeFileSync(statePath, JSON.stringify(state, null, 1));
+  const log = (line: string): void => console.log(`shipbar fanout ${new Date().toISOString().slice(11, 19)}: ${line}`);
+  const phase = async (name: string, body: () => Promise<void> | void): Promise<void> => {
+    const done = state.phases[name];
+    if (done?.end !== undefined) return log(`${name}: done before (${done.seconds} s)`);
+    const start = Date.now();
+    state.phases[name] = { start: new Date(start).toISOString() };
+    save();
+    log(`${name}: start`);
+    await body();
+    state.phases[name] = { start: new Date(start).toISOString(), end: new Date().toISOString(), seconds: Math.round((Date.now() - start) / 1000) };
+    save();
+    log(`${name}: ${state.phases[name]!.seconds} s`);
+  };
+  const remote = `work/${o.name}`;
+  const at = (host: string, path: string): string => `${host}:${remote}/${path}`;
+  const ssh = (host: string, command: string, timeoutS?: number): Promise<Done> => sshOver(o.shell, host, command, timeoutS);
+  const rsync = (from: string, to: string, extra: readonly string[], timeoutS: number): Promise<Done> => rsyncOver(o.shell, from, to, extra, timeoutS);
+  const onHosts = async (hosts: readonly string[], label: string, each: (host: string) => Promise<boolean>): Promise<void> => {
+    const ok = await Promise.all(hosts.map(each));
+    const bad = hosts.filter((_, i) => !ok[i]);
+    if (bad.length > 0) fail(`fanout ${label} failed on ${bad.join(", ")}; run the same command again to resume`);
+  };
+  const step = async (label: string, attempt: () => Promise<Done>, tries = 3): Promise<boolean> => (await retry(label, tries, attempt, log)).status === 0;
+  /** A host script started detached (setsid nohup); started once: a retried start finds its start mark. */
+  const start = async (host: string, script: string, args: readonly string[] = []): Promise<boolean> => {
+    const marker = script.replace(/\.sh$/, "");
+    await ssh(host, `rm -f ${remote}/fanout/${marker}.exit ${remote}/fanout/${marker}.started`);
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const started = await ssh(host, detached(remote, script, args), 120);
+      // The script marks its start first thing; a slow host gets a minute before the start is tried again.
+      for (let check = 0; check < 6; check += 1) {
+        await sleep(10_000);
+        if ((await ssh(host, `test -e ${remote}/fanout/${marker}.started`)).status === 0) return true;
+      }
+      log(`${host}: starting ${script} failed (${started.status}): ${started.stderr.trim().split("\n").at(-1) ?? ""}`);
+    }
+    return false;
+  };
+  /** Poll until `marker` (fanout/<marker>.exit) is on every host; `progress` names what each host is at. */
+  const waitFor = async (hosts: readonly string[], marker: string, progress = ""): Promise<Map<string, string>> => {
+    const exits = new Map<string, string>();
+    let first = true;
+    while (exits.size < hosts.length) {
+      await sleep((first ? Math.min(60, o.pollS) : o.pollS) * 1000);
+      first = false;
+      const lines: string[] = [];
+      await Promise.all(
+        hosts.filter((h) => !exits.has(h)).map(async (host) => {
+          const r = await ssh(host, `cd ${remote} && cat fanout/${marker}.exit 2>/dev/null; echo "|$(cut -d' ' -f1 /proc/loadavg)${progress === "" ? "" : `|$(${progress})`}"`);
+          if (r.status !== 0) return lines.push(`${host} unreachable (${r.status})`);
+          const [exit, rest] = [r.stdout.split("|")[0]!.trim(), r.stdout.split("|").slice(1).join(" ").trim()];
+          if (exit !== "") exits.set(host, exit);
+          lines.push(`${host} ${exit === "" ? "running" : `exit ${exit}`}, load ${rest}`);
+        }),
+      );
+      log(`${marker}: ${lines.join("; ")}`);
+    }
+    return exits;
+  };
+
+  let baseline: Checkout | undefined;
+  await phase("prepare", () => {
+    baseline = resolveBaseline(o.baselineSpec, o.out, o.packDataCache);
+    // Both sides build on the hosts: neither may hold Git LFS pointers in place of the files (scripts/build/require-lfs.mjs).
+    for (const dir of [baseline.dir, o.candidate.dir]) {
+      const check = join(dir, "scripts", "build", "require-lfs.mjs");
+      const lfs = existsSync(check) ? run("node", [check], { cwd: dir }) : { status: 0, stderr: "" };
+      if (lfs.status !== 0) fail(`${dir}: ${lastLine(lfs.stderr)}`);
+    }
+    mkdirSync(join(o.candidate.dir, ".rerail"), { recursive: true });
+    writeFileSync(join(o.candidate.dir, SOURCE_FILE), JSON.stringify({ sha: o.candidate.sha }));
+    prepareCorpora(baseline, discoverPacks(baseline.dir, o.candidate.dir).packs, o.corpora, false);
+  });
+  baseline ??= resolveBaseline(o.baselineSpec, o.out, o.packDataCache);
+  const discovered = discoverPacks(baseline.dir, o.candidate.dir);
+  for (const pack of o.requested ?? []) if (!discovered.packs.includes(pack)) fail(`--packs: main ships no pack ${pack}`);
+  const packs = discovered.packs.filter((pack) => o.requested === undefined || o.requested.includes(pack));
+  const settings = { baseline, candidate: o.candidate, corpora: o.corpora, out: o.out, runs: o.runs };
+  const planPath = join(o.out, "plan.json");
+  const stage = join(root, "stage");
+  await phase("plan", () => {
+    const lock = verifyCorpora(o.corpora, packs, CORPORA);
+    const inputs: PackInput[] = packs.map((pack) => {
+      const fixtures = lock.fixtures[pack];
+      return { pack, corpora: CORPORA.filter((c) => c === "real" || (fixtures !== undefined && !("absent" in fixtures))), rules: oneRuleSet(settings, pack), files: pickOneFiles(settings, pack).map((f) => f.label) };
+    });
+    const plan = planFanout(inputs, o.hosts, o.workers, { runs: o.runs, ruleRuns: o.ruleRuns, fileRuns: o.fileRuns });
+    writeFileSync(planPath, JSON.stringify(plan, null, 1));
+    const count = (slice: string): number => plan.units.filter((u) => u.slice === slice).length;
+    log(`plan: ${plan.units.length} units (A ${count("A")}, B ${count("B")}, C ${count("C")}), longest ${Math.round(plan.units[0]!.est)} s, planned per host ${JSON.stringify(plan.load)} s`);
+    // What each host gets besides the checkouts and corpora: this harness, the host scripts, the plan and C's files.
+    rmSync(stage, { recursive: true, force: true });
+    cpSync(HERE, join(stage, "harness", "scripts", "ship"), { recursive: true });
+    writeFileSync(join(stage, "harness", "package.json"), JSON.stringify({ private: true, type: "module" }));
+    mkdirSync(join(stage, "harness", ".rerail"), { recursive: true });
+    writeFileSync(join(stage, "harness", SOURCE_FILE), JSON.stringify({ sha: checkoutSha(SELF) }));
+    mkdirSync(join(stage, "fanout"), { recursive: true });
+    for (const [name, text] of Object.entries(hostScripts(o))) writeFileSync(join(stage, "fanout", name), text);
+    copyInto(planPath, join(stage, "out", "plan.json"));
+    for (const pack of packs) copyInto(oneFilesPath(o.out, pack), oneFilesPath(join(stage, "out"), pack));
+  });
+  const plan = readJson<Plan>(planPath);
+  await phase("sync", () =>
+    onHosts(o.hosts, "sync", async (host) => {
+      // A fresh sync starts the host's measurements afresh.
+      if (!(await step(`${host} clear`, () => ssh(host, `mkdir -p ${remote} && rm -rf ${remote}/out ${remote}/fanout/*.exit ${remote}/fanout/*.started ${o.stores}`)))) return false;
+      const pushes: [string, string, string[]][] = [
+        [`${baseline!.dir}/`, "baseline/", ["--delete", ...CHECKOUT_EXCLUDES]],
+        [`${o.candidate.dir}/`, "candidate/", ["--delete", ...CHECKOUT_EXCLUDES]],
+        [`${o.corpora}/`, "corpora/", ["--delete"]],
+        [`${join(stage, "harness")}/`, "harness/", ["--delete"]],
+        [`${join(stage, "fanout")}/`, "fanout/", []],
+        [`${join(stage, "out")}/`, "out/", []],
+      ];
+      for (const [from, to, extra] of pushes) if (!(await step(`${host} ${to}`, () => rsync(from, at(host, to), extra, 1800)))) return false;
+      log(`${host}: synced`);
+      return true;
+    }),
+  );
+  const [builder, ...others] = o.hosts as [string, ...string[]];
+  await phase("build", async () => {
+    if (!(await start(builder, "build.sh"))) fail(`fanout build: could not start it on ${builder}`);
+    const exit = (await waitFor([builder], "build")).get(builder);
+    if (exit !== "0 0") fail(`fanout build on ${builder} exited ${exit}: see ~/${remote}/fanout/build-*.log there`);
+  });
+  await phase("distribute", async () => {
+    const sums = await ssh(builder, `cat ${remote}/fanout/build.sha`);
+    const engines = sums.stdout.split("\n").filter((l) => l.trim() !== "").map((line) => ({ sha256: line.slice(0, 64), path: line.slice(64).trim() }));
+    if (sums.status !== 0 || engines.length !== 2) fail(`fanout distribute: ${builder}'s fanout/build.sha names ${engines.length} engines, not 2`);
+    const local = join(root, "engines");
+    for (const engine of engines) {
+      mkdirSync(dirname(join(local, engine.path)), { recursive: true });
+      if (!(await step(`pull ${engine.path}`, () => rsync(at(builder, engine.path), join(local, engine.path), [], 900)))) fail(`fanout distribute: could not pull ${engine.path} from ${builder}`);
+      const got = createHash("sha256").update(readFileSync(join(local, engine.path))).digest("hex");
+      if (got !== engine.sha256) fail(`fanout distribute: ${engine.path} from ${builder} is ${got}, its build said ${engine.sha256}`);
+    }
+    writeFileSync(join(local, "build.sha"), sums.stdout);
+    await onHosts(others, "distribute", async (host) => {
+      for (const engine of engines) if (!(await step(`${host} ${engine.path}`, () => rsync(join(local, engine.path), at(host, engine.path), [], 900)))) return false;
+      if (!(await step(`${host} build.sha`, () => rsync(join(local, "build.sha"), at(host, "fanout/build.sha"), [], 300)))) return false;
+      return start(host, "install.sh");
+    });
+    const exits = await waitFor(others, "install");
+    const bad = others.filter((h) => exits.get(h) !== "0 0 0");
+    if (bad.length > 0) fail(`fanout distribute: npm ci or the engines' check failed on ${bad.map((h) => `${h} (${exits.get(h)})`).join(", ")}: see ~/${remote}/fanout/install-*.log there`);
+  });
+  await phase("measure", async () => {
+    await onHosts(o.hosts, "measure", (host) => start(host, "host.sh", [host]));
+    const total = (host: string): number => plan.units.filter((u) => u.host === host).length;
+    log(`measure: units per host ${o.hosts.map((h) => `${h} ${total(h)}`).join(", ")}`);
+    const exits = await waitFor(o.hosts, "host", "echo measured $(find out/claims/measure -name done 2>/dev/null | wc -l) confirmed $(find out/claims/confirm -name done 2>/dev/null | wc -l)");
+    for (const [host, exit] of exits) if (exit !== "0") log(`${host}: host exited ${exit}; see ~/${remote}/fanout/host.log and out/logs/ there (the report says what is missing)`);
+  });
+  await phase("merge", async () => {
+    await onHosts(o.hosts, "pull", (host) => step(`${host} pull`, () => rsync(at(host, "out/"), `${join(o.out, "hosts", host)}/`, ["--exclude=*.store", "--exclude=one-rule.scratch", "--exclude=one-rule.stores", "--exclude=claims", "--exclude=platform"], 1800)));
+    const hostDirs = o.hosts.map((h) => join(o.out, "hosts", h));
+    for (const tree of ["runs", "machines", "workload"]) {
+      const conflicts = mergeTrees(hostDirs.map((d) => join(d, tree)), join(o.out, tree));
+      if (conflicts.length > 0) log(`merge ${tree}: ${conflicts.length} files differ between hosts, kept the first host's: ${conflicts.slice(0, 5).join(", ")}`);
+    }
+    writeFileSync(join(o.out, "units.jsonl"), hostDirs.map((d) => (existsSync(join(d, "units.jsonl")) ? readFileSync(join(d, "units.jsonl"), "utf8") : "")).join(""));
+  });
+  // The report: every phase's time and each host's measure and confirm beside it.
+  const hostsTimes = Object.fromEntries(o.hosts.map((h) => [h, existsSync(join(o.out, "hosts", h, "host.json")) ? readJson(join(o.out, "hosts", h, "host.json")) : null]));
+  writeFileSync(join(root, "timings.json"), JSON.stringify({ phases: state.phases, hosts: hostsTimes }, null, 1));
+  const caller = run("aws", ["sts", "get-caller-identity", "--query", "Arn", "--output", "text"]);
+  writeFileSync(join(o.out, "settings.json"), JSON.stringify({ hosts: o.hosts, workers: o.workers, runs: o.runs, confirm: o.confirm, ruleRuns: o.ruleRuns, fileRuns: o.fileRuns, memCap: o.memCap, timeCapS: o.timeCapS, packCaps: o.packCaps, stores: o.stores, invokedBy: caller.status === 0 ? caller.stdout.trim() : null, command: o.command }, null, 1));
+  const partial = discovered.packs.some((pack) => !packs.includes(pack)) ? [`--packs ${o.requested!.join(",")}: ${packs.length} of main's ${discovered.packs.length} packs`] : [];
+  const candidateOnly = discovered.candidateOnly.filter((pack) => o.requested === undefined || o.requested.includes(pack));
+  return writeReport(computeVerdict(settings, packs, candidateOnly, CORPORA, ["ships"], ["ships"], partial), o.out, runMeta(o.out, packs, CORPORA));
 }
 
 // ---------------------------------------------------------------- the command line
@@ -1303,9 +1988,9 @@ function main(): void {
       "rr-chunk": { type: "string", default: "50" },
       candidates: { type: "string", default: "ships" },
       gate: { type: "string" },
-      confirm: { type: "string", default: "1" },
-      drill: { type: "string", default: "2" },
-      "drill-candidates": { type: "string", default: "ships" },
+      confirm: { type: "string", default: "3" },
+      "rule-runs": { type: "string", default: "2" },
+      "file-runs": { type: "string", default: "3" },
       build: { type: "boolean", default: false },
       record: { type: "boolean", default: false },
       "pack-data-cache": { type: "string" },
@@ -1317,10 +2002,22 @@ function main(): void {
       prepare: { type: "boolean", default: false },
       shapes: { type: "string", default: "full" },
       repo: { type: "string" },
+      hosts: { type: "string" },
+      name: { type: "string" },
+      workers: { type: "string", default: "0-3/4-7/8-11/12-15" },
+      stores: { type: "string" },
+      poll: { type: "string", default: "180" },
+      from: { type: "string" },
+      ssh: { type: "string" },
+      plan: { type: "string" },
+      host: { type: "string" },
+      worker: { type: "string" },
+      phase: { type: "string", default: "measure" },
     },
   });
   const command = positionals[0];
-  if (command !== "prepare" && command !== "run" && command !== "verdict" && command !== "waits") fail("usage: shipbar.ts prepare|run|verdict|waits --baseline <ref|dir> --out <dir> [options] (see the header of scripts/ship/shipbar.ts)");
+  const commands = ["prepare", "run", "verdict", "waits", "fanout", "host", "work"];
+  if (command === undefined || !commands.includes(command)) fail(`usage: shipbar.ts ${commands.join("|")} --baseline <ref|dir> --out <dir> [options] (see the header of scripts/ship/shipbar.ts)`);
   const preparingSession = command === "waits" && values.prepare;
   if ((values.baseline === undefined && !preparingSession) || values.out === undefined) fail("--baseline and --out are required");
   const out = resolve(values.out);
@@ -1352,12 +2049,28 @@ function main(): void {
   };
   const runs = count("runs", values.runs, 1);
   const confirm = count("confirm", values.confirm, 0);
-  const drill = count("drill", values.drill, 0);
-  const drillCandidates = values["drill-candidates"].split(",").map((c) => c.trim()).filter((c) => c !== "") as Candidate[];
-  for (const c of drillCandidates) if (!(c in CANDIDATES)) fail(`--drill-candidates: no candidate ${c} (ships, rr)`);
+  const ruleRuns = count("rule-runs", values["rule-runs"], 2);
+  const fileRuns = count("file-runs", values["file-runs"], 1);
+  const workers = values.workers.split("/").map((set) => set.trim()).filter((set) => set !== "");
+  const measureOptions = (cpus: string): MeasureOptions => ({ cpus, memCap: values["mem-cap"], timeCapS: Number(values["time-cap"]), packCaps: values["pack-cap"], confirm, ruleRuns, fileRuns, rrChunk: count("rr-chunk", values["rr-chunk"], 0), stores: values.stores === undefined ? undefined : resolve(values.stores) });
+  if (command === "fanout") {
+    const hosts = values.hosts?.split(",").map((h) => h.trim()).filter((h) => h !== "") ?? [];
+    if (hosts.length === 0) fail("fanout: --hosts h1,h2 is required");
+    const name = values.name ?? `shipbar-${new Date().toISOString().slice(0, 10)}`;
+    const candidateDir = resolve(values.candidate);
+    void fanoutRun({
+      hosts, name, workers, baselineSpec: values.baseline!, packDataCache: values["pack-data-cache"], candidate: { dir: candidateDir, sha: checkoutSha(candidateDir) }, out,
+      corpora: resolve(values.corpora ?? join(out, "corpora")), requested: values.packs?.split(",").map((p) => p.trim()), runs, confirm, ruleRuns, fileRuns,
+      memCap: values["mem-cap"], timeCapS: Number(values["time-cap"]), packCaps: values["pack-cap"], stores: values.stores ?? `/dev/shm/shipbar-${name}`,
+      pollS: count("poll", values.poll, 10), from: values.from, shell: remoteShell(values.ssh), command: ["npm run bench:ship --", ...process.argv.slice(2)].join(" "),
+    }).then((code) => {
+      process.exitCode = code;
+    });
+    return;
+  }
   // Pack runs measure on every platform (platform.ts); the waits pin with taskset and drop the page cache: Linux only.
   if (command === "waits" && process.platform !== "linux") fail(`waits measure on Linux only (taskset, the page cache drop); this is ${process.platform}`);
-  const platform = command === "run" || command === "waits" ? requirePlatform(out) : undefined;
+  const platform = command === "run" || command === "waits" || command === "work" ? requirePlatform(out) : undefined;
 
   const baseline = resolveBaseline(values.baseline!, out, values["pack-data-cache"]);
   const candidate: Checkout = { dir: resolve(values.candidate), sha: checkoutSha(resolve(values.candidate)) };
@@ -1366,6 +2079,11 @@ function main(): void {
   for (const pack of requested ?? []) if (!discovered.packs.includes(pack) && !discovered.candidateOnly.includes(pack)) fail(`--packs: main ships no pack ${pack}`);
   const packs = discovered.packs.filter((pack) => requested === undefined || requested.includes(pack));
   const candidateOnly = discovered.candidateOnly.filter((pack) => requested === undefined || requested.includes(pack));
+  // A run narrowed to some packs or one corpus is partial: its verdict says so and is never PASS.
+  const partial = [
+    ...(discovered.packs.some((pack) => !packs.includes(pack)) ? [`--packs ${values.packs}: ${packs.length} of main's ${discovered.packs.length} packs`] : []),
+    ...(corpusKinds.length < CORPORA.length ? [`--corpus ${values.corpus}: slice A and B on ${corpusKinds.join(", ")} only${corpusKinds.includes("real") ? "" : ", no slice C"}`] : []),
+  ];
   const corpora = resolve(values.corpora ?? join(out, "corpora"));
   if (command === "prepare") {
     if (!existsSync(join(candidate.dir, ".git")) || run("git", ["-C", candidate.dir, "rev-parse", "HEAD"]).status !== 0) fail(`${candidate.dir} is not a git checkout`);
@@ -1376,6 +2094,26 @@ function main(): void {
     return;
   }
   const settingsBase = { baseline, candidate, corpora, out, runs };
+  if (command === "host" || command === "work") {
+    if (values.plan === undefined || values.host === undefined) fail(`${command}: --plan and --host are required`);
+    const plan = readJson<Plan>(resolve(values.plan));
+    if (command === "work") {
+      const worker = count("worker", values.worker ?? "", 0);
+      if (values.phase !== "measure" && values.phase !== "confirm") fail(`--phase ${values.phase}: measure or confirm`);
+      workUnits(openSettings(settingsBase, platform!, undefined, packs, measureOptions(values.cpus)), plan, values.host, worker, values.phase);
+      return;
+    }
+    const forward = [
+      ...["--baseline", baseline.dir, "--candidate", candidate.dir, "--corpora", corpora, "--out", out, "--plan", resolve(values.plan), "--host", values.host],
+      ...["--runs", String(runs), "--confirm", String(confirm), "--rule-runs", String(ruleRuns), "--file-runs", String(fileRuns), "--mem-cap", values["mem-cap"], "--time-cap", values["time-cap"]],
+      ...values["pack-cap"].flatMap((cap) => ["--pack-cap", cap]),
+      ...(values.stores === undefined ? [] : ["--stores", resolve(values.stores)]),
+    ];
+    void hostRun(settingsBase, plan, values.host, workers, forward).then((code) => {
+      process.exitCode = code;
+    });
+    return;
+  }
   if (command === "waits") {
     const repo = waitsManifest.repos[repoName] ?? fail(`waits.json declares no repo ${repoName}`);
     const corpusDir = join(corpora, "real", repo.corpus);
@@ -1429,27 +2167,7 @@ function main(): void {
     const lock = verifyCorpora(corpora, packs, corpusKinds);
     requireBuilt(baseline.dir, { product: true, engine: false }, values.build);
     const { engine } = requireBuilt(candidate.dir, { product: candidates.includes("ships"), engine: candidates.includes("rr") }, values.build);
-    let cpus: number[] = [];
-    let siblings: number[] = [];
-    try {
-      cpus = cpuList(values.cpus);
-      siblings = platform!.siblings(cpus);
-    } catch (error) {
-      fail(`--cpus ${values.cpus}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    // platform.ts pins each measured run; on Linux this process's own work between runs (check-rr, workload counts,
-    // hashing, writing) stays on the stream's cores too, so concurrent streams on one box do not spill onto each other's
-    // idle hyperthread siblings. Its children inherit the mask.
-    if (process.platform === "linux" && run("taskset", ["-a", "-cp", cpus.join(","), String(process.pid)]).status !== 0) fail(`could not pin this process to CPUs ${cpus.join(",")}`);
-    const packCaps: Settings["packCaps"] = {};
-    for (const spec of values["pack-cap"]) {
-      const match = /^([a-z0-9-]+)=(\d+[KMGT]?),(\d+)$/.exec(spec);
-      if (match === null) fail(`--pack-cap ${spec}: <pack>=<memory cap>,<time cap in s>, e.g. python=56G,14400`);
-      if (!packs.includes(match[1]!)) fail(`--pack-cap ${spec}: main ships no pack ${match[1]}`);
-      packCaps[match[1]!] = { memCap: match[2]!, timeCapS: Number(match[3]) };
-    }
-    const rrChunk = count("rr-chunk", values["rr-chunk"], 0);
-    const settings: Settings = { ...settingsBase, engine, cpus, siblings, platform: platform!, memCap: values["mem-cap"], timeCapS: Number(values["time-cap"]), packCaps, confirm, drill, drillCandidates, rrChunk };
+    const settings = openSettings(settingsBase, platform!, engine, packs, measureOptions(values.cpus));
     // Who runs it: the AWS identity this shell is signed in as, the one the pack data pull reads with.
     const caller = run("aws", ["sts", "get-caller-identity", "--query", "Arn", "--output", "text"]);
     const invokedBy = caller.status === 0 && caller.stdout.trim() !== "" ? caller.stdout.trim() : null;
@@ -1470,18 +2188,20 @@ function main(): void {
         const fixtures = lock.fixtures[pack];
         if (corpus === "fixtures" && fixtures !== undefined && "absent" in fixtures) continue;
         const dir = corpusDirectory(corpora, pack, corpus);
+        const cell = join(out, "runs", pack, corpus);
         cachedWorkload(out, relative(corpora, dir), dir, engine ?? engineBinary(candidate.dir));
-        measureCell(settings, pack, corpus, sides, rr);
-        measureFixed(settings, pack, corpus, sides);
-        confirmCell(settings, pack, corpus, candidates, rr);
-        for (const c of candidates) drillCell(settings, pack, corpus, c, rr);
+        measureCell(settings, cell, dir, pack, repetitions(runs), sides, rr);
+        measureFixed(settings, pack, corpus, sides, repetitions(runs));
+        confirmCell(settings, cell, dir, pack, candidates, rr);
+        if (candidates.includes("ships")) measureOneRule(settings, pack, corpus);
       }
+      if (candidates.includes("ships") && corpusKinds.includes("real")) for (const file of pickOneFiles(settings, pack)) measureOneFile(settings, pack, file);
     }
   }
   // A directory with waits and no pack runs reports the waits alone.
   const packsMeasured = command === "run" || existsSync(join(out, "runs"));
   const reported = packsMeasured ? candidates : [];
-  process.exitCode = writeReport(computeVerdict(settingsBase, packsMeasured ? packs : [], packsMeasured ? candidateOnly : [], corpusKinds, reported, packsMeasured ? gate : []), out, runMeta(out, packsMeasured ? packs : [], corpusKinds));
+  process.exitCode = writeReport(computeVerdict(settingsBase, packsMeasured ? packs : [], packsMeasured ? candidateOnly : [], corpusKinds, reported, packsMeasured ? gate : [], partial), out, runMeta(out, packsMeasured ? packs : [], corpusKinds));
 }
 
 main();

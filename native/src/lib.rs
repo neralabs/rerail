@@ -29,6 +29,15 @@ pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;
 pub use rerail_store::content_store;
+/// Every in-process Git read (`native/src/git_access`): the opener, its setup and its pool are the store's
+/// (`rerail-store`), which the workspace discovery and the ignore matcher open through; the Node-API object that
+/// installs the setup is the engine's.
+pub mod git_access {
+    pub use rerail_store::git_access::*;
+    pub mod owner;
+    #[cfg(test)]
+    mod tests;
+}
 pub use rerail_store::git_workspace;
 pub use rerail_store::source_tree;
 pub use rerail_w::git_ignore;
@@ -61,8 +70,11 @@ static GLOBAL: Sampled = Sampled;
 #[cfg_attr(test, allow(dead_code))]
 struct Sampled;
 
+// Every allocation of every crate calls these through the allocator shim (`__rust_alloc`): inlined into it, as
+// jemalloc's own are, they cost the shim one load more an allocation and not a call of their own.
 #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 unsafe impl std::alloc::GlobalAlloc for Sampled {
+    #[inline]
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         let p = unsafe { tikv_jemallocator::Jemalloc.alloc(layout) };
         if rerail_prof::heap::on() {
@@ -70,6 +82,7 @@ unsafe impl std::alloc::GlobalAlloc for Sampled {
         }
         p
     }
+    #[inline]
     unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
         let p = unsafe { tikv_jemallocator::Jemalloc.alloc_zeroed(layout) };
         if rerail_prof::heap::on() {
@@ -77,12 +90,14 @@ unsafe impl std::alloc::GlobalAlloc for Sampled {
         }
         p
     }
+    #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
         if rerail_prof::heap::on() {
             rerail_prof::heap::free(ptr as usize);
         }
         unsafe { tikv_jemallocator::Jemalloc.dealloc(ptr, layout) }
     }
+    #[inline]
     unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
         let q = unsafe { tikv_jemallocator::Jemalloc.realloc(ptr, layout, new_size) };
         if rerail_prof::heap::on() && !q.is_null() {

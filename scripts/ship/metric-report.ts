@@ -1,5 +1,5 @@
 // report.md's rows for metric.ts's figures: each pack's start-up, net times, phases and workload under its gross
-// metrics, the net ratio beside the gross one in the pack table, and the rule cost multiple in the drill-down. All
+// metrics, the net ratio beside the gross one in the pack table, and the rule cost multiple in slice B. All
 // informational: none of it is a status.
 
 import { type CellCost, KNOWN_GAPS, type NetItem } from "./metric.js";
@@ -57,7 +57,7 @@ export function costRows(cells: readonly (CellItem | undefined)[]): string[] {
   ];
 }
 
-/** The drill-down's multiple column: baseline → candidate, with the rule's flags. */
+/** Slice B's multiple column: baseline → candidate, with the rule's flags. */
 export function multipleColumn(rule: RuleItem): string {
   if (rule.multiple === undefined) return "–";
   const text = `${scaled(rule.multiple.baseline, 1)}× → ${scaled(rule.multiple.candidate, 1)}×`;
