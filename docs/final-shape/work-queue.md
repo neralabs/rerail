@@ -1999,6 +1999,14 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   is noise (16–113 MB whatever its nodes), so no finer sizing rule was adopted. Gathering concurrent chunks' label runs
   is not built, since its prize is fewer runs and 0386 keeps each job's wave its own.
 
+### Q281. `label_leaves` is most of the label passes' GPU time
+
+- **Found** (2026-11-19, 0447): with `label_formula`'s floor gone, `label_leaves` takes 32.2 ms of internal_dead_code's
+  50.7 ms of GPU time at s1000 (`RERAIL_GPU_ENCODER_TIMES`): 12 encoders of about 2.7 ms each, against 16.8 ms for
+  every formula.
+- **Done when:** what a leaves pass spends its time on is measured, and either changed with rows the same as native,
+  or recorded as its work.
+
 ### Q270. The children of members read a chain of child reads on one thread per member
 
 - **Found** (2026-11-18, 0437): with a chain's reach at the dispatch floor, op 9 (the children of members,

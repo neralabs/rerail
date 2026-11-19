@@ -1117,9 +1117,12 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
     device atomic_uint* row=(target.mode>=2u?labelScratch:roots)+target.row;
     for(uint w=lane;w<fw;w+=width){
       uint bits=atomic_load_explicit(&anchor[w],memory_order_relaxed),valid=VALID(w),at=(d.node_base+w*32u)/32u;
-      if(target.mode==2u)bits&=uint(root_mask(chunk,d,rules,target.rule,file,w/2u)>>(32u*(w%2u)));
       if(target.mode!=1u){
         if(bits==0u)continue;
+        // Within its rule: the rule read at the word's own 32 nodes, and only where the formula holds at one. A rule
+        // over codes reads each node's code, so reading it at every word (both halves of a 64-node group each time)
+        // was the floor of every formula's dispatch, whatever the formula (item 4, 2026-11-19).
+        if(target.mode==2u){uint lo=32u*(w%2u);bits&=uint(root_mask_in(chunk,d,rules,target.rule,file,w/2u,lo,lo+32u)>>lo);if(bits==0u)continue;}
         atomic_fetch_or_explicit(&row[at],bits<<sh,memory_order_relaxed);
         if(sh!=0u)atomic_fetch_or_explicit(&row[at+1u],bits>>(32u-sh),memory_order_relaxed);
       }else{

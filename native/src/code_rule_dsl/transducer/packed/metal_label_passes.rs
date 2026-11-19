@@ -915,6 +915,126 @@ const KERNELS: [&str; 8] = ["label_sink", "label_settle", "label_round", "label_
 /// `label_formula` and `label_leaves` in `KERNELS` (decision 0365).
 const FORMULA_KERNEL: usize = 6;
 const LEAVES_KERNEL: usize = 7;
+/// `RERAIL_GPU_ENCODER_TIMES=1` (a measurement switch): each compute encoder's own time on the GPU, from timestamps the
+/// GPU takes at its start and end inside its command buffer (stage-boundary counters), and the gaps between one
+/// encoder's end and the next one's start. `RERAIL_GPU_KERNEL_TIMES` times a command buffer a kernel, committed and
+/// waited for alone, so its numbers hold the command buffer's own cost too; this one holds only the encoder's. As
+/// `encoder_us.<label>` and `encoder_n.<label>`, and `encoder_gap_us`.
+struct EncoderTimes {
+    device: metal::Device,
+    samples: metal::CounterSampleBuffer,
+    /// The labels of the encoders sampled in the current command buffer, in order: encoder `k` at samples `2k`, `2k+1`.
+    labels: Vec<String>,
+    /// GPU ticks against host nanoseconds, from two `sampleTimestamps` (at the start, and at each read).
+    calibration: (u64, std::time::Instant),
+}
+
+/// Samples a command buffer holds: two an encoder, for at most this many encoders (a submission holds
+/// `KERNEL_LAUNCH_LIMIT` launches).
+const ENCODER_SAMPLES: usize = 2048;
+
+impl EncoderTimes {
+    fn new(device: &metal::DeviceRef) -> Option<Self> {
+        static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_GPU_ENCODER_TIMES").is_some());
+        if !*ON {
+            return None;
+        }
+        let Some(set) = device.counter_sets().into_iter().find(|set| set.name() == "timestamp") else {
+            eprintln!("RERAIL_GPU_ENCODER_TIMES: this GPU has no timestamp counter set");
+            return None;
+        };
+        if !device.supports_counter_sampling(metal::MTLCounterSamplingPoint::AtStageBoundary) {
+            eprintln!("RERAIL_GPU_ENCODER_TIMES: this GPU samples no counters at stage boundaries");
+            return None;
+        }
+        let descriptor = metal::CounterSampleBufferDescriptor::new();
+        descriptor.set_counter_set(&set);
+        descriptor.set_sample_count(ENCODER_SAMPLES as u64);
+        descriptor.set_storage_mode(metal::MTLStorageMode::Shared);
+        let samples = device.new_counter_sample_buffer_with_descriptor(&descriptor).map_err(|error| eprintln!("RERAIL_GPU_ENCODER_TIMES: {error}")).ok()?;
+        let (mut cpu, mut gpu) = (0, 0);
+        device.sample_timestamps(&mut cpu, &mut gpu);
+        Some(Self { device: device.to_owned(), samples, labels: Vec::new(), calibration: (gpu, std::time::Instant::now()) })
+    }
+
+    /// The pass descriptor of the next encoder, sampled at its start and end; `None` where the buffer is full.
+    fn next(&mut self, label: &str) -> Option<&metal::ComputePassDescriptorRef> {
+        let at = 2 * self.labels.len();
+        if at + 2 > ENCODER_SAMPLES {
+            return None;
+        }
+        self.labels.push(label.to_owned());
+        let descriptor = metal::ComputePassDescriptor::new();
+        let attachment = descriptor.sample_buffer_attachments().object_at(0)?;
+        attachment.set_sample_buffer(&self.samples);
+        attachment.set_start_of_encoder_sample_index(at as u64);
+        attachment.set_end_of_encoder_sample_index(at as u64 + 1);
+        Some(descriptor)
+    }
+
+    /// The finished command buffer's encoders' times, into the profile's counters; the buffer is free again.
+    fn read(&mut self) {
+        if self.labels.is_empty() {
+            return;
+        }
+        // `resolveCounterRange:` gives an NSData of u64 timestamps (metal-rs's own copies none of its bytes).
+        unsafe extern "C" {
+            fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+            fn objc_msgSend();
+        }
+        #[repr(C)]
+        struct Range {
+            location: u64,
+            length: u64,
+        }
+        let count = 2 * self.labels.len();
+        let resolve: unsafe extern "C" fn(*const std::ffi::c_void, *mut std::ffi::c_void, Range) -> *const std::ffi::c_void =
+            unsafe { std::mem::transmute(objc_msgSend as unsafe extern "C" fn()) };
+        let bytes: unsafe extern "C" fn(*const std::ffi::c_void, *mut std::ffi::c_void) -> *const u64 =
+            unsafe { std::mem::transmute(objc_msgSend as unsafe extern "C" fn()) };
+        let length: unsafe extern "C" fn(*const std::ffi::c_void, *mut std::ffi::c_void) -> u64 =
+            unsafe { std::mem::transmute(objc_msgSend as unsafe extern "C" fn()) };
+        let object = std::ptr::from_ref::<metal::CounterSampleBufferRef>(&self.samples).cast::<std::ffi::c_void>();
+        let data = unsafe { resolve(object, sel_registerName(c"resolveCounterRange:".as_ptr()), Range { location: 0, length: count as u64 }) };
+        let labels = std::mem::take(&mut self.labels);
+        if data.is_null() || unsafe { length(data, sel_registerName(c"length".as_ptr())) } < 8 * count as u64 {
+            crate::code_rule_dsl::prof::count("encoder_unresolved", labels.len());
+            return;
+        }
+        let stamps = unsafe { std::slice::from_raw_parts(bytes(data, sel_registerName(c"bytes".as_ptr())), count) };
+        let (mut cpu, mut gpu) = (0, 0);
+        self.device.sample_timestamps(&mut cpu, &mut gpu);
+        let (gpu0, at0) = self.calibration;
+        let ns_a_tick = at0.elapsed().as_nanos() as f64 / gpu.saturating_sub(gpu0).max(1) as f64;
+        crate::code_rule_dsl::prof::count("encoder_ps_a_tick", (ns_a_tick * 1000.0) as usize);
+        let mut last_end = None;
+        for (k, label) in labels.iter().enumerate() {
+            let (start, end) = (stamps[2 * k], stamps[2 * k + 1]);
+            // A sample the GPU did not take reads as an error value (`MTLCounterErrorValue`, all ones) or zero.
+            if start == 0 || end == 0 || start == u64::MAX || end == u64::MAX || end < start {
+                crate::code_rule_dsl::prof::count("encoder_unsampled", 1);
+                continue;
+            }
+            crate::code_rule_dsl::prof::count_named(format!("encoder_us.{label}"), ((end - start) as f64 * ns_a_tick / 1000.0) as usize);
+            crate::code_rule_dsl::prof::count_named(format!("encoder_n.{label}"), 1);
+            if let Some(previous) = last_end
+                && start >= previous
+            {
+                crate::code_rule_dsl::prof::count("encoder_gap_us", ((start - previous) as f64 * ns_a_tick / 1000.0) as usize);
+            }
+            last_end = Some(end);
+        }
+    }
+}
+
+/// A compute encoder on `command`, sampled for `RERAIL_GPU_ENCODER_TIMES` where it is on.
+fn encoder_of<'c>(command: &'c metal::CommandBufferRef, times: &mut Option<EncoderTimes>, label: &str) -> &'c metal::ComputeCommandEncoderRef {
+    match times.as_mut().and_then(|times| times.next(label)) {
+        Some(descriptor) => command.compute_command_encoder_with_descriptor(descriptor),
+        None => command.new_compute_command_encoder(),
+    }
+}
+
 /// Where `label_formula`'s dispatches are noted (`RERAIL_FORMULA_TRACE=<file>`, with `RERAIL_GPU_KERNEL_TIMES`): a
 /// measurement switch, a line a dispatch.
 fn formula_trace() -> Option<&'static std::sync::Mutex<std::fs::File>> {
@@ -1276,6 +1396,8 @@ struct Runner<'a> {
     /// The batch's fact block (`Pass::Fact`, Q251), bound to the pattern kernels where the facts are read: its
     /// address, and its device buffer.
     facts: Option<(usize, Buffer)>,
+    /// `RERAIL_GPU_ENCODER_TIMES`: each encoder's own GPU time, from timestamps inside its command buffer.
+    encoder_times: Option<EncoderTimes>,
     /// The rules whose anchors were evaluated this run (`anchors`), by address.
     anchored: std::collections::HashSet<usize>,
     /// Under `RERAIL_PROF`, each `label_formula` group's counts, read after the flush.
@@ -1665,6 +1787,7 @@ fn encode(
         root_table: RootTable::default(),
         root_words: None,
         facts: None,
+        encoder_times: EncoderTimes::new(device),
         anchored: Default::default(),
         formula_stats: Vec::new(),
         run_leaves: Vec::new(),
@@ -1924,6 +2047,9 @@ impl Runner<'_> {
         commit_checked(&self.command)?;
         wait_checked(&self.command)?;
         crate::code_rule_dsl::prof::count("gpu.commits", 1);
+        if let Some(times) = &mut self.encoder_times {
+            times.read();
+        }
         {
             // The command buffer's time on the GPU (`GPUStartTime` to `GPUEndTime`).
             unsafe extern "C" {
@@ -1971,6 +2097,9 @@ impl Runner<'_> {
         // Refused (the launch ledger is spent): the flush reports it.
         if commit_checked(&self.command).is_err() || wait_checked(&self.command).is_err() {
             return None;
+        }
+        if let Some(times) = &mut self.encoder_times {
+            times.read();
         }
         unsafe extern "C" {
             fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
@@ -2036,7 +2165,7 @@ impl Runner<'_> {
             return;
         }
         crate::code_rule_dsl::prof::count("gpu.encoders", 1);
-        let encoder = self.command.new_compute_command_encoder();
+        let encoder = encoder_of(&self.command, &mut self.encoder_times, label);
         encoder.set_label(label);
         encoder.set_compute_pipeline_state(state);
         for (index, (buffer, offset)) in buffers.iter().enumerate() {
@@ -2549,7 +2678,7 @@ impl Runner<'_> {
         let tests_buffer = self.upload(tests)?;
         let docs = self.tapes.docs.buffer.clone();
         let shape = Shape { target_count: tests.len() as u32, recursive: self.region() as u32, ..self.shape() };
-        let encoder = self.command.new_compute_command_encoder();
+        let encoder = encoder_of(&self.command, &mut self.encoder_times, KERNELS[LEAVES_KERNEL]);
         encoder.set_label(KERNELS[LEAVES_KERNEL]);
         crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[LEAVES_KERNEL]), 1);
         crate::code_rule_dsl::prof::count("gpu.anchor_leaves", tests.len());
@@ -2659,7 +2788,7 @@ impl Runner<'_> {
         for first in (0..count).step_by(per) {
             let formulas = per.min(count - first);
             let shape = Shape { item_count: first as u32, target_count: formulas as u32, queue: stride as u32, profile: u32::from(profile), ..base };
-            let encoder = self.command.new_compute_command_encoder();
+            let encoder = encoder_of(&self.command, &mut self.encoder_times, KERNELS[FORMULA_KERNEL]);
             encoder.set_label(KERNELS[FORMULA_KERNEL]);
             crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[FORMULA_KERNEL]), 1);
             encoder.set_compute_pipeline_state(&state);
@@ -2969,7 +3098,7 @@ impl Runner<'_> {
         blit.fill_buffer(&head, metal::NSRange::new(at + 4 * (2 + 2 * group as u64 + round as u64 % 2), 4), 0);
         blit.end_encoding();
         let state = self.sweep.clone().ok_or(Error::BackendFailure)?;
-        let encoder = self.command.new_compute_command_encoder();
+        let encoder = encoder_of(&self.command, &mut self.encoder_times, "label_sweep");
         encoder.set_label("label_sweep");
         crate::code_rule_dsl::prof::count(concat!("kernel.", "label_sweep"), 1);
         encoder.set_compute_pipeline_state(&state);
@@ -3129,7 +3258,7 @@ impl Runner<'_> {
         }
         buffers.push(self.group_stacks[depth].as_ref().expect("group stacks").buffer.clone());
         let state = self.kernels[pipeline].clone();
-        let encoder = self.command.new_compute_command_encoder();
+        let encoder = encoder_of(&self.command, &mut self.encoder_times, label);
         encoder.set_label(label);
         crate::code_rule_dsl::prof::count_named(format!("kernel.{label}"), 1);
         encoder.set_compute_pipeline_state(&state);
@@ -3374,7 +3503,7 @@ impl Runner<'_> {
                 let threads = if tier == 0 { tier_items.len().min(stack_lanes(8, 31)) } else { tier_items.len().min(ROOT_POOL) };
                 let (kernel, label) = (ROOT_KERNEL, ROOT_NAMES[tier.min(1)]);
                 let state = self.kernels[kernel].clone();
-                let encoder = self.command.new_compute_command_encoder();
+                let encoder = encoder_of(&self.command, &mut self.encoder_times, label);
                 encoder.set_label(label);
                 encoder.set_compute_pipeline_state(&state);
                 for (index, (buffer, offset)) in buffers.iter().enumerate() {
@@ -3479,7 +3608,7 @@ impl Runner<'_> {
         let prepared = self.prepared.get(&level).and_then(Option::as_ref).expect("prepared");
         let routes = prepared.routes.buffer.clone();
         let buffers = self.bound(prepared);
-        let encoder = self.command.new_compute_command_encoder();
+        let encoder = encoder_of(&self.command, &mut self.encoder_times, "Rerail label pass programs");
         encoder.set_label("Rerail label pass programs");
         crate::code_rule_dsl::prof::count(concat!("kernel.", "Rerail label pass programs"), 1);
         encoder.set_compute_pipeline_state(self.engine.pipeline());
