@@ -1021,3 +1021,190 @@ fn tier1_cones() {
         eprintln!("  {only:5} own {size:5} cone  {label}");
     }
 }
+
+/// 0429's step 1, a probe: the grammar's masks that are token-level (their value at a grammar
+/// token's start a function of the tokens: word tests, first-byte classes, their logic, fills
+/// between masks that hold at token starts only) and read by token-level readers only, and the
+/// operations of tier 1's body they make (`Compiled::origin`). Approximate: it reads the syntax,
+/// not the proofs 0429 asks for.
+#[test]
+#[ignore = "a probe: prints"]
+fn token_level_probe() {
+    use ::bitlex::syntax::{Arg, Expr, Stmt};
+    use rerail_compiler::bitlex_masks as bitlex_compile;
+    use std::collections::{HashMap, HashSet};
+    let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
+    let mut defs: HashMap<String, Expr> = HashMap::new();
+    let mut classes: HashSet<String> = HashSet::new();
+    fn walk(s: &[Stmt], defs: &mut HashMap<String, Expr>, classes: &mut HashSet<String>) {
+        for s in s {
+            match s {
+                Stmt::Mask(n, e) => {
+                    defs.insert(n.clone(), e.clone());
+                }
+                Stmt::Class(n, _) => {
+                    classes.insert(n.clone());
+                }
+                Stmt::Block { body, .. } | Stmt::Hyp { body, .. } | Stmt::Rounds { body, .. } => walk(body, defs, classes),
+                _ => {}
+            }
+        }
+    }
+    walk(&stmts, &mut defs, &mut classes);
+    // (token-level, holds at token starts only)
+    fn conj<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
+        if let Expr::And(a, b) = e {
+            conj(a, out);
+            conj(b, out);
+        } else {
+            out.push(e);
+        }
+    }
+    struct Cx<'a> {
+        defs: &'a HashMap<String, Expr>,
+        classes: &'a HashSet<String>,
+        memo: HashMap<String, (bool, bool)>,
+    }
+    fn word_text(e: &Expr) -> Option<usize> {
+        match e {
+            Expr::Call(f, a) if f == "text" => match a.as_slice() {
+                [Arg::S(s)] if s.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_') => Some(s.len()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+    fn tl(cx: &mut Cx, e: &Expr) -> (bool, bool) {
+        match e {
+            Expr::Name(n) if n == "kw_start" => (true, true),
+            Expr::Name(n) if n == "code" => (true, false),
+            Expr::Name(n) if cx.classes.contains(n) => (true, false),
+            Expr::Name(n) => {
+                if let Some(&v) = cx.memo.get(n) {
+                    return v;
+                }
+                cx.memo.insert(n.clone(), (false, false));
+                let v = match cx.defs.get(n).cloned() {
+                    Some(d) => tl(cx, &d),
+                    None => (false, false),
+                };
+                cx.memo.insert(n.clone(), v);
+                v
+            }
+            Expr::Empty => (true, false),
+            Expr::Not(x) => (tl(cx, x).0, false),
+            Expr::Or(a, b) | Expr::Xor(a, b) => {
+                let (x, y) = (tl(cx, a), tl(cx, b));
+                (x.0 && y.0, x.1 && y.1)
+            }
+            Expr::And(..) => {
+                let mut fs = Vec::new();
+                conj(e, &mut fs);
+                // A word test: `kw_start & text(W) & ~next(w, |W|)`.
+                let starts = fs.iter().any(|f| matches!(f, Expr::Name(n) if n == "kw_start"));
+                let mut all = true;
+                let mut only = false;
+                for f in &fs {
+                    let v = match f {
+                        _ if starts && word_text(f).is_some() => (true, true),
+                        Expr::Not(x) if starts && matches!(&**x, Expr::Call(c, _) if c == "next") => (true, false),
+                        Expr::Call(c, a) if c == "text" && matches!(a.as_slice(), [Arg::S(_)]) => (true, true),
+                        f => tl(cx, f),
+                    };
+                    all &= v.0;
+                    only |= v.1;
+                }
+                (all, all && only)
+            }
+            Expr::Call(c, a) if c == "text" && matches!(a.as_slice(), [Arg::S(_)]) => (true, true),
+            Expr::Call(c, a) if c == "fill" => match a.as_slice() {
+                [Arg::E(s), Arg::E(t)] => {
+                    let (x, y) = (tl(cx, s), tl(cx, t));
+                    (x.0 && x.1 && y.0 && y.1, false)
+                }
+                _ => (false, false),
+            },
+            _ => (false, false),
+        }
+    }
+    let mut cx = Cx { defs: &defs, classes: &classes, memo: HashMap::new() };
+    let names: Vec<String> = defs.keys().cloned().collect();
+    let mut level: HashSet<String> = names.iter().filter(|n| tl(&mut cx, &Expr::Name((*n).clone())).0).cloned().collect();
+    // The readers: masks by their definitions; marks read at token starts; every other statement
+    // bytewise.
+    fn uses(e: &Expr, out: &mut HashSet<String>) {
+        let s = format!("{e:?}");
+        for part in s.split("Name(\"").skip(1) {
+            if let Some(n) = part.split('"').next() {
+                out.insert(n.to_string());
+            }
+        }
+    }
+    let mut bytewise: HashSet<String> = HashSet::new();
+    let mut readers: HashMap<String, Vec<String>> = HashMap::new();
+    for (n, e) in &defs {
+        let mut u = HashSet::new();
+        uses(e, &mut u);
+        for x in u {
+            readers.entry(x).or_default().push(n.clone());
+        }
+    }
+    fn others(s: &[Stmt], bytewise: &mut HashSet<String>) {
+        for s in s {
+            match s {
+                Stmt::Mask(..) | Stmt::Class(..) => {}
+                Stmt::Mark { .. } => {}
+                Stmt::Block { body, .. } | Stmt::Hyp { body, .. } => others(body, bytewise),
+                s => {
+                    let d = format!("{s:?}");
+                    for part in d.split("Name(\"").skip(1) {
+                        if let Some(n) = part.split('"').next() {
+                            bytewise.insert(n.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    others(&stmts, &mut bytewise);
+    loop {
+        let before = level.len();
+        let keep: HashSet<String> = level.iter().filter(|n| !bytewise.contains(*n) && readers.get(*n).is_none_or(|rs| rs.iter().all(|r| level.contains(r)))).cloned().collect();
+        level = keep;
+        if level.len() == before {
+            break;
+        }
+    }
+    let own = std::cell::RefCell::new(HashMap::<String, u16>::new());
+    let kind = |name: &str| {
+        crate::lean_kind(name).or_else(|| {
+            let mut own = own.borrow_mut();
+            let next = crate::OWN_IDS + own.len() as u16;
+            Some(*own.entry(name.to_owned()).or_insert(next))
+        })
+    };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field };
+    let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, Default::default()).expect("compiles");
+    let mut by: HashMap<String, usize> = HashMap::new();
+    for o in &c.origin {
+        if let Some(m) = o.strip_prefix("mask ") {
+            *by.entry(m.to_string()).or_default() += 1;
+        }
+    }
+    let mut rows: Vec<(usize, String)> = level.iter().map(|n| (by.get(n).copied().unwrap_or(0), n.clone())).collect();
+    rows.sort_by(|a, b| b.cmp(a));
+    let total: usize = rows.iter().map(|r| r.0).sum();
+    eprintln!("token-level masks read by token-level readers only: {}, {total} of {} operations", rows.len(), c.program.ops.len());
+    for (k, n) in rows.iter().take(40) {
+        eprintln!("  {k:4} {n}");
+    }
+    // The biggest token-level masks some bytewise reader keeps, and the readers.
+    let tl_all: Vec<String> = names.iter().filter(|n| !level.contains(*n) && tl(&mut cx, &Expr::Name((*n).clone())).0).cloned().collect();
+    let mut kept: Vec<(usize, String)> = tl_all.iter().map(|n| (by.get(n).copied().unwrap_or(0), n.clone())).collect();
+    kept.sort_by(|a, b| b.cmp(a));
+    eprintln!("token-level but read bytewise:");
+    for (k, n) in kept.iter().take(25) {
+        let rs: Vec<&String> = readers.get(n).map_or(vec![], |r| r.iter().filter(|r| !level.contains(*r)).collect());
+        eprintln!("  {k:4} {n}: {}{rs:?}", if bytewise.contains(n) { "a statement, " } else { "" });
+    }
+}

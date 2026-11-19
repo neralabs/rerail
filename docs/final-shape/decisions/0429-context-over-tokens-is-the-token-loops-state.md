@@ -59,6 +59,33 @@ prints them), the token loop gains the step's few, and the tapes stay byte-ident
 3. Fills over tokens: the state bits.
 4. Gap marks read through the state.
 
+## Step 1's finding (2026-11-18)
+
+`kotlin_parser`'s `token_level_probe` reads the grammar and finds the masks that are token-level
+(by the forms above) and that only token-level readers read. **None qualify as the grammar
+stands.** The word tests are token-level: `jat`, `ctor_w`, `finally_w`, `where_w`, `else_w`,
+`catch_w` and their kin. But their readers are byte idioms that mean token facts, for example
+`jat_last = at_after & prev(fill(jat, at_sign))` for "the token before is `return@`…". The
+readers fall into three kinds:
+
+| Kind | Examples | What it means | The lean parser's form |
+|---|---|---|---|
+| A lexing decision | `jat`, `jat_last`, `p_start`, `three`, `asq` | whether `return@` and `===` are one token | the lexer's reader for the token |
+| The fallback's comment placement | `goes_now`, `awe_word`, `else_odd`, `ctor_reach`, `ann_ctor` (the escapes "a block comment before a token that goes on the line", …) | where tree-sitter places a comment that the parser would place otherwise | the parser places the comment as tree-sitter does; since 0406 a mark's `settles` and `drops` can say that |
+| Context over tokens | `class_head`, `line_mod`, `hdr_line`, `decl_stop` | being in a class's header, or on a line that starts with modifiers | a rule's level in tier 2 |
+
+So 0429's lowering applies only once each reader says what it means. That is the grammar's work,
+as 0406 did for the next token's back fills. The order of the work becomes:
+
+1. The escapes of comment placement go: the grammar places those comments as tree-sitter does,
+   by `settles` and `drops` where the lean parser decides. Their cones leave tier 1, and the files
+   they refuse now parse.
+2. The lexing decisions become their tokens' rules.
+3. The context over tokens becomes tier 2's levels, or token marks.
+4. What is left of the word tests and fills becomes the token loop's step, as above.
+
+`tier1_cones` gives each step's gate: the operations each removes from the CPU body.
+
 ## Where it stands
 
 Before the work (2026-11-18, after the late marks' merge walk, load about 12): the CPU form has
