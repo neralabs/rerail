@@ -52,6 +52,8 @@ declare module "*/ui/sessions-model.js" {
   export function uncheckedBoundaries(s: { sessionId: string }): number;
   export function codeRulesPendingBoundaries(s: { sessionId: string }): number;
   export function sessionCorrections(sessionId: string): Correction[];
+  export function mcpToolLabel(toolName: unknown): string;
+  export function callToolLabel(call: { verb: string; level: string; label: string; toolName: string }): string | null;
   export function sessionViolationTotal(sessionId: string): number | null;
   export function sessionDeclinedTotal(s: SessionRow): number;
   export function loadedFrom(sessionId: string): number;

@@ -2,7 +2,7 @@ import { h, setAttr, setText, setClass, chevron, syncChildren } from "../dom.js"
 import { fmt, plural, ago, clockSeconds, shortPath, truncate } from "../format.js";
 import { violationOutcome } from "../derive.js";
 import { ui, titleOf, packRuleOf } from "../state.js";
-import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, outputText, describeInput } from "../sessions-model.js";
+import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, outputText, describeInput, callToolLabel } from "../sessions-model.js";
 
 /** Every event with "Show all events", else only those that carry a shown violation. */
 const EF = () => (ui.showAll ? "all" : "corrections");
@@ -97,7 +97,8 @@ function payload(ev) {
 
 function createEvent(ev) {
   return h("div.evt", null,
-    h("button.eh", { "data-act": "etoggle", "data-i": ev.key, "aria-expanded": "false" }, chevron(), h("span.vb"), h("span.tg"),
+    h("button.eh", { "data-act": "etoggle", "data-i": ev.key, "aria-expanded": "false" }, chevron(),
+      h("span.vcell", null, h("span.vb"), h("span.vtool", { hidden: true })), h("span.tg"),
       h("span.out", null, h("span.oc"), h("span.tn"), h("span.sq.num"), h("span.tm.num"))),
     h("span.spk", { hidden: true }),
     h("div.pay"));
@@ -108,6 +109,18 @@ function setSpeaker(node, who) {
   const spk = node.querySelector(":scope > .spk");
   setAttr(spk, "hidden", !who);
   setText(spk, who ?? "");
+}
+
+/**
+ * The call's tool beside its badge (`callToolLabel`), the whole name in the tooltip. The right-hand tool name (wide
+ * windows only) would repeat it, so a call that names its tool here leaves that out.
+ */
+function updateCallTool(eh, ev) {
+  const label = callToolLabel(ev), vtool = eh.querySelector(".vtool");
+  setAttr(vtool, "hidden", label === null);
+  setAttr(eh.querySelector(".tn"), "hidden", label !== null);
+  setText(vtool, label ?? "");
+  setAttr(vtool, "title", label === null ? null : ev.toolName);
 }
 
 function verbLabel(ev) {
@@ -124,6 +137,7 @@ function updateEvent(node, ev, who = null) {
   const eh = node.firstChild;
   setAttr(eh, "aria-expanded", String(isOpen));
   setText(eh.querySelector(".vb"), verbLabel(ev));
+  updateCallTool(eh, ev);
   const tg = eh.querySelector(".tg");
   const desc = ev.title !== ev.target;
   setClass(tg, "desc", desc);

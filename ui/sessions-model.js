@@ -36,6 +36,27 @@ function verbOf(toolName) {
   return TOOL_VERB[name] ?? "other";
 }
 
+/**
+ * An MCP call's server and tool, from the harness's `mcp__<server>__<tool>` name, to show beside its MCP badge as
+ * "server · tool"; the whole name when it has no such parts.
+ */
+export function mcpToolLabel(toolName) {
+  const name = String(toolName ?? "");
+  const parts = name.replace(/^mcp__/u, "").split("__");
+  return parts.length >= 2 && parts.every(Boolean) ? `${parts.slice(0, -1).join("__")} · ${parts.at(-1)}` : name;
+}
+
+/**
+ * The tool a call row names beside its badge: an MCP call's "server · tool", any other call's tool when it says more
+ * than the badge ("Bash" beside Run, "Grep" beside Search). `null` for a file change (Edit, Create, Delete), whose row
+ * names the file instead, for a call the badge already names, and when the harness gave no tool name.
+ */
+export function callToolLabel(call) {
+  if (call.verb === "mcp") return mcpToolLabel(call.toolName);
+  if (call.level === "change" || call.verb === "other" || !call.toolName) return null;
+  return call.toolName.toLowerCase() === call.label.toLowerCase() ? null : call.toolName;
+}
+
 /** First matching pattern names the kind of shell command; order matters. */
 const RUN_KINDS = [
   [/\b(test|vitest|jest|pytest)\b/, "tests"],

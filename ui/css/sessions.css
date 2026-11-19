@@ -176,7 +176,11 @@ body[data-panel="open"] .sess > aside{display:none}
 .evt .pay{border-radius:0 0 calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px)}
 .evt.failed{border-color:var(--fail-border)}
 .evt.lvl-outside{border-color:var(--outside-border)}
-.evt .eh{display:grid;grid-template-columns:20px auto minmax(0,1fr) auto;gap:0 8px;align-items:center;width:100%;padding:5px 8px;text-align:left}
+.evt .eh{display:grid;grid-template-columns:20px minmax(0,auto) minmax(0,1fr) auto;gap:0 8px;align-items:center;width:100%;padding:5px 8px;text-align:left}
+/* The verb's badge, and an MCP call's "server · tool" beside it, which ellipsizes before the row overflows. */
+.evt .eh .vcell{display:flex;align-items:center;gap:6px;min-width:0}
+.evt .eh .vb{flex:none}
+.evt .eh .vtool{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:11.5px;color:var(--muted-foreground)}
 .evt .eh:hover{background:var(--subtle)}
 .evt .eh svg{transition:transform .15s;color:var(--muted-foreground)}
 .evt[data-open="true"] .eh svg{transform:rotate(90deg)}
@@ -209,7 +213,7 @@ body[data-panel="open"] .out .tn,body[data-panel="open"] .out .sq{display:none}
 }
 /* A phone-width timeline: a call's outcome and time take a second line under it, so a long label never pushes them out. */
 @container (max-width:440px){
-  .evt .eh{grid-template-columns:20px auto minmax(0,1fr);row-gap:2px}
+  .evt .eh{grid-template-columns:20px minmax(0,auto) minmax(0,1fr);row-gap:2px}
   .evt .eh .out{grid-column:2 / -1;justify-self:start}
 }
 .ok{color:var(--success-foreground)}

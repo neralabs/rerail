@@ -1,0 +1,1 @@
+In History by session, each tool call names its tool beside its badge (Bash beside Run, an MCP call's server and tool beside MCP), so a command no longer shows only Run. A file change still names the file it changed.

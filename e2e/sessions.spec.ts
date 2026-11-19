@@ -144,6 +144,17 @@ test.describe("History by session", () => {
     expect(header.rows.every(Boolean)).toBe(true);
   });
 
+  test("mature: an MCP call names its server and tool beside its MCP badge", async ({ page, rerail }) => {
+    await page.goto(await rerail.dashboard("mature", { hash: "sessions" }));
+    await page.locator("#content .tl .corr").first().waitFor();
+    await page.locator("#showAll").check();
+    const call = page.locator("#content .tl .evt").filter({ has: page.locator(".vb", { hasText: "MCP" }) });
+    await expect(call.locator(".vcell")).toHaveText("MCPgithub · get_pull_request");
+    await expect(call.locator(".vtool")).toHaveAttribute("title", "mcp__github__get_pull_request");
+    // The file change keeps its file, with no tool beside its badge.
+    await expect(page.locator("#content .tl .evt").filter({ has: page.locator(".vb", { hasText: "Create" }) }).first().locator(".vtool")).toBeHidden();
+  });
+
   test("mature: a session from Overview's recent sessions opens selected in History by session", async ({ page, rerail }) => {
     await page.goto(await rerail.dashboard("mature"));
     const link = page.locator('#content [data-act="session"]').last();

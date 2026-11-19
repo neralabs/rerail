@@ -376,6 +376,11 @@ function recordSession(
   sessions.append({ sessionId: plan.sessionId, eventId: `${plan.sessionId}-turn`, kind: "turn-end", observedAt: at(6 * MINUTE), payload: { turn: 1 } });
   if (plan.endedAt !== null) sessions.closeSession(plan.sessionId, plan.endedAt);
   else {
+    // The open session's agent also reads a pull request through an MCP server, after the audit, so no card is on it.
+    sessions.append({
+      sessionId: plan.sessionId, eventId: `${plan.sessionId}-mcp`, kind: "call", observedAt: at(5.5 * MINUTE),
+      payload: { toolName: "mcp__github__get_pull_request", toolCallId: `${plan.sessionId}-mcp`, input: { pullNumber: 398 } },
+    });
     sessions.append({
       sessionId: plan.sessionId, eventId: `${plan.sessionId}-prompt-2`, kind: "user-prompt", observedAt: context.now - 2 * MINUTE,
       payload: { text: "Now add a test for it." },
