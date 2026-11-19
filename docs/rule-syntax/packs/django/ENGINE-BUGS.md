@@ -18,7 +18,7 @@ engine and is fixed on main by #862.
 | 5 | One tape cache per machine: concurrent runs fail | engine `tape_cache_path` | Reproduced | Partly: the default store is per build and working directory; runs started from one directory still share it |
 | 6 | Very large repositories do not finish | engine, scale | Observed once (PostHog) | Not re-measured |
 | 7 | `sym_of` has no row for an attribute of a class of the same module | `lib/python/names.rerail` | Reproduced with a probe; cause found | Present (probe fails as described) |
-| 8 | A call to a def under an outside decorator has no call target | `lib/python/calls.rerail` | Reproduced with a probe | Present (probe fails as described) |
+| 8 | A call to a def under an outside decorator has no call target | `lib/python/calls.rerail` | Reproduced with a probe | Fixed by #875: the call targets the def and stays open (probe passes); workaround removed |
 | 9 | Rules that read the call graph take hours on large repositories | `python/calls` typing program, scale | Observed; not profiled | Not re-measured; the typing program is unchanged |
 | 10 | A negated tree axis is read wrong below a node a sym_of relation found | engine: lowering or demand of `!inside`/`within_stop` | Reproduced with a probe; bisected to a merge | Fixed by #862; the three rules it broke pass their cases |
 
@@ -306,17 +306,17 @@ decorator of the run `def mine(f)` that returns a `functools.wraps(f)` wrapper, 
 `def plain(): ...`; then `with held(): pass; wrapped(); cached(); plain()`. A rule reporting `call_target`/`call_open`
 per call gives: `held()` open, `cached()` open, `wrapped()` → `w` (the run's wrapper), `plain()` → `plain`.
 
-**Where.** `docs/rule-syntax/lib/python/calls.rerail`: a decorator outside the run makes the decorated name's value
-unknown, so the call is left open. That is sound for an arbitrary decorator; for the standard ones above it loses
-edges a rule needs.
+**Where.** `native/src/code_rule_dsl/typing/programs/calls.rdl` (and `calls.rerail`, its translation), the typing
+program `python/calls` reads: a decorator that is neither transparent nor a function of the run made the decorated
+name's value unknown, so the call was left open with no target.
 
-**Workaround used.** `django-practice-select-for-update-outside-atomic` (`sfu_target`, `sfu_cm_call`) falls back, for
-an open call, to the def its callee's name resolves to by import.
+**Workaround used (removed).** `django-practice-select-for-update-outside-atomic` fell back, for an open or unresolved
+call, to the def its callee's name resolves to by import (`sfu_target`, `sfu_cm_call`). The rule now reads
+`call_target` alone.
 
-**Suggested fix.** Treat a short list of standard decorators that keep the def's code on the call path
-(`contextlib.contextmanager`, `contextlib.asynccontextmanager`, `functools.lru_cache`, `functools.cache`) as passing
-the def through, so the call targets the decorated def. (A decorator of the run, such as `mine` above, already
-resolves to its wrapper.)
+**Fix.** #875: a call of a def whose decorators are imported from outside the run targets the def and stays
+`call_open`, since the wrapper is code the program does not read. The probe's `held()` and `cached()` now target
+their defs.
 
 ---
 

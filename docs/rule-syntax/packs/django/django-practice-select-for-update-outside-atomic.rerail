@@ -74,15 +74,10 @@ sfu_in_atomic(n) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_c
     dj_atomic(e), child(wc, wb, j), i < j, kind(wb, "with_item"), within_stop(n, wb, dj_region_stop).
 sfu_in_atomic(n) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wi, _),
     kind(wi, "with_item"), field(wi, "value", v), (unparen(v, e) ; kind(v, "as_pattern"), child(v, v0, 0), unparen(v0, e)),
-    kind(e, "call"), sfu_cm_call(e, g), sfu_atomic_cm(g), field(w, "body", b), within_stop(n, b, dj_region_stop).
+    kind(e, "call"), call_target(e, g), sfu_atomic_cm(g), field(w, "body", b), within_stop(n, b, dj_region_stop).
 // sfu_atomic_cm(g): def g (a `@contextmanager`) has a `yield` that runs in a transaction.
 .decl sfu_atomic_cm(g: node)
 sfu_atomic_cm(g) :- kind(y, "yield"), sfu_in_atomic(y), nearest(y, g, dj_region_stop), kind(g, "function_definition").
-// sfu_cm_call(e, g): call e calls def g: a call-graph edge, or the def its callee resolves to by import (python/calls
-// does not see through `@contextmanager`, ENGINE-BUGS.md bug 8).
-.decl sfu_cm_call(e: node, g: node)
-sfu_cm_call(e, g) :- kind(e, "call"), call_target(e, g).
-sfu_cm_call(e, g) :- kind(e, "call"), field(e, "function", fe), sym_of(fe, q), qualname(g, q).
 // sfu_atomic_def(f): def f runs in a transaction it opens: `@transaction.atomic`, `@method_decorator(
 // transaction.atomic)`, a method of a class decorated `@method_decorator(transaction.atomic, name=x)` where x is
 // `dispatch` (it calls every handler) or f's name, or a decorator of the run whose wrapper calls the decorated function
@@ -96,7 +91,7 @@ sfu_atomic_def(f) :- kind(f, "function_definition"), nearest(f, k, scope), kind(
 sfu_atomic_def(f) :- kind(f, "function_definition"), decorator(f, e), unparen(e, m), sym_of(m, q), qualname(d, q),
     sfu_atomic_wrapper(d).
 sfu_atomic_def(f) :- kind(f, "function_definition"), decorator(f, e), unparen(e, m), kind(m, "call"),
-    sfu_cm_call(m, g), sfu_atomic_cm(g).
+    call_target(m, g), sfu_atomic_cm(g).
 // sfu_atomic_wrapper(d): decorator d calls the function it receives (its first parameter) in a transaction.
 .decl sfu_atomic_wrapper(d: node)
 sfu_atomic_wrapper(d) :- kind(d, "function_definition"), param(d, x, 0), kind(c, "call"), field(c, "function", fn),
@@ -112,12 +107,7 @@ sfu_method_atomic(e) :- kind(e, "call"), field(e, "function", mf), sym_of(mf, "d
 // matters. (An atomic call site, or an atomic def, ends the walk up the callers.)
 .decl sfu_up(f: node)
 sfu_up(f) :- sfu_site(_, f), sfu_plain(f).
-sfu_up(g) :- sfu_up(f), sfu_target(c, f), owner(c, g), !sfu_in_atomic(c), sfu_plain(g).
-// sfu_target(c, f): call c may call def f: python/calls' answer, or, where that is open, the def the callee's name
-// resolves to (a def behind a decorator python/calls cannot see through, such as `@contextmanager`).
-.decl sfu_target(c: node, f: node)
-sfu_target(c, f) :- call_target(c, f).
-sfu_target(c, f) :- sfu_up(f), qualname(f, q), call_open(c), field(c, "function", e), sym_of(e, q).
+sfu_up(g) :- sfu_up(f), call_target(c, f), owner(c, g), !sfu_in_atomic(c), sfu_plain(g).
 // sfu_exposed(f): def f may run with no transaction open.
 .decl sfu_exposed(f: node)
 sfu_exposed(f) :- sfu_entry(f).
@@ -125,8 +115,8 @@ sfu_exposed(f) :- sfu_bare_call(_, f).
 // sfu_bare_call(c, f): call c, in a def that may run with no transaction open (or at module level), reaches f and
 // is not inside an atomic region.
 .decl sfu_bare_call(c: node, f: node)
-sfu_bare_call(c, f) :- sfu_up(f), sfu_target(c, f), owner(c, g), sfu_exposed(g), !sfu_in_atomic(c).
-sfu_bare_call(c, f) :- sfu_up(f), sfu_target(c, f), !owner(c, _), docof(c, d), !dj_test_doc(d).
+sfu_bare_call(c, f) :- sfu_up(f), call_target(c, f), owner(c, g), sfu_exposed(g), !sfu_in_atomic(c).
+sfu_bare_call(c, f) :- sfu_up(f), call_target(c, f), !owner(c, _), docof(c, d), !dj_test_doc(d).
 // sfu_plain(f): def f, outside tests, does not open a transaction around its whole body.
 .decl sfu_plain(f: node)
 sfu_plain(f) :- kind(f, "function_definition"), !sfu_atomic_def(f), docof(f, d), !dj_test_doc(d).
@@ -143,7 +133,7 @@ sfu_entry(f) :- sfu_up(f), !sfu_called(f), def_name(f, x), !sfu_open_name(x), !s
 .decl sfu_property(f: node)
 sfu_property(f) :- sfu_up(f), decorator(f, e), unparen(e, m), leaf_name(m, x), (x = "property" ; x = "cached_property").
 .decl sfu_called(f: node)
-sfu_called(f) :- sfu_up(f), sfu_target(c, f), docof(c, d), !dj_test_doc(d).
+sfu_called(f) :- sfu_up(f), call_target(c, f), docof(c, d), !dj_test_doc(d).
 // sfu_open_name(x): a call outside tests whose target is unknown or unresolved is spelled `x(…)` or `<obj>.x(…)`, x a
 // sfu_up def's name.
 .decl sfu_open_name(x: symbol)
