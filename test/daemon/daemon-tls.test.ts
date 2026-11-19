@@ -20,6 +20,7 @@ import {
   RerailDaemon,
   serveRerailDaemon,
   TlsKeyExposedError,
+  TlsKeyUnparsedError,
 } from "../../src/daemon/daemon.js";
 import { DAEMON_STATE_FILE, daemonFetch, probeDaemon, readDaemonState, type DaemonState } from "../../src/runtime/index.js";
 import { selfSignedCertificate } from "../support/self-signed-certificate.js";
@@ -241,7 +242,7 @@ Start-Sleep 60`;
     expect(await loadDaemonTls(files)).toEqual({ cert, key });
   });
 
-  it("stops the start in one line naming the file when the key or the certificate is empty or holds no PEM", async () => {
+  it("serves this computer alone on a key that is empty or holds no PEM, and stops the start on such a certificate, each in one line naming the file", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
     const { cert, key } = selfSignedCertificate();
     const files = { certFile: join(root, "cert.pem"), keyFile: join(root, "key.pem") };
@@ -258,21 +259,25 @@ Start-Sleep 60`;
     await writeFile(locked, createPrivateKey(key).export({ type: "pkcs8", format: "pem", cipher: "aes-256-cbc", passphrase: "stand-in" }));
     // A key only its owner reads, on every system, so each start below reaches the files' text.
     const ownerOnly = { platform: "win32" as const, acl: { otherReaders: (): string[] => [] } };
-    // An empty key started a daemon that said it listened on https and failed every handshake.
-    const refused: [{ certFile: string; keyFile: string }, string][] = [
-      [{ ...files, keyFile: empty }, `The TLS private key ${empty} is empty: it must hold a PEM private key`],
-      [{ ...files, keyFile: blank }, `The TLS private key ${blank} could not be read as a PEM private key: `],
-      [{ ...files, keyFile: text }, `The TLS private key ${text} could not be read as a PEM private key: `],
-      [{ ...files, keyFile: files.certFile }, `The TLS private key ${files.certFile} could not be read as a PEM private key: `],
-      [{ ...files, keyFile: locked }, `The TLS private key ${locked} could not be read as a PEM private key: `],
-      [{ ...files, certFile: empty }, `The TLS certificate ${empty} is empty: it must hold a PEM X.509 certificate`],
-      [{ ...files, certFile: text }, `The TLS certificate ${text} could not be read as a PEM X.509 certificate: `],
+    // An empty key started a daemon that said it listened on https and failed every handshake, its engine socket open.
+    // Such a key is served on as one others can read is (`TlsKeyUnparsedError`); such a certificate, refused at main too,
+    // still stops the start, and it is read first, so a start with both is told of the certificate now.
+    const unparsed: [{ certFile: string; keyFile: string }, string, "loopback" | "refused"][] = [
+      [{ ...files, keyFile: empty }, `The TLS private key ${empty} is empty: it must hold a PEM private key`, "loopback"],
+      [{ ...files, keyFile: blank }, `The TLS private key ${blank} could not be read as a PEM private key: `, "loopback"],
+      [{ ...files, keyFile: text }, `The TLS private key ${text} could not be read as a PEM private key: `, "loopback"],
+      [{ ...files, keyFile: files.certFile }, `The TLS private key ${files.certFile} could not be read as a PEM private key: `, "loopback"],
+      [{ ...files, keyFile: locked }, `The TLS private key ${locked} could not be read as a PEM private key: `, "loopback"],
+      [{ ...files, certFile: empty }, `The TLS certificate ${empty} is empty: it must hold a PEM X.509 certificate`, "refused"],
+      [{ ...files, certFile: text }, `The TLS certificate ${text} could not be read as a PEM X.509 certificate: `, "refused"],
+      [{ certFile: empty, keyFile: empty }, `The TLS certificate ${empty} is empty: it must hold a PEM X.509 certificate`, "refused"],
     ];
-    for (const [named, line] of refused) {
+    for (const [named, line, answer] of unparsed) {
       const error = await loadDaemonTls(named, ownerOnly).then(() => undefined, (thrown: unknown) => thrown);
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toContain(line);
       expect((error as Error).message).not.toContain("\n");
+      expect(error instanceof TlsKeyUnparsedError ? "loopback" : "refused").toBe(answer);
       expect(error).not.toBeInstanceOf(TlsKeyExposedError);
     }
   });

@@ -126,7 +126,7 @@ export interface RerailDaemonOptions {
   /**
    * Why a daemon started with a TLS key serves this computer alone, over plain http on loopback: other accounts can read
    * the key (`serveRerailDaemon`). Its arguments asked for https, and may have asked to be reachable from other
-   * machines. The state file records it, for `rerail status` to say.
+   * machines. The state file records it, for `rerail status` to say. It also names a key that is empty or no key.
    */
   remoteRefused?: string;
   /**
@@ -949,6 +949,15 @@ export class TlsKeyExposedError extends Error {
 }
 
 /**
+ * A TLS private key file that is empty or does not parse as a private key (`refuseUnparsed`). The daemon serves this
+ * computer alone on it, as on a key others can read, so hooks keep recording; its message names the file and what it
+ * must hold. Node's https server reads an empty key as no key: it would listen, say https, and fail every handshake.
+ */
+export class TlsKeyUnparsedError extends Error {
+  override readonly name = "TlsKeyUnparsedError";
+}
+
+/**
  * The PEM files `tls` names, read once at start. The private key must be its owner's alone (`openToOthers`): a key
  * other users can read lets any of them impersonate the daemon, so a key with any group or other permission is refused,
  * as ssh refuses one, and on Windows, which has no mode bits, a key whose ACL lets any account beyond the person,
@@ -959,8 +968,9 @@ export class TlsKeyExposedError extends Error {
  * this account can read (a missing or misspelled one, a folder, a FIFO, a file this account may not read, one another
  * program holds with a lease or an oplock, one larger than any key, one that holds no key such as the certificate, one
  * whose readers cannot be read), and a certificate that would not serve with the key, is a mistake in the command and
- * stops the start within seconds. So does a key or certificate that is empty or does not parse (`refuseUnparsed`), in a
- * line that names the file. `access` is for tests.
+ * stops the start within seconds. So does a certificate that is empty or does not parse (`refuseUnparsed`), in a line
+ * that names the file. A key that is empty or does not parse is a `TlsKeyUnparsedError`, on which the daemon serves this
+ * computer alone. `access` is for tests.
  */
 export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = {}): Promise<DaemonTlsMaterial> {
   let others: string | undefined;
@@ -976,34 +986,42 @@ export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = 
     throw await refusedKey(tls, `${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`);
   }
   const [cert, key] = await Promise.all([readFile(tls.certFile, "utf8"), readFile(tls.keyFile, "utf8")]);
-  // Node's https server reads an empty key as no key: it would listen, say https, and fail every handshake.
-  refuseUnparsed(PRIVATE_KEY_FILE, tls.keyFile, key);
+  // The certificate first: one the start would refuse beside a good key is refused now, not once the key is fixed.
   refuseUnparsed(CERTIFICATE_FILE, tls.certFile, cert);
+  refuseUnparsed(PRIVATE_KEY_FILE, tls.keyFile, key);
   return { cert, key };
 }
 
-/** What a TLS file is called, what it must hold, and the parse that stands for the one its text meets at start. */
+/**
+ * What a TLS file is called, what it must hold, the parse that stands for the one its text meets at start, and what a
+ * file that fails it throws.
+ */
 interface TlsFileKind {
   readonly name: string;
   readonly holds: string;
   readonly parse: (text: string) => unknown;
+  readonly refused: (message: string) => Error;
 }
 
 // The key is parsed as the https server parses it, so every key a server took before is taken still; the certificate
 // as `RerailDaemon.start` parses it for its fingerprint, which refused any other before.
-const PRIVATE_KEY_FILE: TlsFileKind = { name: "TLS private key", holds: "a PEM private key", parse: key => createSecureContext({ key }) };
-const CERTIFICATE_FILE: TlsFileKind = { name: "TLS certificate", holds: "a PEM X.509 certificate", parse: pem => new X509Certificate(pem) };
+const PRIVATE_KEY_FILE: TlsFileKind = {
+  name: "TLS private key", holds: "a PEM private key", parse: key => createSecureContext({ key }), refused: message => new TlsKeyUnparsedError(message),
+};
+const CERTIFICATE_FILE: TlsFileKind = {
+  name: "TLS certificate", holds: "a PEM X.509 certificate", parse: pem => new X509Certificate(pem), refused: message => new Error(message),
+};
 
 /**
- * Stops the start, in one line that names `file`, when `text`, read from it, is empty or does not parse as `kind`. The
- * line says the file could not be read as what it must hold, which stays true of a key that needs a passphrase.
+ * Throws `kind.refused`, in one line that names `file`, when `text`, read from it, is empty or does not parse as `kind`.
+ * The line says the file could not be read as what it must hold, which stays true of a key that needs a passphrase.
  */
 function refuseUnparsed(kind: TlsFileKind, file: string, text: string): void {
-  if (text === "") throw new Error(`The ${kind.name} ${file} is empty: it must hold ${kind.holds}`);
+  if (text === "") throw kind.refused(`The ${kind.name} ${file} is empty: it must hold ${kind.holds}`);
   try {
     kind.parse(text);
   } catch (error) {
-    throw new Error(`The ${kind.name} ${file} could not be read as ${kind.holds}: ${errorText(error)}`);
+    throw kind.refused(`The ${kind.name} ${file} could not be read as ${kind.holds}: ${errorText(error)}`);
   }
 }
 
@@ -1324,7 +1342,8 @@ export function remoteRefusal(argv: readonly string[]): { argv: string[]; reason
  * why (`loopbackOnlyNotice`). The refusal comes before anything is opened, so the second start begins from nothing. A
  * daemon launched with `--remote-refused`, as a restart of such a daemon is, serves this computer alone from the start.
  * Its caller supplies only the services of the layers above: why the daemon serves this computer alone is this
- * function's alone to say, so no caller can record a daemon other machines reach as one they cannot.
+ * function's alone to say, so no caller can record a daemon other machines reach as one they cannot. A key that is
+ * empty or no key (`TlsKeyUnparsedError`) is served on in the same way.
  */
 export async function serveRerailDaemon(argv: readonly string[], services: Omit<RerailDaemonServices, "remoteRefused"> = {}): Promise<void> {
   const relaunched = remoteRefusal(argv);
@@ -1332,7 +1351,7 @@ export async function serveRerailDaemon(argv: readonly string[], services: Omit<
   try {
     await runRerailDaemon(argv, services);
   } catch (error) {
-    if (!(error instanceof TlsKeyExposedError)) throw error;
+    if (!(error instanceof TlsKeyExposedError) && !(error instanceof TlsKeyUnparsedError)) throw error;
     await serveLoopback(argv, error.message, services);
   }
 }

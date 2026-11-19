@@ -1,13 +1,13 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { closeSync, existsSync, openSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, test, vi } from "vitest";
-import { ENTRY_POINTS } from "../src/engine/index.js";
+import { ENTRY_POINTS, openRerailDatabase, setUpRepository } from "../src/engine/index.js";
 import type { DaemonState } from "../src/runtime/index.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 import { selfSignedCertificate } from "../test/support/self-signed-certificate.js";
@@ -271,37 +271,49 @@ describe("Rerail daemon CLI", () => {
   }, 60_000);
 
   // An empty key used to start a daemon that said it listened on https and failed every handshake: `rerail daemon start`
-  // waited its 15 s, said only that the daemon was not ready, and left it running. A key or certificate that is empty
-  // or holds no PEM is a mistake in the command, named in one line, and no daemon runs.
-  test("refuses to start, naming the file, when --tls-key or --tls-cert is empty or holds no PEM", async () => {
+  // waited its 15 s, said only that the daemon was not ready, and left it running, its engine socket open, so hooks sent
+  // there recorded their events. A key that is empty or holds no PEM is served on as one others can read is: this
+  // computer alone, over http, with its engine socket, the start naming the file in one line. Such a certificate,
+  // refused at main too, still stops the start, naming the file, and no daemon runs.
+  test("serves this computer alone and names the file when --tls-key is empty or holds no PEM, hooks on its engine socket recording, and refuses such a --tls-cert", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
+    const home = join(root, "home");
+    const repo = join(root, "repo");
     const cli = join(process.cwd(), "dist", "cli", "cli.js");
-    const env = { ...process.env, RERAIL_HOME: root };
+    const env = { ...process.env, RERAIL_HOME: home };
     const certFile = join(root, "cert.pem");
     const keyFile = join(root, "key.pem");
     const emptyKey = join(root, "empty-key.pem");
     const textKey = join(root, "text-key.pem");
     const emptyCert = join(root, "empty-cert.pem");
     try {
+      await startedRepository(repo, home);
       const { cert, key } = selfSignedCertificate();
       const texts: [string, string][] = [[certFile, cert], [keyFile, key], [emptyKey, ""], [textKey, "not a key\n"], [emptyCert, ""]];
       for (const [file, text] of texts) await writeFile(file, text);
       for (const file of [keyFile, emptyKey, textKey]) await makePrivate(file);
-      const starts: [string, string, string][] = [
-        [certFile, emptyKey, `The TLS private key ${literal(emptyKey)} is empty: it must hold a PEM private key`],
-        [certFile, textKey, `The TLS private key ${literal(textKey)} could not be read as a PEM private key: `],
-        [emptyCert, keyFile, `The TLS certificate ${literal(emptyCert)} is empty: it must hold a PEM X\\.509 certificate`],
+      const keys: [string, string][] = [
+        [emptyKey, `The TLS private key ${emptyKey} is empty: it must hold a PEM private key`],
+        [textKey, `The TLS private key ${textKey} could not be read as a PEM private key: `],
       ];
-      for (const [tlsCert, tlsKey, line] of starts) {
-        const start = promisify(execFile)(process.execPath, [cli, "daemon", "start", "--dev", "--port", "0", "--tls-cert", tlsCert, "--tls-key", tlsKey], { env });
-        await expect(start).rejects.toMatchObject({ code: 1, stderr: expect.stringMatching(new RegExp(`rerail daemon: ${line}`, "u")) });
-        expect(existsSync(join(root, "daemon.json"))).toBe(false);
+      for (const [tlsKey, why] of keys) {
+        const started = await rerail(cli, ["daemon", "start", "--dev", "--port", "0", "--tls-cert", certFile, "--tls-key", tlsKey], env);
+        expect(started).toMatchObject({ code: 0, stdout: expect.stringContaining(`This daemon serves this computer alone, over plain http on loopback, until its TLS key is fixed: ${why}`) });
+        const state = JSON.parse(await readFile(join(home, "daemon.json"), "utf8")) as Pick<DaemonState, "url" | "accessToken" | "kernelSocketPath">;
+        expect(state.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/u);
+        expect((await fetch(new URL("/healthz", state.url), { headers: { "x-rerail-access": state.accessToken! } })).status).toBe(200);
+        expect(await hookRecords(repo, { ...env, RERAIL_ENGINE_SOCKET: state.kernelSocketPath, RERAIL_AUTOSTART: "0" })).toBeGreaterThan(0);
+        expect((await rerail(cli, ["daemon", "stop"], env)).code).toBe(0);
       }
+      const start = promisify(execFile)(process.execPath, [cli, "daemon", "start", "--dev", "--port", "0", "--tls-cert", emptyCert, "--tls-key", keyFile], { env });
+      const refusal = `rerail daemon: The TLS certificate ${literal(emptyCert)} is empty: it must hold a PEM X\\.509 certificate`;
+      await expect(start).rejects.toMatchObject({ code: 1, stderr: expect.stringMatching(new RegExp(refusal, "u")) });
+      expect(existsSync(join(home, "daemon.json"))).toBe(false);
     } finally {
-      await promisify(execFile)(process.execPath, [cli, "daemon", "stop"], { env }).catch(() => undefined);
+      await rerail(cli, ["daemon", "stop"], env);
       await rm(root, { recursive: true, force: true });
     }
-  }, 60_000);
+  }, 120_000);
 
   test("reads the start state from the database --database names, not the home's default", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-state-cli-"));
@@ -344,6 +356,44 @@ function launchLogged(args: readonly string[], env: NodeJS.ProcessEnv, logFile: 
   } finally {
     closeSync(log);
   }
+}
+
+/** A Git checkout at `repo`, started in the Rerail home `home` with no rule packs, so a hook there records its events. */
+async function startedRepository(repo: string, home: string): Promise<void> {
+  await mkdir(repo, { recursive: true });
+  await mkdir(home, { recursive: true });
+  await promisify(execFile)("git", ["init", "-q"], { cwd: repo });
+  await writeFile(join(repo, "a.txt"), "a\n");
+  const databasePath = join(home, "rerail.sqlite");
+  const repositoryKey = startTestRepository(repo, databasePath);
+  const database = openRerailDatabase(databasePath);
+  try {
+    setUpRepository(database, repositoryKey, { packs: [] });
+  } finally {
+    database.$client.close();
+  }
+}
+
+/**
+ * Runs the built Claude Code hook once in `repo`, on a read, under `env`, its profile a folder of its own, and returns
+ * how many lines the checkout's session ledgers hold after it.
+ */
+async function hookRecords(repo: string, env: NodeJS.ProcessEnv): Promise<number> {
+  const profile = join(repo, "..", "profile");
+  await mkdir(profile, { recursive: true });
+  const input = JSON.stringify({
+    session_id: "empty-key-session", cwd: repo, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "toolu_empty_key", tool_input: { file_path: join(repo, "a.txt") },
+  });
+  const hook = execFile(process.execPath, [join(process.cwd(), ENTRY_POINTS.hookLauncher), process.execPath, join(process.cwd(), ENTRY_POINTS.claudeHook)], {
+    cwd: repo, env: { ...env, CLAUDE_PROJECT_DIR: repo, HOME: profile, USERPROFILE: profile },
+  });
+  hook.stdin?.end(input);
+  await once(hook, "close");
+  const sessions = join(repo, ".rerail", "sessions");
+  if (!existsSync(sessions)) return 0;
+  const ledgers = (await readdir(sessions, { recursive: true })).filter(entry => basename(entry) === "events.jsonl");
+  const texts = await Promise.all(ledgers.map(async ledger => await readFile(join(sessions, ledger), "utf8")));
+  return texts.join("").split("\n").filter(line => line !== "").length;
 }
 
 /** `text` as a regular expression source that matches it alone. */

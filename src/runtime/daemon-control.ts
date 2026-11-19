@@ -67,7 +67,8 @@ export interface DaemonState {
   tlsFingerprint256?: string;
   /**
    * Why a daemon started with a TLS key serves this computer alone, over plain http on loopback: other accounts can read
-   * the key, and this names it and the command that fixes it. Absent for every other daemon.
+   * the key, and this names it and the command that fixes it; or the key is empty or no key, and this names it and what
+   * it must hold. Absent for every other daemon.
    */
   remoteRefused?: string;
   /**
