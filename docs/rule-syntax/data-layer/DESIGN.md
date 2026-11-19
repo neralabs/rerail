@@ -207,7 +207,7 @@ SQLite + Python:
 | 100,000 functions, 500,000 calls, same shape | not run (quadratic) | 203 k steps, 0.25 s | 2.2 s SQL; 15 k / 36 k search steps; knot 739 nodes |
 | 5,000 functions, one cycle through almost all of them | 2.5 M steps, 0.45 s | 11 k steps, 0.01 s | 0.09 s SQL; 1.7 M search steps (fresh), 10 k (shared); knot 4,791 nodes |
 
-Native (spikes/dfs-first/native; every set pass is a linear scan of a CSR edge array, Tarjan reads it directly):
+Native (spikes/dfs-first/native (removed; at 7efcac9c67); every set pass is a linear scan of a CSR edge array, Tarjan reads it directly):
 
 | Graph | Set passes | Every root, fresh memo | Every root, shared memo | Scripts' search (oracle) |
 |---|---|---|---|---|
@@ -219,11 +219,11 @@ Native (spikes/dfs-first/native; every set pass is a linear scan of a CSR edge a
 Peak resident memory at 1,000,000 functions: 435 MB, including the oracle's memo. CPU time, user+sys; the machine
 was heavily loaded (load average 20–150; 50–110 for the real-data, thread and GPU runs), so times are upper bounds.
 
-On the real repository. spikes/dfs-first/realgraph.py rebuilds LEG-083's call graph from the data-layer
+On the real repository. spikes/dfs-first/realgraph.py (removed; at 7efcac9c67) rebuilds LEG-083's call graph from the data-layer
 repository, reading blobs through `git cat-file` and parsing them with `ast` (nothing from the repository
 runs), and runs a copy of the script's own `_transitive_eager_resolve`. The copy is checked against the real
 linter's output: the data-layer worktree keeps the fact cache of a lint-all run at 41ab36f, and on all 355
-files it covers, the copy gives the same LEG-083 rows (spikes/dfs-first/vs_cache.py).
+files it covers, the copy gives the same LEG-083 rows (spikes/dfs-first/vs_cache.py (removed; at 7efcac9c67)).
 
 Four versions of the search are compared, each against the set-based plan on the rewritten graph (legacy
 surfaces blocked). The oracle is also compared with the script.
@@ -497,5 +497,5 @@ Nothing here has been compiled or run against an engine. `site/check_rr.py` chec
 declarations and stratification statically; it passes on every file. The signing layouts were checked against the
 real signatures with PyNaCl. The rules that build those messages were not run. The findings layer and the run
 artifacts are designed (FINDINGS-LAYER.md, RUN-FACTS.md), not built; the producers are sketches over the data
-layer's existing functions. `dfs_first` exists as a spike (spikes/dfs-first), differential-tested against the
+layer's existing functions. `dfs_first` exists as a spike (spikes/dfs-first (removed; at 7efcac9c67)), differential-tested against the
 Data-layer branch's ordered_first.rs semantics; no engine has it.

@@ -1,6 +1,6 @@
 # Regex lowering, transducer regex ops and trigram prefilter (data-layer gate)
 
-Tags: **M** measured on the 9,010-file gate corpus (Apple M5 Max, 18 cores), **D** derived, **A** assumed. Code and outputs: `../experiments/regex/`.
+Tags: **M** measured on the 9,010-file gate corpus (Apple M5 Max, 18 cores), **D** derived, **A** assumed. Code and outputs: `../experiments/regex/` (removed; at 7efcac9c67).
 
 ## 0. Answers in brief
 
@@ -227,7 +227,7 @@ This uses the opcodes already reserved in spec-transducer.md (0x0c–0x0e, 0x70�
 
 ## Files
 
-All under `../experiments/regex/`:
+All under `../experiments/regex/` (removed; at 7efcac9c67):
 
 **Scripts:**
 - `clauses_norm.py`, `scope.py` — normalise the clauses and compute scoped file lists

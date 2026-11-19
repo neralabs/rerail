@@ -1,6 +1,6 @@
 # Rewriting the heavy relational inputs, and lowering them to the AST
 
-Scripts and clause dumps: `../experiments/heavy-inputs/`.
+Scripts and clause dumps: `../experiments/heavy-inputs/` (removed; at 7efcac9c67).
 
 Nothing here was implemented or run end to end. The before figures are measured. The after figures are estimates built from measured unit costs, and every clause was classified by reading its SQL.
 
@@ -29,7 +29,7 @@ Each relational input is an AST query whose captures become a SQL table. The hea
 
 **Why the code looks like this.** All of it comes from the DLRE generators in `scripts/dsl/data_layer_six/`:
 
-- **Exact oracle parity.** The port bar was "Model the exact state tracked by the oracle" (`docs/data-layer-rule-port.md`). The Python oracles walk the whole tree imperatively, so the generator reproduced that tree in SQL. That is category C in `authored-sql.md`.
+- **Exact oracle parity.** The port bar was "Model the exact state tracked by the oracle" (`docs/data-layer-rule-port.md`, removed; at 7efcac9c67). The Python oracles walk the whole tree imperatively, so the generator reproduced that tree in SQL. That is category C in `authored-sql.md`.
 - **Sharding to fit the arena.** `typed_input_partitions()` in `ast_relations.py` splits the every-node input into 20–27 typed shards:
   - identifiers by first letter (`^[a-f]`, `^[g-m]`, …);
   - strings by prefix;
@@ -253,7 +253,7 @@ So **48 of 52 clauses have all their per-document work in the IR**, against the 
 - I read quality-contracts-1/2/3, state-signatures-1 and runtime-reference-summaries less closely than the heavy ones.
 - No findings were compared; this is a design analysis.
 
-Everything is in ``../experiments/heavy-inputs/``; all scripts run with `python3 -I`, except `brief.sh`, which is a bash wrapper:
+Everything is in ``../experiments/heavy-inputs/`` (removed; at 7efcac9c67); all scripts run with `python3 -I`, except `brief.sh`, which is a bash wrapper:
 - `map_inputs.py` maps per-query timings to named inputs and writes `inputs.json`.
 - `dump_clause.py`, `specific_stages.py` and `brief.sh` dump a clause's inputs and its rule-specific SQL stages.
 - `clauses.py` writes the 52-clause census to `clauses.txt`.
