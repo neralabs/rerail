@@ -144,6 +144,8 @@ async function enforcerFor(workspaceRoot: string, codeRule: CodeRule | (() => Co
     audit, edit, snapshot, derived, steers, revisions, enforcer,
     /** How many audits the enforcer started. */
     auditCount: () => audits.size,
+    /** The violations the audits started after the first `before` reported, per path and code. */
+    reportedSince: (before: number) => counted([...audits.values()].slice(before).flatMap(entry => entry.result?.violations ?? [])),
     acceptsPath: (path: string) => enforcer.acceptsPath(path),
     close: () => enforcer.close(),
   };
@@ -423,6 +425,39 @@ describe("a package.json edit alone", () => {
       expect(await manifest('{ "name": "renamed", "type": "commonjs", "bin": { "tool": "lib/plain" } }\n')).toEqual({});
       // The sources themselves, sent again, read the current manifest.
       expect(await edit()).toEqual(both(["PROGRAM", "REQUIRE"], true));
+    } finally {
+      await close();
+    }
+  });
+
+  it("refreshes the sources below a walk's manifest edit checked in one engine call with a tool call's edit, where a rule counts across files", async () => {
+    // A count across files makes the lane check a tool call's edit with the log edits queued ahead of it in one apply.
+    const crossFile = codeRuleSchema.parse({
+      format: "rerail.policy/v1", id: "package-facts:manifest-edit-together", revision: 1, mode: "steer",
+      scope: { include: ["**/*.js", "**/*.ts"], exclude: [] },
+      clauses: [...CODE_RULE.clauses, {
+        id: "budget", violation: { code: "BUDGET", anchor: "witness.span", message: "Too many files" },
+        budget: { query: { evidence: { as: "n", query: { ast: { language: "typescript", rule: { kind: "program" } } }, project: { path: "file.path" } } }, count: { lte: 100 } },
+      }],
+    });
+    const root = await repository(false, SOURCES);
+    const { edit, enforcer, auditCount, reportedSince, close } = await enforcerFor(root, crossFile, SOURCES);
+    const manifest = '{ "type": "module" }\n';
+    try {
+      expect(await edit()).toEqual(both(["PROGRAM", "REQUIRE"]));
+      await writeFile(join(root, "package.json"), manifest);
+      await writeFile(join(root, "lib/own.ts"), "export const own = 1;\n");
+      const before = auditCount();
+      // A walk's log edit of the manifest, then the session's own edit: checked together, in one engine call.
+      await enforcer.auditGeneratedEdits("package-facts", {
+        revision: 10, checkpoints: ["edit"], mode: "log", edits: [{ path: "package.json", language: "json", generatedText: manifest }],
+      });
+      await enforcer.auditGeneratedEdits("package-facts", {
+        revision: 11, checkpoints: ["edit"], edits: [{ path: "lib/own.ts", language: "typescript", generatedText: "export const own = 1;\n" }],
+      });
+      await enforcer.settle();
+      // The manifest's edit reports the sources it made modules, as a check of it alone does: no CommonJS require now.
+      expect(reportedSince(before)).toEqual({ ...both(["PROGRAM"]), "lib/own.ts PROGRAM": 1 });
     } finally {
       await close();
     }
