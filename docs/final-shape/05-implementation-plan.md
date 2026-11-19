@@ -102,7 +102,7 @@ Check: unit tests for an edit to one blob → exact frontier, cutoff on unchange
 | Copy | From | To | Adaptations |
 |---|---|---|---|
 | `Facts::build` | M `spikes/facts-a/src/facts.rs` (+ tests) | `facts/core.rs` | Change the visibility of W `tape::TapeDoc`/`Grammar`/`LineTable`, since it lives inside `native/`. Remove the hard-coded `"python"`. Outputs are read from the tape (decision 0026) and narrow fact families with derivation rows. No per-node SQL rows. |
-| Supertypes | N `cr/tape.rs` TMPTAPE5 delta (da080ae1, cd981e90) | W `cr/tape.rs` | Port the delta onto W's v7 as a new format version with abstract node classes. Lock v9np later (G8, X) using P `experiments/tape-v8/src/{main.rs, sql.rs}` (copy into `cr/tape/v9np.rs` when its 4 measurements pass). |
+| Supertypes | N `cr/tape.rs` TMPTAPE5 delta (da080ae1, cd981e90) | W `cr/tape.rs` | Port the delta onto W's v7 as a new format version with abstract node classes. Lock v9np later (G8, X) using P `experiments/tape-v8/src/{main.rs, sql.rs}` (removed; at 7efcac9c67) (copy into `cr/tape/v9np.rs` when its 4 measurements pass). |
 
 **Status (2026-10-28): done; v9np placed as `tape::v9np` (`03a7b0d9`), locking it as the format still waits on O8.**
 
@@ -111,7 +111,7 @@ Check: unit tests for an edit to one blob → exact frontier, cutoff on unchange
 - Families (`3295791f`, `2ce1fbe2`): `#core:` and `#kinds:` derivations. A rename re-runs core and cuts off at kinds; a new kind reaches its reader. Same results over the overlay.
 - Gate: full `cargo test --lib`, run once: 1512 passed, 12 failed, 22 ignored; 143 s user + 9 s sys CPU. The 12 failures are the same environmental ones as Phase 1 (3 pack fixtures not in git, 9 `git_workspace` temp repos blocked by the agent git hook).
 - Open items: O2 update, O7–O10 in `open-items.md`.
-- 2026-10-27: v9np copied verbatim (`96ec0387`, P's `docs/rule-engine-direction/experiments/tape-v8/src/{main.rs, sql.rs}` → `tape/{v9np.rs, v9np/sql.rs}`), placed as `tape::v9np` (`03a7b0d9`); locking it as the format waits on O8's measurements.
+- 2026-10-27: v9np copied verbatim (`96ec0387`, P's `docs/rule-engine-direction/experiments/tape-v8/src/{main.rs, sql.rs}` (removed; at 7efcac9c67) → `tape/{v9np.rs, v9np/sql.rs}`), placed as `tape::v9np` (`03a7b0d9`); locking it as the format waits on O8's measurements.
 - Tape format (2026-11-01, list step 8b): v9np in `tape.rs` (decision 0025, format 10): regular per-node columns (folded code, size, block base and offset, tail), no parent column, parents rebuilt at restore; supertype memberships folded into the codes (2026-11-02), validated against the parser's cursor on whole corpora. 0.72–0.92× v8's stored size. `TapeDoc` unchanged. Stored v8 tapes re-derive on the version bump. S7 710 keys = W on CPU and Metal.
 
 ### Phase 3: prefilter, vocabulary, regex, statistics (§6, §16; H1–H4, E11, E13, E15)

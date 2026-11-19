@@ -2,8 +2,8 @@
 
 This extends `metal-recursion.md`.
 
-- **Experiment sources and output:** `../experiments/metal-enqueue/`. `run1.txt` is the full run; `run-c2.txt` is the ICB visibility test.
-- **Build and run:** `xcrun swiftc -O bench.swift -o bench`, then `C2SPLIT=1 ./bench <tape> kernels.metal`. The tape comes from `../experiments/metal-recursion/gen.py`.
+- **Experiment sources and output:** `../experiments/metal-enqueue/` (removed; at 7efcac9c67). `run1.txt` is the full run; `run-c2.txt` is the ICB visibility test.
+- **Build and run:** `xcrun swiftc -O bench.swift -o bench`, then `C2SPLIT=1 ./bench <tape> kernels.metal`. The tape comes from `../experiments/metal-recursion/gen.py` (removed; at 7efcac9c67).
 - **Machine:** Apple M5 Max (40 GPU cores), macOS 26.4.1. Shaders are compiled at run time.
 - **Checking:** every result is compared with a CPU BFS reference. All reported rows match unless noted.
 

@@ -25,6 +25,8 @@ import {
 } from "../../src/runtime/index.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
 import { openRerailDatabase, RepositoryWorktreeWalks, SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
+import { keepClaudeStatusFiles } from "../../src/presentation/index.js";
+import { setUpTestRepository } from "../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 import { linkFolder } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -332,6 +334,37 @@ describe("Rerail daemon", () => {
       expect((await getJson(daemon, `/api/presentation?${query}`)).body).toEqual({ presence: overrides[index - 1]?.presence ?? "compact", repositoryState: "stopped", scope: null });
     }
   });
+
+  it("keeps a Claude Code session's status line in a file while it runs, and leaves it saying not running when it closes", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const databasePath = join(root, "rerail.sqlite");
+    const folder = join(root, "status");
+    await mkdir(folder);
+    setUpTestRepository(root, {}, databasePath);
+    const session = { host: "claude-code" as const, sessionId: "claude-session", cwd: root };
+    const store = new SqliteSessionStore(databasePath);
+    try {
+      store.openSession(session);
+      store.startHudTracking(session, true);
+      const daemon = await start({ statusLines: stores => keepClaudeStatusFiles({ stores, folder, checkEveryMs: 20 }) });
+      // The file's last line is the one for a terminal with no colour.
+      const line = async (): Promise<string> => (await readFile(join(folder, session.sessionId), "utf8")).split("\n")[2]!;
+      await vi.waitFor(async () => expect(await line()).toContain("rules unavailable"), { timeout: 10_000 });
+      // The links are into this daemon's own dashboard.
+      expect(await line()).toContain(`\u001b]8;;${new URL(daemon.url).origin}/?`);
+      // A steer another process records, as Claude Code's hook does, reaches the file without anything asking for it.
+      store.recordSteer(session, "receipt", ["team:rule"]);
+      await vi.waitFor(async () => expect(await line()).toContain("steered 1×"), { timeout: 10_000 });
+      store.closeSession(session.sessionId);
+      await vi.waitFor(() => expect(existsSync(join(folder, session.sessionId))).toBe(false), { timeout: 10_000 });
+      store.openSession(session);
+      await vi.waitFor(() => expect(existsSync(join(folder, session.sessionId))).toBe(true), { timeout: 10_000 });
+      await daemon.close();
+      expect(await line()).toBe("R E R A I L ✕ not running");
+    } finally {
+      store.close();
+    }
+  }, 60_000);
 
   it("keeps session status bounded even when an audit contains multi-megabyte violations", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
