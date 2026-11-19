@@ -511,9 +511,11 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   challenge 404, as any listener without the proof's path does. A lookup (`rerail status`, `rerail daemon stop`, a
   hook's start of the daemon) then lets the process's creation time decide, read as below: a pid this user may signal
   that started no later than the `startedAt` that `daemon.json` records is the daemon that wrote it, and gets the
-  capability, and a hook replaces it whatever package it ran from, since it predates the fields hooks send. Any other
-  pid behind such an engine (one that started later, one whose start is not read, one this user may not signal) is not
-  shown to be that daemon, and the record is removed, as for an engine that does not prove itself. Every other reader
+  capability. A hook's start and set-up replace it whatever package it ran from, since it predates the fields hooks
+  send; a hook that may not replace it (`RERAIL_AUTOSTART=0`, or a daemon that answered only after the start looked)
+  sends it nothing and says it is not the active package's daemon. Any other pid behind such an engine (one that
+  started later, one whose start is not read, one this user may not signal) is not shown to be that daemon, and the
+  record is removed, as for an engine that does not prove itself. Every other reader
   (each hook's check whether Rerail runs in its repository, the status line, the MCP bridge) sends such an engine
   nothing and reads no start, as for an engine that does not prove itself, and removes nothing: a hook makes that check
   before every tool call. An engine that does not answer the proof in time is taken for a busy daemon: its
