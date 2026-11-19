@@ -178,6 +178,8 @@ It must register the store before it can publish ownership.
 This order lets a stop find every store that can hold an ended generation.
 If the store fails to open, the run uses memory and adds no registration.
 The stop remains pending until each store for the directory accepts its release.
+Named revision scans also register their content store for maintenance before evaluation.
+Maintenance can reach that store after a restart or a change to the store override, including after deletion of its last named scope.
 The stop records the physical directory path when it enters the queue.
 Delivery and later probes use that path as a stored scope key, even if a symlink replaces the directory.
 The generation cutoff preserves a new watch that acquires the same path after the stop.

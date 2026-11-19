@@ -29,7 +29,7 @@ import { isWorktreePack, MAX_RULE_DOCUMENT_BYTES, rrPayloadHash, WORKTREE_PACK_I
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
 import { loadNativeBinding, type NativeAnalysisScopeRun, type NativeGitRevisionSource, type NativeLoadedRrPolicies } from "../engine/native/native.js";
-import { acquireDirectoryAnalysisRegistration, analysisScopeHome, scanContentStore } from "../engine/native/analysis-scope.js";
+import { acquireDirectoryAnalysisRegistration, acquireNamedAnalysisRun, analysisScopeHome, scanContentStore } from "../engine/native/analysis-scope.js";
 import { assertContentStoreOwner } from "../engine/native/main-instance.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES } from "../engine/code-rule/code-rule-languages.js";
 import { runGit, runGitBytes } from "../engine/git.js";
@@ -755,8 +755,12 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   let cacheWarning: string | undefined;
   try {
     mkdirSync(dirname(homeDatabase), { recursive: true, mode: 0o700 });
-    const registration = directory ? await acquireDirectoryAnalysisRegistration(homeDatabase, requested, durableStore) : undefined;
-    analysisRun = new binding.AnalysisScopeRun(durableStore, options.analysisScope ?? requested, directory, scanId, registration?.generation ?? 0, directory ? analysisScopeHome(homeDatabase) : undefined, registration?.identity);
+    if (directory) {
+      const registration = await acquireDirectoryAnalysisRegistration(homeDatabase, requested, durableStore);
+      analysisRun = new binding.AnalysisScopeRun(durableStore, requested, true, scanId, registration.generation, analysisScopeHome(homeDatabase), registration.identity);
+    } else {
+      analysisRun = acquireNamedAnalysisRun(homeDatabase, options.analysisScope!, durableStore, scanId);
+    }
   } catch (error) {
     cacheWarning = error instanceof Error ? error.message : String(error);
   }

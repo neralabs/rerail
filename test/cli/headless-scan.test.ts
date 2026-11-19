@@ -1314,6 +1314,30 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
     }
   });
 
+  it("collects a named-only custom store after restart and deletion of its last scope", async () => {
+    const root = checkout(), home = root + "-home", store = join(home, "custom.sqlite"), databasePath = join(home, "rerail.sqlite");
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+    try {
+      const report = await scan(root, { databasePath, revision: "HEAD", analysisScope: "review" });
+      expect(report.cache.publication).toBe("published");
+    } finally { vi.unstubAllEnvs(); }
+    const childEnv = { ...process.env };
+    delete childEnv.RERAIL_CONTENT_STORE_PATH;
+    const collect = () => JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", databasePath], {
+      env: childEnv, encoding: "utf8",
+      input: `import { collectAnalysisCaches } from "./src/engine/native/analysis-scope.ts";
+import { loadNativeBinding } from "./src/engine/native/native.ts";
+const binding = loadNativeBinding(), collect = binding.collectAnalysisCacheAsync, visited = [];
+binding.collectAnalysisCacheAsync = async path => { visited.push(path); await collect(path); };
+await collectAnalysisCaches(process.argv[2]);
+process.stdout.write(JSON.stringify(visited));`,
+    })) as string[];
+    expect(collect()).toContain(store);
+    loadNativeBinding().deleteAnalysisScope(store, "review", false);
+    expect(queryContentStore(store, "SELECT scope FROM analysis_scope_snapshot")).toEqual([]);
+    expect(collect()).toContain(store);
+  }, 30_000);
+
   it("reports a release between evaluation and publication and preserves the findings", async () => {
     const root = checkout(), home = root + "-home", databasePath = join(home, "rerail.sqlite"), store = join(home, "scope.sqlite");
     const engine = loadNativeBinding(), prototype = engine.AnalysisScopeRun.prototype, finish = prototype.finish;

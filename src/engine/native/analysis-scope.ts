@@ -77,6 +77,24 @@ function recordRegistryGeneration(index: RerailDatabase, floor: number, incremen
 
 interface StoreRoute { directory: string; path: string; identity: string | null }
 
+function maintenanceRegistration(index: RerailDatabase) {
+  index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_maintenance_store (path TEXT PRIMARY KEY) STRICT");
+  return index.$client.prepare("INSERT OR IGNORE INTO analysis_maintenance_store VALUES (?)");
+}
+
+export function acquireNamedAnalysisRun(databasePath: string, name: string, store: string, scanId: string) {
+  const run = new (loadNativeBinding().AnalysisScopeRun)(store, name, false, scanId, 0);
+  try {
+    const index = openSqliteDatabase(storeRegistryPath(databasePath));
+    try { maintenanceRegistration(index).run(storedPath(store)); }
+    finally { index.$client.close(); }
+    return run;
+  } catch (error) {
+    run.finish(false);
+    throw error;
+  }
+}
+
 function registerDirectoryAnalysisStore(databasePath: string, root: string, store: string, identity: string, floor?: number): number {
   const index = openSqliteDatabase(storeRegistryPath(databasePath));
   try {
@@ -85,10 +103,9 @@ function registerDirectoryAnalysisStore(databasePath: string, root: string, stor
       index.$client.exec(`CREATE TABLE IF NOT EXISTS analysis_directory_store_identity (
         directory TEXT NOT NULL, path TEXT NOT NULL, identity TEXT NOT NULL, first_generation INTEGER NOT NULL, last_generation INTEGER NOT NULL,
         PRIMARY KEY(directory,path,identity), FOREIGN KEY(directory,path) REFERENCES analysis_directory_store(directory,path) ON DELETE CASCADE ON UPDATE CASCADE) STRICT`);
-      index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_maintenance_store (path TEXT PRIMARY KEY) STRICT");
       const path = storedPath(store);
       index.$client.prepare("INSERT OR IGNORE INTO analysis_directory_store VALUES (?,?)").run(root, path);
-      index.$client.prepare("INSERT OR IGNORE INTO analysis_maintenance_store VALUES (?)").run(path);
+      maintenanceRegistration(index).run(path);
       const generation = floor === undefined ? 0 : recordRegistryGeneration(index, floor, 0);
       index.$client.prepare(`INSERT INTO analysis_directory_store_identity VALUES (?,?,?,?,?)
         ON CONFLICT(directory,path,identity) DO UPDATE SET first_generation=min(first_generation,excluded.first_generation),
@@ -144,9 +161,9 @@ function acknowledgeRoutes(databasePath: string, routes: StoreRoute[], cutoff: n
   try {
     index.$client.transaction(() => {
       const identified = index.$client.prepare("SELECT 1 FROM sqlite_schema WHERE name='analysis_directory_store_identity'").get();
-      index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_maintenance_store (path TEXT PRIMARY KEY) STRICT");
+      const remember = maintenanceRegistration(index);
       for (const { directory, path, identity } of routes) {
-        index.$client.prepare("INSERT OR IGNORE INTO analysis_maintenance_store VALUES (?)").run(path);
+        remember.run(path);
         if (identified) {
           index.$client.prepare("DELETE FROM analysis_directory_store_identity WHERE directory=? AND path=? AND identity=? AND last_generation<=?").run(directory, path, identity, cutoff);
           index.$client.prepare("UPDATE analysis_directory_store_identity SET first_generation=? WHERE directory=? AND path=? AND identity=? AND first_generation<=?")
