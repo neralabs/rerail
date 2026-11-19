@@ -463,6 +463,7 @@
                     let report = super::take_report().expect("a device report");
                     assert!(report.refused.is_none() && report.waved == 1, "{report:?}");
                 }
+                assert_eq!(super::waves_kept(), 0, "the wave's completion goes with its last stratum (Q261: kept for ever, before)");
             } else {
                 for (name, _, _) in &strata {
                     super::super::run(&db, name, 0).unwrap();
@@ -480,6 +481,10 @@
             got.push(rows);
         }
         assert_eq!(got[1], got[0], "the strata's rows after the wave are their own runs'");
+        // The strata closed, their relations dropped: a chunk's end lets go of the device's copies of them, which
+        // held their blocks until this thread's next device stratum (Q261).
+        super::forget_dropped();
+        assert_eq!(super::resident_dropped(), 0);
     }
 
     /// Decision 0386, the queue's bound: a stratum that waits for its wave leaves no command buffer open on its

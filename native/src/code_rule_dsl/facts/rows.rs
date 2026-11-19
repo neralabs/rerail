@@ -72,13 +72,15 @@ pub struct Facts {
     pub ix: Mutex<()>,
     /// The chunk's tally it adds its bytes written to when given back (`in_chunk_measured`), when a chunk made it.
     tally: Option<Arc<std::sync::atomic::AtomicUsize>>,
+    /// How long its relations live.
+    life: Life,
 }
 
 impl Facts {
-    /// A block of relations: the chunk's evaluating on this thread, if one is, counted in its tally.
-    fn new(block: Block) -> Facts {
+    /// A block of relations of `life`: the chunk's evaluating on this thread, if one is, counted in its tally.
+    fn new(block: Block, life: Life) -> Facts {
         let tally = CHUNK.with(|c| c.borrow().as_ref().map(|c| Arc::clone(&c.tally)));
-        Facts { block, ix: Mutex::new(()), tally }
+        Facts { block, ix: Mutex::new(()), tally, life }
     }
 }
 
@@ -162,6 +164,12 @@ pub fn in_chunk<R>(f: impl FnOnce() -> R) -> R {
     in_chunk_measured(f).0
 }
 
+/// Of a chunk's blocks alive at its end (life, used, used past the free list), the bytes it holds: rows it handed on,
+/// a device run's own left out (`in_chunk_measured`).
+fn held_of(live: &[(Life, usize, usize)]) -> usize {
+    live.iter().filter(|l| l.0 != Life::Device).map(|l| l.2).sum()
+}
+
 /// `in_chunk`, and what the chunk's blocks wrote (`Written`).
 pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
     struct Leave(Option<Arc<Chunk>>, Arc<Chunk>);
@@ -174,13 +182,24 @@ pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
             let made = std::mem::take(&mut *self.1.made.lock().unwrap_or_else(|e| e.into_inner()));
             // Of a block still held, its used bytes are what the chunk wrote in it, and those past its free list what
             // it holds (decision 0445: a block one kept relation holds lives, its dead relations' pages given back).
-            let (n, live) = (made.len(), made.iter().filter_map(std::sync::Weak::upgrade).map(|f| (f.block.used(), f.block.used().saturating_sub(f.block.free_bytes()))).collect::<Vec<_>>());
-            self.1.live.store(live.iter().map(|l| l.0).sum(), std::sync::atomic::Ordering::Relaxed);
-            self.1.held.store(live.iter().map(|l| l.1).sum(), std::sync::atomic::Ordering::Relaxed);
+            // A device run's own relations (views, totals, deltas) are handed on to nothing: a block of theirs outlives
+            // the chunk only while device work still in flight holds it, so it is the device's timing, not rows held
+            // (Q261: on Metal 15-30 of a chunk's blocks outlived it, a different number every run).
+            let (n, live) = (made.len(), made.iter().filter_map(std::sync::Weak::upgrade).map(|f| (f.life, f.block.used(), f.block.used().saturating_sub(f.block.free_bytes()))).collect::<Vec<_>>());
+            self.1.live.store(live.iter().map(|l| l.1).sum(), std::sync::atomic::Ordering::Relaxed);
+            self.1.held.store(held_of(&live), std::sync::atomic::Ordering::Relaxed);
             if !live.is_empty() {
-                let bytes: usize = live.iter().map(|l| l.1).sum();
+                let of = |device: bool| {
+                    let v: Vec<_> = live.iter().filter(|l| (l.0 == Life::Device) == device).collect();
+                    (v.len(), v.iter().map(|l| l.2).sum::<usize>() >> 20)
+                };
+                let ((held, mb), (device, device_mb)) = (of(false), of(true));
+                let by = |life: Life| {
+                    let v: Vec<_> = live.iter().filter(|l| l.0 == life).collect();
+                    format!("{} {} KB", v.len(), v.iter().map(|l| l.2).sum::<usize>() >> 10)
+                };
                 crate::code_rule_dsl::logic::profile::decision("a chunk's blocks outlived it", || {
-                    format!("{} of its {n} blocks, {} MB used in them, held by rows it handed on", live.len(), bytes >> 20)
+                    format!("{held} of its {n} blocks, {mb} MB used in them, held by rows it handed on (a run's {}, sources' {}, kept rows' {}); {device} of a device run's own, {device_mb} MB, until its work ends", by(Life::Run), by(Life::Source), by(Life::Kept))
                 });
             }
         }
@@ -215,7 +234,7 @@ pub fn install_block_device(device: fn() -> rerail_blocks::alloc::Device) {
 /// A new block for relations of `life` with room for `need` bytes and its others' margin: the chunk's, if a chunk's
 /// evaluation runs, counted while it lives.
 fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<Facts>, String> {
-    let f = Arc::new(Facts::new(lease(2 * need + MARGIN, life)?));
+    let f = Arc::new(Facts::new(lease(2 * need + MARGIN, life)?, life));
     if let Some(c) = chunk {
         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
     }
@@ -532,7 +551,7 @@ fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
     let rows = vals.len() / k;
-    let facts = Arc::new(Facts::new(Block::anon(kind::FACTS, 2 * room_for(k, rows) + 8 * MARGIN)));
+    let facts = Arc::new(Facts::new(Block::anon(kind::FACTS, 2 * room_for(k, rows) + 8 * MARGIN), Life::Run));
     let rel = Relation::try_create(&facts.block, &spec(k), None).expect("room for the relation");
     assert!(rel.rows.try_reserve(&facts.block, rows as u64));
     // SAFETY: rows `0..rows` are reserved, and this thread alone writes them before any reader looks.
@@ -691,7 +710,7 @@ impl Part {
             let facts = match &*open {
                 _ if alone => {
                     let block = lease_exact(need + extra, life)?;
-                    let f = Arc::new(Facts::new(if rewritten { block.with_free_list() } else { block }));
+                    let f = Arc::new(Facts::new(if rewritten { block.with_free_list() } else { block }, life));
                     if let Some(c) = &chunk {
                         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
                     }
@@ -1895,6 +1914,15 @@ mod tests {
             assert_eq!(MOVED[0].load(std::sync::atomic::Ordering::Relaxed), moved, "no relation moved");
             assert_eq!(r.get(9 << 20 | 5, 0), 5);
         });
+    }
+
+    /// A chunk holds the rows it handed on, never a device run's own relations, which outlive it only while device
+    /// work in flight holds them (Q261: on Metal, a different number of them every run).
+    #[test]
+    fn a_chunk_holds_what_it_handed_on_not_a_device_runs_own() {
+        let live = [(Life::Run, 10 << 20, 4 << 20), (Life::Kept, 2 << 20, 2 << 20), (Life::Device, 64 << 20, 64 << 20), (Life::Source, 1 << 20, 0)];
+        assert_eq!(held_of(&live), 6 << 20);
+        assert_eq!(held_of(&live[..2]), held_of(&live), "the device's blocks, alive or not, change nothing");
     }
 
     /// A relation a chunk drops gives its chunks back to the chunk's block (decision 0342): the next relation of

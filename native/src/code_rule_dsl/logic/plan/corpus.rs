@@ -6510,9 +6510,14 @@ fn run_observed(
     // Within its view of the run's plans (Q88): what it planned, learnt and observed comes back with it.
     let evaluate = |mut task: Task, db: &Connection, modules: &Modules, hand: Option<Hand<'_>>| -> (Result<Evaluated>, crate::code_rule_dsl::logic::plan::ChunkPlans) {
         let view = task.view.take();
-        let ((mut got, plans), written) = crate::code_rule_dsl::logic::native::setfix::in_chunk_measured(|| match view {
-            Some(v) => crate::code_rule_dsl::logic::plan::in_view(&v, || evaluate_in(task, db, modules, hand)),
-            None => (evaluate_in(task, db, modules, hand), Default::default()),
+        let ((mut got, plans), written) = crate::code_rule_dsl::logic::native::setfix::in_chunk_measured(|| {
+            let r = match view {
+                Some(v) => crate::code_rule_dsl::logic::plan::in_view(&v, || evaluate_in(task, db, modules, hand)),
+                None => (evaluate_in(task, db, modules, hand), Default::default()),
+            };
+            // Its relations dropped, the device's copies of them go too, before its blocks are measured (Q261).
+            crate::code_rule_dsl::logic::device::forget_dropped();
+            r
         });
         if let Ok(ev) = &mut got {
             ev.written = written;

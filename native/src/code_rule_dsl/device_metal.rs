@@ -96,6 +96,10 @@ impl SolverDevice for Metal {
         joins::take_report()
     }
 
+    fn forget_dropped(&self) {
+        joins::forget_dropped()
+    }
+
     fn lattice(&self, system: &lattice::System<'_>) -> Result<lattice::Solved, Refused> {
         packed::metal_lattice::solve(system).map_err(refused)
     }

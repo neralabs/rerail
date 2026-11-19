@@ -1248,6 +1248,29 @@ fn unrun<T>(r: Result<T, String>) -> Result<T, String> {
     r
 }
 
+/// Drops this thread's device copies of relations the engine dropped. An entry read in place holds its relation's
+/// block (`Held::kept`), so a chunk's blocks outlived it until this thread's next device stratum trimmed them: by the
+/// threads' timing (Q261). A chunk calls it as it ends, its device work done.
+pub(in crate::code_rule_dsl) fn forget_dropped() {
+    RESIDENT.with_borrow_mut(|res| {
+        res.entries.retain(|e| e.owner.live());
+        res.unions.retain(|(cols, _, _)| cols.iter().all(|(r, _)| r.strong_count() > 0));
+        res.bytes = res.bytes();
+    });
+}
+
+/// The waves flushed whose completion this thread keeps for a stratum still to resume.
+#[cfg(test)]
+fn waves_kept() -> usize {
+    FLUSHED.with_borrow(HashMap::len)
+}
+
+/// This thread's device copies of relations the engine dropped.
+#[cfg(test)]
+fn resident_dropped() -> usize {
+    RESIDENT.with_borrow(|r| r.entries.iter().filter(|e| !e.owner.live()).count())
+}
+
 /// The report of the last stratum the device ran or refused on this thread (taken).
 pub(in crate::code_rule_dsl) fn take_report() -> Option<Report> {
     LAST.with_borrow_mut(Option::take)
@@ -2102,7 +2125,10 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Opti
             let Some((n, mut batch)) = with_open::<Wave, _>(Option::take) else { return Ok(()) };
             let done = on_lane("stratum joins (a wave)", 1, || batch.finish().map_err(|e| format!("{e:?}")));
             // A failed wave fails its strata, which then run on the CPU: the flush itself goes on.
-            FLUSHED.with_borrow_mut(|f| f.insert(n, done.map(Some)));
+            // Kept for the strata that wait on it; a wave none waits on (its work held, unread) keeps nothing.
+            if SUSPENDED.with_borrow(|s| s.values().any(|v| v.1 == n)) {
+                FLUSHED.with_borrow_mut(|f| f.insert(n, done.map(Some)));
+            }
             Ok(())
         }));
     }
@@ -2146,7 +2172,13 @@ fn resume_(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, name
         Some(Err(e)) => Err(e.clone()),
         // The wave's device seconds, counted once (by its first stratum).
         Some(Ok(d)) => Ok(d.take()),
-    })?;
+    });
+    // The wave's last stratum to resume lets its entry go: a wave's strata all wait on the thread that opened it, and
+    // none joins it once flushed.
+    if !SUSPENDED.with_borrow(|s| s.values().any(|v| v.1 == wave)) {
+        FLUSHED.with_borrow_mut(|f| f.remove(&wave));
+    }
+    let done = done?;
     if let Some(d) = done {
         rep.submissions += d.submissions;
         rep.dispatches += d.dispatches;
