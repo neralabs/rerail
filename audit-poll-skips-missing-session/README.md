@@ -1,6 +1,6 @@
 # The daemon survives a running session's row removed from the database
 
-For [pull request #815](https://github.com/neralabs/rerail/pull/815), head b5a9c118f. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #815](https://github.com/neralabs/rerail/pull/815), head 8cc76ca6d. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #815](https://github.com/neralabs/rerail/pull/815), head b5a9c
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 217 lines in 6 files: 59 ship, 158 are tests and text | Quick. 59 source lines, 26 of them comments; not high-risk. | Nothing. No CI result at this head yet. | 2 |
+| 314 lines in 6 files: 85 ship, 229 are tests and text | Quick. 85 source lines, 40 of them comments; not high-risk. | Nothing. No CI result at this head yet. | 2 |
 
 ## 2. Intent, and the gap
 
@@ -32,14 +32,14 @@ Found on 18 November 2026 by reading `main`'s code after a test met it, then mad
 
 ## 3. Where to look
 
-1. **Read first**, 4 min: `runtime.ts`: `#scheduleAuditRequests`, `#claimAgain`. Do the session's folder and repository key give its row's values, and is only a held, open session claimed again?
+1. **Read first**, 4 min: `runtime.ts`: `#scheduleAuditRequests`, `#claimAgain`, `#writeOwedClaim`. Folder and repository as the row held? Only held sessions claimed? A failed claim write kept off the event's write?
 2. 3 min: `session-store.ts` and `audit-control.ts`: `append` calls `onRowPutBack`; `getWorkspaceSettings` takes the repository; `claimAgain`.
 
-**Then skim**, 5 min: Cases remove a session's row: the other sessions read on, the next event recorded, its scan claimed, another runtime's claim kept, a closing session left unclaimed.
+**Then skim**, 5 min: Cases remove a session's row: other sessions read on, its event recorded, its scan claimed, another runtime's claim kept, a closing session unclaimed, a refused claim retried.
 
 ## 4. Risk against verification
 
-<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. Row removed, low risk: independent review does not hold yet, rules scan: nothing new holds with a limit, Windows 11: no new failure holds with a limit. CI at this head does not hold yet for every change.">
+<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. Row removed, low risk: independent review does not hold yet, Windows 11: no new failure holds with a limit. CI at this head does not hold yet for every change.">
 
 One change, low risk: the settings read without the row, and the claim written again with the row.
 
@@ -48,8 +48,7 @@ One change, low risk: the settings read without the row, and the claim written a
 | Change | Check | Its limit, or why it does not hold yet |
 |---|---|---|
 | Row removed | independent review | No second reader has reviewed this round of the change yet. |
-| Row removed | rules scan: nothing new | Published 0.1.5's rules over the diff against `main` f41b8fe6c: no new finding, no function over complexity 6. The scan with Rerail built from `main` did not run: it now refuses `--pack` where `.rerail/packs.json` lists packs. |
-| Row removed | Windows 11: no new failure | Windows 11: the 36 importer files pass (566, nothing outside `main`'s baseline); the eight new cases pass in 19 of 20 runs (the 20th at the 20 s limit on a machine running 15 to 20 times slower), the claim cases in 10 more of 10; every mutant caught. |
+| Row removed | Windows 11: no new failure | Windows 11: the 36 importer files pass here (568, nothing outside `main`'s baseline); the follow-up's two cases pass in 20 of 20 runs, the earlier eight in 19 of 20 (one 20 s limit under load); every mutant caught. |
 | Row removed | CI at this head | No CI run at this head on GitHub yet: the branch is not pushed. |
 
 </details>
@@ -90,7 +89,7 @@ One change, low risk: the settings read without the row, and the claim written a
 
 | Option | What a user gets | Cost | What it breaks |
 |---|---|---|---|
-| The runtime writes the claim it holds again, only where none is **(chosen)** | The removed session's scans are claimed from its next event, as on `main`; another runtime's live claim stays; a closing session gets none. | One constructor option; one insert, on the put-back only. | Nothing found. |
+| The runtime writes the claim it holds again, only where none is **(chosen)** | The removed session's scans are claimed from its next event, as on `main`; another runtime's live claim stays; a closing session gets none. | One constructor option; one insert on the put-back, and one at the next event when that one failed. | Nothing found. |
 | Make a new claim there, as the open does (`registerOwner`) | The same scans. | A new token to keep. | It throws when another runtime holds a live claim; from a write made outside a request, that is a rejection nothing handles, which ends the daemon. |
 | Write the claim again from the control timer when `claim` finds none | Also a claim removed on its own, which `main` loses too. | `claim` would need the delivery mode: a change to the claim's type and to a suspended session's record. | More than this fix needs. |
 
@@ -129,15 +128,15 @@ The description on GitHub is the record: "How you tested it" holds the runs at `
 
 | Where | What ran | Result |
 |---|---|---|
-| Linux x64 and Windows 11 | A real daemon and the Claude Code hook, `main` f41b8fe6c: a session's rows deleted, or a copy from before it began put back, 3 runs each; then `rerail scan --session` in each session | Code 1 after 43 to 291 ms in 12 of 12; the removed session's first edit unsteered in 12 of 12, a later edit steered 1.2 to 5.6 s after it; both scans completed. |
+| Linux x64 and Windows 11 | A real daemon and the Claude Code hook, `main` f41b8fe6c: a session's rows deleted, or a copy from before it began put back, 3 runs each; then `rerail scan --session` in each session; 0.1.5, a delete on Linux x64 | Code 1 after 43 to 291 ms in 12 of 12; the removed session's first edit unsteered in 12 of 12, a later edit steered 1.2 to 5.6 s after it; both scans completed. 0.1.5: code 1 after 213 ms. |
 | Linux x64 and Windows 11 | The same before the claim is written again | The daemon ran on in 12 of 12; the removed session's scan failed in 12 of 12 (`Session has no live owning runtime`), and after a restore the other session's too, 6 of 6. |
-| Linux x64 and Windows 11 | The same at this change | The daemon ran on in 12 of 12; first edit steered in 12 of 12; both scans completed in 12 of 12. |
+| Linux x64 and Windows 11 | The same at this change | The daemon ran on in 12 of 12; first edit steered in 12 of 12; both scans completed in 12 of 12; at 54ce899bd again, 6 of 6 on each system. |
 | Linux x64 and Windows 11 | `main` 890802859, the same removals, 5 runs each per system (earlier round) | Code 1 after 27 to 295 ms in 20 of 20; neither session's next edit steered. |
-| Linux x64 | 0.1.5 from npm, the same delete | Code 1 after 213 ms; no steer after. |
 | Linux x64 and Windows 11 | The new cases, 20 runs at `main`'s source and 20 here on each system; before the claim part, 20 runs on Linux x64 and 3 on Windows 11 | `main`: 20 of 20 failed on each. Before the claim part: both claim cases failed every run. Here: 20 of 20 passed on Linux x64, 19 of 20 on Windows 11 (one 20 s limit under load; 10 more passed). Each line's mutant caught on both. |
+| Linux x64 and Windows 11 | The database refuses the claim write while the next event puts the row back: at b5a9c118f, with 1f2cda899 alone, and here | b5a9c118f: the event's write rejected, 5 of 5 on Linux x64, 20 of 20 on Windows 11. 1f2cda899: no claim after the next event, 5 of 5 and 3 of 3. Here: 20 of 20 passed on each; five mutants caught 3 of 3 on each. |
 | Windows 11 | The folder resolved to the spelling the disk stores; a store that drops the repository, 3 runs each (earlier round) | The first fails `main`'s case and both Windows cases; the second fails the store case. |
-| Linux x64 and Windows 11 | The 36 test files that import a changed module, at `main` and here in turn; CI's integration job here | Windows 11: 566 passed, 0 failed, nothing outside `main`'s baseline. Linux x64: every failure here also failed at `main`, or timed out there when run again. Integration: 89 passed, 1 failed under load; that file passed 5 of 5 on each side on a quieter machine. |
+| Linux x64 and Windows 11 | The 36 test files that import a changed module, at `main` and here in turn; CI's integration job at 4ca6a50db | Windows 11 at 54ce899bd: 568 passed, 0 failed, nothing outside `main`'s baseline. Linux x64: two cases failed here under load; five rounds each, `main` failed them in 3 of 5, here 1 of 5. Integration: 89 passed, 1 failed under load; that file passed 5 of 5 on each side on a quieter machine. |
 
-**Sources.** The branch at b5a9c118f (4ca6a50db with `main` a58b35852 merged in; the runs ran at ea0317242, which differs from 4ca6a50db only in its commit message) and its diff against `main` f41b8fe6c, read on 18 November 2026; runs on Linux x64 and Windows 11 lab machines.
+**Sources.** The branch at 8cc76ca6d (`main` 0cb70bb85 merged into 54ce899bd: b5a9c118f and two commits for the reviewer's follow-up) and its diff against `main` 7ff56e15e, read on 19 November 2026; earlier rounds ran at ea0317242, the tree of 4ca6a50db; runs on Linux x64 and Windows 11 lab machines.
 
 </details>
