@@ -124,6 +124,20 @@ describe("engine service answers a hook no longer waits for", () => {
     expect(await service.deliveriesOf(STEER)).toBe(1);
   }, 20_000);
 
+  it("records a steer once when the daemon restarts between the answer no hook read and the session's next hook", async () => {
+    const first = await checkingService();
+    await first.steer(SESSION, STEER);
+    const responses = serverResponses(1);
+    const gone = hook(first.socketPath, prompt("prompt-1"));
+    goneAtItsAnswer((await responses)[0], gone.destroy);
+    await gone.closed;
+    await first.close();
+    const second = await checkingService({ root: first.root });
+    expect(contents(await ingestEngineEvent(second.engine, prompt("prompt-2", SESSION, second.root)))).toEqual([STEER]);
+    expect(await ingestEngineEvent(second.engine, prompt("prompt-3"))).toEqual([]);
+    expect(await second.deliveriesOf(STEER)).toBe(1);
+  }, 20_000);
+
   it("tells a steer once when its answer waits on its connection behind another session's answer", async () => {
     const service = await checkingService();
     await service.start(OTHER);

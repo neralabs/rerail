@@ -296,7 +296,9 @@ function restoredOwed(ledger: readonly LedgerEntry[]): OwedState {
   const owed = ledger.findLast((entry): entry is OwedEntry => entry.type === "owed");
   if (owed === undefined) return { steers: [], findings: [], recorded: 0 };
   return {
-    steers: owed.steers.map(steer => ({ delivery: steer.delivery, revision: 0, scope: [...steer.scope], digests: { ...steer.digests } })),
+    steers: owed.steers.map(steer => ({
+      delivery: steer.delivery, revision: 0, scope: [...steer.scope], digests: { ...steer.digests }, ...(steer.recorded === true ? { recorded: true as const } : {}),
+    })),
     findings: owed.findings.map(finding => ({ ...restoredFinding(finding), revision: 0 })),
     recorded: owed.steers.length + owed.findings.length,
   };
@@ -564,6 +566,8 @@ interface PendingSteer {
   settled?: (delivered: boolean) => void;
   /** A Merge Assist note: the conflict store keeps it until a delivery takes it, so closing the session loses nothing. */
   mergeAssistNote?: true;
+  /** Its delivery is in the ledger already: an answer no client heard took it (`returnUndelivered`). */
+  recorded?: true;
 }
 
 /**
@@ -1596,7 +1600,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * time limit closes its connection while the daemon still runs its event, and the answer goes nowhere. Each goes back
    * in front of the session's pending steers, in its order, so the session's next answer carries it; that answer drops
    * one a newer revision has overtaken, as it drops any (`#performSteer`). The ledger already holds its delivery, so it
-   * is not recorded again. A session closed or opened again since keeps none: its close counted them as delivered.
+   * is not recorded again, nor after a restart: a close that keeps it owed says so (`recorded`). A session closed or
+   * opened again since keeps none: its close counted them as delivered.
    * Never fails: a failure is reported, and the steers stay as the answer left them.
    */
   returnUndelivered(sessionId: string, deliveries: readonly AdapterDelivery[]): Promise<void> {
@@ -1605,7 +1610,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         const state = this.#sessions.get(sessionId);
         const returned = deliveries.flatMap(delivery => this.#takeHandedOut(delivery, state));
         if (state === undefined || returned.length === 0) return;
-        for (const pending of returned) this.#recordedUndelivered.add(pending.delivery);
+        for (const pending of returned) {
+          pending.recorded = true;
+          this.#recordedUndelivered.add(pending.delivery);
+        }
         state.pendingSteers.unshift(...returned);
       } catch (error) {
         process.stderr.write(`rerail: could not keep the steers of an answer session ${sessionId} never got: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -1638,7 +1646,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     await this.#recordOwed(state, this.#owedEntry(state, [], state.owed.findings));
     const deliveries: AdapterDelivery[] = [];
     for (const steer of heldSteers) {
-      const delivery = await this.#recordedDelivery(steer.delivery);
+      // One an answer no client heard took before the session closed is in the ledger already.
+      const delivery = steer.recorded === true ? steer.delivery : await this.#recordedDelivery(steer.delivery);
       deliveries.push(delivery);
       this.#handedOut.set(delivery, { state, pending: steer });
     }
@@ -1697,7 +1706,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const sensitive = findings.length === 0 ? () => false : checkoutPathBoundary(state.checkout.cwd).sensitive;
     return {
       type: "owed",
-      steers: steers.map((steer): OwedSteer => ({ delivery: steer.delivery, scope: [...steer.scope], digests: { ...steer.digests } })),
+      steers: steers.map((steer): OwedSteer => ({
+        delivery: steer.delivery, scope: [...steer.scope], digests: { ...steer.digests }, ...(steer.recorded === true ? { recorded: true } : {}),
+      })),
       findings: findings.map(finding => owedFinding(finding.violation, finding.sourceOf(finding.violation.ruleId), finding, sensitive)),
     };
   }
