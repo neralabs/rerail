@@ -643,7 +643,7 @@ mod tests {
     /// a matcher opened then reads it: an index rewritten at the very time this one read, as two
     /// writes within one tick of the file system's clock leave it, is not taken for the old one.
     #[test]
-    fn a_matcher_whose_sources_hold_reads_the_index_again() {
+    fn reads_the_index_again_once_it_says_its_sources_hold() {
         let root = fixture("index-again", &[(".gitignore", "gen/\n"), ("gen/x.py", "")]);
         git(&root, &["init", "--initial-branch=main"]);
         git(&root, &["add", ".gitignore"]);
