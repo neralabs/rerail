@@ -908,7 +908,10 @@ mod tests {
     fn a_spare_root_gives_its_room_to_a_root_the_budget_counts() {
         let scratch = Scratch::new("spare");
         let [w1, w2, registry] = folders_of(&scratch, ["w1", "w2", "registry"]);
-        folders_of(&scratch, ["w1/a", "w2/a", "w2/b", "registry/e1", "registry/e2"]);
+        folders_of(
+            &scratch,
+            ["w1/a", "w2/a", "w2/b", "registry/e1", "registry/e2"],
+        );
         let worktrees = [
             (&w1, ["", "a"].map(str::to_owned).to_vec()),
             (&w2, ["", "a", "b"].map(str::to_owned).to_vec()),
@@ -922,7 +925,10 @@ mod tests {
         assert!(backend.watch_spare(&registry, &entries), "room is left");
         for (root, folders) in &worktrees {
             notices.start(root);
-            assert!(backend.watch(root, folders), "{root} fits as with no spare root");
+            assert!(
+                backend.watch(root, folders),
+                "{root} fits as with no spare root"
+            );
         }
         assert!(notice_of(&notices, &registry).ended);
         assert!(!backend.watch_spare(&registry, &entries), "no room is left");
@@ -942,7 +948,10 @@ mod tests {
         }
         assert!(backend.watch_spare(&one, &folders));
         assert!(!backend.watch_spare(&two, &folders), "no room is left");
-        assert!(notices.take().is_empty(), "the first spare root's watch goes on");
+        assert!(
+            notices.take().is_empty(),
+            "the first spare root's watch goes on"
+        );
         backend.close();
     }
 
@@ -955,10 +964,19 @@ mod tests {
         let backend = Inotify::open_with_budget(Arc::clone(&notices), budget).expect("opens");
         let mut watcher = TreeWatcher::over(notices, Box::new(backend));
         let folders = vec![String::new()];
-        assert!(watcher.watch_spare(spare.clone(), folders.clone()).expect("watch"));
+        assert!(
+            watcher
+                .watch_spare(spare.clone(), folders.clone())
+                .expect("watch")
+        );
         assert!(watcher.watch(root, folders).expect("watch"));
         let taken = watcher.take().expect("take");
-        assert!(taken.iter().any(|notice| notice.root == spare && notice.ended), "{taken:?}");
+        assert!(
+            taken
+                .iter()
+                .any(|notice| notice.root == spare && notice.ended),
+            "{taken:?}"
+        );
         watcher.close().expect("close");
     }
 
