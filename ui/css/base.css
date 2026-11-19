@@ -260,6 +260,18 @@ body[data-panel="open"] .panel{display:flex}
 .welcome .x:hover{background:var(--subtle)}
 .welcome.warn{background:var(--warning-subtle);color:var(--warning-foreground)}
 .welcome.warn p{color:var(--warning-foreground)}
+/* One recipe for every banner: its colour stays on its surface and its icon; the title, the text, a command, a button
+ * that goes somewhere and the dismiss read in the page's own colours. A button that changes something (Start Rerail,
+ * Approve) keeps the solid brand colour; one that goes somewhere has a soft fill, the text colour at low strength, so
+ * it darkens a light banner and lightens a dark one. */
+.welcome,.welcome.warn{color:var(--foreground)}
+.welcome p,.welcome.warn p{color:var(--foreground);opacity:1}
+.welcome > .ico{color:var(--info-foreground)}
+.welcome.warn > .ico{color:var(--warning-foreground)}
+.welcome .mono{background:var(--subtle);padding:1px 6px;border-radius:var(--radius-md);color:var(--foreground);-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.welcome .btn:not(.solid){border-color:transparent;background:color-mix(in srgb,var(--foreground) 9%,transparent);color:var(--foreground)}
+.welcome .btn:not(.solid):hover{background:color-mix(in srgb,var(--foreground) 14%,transparent)}
+.welcome .x{color:var(--muted-foreground)}
 
 /* ---- sections and lists ---- */
 section.group{margin-bottom:24px}

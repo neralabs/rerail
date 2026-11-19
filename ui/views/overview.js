@@ -3,7 +3,7 @@
  * (`first-open.js`), the range's four tiles, then the rules with the most violations logged and the newest sessions,
  * or the empty block that says what to do next.
  */
-import { h, setText, setAttr, setClass, setContent, syncChildren, icon } from "../dom.js";
+import { h, setText, setAttr, setClass, setContent, syncChildren, icon, pendingIcon } from "../dom.js";
 import { ago, clock, fmt, plural, shortSessionId, whenLabel, HOST_NAME } from "../format.js";
 import { awaitingApproval, awaitingYourApproval, isFromPack, isRunning, worktreeLeftOut } from "../derive.js";
 import { data, ui, ALL_TIME, activityAllOf, allFires, fires, packOfRule, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
@@ -101,7 +101,7 @@ export const yourRulesToApprove = () => (data.loaded ? rulesArray().filter(await
 function renderYours(root) {
   const rules = yourRulesToApprove(), n = rules.length, one = n === 1;
   const caught = rules.reduce((sum, stored) => sum + allFires(stored.rule.id), 0);
-  setContent(root, JSON.stringify([rules.map(stored => stored.rule.id), caught]), () => (n === 0 ? null : h("div.welcome.warn.yours", { role: "status" }, icon("steered", 22), h("div", null,
+  setContent(root, JSON.stringify([rules.map(stored => stored.rule.id), caught]), () => (n === 0 ? null : h("div.welcome.warn.yours", { role: "status" }, pendingIcon(), h("div", null,
     h("b", null, one ? "Your coding agent added a rule. It’s on Log only until you approve it."
       : `Your coding agent added ${fmt(n)} rules. They’re on Log only until you approve them.`),
     h("p", null, caught === 0 ? "Nothing caught in Log yet. "
@@ -129,7 +129,7 @@ function renderApprovals(root) {
   const list = [...items.values()], n = list.length;
   const packs = list.filter(item => item.kind === "pack").length, rules = n - packs;
   const what = [rules && `${fmt(rules)} ${plural(rules, "rule")}`, packs && `${fmt(packs)} ${plural(packs, "pack")}`].filter(Boolean).join(" and ");
-  setContent(root, JSON.stringify(list), () => (n === 0 ? null : h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
+  setContent(root, JSON.stringify(list), () => (n === 0 ? null : h("div.welcome.warn", { role: "status" }, pendingIcon(), h("div", null,
     h("b", null, `${what} ${n === 1 ? "waits" : "wait"} for approval, so ${n === 1 ? "it runs" : "they run"} in Log and steer${n === 1 ? "s" : ""} no one.`),
     h("p", null, `Rerail did not write ${n === 1 ? "it" : "them"}. Read what each tells the coding agent, then approve it on its page, or ask your coding agent: `,
       h("span.mono", null, "/rerail-create approve the rules"), "."),

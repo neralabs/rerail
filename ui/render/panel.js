@@ -4,7 +4,7 @@
  * applies, what the coding agent sees (Edit hands a new text to the coding agent), its recent violations, and for a
  * rule created by you a Delete in a footer at the end. A rule pack's contents render here too (`pack-panel.js`).
  */
-import { h, setAttr, setText, setContent, icon } from "../dom.js";
+import { h, setAttr, setText, setContent, icon, pendingIcon } from "../dom.js";
 import { fmt, whenLabel, clock, shortSessionId } from "../format.js";
 import { ruleMode, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, awaitingYourApproval, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
 import { data, ui, rangeLabel, fires, allFires, isMeasured, activityAllOf, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
@@ -117,7 +117,7 @@ function renderStats(stored, id) {
  * approves exactly the content this page read; nothing once approved, or for a rule that needs none.
  */
 /** A rule your coding agent added that waits: who added it, what it caught in Log, and Approve, here after it is read. */
-const yourRuleNotice = (subject, caught) => h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
+const yourRuleNotice = (subject, caught) => h("div.welcome.warn", { role: "status" }, pendingIcon(), h("div", null,
   h("b", null, "Added by your coding agent, on Log only."),
   h("p", null, caught === 0 ? "Nothing caught in Log yet. " : `Caught ${fmt(caught)} ${caught === 1 ? "violation" : "violations"} in Log so far, and your coding agent wasn’t told. `,
     "Review what it checks and what it tells the coding agent, then approve it: Rerail tells your coding agent as it works, so it fixes them."),
@@ -129,7 +129,7 @@ function renderApproval(stored) {
   const yours = awaitingYourApproval(stored), caught = yours ? allFires(stored.rule.id) : 0;
   setContent(p.approval, JSON.stringify([waiting, subject, pack?.name, yours, caught]), () => (!waiting ? null
     : yours ? yourRuleNotice(subject, caught)
-    : h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
+    : h("div.welcome.warn", { role: "status" }, pendingIcon(), h("div", null,
       h("b", null, subject.kind === "pack" ? `Its pack, ${pack?.name ?? subject.id}, waits for approval.` : "This rule waits for approval."),
       h("p", null, subject.kind === "pack"
         ? "Rerail did not publish it, so every rule in it runs in Log, steering no one, until a person approves what this version ships."
