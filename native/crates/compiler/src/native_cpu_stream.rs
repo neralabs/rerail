@@ -2105,6 +2105,10 @@ pub(crate) struct SplitParts {
 pub(crate) struct Seq {
     x: usize,
     e: usize,
+    /// The bytes of `X` (the closer's), and of `X` or `E` (where the scan stops): a closer's
+    /// first byte is in the first, a content token's in neither.
+    xs: [u64; 4],
+    stops: [u64; 4],
     /// Where `E` is one byte: a part's code by its second byte (`records::pass` of the two
     /// bytes), as simdjson's `escape_map[escape_char]`.
     codes2: Option<Box<[u32; 256]>>,
@@ -2170,7 +2174,7 @@ pub(crate) fn sequential(block: &crate::block_native::BlockNative, a: &crate::re
     let I::AndNot(t2, pt) = block.insts[usize::from(opener)] else { return None };
     let I::Prev(tg2, 1) = block.insts[usize::from(pt)] else { return None };
     let I::Toggle(t3) = block.insts[usize::from(tg2)] else { return None };
-    (closer_and_file && usize::from(t2) == t && usize::from(t3) == t).then_some(Seq { x, e, codes2: None })
+    (closer_and_file && usize::from(t2) == t && usize::from(t3) == t).then_some(Seq { x, e, xs, stops: std::array::from_fn(|k| xs[k] | es[k]), codes2: None })
 }
 
 /// The region tier 2 splits (`SplitParts`), where a reader says so; refused where its parts'
@@ -3063,8 +3067,20 @@ fn output_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, bw: &crate::native_
 
 /// A part of a split region (`SplitParts`) as the token: its bytes `s..=l` and its code
 /// (`plain_code`), then on to `fetched`.
-fn split_token(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, s: Value, l: Value, fetched: Block, read: Option<&[u8]>) {
+/// `firsts`: the bytes its first byte can be, where the caller knows them (a sequential region's
+/// closer or content): the kinds read only where one of them has them, and a kind that is
+/// every one's, not read, a constant.
+fn split_token(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, s: Value, l: Value, fetched: Block, read: Option<&[u8]>, firsts: Option<[u64; 4]>) {
     let bytes = (e.ctx)(f, BYTES);
+    // The kinds its first byte can have (the record tables' first 256 bytes, a byte's kind).
+    let kinds_of = firsts.map(|set| {
+        let mut ks: Vec<u8> = (0..256usize).filter(|&b| set[b / 64] >> (b % 64) & 1 == 1).map(|b| (sp.tables.words[b / 8] >> (8 * (b % 8))) as u8).collect();
+        ks.sort_unstable();
+        ks.dedup();
+        ks
+    });
+    let read: Option<Vec<u8>> = read.map(|r| r.iter().copied().filter(|x| kinds_of.as_ref().is_none_or(|ks| ks.contains(x))).collect());
+    let read = read.as_deref();
     let whole = |f: &mut FunctionBuilder<'_>| {
         let k = crate::native_cpu_block::tables_consts(f, &sp.tables);
         let n = f.ins().isub(l, s);
@@ -3076,11 +3092,16 @@ fn split_token(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, s:
         // The first byte's kind, one load; its word only where a word after reads its kind's
         // (`words_read`).
         Some(kinds) => {
-            let at = f.ins().iadd(bytes, s);
-            let b = f.ins().uload8(types::I64, MemFlags::trusted(), at, 0);
-            let kind_table = crate::native_cpu_block::tables_consts(f, &sp.tables).0;
-            let ka = f.ins().iadd(kind_table, b);
-            let kind = f.ins().uload8(types::I64, MemFlags::trusted().with_readonly(), ka, 0);
+            let kind = match kinds_of.as_deref() {
+                Some(&[k]) => f.ins().iconst(types::I64, i64::from(k)),
+                _ => {
+                    let at = f.ins().iadd(bytes, s);
+                    let b = f.ins().uload8(types::I64, MemFlags::trusted(), at, 0);
+                    let kind_table = crate::native_cpu_block::tables_consts(f, &sp.tables).0;
+                    let ka = f.ins().iadd(kind_table, b);
+                    f.ins().uload8(types::I64, MemFlags::trusted().with_readonly(), ka, 0)
+                }
+            };
             if kinds.is_empty() {
                 kind
             } else {
@@ -3131,7 +3152,7 @@ fn split_next(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw:
     f.switch_to_block(closer);
     let zero = f.ins().iconst(types::I64, 0);
     (e.set)(f, Mem::PartAt, zero);
-    split_token(f, e, sp, c0, pe, fetched, read_word);
+    split_token(f, e, sp, c0, pe, fetched, read_word, None);
     // The nearest part's bit from `at`, below the closer's byte: a word at a time.
     f.switch_to_block(look);
     let (scan, found) = (f.create_block(), f.create_block());
@@ -3180,7 +3201,7 @@ fn split_next(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw:
     f.switch_to_block(content);
     (e.set)(f, Mem::PartAt, near);
     let l = f.ins().iadd_imm(near, -1);
-    split_token(f, e, sp, at, l, fetched, read_word);
+    split_token(f, e, sp, at, l, fetched, read_word, None);
     // A part at `at`: the shortest whose bit is there, its bytes.
     f.switch_to_block(parted);
     let low = {
@@ -3203,7 +3224,7 @@ fn split_next(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw:
         let after = f.ins().iadd_imm(at, i64::from(n));
         (e.set)(f, Mem::PartAt, after);
         let l = f.ins().iadd_imm(at, i64::from(n) - 1);
-        split_token(f, e, sp, at, l, fetched, read_word);
+        split_token(f, e, sp, at, l, fetched, read_word, None);
         if let Some(o) = other {
             f.switch_to_block(o);
         }
@@ -3247,7 +3268,7 @@ fn split_next_seq(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts,
     f.switch_to_block(content);
     (e.set)(f, Mem::PartAt, i);
     let l = f.ins().iadd_imm(i, -1);
-    split_token(f, e, sp, at, l, fetched, read_word);
+    split_token(f, e, sp, at, l, fetched, read_word, Some(std::array::from_fn(|k| !seq.stops[k])));
     // At `at`: the closer, or a part of two bytes.
     f.switch_to_block(here);
     let sh = if stride == 1 { tz } else { f.ins().imul_imm(k, stride) };
@@ -3258,7 +3279,7 @@ fn split_next_seq(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts,
     f.switch_to_block(closer);
     let zero = f.ins().iconst(types::I64, 0);
     (e.set)(f, Mem::PartAt, zero);
-    split_token(f, e, sp, at, at, fetched, read_word);
+    split_token(f, e, sp, at, at, fetched, read_word, Some(seq.xs));
     f.switch_to_block(part);
     let after = f.ins().iadd_imm(at, 2);
     (e.set)(f, Mem::PartAt, after);
@@ -3278,7 +3299,7 @@ fn split_next_seq(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts,
             (e.set)(f, Mem::Taken, code);
             f.ins().jump(fetched, &[]);
         }
-        None => split_token(f, e, sp, at, l, fetched, read_word),
+        None => split_token(f, e, sp, at, l, fetched, read_word, None),
     }
 }
 
@@ -3307,7 +3328,7 @@ fn split_enter_seq(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts
     f.switch_to_block(enter);
     let s1 = f.ins().iadd_imm(s, 1);
     (e.set)(f, Mem::PartAt, s1);
-    split_token(f, e, sp, s, s, on, words);
+    split_token(f, e, sp, s, s, on, words, sp.seq.as_ref().map(|q| q.xs));
     f.switch_to_block(on);
 }
 
@@ -3330,7 +3351,7 @@ fn split_enter(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw
     let s1 = f.ins().iadd_imm(s, 1);
     (e.set)(f, Mem::PartAt, s1);
     (e.set)(f, Mem::PartEnd, l);
-    split_token(f, e, sp, s, s, on, words);
+    split_token(f, e, sp, s, s, on, words, None);
     f.switch_to_block(on);
 }
 

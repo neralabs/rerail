@@ -384,6 +384,21 @@ an array's string and a pair's value. The starts test asserts it: the scans are 
 `TOKEN`s whose switch takes the escapes. With no part ever pending, the trees test fails; with
 one always pending, the starts test fails.
 
+## Step 9, done: a string's content taken as `parse_string` takes it
+
+The scan's three outcomes, against `parse_string`'s:
+
+| `parse_string` | Before | Now |
+|---|---|---|
+| quote first: `return` | the closer's kind: its byte loaded, its kind loaded | a constant (every byte of `X` has the one kind) |
+| backslash: `escape_map[src[bs_dist + 1]]` | one load by the second byte (step 4) | the same |
+| the bytes before it: copied | the first byte's kind, then a test of it for the escape's kind, and under it the word table's hash | the first byte's kind alone: a content token's first byte is neither `X` nor `E`, and no other byte has a kind a word after reads |
+
+`split_token` takes the bytes a token's first byte can be (`firsts`: `X` for the closer and
+the opener, neither `X` nor `E` for content). It reads only the kinds one of them has, and a
+kind every one of them shares is a constant. Content given the closer's bytes fails the trees
+test.
+
 ## Order
 
 1. Done: step 1, above.
