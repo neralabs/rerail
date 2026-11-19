@@ -108,6 +108,7 @@ repository's `.rerail/sessions/`.
 | Where | What |
 | --- | --- |
 | `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits, findings, steer feedback, and all agent events (prompts, replies, tool inputs and outputs). With Merge Assist on, also its in-flight conflicts (both sides' summaries and contested hunks; a dismissed one keeps everything but its hunks and evidence: its title, files, each side's branch or pull request, commit, author, link, summary and location, who dismissed it, and the hook command's last answer: its note (up to 600 characters), status line and any error (up to 300 characters of the command's output)), its last scan, your `gh` sign-in state and login, which notes each session was handed, and your Merge Assist settings; turning Merge Assist off clears the conflicts, scans and `gh` sign-in state, and `rerail reset` clears the notes of the sessions it removes. Also daemon state and log, consent answer, rule packs, managed installs |
+| `~/.rerail/claude-status-lines/` | One file per Claude Code session, named by its session id: the status line the daemon last drew for it. That is its rule and steer counts, any problem state, the newest open Merge Assist conflict's line, and dashboard links naming the repository's key and the checkout's path. No prompts, replies or code |
 | `~/.cache/rerail/` (Windows: `%USERPROFILE%\AppData\Local\rerail`) | `content-v5.sqlite`: source files Rerail read, with syntax trees and check results. Sources and syntax trees from a scan are kept uncompressed in the `content-v5.sqlite.objects` folder beside it, and the facts derived from them in the `.frames` and `.memo` folders. `content-v5.sqlite.files` records the paths, sizes and times of the files Rerail looked at, with their contents' digests, so it can tell an unchanged file without reading it. On Windows, the copy an earlier release kept in `~/.cache/rerail` stays until `rerail install --remove` deletes it |
 | `<your repository>/.rerail/sessions/` | One ledger per session: events and pre-edit file text. Its `.gitignore` of `*` keeps it out of Git |
 
@@ -170,7 +171,7 @@ SQLite side files inherit the database's mode.
 
 On macOS and Linux, Rerail removes group and other access from these when it opens one your user owns, fixing old
 releases or loose umasks. Covered: home and cache folders, `rerail.sqlite*` (pre-update copies too),
-`content-v5.sqlite*` (the `.objects`, `.frames` and `.memo` folders are made private to you, and the `.files` database is created private), `harness.sqlite*`, `daemon.json`, `access-token`, `daemon.log`. It never follows symlinks or
+`content-v5.sqlite*` (the `.objects`, `.frames` and `.memo` folders are made private to you, and the `.files` database is created private), `harness.sqlite*`, `daemon.json`, `access-token`, `daemon.log`, `claude-status-lines/`. It never follows symlinks or
 touches other users' files.
 
 </details>
@@ -254,11 +255,11 @@ Three commands remove data, each reaching further.
 <summary>Exactly what each command removes</summary>
 
 - **`rerail reset`** in a repository deletes its history (sessions, events, steer feedback, audits) and rewrites the
-  database so it cannot be recovered. Rules, settings, `.rerail/sessions/`, the content cache and daemon log stay. All
-  writes zero freed space (`secure_delete`).
+  database so it cannot be recovered, and deletes the Claude Code status line kept for each session it deletes. Rules,
+  settings, `.rerail/sessions/`, the content cache and daemon log stay. All writes zero freed space (`secure_delete`).
 - **`rerail install --remove`** disconnects agents, stops the daemon, **moves** the database to
-  `~/.rerail-clean-YYYYMMDD`, removes Rerail from `PATH`, and deletes the installation, the rule packs and the content
-  cache.
+  `~/.rerail-clean-YYYYMMDD`, removes Rerail from `PATH`, and deletes the installation, the rule packs, the Claude
+  Code status lines and the content cache.
 - **`rerail install --remove --delete-data`** deletes the databases, every `~/.rerail-clean-*` backup, the content cache,
   recorded checkouts' `.rerail/sessions/`, the device secrets of `rerail activate` profiles, and everything else Rerail
   wrote in its home, then the home. `--dry-run` previews. Unrecorded checkouts, a custom `RERAIL_STORAGE_ROOT` and the

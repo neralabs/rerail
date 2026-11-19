@@ -729,8 +729,8 @@ records folder whoever made it ([B6](#b6-data-at-rest)).
 
 - The content store's folder is created 0700 and its database 0600; SQLite gives `-wal` and `-shm` the same mode.
 - On open, Rerail tightens the home and these files if other users could read them and the person owns them:
-  `rerail.sqlite*`, `harness.sqlite*`, `daemon.json*`, `access-token*`, `daemon.log*`, `*.pre-update`. It never
-  follows a symlink to do so.
+  `rerail.sqlite*`, `harness.sqlite*`, `daemon.json*`, `access-token*`, `daemon.log*`, `claude-status-lines/`, `*.pre-update`. It
+  never follows a symlink to do so.
 - The rule-pack staging folder is created 0700.
 
 **Mitigated on every system** (`src/daemon/daemon.ts:loadDaemonTls`): a daemon TLS key other accounts can read, by its
@@ -780,6 +780,11 @@ should not widen it.
 - The Claude status-line wrapper runs an inherited `statusLine` command, re-read from the working directory's
   `.claude/settings*.json`, through a shell: `shell: true`, or Git Bash's `bash -c` on Windows when Rerail finds one
   (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).
+- Claude Code's status command on macOS and Linux has its shell read `claude-status.sh` from the installed package and
+  print `<Rerail home>/claude-status-lines/<session id>`, which the daemon writes (0600, in a 0700 folder). The session id comes
+  from Claude Code's JSON on stdin; the script takes only `[A-Za-z0-9_-]`, so an id cannot name a file outside the
+  folder. The lines hold terminal escapes (colour, OSC 8 links); the daemon strips control characters from every
+  label and address it puts in them (`src/presentation/claude-status-files.ts`).
 - `hooks/cursor.json` uses the relative path `./dist/hosts/cursor/cursor-hook.js`. [INFERENCE: exposed only if Cursor
   runs plugin hooks with the project as working directory. `rerail setup` writes absolute paths.]
 

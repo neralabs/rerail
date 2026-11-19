@@ -296,7 +296,9 @@ function restoredOwed(ledger: readonly LedgerEntry[]): OwedState {
   const owed = ledger.findLast((entry): entry is OwedEntry => entry.type === "owed");
   if (owed === undefined) return { steers: [], findings: [], recorded: 0 };
   return {
-    steers: owed.steers.map(steer => ({ delivery: steer.delivery, revision: 0, scope: [...steer.scope], digests: { ...steer.digests } })),
+    steers: owed.steers.map(steer => ({
+      delivery: steer.delivery, revision: 0, scope: [...steer.scope], digests: { ...steer.digests }, ...(steer.recorded === true ? { recorded: true as const } : {}),
+    })),
     findings: owed.findings.map(finding => ({ ...restoredFinding(finding), revision: 0 })),
     recorded: owed.steers.length + owed.findings.length,
   };
@@ -564,6 +566,8 @@ interface PendingSteer {
   settled?: (delivered: boolean) => void;
   /** A Merge Assist note: the conflict store keeps it until a delivery takes it, so closing the session loses nothing. */
   mergeAssistNote?: true;
+  /** Its delivery is in the ledger already: an answer no client heard took it (`returnUndelivered`). */
+  recorded?: true;
 }
 
 /**
@@ -1087,6 +1091,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #sessionStore: SqliteSessionStore;
   readonly #audits: SqliteAuditStore;
   readonly #steersInFlight = new Set<Promise<AdapterDelivery | undefined>>();
+  /** The steer each answer's delivery came from, and its session, until the answer reaches its asker or comes back (`returnUndelivered`). */
+  readonly #handedOut = new WeakMap<AdapterDelivery, { state: RuntimeSessionState; pending: PendingSteer }>();
   /** Evaluator opens still running, each with its own release: disposal waits for them before the stores close under them. */
   readonly #evaluatorOpens = new Set<Promise<CodeRuleBridge | undefined>>();
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
@@ -1422,7 +1428,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * Begins a tool call on the open evaluator. One answered while the evaluator opens is never begun, but what it writes
-   * is the session's own, so it opens only its window (`CodeRuleBridge.unwatchedCall`).
+   * is the session's own, so it opens only its window, which names the files its tool names (`CodeRuleBridge.unwatchedCall`).
    */
   async #beginCall(
     state: RuntimeSessionState,
@@ -1430,7 +1436,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     event: Extract<AdapterEvent, { kind: "call" }>,
   ): Promise<Readonly<Record<string, Preimage>> | undefined> {
     if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input);
-    await state.codeRuleBridge?.unwatchedCall(event.toolCallId, event.toolName);
+    await state.codeRuleBridge?.unwatchedCall(event.toolCallId, event.toolName, event.input);
     return undefined;
   }
 
@@ -1589,9 +1595,46 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // Delivery removes entries from the list, so iterate a snapshot.
     for (const pending of state.pendingSteers.slice()) {
       const delivery = await this.#deliverSteer(state, pending, false);
-      if (delivery !== undefined) deliveries.push(delivery);
+      if (delivery === undefined) continue;
+      deliveries.push(delivery);
+      this.#handedOut.set(delivery, { state, pending });
     }
     return deliveries;
+  }
+
+  /**
+   * Gives the session back the steers `deliveries` took when their answer never reached its asker: a hook past its own
+   * time limit closes its connection while the daemon still runs its event, and the answer goes nowhere. Each goes back
+   * in front of the session's pending steers, in its order, so the session's next answer carries it; that answer drops
+   * one a newer revision has overtaken, as it drops any (`#performSteer`). The ledger already holds its delivery, so it
+   * is not recorded again, nor after a restart: a close that keeps it owed says so (`recorded`); and a Merge Assist note
+   * was marked given as the answer took it, so it is not marked again. A session closed or opened again since keeps
+   * none: its close counted them as delivered.
+   * Never fails: a failure is reported, and the steers stay as the answer left them.
+   */
+  returnUndelivered(sessionId: string, deliveries: readonly AdapterDelivery[]): Promise<void> {
+    return this.#ingestLanes.run(sessionId, async () => {
+      try {
+        const state = this.#sessions.get(sessionId);
+        const returned = deliveries.flatMap(delivery => this.#takeHandedOut(delivery, state));
+        if (state === undefined || returned.length === 0) return;
+        for (const pending of returned) {
+          pending.recorded = true;
+          // It settled as the answer took it.
+          delete pending.settled;
+        }
+        state.pendingSteers.unshift(...returned);
+      } catch (error) {
+        process.stderr.write(`rerail: could not keep the steers of an answer session ${sessionId} never got: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+    });
+  }
+
+  /** The steer `delivery` came from when an answer of `state`'s took it, no longer counted as handed out; else none. */
+  #takeHandedOut(delivery: AdapterDelivery, state: RuntimeSessionState | undefined): PendingSteer[] {
+    const handed = this.#handedOut.get(delivery);
+    this.#handedOut.delete(delivery);
+    return handed === undefined || handed.state !== state ? [] : [handed.pending];
   }
 
   /**
@@ -1611,7 +1654,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     state.missedFindings.unshift(...heldFindings);
     await this.#recordOwed(state, this.#owedEntry(state, [], state.owed.findings));
     const deliveries: AdapterDelivery[] = [];
-    for (const steer of heldSteers) deliveries.push(await this.#recordedDelivery(steer.delivery));
+    for (const steer of heldSteers) {
+      // One an answer no client heard took before the session closed is in the ledger already.
+      const delivery = steer.recorded === true ? steer.delivery : await this.#recordedDelivery(steer.delivery);
+      deliveries.push(delivery);
+      this.#handedOut.set(delivery, { state, pending: steer });
+    }
     return deliveries;
   }
 
@@ -1667,7 +1715,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const sensitive = findings.length === 0 ? () => false : checkoutPathBoundary(state.checkout.cwd).sensitive;
     return {
       type: "owed",
-      steers: steers.map((steer): OwedSteer => ({ delivery: steer.delivery, scope: [...steer.scope], digests: { ...steer.digests } })),
+      steers: steers.map((steer): OwedSteer => ({
+        delivery: steer.delivery, scope: [...steer.scope], digests: { ...steer.digests }, ...(steer.recorded === true ? { recorded: true } : {}),
+      })),
       findings: findings.map(finding => owedFinding(finding.violation, finding.sourceOf(finding.violation.ruleId), finding, sensitive)),
     };
   }
@@ -2989,6 +3039,29 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       if ((state.codeRuleSourceVersions.get(path) ?? 0) > pending.revision) state.undeliveredSources.add(path);
   }
 
+  /**
+   * Whether `pending` goes to the agent no more: a newer revision has overtaken it (its sources are marked, as
+   * `#recordUndelivered` says), or the runtime stops.
+   */
+  #withheld(state: RuntimeSessionState, pending: PendingSteer): boolean {
+    if (!this.#isCurrentSteer(state, pending)) {
+      this.#recordUndelivered(state, pending);
+      return true;
+    }
+    return this.#stopped();
+  }
+
+  /** Hands `delivery` to a native host at once (`deliverBackground`); false when that failed, which is reported. */
+  async #deliveredInBackground(delivery: AdapterDelivery): Promise<boolean> {
+    try {
+      await this.#deliverBackground!(delivery);
+      return true;
+    } catch (error) {
+      process.stderr.write(`rerail: policy delivery failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      return false;
+    }
+  }
+
   #deliverSteer(
     state: RuntimeSessionState,
     pending: PendingSteer,
@@ -3011,33 +3084,17 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     state.pendingSteers.splice(index, 1);
     let delivered = false;
     try {
-      if (!this.#isCurrentSteer(state, pending)) {
-        this.#recordUndelivered(state, pending);
-        return undefined;
-      }
-      if (this.#stopped()) return undefined;
+      if (this.#withheld(state, pending)) return undefined;
       pending.delivery = this.#currentConflictNotice(state, pending.delivery);
-      try {
-        await this.persistDelivery(pending.delivery);
-      } catch (error) {
-        process.stderr.write(`rerail: could not record policy delivery: ${error instanceof Error ? error.message : String(error)}\n`);
-      }
+      // One an answer no client heard took is in the ledger already (`returnUndelivered`).
+      if (pending.recorded !== true) await this.#recordedDelivery(pending.delivery);
       // A stop committed elsewhere while the ledger was written withholds the result.
-      if (!this.#isCurrentSteer(state, pending)) {
-        this.#recordUndelivered(state, pending);
-        return undefined;
-      }
-      if (this.#stopped()) return undefined;
+      if (this.#withheld(state, pending)) return undefined;
       if (!native) {
         delivered = true;
         return pending.delivery;
       }
-      try {
-        await this.#deliverBackground!(pending.delivery);
-        delivered = true;
-      } catch (error) {
-        process.stderr.write(`rerail: policy delivery failed: ${error instanceof Error ? error.message : String(error)}\n`);
-      }
+      delivered = await this.#deliveredInBackground(pending.delivery);
       return undefined;
     } finally {
       pending.settled?.(delivered);
