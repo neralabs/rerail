@@ -9,7 +9,7 @@ import {
   UNLISTED_BRANCHES_PROBLEM,
   type DetectContext,
 } from "../../../src/runtime/merge-assist/conflict-detect.js";
-import { readConflicts } from "../../../src/runtime/merge-assist/conflict-store.js";
+import { readConflicts, writeConflicts } from "../../../src/runtime/merge-assist/conflict-store.js";
 import type { PullRequestSummary } from "../../../src/runtime/merge-assist/github.js";
 import { commit, git, writeFiles } from "../../support/merge-assist/git.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -32,6 +32,13 @@ vi.mock("../../../src/runtime/merge-assist/github.js", async () => ({
   ...await vi.importActual<typeof import("../../../src/runtime/merge-assist/github.js")>("../../../src/runtime/merge-assist/github.js"),
   PULL_REQUEST_LIMIT: 1,
 }));
+
+// A test can stop a pass's reads right after its store has committed.
+vi.mock("../../../src/runtime/merge-assist/conflict-store.js", { spy: true });
+const { GitReads } = await vi.importActual<typeof import("../../../src/engine/git.js")>("../../../src/engine/git.js");
+const { writeConflicts: actualWriteConflicts } = await vi.importActual<typeof import("../../../src/runtime/merge-assist/conflict-store.js")>(
+  "../../../src/runtime/merge-assist/conflict-store.js",
+);
 
 // Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
 withExperiments("MERGE_ASSIST");
@@ -98,6 +105,22 @@ describe("a detection pass", { timeout: 30_000 }, () => {
 
     expect(after?.after.map(entry => entry.conflict.theirs.ref)).toEqual(["origin/remote-only"]);
     expect(open(ws)).toEqual(["origin/remote-only"]);
+  });
+
+  it("answers what it stored when the owner of its Git reads stops them once its store has committed", async () => {
+    const { ws, context } = await enabled();
+    commit(ws.worktree("jbarnes-orders"), THEIR_ORDERS, "Version the orders path");
+    const owner = new GitReads();
+    vi.mocked(writeConflicts).mockImplementationOnce((...args) => {
+      actualWriteConflicts(...args);
+      void owner.stop();
+    });
+
+    const detected = await detectConflicts({ ...context([]), reads: owner });
+
+    expect(owner.stopped).toBe(true);
+    expect(detected?.after.map(entry => entry.conflict.theirs.ref)).toEqual(["jbarnes-orders"]);
+    expect(open(ws)).toEqual(["jbarnes-orders"]);
   });
 
   it("keeps the open branch conflicts, and says why, when Git cannot list the branches", async () => {

@@ -1,6 +1,6 @@
 # Fusion opportunity and performance model on the data-layer rules
 
-Code and raw output are in `../experiments/fusion-model/`; the corpus copy is not checked in. Measured on the gate corpus (9,010 Python files, 28.2M tree-sitter nodes), single-threaded, on a shared machine. Identical runs differed by up to 2.2×.
+Code and raw output are in `../experiments/fusion-model/` (removed; at 7efcac9c67); the corpus copy is not checked in. Measured on the gate corpus (9,010 Python files, 28.2M tree-sitter nodes), single-threaded, on a shared machine. Identical runs differed by up to 2.2×.
 
 > **Superseded statement.** The "Recursive set stage (CPU only)" layer in §1 predates `metal-enqueue.md`. Under spec §8 monotone recursion runs on Metal as GPU-scheduled waves; there is no CPU fallback.
 
@@ -42,7 +42,7 @@ Everything was run on the real gate corpus (9,010 Python files, 28.2M tree-sitte
 
 ## Reproduce
 
-Everything is in `../experiments/fusion-model/`:
+Everything is in `../experiments/fusion-model/` (removed; at 7efcac9c67):
 
 ```
 python3 -I analyze.py <worktree>/packs/data-layer/candidates/rules out
