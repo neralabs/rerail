@@ -19,6 +19,7 @@ On upgrade, Rerail keeps the common ID when it exists. Otherwise it adopts the e
 If the Git directory is read-only and has no ID, Rerail uses its volume, file number, and creation time when available.
 Without a stable directory identity or an existing ID in the local Git configuration, a read-only scan cannot establish ownership.
 The content store records this identity with each run. A later writable scan saves the same ID in the common directory.
+Rerail resolves a requested Git revision before it registers the analysis scope. An invalid revision leaves no scope registration.
 The scan can retain analysis results in the content cache beside the Rerail home database.
 
 </details>

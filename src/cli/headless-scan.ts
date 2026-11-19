@@ -751,6 +751,7 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   const durableStore = scanContentStore(homeDatabase);
   assertContentStoreOwner(durableStore);
   const packs = installedPackIds(options.packs);
+  const source = options.revision === undefined ? undefined : new binding.GitRevisionSource(root, options.revision, options.analysisScope!, requested);
   let analysisRun: NativeAnalysisScopeRun | undefined;
   let cacheWarning: string | undefined;
   try {
@@ -767,7 +768,6 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   const analysisStore = analysisRun === undefined ? ":memory:" : durableStore;
   let report: ScanReport | undefined;
   try {
-    const source = options.revision === undefined ? undefined : new binding.GitRevisionSource(root, options.revision, options.analysisScope!, requested);
     analysisRun?.selectSource(root, source);
     if (source !== undefined)
       source.setSourceLanguages(JSON.stringify({ suffixes: Object.fromEntries(SOURCE_LANGUAGES), names: Object.fromEntries(SOURCE_NAMES) }));

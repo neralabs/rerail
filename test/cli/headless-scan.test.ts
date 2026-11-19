@@ -1441,6 +1441,27 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
     expect(selectedPolicy.failures).toEqual([expect.objectContaining({ path: expect.stringMatching(/\.rerail\/rules\/\[hex:ff2e7272\]$/u) })]);
   });
 
+  it("resolves a revision before creating its store or registering its named scope", async () => {
+    const root = checkout(), home = root + "-home", databasePath = join(home, RERAIL_DATABASE_FILE);
+    const first = join(home, "unused.sqlite"), second = join(home, "used.sqlite");
+    try {
+      vi.stubEnv("RERAIL_CONTENT_STORE_PATH", first);
+      for (const name of ["review", "bad-2", "bad-3"]) {
+        await expect(scan(root, { revision: "missing-revision", analysisScope: name, databasePath })).rejects.toThrow(/missing-revision/u);
+      }
+      expect(existsSync(first)).toBe(false);
+      expect(existsSync(databasePath + ".analysis-stores.sqlite")).toBe(false);
+      vi.stubEnv("RERAIL_CONTENT_STORE_PATH", second);
+      expect((await scan(root, { revision: "HEAD", analysisScope: "review", databasePath })).cache.publication).toBe("published");
+      const removed = spawnSync(process.execPath, ["--import", "tsx", "src/cli/cli.ts", "--rerail-managed-child", "scope", "delete", "review"], {
+        env: { ...process.env, RERAIL_HOME: home, RERAIL_CONTENT_STORE_PATH: first }, encoding: "utf8",
+      });
+      expect(removed.status, removed.stderr).toBe(0);
+      expect(removed.stdout).toContain(second);
+      expect(existsSync(first)).toBe(false);
+    } finally { vi.unstubAllEnvs(); }
+  }, 30_000);
+
   it("keeps a Git snapshot owned by two scopes after one is deleted", async () => {
     const root = checkout();
     const databasePath = join(`${root}-home`, "rerail.sqlite");
