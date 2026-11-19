@@ -2338,6 +2338,28 @@ calls(x, l) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), ki
     assert_eq!(calls, [["f(1)", "3"], ["g(2)", "5"]]);
 }
 
+/// Decision 0431 §4: a file's programs are granules of the file, so an edit inside one script renumbers no node of
+/// the other script and none of the file's own.
+#[test]
+#[ignore = "0431 step 3: a file's programs in its id space"]
+fn an_edit_in_one_script_renumbers_no_other_program() {
+    let html = |body: &str| format!("<!doctype html>\n<p>hi</p>\n<script>\n{body}\n</script>\n<script>g(2); h(3)</script>\n");
+    let rule = r#"
+.language html
+#include "html/embeds.rr"
+.decl ids(x: symbol, n: node, d: number)
+ids(x, c, d) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), docof(c, d).
+ids(x, e, d) :- kind(e, "element"), text(e, x), docof(e, d).
+.output ids
+"#;
+    let before = guests_run("one-script-a", &[("a.html", &html("let a = f(1);"))], rule, &["ids"]).remove(0);
+    let after = guests_run("one-script-b", &[("a.html", &html("let a = f(1) + k(4);"))], rule, &["ids"]).remove(0);
+    let kept = |rows: &[Vec<String>]| rows.iter().filter(|r| ["g(2)", "h(3)", "<p>hi</p>"].contains(&r[0].as_str())).cloned().collect::<Vec<_>>();
+    assert_eq!(kept(&before).len(), 3, "{before:?}");
+    assert_eq!(kept(&before), kept(&after), "the second script's and the file's ids stay");
+    assert!(before.iter().all(|r| r[2] == before[0][2]), "every node is a.html's: {before:?}");
+}
+
 /// Decision 0431 R2: `guest_of(n, s)` names the string node a guest node was parsed from (it replaces
 /// `docof(n, d), guest(d, _, s, _)`), for every node of the guest and for no node of the file's own tree.
 #[test]

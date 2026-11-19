@@ -69,6 +69,13 @@ code may be named by which rules asked for it, or in what order.
    nodes are numbered in the file's id space after the file's own, in the order the parse found them, so `docof`,
    `line` and `col` are the file's and findings land at its lines. The libraries' structural `embed` rules (`html`,
    `vue`, `blade`, `markdown`, `rr` patterns) become the languages' declarations of what they embed.
+   How (step 3), under per-definition ids (0083 §3, `granules`): a program's nodes are granules of its file. A program
+   granule's key is its host node's granule key, then `embedded:<grammar>#<ordinal>`, then the program's own granule
+   key, and it is placed in the file's one slot table with the file's own granules (same hashing, same clash order).
+   So an edit inside a script renumbers that script's granules and no other's, and an edit to the file around it moves
+   none of the script's unless their keys change. The table answers which tape a slot is of, so a node id resolves to
+   (file, program, node) in place. In the batch a program is a document with its file's key and its own tape and rank
+   index; it has no span slots (its positions are the file's, through its map) and no `doc` row of its own.
 5. **Format 16 does not change** (0426): a tape is one text, one tree, one grammar. A file's programs are each a tape of
    their own grammar; a tape value is a tape. Around them:
    - a file's record of its programs (each one's tape key, host node, grammar, first id, the map from its text to the
@@ -89,7 +96,7 @@ code may be named by which rules asked for it, or in what order.
 
 | | Requirement | Test |
 |---|---|---|
-| R1 | A program the grammar holds is its file's: `docof` of its nodes is the file, its lines are the file's | `a_program_a_file_holds_is_the_files` |
+| R1 | A program the grammar holds is its file's: `docof` of its nodes is the file, its lines are the file's; an edit inside one program renumbers no other's nodes nor the file's | `a_program_a_file_holds_is_the_files`, `an_edit_in_one_script_renumbers_no_other_program` |
 | R2 | `guest_of(n, s)` names the string a tape value's node was parsed at | `guest_of_names_the_string_a_node_was_parsed_from` |
 | R3 | One text is one tape and one set of nodes at every place; a tape value's node is no file's | `one_tape_at_two_places_is_one_set_of_nodes` |
 | R4 | No string is parsed unless a rule asks for it | `a_string_no_rule_asks_for_is_not_parsed` |
