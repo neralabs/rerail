@@ -122,3 +122,34 @@ same, 44 refused, 0 differ). `aot_tapes_are_the_jits` passes on the 447 files.
 
 The other gap marks (`semi_close` and the escapes' marks) are still lifted after the tokens.
 Step 3 (tier 2 tests `semi` where a rule takes a semicolon) is next.
+
+## Step 3: where tier 2 asks for the semicolon (2026-11-18)
+
+Reading the generated `tier2_aot.rs`, tier 2 already asks for `semi` only where the lean parser
+asks `semi()` or `ends()`. A state tests a mark where it takes it, where its level refuses it,
+or, for a mark with `, ends`, where its nested level may end there (`bitlex_tier2::state`).
+`semi` is tested at 159 places, as is `semi_close` (154 tests). `head_ctor` has 6, after a
+class's name.
+
+The chain of tests before each token's switch has another cause. Four marks are not hidden:
+`dotted`, `acc`, `generic` and `decl_mod`. Where a nested level may end and does not take one,
+it ends the level there (`AtMark::End`), so the caller takes it or refuses the file, as the
+reference's `past_marks` does. They are tested at 750 to 1,060 places each, at almost every
+token of every nested rule. The lean parser has no such test: the four are decisions it makes
+where it reads the token (a `.` after a declaration's name, `get`/`set` after a property, `<`
+as type arguments, a modifier before a declaration).
+
+Two changes were tried:
+
+1. **A refusal moves into the switch past tests it cannot meet** (kept). Before, a refusal moved
+   into its token's switch arms only when every test after it refused too. Now it also moves
+   past a test of a mark whose first bytes are apart from its own: the two never both hold at a
+   token. Kotlin's refusing tests go from 261 to 240 places each, and the tapes are the same.
+2. **An end moves into the switch the same way** (reverted). A nested state's switch already
+   ends the level at a token it does not take, so the test is only needed in the arms that take
+   something. But the four marks begin at any name, so their tests are copied into every arm that
+   takes one: 1,300 places, and no fewer tests at a name.
+
+So the four marks need what 0429's table gives each kind of context: a construct that says what
+each decides, at the token where the lean parser decides it, in place of a mark that every
+nested level must end on. That is 0429 item 6's remaining part, after this decision.

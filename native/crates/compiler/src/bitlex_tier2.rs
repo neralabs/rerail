@@ -924,10 +924,13 @@ impl Emit<'_> {
             .collect();
         // A refusal tested on its token's bytes only (`Mark::first`), in the switch's arms for
         // them, as the lean parser looks for a mark where it reads its token: where every test
-        // after it refuses too (refusals commute; a jump to a mark's arm must stay after it), and
-        // not a mark the end has (the switch's end is not a byte's).
+        // after it refuses too, or is of a mark that never holds at a token it holds at (their
+        // first bytes apart): refusals commute, and so do two tests never both met at a token;
+        // a jump to a mark's arm, or a level's end, must stay after one that may hold with it.
+        // Not a mark the end has (the switch's end is not a byte's).
+        let apart = |a: usize, b: usize| (0..4).all(|i| self.marks[a].first[i] & self.marks[b].first[i] == 0);
         let moved: Vec<usize> = (0..tests.len())
-            .filter(|&i| tests[i..].iter().all(|&(_, a)| a == AtMark::Refuse) && !self.marks[tests[i].0].end)
+            .filter(|&i| tests[i].1 == AtMark::Refuse && !self.marks[tests[i].0].end && tests[i + 1..].iter().all(|&(j, a)| a == AtMark::Refuse || apart(tests[i].0, j)))
             .map(|i| tests[i].0)
             .collect();
         let tests: Vec<(usize, AtMark)> = tests.into_iter().filter(|(k, _)| !moved.contains(k)).collect();
