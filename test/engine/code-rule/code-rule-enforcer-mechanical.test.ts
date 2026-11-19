@@ -1805,6 +1805,30 @@ describe("mechanical code rule regressions", () => {
     }
   }, 30_000);
 
+  it("ends a result's wait for the steering edits when the evaluator stops before checking them", async () => {
+    const { enforcer, rules } = await fixture();
+    const unpaged = () => { throw new Error("the workspace is never paged"); };
+    const cannotApply = async () => { throw new Error("the replacement cannot apply"); };
+    const failing = Object.assign(pagingWorkspace(unpaged), { applyAsync: cannotApply, applyBufferAsync: cannotApply });
+    const binding = nativeWorkspaces(pagingWorkspace(unpaged), failing);
+    try {
+      await enforcer.openWorkspace("pump-fails");
+      // A rule change makes the next check replace the workspace first, and the replacement fails: no edit is checked.
+      rules.upsert(needleCodeRule(2, "TWO", "TWO"));
+      await enforcer.auditGeneratedEdits("pump-fails", {
+        revision: 1, checkpoints: ["edit"], edits: [{ path: "api/own.py", language: "python", generatedText: "NEEDLE\n" }],
+      });
+      const first = await Promise.race([
+        enforcer.settleGeneratedEdits("steering").then(() => "the wait ended"),
+        settled(enforcer).then(() => "the evaluator stopped"),
+      ]);
+      expect(first).toBe("the wait ended");
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
   it("never applies to a replacement that a newer catalog superseded while it replayed", async () => {
     const { enforcer, rules } = await fixture();
     const unpaged = () => { throw new Error("the workspace is never paged"); };
