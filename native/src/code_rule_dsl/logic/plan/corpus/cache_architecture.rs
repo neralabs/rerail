@@ -36,6 +36,9 @@ fn relative(path: &Path) -> String {
 /// scratch (in memory or temporary, dropped when the run ends).
 const NOT_CACHES: &[&str] = &[
     "source_objects", "source_aliases", "strings", "atom_blocks", "hashes", "paths", "store_state", "store_identity", "object_pins",
+    // Each guest's key, the store's name for its identity (decisions 0323, 0391), and the observer's journal of the
+    // paths that changed, by the check's generation (decision 0399 step 1): names and sources' bookkeeping.
+    "guest_keys", "observed_changes",
     // The segments sources (and tapes) are in (decision 0295 step 5).
     "object_segments",
     "push_pending", "snapshots", "snapshot_files", "workspaces", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",

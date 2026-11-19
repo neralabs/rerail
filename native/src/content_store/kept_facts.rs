@@ -13,7 +13,7 @@ use super::{StoreError, StoreResult};
 use rerail_blocks::kept::{FactKey, KeptFacts, KeptRead, KeptView, KeptW, Meta};
 use rerail_blocks::relation::Relation;
 use rusqlite::{Connection, OptionalExtension as _};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// A relation the keep puts, lent by its holder (the engine's run): its rows, dead bits and levels, kept alive while
@@ -152,9 +152,9 @@ fn map_copy(copy: &Relation, types: &[u8], map: &dyn Fn(&mut [i64]) -> StoreResu
 
 /// Writes `space`'s next block in transaction `t`, with `puts` (each key once): a delta over its base, or a new base
 /// when there is none or the delta would outgrow it. `map` maps a forked process's atom ids to the store's.
-pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut>, map: Option<&dyn Fn(&mut [i64]) -> StoreResult<()>>) -> StoreResult<()> {
+pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut>, map: Option<&dyn Fn(&mut [i64]) -> StoreResult<()>>) -> StoreResult<Option<SpaceRow>> {
     if puts.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let io = |e: std::io::Error| StoreError::Io(e);
     let dir = space_dir(store, space);
@@ -257,7 +257,7 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
         delta.as_ref().map(|d| d.0.as_str()),
         delta.as_ref().map(|d| d.1 as i64),
     ])?;
-    Ok(())
+    Ok(Some(SpaceRow { base, delta }))
 }
 
 /// Spaces' next blocks, queued for the store's writer (`ContentStore::queue_kept`): each space's puts of a wave
@@ -270,14 +270,24 @@ impl KeptWrite {
     pub(super) fn run(&mut self, store: &super::ContentStore) -> StoreResult<()> {
         let spaces = std::mem::take(&mut self.spaces);
         let path = store.database_path.clone();
-        store.immediate_transaction_once(|t| {
+        let written = store.immediate_transaction_once(|t| {
             // Forked (decision 0170): the copies' atom columns are mapped to the store's ids in this transaction.
             let map = |v: &mut [i64]| store.atoms.to_store(t, super::ProcessIds::of_process(v)).map(drop);
+            let mut written = Vec::new();
             for (space, puts) in spaces {
-                write_space(&path, t, &space, puts, store.atoms.forked().then_some(&map as &dyn Fn(&mut [i64]) -> StoreResult<()>))?;
+                if let Some(row) = write_space(&path, t, &space, puts, store.atoms.forked().then_some(&map as &dyn Fn(&mut [i64]) -> StoreResult<()>))? {
+                    written.push((space, row));
+                }
             }
-            Ok(())
-        })
+            Ok(written)
+        })?;
+        // Committed: the rows this process holds are the new ones (where it holds the store's rows at all).
+        super::frames::snapshot_kept(&path, |kept| {
+            if let Some(rows) = kept {
+                rows.extend(written);
+            }
+        });
+        Ok(())
     }
 }
 
@@ -300,7 +310,9 @@ fn held_bytes(p: &KeptPut) -> usize {
 
 impl KeptGather {
     /// `space`'s puts, each key once: a later put replaces an earlier one of its key, but a retag (`Reads`) keeps the
-    /// rows an earlier put of this wave gave it, with its reads.
+    /// rows an earlier put of this wave gave it, and their digest, with its reads. A retag has no digest of its own
+    /// (its rows are the entry's): taken over, it gave a relation handed off with its rows (its digest known then) and
+    /// retagged at the run's end digest 0, and every reader of it ran again in the next run.
     fn add(&mut self, space: [u8; 32], puts: Vec<KeptPut>) {
         let (list, at) = self.spaces.entry(space).or_default();
         for p in puts {
@@ -311,7 +323,6 @@ impl KeptGather {
                     let was = &mut list[i];
                     if matches!(p.what, KeptWhat::Reads) && !matches!(was.what, KeptWhat::Reads | KeptWhat::Gone) {
                         was.reads = p.reads;
-                        was.digest = p.digest;
                     } else {
                         *was = p;
                     }
@@ -384,22 +395,45 @@ impl super::ContentStore {
     /// a run reads before its first wave (decision 0104), its own earlier runs' writes included.
     pub fn kept_row(&self, space: &[u8; 32]) -> StoreResult<Option<SpaceRow>> {
         self.settle(&space_key(space));
+        if let Some(Some(row)) = super::frames::snapshot_kept(&self.database_path, |kept| kept.as_ref().map(|rows| rows.get(space).cloned())) {
+            return Ok(row);
+        }
         let connection = self.connection.lock().expect("content store mutex poisoned");
         space_row(&connection, space)
+    }
+
+    /// Every space's row, read once a process before a run's first wave (decision 0104): from then on `kept_row`
+    /// answers from memory, and this process's writer keeps it current. Returns the spaces read now (none when an
+    /// earlier run of the process read them).
+    pub fn preload_kept(&self) -> StoreResult<usize> {
+        // Held under the snapshot's lock while read: this process's writer, committing meanwhile, replaces its row
+        // after this read, not before it.
+        super::frames::snapshot_kept(&self.database_path, |kept| self.read_kept_rows(kept)).unwrap_or(Ok(0))
+    }
+
+    fn read_kept_rows(&self, kept: &mut Option<HashMap<[u8; 32], SpaceRow>>) -> StoreResult<usize> {
+        if kept.is_some() {
+            return Ok(0);
+        }
+        let rows: HashMap<[u8; 32], SpaceRow> = {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            let mut st = connection.prepare("SELECT space, base, base_tag, delta, delta_tag FROM main.facts_blocks")?;
+            let file = |name: Option<String>, tag: Option<i64>| name.zip(tag).map(|(n, t)| (n, t as u64));
+            st.query_map([], |r| {
+                let space: Vec<u8> = r.get(0)?;
+                Ok((space, SpaceRow { base: file(r.get(1)?, r.get(2)?), delta: file(r.get(3)?, r.get(4)?) }))
+            })?
+            .filter_map(|r| r.ok().and_then(|(s, row)| Some((<[u8; 32]>::try_from(s.as_slice()).ok()?, row))))
+            .collect()
+        };
+        let n = rows.len();
+        *kept = Some(rows);
+        Ok(n)
     }
 
     /// `space`'s blocks as `row` names them, mapped.
     pub fn open_kept(&self, space: &[u8; 32], row: &SpaceRow) -> StoreResult<KeptSpace> {
         KeptSpace::open(&self.database_path, space, row)
-    }
-
-    /// The kept facts of `space` as the store's last commit has them, mapped; `None` when it keeps none.
-    pub fn kept_space(&self, space: &[u8; 32]) -> StoreResult<Option<KeptSpace>> {
-        let row = {
-            let connection = self.connection.lock().expect("content store mutex poisoned");
-            space_row(&connection, space)?
-        };
-        row.map(|row| KeptSpace::open(&self.database_path, space, &row)).transpose()
     }
 }
 

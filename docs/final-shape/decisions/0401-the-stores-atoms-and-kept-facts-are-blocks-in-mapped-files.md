@@ -308,7 +308,7 @@ Facts:
 5. (built) `rerail_blocks::kept`: the directory, `KeptW`, `KeptRead` over a base and its delta; F-R1 at the block
    (`a_kept_relation_is_read_where_it_lies`), `a_delta_reads_over_its_base`, `a_key_put_twice_is_refused`.
 6. (built) The keep (`retain::write_frames`, `write_input_frames`) writes a space's delta, beside the frames.
-7. The read (`preload_frames_live`, `kept_inputs`, the clean relations) binds views; F-R1–F-R3.
+7. (built, 0438) The read (`preload_frames_live`, `kept_inputs`, the clean relations) binds views; F-R1–F-R3.
 8. Collection as a roll-up; F-R4.
 9. The virtual table; F-R5. The cross part's `frames` rows retired.
 10. Measured on ep2 (the kept frames 0.064 s, the cross space's size).
@@ -362,3 +362,10 @@ instructions rose 11% against `a0`, from writing both. Before the frames are ret
 larger than the frames: a kept relation's columns packed to their widths (0266 §14) when they are copied, and the
 chunk room unwritten left out. A run handed off 0–5 relations before the keep, with their rows dropped; step 7 keeps
 those at the hand-off.
+
+### The reads bound where they lie (step 7, 2026-11-18)
+
+Decision 0438 has the step's faults and fixes. The 57 data-layer rules over corpus0's first 50 files, with the
+profiling build, at load 31 on the M5: cold 9.6 s, warm 0.1 s, an edit adding a function 2.0 s (2.2 s profiled
+before), the edited tree cold 8.4 s. Its 589 outputs equal across the edit, the warm run after it and the cold run
+(F-R2), and a run that changes nothing writes no facts (F-R3).

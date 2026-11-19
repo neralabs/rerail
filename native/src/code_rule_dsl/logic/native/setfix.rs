@@ -4352,6 +4352,14 @@ pub fn hold_rows(conn: &Connection, table: &str, types: Vec<u8>, rows: Vec<i64>,
     DERIVED.lock(conn.at()).insert((conn.at(), table.to_owned()), rel);
 }
 
+/// `rel`, an earlier run's kept relation bound where it lies (decision 0401 F3), held as `conn`'s run's `table`.
+pub fn hold_bound(conn: &Connection, table: &str, rel: Arc<InRel>) {
+    crate::code_rule_dsl::logic::plan::corpus::maintain::shape::held(table);
+    let _ = rel.name.set(table.to_owned());
+    forgotten_on_close();
+    DERIVED.lock(conn.at()).insert((conn.at(), table.to_owned()), rel);
+}
+
 /// A native relation of `conn`'s run as it can be kept and held again (`hold_rows`): its columns' types and its live
 /// rows, flat.
 pub fn kept_rows(conn: &Connection, table: &str) -> Option<(Vec<u8>, Vec<i64>, usize)> {
@@ -5589,6 +5597,15 @@ impl InRel {
         }
         let b = if self.ndead > 0 { self.rows.in_block_dead(&self.dead) } else { self.rows.in_block() };
         b.filter(|b| b.rows as usize == self.n)
+    }
+    /// Its rows, dead ones too, as one relation in one block (`Rows::in_block`): for a reader that takes its dead bits
+    /// apart (`dead_bits`), as a kept entry's writer does. `in_block` writes the dead rows' delta into that block,
+    /// which a kept relation bound over its read-only mapping (decision 0401 F3) cannot take.
+    pub fn rows_in_block(&self) -> Option<InBlock> {
+        if self.view.is_some() || self.k == 0 {
+            return None;
+        }
+        self.rows.in_block().filter(|b| b.rows as usize == self.n)
     }
     /// A flat relation's row `id`'s value in column `c`, read where it lies.
     pub fn value(&self, id: usize, c: usize) -> i64 { self.rows.value(id as u32, self.k, c) }

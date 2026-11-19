@@ -1240,6 +1240,18 @@ impl Atoms {
         Ok(())
     }
 
+    /// Whether stored rows whose symbols are at most `max` (as the store numbers them) read as this process numbers
+    /// them, held as `hold_named` holds them: a kept block's rows, read where they lie (decision 0401 F3), which no
+    /// reader maps. Not past a fork (decision 0170), where the store's ids are another numbering's.
+    pub fn reads_in_place(&self, max: i64) -> StoreResult<bool> {
+        self.hold_named(&[max])?;
+        if !self.forked() {
+            return Ok(true);
+        }
+        let state = self.state.read();
+        Ok(state.map.as_ref().is_some_and(|m| Sym::try_from(max).is_ok_and(|v| v < m.fork)))
+    }
+
     /// A run's end: the lease is given back with its next commit, as before the run; at once when nothing is pending.
     /// The run's last commit can come before its end (Q42): `committed` kept the lease then, the run still going, and
     /// no commit came after to give it back, so the process held the store's lock file after its last run.

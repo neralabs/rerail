@@ -46,3 +46,31 @@ fn a_kept_relation_is_read_where_it_lies() {
     drop(again);
     assert_eq!(rel.live_rows().unwrap(), vec![1, 10, 3, 30]);
 }
+
+/// Rows started from a kept relation bound over its read-only mapping (`Rows::shared`, as a maintained relation goes
+/// on from its old rows) read the bound rows, then the rows pushed after them, at the ids past them. Nothing is written
+/// in the mapping and its rows are not moved out (0353): the tail is a relation of its own past the mapped segment. A
+/// tail moved holding every row (`Part::moved_all`) once kept the mapped segment too, read a second copy of the old
+/// rows at the new rows' ids, and lost the rows pushed.
+#[test]
+fn rows_started_from_a_bound_relation_read_the_rows_pushed_after_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+    let held = InRel::held_shared(Rows::frozen(2, vec![1, 10, 2, 20, 3, 30], 3), 3, vec![b'i', b'i'], Shared::default(), Shared::default());
+    let name = FrameRel { name: "r".into(), ident: [3; 32] };
+    store.queue_kept(SPACE, vec![super::super::kept_rows(&name, 1, vec![], vec![b'i', b'i'], &held).expect("a relation in a block")]);
+    let bound = Bound::of(&store, &SPACE).unwrap().unwrap();
+    let view = bound.view();
+    let kept = view.get(&rerail_blocks::kept::FactKey { rel: "r", ident: &[3; 32], part: super::super::DOCS_PART }).expect("its entry");
+    let mut rows = Rows::living(2, Life::Kept);
+    rows.append_part(bound.part(&kept).expect("its rows' part"));
+    let rows = rows.sealed();
+    let mut next = rows.shared(3);
+    // copy: not block data: a test's rows
+    next.extend_from_slice(&[4, 40, 5, 50]);
+    let all: Vec<Vec<i64>> = (0..5).map(|i| next.row(i, 2).to_vec()).collect();
+    assert_eq!(all, [[1, 10], [2, 20], [3, 30], [4, 40], [5, 50]].map(|r| r.to_vec()), "the bound rows, then the rows pushed");
+    let parts: Vec<&crate::code_rule_dsl::facts::rows::Part> = next.parts().collect();
+    assert_eq!(parts.len(), 2, "the mapped segment, then a tail of its own");
+    assert!(std::ptr::eq(parts[0].rel(), kept.rows), "the old rows where they lie, not moved");
+}

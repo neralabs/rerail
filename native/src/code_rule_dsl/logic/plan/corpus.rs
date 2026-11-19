@@ -2971,6 +2971,11 @@ fn run_handed(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    // The corpus root by one name, its canonical one, as each part keyed by it names it (the observer's roots, a
+    // `World`'s, the run's reuse and constants keys): a root named by an alias (`/tmp`, `/var` on macOS) was read
+    // by the alias and watched by both names, and the run after a cold one wrote the alias's first cursor
+    // (`RERAIL_WARM`), the cold run having watched the directory above it, the store's own.
+    let root = &std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     // The `RERAIL_*` switches stay as they are until the run ends: a test sets them only while no run reads them.
     let _switches = switches::reading();
     // Upkeep yields to the run (decision 0190 §8): this process's, and other processes' over its store and the cost
@@ -7547,7 +7552,7 @@ fn run_observed(
             let cone_handle = cone_store.as_deref().map(|p| connections::Cone::take_store(&cone_slot, p)).transpose().map_err(|e| Error::Plan(e.to_string()))?;
             let cone_types = cone_inputs.iter().filter_map(|(r, _)| Some((r.clone(), decl_types.get(r)?.clone()))).collect();
             let load_placed = lowered_load.placed()?;
-            let mut cone_kept = cone_handle.as_ref().map(|s| kept_strata::Kept::new(s, cone_space, prepared_key, &cone_inputs, cone_types).typed(&load_placed, &lowered_load.domains));
+            let mut cone_kept = cone_handle.as_ref().map(|s| kept_strata::Kept::new(s, cone_space, &cone_inputs, cone_types).typed(&load_placed, &lowered_load.domains));
             // Strata kept for the next run keep each relation's whole rows, as a session's cross-file part does: one
             // computed only for the keys its readers reached (the negation split, a corpus run's choice) would miss a
             // key a later run demands (an edited library's new import) whose derivation no delta touches (spike O125,
@@ -8165,7 +8170,7 @@ fn run_observed(
                 let prog = &placed;
                 let fields = prog.fields().map_err(|e| e.to_string())?;
                 let rels: Vec<String> = split.exports.iter().cloned().chain(stored.iter().map(|(r, _)| r.clone())).collect();
-                let kept = retain::kept_inputs(store, kept_strata::space(root), binds, prog, &split.locations, &rels, &semijoin).map_err(|e| e.to_string())?.map_err(|why| format!("no kept inputs of this cross part: {why}"))?;
+                let kept = retain::kept_inputs(store, kept_strata::space(root), binds, prog, &rels, &semijoin).map_err(|e| e.to_string())?.map_err(|why| format!("no kept inputs of this cross part: {why}"))?;
                 let _s1 = crate::code_rule_dsl::logic::profile::span(|| "the changed files' old and new rows".into());
                 // The changed files' entries as the kept inputs hold them: the keeper's, found before the first wave.
                 let mut old_entries = Vec::new();
@@ -8877,6 +8882,9 @@ fn run_observed(
                     // Kept by the cross program alone (`binds`): a file-local rule's edit changes `ckey`, not the part's
                     // program, whose inputs `cut` compares by digest. The part is taken under this run's key.
                     let mut cell = cells.remove(&binds).map(|c| c.rekeyed(ckey));
+                    if let Some(c) = cell.as_mut() {
+                        c.rebind(store)?;
+                    }
                     let mut kept_frames = None;
                     if kept_part.is_some() {
                         let (loaded, p) = kept_strata::load(store, root, ckey, binds, &cross_placed, &cross.domains, &cross_sccs, &cross_inputs, &digests)?;
@@ -8900,7 +8908,7 @@ fn run_observed(
                     // Decision 0117 step 4: a maintained run reads the kept rows where a stratum it reaches reads them.
                     let drive = cross_f.gates().is_empty() && std::env::var_os("RERAIL_MAINTAIN_WHOLE").is_none();
                     if let Some(kept) = cell.as_mut().filter(|_| from_frames.is_some()) {
-                        if let Some((rels, rows)) = kept.load(store, &cut, &cross_placed, &split.locations, drive)? {
+                        if let Some((rels, rows)) = kept.load(store, &cut, &cross_placed, drive)? {
                             crate::code_rule_dsl::logic::profile::decision("the kept part, from the frames (t33 K4)", || format!("{rels} relations' rows read ({rows} rows) for the strata that run"));
                         } else {
                             cut = retain::cut(None, ckey, &cross_placed, &cross_sccs, &digests)?;
@@ -9213,8 +9221,7 @@ fn run_observed(
                         }
                         let Some(held) = crate::code_rule_dsl::logic::native::component::held(&db, rel) else { return Ok(false) };
                         let Some(placer) = &placer else { return Ok(false) };
-                        let was = was_frames.as_ref().and_then(|w| w.derived_digest(rel));
-                        let Some(h) = retain::Handed::of(store, &cross_placed, &cross.domains, rel, &held, was, placer) else { return Ok(false) };
+                        let Some(h) = retain::Handed::of(store, &cross_placed, &cross.domains, rel, &held, was_frames.as_ref(), placer) else { return Ok(false) };
                         handed.borrow_mut().insert(rel.to_owned(), h);
                         Ok(true)
                     };
@@ -9582,7 +9589,7 @@ fn run_observed(
                     let exported: BTreeSet<&String> = split.exports.iter().collect();
                     // Without a session, the strata are kept in the tape cache from run to run (decision 0077 §4).
                     let typed_by = cross.placed()?;
-                    let mut kept_strata = (durable.is_some() && one_fixpoint).then(|| kept_strata::Kept::new(store, kept_strata::space(root), prepared_key, &cross_inputs, cross_inputs.iter().map(|(r, _)| (r.clone(), retain::types_of(&typed_by, &cross.domains, r))).collect()).typed(&typed_by, &cross.domains));
+                    let mut kept_strata = (durable.is_some() && one_fixpoint).then(|| kept_strata::Kept::new(store, kept_strata::space(root), &cross_inputs, cross_inputs.iter().map(|(r, _)| (r.clone(), retain::types_of(&typed_by, &cross.domains, r))).collect()).typed(&typed_by, &cross.domains));
                     let loaded = kept_strata.as_ref().map(|k| std::rc::Rc::clone(&k.loaded));
                     let mut load = |rels: &[String]| -> Result<()> {
                         for rel in rels.iter().filter(|r| exported.contains(r)) {

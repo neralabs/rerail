@@ -1022,9 +1022,15 @@ impl Part {
     }
 
     /// A relation of its own with `room` rows more holding every row it reads (its chain's absorbed, `moved_whole`):
-    /// where a continuation cannot be made in its block.
+    /// where a continuation cannot be made in its block. It absorbed every row it reads, its own too, so a `Rows`
+    /// opening it as the tail past it (`Rows::opened`) drops every segment (`Rows::absorbed`): with only its base's
+    /// counted, a relation of its own (no base: a kept relation bound over its read-only mapping, or one whose block is
+    /// full) kept its segment as well, the tail's first rows a second copy of its rows read at the ids past them, and
+    /// the rows pushed after read at no id (an edit's maintained `kind` lost the new nodes').
     fn moved_all(&self, room: usize) -> Part {
-        self.moved_whole(self.len(), room)
+        let mut moved = self.moved_whole(self.len(), room);
+        Arc::get_mut(&mut moved.held).expect("a new relation's one holder").absorbed = self.reads();
+        moved
     }
 
     /// Appends rows `lo..hi` of `from` (as many columns).
@@ -1240,6 +1246,12 @@ impl Rows {
             crate::code_rule_dsl::logic::profile::decision("tails opened past rows of many relations (merged when bound)", || format!("{} segments", self.segs.len()));
             return Part::new(self.life, self.k, rows);
         };
+        // Past a kept relation bound over its read-only mapping (decision 0401 F3): nothing is written in its block,
+        // and its rows are not moved out of it (0353), so the tail is a relation of its own past them.
+        if !end.facts.block.is_writable() {
+            crate::code_rule_dsl::logic::profile::decision("tails opened past kept rows read where they lie (merged when bound)", || format!("{} rows", self.from));
+            return Part::new(self.life, self.k, rows);
+        }
         match Part::continuing(end) {
             Some(t) => {
                 crate::code_rule_dsl::logic::profile::decision("relations continued from rows another writer went on from (forks)", || format!("{} rows, {} segments", self.from, self.segs.len()));
@@ -1844,6 +1856,28 @@ mod tests {
         let lone = BlockVec::from_iter_in(None, [7i64, 8]);
         assert_eq!(*lone, [7, 8]);
         assert!(BlockVec::<u8>::new().facts().is_none(), "empty holds no chunk");
+    }
+
+    /// A tail opened past a relation of its own that cannot be continued in its block (a full one) holds every row it
+    /// reads (`Part::moved_all`): it absorbed them all, so the segment goes and its ids are from 0. With only a
+    /// continuation's base counted as absorbed, a relation of its own kept its segment too, and the rows pushed after
+    /// were read at no id (a second copy of the old rows at theirs).
+    #[test]
+    fn a_tail_moved_past_its_rows_holds_every_row_once() {
+        let k = 2;
+        let mut rows = Rows::new(k);
+        // copy: not block data: a test's rows
+        rows.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
+        let rows = rows.sealed();
+        let end = rows.chain().expect("one relation").clone();
+        let mut next = Rows { segs: rows.segs.clone(), from: rows.from, tail: Some(end.moved_all(4)), k, life: rows.life, ..Rows::default() };
+        next.absorbed();
+        assert_eq!((next.parts().count(), next.from), (1, 0), "the segment absorbed");
+        // copy: not block data: a test's rows
+        next.extend_from_slice(&[7, 8]);
+        for (i, want) in [[1i64, 2], [3, 4], [5, 6], [7, 8]].iter().enumerate() {
+            assert_eq!(&*next.row(i as u32, k), &want[..], "row {i}, read where it lies");
+        }
     }
 
     /// Decision 0384 step 7: a fork (a second relation started from frozen rows whose writer the first took) goes on

@@ -10751,8 +10751,6 @@ pub trait KeptStrata {
     /// Each relation of the program the run evaluates, by its identity (`identities`): what was kept of a relation
     /// is of the relation of that identity.
     fn program(&mut self, identities: &HashMap<String, [u8; 32]>);
-    /// Admit potentially consumed retained rows before scheduling. Metadata for unconsumed relations stays cheap.
-    fn admit(&mut self, _relations: &[String]) {}
     /// Input `rel`'s digest in this run (`None`: not known).
     fn input(&mut self, rel: &str) -> Option<u64>;
     /// The digest relation `rel` had when it was kept.
@@ -10761,8 +10759,9 @@ pub trait KeptStrata {
     fn read_was(&self, rel: &str, read: &str) -> Option<u64>;
     /// Whether the earlier run's rows of `rel` are kept.
     fn has_rows(&self, rel: &str) -> bool;
-    /// The earlier run's rows of `rel`: its columns' types, the rows flat, and their count.
-    fn rows(&mut self, rel: &str) -> Option<(Vec<u8>, Vec<i64>, usize)>;
+    /// The earlier run's rows of `rel`: its columns' types as kept, and its rows as a relation the engine holds under
+    /// `types` (its own), bound where they lie (decision 0401 F3).
+    fn rows(&mut self, rel: &str, types: &[u8]) -> Option<(Vec<u8>, Arc<super::native::component::InRel>)>;
     /// This run derived `rel`: its digest, and its rows (types, flat, count), with the digest each relation its
     /// stratum read had; `None` when SQL derived it, or a read's digest is not known.
     fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, Vec<i64>, usize, Vec<(String, u64)>)>);
@@ -11023,15 +11022,17 @@ fn postings(values: impl Iterator<Item = i64>) -> (f64, f64) {
 }
 
 fn kept_strata_hold(ks: &mut dyn KeptStrata, db: &Connection, run: &mut Run, rel: &str) -> Result<usize> {
-    let (stored, rows, n) = ks.rows(rel).ok_or_else(|| Error::Plan(format!("{rel}: kept as clean, but its rows are not kept")))?;
     // Held as this run's engine holds the relation's columns (over atoms a symbol is an integer column).
     let types: Vec<u8> = run.fields().types(rel).iter().map(|t| sym_char(&run.model.inputs, t) as u8).collect();
+    let (stored, held) = ks.rows(rel, &types).ok_or_else(|| Error::Plan(format!("{rel}: kept as clean, but its rows are not kept")))?;
     if types.len() != stored.len() {
         return Err(Error::Plan(format!("{rel}: kept {} columns wide, declared {}", stored.len(), types.len())));
     }
     let k = types.len();
-    let cols: Vec<(f64, f64)> = (0..k).map(|c| postings(rows.iter().skip(c).step_by(k).copied())).collect();
-    super::native::component::hold_rows(db, rel, types, rows, n);
+    let n = held.rows();
+    let rel_ = &*held;
+    let cols: Vec<(f64, f64)> = (0..k).map(|c| postings((0..rel_.len()).filter(|&id| !super::native::component::is_dead(rel_.dead_bits(), id as u32)).map(|id| rel_.value(id, c)))).collect();
+    super::native::component::hold_bound(db, rel, Arc::clone(&held));
     run.native_rels.insert(rel.to_owned());
     run.model.stats.card.insert(rel.to_owned(), (n as f64).max(1.0));
     for (c, (d, fan)) in cols.into_iter().enumerate() {
@@ -11040,6 +11041,18 @@ fn kept_strata_hold(ks: &mut dyn KeptStrata, db: &Connection, run: &mut Run, rel
         run.model.stats.dfreq.remove(&(rel.to_owned(), c));
     }
     Ok(n)
+}
+
+/// A clean relation's kept rows (`KeptStrata::rows`), as the requests it answers again take them.
+fn kept_strata_rows(ks: &mut dyn KeptStrata, f: Fields<'_>, rel: &str) -> Result<Vec<Vec<i64>>> {
+    let types = vec![b'i'; f.types(rel).len()];
+    let (_, held) = ks.rows(rel, &types).ok_or_else(|| Error::Plan(format!("{rel}: kept as clean, but its rows are not kept")))?;
+    let k = types.len();
+    if k == 0 {
+        return Ok(Vec::new());
+    }
+    // copy: not block data: the requests a replayed stratum asks again, as its answer function takes them.
+    Ok(held.live_rows().unwrap_or_default().chunks_exact(k).map(<[i64]>::to_vec).collect())
 }
 
 /// How a digest reads a relation's cells (decision 0212): an atom column (`b's'`, as frames type it) by its atoms'
@@ -11992,31 +12005,6 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     // Each evaluated stratum's reads, with the digest each had when it ran (`None`: one was not known).
     let mut stratum_read_digests: HashMap<usize, Option<Vec<(String, u64)>>> = HashMap::new();
     let input_set: BTreeSet<&str> = f0.inputs().collect();
-    if let Some(ks) = strata_kept.as_deref_mut() {
-        // Prove unchanged strata from admitted metadata and input digests. Anything unproved can run.
-        // Only those consumers' retained inputs and the outputs need payloads. Early cutoff during
-        // execution can shrink this set, but cannot add a reader not covered here.
-        let mut unchanged = HashSet::new();
-        let mut demand: BTreeSet<String> = stays.iter().filter(|r| ks.has_rows(r)).cloned().collect();
-        for (scc, rules) in sccs.iter().zip(&by_stratum) {
-            let reads = stratum_reads(f0, &run_vs, scc, rules);
-            let clean = retainable_stratum(f0, &run_vs, scc, rules, &run.views) && scc.iter().all(|r| ks.has_rows(r))
-                && reads.iter().filter(|r| !scc.contains(*r) || input_set.contains(r.as_str())).all(|r| {
-                    let now = if unchanged.contains(r) { ks.was(r) }
-                        else if input_set.contains(r.as_str()) { ks.input(r) }
-                        else if rules_by.contains_key(r.as_str()) { None }
-                        else { Some(0) };
-                    now.is_some() && scc.iter().all(|x| ks.read_was(x, r) == now)
-                });
-            if clean { unchanged.extend(scc.iter().cloned()); }
-            else { demand.extend(reads.into_iter().filter(|r| ks.has_rows(r))); }
-            // Native-answer validation reads requests, and a view holds its component members.
-            if scc.iter().any(|r| run.views.contains(r) || f0.request(r)) {
-                demand.extend(scc.iter().filter(|r| ks.has_rows(r)).cloned());
-            }
-        }
-        ks.admit(&demand.into_iter().collect::<Vec<_>>());
-    }
     // This run's digest of each derived relation (`None`: not known, as for a stratum SQL ran); clean relations not
     // yet held; the strata evaluated whose rows' digests are not taken yet. A stratum waiting on its device wave has
     // no rows yet: its digest is taken once its wave ran (a stratum that reads it finishes the wave first).
@@ -12478,8 +12466,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             if clean && answering {
                 let _span = super::profile::span(|| "the stratum's requests answered again".into());
                 for req in &asks {
-                    let (types, flat, _) = ks.rows(req).ok_or_else(|| Error::Plan(format!("{req}: kept as clean, but its rows are not kept")))?;
-                    let rows: Vec<Vec<i64>> = if types.is_empty() { Vec::new() } else { flat.chunks_exact(types.len()).map(<[i64]>::to_vec).collect() };
+                    let rows = kept_strata_rows(ks, f0, req)?;
                     let answer = run.answer.as_deref_mut().expect("answering");
                     for (p, got) in answer(req, &rows)? {
                         replayed.entry(p).or_default().extend(got);
@@ -12498,8 +12485,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                         }
                         continue;
                     }
-                    let (types, flat, _) = ks.rows(q).ok_or_else(|| Error::Plan(format!("{q}: kept as clean, but its rows are not kept")))?;
-                    let rows: Vec<Vec<i64>> = if types.is_empty() { Vec::new() } else { flat.chunks_exact(types.len()).map(<[i64]>::to_vec).collect() };
+                    let rows = kept_strata_rows(ks, f0, q)?;
                     let answer = run.answer.as_deref_mut().expect("answering");
                     for (p, got) in answer(q, &rows)? {
                         replayed.entry(p).or_default().extend(got);

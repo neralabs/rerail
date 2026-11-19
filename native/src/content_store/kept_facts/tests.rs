@@ -162,8 +162,9 @@ fn a_waves_puts_are_one_block_a_space() {
     let mut g = KeptGather::default();
     g.add(SPACE, vec![put("p", 0, 1, flat(&[1, 1])), put("q", 0, 2, flat(&[2, 2])), put("g", 0, 3, flat(&[3, 3]))]);
     g.add(OTHER, vec![put("o", 0, 4, flat(&[4, 4]))]);
-    // `p` replaced; `q` retagged (its rows this wave's, its reads the retag's); `g` gone.
-    let mut retag = put("q", 0, 22, KeptWhat::Reads);
+    // `p` replaced; `q` retagged (its rows and digest this wave's, its reads the retag's: a retag carries no digest,
+    // `retain::kept_reads`); `g` gone.
+    let mut retag = put("q", 0, 0, KeptWhat::Reads);
     retag.reads = vec![("r".into(), 77)];
     g.add(SPACE, vec![put("p", 0, 11, flat(&[5, 5, 6, 6])), retag, put("g", 0, 0, KeptWhat::Gone)]);
     assert_eq!(g.spaces[&SPACE].0.len(), 3, "each key once");
@@ -176,8 +177,8 @@ fn a_waves_puts_are_one_block_a_space() {
     let got = read(&path, &c);
     assert_eq!(
         got.iter().map(|(r, p, d, rows)| (r.as_str(), *p, *d, rows.clone())).collect::<Vec<_>>(),
-        [("p", 0, 11, vec![vec![5, 5], vec![6, 6]]), ("q", 0, 22, vec![vec![2, 2]])],
-        "p replaced, q retagged with this wave's rows, g gone"
+        [("p", 0, 11, vec![vec![5, 5], vec![6, 6]]), ("q", 0, 2, vec![vec![2, 2]])],
+        "p replaced, q retagged with this wave's rows and digest, g gone"
     );
     let row = space_row(&c, &SPACE).unwrap().unwrap();
     let space = KeptSpace::open(&path, &SPACE, &row).unwrap();

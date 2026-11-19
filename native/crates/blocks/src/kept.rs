@@ -279,8 +279,9 @@ fn merged<'b>(a: Vec<(FactKey<'b>, Found<'b>)>, b: Vec<(FactKey<'b>, Found<'b>)>
     out
 }
 
-impl KeptRead for KeptView<'_> {
-    fn get(&self, key: &FactKey) -> Option<Kept<'_>> {
+impl<'a> KeptView<'a> {
+    /// `get`, the entry borrowed from the blocks, not from this view.
+    pub fn find(&self, key: &FactKey) -> Option<Kept<'a>> {
         if let Some(d) = self.delta {
             match d.find(key) {
                 Some(Found::Kept(k)) => return Some(k),
@@ -289,6 +290,12 @@ impl KeptRead for KeptView<'_> {
             }
         }
         self.base?.get(key)
+    }
+}
+
+impl KeptRead for KeptView<'_> {
+    fn get(&self, key: &FactKey) -> Option<Kept<'_>> {
+        self.find(key)
     }
     fn of<'s>(&'s self, rel: &str) -> Box<dyn Iterator<Item = Kept<'s>> + 's> {
         let a = self.base.map(|b| b.range(rel).collect()).unwrap_or_default();

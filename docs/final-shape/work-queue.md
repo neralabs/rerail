@@ -4451,8 +4451,10 @@ Found 2026-11-18, the 57 data-layer rules over corpus0's first 50 files, the pro
   (`frames::rows_of`) and copies them back into columns (`columns_source`), an unlisted copy of 0353; the store's
   frames read once a process (0.03 s), the cross part's space by identity (0.034 s). The keep writes frames and kept
   blocks both (0401 step 6).
-- **Next:** 0401 step 7, the reads bind the kept blocks where they lie (`preload_frames_live`, `kept_inputs`, the
-  clean relations), then step 9 retires the frames: the decode, the two transposes and the second write go. Then the
+- **Step 7 built** (2026-11-18, 0438): the reads bind the kept blocks where they lie. On the way, six faults that
+  made the next run derive again or lose rows, and the alias root's warm-run cursor. The edit adding a function 2.0 s
+  at load 31 (2.2 s before), 589 outputs equal.
+- **Next:** step 9 retires the frames: the decode, the two transposes and the second write go. Then the
   tape views as reads of the tape, not framed inputs (0353), and the per-chunk fixed cost of a one-file chunk.
 
 ### Q243. A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (done)

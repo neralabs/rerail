@@ -358,6 +358,18 @@ struct Snapshot {
     left_out: Option<([u8; 32], HashSet<Rel>)>,
     /// The (space, program) pairs known to hold there (`hold_frames`, decision 0302): each looked up once a process.
     holding: HashSet<([u8; 32], [u8; 32])>,
+    /// Each space's kept blocks (decision 0401) as their `facts_blocks` row names them: read before a run's first
+    /// wave (`ContentStore::preload_kept`, decision 0104), and replaced by this process's writer as it commits a
+    /// space's next block. `None` until read. A run binding a space inside its waves asks no SQL (`kept_row`).
+    kept: Option<HashMap<[u8; 32], super::kept_facts::SpaceRow>>,
+}
+
+/// `f` over the kept blocks' rows this process holds of the store at `path` (`Snapshot::kept`); `None` when no
+/// snapshot of it is installed.
+pub(super) fn snapshot_kept<T>(path: &std::path::Path, f: impl FnOnce(&mut Option<HashMap<[u8; 32], super::kept_facts::SpaceRow>>) -> T) -> Option<T> {
+    let snapshot = snapshots().lock().expect("the frames' snapshots").get(&super::atoms::key(path)).cloned()?;
+    let mut snapshot = snapshot.lock().expect("the frames' snapshot");
+    Some(f(&mut snapshot.kept))
 }
 
 /// A root's cross part's space, as a run reads it before its first wave (`preload_frames_live`, Q19).
@@ -495,6 +507,8 @@ impl ContentStore {
             Some(_) => (0, 0),
             None => self.install_snapshot(cross.as_ref())?,
         };
+        // The kept blocks' rows with the frames, in the one read before the first wave (decision 0104).
+        self.preload_kept()?;
         let snapshot = self.snapshot().expect("the snapshot, installed");
         if let Some(c) = cross.filter(|c| c.own)
             && snapshot.lock().expect("the frames' snapshot").preloaded.insert(c.space)
