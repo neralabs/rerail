@@ -4,10 +4,11 @@
 //! is a folder that holds a tracked path. Hosts that follow `.gitignore` skip what this ignores,
 //! and can name the pattern that ignored a path, with its file and line (`git check-ignore -v`).
 //!
-//! The index is re-read whenever its file changes on disk, so `git add` of an ignored file brings it
-//! back; a `.gitignore` is read when the walk first enters its folder. A matcher says whether one
-//! opened now would read the rules it read (`sources_unchanged`), so hosts can share one per
-//! checkout: every holder reads the index again once its file changes.
+//! The index is re-read whenever its file changes on disk, and the rules with it, so `git add` of an
+//! ignored file brings it back and a `.gitignore` the index marks skip-worktree is read from the
+//! blob it names now; a `.gitignore` is read when the walk first enters its folder. A matcher says
+//! whether one opened now would read the rules it read (`sources_unchanged`), so hosts can share
+//! one per checkout: every holder reads the index again once its file changes.
 //!
 //! The repository opens through the engine's one opener (`git_access::opener`), so a repository
 //! Git refuses has no matcher. Opening runs on a thread of its own under the Git read time limit; questions
@@ -114,6 +115,23 @@ impl GitIgnore {
         true
     }
 
+    /// Reads the index again once its file's stamp differs from the one it was read with, and makes
+    /// the stack again from it, as an open makes it: the stack names each `.gitignore` the index
+    /// marks skip-worktree by the blob the index holds. The sources are read again first, as an
+    /// open reads them, so a check of them compares the files the new stack reads.
+    fn refresh(&mut self) -> std::result::Result<(), String> {
+        if FileStamp::of(&self.index.path) == self.index.stamp {
+            return Ok(());
+        }
+        let sources = self
+            .sources
+            .as_ref()
+            .and_then(|read| Sources::read(&self.repository, &read.worktree));
+        let (index, stack) = index_and_exclude_stack(&self.repository)?;
+        (self.sources, self.index, self.stack) = (sources, index, stack);
+        Ok(())
+    }
+
     /// Asked about `.git`, a path at the worktree root that Git never tracks, the stack leaves
     /// every folder below the root.
     fn leave_folders(&mut self) {
@@ -147,7 +165,7 @@ impl GitIgnore {
         if path.is_empty() {
             return Ok(None);
         }
-        self.index.refresh(&self.repository)?;
+        self.refresh()?;
         if tracked(&self.index.file, path.as_bytes().as_bstr(), is_directory) {
             return Ok(None);
         }
@@ -375,14 +393,6 @@ impl IndexFile {
             Err(error) => return Err(format!("cannot read Git index: {error}")),
         };
         Ok(Self { path, stamp, file })
-    }
-
-    /// Reads the index again once its file's stamp differs from the one it was read with.
-    fn refresh(&mut self, repository: &gix::Repository) -> std::result::Result<(), String> {
-        if FileStamp::of(&self.path) != self.stamp {
-            *self = Self::read(repository)?;
-        }
-        Ok(())
     }
 }
 
@@ -935,6 +945,33 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// The rules a matcher reads again with a new index come with their sources read again, so
+    /// `info/exclude` changed, read with the new index and then put back as it was at the open is a
+    /// change of the rules the matcher follows.
+    #[test]
+    fn says_its_rules_changed_once_a_file_read_again_with_the_index_is_put_back() {
+        let root = fixture("put-back", &[(".gitignore", "gen/\n"), ("a.py", ""), ("b.py", "")]);
+        git(&root, &["init", "--initial-branch=main"]);
+        let root = root.canonicalize().unwrap();
+        let exclude = root.join(".git").join("info").join("exclude");
+        std::fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+        std::fs::write(&exclude, "# none\n").unwrap();
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert!(!ignore.ignored("a.py", false).unwrap());
+        std::fs::write(&exclude, "a.py\n").unwrap();
+        git(&root, &["add", "b.py"]);
+        assert!(
+            ignore.ignored("a.py", false).unwrap(),
+            "read again with the index"
+        );
+        std::fs::write(&exclude, "# none\n").unwrap();
+        assert!(
+            !ignore.sources_unchanged(true),
+            "info/exclude as the open read it, not as the matcher reads it now"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// A matcher whose sources hold is handed on as one opened then, with the index read again at
     /// its next question: an index rewritten at the very time this one read, as two writes within
     /// one tick of the file system's clock leave it, is not taken for the old one. A holder that
@@ -970,9 +1007,8 @@ mod tests {
     }
 
     /// A `.gitignore` the index marks skip-worktree and the worktree lacks is read from the blob
-    /// the index names. A matcher handed on as one opened now reads the blob the index names
-    /// then, as that open does; a holder that asks again keeps the one it read, as a matcher of
-    /// its own would.
+    /// the index names. Once the index names another blob, the matcher reads that one, as an open
+    /// then does, whether it is handed on or asked again by a holder.
     #[test]
     fn reads_a_skipped_gitignore_as_the_index_names_it_when_handed_on() {
         let root = fixture(
@@ -1020,7 +1056,7 @@ mod tests {
         let mut fresh = GitIgnore::open(&root).unwrap().unwrap();
         assert_eq!(answers(&mut fresh), (false, true), "the new blob");
         assert!(ignore.sources_unchanged(false));
-        assert_eq!(answers(&mut ignore), (true, false), "a holder keeps it");
+        assert_eq!(answers(&mut ignore), (false, true), "a holder reads it too");
         assert!(ignore.sources_unchanged(true));
         assert_eq!(answers(&mut ignore), (false, true), "handed on");
         std::fs::remove_dir_all(root).unwrap();
