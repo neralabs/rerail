@@ -112,6 +112,18 @@ pub struct Job<'a> {
     pub calls: &'a mut dyn Calls,
 }
 
+impl Drop for Gpu {
+    /// A run ended by an error between launches (a lease past the device's budget): its open
+    /// encoder ended, its command buffer dropped uncommitted. Metal aborts the process on an
+    /// encoder released without `endEncoding`.
+    fn drop(&mut self) {
+        if let Some(encoder) = self.encoder.take() {
+            encoder.end_encoding();
+        }
+        self.command = None;
+    }
+}
+
 /// A unit's columns and parameters, its calls answered by the batch's `UnitCalls`.
 pub struct Columns<'a> {
     pub inputs: Vec<&'a [i64]>,
@@ -546,7 +558,7 @@ fn run_in(p: &ArrayProgram, jobs: &[Columns<'_>], calls: &mut dyn UnitCalls, mut
             None => Ok(outs.iter().zip(&all).map(|(a, x)| x[a.dom.off[u]..a.dom.off[u + 1]].to_vec()).collect()),
         })
         .collect();
-    Ok((outcomes, g.run))
+    Ok((outcomes, std::mem::take(&mut g.run)))
 }
 
 /// A group's rounds, as the interpreter's `settle`: its span's dependents run again until each

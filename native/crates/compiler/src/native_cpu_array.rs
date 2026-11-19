@@ -8,8 +8,8 @@
 //! every loop over elements is emitted code:
 //! - maps, selects, iotas and copies: a loop an element;
 //! - scans: a loop with the running combination, reset where a flag is set;
-//! - sorts: a stable LSD radix sort, a byte a pass, the keys from the least significant; a pass
-//!   whose elements all have one byte there is skipped;
+//! - sorts: under 64 elements an insertion sort; else a stable LSD radix sort, a byte a pass,
+//!   the keys from the least significant, only the bytes where a key's elements differ;
 //! - gathers, scatters (a `set` scatter's written flags), searches (a check that the array is
 //!   sorted, then a binary search a query), compacts, expands;
 //! - a fixed point's verdict: whether a carry is its next.
@@ -119,7 +119,7 @@ pub fn compile(p: &ArrayProgram) -> Result<CompiledArray, Error> {
         ids.push(id);
     }
     module.finalize_definitions().map_err(|_| Error::BackendFailure)?;
-    let kernels = shapes
+    let kernels: HashMap<Shape, Kernel> = shapes
         .iter()
         .zip(ids)
         .map(|(&s, id)| {
@@ -127,6 +127,14 @@ pub fn compile(p: &ArrayProgram) -> Result<CompiledArray, Error> {
             (s, unsafe { std::mem::transmute::<*const u8, Kernel>(module.get_finalized_function(id)) })
         })
         .collect();
+    if std::env::var_os("RERAIL_ARRAY_KERNELS").is_some() {
+        // Each function's address, for a sampling profiler's unnamed frames.
+        let mut at: Vec<(usize, Shape)> = kernels.iter().map(|(s, k)| (*k as usize, *s)).collect();
+        at.sort_unstable_by_key(|a| a.0);
+        for (a, s) in at {
+            eprintln!("array kernel {a:#x} {s:?}");
+        }
+    }
     Ok(CompiledArray { _module: module, kernels })
 }
 
@@ -403,16 +411,76 @@ fn emit(f: &mut FunctionBuilder<'_>, s: Shape) {
     f.ins().return_(&[ret]);
 }
 
-/// The stable LSD radix sort: `perm` from `0..n`, then for each key from the last, each byte
-/// from the lowest: a histogram of the byte over the elements in their order so far, its
-/// exclusive sums, and each element to its place in the other buffer. A pass where every
-/// element has the first one's byte keeps the order. The order ends in `perm`.
+/// Arrays shorter than this sort by insertion: a radix pass's histogram is 256 counts.
+const INSERTION: i64 = 64;
+
+/// The stable sort, the order into `perm` (from `0..n`):
+/// - shorter than `INSERTION`: an insertion sort, each element moved down past those whose keys
+///   (compared in order) are greater;
+/// - else an LSD radix sort, for each key from the last, each byte from the lowest where the
+///   key's elements differ (one pass ORs each one's difference from the first): a histogram
+///   of the byte over the elements in their order so far, its exclusive sums, each element to
+///   its place in the other buffer. The order ends in `perm`.
 fn emit_sort(f: &mut FunctionBuilder<'_>, w: &[Value]) {
     let (n, nkeys, keys, perm, tmp, hist) = (w[0], w[1], w[2], w[3], w[4], w[5]);
     count_loop(f, n, &[], &mut |f, j, _| {
         put(f, perm, j, j);
         vec![]
     });
+    let (small, radix, end) = (f.create_block(), f.create_block(), f.create_block());
+    let short = f.ins().icmp_imm(IntCC::SignedLessThan, n, INSERTION);
+    f.ins().brif(short, small, &[], radix, &[]);
+
+    // Insertion: `x` down past each element before it whose keys are greater.
+    f.switch_to_block(small);
+    let one = f.ins().iconst(types::I64, 1);
+    // -1, 0 or 1: element `a`'s keys against `b`'s, in order.
+    let order = |f: &mut FunctionBuilder<'_>, a: Value, b: Value| -> Value {
+        let z = f.ins().iconst(types::I64, 0);
+        count_loop(f, nkeys, &[z], &mut |f, k, c| {
+            let key = elem(f, keys, k);
+            let ka = elem(f, key, a);
+            let kb = elem(f, key, b);
+            let gt = f.ins().icmp(IntCC::SignedGreaterThan, ka, kb);
+            let lt = f.ins().icmp(IntCC::SignedLessThan, ka, kb);
+            let p1 = f.ins().iconst(types::I64, 1);
+            let m1 = f.ins().iconst(types::I64, -1);
+            let z = f.ins().iconst(types::I64, 0);
+            let here = f.ins().select(lt, m1, z);
+            let here = f.ins().select(gt, p1, here);
+            let decided = f.ins().icmp_imm(IntCC::NotEqual, c[0], 0);
+            vec![f.ins().select(decided, c[0], here)]
+        })[0]
+    };
+    let zero = f.ins().iconst(types::I64, 0);
+    let rest = f.ins().isub(n, one);
+    let rest = f.ins().smax(rest, zero);
+    count_loop(f, rest, &[], &mut |f, i0, _| {
+        let i = f.ins().iadd_imm(i0, 1);
+        let x = elem(f, perm, i);
+        let at = while_loop(f, &[i], &mut |f, c| {
+            // `j > 0` and the element before greater (read at `max(j, 1) - 1`, in bounds).
+            let j = c[0];
+            let one = f.ins().iconst(types::I64, 1);
+            let jm = f.ins().smax(j, one);
+            let jm = f.ins().iadd_imm(jm, -1);
+            let before = elem(f, perm, jm);
+            let o = order(f, before, x);
+            let greater = f.ins().icmp_imm(IntCC::SignedGreaterThan, o, 0);
+            let more = f.ins().icmp_imm(IntCC::SignedGreaterThan, j, 0);
+            f.ins().band(more, greater)
+        }, &mut |f, c| {
+            let jm = f.ins().iadd_imm(c[0], -1);
+            let before = elem(f, perm, jm);
+            put(f, perm, c[0], before);
+            vec![jm]
+        });
+        put(f, perm, at[0], x);
+        vec![]
+    });
+    f.ins().jump(end, &[]);
+
+    f.switch_to_block(radix);
     let k256 = f.ins().iconst(types::I64, 256);
     let k8 = f.ins().iconst(types::I64, 8);
     let min = f.ins().iconst(types::I64, i64::MIN);
@@ -427,9 +495,25 @@ fn emit_sort(f: &mut FunctionBuilder<'_>, w: &[Value]) {
         let last = f.ins().iadd_imm(nkeys, -1);
         let k = f.ins().isub(last, kk);
         let key = elem(f, keys, k);
+        // The bits where its elements differ from the first.
+        let z = f.ins().iconst(types::I64, 0);
+        let first = elem(f, key, z);
+        let differ = count_loop(f, n, &[z], &mut |f, j, d| {
+            let e = elem(f, key, j);
+            let x = f.ins().bxor(e, first);
+            vec![f.ins().bor(d[0], x)]
+        })[0];
         count_loop(f, k8, &[c[0], c[1]], &mut |f, b, c| {
             let (cur, alt) = (c[0], c[1]);
             let shift = f.ins().ishl_imm(b, 3);
+            let (pass, done) = (f.create_block(), f.create_block());
+            f.append_block_param(done, types::I64);
+            f.append_block_param(done, types::I64);
+            // One byte for all: this pass keeps the order.
+            let varies = f.ins().ushr(differ, shift);
+            let varies = f.ins().band_imm(varies, 255);
+            f.ins().brif(varies, pass, &[], done, &[cur.into(), alt.into()]);
+            f.switch_to_block(pass);
             count_loop(f, k256, &[], &mut |f, d, _| {
                 let z = f.ins().iconst(types::I64, 0);
                 put(f, hist, d, z);
@@ -443,23 +527,7 @@ fn emit_sort(f: &mut FunctionBuilder<'_>, w: &[Value]) {
                 put(f, hist, d, h1);
                 vec![]
             });
-            // One byte for all (or none): this pass keeps the order.
-            let (pass, skip, done) = (f.create_block(), f.create_block(), f.create_block());
-            f.append_block_param(done, types::I64);
-            f.append_block_param(done, types::I64);
-            let empty = f.ins().icmp_imm(IntCC::Equal, n, 0);
-            let check = f.create_block();
-            f.ins().brif(empty, skip, &[], check, &[]);
-            f.switch_to_block(check);
             let z = f.ins().iconst(types::I64, 0);
-            let first = elem(f, cur, z);
-            let d0 = digit(f, key, first, shift);
-            let h0 = elem(f, hist, d0);
-            let all = f.ins().icmp(IntCC::Equal, h0, n);
-            f.ins().brif(all, skip, &[], pass, &[]);
-            f.switch_to_block(skip);
-            f.ins().jump(done, &[cur.into(), alt.into()]);
-            f.switch_to_block(pass);
             count_loop(f, k256, &[z], &mut |f, d, s| {
                 let h = elem(f, hist, d);
                 put(f, hist, d, s[0]);
@@ -480,7 +548,7 @@ fn emit_sort(f: &mut FunctionBuilder<'_>, w: &[Value]) {
         })
     });
     // The order in the other buffer: copied into `perm`.
-    let (copy, end) = (f.create_block(), f.create_block());
+    let copy = f.create_block();
     let other = f.ins().icmp(IntCC::NotEqual, ends[0], perm);
     f.ins().brif(other, copy, &[], end, &[]);
     f.switch_to_block(copy);

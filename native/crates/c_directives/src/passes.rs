@@ -1269,6 +1269,9 @@ impl DeviceStats {
 struct Runner {
     exec: Exec,
     device: DeviceStats,
+    /// The most units a device run takes: halved where a run was past the device's budget, so
+    /// that a failing size is tried once (a run that fails late has made its calls already).
+    cap: usize,
 }
 
 impl Prog {
@@ -1306,9 +1309,18 @@ impl Prog {
                 inputs.iter().zip(hosts.iter_mut()).map(|(i, h)| c.values_at(&self.p, i, &[], h).map(|v| self.p.outputs.iter().map(|&o| v.arrays[usize::from(o)].clone()).collect())).collect()
             }
             #[cfg(target_os = "macos")]
+            Exec::Metal | Exec::MetalWords if cols.len() > runner.cap => {
+                let h = runner.cap;
+                let (hl, hr) = hosts.split_at_mut(h);
+                let mut out = self.run(&cols[..h], hl, runner);
+                out.extend(self.run(&cols[h..], hr, runner));
+                return out;
+            }
+            #[cfg(target_os = "macos")]
             Exec::Metal | Exec::MetalWords => {
-                let cols: Vec<rerail_metal::array_program::Columns> = inputs.iter().map(|i| rerail_metal::array_program::Columns { inputs: i.clone(), params: Vec::new() }).collect();
-                match rerail_metal::array_program::run_units(&self.p, &cols, &mut Hosts(hosts)) {
+                let units: Vec<rerail_metal::array_program::Columns> = inputs.iter().map(|i| rerail_metal::array_program::Columns { inputs: i.clone(), params: Vec::new() }).collect();
+                let ran = rerail_metal::array_program::run_units(&self.p, &units, &mut Hosts(&mut *hosts));
+                match ran {
                     Ok((out, r)) => {
                         runner.device.add(&DeviceStats { runs: 1, gpu_seconds: r.gpu_seconds, dispatches: r.dispatches, syncs: r.syncs, calls: r.calls, syncs_by: r.syncs_by, peak_bytes: r.peak_bytes, by_kernel: r.by_kernel });
                         if std::env::var_os("RERAIL_PP_ORACLE").is_some() {
@@ -1334,7 +1346,24 @@ impl Prog {
                         }
                         out
                     }
-                    Err(_) => return cols.iter().map(|_| Err("the device failed")).collect(),
+                    // Past the device's budget: the batch in halves, each in lockstep.
+                    Err(rerail_metal::Error::BackendCapacity) if cols.len() > 1 => {
+                        let h = cols.len() / 2;
+                        runner.cap = h;
+                        if std::env::var_os("RERAIL_PP_DEVICE_TRACE").is_some() {
+                            eprintln!("passes: a batch of {} past the device's budget: {h} a run from here", cols.len());
+                        }
+                        let (hl, hr) = hosts.split_at_mut(h);
+                        let mut out = self.run(&cols[..h], hl, runner);
+                        out.extend(self.run(&cols[h..], hr, runner));
+                        return out;
+                    }
+                    Err(e) => {
+                        if std::env::var_os("RERAIL_PP_DEVICE_TRACE").is_some() {
+                            eprintln!("passes: the device failed a batch of {}: {e:?}", cols.len());
+                        }
+                        return cols.iter().map(|_| Err("the device failed")).collect();
+                    }
                 }
             }
         };
@@ -1381,7 +1410,7 @@ pub fn run(cfg: Config, io: &mut dyn Files, path: &str) -> (Outcome, Stats) {
         Err(why) => return (Err(why), Stats::default()),
     };
     let mut r = [Reading::new(&mut unit, None)];
-    read(&mut r, &mut Runner { exec: Exec::Interpreter, device: DeviceStats::default() });
+    read(&mut r, &mut Runner { exec: Exec::Interpreter, device: DeviceStats::default(), cap: usize::MAX });
     let [r] = r;
     let out = r.outcome();
     (out, unit.stats.clone())
@@ -1413,7 +1442,7 @@ pub fn run_batch(units: Vec<(Config, &mut dyn Files, &str)>, run_words: words::R
             Ok((Unit::new(cfg, io, path)?, w))
         })
         .collect();
-    let mut runner = Runner { exec, device: DeviceStats::default() };
+    let mut runner = Runner { exec, device: DeviceStats::default(), cap: usize::MAX };
     let mut readings: Vec<Reading> = made.iter_mut().filter_map(|m| m.as_mut().ok()).map(|(u, w)| Reading::new(u, Some(w))).collect();
     read(&mut readings, &mut runner);
     let outcomes: Vec<Outcome> = readings.into_iter().map(Reading::outcome).collect();
