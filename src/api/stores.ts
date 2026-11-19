@@ -144,7 +144,8 @@ export class DatabaseApiStores implements RerailApiStores {
   }
 
   close(): void {
-    // Its hook commands get SIGTERM and its late answers record nothing, before the database closes under them.
+    // Its hook commands get SIGTERM, its passes end at their next Git read, and its late answers record nothing, before
+    // the database closes under them: a stop with no wait does all that in its call.
     void this.#ownMergeAssist?.stop(0);
     this.reader.close();
     this.#sessionStore?.close();

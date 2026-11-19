@@ -1,0 +1,429 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ann001-missing-type-function-argument",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Annotate every function parameter with a type so type checkers can verify calls and readers know what the function accepts.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "missing-type-function-argument",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "overload-expr": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.overload",
+                      "typing_extensions.overload",
+                      "_typeshed.overload"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "overload-expr"
+                  }
+                }
+              ]
+            },
+            "imports-builtins": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "module",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "import_statement",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "dotted_name",
+                        "regex": "^builtins(\\.|$)"
+                      }
+                    },
+                    {
+                      "kind": "import_from_statement",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "module_name",
+                        "kind": "dotted_name",
+                        "regex": "^builtins(\\.|$)"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "staticmethod-expr": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^staticmethod$",
+                  "not": {
+                    "any": [
+                      {
+                        "matches": "imports-builtins"
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "module",
+                          "has": {
+                            "stopBy": "end",
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "dotted_name"
+                              }
+                            ],
+                            "regex": "^staticmethod$",
+                            "binds": {
+                              "scope": "module"
+                            },
+                            "not": {
+                              "any": [
+                                {
+                                  "binds": {
+                                    "form": "annotation"
+                                  }
+                                },
+                                {
+                                  "binds": {
+                                    "form": "except"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "matches": "imports-builtins",
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "staticmethod"
+                    ],
+                    "import": [
+                      "builtins.staticmethod"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "staticmethod-expr"
+                  }
+                }
+              ]
+            },
+            "overload-decorated": {
+              "kind": "decorated_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "decorator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "overload-expr"
+                }
+              }
+            },
+            "definition-statement": {
+              "any": [
+                {
+                  "kind": "function_definition"
+                },
+                {
+                  "kind": "class_definition"
+                },
+                {
+                  "kind": "decorated_definition"
+                }
+              ]
+            },
+            "holds-definition": {
+              "any": [
+                {
+                  "matches": "definition-statement"
+                },
+                {
+                  "has": {
+                    "stopBy": {
+                      "matches": "definition-statement"
+                    },
+                    "matches": "definition-statement"
+                  }
+                }
+              ]
+            },
+            "last-definition-is-overload": {
+              "any": [
+                {
+                  "matches": "overload-decorated",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "function_definition",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "pattern": "$FN"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "decorated_definition",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "function_definition"
+                        }
+                      }
+                    ]
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "holds-definition",
+                    "not": {
+                      "precedes": {
+                        "stopBy": "end",
+                        "matches": "holds-definition"
+                      }
+                    },
+                    "all": [
+                      {
+                        "matches": "last-definition-is-overload"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "previous-overload": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": {
+                      "matches": "holds-definition"
+                    },
+                    "matches": "last-definition-is-overload"
+                  }
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "matches": "holds-definition"
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "kind": "module"
+                        }
+                      ]
+                    },
+                    "matches": "previous-overload"
+                  }
+                }
+              ]
+            },
+            "overload-implementation": {
+              "not": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "overload-decorated"
+                }
+              },
+              "matches": "previous-overload"
+            },
+            "skips-first": {
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                },
+                "kind": "class_definition"
+              },
+              "not": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "decorated_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "decorator",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "staticmethod-expr"
+                    }
+                  }
+                }
+              }
+            },
+            "non-variadic": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "default_parameter"
+                },
+                {
+                  "kind": "typed_default_parameter"
+                },
+                {
+                  "kind": "typed_parameter",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "list_splat_pattern"
+                        },
+                        {
+                          "kind": "dictionary_splat_pattern"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "reported-parameter": {
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "parameters",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "function_definition",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "pattern": "$FN"
+                      }
+                    },
+                    {
+                      "not": {
+                        "matches": "overload-implementation"
+                      }
+                    }
+                  ]
+                }
+              },
+              "any": [
+                {
+                  "not": {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "matches": "non-variadic"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parameters",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "function_definition",
+                      "not": {
+                        "matches": "skips-first"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parameters"
+                },
+                "matches": "reported-parameter"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "default_parameter",
+                  "field": "name",
+                  "matches": "reported-parameter"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "ANN001",
+        "message": "Add a type annotation to parameter `$NAME`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "ANN001"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

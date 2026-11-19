@@ -159,8 +159,11 @@ describe("the checkout the pre-commit checks run in", () => {
   });
 });
 
-/** A stub on PATH: `npm run --silent check` lists what Git sees, and every other check passes. */
-const STUBS = { npm: '#!/bin/sh\n[ "$3" != check ] || exec git ls-files\n', just: "#!/bin/sh\nexit 0\n" };
+/**
+ * A stub on PATH: `npm run --silent check` lists what Git sees, and every other check passes (`just`, and `python3`
+ * for the engine manifests' feature check, which this repository has none of).
+ */
+const STUBS = { npm: '#!/bin/sh\n[ "$3" != check ] || exec git ls-files\n', just: "#!/bin/sh\nexit 0\n", python3: "#!/bin/sh\nexit 0\n" };
 
 /** `root` with the real pre-commit scripts committed on `feature`, and `main.txt` on `origin/main` only. */
 function hookRepository() {

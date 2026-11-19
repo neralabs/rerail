@@ -1,0 +1,16 @@
+.policy "eslint-no-with" revision 5
+.description "Don't use with statements in JavaScript; they make variable lookup ambiguous and are forbidden in strict mode."
+.language typescript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// ESLint's no-with: every `with` statement. It puts an object's properties in scope, so a name in its body may
+// be a property or a variable depending on the object at run time; strict mode forbids it.
+//   with (point) { r = Math.sqrt(x * x + y * y); }    → reported
+// No options.
+.violation no_with(at: node) code "no-with"
+    "Remove this with statement and reference the object's properties explicitly through a variable."
+    suppress eslint "no-with"
+    suppress oxlint "no-with"
+    suppress biome "lint/suspicious/noWith"
+no_with(s) :- kind(s, "with_statement").

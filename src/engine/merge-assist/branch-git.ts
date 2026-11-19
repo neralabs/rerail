@@ -1,19 +1,41 @@
 /**
  * What Merge Assist asks Git about a checkout's branches: the current and base branch, merge bases and ancestry, and
- * the GitHub repository a key names; and the read every Merge Assist Git call shares ({@link gitReadAsync}). Nothing
- * here blocks the daemon: every call goes through `runGitAsync`, so a repository's own config cannot run hooks or an
- * fsmonitor either; nothing here writes a ref or the index.
+ * the GitHub repository a key names; and the read every Merge Assist Git call shares ({@link gitReadAsync}), which a
+ * detection pass's owner stops ({@link readsStoppedBy}). Nothing here blocks the daemon: every call goes through
+ * `runGitAsync`, so a repository's own config cannot run hooks or an fsmonitor either; nothing here writes a ref or the
+ * index.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { runGitAsync, type RunGitOptions } from "../git.js";
+import { type GitReads, runGitAsync, type GitResult, type RunGitOptions } from "../git.js";
+
+/** The owner of the Git reads of the work a read runs in, as {@link readsStoppedBy} set it; none outside such work. */
+const readOwner = new AsyncLocalStorage<GitReads | undefined>();
+
+/**
+ * Runs `work` with every Git read of this module it starts, however deep, run by `reads`: once `reads` stops, a read
+ * running ends its Git with every process that Git started and answers as a failed read once they have exited, and a
+ * later read starts no Git. A detection pass is stopped this way at its next read, with no read naming its owner, and
+ * the owner's stop waits for those Git processes, not for the pass's other awaits such as a file read.
+ */
+export async function readsStoppedBy<T>(reads: GitReads | undefined, work: () => Promise<T>): Promise<T> {
+  return await readOwner.run(reads, work);
+}
+
+/** `runGitAsync` run by the owner of the work it runs in ({@link readsStoppedBy}). */
+async function runRead(root: string, args: readonly string[], options: RunGitOptions & { input?: string } = {}): Promise<GitResult> {
+  const reads = readOwner.getStore();
+  if (reads === undefined) return await runGitAsync(root, args, options);
+  return await reads.run(signal => runGitAsync(root, args, { ...options, signal }));
+}
 
 /**
  * Stdout of a successful read-only `git -C root <args>`, paths unquoted (`core.quotePath=false`) and untrimmed so
  * NUL-separated output stays whole; undefined when Git fails, times out or overflows. `input` goes to Git's stdin.
  */
 export async function gitReadAsync(root: string, args: readonly string[], options?: RunGitOptions & { input?: string }): Promise<string | undefined> {
-  const result = await runGitAsync(root, ["-c", "core.quotePath=false", ...args], options);
+  const result = await runRead(root, ["-c", "core.quotePath=false", ...args], options);
   return result.status === 0 && result.error === undefined ? result.stdout : undefined;
 }
 
@@ -64,7 +86,7 @@ export async function mergeBaseAsync(root: string, a: string, b: string): Promis
 /** Whether `ancestor` is `descendant` or one of its ancestors; false when either is unknown. */
 export async function isAncestorAsync(root: string, ancestor: string, descendant: string): Promise<boolean> {
   if (!revisionArgument(ancestor) || !revisionArgument(descendant)) return false;
-  return (await runGitAsync(root, ["merge-base", "--is-ancestor", "--end-of-options", ancestor, descendant])).status === 0;
+  return (await runRead(root, ["merge-base", "--is-ancestor", "--end-of-options", ancestor, descendant])).status === 0;
 }
 
 /** The commit `revision` resolves to, without blocking; null when it names none. */

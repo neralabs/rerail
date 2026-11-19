@@ -1,0 +1,198 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt001-pytest-fixture-incorrect-parentheses-style",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Drop the empty parentheses from an argument-free pytest fixture decorator, so fixtures follow the style of the pytest documentation.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "fixture-empty-parentheses",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "fixture-name": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "pytest.fixture",
+                  "pytest.yield_fixture"
+                ]
+              }
+            },
+            "fixture-ref": {
+              "matches": "fixture-name",
+              "pattern": "$F"
+            },
+            "callee": {
+              "any": [
+                {
+                  "matches": "fixture-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "plain-callee": {
+              "any": [
+                {
+                  "matches": "fixture-name"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "plain-callee"
+                  }
+                }
+              ]
+            },
+            "fixture-expr": {
+              "any": [
+                {
+                  "matches": "plain-callee"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "plain-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fixture-expr"
+                  }
+                }
+              ]
+            },
+            "empty-call": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "callee"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "arguments",
+                        "kind": "argument_list",
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "comment"
+                                },
+                                {
+                                  "kind": "line_continuation"
+                                },
+                                {
+                                  "regex": "^[()]$"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "empty-call"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "decorator",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "empty-call"
+            },
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "kind": "decorator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fixture-expr"
+                }
+              }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "has": {
+                "field": "definition",
+                "kind": "function_definition"
+              }
+            },
+            "any": [
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "comment"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "comment"
+                },
+                "regex": "(?s)^(?<SPAN>@.*?\\))(?:[ \\t\\f]|\\\\(?:\\r\\n?|\\n))*(?:#[^\\n]*)?\\s*$"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "comment"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.SPAN",
+        "code": "PT001",
+        "message": "Remove the empty parentheses: write the decorator as `@$F` instead of `@$F()`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT001"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

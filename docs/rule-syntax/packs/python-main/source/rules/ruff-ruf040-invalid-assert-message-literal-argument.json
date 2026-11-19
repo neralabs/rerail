@@ -1,0 +1,53 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-ruf040-invalid-assert-message-literal-argument",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use a string as the assert message; a number, boolean, None, ellipsis or bytes literal there is usually a comparison written with a comma by mistake.",
+ "scope": {"include": ["**/*"], "exclude": []},
+ "clauses": [
+  {
+   "id": "invalid-assert-message-literal",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "trivia": {"any": [{"kind": "comment"}, {"kind": "line_continuation"}]},
+      "bytes-prefix": {"regex": "^[a-zA-Z]*[bB]"},
+      "message-slot": {
+       "any": [
+        {
+         "inside": {"stopBy": "neighbor", "kind": "assert_statement"},
+         "follows": {"stopBy": {"not": {"matches": "trivia"}}, "regex": "^,$"}
+        },
+        {"inside": {"stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "message-slot"}}
+       ]
+      },
+      "non-string-literal": {
+       "any": [
+        {"kind": "integer"},
+        {"kind": "float"},
+        {"kind": "true"},
+        {"kind": "false"},
+        {"kind": "none"},
+        {"kind": "ellipsis"},
+        {"kind": "string", "matches": "bytes-prefix"},
+        {
+         "kind": "concatenated_string",
+         "has": {"stopBy": "neighbor", "kind": "string", "matches": "bytes-prefix"}
+        }
+       ]
+      }
+     },
+     "rule": {"matches": "non-string-literal", "all": [{"matches": "message-slot"}]}
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "RUF040",
+    "message": "Use a string as the assert message; if this literal was meant to be compared with the condition, write the comparison instead, as in `assert cond == value`.",
+    "suppress": {"noqa": {"codes": ["RUF040"]}}
+   }
+  }
+ ]
+}
