@@ -135,16 +135,16 @@ pub mod at {
     pub const RUN_LEN: i32 = offset_of!(Run, len) as i32;
 }
 
-/// The descriptor's MSL: `struct Run`, `struct Numbering`, each field's offset and the size asserted against this
+/// The descriptor in UKL: `struct Run`, `struct Numbering`, each field's offset and the size asserted against this
 /// definition's, so the kernels cannot read a layout of their own.
-pub fn msl() -> String {
+pub fn ukl() -> String {
     use std::mem::offset_of;
     let (count, samples) = (format!("count[{ITEMS}]"), format!("samples[{ITEMS}]"));
     let fields: [(&str, &str, usize); 21] = [
-        ("uint", "first", offset_of!(Numbering, first)),
-        ("uint", "granules", offset_of!(Numbering, granules)),
-        ("uint", &count, offset_of!(Numbering, count)),
-        ("uint", "preorder_keys", offset_of!(Numbering, preorder_keys)),
+        ("uint32_t", "first", offset_of!(Numbering, first)),
+        ("uint32_t", "granules", offset_of!(Numbering, granules)),
+        ("uint32_t", &count, offset_of!(Numbering, count)),
+        ("uint32_t", "preorder_keys", offset_of!(Numbering, preorder_keys)),
         ("Run", "groups", offset_of!(Numbering, groups)),
         ("Run", &samples, offset_of!(Numbering, samples)),
         ("Run", "starts", offset_of!(Numbering, starts)),
@@ -163,7 +163,7 @@ pub fn msl() -> String {
         ("Run", "rank_ends[2]", offset_of!(Numbering, rank_ends)),
         ("Run", "jumps[2]", offset_of!(Numbering, jumps)),
     ];
-    let mut s = String::from("struct Run {\n    long off;\n    ulong len;\n};\nstatic_assert(sizeof(Run) == 16, \"Run: size\");\n");
+    let mut s = String::from("struct Run {\n    int64_t off;\n    uint64_t len;\n};\nstatic_assert(sizeof(Run) == 16, \"Run: size\");\n");
     s += "struct Numbering {\n";
     for (ty, name, _) in fields.iter() {
         s += &format!("    {ty} {name};\n");

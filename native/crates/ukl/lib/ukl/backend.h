@@ -17,6 +17,9 @@
 // Qualifiers: a function the library inlines; a struct's method; device memory; device memory another threadgroup
 // of the same dispatch writes (coherent); threadgroup memory; a thread's own.
 #define UKL_INLINE static inline
+// A function written as a rare case (a generated read marked cold, decision 0310): a call where the backend makes
+// real calls. Metal's compiler inlines as it judges, as it always has with these reads.
+#define UKL_COLD static inline
 #define UKL_METHOD inline
 #define UKL_GLOBAL device
 #define UKL_COHERENT device coherent(device)
@@ -78,6 +81,9 @@ UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v) { return simd_prefix
 #elif defined(UKL_CUDA)
 
 #define UKL_INLINE static __device__ __forceinline__
+// A rare case, called (not inlined): forced inline at every call site, a large cold read (16z's block decode) made
+// NVRTC take minutes and gigabytes on a kernel that reads every node's every field.
+#define UKL_COLD static __device__ __noinline__
 #define UKL_METHOD __device__ __forceinline__
 #define UKL_GLOBAL
 #define UKL_COHERENT volatile

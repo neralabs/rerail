@@ -76,7 +76,15 @@ pub struct Key {
 
 impl Key {
     pub fn of(source: &str, name: &str, constant: Option<u32>) -> Key {
-        let library: [u8; 32] = Sha256::digest(source.as_bytes()).into();
+        // A source that takes UKL's library names its headers, not their text: the library's fingerprint keys it too.
+        let library: [u8; 32] = if rerail_ukl::takes_library(source) {
+            let mut d = Sha256::new();
+            d.update(source.as_bytes());
+            d.update(rerail_ukl::fingerprint().to_le_bytes());
+            d.finalize().into()
+        } else {
+            Sha256::digest(source.as_bytes()).into()
+        };
         let mut d = Sha256::new();
         d.update(library);
         d.update(name.as_bytes());
@@ -459,6 +467,15 @@ fn compile_archived(device: &Device, descriptor: &metal::ComputePipelineDescript
     p
 }
 
+/// `source` as the Metal front end takes it: a source that takes UKL's library (`#include <ukl/...>`: the reads
+/// written once in CLIF, decision 0400 §3.3) preprocessed with it in place, any other as it is.
+pub fn msl<'a>(source: &'a str, name: &str) -> Result<std::borrow::Cow<'a, str>, String> {
+    if !rerail_ukl::takes_library(source) {
+        return Ok(std::borrow::Cow::Borrowed(source));
+    }
+    rerail_ukl::metal_source(name, source).map(std::borrow::Cow::Owned).map_err(|e| format!("{name}: {e}"))
+}
+
 /// The library of `source` (its digest `library`): this process's, else the shipped AIR library, else the front
 /// end's compile.
 fn library(library: [u8; 32], source: &str, name: &str) -> Library {
@@ -474,6 +491,7 @@ fn library(library: [u8; 32], source: &str, name: &str) -> Library {
         Some(file) => crate::score::phase("msl from shipped", || objc::rc::autoreleasepool(|| device.new_library_with_file(&file)))
             .unwrap_or_else(|e| panic!("the shipped Metal library {} (kernel {name}) does not load: {e}", file.display())),
         None => {
+            let source = &*msl(source, name).unwrap_or_else(|e| panic!("the Metal library of kernel {name} does not preprocess: {e}"));
             let nonce;
             // `RERAIL_DIAG_MSL_NONCE`: every source made new to the system's shader cache, to measure first compiles.
             let text = match std::env::var("RERAIL_DIAG_MSL_NONCE") {
@@ -772,6 +790,7 @@ pub fn ship(dir: &Path, from: &Path, air: bool) -> Result<Vec<String>, String> {
     let mut lines = Vec::new();
     for (library, kernels) in &by_library {
         let source = std::fs::read_to_string(from.join("src").join(format!("{library}.metal"))).map_err(|e| format!("the source of {library}: {e}"))?;
+        let source = msl(&source, library)?.into_owned();
         let lib = dir.join(format!("{library}.metallib"));
         let started = std::time::Instant::now();
         if air && !lib.is_file() {

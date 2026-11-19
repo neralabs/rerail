@@ -499,9 +499,9 @@ static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         "using namespace metal;\n#define CLIF_VIEW_SPACE device\n{}{}{}{}{VREAD}",
         rerail_blocks::RELATION_READS,
         // The reads that read a 16z tape too, through its batch's cache (decision 0353 step 4b).
-        include_str!("metal_tape_reads_z.metal"),
-        include_str!("../../facts/vtab/syntax/id_reads.metal"),
-        include_str!("../../facts/vtab/syntax/view_reads.metal"),
+        "#include <ukl/reads/tape_z.h>\n",
+        "#include <ukl/reads/ids.h>\n",
+        "#include <ukl/reads/view.h>\n",
     );
     SOURCE_MAIN.replacen("using namespace metal;\n", &reads, 1)
 });

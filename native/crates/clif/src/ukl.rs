@@ -1,96 +1,56 @@
-//! CLIF as Metal Shading Language (decision 0310's third backend): the tape's reads for the kernels, in place of
-//! `metal_tape.metal`'s hand port.
+//! CLIF as UKL (decisions 0310, 0400 §3.3): the reads written once in CLIF, for every GPU's kernels. UKL is C with
+//! macros for what differs between GPU languages; the backend's shim turns it into MSL for Metal or CUDA C++ for NVRTC,
+//! and the library (`<ukl/...>`, decision 0400 §5) gives the loads, stores and atomics, written once over each
+//! backend's intrinsics.
 //!
-//! A read's function takes the tape (`device const uchar* t`, where the view's offsets count from: the
-//! document's first byte in its batch's block) and its view as u32s (`CLIF_VIEW_SPACE const uint* v`: `thread` unless a
-//! kernel source defines it `device`, as the join kernels do, which read each document's view where the batch's
-//! directory holds it; the device's `DocView`, `at` first), then its own parameters. In the body the tape and the view
-//! are byte offsets from those pointers, 0 where they come in, so
-//! an address the read computes is an offset: a load of the view (marked aligned: its fields) reads `v`, a load of
-//! the tape reads `t`, at any alignment (two aligned words shifted together where it is not aligned to its size;
-//! a slab lays the document's source after its tape, so the second word lies in it).
+//! A read's function takes the tape (`UKL_GLOBAL const uint8_t* t`, where the view's offsets count from: the
+//! document's first byte in its batch's block) and its view as u32s (`CLIF_VIEW_SPACE const uint32_t* v`: the thread's
+//! own unless a kernel source defines it `UKL_GLOBAL`, as the join kernels do, which read each document's view where the
+//! batch's directory holds it; the device's `DocView`, `at` first), then its own parameters. In the body the tape and
+//! the view are byte offsets from those pointers, 0 where they come in, so an address the read computes is an offset:
+//! a load of the view (marked aligned: its fields) reads `v` (`clif_view`, which a kernel may define first), a load
+//! of the tape reads `t` at any alignment (`ukl_ld_*`: two aligned words shifted together where it is not aligned to
+//! its size; a slab lays the document's source after its tape, so the second word lies in it).
 //!
-//! A relation's read (decision 0325) takes a base (`device const uchar* t`, a block's first byte, or any pointer
-//! before the descriptor in its buffer) and the descriptor's offset from it (`ulong a0`), then its own parameters:
+//! A relation's read (decision 0325) takes a base (`UKL_GLOBAL const uint8_t* t`, a block's first byte, or any pointer
+//! before the descriptor in its buffer) and the descriptor's offset from it (`uint64_t a0`), then its own parameters:
 //! every address it computes is an offset from `t`, through the block's self-relative references, so an address a
 //! read returns (`rows_at`) and a descriptor a read calls another of are offsets from the same `t`. Its loads are
 //! aligned, and read as their type.
 //!
-//! MSL has no `goto` and no labelled `break`, so a body is written structured (`Shape`): a branch as `if`/`else`
-//! with its merge after it, a loop as `while(true)` with `continue` and `break`, a block reached on two paths that
-//! are not its merge's written on each. A body that takes no such shape (an irreducible loop, a loop of several
-//! exits) is a loop over a `switch` on its block. A value read in another block than its own is a local of the
-//! body, set where a branch passes it on; one read only in its own block is declared where it is set. (The switch
+//! No backend has `goto` or a labelled `break` (Metal has neither), so a body is written structured (`Shape`): a
+//! branch as `if`/`else` with its merge after it, a loop as `while(true)` with `continue` and `break`, a block reached
+//! on two paths that are not its merge's written on each. A body that takes no such shape (an irreducible loop, a loop
+//! of several exits) is a loop over a `switch` on its block. A value read in another block than its own is a local of
+//! the body, set where a branch passes it on; one read only in its own block is declared where it is set. (The switch
 //! form cost the label kernels about 20% against hand-written reads, t41.)
 //!
 //! A GPU computes in 32 bits; a 64-bit add or shift is several instructions. Every offset a read computes from the
 //! tape or the view is below 4 GiB on the device (a document's parts are offsets from its first byte, u32 in its
 //! view), so a 64-bit value whose every use reads only its low 32 bits (`low_words`: an address, a modular step to
-//! another such value) is computed as a `uint`, with the same low bits, and a 64-bit load of it reads 32 bits. A
+//! another such value) is computed as a `uint32_t`, with the same low bits, and a 64-bit load of it reads 32 bits. A
 //! relation's offsets are a block's, not bounded so: its reads keep 64 bits.
 
 use cranelift_codegen::ir::{self, InstructionData, Opcode, condcodes::IntCC, types};
 use crate::reads::Family;
 use std::fmt::Write;
 
-/// MSL's unsigned type for a Cranelift integer type, and its signed one.
+/// The unsigned type for a Cranelift integer type, and its signed one.
 fn ty(t: ir::Type) -> Result<(&'static str, &'static str), String> {
     Ok(match t {
-        types::I8 => ("uchar", "char"),
-        types::I16 => ("ushort", "short"),
-        types::I32 => ("uint", "int"),
-        types::I64 => ("ulong", "long"),
+        types::I8 => ("uint8_t", "int8_t"),
+        types::I16 => ("uint16_t", "int16_t"),
+        types::I32 => ("uint32_t", "int32_t"),
+        types::I64 => ("uint64_t", "int64_t"),
         t => return Err(format!("a value of type {t}")),
     })
 }
 
-/// The loads every read's body uses: of the tape at any alignment, and of the view (`clif_view`, which a
-/// kernel source may define before the reads, as the label passes' does to make the format a constant). Guarded,
-/// so a kernel may include the reads of several families.
-pub const HELPERS: &str = "\
-#ifndef CLIF_VIEW_SPACE
-#define CLIF_VIEW_SPACE thread
-#endif
-#ifndef clif_view
-#define clif_view(v,a) (v)[(a)/4u]
-#endif
-#ifndef CLIF_HELPERS
-#define CLIF_HELPERS 1
-inline ulong clif_word(device const uchar* t,ulong a){device const ulong* w=(device const ulong*)(t+(a&~7ul));uint s=uint(a&7ul)*8u;return s==0u?w[0]:(w[0]>>s)|(w[1]<<(64u-s));}
-inline uchar clif_u8(device const uchar* t,ulong a){return t[a];}
-inline ushort clif_u16(device const uchar* t,ulong a){return (a&1ul)==0ul?*(device const ushort*)(t+a):ushort(clif_word(t,a));}
-inline uint clif_u32(device const uchar* t,ulong a){return (a&3ul)==0ul?*(device const uint*)(t+a):uint(clif_word(t,a));}
-inline ulong clif_u64(device const uchar* t,ulong a){return clif_word(t,a);}
-inline ulong clif_word(device const uchar* t,uint a){device const ulong* w=(device const ulong*)(t+(a&~7u));uint s=(a&7u)*8u;return s==0u?w[0]:(w[0]>>s)|(w[1]<<(64u-s));}
-inline uint clif_lo(device const uchar* t,uint a){return (a&3u)==0u?*(device const uint*)(t+a):uint(clif_word(t,a));}
-inline uchar clif_u8(device const uchar* t,uint a){return t[a];}
-inline ushort clif_u16(device const uchar* t,uint a){return (a&1u)==0u?*(device const ushort*)(t+a):ushort(clif_word(t,a));}
-inline uint clif_u32(device const uchar* t,uint a){return clif_lo(t,a);}
-inline ulong clif_u64(device const uchar* t,uint a){return clif_word(t,a);}
-#endif
-#ifndef CLIF_CACHE_HELPERS
-#define CLIF_CACHE_HELPERS 1
-inline ulong clif_cword(device const uchar* t,ulong a){device coherent(device) const ulong* w=(device coherent(device) const ulong*)(t+(a&~7ul));uint s=uint(a&7ul)*8u;return s==0u?w[0]:(w[0]>>s)|(w[1]<<(64u-s));}
-inline uchar clif_c8(device const uchar* t,ulong a){return *(device coherent(device) const uchar*)(t+a);}
-inline ushort clif_c16(device const uchar* t,ulong a){return (a&1ul)==0ul?*(device coherent(device) const ushort*)(t+a):ushort(clif_cword(t,a));}
-inline uint clif_c32(device const uchar* t,ulong a){return (a&3ul)==0ul?*(device coherent(device) const uint*)(t+a):uint(clif_cword(t,a));}
-inline ulong clif_c64(device const uchar* t,ulong a){return clif_cword(t,a);}
-inline void clif_st8(device const uchar* t,ulong a,ulong x){*(device coherent(device) uchar*)(t+a)=uchar(x);}
-inline void clif_stw(device const uchar* t,ulong a,ulong x,uint n){device coherent(device) ulong* w=(device coherent(device) ulong*)(t+(a&~7ul));uint s=uint(a&7ul)*8u;ulong m=n==64u?~0ul:((1ul<<n)-1ul);x&=m;w[0]=(w[0]&~(m<<s))|(x<<s);if(s+n>64u){uint r=64u-s;w[1]=(w[1]&~(m>>r))|(x>>r);}}
-inline void clif_st16(device const uchar* t,ulong a,ulong x){if((a&1ul)==0ul)*(device coherent(device) ushort*)(t+a)=ushort(x);else clif_stw(t,a,x,16u);}
-inline void clif_st32(device const uchar* t,ulong a,ulong x){if((a&3ul)==0ul)*(device coherent(device) uint*)(t+a)=uint(x);else clif_stw(t,a,x,32u);}
-inline void clif_st64(device const uchar* t,ulong a,ulong x){if((a&7ul)==0ul)*(device coherent(device) ulong*)(t+a)=x;else clif_stw(t,a,x,64u);}
-inline uint clif_ald(device const uchar* t,ulong a){return atomic_load_explicit((device atomic_uint*)(t+a),memory_order_relaxed);}
-inline void clif_ast(device const uchar* t,ulong a,uint x){atomic_store_explicit((device atomic_uint*)(t+a),x,memory_order_relaxed);}
-inline uint clif_aadd(device const uchar* t,ulong a,uint x){return atomic_fetch_add_explicit((device atomic_uint*)(t+a),x,memory_order_relaxed);}
-// A strong compare-and-swap: the value seen, which is `e` where it swapped (a weak one's spurious failure tried again,
-// a bounded number of times, then reported as a value other than `e`).
-inline uint clif_acas(device const uchar* t,ulong a,uint e,uint n){for(uint k=0u;k<64u;k++){uint x=e;if(atomic_compare_exchange_weak_explicit((device atomic_uint*)(t+a),&x,n,memory_order_relaxed,memory_order_relaxed))return e;if(x!=e)return x;}return ~e;}
-inline void clif_fence(){atomic_thread_fence(mem_flags::mem_device,memory_order_seq_cst,thread_scope_device);}
-#endif
-";
+/// What every read's body includes: the library's loads, stores and atomics (`ukl/memory.h`), and the reads' hooks
+/// (`ukl/clif.h`: the view's space and its load, which a kernel source may define before the reads).
+pub const HELPERS: &str = "#pragma once\n#include <ukl/memory.h>\n#include <ukl/clif.h>\n";
 
-/// The reads `funcs` of `family` (by their user name's index, each with its name) as MSL functions, `prefix` before
+/// The reads `funcs` of `family` (by their user name's index, each with its name) as UKL functions, `prefix` before
 /// each name: declarations first, so a read may call one defined after it.
 pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family: Family) -> Result<String, String> {
     // A read of another family (a view read's calls of the tape's and the numbering's) is named by its place in
@@ -103,7 +63,8 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family
     for (id, f, n) in funcs {
         // Each read in its own family (a view read's source holds the lines' reads it calls too).
         let family = crate::reads::READS.get(*id as usize).map_or(family, |read| read.family);
-        let signature = signature(f, &format!("{prefix}{n}"), family)?;
+        let hot = crate::reads::READS.get(*id as usize).is_none_or(|read| read.hot);
+        let signature = signature(f, &format!("{prefix}{n}"), family, hot)?;
         writeln!(out, "{signature};").unwrap();
         writeln!(bodies, "{signature}{{").unwrap();
         body(&mut bodies, f, &named, family).map_err(|e| format!("{n} (u0:{id}): {e}"))?;
@@ -184,21 +145,24 @@ fn low_words(f: &ir::Function, family: Family) -> std::collections::HashSet<ir::
     }
 }
 
-/// The pointers a read of `family` takes, as MSL's parameters and as a call passes them on.
+/// The pointers a read of `family` takes, as its parameters and as a call passes them on.
 fn pointers(family: Family) -> (&'static str, &'static str) {
     match family {
-        Family::Tape => ("device const uchar* t,CLIF_VIEW_SPACE const uint* v", "t,v"),
-        Family::Relation | Family::Lines => ("device const uchar* t,ulong a0", "t"),
-        Family::View => ("device const uchar* t,ulong a0,device const uchar* tt,CLIF_VIEW_SPACE const uint* v,device const uchar* ll", "t"),
+        Family::Tape => ("UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v", "t,v"),
+        Family::Relation | Family::Lines => ("UKL_GLOBAL const uint8_t* t,uint64_t a0", "t"),
+        Family::View => ("UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll", "t"),
     }
 }
 
-fn signature(f: &ir::Function, name: &str, family: Family) -> Result<String, String> {
+/// A read's declaration: `UKL_INLINE` where it is hot, `UKL_COLD` (a call) where it is marked cold, as the JIT's
+/// inlining pass and the Rust backend treat it (decision 0310).
+fn signature(f: &ir::Function, name: &str, family: Family, hot: bool) -> Result<String, String> {
     let [ret] = f.signature.returns.as_slice() else { return Err(format!("{name}: a read returns one value")) };
     let params: Vec<String> =
         f.signature.params.iter().enumerate().skip(family.pointers()).map(|(i, p)| Ok(format!("{} a{i}", ty(p.value_type)?.0))).collect::<Result<_, String>>()?;
     let more = if params.is_empty() { String::new() } else { format!(",{}", params.join(",")) };
-    Ok(format!("inline {} {name}({}{more})", ty(ret.value_type)?.0, pointers(family).0))
+    let qualifier = if hot { "UKL_INLINE" } else { "UKL_COLD" };
+    Ok(format!("{qualifier} {} {name}({}{more})", ty(ret.value_type)?.0, pointers(family).0))
 }
 
 fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String, String>, family: Family) -> Result<(), String> {
@@ -228,13 +192,13 @@ fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String
     let mut declared = std::collections::BTreeMap::new();
     for b in f.layout.blocks() {
         for &v in dfg.block_params(b) {
-            declared.insert(v.as_u32(), if low.contains(&v) { "uint" } else { ty(dfg.value_type(v))?.0 });
+            declared.insert(v.as_u32(), if low.contains(&v) { "uint32_t" } else { ty(dfg.value_type(v))?.0 });
         }
         for &v in f.layout.block_insts(b).flat_map(|i| dfg.inst_results(i)) {
             if read_in.get(&v).is_none_or(|blocks| blocks.iter().all(|&r| r == b)) {
                 scoped.insert(v);
             } else {
-                declared.insert(v.as_u32(), if low.contains(&v) { "uint" } else { ty(dfg.value_type(v))?.0 });
+                declared.insert(v.as_u32(), if low.contains(&v) { "uint32_t" } else { ty(dfg.value_type(v))?.0 });
             }
         }
     }
@@ -262,7 +226,7 @@ fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String
             let line = instruction(f, inst, &name, named, &low, family)?;
             match dfg.inst_results(inst).first() {
                 Some(&r) if scoped.contains(&r) => {
-                    let t = if low.contains(&r) { "uint" } else { ty(dfg.value_type(r))?.0 };
+                    let t = if low.contains(&r) { "uint32_t" } else { ty(dfg.value_type(r))?.0 };
                     writeln!(out, "{indent}{t} {line}").unwrap();
                 }
                 _ => writeln!(out, "{indent}{line}").unwrap(),
@@ -280,7 +244,7 @@ fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String
             return Ok(());
         }
     }
-    writeln!(out, " uint b={};\n while(true){{switch(b){{", entry.as_u32()).unwrap();
+    writeln!(out, " uint32_t b={};\n while(true){{switch(b){{", entry.as_u32()).unwrap();
     for block in f.layout.blocks() {
         writeln!(out, " case {}u:{{", block.as_u32()).unwrap();
         straight(out, block, "  ")?;
@@ -452,7 +416,7 @@ impl Shape {
         {
             let h = block.as_u32();
             if exits.len() > 1 {
-                writeln!(out, "{indent}uint e{h}=0u;").unwrap();
+                writeln!(out, "{indent}uint32_t e{h}=0u;").unwrap();
             }
             writeln!(out, "{indent}while(true){{").unwrap();
             loops.push((block, exits.clone()));
@@ -575,7 +539,7 @@ fn assign(f: &ir::Function, call: &ir::BlockCall, name: &dyn Fn(ir::Value) -> St
         .collect::<Result<_, String>>()?;
     let mut s = String::from("{");
     for (k, (p, a)) in params.iter().zip(&args).enumerate() {
-        write!(s, "{} t{k}={a};", if low.contains(p) { "uint" } else { ty(dfg.value_type(*p))?.0 }).unwrap();
+        write!(s, "{} t{k}={a};", if low.contains(p) { "uint32_t" } else { ty(dfg.value_type(*p))?.0 }).unwrap();
     }
     for (k, p) in params.iter().enumerate() {
         write!(s, "{}=t{k};", name(*p)).unwrap();
@@ -603,7 +567,7 @@ fn cond(cc: IntCC, a: &str, b: &str, u: &str, s: &str) -> String {
         IntCC::SignedGreaterThanOrEqual => (">=", true),
     };
     let t = if signed { s } else { u };
-    format!("uchar(({t})({a}){op}({t})({b}))")
+    format!("uint8_t(({t})({a}){op}({t})({b}))")
 }
 
 fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> String, named: &dyn Fn(u32) -> Result<String, String>, low: &std::collections::HashSet<ir::Value>, family: Family) -> Result<String, String> {
@@ -636,14 +600,14 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
     let args: Vec<String> = dfg
         .inst_args(inst)
         .iter()
-        .map(|&v| if result_low && modular && !low.contains(&dfg.resolve_aliases(v)) && dfg.value_type(v) == types::I64 { format!("uint({})", name(v)) } else { name(v) })
+        .map(|&v| if result_low && modular && !low.contains(&dfg.resolve_aliases(v)) && dfg.value_type(v) == types::I64 { format!("uint32_t({})", name(v)) } else { name(v) })
         .collect();
     let r = results.first().map(|&v| name(v));
     let rt = results.first().map(|&v| dfg.value_type(v));
     let at = dfg.inst_args(inst).first().map(|&v| dfg.value_type(v));
     let set = |e: String| -> String { format!("{}={e};", r.clone().expect("a result")) };
-    let (u, s) = if result_low { ("uint", "int") } else { rt.and_then(|t| ty(t).ok()).unwrap_or(("ulong", "long")) };
-    let (au, as_) = at.and_then(|t| ty(t).ok()).unwrap_or(("ulong", "long"));
+    let (u, s) = if result_low { ("uint32_t", "int32_t") } else { rt.and_then(|t| ty(t).ok()).unwrap_or(("uint64_t", "int64_t")) };
+    let (au, as_) = at.and_then(|t| ty(t).ok()).unwrap_or(("uint64_t", "int64_t"));
     let bits = if result_low { 32 } else { rt.map_or(64, |t| t.bits()) };
     let imm = || -> Result<i64, String> {
         match data {
@@ -657,9 +621,9 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         let t = if signed { s } else { u };
         if result_low && op == "<<" {
             // The low word of a 64-bit left shift: 0 past 31.
-            return format!("((uint({b})&63u)<32u?uint({a})<<(uint({b})&31u):0u)");
+            return format!("((uint32_t({b})&63u)<32u?uint32_t({a})<<(uint32_t({b})&31u):0u)");
         }
-        format!("{u}(({t})({a}){op}(uint({b})&{}u))", bits - 1)
+        format!("{u}(({t})({a}){op}(uint32_t({b})&{}u))", bits - 1)
     };
     let addr = |p: &str| -> String {
         let off = data.load_store_offset().unwrap_or(0);
@@ -667,15 +631,15 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         if off == 0 {
             p.to_string()
         } else if address_low {
-            format!("({p}+uint({}u))", off as i64 as u64 as u32)
+            format!("({p}+uint32_t({}u))", off as i64 as u64 as u32)
         } else {
-            format!("({p}+ulong(long({off})))")
+            format!("({p}+uint64_t(int64_t({off})))")
         }
     };
     // A cache's address (decision 0353 step 4b): 64 bits, its offset added as a signed one.
     let wide_addr = |p: &str| -> String {
         let off = data.load_store_offset().unwrap_or(0);
-        if off == 0 { format!("ulong({p})") } else { format!("(ulong({p})+ulong(long({off})))") }
+        if off == 0 { format!("uint64_t({p})") } else { format!("(uint64_t({p})+uint64_t(int64_t({off})))") }
     };
     Ok(match op {
         Opcode::Iconst => set(k(imm()?)),
@@ -692,7 +656,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Ushr | Opcode::Sshr if result_low => {
             let (wu, ws) = ty(at.unwrap_or(types::I64))?;
             let t = if op == Opcode::Sshr { ws } else { wu };
-            set(format!("uint(({t})({}){}(uint({})&63u))", name(dfg.inst_args(inst)[0]), ">>", args[1]))
+            set(format!("uint32_t(({t})({}){}(uint32_t({})&63u))", name(dfg.inst_args(inst)[0]), ">>", args[1]))
         }
         Opcode::Ushr => set(shift(&args[0], &args[1], ">>", false)),
         Opcode::Sshr => set(shift(&args[0], &args[1], ">>", true)),
@@ -706,17 +670,24 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::UshrImm | Opcode::SshrImm if result_low => {
             let (wu, ws) = ty(at.unwrap_or(types::I64))?;
             let t = if op == Opcode::SshrImm { ws } else { wu };
-            set(format!("uint(({t})({})>>{}u)", name(dfg.inst_args(inst)[0]), imm()? as u64 & 63))
+            set(format!("uint32_t(({t})({})>>{}u)", name(dfg.inst_args(inst)[0]), imm()? as u64 & 63))
         }
         Opcode::UshrImm => set(shift(&args[0], &(imm()? as u64 & 63).to_string(), ">>", false)),
         Opcode::SshrImm => set(shift(&args[0], &(imm()? as u64 & 63).to_string(), ">>", true)),
-        Opcode::Clz => set(format!("{u}(clz({}))", args[0])),
-        Opcode::Popcnt => set(format!("{u}(popcount({}))", args[0])),
-        Opcode::Ctz => set(format!("{u}(ctz({}))", args[0])),
-        Opcode::Umin => set(format!("min({},{})", args[0], args[1])),
-        Opcode::Umax => set(format!("max({},{})", args[0], args[1])),
-        Opcode::Smin => set(format!("{u}(min({s}({}),{s}({})))", args[0], args[1])),
-        Opcode::Smax => set(format!("{u}(max({s}({}),{s}({})))", args[0], args[1])),
+        // The library's bit counts, by the operand's width.
+        Opcode::Clz | Opcode::Popcnt | Opcode::Ctz => {
+            let f = match op {
+                Opcode::Clz => "clz",
+                Opcode::Popcnt => "popcount",
+                _ => "ctz",
+            };
+            let w = if at == Some(types::I64) { 64 } else { 32 };
+            set(format!("{u}(ukl_{f}{w}({}))", args[0]))
+        }
+        Opcode::Umin => set(format!("ukl_min({},{})", args[0], args[1])),
+        Opcode::Umax => set(format!("ukl_max({},{})", args[0], args[1])),
+        Opcode::Smin => set(format!("{u}(ukl_min({s}({}),{s}({})))", args[0], args[1])),
+        Opcode::Smax => set(format!("{u}(ukl_max({s}({}),{s}({})))", args[0], args[1])),
         Opcode::Icmp | Opcode::IcmpImm => {
             let cc = match data {
                 InstructionData::IntCompare { cond, .. } | InstructionData::IntCompareImm { cond, .. } => *cond,
@@ -743,12 +714,12 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             if aligned && family != Family::Tape {
                 // The block's own words, at their alignment.
                 let t = match size {
-                    8 => "uchar",
-                    16 => "ushort",
-                    32 => "uint",
-                    _ => "ulong",
+                    8 => "uint8_t",
+                    16 => "uint16_t",
+                    32 => "uint32_t",
+                    _ => "uint64_t",
                 };
-                set(format!("{u}(*(device const {t}*)(t+{}))", addr(&args[0])))
+                set(format!("{u}(*(UKL_GLOBAL const {t}*)(t+{}))", addr(&args[0])))
             } else if aligned {
                 // The view: its u32 fields.
                 if size != 32 {
@@ -757,12 +728,12 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 set(format!("{u}(clif_view(v,{}))", addr(&args[0])))
             } else if !readonly {
                 // A cache's (decision 0353 step 4b), which other threads write: coherent across the device.
-                set(format!("{u}(clif_c{size}(t,{}))", wide_addr(&args[0])))
+                set(format!("{u}(ukl_ldc_u{size}(clif_coherent(t),{}))", wide_addr(&args[0])))
             } else if result_low && size == 64 {
                 // The low word of a little-endian 64-bit load is the 32-bit load at its address.
-                set(format!("uint(clif_u32(t,{}))", addr(&args[0])))
+                set(format!("uint32_t(ukl_ld_u32(t,{}))", addr(&args[0])))
             } else {
-                set(format!("{u}(clif_u{size}(t,{}))", addr(&args[0])))
+                set(format!("{u}(ukl_ld_u{size}(t,{}))", addr(&args[0])))
             }
         }
         // A cache's stores, atomics and fences (decision 0353 step 4b): of the tape's family, at offsets from `t`.
@@ -773,16 +744,16 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 Opcode::Istore32 => 32,
                 _ => dfg.value_type(dfg.inst_args(inst)[0]).bits(),
             };
-            format!("clif_st{bits}(t,{},ulong({}));", wide_addr(&args[1]), args[0])
+            format!("ukl_stc_u{bits}(clif_written(t),{},uint64_t({}));", wide_addr(&args[1]), args[0])
         }
-        Opcode::AtomicLoad => set(format!("clif_ald(t,{})", wide_addr(&args[0]))),
-        Opcode::AtomicStore => format!("clif_ast(t,{},uint({}));", wide_addr(&args[1]), args[0]),
+        Opcode::AtomicLoad => set(format!("ukl_atomic_load_at(t,{})", wide_addr(&args[0]))),
+        Opcode::AtomicStore => format!("ukl_atomic_store_at(t,{},uint32_t({}));", wide_addr(&args[1]), args[0]),
         Opcode::AtomicRmw => {
             let InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Add, .. } = data else { return Err("an atomic other than an add".into()) };
-            set(format!("clif_aadd(t,{},uint({}))", wide_addr(&args[0]), args[1]))
+            set(format!("ukl_atomic_add_at(t,{},uint32_t({}))", wide_addr(&args[0]), args[1]))
         }
-        Opcode::AtomicCas => set(format!("clif_acas(t,{},uint({}),uint({}))", wide_addr(&args[0]), args[1], args[2])),
-        Opcode::Fence => "clif_fence();".to_owned(),
+        Opcode::AtomicCas => set(format!("ukl_atomic_cas_at(t,{},uint32_t({}),uint32_t({}))", wide_addr(&args[0]), args[1], args[2])),
+        Opcode::Fence => "ukl_fence_device();".to_owned(),
         Opcode::Call => {
             let InstructionData::Call { func_ref, .. } = data else { return Err("a call of no function".into()) };
             let callee = match &dfg.ext_funcs[*func_ref].name {

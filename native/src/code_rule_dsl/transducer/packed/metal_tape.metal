@@ -19,7 +19,7 @@ constant uint TAPE_NONE=0xffffffffu;
 // A document's first byte in the batch's chunk block: its parts are offsets from it.
 inline device const uchar* tape_doc(device const uchar* chunk,DocView d){return chunk+d.at;}
 
-// ---- the reads (decision 0310): `metal_tape_reads.metal`, written from the tape's reads in CLIF, which the CPU's
+// ---- the reads (decision 0310): `<ukl/reads/tape.h>`, written from the tape's reads in CLIF, which the CPU's
 // JIT and the tape crate read through too; each takes the document's first byte and its view.
 #define TAPE_READ(C,D) tape_doc(C,D),(thread const uint*)&(D)
 inline uint tape_size(device const uchar* s,DocView d,uint i){return clif_tape_size(TAPE_READ(s,d),i);}

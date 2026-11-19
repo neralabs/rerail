@@ -200,7 +200,7 @@ fn the_device_reads_every_format_as_the_document_does() {
     use crate::code_rule_dsl::tape::formats::Format;
     use crate::code_rule_dsl::transducer::packed::metal_backend::{MappedBuffer, pipeline_named};
     use metal::MTLSize;
-    let tape = format!("{}{}{}", msl(), include_str!("../../transducer/packed/metal_tape_reads.metal"), include_str!("../../transducer/packed/metal_tape.metal"));
+    let tape = format!("{}{}{}", msl(), "#include <ukl/reads/tape.h>\n", include_str!("../../transducer/packed/metal_tape.metal"));
     const FIELDS: usize = 14;
     const KERNEL: &str = r#"
 inline uint tape_global(DocView d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}

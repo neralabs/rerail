@@ -11,7 +11,7 @@ use sha2::{Digest as _, Sha256};
 use crate::code_rule_dsl::transducer::packed::metal_backend::{MappedBuffer, pipeline_named};
 use metal::MTLSize;
 
-const TAPE: &str = concat!(include_str!("metal_tape_reads.metal"), include_str!("metal_tape.metal"));
+const TAPE: &str = concat!("#include <ukl/reads/tape.h>\n", include_str!("metal_tape.metal"));
 const FIELDS: usize = 12;
 
 const KERNEL: &str = r#"

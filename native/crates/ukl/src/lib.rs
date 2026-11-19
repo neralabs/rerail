@@ -57,7 +57,46 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/radix.h", include_str!("../lib/ukl/radix.h")),
     ("ukl/hash.h", include_str!("../lib/ukl/hash.h")),
     ("ukl/workqueue.h", include_str!("../lib/ukl/workqueue.h")),
+    ("ukl/clif.h", include_str!("../lib/ukl/clif.h")),
+    // The reads written once in CLIF (decision 0310), as `rerail_clif::ukl` writes them: generated, held here so
+    // that every kernel finds them as it finds the rest of the library (`rerail-clif`'s tests write them again).
+    ("ukl/reads/tape.h", include_str!("../lib/ukl/reads/tape.h")),
+    ("ukl/reads/tape_z.h", include_str!("../lib/ukl/reads/tape_z.h")),
+    ("ukl/reads/relation.h", include_str!("../lib/ukl/reads/relation.h")),
+    ("ukl/reads/ids.h", include_str!("../lib/ukl/reads/ids.h")),
+    ("ukl/reads/view.h", include_str!("../lib/ukl/reads/view.h")),
 ];
+
+/// The Metal front end's own headers, which it includes in every source itself: empty when a source that names them
+/// (a hand-written MSL kernel that takes the library's headers) is preprocessed ahead of it.
+const METAL_OWN: &[&str] = &["metal_stdlib", "metal_atomic"];
+
+/// A fingerprint of everything a kernel can include from here (the shims and the library): a kernel's text names its
+/// headers, not their contents, so a store of compiled kernels keys a kernel by its text and this.
+pub fn fingerprint() -> u64 {
+    // FNV-1a over each carried file's name and text.
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for (name, text) in HEADERS.iter().chain(LIBRARY) {
+        for b in name.bytes().chain([0]).chain(text.bytes()).chain([0]) {
+            h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    h
+}
+
+/// Whether `text` takes UKL's library (`#include <ukl/...>` or `<ukl>`), so it must be preprocessed before its
+/// backend's compiler sees it.
+pub fn takes_library(text: &str) -> bool {
+    text.contains("#include <ukl")
+}
+
+/// A Metal source that takes the library (`takes_library`), preprocessed for the Metal front end: the library's
+/// headers in place, the source's own text and macros as written. A hand-written MSL kernel includes the generated
+/// reads so (decision 0400 §3.3) until it is UKL itself.
+pub fn metal_source(name: &str, text: &str) -> Result<String, Error> {
+    let path = format!("/<kernels>/{name}");
+    Preprocess::new(Backend::Metal { version: 310 }).file(&path, text).run(&path)
+}
 
 /// A GPU backend a kernel is preprocessed for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -181,6 +220,9 @@ impl Preprocess {
         d.push((format!("{ROOT}/mldb/block/ukl"), DirKind::Angle));
         d.push((format!("{ROOT}/mldb/builtin/{}/ukl", self.backend.dir()), DirKind::Angle));
         d.push((format!("{ROOT}/lib"), DirKind::Angle));
+        if matches!(self.backend, Backend::Metal { .. }) {
+            d.push((format!("{ROOT}/metal"), DirKind::Angle));
+        }
         d
     }
 
@@ -196,12 +238,16 @@ impl Preprocess {
             .chain(LIBRARY.iter().map(|(p, t)| (format!("{ROOT}/lib/{p}"), *t)))
             .collect();
         let files = &self.files;
+        let metal = matches!(self.backend, Backend::Metal { .. });
         let read = |p: &str| -> Option<Vec<u8>> {
             if let Some(t) = files.get(p) {
                 return Some(t.clone());
             }
             if let Some(t) = carried.get(p) {
                 return Some(t.as_bytes().to_vec());
+            }
+            if metal && p.strip_prefix(ROOT).and_then(|n| n.strip_prefix("/metal/")).is_some_and(|n| METAL_OWN.contains(&n)) {
+                return Some(Vec::new());
             }
             if p.starts_with(ROOT) {
                 return None;

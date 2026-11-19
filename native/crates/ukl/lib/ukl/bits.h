@@ -6,6 +6,11 @@
 // "No such position": a search that finds nothing.
 #define UKL_NONE 0xffffffffu
 
+// The lesser and the greater of two values of one type (the backend's `min` and `max`, which not every backend has
+// for every width).
+template <typename T> UKL_INLINE T ukl_min(T a, T b) { return a < b ? a : b; }
+template <typename T> UKL_INLINE T ukl_max(T a, T b) { return a < b ? b : a; }
+
 // The `n` lowest bits set (all of them from 32 or 64 up).
 UKL_INLINE uint32_t ukl_mask32(uint32_t n) { return n >= 32u ? 0xffffffffu : (1u << n) - 1u; }
 UKL_INLINE uint64_t ukl_mask64(uint32_t n) { return n >= 64u ? ~(uint64_t)0 : (((uint64_t)1) << n) - 1u; }

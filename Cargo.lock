@@ -3160,6 +3160,7 @@ dependencies = [
  "rerail-blocks",
  "rerail-forest",
  "rerail-gpu",
+ "rerail-ukl",
  "rustc-hash",
  "sha2 0.10.9",
 ]
@@ -3172,6 +3173,7 @@ dependencies = [
  "libc",
  "metal",
  "rayon",
+ "rerail-ukl",
 ]
 
 [[package]]
@@ -4645,6 +4647,7 @@ dependencies = [
  "lz4-sys",
  "memchr",
  "rerail-clif",
+ "rerail-gpu",
  "rerail-simd8",
  "sha2 0.10.9",
 ]

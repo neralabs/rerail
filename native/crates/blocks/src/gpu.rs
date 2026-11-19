@@ -44,7 +44,7 @@ constant ulong NONE = 0xFFFFFFFFFFFFFFFFul;
 constant ulong SEED = 0x243F6A8885A308D3ul;
 inline ulong mix(ulong h, long v) { h ^= ulong(v); h *= 0x9E3779B97F4A7C15ul; return h ^ (h >> 29); }
 
-// A relation's reads are written once in CLIF (`relation_reads.metal`, generated: decision 0325); these name them as
+// A relation's reads are written once in CLIF (`<ukl/reads/relation.h>`, generated: decision 0325); these name them as
 // the host's are. A read takes a base and the descriptor's offset from it: here the descriptor itself, at 0.
 inline device const uchar* desc(device const void* p) { return (device const uchar*)p; }
 inline long rows_get(device const Rows* r, uint i, uint c) { return long(clif_rows_get(desc(r), 0ul, i, c)); }
@@ -152,10 +152,12 @@ pub struct JoinRun {
 impl Gpu {
     /// The join kernels on `device`, dispatched on `queue`: the process's one device and queue (decision 0100 §2,
     /// `rerail_metal::device()`/`queue()`), which this crate, below their owner, does not make.
-    pub fn on(device: Device, queue: CommandQueue) -> Result<Gpu, String> {
+    /// `msl` is `source()` preprocessed for Metal (`rerail_ukl::metal_source`: it includes the relation's reads,
+    /// `<ukl/reads/relation.h>`), which this crate, below the preprocessor, does not do.
+    pub fn on(device: Device, queue: CommandQueue, msl: &str) -> Result<Gpu, String> {
         // A kernel that does not compile is fatal (decision 0382).
         let fatal = |name: &str, what: &str, error: String| -> ! { panic!("Metal: the {what} of `{name}` does not compile (decision 0382: fatal): {error}") };
-        let lib = device.new_library_with_source(&source(), &CompileOptions::new()).unwrap_or_else(|e| fatal("join", "library", e));
+        let lib = device.new_library_with_source(msl, &CompileOptions::new()).unwrap_or_else(|e| fatal("join", "library", e));
         let pipe = |name: &str| -> ComputePipelineState {
             let f = lib.get_function(name, None).unwrap_or_else(|e| fatal(name, "function", e));
             device.new_compute_pipeline_state_with_function(&f).unwrap_or_else(|e| fatal(name, "pipeline", e))

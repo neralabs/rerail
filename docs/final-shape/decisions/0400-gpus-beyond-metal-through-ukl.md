@@ -624,6 +624,58 @@ Progress (2026-11-18):
     The kernels already written move onto the library in steps 6 and 7: the generated tape reads call `memory.h`,
     the 16z decoder calls `lz4.h`, and `accel`'s scan, sort and histogram are the library's calls.
 
+- **Step 6: the reads' backend writes UKL, done** (2026-11-18).
+  - **The emitter.** `clif/src/msl.rs` is `clif/src/ukl.rs`. Its structure is unchanged: structured bodies, the
+    32-bit values, the switch form. What changed is what it writes:
+    - UKL's types and qualifiers (`uint32_t`, `UKL_GLOBAL`, `UKL_INLINE`) in place of MSL's;
+    - every load, store and atomic as the library's call (`ukl_ld_*`, `ukl_ldc_*`, `ukl_stc_*`, `ukl_atomic_*_at`,
+      `ukl_fence_device`), and bit counts and minimums as `ukl_clz32`, `ukl_min` and so on. The reads' own helper
+      block is gone;
+    - a read marked cold (0310's policy: `tape_f16_side`, `tape_parent`, `tape_z_block`, two of the numbering's) as
+      `UKL_COLD`. That is a call on CUDA (`__noinline__`) and `static inline` on Metal, as before. Every read forced
+      inline (CUDA's `UKL_INLINE`) put 16z's block decode into each of a kernel's 23 calls: NVRTC ran past 500 s and
+      3 GB on the conformance kernel. With the cold reads called it takes 12 s on the V100.
+    - The structs the reads are over (`TapeView`, `ViewRow`, `ViewDir`, `ViewDoc`, `Run`, `Numbering`) are written
+      in UKL's types too (`view::ukl`, `view_reads::ukl`, `ids::ukl`).
+  - **Where the reads are held: the library.** The five generated files are `<ukl/reads/tape.h>`, `tape_z.h`,
+    `relation.h`, `ids.h` and `view.h`, in `native/crates/ukl/lib/ukl/reads/`, carried by `rerail-ukl` and written
+    again by `rerail-clif`'s tests (`RERAIL_WRITE_READS=1`) as the `.metal` files were. `view.h` includes `tape_z.h`
+    and `ids.h`, whose reads it calls; `tape.h` and `tape_z.h` are one set of functions, and a kernel that includes
+    both is refused. The reads' hooks (`CLIF_VIEW_SPACE`, `clif_view`) are in `ukl/clif.h`, which a kernel defines
+    first where it needs another: the join kernels read the view in device memory, the label passes make the format
+    a constant. Every library header, the reads included, preprocesses as clang does on Metal, sm_121 and sm_70.
+  - **The hand-written MSL takes them by `#include`** until step 7 ports it: the join kernels, the label passes, the
+    program backend, `rerail-blocks`' and `accel`'s join kernels, and the Metal tests. A source that includes
+    `<ukl/...>` is preprocessed for Metal in `accel`'s one path to the front end (`gpu::kernels::msl`, which
+    `library` and `ship` call). The Metal front end's own headers (`<metal_stdlib>`, `<metal_atomic>`) are empty to
+    the preprocessor: the front end includes them itself. The kernel store's key for such a source adds the
+    library's fingerprint (`rerail_ukl::fingerprint`), because the source names its headers, not their text, so
+    changed reads would otherwise come back from stale archives. `rerail-blocks` sits below the preprocessor (through
+    the C lexer and the tape crate), so its `Gpu::on` takes the preprocessed text from its caller.
+  - **The gate, 0310 §4's test per backend** (`rerail-tape-format`'s
+    `the_device_reads_read_every_node_as_the_crate_does`): every tape read (size, end, code, start, end, parent,
+    next, next in parent, first child, child count, children 0 to 12) of every node equals the crate's own, compiled
+    for the process's GPU:
+    - format 16 with every side list in use, through `tape.h` and through `tape_z.h`;
+    - 16z through a cache that the device's threads share, sized for the tape, through `tape_z.h`;
+    - format 15, through both headers.
+
+    It passes on Metal (Mac) and on CUDA (a V100, sm_70). The GB10s were off the network for this step. The engine's
+    Metal tests of each family pass on the new headers too: the tape's (`the_device_reads_resident_tapes_...`,
+    `the_device_reads_every_format_...`), the numbering's (`the_kernels_id_reads_are_the_hosts`), the relation's
+    (`a_sources_rows_in_their_block_are_read_in_place`, `column_statistics_...`), the join kernels with all four
+    (`a_strata_seeds_on_the_device_...`) and the label kernels (`the_label_kernels_compile_for_every_format`).
+  - **Found on the way:**
+    - `the_view_reads_are_the_hosts_rows` times out cold, with the old MSL as with the new. Its kernel's Metal back
+      end takes 412 s with the old reads and 387 s with the new, measured with no shader cache. It passes only when
+      the system's shader cache already holds the kernel. That is the view reads' code size in one kernel, and it
+      is still open.
+    - The engine's and `rerail-device-metal`'s test targets did not compile on this branch. Five calls predated
+      `in_format`'s `source` argument and `DocTape::new`'s, and a glob re-export missed a `pub(super)` function.
+      They are fixed.
+    - `rerail-blocks` did not build on Linux (`mincore`'s dirty bits are macOS's), and so neither did the tape
+      crate's tests, which CUDA's gate needs. On Linux one `msync` writes the pages back.
+
 Steps 1, 2 and E1 are small and settle the bets the rest rests on: the preprocessor, the shim, and in-place
 bandwidth. Step 3 can run beside them.
 

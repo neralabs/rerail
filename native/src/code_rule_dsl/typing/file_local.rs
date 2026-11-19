@@ -401,7 +401,7 @@ fn close_under<T: Ord + Clone>(vars: &mut std::collections::BTreeSet<T>, equal: 
     }
 }
 
-pub(super) fn push_equal_columns() -> bool {
+pub fn push_equal_columns() -> bool {
     std::env::var("RERAIL_PUSH_EQUAL_COLUMNS").map_or(true, |value| value != "off")
 }
 

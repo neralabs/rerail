@@ -1,5 +1,5 @@
 //! The views' reads as CLIF functions, written once (decision 0353 step 4c): a view's row is a read of the tape and
-//! of its projection's numbering, never a relation made of it. The kernels (the MSL backend: `view_reads.metal`) and
+//! of its projection's numbering, never a relation made of it. The kernels (the UKL backend: `<ukl/reads/view.h>`) and
 //! the JIT read the views through them; the host's `Viewed` answers the same rows, which a test checks.
 //!
 //! A read takes the document's entry (`ViewDoc`, in its batch's block beside the projection's numbering, which it
@@ -68,7 +68,7 @@ pub const PLACED_AT: u32 = 2;
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ViewRow {
     pub entry: u64,
-    /// Device addresses: `device const uchar*` in the kernels.
+    /// Device addresses: `UKL_GLOBAL const uint8_t*` in the kernels.
     pub tape: u64,
     pub lines: u64,
     pub rows: [u32; VIEWS.len()],
@@ -126,33 +126,33 @@ pub const CORE_COLUMNS: u32 = 3;
 pub const LINE_COLUMNS: u32 = 2;
 pub const LOC_COLUMNS: u32 = 2;
 
-/// The entry's MSL: `struct ViewDoc`, each field's offset and the size asserted against this definition's.
+/// The entry in UKL: `struct ViewDoc`, each field's offset and the size asserted against this definition's.
 #[cfg(feature = "ir")]
-pub fn msl() -> String {
+pub fn ukl() -> String {
     use std::mem::offset_of;
     let fields: [(&str, &str, usize); 18] = [
-        ("uint", "key", offset_of!(ViewDoc, key)),
-        ("uint", "tag", offset_of!(ViewDoc, tag)),
-        ("uint", "preorder", offset_of!(ViewDoc, preorder)),
-        ("uint", "nodes", offset_of!(ViewDoc, nodes)),
+        ("uint32_t", "key", offset_of!(ViewDoc, key)),
+        ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
+        ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
+        ("uint32_t", "nodes", offset_of!(ViewDoc, nodes)),
         ("Run", "numbering", offset_of!(ViewDoc, numbering)),
         ("Run", "kinds", offset_of!(ViewDoc, kinds)),
         ("Run", "fields", offset_of!(ViewDoc, fields)),
         ("Run", "places", offset_of!(ViewDoc, places)),
-        ("uint", "tokens", offset_of!(ViewDoc, tokens)),
-        ("uint", "own_text", offset_of!(ViewDoc, own_text)),
-        ("uint", "ends", offset_of!(ViewDoc, ends)),
-        ("uint", "source_len", offset_of!(ViewDoc, source_len)),
+        ("uint32_t", "tokens", offset_of!(ViewDoc, tokens)),
+        ("uint32_t", "own_text", offset_of!(ViewDoc, own_text)),
+        ("uint32_t", "ends", offset_of!(ViewDoc, ends)),
+        ("uint32_t", "source_len", offset_of!(ViewDoc, source_len)),
         ("Run", "lines", offset_of!(ViewDoc, lines)),
-        ("uint", "placement", offset_of!(ViewDoc, placement)),
-        ("uint", "pad", offset_of!(ViewDoc, pad)),
-        ("long", "delta", offset_of!(ViewDoc, delta)),
-        ("uint", "within_lo", offset_of!(ViewDoc, within_lo)),
-        ("uint", "within_hi", offset_of!(ViewDoc, within_hi)),
+        ("uint32_t", "placement", offset_of!(ViewDoc, placement)),
+        ("uint32_t", "pad", offset_of!(ViewDoc, pad)),
+        ("int64_t", "delta", offset_of!(ViewDoc, delta)),
+        ("uint32_t", "within_lo", offset_of!(ViewDoc, within_lo)),
+        ("uint32_t", "within_hi", offset_of!(ViewDoc, within_hi)),
     ];
     let mut s = String::from(
-        "struct ViewRow {\n    ulong entry;\n    device const uchar* tape;\n    device const uchar* lines;\n    uint rows[9];\n    uint view[29];\n};\n\
-         struct ViewDir {\n    device const uchar* chunk;\n    uint ndocs;\n    uint pad;\n    device const ViewRow* rows;\n};\n",
+        "struct ViewRow {\n    uint64_t entry;\n    UKL_GLOBAL const uint8_t* tape;\n    UKL_GLOBAL const uint8_t* lines;\n    uint32_t rows[9];\n    uint32_t view[29];\n};\n\
+         struct ViewDir {\n    UKL_GLOBAL const uint8_t* chunk;\n    uint32_t ndocs;\n    uint32_t pad;\n    UKL_GLOBAL const ViewRow* rows;\n};\n",
     );
     s += &format!("static_assert(sizeof(ViewRow) == {}, \"ViewRow: size\");\n", std::mem::size_of::<ViewRow>());
     s += &format!("static_assert(__builtin_offsetof(ViewRow, view) == {}, \"ViewRow.view\");\n", std::mem::offset_of!(ViewRow, view));

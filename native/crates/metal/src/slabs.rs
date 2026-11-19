@@ -70,7 +70,7 @@ const _: () = assert!(std::mem::size_of::<DocView>() == 116);
 
 /// The MSL of `DocView`, for the kernels that read documents in place (`metal_tape.metal`).
 pub fn msl() -> String {
-    rerail_clif::view::msl()
+    rerail_clif::view::ukl()
 }
 
 /// A slab: a chunk block over a lease of the pool, and its identity. Its rooms are the block's

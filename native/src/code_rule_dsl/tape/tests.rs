@@ -5166,7 +5166,7 @@ fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
     let (_, doc, _, _) = fixture(&source, GrammarDialect::Python);
     let grammar = Arc::new(Grammar::new(GrammarDialect::Python).unwrap());
     for format in Format::ALL {
-        let bytes = doc.doc_tape().image().clone().in_format(format).to_bytes().unwrap();
+        let bytes = doc.doc_tape().image().clone().in_format(format, source.as_bytes()).to_bytes().unwrap();
         let own = TapeImage::from_bytes(&bytes, &grammar).unwrap();
         let home = super::placed::place(bytes.len(), |out| {
             out.copy_from_slice(&bytes);
@@ -5178,7 +5178,7 @@ fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
         #[cfg(target_os = "macos")]
         assert_eq!(placed.placed(), rerail_metal::METAL_DEVICE.is_some(), "{format:?}: in a slab's room where there is a device");
         assert_eq!(placed.to_bytes().unwrap(), bytes, "{format:?}: the bytes as stored");
-        let (own, placed) = (super::formats::DocTape::new(Arc::new(own)), super::formats::DocTape::new(Arc::new(placed)));
+        let (own, placed) = (super::formats::DocTape::new(Arc::new(own), Arc::new(source.clone())), super::formats::DocTape::new(Arc::new(placed), Arc::new(source.clone())));
         let (a, b) = (own.tape(), placed.tape());
         rerail_tape_format::with_tape!(a, |a| {
             rerail_tape_format::with_tape!(b, |b| {

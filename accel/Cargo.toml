@@ -28,6 +28,9 @@ metal = "0.33.0"
 objc = "0.2.7"
 block = "0.1.6"
 core-foundation-sys = "0.8.7"
+# A kernel that takes UKL's library (the reads written once in CLIF) preprocessed before the Metal front end
+# (`gpu::kernels::msl`, decision 0400 §3.3).
+rerail-ukl = { path = "../native/crates/ukl" }
 
 [dev-dependencies]
 # The UKL library's device-wide calls, timed against the lane's own kernels (decision 0400 step 5's speed gate).

@@ -871,7 +871,7 @@ fn scratch_rows(plan: &Plan<'_>) -> usize {
 
 /// The device's tape view (decision 0032), which the label and pattern kernels read: the
 /// document table's entry as generated (`slabs::msl`, decisions 0289 §4 and 0310), the reads written once in CLIF
-/// (`metal_tape_reads.metal`), then the readers.
+/// (`<ukl/reads/tape.h>`), then the readers.
 ///
 /// The batch's tape format is function constant 0 (`tape_format`, 0 for a mixed batch): each view load of the format
 /// field reads it, so a batch of one format runs reads without the other format's branches (t41: label_micro 388 to
@@ -881,7 +881,7 @@ static TAPE_VIEW: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         "#include <metal_stdlib>\nusing namespace metal;\n{}constant uint tape_format [[function_constant(0)]];\n#define clif_view(v,a) ((tape_format!=0u&&(a)=={}u)?tape_format:(v)[(a)/4u])\n{}{}",
         crate::code_rule_dsl::residency::slabs::msl(),
         std::mem::offset_of!(crate::code_rule_dsl::residency::slabs::DocView, format),
-        include_str!("metal_tape_reads.metal"),
+        "#include <ukl/reads/tape.h>\n",
         include_str!("metal_tape.metal")
     )
 });
