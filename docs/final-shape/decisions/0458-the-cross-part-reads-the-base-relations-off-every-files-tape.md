@@ -85,11 +85,25 @@ Each has its test before the code that meets it.
   `Minus` come from the changed files' new documents and their old ones, made from the old sources and tapes read
   before the first wave (`old_inputs`). The kept route's base-relation patching (`patch_owners`' `holders`
   `None`) went with it.
-- **Not yet:** a session (0077) still digests a base relation by its rows (`retain::kept_source`), and holds no
-  corpus batch from run to run; the memo entries still keep base rows, and the keep still writes the base inputs'
-  granules (step 4).
+- **Step 4, the kept granules** (2026-11-19). A base relation is kept as its documents' digest alone: a
+  digest-only entry (`#digest-only`, one row, no granules), and beside them one documents' table for the cross part
+  (`#base-documents`: each file's path atom, document key and content). Its digest is its documents' (their keys and
+  `core::digest`s), taken where the corpus batch is made, never its rows'. The next run compares the table with its
+  files before its first wave (contents not stored when it was written found by their digests, as the keeper's are),
+  reads each changed or gone file's old source, tape and entry there, and makes its old documents once the chunks are
+  done: on every route, not the kept route alone. Its old version, which the maintain mode reads beside `Minus` and
+  `Plus` (0364's `Old`), is `input_delta::Before`: the batch's rows but the changed documents' (found through the
+  batch's index of its first column), then the old documents' rows, read where they lie. The table is written with
+  the digests it is the documents of, when one changes. On the way: a gone file had no `Minus` on the kept route
+  (its old document was never made).
+- **Not yet:** the memo entries still keep base rows (copy 2, the rest of step 4); a session (0077) still digests a
+  base relation by its rows (`retain::kept_source`) and holds no corpus batch from run to run.
 
 ## Open
+
+- A run that lists its files inside another run's waves (a phase's, `phases::sources`) cannot read its changed
+  files' old sources there (0104): what reads a base relation in it runs again after an edit. A read of the old
+  tapes and sources that is no SQL (as the kept blocks are bound) would maintain it.
 
 - A run of many files holds every file's tape mapped for the cross part. Their bytes are the tape store's, mapped,
   not the heap's; the peak is measured in step 5.

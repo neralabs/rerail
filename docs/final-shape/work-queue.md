@@ -4508,6 +4508,11 @@ Found 2026-11-18, the 57 data-layer rules over corpus0's first 50 files, the pro
   `cross_views_tests` R1–R3 and R5, the maintain, partial-hit and guest tests, and 273 of 275 corpus tests on a Linux
   host (the two others are Q286, and pass on the M5). Next: step 4, the memo entries' base rows and the kept base
   granules go.
+- **0458 step 4, the kept granules gone** (2026-11-19): a base relation kept as its documents' digest, with one
+  documents' table; the changed files' old documents made on every route; the old version read in place
+  (`input_delta::Before`). R4 passes for the chain; 275 of 277 corpus tests on a Linux host (Q286's two), and on
+  the M5 the warm-run, cycle, new-process and 0458 tests. Next: the memo entries' base rows (copy 2), then R4 over the
+  memo too.
 
 ### Q284. (Q243 here before the hub merge 535cc2c8b) A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (done)
 

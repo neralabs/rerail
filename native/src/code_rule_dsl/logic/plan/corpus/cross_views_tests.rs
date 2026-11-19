@@ -159,17 +159,21 @@ fn r3_an_edit_reads_the_changed_files_old_and_new_rows() {
     }
 }
 
-/// R4: no base relation's rows are kept: the chain names none of them after a cold run and an edit's run.
+/// R4: no base relation's rows are kept, after a cold run and an edit's run. What 0458 keeps of one is its
+/// documents' digest (its documents' entry: one row, no granules) and its statistics beside it.
 #[test]
-#[ignore = "0458 step 4: the kept inputs' granules and the memo entries' base rows still keep them"]
 fn r4_no_base_relation_is_kept() {
     let mut c = Corpus::new("r4");
     c.run();
     c.write("d.py", "from c import h\nfrom a import f\n\ndef i():\n    h()\n");
     c.run();
-    let kept: BTreeSet<String> = crate::content_store::kept_facts::by_relation(&c.store()).unwrap().into_iter().map(|((rel, _), _)| rel).collect();
-    let base: Vec<&&str> = BASE.iter().filter(|r| kept.contains(**r)).collect();
-    assert!(base.is_empty(), "the chain keeps the base relations {base:?}");
+    let kept = crate::content_store::kept_facts::by_relation(&c.store()).unwrap();
+    let rows: Vec<_> = kept.iter().filter(|((rel, part), (entries, rows, _))| BASE.contains(&rel.as_str()) && match *part {
+        "rows" => rows > entries,
+        "beside" => false,
+        _ => true,
+    }).collect();
+    assert!(rows.is_empty(), "the chain keeps the base relations' rows {rows:?}");
 }
 
 /// R5: the runs pass in strict mode (`RERAIL_SQL_STRICT`): no SQL inside the waves (decision 0104), for the memo
