@@ -194,6 +194,8 @@ Each coding agent waits briefly after an edit for its check, so the steer lands 
 
 Slower checks steer at the next hook, reply or poll. The waits are fixed, not per rule.
 
+One rare case misses the one-second wait: an agent moves a nested checkout inside a worktree and writes a file into it at once, while another session is open in the repository. The walk of the other worktrees then checks every file that moved, and the steer for the new file can come one or two tool calls later. Its finding is in Log as soon as its check ends.
+
 </details>
 
 <details>
