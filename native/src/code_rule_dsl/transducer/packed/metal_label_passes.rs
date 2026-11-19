@@ -1016,7 +1016,7 @@ pub(in crate::code_rule_dsl) fn warm() {
                 // The set program's kernels first: it runs first in a wave (its candidates). The shared
                 // device is not opened here: on S7 a wave waiting on this job's open waited longer (to
                 // 0.8 s under load) than opening it itself (50-80 ms).
-                let _ = super::set_steps::pipelines();
+                let _ = super::set_steps::kernel();
                 let _ = compile_resident_interpreter_cached();
                 // The run's format, as its tapes are placed (a 16z tape as 16): its batches' kernels.
                 let _ = pipelines(match crate::code_rule_dsl::tape::formats::Format::of_run() {
