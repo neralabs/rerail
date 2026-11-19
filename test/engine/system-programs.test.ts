@@ -131,7 +131,7 @@ describe("programOnPath", () => {
   });
 
   // Git's own search skips a PATH folder inside the repository Rerail runs in, whose files are the repository's.
-  it.runIf(process.platform === "win32")("on Windows skips a PATH entry from the root of the current drive that names a folder in the repository the current folder is in, and reads one outside it", async () => {
+  it.runIf(process.platform === "win32")("on Windows skips a PATH entry from the root of the current drive that names a folder in the repository nearest the current folder, and reads one outside it", async () => {
     const { root, drive } = await driveWithTools();
     const binaries = await binDirectory("node.exe");
     // A repository elsewhere on the drive, the PATH folder's own clone among them, leaves the folder to the person.
@@ -143,5 +143,7 @@ describe("programOnPath", () => {
     await mkdir(join(root, ".git"));
     expect(searchFrom(`${drive}\\docs`, `\\tools;${binaries}`)).toBe(join(binaries, "node.exe"));
     expect(searchFrom(`${drive}\\docs`, String.raw`\tools`)).toBeUndefined();
+    // Only the nearest repository counts, as in Git's search: from a nested clone the outer one's folder is read as before.
+    expect(searchFrom(`${drive}\\src`, String.raw`\tools`)).toBe(`${drive}\\tools\\node.exe`);
   });
 });

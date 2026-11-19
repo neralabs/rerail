@@ -100,8 +100,10 @@ function searchedFolder(entry: string): string[] {
 
 /**
  * `entry`, a path from the root of the current drive, on the drive (or server share) of this process's current folder;
- * undefined where that folder lies in the repository the current folder is in, as for a repository cloned to a drive's
- * root: its files are the repository's, not the person's programs, and Git's own search skips such a folder too.
+ * undefined where that folder lies in the repository nearest the current folder, as for a repository cloned to a drive's
+ * root: its files are the repository's, not the person's programs, and Git's own search skips such a folder too. Only
+ * the nearest repository counts, as in Git's search: from a submodule or a nested clone of a repository at a drive's
+ * root, the outer repository's folder is read as before.
  */
 function currentDriveFolder(entry: string): string | undefined {
   const here = process.cwd();
