@@ -1,7 +1,8 @@
 # 0450: Sessions keep their latest data live in segments; the rest ages out, and may be kept compressed
 
-Status: decided in part by the user (2026-11-19), items 1–4 of §1. §2 (what a session is) is proposed, not agreed.
-§3 (the cross-file memo) is surveyed, to be discussed. Follows 0295 (segments and the archive), 0053 (collection),
+Status: decided in part by the user (2026-11-19), items 1–4 of §1, and §2's two sessions and how a store session
+ends. §2's store session's shape is proposed, not agreed. §3 (the cross-file memo): its history traced; its removal
+proposed, not agreed. Follows 0295 (segments and the archive), 0053 (collection),
 0353 (blocks are never copied) and the store's floor 7 (0295 step 5: no source or tape in a row).
 
 ## Intro
@@ -42,38 +43,85 @@ So the tiers are:
 | aged | data no session's latest names, inside the LRU or age budget | SQLite rows, zstd (the archive, 0295 §4), or segments until archived |
 | gone | past the budget | collected |
 
-### 2. What a session is (proposed, not agreed)
+### 2. Two sessions (the user, 2026-11-19: "I think we need two sessions"; validated below)
 
-A session is the store's one kind of owner: a row `(session, kind, key, latest generation, last used)`. Each of
-today's owners becomes a session of its kind: a workspace (key: its root path), a corpus root and lane (0053), a
-caller's session (0204), a pin's owner, an analysis scope. A session's latest generation names what it read and
-wrote last; that set is live. Its older generations, and data no session's latest names, are aged: 0053 §3's history
-budget and backstop become the one LRU and age rule for every kind.
+**The engine session** (0063, 0077, 0204: `logic/plan/corpus/session.rs`, `session::Handle`) is what a long-lived
+caller keeps from one run to the next so that a run after an edit costs what the edit changed: the file-local memo
+held in memory, the cross-file part's retained strata (0077), the outputs and stacks it wrote, kept statistics, open
+connections. It is a value: its caller owns it (the browser's engine, `repeat` through `RERAIL_SESSION`, a test), it
+is numbered by a process counter (`GENERATION`), and it ends when its caller drops it. What it holds is memory ahead
+of the store, never what keeps the store's data alive. It opens a store of its own, `session.sqlite` in its
+directory.
 
-Open: whether 0204's in-process session and the store's session are one thing; how a session ends (a lease, or its
-caller); the budget's marks.
+**The store session** (this decision) is a durable owner in the store: what keeps data alive between processes and
+after them. Its key is a durable name (a workspace's root, a corpus root and lane, a pin's owner, an analysis
+scope), and its latest data is live (§1).
 
-### 3. The cross-file memo (`cross_components`, `cross_blocks`, `cross_rows`), surveyed
+They differ in every respect that matters here, so they are two things:
 
-- **What it is** (0076): a corpus run's rows of cross-file relations, memoised per Python import component and keyed
-  by the component's descriptor digest (plan, key, documents' keys), so it is shared by content across roots.
-  `cross_blocks` holds one blob per (component, relation): columns of zigzag varint differences. `cross_rows` is the
-  older row-per-row table; this binary neither writes nor reads it.
-- **Who uses it:** only a program that declares `.pragma "cross-memo"`. No shipped program does; only tests
-  (`corpus/tests.rs`, `typing/oracle_tests.rs`, `findings/tests/rr_comparison.rs`).
-- **What it measured** (0076 §7–9, Jedi corpus): a warm run 53.7 s → 13.2 s; one file edited, it does not pay (cross
-  part 42.2 s against 29.9 s with the memo off).
-- **Its format** is decoded into in-memory columns on read: a copy of a block (0353), and not random access, unlike
-  0443's packed chunks.
-- **On the sibling branches:** phased-facts retired the frames and removed `encode_windows`, which only frames used;
-  no branch extends the cross memo. 0083 keeps it "for programs that declare them".
-- **Kept facts** (0438, 0443) serve the edit case: a run binds the relations kept by the previous one where they lie
-  and derives only what changed. They are kept per space (a program's part). Whether a space is shared across roots,
-  as the cross memo is by content, is not checked here.
+| | engine session | store session |
+|---|---|---|
+| lives in | a process's memory | the store's rows |
+| identity | a process counter | a durable key |
+| ends | when its caller drops it | when nothing keeps it alive |
+| holds | data ahead of the store, for speed | which data the store keeps |
+
+The link: a bound engine session is one of the things that keeps a store session alive, and what it writes durably
+(memo entries, kept facts, results) is the latest data of that store session.
+
+**A store session ends when nothing keeps it alive any more** (the user, 2026-11-19). What keeps one alive: an
+engine session or process bound to it (shown live as a process's lock is), a lease (a workspace's), a pin, or a
+durable name that refers to it (a branch, an audit snapshot). With none left, its latest data is no longer live: it
+is aged like the rest (§1), not deleted at once.
+
+**Proposed, not agreed:** a row `(session, kind, key, latest generation, last used)` for each store session. Today's
+owners each become one: a workspace, a corpus root and lane (0053), a pin's owner, an analysis scope. 0053 §3's
+history budget and backstop become the one LRU and age rule. Open: the budget's marks; whether the engine session
+keeps a store of its own (`session.sqlite`) or binds a store session in the shared store.
+
+### 3. The cross-file memo (`cross_components`, `cross_blocks`, `cross_rows`): its history
+
+- **What it is** (0076): a corpus run's rows of cross-file relations, memoised per Python import component, keyed by
+  the component's descriptor digest (plan, key, documents' keys), so shared by content across roots. `cross_blocks`
+  holds one blob per (component, relation): columns of zigzag varint differences, decoded into columns on read (a
+  copy, 0353). `cross_rows` is the older row-per-row table, which this binary neither writes nor reads.
+- **The problem it was for.** The per-file memo (0052) let a warm run skip unchanged files, but the cross-file part
+  ran whole every time: typing's took 12.6 s of CPU on the 84-file workspace (0059) and about 52 s on 489 files
+  (O94). Designed in the Bend-language-investigation session on 2026-11-08 (00:57–01:14 UTC). The user asked "why are
+  cross-file relations so special? why does the file matter? why can't they be memoized?", was offered a key per
+  run, per import-closed group or per file's read set, and chose the group: "we need to do 2. Deriving the import
+  chunks (the closure) and the key needs to be done via rerail and facts too, so that all of the work is memoized."
+  Built in `cc5ca55c9` (2026-11-08 02:02 UTC, as "0063 steps 2–4").
+- **Results** (Jedi corpus, 84 files with typeshed; 0076 §7–9):
+  - over `calls.rr`: correct, not faster. Replay made the cross part 19.8 s against 16.2 s: only the cheap relations
+    meet the contract; the costly ones look up every document by name under negation (O114).
+  - over `calls_cx.rr` (generated from `calls.rr`, every lookup kept to the reader's import closure): a warm run 53.7
+    s → 13.2 s; a one-file edit worse, its cross part 42.2 s against 29.9 s with the memo off. The key is the files'
+    bytes, so there is no cutoff: one edit to a widely imported file missed 41 of 133 components.
+- **When and why it stopped** (2026-11-08, about 15:00 UTC). Asked to survey the other worktrees' keying, the session
+  found 0083 (Two-pass-roots-and-cross-file): phases, definitions as the unit of change, stored results maintained by
+  deltas. It wrote "I'd stop extending the per-component memo here. 0083 replaces it for typing." 0094 (accepted
+  2026-11-08) recorded "0076 is retired for typing", keeping its keyed one-query tables as a pattern; 0083 keeps "the
+  mechanism ... for any program that declares it".
+- **Since then:** no shipped program declares `.pragma "cross-memo"`. Only tests switch it on: `typing/oracle_tests.rs`
+  through `RERAIL_PYTHON_CROSS_MEMO`, `logic/plan/corpus/tests.rs` and `findings/tests/rr_comparison.rs`. Every later
+  commit touching `cross_memo.rs` carries it through refactors (versions, atoms, clippy). Kept facts (0438, 0443) now
+  do what it did for the edit: a run binds the previous run's relations where they lie and derives only what changed.
+- **Half of it is not the memo, and is about to be on the product path.** `components.rr` derives the import
+  closure (`rr_cx_reach`, `rr_cx_sees`, the edges and components). `calls_cx.rr` and `calls_p3.rr` read it without
+  the memo (`reads_components` in `corpus.rs`), and on phased-facts (`396f6f942`, 2026-11-18) the shipped
+  `python/calls.rr` and `python/types.rr` include `points-to.rr`, which reads `rr_cx_reach` 29 times and
+  `rr_cx_sees` 7 times.
+
+**Proposed:** remove the memo: its lookup, record and replay, the `__cross` inputs and `rr_cross_doc` guards, the
+pragma and `RERAIL_CROSS_MEMO`, and the three tables, dropped at open as 0439 drops the frames. Keep the import
+closure: `components.rr` and its relations, added to a program that reads them, in a module of its own. This
+supersedes 0094 §7's "kept from it: the `cross_rows` store" and 0083's "the mechanism stays for any program that
+declares it".
 
 ## Order of work
 
-1. Agree §2 and §3.
+1. Agree §2's store session and §3's removal.
 2. The live tier for the zstd rows: results, call summaries and tree pages placed in segments, rows pointing at them
    (as sources and tapes, floor 7). The facts memo waits for §1 item 4.
 3. Sessions as the one owner, with the latest generation live and the LRU and age rule (0053 §3 generalized).
