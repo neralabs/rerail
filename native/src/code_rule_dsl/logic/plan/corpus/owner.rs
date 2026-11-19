@@ -65,8 +65,8 @@ fn lock_file(store: &Path) -> std::io::Result<File> {
     std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(beside(store, "-owner.lock"))
 }
 
-/// Whether `file` (locked) is still the lock file at `store`'s path: a cleanup (`remove_unowned`) unlinks a lock file
-/// last, holding it, so a process that opened it before and locks it after has a lock no one else can see.
+/// Whether `file` (locked) is still the lock file at `store`'s path: a cleanup unlinks a lock file last, holding it
+/// (`remove_lock`), so a process that opened it before and locks it after has a lock no one else can see.
 fn still_there(file: &File, store: &Path) -> bool {
     #[cfg(unix)]
     {
@@ -78,7 +78,7 @@ fn still_there(file: &File, store: &Path) -> bool {
     }
     #[cfg(not(unix))]
     {
-        // Elsewhere an open file is not removed while another process holds it.
+        // Elsewhere no cleanup removes a lock file (`remove_lock`): the file locked is the path's.
         let _ = (file, store);
         true
     }
@@ -261,11 +261,10 @@ pub fn refusal(store: &Path) -> Option<String> {
     }
 }
 
-/// Removes the files `names` in `dir` (a cleanup's: another build's, unused for a day), each store's whole while
-/// holding its owner lock, and the lock file last: a store a live process owns keeps its files. A process that opened
-/// the lock file before it went finds it gone once it locks it (`still_there`), and takes the new one.
+/// Removes the files `names` in `dir` (a cleanup's: another build's, unused for a day), each store's whole
+/// (`remove_store`): a store a live process owns keeps its files.
 pub fn remove_unowned(dir: &Path, names: &[String]) {
-    let mut stores: HashMap<&str, Vec<&String>> = HashMap::new();
+    let mut stores: HashMap<&str, Vec<&str>> = HashMap::new();
     for name in names {
         match name.find(".sqlite") {
             Some(at) => stores.entry(&name[..at + ".sqlite".len()]).or_default().push(name),
@@ -275,27 +274,46 @@ pub fn remove_unowned(dir: &Path, names: &[String]) {
         }
     }
     for (store, files) in stores {
-        let store = dir.join(store);
-        let lock = beside(&store, "-owner.lock");
-        let held = match std::fs::OpenOptions::new().read(true).write(true).open(&lock) {
-            Ok(file) => match file.try_lock() {
-                Ok(()) => Some(file),
-                Err(_) => continue,
-            },
-            Err(_) => None,
-        };
-        if claims().contains_key(&store) {
-            continue;
-        }
-        let lock_name = lock.file_name().map(|n| n.to_string_lossy().into_owned());
-        for name in files.iter().filter(|n| Some(n.as_str()) != lock_name.as_deref()) {
-            let _ = std::fs::remove_file(dir.join(name));
-        }
-        if held.is_some() && files.iter().any(|n| Some(n.as_str()) == lock_name.as_deref()) {
-            let _ = std::fs::remove_file(&lock);
-        }
-        drop(held);
+        remove_store(dir, &dir.join(store), &files);
     }
+}
+
+/// Removes `files` of `store` while holding its owner lock, the lock file last (`remove_lock`); nothing when a
+/// process, this one included, owns it.
+fn remove_store(dir: &Path, store: &Path, files: &[&str]) {
+    let Some(held) = unowned(store) else { return };
+    let lock = beside(store, "-owner.lock");
+    let lock_name = lock.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    for name in files.iter().filter(|n| **n != lock_name) {
+        let _ = std::fs::remove_file(dir.join(name));
+    }
+    if files.contains(&lock_name.as_str()) {
+        remove_lock(&lock, held);
+    }
+}
+
+/// `store`'s owner lock taken for a cleanup: `Some(None)` where it has no lock file, `None` where a process owns it.
+fn unowned(store: &Path) -> Option<Option<File>> {
+    if claims().contains_key(store) {
+        return None;
+    }
+    match std::fs::OpenOptions::new().read(true).write(true).open(beside(store, "-owner.lock")) {
+        Ok(file) => file.try_lock().ok().map(|()| Some(file)),
+        Err(_) => Some(None),
+    }
+}
+
+/// Removes the lock file at `lock`, held (`held`) by the cleanup: a process that opened it before and locks it after
+/// finds it gone (`still_there`) and takes the new one. Only where a file's identity says so (unix): elsewhere std
+/// opens files sharing their deletion, so a process could lock a file already gone, and the empty lock file stays.
+fn remove_lock(lock: &Path, held: Option<File>) {
+    #[cfg(unix)]
+    if held.is_some() {
+        let _ = std::fs::remove_file(lock);
+    }
+    #[cfg(not(unix))]
+    let _ = lock;
+    drop(held);
 }
 
 #[cfg(test)]
@@ -425,8 +443,8 @@ mod tests {
         assert_eq!(super::named_within(&store, Duration::from_millis(50)), Ok(()), "asked again, the same answer");
     }
 
-    /// A cleanup removes an unused store's files, its lock file with them, and leaves every file of a store another
-    /// process owns (here an open file of the test's own, locked, as the OS sees another process's).
+    /// A cleanup removes an unused store's files, its lock file with them (on unix), and leaves every file of a store
+    /// another process owns (here an open file of the test's own, locked, as the OS sees another process's).
     #[test]
     fn a_cleanup_leaves_a_store_another_process_owns() {
         let dir = tempfile::tempdir().unwrap();
@@ -441,6 +459,10 @@ mod tests {
         let mut left: Vec<String> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         left.sort();
         all = names("held.sqlite");
+        // Only where a file's identity is known does the free store's lock file go too (`remove_lock`).
+        if cfg!(not(unix)) {
+            all.push("free.sqlite-owner.lock".to_owned());
+        }
         all.sort();
         assert_eq!(left, all, "the held store's files stay; the free store's and the loose file go");
     }
