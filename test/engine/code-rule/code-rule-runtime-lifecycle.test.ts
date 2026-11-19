@@ -803,6 +803,20 @@ describe("source-scoped steers", () => {
       } finally { await test.close(); }
     });
 
+    // The evaluator's window of such a call names the files its tool names: a later call's capture of one of them is
+    // then no earlier state the walk could take the call's edit as (`CodeRuleBridge.unwatchedCall`).
+    it("opens the window of a call it answered while indexing with the tool's input", async () => {
+      const test = await openingFixture();
+      const windows = vi.spyOn(CodeRuleBridge.prototype, "unwatchedCall");
+      try {
+        await test.call("write");
+        expect(windows).toHaveBeenCalledWith("write", "write", { path: "edited.py" });
+      } finally {
+        windows.mockRestore();
+        await test.close();
+      }
+    });
+
     it("does not check at its result the edit of a call it answered while indexing, even once the evaluator has opened", async () => {
       const test = await openingFixture();
       try {
