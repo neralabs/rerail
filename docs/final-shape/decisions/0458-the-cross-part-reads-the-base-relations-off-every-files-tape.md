@@ -96,13 +96,22 @@ Each has its test before the code that meets it.
   batch's index of its first column), then the old documents' rows, read where they lie. The table is written with
   the digests it is the documents of, when one changes. On the way: a gone file had no `Minus` on the kept route
   (its old document was never made).
-- **Not yet:** the memo entries still keep base rows (copy 2, the rest of step 4); a session (0077) still digests a
-  base relation by its rows (`retain::kept_source`) and holds no corpus batch from run to run.
+- **Step 4, the memo entries' base rows** (2026-11-19). No entry keeps a base relation's rows, and none needs them
+  to be a hit: the memo writer's path fails a run whose entry would keep one (R4's guard). The keeper (0096 §3)
+  counts the exports alone. A base relation's statistics are kept beside the documents' table (`#base-stats/<rel>`),
+  with the digest of the rows they count, read before the first wave with the table in every run that keeps one (a
+  run inside another's waves too). Kept of these rows, they stand; kept of the table's documents, the changed
+  documents' old rows are counted out and their new ones in, read where they lie (`RelStats::documents_read`); else
+  they are counted off the corpus batch. A session's input delta of a base relation no longer reads entries: it is
+  the changed documents' versions, else the session's kept rows by document.
+- **Not yet:** a session (0077) still digests a base relation by its rows (`retain::kept_source`), holds no corpus
+  batch from run to run, and keeps no base statistics (it counts them off the batch each run).
 
 ## Open
 
 - A run that lists its files inside another run's waves (a phase's, `phases::sources`) cannot read its changed
-  files' old sources there (0104): what reads a base relation in it runs again after an edit. A read of the old
+  files' old sources there (0104): what reads a base relation in it runs again after an edit, and its base
+  relations' statistics are counted again. A read of the old
   tapes and sources that is no SQL (as the kept blocks are bound) would maintain it.
 
 - A run of many files holds every file's tape mapped for the cross part. Their bytes are the tape store's, mapped,

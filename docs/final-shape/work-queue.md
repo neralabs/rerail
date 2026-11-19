@@ -4513,6 +4513,12 @@ Found 2026-11-18, the 57 data-layer rules over corpus0's first 50 files, the pro
   (`input_delta::Before`). R4 passes for the chain; 275 of 277 corpus tests on a Linux host (Q286's two), and on
   the M5 the warm-run, cycle, new-process and 0458 tests. Next: the memo entries' base rows (copy 2), then R4 over the
   memo too.
+- **0458 step 4, the memo entries' base rows gone** (2026-11-19): no entry keeps a base relation's rows (a guard in
+  the memo writer's path fails a run whose entry would); the keeper counts the exports alone. A base relation's
+  statistics are kept beside its documents' table, read before the first wave, and patched by the changed documents'
+  old and new rows, read where they lie (`RelStats::documents_read`). Tests: `cross_views_tests` R1–R5 and the
+  statistics' (counted cold, kept warm, patched by an edit), the warm-run, maintain and keeper tests; all 140 corpus
+  tests on the M3. Next: step 5, R6 measured over the 50 files.
 
 ### Q284. (Q243 here before the hub merge 535cc2c8b) A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (done)
 
