@@ -1804,7 +1804,8 @@ Unreadable(@place("tree", 1), why) :- git_tree_walk_error(_, _, _, why).
     const unrelated = git(root, "rev-parse", "HEAD:a.py");
     const base = join(objects, "pack/unrelated");
     const suffix = execFileSync("git", ["pack-objects", base], { cwd: root, input: `${unrelated}\n`, encoding: "utf8" }).trim();
-    for (const state of ["created", "touched"]) {
+    for (const state of ["created", "touched", "multi-index"]) {
+      if (state === "multi-index") git(root, "multi-pack-index", "write");
       if (state === "touched") utimesSync(`${base}-${suffix}.pack`, new Date(), new Date());
       const profile = join(home, `unrelated-pack-${state}`);
       expect(evaluate(profile)).toEqual([["Complete", "complete"]]);
