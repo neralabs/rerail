@@ -2874,15 +2874,28 @@ reuses another's sync.
   `a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change`,
   `an_inner_root_is_answered_by_the_root_above_it`); 34 of 34 passed in one run. Waiting at most 2 s per stream
   and starting another was tried, and is worse: slow but live streams were dropped, and every new one was slow too.
-- **Found, the late streams** (2026-11-19, by reading `journal.rs`): the lateness is a stream's own, not
-  `fseventsd`'s: a new stream had its cookie in 0.5 s while a kept one was told nothing for 20 s. What schedules a
-  stream's delivery is the dispatch queue its callbacks run on, and `start` made it with no QoS
-  (`dispatch_queue_create(.., NULL)`): the handler ran at none of its own, and `sync` waits on a condvar, which lends
-  it no priority. Under `nice -n 19` on a machine at load 20–55 it waited behind everything. The queue is now made
-  at `QOS_CLASS_USER_INITIATED` (`dispatch_queue_attr_make_with_qos_class`), the QoS of a run that waits on it.
-  Still to see: 20 of 20 on a Mac at load (none was usable to run it when this was written).
+- **Found, the late journal** (2026-11-19, Typing-support, on the M3 at load 40–80): `fseventsd` was at a full
+  core in every sample (98–120% CPU, 1,847 CPU minutes, priority 50): saturated, not starved. It delivers and logs
+  the machine's file events in order, and a cookie or a marker waits behind all of them. Traced, history's end came
+  in 0.27–0.38 s on every stream, and the live cookie at 2.7, 6.5, 7.2, 12.3 s, or not in 20 s (no event at all in
+  the stream meanwhile). Streams started later had theirs sooner because they started later, not alongside. A queue
+  QoS for the callbacks was tried first, on the reading that a kept stream's handler starved, and did not help
+  (1 to 5 of 34 still failed in each of 6 runs); it is reverted. No setting of ours shortens `fseventsd`'s backlog.
+- **Fixed, the tests name why a run cannot answer**: the observer counts the roots the journal answered later than
+  their wait (`journal::late`: `SLOWER`, `COOKIE_LATE`) or `Behind` its marker for the whole settle window
+  (`Counts::late`). A test's assertions of the journal's own counts hold where no run of the test so far was late
+  (`journal_answered`), and else say why; the answers are checked in every run. A late run reaches the next: its
+  stream answers from its sync on, so the next run's question from the older stored cursor is a history replay,
+  which misses a change merged into a record older than the cursor (decision 0400), as a new process's would. A
+  run covers that by its settle window, which the test observer turns off, so after a late run an edit is checked
+  as a run reads it, window on. Two faults the lateness had hidden, fixed: `the_journal_names_what_changed_since_its_cursor`
+  asked its zero-bound question with a 5 s settle budget, which is the least a question waits, so it was never
+  bounded and failed whenever the journal answered in time; and the settle-window test's miss can vanish when the
+  journal names the edit anyway (the safe side), which it now says. 22 of 22 runs of the 34 pass on the M3
+  (14 at load 41–48, 8 at 14 falling to 7).
 - **Done when**: the test passes 20 of 20 on a host at load, or names why a run cannot answer.
-- **Record**: —
+- **Record**: done 2026-11-19 (Typing-support): 22 of 22 on the M3, each run naming the questions the journal
+  answered late.
 
 ### Q224. (Q187 on benchmarks-on-integration) The full shape's cold run on Metal hangs, now and then: the main thread waits on the builder's bell, the pool idle
 
