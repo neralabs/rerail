@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -110,6 +110,33 @@ describe("Rerail's Git calls start no filter program only a repository's own con
 
     expect(runs(marker)).toBe(0);
     expect(firstSeen).toEqual(["notes.txt"]);
+  }, 60_000);
+
+  it("nor the program of a driver whose name is empty", async () => {
+    const root = await folder();
+    const marker = join(root, "filter-ran");
+    const work = await repository(root, "work", { ".gitattributes": "*.txt filter=\n", "notes.txt": "one\n" });
+    await appendFile(join(work, ".git", "config"), `[filter ""]\n\tclean = ${configValue(recording(marker))}\n`);
+    await writeFile(join(work, "notes.txt"), "two\n");
+
+    const answers = [runGit(work, AUDIT_DIFF), runGit(work, SCAN_DIFF)];
+    const walk = await gitModifiedOrUntrackedPaths(work);
+
+    expect(runs(marker)).toBe(0);
+    expect([...answers.map(answer => [answer.status, listed(answer.stdout)]), walk]).toEqual([[0, ["notes.txt"]], [0, ["notes.txt"]], ["notes.txt"]]);
+  }, 60_000);
+
+  it("nor in a `git status`, which would look into submodules and is no name-only diff", async () => {
+    const root = await folder();
+    const marker = join(root, "filter-ran");
+    const work = await repository(root, "work", { ".gitattributes": "*.txt filter=probe\n", "notes.txt": "one\n" });
+    git(work, "config", "filter.probe.clean", recording(marker));
+    await writeFile(join(work, "notes.txt"), "two\n");
+
+    const status = runGit(work, ["status", "--porcelain=2", "-z"]);
+
+    expect(runs(marker)).toBe(0);
+    expect([status.status, status.stdout.split("\0").filter(entry => entry !== "").map(entry => entry.split(" ").at(-1))]).toEqual([0, ["notes.txt"]]);
   }, 60_000);
 
   it("runs the person's own driver where the repository defines one of the same name, and answers as their Git does", async () => {

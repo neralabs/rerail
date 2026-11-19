@@ -196,6 +196,24 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect([audit.status, listed(audit.stdout)]).toEqual([0, ["sub"]]);
   }, 60_000);
 
+  it("and list a submodule whose own submodule's commit moved, not staged in it, as Git does", async () => {
+    const root = await folder();
+    const leaf = await repository(root, "leaf", { "leaf.txt": "one\n" });
+    const middle = await repository(root, "middle", { "middle.txt": "one\n" });
+    git(middle, "submodule", "add", "--quiet", leaf, "leaf");
+    git(middle, "commit", "--quiet", "-m", "leaf");
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    git(work, "submodule", "add", "--quiet", middle, "sub");
+    git(work, "submodule", "update", "--quiet", "--init", "--recursive");
+    git(work, "commit", "--quiet", "-m", "submodule");
+    git(join(work, "sub", "leaf"), "commit", "--quiet", "--allow-empty", "-m", "moved");
+
+    const answers = [runGit(work, AUDIT_DIFF), runGit(work, SCAN_DIFF)];
+
+    expect(answers.map(answer => answer.stdout)).toEqual([git(work, ...AUDIT_DIFF), git(work, ...SCAN_DIFF)]);
+    expect(answers.map(answer => listed(answer.stdout))).toEqual([["sub"], ["sub"]]);
+  }, 60_000);
+
   it("in a checked-out submodule or one inside it, and list them as Git does", async () => {
     const root = await folder();
     const marker = join(root, "driver-ran");
