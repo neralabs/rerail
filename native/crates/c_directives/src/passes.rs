@@ -1130,11 +1130,50 @@ impl Calls for Host<'_, '_> {
     }
 }
 
+/// Which executor runs the programs: the interpreter (their meaning), or the device's launches
+/// (`rerail_metal::array_program`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Exec {
+    Interpreter,
+    #[cfg(target_os = "macos")]
+    Metal,
+}
+
+/// The device's account of a unit's runs (`Exec::Metal`).
+#[derive(Clone, Debug, Default)]
+pub struct DeviceStats {
+    pub runs: usize,
+    pub gpu_seconds: f64,
+    pub dispatches: usize,
+    pub syncs: usize,
+    /// Elements whose calls the host answered.
+    pub calls: usize,
+}
+
+/// The executor of a unit's runs, and its account.
+struct Runner {
+    exec: Exec,
+    device: DeviceStats,
+}
+
 impl Prog {
     /// A run on the named columns; its outputs by name.
-    fn run(&self, cols: &HashMap<&'static str, Vec<i64>>, host: &mut Host) -> Result<HashMap<&'static str, Vec<i64>>, &'static str> {
+    fn run(&self, cols: &HashMap<&'static str, Vec<i64>>, host: &mut Host, runner: &mut Runner) -> Result<HashMap<&'static str, Vec<i64>>, &'static str> {
         let inputs: Vec<&[i64]> = self.inputs.iter().map(|n| cols.get(n).unwrap_or_else(|| panic!("no column {n}")).as_slice()).collect();
-        let v = self.p.values_at(&inputs, &[], host).map_err(|(i, why)| {
+        let outputs = match runner.exec {
+            Exec::Interpreter => self.p.values_at(&inputs, &[], host).map(|v| self.p.outputs.iter().map(|&o| v.arrays[usize::from(o)].clone()).collect::<Vec<_>>()),
+            #[cfg(target_os = "macos")]
+            Exec::Metal => match rerail_metal::array_program::run(&self.p, &inputs, &[], host) {
+                Ok(Ok(r)) => {
+                    let d = &mut runner.device;
+                    (d.runs, d.gpu_seconds, d.dispatches, d.syncs, d.calls) = (d.runs + 1, d.gpu_seconds + r.gpu_seconds, d.dispatches + r.dispatches, d.syncs + r.syncs, d.calls + r.calls);
+                    Ok(r.outputs)
+                }
+                Ok(Err(e)) => Err(e),
+                Err(_) => return Err("the device failed"),
+            },
+        };
+        let outputs = outputs.map_err(|(i, why)| {
             if std::env::var_os("RERAIL_PASSES_TRACE").is_some() {
                 for k in i.saturating_sub(20)..i {
                     eprintln!("passes:   %{k} = {}", self.p.ops[k].text());
@@ -1143,7 +1182,7 @@ impl Prog {
             }
             why
         })?;
-        Ok(self.outputs.iter().copied().zip(self.p.outputs.iter().map(|&o| v.arrays[usize::from(o)].clone())).collect())
+        Ok(self.outputs.iter().copied().zip(outputs).collect())
     }
 }
 
@@ -1171,7 +1210,7 @@ pub fn run(cfg: Config, io: &mut dyn Files, path: &str) -> (Outcome, Stats) {
         Ok(u) => u,
         Err(why) => return (Err(why), Stats::default()),
     };
-    let out = read(&mut unit, None);
+    let out = read(&mut unit, None, &mut Runner { exec: Exec::Interpreter, device: DeviceStats::default() });
     let stats = unit.stats.clone();
     (out, stats)
 }
@@ -1179,20 +1218,27 @@ pub fn run(cfg: Config, io: &mut dyn Files, path: &str) -> (Outcome, Stats) {
 /// `run`, its tests and expansions on the words (decision 0422), run by `run_words`
 /// (`expand::native`, or the interpreter).
 pub fn run_words(cfg: Config, io: &mut dyn Files, path: &str, run_words: words::Run) -> (Outcome, Stats, words::WordStats) {
+    let (out, stats, w, _) = run_on(cfg, io, path, run_words, Exec::Interpreter);
+    (out, stats, w)
+}
+
+/// `run_words`, the programs run by `exec`.
+pub fn run_on(cfg: Config, io: &mut dyn Files, path: &str, run_words: words::Run, exec: Exec) -> (Outcome, Stats, words::WordStats, DeviceStats) {
     let mut w = match words::Words::new(&cfg, run_words) {
         Ok(w) => w,
-        Err(why) => return (Err(why), Stats::default(), Default::default()),
+        Err(why) => return (Err(why), Stats::default(), Default::default(), Default::default()),
     };
     let mut unit = match Unit::new(cfg, io, path) {
         Ok(u) => u,
-        Err(why) => return (Err(why), Stats::default(), Default::default()),
+        Err(why) => return (Err(why), Stats::default(), Default::default(), Default::default()),
     };
-    let out = read(&mut unit, Some(&mut w));
+    let mut runner = Runner { exec, device: DeviceStats::default() };
+    let out = read(&mut unit, Some(&mut w), &mut runner);
     let stats = unit.stats.clone();
-    (out, stats, w.stats.clone())
+    (out, stats, w.stats.clone(), runner.device)
 }
 
-fn read(unit: &mut Unit, mut words: Option<&mut words::Words>) -> Outcome {
+fn read(unit: &mut Unit, mut words: Option<&mut words::Words>, runner: &mut Runner) -> Outcome {
     // Each instance as first entered: its own group active, nothing else.
     let fresh = |unit: &Unit, from: usize, a: &mut Vec<i64>| {
         let inst = unit.instances();
@@ -1213,7 +1259,7 @@ fn read(unit: &mut Unit, mut words: Option<&mut words::Words>) -> Outcome {
         for (k, n) in MEMO.iter().enumerate() {
             cols.insert(n, std::mem::take(&mut memo.0[k]));
         }
-        let mut o = ROUND.run(&cols, &mut Host { unit: &mut *unit, refused: 0, words: words.as_deref_mut() })?;
+        let mut o = ROUND.run(&cols, &mut Host { unit: &mut *unit, refused: 0, words: words.as_deref_mut() }, runner)?;
         for (k, n) in MEMO.iter().enumerate() {
             memo.0[k] = o.remove(n).expect("the memo's outputs");
         }
@@ -1237,21 +1283,21 @@ fn read(unit: &mut Unit, mut words: Option<&mut words::Words>) -> Outcome {
             if o["unsupported"][0] > 0 {
                 return Err(unit.reason(o["unsupported"][0] - 1));
             }
-            return text_of(unit, words, &state, &b_sym, &b_val);
+            return text_of(unit, words, &state, &b_sym, &b_val, runner);
         }
         state = next;
     }
     Err("past the rounds' bound")
 }
 
-fn text_of(unit: &mut Unit, mut words: Option<&mut words::Words>, state: &State, b_sym: &[i64], b_val: &[i64]) -> Outcome {
+fn text_of(unit: &mut Unit, mut words: Option<&mut words::Words>, state: &State, b_sym: &[i64], b_val: &[i64], runner: &mut Runner) -> Outcome {
     unit.generation += 1;
     let mut cols = columns(unit, state, b_sym, b_val);
     cols.insert("t_kind", unit.cols.t_kind.clone());
     cols.insert("t_sym", unit.cols.t_sym.clone());
     cols.insert("fnlike", unit.fnlike());
     let mut host = Host { unit: &mut *unit, refused: 0, words: words.as_deref_mut() };
-    let o = TEXT.run(&cols, &mut host)?;
+    let o = TEXT.run(&cols, &mut host, runner)?;
     let refused = host.refused;
     if refused > 0 {
         return Err(unit.reason(refused - 1));

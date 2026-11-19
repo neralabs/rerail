@@ -39,11 +39,22 @@ fn both(files: &[(&str, &str)]) -> (Outcome, Stats) {
         assert_eq!(show(o), show(&serial.0), "the programs against the serial pass");
     }
     // The same calls on the words (the interpreter): the same outcome.
-    let (w_out, _, _) = run_words(cfg, &mut io(files), "main.c", rerail_compiler::pp_words::run);
+    let (w_out, _, _) = run_words(cfg.clone(), &mut io(files), "main.c", rerail_compiler::pp_words::run);
     match (&out, &w_out) {
         (Ok(a), Ok(b)) => assert_eq!(show(b), show(a), "the words' calls against the lean calls"),
         (Err(_), Err(_)) => {}
         _ => panic!("the lean calls: {:?}\nthe words' calls: {:?}", out.as_ref().map(|o| show(o)), w_out.as_ref().map(|o| show(o))),
+    }
+    // The programs on the device: the interpreter's outcome.
+    #[cfg(target_os = "macos")]
+    {
+        let (m_out, _, _, device) = run_on(cfg, &mut io(files), "main.c", rerail_compiler::pp_words::run, Exec::Metal);
+        match (&w_out, &m_out) {
+            (Ok(a), Ok(b)) => assert_eq!(show(b), show(a), "the device's runs against the interpreter's"),
+            (Err(a), Err(b)) => assert_eq!(b, a, "the device's refusal against the interpreter's"),
+            _ => panic!("the interpreter: {:?}\nthe device: {:?}", w_out.as_ref().map(|o| show(o)), m_out.as_ref().map(|o| show(o))),
+        }
+        assert!(device.runs > 0 && device.dispatches > 0, "{device:?}");
     }
     (out, stats)
 }
@@ -162,6 +173,12 @@ fn the_corpus_by_the_programs() {
     let each = env("RERAIL_PP_EACH").is_some();
     // The calls on the words' CPU path (`expand::native`), else the lean calls.
     let words = env("RERAIL_PP_WORDS").is_some();
+    // The programs on the device (`RERAIL_PP_EXEC=metal`, the calls on the words), else the interpreter.
+    #[cfg(target_os = "macos")]
+    let exec = if env("RERAIL_PP_EXEC").as_deref() == Some("metal") { Exec::Metal } else { Exec::Interpreter };
+    #[cfg(not(target_os = "macos"))]
+    let exec = Exec::Interpreter;
+    let mut device = DeviceStats::default();
     let mut wrong = 0;
     for lang in env("RERAIL_PP_LANGS").unwrap_or("c,cpp".into()).split(',') {
         let mut prof = Profile::new(if lang == "cpp" { Lang::cpp() } else { Lang::c() });
@@ -176,10 +193,16 @@ fn the_corpus_by_the_programs() {
             let prof = env("RERAIL_PP_PROFILE").is_some();
             rerail_compiler::array::profile(prof);
             let t0 = std::time::Instant::now();
-            let (out, st, ws) = if words { run_words(settled.cfg.clone(), &mut io, &p, crate::expand::native) } else { let (o, s) = run(settled.cfg.clone(), &mut io, &p); (o, s, Default::default()) };
+            let (out, st, ws, d) = if words || exec != Exec::Interpreter {
+                run_on(settled.cfg.clone(), &mut io, &p, crate::expand::native, exec)
+            } else {
+                let (o, s) = run(settled.cfg.clone(), &mut io, &p);
+                (o, s, Default::default(), Default::default())
+            };
             if each {
-                println!("{p}: {} ms; {}; {st:?} {ws:?}", t0.elapsed().as_millis(), out.as_ref().map_or_else(|w| w.to_string(), |o| if *o == settled.tokens { "same".into() } else { "DIFFERS".into() }));
+                println!("{p}: {} ms; {}; {st:?} {ws:?} {d:?}", t0.elapsed().as_millis(), out.as_ref().map_or_else(|w| w.to_string(), |o| if *o == settled.tokens { "same".into() } else { "DIFFERS".into() }));
             }
+            (device.runs, device.gpu_seconds, device.dispatches, device.syncs, device.calls) = (device.runs + d.runs, device.gpu_seconds + d.gpu_seconds, device.dispatches + d.dispatches, device.syncs + d.syncs, device.calls + d.calls);
             if prof {
                 // The operations by time: program, operation, steps, ms, elements.
                 let mut rows: Vec<_> = rerail_compiler::array::profile(false).into_iter().collect();
@@ -203,6 +226,9 @@ fn the_corpus_by_the_programs() {
             }
         }
         println!("{lang}: {same} the same, {differ} differ, refused {refused:?}");
+        if exec != Exec::Interpreter {
+            println!("  the device: {device:?}");
+        }
         wrong += differ;
     }
     assert_eq!(wrong, 0, "units the programs read otherwise than the serial pass");
