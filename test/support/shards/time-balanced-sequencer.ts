@@ -62,16 +62,18 @@ export function assignShards(paths: readonly string[], times: PlatformTimes, cou
   const taken = new Set<number>();
   const shards = new Map<string, number>();
   for (const { path, weight } of weighted) {
-    let lightest = -1;
-    for (let shard = 0; shard < count; shard += 1) {
-      if (taken.size < count && taken.has(shard)) continue;
-      if (lightest === -1 || loads[shard]! < loads[lightest]!) lightest = shard;
-    }
+    const lightest = lightestShard(loads, taken);
     taken.add(lightest);
     loads[lightest]! += weight;
     shards.set(path, lightest);
   }
   return shards;
+}
+
+/** The shard holding the least so far, the lowest on a tie, among the shards still without a file while any is. */
+function lightestShard(loads: readonly number[], taken: ReadonlySet<number>): number {
+  const open = loads.map((_, shard) => shard).filter((shard) => taken.size >= loads.length || !taken.has(shard));
+  return open.reduce((lightest, shard) => (loads[shard]! < loads[lightest]! ? shard : lightest));
 }
 
 export class TimeBalancedSequencer extends BaseSequencer {

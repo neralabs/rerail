@@ -40,30 +40,39 @@ export function unitJob(name) {
   return { platform: match[1] === "Windows" ? "win32" : "linux", shard: Number(match[2]) };
 }
 
+/** The log's lines without their timestamps and colours, cut into steps at each step's group header. */
+function steps(log) {
+  const cut = [[]];
+  for (const raw of log.split(/\r?\n/u)) {
+    const line = raw.replace(TIMESTAMP, "").replace(COLOUR, "");
+    if (line.startsWith(STEP)) cut.push([]);
+    cut.at(-1).push(line);
+  }
+  return cut;
+}
+
+/** The wall time of the vitest runs in a step's lines. */
+function vitestMs(lines) {
+  return lines.reduce((sum, line) => {
+    const duration = DURATION_LINE.exec(line);
+    return duration === null ? sum : sum + milliseconds(duration[1], duration[2]);
+  }, 0);
+}
+
 /**
  * What one unit test job's log says: each file's milliseconds in the sharded suite, the suite's wall time, and the
  * wall time of the vitest runs of the steps after it (zero when there are none).
  */
 export function parseUnitLog(log) {
-  const files = new Map();
-  let section = "before";
-  let suiteMs = 0;
-  let extraMs = 0;
-  for (const raw of log.split(/\r?\n/u)) {
-    const line = raw.replace(TIMESTAMP, "").replace(COLOUR, "");
-    if (line.startsWith(SUITE_STEP)) section = "suite";
-    else if (line.startsWith(STEP) && section !== "before") section = "after";
-    if (section === "before") continue;
-    const duration = DURATION_LINE.exec(line);
-    if (duration !== null) {
-      if (section === "suite") suiteMs = milliseconds(duration[1], duration[2]);
-      else extraMs += milliseconds(duration[1], duration[2]);
-      continue;
-    }
-    const file = section === "suite" ? FILE_LINE.exec(line) : null;
-    if (file !== null) files.set(file[1], file[2] === undefined ? 0 : milliseconds(file[2], file[3]));
-  }
-  return { files, suiteMs, extraMs };
+  const cut = steps(log);
+  const suite = cut.findIndex((lines) => lines[0]?.startsWith(SUITE_STEP));
+  if (suite === -1) return { files: new Map(), suiteMs: 0, extraMs: 0 };
+  const fileLines = cut[suite].map((line) => FILE_LINE.exec(line)).filter((match) => match !== null);
+  return {
+    files: new Map(fileLines.map((match) => [match[1], match[2] === undefined ? 0 : milliseconds(match[2], match[3])])),
+    suiteMs: vitestMs(cut[suite]),
+    extraMs: cut.slice(suite + 1).reduce((sum, lines) => sum + vitestMs(lines), 0),
+  };
 }
 
 function median(values) {
@@ -72,26 +81,39 @@ function median(values) {
   return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
+/** Each file's median milliseconds over the jobs, for the files `exists` says the checkout still has. */
+function fileMedians(jobs, exists) {
+  const samples = new Map();
+  for (const { log } of jobs) {
+    for (const [path, ms] of log.files) samples.set(path, [...(samples.get(path) ?? []), ms]);
+  }
+  const paths = [...samples.keys()].filter(exists).sort();
+  return Object.fromEntries(paths.map((path) => [path, Math.round(median(samples.get(path)))]));
+}
+
+/**
+ * The median time of the steps the first shard runs after its suite, as test-file time: each scaled by how many files
+ * that shard's suite ran side by side (its files' time over its wall time).
+ */
+function firstShardExtraMs(jobs) {
+  const extras = jobs
+    .filter(({ shard, log }) => shard === 1 && log.suiteMs > 0)
+    .map(({ log }) => log.extraMs * ([...log.files.values()].reduce((sum, ms) => sum + ms, 0) / log.suiteMs));
+  return extras.length === 0 ? 0 : Math.round(median(extras));
+}
+
 /**
  * The times file from parsed unit test jobs (`{ platform, shard, log }` with `log` from parseUnitLog), keeping only the
  * files `exists` says the checkout still has.
  */
 export function unitTestTimes(jobs, exists) {
-  const platforms = {};
-  for (const platform of [...new Set(jobs.map((job) => job.platform))].sort()) {
-    const ofPlatform = jobs.filter((job) => job.platform === platform);
-    const samples = new Map();
-    for (const { log } of ofPlatform) {
-      for (const [path, ms] of log.files) samples.set(path, [...(samples.get(path) ?? []), ms]);
-    }
-    const extras = ofPlatform
-      .filter(({ shard, log }) => shard === 1 && log.suiteMs > 0)
-      .map(({ log }) => log.extraMs * ([...log.files.values()].reduce((sum, ms) => sum + ms, 0) / log.suiteMs));
-    const files = {};
-    for (const path of [...samples.keys()].sort()) if (exists(path)) files[path] = Math.round(median(samples.get(path)));
-    platforms[platform] = { firstShardExtraMs: extras.length === 0 ? 0 : Math.round(median(extras)), files };
-  }
-  return platforms;
+  const platforms = [...new Set(jobs.map((job) => job.platform))].sort();
+  return Object.fromEntries(
+    platforms.map((platform) => {
+      const ofPlatform = jobs.filter((job) => job.platform === platform);
+      return [platform, { firstShardExtraMs: firstShardExtraMs(ofPlatform), files: fileMedians(ofPlatform, exists) }];
+    }),
+  );
 }
 
 const gh = (...args) => execFileSync("gh", ["api", ...args], { cwd: ROOT, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
@@ -107,16 +129,18 @@ function latestRuns(count) {
   return runs.workflow_runs.map((run) => String(run.id));
 }
 
+/** The successful unit test jobs of the runs, each with its platform, shard and parsed log. */
+function unitJobs(runs) {
+  const jobs = runs.flatMap((run) => runJobs(run).filter((job) => job.conclusion === "success"));
+  return jobs.flatMap((job) => {
+    const unit = unitJob(job.name);
+    return unit === undefined ? [] : [{ ...unit, log: parseUnitLog(gh(`repos/{owner}/{repo}/actions/jobs/${job.id}/logs`)) }];
+  });
+}
+
 function main() {
   const runs = process.argv.length > 2 ? process.argv.slice(2) : latestRuns(DEFAULT_RUNS);
-  const jobs = [];
-  for (const run of runs) {
-    for (const job of runJobs(run)) {
-      const unit = unitJob(job.name);
-      if (unit === undefined || job.conclusion !== "success") continue;
-      jobs.push({ ...unit, log: parseUnitLog(gh(`repos/{owner}/{repo}/actions/jobs/${job.id}/logs`)) });
-    }
-  }
+  const jobs = unitJobs(runs);
   if (jobs.length === 0) throw new Error(`no successful unit test job in runs ${runs.join(", ")}`);
   const times = unitTestTimes(jobs, (path) => existsSync(join(ROOT, path)));
   writeFileSync(join(ROOT, OUTPUT), timesModule(times, runs));
