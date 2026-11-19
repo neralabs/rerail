@@ -5381,7 +5381,10 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Found** (2026-11-19, the django-bugs merge abaecb14a): three warnings. `content_store/journal.rs`
   `since_within` takes a `wait` it never reads (an unfinished option?); `phases.rs:380` reads `sources.rr` into a
   `src` it never uses; `rr/testing.rs:371` imports `ProgramFields` unused in a build without test-hooks. Left to
-  that track's owner to say which are unfinished.
+  that track's owner to say which are unfinished. The merge also left `the_journal_names_what_changed_since_its_cursor`
+  not compiling: two of its calls lacked the `settle` argument the other side added; given `SETTLE`, as the calls
+  beside them (0450 step 2a's commit). It and `an_answer_recorded_within_the_settle_window_is_checked_though_the_
+  journal_names_nothing` then fail: each expects `since_within`'s `wait` bound to act, and nothing reads it.
 - **Partly done** (fa53bc6a6): a chunk's held bytes leave out a device run's own blocks, and the chunk drops the
   device's copies of its dead relations on its thread as it ends; `FLUSHED` no longer keeps every wave.
 - **Open**: on Metal, a chunk's held bytes still differ between runs (one chunk 19-50 MB): a chunk's device strata

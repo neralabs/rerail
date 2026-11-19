@@ -83,13 +83,26 @@ Asked why the device caches relations at all, the user set the rule (2026-11-19)
 | `InRel::keyed` | a key column's runs | the relation's block | 6 |
 | `InRel::vers` | a relation's versions as read | relations in blocks | 6 |
 | `GROWTH` (device) | rows out per row, by rule and stage | the joins' memo (0444), which is filed in order | 7 |
-| `FLUSHED`, `SUSPENDED`, `LAST` (device) | what is in flight: waves, waiting strata, the last report | open: these are the executor's control state, not data a reader reads. Asked of the user. | — |
+| `FLUSHED`, `SUSPENDED`, `LAST` (device) | what is in flight: waves, waiting strata, the last report | stays on the CPU for now (the user, 2026-11-19: "Bookkeeping / scoreboards / schedules can be on the CPU for now; if we want device-side enqueuing everywhere we will need to do so later") | — |
 
 ## Steps
 
 1. The device makes its handle to a relation read in place, and its sorts, at each stratum from the block. A
    stratum in flight keeps its own handle until it completes. R1, R6.
 2. The rolling cache holds the verdicts and the text functions' outputs; the CPU's text tests read it too. R3.
+   A verdict made where a reader reads it needs the symbol's name and the test's automaton in blocks, so step 2 is
+   built in this order (2026-11-19):
+   - **2a.** The run's pending atoms in atoms blocks (`rerail_blocks::atoms`, the stored chain's format), a chain
+     of anonymous blocks each twice the last. `Interner`'s `buf`, `ends`, `hashes` and `table` go. A block wholly
+     stored is dropped; its atoms are read in the store's chain.
+   - **2b.** A family of reads over the atoms chain, written once in CLIF: an id's bytes, for the Rust host, the
+     JIT and the kernels.
+   - **2c.** The text tests' automata in a block (step 4 brought forward), run by a read in CLIF.
+   - **2d.** The verdict cache: the one rolling cache, keyed by (test, symbol), filled by running the test's
+     automaton over the symbol's bytes; read by the CPU's text tests and the kernels. The device's verdicts by
+     column, its names uploaded (`texts`, `unions`) and `column_symbols` go.
+   - **2e.** The text functions' outputs (`mapped`), by (functions, symbol). Their representation is decided
+     when 2d is in: an output is a text, not a verdict.
 3. Views' indexes go in the chunk block, and the copies are no longer cached. R4.
 4. The device's automata go in a block.
 5. The CPU's indexes, orders and dead rows go in the relation's block. R2, R5.
@@ -113,3 +126,10 @@ findings in every run:
 - Not yet the same chunks at once in every run (R6): a chunk's bytes written still differ on Metal (one chunk
   144-156 MB). A device run's own blocks are sized by the capacity estimates (`GROWTH`, per thread, step 7), and a
   stratum the device refuses at run time (4-29 a run, by the device room left) writes on the CPU instead.
+
+## Measured (2026-11-19, step 2a)
+
+The pending atoms in atoms blocks: hogql cold, profiling builds, format 15, load 70-81, interleaved with step 1, two
+runs each on the CPU: 84.4 and 88.9 B instructions against 85.5 and 87.6 B, peak 289 and 334 MB against 298 and
+339 MB; Metal 74.7 B, 1,283 MB. 1,629 findings in every run. `Interner::store_upto` no longer copies the atoms still
+pending into a new buffer.

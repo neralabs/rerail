@@ -55,13 +55,19 @@ pub fn hash_str(s: &str) -> u64 {
 pub struct Interner {
     stored: stored::Stored,
     base: Sym,
-    buf: Vec<u8>,
-    /// ends[i] = end offset of pending atom `base + i` in `buf`.
-    ends: Vec<u32>,
-    hashes: Vec<u64>,
-    /// Each pending atom's id with its hash's high half (`tag`): a probe compares tags and reads no atom's hash.
-    table: hashbrown::HashTable<(u32, Sym)>,
+    /// The pending atoms (`base` on), in atoms blocks of the stored chain's format in anonymous memory, each twice
+    /// the last (decision 0450 step 2a): every string, its end, its hash and the table from hash to id inside its
+    /// block, where any reader reads it. A block may begin below `base`: its atoms stored since are read in the
+    /// store's chain, and a block wholly stored is let go.
+    pending: Vec<rerail_blocks::atoms::AtomsW>,
 }
+
+/// The first pending block's room: atoms, and string bytes. Each next has twice the last's (or a long string's).
+#[cfg(not(test))]
+pub(crate) const PENDING_FIRST_CAP: u32 = 1 << 12;
+#[cfg(test)]
+pub(crate) const PENDING_FIRST_CAP: u32 = 64;
+const PENDING_FIRST_BYTES: u64 = 64 * PENDING_FIRST_CAP as u64;
 
 impl Default for Interner {
     fn default() -> Self {
@@ -72,17 +78,26 @@ impl Default for Interner {
 impl Interner {
     /// The atoms of the store at `database` (none read yet), or of an in-memory database's.
     fn over(database: Option<&Path>) -> Self {
-        Interner { stored: stored::Stored::new(database), base: 1, buf: Vec::new(), ends: Vec::new(), hashes: Vec::new(), table: hashbrown::HashTable::new() }
+        Interner { stored: stored::Stored::new(database), base: 1, pending: Vec::new() }
+    }
+
+    /// The pending block that holds `s`, if one does.
+    fn block_of(&self, s: Sym) -> Option<&rerail_blocks::atoms::AtomsW> {
+        use rerail_blocks::atoms::AtomRead;
+        self.pending.iter().rev().find(|b| b.ids().contains(&s))
+    }
+
+    /// The pending blocks' memory, each its first byte and its reservation's end.
+    #[cfg(test)]
+    pub(crate) fn pending_regions(&self) -> Vec<(usize, usize)> {
+        self.pending.iter().map(rerail_blocks::atoms::AtomsW::region).collect()
     }
 
     /// The string of `s`, if this process holds it: the store's (mapped), or pending.
     pub fn str(&self, s: Sym) -> Option<&str> {
         if s >= self.base {
-            let i = (s - self.base) as usize;
-            let &end = self.ends.get(i)?;
-            let start = if i == 0 { 0 } else { self.ends[i - 1] as usize };
-            // SAFETY: only whole `&str`s are appended to `buf`.
-            return Some(unsafe { std::str::from_utf8_unchecked(&self.buf[start..end as usize]) });
+            use rerail_blocks::atoms::AtomRead;
+            return self.block_of(s)?.str(s);
         }
         if s == 0 {
             return Some("");
@@ -93,22 +108,13 @@ impl Interner {
     /// The hash of `s`'s string (`hash_str`), if this process holds it: kept with each atom, so no string is read.
     fn hash_of(&self, s: Sym) -> Option<u64> {
         if s >= self.base {
-            return self.hashes.get((s - self.base) as usize).copied();
+            use rerail_blocks::atoms::AtomRead;
+            return self.block_of(s)?.hash(s);
         }
         if s == 0 {
             return Some(hash_str(""));
         }
         self.stored.hash(s)
-    }
-
-    /// A hash's tag, and the table's hash of a tag: the table places entries by what it holds, so it rehashes
-    /// without reading an atom.
-    fn tag(h: u64) -> u32 {
-        (h >> 32) as u32
-    }
-
-    fn placed(tag: u32) -> u64 {
-        ((tag as u64) << 32) | tag.rotate_left(16) as u64
     }
 
     pub fn get(&self, s: &str) -> Option<Sym> {
@@ -120,8 +126,9 @@ impl Interner {
         if s.is_empty() {
             return Some(0);
         }
-        let tag = Self::tag(h);
-        if let Some(&(_, id)) = self.table.find(Self::placed(tag), |&(t, id)| t == tag && self.str(id) == Some(s)) {
+        use rerail_blocks::atoms::AtomRead;
+        let base = self.base;
+        if let Some(id) = self.pending.iter().find_map(|b| b.find(s, h).filter(|&id| id >= base)) {
             return Some(id);
         }
         self.stored.find(s, h).filter(|&id| id < self.base)
@@ -141,18 +148,20 @@ impl Interner {
 
     fn push(&mut self, s: &str, h: u64) -> Sym {
         let id = self.len() as Sym;
-        self.buf.extend_from_slice(s.as_bytes());
-        assert!(self.buf.len() <= u32::MAX as usize, "pending atoms over 4 GiB");
-        self.ends.push(self.buf.len() as u32);
-        self.hashes.push(h);
-        let tag = Self::tag(h);
-        self.table.insert_unique(Self::placed(tag), (tag, id), |&(t, _)| Self::placed(t));
-        id
+        if let Some(got) = self.pending.last_mut().filter(|b| b.end() == id).and_then(|b| b.append(s, h)) {
+            return got;
+        }
+        // The next block, twice the last (and room for this string).
+        let (cap, bytes) = self.pending.last().map_or((PENDING_FIRST_CAP, PENDING_FIRST_BYTES), |b| (b.cap().saturating_mul(2), b.bytes_cap() * 2));
+        let mut b = rerail_blocks::atoms::AtomsW::anon(id, cap, bytes.max(2 * s.len() as u64));
+        let got = b.append(s, h).expect("room for its first atom");
+        self.pending.push(b);
+        got
     }
 
     /// One past the last id: the database's (as far as this process knows) and the pending ones.
     pub fn len(&self) -> usize {
-        self.base as usize + self.ends.len()
+        self.pending.last().map_or(self.base, |b| b.end().max(self.base)) as usize
     }
 
     /// Where the pending atoms start: ids below it are in the database.
@@ -162,12 +171,13 @@ impl Interner {
 
     /// How many atoms are pending, and their bytes.
     fn pending(&self) -> (usize, usize) {
-        (self.ends.len(), self.buf.len())
+        let bytes: u64 = self.pending.iter().map(|b| b.bytes_of(self.base, Sym::MAX)).sum();
+        (self.len() - self.base(), bytes as usize)
     }
 
-    /// Heap bytes held (capacities): the pending atoms' alone. The store's are mapped (`mapped`).
+    /// Bytes the pending atoms' blocks hold (their pages taken). The store's are mapped (`mapped`).
     pub fn bytes(&self) -> usize {
-        self.buf.capacity() + self.ends.capacity() * 4 + self.hashes.capacity() * 8 + self.table.capacity() * 9
+        self.pending.iter().map(rerail_blocks::atoms::AtomsW::used).sum()
     }
 
     /// Bytes of the store's blocks mapped.
@@ -178,13 +188,12 @@ impl Interner {
     /// Appends the pending atoms from `from` to `upto` to the store's open block, in `connection`'s write transaction
     /// (`Stored::append`): read from the pending buffer as they are, not copied.
     fn append_pending(&mut self, connection: &Connection, from: usize, upto: usize) -> StoreResult<Sym> {
-        let Interner { stored, base, buf, ends, hashes, .. } = self;
-        let base = *base as usize;
+        use rerail_blocks::atoms::AtomRead;
+        let Interner { stored, pending, .. } = self;
+        let of = |id: Sym| pending.iter().rev().find(|b| b.ids().contains(&id)).expect("a pending atom's block");
         let run = (from..upto).map(|id| {
-            let i = id - base;
-            let start = if i == 0 { 0 } else { ends[i - 1] as usize };
-            // SAFETY: only whole `&str`s are appended to `buf`.
-            (unsafe { std::str::from_utf8_unchecked(&buf[start..ends[i] as usize]) }, hashes[i])
+            let b = of(id as Sym);
+            (b.str(id as Sym).expect("a pending atom"), b.hash(id as Sym).expect("a pending atom's hash"))
         });
         stored.append(connection, from as Sym, run)
     }
@@ -192,26 +201,16 @@ impl Interner {
     /// The pending atoms below `upto` are stored now (their commit reached it): read where they lie in the blocks,
     /// and their heap copies dropped.
     fn store_upto(&mut self, upto: usize) -> StoreResult<()> {
-        let n = upto.saturating_sub(self.base()).min(self.ends.len());
+        let n = upto.saturating_sub(self.base()).min(self.len() - self.base());
         if n == 0 {
             return Ok(());
         }
         self.stored.view_to(upto as Sym)?;
-        let cut = self.ends[n - 1] as usize;
-        // The pending rest (if any) is copied into a buffer of its own: a drain would keep the buffer's capacity.
-        self.buf = self.buf[cut..].to_vec();
-        self.ends.drain(..n);
-        for end in &mut self.ends {
-            *end -= cut as u32;
-        }
-        self.hashes.drain(..n);
-        self.ends.shrink_to_fit();
-        self.hashes.shrink_to_fit();
         self.base += n as Sym;
-        // The table holds the pending atoms alone.
+        // A block wholly stored is let go: its atoms are read in the store's chain. A block with atoms still pending
+        // stays as it is, nothing copied.
         let base = self.base;
-        self.table.retain(|&mut (_, id)| id >= base);
-        self.table.shrink_to_fit(|&(t, _)| Self::placed(t));
+        self.pending.retain(|b| b.end() > base);
         Ok(())
     }
 
@@ -221,9 +220,10 @@ impl Interner {
         if end <= self.base() {
             return Ok(());
         }
-        if !self.ends.is_empty() {
+        if self.len() > self.base() {
             return Err(StoreError::Corrupt("another process wrote atoms while this one had atoms pending".to_owned()));
         }
+        self.pending.clear();
         self.stored.learn(rows);
         self.stored.view_to(end as Sym)?;
         self.base = end as Sym;
@@ -1348,9 +1348,7 @@ impl Atoms {
 
 /// The bytes of pending atoms `from..upto`.
 fn state_bytes(atoms: &Interner, from: usize, upto: usize) -> usize {
-    let (i, j) = (from - atoms.base(), upto - atoms.base());
-    let start = if i == 0 { 0 } else { atoms.ends[i - 1] as usize };
-    (if j == 0 { 0 } else { atoms.ends[j - 1] as usize }) - start
+    atoms.pending.iter().map(|b| b.bytes_of(from as Sym, upto as Sym)).sum::<u64>() as usize
 }
 
 /// Commits `connection`'s open transaction (`BEGIN` … ), appending the pending atoms first if it

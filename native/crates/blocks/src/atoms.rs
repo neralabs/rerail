@@ -142,13 +142,15 @@ fn slots(cap: u64) -> u64 {
     (cap * 2).next_power_of_two().max(16)
 }
 
-/// An open atoms block in a file: its one writer (the store's atoms lease holder).
+/// An open atoms block: its one writer. In a file, the store's atoms lease holder's; in anonymous memory, a process's
+/// pending atoms (decision 0450 step 2a), never written to a file.
 pub struct AtomsW {
     block: Block,
     raw: Raw,
-    /// Where it writes back without a shared mapping (WASI): the block lives in memory there.
+    /// Where it writes back without a shared mapping (WASI): the block lives in memory there. `None` for a block in
+    /// anonymous memory.
     #[cfg(not(unix))]
-    file: std::fs::File,
+    file: Option<std::fs::File>,
 }
 
 // SAFETY: one writer appends, through `&mut self`; reads through `&self` are of what it wrote.
@@ -158,13 +160,43 @@ unsafe impl Sync for AtomsW {}
 impl AtomsW {
     /// A new block at `path` for ids from `first`, with room for `cap` atoms and `bytes_cap` bytes of strings.
     pub fn create(path: &Path, first: u32, tag: u64, cap: u32, bytes_cap: u64) -> io::Result<AtomsW> {
-        let cap64 = u64::from(cap.max(1));
-        let n = slots(cap64);
-        let need = 4 * PAGE + (cap64 * 16 + n * 8 + bytes_cap) as usize;
+        let need = Self::need(cap, bytes_cap);
         #[cfg(unix)]
         let block = Block::file(path, kind::ATOMS, need)?;
         #[cfg(not(unix))]
         let block = Block::anon(kind::ATOMS, need);
+        let w = AtomsW {
+            raw: Self::lay_out(&block, first, tag, cap, bytes_cap),
+            block,
+            #[cfg(not(unix))]
+            file: Some(std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?),
+        };
+        w.sync()?;
+        Ok(w)
+    }
+
+    /// A new block in anonymous memory for ids from `first`, with room for `cap` atoms and `bytes_cap` bytes of
+    /// strings: a process's pending atoms (decision 0450 step 2a). Its pages are taken as atoms are appended.
+    pub fn anon(first: u32, cap: u32, bytes_cap: u64) -> AtomsW {
+        let block = Block::anon(kind::ATOMS, Self::need(cap, bytes_cap));
+        AtomsW {
+            raw: Self::lay_out(&block, first, 0, cap, bytes_cap),
+            block,
+            #[cfg(not(unix))]
+            file: None,
+        }
+    }
+
+    /// The bytes a block of `cap` atoms and `bytes_cap` string bytes reserves.
+    fn need(cap: u32, bytes_cap: u64) -> usize {
+        let cap64 = u64::from(cap.max(1));
+        4 * PAGE + (cap64 * 16 + slots(cap64) * 8 + bytes_cap) as usize
+    }
+
+    /// `block`'s regions laid out for ids from `first`: its root, set as the block's.
+    fn lay_out(block: &Block, first: u32, tag: u64, cap: u32, bytes_cap: u64) -> Raw {
+        let cap64 = u64::from(cap.max(1));
+        let n = slots(cap64);
         let root: *mut AtomsRoot = block.alloc_t(1);
         let ends: *mut u64 = block.alloc_t(cap64 as usize);
         let hashes: *mut u64 = block.alloc_t(cap64 as usize);
@@ -185,15 +217,7 @@ impl AtomsW {
             Span::set(&r.strings, strings, bytes_cap as usize);
         }
         block.set_root(root);
-        let raw = Raw::of(&block);
-        let w = AtomsW {
-            block,
-            raw,
-            #[cfg(not(unix))]
-            file: std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?,
-        };
-        w.sync()?;
-        Ok(w)
+        Raw::of(block)
     }
 
     /// The open block at `path`, for its next writer, which continues from `end` (the end the store's last commit
@@ -208,7 +232,7 @@ impl AtomsW {
             block,
             raw,
             #[cfg(not(unix))]
-            file: std::fs::OpenOptions::new().read(true).write(true).open(path)?,
+            file: Some(std::fs::OpenOptions::new().read(true).write(true).open(path)?),
         };
         w.resume(end)?;
         Ok(w)
@@ -292,6 +316,31 @@ impl AtomsW {
         Some(id)
     }
 
+    /// The bytes its block has written (its pages taken).
+    pub fn used(&self) -> usize {
+        self.block.used()
+    }
+
+    /// The string bytes of ids `from..to` (within its atoms appended).
+    pub fn bytes_of(&self, from: u32, to: u32) -> u64 {
+        let end = self.end();
+        let (from, to) = (from.clamp(self.raw.first, end), to.clamp(self.raw.first, end));
+        if from >= to {
+            return 0;
+        }
+        let at = |id: u32| {
+            let i = (id - self.raw.first) as usize;
+            // SAFETY: `i` is below the count appended.
+            if i == 0 { 0 } else { unsafe { *self.raw.ends.add(i - 1) } }
+        };
+        at(to) - at(from)
+    }
+
+    /// Its block's memory: its first byte and its reservation's end.
+    pub fn region(&self) -> (usize, usize) {
+        (self.block.base_ptr() as usize, self.block.base_ptr() as usize + self.block.reserved())
+    }
+
     /// One past the last id appended.
     pub fn end(&self) -> u32 {
         self.raw.first + self.block.root::<AtomsRoot>().count.load(Acquire) as u32
@@ -306,7 +355,7 @@ impl AtomsW {
         #[cfg(not(unix))]
         {
             use std::io::{Seek, Write};
-            let mut f = &self.file;
+            let Some(mut f) = self.file.as_ref() else { return Ok(()) };
             f.seek(io::SeekFrom::Start(0))?;
             f.write_all(self.block.bytes(0, self.block.used()))?;
             f.sync_data()
@@ -332,7 +381,9 @@ impl AtomsW {
             f.set_len(len)?;
         }
         #[cfg(not(unix))]
-        self.file.set_len(len)?;
+        if let Some(f) = &self.file {
+            f.set_len(len)?;
+        }
         Ok(())
     }
 }
