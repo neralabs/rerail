@@ -13,7 +13,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
-import { worktreeRegistry } from "../catalog/repository-identity.js";
+import { worktreeRegistry, worktreeRegistryFolder } from "../catalog/repository-identity.js";
 import { loadNativeBinding, type NativeGitIgnoreMatcher } from "../native/native.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import type {
@@ -246,6 +246,11 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return (worktreeRegistry(starting)?.worktrees ?? [])
       .map(worktree => storedPath(worktree))
       .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
+  }
+
+  /** Where Git registers the worktrees `worktreeRoots` reads, as it last read them (`worktreeRegistryFolder`). */
+  worktreeRegistry(): string | undefined {
+    return worktreeRegistryFolder(this.#options.startingCheckout);
   }
 
   /**

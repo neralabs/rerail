@@ -13,7 +13,12 @@
  * a `.git` entry or of a folder the read walked (each change among a folder's entries comes as a notice of its own), or
  * a path in or under what the read did not walk or observe (an ignored file or folder, another worktree). A notice the
  * system says it lost, a watch that ended, and every notice that arrives while a read runs count.
+ *
+ * The folder where Git registers a repository's linked worktrees (`worktrees` in its common Git folder) is watched too
+ * (`watchRegistry`): `git worktree add`, `remove`, `move`, `repair` and `prune` change an entry there, so a notice of one
+ * tells the walks that Git's list may name a worktree it did not, such as one removed and added again at its path.
  */
+import { lstatSync, readdirSync } from "node:fs";
 import type { TreeNotice, TreeWatch } from "./tree-watch.js";
 
 /** What a walk's read of a worktree saw, by paths relative to the worktree (`/`-separated, `""` for the worktree itself). */
@@ -27,10 +32,12 @@ export interface WorktreeRead {
 /** A worktree that could not be watched is tried again after this long, read on every walk meanwhile. */
 export const WATCH_RETRY_MS = 600_000;
 /**
- * A worktree whose watch ended is watched again no sooner than this after: read whole on every walk meanwhile. A watch
- * ends when the worktree or a folder above it is renamed, moved or deleted (on Windows, when the path then holds no
- * folder or another, or after a run of renames: the engine's `REOPENS` within `REOPEN_WINDOW`), or on a watch error.
- * Watching it again at once would chase a worktree still being moved or replaced, its watch ending again on every walk.
+ * A worktree whose watch ended is watched again no sooner than this after, read whole on every walk meanwhile, unless
+ * another folder than the one it watched now stands at its path (`folderAt`): a worktree made again there is watched as
+ * the next walk reads it, so a write after that read is a notice. A watch ends when the worktree or a folder above it is
+ * renamed, moved or deleted (on Windows, when the path then holds no folder or another, or after a run of renames: the
+ * engine's `REOPENS` within `REOPEN_WINDOW`), or on a watch error. Watching the same folder again at once would chase a
+ * worktree still being moved, its watch ending again on every walk.
  */
 export const REWATCH_MS = 5_000;
 
@@ -76,12 +83,62 @@ function counts(seen: WorktreeRead, notice: TreeNotice): boolean {
   return notice.renamed.some(path => noticeCounts(seen, "rename", path)) || notice.changed.some(path => noticeCounts(seen, "change", path));
 }
 
+/** The files of a worktree's entry in Git's registry that say where it is (`gitdir`) and whether Git is still making it (`locked`). */
+const REGISTRY_FILES = new Set(["gitdir", "locked"]);
+
+/**
+ * Whether a notice of `event` for `path` (relative to the folder where Git registers the worktrees) may change what Git
+ * lists: an entry came or went, or its `gitdir` or `locked` file did or was written. Git writes the rest of an entry
+ * (`HEAD`, `index`, `logs`) as it works in that worktree, which moves nothing it lists.
+ */
+export function registryNoticeCounts(event: "change" | "rename", path: string): boolean {
+  const parts = path.split("/");
+  if (parts.length === 1) return event === "rename";
+  return parts.length === 2 && REGISTRY_FILES.has(parts[1]!);
+}
+
+/** Whether a notice of a registry folder may change what Git lists (`registryNoticeCounts`); one that lost its paths or ended may. */
+function registryCounts(notice: TreeNotice): boolean {
+  if (notice.ended || notice.lost) return true;
+  return notice.renamed.some(path => registryNoticeCounts("rename", path)) || notice.changed.some(path => registryNoticeCounts("change", path));
+}
+
+/**
+ * The folder at `root`: its device, file number and birth time (a folder made on Linux may take the file number of one
+ * just removed); `""` when none is there.
+ */
+export function folderAt(root: string): string {
+  try {
+    const info = lstatSync(root, { bigint: true });
+    return info.isDirectory() ? `${info.dev}:${info.ino}:${info.birthtimeNs}` : "";
+  } catch {
+    return "";
+  }
+}
+
+/** The folders a watch of the registry `folder` follows on Linux: its own, and each worktree's entry, where Git writes `gitdir` and `locked`. */
+function registryFolders(folder: string): string[] {
+  try {
+    return ["", ...readdirSync(folder, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort()];
+  } catch {
+    return [""];
+  }
+}
+
 interface Watched {
   /** The folders the watch follows (Linux), as last given to `TreeWatch.watch`. */
   folders: ReadonlySet<string>;
   /** What the last finished read saw; undefined while a read runs or before the first, when every notice counts. */
   seen: WorktreeRead | undefined;
   changed: boolean;
+  /** The folder at the worktree's path as the watch began (`folderAt`). */
+  readonly folder: string;
+}
+
+/** A watch that ended: when, and the folder it watched (`folderAt`). */
+interface Ended {
+  readonly at: number;
+  readonly folder: string;
 }
 
 /**
@@ -94,18 +151,31 @@ export class WorktreeNotices {
   /** Whether the watch follows the folders a read walked (Linux), rather than each worktree's whole tree. */
   readonly #byFolder: boolean;
   readonly #now: () => number;
+  readonly #folderAt: (root: string) => string;
   readonly #watched = new Map<string, Watched>();
   /** When each worktree that could not be watched failed. */
   readonly #failed = new Map<string, number>();
-  /** When the watch of each worktree last ended. */
-  readonly #ended = new Map<string, number>();
-  /** The watched worktrees a notice counted in since a read of each began, until `noticed` hands them on. */
+  /** The watch of each worktree that last ended. */
+  readonly #ended = new Map<string, Ended>();
+  /** The folders where Git registers the worktrees that are watched (`watchRegistry`), each with the folders it follows on Linux. */
+  readonly #registries = new Map<string, readonly string[]>();
+  /**
+   * The watched worktrees a notice counted in since a read of each began, and the registry folders a notice counted in
+   * (`registryNoticeCounts`), until `noticed` hands them on.
+   */
   readonly #noticed = new Set<string>();
 
-  constructor(options: { treeWatch?: TreeWatch | undefined; platform?: NodeJS.Platform; now?: () => number } = {}) {
+  /** `folderAt`: the folder at a worktree's path (`folderAt` by default), which tells a worktree made again there. */
+  constructor(options: {
+    treeWatch?: TreeWatch | undefined;
+    platform?: NodeJS.Platform;
+    now?: () => number;
+    folderAt?: (root: string) => string;
+  } = {}) {
     this.#watch = options.treeWatch;
     this.#byFolder = (options.platform ?? process.platform) === "linux";
     this.#now = options.now ?? Date.now;
+    this.#folderAt = options.folderAt ?? folderAt;
   }
 
   /** Takes every notice the watch queued since the last take, and weighs each against its worktree's last read. */
@@ -128,14 +198,26 @@ export class WorktreeNotices {
     return this.#watched.has(root);
   }
 
-  /** Whether any worktree is watched now, so a notice may come. */
+  /** Whether any worktree, or a folder where Git registers them, is watched now, so a notice may come. */
   watchingAny(): boolean {
-    return this.#watched.size > 0;
+    return this.#watched.size > 0 || this.#registries.size > 0;
+  }
+
+  /**
+   * Watches `folder` (physical), where Git registers a repository's linked worktrees, unless it is watched; on Linux with
+   * each worktree's entry, so Git's writing of an entry's `gitdir` and `locked` is a notice too. Once a notice there may
+   * change what Git lists (`registryNoticeCounts`), `noticed` hands on `folder`. A folder that is not there, or that the
+   * watch refuses, is tried again at the next call.
+   */
+  watchRegistry(folder: string): void {
+    if (this.#watch === undefined || this.#registries.has(folder)) return;
+    this.#followRegistry(folder);
   }
 
   /**
    * Takes the worktrees a notice counted in since the last call, and since a read of each began: each may hold a
-   * change no read has seen, which a notice taken as the read began, or while it ran, would not.
+   * change no read has seen, which a notice taken as the read began, or while it ran, would not. With them, each
+   * registry folder (`watchRegistry`) a notice counted in since the last call: Git's list may name another worktree.
    */
   noticed(): Set<string> {
     const noticed = new Set(this.#noticed);
@@ -164,25 +246,32 @@ export class WorktreeNotices {
     if (this.#byFolder) this.#follow(root, watched, seen.folders);
   }
 
-  /** Stops watching each worktree not in `roots`, releasing every handle the watch held on it. */
+  /**
+   * Stops watching each worktree, and each registry folder (`watchRegistry`), not in `roots`, releasing every handle the
+   * watch held on it.
+   */
   retain(roots: ReadonlySet<string>): void {
-    for (const root of this.#watched.keys()) {
-      if (roots.has(root)) continue;
-      this.#watched.delete(root);
-      this.#watch?.unwatch(root);
-    }
+    this.#letGo(this.#watched, roots);
+    this.#letGo(this.#registries, roots);
     forgetOthers(this.#failed, roots);
     forgetOthers(this.#ended, roots);
     forgetOthers(this.#noticed, roots);
   }
 
+  /** Stops watching each root of `watched` not in `roots`. */
+  #letGo(watched: Map<string, unknown>, roots: ReadonlySet<string>): void {
+    for (const root of watched.keys()) {
+      if (roots.has(root)) continue;
+      watched.delete(root);
+      this.#watch?.unwatch(root);
+    }
+  }
+
   /** Starts watching `root`, its root folder alone until a read names its folders; undefined when it cannot be watched now. */
   #open(root: string): Watched | undefined {
-    if (this.#watch === undefined) return undefined;
-    const failedAt = this.#failed.get(root);
-    if (failedAt !== undefined && this.#now() - failedAt < WATCH_RETRY_MS) return undefined;
-    const endedAt = this.#ended.get(root);
-    if (endedAt !== undefined && this.#now() - endedAt < REWATCH_MS) return undefined;
+    if (this.#watch === undefined || this.#failedLately(root)) return undefined;
+    const folder = this.#folderAt(root);
+    if (this.#endedAt(root, folder)) return undefined;
     this.#failed.delete(root);
     this.#ended.delete(root);
     // Up before the read: a change made while it runs is a notice.
@@ -190,9 +279,41 @@ export class WorktreeNotices {
       this.#failed.set(root, this.#now());
       return undefined;
     }
-    const watched: Watched = { folders: new Set([""]), seen: undefined, changed: true };
+    const watched: Watched = { folders: new Set([""]), seen: undefined, changed: true, folder };
     this.#watched.set(root, watched);
     return watched;
+  }
+
+  /** Whether `root` could not be watched within `WATCH_RETRY_MS`. */
+  #failedLately(root: string): boolean {
+    const failedAt = this.#failed.get(root);
+    return failedAt !== undefined && this.#now() - failedAt < WATCH_RETRY_MS;
+  }
+
+  /**
+   * Whether the watch of `root` ended within `REWATCH_MS` and `folder`, the folder at its path now, is the one it watched,
+   * or none: another folder there is a worktree made again, watched at once.
+   */
+  #endedAt(root: string, folder: string): boolean {
+    const ended = this.#ended.get(root);
+    return ended !== undefined && this.#now() - ended.at < REWATCH_MS && (folder === "" || folder === ended.folder);
+  }
+
+  /** Watches the registry `folder` with the folders it follows now (`registryFolders` on Linux); one the watch refuses is let go. */
+  #followRegistry(folder: string): void {
+    const folders = this.#byFolder ? registryFolders(folder) : [""];
+    if (this.#watch!.watch(folder, folders)) this.#registries.set(folder, folders);
+    else this.#registries.delete(folder);
+  }
+
+  /**
+   * A notice of a registry folder: once its watch ended, it is watched again at the next `watchRegistry`; on Linux an
+   * entry that came or went, or a notice that lost its paths, has the watch follow the entries there now.
+   */
+  #registryNotice(notice: TreeNotice): void {
+    if (notice.ended) this.#registries.delete(notice.root);
+    else if (this.#byFolder && (notice.lost || notice.renamed.some(path => !path.includes("/")))) this.#followRegistry(notice.root);
+    if (registryCounts(notice)) this.#noticed.add(notice.root);
   }
 
   /**
@@ -214,13 +335,17 @@ export class WorktreeNotices {
   }
 
   #notice(notice: TreeNotice): void {
+    if (this.#registries.has(notice.root)) {
+      this.#registryNotice(notice);
+      return;
+    }
     const watched = this.#watched.get(notice.root);
     if (watched === undefined) return;
     // The watch let go (the worktree or a folder above it moved or went, a watch error): read it whole, and watch it
     // again as the next walk asks.
     if (notice.ended) {
       this.#watched.delete(notice.root);
-      this.#ended.set(notice.root, this.#now());
+      this.#ended.set(notice.root, { at: this.#now(), folder: watched.folder });
     }
     if (this.#byFolder) this.#unfollow(watched, notice);
     if (marksChanged(watched, notice)) {

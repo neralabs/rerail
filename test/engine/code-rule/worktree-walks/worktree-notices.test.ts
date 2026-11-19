@@ -1,6 +1,12 @@
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { TreeNotice, TreeWatch } from "../../../../src/engine/code-rule/tree-watch.js";
-import { NOTICE_PATHS_CAP, noticeCounts, REWATCH_MS, SharedTreeWatch, WATCH_RETRY_MS, WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
+import {
+  folderAt, NOTICE_PATHS_CAP, noticeCounts, REWATCH_MS, SharedTreeWatch, WATCH_RETRY_MS, WorktreeNotices,
+} from "../../../../src/engine/code-rule/worktree-notices.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 /** A read that walked the worktree, `src` and `src/deep`, and left out an ignored folder, an ignored file and a worktree. */
 const seen = { folders: new Set(["", "src", "src/deep"]), leftOut: new Set(["node_modules", "src/cache.tmp", "nested"]) };
@@ -210,6 +216,72 @@ describe("WorktreeNotices", () => {
     expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
   });
 
+  it("watches again at once a worktree whose watch ended once another folder stands at its path, and waits while the same folder, or none, does", () => {
+    const watch = new ScriptedWatch();
+    const clock = { now: 0 };
+    const folders = new Map([["/remade", "a"], ["/same", "b"], ["/gone", "c"]]);
+    const subject = new WorktreeNotices({ treeWatch: watch, platform: "darwin", now: () => clock.now, folderAt: root => folders.get(root) ?? "" });
+    for (const root of folders.keys()) {
+      read(subject, root);
+      watch.notice(root, { ended: true });
+    }
+    subject.collect();
+    folders.set("/remade", "a2");
+    folders.delete("/gone");
+    expect([...folders.keys(), "/gone"].map(root => [subject.changed(root), subject.watching(root)])).toEqual([[true, true], [true, false], [true, false]]);
+    clock.now = REWATCH_MS;
+    folders.set("/gone", "c2");
+    expect(["/same", "/gone"].map(root => [subject.changed(root), subject.watching(root)])).toEqual([[true, true], [true, true]]);
+  });
+
+  it("hands on the folder where Git registers the worktrees once an entry there came or went, or its gitdir or locked file did, and not for Git's work in an entry", () => {
+    const watch = new ScriptedWatch();
+    const { notices: subject } = notices(watch);
+    subject.watchRegistry("/r");
+    subject.watchRegistry("/r");
+    expect([watch.calls, subject.watchingAny()]).toEqual([["watch /r []"], true]);
+    watch.notice("/r", { changed: ["w1", "w1/index", "w1/HEAD"], renamed: ["w1/index.lock", "w1/logs/HEAD"] });
+    subject.collect();
+    expect(subject.noticed()).toEqual(new Set());
+    for (const notice of [{ renamed: ["w2"] }, { changed: ["w1/gitdir"] }, { renamed: ["w1/locked"] }, { lost: true }, { ended: true }]) {
+      watch.notice("/r", notice);
+      subject.collect();
+      expect(subject.noticed()).toEqual(new Set(["/r"]));
+    }
+    // Its watch ended: watched again as the next walk names it.
+    subject.watchRegistry("/r");
+    expect(watch.calls).toEqual(["watch /r []", "watch /r []"]);
+    subject.retain(new Set());
+    expect([watch.calls.at(-1), subject.watchingAny()]).toEqual(["unwatch /r", false]);
+  });
+
+  it("follows each worktree's entry where Git registers the worktrees on Linux, and the entries there once one came", async () => {
+    const folder = await mkdtemp(join(tmpdir(), "rerail-registry-"));
+    try {
+      await mkdir(join(folder, "w1"));
+      await writeFile(join(folder, "stray"), "");
+      const watch = new ScriptedWatch();
+      const { notices: subject } = notices(watch, "linux");
+      subject.watchRegistry(folder);
+      await mkdir(join(folder, "w2"));
+      watch.notice(folder, { changed: ["w1/index"] });
+      subject.collect();
+      watch.notice(folder, { renamed: ["w2"] });
+      subject.collect();
+      expect(watch.calls).toEqual([`watch ${folder} [,w1]`, `watch ${folder} [,w1,w2]`]);
+      // One the watch refuses to follow is let go, and watched again as the next walk names it.
+      watch.refused.add(folder);
+      watch.notice(folder, { lost: true });
+      subject.collect();
+      expect(subject.watchingAny()).toBe(false);
+      watch.refused.delete(folder);
+      subject.watchRegistry(folder);
+      expect([watch.calls.at(-1), subject.watchingAny()]).toEqual([`watch ${folder} [,w1,w2]`, true]);
+    } finally {
+      await removeFolder(folder);
+    }
+  });
+
   it("lets go of each worktree no walk watches any more", () => {
     const watch = new ScriptedWatch();
     const { notices: subject } = notices(watch);
@@ -218,6 +290,28 @@ describe("WorktreeNotices", () => {
     subject.retain(new Set(["/a"]));
     expect(watch.calls.filter(call => call.startsWith("unwatch"))).toEqual(["unwatch /b"]);
     expect(subject.watching("/b")).toBe(false);
+  });
+});
+
+describe("folderAt", () => {
+  it("tells a folder made again at a path from the one removed there, and gives none for a file or nothing there", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-folder-at-"));
+    try {
+      const path = join(root, "w");
+      await mkdir(path);
+      const first = folderAt(path);
+      expect([first === "", folderAt(path) === first]).toEqual([false, true]);
+      await removeFolder(path);
+      expect(folderAt(path)).toBe("");
+      // A folder made right after another went may take its file number on Linux.
+      await mkdir(path);
+      expect([folderAt(path) === "", folderAt(path) === first]).toEqual([false, false]);
+      await removeFolder(path);
+      await writeFile(path, "");
+      expect(folderAt(path)).toBe("");
+    } finally {
+      await removeFolder(root);
+    }
   });
 });
 

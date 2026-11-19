@@ -701,6 +701,17 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     expect(auditor.worktreeRoots()).toEqual([worktree]);
   });
 
+  it("names where Git registers the worktrees it named for the session's walk", async () => {
+    const { databasePath, session } = await repositoryWithWorktree(outside);
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+    await auditor.openWorkspace("registry");
+
+    auditor.worktreeRoots();
+
+    expect(auditor.worktreeRegistry()).toBe(join(await realpath(session), ".git", "worktrees"));
+  });
+
   it("names a worktree Git made, while the session is open, at a folder the session looked up while it was plain", async () => {
     const { root, databasePath, session, worktree } = await repositoryWithWorktree(outside);
     const later = join(root, "elsewhere", "later");
