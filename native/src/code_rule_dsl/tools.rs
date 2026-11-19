@@ -423,43 +423,61 @@ pub fn run_policies(
     Ok(serde_json::json!({"diagnostics": diagnostics, "runs": runs}))
 }
 
-/// Policies of a batch that run as one pack: one language of one dialect, each with its own policy id (its findings
-/// are told apart by it) and findings declared. `members` index the batch's paths; `metadata` is each one's.
+/// Policies of a batch that run as one pack: one language, the same dialects with files in scope, the same guest
+/// requests (`rr::GuestAsks`), each with its own policy id (its findings are told apart by it) and findings declared.
+/// `members` index the batch's paths; `metadata` is each one's; `dialects` the runs a policy alone makes
+/// (`corpus::run_dialects`: none for a language of one dialect).
 struct PolicyGroup {
     members: Vec<usize>,
     ids: Vec<String>,
     metadata: Vec<serde_json::Value>,
+    dialects: Vec<&'static str>,
+    asks: super::logic::rr::GuestAsks,
 }
 
 /// The batch's policies (`texts`, as `program_texts` reads them) grouped by the grammar each run reads (decision
-/// 0168, `corpus::run_language`: its `.language`'s, else the tree's), each read for its header only (`rr::Text::header`:
-/// its directives and declarations, no clause), which is all a group needs before its run.
+/// 0168, `corpus::run_language`: its `.language`'s, else the tree's), the dialects its language's runs read
+/// (`corpus::run_dialects_in`, PR #508's 1999e204e) and the guests it asks for (`rr::guest_asks`, 370b90f9c), each read
+/// for its header only (`rr::Text::header`: its directives and declarations, no clause) and its clauses' guest reads,
+/// which is all a group needs before its run. A pack makes one set of guests for all its programs, and a rule that
+/// reaches a guest reads all of them: programs that ask for different guests would each read the others'. A policy
+/// whose own clauses ask for guests runs in a group of its own. The corpus is listed once for all of them.
 /// Findings are told apart by their policy's `.policy` id, so a group holds each id once (one policy of none). A
-/// policy whose header does not read, has an id another of its grammar has, declares no findings, or names a
-/// language of several dialects runs as `run_rr` runs it (and fails there with its own error).
+/// policy whose header does not read, has an id another of its grammar has, or declares no findings runs as `run_rr`
+/// runs it (and fails there with its own error).
 fn policy_groups(texts: &[String], root: &std::path::Path, options: &serde_json::Value) -> Vec<PolicyGroup> {
     use super::logic::{plan::corpus, rr};
+    let listing: std::cell::OnceCell<corpus::CorpusFiles> = std::cell::OnceCell::new();
+    let files = || -> super::logic::plan::Result<corpus::CorpusFiles> {
+        if let Some(f) = listing.get() {
+            return Ok(f.clone());
+        }
+        let f = corpus::corpus_files(root)?;
+        let _ = listing.set(f.clone());
+        Ok(f)
+    };
     let mut groups: Vec<(&'static str, PolicyGroup)> = Vec::new();
     for (k, text) in texts.iter().enumerate() {
         let own = rr::text_header(text).ok();
         let joined = own.and_then(|own| {
             let settings = ProgramFields::settings(&*own);
-            let named = settings.iter().find(|(k, _)| k == "language").map(|(_, v)| v.trim().trim_matches('"').to_owned());
-            let one_dialect = named.as_deref().is_none_or(|name| {
-                crate::code_rule_dsl::language::CodeRuleLanguage::ALL.into_iter().find(|l| l.name() == name).is_some_and(|l| l.dialects().len() < 2)
-            });
             let language = corpus::run_language(root, &*own, &with_reuse(options)).ok()?;
+            // A language of several dialects (`.language typescript` over `.ts`, `.tsx` and `.js` files) is a run per
+            // dialect with files in the policy's scope, as `run_program` makes them: policies of the same dialects
+            // make the same runs, each one pack.
+            let dialects = corpus::run_dialects_in(&files, &*own, &with_reuse(options)).ok()?;
             let id = settings.iter().find(|(k, _)| k == "policy").and_then(|(_, t)| t.split('"').nth(1)).unwrap_or_default().to_owned();
             let findings = own.output_names().iter().any(|o| rr::is_diagnostic(o));
             let metadata = rr::metadata(&*own).ok()?;
-            (one_dialect && findings).then_some((language, id, metadata))
+            let asks = rr::guest_asks(text).ok()?;
+            findings.then_some((language, dialects, id, metadata, asks))
         });
         match joined {
-            Some((language, id, metadata)) if !groups.iter().any(|(_, g)| g.ids.contains(&id)) => {
-                let at = match groups.iter().position(|(l, _)| *l == language) {
+            Some((language, dialects, id, metadata, asks)) if !groups.iter().any(|(_, g)| g.ids.contains(&id)) => {
+                let at = match groups.iter().position(|(l, g)| *l == language && g.dialects == dialects && g.asks == asks && !asks.own) {
                     Some(at) => at,
                     None => {
-                        groups.push((language, PolicyGroup { members: Vec::new(), ids: Vec::new(), metadata: Vec::new() }));
+                        groups.push((language, PolicyGroup { members: Vec::new(), ids: Vec::new(), metadata: Vec::new(), dialects, asks }));
                         groups.len() - 1
                     }
                 };
@@ -474,9 +492,10 @@ fn policy_groups(texts: &[String], root: &std::path::Path, options: &serde_json:
     groups.into_iter().map(|(_, g)| g).collect()
 }
 
-/// One group's policies run as one pack into `out/pack-<first>`, and each one's findings written to its own
-/// `out/<k>` (its `rr_diagnostic`, in `outputs.rro`): per member, its findings and its run's record. `None` when the pack's run fails or a
-/// finding names no member's id: the group's policies then run alone, each with its own error.
+/// One group's policies run as one pack into `out/pack-<first>` (a dialect after the first into its own directory
+/// below it, as `run_program` places a policy's), and each one's findings written to its own `out/<k>` (its
+/// `rr_diagnostic`, in `outputs.rro`): per member, its findings and its run's record. `None` when a pack's run fails
+/// or a finding names no member's id: the group's policies then run alone, each with its own error.
 fn run_pack(
     paths: &[std::path::PathBuf],
     texts: &[String],
@@ -486,39 +505,59 @@ fn run_pack(
     options: &serde_json::Value,
 ) -> Result<Option<Vec<(Vec<serde_json::Value>, serde_json::Value)>>, String> {
     use super::{logic::plan::corpus, typing::file_local::Binding};
+    use crate::code_rule_dsl::logic::plan::output;
     let texts: Vec<&str> = group.members.iter().map(|&k| texts[k].as_str()).collect();
     let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
     let dir = out.join(format!("pack-{}", group.members[0]));
     crate::code_rule_dsl::logic::profile::decision("a batch's policies as one pack (decision 0168)", || {
         format!("{} policies: {}", texts.len(), group.ids.join(", "))
     });
-    let Ok(report) = corpus::run_with_options(&texts, root, None, &dir, "program", binding, 1 << 18, &Default::default(), &with_reuse(options)) else {
-        return Ok(None);
+    // Each dialect's run and its directory, its language the dialect's (the `dialect` option, as `run_program` runs
+    // a policy alone): one run as written where the language has one dialect.
+    let runs: Vec<(Option<&str>, std::path::PathBuf)> = if group.dialects.is_empty() {
+        vec![(None, dir.clone())]
+    } else {
+        group.dialects.iter().enumerate().map(|(i, label)| (Some(*label), if i == 0 { dir.clone() } else { dir.join(label) })).collect()
     };
+    let mut files = 0;
+    let mut outputs = Vec::with_capacity(runs.len());
+    for (dialect, dir) in &runs {
+        let mut options = with_reuse(options);
+        if let Some(dialect) = dialect {
+            options["dialect"] = serde_json::json!(dialect);
+        }
+        let Ok(report) = corpus::run_with_options(&texts, root, None, dir, "program", binding, 1 << 18, &Default::default(), &options) else {
+            return Ok(None);
+        };
+        files += report.files;
+        outputs.push(output::Outputs::open(dir).map_err(|e| e.to_string())?);
+    }
     let mut each: Vec<Vec<serde_json::Value>> = group.members.iter().map(|_| Vec::new()).collect();
-    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&dir).map_err(|e| e.to_string())?;
-    // Each member's rows of each finding relation, by the policy each row names (its first column).
-    type Rows<'a> = Vec<crate::code_rule_dsl::logic::plan::output::Row<'a>>;
+    // Each member's rows of each finding relation, by the policy each row names (its first column), every dialect's.
+    type Rows<'a> = Vec<output::Row<'a>>;
     let mut rows: Vec<std::collections::BTreeMap<String, Rows<'_>>> = group.members.iter().map(|_| std::collections::BTreeMap::new()).collect();
-    for rel in outputs.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)) {
-        for row in outputs.rows(rel) {
-            let Some(at) = row.get(0).text().and_then(|id| group.ids.iter().position(|x| x == id)) else { return Ok(None) };
-            each[at].push(diagnostic(&row)?);
-            rows[at].entry(rel.to_owned()).or_default().push(row);
+    for run in &outputs {
+        for rel in run.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)) {
+            for row in run.rows(rel) {
+                let Some(at) = row.get(0).text().and_then(|id| group.ids.iter().position(|x| x == id)) else { return Ok(None) };
+                each[at].push(diagnostic(&row)?);
+                rows[at].entry(rel.to_owned()).or_default().push(row);
+            }
         }
     }
+    let flags = outputs[0].images().last().map_or(0, output::Image::flags);
     let mut done = Vec::with_capacity(group.members.len());
     for (((&k, found), rows), metadata) in group.members.iter().zip(each).zip(rows).zip(&group.metadata) {
         let own = out.join(k.to_string());
         std::fs::create_dir_all(&own).map_err(|e| format!("{}: {e}", own.display()))?;
         // Its own outputs, a base of its findings alone (decision 0239).
-        let mut image = crate::code_rule_dsl::logic::plan::output::Builder::new(outputs.images().last().map_or(0, crate::code_rule_dsl::logic::plan::output::Image::flags), false);
+        let mut image = output::Builder::new(flags, false);
         for (rel, rows) in &rows {
-            let types = outputs.get(rel).map(|r| r.types().to_vec()).unwrap_or_default();
+            let types = outputs.iter().find_map(|o| o.get(rel).map(|r| r.types().to_vec())).unwrap_or_default();
             image.rows_of(rel, &types, rows);
         }
-        crate::code_rule_dsl::logic::plan::output::write(&own, &image.finish()).map_err(|e| format!("{}: {e}", own.display()))?;
-        let run = serde_json::json!({"path": paths[k].display().to_string(), "files": report.files, "metadata": metadata, "together": group.members.len()});
+        output::write(&own, &image.finish()).map_err(|e| format!("{}: {e}", own.display()))?;
+        let run = serde_json::json!({"path": paths[k].display().to_string(), "files": files, "metadata": metadata, "together": group.members.len()});
         done.push((found, run));
     }
     Ok(Some(done))

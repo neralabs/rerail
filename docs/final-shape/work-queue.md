@@ -5160,6 +5160,11 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - **Keep**: decision 0055's one set of guests a pack; Tim's `rr::guest_asks` splits packs by the guests they ask for
   (370b90f9c), and runs a language's dialects as one pack each (1999e204e).
 - **Done when**: both `rr::tape_tests` pass, unignored.
+- **Done** (2026-11-18, branch `pr508-fixes-as-tests`): `tools::policy_groups` groups by the dialects with files in
+  scope (`corpus::run_dialects_in`, the corpus listed once) and by `rr::guest_asks`; `run_pack` runs a group once a
+  dialect. Both tests pass on the M3, unignored, with the batch, pack and `run_policies` tests (97 of 98; the 98th,
+  `library_modules_link_to_the_lowering_of_them_together`, passes under the gate profile and times out under the
+  default's 4 minutes at the M3's load).
 
 ### Q243. (PR #508, t47) The run after a cold one writes its kept plans
 
