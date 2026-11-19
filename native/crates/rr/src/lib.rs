@@ -53,6 +53,7 @@ pub mod code_rule_dsl {
         pub mod rr {
             pub mod aggregate_demand;
             pub mod check;
+            pub mod clause;
             pub mod from_tape;
             pub mod lower;
             pub mod print;

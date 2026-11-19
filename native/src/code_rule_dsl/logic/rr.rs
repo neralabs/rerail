@@ -22,6 +22,7 @@ pub mod aggregate_demand {
     use std::collections::{BTreeMap, BTreeSet};
 }
 pub use rerail_rr::code_rule_dsl::logic::rr::from_tape;
+pub use rerail_rr::code_rule_dsl::logic::rr::clause;
 pub use from_tape::{code_body, string_value, syntax_error};
 pub mod images;
 pub mod module_image;

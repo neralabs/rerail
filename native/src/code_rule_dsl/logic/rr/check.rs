@@ -9,27 +9,26 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::clause::{At, L, LitAt, Reads, T};
+use super::from_tape::{RrFile, S, Stmt};
 use super::lower::{RELATION_ARG, TESTS};
-use super::from_tape::{S, Stmt};
-use rerail_rr_syntax::syntax::{Head, Lit, Term};
+use super::tape::Field;
 
-fn vars_of(t: &Term) -> BTreeSet<String> {
-    let mut out = Vec::new();
-    t.vars(&mut out);
-    out.into_iter().collect()
+fn vars_of(f: &RrFile, t: &At) -> BTreeSet<String> {
+    f.term_var_set(t)
 }
 
 /// What a term needs from outside, given what is bound: its variables, but of each aggregate inside it only what
 /// that aggregate's body uses and does not bind (`1 + count : { f(x) }` needs nothing).
-fn term_needs(t: &Term, bound: &BTreeSet<String>) -> BTreeSet<String> {
-    match t {
-        Term::Agg { body, .. } => inner_needs(body, bound),
-        Term::Call { args, .. } => args.iter().flat_map(|a| term_needs(a, bound)).collect(),
-        Term::Bin { l, r, .. } => term_needs(l, bound).union(&term_needs(r, bound)).cloned().collect(),
-        Term::Named(_, t) => term_needs(t, bound),
+fn term_needs(f: &RrFile, t: &At, bound: &BTreeSet<String>) -> BTreeSet<String> {
+    match f.tv(t) {
+        T::Agg { body, .. } => inner_needs(f, &body, bound),
+        T::Call { args, .. } => args.iter().flat_map(|a| term_needs(f, a, bound)).collect(),
+        T::Bin { l, r, .. } => term_needs(f, &l, bound).union(&term_needs(f, &r, bound)).cloned().collect(),
+        T::Named(_, t) => term_needs(f, &t, bound),
         // `top` no literal binds is the lattice's top, a constant (`unbound`): `a = top` binds `a`.
-        Term::Var(v) if v == "top" && !bound.contains(v) => BTreeSet::new(),
-        t => vars_of(t),
+        T::Var(v) if v == "top" && !bound.contains(&v) => BTreeSet::new(),
+        _ => vars_of(f, t),
     }
 }
 
@@ -38,39 +37,29 @@ fn is_text_test(rel: &str) -> bool {
 }
 
 /// An atom's variables, the relations it passes to a built-in left out.
-fn atom_vars(rel: &str, args: &[Term]) -> BTreeSet<String> {
+fn atom_vars(f: &RrFile, rel: &str, args: &[At]) -> BTreeSet<String> {
     let skip: &[usize] = RELATION_ARG.iter().find(|(r, _)| *r == rel).map_or(&[], |(_, k)| k);
-    args.iter().enumerate().filter(|(k, a)| !(skip.contains(k) && matches!(a, Term::Var(_)))).flat_map(|(_, a)| vars_of(a)).collect()
+    args.iter().enumerate().filter(|(k, a)| !(skip.contains(k) && matches!(f.tv(a), T::Var(_)))).flat_map(|(_, a)| vars_of(f, a)).collect()
 }
 
 /// A regex's named groups.
 fn groups(re: &str) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    for (at, _) in re.match_indices("(?") {
-        let rest = &re[at + 2..];
-        let rest = rest.strip_prefix('P').unwrap_or(rest);
-        if let Some(rest) = rest.strip_prefix('<') {
-            let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
-            if !name.is_empty() && rest[name.len()..].starts_with('>') {
-                out.insert(name);
-            }
-        }
-    }
-    out
+    super::lower::groups(re).into_iter().collect()
 }
 
 /// (binds, needs, ready) for one body literal, given what is bound.
-fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>, BTreeSet<String>, bool) {
+fn literal(f: &RrFile, l: &LitAt, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>, BTreeSet<String>, bool) {
     let none = BTreeSet::new;
-    match l {
+    let vars = |ts: &[At]| -> BTreeSet<String> { ts.iter().flat_map(|a| vars_of(f, a)).collect() };
+    match f.lit(l) {
         // A negated conjunction's own positive literals bind its local variables (`!(callee(m, c), fname(f, c))`
         // needs only `c`), as a group's branches do; it binds nothing outside.
-        Lit::Group { alts, neg: true } => {
+        L::Group { alts, neg: true } => {
             let mut needs = BTreeSet::new();
-            for branch in alts {
+            for branch in &alts {
                 let mut inner = bound.clone();
                 for lit in branch {
-                    let (b, n, _) = literal(lit, &inner, true);
+                    let (b, n, _) = literal(f, lit, &inner, true);
                     inner.extend(b);
                     needs.extend(n.difference(&inner).cloned().collect::<Vec<_>>());
                 }
@@ -79,17 +68,17 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
             (none(), needs, ready)
         }
         // A negated pattern reads its subject; its captures are its own.
-        Lit::Pattern { subject, neg: true, .. } => {
-            let vs = vars_of(subject);
+        L::Pattern { subject, neg: true, .. } => {
+            let vs = vars_of(f, &subject);
             let ready = force || vs.is_subset(bound);
             (none(), vs, ready)
         }
-        Lit::Group { alts, neg: false } => {
+        L::Group { alts, neg: false } => {
             let (mut sets, mut needs) = (Vec::new(), BTreeSet::new());
-            for branch in alts {
+            for branch in &alts {
                 let mut inner = bound.clone();
                 for lit in branch {
-                    let (b, n, _) = literal(lit, &inner, true);
+                    let (b, n, _) = literal(f, lit, &inner, true);
                     inner.extend(b);
                     needs.extend(n.difference(&inner).cloned().collect::<Vec<_>>());
                 }
@@ -98,24 +87,24 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
             let binds = sets.iter().skip(1).fold(sets.first().cloned().unwrap_or_default(), |a, b| a.intersection(b).cloned().collect());
             (binds, needs, true)
         }
-        Lit::Pattern { subject, pattern, neg: false, .. } => {
-            let mut b = vars_of(subject);
-            b.extend(rerail_rr_syntax::syntax::tick_vars(pattern));
+        L::Pattern { subject, pattern, neg: false, .. } => {
+            let mut b = vars_of(f, &subject);
+            b.extend(rerail_rr_syntax::syntax::tick_vars(&pattern));
             (b, none(), true)
         }
-        Lit::Atom { rel, args, neg: true } => {
-            let vs = if matches!(rel.as_str(), "match" | "match_all" | "match_group") { args.iter().skip(1).flat_map(vars_of).collect() } else { atom_vars(rel, args) };
+        L::Atom { rel, args, neg: true } => {
+            let vs = if matches!(rel.as_str(), "match" | "match_all" | "match_group") { vars(args.get(1..).unwrap_or(&[])) } else { atom_vars(f, &rel, &args) };
             let ready = force || vs.is_subset(bound);
             (none(), vs, ready)
         }
-        Lit::Atom { rel, args, neg: false } if is_text_test(rel) => {
-            let vs: BTreeSet<String> = args.iter().flat_map(vars_of).collect();
+        L::Atom { rel, args, neg: false } if is_text_test(&rel) => {
+            let vs = vars(&args);
             let ready = force || vs.is_subset(bound);
             (none(), vs, ready)
         }
-        Lit::Atom { rel, args, neg: false } if matches!(rel.as_str(), "match" | "match_all" | "match_group") => {
-            let mut g = match args.first() {
-                Some(Term::Str(re)) if rel != "match_group" => groups(re),
+        L::Atom { rel, args, neg: false } if matches!(rel.as_str(), "match" | "match_all" | "match_group") => {
+            let mut g = match args.first().map(|a| f.tv(a)) {
+                Some(T::Str(re)) if rel != "match_group" => groups(&re),
                 _ => none(),
             };
             // `match_all("re", sp, m)`, `match_group("re", sp, m, g, gsp)`: the match, the group and its span are
@@ -128,50 +117,55 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
                 [_, rest @ ..] => (rest, &[][..]),
                 [] => (&[][..], &[][..]),
             };
-            g.extend(binds.iter().flat_map(vars_of));
-            let subject: BTreeSet<String> = subject.iter().flat_map(vars_of).collect();
+            g.extend(vars(binds));
+            let subject = vars(subject);
             let ready = force || subject.is_subset(bound);
             (g, subject, ready)
         }
-        Lit::Atom { rel, args, neg: false } => (atom_vars(rel, args), none(), true),
-        Lit::Cmp { l, op, r } => {
-            if let Some(body) = aggregate(l).or_else(|| aggregate(r)) {
-                let inner = inner_needs(body, bound);
-                if *op == "=" && let (Term::Var(v), Term::Agg { .. }) = (l, r) {
+        L::Atom { rel, args, neg: false } => (atom_vars(f, &rel, &args), none(), true),
+        L::Cmp { l, op, r } => {
+            let (lt, rt) = (f.tv(&l), f.tv(&r));
+            let body = match (&lt, &rt) {
+                (T::Agg { body, .. }, _) | (_, T::Agg { body, .. }) => Some(body),
+                _ => None,
+            };
+            if let Some(body) = body {
+                let inner = inner_needs(f, body, bound);
+                if op == "=" && let (T::Var(v), T::Agg { .. }) = (&lt, &rt) {
                     let ready = force || inner.is_subset(bound);
                     return (BTreeSet::from([v.clone()]), inner, ready);
                 }
-                let other = if aggregate(l).is_some() { r } else { l };
-                let mut vs = vars_of(other);
+                let other = if matches!(lt, T::Agg { .. }) { &r } else { &l };
+                let mut vs = vars_of(f, other);
                 vs.extend(inner);
                 let ready = force || vs.is_subset(bound);
                 return (none(), vs, ready);
             }
-            let (lv, rv) = (term_needs(l, bound), term_needs(r, bound));
-            if *op != "=" {
+            let (lv, rv) = (term_needs(f, &l, bound), term_needs(f, &r, bound));
+            if op != "=" {
                 let vs: BTreeSet<String> = lv.union(&rv).cloned().collect();
                 let ready = force || vs.is_subset(bound);
                 return (none(), vs, ready);
             }
-            if let Term::Var(x) = l
+            if let T::Var(x) = &lt
                 && rv.is_subset(bound)
             {
                 return (BTreeSet::from([x.clone()]), rv, true);
             }
-            if let Term::Var(x) = r
+            if let T::Var(x) = &rt
                 && lv.is_subset(bound)
             {
                 return (BTreeSet::from([x.clone()]), lv, true);
             }
             // `m = @dot(q, x)` with `m` bound splits it at each dot (`split_dot`), and `m = @cat(q, x)` at each
             // position (the engine's `@cat` split, which `@dot` lowers to: T's `cmp_binds`), binding `q` and `x`.
-            for (whole, parts) in [(l, r), (r, l)] {
-                if let (Term::Var(m), Term::Call { name, args, .. }) = (whole, parts)
+            for (whole, parts) in [(&lt, &rt), (&rt, &lt)] {
+                if let (T::Var(m), T::Call { name, args, .. }) = (whole, parts)
                     && (name == "dot" || name == "cat")
-                    && args.iter().all(|a| matches!(a, Term::Var(_)))
+                    && args.iter().all(|a| matches!(f.tv(a), T::Var(_)))
                 {
                     let ready = force || bound.contains(m);
-                    return (args.iter().flat_map(vars_of).collect(), BTreeSet::from([m.clone()]), ready);
+                    return (vars(args), BTreeSet::from([m.clone()]), ready);
                 }
             }
             let vs: BTreeSet<String> = lv.union(&rv).cloned().collect();
@@ -181,24 +175,17 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
     }
 }
 
-fn aggregate(t: &Term) -> Option<&Vec<Lit>> {
-    match t {
-        Term::Agg { body, .. } => Some(body),
-        _ => None,
-    }
-}
-
 /// What an aggregate's body needs from outside: what it uses and does not bind.
-fn inner_needs(lits: &[Lit], bound: &BTreeSet<String>) -> BTreeSet<String> {
+fn inner_needs(f: &RrFile, lits: &[LitAt], bound: &BTreeSet<String>) -> BTreeSet<String> {
     let mut b = bound.clone();
     let mut needs = BTreeSet::new();
-    let mut pending: Vec<&Lit> = lits.iter().collect();
+    let mut pending: Vec<&LitAt> = lits.iter().collect();
     let mut changed = true;
     while changed {
         changed = false;
         let mut left = Vec::new();
         for l in pending {
-            let (bb, nn, done) = literal(l, &b, false);
+            let (bb, nn, done) = literal(f, l, &b, false);
             if done {
                 b.extend(bb);
                 needs.extend(nn);
@@ -210,16 +197,23 @@ fn inner_needs(lits: &[Lit], bound: &BTreeSet<String>) -> BTreeSet<String> {
         pending = left;
     }
     for l in pending {
-        needs.extend(literal(l, &b, true).1);
+        needs.extend(literal(f, l, &b, true).1);
     }
     let local: BTreeSet<String> = b.difference(bound).cloned().collect();
     needs.difference(&local).cloned().collect()
 }
 
-/// A rule's unbound variables, sorted; empty when it is grounded. `given`: relations whose heads are bound from
+/// Clause `c`'s body, read off its tape.
+fn body_of(f: &RrFile, c: u32) -> Vec<LitAt> {
+    f.tape().get(c, Field::Body).map_or_else(Vec::new, |b| f.body_at(b, 0))
+}
+
+/// Clause `c`'s unbound variables, sorted; empty when it is grounded. `given`: relations whose heads are bound from
 /// outside (fix relations and edits).
-pub(super) fn unbound(heads: &[Head], body: &[Lit], edits: &[Term], given: &BTreeSet<String>) -> Vec<String> {
-    let head_vars: BTreeSet<String> = heads.iter().flat_map(|h| h.args.iter().flat_map(vars_of)).collect();
+pub(super) fn unbound(f: &RrFile, c: u32, given: &BTreeSet<String>) -> Vec<String> {
+    let heads = f.heads_at(c);
+    let body = body_of(f, c);
+    let head_vars: BTreeSet<String> = heads.iter().flat_map(|h| h.args.iter().flat_map(|a| vars_of(f, a))).collect();
     // `top` no literal binds is the lattice's top, not a variable (`lower`'s `top_is_var`): bound from the start, so
     // `a = top` binds `a`.
     let mut bound = BTreeSet::from(["top".to_owned()]);
@@ -227,13 +221,13 @@ pub(super) fn unbound(heads: &[Head], body: &[Lit], edits: &[Term], given: &BTre
         bound.extend(head_vars.iter().cloned());
     }
     let mut need = BTreeSet::new();
-    let mut pending: Vec<&Lit> = body.iter().collect();
+    let mut pending: Vec<&LitAt> = body.iter().collect();
     let mut changed = true;
     while changed {
         changed = false;
         let mut left = Vec::new();
         for l in pending {
-            let (b, n, done) = literal(l, &bound, false);
+            let (b, n, done) = literal(f, l, &bound, false);
             if done {
                 bound.extend(b);
                 need.extend(n);
@@ -245,10 +239,11 @@ pub(super) fn unbound(heads: &[Head], body: &[Lit], edits: &[Term], given: &BTre
         pending = left;
     }
     for l in pending {
-        need.extend(literal(l, &bound, true).1);
+        need.extend(literal(f, l, &bound, true).1);
     }
-    need.extend(heads.iter().flat_map(|h| h.args.iter().flat_map(|a| term_needs(a, &bound))));
-    need.extend(edits.iter().flat_map(vars_of));
+    need.extend(heads.iter().flat_map(|h| h.args.iter().flat_map(|a| term_needs(f, a, &bound))));
+    let t = f.tape();
+    need.extend(t.all(c, Field::Edit).flat_map(|e| vars_of(f, &At::Node(e, 0))));
     need.difference(&bound).cloned().collect()
 }
 
@@ -275,9 +270,9 @@ pub fn grounded(statements: &[Stmt], given: &BTreeSet<String>) -> Vec<(usize, Ve
         .iter()
         .filter(|s| s.what() == Some(S::Clause))
         .filter_map(|s| {
-            let (t, n) = s.tape();
-            let (heads, body, edits) = t.clause(n).ok()?;
-            let bad = unbound(&heads, &body, &edits, &given);
+            let (f, n) = (s.file(), s.node());
+            f.check_clause(n).ok()?;
+            let bad = unbound(f, n, &given);
             (!bad.is_empty()).then(|| (s.line(), bad))
         })
         .collect()
@@ -311,80 +306,82 @@ type Dep = (String, bool, Option<String>, usize);
 /// The binary atoms `r(m, n)` of a scope, for `ordered by` ties.
 type Scope = BTreeSet<(String, String, String)>;
 
-fn binary_atoms(lits: &[Lit], out: &mut Scope) {
-    fn term(t: &Term, out: &mut Scope) {
-        match t {
-            Term::Agg { body, .. } => binary_atoms(body, out),
-            Term::Bin { l, r, .. } => {
-                term(l, out);
-                term(r, out);
+fn binary_atoms(f: &RrFile, lits: &[LitAt], out: &mut Scope) {
+    fn term(f: &RrFile, t: &At, out: &mut Scope) {
+        match f.tv(t) {
+            T::Agg { body, .. } => binary_atoms(f, &body, out),
+            T::Bin { l, r, .. } => {
+                term(f, &l, out);
+                term(f, &r, out);
             }
-            Term::Call { args, .. } => args.iter().for_each(|a| term(a, out)),
+            T::Call { args, .. } => args.iter().for_each(|a| term(f, a, out)),
             _ => {}
         }
     }
     for l in lits {
-        match l {
-            Lit::Atom { rel, args, .. } => {
-                if let [Term::Var(m), Term::Var(n)] = args.as_slice() {
-                    out.insert((rel.clone(), m.clone(), n.clone()));
+        match f.lit(l) {
+            L::Atom { rel, args, .. } => {
+                if let [m, n] = args.as_slice()
+                    && let (T::Var(m), T::Var(n)) = (f.tv(m), f.tv(n))
+                {
+                    out.insert((rel.clone(), m, n));
                 }
-                args.iter().for_each(|a| term(a, out));
+                args.iter().for_each(|a| term(f, a, out));
             }
-            Lit::Group { alts, .. } => alts.iter().for_each(|a| binary_atoms(a, out)),
-            Lit::Cmp { l, r, .. } => {
-                term(l, out);
-                term(r, out);
+            L::Group { alts, .. } => alts.iter().for_each(|a| binary_atoms(f, a, out)),
+            L::Cmp { l, r, .. } => {
+                term(f, &l, out);
+                term(f, &r, out);
             }
-            Lit::Pattern { .. } => {}
+            L::Pattern { .. } => {}
         }
     }
 }
 
-fn first(args: &[Term]) -> Option<String> {
-    match args.first() {
-        Some(Term::Var(v)) => Some(v.clone()),
+fn first(f: &RrFile, args: &[At]) -> Option<String> {
+    match args.first().map(|a| f.tv(a)) {
+        Some(T::Var(v)) => Some(v),
         _ => None,
     }
 }
 
-fn deps(lits: &[Lit], neg: bool, scope: usize, scopes: &mut Vec<Scope>, out: &mut Vec<Dep>) {
-    fn aggregates<'t>(t: &'t Term, out: &mut Vec<&'t Vec<Lit>>) {
-        match t {
-            Term::Agg { body, .. } => out.push(body),
-            Term::Bin { l, r, .. } => {
-                aggregates(l, out);
-                aggregates(r, out);
+fn deps(f: &RrFile, lits: &[LitAt], neg: bool, scope: usize, scopes: &mut Vec<Scope>, out: &mut Vec<Dep>) {
+    fn aggregates(f: &RrFile, t: &At, out: &mut Vec<Vec<LitAt>>) {
+        match f.tv(t) {
+            T::Agg { body, .. } => out.push(body),
+            T::Bin { l, r, .. } => {
+                aggregates(f, &l, out);
+                aggregates(f, &r, out);
             }
-            Term::Call { args, .. } => args.iter().for_each(|a| aggregates(a, out)),
+            T::Call { args, .. } => args.iter().for_each(|a| aggregates(f, a, out)),
             _ => {}
         }
     }
     for l in lits {
-        match l {
-            Lit::Group { alts, neg: n } => alts.iter().for_each(|a| deps(a, neg || *n, scope, scopes, out)),
-            Lit::Pattern { .. } => {}
-            Lit::Atom { rel, args, neg: n } => {
-                out.push((rel.clone(), neg || *n, first(args), scope));
-                if let Some((_, ks)) = RELATION_ARG.iter().find(|(r, _)| r == rel) {
+        match f.lit(l) {
+            L::Group { alts, neg: n } => alts.iter().for_each(|a| deps(f, a, neg || n, scope, scopes, out)),
+            L::Pattern { .. } => {}
+            L::Atom { rel, args, neg: n } => {
+                out.push((rel.clone(), neg || n, first(f, &args), scope));
+                if let Some((_, ks)) = RELATION_ARG.iter().find(|(r, _)| *r == rel) {
                     // A relation passed to a built-in is read whole, like a negation.
                     for &k in *ks {
-                        if let Some(Term::Var(r)) = args.get(k) {
-                            out.push((r.clone(), true, None, scope));
+                        if let Some(T::Var(r)) = args.get(k).map(|a| f.tv(a)) {
+                            out.push((r, true, None, scope));
                         }
                     }
                 }
             }
-            Lit::Cmp { l, r, .. } => {
+            L::Cmp { l, r, .. } => {
                 let mut bodies = Vec::new();
-                aggregates(l, &mut bodies);
-                aggregates(r, &mut bodies);
+                aggregates(f, &l, &mut bodies);
+                aggregates(f, &r, &mut bodies);
                 for body in bodies {
                     let mut s = Scope::new();
-                    binary_atoms(body, &mut s);
+                    binary_atoms(f, &body, &mut s);
                     scopes.push(s);
                     let inner = scopes.len() - 1;
-                    deps(body, true, inner, scopes, out);
+                    deps(f, &body, true, inner, scopes, out);
                 }
             }
         }
@@ -406,30 +403,30 @@ fn tarjan(nodes: &BTreeSet<String>, graph: &BTreeMap<String, BTreeSet<String>>) 
 /// Relations a program's rules read that none of its files declares, nor the lowering makes (its built-ins): the
 /// syntax-level form of `lowering_tail::Declared`, which a run and check-rr apply to the lowered program.
 pub fn undeclared(statements: &[&Stmt]) -> Vec<String> {
-    fn reads(lits: &[Lit], out: &mut Vec<String>) {
-        fn term(t: &Term, out: &mut Vec<String>) {
-            match t {
-                Term::Agg { body, .. } => reads(body, out),
-                Term::Bin { l, r, .. } => {
-                    term(l, out);
-                    term(r, out);
+    fn reads(f: &RrFile, lits: &[LitAt], out: &mut Vec<String>) {
+        fn term(f: &RrFile, t: &At, out: &mut Vec<String>) {
+            match f.tv(t) {
+                T::Agg { body, .. } => reads(f, &body, out),
+                T::Bin { l, r, .. } => {
+                    term(f, &l, out);
+                    term(f, &r, out);
                 }
-                Term::Call { args, .. } => args.iter().for_each(|a| term(a, out)),
+                T::Call { args, .. } => args.iter().for_each(|a| term(f, a, out)),
                 _ => {}
             }
         }
         for l in lits {
-            match l {
-                Lit::Group { alts, .. } => alts.iter().for_each(|a| reads(a, out)),
-                Lit::Atom { rel, args, .. } => {
-                    out.push(rel.clone());
-                    args.iter().for_each(|a| term(a, out));
+            match f.lit(l) {
+                L::Group { alts, .. } => alts.iter().for_each(|a| reads(f, a, out)),
+                L::Atom { rel, args, .. } => {
+                    out.push(rel);
+                    args.iter().for_each(|a| term(f, a, out));
                 }
-                Lit::Cmp { l, r, .. } => {
-                    term(l, out);
-                    term(r, out);
+                L::Cmp { l, r, .. } => {
+                    term(f, &l, out);
+                    term(f, &r, out);
                 }
-                Lit::Pattern { .. } => {}
+                L::Pattern { .. } => {}
             }
         }
     }
@@ -442,12 +439,15 @@ pub fn undeclared(statements: &[&Stmt]) -> Vec<String> {
     let built_in = |rel: &str| TESTS.iter().any(|(t, _)| *t == rel) || RELATION_ARG.iter().any(|(r, _)| *r == rel) || super::lower::BUILT_INS.contains(&rel);
     let mut out = BTreeSet::new();
     for s in statements.iter().filter(|s| s.what() == Some(S::Clause)) {
-        let (t, n) = s.tape();
-        let Ok((heads, body, _)) = t.clause(n) else { continue };
+        let (f, n) = (s.file(), s.node());
+        if f.check_clause(n).is_err() {
+            continue;
+        }
         let mut read = Vec::new();
-        reads(&body, &mut read);
+        reads(f, &body_of(f, n), &mut read);
+        let head = s.heads().first().map_or("", |h| *h).to_owned();
         for rel in read.into_iter().filter(|r| !declared.contains(r) && !built_in(r)) {
-            out.insert(format!("line {}: relation {rel} is read by the rule for {} and not declared", s.line(), heads[0].rel));
+            out.insert(format!("line {}: relation {rel} is read by the rule for {head} and not declared", s.line()));
         }
     }
     out.into_iter().collect()
@@ -470,12 +470,16 @@ pub fn strata(statements: &[&Stmt]) -> Vec<String> {
                 }
             }
             Some(S::Clause) if s.has_body() => {
-                let Ok((heads, body, _)) = t.clause(n) else { continue };
+                let f = s.file();
+                if f.check_clause(n).is_err() {
+                    continue;
+                }
+                let (heads, body) = (f.heads_at(n), body_of(f, n));
                 let mut scopes = vec![Scope::new()];
-                binary_atoms(&body, &mut scopes[0]);
+                binary_atoms(f, &body, &mut scopes[0]);
                 let mut ds = Vec::new();
-                deps(&body, false, 0, &mut scopes, &mut ds);
-                rules.push((s.line(), heads[0].rel.clone(), first(&heads[0].args), ds, scopes));
+                deps(f, &body, false, 0, &mut scopes, &mut ds);
+                rules.push((s.line(), heads[0].rel.clone(), first(f, &heads[0].args), ds, scopes));
             }
             _ => {}
         }

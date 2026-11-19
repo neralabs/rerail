@@ -436,9 +436,10 @@ Progress (2026-11-18):
       clause's copy is a substitution: a hoisted aggregate, tape operation or digest, a wildcard named for a demand
       or a count, is a fresh variable in a per-literal substitution set (`Sub`) over the node it stands for. What it
       made is named: a value's binding (`LitAt::Eq`), a cover's atom (`LitAt::Made`). Fresh names come in the same
-      order as before, so the lowered programs are unchanged (the print-back tests). Left for A2: the clause
-      checks (`check`, the tape type check, the token-read refusal) still read `Tape::clause`'s parser form, and
-      `from_tape` still builds it for them.
+      order as before, so the lowered programs are unchanged (the print-back tests). The reads are
+      `rr::clause::Reads`, a trait: the lowering supplies its substitutions, a file (`RrFile`) reads a clause as
+      written. The clause checks (`check`'s grounding, strata and undeclared reads, the tape type check, the
+      token-read refusal) read through it, and no reader takes `Tape::clause`'s parser form.
   - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
     (`Tree::rule`) goes.
   - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,

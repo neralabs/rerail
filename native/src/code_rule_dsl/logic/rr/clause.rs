@@ -1,6 +1,7 @@
-//! The clause being lowered, read off its file's tape in place (decision 0276, stage 6 A2). Its literals and terms
-//! are positions in the tape, read where they are, as many times as the lowering reads them: a literal beside an
-//! aggregate is read again for the aggregate's context, a group's alternatives for each choice.
+//! A clause, read off its file's tape in place (decision 0276, stage 6 A2). Its literals and terms are positions in
+//! the tape, read where they are, as many times as a reader reads them: a literal beside an aggregate is read again
+//! for the aggregate's context, a group's alternatives for each choice. The lowering reads its clause so
+//! (`Reads for Lowerer`), and so do the clause checks (`Reads for RrFile`, with no substitution).
 //!
 //! What the lowering states beside the written literals is a position too, or names variables only: an aggregate
 //! hoisted out of a term (`v = count : { … }`) is the aggregate's node (`LitAt::Bound`), a tape operation's atom is
@@ -10,22 +11,23 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use super::super::from_tape::{Tape, code_body, op};
-use super::super::tape::{Field, Kind};
-use super::{Error, Lowerer, RELATION_ARG, TAPE_OPS, groups, test_of};
+use super::Error;
+use super::from_tape::{RrFile, Tape, code_body, op};
+use super::lower::{RELATION_ARG, TAPE_OPS, groups, test_of};
+use super::tape::{Field, Kind};
 use rerail_rr_syntax::syntax::tick_vars;
 
 /// The variables standing in place of the terms a hoisting moved (or the wildcards the lowering named), by the
 /// term's node, over those of its parent. Set 0 is the clause as written.
 #[derive(Clone, Debug, Default)]
-pub(super) struct Sub {
-    parent: u32,
-    map: HashMap<u32, String>,
+pub struct Sub {
+    pub parent: u32,
+    pub map: HashMap<u32, String>,
 }
 
 /// A literal of the clause being lowered.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum LitAt {
+pub enum LitAt {
     /// A literal node (an atom, a negation, a comparison, a pattern, a group, or a body's disjunction), read under
     /// substitution set .1.
     Node(u32, u32),
@@ -43,7 +45,7 @@ pub(super) enum LitAt {
 /// A term: a node (read under a substitution set: as its variable where the set names it), a node read as written
 /// at its top (a hoisted term, under the variable that stands for it), or a variable the lowering names.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum At {
+pub enum At {
     Node(u32, u32),
     Bare(u32, u32),
     Var(String),
@@ -51,7 +53,7 @@ pub(super) enum At {
 
 /// A literal, read: its terms and alternatives are positions.
 #[derive(Debug)]
-pub(super) enum L {
+pub enum L {
     Atom { rel: String, args: Vec<At>, neg: bool },
     Cmp { l: At, op: &'static str, r: At },
     Pattern { subject: At, pattern: String, selector: Option<String>, neg: bool },
@@ -60,7 +62,7 @@ pub(super) enum L {
 
 /// A term, read.
 #[derive(Debug)]
-pub(super) enum T {
+pub enum T {
     Var(String),
     Wild,
     Num(i64),
@@ -78,7 +80,7 @@ pub(super) enum T {
 }
 
 /// The substitution set literal `l` is read under (0 for one of the lowering's own, over variables).
-pub(super) fn sub_of_lit(l: &LitAt) -> u32 {
+pub fn sub_of_lit(l: &LitAt) -> u32 {
     match l {
         LitAt::Node(_, s) | LitAt::Bound(_, s) | LitAt::Op(_, s) | LitAt::Eq(_, At::Node(_, s) | At::Bare(_, s)) => *s,
         LitAt::Eq(_, At::Var(_)) | LitAt::Made(..) => 0,
@@ -86,7 +88,7 @@ pub(super) fn sub_of_lit(l: &LitAt) -> u32 {
 }
 
 /// Literal `l`, read under substitution set `s` (one over its own).
-pub(super) fn with_sub(l: &LitAt, s: u32) -> LitAt {
+pub fn with_sub(l: &LitAt, s: u32) -> LitAt {
     match l {
         LitAt::Node(n, _) => LitAt::Node(*n, s),
         LitAt::Bound(n, _) => LitAt::Bound(*n, s),
@@ -97,7 +99,7 @@ pub(super) fn with_sub(l: &LitAt, s: u32) -> LitAt {
 }
 
 /// Term `a`, read under substitution set `s`.
-pub(super) fn with_sub_at(a: At, s: u32) -> At {
+pub fn with_sub_at(a: At, s: u32) -> At {
     match a {
         At::Node(n, _) => At::Node(n, s),
         At::Bare(n, _) => At::Bare(n, s),
@@ -106,48 +108,21 @@ pub(super) fn with_sub_at(a: At, s: u32) -> At {
 }
 
 /// A clause's head, read.
-pub(super) struct HeadAt {
+pub struct HeadAt {
     pub modal: Option<String>,
     pub rel: String,
     pub args: Vec<At>,
 }
 
-impl Lowerer {
-    /// The tape of the clause being lowered.
-    pub(super) fn tape(&self) -> Tape<'_> {
-        self.file.as_ref().expect("a clause being lowered").tape()
-    }
+/// A reader of a clause off its tape: the tape, and the variables standing in place of nodes (none for a clause as
+/// written).
+pub trait Reads {
+    /// The clause's tape.
+    fn tape(&self) -> Tape<'_>;
 
-    /// Starts the clause at `node` of `file`: no substitution yet.
-    pub(super) fn start_clause(&mut self, file: std::sync::Arc<super::super::from_tape::RrFile>) {
-        self.file = Some(file);
-        self.subs.clear();
-        self.subs.push(Sub::default());
-    }
-
-    /// A substitution set over `parent`'s.
-    pub(super) fn new_sub(&mut self, parent: u32) -> u32 {
-        self.subs.push(Sub { parent, map: HashMap::new() });
-        (self.subs.len() - 1) as u32
-    }
-
-    /// Variable `v` stands in place of node `n` under set `s`.
-    pub(super) fn set_sub(&mut self, s: u32, n: u32, v: String) {
-        self.subs[s as usize].map.insert(n, v);
-    }
-
-    /// The variable standing in place of node `n` under set `s`.
-    fn sub_of(&self, mut s: u32, n: u32) -> Option<&String> {
-        loop {
-            let sub = &self.subs[s as usize];
-            if let Some(v) = sub.map.get(&n) {
-                return Some(v);
-            }
-            if s == 0 {
-                return None;
-            }
-            s = sub.parent;
-        }
+    /// The variable standing in place of node `n` under substitution set `s`.
+    fn sub_of(&self, _s: u32, _n: u32) -> Option<&String> {
+        None
     }
 
     /// Node `n`, through parentheses: a parenthesised term is the term.
@@ -164,7 +139,7 @@ impl Lowerer {
     }
 
     /// The literals of a body or a conjunction node: a disjunction is one literal, its group.
-    pub(super) fn body_at(&self, b: u32, s: u32) -> Vec<LitAt> {
+    fn body_at(&self, b: u32, s: u32) -> Vec<LitAt> {
         let t = self.tape();
         if t.is(b, Kind::Disjunction) { vec![LitAt::Node(b, s)] } else { t.all(b, Field::Literal).map(|l| LitAt::Node(l, s)).collect() }
     }
@@ -179,7 +154,7 @@ impl Lowerer {
     }
 
     /// Literal `l`, read.
-    pub(super) fn lit(&self, l: &LitAt) -> L {
+    fn lit(&self, l: &LitAt) -> L {
         let t = self.tape();
         match l {
             LitAt::Node(n, s) => self.lit_node(&t, *n, *s),
@@ -233,7 +208,7 @@ impl Lowerer {
     }
 
     /// Term `a`, read.
-    pub(super) fn tv(&self, a: &At) -> T {
+    fn tv(&self, a: &At) -> T {
         match a {
             At::Var(v) => T::Var(v.clone()),
             At::Node(n, s) => match self.sub_of(*s, *n) {
@@ -282,7 +257,7 @@ impl Lowerer {
     }
 
     /// Clause node `c`'s heads.
-    pub(super) fn heads_at(&self, c: u32) -> Vec<HeadAt> {
+    fn heads_at(&self, c: u32) -> Vec<HeadAt> {
         let t = self.tape();
         t.all(c, Field::Head)
             .map(|h| HeadAt {
@@ -295,7 +270,7 @@ impl Lowerer {
 
     /// Whether term `a` is a float: a decimal number, `to_float(…)`, or arithmetic on one. (A variable's type is not
     /// followed: `0.0 - f` is a float, `f - g` is not.)
-    pub(super) fn is_float(&self, a: &At) -> bool {
+    fn is_float(&self, a: &At) -> bool {
         match self.tv(a) {
             T::Float(_) => true,
             T::Call { name, functor: false, args } => name == "to_float" || (matches!(name.as_str(), "max" | "min") && args.iter().any(|a| self.is_float(a))),
@@ -306,7 +281,7 @@ impl Lowerer {
     }
 
     /// Whether two terms are written the same.
-    pub(super) fn same(&self, a: &At, b: &At) -> bool {
+    fn same(&self, a: &At, b: &At) -> bool {
         match (self.tv(a), self.tv(b)) {
             (T::Var(x), T::Var(y)) | (T::Float(x), T::Float(y)) | (T::Str(x), T::Str(y)) | (T::Tick(x), T::Tick(y)) | (T::Json(x), T::Json(y)) => x == y,
             (T::Wild, T::Wild) => true,
@@ -322,7 +297,7 @@ impl Lowerer {
     }
 
     /// The variables in term `a`, patterns' and templates' `$X` included.
-    pub(super) fn term_vars(&self, a: &At, out: &mut Vec<String>) {
+    fn term_vars(&self, a: &At, out: &mut Vec<String>) {
         match self.tv(a) {
             T::Var(v) => out.push(v),
             T::Tick(x) => out.extend(tick_vars(&x)),
@@ -356,7 +331,7 @@ impl Lowerer {
     }
 
     /// The variables in literal `l`.
-    pub(super) fn lit_vars(&self, l: &LitAt, out: &mut Vec<String>) {
+    fn lit_vars(&self, l: &LitAt, out: &mut Vec<String>) {
         match self.lit(l) {
             L::Atom { args, .. } => args.iter().for_each(|a| self.term_vars(a, out)),
             L::Cmp { l, r, .. } => {
@@ -373,7 +348,7 @@ impl Lowerer {
 
     /// The variables of literal `l`'s own scope: not those only inside an aggregate's body, which are that body's own
     /// unless they appear outside it too (Soufflé's scoping).
-    pub(super) fn scope_vars(&self, l: &LitAt, out: &mut Vec<String>) {
+    fn scope_vars(&self, l: &LitAt, out: &mut Vec<String>) {
         match self.lit(l) {
             L::Atom { args, .. } => args.iter().for_each(|a| self.term_scope_vars(a, out)),
             L::Cmp { l, r, .. } => {
@@ -387,7 +362,7 @@ impl Lowerer {
 
     /// The variables `lits` bind or read in their own scope: an atom's arguments (not a relation argument's name),
     /// `match`'s named groups, and the scope variables of the rest.
-    pub(super) fn body_vars(&self, lits: &[LitAt]) -> BTreeSet<String> {
+    fn body_vars(&self, lits: &[LitAt]) -> BTreeSet<String> {
         let mut out = BTreeSet::new();
         for l in lits {
             match self.lit(l) {
@@ -419,12 +394,12 @@ impl Lowerer {
     }
 
     /// The variables of one literal (`body_vars`).
-    pub(super) fn vars_of(&self, l: &LitAt) -> BTreeSet<String> {
+    fn vars_of(&self, l: &LitAt) -> BTreeSet<String> {
         self.body_vars(std::slice::from_ref(l))
     }
 
     /// The variables of term `a`.
-    pub(super) fn term_var_set(&self, a: &At) -> BTreeSet<String> {
+    fn term_var_set(&self, a: &At) -> BTreeSet<String> {
         let mut vs = Vec::new();
         self.term_vars(a, &mut vs);
         vs.into_iter().collect()
@@ -432,7 +407,7 @@ impl Lowerer {
 
     /// `body_vars`, with the variables of aggregates inside comparisons too: what a group shares with its rule when
     /// an aggregate in it is correlated on the rule's variables (`count : { b(x, _) } > 2` shares x).
-    pub(super) fn shared_vars(&self, lits: &[LitAt]) -> BTreeSet<String> {
+    fn shared_vars(&self, lits: &[LitAt]) -> BTreeSet<String> {
         let mut out = self.body_vars(lits);
         for l in lits {
             match self.lit(l) {
@@ -452,18 +427,18 @@ impl Lowerer {
     /// Whether a literal binds every variable of its columns: a positive atom of a relation, not a text test nor a
     /// built-in the lowering writes out as tests or computations of variables bound elsewhere (`within`, `earlier`,
     /// `split_dot`, `nearest`, `precedes_stop`, …).
-    pub(super) fn binds_columns(&self, l: &LitAt) -> bool {
+    fn binds_columns(&self, l: &LitAt) -> bool {
         matches!(self.lit(l), L::Atom { rel, neg: false, .. } if test_of(&rel).is_none()
             && !matches!(rel.as_str(), "within" | "within_stop" | "earlier" | "split_dot" | "nearest" | "precedes_stop" | "dfs_first" | "dfs_first_memo" | "unset"))
     }
 
     /// Whether `l` is a positive atom of `rel`'s kind: a binding atom (not a text test, not `earlier`).
-    pub(super) fn binding_atom(&self, l: &LitAt) -> bool {
+    fn binding_atom(&self, l: &LitAt) -> bool {
         matches!(self.lit(l), L::Atom { rel, neg: false, .. } if test_of(&rel).is_none() && rel != "earlier")
     }
 
     /// The relations `lits` read, inside groups and aggregates too.
-    pub(super) fn lit_rels(&self, lits: &[LitAt], out: &mut BTreeSet<String>) {
+    fn lit_rels(&self, lits: &[LitAt], out: &mut BTreeSet<String>) {
         for l in lits {
             match self.lit(l) {
                 L::Atom { rel, args, .. } => {
@@ -494,7 +469,7 @@ impl Lowerer {
 
     /// What the lowering reads of clause `c` can be read: no negated comparison, each operator and number one it
     /// knows, each string a string. Checked once, as the clause's walk starts.
-    pub(super) fn check_clause(&self, c: u32) -> Result<(), Error> {
+    fn check_clause(&self, c: u32) -> Result<(), Error> {
         let t = self.tape();
         let bad = |what: String| Err(Error::Syntax(format!("tape: {what}")));
         for n in c..c + t.size(c) {
@@ -516,5 +491,11 @@ impl Lowerer {
             }
         }
         Ok(())
+    }
+}
+
+impl Reads for RrFile {
+    fn tape(&self) -> Tape<'_> {
+        RrFile::tape(self)
     }
 }

@@ -69,8 +69,7 @@ use crate::code_rule_dsl::logic::strings::SET;
 use crate::code_rule_dsl::logic::program_facts::Field;
 use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut, ProgramFields};
 pub mod findings;
-mod reads;
-use reads::{At, HeadAt, L, LitAt, T};
+use super::clause::{self as reads, At, HeadAt, L, LitAt, Reads, T};
 
 /// The text tests: their `.rr` names and the engine's.
 pub const TESTS: [(&str, &str); 11] = [
@@ -87,7 +86,7 @@ pub const TESTS: [(&str, &str); 11] = [
     ("match", "rx"),
 ];
 
-fn test_of(rel: &str) -> Option<&'static str> {
+pub(super) fn test_of(rel: &str) -> Option<&'static str> {
     TESTS.iter().find(|(rr, _)| *rr == rel).map(|(_, engine)| *engine)
 }
 
@@ -807,6 +806,48 @@ struct Seeded {
     three: BTreeSet<String>,
     /// The includes' `.violation`s, first in `violations`, and whether each had a place relation already.
     violations: Vec<bool>,
+}
+
+impl Lowerer {
+    /// Starts the clause at `node` of `file`: no substitution yet.
+    pub(super) fn start_clause(&mut self, file: std::sync::Arc<super::from_tape::RrFile>) {
+        self.file = Some(file);
+        self.subs.clear();
+        self.subs.push(reads::Sub::default());
+    }
+
+    /// A substitution set over `parent`'s.
+    pub(super) fn new_sub(&mut self, parent: u32) -> u32 {
+        self.subs.push(reads::Sub { parent, map: Default::default() });
+        (self.subs.len() - 1) as u32
+    }
+
+    /// Variable `v` stands in place of node `n` under set `s`.
+    pub(super) fn set_sub(&mut self, s: u32, n: u32, v: String) {
+        self.subs[s as usize].map.insert(n, v);
+    }
+}
+
+/// The lowering reads its clause under the substitutions its hoistings made.
+impl Reads for Lowerer {
+    /// The tape of the clause being lowered.
+    fn tape(&self) -> super::from_tape::Tape<'_> {
+        self.file.as_ref().expect("a clause being lowered").tape()
+    }
+
+    /// The variable standing in place of node `n` under set `s`.
+    fn sub_of(&self, mut s: u32, n: u32) -> Option<&String> {
+        loop {
+            let sub = &self.subs[s as usize];
+            if let Some(v) = sub.map.get(&n) {
+                return Some(v);
+            }
+            if s == 0 {
+                return None;
+            }
+            s = sub.parent;
+        }
+    }
 }
 
 impl Lowerer {
@@ -4468,7 +4509,7 @@ fn ungrouped(re: &str) -> String {
 }
 
 /// A regex's named groups, in order (`(?<x>…)` and `(?P<x>…)`).
-fn groups(re: &str) -> Vec<String> {
+pub(super) fn groups(re: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = re;
     while let Some(i) = rest.find("(?<").map(|i| (i, 3)).into_iter().chain(rest.find("(?P<").map(|i| (i, 4))).min() {
@@ -4499,7 +4540,7 @@ const LOCATED: &str = "rr_located";
 const GUEST_RELATIONS: [&str; 10] = ["parsed", "sub_tape", "guest", "doc_root", "doc_role", "tape_of", "host_node", "parse_of", "unparse_of", "splice_of"];
 
 /// The tape operations (decision 0058 §4): function, arity, the relation it reads, and that relation's columns.
-const TAPE_OPS: [(&str, usize, &str, &[(&str, &str)]); 3] = [
+pub(super) const TAPE_OPS: [(&str, usize, &str, &[(&str, &str)]); 3] = [
     ("parse", 2, "parse_of", &[("x", "sym"), ("g", "sym"), ("t", "sym")]),
     ("unparse", 1, "unparse_of", &[("t", "sym"), ("x", "sym")]),
     ("splice", 3, "splice_of", &[("t", "sym"), ("n", "node"), ("t2", "sym"), ("t3", "sym")]),
