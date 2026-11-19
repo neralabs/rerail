@@ -2,7 +2,7 @@
 //! lengths around a tile's (256) and past a second level of tiles, then the refusals at the
 //! same operation.
 
-use super::run;
+use super::{Job, run, run_batch};
 use rerail_compiler::array::{ArrayProgram, Calls, Fun};
 
 /// A program from its rows (`array N` dropped): the first is its shape.
@@ -49,8 +49,12 @@ const LENGTHS: [usize; 9] = [0, 1, 2, 7, 255, 256, 257, 1000, 70_001];
 /// `p` on the device and on the interpreter: the same outputs, or the same refusal.
 fn same(p: &ArrayProgram, inputs: &[&[i64]], params: &[i64]) {
     let want = p.values_at(inputs, params, &mut Rows).map(|v| p.outputs.iter().map(|&o| v.arrays[usize::from(o)].clone()).collect::<Vec<_>>());
-    let got = run(p, inputs, params, &mut Rows).expect("a device").map(|r| r.outputs);
-    match (&want, &got) {
+    let got = run(p, inputs, params, &mut Rows).expect("a device").0;
+    check(&want, &got);
+}
+
+fn check(want: &super::Outcome, got: &super::Outcome) {
+    match (want, got) {
         (Ok(w), Ok(g)) => {
             for (k, (w, g)) in w.iter().zip(g).enumerate() {
                 if w != g {
@@ -61,6 +65,74 @@ fn same(p: &ArrayProgram, inputs: &[&[i64]], params: &[i64]) {
         }
         _ => assert_eq!(want, got),
     }
+}
+
+/// Programs over a batch of units of every length (and some refused): each unit's outcome
+/// its own run's on the interpreter.
+#[test]
+fn a_batch_equals_each_unit_alone() {
+    let p = program(
+        "shape 2 1
+        fun f0 host rows fields=2
+        %0 = input 0
+        %1 = input 1
+        %2 = param 0
+        %3 = map add %0 %2
+        %4 = scan add excl %3 seg %1
+        %5 = sort %0
+        %6 = gather %0 %5
+        %7 = search le %6 %3
+        %8 = len %0
+        %9 = const 0
+        %10 = scatter max %0 %1 %8 %9
+        %11 = compact %1
+        %12 = expand %1
+        %13 = concat %11 %12
+        %14 = call f0 %0 env %13
+        %15 = part %14 1
+        %16 = gather %0 %13
+        %17 = carry %1
+        %18 = gather %17 %17
+        %19 = sort %1 %0
+        rounds %17 %18
+        output %19
+        output %4
+        output %5
+        output %7
+        output %10
+        output %13
+        output %15
+        output %16
+        output %18
+        ",
+    );
+    let mut r = Rng(23);
+    let mut units: Vec<(Vec<i64>, Vec<i64>, i64)> = Vec::new();
+    for (k, n) in [0usize, 1, 2, 7, 255, 256, 257, 1000, 3000, 1, 0, 40].into_iter().enumerate() {
+        let x = r.column(n, -50, 50);
+        // Parents before each node: a forest, its roots by pointer jumping; in unit 9 a node
+        // past the end, refused by its gather.
+        let mut parent: Vec<i64> = (0..n).map(|j| if j == 0 { 0 } else { (r.next() % j as u64) as i64 }).collect();
+        if k == 11 {
+            parent[20] = 40;
+        }
+        units.push((x, parent, k as i64 - 3));
+    }
+    let want: Vec<super::Outcome> = units
+        .iter()
+        .map(|(x, f, k)| p.values_at(&[x, f], &[*k], &mut Rows).map(|v| p.outputs.iter().map(|&o| v.arrays[usize::from(o)].clone()).collect()))
+        .collect();
+    assert!(want.iter().any(Result::is_err) && want.iter().filter(|w| w.is_ok()).count() > 8, "{:?}", want.iter().map(|w| w.as_ref().err()).collect::<Vec<_>>());
+    let mut hosts: Vec<Rows> = units.iter().map(|_| Rows).collect();
+    let mut jobs: Vec<Job> = units.iter().zip(hosts.iter_mut()).map(|((x, f, k), h)| Job { inputs: vec![x, f], params: vec![*k], calls: h }).collect();
+    let (got, run) = run_batch(&p, &mut jobs).expect("a device");
+    for (u, (w, g)) in want.iter().zip(&got).enumerate() {
+        eprintln!("unit {u}: {:?}", w.as_ref().err());
+        check(w, g);
+    }
+    // One batch: the syncs of one unit's run, not of twelve.
+    let (_, one) = super::run(&p, &[&units[8].0, &units[8].1], &[units[8].2], &mut Rows).expect("a device");
+    assert!(run.syncs <= one.syncs + 2, "{} syncs a batch, {} a unit", run.syncs, one.syncs);
 }
 
 #[test]

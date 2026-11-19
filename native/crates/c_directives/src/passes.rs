@@ -843,8 +843,8 @@ fn stretches(b: &mut B, x: &Base, act: V, tp: &TokenPlace) -> Stretches {
     let start = b.select(first, zero, sb);
     let ndirs = b.gather(x.i_ndirs, inst);
     let last = b.eq(k, ndirs);
-    let dk_at = b.select(last, zero, dk0);
-    let dk = b.gather(x.d_before, dk_at);
+    // The directive after it (none after the last stretch, and a unit may have no directive).
+    let dk = b.gather_or(x.d_before, dk0, 0);
     let ntext = b.gather(x.f_ntext, file);
     let end = b.select(last, ntext, dk);
     let tb = b.gather(x.f_textbase, file);
@@ -1168,31 +1168,39 @@ struct Runner {
 }
 
 impl Prog {
-    /// A run on the named columns; its outputs by name.
-    fn run(&self, cols: &HashMap<&'static str, Vec<i64>>, host: &mut Host, runner: &mut Runner) -> Result<HashMap<&'static str, Vec<i64>>, &'static str> {
-        let inputs: Vec<&[i64]> = self.inputs.iter().map(|n| cols.get(n).unwrap_or_else(|| panic!("no column {n}")).as_slice()).collect();
-        let outputs = match runner.exec {
-            Exec::Interpreter => self.p.values_at(&inputs, &[], host).map(|v| self.p.outputs.iter().map(|&o| v.arrays[usize::from(o)].clone()).collect::<Vec<_>>()),
+    /// A run for each unit of a batch on its named columns, its calls answered by its host: its
+    /// outputs by name.
+    fn run(&self, cols: &[HashMap<&'static str, Vec<i64>>], hosts: &mut [Host], runner: &mut Runner) -> Vec<Result<HashMap<&'static str, Vec<i64>>, &'static str>> {
+        let inputs: Vec<Vec<&[i64]>> = cols.iter().map(|c| self.inputs.iter().map(|n| c.get(n).unwrap_or_else(|| panic!("no column {n}")).as_slice()).collect()).collect();
+        let outputs: Vec<Result<Vec<Vec<i64>>, (usize, &'static str)>> = match runner.exec {
+            Exec::Interpreter => inputs.iter().zip(hosts.iter_mut()).map(|(i, h)| self.p.values_at(i, &[], h).map(|v| self.p.outputs.iter().map(|&o| v.arrays[usize::from(o)].clone()).collect())).collect(),
             #[cfg(target_os = "macos")]
-            Exec::Metal => match rerail_metal::array_program::run(&self.p, &inputs, &[], host) {
-                Ok(Ok(r)) => {
-                    runner.device.add(&DeviceStats { runs: 1, gpu_seconds: r.gpu_seconds, dispatches: r.dispatches, syncs: r.syncs, calls: r.calls, syncs_by: r.syncs_by });
-                    Ok(r.outputs)
+            Exec::Metal => {
+                let mut jobs: Vec<rerail_metal::array_program::Job> = inputs.iter().zip(hosts.iter_mut()).map(|(i, h)| rerail_metal::array_program::Job { inputs: i.clone(), params: Vec::new(), calls: h }).collect();
+                match rerail_metal::array_program::run_batch(&self.p, &mut jobs) {
+                    Ok((out, r)) => {
+                        runner.device.add(&DeviceStats { runs: 1, gpu_seconds: r.gpu_seconds, dispatches: r.dispatches, syncs: r.syncs, calls: r.calls, syncs_by: r.syncs_by });
+                        out
+                    }
+                    Err(_) => return cols.iter().map(|_| Err("the device failed")).collect(),
                 }
-                Ok(Err(e)) => Err(e),
-                Err(_) => return Err("the device failed"),
-            },
-        };
-        let outputs = outputs.map_err(|(i, why)| {
-            if std::env::var_os("RERAIL_PASSES_TRACE").is_some() {
-                for k in i.saturating_sub(20)..i {
-                    eprintln!("passes:   %{k} = {}", self.p.ops[k].text());
-                }
-                eprintln!("passes: %{i} = {} refused: {why}", self.p.ops[i].text());
             }
-            why
-        })?;
-        Ok(self.outputs.iter().copied().zip(outputs).collect())
+        };
+        outputs
+            .into_iter()
+            .map(|o| {
+                let o = o.map_err(|(i, why)| {
+                    if std::env::var_os("RERAIL_PASSES_TRACE").is_some() {
+                        for k in i.saturating_sub(20)..i {
+                            eprintln!("passes:   %{k} = {}", self.p.ops[k].text());
+                        }
+                        eprintln!("passes: %{i} = {} refused: {why}", self.p.ops[i].text());
+                    }
+                    why
+                })?;
+                Ok(self.outputs.iter().copied().zip(o).collect())
+            })
+            .collect()
     }
 }
 
@@ -1220,9 +1228,11 @@ pub fn run(cfg: Config, io: &mut dyn Files, path: &str) -> (Outcome, Stats) {
         Ok(u) => u,
         Err(why) => return (Err(why), Stats::default()),
     };
-    let out = read(&mut unit, None, &mut Runner { exec: Exec::Interpreter, device: DeviceStats::default() });
-    let stats = unit.stats.clone();
-    (out, stats)
+    let mut r = [Reading::new(&mut unit, None)];
+    read(&mut r, &mut Runner { exec: Exec::Interpreter, device: DeviceStats::default() });
+    let [r] = r;
+    let out = r.outcome();
+    (out, unit.stats.clone())
 }
 
 /// `run`, its tests and expansions on the words (decision 0430), run by `run_words`
@@ -1234,89 +1244,172 @@ pub fn run_words(cfg: Config, io: &mut dyn Files, path: &str, run_words: words::
 
 /// `run_words`, the programs run by `exec`.
 pub fn run_on(cfg: Config, io: &mut dyn Files, path: &str, run_words: words::Run, exec: Exec) -> (Outcome, Stats, words::WordStats, DeviceStats) {
-    let mut w = match words::Words::new(&cfg, run_words) {
-        Ok(w) => w,
-        Err(why) => return (Err(why), Stats::default(), Default::default(), Default::default()),
-    };
-    let mut unit = match Unit::new(cfg, io, path) {
-        Ok(u) => u,
-        Err(why) => return (Err(why), Stats::default(), Default::default(), Default::default()),
-    };
+    let (mut out, device) = run_batch(vec![(cfg, io, path)], run_words, exec);
+    let (o, s, w) = out.pop().unwrap();
+    (o, s, w, device)
+}
+
+/// Each unit of a batch read by the programs (`run_on`), in the same runs: the rounds of every
+/// unit still moving in one run of `ROUND` a round, then the text of all in one run of `TEXT`.
+pub fn run_batch(units: Vec<(Config, &mut dyn Files, &str)>, run_words: words::Run, exec: Exec) -> (Vec<(Outcome, Stats, words::WordStats)>, DeviceStats) {
+    let mut made: Vec<Result<(Unit, words::Words), &'static str>> = units
+        .into_iter()
+        .map(|(cfg, io, path)| {
+            let w = words::Words::new(&cfg, run_words)?;
+            Ok((Unit::new(cfg, io, path)?, w))
+        })
+        .collect();
     let mut runner = Runner { exec, device: DeviceStats::default() };
-    let out = read(&mut unit, Some(&mut w), &mut runner);
-    let stats = unit.stats.clone();
-    (out, stats, w.stats.clone(), runner.device)
+    let mut readings: Vec<Reading> = made.iter_mut().filter_map(|m| m.as_mut().ok()).map(|(u, w)| Reading::new(u, Some(w))).collect();
+    read(&mut readings, &mut runner);
+    let outcomes: Vec<Outcome> = readings.into_iter().map(Reading::outcome).collect();
+    let mut outcomes = outcomes.into_iter();
+    let out = made
+        .into_iter()
+        .map(|m| match m {
+            Ok((u, w)) => (outcomes.next().unwrap(), u.stats.clone(), w.stats.clone()),
+            Err(why) => (Err(why), Stats::default(), Default::default()),
+        })
+        .collect::<Vec<_>>();
+    (out, runner.device)
 }
 
-fn read(unit: &mut Unit, mut words: Option<&mut words::Words>, runner: &mut Runner) -> Outcome {
-    // Each instance as first entered: its own group active, nothing else.
-    let fresh = |unit: &Unit, from: usize, a: &mut Vec<i64>| {
-        let inst = unit.instances();
-        for &f in &inst[from..] {
-            let n = unit.cols.f_ngroups[f as usize];
-            a.push(1);
-            a.extend(std::iter::repeat_n(0, (n - 1) as usize));
-        }
-    };
-    let mut state = State::default();
-    fresh(unit, 0, &mut state.a);
-    let (b_sym, b_val) = unit.builtin_rows();
-    let mut memo = Memo::default();
+/// A unit's reading: its state between rounds, its memo, and where it is.
+struct Reading<'u, 'a> {
+    unit: &'u mut Unit<'a>,
+    words: Option<&'u mut words::Words>,
+    state: State,
+    memo: Memo,
+    b_sym: Vec<i64>,
+    b_val: Vec<i64>,
+    /// Its outcome once it has one; until then, whether its rounds are done (its text next).
+    done: Option<Outcome>,
+    settled: bool,
+}
+
+impl<'u, 'a> Reading<'u, 'a> {
+    fn new(unit: &'u mut Unit<'a>, words: Option<&'u mut words::Words>) -> Self {
+        let mut state = State::default();
+        fresh(unit, 0, &mut state.a);
+        let (b_sym, b_val) = unit.builtin_rows();
+        Reading { unit, words, state, memo: Memo::default(), b_sym, b_val, done: None, settled: false }
+    }
+
+    fn outcome(self) -> Outcome {
+        self.done.unwrap_or(Err("past the rounds' bound"))
+    }
+}
+
+/// Each instance from `from` as first entered: its own group active, nothing else.
+fn fresh(unit: &Unit, from: usize, a: &mut Vec<i64>) {
+    let inst = unit.instances();
+    for &f in &inst[from..] {
+        let n = unit.cols.f_ngroups[f as usize];
+        a.push(1);
+        a.extend(std::iter::repeat_n(0, (n - 1) as usize));
+    }
+}
+
+fn read(rs: &mut [Reading], runner: &mut Runner) {
     for round in 1..=rerail_compiler::array::MAX_ROUNDS as u32 {
-        unit.generation += 1;
-        unit.stats.rounds = round;
-        let mut cols = columns(unit, &state, &b_sym, &b_val);
-        for (k, n) in MEMO.iter().enumerate() {
-            cols.insert(n, std::mem::take(&mut memo.0[k]));
+        let moving: Vec<usize> = (0..rs.len()).filter(|&k| rs[k].done.is_none() && !rs[k].settled).collect();
+        if moving.is_empty() {
+            break;
         }
-        let mut o = ROUND.run(&cols, &mut Host { unit: &mut *unit, refused: 0, words: words.as_deref_mut() }, runner)?;
-        for (k, n) in MEMO.iter().enumerate() {
-            memo.0[k] = o.remove(n).expect("the memo's outputs");
-        }
-        if o["refused"][0] > 0 {
-            return Err(unit.reason(o["refused"][0] - 1));
-        }
-        if o["shape"][0] > 0 {
-            return Err(SHAPE[o["shape"][0] as usize]);
-        }
-        let n_inst = unit.instances().len();
-        let mut next = State { a: o["a_next"].clone(), e: [o["e_inst"].clone(), o["e_tok"].clone(), o["e_ev"].clone(), o["e_sym"].clone()], ..State::default() };
-        for k in 0..o["n_parent"].len() {
-            let (p, d, f) = (o["n_parent"][k], o["n_dir"][k], o["n_file"][k]);
-            let c = unit.enter(p, d, f);
-            next.l_parent.push(p);
-            next.l_dir.push(d);
-            next.l_child.push(c);
-        }
-        fresh(unit, n_inst, &mut next.a);
-        if next == state {
-            if o["unsupported"][0] > 0 {
-                return Err(unit.reason(o["unsupported"][0] - 1));
+        let mut cols = Vec::with_capacity(moving.len());
+        for &k in &moving {
+            let r = &mut rs[k];
+            r.unit.generation += 1;
+            r.unit.stats.rounds = round;
+            let mut c = columns(r.unit, &r.state, &r.b_sym, &r.b_val);
+            for (j, n) in MEMO.iter().enumerate() {
+                c.insert(n, std::mem::take(&mut r.memo.0[j]));
             }
-            return text_of(unit, words, &state, &b_sym, &b_val, runner);
+            cols.push(c);
         }
-        state = next;
+        let outs = {
+            let mut hosts: Vec<Host> = rs.iter_mut().enumerate().filter(|(k, _)| moving.contains(k)).map(|(_, r)| Host { unit: &mut *r.unit, refused: 0, words: r.words.as_deref_mut() }).collect();
+            ROUND.run(&cols, &mut hosts, runner)
+        };
+        for (&k, o) in moving.iter().zip(outs) {
+            let r = &mut rs[k];
+            let mut o = match o {
+                Ok(o) => o,
+                Err(why) => {
+                    r.done = Some(Err(why));
+                    continue;
+                }
+            };
+            for (j, n) in MEMO.iter().enumerate() {
+                r.memo.0[j] = o.remove(n).expect("the memo's outputs");
+            }
+            if o["refused"][0] > 0 {
+                r.done = Some(Err(r.unit.reason(o["refused"][0] - 1)));
+                continue;
+            }
+            if o["shape"][0] > 0 {
+                r.done = Some(Err(SHAPE[o["shape"][0] as usize]));
+                continue;
+            }
+            let n_inst = r.unit.instances().len();
+            let mut next = State { a: o["a_next"].clone(), e: [o["e_inst"].clone(), o["e_tok"].clone(), o["e_ev"].clone(), o["e_sym"].clone()], ..State::default() };
+            for j in 0..o["n_parent"].len() {
+                let (p, d, f) = (o["n_parent"][j], o["n_dir"][j], o["n_file"][j]);
+                let c = r.unit.enter(p, d, f);
+                next.l_parent.push(p);
+                next.l_dir.push(d);
+                next.l_child.push(c);
+            }
+            fresh(r.unit, n_inst, &mut next.a);
+            if next == r.state {
+                if o["unsupported"][0] > 0 {
+                    r.done = Some(Err(r.unit.reason(o["unsupported"][0] - 1)));
+                } else {
+                    r.settled = true;
+                }
+                continue;
+            }
+            r.state = next;
+        }
     }
-    Err("past the rounds' bound")
+    text_of(rs, runner);
 }
 
-fn text_of(unit: &mut Unit, mut words: Option<&mut words::Words>, state: &State, b_sym: &[i64], b_val: &[i64], runner: &mut Runner) -> Outcome {
-    unit.generation += 1;
-    let mut cols = columns(unit, state, b_sym, b_val);
-    cols.insert("t_kind", unit.cols.t_kind.clone());
-    cols.insert("t_sym", unit.cols.t_sym.clone());
-    cols.insert("fnlike", unit.fnlike());
-    let mut host = Host { unit: &mut *unit, refused: 0, words: words.as_deref_mut() };
-    let o = TEXT.run(&cols, &mut host, runner)?;
-    let refused = host.refused;
-    if refused > 0 {
-        return Err(unit.reason(refused - 1));
+/// The text of each unit whose rounds are done, in one run of `TEXT`.
+fn text_of(rs: &mut [Reading], runner: &mut Runner) {
+    let ready: Vec<usize> = (0..rs.len()).filter(|&k| rs[k].done.is_none() && rs[k].settled).collect();
+    if ready.is_empty() {
+        return;
     }
-    if o["shape"][0] > 0 {
-        return Err(SHAPE[o["shape"][0] as usize]);
+    let mut cols = Vec::with_capacity(ready.len());
+    for &k in &ready {
+        let r = &mut rs[k];
+        r.unit.generation += 1;
+        let mut c = columns(r.unit, &r.state, &r.b_sym, &r.b_val);
+        c.insert("t_kind", r.unit.cols.t_kind.clone());
+        c.insert("t_sym", r.unit.cols.t_sym.clone());
+        c.insert("fnlike", r.unit.fnlike());
+        cols.push(c);
     }
-    unit.stats.output = o["out"].len() as u64;
-    Ok(o["out"].iter().map(|&h| if h < 0 && let Some(w) = words.as_deref() { w.made(h).to_vec() } else { unit.spelling(h) }).collect())
+    let (outs, refused): (Vec<_>, Vec<i64>) = {
+        let mut hosts: Vec<Host> = rs.iter_mut().enumerate().filter(|(k, _)| ready.contains(k)).map(|(_, r)| Host { unit: &mut *r.unit, refused: 0, words: r.words.as_deref_mut() }).collect();
+        let outs = TEXT.run(&cols, &mut hosts, runner);
+        (outs, hosts.iter().map(|h| h.refused).collect())
+    };
+    for ((&k, o), refused) in ready.iter().zip(outs).zip(refused) {
+        let r = &mut rs[k];
+        r.done = Some((|| {
+            let o = o?;
+            if refused > 0 {
+                return Err(r.unit.reason(refused - 1));
+            }
+            if o["shape"][0] > 0 {
+                return Err(SHAPE[o["shape"][0] as usize]);
+            }
+            r.unit.stats.output = o["out"].len() as u64;
+            Ok(o["out"].iter().map(|&h| if h < 0 && let Some(w) = r.words.as_deref() { w.made(h).to_vec() } else { r.unit.spelling(h) }).collect())
+        })());
+    }
 }
 
 /// The columns a run reads.

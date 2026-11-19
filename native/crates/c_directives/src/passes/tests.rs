@@ -157,6 +157,45 @@ fn what_is_refused() {
     assert_eq!(refused("#if __has_feature(x\nyes\n#endif\nend\n"), None);
     assert_eq!(refused("#define f(a, b) a b\nf(1,\n#ifdef X\n2\n#else\n3\n#endif\n)\n"), Some("a call past its stretch of text"));
     assert_eq!(refused("#if 0\n#line 10\n#endif\nok\n"), None);
+    // No directive at all: nothing, and text alone.
+    assert_eq!(refused(""), None);
+    assert_eq!(refused("a b\n"), None);
+}
+
+/// A batch of units read in the same runs: each one's outcome its own read alone, the units
+/// at different depths of rounds, one refused in its rounds and one in its text.
+#[test]
+fn a_batch_reads_each_unit_as_alone() {
+    let units: [&[(&str, &str)]; 6] = [
+        &[("main.c", "#define A 1\n#if A\nyes\n#else\nno\n#endif\nA\n")],
+        &[("main.c", "#include \"a.h\"\nB\n"), ("a.h", "#include \"b.h\"\n#define B C\n"), ("b.h", "#define C 7\n")],
+        &[("main.c", "#line 10\n__LINE__\n")],
+        &[("main.c", "")],
+        &[("main.c", "#define f(x) g\n#define g(y) y + 1\nf(1)(2)\n")],
+        &[("main.c", "#define F(a, b) a ## b\nF(x, y) __COUNTER__ __COUNTER__\n#ifndef Z\n#define Z\n#endif\nZ\n")],
+    ];
+    let cfg = Config::new(Options::c(17, true));
+    let alone: Vec<Outcome> = units.iter().map(|f| run_words(cfg.clone(), &mut io(f), "main.c", rerail_compiler::pp_words::run).0).collect();
+    assert!(alone.iter().filter(|o| o.is_err()).count() == 2, "{:?}", alone.iter().map(|o| o.as_ref().err()).collect::<Vec<_>>());
+    let mut execs = vec![Exec::Interpreter];
+    #[cfg(target_os = "macos")]
+    execs.push(Exec::Metal);
+    for exec in execs {
+        let mut ios: Vec<_> = units.iter().map(|f| io(f)).collect();
+        let batch: Vec<(Config, &mut dyn Files, &str)> = ios.iter_mut().map(|io| (cfg.clone(), io as &mut dyn Files, "main.c")).collect();
+        let (got, device) = run_batch(batch, rerail_compiler::pp_words::run, exec);
+        for (k, (a, (b, _, _))) in alone.iter().zip(&got).enumerate() {
+            match (a, b) {
+                (Ok(a), Ok(b)) => assert_eq!(show(b), show(a), "unit {k} on {exec:?}"),
+                _ => assert_eq!(b.as_ref().err(), a.as_ref().err(), "unit {k} on {exec:?}"),
+            }
+        }
+        if exec != Exec::Interpreter {
+            // A round's run serves every unit still moving: as many runs as the deepest unit's rounds, and the text's.
+            let rounds = got.iter().map(|g| g.1.rounds as usize).max().unwrap();
+            assert!(device.runs <= rounds + 1, "{} runs for {rounds} rounds", device.runs);
+        }
+    }
 }
 
 /// Both corpora: each file read by the programs against the serial pass, under clang's profile
@@ -179,6 +218,8 @@ fn the_corpus_by_the_programs() {
     #[cfg(not(target_os = "macos"))]
     let exec = Exec::Interpreter;
     let mut device = DeviceStats::default();
+    // Units a batch (`run_batch`): their rounds and their text in the same runs.
+    let batch: usize = env("RERAIL_PP_BATCH").and_then(|s| s.parse().ok()).unwrap_or(1).max(1);
     let mut wrong = 0;
     for lang in env("RERAIL_PP_LANGS").unwrap_or("c,cpp".into()).split(',') {
         let mut prof = Profile::new(if lang == "cpp" { Lang::cpp() } else { Lang::c() });
@@ -186,24 +227,24 @@ fn the_corpus_by_the_programs() {
         names.sort();
         let (mut same, mut differ) = (0, 0);
         let mut refused: HashMap<&str, usize> = HashMap::new();
-        for path in names.iter().skip(first).take(count) {
-            let p = path.to_string_lossy().into_owned();
-            let settled = prof.settle(&p);
-            let mut io = Search::new(settled.dirs.clone(), read_fs);
-            let prof = env("RERAIL_PP_PROFILE").is_some();
-            rerail_compiler::array::profile(prof);
+        let chosen: Vec<_> = names.iter().skip(first).take(count).collect();
+        for chunk in chosen.chunks(batch) {
+            let settled: Vec<_> = chunk.iter().map(|path| prof.settle(&path.to_string_lossy())).collect();
+            let mut ios: Vec<_> = settled.iter().map(|s| Search::new(s.dirs.clone(), read_fs)).collect();
+            let paths: Vec<String> = chunk.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+            let profiled = env("RERAIL_PP_PROFILE").is_some();
+            rerail_compiler::array::profile(profiled);
             let t0 = std::time::Instant::now();
-            let (out, st, ws, d) = if words || exec != Exec::Interpreter {
-                run_on(settled.cfg.clone(), &mut io, &p, crate::expand::native, exec)
+            let results: Vec<(Outcome, Stats, words::WordStats)> = if words || exec != Exec::Interpreter {
+                let units: Vec<(Config, &mut dyn Files, &str)> = settled.iter().zip(ios.iter_mut()).zip(&paths).map(|((s, io), p)| (s.cfg.clone(), io as &mut dyn Files, p.as_str())).collect();
+                let (r, d) = run_batch(units, crate::expand::native, exec);
+                device.add(&d);
+                r
             } else {
-                let (o, s) = run(settled.cfg.clone(), &mut io, &p);
-                (o, s, Default::default(), Default::default())
+                settled.iter().zip(ios.iter_mut()).zip(&paths).map(|((s, io), p)| { let (o, st) = run(s.cfg.clone(), io, p); (o, st, Default::default()) }).collect()
             };
-            if each {
-                println!("{p}: {} ms; {}; {st:?} {ws:?} {d:?}", t0.elapsed().as_millis(), out.as_ref().map_or_else(|w| w.to_string(), |o| if *o == settled.tokens { "same".into() } else { "DIFFERS".into() }));
-            }
-            device.add(&d);
-            if prof {
+            let ms = t0.elapsed().as_millis();
+            if profiled {
                 // The operations by time: program, operation, steps, ms, elements.
                 let mut rows: Vec<_> = rerail_compiler::array::profile(false).into_iter().collect();
                 rows.sort_by_key(|r| std::cmp::Reverse(r.1.1));
@@ -214,15 +255,20 @@ fn the_corpus_by_the_programs() {
                     println!("  {name} %{i:<4} {n:>5} steps {:>7.1} ms {len:>10} elements  {}", *ns as f64 / 1e6, prog.ops[*i].text());
                 }
             }
-            match out {
-                Ok(o) if o == settled.tokens => same += 1,
-                Ok(o) => {
-                    differ += 1;
-                    let k = o.iter().zip(&settled.tokens).position(|(a, b)| a != b).unwrap_or(o.len().min(settled.tokens.len()));
-                    let near = |v: &[Vec<u8>]| show(&v[k.saturating_sub(6)..(k + 6).min(v.len())]);
-                    println!("DIFF {p}: token {k} (serial {}, programs {})\n  serial:   {}\n  programs: {}", settled.tokens.len(), o.len(), near(&settled.tokens), near(&o));
+            for (((out, st, ws), settled), p) in results.into_iter().zip(&settled).zip(&paths) {
+                if each {
+                    println!("{p}: {ms} ms (its batch); {}; {st:?} {ws:?}", out.as_ref().map_or_else(|w| w.to_string(), |o| if *o == settled.tokens { "same".into() } else { "DIFFERS".into() }));
                 }
-                Err(why) => *refused.entry(why).or_default() += 1,
+                match out {
+                    Ok(o) if o == settled.tokens => same += 1,
+                    Ok(o) => {
+                        differ += 1;
+                        let k = o.iter().zip(&settled.tokens).position(|(a, b)| a != b).unwrap_or(o.len().min(settled.tokens.len()));
+                        let near = |v: &[Vec<u8>]| show(&v[k.saturating_sub(6)..(k + 6).min(v.len())]);
+                        println!("DIFF {p}: token {k} (serial {}, programs {})\n  serial:   {}\n  programs: {}", settled.tokens.len(), o.len(), near(&settled.tokens), near(&o));
+                    }
+                    Err(why) => *refused.entry(why).or_default() += 1,
+                }
             }
         }
         println!("{lang}: {same} the same, {differ} differ, refused {refused:?}");
