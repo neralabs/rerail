@@ -645,8 +645,6 @@ enum Mem {
     Limit,
     /// The end of the token before.
     LastEnd,
-    /// 1 at the stream's end.
-    AtEnd,
     /// The nodes made, the nodes open, the calls made and not returned.
     Nodes,
     Open,
@@ -670,7 +668,7 @@ enum Mem {
 }
 
 impl Mem {
-    const COUNT: u32 = 29;
+    const COUNT: u32 = 28;
 }
 
 /// `Ctx::state`'s slots (`rust_stream` writes `Ctx` field for field).
@@ -1948,7 +1946,8 @@ fn token_end_at(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, end_at: EndAt) -> 
         EndAt::Taken => (e.get)(f, Mem::Limit),
         EndAt::Field => (e.get)(f, Mem::End),
         EndAt::Untaken => {
-            let (at_end, limit, start) = ((e.get)(f, Mem::AtEnd), (e.get)(f, Mem::Limit), (e.get)(f, Mem::Start));
+            let (next, nstarts, limit, start) = ((e.get)(f, Mem::Next), (e.ctx)(f, NSTARTS), (e.get)(f, Mem::Limit), (e.get)(f, Mem::Start));
+            let at_end = f.ins().icmp(IntCC::UnsignedGreaterThan, next, nstarts);
             f.ins().select(at_end, limit, start)
         }
     }
@@ -3333,14 +3332,6 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
     let overflow = f.ins().iconst(types::I64, OVERFLOW as i64);
     f.ins().return_(&[overflow]);
     f.switch_to_block(fits);
-    let (ended, go) = (f.create_block(), f.create_block());
-    let at_end = field_get(f, ctx, Mem::AtEnd);
-    f.ins().brif(at_end, ended, &[], go, &[]);
-    f.switch_to_block(ended);
-    f.set_cold_block(ended);
-    let one = f.ins().iconst(types::I64, 1);
-    f.ins().return_(&[one]);
-    f.switch_to_block(go);
     let (next, end) = (field_get(f, ctx, Mem::Next), field_get(f, ctx, Mem::Limit));
     field_set(f, ctx, Mem::LastEnd, end);
     let zero = f.ins().iconst(types::I64, 0);
@@ -3356,14 +3347,24 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
     if let (Some((sp, bw)), Some(fetched)) = (&split, fetched) {
         split_next(f, &senv, sp, bw, fetched, None, heads);
     }
+    // The stream's end, one compare a token (`Next` is one past the count once the end is
+    // taken): the end's token, or past it.
     let nstarts = load(f, NSTARTS);
-    let is_end = f.ins().icmp(IntCC::Equal, next, nstarts);
-    let (last, token) = (f.create_block(), f.create_block());
-    f.ins().brif(is_end, last, &[], token, &[]);
+    let is_end = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, next, nstarts);
+    let (ends, last, ended, token) = (f.create_block(), f.create_block(), f.create_block(), f.create_block());
+    f.ins().brif(is_end, ends, &[], token, &[]);
+    f.switch_to_block(ends);
+    f.set_cold_block(ends);
+    let past = f.ins().icmp(IntCC::UnsignedGreaterThan, next, nstarts);
+    f.ins().brif(past, ended, &[], last, &[]);
+    f.switch_to_block(ended);
+    f.set_cold_block(ended);
+    let one = f.ins().iconst(types::I64, 1);
+    f.ins().return_(&[one]);
     f.switch_to_block(last);
     f.set_cold_block(last);
-    let one = f.ins().iconst(types::I64, 1);
-    field_set(f, ctx, Mem::AtEnd, one);
+    let past = f.ins().iadd_imm(nstarts, 1);
+    field_set(f, ctx, Mem::Next, past);
     let at_end_live = f.ins().iconst(types::I64, t.end_bits);
     field_set(f, ctx, Mem::Live, at_end_live);
     if let Some(code) = t.end_code {
@@ -4390,6 +4391,12 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                 f.ins().store(MemFlags::trusted(), x, p, STATE + 8 * k as i32);
             }
         };
+        // At the stream's end: `Next` past the count (the end's token sets it one past).
+        let ended_now = |f: &mut FunctionBuilder<'_>, next: Value| -> Value {
+            let b = if clustered { pinned(f) } else { ctx };
+            let n = f.ins().load(types::I64, MemFlags::trusted(), b, NSTARTS);
+            f.ins().icmp(IntCC::UnsignedGreaterThan, next, n)
+        };
         // The token's kind and word, read from its code in memory as the lean parser reads a
         // token's (`ldrb` of the kind; the word's bytes after it): no shift or mask a test, which
         // Cranelift would make again in every block that tests (`band` with a constant is
@@ -4785,8 +4792,6 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         let dead = f.create_block();
                         f.switch_to_block(dead);
                     }
-                    let at_end = mget(&mut f, Mem::AtEnd);
-                    guard(&mut f, at_end, pc);
                     let next = mget(&mut f, Mem::Next);
                     let end = if flagged { mget(&mut f, Mem::End) } else { mget(&mut f, Mem::Limit) };
                     mset(&mut f, Mem::LastEnd, end);
@@ -4804,13 +4809,20 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         }
                         split_next(&mut f, &env, sp, bw, fetched, words_read(native, &pushes, &word_kinds, pc + 1).as_deref(), &mut heads);
                     }
-                    let is_end = f.ins().icmp(IntCC::Equal, next, nstarts);
-                    let (last, token) = (f.create_block(), f.create_block());
-                    f.ins().brif(is_end, last, &[], token, &[]);
+                    // One compare a token (`Next` is one past the count once the end is
+                    // taken): the end's token, or past it (refused).
+                    let is_end = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, next, nstarts);
+                    let (ends, last, token) = (f.create_block(), f.create_block(), f.create_block());
+                    f.ins().brif(is_end, ends, &[], token, &[]);
+                    f.switch_to_block(ends);
+                    f.set_cold_block(ends);
+                    let past = f.ins().icmp(IntCC::UnsignedGreaterThan, next, nstarts);
+                    guard(&mut f, past, pc);
+                    f.ins().jump(last, &[]);
                     f.switch_to_block(last);
                     f.set_cold_block(last);
-                    let one = f.ins().iconst(types::I64, 1);
-                    mset(&mut f, Mem::AtEnd, one);
+                    let past = f.ins().iadd_imm(nstarts, 1);
+                    mset(&mut f, Mem::Next, past);
                     let at_end_live = f.ins().iconst(types::I64, end_bits);
                     mset(&mut f, Mem::Live, at_end_live);
                     if let Some(k) = end_kind {
@@ -4978,7 +4990,10 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     // On kinds, the end is a kind (`end_kind`): its target in the tree.
                     let end_in_tree = end_kind.filter(|_| kind_reps.is_some() && s.offset == 0);
                     if end_in_tree.is_none() {
-                        let at_end = mget(&mut f, Mem::AtEnd);
+                        let at_end = {
+                            let next = mget(&mut f, Mem::Next);
+                            ended_now(&mut f, next)
+                        };
                         let (ended, taking) = (f.create_block(), f.create_block());
                         f.ins().brif(at_end, ended, &[], taking, &[]);
                         f.switch_to_block(ended);
@@ -5282,7 +5297,10 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         // A gap mark tier 2 tests itself: at the stream's end, the end's (its
                         // bit in `Live` there); else its mask from the grammar token before.
                         if let Some(&(_, o)) = lazy.iter().find(|&&(k, _)| k == order) {
-                            let at_end = mget(&mut f, Mem::AtEnd);
+                            let at_end = {
+                            let next = mget(&mut f, Mem::Next);
+                            ended_now(&mut f, next)
+                        };
                             let (ask, holds) = (f.create_block(), f.create_block());
                             f.ins().brif(at_end, holds, &[], ask, &[]);
                             f.switch_to_block(ask);
@@ -5355,7 +5373,10 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     if pattern.is_some() {
                         return Err(Error::UnsupportedBackend);
                     }
-                    let (at_end, live) = (mget(&mut f, Mem::AtEnd), mget(&mut f, Mem::Live));
+                    let (at_end, live) = ({
+                            let next = mget(&mut f, Mem::Next);
+                            ended_now(&mut f, next)
+                        }, mget(&mut f, Mem::Live));
                     let lit = f.ins().ushr_imm(live, i64::from(order));
                     let lit = f.ins().band_imm(lit, 1);
                     let (look, ended) = (f.create_block(), f.create_block());
@@ -5963,8 +5984,9 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     }
                 }
                 Op::Accept => {
-                    let (at_end, open) = (mget(&mut f, Mem::AtEnd), mget(&mut f, Mem::Open));
-                    let not_end = f.ins().icmp_imm(IntCC::Equal, at_end, 0);
+                    let (next, open) = (mget(&mut f, Mem::Next), mget(&mut f, Mem::Open));
+                    let not_end = ended_now(&mut f, next);
+                    let not_end = f.ins().bxor_imm(not_end, 1);
                     let not_one = f.ins().icmp_imm(IntCC::NotEqual, open, 1);
                     // A branch each, not the tests joined.
                     guard(&mut f, not_end, pc);

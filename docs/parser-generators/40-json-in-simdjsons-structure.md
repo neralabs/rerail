@@ -319,6 +319,12 @@ a token: the stream's end (`AtEnd`, and the count's compare). simdjson has a sen
 both: the index after the last points at the padding, which no switch accepts. The starts test
 asserts there is no room check.
 
+**The end in one compare.** The end's token now sets `Next` one past the count, so "at the
+end" is `Next > nstarts` and the `AtEnd` flag is gone from the state. A token tests
+`Next >= nstarts` once (`b.hs` to a cold block that tells the end's token from past it), in
+place of a flag loaded from the frame, its branch, and the count's compare. `SWITCH`, `MARK` and
+`ACCEPT` read the end the same way. A value's `TOKEN` before its switch: 13 instructions to 11.
+
 ## Order
 
 1. Done: step 1, above.
