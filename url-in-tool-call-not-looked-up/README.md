@@ -1,6 +1,6 @@
 # A tool call's URL is looked up on no other machine
 
-For the pull request of branch `JeanFrancoisGagne/url-in-tool-call-not-looked-up`, not opened yet, head 2e626f910. [report.html](report.html) is the same report as one page: download it and open it.
+For the pull request of branch `JeanFrancoisGagne/url-in-tool-call-not-looked-up`, not opened yet, head 3eb21925d. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -13,7 +13,7 @@ For the pull request of branch `JeanFrancoisGagne/url-in-tool-call-not-looked-up
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 735 lines in 6 files: 233 ship, 502 are tests and text | Careful. It changes which tool calls count as naming a secret. | Nothing. No CI run on GitHub yet: not pushed. | 2 |
+| 757 lines in 6 files: 239 ship, 518 are tests and text | Careful. It changes which tool calls count as naming a secret. | Nothing. No CI run on GitHub yet: not pushed. | 2 |
 
 ## 2. Intent, and the gap
 
