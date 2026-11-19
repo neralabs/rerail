@@ -23,21 +23,32 @@ import {
   pickFiles,
   ruleSliceStats,
   scoreFindings,
+  SLICES_TOLERANCE_PERCENT,
   TOLERANCE_PERCENT,
   withinTolerance,
 } from "../../../scripts/ship/verdict.js";
 
-describe("the 15% bar", () => {
-  it("passes a candidate at exactly 1.15 times main and fails one just above", () => {
-    expect(TOLERANCE_PERCENT).toBe(15);
-    expect(withinTolerance(1000, 1150)).toBe(true);
-    expect(withinTolerance(1000, 1151)).toBe(false);
+describe("the bars", () => {
+  it("passes a slice figure at exactly 1.15 times main and fails one just above", () => {
+    const bar = SLICES_TOLERANCE_PERCENT;
+    expect(bar).toBe(15);
+    expect(withinTolerance(1000, 1150, bar)).toBe(true);
+    expect(withinTolerance(1000, 1151, bar)).toBe(false);
     // 3 * 1.15 is 3.4499999999999997 in floating point; the bar is exact.
-    expect(withinTolerance(3, 3.45)).toBe(true);
-    expect(compareMetric("wall-cold", [100, 100, 100], [115, 115, 115]).status).toBe("pass");
-    expect(compareMetric("wall-cold", [100, 100, 100], [116, 116, 116])).toMatchObject({ status: "fail", ratio: 1.16 });
-    // What failed the old 1.10 bar passes this one.
-    expect(compareMetric("wall-cold", [100, 100, 100], [112, 112, 112]).status).toBe("pass");
+    expect(withinTolerance(3, 3.45, bar)).toBe(true);
+    expect(compareMetric("wall-cold", [100, 100, 100], [115, 115, 115], bar).status).toBe("pass");
+    expect(compareMetric("wall-cold", [100, 100, 100], [116, 116, 116], bar)).toMatchObject({ status: "fail", ratio: 1.16 });
+    // What fails the waits' 1.10 bar passes the slices'.
+    expect(compareMetric("wall-cold", [100, 100, 100], [112, 112, 112], bar).status).toBe("pass");
+  });
+
+  it("keeps the waits at 1.10 times main, the default", () => {
+    expect(TOLERANCE_PERCENT).toBe(10);
+    expect(withinTolerance(1000, 1100)).toBe(true);
+    expect(withinTolerance(1000, 1101)).toBe(false);
+    // 1.1 * 3 is 3.3000000000000003 in floating point; the bar is exact.
+    expect(withinTolerance(3, 3.3)).toBe(true);
+    expect(compareMetric("wall-cold", [100, 100, 100], [111, 111, 111])).toMatchObject({ status: "fail", ratio: 1.11 });
   });
 
   it("compares medians, so one slow run of three does not fail the candidate", () => {

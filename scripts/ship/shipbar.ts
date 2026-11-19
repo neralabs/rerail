@@ -131,7 +131,7 @@ import {
   scoreFindings,
   SOURCE_EXTENSIONS,
   type TimeVerdict,
-  TOLERANCE_PERCENT,
+  SLICES_TOLERANCE_PERCENT,
 } from "./verdict.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -1262,10 +1262,10 @@ function measuredMetrics(main: readonly RunRow[], candidate: readonly RunRow[], 
     const confirmedMain = metricValues(confirmMain, metric);
     const confirmedCandidate = metricValues(confirmCandidate, metric);
     return {
-      verdict: compareMetric(metric, mainRuns, candidateRuns),
+      verdict: compareMetric(metric, mainRuns, candidateRuns, SLICES_TOLERANCE_PERCENT),
       mainRuns,
       candidateRuns,
-      confirm: confirmedMain.length > 0 && confirmedCandidate.length > 0 ? { verdict: compareMetric(metric, confirmedMain, confirmedCandidate), mainRuns: confirmedMain, candidateRuns: confirmedCandidate } : null,
+      confirm: confirmedMain.length > 0 && confirmedCandidate.length > 0 ? { verdict: compareMetric(metric, confirmedMain, confirmedCandidate, SLICES_TOLERANCE_PERCENT), mainRuns: confirmedMain, candidateRuns: confirmedCandidate } : null,
     };
   });
 }
@@ -1403,7 +1403,7 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
     metrics = metrics.map((m) => {
       const [what, mode] = m.verdict.metric.split("-") as ["wall" | "cpu" | "rss", "cold" | "warm"];
       const candidateRuns = sums.filter((s) => s.mode === mode).map((s) => (what === "wall" ? s.wallMs : what === "cpu" ? s.cpuMs : s.rssKB));
-      const verdict = compareMetric(m.verdict.metric, m.mainRuns, candidateRuns);
+      const verdict = compareMetric(m.verdict.metric, m.mainRuns, candidateRuns, SLICES_TOLERANCE_PERCENT);
       return { ...m, verdict: verdict.reason === "" ? verdict : { ...verdict, reason: `${verdict.reason} (chunked: the sum of ${chunks.length} chunk runs)` }, candidateRuns };
     });
   }
@@ -1509,7 +1509,7 @@ function computeVerdict(settings: { baseline: Checkout; candidate: Checkout; cor
   });
   const machinesDir = join(settings.out, "machines");
   return {
-    tolerancePercent: TOLERANCE_PERCENT,
+    tolerancePercent: SLICES_TOLERANCE_PERCENT,
     runs: settings.runs,
     baseline: settings.baseline,
     candidate: settings.candidate,

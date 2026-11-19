@@ -10,7 +10,7 @@
 import { methodGaps, type RunMethod } from "./platform.js";
 import type { Candidate, CellVerdict, Corpus, LoadSummary, MeasuredMetric, OneFileVerdict, OneRuleTiming, OneRuleVerdict, PackVerdict, RuleTiming, SameFindings, Verdict } from "./shipbar.js";
 import { type CellCost, KNOWN_GAPS, type RuleMultiple, ruleMultiples } from "./metric.js";
-import { type FileLabel, median, RULE_ALERT_RATIO, RULE_FLOOR_MS, ruleSliceStats, spread, type TimeVerdict, TOLERANCE_PERCENT } from "./verdict.js";
+import { type FileLabel, median, RULE_ALERT_RATIO, RULE_FLOOR_MS, ruleSliceStats, SLICES_TOLERANCE_PERCENT, spread, type TimeVerdict } from "./verdict.js";
 import type { WaitsSection } from "./waits-model.js";
 
 export const SCHEMA = "ship-no-ship/report/v2";
@@ -633,7 +633,7 @@ function failurePhase(reason: string): string {
 /** Every item that fails (or is noisy) under one candidate, in pack order, coverage first, each slice in turn. */
 function items(packs: readonly PackItem[], wanted: ItemStatus): FailureItem[] {
   const out: FailureItem[] = [];
-  const bar = (1 + TOLERANCE_PERCENT / 100).toFixed(2);
+  const bar = (1 + SLICES_TOLERANCE_PERCENT / 100).toFixed(2);
   const ratio = (r: number | null): string => (r === null || !Number.isFinite(r) ? "–" : `${r.toFixed(3)}x`);
   const metricItems = (p: PackItem, slice: Slice, corpus: Corpus | null, metrics: readonly MetricItem[], note: string, hint: string | null): void => {
     for (const m of metrics) {
@@ -725,7 +725,7 @@ export function buildReport(verdict: Verdict, meta: RunMeta, waits: WaitsSection
     candidate: { ref: verdict.candidate.ref ?? null, sha: verdict.candidate.sha },
     inputs: verdict.corpora,
     bar: {
-      max_ratio: 1 + TOLERANCE_PERCENT / 100,
+      max_ratio: 1 + SLICES_TOLERANCE_PERCENT / 100,
       runs_per_side: verdict.runs,
       confirm_runs: meta.confirmRuns,
       rule_runs: meta.ruleRuns,

@@ -10,14 +10,14 @@ import { LINUX_METHOD } from "../../../scripts/ship/platform.js";
 import { attribute, buildReport, metricStatus, ruleHint, type RunMeta, SCHEMA } from "../../../scripts/ship/report-model.js";
 import { renderReport } from "../../../scripts/ship/report.js";
 import type { CellVerdict, Corpus, MeasuredMetric, OneFileVerdict, OneRuleTiming, OneRuleVerdict, PackVerdict, RuleTiming, Verdict } from "../../../scripts/ship/shipbar.js";
-import { compareMetric, type FileLabel, judgeTime } from "../../../scripts/ship/verdict.js";
+import { compareMetric, type FileLabel, judgeTime, SLICES_TOLERANCE_PERCENT } from "../../../scripts/ship/verdict.js";
 
 function measured(metric: string, main: number[], candidate: number[], confirm?: [number[], number[]], locator: string | null = null): MeasuredMetric {
   return {
-    verdict: compareMetric(metric, main, candidate),
+    verdict: compareMetric(metric, main, candidate, SLICES_TOLERANCE_PERCENT),
     mainRuns: main,
     candidateRuns: candidate,
-    confirm: confirm === undefined ? null : { verdict: compareMetric(metric, confirm[0], confirm[1]), mainRuns: confirm[0], candidateRuns: confirm[1] },
+    confirm: confirm === undefined ? null : { verdict: compareMetric(metric, confirm[0], confirm[1], SLICES_TOLERANCE_PERCENT), mainRuns: confirm[0], candidateRuns: confirm[1] },
     locator,
   };
 }

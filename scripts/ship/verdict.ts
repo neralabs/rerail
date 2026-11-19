@@ -1,12 +1,15 @@
 // The shippability bar's verdict logic (scripts/ship/shipbar.ts): pure functions over measured runs and findings, the
-// same for every candidate. A candidate passes a metric when its median is at most 1.15 times main's, keeps every
-// finding main gets right and adds no false positive main does not have, completes every run main completes, and
-// ships every rule main ships. Slice B (each rule alone) counts a rule over the bar only when it is still over after
-// its confirmation runs and its time moved by at least RULE_FLOOR_MS; slice C (one file, all rules) is judged as a
-// whole-pack cell is. Every failing time carries a locator: the phase that moved (locate).
+// same for every candidate. A candidate passes a pack's slices when every figure's median is at most 1.15 times main's
+// (SLICES_TOLERANCE_PERCENT), keeps every finding main gets right and adds no false positive main does not have,
+// completes every run main completes, and ships every rule main ships. Slice B (each rule alone) counts a rule over the
+// bar only when it is still over after its confirmation runs and its time moved by at least RULE_FLOOR_MS; slice C (one
+// file, all rules) is judged as a whole-pack cell is. Every failing time carries a locator: the phase that moved
+// (locate). The user waits (waits-model.ts) keep their own bar, TOLERANCE_PERCENT.
 
-/** The tolerance, in percent: a candidate figure fails when it is more than this much above main's. */
-export const TOLERANCE_PERCENT = 15;
+/** The waits' tolerance, in percent: a candidate figure fails when it is more than this much above main's. */
+export const TOLERANCE_PERCENT = 10;
+/** The slices' tolerance (A, B and C of every pack), in percent. */
+export const SLICES_TOLERANCE_PERCENT = 15;
 
 export type Status = "pass" | "fail" | "not-compared";
 
@@ -27,7 +30,7 @@ export function spread(values: readonly number[]): number {
 
 /** Whether `candidate` is within the tolerance of `main`: candidate <= main * (1 + TOLERANCE_PERCENT / 100), exactly. */
 export function withinTolerance(main: number, candidate: number, tolerancePercent = TOLERANCE_PERCENT): boolean {
-  // Scaled to integers' arithmetic so 1.15 times main is the bar itself, not a float next to it.
+  // Scaled to integers' arithmetic so the bar itself (1.10 or 1.15 times main) passes, not a float next to it.
   return candidate * 100 <= main * (100 + tolerancePercent);
 }
 
@@ -288,7 +291,7 @@ export interface TimeVerdict {
 }
 
 /** One time (a rule's compile + evaluate, or a fixed-cost figure) against main's, with its confirmation and the floor. */
-export function judgeTime(name: string, main: readonly number[], candidate: readonly number[], confirmMain: readonly number[] = [], confirmCandidate: readonly number[] = [], floorMs = RULE_FLOOR_MS, tolerancePercent = TOLERANCE_PERCENT): TimeVerdict {
+export function judgeTime(name: string, main: readonly number[], candidate: readonly number[], confirmMain: readonly number[] = [], confirmCandidate: readonly number[] = [], floorMs = RULE_FLOOR_MS, tolerancePercent = SLICES_TOLERANCE_PERCENT): TimeVerdict {
   const first = compareMetric(name, main, candidate, tolerancePercent);
   const base = { name, main: first.main, candidate: first.candidate, ratio: first.ratio };
   if (first.status === "not-compared") return { ...base, confirm: null, overBefore: false, finalRatio: null, finalDeltaMs: null, status: "not-compared" };
