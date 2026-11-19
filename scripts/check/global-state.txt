@@ -215,16 +215,9 @@ native/src/code_rule_dsl/logic/plan/output.rs::WRITES	review
 native/src/code_rule_dsl/logic/plan/table.rs::BATCHES	review	
 native/src/code_rule_dsl/logic/plan/table.rs::IN_PLACE	review	
 native/src/code_rule_dsl/logic/plan/table.rs::NAMES	shared	shared by design: an interner (names are visible to every caller holding it)
-native/src/code_rule_dsl/logic/profile.rs::COMMAND	run	the run's profile: profiled runs now queue for the one process profile
-native/src/code_rule_dsl/logic/profile.rs::DIR	run	the run's profile: profiled runs now queue for the one process profile
-native/src/code_rule_dsl/logic/profile.rs::EXITED	run	the run's profile: profiled runs now queue for the one process profile
-native/src/code_rule_dsl/logic/profile.rs::EXITED_GAPS	run	the run's profile: profiled runs now queue for the one process profile
-native/src/code_rule_dsl/logic/profile.rs::ON	run	the run's profile: profiled runs now queue for the one process profile
-native/src/code_rule_dsl/logic/profile.rs::ONE_RUN	review	
-native/src/code_rule_dsl/logic/profile.rs::RUN_PHASES	run	the run's profile: profiled runs now queue for the one process profile
-native/src/code_rule_dsl/logic/profile.rs::SHARDS	run	the run's profile: profiled runs now queue for the one process profile
-native/src/code_rule_dsl/logic/profile.rs::STATE	run	the run's profile: profiled runs now queue for the one process profile
-native/src/code_rule_dsl/logic/profile.rs::THREADS	run	the run's profile: profiled runs now queue for the one process profile
+native/src/code_rule_dsl/logic/profile.rs::EXITED	shared	the accounts of the pool's ended threads: with the pool (batch 5)
+native/src/code_rule_dsl/logic/profile.rs::EXITED_GAPS	shared	the gaps of the pool's ended threads: with the pool (batch 5)
+native/src/code_rule_dsl/logic/profile.rs::THREADS	shared	the process's threads that opened spans: the pool is shared by design, its accounts go with it (batch 5)
 native/src/code_rule_dsl/logic/profile.rs::TICK	review	
 native/src/code_rule_dsl/logic/profile.rs::WARM_FAULTS	review	
 native/src/code_rule_dsl/logic/profile.rs::WAVES	review	

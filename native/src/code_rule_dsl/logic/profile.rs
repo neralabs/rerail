@@ -44,30 +44,34 @@ pub mod sources;
 pub use roofline::Unit;
 // cratify: `report` is rerail-logic's (it mounts it)
 
-static ON: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(std::env::var_os("RERAIL_PROFILE").is_some()));
+thread_local! {
+    /// Whether the caller's runs are profiled (decision 0442: the caller's choice, `RERAIL_PROFILE` unless it sets
+    /// one; held by its thread and carried to its runs' jobs, `logic::run_state`).
+    pub static ON: std::cell::Cell<bool> = std::cell::Cell::new(std::env::var_os("RERAIL_PROFILE").is_some());
+    /// The directory the caller's next report is written to: `RERAIL_PROFILE`'s, unless it sets one.
+    pub static DIR: std::cell::RefCell<Option<std::path::PathBuf>> = std::cell::RefCell::new(std::env::var_os("RERAIL_PROFILE").map(Into::into));
+}
 
 /// Whether this run is profiled.
 pub fn on() -> bool {
-    ON.load(Ordering::Relaxed)
+    ON.with(std::cell::Cell::get)
 }
 
-/// Turns profiling on or off (a test that profiles without the environment variable).
+/// Turns profiling of this caller's runs on or off (a test that profiles without the environment variable).
 #[allow(dead_code)]
 pub fn set(on: bool) {
-    ON.store(on, Ordering::Relaxed);
+    ON.with(|o| o.set(on));
 }
-
-static DIR: LazyLock<Mutex<Option<std::path::PathBuf>>> = LazyLock::new(|| Mutex::new(std::env::var_os("RERAIL_PROFILE").map(Into::into)));
 
 /// The directory the next report is written to: `RERAIL_PROFILE`'s, unless set (one per rule in a measurement).
 pub fn directory() -> Option<std::path::PathBuf> {
-    DIR.lock().unwrap().clone()
+    DIR.with(|d| d.borrow().clone())
 }
 
-/// Sets the directory the next report is written to.
+/// Sets the directory this caller's next report is written to.
 #[allow(dead_code)]
 pub fn set_directory(dir: &Path) {
-    *DIR.lock().unwrap() = Some(dir.to_path_buf());
+    DIR.with(|d| *d.borrow_mut() = Some(dir.to_path_buf()));
 }
 
 fn cpu() -> f64 {
@@ -579,26 +583,28 @@ pub const PHASES: [&str; 7] = [
     "wake (GPUEndTime to wait returning)",
 ];
 
-/// The profile's records, merged: every thread's shard (`SHARDS`) is added in when they are read (`merged`).
-static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
 /// One thread's records: what its spans, decisions, work and plans add, under a lock only its own thread takes
 /// while it records. One lock for every thread's records was a run's hottest lock: sixteen threads ending spans and
 /// stating decisions took turns at it (about a tenth of a full corpus run's yields and blocked waits, 2026-11-15).
 type Shard = std::sync::Arc<parking_lot::Mutex<State>>;
 
-/// Every thread's shard, an ended thread's too until its records are merged.
-static SHARDS: Mutex<Vec<Shard>> = Mutex::new(Vec::new());
+/// A run's profile (decision 0442: the run's, `local`): its records merged, and every thread's shard of them, an
+/// ended thread's too until its records are merged.
+#[derive(Default)]
+pub struct Records {
+    merged: std::sync::Arc<parking_lot::Mutex<State>>,
+    shards: parking_lot::Mutex<Vec<Shard>>,
+    /// Whether a corpus run of the run holds them (`hold_records`): it resets and writes them.
+    held: AtomicBool,
+}
 
 thread_local! {
     /// Whether this thread holds the profile's state (`state`, `merged`).
     static HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// This thread's shard, made and listed when it first records.
-    static SHARD: Shard = {
-        let s = Shard::default();
-        SHARDS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(s.clone());
-        s
-    };
+    /// This thread's shard of its run's records (`Records`), made and listed in them when it first records for that
+    /// run, with the run's records it is listed in.
+    static SHARD: std::cell::RefCell<(std::sync::Weak<Records>, Shard)> = std::cell::RefCell::new((std::sync::Weak::new(), Shard::default()));
 }
 
 /// The profile's state, held: this thread's shard to record into (`state`), or every record merged to read
@@ -608,7 +614,7 @@ thread_local! {
 /// instead, naming the cause.
 pub enum Held {
     Own(parking_lot::ArcMutexGuard<parking_lot::RawMutex, State>),
-    Merged(std::sync::MutexGuard<'static, State>),
+    Merged(parking_lot::ArcMutexGuard<parking_lot::RawMutex, State>),
 }
 
 impl std::ops::Deref for Held {
@@ -644,14 +650,24 @@ fn hold() {
 /// `merged`.
 pub fn state() -> Held {
     hold();
-    Held::Own(SHARD.with(|s| s.lock_arc()))
+    let records = local::<Records>();
+    Held::Own(SHARD.with(|s| {
+        let mut s = s.borrow_mut();
+        if !std::ptr::eq(s.0.as_ptr(), std::sync::Arc::as_ptr(&records)) {
+            let shard = Shard::default();
+            records.shards.lock().push(shard.clone());
+            *s = (std::sync::Arc::downgrade(&records), shard);
+        }
+        s.1.lock_arc()
+    }))
 }
 
 /// Every thread's records, merged: each shard's taken into the run's (an ended thread's shard then dropped).
 pub fn merged() -> Held {
     hold();
-    let mut all = STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut shards = SHARDS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let records = local::<Records>();
+    let mut all = records.merged.lock_arc();
+    let mut shards = records.shards.lock();
     for s in shards.iter() {
         let taken = std::mem::take(&mut *s.lock());
         all.absorb(taken);
@@ -724,8 +740,8 @@ fn charge(track: &mut Option<Track>, opens: &[Open], cpu: f64) {
 }
 
 /// Each phase of the run's thread (`run_thread_phase`): its name, and by span path the wall and CPU.
-type RunPhases = Vec<(&'static str, HashMap<String, [f64; 2]>)>;
-static RUN_PHASES: LazyLock<Mutex<RunPhases>> = LazyLock::new(Default::default);
+/// The run's (decision 0442, `local`).
+type RunPhases = Mutex<Vec<(&'static str, HashMap<String, [f64; 2]>)>>;
 
 /// Starts charging this thread's time to its spans, phase by phase (decision 0288): the run's thread, once the run
 /// holds the profile. The phases kept so far are forgotten.
@@ -733,7 +749,7 @@ pub fn track_run_thread() {
     if !on() {
         return;
     }
-    RUN_PHASES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+    local::<RunPhases>().lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
     STACK.with(|s| s.lock().track = Some(Track { wall: std::time::Instant::now(), cpu: cpu(), by: HashMap::new() }));
 }
 
@@ -746,7 +762,8 @@ pub fn run_thread_phase(name: &'static str) {
         charge(&mut s.track, &s.opens, cpu());
         let Some(t) = s.track.as_mut() else { return };
         let by = std::mem::take(&mut t.by);
-        let mut all = RUN_PHASES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let phases = local::<RunPhases>();
+        let mut all = phases.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         match all.iter_mut().find(|p| p.0 == name) {
             Some((_, kept)) => {
                 for (path, d) in by {
@@ -796,13 +813,16 @@ pub fn snapshot() -> Snapshot {
 }
 
 /// The command's start (`command_begins`) and its run's end (`run_ends`), for the time before and after its run.
-static COMMAND: Mutex<(Option<Snapshot>, Option<Snapshot>, f64)> = Mutex::new((None, None, 0.0));
+/// The command's, on the thread that runs it (its outermost run runs there).
+thread_local! {
+    static COMMAND: std::cell::Cell<(Option<Snapshot>, Option<Snapshot>, f64)> = const { std::cell::Cell::new((None, None, 0.0)) };
+}
 
 /// The command line's command begins (decision 0288): its clocks now, and the process's age (its start's time).
 /// Profiling, this thread's time is charged to its spans from here (`track_run_thread`): its run files what came
 /// before it as its phase `before`.
 pub fn command_begins() {
-    *COMMAND.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = (Some(snapshot()), None, process_age());
+    COMMAND.with(|c| c.set((Some(snapshot()), None, process_age())));
     track_run_thread();
 }
 
@@ -813,19 +833,32 @@ pub fn tracked() -> bool {
 
 /// The command's start, taken by its first run that holds the profile or runs alone (`before`).
 pub fn take_command_start() -> Option<Snapshot> {
-    COMMAND.lock().unwrap_or_else(std::sync::PoisonError::into_inner).0.take()
+    COMMAND.with(|c| {
+        let mut v = c.get();
+        let start = v.0.take();
+        c.set(v);
+        start
+    })
 }
 
 /// The command's run ended with these clocks.
 pub fn run_ends(at: Snapshot) {
-    COMMAND.lock().unwrap_or_else(std::sync::PoisonError::into_inner).1 = Some(at);
+    COMMAND.with(|c| {
+        let mut v = c.get();
+        v.1 = Some(at);
+        c.set(v);
+    });
 }
 
 /// The process's age when the command began, and the time since its run ended (`run_ends`), if it ran one.
 pub fn command_ends() -> (f64, Option<PhaseClock>) {
-    let mut c = COMMAND.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let age = c.2;
-    (age, c.1.take().map(|end| PhaseClock::between(&end, &snapshot())))
+    COMMAND.with(|c| {
+        let mut v = c.get();
+        let age = v.2;
+        let end = v.1.take();
+        c.set(v);
+        (age, end.map(|end| PhaseClock::between(&end, &snapshot())))
+    })
 }
 
 impl PhaseClock {
@@ -941,7 +974,8 @@ pub fn run_thread_report(clocks: &[(&'static str, PhaseClock)]) -> String {
     for (name, c) in clocks.iter().chain(std::iter::once(&("all", total))) {
         let _ = writeln!(r, "{name:<10} {:>7.3} {:>7.3} {:>7.3} {:>7.3} {:>7.3} {:>8.2} {:>8.3} {:>9}", c.wall, c.own, c.helped, c.off_core(), c.others(), c.process_cpu / c.wall.max(1e-9), c.no_core(), c.involuntary);
     }
-    let phases = RUN_PHASES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(phases) = local_if_any::<RunPhases>() else { return r };
+    let phases = phases.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if phases.is_empty() {
         return r;
     }
@@ -1204,9 +1238,42 @@ pub fn here() -> Option<String> {
 /// with one open (the caller's), as it is. Rayon's work taken by another thread is under no span of that thread's.
 pub fn carried<A, R>(name: &'static str, f: impl Fn(A) -> R + Sync + Send) -> impl Fn(A) -> R + Sync + Send {
     let under = here();
+    // The run under way here, for an item a pool thread takes: its records are the run's (decision 0442).
+    let run = run_own();
+    let on = on();
     move |a| {
+        let _run = InRun::enter(&run, on);
         let _span = (under.is_some() && STACK.with(|s| s.lock().opens.is_empty())).then(|| span_at(under.as_deref(), || name.to_owned()));
         f(a)
+    }
+}
+
+/// A pool thread in a run's context for an item (`carried`): the run and its profiling switch; dropped, the thread's
+/// own are back. On a thread already in that run, nothing changes.
+struct InRun(Option<(Option<std::sync::Arc<dyn RunOwn>>, bool)>);
+
+impl InRun {
+    fn enter(run: &Option<std::sync::Arc<dyn RunOwn>>, on: bool) -> InRun {
+        let same = RUN.with(|r| match (r.borrow().as_ref(), run.as_ref()) {
+            (Some(a), Some(b)) => std::ptr::addr_eq(std::sync::Arc::as_ptr(a), std::sync::Arc::as_ptr(b)),
+            (None, None) => true,
+            _ => false,
+        });
+        if same {
+            return InRun(None);
+        }
+        let was_run = RUN.with(|r| r.replace(run.clone()));
+        let was_on = ON.with(|o| o.replace(on));
+        InRun(Some((was_run, was_on)))
+    }
+}
+
+impl Drop for InRun {
+    fn drop(&mut self) {
+        if let Some((run, on)) = self.0.take() {
+            RUN.with(|r| *r.borrow_mut() = run);
+            ON.with(|o| o.set(on));
+        }
     }
 }
 
@@ -2506,23 +2573,50 @@ pub fn device_phases(kernel: &str, phases: [f64; PHASES.len()], made: u64, reuse
     t.reused += reused;
 }
 
-/// The profile is process-wide, so one profiled run (or profile test) at a time: a run that resets it holds this,
-/// and so does a test that turns it on, so a run in another thread cannot reset the records the test reads.
-static ONE_RUN: Mutex<()> = Mutex::new(());
+/// The run's records held by one corpus run of it (`hold_records`), until the guard drops.
+pub struct Holding(std::sync::Arc<Records>);
 
-/// Holds the profile for one run (`ONE_RUN`).
-pub fn one_run() -> std::sync::MutexGuard<'static, ()> {
-    ONE_RUN.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+impl Drop for Holding {
+    fn drop(&mut self) {
+        self.0.held.store(false, Ordering::Release);
+    }
 }
 
-/// Holds the profile for one run if no run holds it: a run nested in another (phase 0's, inside a run's preparing)
-/// is then the outer run's, and neither resets nor writes the profile.
-pub fn one_run_if_free() -> Option<std::sync::MutexGuard<'static, ()>> {
-    match ONE_RUN.try_lock() {
-        Ok(guard) => Some(guard),
-        Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
-        Err(std::sync::TryLockError::WouldBlock) => None,
+/// Holds the run's profile for one corpus run of it, if no other corpus run of it holds it (decision 0442: the records
+/// are the run's, so a run never waits on another's): a corpus run nested in another (phase 0's, inside a run's
+/// preparing) is then the outer one's, and neither resets nor writes the profile. Outside a run, nothing.
+pub fn hold_records() -> Option<Holding> {
+    run_own()?;
+    let records = local::<Records>();
+    (!records.held.swap(true, Ordering::AcqRel)).then(|| Holding(records))
+}
+
+/// A run of its own for a test of the crates below `logic` (whose runs are `logic::run`'s), where none is under way:
+/// the profile's records are a run's, so they are kept only inside one. Dropped, the thread's own is back.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn test_run() -> impl Drop {
+    struct Own(RunValues);
+    impl RunOwn for Own {
+        fn decoded(&self, _: &'static std::panic::Location<'static>) {}
+        fn values(&self) -> &RunValues {
+            &self.0
+        }
+        fn any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> {
+            self
+        }
     }
+    struct Back(Option<Option<std::sync::Arc<dyn RunOwn>>>);
+    impl Drop for Back {
+        fn drop(&mut self) {
+            if let Some(was) = self.0.take() {
+                RUN.with(|r| *r.borrow_mut() = was);
+            }
+        }
+    }
+    if run_own().is_some() {
+        return Back(None);
+    }
+    Back(Some(RUN.with(|r| r.replace(Some(std::sync::Arc::new(Own(RunValues::default())))))))
 }
 
 /// Forgets everything recorded (a run's start).
@@ -2820,7 +2914,7 @@ pub mod tests {
     /// nothing (its enclosing step keeps what it decided); a run that reuses the step's output states them, kept.
     #[test]
     fn a_step_keeps_its_decisions_and_a_reuse_states_them() {
-        let _serial = one_run();
+        let _serial = test_run();
         set(false);
         let outer = Deciding::open();
         decision("t", || "a".into());
@@ -2850,7 +2944,7 @@ pub mod tests {
     /// the rest.
     #[test]
     fn a_thread_records_while_another_holds_its_records() {
-        let _serial = one_run();
+        let _serial = test_run();
         set(true);
         reset();
         let held = state();
@@ -2858,7 +2952,11 @@ pub mod tests {
         let threads: Vec<_> = (0..8)
             .map(|_| {
                 let tx = tx.clone();
+                // Each thread in the test's run, profiled (decision 0442: the records and the switch are the run's
+                // and its caller's).
+                let run = run_own();
                 std::thread::spawn(move || {
+                    let _run = InRun::enter(&run, true);
                     for _ in 0..10 {
                         let _s = span(|| "xsharded".into());
                         decision("xshard", || "on another thread".into());
@@ -2881,7 +2979,7 @@ pub mod tests {
 
     #[test]
     fn spans_nest_and_charge_their_own_cpu() {
-        let _serial = one_run();
+        let _serial = test_run();
         set(true);
         reset();
         {
@@ -2908,7 +3006,7 @@ pub mod tests {
     /// freed; a dump lists the spans still open on every thread, with the SQL statement running.
     #[test]
     fn the_memory_sampler_charges_a_rise_to_the_span_open_on_its_thread() {
-        let _serial = one_run();
+        let _serial = test_run();
         set(true);
         // The high-water mark is the process's: other tests in this process may have left it so high that the probe
         // cannot raise it. Then only the span's own allocation can be seen.
@@ -2938,7 +3036,7 @@ pub mod tests {
 
     #[test]
     fn spans_charge_memory_and_a_dump_lists_what_is_open() {
-        let _serial = one_run();
+        let _serial = test_run();
         set(true);
         reset();
         let mb = 1 << 20;
@@ -2953,9 +3051,11 @@ pub mod tests {
         }
         // Another thread, stopped inside a span with a statement running, while this one dumps.
         let (opened, release) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+        let run = run_own();
         let holder = std::thread::Builder::new()
             .name("holder".into())
             .spawn(move || {
+                let _run = InRun::enter(&run, true);
                 let _held = span(|| "held open".into());
                 statement(Some("SELECT 42".into()));
                 opened.0.send(()).unwrap();

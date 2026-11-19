@@ -2289,7 +2289,7 @@ mod tests {
     #[test]
     fn a_run_reads_its_cross_space_by_identity_whichever_run_reads_first() {
         use rerail_prof::code_rule_dsl::logic::profile;
-        let _run = profile::one_run();
+        let _run = profile::test_run();
         profile::reset();
         profile::set(true);
         let dir = tempfile::tempdir().unwrap();

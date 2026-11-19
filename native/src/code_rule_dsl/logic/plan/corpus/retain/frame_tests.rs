@@ -44,7 +44,7 @@ fn fixture(store: &ContentStore, count: usize) -> (front::Program, HashMap<Strin
 
 #[test]
 fn k4_admission_batches_input_digests_derived_rows_and_mixed_granules() {
-    let _run = profile::one_run();
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     profile::set(true);
     let dir = tempfile::tempdir().unwrap();
     let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
@@ -76,7 +76,7 @@ fn k4_admission_batches_input_digests_derived_rows_and_mixed_granules() {
 
 #[test]
 fn k4_clean_outputs_are_admitted_together_without_rerunning_their_producers() {
-    let _run=profile::one_run();
+    let _run=crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     profile::set(true);
     let dir=tempfile::tempdir().unwrap();
     let store=ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();

@@ -146,9 +146,12 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/profile.rs", "BEHIND", Thread, "marks the store's writer thread"),
     ("src/code_rule_dsl/logic/profile.rs", "QUIET", Call, "a debug build's tree check beside a pass, its decisions unrecorded for the call (`quiet`): a pool job it starts records its own"),
     ("src/code_rule_dsl/logic/profile.rs", "HELD", Thread, "whether this thread holds the profile's state"),
-    ("src/code_rule_dsl/logic/profile.rs", "SHARD", Thread, "this thread's profile records, merged into the run's as they are read"),
+    ("src/code_rule_dsl/logic/profile.rs", "SHARD", Thread, "this thread's shard of its run's profile records, merged into them as they are read (decision 0442)"),
     ("src/code_rule_dsl/logic/profile.rs", "STACK", Thread, "this thread's open spans; a job opens its span under its caller's (`profile::here`, carried)"),
     ("src/code_rule_dsl/logic/profile.rs", "STAGE", Carried, ""),
+    ("src/code_rule_dsl/logic/profile.rs", "ON", Carried, "whether the caller's runs are profiled (decision 0442)"),
+    ("src/code_rule_dsl/logic/profile.rs", "DIR", Carried, "where the caller's next profile is written (decision 0442)"),
+    ("src/code_rule_dsl/logic/profile.rs", "COMMAND", Outermost, "the command's clocks, on the thread that runs it and its outermost run"),
     ("src/code_rule_dsl/logic/profile.rs", "SEEN", Thread, "this thread's copy of the settings its run under way read, held with that run (decision 0442)"),
     ("src/code_rule_dsl/logic/profile.rs", "WARM_SCOPE", Thread, "the warm check's mark of the transaction a store writer has open on this thread; its commit hook runs on it"),
     ("src/code_rule_dsl/logic/rr.rs", "READS", Call, "the libraries read while `recording` runs; a job records its own and hands them back (`rr::recorded_on_worker`)"),
@@ -317,6 +320,8 @@ fn carried_elsewhere(c: &mut Capture) {
     c.copy(&["IN_PHASE_0"], &crate::code_rule_dsl::phase_clock::IN_PHASE_0);
     c.copy(&["WAVES"], &crate::content_store::write_back::WAVES);
     c.copy(&["STAGE"], &super::profile::STAGE);
+    c.copy(&["ON"], &super::profile::ON);
+    c.cloned(&["DIR"], &super::profile::DIR);
     c.part(&["CURRENT"], Shared(crate::code_rule_dsl::sql_admission::current(), crate::code_rule_dsl::sql_admission::enter_current));
 }
 

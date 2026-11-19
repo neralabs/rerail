@@ -7,7 +7,7 @@
 //! crate of its own so that the engine's crates (the Metal runtime's) count into the same stages.
 
 use std::collections::BTreeMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::Mutex;
 use std::time::Duration;
 
 // The workspace profile (`RERAIL_PROFILE`) reports the stages too (its "Stages" section).

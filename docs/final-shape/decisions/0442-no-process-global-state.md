@@ -52,3 +52,16 @@ by any caller in the process, so two callers of different trust could not be kep
 
 - The baseline (2026-11-19): 563 statics: 78 stay, 109 run, 9 connection, 41 shared, 326 review.
 - Thread-locals of class Carried are the run's context in thread-locals: they fold into `Run` once it holds the rest.
+- Step 3 (the profile), as done:
+  - A run's records are the run's (`profile::Records`, a run local). Each thread's shard of them is listed in the run
+    it records for. Outside a run nothing keeps them: a test that reads a profile holds a run (`run::scope`, or
+    `profile::test_run` in the crates below `logic`).
+  - The run thread's phases are the run's. The command's clocks are the command's thread's (`COMMAND`, Outermost).
+  - Whether to profile, and where to write the report, are the caller's: thread-locals carried to its runs' jobs
+    (`ON`, `DIR`). `profile::carried` carries the run and the switch into a pool thread's item too.
+  - The process lock that let one profiled run at a time (`one_run`) is gone. A corpus run holds its run's records
+    (`hold_records`); one nested in it neither resets nor writes them.
+  - The threads' CPU accounts (`THREADS`, `EXITED`, `EXITED_GAPS`) are the pool's, which is shared by design. They
+    move with the pool into `Shared` (step 5).
+  - Not done yet: `WAVES` (the process's count of waves, for a thread with no run's context) and `WARM_FAULTS` (the
+    process's exit status under `RERAIL_WARM=list`).

@@ -3366,26 +3366,18 @@ fn run_observed_within(
         }
         last = now;
     };
-    // A profiled run holds the profile (`profile::one_run`), and asks again once it does: a test that turned
-    // profiling on may have turned it off meanwhile.
-    // A run nested in another on this thread (phase 0's, a phase's, the constants', a bridged program's) and phase
-    // 0's own run hold it only when no run does: nested, the profile is the outer run's, and such a run neither
-    // resets nor writes it. Waiting for it would wait for the outer run, which waits for this one. So does a run
-    // behind the run on another thread (`profile::behind`: the test store's template, filled while a profiled test
-    // holds the profile and waits for it).
+    // A profiled corpus run holds its run's profile (`profile::hold_records`; decision 0442: the records are the run's).
+    // A corpus run nested in another on this thread (phase 0's, a phase's, the constants', a bridged program's) and
+    // phase 0's own run hold it only when no corpus run of the run does: nested, the profile is the outer one's, and
+    // such a run neither resets nor writes it. So does a run behind the run on another thread (`profile::behind`:
+    // the test store's template).
     let nested = RUNS_UNDER_WAY.with(std::cell::Cell::get) > 0 || crate::code_rule_dsl::logic::profile::is_behind();
     let _under_way = UnderWay::enter();
     let _stage = crate::code_rule_dsl::logic::profile::run_begins();
     // The run's own kept splits (`file_local::split_memo`), apart from any run it is nested in.
     let _splits = crate::code_rule_dsl::typing::file_local::split_memo::own();
-    let _profile = if !crate::code_rule_dsl::logic::profile::on() {
-        None
-    } else if phase0::active() || nested {
-        crate::code_rule_dsl::logic::profile::one_run_if_free()
-    } else {
-        Some(crate::code_rule_dsl::logic::profile::one_run())
-    };
-    let profiling = _profile.is_some() && crate::code_rule_dsl::logic::profile::on();
+    let _profile = if crate::code_rule_dsl::logic::profile::on() { crate::code_rule_dsl::logic::profile::hold_records() } else { None };
+    let profiling = _profile.is_some();
     if profiling {
         crate::code_rule_dsl::logic::profile::reset();
     }

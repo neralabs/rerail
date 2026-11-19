@@ -83,18 +83,20 @@ pub fn current() -> Option<Arc<Run>> {
 pub struct Scope {
     run: Arc<Run>,
     outer: bool,
+    /// The run under way on the thread before the outermost scope (a test's own run, `profile::test_run`), put back.
+    was: Option<Arc<dyn super::profile::RunOwn>>,
 }
 
 /// The scope of a run starting here: the run's own if one is under way on this thread, else a new run with the limits
 /// `settings` gives.
 pub fn scope(settings: impl FnOnce() -> width::Settings) -> Scope {
     if let Some(run) = current() {
-        return Scope { run, outer: false };
+        return Scope { run, outer: false, was: None };
     }
     let run = Arc::new(Run::new(settings()));
     width::watch(&run);
-    super::profile::RUN.with(|r| *r.borrow_mut() = Some(Arc::clone(&run) as Arc<dyn super::profile::RunOwn>));
-    Scope { run, outer: true }
+    let was = super::profile::RUN.with(|r| r.replace(Some(Arc::clone(&run) as Arc<dyn super::profile::RunOwn>)));
+    Scope { run, outer: true, was }
 }
 
 impl Scope {
@@ -111,7 +113,8 @@ impl Drop for Scope {
     fn drop(&mut self) {
         if self.outer {
             self.run.ended.store(true, Relaxed);
-            super::profile::RUN.with(|r| *r.borrow_mut() = None);
+            let was = self.was.take();
+            super::profile::RUN.with(|r| *r.borrow_mut() = was);
         }
     }
 }

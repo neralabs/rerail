@@ -302,11 +302,10 @@ const STATE: &[(&str, &str)] = &[
     // Ended threads' CPU accounts and their CPU outside spans, summed for the report; no reusable results.
     ("code_rule_dsl/logic/profile.rs", "EXITED"),
     ("code_rule_dsl/logic/profile.rs", "EXITED_GAPS"),
-    ("code_rule_dsl/logic/profile.rs", "ON"),
-    // Each thread's profile records, merged into `STATE` as they are read: records, no reusable results.
-    ("code_rule_dsl/logic/profile.rs", "SHARDS"),
+    // Each thread's shard of its run's profile records, merged into the run's as they are read: records, no
+    // reusable results.
+    ("code_rule_dsl/logic/profile.rs", "SHARD"),
     ("code_rule_dsl/logic/profile.rs", "STACK"),
-    ("code_rule_dsl/logic/profile.rs", "STATE"),
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
@@ -324,7 +323,6 @@ const STATE: &[(&str, &str)] = &[
     // Profiling (0288): the command's clocks, the process's start, the run thread's phases, each step's decisions.
     ("code_rule_dsl/logic/profile.rs", "COMMAND"),
     ("code_rule_dsl/logic/profile.rs", "DECIDING"),
-    ("code_rule_dsl/logic/profile.rs", "RUN_PHASES"),
     ("code_rule_dsl/logic/profile/life.rs", "ENTERED"),
     ("content_store/atoms.rs", "CANONICAL"),
     // Each database file's identity, read once a file: a registry, as CANONICAL is.

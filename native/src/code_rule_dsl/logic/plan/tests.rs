@@ -1329,7 +1329,8 @@ found(x, i, a, b, c) :- s(x), match_all("(?<c>x+)", x, i, a, b).
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
         let _scratch = super::corpus::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")]);
-        // The run holds the profile (`one_run`) and resets it as it starts.
+        // The run resets the profile as it starts; the test's run keeps it after (decision 0442: the run's records).
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         profile::set(true);
         let ran = super::corpus::run(program, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
         let declined = profile::declined();
@@ -2846,9 +2847,9 @@ fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
                 crate::code_rule_dsl::logic::profile::set(false);
             }
         }
-        // The profile is the process's: held for this test (`one_run`), so a run in another test cannot reset the
-        // decisions it reads (`no longer needed` went missing when one ran beside it). Dropped after `Off`.
-        let _one = crate::code_rule_dsl::logic::profile::one_run();
+        // The test's own run, whose profile its runs record (decision 0442): a run in another test never reaches the
+        // decisions it reads (`no longer needed` went missing when one ran beside the process's). Dropped after `Off`.
+        let _one = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let _off = Off;
         crate::code_rule_dsl::logic::profile::set(true);
         crate::code_rule_dsl::logic::profile::reset();
@@ -3043,6 +3044,7 @@ fn explain_lists_each_relations_layout() {
     let mut inputs = Inputs::file();
     inputs.facts.clear();
     inputs.given = Some(Stats::empty(&p));
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     crate::code_rule_dsl::logic::profile::set(true);
     crate::code_rule_dsl::logic::profile::reset();
     let _model = make_plan(&body::Placed::of_program(&p).unwrap(), &db, inputs).unwrap();
