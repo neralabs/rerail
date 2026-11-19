@@ -12,7 +12,7 @@ fn key(tree: u8, plan: u8) -> TreePageKey<'static> {
 }
 
 fn page(bytes: &[u8], file_count: usize) -> TreePage {
-    TreePage { file_count, bytes: bytes.to_vec() }
+    TreePage::new(file_count, bytes.to_vec())
 }
 
 #[test]

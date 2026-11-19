@@ -3098,31 +3098,31 @@ fn paged_results_equal_complete_results_for_each_violations_and_capture_anchors(
     workspace.close();
 }
 
-/// Every stored local result as `(path, clause, codec, raw length, frame)`, in that order.
-fn stored_local_results(store: &std::path::Path) -> Vec<(String, String, i64, i64, Vec<u8>)> {
+/// Every stored local result as `(path, clause, bytes)`, in that order: its bytes read where its segment holds
+/// them (decision 0450 step 2).
+fn stored_local_results(store: &std::path::Path) -> Vec<(String, String, Vec<u8>)> {
     let connection = rusqlite::Connection::open(store).unwrap();
+    let mut maps = crate::content_store::ObjectMaps::new(store);
     let mut statement = connection
         .prepare(
-            "SELECT ps.value,cs.value,r.codec_id,r.raw_length,r.frame FROM context_check_results r \
+            "SELECT ps.value,cs.value,r.seg,r.seg_at,r.seg_len FROM context_check_results r \
              JOIN workspace_overlay o ON o.source_id=r.source_id \
              JOIN paths p ON p.path_id=o.path_id JOIN strings ps ON ps.string_id=p.string_id \
              JOIN candidate_checks c ON c.check_id=r.check_id \
              JOIN strings cs ON cs.string_id=c.check_string_id ORDER BY 1,2",
         )
         .unwrap();
-    statement
-        .query_map([], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-            ))
-        })
+    let rows: Vec<(String, String, [i64; 3])> = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, [row.get(2)?, row.get(3)?, row.get(4)?])))
         .unwrap()
         .collect::<rusqlite::Result<_>>()
-        .unwrap()
+        .unwrap();
+    rows.into_iter()
+        .map(|(path, clause, [seg, at, len])| {
+            let frame = maps.frame(seg, at, len).expect("a stored result's segment");
+            (path, clause, frame.segment().bytes().to_vec())
+        })
+        .collect()
 }
 
 #[test]
@@ -3161,14 +3161,12 @@ fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trip
             "{clause}: {stored:?}"
         );
     }
-    for (path, clause, _, raw_length, frame) in &stored {
-        let bytes = zstd::stream::decode_all(std::io::Cursor::new(frame)).unwrap();
-        assert_eq!(bytes.len() as i64, *raw_length, "{path} {clause}");
+    for (path, clause, bytes) in &stored {
         // A result is the canonical (key-ordered) serialization of its JSON value.
         let value = serde_json::from_slice::<Value>(&bytes).unwrap();
         assert_eq!(
             serde_json::to_vec(&value).unwrap(),
-            bytes,
+            *bytes,
             "{path} {clause}"
         );
         assert_eq!(value["version"], 4, "{path} {clause}");

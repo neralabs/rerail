@@ -186,7 +186,7 @@ fn opening_a_store_without_the_facts_tables_adds_them_at_the_same_floor() {
         // atoms' blocks, decision 0401; 5 the frames' segments, decision 0295; 4 the manifests' lane column; 3 was the
         // atom segments', decision 0049).
         assert_eq!(SCHEMA_VERSION, 7);
-        assert_eq!(STORE_FILE_NAME, "content-v7.sqlite");
+        assert_eq!(STORE_FILE_NAME, "content-v8.sqlite");
     }
     assert_eq!(store.get_source(old).unwrap(), b"older source");
     let source = store.put_facts_source(b"older source", content(b"older source"), &[]).unwrap();

@@ -365,7 +365,10 @@ impl ContentStore {
         )?;
         #[cfg(any(test, feature = "test-hooks"))]
         run_publication_test_hook(&BEFORE_RELATIONSHIP_WRITE_HOOK);
-        let (elapsed, statement_count, current) = retry_busy(busy, || {
+        // The results' bytes, as they are, in one segment of the pass's (decision 0450 step 2): numbered in its
+        // transaction, named once it commits; a pass that does not commit leaves no file.
+        let mut placing = Placing::write(&self.database_path, &relationship_pass.result_bytes())?;
+        let (elapsed, statement_count, current, seg) = retry_busy(busy, || {
             if cancelled() {
                 return Err(StoreError::Invalid(
                     "overlay publication was cancelled".to_owned(),
@@ -392,9 +395,11 @@ impl ContentStore {
                     u64::try_from(transaction_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
                     0,
                     false,
+                    None,
                 ));
             }
-            execute_relationship_pass(&transaction, &relationship_pass)?;
+            let seg = placing.number(&transaction)?;
+            execute_relationship_pass(&transaction, &relationship_pass, &placing, seg)?;
             let statement_count = relationship_pass.statement_count();
             if cancelled() {
                 return Err(StoreError::Invalid(
@@ -406,8 +411,10 @@ impl ContentStore {
                 u64::try_from(transaction_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
                 statement_count,
                 true,
+                seg,
             ))
         })?;
+        placing.name(seg)?;
         if !current {
             if stale_relationship_retries >= 8 {
                 return Err(StoreError::Invalid(

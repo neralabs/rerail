@@ -1,7 +1,7 @@
 # 0450: Sessions keep their latest data live in segments; the rest ages out, and may be kept compressed
 
-Status: decided in part by the user (2026-11-19), items 1–4 of §1, and §2's two sessions and how a store session
-ends. §2's store session's shape is proposed, not agreed. §3 (the cross-file memo): its history traced; its removal
+Status: decided by the user (2026-11-19): items 1–4 of §1, §2 (two sessions, how a store session ends, and its
+shape: "go ahead with 0450"). Step 2 built (floor 8). §3 (the cross-file memo): its history traced; its removal
 decided by the user (2026-11-19, "go ahead with that split") and done. Follows 0295 (segments and the archive), 0053 (collection),
 0353 (blocks are never copied) and the store's floor 7 (0295 step 5: no source or tape in a row).
 
@@ -74,7 +74,7 @@ engine session or process bound to it (shown live as a process's lock is), a lea
 durable name that refers to it (a branch, an audit snapshot). With none left, its latest data is no longer live: it
 is aged like the rest (§1), not deleted at once.
 
-**Proposed, not agreed:** a row `(session, kind, key, latest generation, last used)` for each store session. Today's
+**Agreed (the user, 2026-11-19: "go ahead with 0450"):** a row `(session, kind, key, latest generation, last used)` for each store session. Today's
 owners each become one: a workspace, a corpus root and lane (0053), a pin's owner, an analysis scope. 0053 §3's
 history budget and backstop become the one LRU and age rule. Open: the budget's marks; whether the engine session
 keeps a store of its own (`session.sqlite`) or binds a store session in the shared store.
@@ -125,9 +125,31 @@ it: the `cross_rows` store" and 0083's "the mechanism stays for any program that
 
 ## Order of work
 
-1. Agree §2's store session. (§3's removal: done.)
+1. Agree §2's store session. Done (2026-11-19), and §3's removal.
 2. The live tier for the zstd rows: results, call summaries and tree pages placed in segments, rows pointing at them
-   (as sources and tapes, floor 7). The facts memo waits for §1 item 4.
+   (as sources and tapes, floor 7). The facts memo waits for §1 item 4. **Built (2026-11-19, floor 8,
+   `content-v8.sqlite`):**
+   - `context_check_results` and `tree_pages` name a range of an object segment (`seg`, `seg_at`, `seg_len`); their
+     bytes are as the caller made them, no zstd. A result is read where its segment holds it (`StoredLocalResult::
+     bytes`, `TreePage::bytes`: `ObjectBytes::Mapped`); a page set is not hashed again on a read (the segment's check
+     is the check).
+   - A publication's relationship pass places its results in one segment written before its transaction, numbered in
+     it and named after commit (`Placing`, as the object pass); `put_tree_pages` the same.
+   - A result or page whose segment is gone is a miss (the file's results, the directory's pages computed again).
+   - Compaction covers every placed table (`object_segments::PLACED`): sources and tapes marked absent when their
+     segment is gone, results and pages removed; bytes several rows name copied once.
+   - `local_check_results`, which nothing wrote, is gone.
 3. Sessions as the one owner, with the latest generation live and the LRU and age rule (0053 §3 generalized).
+   Planned in slices, each its own commit:
+   - **A. Workspaces are store sessions.** A row of `store_sessions(session_id, kind, key, latest, last_used,
+     ended)` per workspace (kind 1, key its root). Registration and a lease's renewal keep it alive (`last_used`
+     now, `ended` NULL); `retire_workspace` or a lapsed lease ends it (`ended` then). Its overlay and snapshot are
+     its latest data. An ended workspace's are aged, not dropped at the next pass as now: kept while the aged bytes
+     are under the budget and it ended less than the backstop ago, the oldest-ended released first.
+   - **B. Corpus lanes are store sessions** (kind 2, key root and lane): a lane's protected runs are its latest
+     data, its older runs aged (0053 §3 as it is), under the same budget as A's.
+   - **C. A pin's owner is a store session** (kind 3): its lease keeps it alive.
+   - **The budget**, one for every kind: 0053 §3's marks (512 MB high, 384 MB low) and backstop (30 days), until
+     the user sets others (§2 left the marks open).
 4. The archive: aged data moved to zstd rows by upkeep, segments rewritten (§1 item 2), and placed again in a segment
    when read (§1 item 3).

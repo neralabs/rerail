@@ -23,18 +23,20 @@ use std::sync::LazyLock;
 // run against it. It is safe to delete by hand once no older binary runs; the CHANGELOG entry of
 // each floor raise names the file (with its -wal and -shm). STORE_FILE_FLOOR pins the pairing, so
 // raising SCHEMA_VERSION alone does not compile.
-pub(super) const SCHEMA_VERSION: i64 = 7;
+pub(super) const SCHEMA_VERSION: i64 = 8;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
-pub const STORE_FILE_NAME: &str = "content-v7.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at. 7: every source and tape is in a segment, as it is, and no row holds
+pub const STORE_FILE_NAME: &str = "content-v8.sqlite";
+/// The floor `STORE_FILE_NAME` was introduced at. 8: every check result, call summary and tree page is in a segment,
+/// as it is, its row naming its range (decision 0450 step 2, 2026-11-19), which an older binary would read as a row
+/// with no frame; 7: every source and tape is in a segment, as it is, and no row holds
 /// an object's bytes (decision 0295 step 5, 2026-11-19), which an older binary would read as an empty or corrupt
 /// frame; 6: the atoms are blocks in files beside the store (decision 0401:
 /// `atom_blocks`), which an older binary would read as a store with no atoms; 5: a frame's row points at its bytes in a segment beside the store
 /// (decision 0295 §4: `frames.seg`), which an older binary would read as an empty frame; 4: a corpus manifest's lane is a column of it
 /// (`corpus_manifests.lane`), not a table of its own (decision 0104); 3 was atoms stored as segments
 /// of the arena (decision 0049); 2 the prefilter vocabulary keyed by atom.
-const STORE_FILE_FLOOR: i64 = 7;
+const STORE_FILE_FLOOR: i64 = 8;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
     "raising the floor requires a new STORE_FILE_NAME"
@@ -229,22 +231,15 @@ CREATE TABLE IF NOT EXISTS completed_workspace_revisions (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS completed_workspace_revisions_by_catalog
 ON completed_workspace_revisions(catalog_hash_id);
-CREATE TABLE IF NOT EXISTS local_check_results (
-    source_id INTEGER NOT NULL REFERENCES source_objects(source_id),
-    check_id INTEGER NOT NULL REFERENCES candidate_checks(check_id),
-    codec_id INTEGER NOT NULL,
-    raw_length INTEGER NOT NULL,
-    frame BLOB NOT NULL,
-    PRIMARY KEY(source_id, check_id)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS local_check_results_by_check ON local_check_results(check_id, source_id);
+-- A file's result of a check (a call summary among them) under a context: its bytes as they are, in a segment of
+-- `<store>.objects/`, read there in place (decision 0450 step 2: floor 8); the row names their range.
 CREATE TABLE IF NOT EXISTS context_check_results (
     source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
     context_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id) ON DELETE CASCADE,
     check_id INTEGER NOT NULL REFERENCES candidate_checks(check_id) ON DELETE CASCADE,
-    codec_id INTEGER NOT NULL,
-    raw_length INTEGER NOT NULL,
-    frame BLOB NOT NULL,
+    seg INTEGER NOT NULL,
+    seg_at INTEGER NOT NULL,
+    seg_len INTEGER NOT NULL,
     PRIMARY KEY(source_id, context_hash_id, check_id)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS context_check_results_by_check
@@ -487,16 +482,17 @@ CREATE TABLE IF NOT EXISTS push_pending (
 CREATE INDEX IF NOT EXISTS name_bindings_by_digest ON name_bindings(digest);
 
 -- Per-directory result pages (tree_pages.rs, from Tempo's tree_result_segments), keyed by what the
--- directory's result depends on; `digest` is the page derivation's output digest.
+-- directory's result depends on; `digest` is the page derivation's output digest. Each page's bytes are in a
+-- segment of `<store>.objects/`, as they are (decision 0450 step 2: floor 8).
 CREATE TABLE IF NOT EXISTS tree_pages (
     page_key BLOB NOT NULL CHECK(length(page_key) = 32),
     page_index INTEGER NOT NULL CHECK(page_index >= 0),
     page_count INTEGER NOT NULL CHECK(page_count > 0),
     digest BLOB NOT NULL CHECK(length(digest) = 32),
-    codec_id INTEGER NOT NULL,
-    raw_length INTEGER NOT NULL CHECK(raw_length >= 0),
     file_count INTEGER NOT NULL CHECK(file_count >= 0 AND file_count <= 64),
-    frame BLOB NOT NULL,
+    seg INTEGER NOT NULL,
+    seg_at INTEGER NOT NULL,
+    seg_len INTEGER NOT NULL,
     PRIMARY KEY (page_key, page_index)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS tree_pages_by_digest ON tree_pages(digest);

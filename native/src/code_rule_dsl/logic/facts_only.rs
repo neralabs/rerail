@@ -175,13 +175,12 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("completed_directory_reuse", "8"),
     ("candidate_catalogs", "8"),
     ("candidate_checks", "8"),
-    ("local_check_results", "8"),
     ("context_check_results", "8"),
 ];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
 /// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take; back to 61 once a
-/// merge took one out (2026-11-12); 58 when the cross-file memo's three tables went (decision 0450 §3, 2026-11-19).
-const NOT_YET_TABLES_PIN: usize = 58;
+/// merge took one out (2026-11-12); 58 when the cross-file memo's three tables went (decision 0450 §3, 2026-11-19); 57 when `local_check_results`, which nothing wrote, went (0450 step 2).
+const NOT_YET_TABLES_PIN: usize = 57;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.

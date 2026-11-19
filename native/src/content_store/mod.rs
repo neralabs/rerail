@@ -570,14 +570,15 @@ pub struct SnapshotFilePublication<'a> {
 pub struct LocalResultPublication {
     pub candidate: CandidateClause,
     pub context: HashKey,
-    pub raw_length: usize,
-    pub frame: Vec<u8>,
+    /// The result's bytes, stored as they are, in a segment (decision 0450 step 2).
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
 pub struct StoredLocalResult {
     pub candidate: CandidateClause,
-    pub bytes: Vec<u8>,
+    /// The result's bytes where its segment holds them, mapped (decision 0450 step 2).
+    pub bytes: ObjectBytes,
 }
 
 #[derive(Clone, Copy, Debug)]

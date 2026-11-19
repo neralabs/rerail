@@ -53,7 +53,7 @@ applies the DDL; a new store also gets `auto_vacuum=INCREMENTAL`.
 `PRAGMA user_version` is the compatibility floor, `SCHEMA_VERSION` (7). A build refuses a store
 whose floor is newer than its own. Additive changes such as indexes never raise it.
 
-The renamed file is `STORE_FILE_NAME`, now `content-v7.sqlite`. The old file is neither migrated nor
+The renamed file is `STORE_FILE_NAME`, now `content-v8.sqlite`. The old file is neither migrated nor
 deleted.
 
 Tests: `newer_compatibility_floor_is_refused`,
@@ -135,8 +135,9 @@ signed 64-bit lanes, each eight digest bytes read with `i64::from_be_bytes`. SHA
 
 ## Objects
 
-Each source and tape is stored once, uncompressed, in segment files beside the store (`content-v7.sqlite.objects/`),
-and read in place; the row points at its range and holds no bytes. A scan gathers its files into a few large
+Each source and tape is stored once, uncompressed, in segment files beside the store (`content-v8.sqlite.objects/`),
+and read in place; the row points at its range and holds no bytes. Check results, call summaries and tree pages are
+kept the same way (floor 8). A scan gathers its files into a few large
 segments; any other write (a publication, a snapshot, a single put) writes one segment of its own objects before its
 transaction, which numbers it and inserts the rows. Each read checks the range's length against the row.
 
@@ -294,13 +295,13 @@ Scan budgets: [Reference](reference.md#scan-and-settings-controls). Result pages
 - **`candidate_catalogs`:** a rule catalog's identity, a SHA-256 over the code-rule catalog, grammar
   set, scanner version and tape format (`CandidateCatalogIdentity`).
 - **`candidate_checks`:** one clause of a catalog, by rule (policy hash) and clause key.
-- **`context_check_results(source_id, context_hash_id, check_id, codec_id, raw_length, frame)`:**
-  per-file results. The context (`file_context`) is all non-content inputs: path, language, Python
-  module, nearest `package.json` and any calls-closure stamp (`result_context`).
-- **`local_check_results(source_id, check_id, ...)`:** still in the schema and still collected, but
-  never written.
+- **`context_check_results(source_id, context_hash_id, check_id, seg, seg_at, seg_len)`:**
+  per-file results, a file's call summary among them. The result's bytes are in an object segment, as
+  they are, and read there. The context (`file_context`) is all non-content inputs: path, language,
+  Python module, nearest `package.json` and any calls-closure stamp (`result_context`). A result whose
+  segment is gone makes the file's results a miss.
 
-`LocalResultCache` keeps up to 32 MiB of decoded results per process.
+`LocalResultCache` keeps up to 32 MiB of results per process, as the segments hold them.
 
 </details>
 
@@ -403,7 +404,8 @@ collection between read and write can delete rows the pass relied on; the next p
 Publication fails after eight incomplete passes.
 
 **Relationship pass.** It writes overlay rows, new result-context hashes and `context_check_results`,
-chunked to SQLite's variable limit, in at most ten statements. Under the write lock it first checks
+chunked to SQLite's variable limit, in at most ten statements. The results' bytes go first into one
+segment of the pass's, which its transaction numbers and which is named once it commits. Under the write lock it first checks
 every prepared path, source, tape, catalog and check ID is still current
 (`relationship_references_current`); otherwise the whole publication restarts, at most eight times.
 

@@ -496,16 +496,13 @@ impl ContentStore {
         Ok(out)
     }
 
-    /// The tape and source segments' bytes, and the bytes their rows name: what compaction would leave.
+    /// The object segments' bytes, and the bytes their rows name (`PLACED`): what compaction would leave.
     pub fn object_segment_bytes(&self) -> StoreResult<(u64, u64)> {
         let (segs, named): (Vec<i64>, i64) = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             let segs = connection.prepare("SELECT seg FROM object_segments")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
-            let named = connection.query_row(
-                "SELECT (SELECT coalesce(sum(seg_len), 0) FROM source_objects WHERE seg > 0) + (SELECT coalesce(sum(seg_len), 0) FROM tape_objects WHERE seg > 0)",
-                [],
-                |r| r.get(0),
-            )?;
+            let sum = PLACED.iter().map(|p| format!("(SELECT coalesce(sum(seg_len), 0) FROM {} WHERE seg > 0)", p.table)).collect::<Vec<_>>().join(" + ");
+            let named = connection.query_row(&format!("SELECT {sum}"), [], |r| r.get(0))?;
             (segs, named)
         };
         let dir = object_dir(&self.database_path);
@@ -513,11 +510,12 @@ impl ContentStore {
         Ok((held, named as u64))
     }
 
-    /// Copies every placed source's and tape's bytes to one new segment and removes the others, where the bytes no
-    /// row names (objects stored again, collected) are more than half the segments and at least `floor`: one write
-    /// transaction. A row whose segment is not there is marked so (`seg` -1, never a segment's number: no later
-    /// segment is read as its), absent to readers until its file is parsed and stored again; other rows name it, so
-    /// it stays. Returns the bytes freed. A reader that mapped an old segment reads it on.
+    /// Copies every placed object's bytes (each table of `PLACED`) to one new segment and removes the others, where
+    /// the bytes no row names (objects stored again, collected) are more than half the segments and at least `floor`:
+    /// one write transaction. Bytes several rows name are copied once. A row whose segment is not there is marked so
+    /// where others name it (a source or tape: `seg` -1, never a segment's number, absent to readers until its file
+    /// is parsed and stored again), and removed where it is a cache (a result, a page: computed again). Returns the
+    /// bytes freed. A reader that mapped an old segment reads it on.
     pub fn compact_object_segments(&self, floor: u64) -> StoreResult<u64> {
         let (held, named) = self.object_segment_bytes()?;
         if held < floor || held.saturating_sub(named) < held / 2 {
@@ -526,40 +524,65 @@ impl ContentStore {
         let dir = object_dir(&self.database_path);
         let old = self.immediate_transaction_once(|t| {
             let segs: Vec<i64> = t.prepare("SELECT seg FROM object_segments")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
-            // (table, row id, place).
-            let mut rows: Vec<(&str, i64, Place)> = Vec::new();
-            for (table, id) in [("tape_objects", "tape_id"), ("source_objects", "source_id")] {
-                let sql = format!("SELECT {id}, seg, seg_at, seg_len FROM {table} WHERE seg > 0 ORDER BY seg, seg_at");
-                for r in t.prepare(&sql)?.query_map([], |r| Ok((r.get::<_, i64>(0)?, Place { seg: r.get(1)?, at: r.get::<_, i64>(2)? as u64, len: r.get::<_, i64>(3)? as usize })))? {
-                    let (rowid, place) = r?;
-                    rows.push((table, rowid, place));
+            // (table, row key, place).
+            let mut rows: Vec<(usize, Vec<rusqlite::types::Value>, Place)> = Vec::new();
+            for (table, placed) in PLACED.iter().enumerate() {
+                let keys = placed.key.join(", ");
+                let sql = format!("SELECT {keys}, seg, seg_at, seg_len FROM {} WHERE seg > 0 ORDER BY seg, seg_at", placed.table);
+                let n = placed.key.len();
+                let mut st = t.prepare(&sql)?;
+                let mut q = st.query([])?;
+                while let Some(r) = q.next()? {
+                    let key = (0..n).map(|c| r.get::<_, rusqlite::types::Value>(c)).collect::<Result<Vec<_>, _>>()?;
+                    let place = Place { seg: r.get(n)?, at: r.get::<_, i64>(n + 1)? as u64, len: r.get::<_, i64>(n + 2)? as usize };
+                    rows.push((table, key, place));
                 }
             }
             let mut maps = SegmentMaps::new(dir.clone());
-            let mut kept: Vec<(&str, i64, SegmentBytes)> = Vec::new();
-            for (table, rowid, place) in rows {
-                match maps.at(place) {
-                    Some(bytes) => kept.push((table, rowid, bytes)),
-                    None => {
-                        let id = if table == "tape_objects" { "tape_id" } else { "source_id" };
-                        t.execute(&format!("UPDATE {table} SET seg = -1 WHERE {id} = ?1"), [rowid])?;
-                    }
-                }
+            // Each distinct place's bytes, in the order first named, and each row's entry among them.
+            let mut entries: Vec<SegmentBytes> = Vec::new();
+            let mut entry_of: HashMap<(i64, u64, usize), usize> = HashMap::new();
+            let mut kept: Vec<(usize, Vec<rusqlite::types::Value>, usize)> = Vec::new();
+            for (table, key, place) in rows {
+                let at = match entry_of.get(&(place.seg, place.at, place.len)) {
+                    Some(&at) => at,
+                    None => match maps.at(place) {
+                        Some(bytes) => {
+                            entries.push(bytes);
+                            entry_of.insert((place.seg, place.at, place.len), entries.len() - 1);
+                            entries.len() - 1
+                        }
+                        None => {
+                            let placed = &PLACED[table];
+                            let filter = key_filter(placed.key, 1);
+                            let sql = match placed.missing {
+                                Missing::Mark => format!("UPDATE {} SET seg = -1 WHERE {filter}", placed.table),
+                                Missing::Drop => format!("DELETE FROM {} WHERE {filter}", placed.table),
+                            };
+                            t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(key.iter()))?;
+                            continue;
+                        }
+                    },
+                };
+                kept.push((table, key, at));
             }
             t.execute("DELETE FROM object_segments", [])?;
-            if kept.is_empty() {
+            if entries.is_empty() {
                 return Ok(segs);
             }
-            let entries: Vec<(&[u8], i64, &[u8; 32])> = kept.iter().map(|(_, rowid, b)| (b.bytes(), *rowid, &[0u8; 32])).collect();
-            let mut placed = super::segments::write_segments(&dir, &entries)?;
+            let listed: Vec<(&[u8], i64, &[u8; 32])> = entries.iter().map(|b| (b.bytes(), 0, &[0u8; 32])).collect();
+            let mut placed = super::segments::write_segments(&dir, &listed)?;
             if placed.files().len() != 1 {
                 return Err(StoreError::Invalid("the objects' compaction made more than one segment".into()));
             }
             let seg = segs.iter().copied().max().unwrap_or(0) + 1;
             t.execute("INSERT INTO object_segments(seg) VALUES (?1)", [seg])?;
-            for (i, (table, rowid, _)) in kept.iter().enumerate() {
-                let id = if *table == "tape_objects" { "tape_id" } else { "source_id" };
-                t.execute(&format!("UPDATE {table} SET seg = ?2, seg_at = ?3 WHERE {id} = ?1"), params![rowid, seg, placed.placed(i).1 as i64])?;
+            for (table, key, at) in &kept {
+                let spec = &PLACED[*table];
+                let sql = format!("UPDATE {} SET seg = ?1, seg_at = ?2 WHERE {}", spec.table, key_filter(spec.key, 3));
+                let mut values: Vec<rusqlite::types::Value> = vec![seg.into(), (placed.placed(*at).1 as i64).into()];
+                values.extend(key.iter().cloned());
+                t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(values.iter()))?;
             }
             placed.name(&dir, &[seg])?;
             Ok(segs)
@@ -570,6 +593,35 @@ impl ContentStore {
         let (now, _) = self.object_segment_bytes()?;
         Ok(held.saturating_sub(now))
     }
+}
+
+/// What a compaction does with a row whose segment is gone.
+enum Missing {
+    /// Marked absent (`seg` -1): other rows name it.
+    Mark,
+    /// Removed: a cache, computed again.
+    Drop,
+}
+
+/// A table whose rows name their bytes' place in an object segment (`seg`, `seg_at`, `seg_len`), with its key.
+struct PlacedTable {
+    table: &'static str,
+    key: &'static [&'static str],
+    missing: Missing,
+}
+
+/// Every table whose rows name a place in the object segments: sources and tapes (decision 0295 step 5), check
+/// results with call summaries, and tree pages (decision 0450 step 2).
+const PLACED: [PlacedTable; 4] = [
+    PlacedTable { table: "tape_objects", key: &["tape_id"], missing: Missing::Mark },
+    PlacedTable { table: "source_objects", key: &["source_id"], missing: Missing::Mark },
+    PlacedTable { table: "context_check_results", key: &["source_id", "context_hash_id", "check_id"], missing: Missing::Drop },
+    PlacedTable { table: "tree_pages", key: &["page_key", "page_index"], missing: Missing::Drop },
+];
+
+/// `k1 = ?n AND k2 = ?n+1 …` over `key`, its parameters from `first`.
+fn key_filter(key: &[&str], first: usize) -> String {
+    key.iter().enumerate().map(|(i, k)| format!("{k} = ?{}", first + i)).collect::<Vec<_>>().join(" AND ")
 }
 
 /// A source whose bytes are at `place`: inserted, or (stored by its hash) moved there, so a row whose segment went

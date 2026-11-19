@@ -24,7 +24,7 @@ use crate::code_rule_dsl::{language, tape};
 use crate::content_store::{
     BusyRetries, CandidateCatalogIdentity, CandidateClause, DocumentPayload, HashKey,
     LocalResultPublication, OverlayFilePublication, PublicationResult, StoreError, StoredFile,
-    TapePayload, compress,
+    TapePayload,
 };
 use napi::Result;
 use rayon::prelude::*;
@@ -685,7 +685,7 @@ pub(super) fn persist_files(
             clause_index,
         )
     };
-    // Each file's payloads (tape bytes, encoded and compressed local results, blob alias) are
+    // Each file's payloads (tape bytes, encoded local results, blob alias) are
     // independent of every other file's, so they are built on the worker pool.
     let prepared = (|| {
         paths
@@ -751,14 +751,7 @@ pub(super) fn persist_files(
                             file.failures.get(id).copied(),
                             file.syntax.as_deref(),
                         )?;
-                        let frame =
-                            compress(&bytes, 3).map_err(|error| invalid(error.to_string()))?;
-                        Ok(LocalResultPublication {
-                            candidate: candidate(id),
-                            context,
-                            raw_length: bytes.len(),
-                            frame,
-                        })
+                        Ok(LocalResultPublication { candidate: candidate(id), context, bytes })
                     })
                     .collect::<Result<Vec<_>>>()?;
                 if !file.transient_failure {

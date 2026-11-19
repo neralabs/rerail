@@ -10,7 +10,6 @@ use rusqlite::limits::Limit;
 use rusqlite::params;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
-use std::io::Cursor;
 use std::time::Duration;
 use super::object_segments::CODEC_RAW;
 use std::sync::Arc;
@@ -758,8 +757,7 @@ fn local_results_publish_across_sqlite_variable_limit_chunks() {
                     clause: format!("check-{index}"),
                 },
                 context: HashKey::sha256(format!("bulk-context-{}", index % 2).as_bytes()),
-                raw_length: bytes.len(),
-                frame: zstd::stream::encode_all(Cursor::new(bytes), 3).unwrap(),
+                bytes: bytes.to_vec(),
             }
         })
         .collect::<Vec<_>>();
@@ -785,7 +783,7 @@ fn local_results_publish_across_sqlite_variable_limit_chunks() {
             )
             .unwrap()
             .into_iter()
-            .map(|result| (result.candidate.clause, result.bytes))
+            .map(|result| (result.candidate.clause, result.bytes.to_vec()))
             .collect::<Vec<_>>();
         restored.sort();
         let mut expected = (0..12)
@@ -846,14 +844,12 @@ fn local_results_are_scoped_by_context_hash() {
     let first = LocalResultPublication {
         candidate: candidate.clone(),
         context: first_context,
-        raw_length: 5,
-        frame: zstd::stream::encode_all(Cursor::new(b"alpha"), 3).unwrap(),
+        bytes: b"alpha".to_vec(),
     };
     let second = LocalResultPublication {
         candidate,
         context: second_context,
-        raw_length: 4,
-        frame: zstd::stream::encode_all(Cursor::new(b"beta"), 3).unwrap(),
+        bytes: b"beta".to_vec(),
     };
     let stored = store
         .publish_overlay_file(
@@ -876,15 +872,15 @@ fn local_results_are_scoped_by_context_hash() {
         store
             .local_check_results(stored.source, first_context, catalog)
             .unwrap()[0]
-            .bytes,
-        b"alpha"
+            .bytes[..],
+        b"alpha"[..]
     );
     assert_eq!(
         store
             .local_check_results(stored.source, second_context, catalog)
             .unwrap()[0]
-            .bytes,
-        b"beta"
+            .bytes[..],
+        b"beta"[..]
     );
     let by_key = store
         .local_check_results_by_key(
@@ -896,13 +892,67 @@ fn local_results_are_scoped_by_context_hash() {
         )
         .unwrap();
     assert_eq!(
-        by_key[&(HashKey::sha256(b"pass\n"), first_context)][0].bytes,
-        b"alpha"
+        by_key[&(HashKey::sha256(b"pass\n"), first_context)][0].bytes[..],
+        b"alpha"[..]
     );
     assert_eq!(
-        by_key[&(HashKey::sha256(b"pass\n"), second_context)][0].bytes,
-        b"beta"
+        by_key[&(HashKey::sha256(b"pass\n"), second_context)][0].bytes[..],
+        b"beta"[..]
     );
+}
+
+/// Decision 0450 step 2: a result and a tree page are stored as they are, in a segment, and read there in place;
+/// compaction carries them into its one segment; a segment gone makes them a miss, not an error.
+#[test]
+fn results_and_pages_are_read_in_place_and_survive_compaction() {
+    let (_path, store) = store("results-in-segments");
+    let (workspace, catalog) = local_result_workspace(&store, "results-in-segments");
+    let candidate = CandidateClause { rule: HashKey::sha256(b"policy"), clause: "check".to_owned() };
+    let context = HashKey::sha256(b"x.py");
+    let publish = |bytes: &[u8], state_id: i64| {
+        let result = LocalResultPublication { candidate: candidate.clone(), context, bytes: bytes.to_vec() };
+        store
+            .publish_overlay_file(
+                workspace,
+                OverlayFilePublication {
+                    path: "x.py",
+                    state_id,
+                    source: b"pass\n",
+                    aliases: &[],
+                    tape: None,
+                    catalog,
+                    candidates: &[],
+                    local_results: &[result],
+                    candidates_current: false,
+                },
+            )
+            .unwrap()
+    };
+    let stored = publish(b"result", 1);
+    let page_key = TreePageKey { tree: [3; 32], prefix: "src", context: [0; 32], plan: [4; 32] };
+    store.put_tree_pages(&page_key, &[TreePage::new(1, b"page".to_vec())]).unwrap();
+    let read = |store: &ContentStore| {
+        let results = store.local_check_results(stored.source, context, catalog).unwrap();
+        let pages = store.tree_pages(&page_key).unwrap();
+        (results.first().map(|r| (r.bytes.in_place(), r.bytes.to_vec())), pages.map(|(_, p)| (p[0].bytes.in_place(), p[0].bytes.to_vec())))
+    };
+    assert_eq!(read(&store), (Some((true, b"result".to_vec())), Some((true, b"page".to_vec()))));
+    let rows: i64 = store.connection.lock().unwrap().query_row(
+        "SELECT (SELECT count(*) FROM context_check_results WHERE seg > 0) + (SELECT count(*) FROM tree_pages WHERE seg > 0)", [], |r| r.get(0)).unwrap();
+    assert_eq!(rows, 2, "each row names a segment's range");
+    // The same pages stored again leave copies no row names; compaction keeps the named ones, in its one segment.
+    for _ in 0..3 {
+        store.put_tree_pages(&page_key, &[TreePage::new(1, b"page".to_vec())]).unwrap();
+    }
+    assert!(store.compact_object_segments(0).unwrap() > 0);
+    let dir = super::object_segments::object_dir(&store.database_path);
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "one segment left");
+    assert_eq!(read(&store), (Some((true, b"result".to_vec())), Some((true, b"page".to_vec()))));
+    // Their segment gone: a miss.
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        std::fs::remove_file(entry.unwrap().path()).unwrap();
+    }
+    assert_eq!(read(&store), (None, None));
 }
 
 #[test]
@@ -915,8 +965,7 @@ fn a_result_under_a_new_context_of_stored_objects_is_kept() {
             clause: "check".to_owned(),
         },
         context: HashKey::sha256(context),
-        raw_length: bytes.len(),
-        frame: zstd::stream::encode_all(Cursor::new(bytes), 3).unwrap(),
+        bytes: bytes.to_vec(),
     };
     let publish = |results: &[LocalResultPublication]| {
         store
@@ -943,7 +992,7 @@ fn a_result_under_a_new_context_of_stored_objects_is_kept() {
         .local_check_results(stored.source, HashKey::sha256(b"second"), catalog)
         .unwrap();
     assert_eq!(restored.len(), 1);
-    assert_eq!(restored[0].bytes, b"beta");
+    assert_eq!(&restored[0].bytes[..], b"beta");
 }
 
 #[test]
@@ -961,8 +1010,7 @@ fn context_results_cascade_when_sources_and_clauses_are_deleted() {
                 clause: "check".to_owned(),
             },
             context: HashKey::sha256(b"context"),
-            raw_length: 6,
-            frame: zstd::stream::encode_all(Cursor::new(b"result"), 3).unwrap(),
+            bytes: b"result".to_vec(),
         };
         let stored = store
             .publish_overlay_file(
@@ -1056,8 +1104,7 @@ fn reconciliation_revalidates_clause_collected_before_relationship_write() {
     let result = LocalResultPublication {
         candidate: candidate.clone(),
         context: HashKey::sha256(b"context"),
-        raw_length: 6,
-        frame: zstd::stream::encode_all(Cursor::new(b"result"), 3).unwrap(),
+        bytes: b"result".to_vec(),
     };
     let copy = path.to_path_buf();
     BEFORE_RELATIONSHIP_WRITE_HOOK.set(Some(Box::new(move || {
