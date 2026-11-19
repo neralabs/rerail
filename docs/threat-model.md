@@ -662,7 +662,8 @@ keeps its own `.gitignore`, and on Windows gives the records folder the owner-on
   to `git add -A`.
 - A `.rerail/sessions` the repository's own commit makes, which on Windows outside the profile folder takes its
   parent's ACL, is given the owner-only ACL when the daemon first opens a session there, before it writes
-  (`makeLedgerFolder` with `repair`); elsewhere it is made `0700`. One Rerail cannot change is named in the daemon log.
+  (`makeLedgerFolder` with `repair`); elsewhere it is made `0700`. On Windows, one whose ACL Rerail cannot read or
+  change is named in the daemon log.
 
 **What remains:** a `RERAIL_STORAGE_ROOT` outside any `.rerail` folder is not checked. Replayed ledgers are still
 trusted state; planting one needs the session id, whose hash names the folder.
