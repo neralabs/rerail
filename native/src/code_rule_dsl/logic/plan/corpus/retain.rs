@@ -3293,6 +3293,7 @@ impl Retained {
 }
 
 mod kept_stats;
+pub(in crate::code_rule_dsl) mod kept_read;
 
 #[cfg(test)]
 pub mod frame_tests;

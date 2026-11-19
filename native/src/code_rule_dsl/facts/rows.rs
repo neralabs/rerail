@@ -60,6 +60,83 @@ impl Facts {
     fn new(block: Block) -> Facts {
         Facts { block, ix: Mutex::new(()) }
     }
+
+    /// A block another owner maps (a kept block, `Block::share`), read where it lies (decision 0401 F3): its relations
+    /// are bound by `Part::over_mapped`, never written, and nothing is given back to it.
+    pub fn over(block: Block) -> Arc<Facts> {
+        Arc::new(Facts::new(block))
+    }
+}
+
+/// Values a relation holds beside its rows (its dead bits, its rows' levels): its own, or a kept block's, read where
+/// they lie (decision 0401 F3) and kept mapped by `keep`. Read as a slice; never written in place.
+pub enum Shared<T: Copy + 'static> {
+    Own(Vec<T>),
+    Mapped { keep: Arc<dyn Send + Sync>, at: *const T, len: usize },
+}
+
+// SAFETY: a mapped slice is read only, and `keep` keeps its memory mapped.
+unsafe impl<T: Copy + Send + 'static> Send for Shared<T> {}
+unsafe impl<T: Copy + Sync + 'static> Sync for Shared<T> {}
+
+impl<T: Copy + 'static> Shared<T> {
+    /// `values`, which `keep` keeps mapped: read where they lie.
+    pub fn mapped(keep: Arc<dyn Send + Sync>, values: &[T]) -> Shared<T> {
+        if values.is_empty() {
+            return Shared::Own(Vec::new());
+        }
+        Shared::Mapped { keep, at: values.as_ptr(), len: values.len() }
+    }
+}
+
+impl<T: Copy + 'static> Shared<T> {
+    /// The values it holds on the heap (a mapped slice holds none).
+    pub fn capacity(&self) -> usize {
+        match self {
+            Shared::Own(v) => v.capacity(),
+            Shared::Mapped { .. } => 0,
+        }
+    }
+}
+
+impl<T: Copy + 'static> Default for Shared<T> {
+    fn default() -> Self {
+        Shared::Own(Vec::new())
+    }
+}
+
+impl<T: Copy + 'static> Clone for Shared<T> {
+    fn clone(&self) -> Self {
+        match self {
+            // copy: not block data: a relation's own values, as a clone of it always copied them.
+            Shared::Own(v) => Shared::Own(v.clone()),
+            Shared::Mapped { keep, at, len } => Shared::Mapped { keep: Arc::clone(keep), at: *at, len: *len },
+        }
+    }
+}
+
+impl<T: Copy + 'static> std::ops::Deref for Shared<T> {
+    type Target = [T];
+    #[inline(always)]
+    fn deref(&self) -> &[T] {
+        match self {
+            Shared::Own(v) => v,
+            // SAFETY: `keep` keeps the values mapped, and nothing writes them.
+            Shared::Mapped { at, len, .. } => unsafe { std::slice::from_raw_parts(*at, *len) },
+        }
+    }
+}
+
+impl<T: Copy + 'static> From<Vec<T>> for Shared<T> {
+    fn from(v: Vec<T>) -> Self {
+        Shared::Own(v)
+    }
+}
+
+impl<T: Copy + std::fmt::Debug + 'static> std::fmt::Debug for Shared<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
 }
 
 /// How long a relation's rows live, which picks the blocks they go in: a block is given back with its last part,
@@ -595,6 +672,10 @@ impl Drop for Held {
         // free list, their whole pages past the list's link back to the OS (Q76: a block lives while any relation in
         // it does, so a chunk's dead relations otherwise kept their pages resident; about 500 MB of a 300-file cold
         // run's footprint, Q76).
+        // A mapped block another owner keeps (`Facts::over`) is never written: nothing is given back to it.
+        if !self.facts.block.is_writable() {
+            return;
+        }
         let given = unsafe { (*self.rel).release(&self.facts.block) };
         GIVEN_BACK.fetch_add(given, std::sync::atomic::Ordering::Relaxed);
     }
@@ -697,6 +778,16 @@ impl Part {
     /// Its relation's descriptor's offset in its block: what a reader's `rel_*` reads take.
     pub fn rel_at(&self) -> usize {
         self.facts.block.offset_of(self.rel)
+    }
+
+    /// Relation `rel`, frozen in `facts`' mapped block (`Facts::over`), read where it lies (decision 0401 F3): no row
+    /// is copied, nothing writes it, and no writer takes it (`free_at`).
+    pub fn over_mapped(facts: Arc<Facts>, rel: &Relation) -> Part {
+        debug_assert!(facts.block.holds(std::ptr::from_ref(rel)), "a relation outside its block");
+        debug_assert!(!facts.block.is_writable(), "a mapped part over a block that may be written");
+        let cols = (0..rel.rows.ncols as usize).map(|c| rel.rows.reader(c)).collect();
+        let rel = std::ptr::from_ref(rel);
+        Part { held: Arc::new(Held { facts, life: Life::Kept, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: None, absorbed: 0 }), cap: u32::MAX }
     }
 
     #[inline(always)]

@@ -86,17 +86,18 @@ pub fn space_row(connection: &Connection, space: &[u8; 32]) -> StoreResult<Optio
 /// A space's blocks, mapped.
 #[derive(Default)]
 pub struct KeptSpace {
-    pub base: Option<KeptFacts>,
-    pub delta: Option<KeptFacts>,
+    /// Shared with the readers that bind its relations where they lie (`Block::share`).
+    pub base: Option<std::sync::Arc<KeptFacts>>,
+    pub delta: Option<std::sync::Arc<KeptFacts>>,
 }
 
 impl KeptSpace {
     /// The blocks `row` names, mapped, each checked against its tag.
     pub fn open(store: &Path, space: &[u8; 32], row: &SpaceRow) -> StoreResult<KeptSpace> {
         let dir = space_dir(store, space);
-        let open = |f: &Option<(String, u64)>| -> StoreResult<Option<KeptFacts>> {
+        let open = |f: &Option<(String, u64)>| -> StoreResult<Option<std::sync::Arc<KeptFacts>>> {
             f.as_ref()
-                .map(|(name, tag)| KeptFacts::open(&dir.join(name), *tag).map_err(|e| StoreError::Corrupt(format!("a space's kept facts: {e}"))))
+                .map(|(name, tag)| KeptFacts::open(&dir.join(name), *tag).map(std::sync::Arc::new).map_err(|e| StoreError::Corrupt(format!("a space's kept facts: {e}"))))
                 .transpose()
         };
         let space = KeptSpace { base: open(&row.base)?, delta: open(&row.delta)? };
@@ -110,7 +111,7 @@ impl KeptSpace {
 
     /// The space as one.
     pub fn view(&self) -> KeptView<'_> {
-        KeptView { base: self.base.as_ref(), delta: self.delta.as_ref() }
+        KeptView { base: self.base.as_deref(), delta: self.delta.as_deref() }
     }
 }
 
@@ -193,7 +194,7 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
     };
     let name = format!("{}{tag:016x}.blk", if roll { 'b' } else { 'd' });
     let making = dir.join(format!("{name}.new"));
-    let base_tag = if roll { None } else { old.base.as_ref().map(KeptFacts::tag) };
+    let base_tag = if roll { None } else { old.base.as_deref().map(KeptFacts::tag) };
     let mut w = KeptW::create(&making, tag, base_tag, reserve).map_err(io)?;
     for k in &entries {
         w.carry(k, None).map_err(io)?;
@@ -324,12 +325,20 @@ impl KeptGather {
     }
 }
 
+/// The key a space's queued kept writes hold (`ContentStore::kept_row` settles it).
+fn space_key(space: &[u8; 32]) -> super::write_back::Key {
+    super::write_back::Key::of(&[b"kept facts", space])
+}
+
 impl super::write_back::Gather for KeptGather {
     fn keys(&self) -> Vec<(super::write_back::Key, Option<super::write_back::Held>)> {
-        Vec::new()
+        self.spaces.keys().map(|s| (space_key(s), None)).collect()
     }
     fn held(&self, _: &super::write_back::Key) -> Option<super::write_back::Held> {
         None
+    }
+    fn holds(&self, key: &super::write_back::Key) -> bool {
+        self.spaces.keys().any(|s| space_key(s) == *key)
     }
     fn bytes(&self) -> usize {
         self.bytes
@@ -345,7 +354,7 @@ impl super::write_back::Gather for KeptGather {
         Some(super::write_back::Closed {
             what: "kept facts",
             bytes: self.bytes,
-            keys: Vec::new(),
+            keys: spaces.iter().map(|(s, _)| (space_key(s), None)).collect(),
             syms: super::write_back::Syms::Mapped,
             job: super::write_back::Work(super::write_back::Kind::Kept(Box::new(KeptWrite { spaces }))),
         })
@@ -368,7 +377,20 @@ impl super::ContentStore {
         let puts = puts.take().expect("the puts");
         let held: usize = puts.iter().map(held_bytes).sum();
         let write = KeptWrite { spaces: vec![(space, puts)] };
-        self.write_back_syms(super::write_back::Syms::Mapped, "kept facts", held, Vec::new(), super::write_back::Work(super::write_back::Kind::Kept(Box::new(write))));
+        self.write_back_syms(super::write_back::Syms::Mapped, "kept facts", held, vec![(space_key(&space), None)], super::write_back::Work(super::write_back::Kind::Kept(Box::new(write))));
+    }
+
+    /// The row of `space`'s kept blocks once every kept write this process queued for it is written (`settle`): what
+    /// a run reads before its first wave (decision 0104), its own earlier runs' writes included.
+    pub fn kept_row(&self, space: &[u8; 32]) -> StoreResult<Option<SpaceRow>> {
+        self.settle(&space_key(space));
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        space_row(&connection, space)
+    }
+
+    /// `space`'s blocks as `row` names them, mapped.
+    pub fn open_kept(&self, space: &[u8; 32], row: &SpaceRow) -> StoreResult<KeptSpace> {
+        KeptSpace::open(&self.database_path, space, row)
     }
 
     /// The kept facts of `space` as the store's last commit has them, mapped; `None` when it keeps none.

@@ -363,6 +363,32 @@ impl Block {
         b
     }
 
+    /// This frozen block again, over the same memory, read-only: a second handle that never unmaps it, the memory kept
+    /// alive by `keep` (its owner) while the handle lives. A reader that binds blocks by value (a relation's part)
+    /// reads a mapped block where it lies (decision 0401 F3): nothing is copied. Allocating in it refuses.
+    pub fn share(&self, keep: std::sync::Arc<dyn Send + Sync>) -> Block {
+        struct Kept {
+            base: *mut u8,
+            len: usize,
+            _keep: std::sync::Arc<dyn Send + Sync>,
+        }
+        // SAFETY: memory that `_keep` keeps mapped, read only.
+        unsafe impl Send for Kept {}
+        unsafe impl Sync for Kept {}
+        impl Backing for Kept {
+            fn base(&self) -> *mut u8 {
+                self.base
+            }
+            fn len(&self) -> usize {
+                self.len
+            }
+        }
+        let top = self.used();
+        let mut b = Block::make(self.base, self.reserved, top, None, false, Some(Box::new(Kept { base: self.base, len: self.reserved, _keep: keep })));
+        b.dirty = false;
+        b
+    }
+
     /// Moves this open block into `backing`: its bytes copied whole, which is the whole move, since every
     /// reference inside it is self-relative. Nothing may hold a reference into this block, and no command read it.
     pub fn relocate(self, backing: Box<dyn Backing>) -> Block {
@@ -448,7 +474,10 @@ impl Block {
 
     /// `try_alloc`; a dirty block's memory is zeroed only when `zeroed` asks it.
     fn alloc_filled(&self, size: usize, align: usize, zeroed: bool) -> Option<usize> {
-        assert!(self.writable, "alloc in a frozen block");
+        // A read-only block (a frozen file's mapping, `share`) has no room: an index a reader would add goes elsewhere.
+        if !self.writable {
+            return None;
+        }
         let mut cur = self.ext.top.load(Relaxed);
         loop {
             let start = round_up(cur, align);
@@ -503,6 +532,11 @@ impl Block {
 
     pub fn base_ptr(&self) -> *mut u8 {
         self.base
+    }
+
+    /// Whether it may be written: an open block's, not a frozen file's mapping or a shared handle (`share`).
+    pub fn is_writable(&self) -> bool {
+        self.writable
     }
 
     pub fn reserved(&self) -> usize {

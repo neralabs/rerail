@@ -156,6 +156,11 @@ impl KeptFacts {
         self.root().tag
     }
 
+    /// Its block, mapped read-only: a reader that binds blocks by value shares it (`Block::share`).
+    pub fn block(&self) -> &Block {
+        &self.block
+    }
+
     /// The tag of the base this delta is read over; `None` for a base.
     pub fn base_tag(&self) -> Option<u64> {
         Some(self.root().base_tag).filter(|&t| t != 0)
