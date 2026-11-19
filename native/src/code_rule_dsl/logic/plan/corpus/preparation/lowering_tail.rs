@@ -1368,7 +1368,7 @@ impl ProgramPass for CoreDecls {
         vec![u8::from(self.docof_of_locs)]
     }
     fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        use crate::code_rule_dsl::logic::rr::lower::{core::declare_core, projection_at, projections};
+        use crate::code_rule_dsl::logic::rr::lower::{core::declare_core, projection_at, projections, write_projection};
         let input = std::sync::Arc::clone(w.input());
         let v: &Version = &input;
         // The fields' edit, staged and stated on the edit or the derivation at the end.
@@ -1394,22 +1394,22 @@ impl ProgramPass for CoreDecls {
         // The program's order, the projections inserted where the tree inserts them.
         enum Item<'r> {
             Old(crate::code_rule_dsl::logic::program_image::RuleRef<'r>),
-            New(&'r crate::code_rule_dsl::logic::front::Rule),
+            New(&'static str),
         }
         let mut order: Vec<Item<'_>> = input.rules().map(Item::Old).collect();
-        for rule in &made {
+        for rel in made {
             let first = order.first().map(|x| match x {
                 Item::Old(r) => input.rel_name(r.head().rel()),
-                Item::New(r) => r.head.rel.as_str(),
+                Item::New(r) => r,
             });
-            order.insert(projection_at(&rule.head.rel, first), Item::New(rule));
+            order.insert(projection_at(rel, first), Item::New(rel));
         }
         let b = w.derive()?;
         b.state_fields_of(&head.b);
         for x in order {
             match x {
                 Item::Old(r) => drop(b.keep(&input, r)),
-                Item::New(r) => drop(b.add(r)?),
+                Item::New(rel) => drop(write_projection(b, rel)?),
             }
         }
         Ok(())
@@ -1417,8 +1417,9 @@ impl ProgramPass for CoreDecls {
 }
 
 /// The findings of the `.violation`s (`lower::findings`) on the version: `lower::findings::findings_on` writes them
-/// over the version's fields, given what it reads of the rules (`RulesSeen`, read off the image); the rules it makes go last, and
-/// the program's own `violation` heads of five columns are widened, as the tree's are. Its settings: the pending
+/// onto a derivation of the version, given what it reads of the rules (`RulesSeen`, read off the image): its fields, and
+/// its rules after the program's, whose own `violation` heads of five columns are widened. Where it writes no rules
+/// (`findings_write`), its fields' edit alone. Its settings: the pending
 /// findings, which the lowerer hands on.
 pub struct Findings {
     pub pending: crate::code_rule_dsl::logic::rr::lower::PendingFindings,
@@ -1430,7 +1431,7 @@ impl ProgramPass for Findings {
         self.pending.key()
     }
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        use crate::code_rule_dsl::logic::rr::lower::{RulesSeen, findings::findings_on, is_place_call};
+        use crate::code_rule_dsl::logic::rr::lower::{RulesSeen, findings::{findings_on, findings_write}, is_place_call};
         let v = cx.v();
         fn place(v: &Version, t: TermRef<'_>) -> bool {
             match t {
@@ -1450,18 +1451,18 @@ impl ProgramPass for Findings {
             reads_guest_policy: v.rules().flat_map(|r| r.body()).any(|l| matches!(l.view(), L::Atom(a) | L::Agg { atom: a, .. } if v.rel_name(a.rel()) == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY)),
         };
         let input = std::sync::Arc::clone(w.input());
-        // The fields' edit, staged and stated on the edit or the derivation at the end.
-        let mut head = crate::code_rule_dsl::logic::program_image::fields::Edit::on(&input);
-        let (made, wrote) = findings_on(&mut head.b, &self.pending, seen).map_err(|e| e.to_string())?;
-        let five = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>| wrote && v.rel_name(r.head().rel()) == "violation" && r.head().args().count() == 5;
-        if made.is_empty() && !v.rules().any(five) {
+        if !findings_write(&*input, &self.pending) {
+            // No rules: the fields' edit alone (`guest_policy`'s facts).
+            let mut head = crate::code_rule_dsl::logic::program_image::fields::Edit::on(&input);
+            findings_on(&mut head.b, &self.pending, seen).map_err(|e| e.to_string())?;
             if !head.b.is_empty() {
                 w.on()?.state_fields_of(&head.b);
             }
             return Ok(());
         }
+        // The program's rules, its own `violation` heads of five columns widened, then the findings' (`findings_on`).
+        let five = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>| v.rel_name(r.head().rel()) == "violation" && r.head().args().count() == 5;
         let b = w.derive()?;
-        b.state_fields_of(&head.b);
         use crate::code_rule_dsl::logic::program_image::build::t_of;
         for r in input.rules() {
             if !five(r) {
@@ -1476,9 +1477,7 @@ impl ProgramPass for Findings {
             }
             rb.finish()?;
         }
-        for rule in &made {
-            b.add(rule)?;
-        }
+        findings_on(b, &self.pending, seen).map_err(|e| e.to_string())?;
         Ok(())
     }
 }

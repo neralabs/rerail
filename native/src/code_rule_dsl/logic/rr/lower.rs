@@ -1232,12 +1232,9 @@ pub fn relinked(v: &crate::code_rule_dsl::logic::program_image::Version, rename:
     crate::code_rule_dsl::logic::program_image::Version::open(&bytes).map_err(Error::Syntax)
 }
 
-/// `rules` as a version of no header (what `relinked` reads of a module's rules).
-fn rules_version(rules: &[Rule]) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
-    let mut b = crate::code_rule_dsl::logic::program_image::Builder::base();
-    for r in rules {
-        b.add(r).map_err(Error::Syntax)?;
-    }
+/// A version of no header and no rules (what `relinked` reads of no module).
+fn empty_version() -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
+    let b = crate::code_rule_dsl::logic::program_image::Builder::base();
     crate::code_rule_dsl::logic::program_image::Version::open(&b.finish_bytes().map_err(Error::Syntax)?).map_err(Error::Syntax)
 }
 
@@ -1256,7 +1253,7 @@ pub fn link_versions(modules: Vec<Module>) -> Result<LinkedVersions, Error> {
     let mut modules = modules.into_iter();
     let Some(Module { mut l, version: v, .. }) = modules.next() else {
         let lowered = whole_front(Lowerer::default())?;
-        let first = relinked(rules_version(&[])?.as_ref(), &Default::default(), &[])?;
+        let first = relinked(empty_version()?.as_ref(), &Default::default(), &[])?;
         return Ok(LinkedVersions { first, appended: Vec::new(), lowered });
     };
     // The first module's helpers by their keys (read from an image, it has none), as `link` keys them.
@@ -1840,23 +1837,31 @@ pub fn span_patterns(p: &SpanProgram<'_>) -> Result<SpanPatterns, Error> {
 /// too. (`precedes` is core.rr's tree arithmetic, `core::rewrite`.)
 /// The rules to add go first, each where `projection_at` puts it; `read` is what the rules read (`reads`), `derives_node`
 /// whether a rule derives `node`. `prog` may be a header alone (a version's).
-pub fn projections(prog: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), read: &BTreeSet<(String, usize)>, docof_of_locs: bool, derives_node: bool) -> Vec<Rule> {
-    let v = |s: &str| Term::Var(s.to_owned().into());
+pub fn projections(prog: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), read: &BTreeSet<(String, usize)>, docof_of_locs: bool, derives_node: bool) -> Vec<&'static str> {
     let mut made = Vec::new();
-    for (rel, args) in [("kind", [Term::Wild, v("n"), v("k"), Term::Wild, Term::Wild]), ("docof", [v("d"), v("n"), Term::Wild, Term::Wild, Term::Wild])] {
+    for rel in ["kind", "docof"] {
         if !read.iter().any(|(r, _)| r == rel) || !prog.input_names().iter().any(|i| i == rel) || (rel == "docof" && (docof_of_locs || !prog.declares("node"))) {
             continue;
         }
         // `kind` is always `node`'s column: a program that reads it reads `node`.
         base_relation_derived(prog, "node", derives_node);
         prog.retain_inputs(&|i| i != rel);
-        let head = if rel == "kind" { vec![v("n"), v("k")] } else { vec![v("n"), v("d")] };
-        made.push(Rule {
-            head: Atom { rel: rel.to_owned().into(), args: head.into(), neg: false, gated: false },
-            body: [Literal::Atom(Atom { rel: "node".into(), args: args.to_vec().into(), neg: false, gated: false })].into(),
-        });
+        made.push(rel);
     }
     made
+}
+
+/// Writes the rule of projection `rel` (`projections`) on `b`: `kind(n, k) :- node(_, n, k, _, _)`, or
+/// `docof(n, d) :- node(d, n, _, _, _)`.
+pub fn write_projection(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, rel: &str) -> Result<crate::code_rule_dsl::logic::program_image::RuleId, String> {
+    use crate::code_rule_dsl::logic::program_image::T;
+    let (n, k, d) = (T::Var("n"), T::Var("k"), T::Var("d"));
+    let (head, node) = match rel {
+        "kind" => ([n.clone(), k.clone()], [T::Wild, n, k, T::Wild, T::Wild]),
+        "docof" => ([n.clone(), d.clone()], [d, n, T::Wild, T::Wild, T::Wild]),
+        other => unreachable!("no projection {other}"),
+    };
+    b.rule().head(rel, &head).atom("node", &node).finish()
 }
 
 /// Where `projections` puts its rule of `rel`, given the program's first rule's head: first, kind before docof (where
@@ -5576,25 +5581,6 @@ pub fn undo_round(prog: &mut (impl crate::code_rule_dsl::logic::program_image::f
         if prog.declares("node_text") {
             prog.undeclare("node_text");
         }
-    }
-}
-
-/// `l` with each variable `v` named `name(v)`.
-fn rename_literal(l: &Literal, name: &dyn Fn(&str) -> String) -> Literal {
-    fn term(t: &Term, name: &dyn Fn(&str) -> String) -> Term {
-        match t {
-            Term::Var(v) => Term::Var(name(v).as_str().into()),
-            Term::Call(f, args) => Term::Call(f.clone(), args.iter().map(|a| term(a, name)).collect()),
-            other => other.clone(),
-        }
-    }
-    let atom = |a: &Atom| Atom { rel: a.rel.clone(), args: a.args.iter().map(|t| term(t, name)).collect(), neg: a.neg, gated: a.gated };
-    match l {
-        Literal::Atom(a) => Literal::Atom(atom(a)),
-        Literal::Cmp { l, op, r } => Literal::Cmp { l: term(l, name), op, r: term(r, name) },
-        Literal::Agg { var, op, over, atom: a } => Literal::Agg { var: name(var), op: op.clone(), over: over.as_deref().map(name), atom: atom(a) },
-        Literal::Nearest { n, a, kindset } => Literal::Nearest { n: name(n), a: name(a), kindset: kindset.clone() },
-        Literal::Ast { document, node, matcher, captures } => Literal::Ast { document: name(document), node: name(node), matcher: matcher.clone(), captures: captures.iter().map(|(c, v)| (c.clone(), name(v))).collect() },
     }
 }
 
