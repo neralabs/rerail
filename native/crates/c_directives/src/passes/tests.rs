@@ -45,16 +45,18 @@ fn both(files: &[(&str, &str)]) -> (Outcome, Stats) {
         (Err(_), Err(_)) => {}
         _ => panic!("the lean calls: {:?}\nthe words' calls: {:?}", out.as_ref().map(|o| show(o)), w_out.as_ref().map(|o| show(o))),
     }
-    // The programs on the device: the interpreter's outcome.
+    // The programs on Cranelift's code and on the device: the interpreter's outcome.
+    let mut execs = vec![Exec::Cranelift];
     #[cfg(target_os = "macos")]
-    for exec in [Exec::Metal, Exec::MetalWords] {
+    execs.extend([Exec::Metal, Exec::MetalWords]);
+    for exec in execs {
         let (m_out, _, _, device) = run_on(cfg.clone(), &mut io(files), "main.c", rerail_compiler::pp_words::run, exec);
         match (&w_out, &m_out) {
             (Ok(a), Ok(b)) => assert_eq!(show(b), show(a), "{exec:?}'s runs against the interpreter's"),
             (Err(a), Err(b)) => assert_eq!(b, a, "{exec:?}'s refusal against the interpreter's"),
             _ => panic!("the interpreter: {:?}\n{exec:?}: {:?}", w_out.as_ref().map(|o| show(o)), m_out.as_ref().map(|o| show(o))),
         }
-        assert!(device.runs > 0 && device.dispatches > 0, "{device:?}");
+        assert!(exec == Exec::Cranelift || device.runs > 0 && device.dispatches > 0, "{device:?}");
     }
     (out, stats)
 }
@@ -177,7 +179,7 @@ fn a_batch_reads_each_unit_as_alone() {
     let cfg = Config::new(Options::c(17, true));
     let alone: Vec<Outcome> = units.iter().map(|f| run_words(cfg.clone(), &mut io(f), "main.c", rerail_compiler::pp_words::run).0).collect();
     assert!(alone.iter().filter(|o| o.is_err()).count() == 2, "{:?}", alone.iter().map(|o| o.as_ref().err()).collect::<Vec<_>>());
-    let mut execs = vec![Exec::Interpreter];
+    let mut execs = vec![Exec::Interpreter, Exec::Cranelift];
     #[cfg(target_os = "macos")]
     execs.extend([Exec::Metal, Exec::MetalWords]);
     for exec in execs {
@@ -190,7 +192,7 @@ fn a_batch_reads_each_unit_as_alone() {
                 _ => assert_eq!(b.as_ref().err(), a.as_ref().err(), "unit {k} on {exec:?}"),
             }
         }
-        if exec != Exec::Interpreter {
+        if !matches!(exec, Exec::Interpreter | Exec::Cranelift) {
             // A round's run serves every unit still moving: as many runs as the deepest unit's rounds, and the text's.
             let rounds = got.iter().map(|g| g.1.rounds as usize).max().unwrap();
             assert!(device.runs <= rounds + 1, "{} runs for {rounds} rounds", device.runs);
@@ -217,6 +219,7 @@ fn the_corpus_by_the_programs() {
     let exec = match env("RERAIL_PP_EXEC").as_deref() {
         Some("metal") => Exec::Metal,
         Some("metal-words") => Exec::MetalWords,
+        Some("cranelift") => Exec::Cranelift,
         _ => Exec::Interpreter,
     };
     #[cfg(not(target_os = "macos"))]

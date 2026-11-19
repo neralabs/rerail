@@ -28,6 +28,9 @@ pub mod grammar;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod ladder;
 mod error;
+pub mod native_cpu_array;
+#[cfg(test)]
+mod native_cpu_array_tests;
 pub mod native_cpu_block;
 pub mod native_cpu_walk;
 pub mod native_cpu_codegen;

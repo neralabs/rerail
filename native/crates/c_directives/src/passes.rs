@@ -200,6 +200,18 @@ pub struct Prog {
     outputs: Vec<&'static str>,
 }
 
+thread_local! {
+    /// Each program's Cranelift code, by the program's address: compiled once a thread.
+    static JIT: std::cell::RefCell<HashMap<usize, std::rc::Rc<rerail_compiler::native_cpu_array::CompiledArray>>> = std::cell::RefCell::new(HashMap::new());
+}
+
+impl Prog {
+    /// The program's Cranelift code (`Exec::Cranelift`).
+    fn jit(&self) -> std::rc::Rc<rerail_compiler::native_cpu_array::CompiledArray> {
+        JIT.with(|j| j.borrow_mut().entry(self as *const Prog as usize).or_insert_with(|| std::rc::Rc::new(rerail_compiler::native_cpu_array::compile(&self.p).expect("the programs compile"))).clone())
+    }
+}
+
 /// The program's functions, in the order both programs declare them.
 const F_TEST: u16 = 0;
 const F_INCLUDE: u16 = 1;
@@ -1213,6 +1225,9 @@ impl Calls for Host<'_, '_> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Exec {
     Interpreter,
+    /// The programs' element loops as Cranelift's code (`native_cpu_array`), compiled once a
+    /// thread; the calls on the CPU.
+    Cranelift,
     #[cfg(target_os = "macos")]
     Metal,
     /// The programs on Metal, and the words' readings too: a wave of a call's readings in one
@@ -1286,6 +1301,10 @@ impl Prog {
         let inputs: Vec<Vec<&[i64]>> = cols.iter().map(|c| self.inputs.iter().map(|n| c.get(n).unwrap_or_else(|| panic!("no column {n}")).as_slice()).collect()).collect();
         let outputs: Vec<Result<Vec<Vec<i64>>, (usize, &'static str)>> = match runner.exec {
             Exec::Interpreter => inputs.iter().zip(hosts.iter_mut()).map(|(i, h)| self.p.values_at(i, &[], h).map(|v| self.p.outputs.iter().map(|&o| v.arrays[usize::from(o)].clone()).collect())).collect(),
+            Exec::Cranelift => {
+                let c = self.jit();
+                inputs.iter().zip(hosts.iter_mut()).map(|(i, h)| c.values_at(&self.p, i, &[], h).map(|v| self.p.outputs.iter().map(|&o| v.arrays[usize::from(o)].clone()).collect())).collect()
+            }
             #[cfg(target_os = "macos")]
             Exec::Metal | Exec::MetalWords => {
                 let cols: Vec<rerail_metal::array_program::Columns> = inputs.iter().map(|i| rerail_metal::array_program::Columns { inputs: i.clone(), params: Vec::new() }).collect();
