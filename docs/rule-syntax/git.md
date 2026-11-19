@@ -56,6 +56,32 @@ release_scan(id, t) :- analysis_history_of("named", "release", _, _, id, _, _, t
 The store looks up completed runs by scope. Publishing or removing another scope preserves this query's cached result.
 To enumerate every published run, read `analysis_run_record` or its projections such as `analysis_scope_run`.
 
+## Read bytes through a Git content handle
+
+Include `git/content.rr` and derive `git_content_request(repo, oid)` for each object whose bytes you need.
+For a readable object, `git_object(repo, oid, kind, content)` returns its kind and an opaque content handle.
+`git_blob_content(repo, oid, content)` selects blobs. Equal payload bytes share a handle across revisions.
+The source store retains the verified bytes under the consuming analysis scope.
+
+```rr
+#include "git/content.rr"
+#include "git/documents.rr"
+git_content_request(r, b) :- git_source_view(v, r, _, _, _), git_source_file(v, "example.bin", _, b).
+git_content_read_request(h, 0, 4) :- git_blob_content(_, _, h).
+.decl signature(bytes: symbol)
+signature(hex) :- git_content_bytes(_, 0, 4, hex).
+.output signature
+```
+
+`git_content_size(content, size)` gives the payload length in bytes. Offsets start at zero.
+`git_content_bytes(content, offset, length, hex)` returns the requested bytes in lowercase hexadecimal.
+A read that crosses the end returns the available bytes. A read starting at or beyond the end returns the empty string.
+Negative offsets or lengths give `git_content_read_error(content, offset, length, reason)`.
+
+The rule must acquire the handle from a repository in this evaluation. This lets one rule pass the handle to another.
+If the Git object disappears or fails verification, `git_content_error(repo, oid, reason)` reports the failure.
+Restoring the object lets a subsequent evaluation verify it and read the same bytes again.
+
 ## Find the Git blob behind a parsed document
 
 Include `git/documents.rr` to join a parsed file to its source in the selected revision.
