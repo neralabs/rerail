@@ -56,8 +56,11 @@ whose `.policy` line names `<id>` (a rule whose clauses span languages is one fi
 path, line, code), the column too where both sides give one (translations give none today), on the pack's examples
 (`pack.json`), its recorded fixtures and its real-code corpora (`scripts/ship/corpora.json`; the `rerail` pack's is
 this repository at a pinned commit). Each rule comes out `same`, `different` (per corpus, how many keys only one side
-reports, with samples), `untranslated` (no `.rerail`) or `failed` (check-rr's refusal or a run's failure, with the
-engine's message). `--rules a,b` narrows a run to some rules; `--corpora`, `--engine` and `--out` say where things are.
+reports, with samples), `untranslated` (no `.rerail`) or `failed` (check-rr's refusal, a run's failure, an original
+that does not compile, with the engine's message); the original's failures on single files (syntax errors, a spent
+work budget) are listed beside the comparison, not counted as failures. Translations include the library of this
+checkout (`docs/rule-syntax/lib`, passed as `RERAIL_RR_LIB`). `--rules a,b` narrows a run to some rules; `--corpora`,
+`--engine` and `--out` say where things are.
 
 Each pack declares what it expects in `equivalence.json` here:
 

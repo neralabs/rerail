@@ -62,6 +62,11 @@ describe("a rule's outcome", () => {
     expect(ruleResult({ rule: "r", translation: "r.rerail", corpora: { a: { original: [f("x.ts", 1)], translation: [] } } }).status).toBe("different");
     expect(summarize([result("a", { e: [0, 0] }), result("b", { e: [1, 0] }), { rule: "c", status: "failed", corpora: {} }])).toEqual({ same: 1, different: 1, untranslated: 0, failed: 1 });
   });
+
+  it("compares a rule its original failed on some files of, and keeps those failures beside it", () => {
+    const r = ruleResult({ rule: "r", translation: "r.rerail", corpora: { a: { original: [f("x.ts", 1)], translation: [f("x.ts", 1), f("y.ts", 2)], originalFailures: ["source-incomplete: file has syntax errors", "budget-exceeded: spent"] } } });
+    expect(r).toMatchObject({ status: "different", corpora: { a: { both: 1, translationOnly: 1, originalFailures: { count: 2, first: "source-incomplete: file has syntax errors" } } } });
+  });
 });
 
 describe("the gate", () => {

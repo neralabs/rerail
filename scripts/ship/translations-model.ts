@@ -62,6 +62,11 @@ export interface CorpusComparison {
   originalOnly: number;
   translationOnly: number;
   samples: { originalOnly: string[]; translationOnly: string[] };
+  /**
+   * The original's failures on files of the corpus (a file with syntax errors, a work budget spent): the product
+   * reports them and carries on, so the rule is compared still, and a difference on such a file may be theirs.
+   */
+  originalFailures?: { count: number; first: string };
 }
 
 export type Status = "same" | "different" | "untranslated" | "failed";
@@ -152,8 +157,11 @@ export interface RuleInput {
   translation: string | undefined;
   /** Why the translation cannot run before any corpus (no .policy line, check-rr's refusal), else undefined. */
   refused?: string;
-  /** Per corpus: each side's findings of this rule, or the first failure either side met on it. */
-  corpora: Record<string, { original: readonly Finding[]; translation: readonly Finding[] } | { failure: string }>;
+  /**
+   * Per corpus: each side's findings of this rule, with the original's failures on some files, or a failure that
+   * leaves the rule without findings to compare (a side's run that failed, an original that does not compile).
+   */
+  corpora: Record<string, { original: readonly Finding[]; translation: readonly Finding[]; originalFailures?: readonly string[] } | { failure: string }>;
 }
 
 /** A rule's outcome: untranslated, failed (refused, or a side failed on a corpus), different, or same. */
@@ -165,7 +173,11 @@ export function ruleResult(input: RuleInput): RuleResult {
   for (const [corpus, run] of Object.entries(input.corpora)) if ("failure" in run) failures.set(run.failure, [...(failures.get(run.failure) ?? []), corpus]);
   if (failures.size > 0) return { rule: input.rule, status: "failed", message: [...failures].map(([why, where]) => `${where.join(", ")}: ${why}`).join("; "), corpora: {} };
   const corpora: Record<string, CorpusComparison> = {};
-  for (const [corpus, run] of Object.entries(input.corpora)) if (!("failure" in run)) corpora[corpus] = compareFindings(run.original, run.translation);
+  for (const [corpus, run] of Object.entries(input.corpora)) {
+    if ("failure" in run) continue;
+    const c = compareFindings(run.original, run.translation);
+    corpora[corpus] = run.originalFailures === undefined || run.originalFailures.length === 0 ? c : { ...c, originalFailures: { count: run.originalFailures.length, first: run.originalFailures[0]! } };
+  }
   const differs = Object.values(corpora).some((c) => c.originalOnly + c.translationOnly > 0);
   return { rule: input.rule, status: differs ? "different" : "same", corpora };
 }
@@ -410,6 +422,7 @@ export function renderPack(report: PackReport, detail = true): string {
       for (const [corpus, c] of Object.entries(r.corpora)) {
         for (const key of c.samples.originalOnly) lines.push(`    ${corpus} original only: ${key}`);
         for (const key of c.samples.translationOnly) lines.push(`    ${corpus} translation only: ${key}`);
+        if (c.originalFailures !== undefined) lines.push(`    ${corpus}: the original failed on ${c.originalFailures.count} file(s); the first: ${c.originalFailures.first.slice(0, 200)}`);
       }
     }
   }

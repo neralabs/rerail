@@ -14,7 +14,10 @@
 // check-rr` and run by `rerail-engine run-policies <corpus> <out> <rule.rerail>...`: every translation of the pack in
 // one run, and when that run fails, each rule's files alone (--jobs at once), a rule failing alone reported with the
 // engine's message. Findings are compared per rule as sets of (rule, path, line, code), and column where both sides
-// give one; messages are not compared.
+// give one; messages are not compared. The engine reads the library translations include from this checkout's
+// docs/rule-syntax/lib (RERAIL_RR_LIB). A rule is `failed` when check-rr refuses it, a side's run fails, or its
+// original does not compile; the original's failures on single files (syntax errors, a spent work budget) are
+// recorded beside the comparison, as the product reports them and carries on.
 //
 // The corpora, each compared on its own:
 //   examples   pack.json's `rules[].examples` that are files, laid out as few directories as hold them;
@@ -66,6 +69,11 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SELF = resolve(HERE, "..", "..");
 const MANIFEST = join(HERE, "corpora.json");
 const TRANSLATIONS = join(SELF, "docs", "rule-syntax", "packs");
+/**
+ * The engine's environment: the `.rerail` library its translations include is this checkout's (RERAIL_RR_LIB), not
+ * the one the engine binary was built from.
+ */
+const ENGINE_ENV = { ...process.env, RERAIL_RR_LIB: join(SELF, "docs", "rule-syntax", "lib") };
 
 interface Manifest {
   format: 1;
@@ -149,7 +157,10 @@ function failureText(run: Spawned, timeoutS: number): string {
 /** One side's findings on one corpus directory, and the rules it failed, each with why. */
 interface SideRun {
   findings: Finding[];
+  /** Rules the run leaves without findings to compare (its process failed, the rule does not compile). */
   failures: Map<string, string>;
+  /** The original's failures on some files of a rule it ran (the product reports them and carries on). */
+  incidents: Map<string, string[]>;
   /** What the run says that is no rule's (the original's failures without a rule; findings of no known policy). */
   notes: string[];
 }
@@ -163,20 +174,22 @@ async function runOriginal(dir: string, rulesDir: string, work: string, ruleIds:
   rmSync(tmp, { recursive: true, force: true });
   if (run.status !== 0 || !existsSync(result)) {
     const why = `the original's run failed: ${failureText(run, timeoutS)}`;
-    return { findings: [], failures: new Map(ruleIds.map((rule) => [rule, why])), notes: [] };
+    return { findings: [], failures: new Map(ruleIds.map((rule) => [rule, why])), incidents: new Map(), notes: [] };
   }
   const output = readJson<{ findings: [string, string, number, string, number?][]; compileErrors: { rule: string; error: string }[]; failures: { rule: string; code: string; message: string }[] }>(result);
   rmSync(result);
   const failures = new Map<string, string>();
   for (const e of output.compileErrors) failures.set(e.rule, `the original does not compile: ${e.error}`);
+  const incidents = new Map<string, string[]>();
   const unattributed: string[] = [];
   for (const f of output.failures) {
     if (f.rule === "") unattributed.push(`${f.code}: ${f.message}`);
-    else if (!failures.has(f.rule)) failures.set(f.rule, `the original failed: ${f.code}: ${f.message}`);
+    else if (incidents.has(f.rule)) incidents.get(f.rule)!.push(`${f.code}: ${f.message}`);
+    else incidents.set(f.rule, [`${f.code}: ${f.message}`]);
   }
   const notes = unattributed.length === 0 ? [] : [`the original's run had ${unattributed.length} failure(s) of no rule; the first: ${unattributed[0]}`];
   const findings = output.findings.map(([rule, path, line, code, column]): Finding => ({ rule, path, line, code, ...(column === undefined || column === 0 ? {} : { column }) }));
-  return { findings, failures, notes };
+  return { findings, failures, incidents, notes };
 }
 
 /** A run-policies document's findings, each mapped to its rule by its policy's name. */
@@ -193,14 +206,19 @@ function translationFindings(stdout: string, policies: ReadonlySet<string>, note
 }
 
 /** The translation side: every rule's `.rerail` files in one run, else each rule's alone, `jobs` at once. */
-async function runTranslations(engine: string, dir: string, rules: ReadonlyMap<string, readonly string[]>, work: string, jobs: number, timeoutS: number): Promise<SideRun> {
+async function runTranslations(engine: string, dir: string, rules: ReadonlyMap<string, readonly string[]>, work: string, jobs: number, timeoutS: number): Promise<Omit<SideRun, "incidents">> {
   const notes: string[] = [];
   const failures = new Map<string, string>();
   if (rules.size === 0) return { findings: [], failures, notes };
   const policies = new Set(rules.keys());
   const attempt = async (paths: readonly string[], out: string): Promise<{ findings: Finding[] } | { failure: string }> => {
-    const run = await spawnAsync(engine, ["run-policies", dir, out, ...paths], { cwd: SELF, timeoutS });
+    // Each run its own store, removed with its output: the default store, one per working directory, would hold every
+    // pack's tapes and memo entries across runs until its hard limit refused new ones.
+    const store = `${out}.store`;
+    mkdirSync(store, { recursive: true });
+    const run = await spawnAsync(engine, ["run-policies", dir, out, ...paths], { cwd: SELF, env: { ...ENGINE_ENV, RERAIL_TAPE_CACHE: join(store, "store.sqlite") }, timeoutS });
     rmSync(out, { recursive: true, force: true });
+    rmSync(store, { recursive: true, force: true });
     if (run.status !== 0) return { failure: failureText(run, timeoutS) };
     try {
       return { findings: translationFindings(run.stdout, policies, notes) };
@@ -270,11 +288,14 @@ function policyFiles(pack: string): Map<string, string[]> {
 }
 
 /** check-rr's refusal of each rule some file of which it does not pass. */
-function checkRr(engine: string, rules: ReadonlyMap<string, readonly string[]>): Map<string, string> {
+function checkRr(engine: string, rules: ReadonlyMap<string, readonly string[]>, work: string): Map<string, string> {
   const refused = new Map<string, string>();
   const paths = [...rules.values()].flat();
   if (paths.length === 0) return refused;
-  const checked = spawnSync(engine, ["check-rr", ...paths], { cwd: SELF, encoding: "utf8", maxBuffer: 1 << 28 });
+  const store = join(work, "check-rr.store");
+  mkdirSync(store, { recursive: true });
+  const checked = spawnSync(engine, ["check-rr", ...paths], { cwd: SELF, env: { ...ENGINE_ENV, RERAIL_TAPE_CACHE: join(store, "store.sqlite") }, encoding: "utf8", maxBuffer: 1 << 28 });
+  rmSync(store, { recursive: true, force: true });
   let rows: { path: string; status: string; error?: string }[];
   try {
     rows = engineJson(checked.stdout ?? "");
@@ -374,12 +395,12 @@ async function checkPack(pack: string, o: Options): Promise<PackReport> {
   const files = policyFiles(pack);
   for (const policy of files.keys()) if (!shipped.includes(policy)) notes.push(`translation of no rule of the pack: .policy "${policy}" (${files.get(policy)!.map((f) => f.slice(f.lastIndexOf("/") + 1)).join(", ")})`);
   const translated = new Map(ruleIds.flatMap((rule) => (files.has(rule) ? [[rule, files.get(rule)!] as const] : [])));
-  const refused = checkRr(o.engine, translated);
-  const runnable = new Map([...translated].filter(([rule]) => !refused.has(rule)));
 
   const work = join(o.out, "work", pack);
   rmSync(work, { recursive: true, force: true });
   mkdirSync(work, { recursive: true });
+  const refused = checkRr(o.engine, translated, work);
+  const runnable = new Map([...translated].filter(([rule]) => !refused.has(rule)));
   const rulesDir = join(work, "rules");
   mkdirSync(rulesDir);
   for (const rule of ruleIds) writeFileSync(join(rulesDir, `${rule}.json`), readFileSync(join(SELF, "packs", pack, "rules", `${rule}.json`)));
@@ -393,12 +414,14 @@ async function checkPack(pack: string, o: Options): Promise<PackReport> {
     const original: Finding[] = [];
     const translation: Finding[] = [];
     const failures = new Map<string, string>();
+    const incidents = new Map<string, string[]>();
     for (const [i, { dir, prefix }] of corpus.dirs.entries()) {
       const runWork = join(work, "runs", `${corpus.name}-${i + 1}`);
       mkdirSync(runWork, { recursive: true });
       console.log(`translations: ${pack} on ${corpus.name}${corpus.dirs.length > 1 ? ` (${i + 1}/${corpus.dirs.length})` : ""}: ${ruleIds.length} originals, ${runnable.size} translations`);
       const [o1, t1] = await Promise.all([runOriginal(dir, rulesDir, runWork, ruleIds, o.timeoutS), runTranslations(o.engine, dir, runnable, runWork, o.jobs, o.timeoutS)]);
       for (const [rule, why] of [...o1.failures, ...t1.failures]) if (!failures.has(rule)) failures.set(rule, why);
+      for (const [rule, list] of o1.incidents) incidents.set(rule, [...(incidents.get(rule) ?? []), ...list]);
       for (const note of [...o1.notes, ...t1.notes]) notes.push(`${corpus.name}: ${note}`);
       original.push(...o1.findings.map((f) => ({ ...f, path: prefix + f.path })));
       translation.push(...t1.findings.map((f) => ({ ...f, path: prefix + f.path })));
@@ -407,7 +430,8 @@ async function checkPack(pack: string, o: Options): Promise<PackReport> {
     const translationBy = byRule(translation);
     for (const rule of runnable.keys()) {
       const why = failures.get(rule);
-      inputs.get(rule)!.corpora[corpus.name] = why === undefined ? { original: originalBy.get(rule) ?? [], translation: translationBy.get(rule) ?? [] } : { failure: why };
+      const run = { original: originalBy.get(rule) ?? [], translation: translationBy.get(rule) ?? [], ...(incidents.has(rule) ? { originalFailures: incidents.get(rule)! } : {}) };
+      inputs.get(rule)!.corpora[corpus.name] = why === undefined ? run : { failure: why };
     }
   }
 
