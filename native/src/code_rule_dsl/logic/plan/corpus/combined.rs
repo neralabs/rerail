@@ -33,7 +33,8 @@ const PATH: &str = "rerail/combined";
 /// The relation holding the program's text's digest (sha256 hex).
 const PROGRAM: &str = "rr_combined_program";
 
-/// The relation holding the images the combine read or kept (decision 0246 §6): their aliases (sha256 hex). A run
+/// The relation holding the images the combine read or kept (decision 0246 §6): their aliases (sha256 hex), or the
+/// hash of facts it kept by text (the tail run's pointer, `parts::keep_facts`). A run
 /// that names the entry names them too, so collection keeps them while it keeps the run.
 const IMAGE: &str = "rr_combined_image";
 
@@ -309,7 +310,11 @@ fn image_sources(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Vec<crate:
     for row in facts.get(IMAGE).into_iter().flatten() {
         if let [Value::Str(digest)] = row.as_slice()
             && let Some(digest) = unhex(digest)
-            && let Some(id) = store.source_by_alias(HashKey::from_sha256_digest(digest))?
+            && let Some(id) = match store.source_by_alias(HashKey::from_sha256_digest(digest))? {
+                Some(id) => Some(id),
+                // Facts kept by their text's hash (`parts::keep_facts`: the tail run's pointer).
+                None => store.source_by_hash(HashKey::from_sha256_digest(digest))?,
+            }
         {
             out.push(id);
         }

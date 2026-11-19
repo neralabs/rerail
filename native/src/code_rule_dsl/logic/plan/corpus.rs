@@ -111,7 +111,6 @@ pub const PREPARING: &[&str] = &[
     // Lowering and its passes.
     "RERAIL_TEXT_NODES",
     "RERAIL_SPAN_PREFILTER",
-    "RERAIL_NODE_ANCHORS",
     "RERAIL_NEAREST_BUFFERS",
     "RERAIL_FACTORIZE",
     "RERAIL_EXPORT_DEMAND",
@@ -916,7 +915,8 @@ fn combine_version(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]
 /// The programs linked into one (`combine_linked_as`), and the combine's tail run on it (`tail_version`), with the kept
 /// tail run it was made over or kept, if any (`tail_kept`).
 fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<[u8; 32]>)> {
-    let (v, tail) = combine_linked_as::<link::Versioned>(programs, extra, read, images_used)?;
+    let mut images_used = images_used;
+    let (v, tail) = combine_linked_as::<link::Versioned>(programs, extra, read, images_used.as_deref_mut())?;
     // `RERAIL_COMBINE_LINK=check`: the splice (decision 0373) against the programs linked whole.
     if combine_link_mode() == "check" {
         let (whole, whole_tail) = crate::code_rule_dsl::logic::profile::quiet(|| combine_linked_spliced::<link::Versioned>(programs, extra, read, None, false))?;
@@ -928,7 +928,7 @@ fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate
     let (v, run) = match &tail {
         Tail::Many { kept: Some(kept), .. } if combine_tail_mode() != "whole" => {
             let kept = *kept;
-            let (spliced, run) = tail_kept(v.clone(), &tail, kept)?;
+            let (spliced, run) = tail_kept(v.clone(), &tail, kept, images_used.as_deref_mut())?;
             // `RERAIL_COMBINE_TAIL=check`: the tail kept (decision 0393) against the tail run whole.
             if combine_tail_mode() == "check" {
                 let whole = crate::code_rule_dsl::logic::profile::quiet(|| tail_version(v, &tail))?;
@@ -1411,7 +1411,9 @@ fn tail_version(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tai
 /// store, and where the link is an edit of its input (`manager::rebase`), the passes run again over the edit
 /// (`Pipeline::again`): each step's analyses carried across it, and a pass that can (`ProgramPass::again`) writing
 /// the edit onto its last output. The run is kept again, behind the run.
-fn tail_kept(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: &Tail, kept: TailKept) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<[u8; 32]>)> {
+/// `used`: where the pointer to the tail's run (`keep_facts`) is named, read or kept, for the combined program's entry
+/// to name it (`combined::image_sources`): a run that reads the entry keeps it as the run that combined did.
+fn tail_kept(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: &Tail, kept: TailKept, used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<[u8; 32]>)> {
     use crate::code_rule_dsl::logic::program_image::manager::{Delta, Pipeline, Runs as _, rebase};
     let Some(store) = crate::code_rule_dsl::logic::rr::image_store() else { return Ok((tail_version(v, tail)?, None)) };
     let key = {
@@ -1433,7 +1435,10 @@ fn tail_kept(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: 
     };
     let last = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the combine's last tail run, from the store (decision 0393)".into());
-        let named = preparation::parts::kept_facts_alone(&store, &key).and_then(|f| f.get("anchor").and_then(|r| r.first()).and_then(|r| match r.first() {
+        if let Some(used) = used {
+            used.push(preparation::parts::kept_facts_hash(&key));
+        }
+        let named = preparation::parts::kept_facts_alone(&store, &key).and_then(|(f, _)| f.get("anchor").and_then(|r| r.first()).and_then(|r| match r.first() {
             Some(front::Value::Str(h)) => preparation::parts::unhex(h),
             _ => None,
         }));
@@ -5343,7 +5348,9 @@ fn run_observed(
                     // declared or not.
                     let bound: Vec<&str> = repository.iter().map(|(rel, _, _)| rel.as_str()).collect();
                     let progs = [cross.placed()?, maintained.placed()?];
-                    let (rels, strata) = retain::frame_rels_kept(store, &[&progs[0], &progs[1]], &binds, &bound)?;
+                    let mut named = Vec::new();
+                    let (rels, strata) = retain::frame_rels_kept(store, &[&progs[0], &progs[1]], &binds, &bound, &mut named)?;
+                    late_sources.lock().expect("the late sources").extend(named);
                     cross_idents = progs.iter().map(super::body::Placed::digest).zip(strata).collect();
                     Some(rels)
                 }

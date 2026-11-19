@@ -622,12 +622,20 @@ fn record(store: &ContentStore, key: &[u8; 32], p: &Prepared) {
     keep(store, key, &p.version, |digest| facts_of(p, digest));
 }
 
-/// The facts kept under `key` alone (`keep_facts`): no image.
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn kept_facts_alone(store: &ContentStore, key: &[u8; 32]) -> Option<Facts> {
-    let source = store.source_by_hash(HashKey::sha256(source_text(key).as_bytes())).ok()??;
+/// The facts kept under `key` alone (`keep_facts`): no image. With the source they are kept as, which a run that
+/// reads them names in its manifest (decision 0306), as the run that kept them did: else collection may take facts a
+/// kept run reads.
+pub(in crate::code_rule_dsl::logic::plan::corpus) fn kept_facts_alone(store: &ContentStore, key: &[u8; 32]) -> Option<(Facts, SourceId)> {
+    let source = store.source_by_hash(kept_facts_hash(key)).ok()??;
     let set = plan();
     let result = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH }).ok()?.results.remove(&set.plans[0])?;
-    program_facts::decode(&result.entry).ok()
+    program_facts::decode(&result.entry).ok().map(|f| (f, source))
+}
+
+/// The hash the facts kept under `key` (`keep_facts`) are stored by: a reader names them by it where it names by
+/// hashes (the combined program's `IMAGE`).
+pub(in crate::code_rule_dsl::logic::plan::corpus) fn kept_facts_hash(key: &[u8; 32]) -> HashKey {
+    HashKey::sha256(source_text(key).as_bytes())
 }
 
 /// Keeps `facts` under `key`, no image beside them, written by the store's writer (`kept_facts_alone` reads them).

@@ -1718,7 +1718,8 @@ fn every_switch_lowering_reads_is_classified() {
     // `choices::key`, which holds the switches those read (`RERAIL_INLINE`, `RERAIL_INLINE_ONLY`,
     // `RERAIL_OBSERVED_STEPS`).
     let mut preparing = sources(&[
-        "logic/simplify.rs", "logic/strings.rs", "logic/reach_form.rs", "logic/magic.rs", "logic/magic", "logic/plan/lower.rs",
+        // The tree passes that were `logic/simplify.rs` and `logic/magic.rs` are the preparation's now (0276 step 6).
+        "logic/strings.rs", "logic/reach_form.rs", "logic/magic", "logic/plan/lower.rs",
         "logic/plan/corpus/cross_memo.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
         // Its passes, on the version (`preparation`): the front's, the lowering's, `FoldOwn`'s and the merges, and
         // the combine's fact spaces.

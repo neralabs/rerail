@@ -1517,13 +1517,15 @@ fn program_key(h: &mut sha2::Sha256, p: &Placed) {
 /// Identities kept as a stored fact under `key` (`parts::keep_facts`): read back where kept, else made by `make` and
 /// kept. The key names everything they are made of (the programs, the binds, the engine), so a program the run held
 /// before reads its identities rather than hashing its strata again (Q19's identities, decision 0379).
-fn kept_identities(store: &ContentStore, what: &str, key: [u8; 32], make: impl FnOnce() -> Result<Vec<(String, [u8; 32])>>) -> Result<Vec<(String, [u8; 32])>> {
+/// `named`: the source of the facts read, for the run's manifest (`kept_facts_alone`).
+fn kept_identities(store: &ContentStore, what: &str, key: [u8; 32], named: &mut Vec<crate::content_store::SourceId>, make: impl FnOnce() -> Result<Vec<(String, [u8; 32])>>) -> Result<Vec<(String, [u8; 32])>> {
     use super::preparation::parts::{hex, keep_facts, kept_facts_alone, rows_of, str};
     let kept = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("{what}: kept"));
-        kept_facts_alone(store, &key).and_then(|f| rows_of(&f, "frame_ident").map(|r| Some((r.first()?.clone(), super::preparation::parts::unhex(r.get(1)?)?))).collect::<Option<Vec<_>>>())
+        kept_facts_alone(store, &key).and_then(|(f, source)| rows_of(&f, "frame_ident").map(|r| Some((r.first()?.clone(), super::preparation::parts::unhex(r.get(1)?)?))).collect::<Option<Vec<_>>>().map(|k| (k, source)))
     };
-    if let Some(k) = kept {
+    if let Some((k, source)) = kept {
+        named.push(source);
         return Ok(k);
     }
     let made = make()?;
@@ -1539,7 +1541,7 @@ pub(in crate::code_rule_dsl) type StrataIdents = Arc<HashMap<String, [u8; 32]>>;
 
 /// `p`'s strata identities (`identities_by_heads` over `sccs`), kept as a stored fact under the program and its
 /// components. Read before the first wave only (decision 0104): a reader inside the waves is handed them.
-fn strata_idents_kept(store: &ContentStore, p: &Placed, sccs: &[BTreeSet<String>]) -> Result<StrataIdents> {
+fn strata_idents_kept(store: &ContentStore, p: &Placed, sccs: &[BTreeSet<String>], named: &mut Vec<crate::content_store::SourceId>) -> Result<StrataIdents> {
     use sha2::{Digest as _, Sha256};
     let mut h = Sha256::new();
     h.update(b"rerail/strata identities v1\0");
@@ -1553,16 +1555,17 @@ fn strata_idents_kept(store: &ContentStore, p: &Placed, sccs: &[BTreeSet<String>
         h.update([1]);
     }
     let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(p.clone());
-    let made = kept_identities(store, "a program's strata identities", h.finalize().into(), || Ok(leaves.identities_by_heads(sccs)?.into_iter().collect()))?;
+    let made = kept_identities(store, "a program's strata identities", h.finalize().into(), named, || Ok(leaves.identities_by_heads(sccs)?.into_iter().collect()))?;
     Ok(Arc::new(made.into_iter().collect()))
 }
 
 /// `frame_rels`, its parts kept as stored facts (`kept_identities`): the whole set under the programs, `binds` and
 /// `bound`, and each program's strata identities (`strata_idents_kept`), returned for `Retained::from_frames`.
 /// Before the first wave (decision 0104).
-pub(in crate::code_rule_dsl) fn frame_rels_kept(store: &ContentStore, progs: &[&Placed], binds: &[u8; 32], bound: &[&str]) -> Result<(std::collections::HashSet<FrameRel>, Vec<StrataIdents>)> {
+/// `named`: the sources of the kept facts read, for the run's manifest.
+pub(in crate::code_rule_dsl) fn frame_rels_kept(store: &ContentStore, progs: &[&Placed], binds: &[u8; 32], bound: &[&str], named: &mut Vec<crate::content_store::SourceId>) -> Result<(std::collections::HashSet<FrameRel>, Vec<StrataIdents>)> {
     use sha2::{Digest as _, Sha256};
-    let strata = progs.iter().map(|p| strata_idents_kept(store, p, &p.components()?)).collect::<Result<Vec<_>>>()?;
+    let strata = progs.iter().map(|p| strata_idents_kept(store, p, &p.components()?, named)).collect::<Result<Vec<_>>>()?;
     let mut h = Sha256::new();
     h.update(b"rerail/frame rels v1\0");
     h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
@@ -1577,7 +1580,7 @@ pub(in crate::code_rule_dsl) fn frame_rels_kept(store: &ContentStore, progs: &[&
         h.update(r.as_bytes());
         h.update([0]);
     }
-    let rels = kept_identities(store, "the cross part's frame identities", h.finalize().into(), || {
+    let rels = kept_identities(store, "the cross part's frame identities", h.finalize().into(), named, || {
         let mut out: std::collections::HashSet<FrameRel> = strata.iter().flat_map(|s| s.iter().map(|(name, ident)| FrameRel { name: name.clone(), ident: *ident })).collect();
         out.extend(input_rels(progs, binds, bound)?);
         Ok(out.into_iter().map(|f| (f.name, f.ident)).collect())
