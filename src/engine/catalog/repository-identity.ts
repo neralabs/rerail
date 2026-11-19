@@ -26,6 +26,7 @@ import {
   realOf,
   type PlacementInputs,
 } from "./checkouts/git-placement.js";
+import { foldersGitSearches } from "./checkouts/git-search.js";
 import { openNoFollowSync } from "../no-follow.js";
 import { GitUnavailableError, gitText, runGit } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
@@ -139,19 +140,14 @@ interface Searched {
 }
 
 /**
- * What Git's search for a repository reads in each folder from `requested`'s real path up to its root, as Git walks up
- * from the folder it changed into; none when the real path cannot be read. Read before Git runs: a folder that becomes
- * a repository while Git runs, after Git passed it, then moves what the next ask reads.
+ * What Git's search for a repository reads in each folder it walks up from `requested`'s real path, the folder Git
+ * changes into, as far as Git's search goes ({@link foldersGitSearches}); none when the real path cannot be read. Read
+ * before Git runs: a folder that becomes a repository while Git runs, after Git passed it, then moves what the next ask
+ * reads.
  */
 function searchedUp(requested: string): Searched[] {
   const real = realOf(requested);
-  return real === undefined ? [] : foldersUp(real).map(folder => ({ folder, entries: searchedIn(folder) }));
-}
-
-/** `folder` and every folder above it, up to its root. */
-function foldersUp(folder: string): string[] {
-  const parent = dirname(folder);
-  return parent === folder ? [folder] : [folder, ...foldersUp(parent)];
+  return real === undefined ? [] : foldersGitSearches(real).map(folder => ({ folder, entries: searchedIn(folder) }));
 }
 
 /** What `folder` holds where Git's search looks ({@link GIT_MARKERS}), as an lstat gives each: two lstats, no Git process. */
@@ -494,8 +490,9 @@ function keepAcceptance(requested: string, facts: string | undefined, located: L
 }
 
 /**
- * The folders of `searched` from the one asked up to `top`, the top level Git named; all of them, up to the root, when
- * `top` is not among them (a `core.worktree` naming a folder elsewhere), since Git searched up from the folder asked.
+ * The folders of `searched` from the one asked up to `top`, the top level Git named; all of them, as far as Git's search
+ * goes, when `top` is not among them (a `core.worktree` naming a folder elsewhere), since Git searched up from the
+ * folder asked.
  */
 function upToTop(searched: readonly Searched[], top: string): readonly Searched[] {
   const end = searched.findIndex(folder => folder.folder === top);

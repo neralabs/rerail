@@ -1,8 +1,21 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { closeSync, cpSync, ftruncateSync, mkdirSync, openSync, realpathSync, symlinkSync, writeSync } from "node:fs";
+import {
+  closeSync,
+  cpSync,
+  ftruncateSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  realpathSync,
+  Stats,
+  symlinkSync,
+  writeSync,
+  type PathLike,
+  type StatSyncOptions,
+} from "node:fs";
 import { chmod, mkdtemp, open, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkoutRealpath, physicalPath } from "../../../../src/engine/catalog/checkout-control.js";
 import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
@@ -28,6 +41,12 @@ vi.mock("../../../../src/engine/git.js", async importOriginal => {
 vi.mock("../../../../src/engine/catalog/checkout-control.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../../src/engine/catalog/checkout-control.js")>();
   return { ...actual, checkoutRealpath: vi.fn(actual.checkoutRealpath) };
+});
+
+// Every lstat passes through, so a case can count what Rerail reads and stand in for what a folder's lstat gives.
+vi.mock("node:fs", async importOriginal => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, lstatSync: vi.fn(actual.lstatSync) };
 });
 
 vi.mock("../../../../src/engine/native/native.js", async importOriginal => {
@@ -307,6 +326,97 @@ describe("GIT_CEILING_DIRECTORIES, which stops Git's search only above the folde
     expect(expectGitsAnswers(join(root, "linked"), ...folders)).toBe(0);
     expectGitsRegistries(...folders);
     expect(folders.reduce((sum, folder) => sum + locateCalls(folder), 0)).toBe(1);
+  });
+});
+
+/** A checkout `inner` in a folder `between` of a repository in `edge`, which a repository `above` holds. */
+interface EdgeLayout {
+  readonly root: string;
+  readonly edge: string;
+  readonly between: string;
+  readonly inner: string;
+  /** A link to `edge`. */
+  readonly link: string;
+}
+
+async function belowAnEdge(): Promise<EdgeLayout> {
+  const root = await temporaryRoot();
+  const edge = join(repository(join(root, "above")), "edge");
+  const between = join(repository(join(edge, "repo")), "between");
+  mkdirSync(join(between, "inner"), { recursive: true });
+  mkdirSync(join(edge, "outside"));
+  mkdirSync(join(root, "elsewhere"));
+  linkFolder(edge, join(root, "link"));
+  return { root, edge, between, inner: join(between, "inner"), link: join(root, "link") };
+}
+
+/** `GIT_CEILING_DIRECTORIES` of `entries`, after an entry that names no folder above and one that names none at all. */
+function ceilings(at: EdgeLayout, ...entries: string[]): Record<string, string> {
+  return { GIT_CEILING_DIRECTORIES: [join(at.root, "elsewhere"), join(at.root, "missing"), ...entries].join(delimiter) };
+}
+
+/** `path` as Git spells a folder: with `/` between names on Windows too. */
+function gitSpelled(path: string): string {
+  return path.replaceAll("\\", "/");
+}
+
+/** The lstats since the `before`th of a `.git` or a `HEAD` in `folder` or a folder above it, as Git's search reads them. */
+function searchReadsFrom(before: number, folder: string): string[] {
+  return vi.mocked(lstatSync).mock.calls.slice(before).map(([path]) => resolve(String(path))).filter(path => {
+    const down = relative(dirname(path), folder);
+    return [".git", "HEAD"].includes(basename(path)) && !down.startsWith("..") && !isAbsolute(down);
+  });
+}
+
+/** Has the lstat of `folder` give another device than the folders below it, as when a file system is mounted below it. */
+function onAnotherDevice(folder: string): void {
+  const actual = vi.mocked(lstatSync).getMockImplementation()!;
+  vi.mocked(lstatSync).mockImplementation(((path: PathLike, options?: StatSyncOptions) => {
+    const stats = actual(path, options);
+    return stats instanceof Stats && resolve(String(path)) === folder ? Object.assign(stats, { dev: stats.dev + 1 }) : stats;
+  }) as typeof lstatSync);
+  cleanups.push(async () => {
+    vi.mocked(lstatSync).mockImplementation(actual);
+  });
+}
+
+/**
+ * Where Git's search for a repository stops, as `git help git` gives it: below the deepest `GIT_CEILING_DIRECTORIES`
+ * entry above the folder (entries before an empty one through their real paths, those after it as written, relative
+ * ones dropped), and at a change of file system unless `GIT_DISCOVERY_ACROSS_FILESYSTEM` is set (Git for Windows reads
+ * no device). `reads` says whether Git's search reads in `from` or above; `gitStops`, where set, is checked against Git.
+ */
+const SEARCH_STOPS: ReadonlyArray<{
+  readonly name: string;
+  readonly env: (at: EdgeLayout) => Record<string, string>;
+  readonly from: (at: EdgeLayout) => string;
+  readonly reads: boolean;
+  readonly gitStops?: boolean;
+  readonly mounted?: boolean;
+}> = [
+  { name: "a ceiling", env: at => ceilings(at, at.edge), from: at => at.edge, reads: false, gitStops: true },
+  { name: "a ceiling named through a link, which Git resolves", env: at => ceilings(at, at.link), from: at => at.edge, reads: false, gitStops: true },
+  { name: "a ceiling after an empty entry, which Git takes as written", env: at => ceilings(at, "", gitSpelled(at.edge)), from: at => at.edge, reads: false, gitStops: true },
+  { name: "a link after an empty entry, which Git takes as written and so never meets", env: at => ceilings(at, "", gitSpelled(at.link)), from: at => at.edge, reads: true, gitStops: false },
+  { name: "a relative entry, which Git drops", env: at => ceilings(at, relative(process.cwd(), at.edge)), from: at => at.edge, reads: true, gitStops: false },
+  { name: "the root, whose own entries Git never reads", env: at => ceilings(at, parse(at.root).root), from: at => parse(at.root).root, reads: false },
+  { name: "a file system mounted below, which Git for Windows reads no device of", env: () => ({}), from: at => at.edge, reads: process.platform === "win32", mounted: true },
+  { name: "a file system mounted below while GIT_DISCOVERY_ACROSS_FILESYSTEM is set", env: () => ({ GIT_DISCOVERY_ACROSS_FILESYSTEM: "1" }), from: at => at.edge, reads: true, mounted: true },
+];
+
+describe("the read before Git places a folder stops where Git's search for a repository stops", () => {
+  it.each(SEARCH_STOPS)("at $name", async ({ env, from, reads, gitStops, mounted }) => {
+    const at = await belowAnEdge();
+    for (const [name, value] of Object.entries(env(at))) vi.stubEnv(name, value);
+    if (gitStops !== undefined) expect(gitsAnswer(join(at.edge, "outside")).git, "Git's search past the edge").toBe(!gitStops);
+    if (mounted === true) onAnotherDevice(at.edge);
+    const before = vi.mocked(lstatSync).mock.calls.length;
+    expect(registryPlacements(at.inner)).toBe(1);
+    expect(searchReadsFrom(before, from(at)).length > 0, "a .git or a HEAD read in the stop or above").toBe(reads);
+
+    // Every folder below the stop is read: one between the checkout and its repository that becomes one ends the acceptance.
+    repository(at.between);
+    expectGitsRegistries(at.inner);
   });
 });
 
