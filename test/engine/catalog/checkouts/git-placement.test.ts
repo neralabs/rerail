@@ -9,6 +9,7 @@ import {
   realpathSync,
   Stats,
   symlinkSync,
+  writeFileSync,
   writeSync,
   type PathLike,
   type StatSyncOptions,
@@ -1173,6 +1174,49 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expect(gitsRegistry(inner)).toEqual(gitsRegistry(middle));
   });
 
+  it("keeps Git's acceptance of such a checkout with no Git process once the repository above switches to another branch", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    const inner = join(outer, "a", "inner");
+    mkdirSync(inner, { recursive: true });
+    expect(registryPlacements(inner)).toBe(1);
+
+    git(outer, "checkout", "--quiet", "-b", "other");
+    expect(gitsProcessesForThreeLists(inner)).toEqual([]);
+  });
+
+  it("keeps Git's acceptance of such a checkout with no Git process once the repository above commits at a detached HEAD", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    const inner = join(outer, "a", "inner");
+    mkdirSync(inner, { recursive: true });
+    expect(registryPlacements(inner)).toBe(1);
+
+    git(outer, "checkout", "--quiet", "--detach");
+    git(outer, "commit", "--quiet", "--allow-empty", "-m", "two");
+    expect(gitsProcessesForThreeLists(inner)).toEqual([]);
+  });
+
+  it("keeps Git's acceptance of such a checkout with no Git process while a person works in the repository above", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    git(outer, "branch", "other");
+    const first = execFileSync("git", ["-C", outer, "symbolic-ref", "--short", "HEAD"], { encoding: "utf8" }).trim();
+    const second = repository(join(root, "second"));
+    const inner = join(outer, "a", "inner");
+    mkdirSync(inner, { recursive: true });
+    expect(registryPlacements(inner)).toBe(1);
+
+    const started = vi.mocked(runGit).mock.calls.length;
+    for (const [work, act] of personsWork(outer, first, second)) {
+      act();
+      expect(worktreeRegistry(inner)?.worktrees, work).toEqual(gitsRegistry(inner));
+    }
+    expect(gitProcessesSince(started)).toEqual([]);
+  }, 30_000);
+
   it("lists as Git does once a folder between such a checkout and the repository above gets a .git link to another repository's Git folder", async () => {
     const root = await temporaryRoot();
     const outer = repository(join(root, "outer"));
@@ -1282,6 +1326,45 @@ function expectGitsRegistries(...checkouts: string[]): void {
     expect(registry?.commonDirectory, `the common directory at ${checkout}`).toBe(physicalPath(dirname(gitsAnswer(checkout).identityPath)));
     expect(repositoryIdentityLocation(checkout), `the placement of ${checkout}`).toEqual(gitsAnswer(checkout));
   }
+}
+
+/** Lists `checkout`'s registry three times, each against Git's list; returns each Git process Rerail started meanwhile. */
+function gitsProcessesForThreeLists(checkout: string): string[] {
+  const started = vi.mocked(runGit).mock.calls.length;
+  for (let use = 0; use < 3; use += 1) expect(worktreeRegistry(checkout)?.worktrees, checkout).toEqual(gitsRegistry(checkout));
+  return gitProcessesSince(started);
+}
+
+/** Each Git process Rerail started since the `started`th, with the folder it ran in. */
+function gitProcessesSince(started: number): string[] {
+  return vi.mocked(runGit).mock.calls.slice(started).map(([cwd, args]) => `${cwd} ${args.join(" ")}`);
+}
+
+/**
+ * What a person does in the repository `outer`, each as Git does it: a switch to the branch `other`, a checkout of the
+ * branch `first` back, a commit on it, a commit at a detached HEAD, a rebase of those two commits, a fetch from the
+ * repository `second`, `git gc` and `git repack -ad`.
+ */
+function personsWork(outer: string, first: string, second: string): ReadonlyArray<readonly [string, () => void]> {
+  return [
+    ["a branch switch", () => git(outer, "switch", "--quiet", "other")],
+    ["a checkout of a branch", () => git(outer, "checkout", "--quiet", first)],
+    ["a commit on a branch", () => commitFile(outer, "one.txt")],
+    ["a commit at a detached HEAD", () => {
+      git(outer, "checkout", "--quiet", "--detach");
+      commitFile(outer, "two.txt");
+    }],
+    ["a rebase of two commits", () => git(outer, "rebase", "--quiet", "--force-rebase", "HEAD~2")],
+    ["a fetch from a second repository", () => git(outer, "fetch", "--quiet", second, "+refs/heads/*:refs/remotes/second/*")],
+    ["git gc", () => git(outer, "gc", "--quiet")],
+    ["git repack -ad", () => git(outer, "repack", "-a", "-d", "--quiet")],
+  ];
+}
+
+function commitFile(checkout: string, name: string): void {
+  writeFileSync(join(checkout, name), `${name}\n`);
+  git(checkout, "add", name);
+  git(checkout, "commit", "--quiet", "-m", name);
 }
 
 /** {@link rewriteInPlace} without waiting, for a rewrite made while a Git process Rerail started runs. */

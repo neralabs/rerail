@@ -418,8 +418,10 @@ export function entryFacts(path: string): string {
 
 /**
  * What Git's search for a repository reads at the `.git` entry `dotGit`, read now: the entry's facts ({@link
- * described}), and the `HEAD` in it when it is a folder (`git init` fills an empty one where it is) or its text when
- * it is a file (rewritten in place to name another Git folder). One lstat where nothing is there.
+ * described}), and the `objects` folder in it when it is a folder, or its text when it is a file (rewritten in place to
+ * name another Git folder). `git init` makes `objects` as it fills an empty `.git` folder where it is; a branch switch,
+ * a commit, a rebase, a fetch or a gc in that repository leaves its facts as they were, where each writes `HEAD` anew.
+ * One lstat where nothing is there.
  */
 export function searchedEntryFacts(dotGit: string): string {
   const looked = look(dotGit);
@@ -427,7 +429,7 @@ export function searchedEntryFacts(dotGit: string): string {
 }
 
 function heldIn(dotGit: string, looked: Looked): string {
-  if (isFolder(looked)) return entryFacts(join(dotGit, "HEAD"));
+  if (isFolder(looked)) return entryFacts(join(dotGit, "objects"));
   return isEntry(looked) && looked.isFile() ? textFact(fileText(dotGit)) : "-";
 }
 
