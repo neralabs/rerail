@@ -6,7 +6,8 @@
 //!
 //! The index is re-read whenever it changes on disk, so `git add` of an ignored file brings it back;
 //! a `.gitignore` is read when the walk first enters its folder. A matcher says whether one opened
-//! now would read the rules it read (`sources_unchanged`), so hosts can share one per checkout.
+//! now would read the rules it read (`sources_unchanged`), so hosts can share one per checkout;
+//! when it would, its next question reads the index from disk, as one opened now would.
 
 use gix::bstr::{BStr, ByteSlice};
 use gix::index::entry::Mode;
@@ -60,15 +61,19 @@ impl GitIgnore {
     /// and their conditions among them), chooses the same excludes file and pattern case, and the
     /// root `.gitignore`, `info/exclude` and that excludes file are as this matcher read them.
     /// When it would, the stack leaves every folder it entered, so the next path below a folder
-    /// reads that folder's `.gitignore` again, as a matcher opened now would.
+    /// reads that folder's `.gitignore` again, and the next question reads the index from disk, as
+    /// a matcher opened now would.
     pub fn sources_unchanged(&mut self) -> bool {
-        let now = match discover_worktree(&self.root) {
-            Ok(Some((repository, worktree))) => Sources::read(&repository, &worktree),
-            _ => None,
+        let Ok(Some((repository, worktree))) = discover_worktree(&self.root) else {
+            return false;
         };
+        let now = Sources::read(&repository, &worktree);
         if now.is_none() || now != self.sources {
             return false;
         }
+        // The repository just found holds no index yet, and the one read before is dropped with the
+        // old repository: an index rewritten at the time it was read is not taken for it.
+        self.repository = repository;
         self.leave_folders();
         true
     }
@@ -342,7 +347,8 @@ impl GitIgnoreMatcher {
 
     /// Whether a matcher opened now would follow the rules this one follows (the configuration
     /// Git reads, read again, and the files read whole as they were read); when it would, each
-    /// folder's `.gitignore` is read again as the next path enters the folder.
+    /// folder's `.gitignore` is read again as the next path enters the folder, and the index at the
+    /// next question.
     #[napi(catch_unwind)]
     pub fn sources_unchanged(&self) -> Result<bool> {
         let mut inner = self
@@ -630,6 +636,31 @@ mod tests {
         let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
         assert!(ignore.ignored("b.py", false).unwrap());
         assert!(ignore.sources_unchanged());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A matcher whose sources hold is handed on with the index read again at its next question, as
+    /// a matcher opened then reads it: an index rewritten at the very time this one read, as two
+    /// writes within one tick of the file system's clock leave it, is not taken for the old one.
+    #[test]
+    fn a_matcher_whose_sources_hold_reads_the_index_again() {
+        let root = fixture("index-again", &[(".gitignore", "gen/\n"), ("gen/x.py", "")]);
+        git(&root, &["init", "--initial-branch=main"]);
+        git(&root, &["add", ".gitignore"]);
+        let root = root.canonicalize().unwrap();
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert!(ignore.ignored("gen/x.py", false).unwrap());
+        let index = root.join(".git").join("index");
+        let read = std::fs::metadata(&index).unwrap().modified().unwrap();
+        git(&root, &["add", "-f", "gen/x.py"]);
+        let file = std::fs::File::options().write(true).open(&index).unwrap();
+        file.set_modified(read).unwrap();
+        drop(file);
+        assert!(ignore.sources_unchanged(), "the rules' sources are as read");
+        assert!(
+            !ignore.ignored("gen/x.py", false).unwrap(),
+            "a force-added file is tracked, as a matcher opened now reads it"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
