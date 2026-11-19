@@ -1084,8 +1084,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #steersInFlight = new Set<Promise<AdapterDelivery | undefined>>();
   /** The steer each answer's delivery came from, and its session, until the answer reaches its asker or comes back (`returnUndelivered`). */
   readonly #handedOut = new WeakMap<AdapterDelivery, { state: RuntimeSessionState; pending: PendingSteer }>();
-  /** Deliveries an answer that never reached its asker recorded in the ledger already: their next delivery records nothing. */
-  readonly #recordedUndelivered = new WeakSet<AdapterDelivery>();
   /** Evaluator opens still running, each with its own release: disposal waits for them before the stores close under them. */
   readonly #evaluatorOpens = new Set<Promise<CodeRuleBridge | undefined>>();
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
@@ -1600,8 +1598,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * time limit closes its connection while the daemon still runs its event, and the answer goes nowhere. Each goes back
    * in front of the session's pending steers, in its order, so the session's next answer carries it; that answer drops
    * one a newer revision has overtaken, as it drops any (`#performSteer`). The ledger already holds its delivery, so it
-   * is not recorded again, nor after a restart: a close that keeps it owed says so (`recorded`). A session closed or
-   * opened again since keeps none: its close counted them as delivered.
+   * is not recorded again, nor after a restart: a close that keeps it owed says so (`recorded`); and a Merge Assist note
+   * was marked given as the answer took it, so it is not marked again. A session closed or opened again since keeps
+   * none: its close counted them as delivered.
    * Never fails: a failure is reported, and the steers stay as the answer left them.
    */
   returnUndelivered(sessionId: string, deliveries: readonly AdapterDelivery[]): Promise<void> {
@@ -1612,7 +1611,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         if (state === undefined || returned.length === 0) return;
         for (const pending of returned) {
           pending.recorded = true;
-          this.#recordedUndelivered.add(pending.delivery);
+          // It settled as the answer took it.
+          delete pending.settled;
         }
         state.pendingSteers.unshift(...returned);
       } catch (error) {
@@ -2629,8 +2629,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   async persistDelivery(delivery: AdapterDelivery): Promise<void> {
-    // Recorded once already, by the answer that never reached its asker (`returnUndelivered`).
-    if (this.#recordedUndelivered.delete(delivery)) return;
     await this.#append(this.#session(delivery.sessionId), { type: "delivery", delivery });
   }
 
@@ -3078,7 +3076,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     try {
       if (this.#withheld(state, pending)) return undefined;
       pending.delivery = this.#currentConflictNotice(state, pending.delivery);
-      await this.#recordedDelivery(pending.delivery);
+      // One an answer no client heard took is in the ledger already (`returnUndelivered`).
+      if (pending.recorded !== true) await this.#recordedDelivery(pending.delivery);
       // A stop committed elsewhere while the ledger was written withholds the result.
       if (this.#withheld(state, pending)) return undefined;
       if (!native) {

@@ -1,6 +1,6 @@
 import { subscribe, unsubscribe } from "node:diagnostics_channel";
 import { once } from "node:events";
-import { mkdtemp, readdir, readFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { request, ServerResponse } from "node:http";
 import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -10,6 +10,7 @@ import type { AdapterDelivery, AdapterEvent, RuleSteerDelivery } from "../../../
 import { ingestEngineEvent, startEngineService } from "../../../src/runtime/engine-service.js";
 import { decodeRerailEventResult } from "../../../src/runtime/event-protocol.js";
 import { testEmbedder } from "../../support/hook-events.js";
+import { deliveryEntries } from "../../support/ledger/deliveries.js";
 import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { startTestRepository } from "../../support/started-repository.js";
@@ -323,17 +324,6 @@ function hook(socketPath: string, event: AdapterEvent): {
       await closed;
     },
   };
-}
-
-/** How many delivery entries of `content` the session ledgers under `storageRoot` hold. */
-async function deliveryEntries(storageRoot: string, content: string): Promise<number> {
-  const names = await readdir(storageRoot, { recursive: true });
-  let count = 0;
-  for (const name of names.filter(entry => entry.endsWith("events.jsonl"))) {
-    const lines = (await readFile(join(storageRoot, name), "utf8")).split("\n");
-    count += lines.filter(line => line.includes('"type":"delivery"') && line.includes(JSON.stringify(content).slice(1, -1))).length;
-  }
-  return count;
 }
 
 interface ServiceOptions {
