@@ -259,36 +259,115 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
     Ok(())
 }
 
-/// A space's next block, queued for the store's writer (`ContentStore::queue_kept`).
+/// Spaces' next blocks, queued for the store's writer (`ContentStore::queue_kept`): each space's puts of a wave
+/// together, written as one block in the wave's transaction.
 pub(super) struct KeptWrite {
-    space: [u8; 32],
-    puts: Vec<KeptPut>,
+    spaces: Vec<([u8; 32], Vec<KeptPut>)>,
 }
 
 impl KeptWrite {
     pub(super) fn run(&mut self, store: &super::ContentStore) -> StoreResult<()> {
-        let puts = std::mem::take(&mut self.puts);
+        let spaces = std::mem::take(&mut self.spaces);
         let path = store.database_path.clone();
         store.immediate_transaction_once(|t| {
             // Forked (decision 0170): the copies' atom columns are mapped to the store's ids in this transaction.
             let map = |v: &mut [i64]| store.atoms.to_store(t, super::ProcessIds::of_process(v)).map(drop);
-            write_space(&path, t, &self.space, puts, store.atoms.forked().then_some(&map as &dyn Fn(&mut [i64]) -> StoreResult<()>))
+            for (space, puts) in spaces {
+                write_space(&path, t, &space, puts, store.atoms.forked().then_some(&map as &dyn Fn(&mut [i64]) -> StoreResult<()>))?;
+            }
+            Ok(())
+        })
+    }
+}
+
+/// A run's wave's kept puts, by space (`ContentStore::gather`): one block a space a wave, where a block a put made
+/// each write copy the space's whole delta again, and sync its file and directory (a cold data-layer run over 50
+/// files: 2,442 blocks, 15.7 s of the writer's CPU and most of the run's wall, its queue full at 300 files).
+#[derive(Default)]
+struct KeptGather {
+    spaces: std::collections::BTreeMap<[u8; 32], (Vec<KeptPut>, std::collections::HashMap<(String, [u8; 32], i64), usize>)>,
+    bytes: usize,
+}
+
+/// The bytes a put holds until written: a flat put's rows, and a little for the rest (a relation is lent, not held).
+fn held_bytes(p: &KeptPut) -> usize {
+    64 + match &p.what {
+        KeptWhat::Flat { rows, .. } => rows.len() * 8,
+        _ => 0,
+    }
+}
+
+impl KeptGather {
+    /// `space`'s puts, each key once: a later put replaces an earlier one of its key, but a retag (`Reads`) keeps the
+    /// rows an earlier put of this wave gave it, with its reads.
+    fn add(&mut self, space: [u8; 32], puts: Vec<KeptPut>) {
+        let (list, at) = self.spaces.entry(space).or_default();
+        for p in puts {
+            self.bytes += held_bytes(&p);
+            let key = (p.rel.clone(), p.ident, p.part);
+            match at.get(&key) {
+                Some(&i) => {
+                    let was = &mut list[i];
+                    if matches!(p.what, KeptWhat::Reads) && !matches!(was.what, KeptWhat::Reads | KeptWhat::Gone) {
+                        was.reads = p.reads;
+                        was.digest = p.digest;
+                    } else {
+                        *was = p;
+                    }
+                }
+                None => {
+                    at.insert(key, list.len());
+                    list.push(p);
+                }
+            }
+        }
+    }
+}
+
+impl super::write_back::Gather for KeptGather {
+    fn keys(&self) -> Vec<(super::write_back::Key, Option<super::write_back::Held>)> {
+        Vec::new()
+    }
+    fn held(&self, _: &super::write_back::Key) -> Option<super::write_back::Held> {
+        None
+    }
+    fn bytes(&self) -> usize {
+        self.bytes
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+    fn close(self: Box<Self>) -> Option<super::write_back::Closed> {
+        let spaces: Vec<([u8; 32], Vec<KeptPut>)> = self.spaces.into_iter().map(|(s, (puts, _))| (s, puts)).filter(|(_, p)| !p.is_empty()).collect();
+        if spaces.is_empty() {
+            return None;
+        }
+        Some(super::write_back::Closed {
+            what: "kept facts",
+            bytes: self.bytes,
+            keys: Vec::new(),
+            syms: super::write_back::Syms::Mapped,
+            job: super::write_back::Work(super::write_back::Kind::Kept(Box::new(KeptWrite { spaces }))),
         })
     }
 }
 
 impl super::ContentStore {
-    /// Writes `space`'s next kept block with `puts`, behind the run (the store's writer, in its wave's transaction). It
-    /// holds the puts' relations until their copies are made.
+    /// Writes `space`'s next kept block with `puts`, behind the run (the store's writer, in its wave's transaction):
+    /// gathered with the wave's other puts, one block a space. It holds the puts' relations until their copies are
+    /// made.
     pub fn queue_kept(&self, space: [u8; 32], puts: Vec<KeptPut>) {
         if puts.is_empty() {
             return;
         }
-        let held: usize = puts.iter().map(|p| match &p.what {
-            KeptWhat::Flat { rows, .. } => rows.len() * 8,
-            _ => 0,
-        }).sum::<usize>() + puts.len() * 64;
-        let write = KeptWrite { space, puts };
+        let mut puts = Some(puts);
+        if self.gather("kept facts", KeptGather::default, |g| g.add(space, puts.take().expect("the puts"))) {
+            return;
+        }
+        // Outside a run's waves (or with no writer): its own job.
+        let puts = puts.take().expect("the puts");
+        let held: usize = puts.iter().map(held_bytes).sum();
+        let write = KeptWrite { spaces: vec![(space, puts)] };
         self.write_back_syms(super::write_back::Syms::Mapped, "kept facts", held, Vec::new(), super::write_back::Work(super::write_back::Kind::Kept(Box::new(write))));
     }
 

@@ -151,3 +151,39 @@ fn a_rolled_back_write_is_not_the_spaces() {
     assert_eq!(read(&path, &c).iter().map(|(r, _, d, _)| (r.as_str(), *d)).collect::<Vec<_>>(), [("p", 1), ("q", 3)]);
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+/// A wave's puts are gathered by space and written as one block each: a later put of a key replaces an earlier one, a
+/// retag keeps the rows the wave gave its key with its own reads, and a gone entry stays gone. Two spaces, one
+/// write each.
+#[test]
+fn a_waves_puts_are_one_block_a_space() {
+    let (path, c) = store("gather");
+    const OTHER: [u8; 32] = [9; 32];
+    let mut g = KeptGather::default();
+    g.add(SPACE, vec![put("p", 0, 1, flat(&[1, 1])), put("q", 0, 2, flat(&[2, 2])), put("g", 0, 3, flat(&[3, 3]))]);
+    g.add(OTHER, vec![put("o", 0, 4, flat(&[4, 4]))]);
+    // `p` replaced; `q` retagged (its rows this wave's, its reads the retag's); `g` gone.
+    let mut retag = put("q", 0, 22, KeptWhat::Reads);
+    retag.reads = vec![("r".into(), 77)];
+    g.add(SPACE, vec![put("p", 0, 11, flat(&[5, 5, 6, 6])), retag, put("g", 0, 0, KeptWhat::Gone)]);
+    assert_eq!(g.spaces[&SPACE].0.len(), 3, "each key once");
+    let spaces: Vec<([u8; 32], Vec<KeptPut>)> = g.spaces.into_iter().map(|(s, (p, _))| (s, p)).collect();
+    c.execute_batch("BEGIN IMMEDIATE").unwrap();
+    for (space, puts) in spaces {
+        write_space(&path, &c, &space, puts, None).unwrap();
+    }
+    c.execute_batch("COMMIT").unwrap();
+    let got = read(&path, &c);
+    assert_eq!(
+        got.iter().map(|(r, p, d, rows)| (r.as_str(), *p, *d, rows.clone())).collect::<Vec<_>>(),
+        [("p", 0, 11, vec![vec![5, 5], vec![6, 6]]), ("q", 0, 22, vec![vec![2, 2]])],
+        "p replaced, q retagged with this wave's rows, g gone"
+    );
+    let row = space_row(&c, &SPACE).unwrap().unwrap();
+    let space = KeptSpace::open(&path, &SPACE, &row).unwrap();
+    let q = space.view().get(&FactKey { rel: "q", ident: &ID, part: 0 }).map(|k| k.reads().map(|(r, d)| (r.to_owned(), d)).collect::<Vec<_>>());
+    assert_eq!(q, Some(vec![("r".to_owned(), 77)]));
+    assert_eq!(files(&path).len(), 1, "one block for the space's wave: {:?}", files(&path));
+    assert!(space_row(&c, &OTHER).unwrap().is_some(), "the other space written in the same job");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}

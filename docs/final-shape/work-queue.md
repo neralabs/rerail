@@ -4432,15 +4432,19 @@ after the phases went on the run path (0083).
     rules run in 60 s (profiled) instead of past 180 s. All 57 rules run over the 50 files.
   - `RERAIL_KEEPS_TRACE=<text>` prints the pricing's estimates for relations whose names hold the text.
 
-### Q243. A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (open)
+### Q243. A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (done)
 
 Found 2026-11-18, the data-layer rules (56, Q242's rule left out) over corpus0's first 300 files, strict.
 - **What happens.** The run aborts after 97 s: "the writer's queue is full (148.0 MB in 4102 jobs; kept facts
   brings 49.4 MB)", a wait inside a wave (`retain::write_input_frames` -> `queue_kept`), which strict refuses.
   Queued then: kept facts 2,405 jobs, 185 MB; the run's record 12 jobs, 123 MB; frames 2,416 jobs, 1.3 MB.
-- **Open:** whether an input's kept facts should be queued per granule (as its frames are) rather than in one
-  job, and whether the run's record (10 MB a job) belongs behind the run. The 300-file measurement ran with
-  `RERAIL_WRITE_QUEUE_MB=512`, strict otherwise.
+- **Why** (2026-11-18): each `queue_kept` was its own job, and each job wrote its space's whole next block: every
+  entry of the previous delta copied again, at least 64 MB reserved, the block `msync`ed and its directory fully
+  synced. A cold run over 50 files queued 2,442 of them: 15.7 s of the writer's CPU, 2.1 M page faults, and the run
+  waited 35 s of its 49 s (profiling build) for the writer to drain.
+- **Done:** a run's wave gathers its kept puts by space (`KeptGather`; a later put of a key replaces an earlier one,
+  a retag keeps the wave's rows with its reads) and writes one block a space. The 50 files: 13.6 s wall, 5.5 s
+  system, 31 k page faults, the same outputs; test `a_waves_puts_are_one_block_a_space`.
 
 ### Q180. Every fork stays one relation, a chain of continuations: step 8 of decision 0384 (done)
 
