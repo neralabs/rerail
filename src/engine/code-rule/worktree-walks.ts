@@ -710,7 +710,7 @@ export class WorktreeWalks {
   async #find(root: string, begun: WalkBegun): Promise<WorktreeFindings | undefined> {
     const kept = this.#kept.get(root);
     // Asked first, of every worktree: it starts the watch before a first read.
-    const noticed = this.#notices.changed(root);
+    const noticed = await this.#notices.changed(root);
     const look = await this.#lookAt(root, begun.files, kept);
     const state: WorktreeState = { ...begun.checkouts.get(root)!, observedAt: begun.observedAt, skipped: skippedIn(root, begun.skip), look };
     const findings = kept !== undefined && !noticed && !this.#mustRead(root, kept, state)

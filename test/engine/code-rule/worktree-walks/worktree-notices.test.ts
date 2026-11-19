@@ -1,10 +1,16 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { TreeNotice, TreeWatch } from "../../../../src/engine/code-rule/tree-watch.js";
 import { removeFolderSync } from "../../../support/platform/remove-folder.js";
 import { folderAt, NOTICE_PATHS_CAP, noticeCounts, REWATCH_MS, SharedTreeWatch, WATCH_RETRY_MS, WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
+
+// Every `lstatSync` is counted, so a case can tell a worktree's folder is read with no call that holds the daemon's thread.
+vi.mock("node:fs", async importOriginal => {
+  const original = await importOriginal<typeof import("node:fs")>();
+  return { ...original, lstatSync: vi.fn(original.lstatSync) };
+});
 
 /** A read that walked the worktree, `src` and `src/deep`, and left out an ignored folder, an ignored file and a worktree. */
 const seen = { folders: new Set(["", "src", "src/deep"]), leftOut: new Set(["node_modules", "src/cache.tmp", "nested"]) };
@@ -74,186 +80,221 @@ function notices(watch: TreeWatch | undefined, platform: NodeJS.Platform = "darw
 }
 
 /** Reads `root` as a walk does: it was changed, the read begins and ends having seen `read`. */
-function read(subject: WorktreeNotices, root: string, read = seen): void {
-  subject.changed(root);
+async function read(subject: WorktreeNotices, root: string, read = seen): Promise<void> {
+  await subject.changed(root);
   subject.reading(root);
   subject.read(root, read);
 }
 
 describe("WorktreeNotices", () => {
-  it("counts every worktree changed on every walk with no engine watch", () => {
+  it("counts every worktree changed on every walk with no engine watch", async () => {
     const { notices: subject } = notices(undefined);
-    read(subject, "/w");
-    expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
+    await read(subject, "/w");
+    expect([await subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
   });
 
-  it("watches a worktree before its first read, and holds it changed until a notice counts", () => {
+  it("watches a worktree before its first read, and holds it changed until a notice counts", async () => {
     const watch = new ScriptedWatch();
     const { notices: subject } = notices(watch);
-    expect(subject.changed("/w")).toBe(true);
+    expect(await subject.changed("/w")).toBe(true);
     expect(watch.calls).toEqual(["watch /w []"]);
     subject.reading("/w");
     subject.read("/w", seen);
-    expect(subject.changed("/w")).toBe(false);
+    expect(await subject.changed("/w")).toBe(false);
     watch.notice("/w", { changed: ["node_modules/x.js", "src"] });
     subject.collect();
-    expect(subject.changed("/w")).toBe(false);
+    expect(await subject.changed("/w")).toBe(false);
     watch.notice("/w", { changed: ["src/a.py"] });
     subject.collect();
-    expect(subject.changed("/w")).toBe(true);
+    expect(await subject.changed("/w")).toBe(true);
   });
 
-  it("counts a notice that arrives while a read runs, whatever it names", () => {
+  it("counts a notice that arrives while a read runs, whatever it names", async () => {
     const watch = new ScriptedWatch();
     const { notices: subject } = notices(watch);
-    subject.changed("/w");
+    await subject.changed("/w");
     subject.reading("/w");
     watch.notice("/w", { changed: ["node_modules/x.js"] });
     subject.read("/w", seen);
-    expect(subject.changed("/w")).toBe(true);
+    expect(await subject.changed("/w")).toBe(true);
   });
 
-  it("counts a worktree changed when the system lost its notices, and watches it again a while after its watch ended", () => {
+  it("counts a worktree changed when the system lost its notices, and watches it again a while after its watch ended", async () => {
     const watch = new ScriptedWatch();
     const { notices: subject, clock } = notices(watch);
-    read(subject, "/w");
+    await read(subject, "/w");
     watch.notice("/w", { lost: true });
     subject.collect();
-    expect(subject.changed("/w")).toBe(true);
-    read(subject, "/w");
+    expect(await subject.changed("/w")).toBe(true);
+    await read(subject, "/w");
     watch.notice("/w", { ended: true });
     subject.collect();
     expect(subject.watching("/w")).toBe(false);
     // Read whole at once, watched again only once `REWATCH_MS` passed.
-    expect(subject.changed("/w")).toBe(true);
+    expect(await subject.changed("/w")).toBe(true);
     expect(watch.calls.filter(call => call.startsWith("watch"))).toEqual(["watch /w []"]);
     clock.now = REWATCH_MS;
-    expect(subject.changed("/w")).toBe(true);
+    expect(await subject.changed("/w")).toBe(true);
     expect(watch.calls.filter(call => call.startsWith("watch"))).toEqual(["watch /w []", "watch /w []"]);
   });
 
-  it("watches a worktree made again at its path as the next walk reads it, so a write after that read is a notice", () => {
+  it("watches a worktree made again at its path as the next walk reads it, so a write after that read is a notice", async () => {
     const watch = new ScriptedWatch();
     const folders = new Map([["/w", "1:10:5"]]);
-    const subject = new WorktreeNotices({ treeWatch: watch, platform: "win32", now: () => 0, folderAt: root => folders.get(root) ?? "" });
-    read(subject, "/w");
+    const subject = new WorktreeNotices({ treeWatch: watch, platform: "win32", now: () => 0, folderAt: async root => folders.get(root) ?? "" });
+    await read(subject, "/w");
     folders.delete("/w");
     watch.notice("/w", { ended: true });
     subject.collect();
     expect(subject.noticed()).toEqual(new Set(["/w"]));
     // No folder there yet: read whole, and no watch is tried that could only fail.
-    expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
+    expect([await subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
     folders.set("/w", "1:11:7");
-    expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, true]);
+    expect([await subject.changed("/w"), subject.watching("/w")]).toEqual([true, true]);
     subject.reading("/w");
     subject.read("/w", seen);
     watch.notice("/w", { renamed: ["src/disk.py"] });
     subject.collect();
-    expect([subject.changed("/w"), subject.noticed()]).toEqual([true, new Set(["/w"])]);
+    expect([await subject.changed("/w"), subject.noticed()]).toEqual([true, new Set(["/w"])]);
   });
 
-  it("watches the same folder again only once `REWATCH_MS` passed after its watch ended", () => {
+  it("watches the same folder again only once `REWATCH_MS` passed after its watch ended", async () => {
     const watch = new ScriptedWatch();
     const clock = { now: 0 };
-    const subject = new WorktreeNotices({ treeWatch: watch, platform: "win32", now: () => clock.now, folderAt: () => "1:10:5" });
-    read(subject, "/w");
+    const subject = new WorktreeNotices({ treeWatch: watch, platform: "win32", now: () => clock.now, folderAt: async () => "1:10:5" });
+    await read(subject, "/w");
     watch.notice("/w", { ended: true });
     subject.collect();
-    expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
+    expect([await subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
     clock.now = REWATCH_MS - 1;
-    expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
+    expect([await subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
     clock.now = REWATCH_MS;
-    expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, true]);
+    expect([await subject.changed("/w"), subject.watching("/w")]).toEqual([true, true]);
   });
 
-  it("waits `REWATCH_MS` after a watch ended when its folder could not be read as the watch began", () => {
+  it("waits `REWATCH_MS` after a watch ended when its folder could not be read as the watch began", async () => {
     const watch = new ScriptedWatch();
     const folders = new Map<string, string>();
-    const subject = new WorktreeNotices({ treeWatch: watch, platform: "win32", now: () => 0, folderAt: root => folders.get(root) ?? "" });
+    const subject = new WorktreeNotices({ treeWatch: watch, platform: "win32", now: () => 0, folderAt: async root => folders.get(root) ?? "" });
     // No identity was read as the watch began (a link, a path it could not read): nothing tells another folder from it.
-    read(subject, "/w");
+    await read(subject, "/w");
     watch.notice("/w", { ended: true });
     subject.collect();
     folders.set("/w", "1:11:7");
-    expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
+    expect([await subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
   });
 
-  it("tells one folder from another, and a path with no folder", () => {
+  it("reads a worktree's folder before its watch begins, while the daemon's thread goes on", async () => {
+    const watch = new ScriptedWatch();
+    let answer: (folder: string) => void = () => undefined;
+    const subject = new WorktreeNotices({
+      treeWatch: watch,
+      platform: "win32",
+      now: () => 0,
+      folderAt: async () => await new Promise<string>(done => (answer = done)),
+    });
+    const changed = subject.changed("/w");
+    // The folder is still being read: nothing is watched yet, and nothing here waited for it.
+    expect(watch.calls).toEqual([]);
+    answer("1:10:5");
+    expect([await changed, subject.watching("/w")]).toEqual([true, true]);
+    expect(watch.calls).toEqual(["watch /w []"]);
+  });
+
+  it("watches no worktree a walk let go of while its folder was read", async () => {
+    const watch = new ScriptedWatch();
+    let answer: (folder: string) => void = () => undefined;
+    const subject = new WorktreeNotices({
+      treeWatch: watch,
+      platform: "win32",
+      now: () => 0,
+      folderAt: async () => await new Promise<string>(done => (answer = done)),
+    });
+    subject.retain(new Set(["/w"]));
+    const changed = subject.changed("/w");
+    // Every session watching it closed meanwhile.
+    subject.retain(new Set());
+    answer("1:10:5");
+    expect([await changed, subject.watching("/w"), watch.calls]).toEqual([true, false, []]);
+  });
+
+  it("tells one folder from another, and a path with no folder", async () => {
     const root = mkdtempSync(join(tmpdir(), "rerail-folder-at-"));
     try {
       mkdirSync(join(root, "a"));
       mkdirSync(join(root, "b"));
       writeFileSync(join(root, "f"), "");
-      expect(folderAt(join(root, "a"))).toBe(folderAt(join(root, "a")));
-      expect(folderAt(join(root, "a"))).not.toBe(folderAt(join(root, "b")));
-      expect([folderAt(join(root, "a")) === "", folderAt(join(root, "f")), folderAt(join(root, "gone"))]).toEqual([false, "", ""]);
+      vi.mocked(lstatSync).mockClear();
+      const [a, again, b, file, gone] = await Promise.all(["a", "a", "b", "f", "gone"].map(name => folderAt(join(root, name))));
+      expect([a === again, a === b, a === "", file, gone]).toEqual([true, false, false, "", ""]);
+      expect(vi.mocked(lstatSync)).not.toHaveBeenCalled();
     } finally {
       removeFolderSync(root);
     }
   });
 
-  it("reads a worktree it cannot watch on every walk, and tries to watch it again after the retry", () => {
+  it("reads a worktree it cannot watch on every walk, and tries to watch it again after the retry", async () => {
     const watch = new ScriptedWatch();
     watch.refused.add("/w");
     const { notices: subject, clock } = notices(watch);
-    read(subject, "/w");
-    expect(subject.changed("/w")).toBe(true);
+    await read(subject, "/w");
+    expect(await subject.changed("/w")).toBe(true);
     clock.now = WATCH_RETRY_MS - 1;
-    expect(subject.changed("/w")).toBe(true);
+    expect(await subject.changed("/w")).toBe(true);
     watch.refused.delete("/w");
     clock.now = WATCH_RETRY_MS;
-    read(subject, "/w");
-    expect(subject.changed("/w")).toBe(false);
+    await read(subject, "/w");
+    expect(await subject.changed("/w")).toBe(false);
     expect(watch.calls).toEqual(["watch /w []", "watch /w []"]);
   });
 
-  it("follows the folders each read walked into on Linux, and reads again after one is watched for the first time", () => {
+  it("follows the folders each read walked into on Linux, and reads again after one is watched for the first time", async () => {
     const watch = new ScriptedWatch();
     const { notices: subject } = notices(watch, "linux");
-    read(subject, "/w");
+    await read(subject, "/w");
     expect(watch.calls).toEqual(["watch /w []", "watch /w [,src,src/deep]"]);
     // `src/deep` was not watched while the first read ran.
-    expect(subject.changed("/w")).toBe(true);
-    read(subject, "/w");
-    expect(subject.changed("/w")).toBe(false);
-    read(subject, "/w", { folders: new Set(["", "src"]), leftOut: seen.leftOut });
+    expect(await subject.changed("/w")).toBe(true);
+    await read(subject, "/w");
+    expect(await subject.changed("/w")).toBe(false);
+    await read(subject, "/w", { folders: new Set(["", "src"]), leftOut: seen.leftOut });
     expect(watch.calls.at(-1)).toBe("watch /w [,src]");
-    expect(subject.changed("/w")).toBe(false);
+    expect(await subject.changed("/w")).toBe(false);
   });
 
-  it("watches again on Linux a folder that went and came back at the same path, and reads the worktree again", () => {
+  it("watches again on Linux a folder that went and came back at the same path, and reads the worktree again", async () => {
     const watch = new ScriptedWatch();
     const { notices: subject } = notices(watch, "linux");
     const walked = { folders: new Set(["", "a"]), leftOut: new Set<string>() };
-    read(subject, "/w", walked);
-    read(subject, "/w", walked);
-    expect(subject.changed("/w")).toBe(false);
+    await read(subject, "/w", walked);
+    await read(subject, "/w", walked);
+    expect(await subject.changed("/w")).toBe(false);
     // `rm -rf a && mkdir a`: the watch of the old `a` tells of nothing in the new one.
     watch.notice("/w", { renamed: ["a"] });
     subject.collect();
-    read(subject, "/w", walked);
+    await read(subject, "/w", walked);
     expect(watch.calls.filter(call => call.startsWith("watch"))).toEqual(["watch /w []", "watch /w [,a]", "watch /w [,a]"]);
-    expect(subject.changed("/w")).toBe(true);
+    expect(await subject.changed("/w")).toBe(true);
   });
 
-  it("watches every folder again on Linux after a notice that lost its paths, which may have hidden a folder put back", () => {
+  it("watches every folder again on Linux after a notice that lost its paths, which may have hidden a folder put back", async () => {
     const watch = new ScriptedWatch();
     const { notices: subject } = notices(watch, "linux");
     const walked = { folders: new Set(["", "a"]), leftOut: new Set<string>() };
-    read(subject, "/w", walked);
-    read(subject, "/w", walked);
+    await read(subject, "/w", walked);
+    await read(subject, "/w", walked);
     // A burst past the engine's cap: which folders went and came back is no longer known.
     watch.notice("/w", { lost: true });
     subject.collect();
-    read(subject, "/w", walked);
+    await read(subject, "/w", walked);
     expect(watch.calls.filter(call => call.startsWith("watch"))).toEqual(["watch /w []", "watch /w [,a]", "watch /w [,a]"]);
   });
 
-  it("hands on each worktree a notice counted in since a read of it began, once", () => {
+  it("hands on each worktree a notice counted in since a read of it began, once", async () => {
     const watch = new ScriptedWatch();
     const { notices: subject } = notices(watch);
-    read(subject, "/a");
-    read(subject, "/b");
+    await read(subject, "/a");
+    await read(subject, "/b");
     expect(subject.noticed()).toEqual(new Set());
     watch.notice("/a", { changed: ["src/a.py"] });
     watch.notice("/b", { changed: ["src/b.py"] });
@@ -263,22 +304,22 @@ describe("WorktreeNotices", () => {
     expect([subject.noticed(), subject.noticed()]).toEqual([new Set(["/a"]), new Set()]);
   });
 
-  it("reads on every walk a Linux worktree whose folders the watch budget cannot hold, until the retry", () => {
+  it("reads on every walk a Linux worktree whose folders the watch budget cannot hold, until the retry", async () => {
     const watch = new ScriptedWatch();
     const { notices: subject } = notices(watch, "linux");
-    subject.changed("/w");
+    await subject.changed("/w");
     subject.reading("/w");
     watch.refused.add("/w");
     subject.read("/w", seen);
     expect(watch.calls.at(-1)).toBe("unwatch /w");
-    expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
+    expect([await subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
   });
 
-  it("lets go of each worktree no walk watches any more", () => {
+  it("lets go of each worktree no walk watches any more", async () => {
     const watch = new ScriptedWatch();
     const { notices: subject } = notices(watch);
-    read(subject, "/a");
-    read(subject, "/b");
+    await read(subject, "/a");
+    await read(subject, "/b");
     subject.retain(new Set(["/a"]));
     expect(watch.calls.filter(call => call.startsWith("unwatch"))).toEqual(["unwatch /b"]);
     expect(subject.watching("/b")).toBe(false);
