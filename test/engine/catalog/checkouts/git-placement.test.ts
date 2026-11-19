@@ -554,6 +554,25 @@ describe("the read before Git places a folder ends in the folder where Git's sea
     expect(listedByGit(folder)).toBeDefined();
     expect(gitEntriesReadIn(before)).toEqual(foldersUpTo(folder, linked));
   });
+
+  it("reads as far as Git's search for a checkout whose .git is a link to a linked worktree's Git folder, whose commondir names its repository as `../..`", async () => {
+    const root = await deepRoot();
+    const outer = repository(join(root, "outer"));
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    const linked = join(root, "linked");
+    const folder = join(linked, "d0");
+    mkdirSync(folder, { recursive: true });
+    linkFolder(join(outer, ".git", "worktrees", "w"), join(linked, ".git"));
+    // Git on Linux and macOS resolves `../..` from where the link leads, the repository's Git folder, and ends its
+    // search here; Git for Windows takes `..` off the path as written, finds no `objects` two folders up, and goes on.
+    const endsHere = process.platform !== "win32";
+    expect(gitsAnswer(folder).workspaceRoot === linked).toBe(endsHere);
+    const before = vi.mocked(lstatSync).mock.calls.length;
+    expect(worktreeRegistry(folder)?.worktrees).toEqual(listedByGit(folder));
+    const read = gitEntriesReadIn(before);
+    if (endsHere) expect(read).toEqual(foldersUpTo(folder, linked));
+    else expect(read).toContain(root);
+  });
 });
 
 /** Points the link at `path`, a symbolic link or on Windows a junction, at `target` instead. */

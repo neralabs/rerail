@@ -214,6 +214,7 @@ function gitFolderAt(folder: string): FoundGitFolder | undefined {
 
 interface CommonFolder {
   readonly linked: string | undefined;
+  /** The name `commondir` holds, as written; `-` without one. */
   readonly stamp: string;
 }
 
@@ -491,8 +492,19 @@ function gitEntryEnds({ dotGit, entry }: FolderLook): boolean {
  */
 function takenAsGitFolder(path: string): boolean {
   const common = validHead(path) === true ? commonOf(path) : undefined;
-  const at = common?.linked ?? path;
-  return common !== undefined && reachable(join(at, "objects")) && reachable(join(at, "refs"));
+  const at = common === undefined ? undefined : commonGitReads(path, common);
+  return at !== undefined && reachable(join(at, "objects")) && reachable(join(at, "refs"));
+}
+
+/**
+ * The folder Git reads `objects` and `refs` in for the Git folder `path` (`get_common_dir_noenv`): `path` itself, or the
+ * one its `commondir` names, joined to `path` and taken through its real path. Git on Linux and macOS resolves the
+ * names in turn, so a `..` there leaves the folder a `.git` link reaches; Git for Windows opens the joined path, and
+ * Windows takes a `..` off the path as written before it follows a link.
+ */
+function commonGitReads(path: string, common: CommonFolder): string {
+  if (common.linked === undefined || process.platform === "win32") return common.linked ?? path;
+  return resolve(realOf(path) ?? path, common.stamp);
 }
 
 /**
