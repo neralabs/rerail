@@ -1304,6 +1304,16 @@ mod tests {
         run_git(root, &["commit", "-m", "initial"]);
     }
 
+    /// A repository at `root` whose first commit holds the files the case wrote at `paths`, with the
+    /// times it gave them (`initialize_repository` writes its files itself).
+    fn initialize_repository_with(root: &Path, paths: &[&str]) {
+        run_git(root, &["init", "--initial-branch=main"]);
+        run_git(root, &["config", "user.email", "rerail-tests@example.com"]);
+        run_git(root, &["config", "user.name", "Rerail tests"]);
+        run_git(root, &[&["add", "--"][..], paths].concat());
+        run_git(root, &["commit", "-m", "initial"]);
+    }
+
     fn fixture_directory(name: &str) -> PathBuf {
         static NEXT_FIXTURE: std::sync::atomic::AtomicUsize =
             std::sync::atomic::AtomicUsize::new(0);
@@ -1356,7 +1366,7 @@ mod tests {
         std::fs::write(&path, b"pront(1)\n").unwrap();
         let written = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_577_836_800);
         backdate(&path, written);
-        initialize_repository(&root, &[]);
+        initialize_repository_with(&root, &["a.py"]);
         let workspace = discover(&root).unwrap();
         let recorded = workspace.base_files[0]
             .checkout
@@ -1397,7 +1407,7 @@ mod tests {
             &path,
             std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_577_836_800),
         );
-        initialize_repository(&root, &[]);
+        initialize_repository_with(&root, &["a.py"]);
         let workspace = discover(&root).unwrap();
         let mut memory = VerifiedFiles::new(None, &root);
         {
@@ -1430,7 +1440,7 @@ mod tests {
         std::fs::write(&path, b"print(1)\n").unwrap();
         let written = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_577_836_800);
         backdate(&path, written);
-        initialize_repository(&root, &[]);
+        initialize_repository_with(&root, &["a.py"]);
         let workspace = discover(&root).unwrap();
         let mut memory = VerifiedFiles::new(None, &root);
         // Setting the same time again moves the change time alone.
@@ -1479,7 +1489,7 @@ mod tests {
         let path = root.join("a.py");
         std::fs::write(&path, bytes).unwrap();
         backdate(&path, written_long_ago());
-        initialize_repository(&root, &[]);
+        initialize_repository_with(&root, &["a.py"]);
         let workspace = discover(&root).unwrap();
         (root, path, workspace)
     }
