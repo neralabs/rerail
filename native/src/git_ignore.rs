@@ -464,7 +464,8 @@ impl FileStamp {
     /// that read, taken later, is kept.
     #[cfg(target_os = "linux")]
     fn tells(&self) -> bool {
-        self.modified.is_some_and(|modified| past_step(modified, file_clock()))
+        self.modified
+            .is_some_and(|modified| past_step(modified, file_clock()))
     }
 
     /// Whether this stamp tells its file from every later one: the identity alone does here.
@@ -1319,7 +1320,10 @@ mod tests {
         assert_eq!(open_under(&root), none, "after a question");
 
         git(&root, &["add", "-f", "gen/t.py"]);
-        assert!(!ignore.ignored("gen/t.py", false).unwrap(), "the index Git wrote");
+        assert!(
+            !ignore.ignored("gen/t.py", false).unwrap(),
+            "the index Git wrote"
+        );
         assert_eq!(open_under(&root), none, "after Git replaced the index");
 
         std::fs::remove_dir_all(&root).unwrap();
@@ -1356,7 +1360,10 @@ mod tests {
 
         let ahead = file_clock() + Duration::from_millis(3_600_500);
         write(tracking.as_slice(), ahead);
-        assert!(ignore.ignored("e.py", false).unwrap(), "read at its new time");
+        assert!(
+            ignore.ignored("e.py", false).unwrap(),
+            "read at its new time"
+        );
         write(zeros.as_slice(), ahead);
         assert!(
             ignore.ignored("e.py", false).is_err(),
