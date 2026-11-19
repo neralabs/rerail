@@ -631,6 +631,25 @@ pub(crate) const STATE_SLOTS: usize = Mem::COUNT as usize;
 /// stack loads over `.rr`'s tier 2, against 161 in the lean parser).
 pub const HELD_IN_RULES: [u32; 0] = [];
 
+/// The fields tier 2 holds as SSA values where it is one function (`Cut::one`): the token
+/// loop's own, which every token reads and writes (the next token's index, its start, end,
+/// limit and code, the end of the one before, the stream's end, the nodes made and open, a split
+/// region's cursor), as simdjson's stage 2 keeps `next_structural` in a register. The rest stays
+/// in the frame, where few words touch it.
+pub const HELD_IN_ONE: [u32; 11] = [
+    Mem::Next as u32,
+    Mem::Taken as u32,
+    Mem::Start as u32,
+    Mem::End as u32,
+    Mem::Limit as u32,
+    Mem::LastEnd as u32,
+    Mem::AtEnd as u32,
+    Mem::Nodes as u32,
+    Mem::Open as u32,
+    Mem::PartAt as u32,
+    Mem::PartEnd as u32,
+];
+
 /// A compare tree over a byte (or a place), as rustc lowers a `match` (LLVM's switch lowering):
 /// `runs` are runs of one target (the first from 0, the last on to `end`, past every value the
 /// switch reads: 256 for a byte). The target with the most runs is the default; the tree is over
@@ -2029,6 +2048,12 @@ pub(crate) struct Fetch {
     kinds: [u8; 256],
     worded: [bool; 256],
     codes1: Box<[u32; 256]>,
+    /// The words (`Records::words`), each with its code as a token of its bytes alone.
+    words: Vec<(Vec<u8>, u32)>,
+    /// By rule: where it is a run (`EndRule::Run`) whose output is a byte class (its bit at a
+    /// byte the byte's being in a set), that set as a table of 256 bytes (1: in it), as
+    /// simdjson's `structural_or_whitespace` table.
+    run_class: Vec<Option<Box<[u8; 256]>>>,
 }
 
 /// The records tier 2 makes (`Fetch`), where the program says so; refused where a token's code
@@ -2070,7 +2095,22 @@ fn fetch_of(native: &Structure) -> Result<Option<Box<Fetch>>, Error> {
         worded[b] = r.words.iter().any(|w| w.first() == Some(&(b as u8)));
         codes1[b] = crate::records::pass(r, &wt, &[b as u8], &[0], &[0], &[]).0.first().copied().unwrap_or(0);
     }
-    Ok(Some(Box::new(Fetch { ends, rules: r.rules.clone(), readers: r.readers.clone(), tables, nexts, kinds, worded, codes1 })))
+    let words = r.words.iter().map(|w| (w.clone(), crate::records::pass(r, &wt, w, &[0], &[w.len().saturating_sub(1) as u32], &[]).0.first().copied().unwrap_or(0))).collect();
+    let run_class = r
+        .rules
+        .iter()
+        .map(|rule| match *rule {
+            crate::records::EndRule::Run(o) => crate::native_cpu_bytes::exact(block, o).filter(|n| n.lo == 0 && n.hi == 0).map(|n| {
+                let mut t = Box::new([0u8; 256]);
+                for (b, x) in t.iter_mut().enumerate() {
+                    *x = u8::from(n.set[b / 64] >> (b % 64) & 1 == 1);
+                }
+                t
+            }),
+            _ => None,
+        })
+        .collect();
+    Ok(Some(Box::new(Fetch { ends, rules: r.rules.clone(), readers: r.readers.clone(), tables, nexts, kinds, worded, codes1, words, run_class })))
 }
 
 /// The first bit of output `o` at or after byte `from`, a word at a time (`records::first_bit`),
@@ -3582,7 +3622,7 @@ pub fn shared_runs(native: &Structure, pushes: &[u16]) -> SharedRuns {
 
 pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
     let speed = crate::native_cpu_codegen::OPTIMIZE_TIER2.load(std::sync::atomic::Ordering::Relaxed);
-    compile_cut(native, &crate::native_cpu_clusters::Cut { speed, ..crate::native_cpu_clusters::Cut::one(native.structural.len()) })
+    compile_cut(native, &crate::native_cpu_clusters::Cut { speed, held: HELD_IN_ONE.to_vec(), reload: true, ..crate::native_cpu_clusters::Cut::one(native.structural.len()) })
 }
 
 /// A cluster's function, lowered: its loop heads, the places it is entered at (each with its
@@ -4649,7 +4689,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         }
                         let edges: Vec<Block> = keys.iter().map(|_| f.create_block()).collect();
                         let no_e = f.create_block();
-                        let sw = ByteSwitch { targets: edge_of, ..ByteSwitch::refusing(0) };
+                        let sw = ByteSwitch { targets: edge_of.clone(), ..ByteSwitch::refusing(0) };
                         let r = runs(&sw, &|t| if t == REFUSE { no_e } else { edges[usize::from(t)] });
                         dispatch(&mut f, b, &r, 256);
                         f.switch_to_block(no_e);
@@ -4661,6 +4701,52 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         for (&(t, rule, k, worded), &edge) in keys.iter().zip(&edges) {
                             f.switch_to_block(edge);
                             let start = mget(&mut f, Mem::Start);
+                            // A run whose bytes begin words, its output a byte class: each word
+                            // as simdjson's atom test (`str4ncmp(value, "true")`, then the byte
+                            // after not in the run's class), the word's target taken at once;
+                            // another token, the rule's run and the word table below.
+                            let class = ft.run_class.get(usize::from(rule)).and_then(Option::as_ref).filter(|_| worded);
+                            if let Some(class) = class {
+                                let bytes_at: Vec<u8> = (0..256usize).filter(|&x| edge_of[x] != REFUSE && keys[usize::from(edge_of[x])] == (t, rule, k, worded)).map(|x| x as u8).collect();
+                                let cands: Vec<(usize, &(Vec<u8>, u32))> = ft
+                                    .words
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, (w, _))| (1..=8).contains(&w.len()) && bytes_at.contains(&w[0]) && w.iter().all(|&b| class[usize::from(b)] == 1))
+                                    .collect();
+                                if !cands.is_empty() {
+                                    let at = f.ins().iadd(bytes, start);
+                                    let raw = f.ins().load(types::I64, flags, at, 0);
+                                    let ctab = f.ins().iconst(types::I64, class.as_ptr() as i64);
+                                    for (x, (w, code)) in cands {
+                                        let n = w.len();
+                                        let mask = if n == 8 { -1i64 } else { ((1u64 << (8 * n)) - 1) as i64 };
+                                        let want = w.iter().rev().fold(0u64, |a, &b| a << 8 | u64::from(b)) as i64;
+                                        let got = f.ins().band_imm(raw, mask);
+                                        let same = f.ins().icmp_imm(IntCC::Equal, got, want);
+                                        let (cand, other) = (f.create_block(), f.create_block());
+                                        f.ins().brif(same, cand, &[], other, &[]);
+                                        f.switch_to_block(cand);
+                                        let after = f.ins().uload8(types::I64, flags, at, n as i32);
+                                        let ca = f.ins().iadd(ctab, after);
+                                        let goes_on = f.ins().uload8(types::I64, MemFlags::trusted().with_readonly(), ca, 0);
+                                        let hit = f.create_block();
+                                        f.ins().brif(goes_on, other, &[], hit, &[]);
+                                        f.switch_to_block(hit);
+                                        let l1 = f.ins().iadd_imm(start, n as i64);
+                                        mset(&mut f, Mem::Limit, l1);
+                                        let c = f.ins().iconst(types::I64, i64::from(*code));
+                                        mset(&mut f, Mem::Taken, c);
+                                        // The word's own target, where the switch names it.
+                                        let to = match plain_of(t) {
+                                            Some(plain) => s.words.iter().find(|&&(y, _)| usize::from(y) == x).map_or(plain, |&(_, to)| to),
+                                            None => t,
+                                        };
+                                        f.ins().jump(if to == REFUSE { no_e } else { word(to) }, &[]);
+                                        f.switch_to_block(other);
+                                    }
+                                }
+                            }
                             let (l, bad) = fetch_last_by(&mut f, &env, ft, &bw, rule, start, &mut heads);
                             let (no, ok) = (f.create_block(), f.create_block());
                             f.ins().brif(bad, no, &[], ok, &[]);

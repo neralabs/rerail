@@ -224,6 +224,44 @@ subtracted, load about 35):
 
 Not measured: time.
 
+## Step 3, done: atoms as simdjson tests them; the token loop's state as SSA values
+
+**Atoms.** A switch edge whose bytes begin words, its run's output a byte class, tests each
+word as simdjson's `visit_primitive` does `true`:
+
+| simdjson (`parse_true_atom`) | Ours, before | Ours, now |
+|---|---|---|
+| `str4ncmp(src, "true")`: one 4-byte load, one compare | 64 bytes classified (NEON nibble lookups, 4 `addp`), the run's end by `ctz`, then the word table's hash | one 8-byte load, masked to the word, one compare |
+| `is_not_structural_or_whitespace(src[4])`: one table load | — | one table load of the byte after (`run_class`) |
+| on to the value | the switch again on the word (`by_word`) | the word's target at once |
+
+Another token of those bytes takes the rule's run and the word table, as before.
+
+**The state.** One-function tier 2 (`Cut::one`) holds the token loop's fields as SSA values
+(`HELD_IN_ONE`: the next index, the token's start, end, limit and code, the end before, the
+stream's end, the nodes made and open, a split region's cursor), and each word loads the `ctx`
+fields it reads where it runs (`Cut::reload`). The frame's loads and stores in the IR fell
+from 587 and 836 to 161 and 248.
+
+**What the machine code shows still differs** (`json_tier2_by_word` with `RERAIL_DUMP_TIER2`
+now writes the code and each word's ranges):
+- The function is about 19K instructions: each `SWITCH` is 250 to 800, as each carries its
+  own copy of every edge's record code. simdjson's `walk_document` states share
+  `visit_primitive` and `parse_string`.
+- The allocator still spills: `ctx` and the next index live in the frame across most blocks
+  (`ldr x?, [sp, #0x108]` and `#0x118` in `TOKEN`). simdjson keeps `next_structural` and the
+  tape pointer in registers.
+- A number's end is still found by classifying 64 bytes; simdjson's `parse_number` finds it
+  by parsing, and the number check is a second pass over the same bytes.
+- A string's parts, as in step 2.
+
+Tests: the trees equal `14-json`'s on the 75 documents; the ladder, `tier2_tests`, the parser
+tests' JSON and block tests, rr_parser's JSON and CPU tests pass.
+
+Counts, as information (retired instructions a pass, load-only run subtracted, load about
+15): the 17 files' whole parse 53.1M (step 2: 56.3M), `[1,1,…]` 206.8M (219.5M), short
+strings 70.5M (74.7M).
+
 ## Order
 
 1. Done: step 1, above.

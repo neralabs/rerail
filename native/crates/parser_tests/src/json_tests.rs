@@ -416,6 +416,12 @@ fn json_tier2_by_word() {
         // Its CLIF (each instruction's source location its word's place + 1), and each word's
         // operation and runs, for reading a word's code.
         std::fs::write(format!("{dir}/{name}.clif"), &c.parser.tier2.clif).expect("writes");
+        std::fs::write(format!("{dir}/{name}.s"), &c.parser.tier2.disassembly).expect("writes");
+        // The machine code, and each word's byte ranges in it (`word_ranges`), for reading a
+        // word's instructions.
+        std::fs::write(format!("{dir}/{name}.bin"), &c.parser.tier2.code_bytes).expect("writes");
+        let ranges: String = c.parser.tier2.word_ranges.iter().map(|&(pc, a, b)| format!("{pc}\t{a}\t{b}\n")).collect();
+        std::fs::write(format!("{dir}/{name}.ranges"), ranges).expect("writes");
         let words: String = (0..runs.len()).map(|pc| format!("{pc}\t{}\t{}\t{:?}\n", runs[pc], insts.get(pc).copied().unwrap_or(0), native.structural[pc].operation)).collect();
         std::fs::write(format!("{dir}/{name}.words"), words).expect("writes");
     }
