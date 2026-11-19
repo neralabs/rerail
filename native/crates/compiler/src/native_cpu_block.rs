@@ -2623,7 +2623,9 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     }
     // The records (`records`): made in the last pass at each file's end where it is a forward
     // one, else in a pass of their own after the passes.
-    let mut tables = native.records.as_ref().map(|r| RecordTables::new(r, native)).transpose()?;
+    // None where tier 2 makes the records (`Records::fetched_in_tier2`, page 40): tier 1 then
+    // writes the starts alone, and has no record pass.
+    let mut tables = native.records.as_ref().filter(|r| !r.fetched_in_tier2()).map(|r| RecordTables::new(r, native)).transpose()?;
     // The CPU's form: the walks made by walking, not by rounds (decision 0139); the refill's
     // words the body makes for its rows kept (0361).
     let keep: Vec<usize> = native.records.as_ref().zip(tables.as_ref()).and_then(|(r, t)| refill_outs(r, t, native)).unwrap_or_default().into_iter().map(usize::from).collect();

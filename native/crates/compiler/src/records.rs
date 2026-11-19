@@ -333,6 +333,17 @@ impl Records {
     }
 }
 
+impl Records {
+    /// Whether tier 2 makes each token's record from its start (page 40): where tier 1 is the
+    /// block of masks (no `skip`, so no token loop) and the tokens end by their rules, tier 1
+    /// writes each token's start alone, as simdjson's stage 1 its structural indexes, and tier 2
+    /// finds the token's last by its first byte's rule and makes its code, as simdjson's stage 2
+    /// switches on the byte at the index. The CPU's tier 1 then has no record pass.
+    pub fn fetched_in_tier2(&self) -> bool {
+        !self.rules.is_empty() && self.skip.is_none() && self.gap.is_none()
+    }
+}
+
 impl Reader {
     /// Whether tier 1 splits its region into parts (`Split::Tier1`).
     pub fn parts_in_tier1(&self) -> bool {

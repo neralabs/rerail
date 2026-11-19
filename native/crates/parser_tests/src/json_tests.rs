@@ -40,6 +40,10 @@ fn simdjson_forms_starts_are_simdjsons_indexes() {
     let block = &c.program.block_programs[0];
     let r = block.records.as_ref().expect("records");
     assert!(r.skip.is_none(), "tier 1 is the block of masks, not a token loop");
+    // Tier 2 makes the records (`Records::fetched_in_tier2`): the CPU's tier 1 has no record
+    // pass, and writes the starts alone, as simdjson's `bit_indexer::write`.
+    assert!(r.fetched_in_tier2(), "tier 2 makes the records");
+    assert!(c.parser.tier1.records.is_none(), "the CPU's tier 1 has no record pass");
     for line in crate::block_tests::STAGE1_EXPECTED.lines() {
         let f: Vec<&str> = line.split_whitespace().collect();
         let (path, len, n, hash) = (f[0], f[1].parse::<usize>().unwrap(), f[2].parse::<usize>().unwrap(), u64::from_str_radix(f[3], 16).unwrap());
@@ -52,6 +56,10 @@ fn simdjson_forms_starts_are_simdjsons_indexes() {
         eprintln!("{path}: tier 1 {}", if run.totals.iter().any(|&t| t != 0) { "refuses it" } else { "accepts it" });
         let starts = &run.positions[usize::from(r.starts)];
         assert_eq!((starts.len(), crate::block_tests::fnv(starts)), (n, hash), "{path}: tier 1's starts against simdjson's indexes");
+        let cpu = c.parser.tier1.run_files(&[&bytes]).remove(0);
+        let cpu_starts = &cpu.positions[usize::from(r.starts)];
+        assert_eq!((cpu_starts.len(), crate::block_tests::fnv(cpu_starts)), (n, hash), "{path}: the CPU's tier 1's starts against simdjson's indexes");
+        assert!(cpu.positions[usize::from(r.lasts)].is_empty() && cpu.codes.is_empty(), "{path}: the CPU's tier 1 writes no lasts and no codes");
     }
 }
 

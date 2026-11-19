@@ -175,6 +175,55 @@ scans the string's bytes.
 
 Not measured: time.
 
+## Step 2, done: no record pass; each `SWITCH` edge makes its token's record
+
+**What changed in the code, beside simdjson's:**
+
+| simdjson | Before | Now |
+|---|---|---|
+| Stage 1: `bit_indexer::write`, a position per structural | the starts, then a record pass: each token's last by its rule and its code (kind table, word hash) | the starts alone; the CPU's tier 1 has no record pass (`Records::fetched_in_tier2`) |
+| Stage 2: `advance()`, one load of the next index | `TOKEN` loads start, last and code | `TOKEN` loads the start alone, where a `SWITCH` on its first byte takes it next |
+| `switch (*value)` | a switch on the code's kind | a switch on the byte at the start, as simdjson's |
+| The arm does its kind's work (`visit_primitive`, `parse_string`) | made for every token by the record pass | each switch edge makes its own bytes' record: a one-byte token's code by one table load; a word byte that begins no keyword, the kind as a constant and the run's scan; `t`, `f`, `n`, the run and the word hash; `"`, the closer's scan, then the string reader |
+
+A token whose record is made already, a string's part or the stream's end, takes the switch on
+its kind, as before. A `TOKEN` that no switch on the first byte follows makes the whole record
+itself (`fetch_last`, by its first byte's rule).
+
+**Tests:**
+- `simdjson_forms_starts_are_simdjsons_indexes` now checks the CPU's tier 1: no record pass, no
+  lasts, no codes, and its starts are simdjson's indexes.
+- `simdjson_forms_trees_are_14_jsons`: Cranelift's trees equal `14-json`'s on the 75 documents.
+- The ladder (`every_step_parses_as_the_reference`, `tier2_tests`), the parser tests' JSON and
+  rr_parser's JSON pass.
+
+**What still differs from simdjson's stage 2:**
+- **A string's parts go through the grammar's state machine, a token each.** Each part is a
+  `TOKEN` and a `SWITCH`, and its code is the word hash. simdjson's `parse_string` is one tight
+  loop: it finds the next backslash or quote and handles the escape by its byte
+  (`escape_map[escape_char]`), with no return to `walk_document` until the closing quote.
+- **The state lives in a stack frame.** Each token stores and loads its start, limit, code and
+  index there (`stack_store` and `stack_load` in `TOKEN`). simdjson keeps `next_structural` in a
+  register.
+- **The tape writer's words** (`OPEN`, `CLOSE`, about 50 IR instructions each) against
+  `tape_builder`'s appends.
+
+**Counts, as information** (retired instructions per pass, 200 passes, the load-only run
+subtracted, load about 35):
+
+| | Tier 1 | Whole parse | Against simdjson |
+|---|---:|---:|---:|
+| 17 corpus files: simdjson | 3.73M | 9.88M | 1× |
+| 17 corpus files: `14-json` | 20.4M | 47.5M | 4.8× |
+| 17 corpus files: step 1 | 15.3M | 60.9M | 6.2× |
+| 17 corpus files: now | **5.96M** | 56.3M | 5.7× |
+| `[1,1,…]`: simdjson | 8.5M | 54.5M | 1× |
+| `[1,1,…]`: now | **9.2M** | 219.5M | 4.0× |
+| short strings: simdjson | 3.1M | 9.19M | 1× |
+| short strings: now | 4.9M | 74.7M | 8.1× |
+
+Not measured: time.
+
 ## Order
 
 1. Done: step 1, above.
