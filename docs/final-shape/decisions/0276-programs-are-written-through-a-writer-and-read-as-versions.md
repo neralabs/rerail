@@ -502,6 +502,12 @@ Progress (2026-11-18):
       literals. Then each helper writes its rules per combination, the analyses it makes of its bodies (`type_of`,
       `grounds`, its key in `helper_once`) reading the rules as written in the builder; a replay skips a helper's
       lowering by the length its deciding walk logged. Last, `alts_of` and the sink of literals go.
+    - *Done (A3.4 stage 1).* `within` writes its pick (`within_put`). The conjunction and the literal are in the
+      pick form (`conjunction_put`, `literal_put`): a conjunction logs its literals' counts (`Logged::Counts`, with
+      whether each is outlined) and a replay splits its combination by them; a disjunction writes its alternatives'
+      combinations in turn; the lowerings not yet converted are bridged (`put_alts`). A clause writes each
+      combination from one replay (`body_of`). The tests that took 131 s take 93 s. New test:
+      `a_nest_of_disjunctions_is_outlined`.
   - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
     (`Tree::rule`) goes.
   - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,

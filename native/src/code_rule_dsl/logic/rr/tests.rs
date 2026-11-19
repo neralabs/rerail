@@ -1241,6 +1241,27 @@ fn axes_refuse_by_name() {
 /// such helper per alternative; a shared variable the conjunction only tests is bound in the helper by the rule's
 /// other literals; a conjunction sharing none has one constant column. Printed, the program reads back as itself.
 #[test]
+fn a_nest_of_disjunctions_is_outlined() {
+    // Five choices of two: past 16 combinations, the fifth is a helper relation of its alternatives, a rule each.
+    let mut text = String::from(".decl e(x: number)\n.input e\n");
+    for k in 1..=5 {
+        text.push_str(&format!(".decl f{k}(x: number)\n.decl g{k}(x: number)\n.input f{k}, g{k}\n"));
+    }
+    text.push_str(".decl a(x: number)\na(x) :- e(x), (f1(x) ; g1(x)), (f2(x) ; g2(x)), (f3(x) ; g3(x)), (f4(x) ; g4(x)), (f5(x) ; g5(x)).\n");
+    let p = parse(&text).unwrap();
+    let rules = shown(&p, |h| h == "a");
+    assert_eq!(rules.len(), 16, "{rules:#?}");
+    let helper = rules[0].rsplit(", ").next().unwrap().trim_end_matches("($x)").to_owned();
+    assert!(helper.starts_with("rr_or"), "{rules:#?}");
+    assert_eq!(rules[0], format!("a($x) :- e($x), f1($x), f2($x), f3($x), f4($x), {helper}($x)"));
+    assert_eq!(rules[15], format!("a($x) :- e($x), g1($x), g2($x), g3($x), g4($x), {helper}($x)"));
+    assert!(rules.iter().all(|r| r.ends_with(&format!("{helper}($x)"))), "{rules:#?}");
+    assert_eq!(shown(&p, |h| h == helper), [format!("{helper}($x) :- f5($x)"), format!("{helper}($x) :- g5($x)")]);
+    let printed = print_version(&p).and_then(|text| parse(&text)).unwrap();
+    assert_eq!(difference(&p, &printed), None);
+}
+
+#[test]
 fn negated_conjunctions_lower_to_helpers() {
     let p = parse(concat!(
         ".decl e(x: number)\n.decl f(x: number, y: number)\n.decl g(y: number)\n.decl o(k: symbol, v: symbol)\n.input e, f, g, o\n",
