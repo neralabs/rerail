@@ -19,6 +19,8 @@ The storage test compared six prefix lengths with the original bytes for loose o
 It checked the actual pack entry types for a base identified by offset and a base identified by object ID.
 After truncating a loose compressed stream to 16 KiB, 8,000 bytes could still be read. Requesting 32 KiB failed.
 The scan regression and both storage tests passed on macOS.
+The Windows 11 ARM64 guest rebuilt `7728f9d9e1` on NTFS. The packed-delta storage test and all 17 standalone revision tests passed.
+All five selected headless tests passed, including the oversized-file scan with damaged pack data.
 [Scan contract](../../../headless-scan.md) · [Storage regression](../../../../native/src/git_snapshot_storage.rs) · [Headless regression](../../../../test/cli/headless-scan.test.ts)
 
 ## Commit diagnostic locations
