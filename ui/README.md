@@ -41,7 +41,7 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   `first-open.js` (the Overview: the repository's first-open state, the Violations steered tally, the Most violations
   logged ranking, whether a session is live), `pack-model.js` (a pack page's rules as filtered and sorted, the
   whole-pack switch's state, the catalog's kinds and order), `history-model.js` (which rules History by rule lists under
-  its All · Steered · Logged chips and which one it shows), `sessions-model.js` (a session's events as turns and tool
+  its All · Log only · Steered · Declined chips, each violation in one outcome, and which one it shows), `sessions-model.js` (a session's events as turns and tool
   calls, and the steers its coding agent declined, joined to their cards), `settings-model.js` (coding agent states and
   the install date), `repo-rules.js` (what Settings and the repository menu say of a repository's rule counts) and
   `merge-model.js` (Merge Assist's conflicts and their order, its status strip, readiness checklist and Settings form,

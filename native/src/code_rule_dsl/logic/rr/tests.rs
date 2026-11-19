@@ -2711,6 +2711,49 @@ names(t) :- kind(s, "string"), parsed(s, "braceFormat", r), within(x, r), kind(x
     assert_eq!(names, [["a"], ["b"], ["w"]], "`inside` climbs to a guest's field");
 }
 
+/// The `try` statements of `py` in a `with` block's body, read through a relation an annotation's root may fill too
+/// (as `sym_of` is), with `negated` (`!inside`, `within_stop` or `!has`) excluding those a def is around or in. Hiding
+/// clones the rule for annotation nodes, its axis over a copy of the kind set; folding that set into its original left
+/// the clone's axis on a set that no longer was, with no rows, so the negation held for every `try`.
+fn tries_in_the_block(name: &str, py: &str, negated: &str) -> Vec<Vec<String>> {
+    let rule = format!(
+        r#"
+.decl body(b: node)
+body(b) :- kind(w, "with_statement"), field(w, "body", b).
+body(r) :- kind(s, "string"), parsed(s, "annotation", r).
+.decl attempt(t: node)
+attempt(t) :- kind(t, "try_statement").
+.decl found(l: number)
+found(l) :- attempt(t), body(b), {negated}, line(t, l).
+.output found
+"#
+    );
+    guests_run(name, &[("a.py", py)], &rule, &["found"]).remove(0)
+}
+
+/// A `try` on line 2, and one on line 7 inside a def nested in the block.
+const TRY_IN_A_NESTED_DEF: &str = "with lock:\n    try:\n        pass\n    except E:\n        pass\n    def later():\n        try:\n            pass\n        except E:\n            pass\n";
+
+/// `!inside(t, _, S)` over a node of a relation an annotation may fill holds only where no ancestor is in S.
+#[test]
+fn a_negated_inside_over_a_maybe_annotation_node_reads_its_kind_set() {
+    assert_eq!(tries_in_the_block("negatedinside", TRY_IN_A_NESTED_DEF, "within(t, b), !inside(t, _, \"function_definition\")"), [["2"]]);
+}
+
+/// `within_stop(t, b, S)` from a node of a relation an annotation may fill stops at S.
+#[test]
+fn within_stop_over_a_maybe_annotation_node_stops_at_its_kind_set() {
+    assert_eq!(tries_in_the_block("withinstop", TRY_IN_A_NESTED_DEF, "within_stop(t, b, \"function_definition\")"), [["2"]]);
+}
+
+/// `!has(t, _, S)` over a node of a relation an annotation may fill holds only where no descendant is in S: the `try`
+/// on line 6 holds a def.
+#[test]
+fn a_negated_has_over_a_maybe_annotation_node_reads_its_kind_set() {
+    let py = "with lock:\n    try:\n        pass\n    except E:\n        pass\n    try:\n        def later():\n            pass\n    except E:\n        pass\n";
+    assert_eq!(tries_in_the_block("negatedhas", py, "within(t, b), !has(t, _, \"function_definition\")"), [["2"]]);
+}
+
 /// `.scope` selects a repository's files (`core.rerail`): a finding in a document outside `dirs`, or under a `tests`
 /// part with `tests false`, is dropped; `.scope given` (files a test gives) keeps them all.
 #[test]
@@ -3305,6 +3348,11 @@ Push(c) :- tool_call(c, "Bash"), tool_input(c, "command", s), match("(?s:.*)(?:\
     ]);
     let refused = run_tests_of("rr-tool-call-bad", ".decl r(x: symbol)\n.test t\n    .tool_call \"Bash\" `[1]`\n.end\n");
     assert!(matches!(&refused[..], [(_, Err(e))] if e.contains(":3: `.tool_call \"<tool>\"`")), "{refused:?}");
+    // An empty fence (two backticks and nothing else) is refused with its line, not read past its ends.
+    for (directive, usage) in [(".tool_call \"Bash\" ``", ":3: `.tool_call \"<tool>\"`"), (".fixture \"a.py\" ``", ":3: `.fixture \"<path>\"` then a fenced text")] {
+        let refused = run_tests_of("rr-empty-fence", &format!(".decl r(x: symbol)\n.test t\n    {directive}\n.end\n"));
+        assert!(matches!(&refused[..], [(_, Err(e))] if e.contains(usage)), "{directive}: {refused:?}");
+    }
 }
 
 /// A policy reads tool calls when it says so, `.scope tool_calls` (as a JSON rule that reads `input` samples tool
@@ -3321,10 +3369,38 @@ fn a_policy_reads_tool_calls_only_under_scope_tool_calls() {
         (format!("{head}.violation V(at: symbol) \"v\"\nV(s) :- tool_input(_, \"command\", s).\n"), "says `.scope tool_calls`"),
         (format!("{head}.violation V(at: symbol) \"v\"\n.decl w(s: symbol)\nw(\"a\").\nV(s) :- w(s).\n"), "only in a `.scope tool_calls` policy"),
         (format!("{head}.scope tool_calls\n.scope include \"**/*.py\"\n.violation V(at: symbol) \"v\"\n{reads}"), "no `.scope include \"**/*.py\"` beside it"),
+        // A call's message names its id (`{at}`), never a property of it: a call has no line or name.
+        (format!("{head}.scope tool_calls\n.violation V(at: symbol) \"v {{at.line}}\"\n{reads}"), "{at.line}: a tool call has only its id"),
+        (format!("{head}.scope tool_calls\n.violation V(at: symbol) \"v {{at.name}}\"\n{reads}"), "{at.name}: a tool call has only its id"),
     ] {
         let error = super::read_text(&text).unwrap().lower(false).unwrap_err().to_string();
         assert!(error.contains(why), "{text}: {error}");
     }
+}
+
+/// A run of a file policy and a tool-call policy together (`docs/rule-syntax/tool-calls.md`): each finds what it finds
+/// alone, the file's finding at its path and line, the call's at the call.
+#[test]
+fn a_run_of_file_and_tool_call_policies_finds_both() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "x = 1\nf()\n").unwrap();
+    let file = dir.path().join("calls-file.rerail");
+    std::fs::write(&file, ".policy \"t:calls-file\" revision 1\n.language python\n.violation Call(at: node) code \"C1\" \"a call\"\nCall(c) :- kind(c, \"call\").\n").unwrap();
+    let tool = dir.path().join("calls-tool.rerail");
+    std::fs::write(&tool, ".policy \"t:calls-tool\" revision 1\n.scope tool_calls\n.violation Push(at: symbol) code \"no-push\" \"a push in call {at}\"\nPush(c) :- tool_input(c, \"command\", s), match(\"(?s:.*)(?:git push)(?s:.*)\", s).\n").unwrap();
+    let calls = serde_json::json!({ "toolCalls": [{"id": "e1", "tool": "Bash", "input": {"command": "git push"}}, {"id": "e2", "tool": "Bash", "input": {"command": "ls"}}] });
+    let report = crate::code_rule_dsl::tools::run_policies(&[file, tool], &root, &dir.path().join("out"), &calls).unwrap();
+    let mut found: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|d| (d["code"].clone(), d["path"].clone(), d["line"].clone(), d["at"].as_str().map(str::to_owned))).collect();
+    found.sort_by_key(|f| f.0.to_string());
+    assert_eq!(found, [
+        (serde_json::json!("C1"), serde_json::json!("a.py"), serde_json::json!(2), None),
+        (serde_json::json!("no-push"), serde_json::json!(""), serde_json::json!(0), Some("e1".to_owned())),
+    ], "{report}");
+    // The message names the call by its id (`{at}`).
+    let messages: Vec<&str> = report["diagnostics"].as_array().unwrap().iter().filter(|d| d["code"] == "no-push").filter_map(|d| d["message"].as_str()).collect();
+    assert_eq!(messages, ["a push in call e1"], "{report}");
 }
 
 /// What a test may not do is refused with its line: give a core relation, give one no rule declares, use a set that
@@ -3967,4 +4043,62 @@ ends(l) :- kind(n, "expression_statement"), last_token(n, t), line(t, l).
     assert_eq!(cv, ["1", "2"], "the cross-file reader's values");
     // With `value`'s round undone the program still has core.rerail's shape: its token leaves are made.
     assert_eq!(ends, ["1"], "a token leaf's reader");
+}
+
+/// The modules `demand_split_child` reads, and the builtin references each holds.
+const SPLIT_MODULES: usize = 32;
+const SPLIT_REFERENCES: usize = 4;
+
+/// python/calls over `SPLIT_MODULES` modules of `SPLIT_REFERENCES` builtin references each: no demand split's rows grow
+/// as the references times the modules (`plan::demand::over::disconnected`). `builtin_ref`'s split with `docof` cut
+/// was every reference against every module (8,801 rows of work in its `pre_<i>` here, over the 4,096 of references
+/// times modules; 129.7M rows on edx-platform's 4,459 files). The profile is the process's, so the run is a child
+/// process of its own (`demand_split_child`), its rows read from its `heads.tsv`.
+#[test]
+fn a_demand_split_stays_linear_in_the_modules() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("src");
+    std::fs::create_dir_all(&root).unwrap();
+    // Plain nodes make the program's rarer kinds anchors (fewer than 1/32 of the nodes), so `docof` is a candidate.
+    let filler = (1..=300).map(|i| i.to_string()).collect::<Vec<_>>().join(", ");
+    let source = format!("x = len([1])\nprint(x)\ny = len(\"ab\")\nprint(y)\nDATA = [{filler}]\n");
+    assert_eq!(source.matches("len(").count() + source.matches("print(").count(), SPLIT_REFERENCES);
+    for m in 0..SPLIT_MODULES {
+        std::fs::write(root.join(format!("m{m}.py")), &source).unwrap();
+    }
+    let rule = directory.path().join("calls.rerail");
+    std::fs::write(&rule, ".policy \"split-linear\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, f), kind(f, \"nothing_has_this_kind\").\n").unwrap();
+    let profile = directory.path().join("profile");
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
+        .args(["--exact", "code_rule_dsl::logic::rr::tests::demand_split_child", "--ignored", "--nocapture"])
+        .env("RERAIL_PROFILE", &profile)
+        .env("RERAIL_TAPE_CACHE", "off")
+        .env("DEMAND_SPLIT_RULE", &rule)
+        .env("DEMAND_SPLIT_ROOT", &root)
+        .env("DEMAND_SPLIT_OUT", directory.path().join("out"));
+    let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+    assert!(status.success());
+    // part, head, cpu_s, work (rows into the head's steps), plans
+    let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap();
+    let rows: Vec<(&str, &str, u64)> = heads.lines().skip(1).map(|l| {
+        let c: Vec<&str> = l.split('\t').collect();
+        (c[0], c[1], c[3].parse().unwrap())
+    }).collect();
+    assert!(rows.iter().any(|(part, _, _)| part.contains("typing programs")), "the typing program ran: {heads}");
+    let product = (SPLIT_MODULES * SPLIT_MODULES * SPLIT_REFERENCES) as u64;
+    for (part, head, work) in &rows {
+        if head.starts_with("pre_") || head.starts_with("demand_") {
+            assert!(*work < product / 4, "{head} ({part}): {work} rows, against {product} for every reference times every module");
+        }
+    }
+}
+
+#[test]
+#[ignore = "child process of a_demand_split_stays_linear_in_the_modules"]
+fn demand_split_child() {
+    let var = |k: &str| {
+        std::path::PathBuf::from(std::env::var_os(k).unwrap_or_else(|| panic!("{k} unset: run by a_demand_split_stays_linear_in_the_modules")))
+    };
+    crate::code_rule_dsl::tools::run_rr(&var("DEMAND_SPLIT_RULE"), &var("DEMAND_SPLIT_ROOT"), &var("DEMAND_SPLIT_OUT"), &serde_json::Value::Null).unwrap();
 }
