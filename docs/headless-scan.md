@@ -31,7 +31,7 @@ rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules
 | `--scope repository` | Default. Every file the rules read, or only the `--path`/`--paths-from` files. |
 | `--scope git-diff` | Changed, staged and untracked files against `HEAD`, or against the merge base with `--base <ref>`. |
 | `--rules-ref <ref>` | Run `.rerail/rules/` and `.rerail/packs.json` **at that Git ref**, so a change cannot edit the rules judging it. |
-| `--pack <id>` | Also run an installed pack. Repeatable. Refused where the repository [lists its packs](#packs-the-repository-lists). |
+| `--pack <id>` | Run an installed pack. Repeatable. Replaces the packs the repository [lists](#packs-the-repository-lists). |
 | `--json` | Print the report. |
 | `--fail-on-violations` | Exit 3 on violations. |
 | `--no-send` | Do not queue the report for this machine's [remotes](remote-sink.md). |
@@ -45,8 +45,9 @@ rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules
 - `--rules-ref`: replaces the working tree's rules, its `.rerail/packs.json` and every pack that file keeps in the
   repository. Those rules run in Log until approved (see [Which rules run](#which-rules-run)).
 - `--pack`: the pack must be installed in the Rerail home first (`rerail packs add <id>`). It takes an id
-  (`complexity`) or package name (`@neralabs/rerail-pack-complexity`). A pack that is not installed is an error, and
-  so is `--pack` when the scan's tree has a `.rerail/packs.json`: add the pack to the file instead.
+  (`complexity`) or package name (`@neralabs/rerail-pack-complexity`). A pack that is not installed is an error. When
+  the scan's tree has a `.rerail/packs.json`, `--pack` replaces its packs: the scan runs only the `--pack` packs and the
+  tree's own rules, and does not read the file ([below](#packs-the-repository-lists)).
 - `--fail-on-violations`: exits 3 only when the scan completed with violations.
 
 </details>
@@ -63,10 +64,11 @@ The scan uses the packs the repository lists when it lists them, else your Rerai
 otherwise a throwaway one.
 
 - **Listed**: the packs in `.rerail/packs.json` and the checkout's `.rerail/rules/`, both from the working tree or from
-  `--rules-ref`. Used whenever that file exists ([below](#packs-the-repository-lists)).
+  `--rules-ref`. Used whenever that file exists and no `--pack` is given ([below](#packs-the-repository-lists)).
 - **Home**: the repository's packs, rules, settings and approvals. Used when Rerail is set up here, the repository
   lists no packs, and no `--pack` or `--rules-ref` is given.
-- **Throwaway**: the checkout's `.rerail/rules/` or the rules at `--rules-ref`, plus every `--pack`.
+- **Throwaway**: the checkout's `.rerail/rules/` or the rules at `--rules-ref`, plus every `--pack`, in place of any
+  packs the repository lists.
 
 Worktree, `--rules-ref`, repository-pack and non-npm pack rules run in **Log** until approved with
 `rerail rules approve`.
@@ -121,6 +123,12 @@ runs the same rules ([design](repository-packs.md)):
 With the file, the scan runs exactly those packs, each in its folders and starting with its own `on` and `mode`, and
 the tree's own rules. Your Rerail home's installed packs, attachments and rule settings are not used; its approvals
 are.
+
+**`--pack` replaces the listed packs**, for trying packs the repository does not list yet: `rerail scan --pack x` runs
+only the home's installed version of each `--pack` and the tree's own rules (from the working tree, or `--rules-ref`),
+and none of the file's packs. The report's `packs` then names each with `"from": "home"`, never `npm` or
+`repository`, so a scan that overrode the file shows it. Approval works as without the file: a third party's pack, or
+one installed from a folder, runs in Log until approved. Without `--pack`, the file decides.
 
 <details>
 <summary>How listed packs are read, fetched and checked</summary>
@@ -217,8 +225,8 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
 - **`payloadHash`**: digest of the exact rule text that produced the finding.
 - **`fingerprint`**: stable across scans, so you can tell new findings from existing ones.
 - **`packs`**: `npm` and `repository` for packs `.rerail/packs.json` lists, `home` for the home's installed packs that
-  ran (its configuration, or `--pack`); `folders` when the file keeps a pack to some folders. Each rule's
-  `source.packId` names its pack.
+  ran (its configuration, or `--pack`, which replaces the file's packs); `folders` when the file keeps a pack to some
+  folders. Each rule's `source.packId` names its pack.
 - **`failures`**: execution failures and coverage gaps, as an audit records them ([reference](reference.md#scan-and-settings-controls)).
   The scan adds its own: `rule-left-out` for a rule file at `--rules-ref` that does not load, and
   `checkout-not-audited` for each checkout it meant to audit, when it had files to scan and no audit ran.

@@ -69,14 +69,16 @@ published pack no exact version, or lists a folder that is empty, repeated, outs
 
 **One commit decides.** The scan reads its rules from one tree: `.rerail/rules/`, `.rerail/packs.json`, every `path`
 pack and every folder the file lists come from the working tree, or, with `--rules-ref <ref>`, all from that ref. A
-change under review can then add, remove, edit or widen neither a pack nor a rule that judges it.
+change under review can then add, remove, edit or widen neither a pack nor a rule that judges it. Only the scan's
+command line can set the file aside, with `--pack` (below).
 
 **The file replaces the machine's choice.** When the file exists, the scan always uses a throwaway configuration: the
 file's packs, each attached at its `folders` or the whole repository, and the tree's own rules, each rule starting
 with its pack's `on` and `mode`. The home's attachments and rule settings are not used, even where Rerail is set up in
 the checkout, so a developer's local scan reproduces CI exactly. The home's approvals are, exactly as today
 ([Approval](#approval)). Without the file, the scan is what it is today: the home's configuration when Rerail is set up
-there, else the tree's rules plus each `--pack`.
+there, else the tree's rules plus each `--pack`. With the file and `--pack`, the throwaway configuration holds the
+`--pack` packs in place of the file's (below).
 
 **Published packs are fetched at their version for the scan.** Each is installed with npm, at exactly the version the
 file names, into the scan's own temporary folder, as set-up's staging install does: `--ignore-scripts`, no lockfile,
@@ -90,16 +92,21 @@ unreachable), a `path` that is not a pack, a listed folder that is not a folder 
 catalog leaves out (its core range, a clash, a rule that does not compile) is an error naming the pack and why, exit
 `1`, never a scan that passes with its rules missing. That is how `--pack` treats a pack that is not installed today.
 
-**`--pack` is refused when the file exists** (settled in review). `rerail scan --pack x` there fails: `this repository
-lists its packs in .rerail/packs.json; add x there`. `--pack` names no version, so adding it on top would mix the
-home's installed version with the file's pinned ones, and let a CI job's command line run rules the repository does
-not declare. Refusing is also the choice that can be loosened later without breaking anyone. Without the file,
-`--pack` works as it does today.
+**`--pack` replaces the file's packs.** `rerail scan --pack x` where the file exists runs only the `--pack` packs, each
+the version installed in the Rerail home as without the file, and the tree's own `.rerail/rules/` (from the working
+tree or `--rules-ref`); none of the file's packs run, and the file is not read. This is for experimental pack scans:
+trying a pack, or a version of one, on a repository that lists its packs, without editing the file. Replacing rather
+than adding keeps each scan's packs from one source, so the home's installed versions never mix with the file's pinned
+ones and no rule is needed for a pack named in both. It does not weaken "one commit decides": the change under review
+still cannot choose its packs, since `--pack` comes from the command that runs the scan, and the report says the file
+was set aside (every pack `from: "home"`). Approval is as without the file: a third party's pack, or one installed
+from a folder, runs in Log until approved. Without `--pack`, the file decides. The first draft refused `--pack` here,
+as the choice that could be loosened later; replacing is that loosening.
 
 **The report names the packs.** `rerail.scan/1` gains a field, which its contract allows: `packs`, each pack the scan
 ran with its `id`, `packageName`, `version`, `from` (`npm`, `repository` with its `path`, or `home` for one from the
-home's configuration or `--pack`) and its `folders` when the file gives them. Every rule keeps `source.packId`, so
-each finding still names its pack.
+home's configuration or `--pack`) and its `folders` when the file gives them. A scan where `--pack` replaced the file's
+packs lists only `home` packs. Every rule keeps `source.packId`, so each finding still names its pack.
 
 ## A session on a developer's machine reads it
 
@@ -172,7 +179,7 @@ fetching of `@neralabs/*` packs, the dashboard's refusal), then rule settings in
 
 Settled in review of the first draft:
 
-- `--pack` when the file exists: refused.
+- `--pack` when the file exists: first refused; now it replaces the file's packs, for experimental pack scans.
 - Sessions: the daemon fetches Rerail's own `@neralabs/*` packs by itself; a third party's pack waits for a person.
 - `folders` per entry: in the first version, optional.
 - A scan with the file ignores the home's rule settings; moving rule settings into `.rerail` is the next step.

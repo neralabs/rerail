@@ -80,7 +80,7 @@ The current code is stricter than this contract in a few places. These are integ
 - `src/engine/storage/audit-history.ts:20` keys history on clause id plus the full span JSON plus code. A different witness then counts as a new finding. Re-key on the finding key; this needs a migration.
 - `native/src/code_rule_dsl/eval/output.rs` derives ids and `added`/`retracted` from exact witness bytes. Move id derivation and ordering into the shared consolidation step.
 - `replay.ts:183` derives a category from `clauseId`. Use a declared `tag`.
-- The data-layer port bar ("Model the exact state tracked by the oracle", `docs/data-layer-rule-port.md:83`; admission "as exact only after its diagnostics and coverage match", `:264`) is replaced by section 5.
+- The data-layer port bar ("Model the exact state tracked by the oracle", `docs/data-layer-rule-port.md:83` (removed; at 7efcac9c67); admission "as exact only after its diagnostics and coverage match", `:264`) is replaced by section 5.
 
 ## 7. Consequences for the engine
 
