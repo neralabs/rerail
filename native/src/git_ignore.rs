@@ -8,8 +8,9 @@
 //! ignored file brings it back and a `.gitignore` the index marks skip-worktree is read from the
 //! blob it names now; a `.gitignore` is read when the walk first enters its folder. A matcher says
 //! whether one opened now would read the rules it read (`sources_unchanged`), so hosts can share
-//! one per checkout: every holder reads the index again once its file changes. A matcher holds no
-//! file open.
+//! one per checkout: every holder reads the index again once its file changes, which a stat of it
+//! tells or, where the volume's stamps cannot, the checksum Git writes at its end. A matcher holds
+//! no file open.
 //!
 //! The repository opens through the engine's one opener (`git_access::opener`), so a repository
 //! Git refuses has no matcher. Opening runs on a thread of its own under the Git read time limit; questions
@@ -98,19 +99,19 @@ impl GitIgnore {
         true
     }
 
-    /// Reads the index again once its file's stamp differs from the one it was read with, and makes
+    /// Reads the index again once its file differs from the one it was read from, and makes
     /// the stack again from it, as an open makes it: the stack names each `.gitignore` the index
     /// marks skip-worktree by the blob the index holds. The sources are read again first, as an
     /// open reads them, so a check of them compares the files the new stack reads.
     fn refresh(&mut self) -> std::result::Result<(), String> {
-        if self.index.stamp == Some(FileStamp::of(&self.index.path)) {
+        if self.index.unchanged() {
             return Ok(());
         }
         let sources = self
             .sources
             .as_ref()
             .and_then(|read| Sources::read(&self.repository, &read.worktree));
-        let index = IndexFile::read(&self.repository)?;
+        let index = IndexFile::read(&self.repository, self.index.volume)?;
         // Rules that cannot be read again leave the stack and sources read before, so questions
         // are answered by them and the new index is read once.
         if let Ok(stack) = exclude_stack(&self.repository, &index.file) {
@@ -335,7 +336,7 @@ fn tracked(index: &gix::index::State, path: &BStr, is_directory: bool) -> bool {
 fn index_and_exclude_stack(
     repository: &gix::Repository,
 ) -> std::result::Result<(IndexFile, gix::worktree::Stack), String> {
-    let index = IndexFile::read(repository)?;
+    let index = IndexFile::read(repository, Volume::of(&repository.index_path()))?;
     let stack = exclude_stack(repository, &index.file)?;
     Ok((index, stack))
 }
@@ -358,25 +359,26 @@ fn exclude_stack(
 /// The index as a matcher last read it, with its file's stamp then. gix's shared index is read
 /// again only once the file's modification time is later, but Git writes the index to a new file
 /// and renames it over the old one, and a second write within one step of the file system's clock
-/// keeps the first one's time: the stamp tells that new file from the one read.
+/// keeps the first one's time: the stamp tells that new file from the one read where it can, and
+/// the checksum Git writes at the end of the index tells it where the stamp cannot.
 struct IndexFile {
     path: PathBuf,
+    /// What the index's volume lets a stamp tell, found once per reader.
+    volume: Volume,
     /// The file's stamp when it was read (`None` inside where there was no file), or `None` where
-    /// that stamp could not tell a later write from it: then the next question reads the index
-    /// again, whatever it finds, an index removed meanwhile among them.
+    /// that stamp could not tell a later write from it: then the next question compares the
+    /// checksum at the file's end with the one read, and reads the index again when it differs.
     stamp: Option<Option<FileStamp>>,
     file: gix::index::File,
 }
 
 impl IndexFile {
     /// `repository`'s index as it is now; an empty one where it has none.
-    fn read(repository: &gix::Repository) -> std::result::Result<Self, String> {
+    fn read(repository: &gix::Repository, volume: Volume) -> std::result::Result<Self, String> {
         let path = repository.index_path();
         // Stamped before it is read, so a write that lands meanwhile reads as a change at the
-        // next question. A stamp that cannot tell a later write is not kept, so the next question
-        // reads the index again.
+        // next question. A stamp that cannot tell a later write is not kept.
         let stamp = FileStamp::of(&path);
-        let stamp = stamp.as_ref().is_none_or(FileStamp::tells).then_some(stamp);
         #[cfg(test)]
         INDEX_READS.with(|reads| reads.set(reads.get() + 1));
         let file = match repository.open_index() {
@@ -387,8 +389,49 @@ impl IndexFile {
             ),
             Err(error) => return Err(format!("cannot read Git index: {error}")),
         };
-        Ok(Self { path, stamp, file })
+        #[cfg(test)]
+        tests::after_index_read();
+        Ok(Self {
+            stamp: volume.keeps(stamp),
+            path,
+            volume,
+            file,
+        })
     }
+
+    /// Whether the file still holds the index read: its stamp equals the one kept, or it ends with
+    /// the checksum read, which Git computes over every byte before it. A stamp that tells its
+    /// file is kept from then on, so a question costs a stat again.
+    fn unchanged(&mut self) -> bool {
+        let now = FileStamp::of(&self.path);
+        if now.is_some() && self.stamp == now {
+            return true;
+        }
+        if !self.same_checksum() {
+            return false;
+        }
+        self.stamp = self.volume.keeps(now);
+        true
+    }
+
+    /// Whether the file ends with the checksum of the index read; never where Git wrote none
+    /// (`index.skipHash`), where the index is read again.
+    fn same_checksum(&self) -> bool {
+        self.file.checksum().is_some_and(|read| {
+            let read = read.as_bytes();
+            trailing_bytes(&self.path, read.len()).is_some_and(|now| now == read)
+        })
+    }
+}
+
+/// The last `len` bytes of `path`; `None` where it cannot be read or is shorter.
+fn trailing_bytes(path: &Path, len: usize) -> Option<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    file.seek(SeekFrom::End(-i64::try_from(len).ok()?)).ok()?;
+    let mut bytes = vec![0; len];
+    file.read_exact(&mut bytes).ok()?;
+    Some(bytes)
 }
 
 #[cfg(test)]
@@ -397,20 +440,204 @@ thread_local! {
     static INDEX_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// What a stamp of a file on one volume can tell, by the volume's file system.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Volume {
+    /// Every new file gets an identity no other file had (NTFS, APFS, HFS+), so a stamp tells its
+    /// file from every later one at once.
+    Unique,
+    /// An identity can come back to a later file (ext4 gives a freed inode number to the next new
+    /// file, FAT and exFAT make it from a file's place in its folder, ReFS's 64-bit index may
+    /// repeat), and file times come from this machine's clock: a stamp tells its file once that
+    /// clock has left the steps of its times ([`FileStamp::tells`]).
+    Local,
+    /// File times come from another machine's clock (NFS, SMB, 9p, FUSE and a virtual machine's
+    /// shared folder among them), which this one cannot read: no stamp is kept, so each question
+    /// compares the index's checksum.
+    Remote,
+}
+
+impl Volume {
+    /// `stamp`, from [`FileStamp::of`], where it tells its file from every later one on this
+    /// volume; `None` where it cannot: a stat refused, a time the file clock has not left, or a
+    /// volume whose times come from another clock.
+    fn keeps(self, stamp: Option<Option<FileStamp>>) -> Option<Option<FileStamp>> {
+        match self {
+            Self::Unique => stamp,
+            Self::Local => {
+                let now = file_clock();
+                stamp.filter(|stamp| stamp.as_ref().is_none_or(|file| file.tells(now)))
+            }
+            Self::Remote => None,
+        }
+    }
+
+    /// The volume of the folder `index` is in, by its file system type (`statfs`): file systems
+    /// served by another machine, or through FUSE, which may be, are remote, and every other one
+    /// local. One that cannot be read is taken as remote.
+    #[cfg(target_os = "linux")]
+    fn of(index: &Path) -> Self {
+        use std::os::unix::ffi::OsStrExt;
+        #[cfg(test)]
+        if let Some(volume) = tests::volume() {
+            return volume;
+        }
+        let folder = index.parent().unwrap_or(index);
+        let Ok(folder) = std::ffi::CString::new(folder.as_os_str().as_bytes()) else {
+            return Self::Remote;
+        };
+        let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        // SAFETY: a NUL-terminated path and a buffer of the type the call fills.
+        if unsafe { libc::statfs(folder.as_ptr(), stat.as_mut_ptr()) } != 0 {
+            return Self::Remote;
+        }
+        // SAFETY: the call succeeded, so it filled the buffer. A type is a 32-bit magic number.
+        let kind = unsafe { stat.assume_init() }.f_type as u32;
+        if REMOTE_FILE_SYSTEMS.contains(&kind) {
+            Self::Remote
+        } else {
+            Self::Local
+        }
+    }
+
+    /// The volume of the folder `index` is in: one the system does not keep locally
+    /// (`MNT_LOCAL`), or that a FUSE driver serves, is remote; APFS and HFS+ give every new file
+    /// an identity of its own (APFS from the volume's next object identifier, HFS+ a number again
+    /// only once its 32-bit count has wrapped); every other one is local. One that cannot be read
+    /// is taken as remote.
+    #[cfg(target_os = "macos")]
+    fn of(index: &Path) -> Self {
+        use std::os::unix::ffi::OsStrExt;
+        #[cfg(test)]
+        if let Some(volume) = tests::volume() {
+            return volume;
+        }
+        let folder = index.parent().unwrap_or(index);
+        let Ok(folder) = std::ffi::CString::new(folder.as_os_str().as_bytes()) else {
+            return Self::Remote;
+        };
+        let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        // SAFETY: a NUL-terminated path and a buffer of the type the call fills.
+        if unsafe { libc::statfs(folder.as_ptr(), stat.as_mut_ptr()) } != 0 {
+            return Self::Remote;
+        }
+        // SAFETY: the call succeeded, so it filled the buffer.
+        let stat = unsafe { stat.assume_init() };
+        // SAFETY: the system ends the name with a NUL inside its 16 bytes.
+        let name = unsafe { std::ffi::CStr::from_ptr(stat.f_fstypename.as_ptr()) };
+        Self::of_mac(
+            (stat.f_flags & libc::MNT_LOCAL as u32) != 0,
+            name.to_bytes(),
+        )
+    }
+
+    /// The volume of a file system named `name`, kept locally or not (`local`).
+    #[cfg(target_os = "macos")]
+    fn of_mac(local: bool, name: &[u8]) -> Self {
+        match name {
+            _ if !local || name.ends_with(b"fuse") => Self::Remote,
+            b"apfs" | b"hfs" => Self::Unique,
+            _ => Self::Local,
+        }
+    }
+
+    /// The volume of the folder `index` is in: a network drive or share is remote, NTFS gives
+    /// every new file a file index of its own (the record number with a sequence number that grows
+    /// each time the record is used again), and every other file system (ReFS, FAT, exFAT) is
+    /// local. One that cannot be read is taken as remote.
+    #[cfg(windows)]
+    fn of(index: &Path) -> Self {
+        #[cfg(test)]
+        if let Some(volume) = tests::volume() {
+            return volume;
+        }
+        match volume_file_system(index.parent().unwrap_or(index)) {
+            None => Self::Remote,
+            Some(name) if name == "NTFS" => Self::Unique,
+            Some(_) => Self::Local,
+        }
+    }
+
+    /// The volume of any folder on a system that is neither Linux, macOS nor Windows: local.
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+    fn of(_index: &Path) -> Self {
+        Self::Local
+    }
+}
+
+/// The name of the file system of the volume `folder` is on (`NTFS`, `ReFS`, `FAT32`, `exFAT`);
+/// `None` on a network drive or share, or where it cannot be read.
+#[cfg(windows)]
+fn volume_file_system(folder: &Path) -> Option<String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetDriveTypeW, GetVolumeInformationW, GetVolumePathNameW,
+    };
+    /// `GetDriveTypeW`'s answer for a network drive.
+    const DRIVE_REMOTE: u32 = 4;
+    let folder: Vec<u16> = folder.as_os_str().encode_wide().chain([0]).collect();
+    let mut root = [0_u16; 1024];
+    // SAFETY: a NUL-terminated path and a buffer of the length given, which the call fills.
+    if unsafe { GetVolumePathNameW(folder.as_ptr(), root.as_mut_ptr(), 1024) } == 0 {
+        return None;
+    }
+    // SAFETY: the NUL-terminated root the call above wrote.
+    if unsafe { GetDriveTypeW(root.as_ptr()) } == DRIVE_REMOTE {
+        return None;
+    }
+    let mut name = [0_u16; 64];
+    // SAFETY: the root, and a buffer of the length given for the name; nothing else is asked for.
+    let read = unsafe {
+        GetVolumeInformationW(
+            root.as_ptr(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            name.as_mut_ptr(),
+            64,
+        )
+    };
+    let end = name
+        .iter()
+        .position(|&unit| unit == 0)
+        .unwrap_or(name.len());
+    (read != 0).then(|| String::from_utf16_lossy(&name[..end]))
+}
+
+/// The `statfs` types of file systems whose file times another machine sets, or may.
+#[cfg(target_os = "linux")]
+const REMOTE_FILE_SYSTEMS: [u32; 15] = [
+    0x6969,      // NFS
+    0x517B,      // SMB
+    0xFF53_4D42, // CIFS
+    0xFE53_4D42, // SMB2
+    0x0102_1997, // 9p: WSL's drives, QEMU's shared folders
+    0x6573_5546, // FUSE: sshfs, virtiofs, VMware's shared folders
+    0x00C3_6400, // Ceph
+    0x5346_414F, // AFS
+    0x6B41_4653, // kAFS
+    0x7375_7245, // Coda
+    0x564C,      // NCP
+    0x0116_1970, // GFS2
+    0x7461_636F, // OCFS2
+    0x0BD0_0BD0, // Lustre
+    0x786F_4256, // VirtualBox's shared folders
+];
+
 /// What tells one index file from another and from itself rewritten: the file's identity (device
 /// and inode on Unix; volume serial and file index on Windows), which every write of Git's
 /// changes, and its modification time and size, which a write in place changes. All three come
 /// from the one query a stat makes, so a question costs what it cost before. Git writes the index
-/// to a new file and renames it over the old one, and ext4 gives a freed inode number to the next
-/// new file at once: two writes within one step of the file system's clock can land the second on
-/// the number of the file read, at its size and time. That needs the read taken within the step,
-/// so on Linux such a stamp is not kept ([`FileStamp::tells`]) and nothing is held open. A tool
-/// can also set a file's time back to the one read; on Unix the stamp holds the time the file last
-/// changed, which the kernel sets at every write, rename and time set and no call sets, so such a
-/// file still differs once the clock has left that time's step too. On macOS the inode number tells
-/// them: APFS numbers each new file from its volume's next identifier, and HFS+ gives a number again
-/// only once its 32-bit count has wrapped. On Windows the file index tells them: NTFS gives every
-/// new file a file index of its own.
+/// to a new file and renames it over the old one; where a volume gives an identity again (ext4
+/// gives a freed inode number to the next new file at once), two writes within one step of the
+/// file system's clock can land the second on the identity of the file read, at its size and
+/// time. That needs the read taken within the step, so there such a stamp is not kept
+/// ([`Volume::keeps`]) and nothing is held open. A tool can also set a file's time back to the one
+/// read; on Unix the stamp holds the time the file last changed, which the kernel sets at every
+/// write, rename and time set and no call sets, so such a file still differs once the clock has
+/// left that time's step too.
 #[derive(Debug, PartialEq, Eq)]
 struct FileStamp {
     identity: (u64, u64),
@@ -440,16 +667,57 @@ fn file_clock() -> std::time::SystemTime {
     // SAFETY: a buffer of the type the call fills; a call that fails leaves the epoch, which
     // tells nothing.
     unsafe { libc::clock_gettime(libc::CLOCK_REALTIME_COARSE, &raw mut now) };
-    std::time::UNIX_EPOCH
-        + std::time::Duration::new(
-            u64::try_from(now.tv_sec).unwrap_or(0),
-            u32::try_from(now.tv_nsec).unwrap_or(0),
-        )
+    shifted(
+        std::time::UNIX_EPOCH
+            + std::time::Duration::new(
+                u64::try_from(now.tv_sec).unwrap_or(0),
+                u32::try_from(now.tv_nsec).unwrap_or(0),
+            ),
+    )
+}
+
+/// The clock this system gives file times from: the system time.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn file_clock() -> std::time::SystemTime {
+    shifted(std::time::SystemTime::now())
+}
+
+/// The clock Windows gives file times from (`GetSystemTimeAsFileTime`, which moves at each tick
+/// of the system clock): a write after a reading of it gets a time no earlier than that reading.
+#[cfg(windows)]
+fn file_clock() -> std::time::SystemTime {
+    use windows_sys::Win32::Foundation::FILETIME;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        /// The system time as of the clock's last tick, which NTFS stamps a write with.
+        fn GetSystemTimeAsFileTime(time: *mut FILETIME);
+    }
+    let mut now = FILETIME::default();
+    // SAFETY: a buffer of the type the call fills.
+    unsafe { GetSystemTimeAsFileTime(&raw mut now) };
+    let count = (u64::from(now.dwHighDateTime) << 32) | u64::from(now.dwLowDateTime);
+    shifted(file_time(count).unwrap_or(std::time::UNIX_EPOCH))
+}
+
+/// `time`, read from the file clock; the cases move it ahead of the file times to stand for a
+/// clock ahead of the one that set them.
+fn shifted(time: std::time::SystemTime) -> std::time::SystemTime {
+    #[cfg(test)]
+    let time = time + tests::clock_ahead();
+    time
+}
+
+/// A `FILETIME` count of 100 ns since 1601 as a time; `None` before 1970.
+#[cfg(windows)]
+fn file_time(count: u64) -> Option<std::time::SystemTime> {
+    /// 1970 as a `FILETIME` count.
+    const UNIX_EPOCH: u64 = 116_444_736_000_000_000;
+    let since = count.checked_sub(UNIX_EPOCH)?;
+    Some(std::time::UNIX_EPOCH + std::time::Duration::from_nanos(since.checked_mul(100)?))
 }
 
 /// Whether `now`, from the file clock, has left the step that gave `modified`, as its digits show
 /// it ([`time_step`]).
-#[cfg(target_os = "linux")]
 fn past_step(modified: std::time::SystemTime, now: std::time::SystemTime) -> bool {
     now > modified + time_step(modified)
 }
@@ -459,7 +727,6 @@ fn past_step(modified: std::time::SystemTime, now: std::time::SystemTime) -> boo
 /// on FAT), so a time's nanoseconds are a multiple of it. The step is taken as the largest power of
 /// ten that divides them, and two seconds for a whole second; a time of a finer file system that
 /// ends in zeros by chance is left a little later.
-#[cfg(target_os = "linux")]
 fn time_step(time: std::time::SystemTime) -> std::time::Duration {
     let nanos = time
         .duration_since(std::time::UNIX_EPOCH)
@@ -475,68 +742,76 @@ fn time_step(time: std::time::SystemTime) -> std::time::Duration {
 }
 
 impl FileStamp {
-    /// `path`'s stamp; `None` when it is absent or cannot be read.
+    /// `path`'s stamp: `Some(None)` when there is no file, `None` when the stat is refused.
     #[cfg(unix)]
-    fn of(path: &Path) -> Option<Self> {
+    fn of(path: &Path) -> Option<Option<Self>> {
         use std::os::unix::fs::MetadataExt;
-        let metadata = std::fs::metadata(path).ok()?;
-        Some(Self {
+        let metadata = match stat(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(None),
+            Err(_) => return None,
+        };
+        let stamp = Self {
             identity: (metadata.dev(), metadata.ino()),
             modified: metadata.modified().ok(),
             changed: (metadata.ctime(), metadata.ctime_nsec()),
             len: metadata.len(),
-        })
+        };
+        #[cfg(test)]
+        let stamp = tests::as_the_volume_gives_it(stamp);
+        Some(Some(stamp))
     }
 
-    /// Whether this stamp tells its file from every later one: once the file clock has left the
-    /// steps that gave the file's time and the time it last changed, since a later write can get
-    /// either only within it. A stamp taken within a step is not kept, so the next question reads
-    /// the index again; that read, taken later, is kept.
-    #[cfg(target_os = "linux")]
-    fn tells(&self) -> bool {
-        let now = file_clock();
+    /// Whether this stamp tells its file from every later one on a local volume: once the file
+    /// clock (`now`) has left the steps that gave the file's times, since a later write can get
+    /// either only within it. A stamp taken within a step is not kept, so the next question
+    /// compares the checksum; a stamp taken later is kept.
+    fn tells(&self, now: std::time::SystemTime) -> bool {
+        self.times()
+            .into_iter()
+            .all(|time| time.is_some_and(|time| past_step(time, now)))
+    }
+
+    /// The file's modification time and the time it last changed.
+    #[cfg(unix)]
+    fn times(&self) -> [Option<std::time::SystemTime>; 2] {
         let (seconds, nanos) = self.changed;
-        let changed = std::time::UNIX_EPOCH
-            + std::time::Duration::new(
-                u64::try_from(seconds).unwrap_or(0),
-                u32::try_from(nanos).unwrap_or(0),
-            );
-        past_step(changed, now)
-            && self
-                .modified
-                .is_some_and(|modified| past_step(modified, now))
+        let changed = u64::try_from(seconds).ok().zip(u32::try_from(nanos).ok());
+        [
+            self.modified,
+            changed.map(|(seconds, nanos)| {
+                std::time::UNIX_EPOCH + std::time::Duration::new(seconds, nanos)
+            }),
+        ]
     }
 
-    /// Whether this stamp tells its file from every later one: the identity alone does here.
-    #[cfg(not(target_os = "linux"))]
-    fn tells(&self) -> bool {
-        true
-    }
-
-    /// `path`'s stamp; `None` when it is absent or cannot be read. One open and one query, the
-    /// ones `std::fs::metadata` makes, so a question costs a stat: the 128-bit file id would take
-    /// a second query. The 64-bit index may repeat across folders on ReFS, where the time and size
-    /// still tell a rewrite.
+    /// The file's modification time.
     #[cfg(windows)]
-    fn of(path: &Path) -> Option<Self> {
-        use std::os::windows::fs::OpenOptionsExt;
+    fn times(&self) -> [Option<std::time::SystemTime>; 1] {
+        [file_time(self.modified)]
+    }
+
+    /// `path`'s stamp: `Some(None)` when there is no file, `None` when it cannot be read. One open
+    /// and one query, the ones `std::fs::metadata` makes, so a question costs a stat: the 128-bit
+    /// file id would take a second query.
+    #[cfg(windows)]
+    fn of(path: &Path) -> Option<Option<Self>> {
         use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::Storage::FileSystem::{
-            BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, GetFileInformationByHandle,
+            BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
         };
-        // No access, as `std::fs::metadata` opens it, and every share mode: Git may rename meanwhile.
-        let file = std::fs::OpenOptions::new()
-            .access_mode(0)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-            .open(path)
-            .ok()?;
+        let file = match open_for_stat(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(None),
+            Err(_) => return None,
+        };
         let mut info = BY_HANDLE_FILE_INFORMATION::default();
         // SAFETY: an open handle and a buffer of the type the call fills.
         if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &raw mut info) } == 0 {
             return None;
         }
         let join = |high: u32, low: u32| (u64::from(high) << 32) | u64::from(low);
-        Some(Self {
+        let stamp = Self {
             identity: (
                 u64::from(info.dwVolumeSerialNumber),
                 join(info.nFileIndexHigh, info.nFileIndexLow),
@@ -546,8 +821,37 @@ impl FileStamp {
                 info.ftLastWriteTime.dwLowDateTime,
             ),
             len: join(info.nFileSizeHigh, info.nFileSizeLow),
-        })
+        };
+        #[cfg(test)]
+        let stamp = tests::as_the_volume_gives_it(stamp);
+        Some(Some(stamp))
     }
+}
+
+/// `path`'s metadata, as `std::fs::metadata` reads it; the cases refuse it.
+#[cfg(unix)]
+fn stat(path: &Path) -> std::io::Result<std::fs::Metadata> {
+    #[cfg(test)]
+    if tests::stat_refused() {
+        return Err(std::io::ErrorKind::PermissionDenied.into());
+    }
+    std::fs::metadata(path)
+}
+
+/// `path` opened as `std::fs::metadata` opens it: no access and every share mode, since Git may
+/// rename over it meanwhile; the cases refuse it.
+#[cfg(windows)]
+fn open_for_stat(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
+    #[cfg(test)]
+    if tests::stat_refused() {
+        return Err(std::io::ErrorKind::PermissionDenied.into());
+    }
+    std::fs::OpenOptions::new()
+        .access_mode(0)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
 }
 
 /// The pattern that ignores a path: the file Git read it from (absolute; `None` when it came from
@@ -644,7 +948,96 @@ impl GitIgnoreMatcher {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use std::cell::{Cell, RefCell};
     use std::time::{Duration, SystemTime};
+
+    thread_local! {
+        /// The volume this thread's readers take in place of the one found.
+        static VOLUME: Cell<Option<Volume>> = const { Cell::new(None) };
+        /// How far ahead of the file clock this thread's clock reads.
+        static CLOCK_AHEAD: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+        /// Whether this thread's stamps take one identity and change time for every file.
+        static ONE_IDENTITY: Cell<bool> = const { Cell::new(false) };
+        /// Whether this thread's stats of a file are refused.
+        static STAT_REFUSED: Cell<bool> = const { Cell::new(false) };
+        /// What runs once, right after this thread's next index read.
+        static AFTER_READ: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn volume() -> Option<Volume> {
+        VOLUME.with(Cell::get)
+    }
+
+    pub(super) fn clock_ahead() -> Duration {
+        CLOCK_AHEAD.with(Cell::get)
+    }
+
+    pub(super) fn stat_refused() -> bool {
+        STAT_REFUSED.with(Cell::get)
+    }
+
+    /// `stamp` as a volume that gives an identity and a change time again gives it: with one of
+    /// each for every file, so only the modification time and size tell two files apart.
+    pub(super) fn as_the_volume_gives_it(mut stamp: FileStamp) -> FileStamp {
+        if ONE_IDENTITY.with(Cell::get) {
+            stamp.identity = (0, 0);
+            #[cfg(unix)]
+            {
+                stamp.changed = (0, 0);
+            }
+        }
+        stamp
+    }
+
+    pub(super) fn after_index_read() {
+        if let Some(run) = AFTER_READ.with(|after| after.borrow_mut().take()) {
+            run();
+        }
+    }
+
+    /// Stand-ins for what a volume and its clock do, on this thread until dropped.
+    struct Seams;
+
+    impl Seams {
+        fn new() -> Self {
+            Self
+        }
+
+        fn volume(self, volume: Volume) -> Self {
+            VOLUME.with(|kept| kept.set(Some(volume)));
+            self
+        }
+
+        fn clock_ahead(self, by: Duration) -> Self {
+            CLOCK_AHEAD.with(|kept| kept.set(by));
+            self
+        }
+
+        fn one_identity(self) -> Self {
+            ONE_IDENTITY.with(|kept| kept.set(true));
+            self
+        }
+
+        fn stat_refused(self) -> Self {
+            STAT_REFUSED.with(|kept| kept.set(true));
+            self
+        }
+
+        fn after_index_read(self, run: impl FnOnce() + 'static) -> Self {
+            AFTER_READ.with(|after| *after.borrow_mut() = Some(Box::new(run)));
+            self
+        }
+    }
+
+    impl Drop for Seams {
+        fn drop(&mut self) {
+            VOLUME.with(|kept| kept.set(None));
+            CLOCK_AHEAD.with(|kept| kept.set(Duration::ZERO));
+            ONE_IDENTITY.with(|kept| kept.set(false));
+            STAT_REFUSED.with(|kept| kept.set(false));
+            AFTER_READ.with(|after| after.borrow_mut().take());
+        }
+    }
 
     fn git(directory: &Path, arguments: &[&str]) {
         run_git(std::process::Command::new("git"), directory, arguments);
@@ -695,18 +1088,13 @@ pub mod tests {
     }
 
     /// Returns once the file clock has left the steps of `file`'s times, so a stamp of it read now
-    /// is kept (Linux; elsewhere every stamp is kept). It waits for a tick of the clock at most.
+    /// is kept on any volume. It waits for a tick of the clock at most.
     fn settle(file: &Path) {
-        #[cfg(target_os = "linux")]
-        {
-            let stamp = FileStamp::of(file).expect("a file");
-            let bound = std::time::Instant::now() + Duration::from_secs(5);
-            while !stamp.tells() && std::time::Instant::now() < bound {
-                std::thread::yield_now();
-            }
+        let stamp = FileStamp::of(file).flatten().expect("a file");
+        let bound = std::time::Instant::now() + Duration::from_secs(5);
+        while !stamp.tells(file_clock()) && std::time::Instant::now() < bound {
+            std::thread::yield_now();
         }
-        #[cfg(not(target_os = "linux"))]
-        let _ = file;
     }
 
     fn fixture(name: &str, files: &[(&str, &str)]) -> PathBuf {
@@ -867,7 +1255,11 @@ pub mod tests {
         );
         set_modified(&index, modified(&index) + Duration::from_secs(1));
         assert!(ignore.ignored("e.py", false).unwrap());
-        assert_eq!(index_reads(), reads + 1, "read again once its time moves");
+        assert_eq!(
+            index_reads(),
+            reads,
+            "the same bytes at another time: the checksum tells the index read, none is read"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1388,17 +1780,18 @@ pub mod tests {
         assert_eq!(open_under(&root), none, "once the checkout is removed");
     }
 
-    /// A stamp taken while the file clock still reads the index's time, or the time it last
-    /// changed, cannot tell a later write within that step from the file read: it is not kept, so
-    /// the next question reads the index again. A stamp taken once the clock has left both is kept,
-    /// and a question costs a stat.
-    #[cfg(target_os = "linux")]
+    /// On a volume that gives an identity again, a stamp taken while the file clock still reads the
+    /// index's time, or the time it last changed, cannot tell a later write within that step from
+    /// the file read: it is not kept, so the next question compares the checksum, and reads the
+    /// index only when it differs. A stamp taken once the clock has left both is kept, and a
+    /// question costs a stat.
     #[test]
     fn keeps_a_stamp_once_the_file_clock_has_left_its_time() {
         let root = fixture("clock-step", &[(".gitignore", "e.py\n"), ("e.py", "")]);
         git(&root, &["init", "--initial-branch=main"]);
         git(&root, &["add", ".gitignore"]);
         let index = root.join(".git/index");
+        let _seams = Seams::new().volume(Volume::Local);
         set_modified(&index, file_clock() - Duration::from_millis(1500));
         settle(&index);
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
@@ -1416,8 +1809,8 @@ pub mod tests {
         assert!(ignore.ignored("e.py", false).unwrap());
         assert_eq!(
             index_reads(),
-            reads + 2,
-            "a time the clock still reads: read again at each question"
+            reads,
+            "a time the clock still reads: the checksum is compared at each question, none is read"
         );
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -1496,8 +1889,8 @@ pub mod tests {
         let file = root.join("f");
         let checked = (0..100).any(|_| {
             set_modified(&file, file_clock() - Duration::from_secs(5));
-            let stamp = FileStamp::of(&file).expect("a file");
-            let tells = stamp.tells();
+            let stamp = FileStamp::of(&file).flatten().expect("a file");
+            let tells = stamp.tells(file_clock());
             let (seconds, nanos) = stamp.changed;
             let changed = std::time::UNIX_EPOCH
                 + Duration::new(
@@ -1521,7 +1914,6 @@ pub mod tests {
     /// A time is left once the clock reads later than the next step its digits show: a nanosecond
     /// time a nanosecond on, a time of 100 ns steps (NTFS) or of 10 ms steps (exFAT) a step on, and
     /// a whole second, which a file system of one or two seconds a step gives, two seconds on.
-    #[cfg(target_os = "linux")]
     #[test]
     fn says_when_the_file_clock_has_left_a_files_time() {
         let at = |seconds: u64, nanos: u32| std::time::UNIX_EPOCH + Duration::new(seconds, nanos);
@@ -1533,6 +1925,157 @@ pub mod tests {
         assert!(past_step(at(10, 10_000_000), at(10, 20_000_001)));
         assert!(!past_step(at(10, 0), at(12, 0)));
         assert!(past_step(at(10, 0), at(12, 1)));
+    }
+
+    /// A checkout ignoring `gen/`, whose index tracks `.gitignore` and `z/m.py`; its index file.
+    /// Tracking `gen/t.py` in place of `z/m.py` leaves the index as long: both entries take 72
+    /// bytes.
+    fn two_entry_checkout(name: &str) -> (PathBuf, PathBuf) {
+        let root = fixture(
+            name,
+            &[(".gitignore", "gen/\n"), ("gen/t.py", ""), ("z/m.py", "")],
+        );
+        git(&root, &["init", "--initial-branch=main"]);
+        git(&root, &["add", ".gitignore", "z/m.py"]);
+        let index = root.join(".git/index");
+        (root, index)
+    }
+
+    /// Git's two writes of the index that track `gen/t.py` in place of `z/m.py`, the second with
+    /// the time of the file read set back on it, as two writes within one step of a file system's
+    /// clock leave it.
+    fn track_t_in_place_of_m(root: &Path, index: &Path, read: &std::fs::Metadata) {
+        git(root, &["add", "-f", "gen/t.py"]);
+        git(root, &["update-index", "--force-remove", "z/m.py"]);
+        set_modified(index, read.modified().unwrap());
+        assert_eq!(
+            std::fs::metadata(index).unwrap().len(),
+            read.len(),
+            "both entries take 72 bytes"
+        );
+    }
+
+    /// On a volume whose file times come from another machine's clock (a share, a virtual
+    /// machine's shared folder), this clock can have left a time that clock has not, so a later
+    /// write can end on the identity, change time, time and size read. No stamp is kept there: a
+    /// question compares the checksum at the index's end, and reads the index only when it differs.
+    #[test]
+    fn reads_the_index_again_on_a_volume_whose_times_come_from_another_clock() {
+        let (root, index) = two_entry_checkout("remote");
+        let _seams = Seams::new()
+            .volume(Volume::Remote)
+            .clock_ahead(Duration::from_secs(3_600))
+            .one_identity();
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert!(
+            ignore.ignored("gen/t.py", false).unwrap(),
+            "read out of the index"
+        );
+        let read = std::fs::metadata(&index).unwrap();
+        track_t_in_place_of_m(&root, &index, &read);
+        assert!(
+            !ignore.ignored("gen/t.py", false).unwrap(),
+            "a file Git now tracks is not ignored, though its stamp is the one read"
+        );
+        let reads = index_reads();
+        assert!(!ignore.ignored("gen/t.py", false).unwrap());
+        assert_eq!(index_reads(), reads, "the same checksum: no index read");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Where a volume gives a file's identity again (FAT and exFAT from its place in its folder,
+    /// ReFS's 64-bit index), a stamp read within a step of the file's time is not kept, on every
+    /// system: a later write can end on that identity, time and size. The index's time is put an
+    /// hour ahead, which no clock has left.
+    #[test]
+    fn reads_the_index_again_where_a_volume_gives_a_file_identity_again() {
+        let (root, index) = two_entry_checkout("identity-again");
+        set_modified(&index, modified(&index) + Duration::from_secs(3_600));
+        let _seams = Seams::new().volume(Volume::Local).one_identity();
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert!(
+            ignore.ignored("gen/t.py", false).unwrap(),
+            "read out of the index"
+        );
+        let read = std::fs::metadata(&index).unwrap();
+        track_t_in_place_of_m(&root, &index, &read);
+        assert!(
+            !ignore.ignored("gen/t.py", false).unwrap(),
+            "a later file on the identity, time and size read"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The stamp is taken before the index is read, so an index Git writes as it is read is read
+    /// at the next question, even where every stamp is kept at once.
+    #[test]
+    fn reads_an_index_written_as_it_was_read_at_the_next_question() {
+        let (root, index) = two_entry_checkout("read-meanwhile");
+        let next = root.join(".git/next-index");
+        git_with_index(&root, &next, &["add", "-f", ".gitignore", "gen/t.py"]);
+        let landing = (next.clone(), index.clone());
+        let _seams = Seams::new()
+            .volume(Volume::Unique)
+            .after_index_read(move || std::fs::rename(&landing.0, &landing.1).unwrap());
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert!(!next.exists(), "the index Git wrote as the reader read");
+        assert!(
+            !ignore.ignored("gen/t.py", false).unwrap(),
+            "the index Git wrote is read"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A stamp whose stat is refused is not kept: each question compares the checksum, so an
+    /// index Git writes, or removes, meanwhile is read as Git reads it.
+    #[test]
+    fn keeps_no_stamp_whose_stat_is_refused() {
+        let (root, index) = two_entry_checkout("stat-refused");
+        let _seams = Seams::new().volume(Volume::Unique).stat_refused();
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert!(
+            ignore.ignored("gen/t.py", false).unwrap(),
+            "read out of the index"
+        );
+        git(&root, &["add", "-f", "gen/t.py"]);
+        assert!(
+            !ignore.ignored("gen/t.py", false).unwrap(),
+            "the index Git wrote"
+        );
+        std::fs::remove_file(&index).unwrap();
+        assert!(
+            ignore.ignored("gen/t.py", false).unwrap(),
+            "with no index Git tracks nothing"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Under `index.skipHash` Git writes no checksum, so a question whose stamp is not kept reads
+    /// the index again. A Git that writes one there anyway leaves the case nothing to check.
+    #[test]
+    fn reads_the_index_again_where_git_writes_no_checksum() {
+        let (root, index) = two_entry_checkout("skip-hash");
+        git(&root, &["config", "index.skipHash", "true"]);
+        git(&root, &["add", "-f", "gen/t.py"]);
+        git(&root, &["rm", "--cached", "-q", "gen/t.py"]);
+        let bytes = std::fs::read(&index).unwrap();
+        if bytes[bytes.len() - 20..] != [0; 20] {
+            eprintln!("this Git writes a checksum under index.skipHash");
+            std::fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        set_modified(&index, modified(&index) + Duration::from_secs(3_600));
+        let _seams = Seams::new().volume(Volume::Local);
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert!(ignore.ignored("gen/t.py", false).unwrap());
+        let reads = index_reads();
+        assert!(ignore.ignored("gen/t.py", false).unwrap());
+        assert_eq!(
+            index_reads(),
+            reads + 1,
+            "no checksum to compare: read again"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     /// While it lives, a file this process cannot read: one with no permissions on Unix, one held
