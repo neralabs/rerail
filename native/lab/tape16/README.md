@@ -58,6 +58,8 @@ target/debug/tape16 ralz   <cap>
 target/debug/tape16 code8  <cap>
 target/debug/tape16 nofield <cap>
 target/debug/tape16 f16    <cap>             # format 16 as one form (t39 steps 16-21)
+target/debug/tape16 zlevel <cap>             # 16z's pieces by LZ4 compressor, HC 9 against lower levels (0399 §6)
+target/debug/tape16 zops   <cap>             # the writer's ops in CLIF against the reference, 16 and 16z (0399 §6)
 target/debug/tape16 f16w   <cap>
 target/debug/tape16 f16-gpu <cap>
 target/debug/tape16 gcodes <cap>             # --features grammar

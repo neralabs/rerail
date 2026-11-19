@@ -61,6 +61,29 @@ pub struct Part {
     pub len: u64,
 }
 
+/// A piece's entry in 16z's piece index (`part::PIECES`): its start in the payload, its stored length, its raw
+/// length, its kind (`RAW`, `LZ4`, `REPEAT`), the next piece in its bucket of the seen pieces (`NONE` for none),
+/// u32s from byte 0; its bytes' hash, a u64 at byte 24.
+pub const PIECE: u32 = 32;
+/// 16z's piece kinds.
+pub const RAW: u32 = 0;
+pub const LZ4: u32 = 1;
+pub const REPEAT: u32 = 2;
+/// The smallest piece a repeat names, and the smallest LZ4 is tried on (format 16's `REPEAT_MIN`, `LZ4_MIN`).
+pub const REPEAT_MIN: u32 = 8;
+pub const LZ4_MIN: u32 = 16;
+/// 16z's magic, as a little-endian word.
+pub const MAGIC16Z: u64 = u64::from_le_bytes(*b"TMPTAPBZ");
+/// The LZ4 compressor's tables (`part::LZ`): a hash of `1 << LZ_HASH_LOG` u32s, then a chain of 64 Ki u16s.
+pub const LZ_HASH_LOG: u32 = 15;
+pub const LZ_TABLES: u32 = (4 << LZ_HASH_LOG) + 2 * 65536;
+/// LZ4 HC's level: its chain entries searched a position (decision 0399 §6).
+pub const LZ_ATTEMPTS: u32 = 8;
+/// The most bytes LZ4 writes for `n` (`LZ4_compressBound`).
+pub const fn lz4_bound(n: u64) -> u64 {
+    n + n / 255 + 16
+}
+
 /// The parts, in their order in `State` (a full part's failure is `fail::FULL` plus its number).
 pub mod part {
     pub const KINDS: u32 = 0;
@@ -73,6 +96,17 @@ pub mod part {
     pub const LAID_AT: u32 = 7;
     pub const PRESENCE: u32 = 8;
     pub const LINES: u32 = 9;
+    /// 16z's: the blocks' rooms, and the ones given back (u32 offsets).
+    pub const ROOMS: u32 = 10;
+    pub const ROOM_FREE: u32 = 11;
+    /// 16z's piece index (`PIECE` bytes an entry), the seen pieces' buckets (u32s, `NONE` for none), the
+    /// checkpoints, the LZ4 compressor's tables.
+    pub const PIECES: u32 = 12;
+    pub const SEEN: u32 = 13;
+    pub const CKPT: u32 = 14;
+    pub const LZ: u32 = 15;
+    /// How many.
+    pub const COUNT: usize = 16;
 }
 
 /// The writer's state, at the start of its region: the document's constants, the writer's variables, its parts.
@@ -95,7 +129,7 @@ pub struct State {
     /// A block's bytes, and where each of its columns starts in it.
     pub stride: u32,
     pub at: [u32; 5],
-    /// 1: a presence a block is kept.
+    /// 1: a presence a block is kept; 2: the tape is 16z.
     pub flags: u32,
     /// The presence's words of kinds and of fields.
     pub kw: u32,
@@ -113,6 +147,15 @@ pub struct State {
     /// The open nodes; the blocks begun.
     pub open_len: u32,
     pub blocks: u32,
+    /// 16z: the seen pieces' buckets (a power of two).
+    pub zbuckets: u32,
+    /// The LZ4 compressor's: the last piece's first index and its length (a reused liblz4 context's `dictLimit`
+    /// and its input), the next index to insert, the last match's offset and back count.
+    pub zbase: u32,
+    pub zprev: u32,
+    pub znext: u32,
+    pub zoff: u32,
+    pub zback: u32,
     /// Each number's kind and field (a u32: kind, then field << 16), read only.
     pub kinds: Part,
     pub open: Part,
@@ -129,6 +172,12 @@ pub struct State {
     pub presence: Part,
     /// The source's newline index, given.
     pub lines: Part,
+    pub rooms: Part,
+    pub room_free: Part,
+    pub pieces: Part,
+    pub seen: Part,
+    pub ckpt: Part,
+    pub lz: Part,
 }
 
 /// Byte `k`'s offset of `State`'s fields.
@@ -157,6 +206,12 @@ pub mod at {
     pub const BAD_NODE: i32 = offset_of!(State, bad_node) as i32;
     pub const OPEN_LEN: i32 = offset_of!(State, open_len) as i32;
     pub const BLOCKS: i32 = offset_of!(State, blocks) as i32;
+    pub const ZBUCKETS: i32 = offset_of!(State, zbuckets) as i32;
+    pub const ZBASE: i32 = offset_of!(State, zbase) as i32;
+    pub const ZPREV: i32 = offset_of!(State, zprev) as i32;
+    pub const ZNEXT: i32 = offset_of!(State, znext) as i32;
+    pub const ZOFF: i32 = offset_of!(State, zoff) as i32;
+    pub const ZBACK: i32 = offset_of!(State, zback) as i32;
     pub const PARTS: i32 = offset_of!(State, kinds) as i32;
     pub const PART: i32 = std::mem::size_of::<Part>() as i32;
     pub const P_AT: i32 = offset_of!(Part, at) as i32;
@@ -164,7 +219,7 @@ pub mod at {
     pub const P_LEN: i32 = offset_of!(Part, len) as i32;
 }
 
-const _: () = assert!(at::PARTS % 8 == 0 && at::PARTS + 10 * at::PART == std::mem::size_of::<State>() as i32);
+const _: () = assert!(at::PARTS % 8 == 0 && at::PARTS + part::COUNT as i32 * at::PART == std::mem::size_of::<State>() as i32);
 
 /// The bytes a row has before column `r` (0 codes, 1 slots, 2 gaps, 3 lengths, 4 checkpoints).
 pub fn before(w: [u32; 3], r: usize) -> u32 {
@@ -208,6 +263,8 @@ mod ops {
         Op { name: "w_retag", params: &[I32, I32], ret: I32, public: true, body: retag },
         Op { name: "w_set_start", params: &[I32, I64], ret: I32, public: true, body: set_start },
         Op { name: "w_finish", params: &[], ret: I32, public: true, body: finish },
+        Op { name: "w_finish_blocks", params: &[], ret: I32, public: true, body: finish_blocks },
+        Op { name: "w_finish_tail", params: &[], ret: I32, public: true, body: finish_tail },
         Op { name: "w_fail", params: &[I32, I32], ret: I32, public: false, body: fail_op },
         Op { name: "w_put", params: &[I32, I32, I64], ret: I32, public: false, body: put },
         Op { name: "w_value", params: &[I32, I32], ret: I64, public: false, body: value },
@@ -219,6 +276,14 @@ mod ops {
         Op { name: "w_find", params: &[I64, I32, I32], ret: I32, public: false, body: find },
         Op { name: "w_copy", params: &[I64, I64, I64], ret: I32, public: false, body: copy },
         Op { name: "w_zero", params: &[I64, I64], ret: I32, public: false, body: zero },
+        Op { name: "w_fill", params: &[I64, I64, I64], ret: I32, public: false, body: fill },
+        Op { name: "w_zblock", params: &[I32, I32], ret: I32, public: false, body: zblock },
+        Op { name: "w_zpiece", params: &[I32, I64, I64], ret: I32, public: false, body: zpiece },
+        Op { name: "w_zfinish", params: &[I32], ret: I32, public: false, body: zfinish },
+        Op { name: "w_lz4", params: &[I64, I64, I64], ret: I64, public: true, body: lz4 },
+        Op { name: "w_lz4_find", params: &[I64, I64, I64, I64, I64], ret: I64, public: false, body: lz4_find },
+        Op { name: "w_hash", params: &[I64, I64], ret: I64, public: false, body: hash },
+        Op { name: "w_eq", params: &[I64, I64, I64], ret: I32, public: false, body: eq },
     ];
 
     pub fn op(name: &str) -> Option<&'static Op> {
@@ -499,8 +564,21 @@ mod ops {
             let e = self.entry(b);
             let room = self.ld(I32, e, 0);
             let room = self.u64of(room);
+            let base = self.rooms();
+            self.f.ins().iadd(base, room)
+        }
+        /// Whether the tape is 16z.
+        fn z(&mut self) -> Value {
+            let flags = self.get32(at::FLAGS);
+            let z = self.f.ins().band_imm(flags, 2);
+            self.f.ins().icmp_imm(IntCC::NotEqual, z, 0)
+        }
+        /// Where the blocks' rooms lie: in 16, the tape; in 16z, their own part.
+        fn rooms(&mut self) -> Value {
+            let z = self.z();
+            let rooms = self.part(part::ROOMS);
             let out = self.part(part::OUT);
-            self.f.ins().iadd(out, room)
+            self.f.ins().select(z, rooms, out)
         }
         /// Block `b`'s side area's address.
         fn area_of(&mut self, b: Value) -> Value {
@@ -837,11 +915,47 @@ mod ops {
         let stride = w.get32(at::STRIDE);
         let stride = w.u64of(stride);
         let b64 = w.u64of(b);
-        let room = w.f.ins().imul(b64, stride);
-        let room = w.f.ins().iadd_imm(room, i64::from(HEAD16));
-        let end = w.f.ins().iadd(room, stride);
-        let need = w.f.ins().iadd_imm(end, 8);
-        w.room(part::OUT, need);
+        // The block's room: in 16 its place in the tape; in 16z one given back, else a new one.
+        let zero64 = w.c64(0);
+        let roomv = w.var(I64, zero64);
+        let z = w.z();
+        w.if_else(
+            z,
+            |w| {
+                let free = w.part_len(part::ROOM_FREE);
+                let none = w.f.ins().icmp_imm(IntCC::Equal, free, 0);
+                w.if_else(
+                    none,
+                    |w| {
+                        let made = w.part_len(part::ROOMS);
+                        let next = w.f.ins().iadd(made, stride);
+                        w.room(part::ROOMS, next);
+                        w.set_part_len(part::ROOMS, next);
+                        w.set(roomv, made);
+                    },
+                    |w| {
+                        let top = w.f.ins().iadd_imm(free, -4);
+                        w.set_part_len(part::ROOM_FREE, top);
+                        let f = w.part(part::ROOM_FREE);
+                        let at = w.f.ins().iadd(f, top);
+                        let r = w.ld(I32, at, 0);
+                        let r = w.u64of(r);
+                        w.set(roomv, r);
+                    },
+                );
+            },
+            |w| {
+                let room = w.f.ins().imul(b64, stride);
+                let room = w.f.ins().iadd_imm(room, i64::from(HEAD16));
+                let end = w.f.ins().iadd(room, stride);
+                w.room(part::OUT, end);
+                let len = w.part_len(part::OUT);
+                let grow = w.f.ins().icmp(IntCC::UnsignedLessThan, len, end);
+                w.if_(grow, |w| w.set_part_len(part::OUT, end));
+                w.set(roomv, room);
+            },
+        );
+        let room = w.get(roomv);
         let te = w.f.ins().iadd_imm(b64, 1);
         let te = w.f.ins().imul_imm(te, i64::from(TABLE));
         w.room(part::TABLE, te);
@@ -857,7 +971,8 @@ mod ops {
                 let next = w.f.ins().iadd_imm(made, i64::from(SIDE_AREA));
                 w.room(part::SIDES, next);
                 w.set_part_len(part::SIDES, next);
-                let k = w.f.ins().udiv_imm(made, i64::from(SIDE_AREA));
+                let d = w.c64(i64::from(SIDE_AREA));
+                let k = w.f.ins().udiv(made, d);
                 let k = w.f.ins().ireduce(I32, k);
                 w.set(area, k);
             },
@@ -870,11 +985,8 @@ mod ops {
                 w.set(area, k);
             },
         );
-        let out = w.part(part::OUT);
-        let len = w.part_len(part::OUT);
-        let grow = w.f.ins().icmp(IntCC::UnsignedLessThan, len, end);
-        w.if_(grow, |w| w.set_part_len(part::OUT, end));
-        let at = w.f.ins().iadd(out, room);
+        let base = w.rooms();
+        let at = w.f.ins().iadd(base, room);
         w.call("w_zero", &[at, stride]);
         let tl = w.part_len(part::TABLE);
         let grow = w.f.ins().icmp(IntCC::UnsignedLessThan, tl, te);
@@ -1297,6 +1409,12 @@ mod ops {
         w.set_part_len(part::FREE, need);
         let none = w.c32(i64::from(NONE));
         w.st(none, e, 4);
+        // 16z: its pieces compressed, its room given back.
+        let z = w.z();
+        w.if_(z, |w| {
+            let r = w.call("w_zblock", &[b, rows]);
+            w.ret_if(r);
+        });
         w.ok();
     }
 
@@ -1323,8 +1441,7 @@ mod ops {
         let len = w.f.ins().iadd(len, vals);
         let len = w.f.ins().select(some, len, zero64);
         let end = w.f.ins().iadd(start, len);
-        let need = w.f.ins().iadd_imm(end, 8);
-        w.room(part::LAID, need);
+        w.room(part::LAID, end);
         w.if_(some, |w| {
             let at = w.f.ins().iadd(laid, start);
             let zero = w.zero32();
@@ -1546,6 +1663,19 @@ mod ops {
     /// `w_finish()`: the tape: the last node's slot, the blocks not yet final, the last block's columns moved down
     /// to its rows, the tail (each side list's parts in block order, their starts, the newline index), the header.
     fn finish(w: &mut W<'_, '_>) {
+        let r = w.call("w_finish_blocks", &[]);
+        w.ret_if(r);
+        let r = w.call("w_finish_tail", &[]);
+        w.f.ins().return_(&[r]);
+        let after = w.f.create_block();
+        w.f.switch_to_block(after);
+        let z = w.zero32();
+        w.f.ins().return_(&[z]);
+    }
+
+    /// `w_finish_blocks()`: `finish`'s first half: the last node's slot, every block final. A host reserves the
+    /// tail's room after it, knowing the side lists' laid parts (`w_finish_tail`).
+    fn finish_blocks(w: &mut W<'_, '_>) {
         // The first failure, kept, is the op's.
         let bad = w.get32(at::BAD);
         w.ret_if(bad);
@@ -1588,6 +1718,22 @@ mod ops {
                 w.set(b, b1);
             },
         );
+        w.ok();
+    }
+
+    /// `w_finish_tail()`: `finish`'s second half: 16z's tail (`w_zfinish`), or 16's: the last block's columns moved
+    /// down to its rows, then the side lists' parts in block order, their starts, the newline index, the header.
+    fn finish_tail(w: &mut W<'_, '_>) {
+        let bad = w.get32(at::BAD);
+        w.ret_if(bad);
+        let n = w.get32(at::N);
+        let count = w.f.ins().iadd_imm(n, i64::from(Z - 1));
+        let count = w.f.ins().ushr_imm(count, Z.trailing_zeros() as i64);
+        let z = w.z();
+        w.if_(z, |w| {
+            let r = w.call("w_zfinish", &[count]);
+            w.ret(r);
+        });
         let out = w.part(part::OUT);
         let w0 = w.get32(at::W);
         let w1 = w.get32(at::W + 4);
@@ -1690,7 +1836,11 @@ mod ops {
             let p8 = w.f.ins().iadd_imm(p, 8);
             w.set(pos, p8);
         }
+        // The padding to the part starts' alignment is zeros too (the bytes there were the last block's columns).
         let p = w.get(pos);
+        let to = w.f.ins().iadd(out, p);
+        let z64 = w.c64(0);
+        w.st(z64, to, 0);
         let p = w.f.ins().iadd_imm(p, 3);
         let p = w.f.ins().band_imm(p, !3);
         w.set(pos, p);
@@ -1736,41 +1886,1279 @@ mod ops {
         w.st(z64, to, 0);
         let end = w.f.ins().iadd_imm(le, 8);
         w.set_part_len(part::OUT, end);
-        // The header.
+        let tail: Vec<Value> = side.iter().chain(&parts).copied().chain([lines_at, end]).collect();
+        write_head(w, out, MAGIC16, &tail);
+        w.ok();
+    }
+
+    /// The header at `out`: `magic`, the document's constants, and the tail's offsets (`tail`, ten i64s: the side
+    /// lists', their part starts', the newline index's, the end; for 16z, the tape's it decodes to).
+    fn write_head(w: &mut W<'_, '_>, out: Value, magic: u64, tail: &[Value]) {
         let h = w.c64(i64::from(HEAD16));
         w.call("w_zero", &[out, h]);
-        let magic = w.c64(MAGIC16 as i64);
+        let magic = w.c64(magic as i64);
         w.st(magic, out, 0);
         let tag = w.get32(at::TAG);
         w.st8(tag, out, 8);
         let mark = w.get32(at::MARK);
         w.st8(mark, out, 9);
+        let cw = w.get32(at::CW);
         w.st8(cw, out, 10);
         let nl = w.get32(at::NEWLINES);
         w.st(nl, out, 12);
         let sl = w.get64(at::SOURCE_LEN);
         w.st(sl, out, 16);
+        let n = w.get32(at::N);
         let n64 = w.u64of(n);
         w.st(n64, out, 24);
         for k in 0..4 {
             let v = w.get32(at::VW + 4 * k);
             w.st8(v, out, 32 + k);
         }
-        w.st8(w0, out, 36);
-        w.st8(w1, out, 37);
-        w.st8(w2, out, 38);
+        for k in 0..3 {
+            let v = w.get32(at::W + 4 * k);
+            w.st8(v, out, 36 + k);
+        }
         let stride = w.get32(at::STRIDE);
         w.st(stride, out, 40);
         let blocks = w.c32(i64::from(HEAD16));
         w.st(blocks, out, 44);
-        let tail: Vec<Value> = side.iter().chain(&parts).copied().chain([lines_at, end]).collect();
-        for (t, v) in tail.into_iter().enumerate() {
+        for (t, &v) in tail.iter().enumerate() {
             let v = w.f.ins().ireduce(I32, v);
             w.st(v, out, 48 + 4 * t as i32);
         }
+    }
+
+    /// `w_zblock(b, rows)`: 16z's block `b`, final: its four pieces (each column at its rows, then its side list's
+    /// part as laid) stored in turn at the payload's end (`w_zpiece`), its checkpoints kept, its room given back.
+    fn zblock(w: &mut W<'_, '_>) {
+        let (b, rows) = (w.arg(0), w.arg(1));
+        let room = w.room_of(b);
+        let laid = w.part(part::LAID);
+        let la = w.part(part::LAID_AT);
+        let la = w.index(la, b, i64::from(LAID_AT));
+        let rows64 = w.u64of(rows);
+        let zero = w.zero32();
+        let q = w.var(I32, zero);
+        w.while_(
+            |w| {
+                let q = w.get(q);
+                w.f.ins().icmp_imm(IntCC::UnsignedLessThan, q, 4)
+            },
+            |w| {
+                let qv = w.get(q);
+                // A column's cell: a byte (codes), else its array's width.
+                let first = w.f.ins().icmp_imm(IntCC::Equal, qv, 0);
+                let one = w.c32(1);
+                let qm = w.f.ins().iadd_imm(qv, -1);
+                let qm = w.f.ins().select(first, zero, qm);
+                let wq = w.get32_at(at::W, qm);
+                let cell = w.f.ins().select(first, one, wq);
+                let cell = w.u64of(cell);
+                let clen = w.f.ins().imul(rows64, cell);
+                let e = w.index(la, qv, 8);
+                let lst = w.ld(I32, e, 0);
+                let lst = w.u64of(lst);
+                let llen = w.ld(I32, e, 4);
+                let llen = w.u64of(llen);
+                let raw = w.f.ins().iadd(clen, llen);
+                let pos = w.part_len(part::OUT);
+                let need = w.f.ins().iadd(pos, raw);
+                let need = w.f.ins().iadd(need, raw);
+                let extra = w.c64(255);
+                let extra = w.f.ins().udiv(raw, extra);
+                let need = w.f.ins().iadd(need, extra);
+                let need = w.f.ins().iadd_imm(need, 16);
+                w.room(part::OUT, need);
+                let j = w.f.ins().ishl_imm(b, 2);
+                let j = w.f.ins().iadd(j, qv);
+                let j1 = w.u64of(j);
+                let j1 = w.f.ins().iadd_imm(j1, 1);
+                let pneed = w.f.ins().imul_imm(j1, i64::from(PIECE));
+                w.room(part::PIECES, pneed);
+                let pl = w.part_len(part::PIECES);
+                let grow = w.f.ins().icmp(IntCC::UnsignedLessThan, pl, pneed);
+                w.if_(grow, |w| w.set_part_len(part::PIECES, pneed));
+                let out = w.part(part::OUT);
+                let src = w.f.ins().iadd(out, pos);
+                let col = w.col(qv);
+                let col = w.f.ins().iadd(room, col);
+                w.call("w_copy", &[src, col, clen]);
+                let to = w.f.ins().iadd(src, clen);
+                let from = w.f.ins().iadd(laid, lst);
+                w.call("w_copy", &[to, from, llen]);
+                let r = w.call("w_zpiece", &[j, pos, raw]);
+                w.ret_if(r);
+                let q1 = w.f.ins().iadd_imm(qv, 1);
+                w.set(q, q1);
+            },
+        );
+        // Its checkpoints, at their place among the blocks'.
+        let cw = w.get32(at::CW);
+        let cw = w.u64of(cw);
+        let b64 = w.u64of(b);
+        let c0 = w.f.ins().imul_imm(b64, i64::from(Z / K));
+        let c0 = w.f.ins().imul(c0, cw);
+        let c = w.f.ins().iadd_imm(rows64, i64::from(K - 1));
+        let c = w.f.ins().ushr_imm(c, K.trailing_zeros() as i64);
+        let clen = w.f.ins().imul(c, cw);
+        let end = w.f.ins().iadd(c0, clen);
+        w.room(part::CKPT, end);
+        let ck = w.part(part::CKPT);
+        let to = w.f.ins().iadd(ck, c0);
+        let four = w.c32(4);
+        let col = w.col(four);
+        let from = w.f.ins().iadd(room, col);
+        w.call("w_copy", &[to, from, clen]);
+        let cl = w.part_len(part::CKPT);
+        let grow = w.f.ins().icmp(IntCC::UnsignedLessThan, cl, end);
+        w.if_(grow, |w| w.set_part_len(part::CKPT, end));
+        // The laid parts are in its pieces; its room serves the next block.
+        let z64 = w.c64(0);
+        w.set_part_len(part::LAID, z64);
+        let fl = w.part_len(part::ROOM_FREE);
+        let need = w.f.ins().iadd_imm(fl, 4);
+        w.room(part::ROOM_FREE, need);
+        let fp = w.part(part::ROOM_FREE);
+        let at = w.f.ins().iadd(fp, fl);
+        let e = w.entry(b);
+        let r = w.ld(I32, e, 0);
+        w.st(r, at, 0);
+        w.set_part_len(part::ROOM_FREE, need);
         w.ok();
     }
+
+    /// `w_zpiece(j, pos, raw)`: piece `j`, its `raw` bytes at the payload's end (`pos` in the tape), stored as 16z
+    /// stores it: a repeat of an earlier piece of the same bytes (found by their hash, then compared: a raw
+    /// piece's bytes with these, an LZ4 one's with these compressed), else one LZ4 block where that saves a tenth,
+    /// else as they are. Its entry in the piece index; the payload past it.
+    fn zpiece(w: &mut W<'_, '_>) {
+        let (j, pos, raw) = (w.arg(0), w.arg(1), w.arg(2));
+        let out = w.part(part::OUT);
+        let src = w.f.ins().iadd(out, pos);
+        let dst = w.f.ins().iadd(src, raw);
+        let pieces = w.part(part::PIECES);
+        let pe = w.index(pieces, j, i64::from(PIECE));
+        let start = w.f.ins().iadd_imm(pos, -i64::from(HEAD16));
+        let start = w.f.ins().ireduce(I32, start);
+        let raw32 = w.f.ins().ireduce(I32, raw);
+        let unset = w.c64(-1);
+        let zl = w.var(I64, unset);
+        let zero64 = w.c64(0);
+        let h = w.var(I64, zero64);
+        let none = w.c32(i64::from(NONE));
+        let next = w.var(I32, none);
+        let compress = |w: &mut W<'_, '_>| -> Value {
+            let z = w.get(zl);
+            let todo = w.f.ins().icmp_imm(IntCC::SignedLessThan, z, 0);
+            w.if_(todo, |w| {
+                let l = w.call("w_lz4", &[src, raw, dst]);
+                w.set(zl, l);
+            });
+            w.get(zl)
+        };
+        let entry = |w: &mut W<'_, '_>, len: Value, kind: u32, next: Value, h: Value| {
+            w.st(start, pe, 0);
+            let len32 = w.f.ins().ireduce(I32, len);
+            w.st(len32, pe, 4);
+            w.st(raw32, pe, 8);
+            let k = w.c32(i64::from(kind));
+            w.st(k, pe, 12);
+            w.st(next, pe, 16);
+            w.st(h, pe, 24);
+            let end = w.f.ins().iadd(pos, len);
+            w.set_part_len(part::OUT, end);
+        };
+        let big = w.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, raw, i64::from(REPEAT_MIN));
+        w.if_(big, |w| {
+            let hv = w.call("w_hash", &[src, raw]);
+            w.set(h, hv);
+            let nb = w.get32(at::ZBUCKETS);
+            let mask = w.f.ins().iadd_imm(nb, -1);
+            let h32 = w.f.ins().ireduce(I32, hv);
+            let bucket = w.f.ins().band(h32, mask);
+            let seen = w.part(part::SEEN);
+            let slot = w.index(seen, bucket, 4);
+            let head = w.ld(I32, slot, 0);
+            let e = w.var(I32, head);
+            w.while_(
+                |w| {
+                    let ev = w.get(e);
+                    w.f.ins().icmp_imm(IntCC::NotEqual, ev, i64::from(NONE))
+                },
+                |w| {
+                    let ev = w.get(e);
+                    let ee = w.index(pieces, ev, i64::from(PIECE));
+                    let eh = w.ld(I64, ee, 24);
+                    let er = w.ld(I32, ee, 8);
+                    let same_h = w.f.ins().icmp(IntCC::Equal, eh, hv);
+                    let same_r = w.f.ins().icmp(IntCC::Equal, er, raw32);
+                    let cand = w.f.ins().band(same_h, same_r);
+                    w.if_(cand, |w| {
+                        let kind = w.ld(I32, ee, 12);
+                        let est = w.ld(I32, ee, 0);
+                        let est = w.u64of(est);
+                        let stored = w.f.ins().iadd(out, est);
+                        let stored = w.f.ins().iadd_imm(stored, i64::from(HEAD16));
+                        let zero = w.zero32();
+                        let same = w.var(I32, zero);
+                        let is_raw = w.f.ins().icmp_imm(IntCC::Equal, kind, i64::from(RAW));
+                        w.if_else(
+                            is_raw,
+                            |w| {
+                                let r = w.call("w_eq", &[stored, src, raw]);
+                                w.set(same, r);
+                            },
+                            |w| {
+                                let z = compress(w);
+                                let elen = w.ld(I32, ee, 4);
+                                let elen = w.u64of(elen);
+                                let fits = w.f.ins().icmp(IntCC::Equal, z, elen);
+                                w.if_(fits, |w| {
+                                    let r = w.call("w_eq", &[stored, dst, z]);
+                                    w.set(same, r);
+                                });
+                            },
+                        );
+                        let sv = w.get(same);
+                        let hit = w.f.ins().icmp_imm(IntCC::NotEqual, sv, 0);
+                        w.if_(hit, |w| {
+                            w.st(ev, src, 0);
+                            let four = w.c64(4);
+                            let none = w.c32(i64::from(NONE));
+                            entry(w, four, REPEAT, none, hv);
+                            let z = w.zero32();
+                            w.ret(z);
+                        });
+                    });
+                    let nx = w.ld(I32, ee, 16);
+                    w.set(e, nx);
+                },
+            );
+            // The first piece of these bytes: into its bucket.
+            w.set(next, head);
+            w.st(j, slot, 0);
+        });
+        let kind = w.c32(i64::from(RAW));
+        let kindv = w.var(I32, kind);
+        let lenv = w.var(I64, raw);
+        let try_lz = w.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, raw, i64::from(LZ4_MIN));
+        w.if_(try_lz, |w| {
+            let z = compress(w);
+            let z10 = w.f.ins().imul_imm(z, 10);
+            let r9 = w.f.ins().imul_imm(raw, 9);
+            let saves = w.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, z10, r9);
+            w.if_(saves, |w| {
+                w.call("w_copy", &[src, dst, z]);
+                let k = w.c32(i64::from(LZ4));
+                w.set(kindv, k);
+                w.set(lenv, z);
+            });
+        });
+        let len = w.get(lenv);
+        let k = w.get(kindv);
+        let nx = w.get(next);
+        let hv = w.get(h);
+        // `entry` with the kind as a value.
+        w.st(start, pe, 0);
+        let len32 = w.f.ins().ireduce(I32, len);
+        w.st(len32, pe, 4);
+        w.st(raw32, pe, 8);
+        w.st(k, pe, 12);
+        w.st(nx, pe, 16);
+        w.st(hv, pe, 24);
+        let end = w.f.ins().iadd(pos, len);
+        w.set_part_len(part::OUT, end);
+        w.ok();
+    }
+
+    /// `w_zfinish(count)`: 16z's tail after its payload (format 16's `ZOut::finish`): each side list's part
+    /// starts by block, the checkpoints, the newline index, the piece index (starts, lengths, kinds); then the
+    /// header, which says the tape it decodes to, and where each of these lies.
+    fn zfinish(w: &mut W<'_, '_>) {
+        let count = w.arg(0);
+        let out = w.part(part::OUT);
+        let pos0 = w.part_len(part::OUT);
+        let la = w.part(part::LAID_AT);
+        let ck = w.part(part::CKPT);
+        let clen = w.part_len(part::CKPT);
+        let lines = w.part(part::LINES);
+        let llen = w.part_len(part::LINES);
+        let pieces = w.part(part::PIECES);
+        let c64 = w.u64of(count);
+        let np = w.f.ins().ishl_imm(c64, 2);
+        let starts_len = w.f.ins().iadd_imm(c64, 1);
+        let starts_len = w.f.ins().imul_imm(starts_len, 16);
+        let need = w.f.ins().iadd(pos0, starts_len);
+        let need = w.f.ins().iadd(need, clen);
+        let need = w.f.ins().iadd(need, llen);
+        let idx = w.f.ins().imul_imm(np, 9);
+        let need = w.f.ins().iadd(need, idx);
+        let need = w.f.ins().iadd_imm(need, 3 + 8 + 8 + 3 + 8);
+        w.room(part::OUT, need);
+        let z64 = w.c64(0);
+        let at0 = w.f.ins().iadd(out, pos0);
+        w.st(z64, at0, 0);
+        let p = w.f.ins().iadd_imm(pos0, 3);
+        let p = w.f.ins().band_imm(p, !3);
+        let pos = w.var(I64, p);
+        let parts_at = p;
+        let mut totals = Vec::new();
+        for q in 0..4i32 {
+            let zero = w.zero32();
+            let acc = w.var(I32, zero);
+            let bb = w.var(I32, zero);
+            w.while_(
+                |w| {
+                    let b = w.get(bb);
+                    w.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, b, count)
+                },
+                |w| {
+                    let bv = w.get(bb);
+                    let a = w.get(acc);
+                    let p = w.get(pos);
+                    let to = w.f.ins().iadd(out, p);
+                    w.st(a, to, 0);
+                    let p4 = w.f.ins().iadd_imm(p, 4);
+                    w.set(pos, p4);
+                    let inside = w.f.ins().icmp(IntCC::UnsignedLessThan, bv, count);
+                    w.if_(inside, |w| {
+                        let e = w.index(la, bv, i64::from(LAID_AT));
+                        let ln = w.ld(I32, e, 8 * q + 4);
+                        let a2 = w.f.ins().iadd(a, ln);
+                        w.set(acc, a2);
+                    });
+                    let b1 = w.f.ins().iadd_imm(bv, 1);
+                    w.set(bb, b1);
+                },
+            );
+            let a = w.get(acc);
+            let a = w.u64of(a);
+            totals.push(a);
+        }
+        let ckpt_at = w.get(pos);
+        let to = w.f.ins().iadd(out, ckpt_at);
+        w.call("w_copy", &[to, ck, clen]);
+        let e = w.f.ins().iadd(ckpt_at, clen);
+        let to = w.f.ins().iadd(out, e);
+        w.st(z64, to, 0);
+        let lines_at = w.f.ins().iadd_imm(e, 8);
+        let to = w.f.ins().iadd(out, lines_at);
+        w.call("w_copy", &[to, lines, llen]);
+        let e = w.f.ins().iadd(lines_at, llen);
+        let to = w.f.ins().iadd(out, e);
+        w.st(z64, to, 0);
+        w.st(z64, to, 8);
+        let p = w.f.ins().iadd_imm(e, 8 + 3);
+        let starts = w.f.ins().band_imm(p, !3);
+        let lens = w.f.ins().ishl_imm(np, 2);
+        let lens = w.f.ins().iadd(starts, lens);
+        let kinds = w.f.ins().ishl_imm(np, 2);
+        let kinds = w.f.ins().iadd(lens, kinds);
+        let end = w.f.ins().iadd(kinds, np);
+        let zero = w.c64(0);
+        let k = w.var(I64, zero);
+        w.while_(
+            |w| {
+                let kv = w.get(k);
+                w.f.ins().icmp(IntCC::UnsignedLessThan, kv, np)
+            },
+            |w| {
+                let kv = w.get(k);
+                let pe = w.f.ins().imul_imm(kv, i64::from(PIECE));
+                let pe = w.f.ins().iadd(pieces, pe);
+                let k4 = w.f.ins().ishl_imm(kv, 2);
+                let st = w.ld(I32, pe, 0);
+                let a = w.f.ins().iadd(out, starts);
+                let a = w.f.ins().iadd(a, k4);
+                w.st(st, a, 0);
+                let ln = w.ld(I32, pe, 4);
+                let a = w.f.ins().iadd(out, lens);
+                let a = w.f.ins().iadd(a, k4);
+                w.st(ln, a, 0);
+                let kd = w.ld(I32, pe, 12);
+                let a = w.f.ins().iadd(out, kinds);
+                let a = w.f.ins().iadd(a, kv);
+                w.st8(kd, a, 0);
+                let k1 = w.f.ins().iadd_imm(kv, 1);
+                w.set(k, k1);
+            },
+        );
+        w.set_part_len(part::OUT, end);
+        // The tape it decodes to: its blocks' end, then its tail as format 16 places it (`Placement::of`).
+        let n = w.get32(at::N);
+        let stride = w.get32(at::STRIDE);
+        let stride = w.u64of(stride);
+        let cw = w.get32(at::CW);
+        let cw = w.u64of(cw);
+        let head16 = w.c64(i64::from(HEAD16));
+        let be = w.var(I64, head16);
+        let any = w.f.ins().icmp_imm(IntCC::NotEqual, count, 0);
+        w.if_(any, |w| {
+            let lb = w.f.ins().iadd_imm(c64, -1);
+            let n64 = w.u64of(n);
+            let first = w.f.ins().imul_imm(lb, i64::from(Z));
+            let rows = w.f.ins().isub(n64, first);
+            let at = w.f.ins().imul(lb, stride);
+            let at = w.f.ins().iadd_imm(at, i64::from(HEAD16));
+            let w0 = w.get32(at::W);
+            let w1 = w.get32(at::W + 4);
+            let w2 = w.get32(at::W + 8);
+            let b4 = w.f.ins().iadd(w0, w1);
+            let b4 = w.f.ins().iadd(b4, w2);
+            let b4 = w.f.ins().iadd_imm(b4, 1);
+            let b4 = w.u64of(b4);
+            let cols = w.f.ins().imul(rows, b4);
+            let c = w.f.ins().iadd_imm(rows, i64::from(K - 1));
+            let c = w.f.ins().ushr_imm(c, K.trailing_zeros() as i64);
+            let c = w.f.ins().imul(c, cw);
+            let x = w.f.ins().iadd(at, cols);
+            let x = w.f.ins().iadd(x, c);
+            w.set(be, x);
+        });
+        let be = w.get(be);
+        let mut tail = Vec::new();
+        let mut at = w.f.ins().iadd_imm(be, 8);
+        for t in &totals {
+            tail.push(at);
+            let x = w.f.ins().iadd(at, *t);
+            at = w.f.ins().iadd_imm(x, 8);
+        }
+        let x = w.f.ins().iadd_imm(at, 3);
+        at = w.f.ins().band_imm(x, !3);
+        let starts_each = w.f.ins().iadd_imm(c64, 1);
+        let starts_each = w.f.ins().ishl_imm(starts_each, 2);
+        for _ in 0..4 {
+            tail.push(at);
+            at = w.f.ins().iadd(at, starts_each);
+        }
+        tail.push(at);
+        let x = w.f.ins().iadd(at, llen);
+        let tend = w.f.ins().iadd_imm(x, 8);
+        tail.push(tend);
+        write_head(w, out, MAGIC16Z, &tail);
+        for (t, v) in [parts_at, ckpt_at, lines_at, starts, lens, kinds, end].into_iter().enumerate() {
+            let v = w.f.ins().ireduce(I32, v);
+            w.st(v, out, 88 + 4 * t as i32);
+        }
+        w.ok();
+    }
+
+    // ---- LZ4 HC, level 4 (decision 0399 §6) -------------------------------------------------------------------
+    //
+    // liblz4 1.10.0's `LZ4HC_compress_hashChain` with 8 attempts, no dictionary, no pattern analysis and no chain
+    // swap, as `LZ4_compress_HC(.., 4)` runs it: the same sequences, so the same bytes. Positions are i64 offsets
+    // from the piece's first byte; an index is a position plus the piece's base (`zbase`).
+
+    const MINMATCH: i64 = 4;
+    const MFLIMIT: i64 = 12;
+    const LASTLITERALS: i64 = 5;
+    const OPTIMAL_ML: i64 = 18;
+    const DISTANCE_MAX: i64 = 65535;
+    const CHAIN_AT: i64 = 4 << LZ_HASH_LOG;
+
+    impl W<'_, '_> {
+        fn r16(&mut self, src: Value, pos: Value) -> Value {
+            let a = self.f.ins().iadd(src, pos);
+            let v = self.ld16(a, 0);
+            self.u64of(v)
+        }
+        fn r32(&mut self, src: Value, pos: Value) -> Value {
+            let a = self.f.ins().iadd(src, pos);
+            self.ld(I32, a, 0)
+        }
+        fn r64(&mut self, src: Value, pos: Value) -> Value {
+            let a = self.f.ins().iadd(src, pos);
+            self.ld(I64, a, 0)
+        }
+        /// LZ4 HC's hash of a 4-byte word: its hash table's slot, times 4 (an i64 byte offset).
+        fn lz_hash(&mut self, x: Value) -> Value {
+            let m = self.f.ins().imul_imm(x, 2654435761u32 as i32 as i64);
+            let h = self.f.ins().ushr_imm(m, i64::from(32 - LZ_HASH_LOG));
+            let h = self.u64of(h);
+            self.f.ins().ishl_imm(h, 2)
+        }
+        fn slt(&mut self, a: Value, b: Value) -> Value {
+            self.f.ins().icmp(IntCC::SignedLessThan, a, b)
+        }
+        fn sle(&mut self, a: Value, b: Value) -> Value {
+            self.f.ins().icmp(IntCC::SignedLessThanOrEqual, a, b)
+        }
+        fn jump(&mut self, to: ir::Block) {
+            self.f.ins().jump(to, &[]);
+        }
+        fn branch(&mut self, cond: Value, yes: ir::Block, no: ir::Block) {
+            self.f.ins().brif(cond, yes, &[], no, &[]);
+        }
+        /// `k` bytes of 255 at `*op`, then the byte `rest`: LZ4's length past 15 (`len / 255` 255s, `len % 255`).
+        fn lz_length(&mut self, op: Variable, len: Value) {
+            let d = self.c64(255);
+            let k = self.f.ins().udiv(len, d);
+            let rest = self.f.ins().urem(len, d);
+            let o = self.get(op);
+            let ones = self.c64(-1);
+            self.call("w_fill", &[o, k, ones]);
+            let o = self.f.ins().iadd(o, k);
+            self.st8(rest, o, 0);
+            let o = self.f.ins().iadd_imm(o, 1);
+            self.set(op, o);
+        }
+        /// `LZ4HC_encodeSequence`: the literals from `anchor` to `ip`, then a match of `ml` at `off`; `ip` past the
+        /// match, `anchor` at it.
+        fn lz_encode(&mut self, src: Value, ip: Variable, anchor: Variable, op: Variable, ml: Value, off: Value) {
+            let (i, a) = (self.get(ip), self.get(anchor));
+            let len = self.f.ins().isub(i, a);
+            let token = self.get(op);
+            let o = self.f.ins().iadd_imm(token, 1);
+            self.set(op, o);
+            let tok = self.var(I64, len);
+            let long = self.f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, len, 15);
+            self.if_(long, |w| {
+                let ext = w.f.ins().iadd_imm(len, -15);
+                w.lz_length(op, ext);
+                let t = w.c64(15);
+                w.set(tok, t);
+            });
+            let t = self.get(tok);
+            let t = self.f.ins().ishl_imm(t, 4);
+            self.set(tok, t);
+            let o = self.get(op);
+            let from = self.f.ins().iadd(src, a);
+            self.call("w_copy", &[o, from, len]);
+            let o = self.f.ins().iadd(o, len);
+            self.st16(off, o, 0);
+            let o = self.f.ins().iadd_imm(o, 2);
+            self.set(op, o);
+            let l = self.f.ins().iadd_imm(ml, -MINMATCH);
+            let long = self.f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, l, 15);
+            self.if_else(
+                long,
+                |w| {
+                    let ext = w.f.ins().iadd_imm(l, -15);
+                    w.lz_length(op, ext);
+                    let t = w.get(tok);
+                    let t = w.f.ins().iadd_imm(t, 15);
+                    w.set(tok, t);
+                },
+                |w| {
+                    let t = w.get(tok);
+                    let t = w.f.ins().iadd(t, l);
+                    w.set(tok, t);
+                },
+            );
+            let t = self.get(tok);
+            self.st8(t, token, 0);
+            let i = self.f.ins().iadd(i, ml);
+            self.set(ip, i);
+            self.set(anchor, i);
+        }
+        /// `LZ4HC_InsertAndGetWiderMatch` (by `w_lz4_find`): the match's length, its offset and back count in the
+        /// state.
+        fn lz_find(&mut self, src: Value, ip: Value, low: Value, high: Value, longest: Value) -> (Value, Value, Value) {
+            let len = self.call("w_lz4_find", &[src, ip, low, high, longest]);
+            let off = self.get32(at::ZOFF);
+            let off = self.u64of(off);
+            let back = self.get32(at::ZBACK);
+            let back = self.f.ins().sextend(I64, back);
+            (len, off, back)
+        }
+    }
+
+    /// `w_fill(to, len, v)`: `len` bytes of `v`'s, a word at a time, the bytes past `len` kept.
+    fn fill(w: &mut W<'_, '_>) {
+        let (to, len, v) = (w.arg(0), w.arg(1), w.arg(2));
+        let zero = w.c64(0);
+        let k = w.var(I64, zero);
+        w.while_(
+            |w| {
+                let k = w.get(k);
+                let k8 = w.f.ins().iadd_imm(k, 8);
+                w.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, k8, len)
+            },
+            |w| {
+                let kv = w.get(k);
+                let d = w.f.ins().iadd(to, kv);
+                w.st(v, d, 0);
+                let k8 = w.f.ins().iadd_imm(kv, 8);
+                w.set(k, k8);
+            },
+        );
+        let kv = w.get(k);
+        let rest = w.f.ins().isub(len, kv);
+        let some = w.f.ins().icmp_imm(IntCC::NotEqual, rest, 0);
+        w.if_(some, |w| {
+            let d = w.f.ins().iadd(to, kv);
+            w.cell_put(d, rest, v);
+        });
+        let z = w.zero32();
+        w.f.ins().return_(&[z]);
+    }
+
+    /// `w_hash(src, n)`: a 64-bit hash of `n` bytes, a word at a time (the seen pieces').
+    fn hash(w: &mut W<'_, '_>) {
+        let (src, n) = (w.arg(0), w.arg(1));
+        let zero = w.c64(0);
+        let k = w.var(I64, zero);
+        let h = w.var(I64, n);
+        let mix = |w: &mut W<'_, '_>, x: Value| {
+            let hv = w.get(h);
+            let x = w.f.ins().bxor(hv, x);
+            let x = w.f.ins().imul_imm(x, 0x9e37_79b9_7f4a_7c15u64 as i64);
+            let s = w.f.ins().ushr_imm(x, 29);
+            let x = w.f.ins().bxor(x, s);
+            w.set(h, x);
+        };
+        w.while_(
+            |w| {
+                let k = w.get(k);
+                let k8 = w.f.ins().iadd_imm(k, 8);
+                w.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, k8, n)
+            },
+            |w| {
+                let kv = w.get(k);
+                let x = w.r64(src, kv);
+                mix(w, x);
+                let k8 = w.f.ins().iadd_imm(kv, 8);
+                w.set(k, k8);
+            },
+        );
+        let kv = w.get(k);
+        let rest = w.f.ins().isub(n, kv);
+        let some = w.f.ins().icmp_imm(IntCC::NotEqual, rest, 0);
+        w.if_(some, |w| {
+            let a = w.f.ins().iadd(src, kv);
+            let x = w.cell_get(a, rest);
+            mix(w, x);
+        });
+        let hv = w.get(h);
+        w.f.ins().return_(&[hv]);
+    }
+
+    /// `w_eq(a, b, n)`: 1 where `n` bytes at `a` and at `b` are the same, a word at a time.
+    fn eq(w: &mut W<'_, '_>) {
+        let (a, b, n) = (w.arg(0), w.arg(1), w.arg(2));
+        let zero = w.c64(0);
+        let k = w.var(I64, zero);
+        w.while_(
+            |w| {
+                let k = w.get(k);
+                let k8 = w.f.ins().iadd_imm(k, 8);
+                w.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, k8, n)
+            },
+            |w| {
+                let kv = w.get(k);
+                let x = w.r64(a, kv);
+                let y = w.r64(b, kv);
+                let ne = w.f.ins().icmp(IntCC::NotEqual, x, y);
+                let z = w.zero32();
+                w.if_(ne, |w| w.ret(z));
+                let k8 = w.f.ins().iadd_imm(kv, 8);
+                w.set(k, k8);
+            },
+        );
+        let kv = w.get(k);
+        let rest = w.f.ins().isub(n, kv);
+        let pa = w.f.ins().iadd(a, kv);
+        let pb = w.f.ins().iadd(b, kv);
+        let x = w.cell_get(pa, rest);
+        let y = w.cell_get(pb, rest);
+        let same = w.f.ins().icmp(IntCC::Equal, x, y);
+        let one = w.c32(1);
+        let z = w.zero32();
+        let r = w.f.ins().select(same, one, z);
+        w.f.ins().return_(&[r]);
+    }
+
+    /// `w_lz4_find(src, ip, low, high, longest)`: `LZ4HC_InsertAndGetWiderMatch` at level 4 for the piece at
+    /// `src`: the positions before `ip` inserted, then up to 8 entries of `ip`'s chain tried for a match longer
+    /// than `longest`, reaching back to `low` and on to `high`. Returns its length (`longest` if none), its offset
+    /// and back count in the state.
+    fn lz4_find(w: &mut W<'_, '_>) {
+        let (src, ip, low, high, longest0) = (w.arg(0), w.arg(1), w.arg(2), w.arg(3), w.arg(4));
+        let lz = w.part(part::LZ);
+        let chain = w.f.ins().iadd_imm(lz, CHAIN_AT);
+        let g = w.get32(at::ZBASE);
+        let g = w.u64of(g);
+        let ip_index = w.f.ins().iadd(g, ip);
+        // The positions before `ip` in the hash table and the chain (`LZ4HC_Insert`).
+        let next = w.get32(at::ZNEXT);
+        let next = w.u64of(next);
+        let nu = w.var(I64, next);
+        w.while_(
+            |w| {
+                let v = w.get(nu);
+                w.f.ins().icmp(IntCC::UnsignedLessThan, v, ip_index)
+            },
+            |w| {
+                let v = w.get(nu);
+                let pos = w.f.ins().isub(v, g);
+                let x = w.r32(src, pos);
+                let h = w.lz_hash(x);
+                let slot = w.f.ins().iadd(lz, h);
+                let old = w.ld(I32, slot, 0);
+                let old = w.u64of(old);
+                let delta = w.f.ins().isub(v, old);
+                let max = w.c64(DISTANCE_MAX);
+                let delta = w.f.ins().umin(delta, max);
+                let c = w.f.ins().band_imm(v, 0xffff);
+                let c = w.f.ins().ishl_imm(c, 1);
+                let ca = w.f.ins().iadd(chain, c);
+                w.st16(delta, ca, 0);
+                let v32 = w.f.ins().ireduce(I32, v);
+                w.st(v32, slot, 0);
+                let v1 = w.f.ins().iadd_imm(v, 1);
+                w.set(nu, v1);
+            },
+        );
+        let i32_index = w.f.ins().ireduce(I32, ip_index);
+        w.set32(at::ZNEXT, i32_index);
+        let within = w.f.ins().iadd_imm(g, DISTANCE_MAX + 1);
+        let within = w.f.ins().icmp(IntCC::UnsignedGreaterThan, within, ip_index);
+        let far = w.f.ins().iadd_imm(ip_index, -DISTANCE_MAX);
+        let lowest = w.f.ins().select(within, g, far);
+        let look_back = w.f.ins().isub(ip, low);
+        let pattern = w.r32(src, ip);
+        let h = w.lz_hash(pattern);
+        let slot = w.f.ins().iadd(lz, h);
+        let first = w.ld(I32, slot, 0);
+        let first = w.u64of(first);
+        let mi = w.var(I64, first);
+        let attempts = w.c64(i64::from(LZ_ATTEMPTS));
+        let tries = w.var(I64, attempts);
+        let longest = w.var(I64, longest0);
+        let zero = w.c64(0);
+        let offset = w.var(I64, zero);
+        let s_back = w.var(I64, zero);
+        w.while_(
+            |w| {
+                let m = w.get(mi);
+                let t = w.get(tries);
+                let a = w.f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, m, lowest);
+                let b = w.f.ins().icmp_imm(IntCC::SignedGreaterThan, t, 0);
+                w.f.ins().band(a, b)
+            },
+            |w| {
+                let t = w.get(tries);
+                let t = w.f.ins().iadd_imm(t, -1);
+                w.set(tries, t);
+                let m = w.get(mi);
+                let mp = w.f.ins().isub(m, g);
+                let l = w.get(longest);
+                let at_low = w.f.ins().iadd(low, l);
+                let at_low = w.f.ins().iadd_imm(at_low, -1);
+                let a = w.r16(src, at_low);
+                let at_m = w.f.ins().isub(mp, look_back);
+                let at_m = w.f.ins().iadd(at_m, l);
+                let at_m = w.f.ins().iadd_imm(at_m, -1);
+                let b = w.r16(src, at_m);
+                let same16 = w.f.ins().icmp(IntCC::Equal, a, b);
+                let mv = w.r32(src, mp);
+                let same32 = w.f.ins().icmp(IntCC::Equal, mv, pattern);
+                let cand = w.f.ins().band(same16, same32);
+                w.if_(cand, |w| {
+                    let back = lz_count_back(w, src, ip, mp, low);
+                    let ip4 = w.f.ins().iadd_imm(ip, MINMATCH);
+                    let mp4 = w.f.ins().iadd_imm(mp, MINMATCH);
+                    let c = lz_count(w, src, ip4, mp4, high);
+                    let ml = w.f.ins().iadd_imm(c, MINMATCH);
+                    let ml = w.f.ins().isub(ml, back);
+                    let l = w.get(longest);
+                    let better = w.f.ins().icmp(IntCC::SignedGreaterThan, ml, l);
+                    w.if_(better, |w| {
+                        w.set(longest, ml);
+                        let o = w.f.ins().isub(ip_index, m);
+                        w.set(offset, o);
+                        w.set(s_back, back);
+                    });
+                });
+                let c = w.f.ins().band_imm(m, 0xffff);
+                let c = w.f.ins().ishl_imm(c, 1);
+                let ca = w.f.ins().iadd(chain, c);
+                let d = w.ld16(ca, 0);
+                let d = w.u64of(d);
+                let m2 = w.f.ins().isub(m, d);
+                w.set(mi, m2);
+            },
+        );
+        let o = w.get(offset);
+        let o = w.f.ins().ireduce(I32, o);
+        w.set32(at::ZOFF, o);
+        let b = w.get(s_back);
+        let b = w.f.ins().ireduce(I32, b);
+        w.set32(at::ZBACK, b);
+        let l = w.get(longest);
+        w.f.ins().return_(&[l]);
+    }
+
+    /// `LZ4HC_countBack`: minus the bytes before `ip` and `mp` that are the same, down to `low` and to the piece's
+    /// first byte; a word at a time, the last word's top bytes by its leading zeros.
+    fn lz_count_back(w: &mut W<'_, '_>, src: Value, ip: Value, mp: Value, low: Value) -> Value {
+        let a = w.f.ins().isub(low, ip);
+        let zero = w.c64(0);
+        let b = w.f.ins().isub(zero, mp);
+        let min = w.f.ins().smax(a, b);
+        let back = w.var(I64, zero);
+        let done = w.var(I64, zero);
+        w.while_(
+            |w| {
+                let bk = w.get(back);
+                let d = w.f.ins().isub(bk, min);
+                let room = w.f.ins().icmp_imm(IntCC::SignedGreaterThan, d, 3);
+                let dn = w.get(done);
+                let go = w.f.ins().icmp_imm(IntCC::Equal, dn, 0);
+                w.f.ins().band(room, go)
+            },
+            |w| {
+                let bk = w.get(back);
+                let p = w.f.ins().iadd(ip, bk);
+                let p = w.f.ins().iadd_imm(p, -4);
+                let q = w.f.ins().iadd(mp, bk);
+                let q = w.f.ins().iadd_imm(q, -4);
+                let x = w.r32(src, p);
+                let y = w.r32(src, q);
+                let v = w.f.ins().bxor(x, y);
+                let differ = w.f.ins().icmp_imm(IntCC::NotEqual, v, 0);
+                let common = w.f.ins().clz(v);
+                let common = w.f.ins().ushr_imm(common, 3);
+                let common = w.u64of(common);
+                let at_diff = w.f.ins().isub(bk, common);
+                let step = w.f.ins().iadd_imm(bk, -4);
+                let nb = w.f.ins().select(differ, at_diff, step);
+                w.set(back, nb);
+                let one = w.c64(1);
+                let zero = w.c64(0);
+                let dn = w.f.ins().select(differ, one, zero);
+                w.set(done, dn);
+            },
+        );
+        let dn = w.get(done);
+        let open = w.f.ins().icmp_imm(IntCC::Equal, dn, 0);
+        w.if_(open, |w| {
+            // The remainder: fewer than 4 bytes, the top ones of the word that ends at `back`.
+            let bk = w.get(back);
+            let rest = w.f.ins().isub(bk, min);
+            let some = w.f.ins().icmp_imm(IntCC::SignedGreaterThan, rest, 0);
+            w.if_(some, |w| {
+                let p = w.f.ins().iadd(ip, bk);
+                let p = w.f.ins().iadd_imm(p, -4);
+                let q = w.f.ins().iadd(mp, bk);
+                let q = w.f.ins().iadd_imm(q, -4);
+                let x = w.r32(src, p);
+                let y = w.r32(src, q);
+                let v = w.f.ins().bxor(x, y);
+                let common = w.f.ins().clz(v);
+                let common = w.f.ins().ushr_imm(common, 3);
+                let common = w.u64of(common);
+                let common = w.f.ins().umin(common, rest);
+                let nb = w.f.ins().isub(bk, common);
+                w.set(back, nb);
+            });
+        });
+        w.get(back)
+    }
+
+    /// `LZ4_count`: the bytes from `p` and `m` that are the same, up to `limit`, a word at a time.
+    fn lz_count(w: &mut W<'_, '_>, src: Value, p: Value, m: Value, limit: Value) -> Value {
+        let zero = w.c64(0);
+        let k = w.var(I64, zero);
+        let found = w.c64(-1);
+        let result = w.var(I64, found);
+        w.while_(
+            |w| {
+                let kv = w.get(k);
+                let at = w.f.ins().iadd(p, kv);
+                let at8 = w.f.ins().iadd_imm(at, 8);
+                let room = w.sle(at8, limit);
+                let r = w.get(result);
+                let open = w.f.ins().icmp_imm(IntCC::SignedLessThan, r, 0);
+                w.f.ins().band(room, open)
+            },
+            |w| {
+                let kv = w.get(k);
+                let a = w.f.ins().iadd(p, kv);
+                let b = w.f.ins().iadd(m, kv);
+                let x = w.r64(src, a);
+                let y = w.r64(src, b);
+                let v = w.f.ins().bxor(x, y);
+                let differ = w.f.ins().icmp_imm(IntCC::NotEqual, v, 0);
+                w.if_(differ, |w| {
+                    let t = w.f.ins().ctz(v);
+                    let t = w.f.ins().ushr_imm(t, 3);
+                    let r = w.f.ins().iadd(kv, t);
+                    w.set(result, r);
+                });
+                let k8 = w.f.ins().iadd_imm(kv, 8);
+                w.set(k, k8);
+            },
+        );
+        let r = w.get(result);
+        let open = w.f.ins().icmp_imm(IntCC::SignedLessThan, r, 0);
+        w.if_(open, |w| {
+            let kv = w.get(k);
+            let at = w.f.ins().iadd(p, kv);
+            let rest = w.f.ins().isub(limit, at);
+            let zero = w.c64(0);
+            let rest = w.f.ins().smax(rest, zero);
+            let a = w.f.ins().iadd(src, at);
+            let b = w.f.ins().iadd(m, kv);
+            let b = w.f.ins().iadd(src, b);
+            let x = w.cell_get(a, rest);
+            let y = w.cell_get(b, rest);
+            let v = w.f.ins().bxor(x, y);
+            let t = w.f.ins().ctz(v);
+            let t = w.f.ins().ushr_imm(t, 3);
+            let t = w.f.ins().umin(t, rest);
+            let r = w.f.ins().iadd(kv, t);
+            w.set(result, r);
+        });
+        w.get(result)
+    }
+
+    /// `w_lz4(src, n, dst)`: the `n` bytes at `src` as one LZ4 block at `dst` (`LZ4_compress_HC(.., 4)`'s bytes);
+    /// returns its length. `dst` has room for `lz4_bound(n)` bytes, and the 8 past a cell; `src`'s 3 bytes before
+    /// it and 8 after are readable.
+    fn lz4(w: &mut W<'_, '_>) {
+        let (src, n, dst) = (w.arg(0), w.arg(1), w.arg(2));
+        // `LZ4HC_init_internal`, the context reused: this piece's indices start 64 KB past the last one's end.
+        let base = w.get32(at::ZBASE);
+        let base = w.u64of(base);
+        let prev = w.get32(at::ZPREV);
+        let prev = w.u64of(prev);
+        let start = w.f.ins().iadd(base, prev);
+        let startv = w.var(I64, start);
+        let over = w.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, start, 1 << 30);
+        w.if_(over, |w| {
+            let lz = w.part(part::LZ);
+            let len = w.c64(i64::from(4 << LZ_HASH_LOG));
+            w.call("w_zero", &[lz, len]);
+            let z = w.c64(0);
+            w.set(startv, z);
+        });
+        let start = w.get(startv);
+        let g = w.f.ins().iadd_imm(start, 65536);
+        let g32 = w.f.ins().ireduce(I32, g);
+        w.set32(at::ZBASE, g32);
+        w.set32(at::ZNEXT, g32);
+        let n32 = w.f.ins().ireduce(I32, n);
+        w.set32(at::ZPREV, n32);
+        let zero = w.c64(0);
+        let ip = w.var(I64, zero);
+        let anchor = w.var(I64, zero);
+        let op = w.var(I64, dst);
+        let start0 = w.var(I64, zero);
+        let start2 = w.var(I64, zero);
+        let start3 = w.var(I64, zero);
+        let (m0l, m0o) = (w.var(I64, zero), w.var(I64, zero));
+        let (m1l, m1o) = (w.var(I64, zero), w.var(I64, zero));
+        let (m2l, m2o) = (w.var(I64, zero), w.var(I64, zero));
+        let (m3l, m3o) = (w.var(I64, zero), w.var(I64, zero));
+        let mflimit = w.f.ins().iadd_imm(n, -MFLIMIT);
+        let matchlimit = w.f.ins().iadd_imm(n, -LASTLITERALS);
+        let main = w.f.create_block();
+        let body = w.f.create_block();
+        let search2 = w.f.create_block();
+        let search3 = w.f.create_block();
+        let last = w.f.create_block();
+        let small = w.f.ins().icmp_imm(IntCC::SignedLessThan, n, MFLIMIT + 1);
+        w.branch(small, last, main);
+
+        // The main loop.
+        w.f.switch_to_block(main);
+        let i = w.get(ip);
+        let go = w.sle(i, mflimit);
+        w.branch(go, body, last);
+
+        w.f.switch_to_block(body);
+        let i = w.get(ip);
+        let three = w.c64(MINMATCH - 1);
+        let (l, o, _) = w.lz_find(src, i, i, matchlimit, three);
+        let none = w.f.ins().icmp_imm(IntCC::SignedLessThan, l, MINMATCH);
+        let found = w.f.create_block();
+        let skip = w.f.create_block();
+        w.branch(none, skip, found);
+        w.f.switch_to_block(skip);
+        let i1 = w.f.ins().iadd_imm(i, 1);
+        w.set(ip, i1);
+        w.jump(main);
+        w.f.switch_to_block(found);
+        w.set(start0, i);
+        w.set(m0l, l);
+        w.set(m0o, o);
+        w.set(m1l, l);
+        w.set(m1o, o);
+        w.jump(search2);
+
+        // _Search2.
+        w.f.switch_to_block(search2);
+        let i = w.get(ip);
+        let l1 = w.get(m1l);
+        let end1 = w.f.ins().iadd(i, l1);
+        let room = w.sle(end1, mflimit);
+        w.if_else(
+            room,
+            |w| {
+                let s2 = w.f.ins().iadd_imm(end1, -2);
+                let (l, o, b) = w.lz_find(src, s2, i, matchlimit, l1);
+                let s2 = w.f.ins().iadd(s2, b);
+                w.set(start2, s2);
+                w.set(m2l, l);
+                w.set(m2o, o);
+            },
+            |w| {
+                let z = w.c64(0);
+                w.set(m2l, z);
+                w.set(m2o, z);
+            },
+        );
+        let l2 = w.get(m2l);
+        let l1 = w.get(m1l);
+        let no_better = w.sle(l2, l1);
+        let encode1 = w.f.create_block();
+        let better = w.f.create_block();
+        w.branch(no_better, encode1, better);
+        w.f.switch_to_block(encode1);
+        let o1 = w.get(m1o);
+        w.lz_encode(src, ip, anchor, op, l1, o1);
+        w.jump(main);
+        w.f.switch_to_block(better);
+        let i = w.get(ip);
+        let s0 = w.get(start0);
+        let s2 = w.get(start2);
+        let l0 = w.get(m0l);
+        let skipped = w.slt(s0, i);
+        let e0 = w.f.ins().iadd(i, l0);
+        let squeeze = w.slt(s2, e0);
+        let restore = w.f.ins().band(skipped, squeeze);
+        w.if_(restore, |w| {
+            w.set(ip, s0);
+            let (l, o) = (w.get(m0l), w.get(m0o));
+            w.set(m1l, l);
+            w.set(m1o, o);
+        });
+        let i = w.get(ip);
+        let gap = w.f.ins().isub(s2, i);
+        let tiny = w.f.ins().icmp_imm(IntCC::SignedLessThan, gap, 3);
+        let drop1 = w.f.create_block();
+        w.branch(tiny, drop1, search3);
+        w.f.switch_to_block(drop1);
+        w.set(ip, s2);
+        let (l, o) = (w.get(m2l), w.get(m2o));
+        w.set(m1l, l);
+        w.set(m1o, o);
+        w.jump(search2);
+
+        // _Search3.
+        w.f.switch_to_block(search3);
+        let i = w.get(ip);
+        let s2 = w.get(start2);
+        let gap = w.f.ins().isub(s2, i);
+        let short = w.f.ins().icmp_imm(IntCC::SignedLessThan, gap, OPTIMAL_ML);
+        w.if_(short, |w| {
+            let l1 = w.get(m1l);
+            let cap = w.c64(OPTIMAL_ML);
+            let new_ml = w.f.ins().smin(l1, cap);
+            let nm = w.var(I64, new_ml);
+            let l2 = w.get(m2l);
+            let lim = w.f.ins().iadd(s2, l2);
+            let lim = w.f.ins().iadd_imm(lim, -MINMATCH);
+            let reach = w.f.ins().iadd(i, new_ml);
+            let past = w.f.ins().icmp(IntCC::SignedGreaterThan, reach, lim);
+            w.if_(past, |w| {
+                let x = w.f.ins().iadd(gap, l2);
+                let x = w.f.ins().iadd_imm(x, -MINMATCH);
+                w.set(nm, x);
+            });
+            let nmv = w.get(nm);
+            let corr = w.f.ins().isub(nmv, gap);
+            let pos = w.f.ins().icmp_imm(IntCC::SignedGreaterThan, corr, 0);
+            w.if_(pos, |w| {
+                let s = w.f.ins().iadd(s2, corr);
+                w.set(start2, s);
+                let l = w.f.ins().isub(l2, corr);
+                w.set(m2l, l);
+            });
+        });
+        let s2 = w.get(start2);
+        let l2 = w.get(m2l);
+        let end2 = w.f.ins().iadd(s2, l2);
+        let room = w.sle(end2, mflimit);
+        w.if_else(
+            room,
+            |w| {
+                let s3 = w.f.ins().iadd_imm(end2, -3);
+                let (l, o, b) = w.lz_find(src, s3, s2, matchlimit, l2);
+                let s3 = w.f.ins().iadd(s3, b);
+                w.set(start3, s3);
+                w.set(m3l, l);
+                w.set(m3o, o);
+            },
+            |w| {
+                let z = w.c64(0);
+                w.set(m3l, z);
+                w.set(m3o, z);
+            },
+        );
+        let l3 = w.get(m3l);
+        let l2 = w.get(m2l);
+        let no_better = w.sle(l3, l2);
+        let encode2 = w.f.create_block();
+        let three_m = w.f.create_block();
+        w.branch(no_better, encode2, three_m);
+        // No better third: the first two encoded.
+        w.f.switch_to_block(encode2);
+        let i = w.get(ip);
+        let s2 = w.get(start2);
+        let l1 = w.get(m1l);
+        let e1 = w.f.ins().iadd(i, l1);
+        let cut = w.slt(s2, e1);
+        w.if_(cut, |w| {
+            let x = w.f.ins().isub(s2, i);
+            w.set(m1l, x);
+        });
+        let (l1, o1) = (w.get(m1l), w.get(m1o));
+        w.lz_encode(src, ip, anchor, op, l1, o1);
+        w.set(ip, s2);
+        let (l2, o2) = (w.get(m2l), w.get(m2o));
+        w.lz_encode(src, ip, anchor, op, l2, o2);
+        w.jump(main);
+
+        w.f.switch_to_block(three_m);
+        let i = w.get(ip);
+        let s2 = w.get(start2);
+        let s3 = w.get(start3);
+        let l1 = w.get(m1l);
+        let e1 = w.f.ins().iadd(i, l1);
+        let e13 = w.f.ins().iadd_imm(e1, 3);
+        let no_room = w.slt(s3, e13);
+        let crowded = w.f.create_block();
+        let ascending = w.f.create_block();
+        w.branch(no_room, crowded, ascending);
+        w.f.switch_to_block(crowded);
+        let can = w.f.ins().icmp(IntCC::SignedGreaterThanOrEqual, s3, e1);
+        let write1 = w.f.create_block();
+        let swap = w.f.create_block();
+        w.branch(can, write1, swap);
+        // The first written now; the second dropped, the third becomes the first.
+        w.f.switch_to_block(write1);
+        let over = w.slt(s2, e1);
+        w.if_(over, |w| {
+            let corr = w.f.ins().isub(e1, s2);
+            let s = w.f.ins().iadd(s2, corr);
+            w.set(start2, s);
+            let l2 = w.get(m2l);
+            let l = w.f.ins().isub(l2, corr);
+            w.set(m2l, l);
+            let short = w.f.ins().icmp_imm(IntCC::SignedLessThan, l, MINMATCH);
+            w.if_(short, |w| {
+                w.set(start2, s3);
+                let (l, o) = (w.get(m3l), w.get(m3o));
+                w.set(m2l, l);
+                w.set(m2o, o);
+            });
+        });
+        let o1 = w.get(m1o);
+        w.lz_encode(src, ip, anchor, op, l1, o1);
+        w.set(ip, s3);
+        let (l, o) = (w.get(m3l), w.get(m3o));
+        w.set(m1l, l);
+        w.set(m1o, o);
+        let s2 = w.get(start2);
+        w.set(start0, s2);
+        let (l, o) = (w.get(m2l), w.get(m2o));
+        w.set(m0l, l);
+        w.set(m0o, o);
+        w.jump(search2);
+        w.f.switch_to_block(swap);
+        w.set(start2, s3);
+        let (l, o) = (w.get(m3l), w.get(m3o));
+        w.set(m2l, l);
+        w.set(m2o, o);
+        w.jump(search3);
+
+        // Three ascending matches: the first written, the second becomes the first, the third the second.
+        w.f.switch_to_block(ascending);
+        let i = w.get(ip);
+        let s2 = w.get(start2);
+        let l1 = w.get(m1l);
+        let e1 = w.f.ins().iadd(i, l1);
+        let over = w.slt(s2, e1);
+        w.if_(over, |w| {
+            let gap = w.f.ins().isub(s2, i);
+            let short = w.f.ins().icmp_imm(IntCC::SignedLessThan, gap, OPTIMAL_ML);
+            w.if_else(
+                short,
+                |w| {
+                    let l1 = w.get(m1l);
+                    let cap = w.c64(OPTIMAL_ML);
+                    let l1 = w.f.ins().smin(l1, cap);
+                    w.set(m1l, l1);
+                    let l2 = w.get(m2l);
+                    let lim = w.f.ins().iadd(s2, l2);
+                    let lim = w.f.ins().iadd_imm(lim, -MINMATCH);
+                    let reach = w.f.ins().iadd(i, l1);
+                    let past = w.f.ins().icmp(IntCC::SignedGreaterThan, reach, lim);
+                    w.if_(past, |w| {
+                        let x = w.f.ins().iadd(gap, l2);
+                        let x = w.f.ins().iadd_imm(x, -MINMATCH);
+                        w.set(m1l, x);
+                    });
+                    let l1 = w.get(m1l);
+                    let corr = w.f.ins().isub(l1, gap);
+                    let pos = w.f.ins().icmp_imm(IntCC::SignedGreaterThan, corr, 0);
+                    w.if_(pos, |w| {
+                        let s = w.f.ins().iadd(s2, corr);
+                        w.set(start2, s);
+                        let l = w.f.ins().isub(l2, corr);
+                        w.set(m2l, l);
+                    });
+                },
+                |w| w.set(m1l, gap),
+            );
+        });
+        let (l1, o1) = (w.get(m1l), w.get(m1o));
+        w.lz_encode(src, ip, anchor, op, l1, o1);
+        let s2 = w.get(start2);
+        w.set(ip, s2);
+        let (l, o) = (w.get(m2l), w.get(m2o));
+        w.set(m1l, l);
+        w.set(m1o, o);
+        let s3 = w.get(start3);
+        w.set(start2, s3);
+        let (l, o) = (w.get(m3l), w.get(m3o));
+        w.set(m2l, l);
+        w.set(m2o, o);
+        w.jump(search3);
+
+        // _last_literals.
+        w.f.switch_to_block(last);
+        let a = w.get(anchor);
+        let run = w.f.ins().isub(n, a);
+        let token = w.get(op);
+        let o = w.f.ins().iadd_imm(token, 1);
+        w.set(op, o);
+        let long = w.f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, run, 15);
+        w.if_else(
+            long,
+            |w| {
+                let t = w.c32(0xf0);
+                w.st8(t, token, 0);
+                let ext = w.f.ins().iadd_imm(run, -15);
+                w.lz_length(op, ext);
+            },
+            |w| {
+                let t = w.f.ins().ishl_imm(run, 4);
+                w.st8(t, token, 0);
+            },
+        );
+        let o = w.get(op);
+        let from = w.f.ins().iadd(src, a);
+        w.call("w_copy", &[o, from, run]);
+        let o = w.f.ins().iadd(o, run);
+        let len = w.f.ins().isub(o, dst);
+        w.f.ins().return_(&[len]);
+    }
 }
+
 
 #[cfg(all(test, feature = "ir"))]
 mod tests {

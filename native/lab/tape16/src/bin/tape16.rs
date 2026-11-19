@@ -1762,6 +1762,40 @@ fn cmd_f16(path: &str) {
     }
 }
 
+/// Decision 0399 §6: 16z's pieces by compressor, HC 9 against lower levels and LZ4's fast one (`zlevel.rs`).
+fn cmd_zlevel(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    for (tag, fs) in &by_tag {
+        let title = format!("{path}, {} ({tag})", capture::language(*tag));
+        match rerail_tape_lab::zlevel::run(fs) {
+            Ok(r) => rerail_tape_lab::zlevel::print(&title, &r),
+            Err(e) => println!("### {title}\n\n{e}\n"),
+        }
+    }
+}
+
+/// Decision 0399 §6: the writer's ops in CLIF against the reference writer, on every file (`zlevel.rs`).
+fn cmd_zops(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    for (tag, fs) in &by_tag {
+        let title = format!("{path}, {} ({tag})", capture::language(*tag));
+        match rerail_tape_lab::zlevel::ops(fs) {
+            Ok(r) => rerail_tape_lab::zlevel::print_ops(&title, &r),
+            Err(e) => println!("### {title}\n\n{e}\n"),
+        }
+    }
+}
+
 /// E25 (t39 step 17): every code the grammar allows, checked against every node of the capture (`gcodes.rs`).
 #[cfg(feature = "grammar")]
 fn cmd_gcodes(path: &str) {
@@ -1922,6 +1956,8 @@ fn main() {
         "code8" => cmd_code8(path),
         "nofield" => cmd_nofield(path),
         "f16" => cmd_f16(path),
+        "zlevel" => cmd_zlevel(path),
+        "zops" => cmd_zops(path),
         "f16w" => cmd_f16w(path),
         #[cfg(target_os = "macos")]
         "f16-gpu" => cmd_f16_gpu(path),

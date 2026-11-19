@@ -644,7 +644,7 @@ impl ZOut {
     }
 
     /// Block `b`'s four pieces from its columns (codes, slots, gaps, lengths, at its rows) and its side lists'
-    /// parts (`part_into`), and its checkpoints: each piece stored as its bytes, as one LZ4 block (HC 9) when that
+    /// parts (`part_into`), and its checkpoints: each piece stored as its bytes, as one LZ4 block (HC 4) when that
     /// shrinks it by a tenth, or as a repeat of an earlier piece of the tape with the same bytes (0156 §2.1).
     fn block(&mut self, b: usize, columns: [&[u8]; 4], parts: [&[u8]; 4], ckpt: &[u8], cw: usize) {
         let pieces = PIECES * (b + 1);
@@ -1212,8 +1212,58 @@ fn part_into(out: &mut Vec<u8>, e: &[(u16, u64)], nb: usize, vw: usize) {
 /// Format 16, or 16z where `z`, written over a document's `n` nodes in preorder by the writer's ops (`Writer`):
 /// `node(i)` is node `i`'s cells, asked once each, in order; a node closes when the pass reaches its subtree's end.
 /// `Err` where a node's values break the tape's bounds: no tape is made of it.
-pub fn write(lang: &Lang, n: usize, source: &[u8], tag: u8, z: bool, mut node: impl FnMut(usize) -> Node) -> Result<Written, String> {
-    let mut w = Writer::new(lang, source, tag, z, false, n);
+/// A tape writer's ops (decision 0399 §2), by the reference writer (`Writer`) or the ops in CLIF
+/// (`ops::OpsWriter`).
+pub(crate) trait WriterOps: Sized {
+    fn open(&mut self, number: u32, start: u64) -> usize;
+    fn close(&mut self, end: u64);
+    // `leaf`, `retag` and `set_start`: the tests' (tier 2's, by R17).
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn leaf(&mut self, number: u32, start: u64, end: u64) -> usize;
+    fn commit(&mut self);
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn retag(&mut self, i: usize, number: u32);
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn set_start(&mut self, i: usize, start: u64);
+    fn finish(self) -> Result<Finished, String>;
+}
+
+macro_rules! writer_ops {
+    ($t:ty) => {
+        impl WriterOps for $t {
+            fn open(&mut self, number: u32, start: u64) -> usize {
+                <$t>::open(self, number, start)
+            }
+            fn close(&mut self, end: u64) {
+                <$t>::close(self, end)
+            }
+            fn leaf(&mut self, number: u32, start: u64, end: u64) -> usize {
+                <$t>::leaf(self, number, start, end)
+            }
+            fn commit(&mut self) {
+                <$t>::commit(self)
+            }
+            fn retag(&mut self, i: usize, number: u32) {
+                <$t>::retag(self, i, number)
+            }
+            fn set_start(&mut self, i: usize, start: u64) {
+                <$t>::set_start(self, i, start)
+            }
+            fn finish(self) -> Result<Finished, String> {
+                <$t>::finish(self)
+            }
+        }
+    };
+}
+writer_ops!(Writer<'_>);
+writer_ops!(ops::OpsWriter);
+
+pub fn write(lang: &Lang, n: usize, source: &[u8], tag: u8, z: bool, node: impl FnMut(usize) -> Node) -> Result<Written, String> {
+    write_with(Writer::new(lang, source, tag, z, false, n), n, node)
+}
+
+/// `write` by `w`'s ops.
+pub(crate) fn write_with(mut w: impl WriterOps, n: usize, mut node: impl FnMut(usize) -> Node) -> Result<Written, String> {
     // The open nodes' subtree ends and ends.
     let mut ends: Vec<(usize, u64)> = Vec::with_capacity(64);
     for i in 0..n {
@@ -1239,11 +1289,16 @@ const NONE: u32 = u32::MAX;
 /// Format 16 (or 16z where `z`) written from another tape `t`, each node's code mapped to the language's number
 /// (`number`, by `t`'s code), in one pass (`write`): a tape a parser did not write in format 16 (decision 0293).
 pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], tag: u8, z: bool) -> Result<Written, String> {
+    write(lang, t.len(), source, tag, z, nodes_of(t, number))
+}
+
+/// `t`'s nodes in preorder, as `write` takes them.
+pub(crate) fn nodes_of<'t, T: Tape>(t: &'t T, number: &'t [u32]) -> impl FnMut(usize) -> Node + 't {
     let mut s = 0;
-    write(lang, t.len(), source, tag, z, |i| {
+    move |i| {
         s = t.start_next(i, s);
         Node { number: number[t.code(i) as usize], start: s, end: t.end_with_start(i, s), subtree_end: t.subtree_end(i) }
-    })
+    }
 }
 
 /// Each of `table`'s codes as `lang`'s number: what `write_from` maps a tape's codes with. An error names a code the
@@ -1932,17 +1987,26 @@ impl Tape for F16Z<'_> {
     }
 }
 
-/// LZ4's block format (`lz4-sys`): HC level 9 to write (0156 §2.1), `LZ4_decompress_safe` to read.
+/// LZ4's block format (`lz4-sys`): HC level 4 to write (0156 §2.1 chose 9; decision 0399 §6 takes 4, which the
+/// writer's ops in CLIF port exactly), `LZ4_decompress_safe` to read.
 mod lz4 {
     use std::os::raw::c_char;
 
+    /// HC's level: 8 chain entries a position.
+    pub const LEVEL: i32 = 4;
+
     pub fn compress(src: &[u8]) -> Vec<u8> {
+        compress_at(src, LEVEL)
+    }
+
+    /// `src` at HC level `level`.
+    pub fn compress_at(src: &[u8], level: i32) -> Vec<u8> {
         let n = i32::try_from(src.len()).expect("a piece under 2 GB");
         // SAFETY: the bound is LZ4's own for `n` bytes; both buffers are as long as the lengths given.
         unsafe {
             let cap = lz4_sys::LZ4_compressBound(n);
             let mut out = vec![0u8; cap as usize];
-            let k = lz4_sys::LZ4_compress_HC(src.as_ptr() as *const c_char, out.as_mut_ptr() as *mut c_char, n, cap, 9);
+            let k = lz4_sys::LZ4_compress_HC(src.as_ptr() as *const c_char, out.as_mut_ptr() as *mut c_char, n, cap, level);
             assert!(k > 0, "LZ4 compresses a piece");
             out.truncate(k as usize);
             out
@@ -2774,41 +2838,6 @@ mod tests {
         }
     }
 
-    /// The writer's ops as `ops_write_the_tape` and `retag_and_set_start` call them, over either writer.
-    trait WriterOps {
-        fn open(&mut self, number: u32, start: u64) -> usize;
-        fn close(&mut self, end: u64);
-        fn leaf(&mut self, number: u32, start: u64, end: u64) -> usize;
-        fn commit(&mut self);
-        fn retag(&mut self, i: usize, number: u32);
-        fn set_start(&mut self, i: usize, start: u64);
-    }
-    macro_rules! writer_ops {
-        ($t:ty) => {
-            impl WriterOps for $t {
-                fn open(&mut self, number: u32, start: u64) -> usize {
-                    <$t>::open(self, number, start)
-                }
-                fn close(&mut self, end: u64) {
-                    <$t>::close(self, end)
-                }
-                fn leaf(&mut self, number: u32, start: u64, end: u64) -> usize {
-                    <$t>::leaf(self, number, start, end)
-                }
-                fn commit(&mut self) {
-                    <$t>::commit(self)
-                }
-                fn retag(&mut self, i: usize, number: u32) {
-                    <$t>::retag(self, i, number)
-                }
-                fn set_start(&mut self, i: usize, start: u64) {
-                    <$t>::set_start(self, i, start)
-                }
-            }
-        };
-    }
-    writer_ops!(Writer<'_>);
-    writer_ops!(ops::OpsWriter);
 
     /// `nodes` written by `w`'s ops, a commit every `every` nodes; with `late`, each inner node opened with another
     /// code and the node before's start, then retagged and its start set once its first child is open.
@@ -2856,20 +2885,67 @@ mod tests {
         let (nodes, pos) = escaped_nodes();
         let source = source_of(pos + 2);
         let small = [(3u32, 0u64, 5u64, 1usize)];
-        for (label, nodes) in [("escaped", &nodes[..]), ("one node", &small[..]), ("none", &[][..])] {
-            for (every, late, blocks) in [(1, false, true), (1_000_000, false, false), (97, false, true), (1, true, false), (13, true, true)] {
+        // A tape whose blocks repeat: 16z's repeats.
+        let n = 5000usize;
+        let mut rep: Vec<(u32, u64, u64, usize)> = (1..n as u64).map(|i| (1 + (i % 3) as u32, 4 * i, 4 * i + 2, 1)).collect();
+        rep.insert(0, (0, 0, 4 * n as u64, n));
+        let rep_source = source_of(4 * n as u64);
+        // Random trees: every alignment of the tail, escaped gaps and lengths among plain ones.
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let mut rng = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        fn tree(rng: &mut impl FnMut() -> u64, depth: u32, at: &mut u64, out: &mut Vec<(u32, u64, u64, usize)>, max: usize) {
+            let i = out.len();
+            out.push((0, 0, 0, 0));
+            let (code, start) = ((rng() % 600) as u32, *at);
+            let children = if depth < 7 && out.len() < max { rng() % 6 } else { 0 };
+            for _ in 0..children {
+                *at += if rng().is_multiple_of(23) { 70_000 + rng() % 1000 } else { rng() % 9 };
+                tree(rng, depth + 1, at, out, max);
+            }
+            *at += if rng().is_multiple_of(31) { 70_000 } else { rng() % 5 };
+            out[i] = (code, start, *at, out.len() - i);
+        }
+        let mut randoms = Vec::new();
+        for max in [1, 2, 3, 5, 9, 40, 300, 1023, 1024, 1025, 3000] {
+            let (mut at, mut t) = (0u64, Vec::new());
+            tree(&mut rng, 0, &mut at, &mut t, max);
+            randoms.push((t, source_of(at + 10)));
+        }
+        let mut kinds = [0usize; 3];
+        type Case<'a> = (&'a str, &'a [(u32, u64, u64, usize)], &'a Vec<u8>);
+        let mut cases: Vec<Case> = vec![("escaped", &nodes[..], &source), ("repeating", &rep[..], &rep_source), ("one node", &small[..], &source), ("none", &[][..], &source)];
+        cases.extend(randoms.iter().map(|(t, src)| ("random", &t[..], src)));
+        for (label, nodes, source) in cases {
+            for (z, every, late, blocks) in [(false, 1, false, true), (false, 1_000_000, false, false), (false, 97, false, true), (false, 1, true, false), (false, 13, true, true), (true, 1, false, true), (true, 1_000_000, false, false), (true, 13, true, true)] {
                 if late && nodes.len() < 2 {
                     continue;
                 }
-                let mut r = Writer::new(&lang, &source, 3, false, blocks, nodes.len());
+                let mut r = Writer::new(&lang, source, 3, z, blocks, nodes.len());
                 by_ops_of(&mut r, nodes, every, late);
-                let mut c = ops::OpsWriter::new(&lang, &source, 3, blocks, nodes.len() / 3);
+                let mut c = ops::OpsWriter::new(&lang, source, 3, z, blocks, nodes.len() / 3);
                 by_ops_of(&mut c, nodes, every, late);
-                let what = format!("{label}: commit every {every}, late {late}, blocks {blocks}");
+                let what = format!("{label}: 16z {z}, commit every {every}, late {late}, blocks {blocks}");
                 match (r.finish(), c.finish()) {
                     (Ok(r), Ok(c)) => {
-                        let (Written::F16(rt), Written::F16(ct)) = (&r.tape, &c.tape) else { panic!("format 16") };
-                        assert_eq!(ct.as_bytes(), rt.as_bytes(), "{what}: the tape");
+                        match (&r.tape, &c.tape) {
+                            (Written::F16(rt), Written::F16(ct)) => assert_eq!(ct.as_bytes(), rt.as_bytes(), "{what}: the tape"),
+                            (Written::F16Z(rt), Written::F16Z(ct)) => {
+                                let (rb, cb) = (rt.as_bytes(), ct.as_bytes());
+                                assert_eq!(cb.len(), rb.len(), "{what}: the 16z tape's length");
+                                if let Some(k) = (0..rb.len()).find(|&k| rb[k] != cb[k]) {
+                                    panic!("{what}: the 16z tapes differ from byte {k} of {}", rb.len());
+                                }
+                                for &k in &rb[rt.zat[ZKINDS]..rt.zat[ZEND]] {
+                                    kinds[usize::from(k)] += 1;
+                                }
+                            }
+                            _ => panic!("{what}: the formats"),
+                        }
                         assert_eq!(c.presence, r.presence, "{what}: the presence");
                     }
                     (Err(_), Err(_)) => assert!(nodes.is_empty(), "{what}: both failed"),
@@ -2877,6 +2953,7 @@ mod tests {
                 }
             }
         }
+        assert!(kinds.iter().all(|&k| k > 0), "16z's pieces of every kind (raw, LZ4, repeat): {kinds:?}");
     }
 
     /// Decision 0399 §6, R14: an op that breaks the tape's bounds fails in the ops as in the reference, and the
@@ -2906,7 +2983,7 @@ mod tests {
         ];
         for (k, (case, code)) in cases.into_iter().enumerate() {
             let mut r = Writer::new(&lang, &source, 0, false, false, 4);
-            let mut c = ops::OpsWriter::new(&lang, &source, 0, false, 4);
+            let mut c = ops::OpsWriter::new(&lang, &source, 0, false, false, 4);
             // 0 open, 1 leaf, 2 close, 3 commit, 4 retag.
             case(&mut |op, a, b| match op {
                 0 => { r.open(1, a); c.open(1, a); }
@@ -2935,7 +3012,7 @@ mod tests {
         let source = source_of(pos + 2);
         let mut cases = 0;
         for (k, cap) in [(part::OUT, 5000), (part::OUT, 30_000), (part::OPEN, 24), (part::TABLE, 16), (part::LAID, 100), (part::LAID_AT, 0), (part::FREE, 0)] {
-            let mut c = ops::OpsWriter::new(&lang, &source, 0, false, 0);
+            let mut c = ops::OpsWriter::new(&lang, &source, 0, false, false, 0);
             c.fix(k, cap, 0xa5);
             by_ops_of(&mut c, &nodes, 1, false);
             let failure = c.failure();
@@ -2945,5 +3022,65 @@ mod tests {
             cases += 1;
         }
         assert_eq!(cases, 7);
+    }
+
+    /// Decision 0399 §6: the writer's LZ4 compressor in CLIF writes liblz4's `LZ4_compress_HC(.., 4)` bytes, for
+    /// pieces of every kind (empty, short, random, runs, a tape's columns, longer than a chain's 64 KB reach), each
+    /// through one compressor whose tables earlier pieces left, as the writer reuses them.
+    #[test]
+    fn the_clif_lz4_is_liblz4_hc4() {
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k % 300, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let source = source_of(pos + 2);
+        let number: Vec<u32> = (0..600).collect();
+        let Ok(Written::F16(tape)) = write_from(&lang, &Plain(&nodes, &table), &number, &source, 0, false) else { panic!("format 16") };
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut random = |n: usize, alphabet: u64| -> Vec<u8> {
+            (0..n)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    (x % alphabet) as u8
+                })
+                .collect()
+        };
+        let mut inputs: Vec<Vec<u8>> = vec![Vec::new(), vec![7], b"abcabcabcabc".to_vec(), b"abcabcabcabcabcabc".to_vec(), vec![0; 13], vec![0; 5000]];
+        for n in [14, 31, 100, 1000, 4096, 20_000] {
+            inputs.push(random(n, 256));
+            inputs.push(random(n, 4));
+        }
+        let mut runs = Vec::new();
+        for k in 0..3000u32 {
+            runs.extend(std::iter::repeat_n((k % 17) as u8, (k % 23) as usize));
+            runs.extend_from_slice(&k.to_le_bytes()[..(k % 3) as usize]);
+        }
+        inputs.push(runs);
+        let t = tape.as_bytes();
+        for k in 0..12 {
+            inputs.push(t[k * t.len() / 12..(k + 1) * t.len() / 12].to_vec());
+        }
+        inputs.push(t.to_vec());
+        let mut far = random(70_000, 256);
+        far.extend_from_within(..30_000);
+        inputs.push(far);
+        let mut z = ops::Lz::new();
+        let (mut shrunk, mut differs) = (0, 0);
+        for round in 0..2 {
+            for (k, src) in inputs.iter().enumerate() {
+                let want = if src.is_empty() { vec![0] } else { lz4::compress(src) };
+                let got = z.compress(src);
+                assert_eq!(got, want, "input {k} ({} bytes), round {round}", src.len());
+                shrunk += usize::from(got.len() < src.len());
+                // A level the port is not: HC 9's bytes differ on some inputs, so the test tells levels apart.
+                if src.len() > 1000 {
+                    let hc9 = lz4::compress_at(src, 9);
+                    differs += usize::from(hc9 != got);
+                }
+            }
+        }
+        assert!(shrunk >= 2 * 20 && differs > 0, "{shrunk} inputs compressed, {differs} unlike HC 9");
     }
 }

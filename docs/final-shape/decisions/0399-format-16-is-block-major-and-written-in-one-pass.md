@@ -201,8 +201,8 @@ holds none of those. The ops in CLIF work on one region of memory whose layout i
   - the presence: the document's bitmap, and one a block where asked;
   - 16z's output: the payload, the piece index (start, length, kind), each list's part lengths, the checkpoints,
     and the pieces seen (a hash table of a piece's 64-bit hash to its number). A repeat is taken only after the
-    earlier piece's bytes compare equal (a raw piece read where it lies, an LZ4 one decoded with `z_lz4` into a
-    scratch room), so a hash collision costs a compare, never a wrong tape.
+    earlier piece's stored bytes compare equal (a raw piece's with this one's, an LZ4 piece's with this one's
+    compressed form; below), so a hash collision costs a compare, never a wrong tape.
 - **The ops** are CLIF functions whose one pointer is the state, as a relation's reads take their descriptor
   (the backends' `Family::Relation` convention, so no new family): `w_open`, `w_close`, `w_leaf`, `w_commit`,
   `w_retag`, `w_set_start` and `w_finish`, on top of `w_put`, `w_put_code`, `w_settle`, `w_finalize`, `w_lay`
@@ -227,8 +227,49 @@ R13 holds for format 16: the ops write the reference's bytes and presence for es
 closes, a commit every node, every 97 or none, `retag` and `set_start`, a presence a block, one node. R14 holds:
 the reference's broken cases fail with the same first failure, and a part held at a capacity (the tape, the open
 nodes, the block table, the laid lists and their places, the side areas given back) fails as full, naming it,
-with nothing written past its room. Next: 16z's block sink, the ops on the JIT and in MSL (R15), the host's
-`Writer` as the ops (R16), tier 2 (R17).
+with nothing written past its room.
+
+**16z's compressor is LZ4 HC level 4, ported to CLIF (2026-11-18).** 0156 §2.1 stores an LZ4 piece at HC level 9.
+A device writer cannot call liblz4, and HC 9 searches 256 chain entries a position (and adds a pattern analysis);
+level 4 searches 8 with the same parser. The lab's `tape16 zlevel` cuts each file's format 16 tape (the shipped
+tables) into 16z's pieces as the writer does and stores each as 16z does (LZ4 where it saves a tenth), by each
+compressor (M5 Max, lz4 1.10.0):
+
+| capture, language | nodes | LZ4 fast | HC 2 | HC 3 | HC 4 | HC 9, B/node |
+|---|---|---|---|---|---|---|
+| dl-10, python | 2.47 M | +3.8% | +1.7% | +0.1% | +0.0% | 2.797 |
+| dl-10, json | 6.99 M | +13.2% | +6.7% | +1.2% | +0.5% | 1.299 |
+| rerail-5b, rust | 1.41 M | +4.3% | +1.9% | +0.2% | +0.1% | 2.993 |
+| rerail-5b, typescript | 0.32 M | +4.3% | +1.9% | +0.2% | +0.0% | 2.954 |
+| rerail-5b, rr | 0.58 M | +11.4% | +4.5% | +0.6% | +0.2% | 1.848 |
+| rerail-5b, json | 2.81 M | +10.7% | +5.1% | +1.5% | +0.7% | 1.339 |
+| sqlite, python | 0.47 M | +3.9% | +1.7% | +0.1% | +0.0% | 2.806 |
+
+So HC 4 costs at most 0.7% of the pieces' bytes, and a compressor without a chain (LZ4's fast one) 4–13%. The
+ops port liblz4's `LZ4HC_compress_hashChain` at level 4 exactly (no dictionary, no pattern analysis, no chain
+swap), and the reference writer calls liblz4 at level 4, so R13 compares 16z's bytes too. The port's tables (a
+hash of 2^15 u32s, a chain of 2^16 u16s) are kept across pieces as a reused liblz4 context keeps them: each
+piece's indices start 64 KB past the last piece's end, so an earlier piece's entries lie below its low limit and
+are never read, and the tables are cleared only past 1 GB, as liblz4 does; the output is the fresh context's.
+A repeat compares a candidate's stored bytes: a raw piece's with this piece's, an LZ4 piece's with this piece's
+compressed form (the compressor is a function of the piece's bytes), so no piece is decoded to find a repeat.
+
+**Done (2026-11-18): 16z's block sink.** `w_zblock` stores a final block's four pieces at the payload's end in
+turn (`w_zpiece`: a repeat, else LZ4 where it saves a tenth, else raw), keeps its checkpoints and gives its room
+back; `w_zfinish` lays 16z's tail and header. `w_lz4` is liblz4's level 4 (`the_clif_lz4_is_liblz4_hc4`: its
+bytes on empty, short, random, run-heavy and tape inputs and past the chain's 64 KB reach, through one reused
+state, and unlike HC 9's). `finish` is two ops, `w_finish_blocks` then `w_finish_tail`, so the host reserves the
+tail's room once the laid parts are known (a device calls `w_finish`, both). R13 now covers 16z byte for byte,
+with raw, LZ4 and repeat pieces, and random trees (every tail alignment, escaped gaps and lengths); a test build
+fills the tape's fresh bytes with 0xa5, so a byte the ops leave unwritten fails it. At scale (the lab's `tape16
+zops`): every file of dl-10, dl-50, rerail-5b, rr and sqlite, 6,731 files and 19.6 M nodes in 11 languages,
+written by the ops' Rust and by the reference, gives the same bytes in 16 and in 16z. That check found the one
+difference the tests had not: the tail's padding before the part starts was left as the last block's moved
+columns, not zeros. Time (M5 Max, the lab's opt-level 3, dl-10): 16 by the ops 44.5 ns a node against the
+reference's 37.3 (python), 16z 70.2 against 72.3. The compressor inserts each position into its hash chain, as
+liblz4's does: the codec's work, not a scan of the text.
+
+Next: the ops on the JIT and in MSL (R15), the host's `Writer` as the ops (R16), tier 2 (R17).
 
 ## Requirements, each with its test
 

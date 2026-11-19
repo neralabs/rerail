@@ -3,29 +3,37 @@
 //! op the host reserves what the op can need, as a `Vec` reserves before a push, so an op never finds a part full:
 //! a full part is the device's failure, whose document is parsed again on the host.
 
-use super::{Finished, Lang, Presence, Tape16, Written, Z, before, bytes_for, mask, stride_of};
+use super::{Finished, K, Lang, Presence, Tape16, Tape16Z, Written, Z, before, bytes_for, mask, stride_of};
 use crate::generated_writer as ops;
 use rerail_clif::writer::{self as w, LAID_AT, OPEN, Part, SIDE_AREA, State, TABLE, part};
 
 /// The most a block's four side-list parts take, laid (`w_lay`): each a u16 a sub-block, a byte and 8 bytes an
 /// entry, and 8 bytes of room.
 const LAID_MAX: usize = 4 * (2 * (Z / 256) + 9 * Z) + 8;
+/// The most a 16z piece holds raw (a column of 8-byte cells and its part), and the most a final block adds to
+/// the payload while its pieces are stored (each raw at the end, the last one's LZ4 room past it).
+const PIECE_MAX: usize = 8 * Z + (2 * (Z / 256) + 9 * Z);
+const ZBLOCK_MAX: usize = 4 * PIECE_MAX + w::lz4_bound(PIECE_MAX as u64) as usize + 64;
+
+/// What a fresh byte of the tape's buffer holds: in tests not zero, so a byte the ops do not write shows.
+const FRESH: u8 = if cfg!(test) { 0xa5 } else { 0 };
 
 /// A document's writer whose ops are the CLIF ones: `f16::Writer`'s API.
 pub struct OpsWriter {
     state: Box<State>,
     /// The parts' buffers, by `part::*`, each its capacity long.
-    parts: [Vec<u8>; 10],
+    parts: [Vec<u8>; part::COUNT],
     presence_words: (usize, usize),
     keep_blocks: bool,
+    z: bool,
     /// A part held at its capacity (a test's: the device's region, which the host does not grow).
     #[cfg(test)]
     fixed: Option<(u32, u64)>,
 }
 
 impl OpsWriter {
-    /// `f16::Writer::new` (format 16; 16z is not written by the ops yet).
-    pub fn new(lang: &Lang, source: &[u8], tag: u8, blocks: bool, nodes: usize) -> Self {
+    /// `f16::Writer::new`: 16z where `z`.
+    pub fn new(lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
         let source_len = source.len() as u64;
         let wd = lang.widths;
         let cw = bytes_for(source_len);
@@ -44,7 +52,7 @@ impl OpsWriter {
             per: lang.per,
             stride: stride_of(wd, cw) as u32,
             at: std::array::from_fn(|r| (Z * before(wd, r)) as u32),
-            flags: u32::from(blocks),
+            flags: u32::from(blocks) | u32::from(z) << 1,
             kw: kind_words as u32,
             fw: field_words as u32,
             tag: u32::from(tag),
@@ -56,12 +64,22 @@ impl OpsWriter {
         let kinds: Vec<u8> = lang.kind_field.iter().flat_map(|&(k, f)| (u32::from(k) | u32::from(f) << 16).to_le_bytes()).collect();
         let words = 8 * (kind_words + field_words);
         let count = nodes.div_ceil(Z).max(1);
-        let mut parts: [Vec<u8>; 10] = Default::default();
-        let lens = [kinds.len() as u64, 0, 0, 0, 0, 0, 0, 0, words as u64, lines.len() as u64];
-        let caps = [
+        let buckets = (4 * count).next_power_of_two().max(64);
+        state.zbuckets = buckets as u32;
+        let stride = state.stride as usize;
+        let mut parts: [Vec<u8>; part::COUNT] = Default::default();
+        let mut lens = [0u64; part::COUNT];
+        (lens[part::KINDS as usize], lens[part::PRESENCE as usize], lens[part::LINES as usize]) = (kinds.len() as u64, words as u64, lines.len() as u64);
+        if z {
+            // 16z's payload follows its header's room; its seen pieces' buckets start empty.
+            lens[part::OUT as usize] = w::HEAD16 as u64;
+            lens[part::SEEN as usize] = 4 * buckets as u64;
+            lens[part::LZ as usize] = u64::from(w::LZ_TABLES);
+        }
+        let caps: [usize; part::COUNT] = [
             kinds.len() + 8,
             64 * OPEN as usize,
-            w::HEAD16 as usize + count * state.stride as usize + 64,
+            if z { w::HEAD16 as usize + ZBLOCK_MAX + 64 } else { w::HEAD16 as usize + count * stride + 64 },
             count * TABLE as usize,
             2 * SIDE_AREA as usize,
             64,
@@ -69,6 +87,12 @@ impl OpsWriter {
             count * LAID_AT as usize,
             words * (1 + if blocks { count + 1 } else { 0 }) + 8,
             lines.len() + 8,
+            if z { 2 * stride + 8 } else { 8 },
+            64,
+            if z { 4 * count * w::PIECE as usize + 8 } else { 8 },
+            if z { 4 * buckets + 8 } else { 8 },
+            if z { count * (Z / K) * cw + 8 } else { 8 },
+            if z { w::LZ_TABLES as usize + 8 } else { 8 },
         ];
         // The kinds' table and the newline index are their parts, made where they are computed.
         parts[part::KINDS as usize] = kinds;
@@ -76,7 +100,9 @@ impl OpsWriter {
         for (buf, &cap) in parts.iter_mut().zip(&caps) {
             buf.resize(cap, 0);
         }
-        let mut wr = OpsWriter { state: Box::new(State::default()), parts, presence_words: (kind_words, field_words), keep_blocks: blocks, #[cfg(test)] fixed: None };
+        parts[part::OUT as usize].fill(FRESH);
+        parts[part::SEEN as usize].fill(0xff);
+        let mut wr = OpsWriter { state: Box::new(State::default()), parts, presence_words: (kind_words, field_words), keep_blocks: blocks, z, #[cfg(test)] fixed: None };
         for (k, &len) in lens.iter().enumerate() {
             *wr.part_mut(&mut state, k) = Part { at: 0, cap: 0, len };
         }
@@ -96,7 +122,13 @@ impl OpsWriter {
             part::LAID => &mut state.laid,
             part::LAID_AT => &mut state.laid_at,
             part::PRESENCE => &mut state.presence,
-            _ => &mut state.lines,
+            part::LINES => &mut state.lines,
+            part::ROOMS => &mut state.rooms,
+            part::ROOM_FREE => &mut state.room_free,
+            part::PIECES => &mut state.pieces,
+            part::SEEN => &mut state.seen,
+            part::CKPT => &mut state.ckpt,
+            _ => &mut state.lz,
         }
     }
 
@@ -104,7 +136,7 @@ impl OpsWriter {
     fn bind(&mut self) {
         let base = std::ptr::from_ref::<State>(&self.state) as i64;
         let mut state = *self.state;
-        for k in 0..10 {
+        for k in 0..part::COUNT {
             let (at, cap) = (self.parts[k].as_ptr() as i64, self.parts[k].len().saturating_sub(8) as u64);
             #[cfg(test)]
             let cap = match self.fixed {
@@ -133,17 +165,23 @@ impl OpsWriter {
             return;
         }
         let cap = (need + 8).max(2 * self.parts[k as usize].len());
-        self.parts[k as usize].resize(cap, 0);
+        self.parts[k as usize].resize(cap, if k == part::OUT { FRESH } else { 0 });
         self.bind();
     }
 
-    /// Room for `blocks` blocks made final: their laid parts, their side areas given back, their entries.
+    /// Room for `blocks` blocks made final: their laid parts, their side areas given back, their entries; in 16z
+    /// their pieces and their rooms given back.
     fn reserve_final(&mut self, blocks: usize) {
         let (laid, free) = (self.len_of(part::LAID), self.len_of(part::FREE));
         self.reserve(part::LAID, laid + blocks * LAID_MAX);
         self.reserve(part::FREE, free + 4 * blocks);
         let count = self.state.blocks as usize;
         self.reserve(part::LAID_AT, count * LAID_AT as usize);
+        if self.z {
+            let (out, rooms) = (self.len_of(part::OUT), self.len_of(part::ROOM_FREE));
+            self.reserve(part::OUT, out + blocks * ZBLOCK_MAX);
+            self.reserve(part::ROOM_FREE, rooms + 4 * blocks);
+        }
     }
 
     /// Part `k` held at `cap` bytes, not grown, its buffer's bytes past `cap + 8` (the op's room past its last cell)
@@ -184,7 +222,14 @@ impl OpsWriter {
         if i.is_multiple_of(Z) {
             let b = i / Z;
             let stride = self.state.stride as usize;
-            self.reserve(part::OUT, w::HEAD16 as usize + (b + 1) * stride);
+            if self.z {
+                let rooms = self.len_of(part::ROOMS);
+                self.reserve(part::ROOMS, rooms + stride);
+                self.reserve(part::PIECES, 4 * (b + 1) * w::PIECE as usize);
+                self.reserve(part::CKPT, (b + 1) * (Z / K) * self.state.cw as usize);
+            } else {
+                self.reserve(part::OUT, w::HEAD16 as usize + (b + 1) * stride);
+            }
             self.reserve(part::TABLE, (b + 1) * TABLE as usize);
             let sides = self.len_of(part::SIDES);
             self.reserve(part::SIDES, sides + SIDE_AREA as usize);
@@ -247,11 +292,17 @@ impl OpsWriter {
     pub fn finish(mut self) -> Result<Finished, String> {
         let count = (self.state.n as usize).div_ceil(Z);
         self.reserve_final(count);
-        let need = self.len_of(part::OUT) + self.len_of(part::LAID) + 16 * (count + 1) + self.len_of(part::LINES) + 64;
-        self.reserve(part::OUT, need);
         let desc = self.desc();
         // SAFETY: as `open`'s.
-        let r = unsafe { ops::w_finish(desc) };
+        let mut r = unsafe { ops::w_finish_blocks(desc) };
+        if r == 0 {
+            // The tail's room, the blocks' laid parts now known.
+            let need = self.len_of(part::OUT) + self.len_of(part::LAID) + 16 * (count + 1) + self.len_of(part::LINES) + self.len_of(part::CKPT) + 9 * 4 * count + 64;
+            self.reserve(part::OUT, need);
+            let desc = self.desc();
+            // SAFETY: as `open`'s.
+            r = unsafe { ops::w_finish_tail(desc) };
+        }
         if r != 0 {
             return Err(format!("the writer's ops failed: {r:#x} at node {}", self.state.bad_node as i32));
         }
@@ -265,6 +316,42 @@ impl OpsWriter {
         let end = self.len_of(part::OUT);
         let mut out = std::mem::take(&mut self.parts[part::OUT as usize]);
         out.truncate(end);
-        Ok(Finished { tape: Written::F16(Tape16::from_bytes(out)?), presence })
+        let tape = if self.z { Written::F16Z(Tape16Z::from_bytes(out)?) } else { Written::F16(Tape16::from_bytes(out)?) };
+        Ok(Finished { tape, presence })
+    }
+}
+
+/// `f16::write_from` by the ops in CLIF.
+pub fn write_from<T: crate::tape::Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], tag: u8, z: bool) -> Result<Written, String> {
+    super::write_with(OpsWriter::new(lang, source, tag, z, false, t.len()), t.len(), super::nodes_of(t, number))
+}
+
+/// The CLIF LZ4 compressor alone (a test's): its state, its tables, a piece's room.
+#[cfg(test)]
+pub(super) struct Lz {
+    state: Box<State>,
+    tables: Vec<u8>,
+}
+
+#[cfg(test)]
+impl Lz {
+    pub(super) fn new() -> Self {
+        let mut lz = Lz { state: Box::default(), tables: vec![0; w::LZ_TABLES as usize + 8] };
+        let base = std::ptr::from_ref::<State>(&lz.state) as i64;
+        lz.state.lz = Part { at: (lz.tables.as_ptr() as i64).wrapping_sub(base), cap: w::LZ_TABLES as u64, len: w::LZ_TABLES as u64 };
+        lz
+    }
+
+    /// `src` as one LZ4 block, by the ops.
+    pub(super) fn compress(&mut self, src: &[u8]) -> Vec<u8> {
+        let n = src.len();
+        // The piece with 3 readable bytes before it and 8 after, then the output's room.
+        let mut room = vec![0xeeu8; 8 + n + 8 + w::lz4_bound(n as u64) as usize + 8];
+        room[8..8 + n].copy_from_slice(src);
+        let (s, d) = (room.as_mut_ptr().wrapping_add(8), room.as_mut_ptr().wrapping_add(8 + n + 8));
+        let desc = std::ptr::from_mut::<State>(&mut self.state).cast::<u8>();
+        // SAFETY: the piece and the output lie in `room`, with the bytes the op reads and writes past each.
+        let len = unsafe { ops::w_lz4(desc, s as u64, n as u64, d as u64) } as usize;
+        room[8 + n + 8..8 + n + 8 + len].to_vec()
     }
 }
