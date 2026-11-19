@@ -131,6 +131,13 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
       addColumn(database, "analysis_scope_releases", "next_attempt_at", "integer DEFAULT 0 NOT NULL");
     },
   },
+  {
+    id: "analysis-scope-probe-failures",
+    up(database) {
+      addColumn(database, "analysis_scope_release_probes", "attempts", "integer DEFAULT 0 NOT NULL");
+      addColumn(database, "analysis_scope_release_probes", "last_error", "text");
+    },
+  },
 ];
 
 /**

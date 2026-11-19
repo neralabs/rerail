@@ -205,6 +205,8 @@ export const analysisScopeReleaseProbes = sqliteTable("analysis_scope_release_pr
   directory: text("directory").notNull(),
   store: text("store").notNull(),
   nextAttemptAt: integer("next_attempt_at").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  lastError: text("last_error"),
 }, table => [
   primaryKey({ columns: [table.releaseId, table.store] }),
   index("analysis_scope_release_probes_due").on(table.nextAttemptAt, table.releaseId, table.store),

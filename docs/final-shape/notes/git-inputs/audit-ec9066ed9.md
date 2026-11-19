@@ -10,6 +10,12 @@ The long-lived resolver reads the current checkout on each call. It follows link
 
 Fresh discovery has a cost. In 30 warm resolver calls per checkout, the median was 8.69 ms for a recorded checkout and 22.83 ms for an unrecorded clone. This used one open catalog connection on macOS with a one-minute load average of 8.87. The latter lookup also asks Git for the effective remote.
 
+### Deferred ownership probes
+
+Case 17 now keeps each probe's last failure, attempt count, and due time in the control database.
+The retry test reads the row through 13 failures and checks the five-second initial delay, doubling, and one-hour cap.
+Recovery uses the original release ID and preserves a later directory owner. The migration keeps the due time of a pending probe from an older database.
+
 ## Status at `4b4c8754e`
 
 Seventeen implementation issues or performance questions and five rule-interface gaps remain in this review.

@@ -20,6 +20,12 @@ function defaultScanStore(databasePath: string): string {
 // Keep generation tokens above the legacy microsecond timestamps already stored on ownership rows.
 const INITIAL_GENERATION = 2 ** 52;
 const RELEASE_RETRY_DELAY_MS = 5_000;
+const MAX_PROBE_DELAY_MS = 60 * 60 * 1_000;
+
+function failedProbe(previousAttempts: number, error: unknown) {
+  const delay = Math.min(MAX_PROBE_DELAY_MS, RELEASE_RETRY_DELAY_MS * 2 ** previousAttempts);
+  return { attempts: previousAttempts + 1, lastError: error instanceof Error ? error.message : String(error), nextAttemptAt: Date.now() + delay };
+}
 
 export function analysisScopeHome(databasePath: string): string {
   return createHash("sha256").update(storedPath(databasePath)).digest("hex");
@@ -370,15 +376,16 @@ function settleAnalysisScopeReleaseProbes(database: RerailDatabase, home: string
     .where(limit < 0 ? undefined : lte(analysisScopeReleaseProbes.nextAttemptAt, Date.now()))
     .orderBy(analysisScopeReleaseProbes.nextAttemptAt, analysisScopeReleaseProbes.releaseId, analysisScopeReleaseProbes.store)
     .limit(limit).all();
-  for (const { releaseId, directory, store } of probes) {
+  for (const { releaseId, directory, store, attempts } of probes) {
     const row = and(eq(analysisScopeReleaseProbes.releaseId, releaseId), eq(analysisScopeReleaseProbes.store, store));
     try {
       assertContentStoreOwner(store);
       let routes = analysisStores(databasePath, directory, releaseCutoff(releaseId)).registered.filter(route => route.path === store);
       if (routes.length === 0) routes = discoverReleaseRoute(databasePath, directory, store, home);
       deliverRelease(databasePath, directory, store, releaseId, routes);
-    } catch {
-      database.update(analysisScopeReleaseProbes).set({ nextAttemptAt: Date.now() + RELEASE_RETRY_DELAY_MS }).where(row).run();
+    } catch (error) {
+      database.update(analysisScopeReleaseProbes).set(failedProbe(attempts, error))
+        .where(and(row, eq(analysisScopeReleaseProbes.attempts, attempts))).run();
       continue;
     }
     database.delete(analysisScopeReleaseProbes).where(row).run();
@@ -421,7 +428,7 @@ export function settleAnalysisScopeReleases(databasePath: string, limit = 32): v
         } catch (error) {
           if (!deliveryTarget) {
             database.insert(analysisScopeReleaseProbes).values({
-              releaseId: id, directory: root, store, nextAttemptAt: Date.now() + RELEASE_RETRY_DELAY_MS,
+              releaseId: id, directory: root, store, ...failedProbe(0, error),
             }).onConflictDoNothing().run();
             continue;
           }

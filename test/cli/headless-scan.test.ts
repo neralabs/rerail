@@ -2828,16 +2828,31 @@ Seen(n) :- kind(n, "identifier").
       const database = openRerailDatabase(databasePath);
       try {
         database.transaction(tx => queueAnalysisScopeReleases(tx, [root], databasePath));
+        let reason = "temporary I/O error during ownership check";
         const probe = vi.spyOn(binding, "owningDirectoryAnalysisStore").mockImplementation((store, ...args) => {
-          if (store === legacy) throw new Error("temporary I/O error during ownership check");
+          if (store === legacy) throw new Error(reason);
           return lookup(store, ...args);
         });
+        let now = Date.now();
+        const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
         try {
           settleAnalysisScopeReleases(databasePath);
           expect(database.$client.prepare("SELECT count(*) FROM analysis_scope_releases").pluck().get()).toBe(0);
-          expect(database.$client.prepare("SELECT store FROM analysis_scope_release_probes").pluck().all()).toEqual([legacy]);
+          const pending = database.$client.prepare("SELECT store, release_id, attempts, last_error, next_attempt_at FROM analysis_scope_release_probes");
+          const release = (pending.get() as { release_id: string }).release_id;
+          for (let attempt = 1; attempt <= 13; attempt++) {
+            const due = now + Math.min(3_600_000, 5_000 * 2 ** (attempt - 1));
+            const row = { store: legacy, release_id: release, attempts: attempt, last_error: reason, next_attempt_at: due };
+            expect(pending.all()).toEqual([row]);
+            now = due - 1;
+            settleAnalysisScopeReleases(databasePath);
+            expect(pending.all()).toEqual([row]);
+            now = due;
+            reason = `ownership check still unavailable at attempt ${attempt + 1}`;
+            settleAnalysisScopeReleases(databasePath);
+          }
           expect(directoryOwnerCount(legacy)).toBe(1);
-        } finally { probe.mockRestore(); }
+        } finally { clock.mockRestore(); probe.mockRestore(); }
 
         const subdirectory = join(root, "src");
         mkdirSync(subdirectory);

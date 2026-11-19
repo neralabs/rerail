@@ -227,7 +227,9 @@ This also covers a damaged database header. Repairing the file lets the next pro
 A permanently invalid legacy path therefore continues to receive probes.
 A configured store can be absent at the time of the stop. The stop records a deferred probe for that path too.
 The probe keeps the original stop generation, home, and directory.
-The daemon tries the probe again after a delay, independently of release delivery.
+The first failure schedules a retry after five seconds. Each subsequent failure doubles the delay up to one hour.
+The control database records the number of failed attempts, the latest error and the next attempt time.
+These values survive a daemon restart. A successful probe removes its retry record.
 If the query finds matching ownership, the daemon delivers the original release.
 If the query proves that the store has no matching ownership, the daemon deletes the probe.
 A store with a directory registration remains a release target while it is unavailable.
