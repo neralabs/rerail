@@ -2332,6 +2332,19 @@ impl Lowerer {
         name
     }
 
+    /// Helper `name(vars)` of stem `stem`: a rule per combination of conjunction `lits` (decided as `decided`,
+    /// `decide_conjunction`), its columns typed by what its rules say (`Scan`); merged at the walk's end into an
+    /// equal one made before (`merge_helpers`). Its head's arguments.
+    fn helper_of(&mut self, name: &str, stem: &str, vars: &[String], decided: (usize, usize, usize), lits: &[LitAt], context: &BTreeSet<String>) -> Result<Vec<Term>, Error> {
+        let args: Vec<Term> = vars.iter().map(|c| Term::Var(c.clone().into())).collect();
+        let scan = self.write_combinations(decided, name, &args, &[], lits, context)?;
+        if self.replay.is_none() {
+            self.prog.declare_cols(name, vars.iter().map(|c| (c.clone(), scan.type_of(c))));
+            self.once.push((name.to_owned(), stem.to_owned(), decided.1));
+        }
+        Ok(args)
+    }
+
     /// `v`, the walk's version, with each helper `helper_once` made that equals one made before (`once_key`, in the
     /// order made, each named as the merges before it leave it) merged into that one (`relinked`); `once` keeps the
     /// rest.
@@ -4207,10 +4220,9 @@ impl Lowerer {
         let context = self.connected(context, vars);
         let context = self.covering(context, vars)?;
         let ctx = self.fresh("ctx");
-        let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
-        let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
-        let args: Vec<Term> = vars.iter().map(|c| Term::Var(c.clone().into())).collect();
-        let ctx = self.helper_once(ctx, "ctx", types, alts.into_iter().map(|b| (args.clone(), b)).collect());
+        let asked: BTreeSet<String> = vars.iter().cloned().collect();
+        let decided = self.decide_conjunction(&context, &asked)?;
+        let args = self.helper_of(&ctx, "ctx", vars, decided, &context, &asked)?;
         Ok(Atom { rel: ctx.into(), args: args.into(), neg: false, gated: false })
     }
 
@@ -4410,10 +4422,9 @@ impl Lowerer {
             } else {
                 lits
             };
-            let alts = self.conjunction(&lits, &cols.iter().cloned().collect())?;
-            let types = cols.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
-            let args: Vec<Term> = cols.iter().map(|c| Term::Var(c.clone().into())).collect();
-            let rel = self.helper_once(rel, "cover", types, alts.into_iter().map(|b| (args.clone(), b)).collect());
+            let asked: BTreeSet<String> = cols.iter().cloned().collect();
+            let decided = self.decide_conjunction(&lits, &asked)?;
+            self.helper_of(&rel, "cover", &cols, decided, &lits, &asked)?;
             out.push(LitAt::Made(rel, cols));
         }
         Ok(out)
