@@ -116,6 +116,15 @@ impl Notices {
             .is_some_and(|pending| pending.lost)
     }
 
+    /// How many entries `root`'s notice not taken yet holds.
+    #[cfg(test)]
+    pub(crate) fn pending_entries(&self, root: &str) -> usize {
+        self.state()
+            .pending
+            .get(root)
+            .map_or(0, |pending| pending.changed.len() + pending.renamed.len())
+    }
+
     /// `path` (relative to `root`, `/`-separated) changed: its content, size or attributes.
     pub(crate) fn changed(&self, root: &str, path: String) {
         if let Some(pending) = self.state().watched(root) {

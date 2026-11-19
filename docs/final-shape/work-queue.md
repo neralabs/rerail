@@ -5345,7 +5345,7 @@ Open:
     are 0411 (the CPU's record pass makes the outputs in `records_made`, and tier 1's runs are compared `without`
     them) and Q200 (a refused file's records stop at the refusal). Check which by one run of the test, then compare
     as `compile_tests` does.
-- **Written** (2026-11-19, not yet run on a Mac: the M3's disk full, 214 MB free, the other Macs off):
+- **Done** (2026-11-19): both pass on the M3 (one nextest run with Q253's set).
   - `a_refused_files_…`: its token refusal is a 19-digit integer (0413: a float chain is read now).
   - `every_step_on_metal_…`: where the interpreter makes a token's records itself (the loop's starts and lasts,
     0177 stage 2a; the lasts by the gaps, 0411), a refused file's starts and lasts extracts are excused, as those
@@ -5364,7 +5364,12 @@ Open:
   (at `-j 4` one to three of its own fail, a different set each run, also at 5fbc02057).
 - **Done when**: Q221's bound reads `wait` again with the observer tests passing, and the FSEvents tests pass
   together (a test group of their own, or streams that do not share `fseventsd`'s latency).
-- **Written** (2026-11-19, not yet run on a Mac, as Q252):
+- **Done** (2026-11-19) but one, on the M3: the store's journal and observer tests and the engine's `tree_watch`
+  tests in one run, the group one at a time: 54 of 56. A symlinked root's test passed alone. The cap's
+  (`more_entries_than_the_cap_lose_the_root`, 16,385 files written) fails alone too: FSEvents told 665 of them in its
+  20 s (33 a second; the assertion counts them now), with `fseventsd` at 100% of a core and 18.5 GB resident after
+  172 days up. The host's daemon, not the adapter (the cap's own test, over `Notices`, passes); a restart of
+  `fseventsd` is the host owner's. The changes:
   - `fsevents::since_within` waits the caller's bound again, else `WAIT` (or a journal test's settle):
     `wait.unwrap_or(WAIT.max(settle))`.
   - `journal_observer` asks for the journal's answer within the same 5 s it lets the replay settle (it asked 2 s,

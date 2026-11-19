@@ -340,7 +340,12 @@ mod adapter {
         // Nothing is taken until the root is lost: the cap counts between two takes.
         let started = Instant::now();
         while !watcher.notices.is_lost(&root) {
-            assert!(started.elapsed() < DEADLINE, "{root} was not lost");
+            assert!(
+                started.elapsed() < DEADLINE,
+                "{root} was not lost: {} of {} entries told",
+                watcher.notices.pending_entries(&root),
+                NOTICE_CAP + 1
+            );
             std::thread::sleep(Duration::from_millis(20));
         }
         let taken = watcher.take().expect("take");
