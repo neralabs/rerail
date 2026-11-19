@@ -19,7 +19,7 @@ The last column is each bug on main after the final-shape engine landed (2026-11
 | 7 | `sym_of` has no row for an attribute of a class of the same module | `lib/python/names.rerail` | Reproduced with a probe; cause found | Present (probe fails as described) |
 | 8 | A call to a def under an outside decorator has no call target | `lib/python/calls.rerail` | Reproduced with a probe | Present (probe fails as described) |
 | 9 | Rules that read the call graph take hours on large repositories | `python/calls` typing program, scale | Observed; not profiled | Not re-measured; the typing program is unchanged |
-| 10 | A negated tree axis is read wrong below a node a sym_of relation found | engine: lowering or demand of `!inside`/`within_stop` | Reproduced with a probe; bisected to a merge | Present; fixed at its root in its own pull request. Until then three rules fail their cases |
+| 10 | A negated tree axis is read wrong below a node a sym_of relation found | engine: lowering or demand of `!inside`/`within_stop` | Reproduced with a probe; bisected to a merge | Present; fixed by #862. Until it merges three rules fail their cases |
 
 ---
 
@@ -392,14 +392,13 @@ below a.
 **When.** The engine at `91c2df8863` gives no `x_sym` row. Along the first parents of the final-shape engine's
 history, `7529228ce3` is right and the merge after it, `bddab770c8` (the serverplan-quality hub), is wrong; the six
 commits after that merge do not build or do not run the probe on their own, and the hub's own commits do not build
-alone, so the commit inside the hub is not found. Not confirmed: whether the negated axis atom gets no rows for an n
-bound late (a demand or negation split that never asks for n's ancestors) or is lowered without them.
+alone, so the commit inside the hub is not found. The cause, found by #862: of two hub changes, one copies a kind set
+for the nodes that may be annotations, and the other (`fold_own`) folds those copies back and deletes the set, but
+redirects only `nearest`, so the negated axis is left reading a set that no longer exists.
 
-**Workaround used.** None: the rules keep `within_stop` as written, and the engine is fixed at its root in its own
-pull request. Until it merges, atomic-around-caught-db-error, enqueue-on-commit and select-for-update-outside-atomic
-fail their cases (`.test cases`). Writing the region without a negation, `within(n, b), nearest(n, s, S'),
-within(b, s)` with S' the def, lambda and class kinds and the module, gives the right answer on today's engine.
+**Workaround used.** None: the rules keep `within_stop` as written. Until #862 merges, atomic-around-caught-db-error,
+enqueue-on-commit and select-for-update-outside-atomic fail their cases (`.test cases`); with it, all 27 rules pass.
+Writing the region without a negation, `within(n, b), nearest(n, s, S'), within(b, s)` with S' the def, lambda and
+class kinds and the module, gives the right answer on today's engine.
 
-**Suggested fix.** Find which pass drops the negated axis's rows for a late-bound node: run the probe with the
-lowered program and plan printed (`rerail-engine dump --rule probe.rerail`) on both engines and compare how
-`!rr_inside_function_definition(t, _)` is evaluated.
+**Fix.** #862.
