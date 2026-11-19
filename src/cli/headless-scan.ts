@@ -29,7 +29,7 @@ import { isWorktreePack, MAX_RULE_DOCUMENT_BYTES, rrPayloadHash, WORKTREE_PACK_I
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
 import { loadNativeBinding, type NativeAnalysisScopeRun, type NativeGitRevisionSource, type NativeLoadedRrPolicies } from "../engine/native/native.js";
-import { acquireDirectoryAnalysisRegistration, acquireNamedAnalysisRun, analysisScopeHome, scanContentStore } from "../engine/native/analysis-scope.js";
+import { acquireDirectoryAnalysisRegistration, acquireNamedAnalysisRun, analysisScopeHome, finishNamedAnalysisRegistration, scanContentStore } from "../engine/native/analysis-scope.js";
 import { assertContentStoreOwner } from "../engine/native/main-instance.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES } from "../engine/code-rule/code-rule-languages.js";
 import { runGit, runGitBytes } from "../engine/git.js";
@@ -800,6 +800,13 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
     }
     throw error;
   } finally {
+    if (analysisRun !== undefined && options.analysisScope !== undefined) try {
+      finishNamedAnalysisRegistration(homeDatabase, options.analysisScope, scanId, analysisRun);
+    } catch (error) {
+      const message = `Could not finish named scope registration: ${String(error)}`;
+      if (report !== undefined) (report.cacheWarnings ??= []).push(message);
+      else process.stderr.write(`rerail: ${message}\n`);
+    }
     if (analysisRun !== undefined) try {
       await binding.collectAnalysisCacheAsync(durableStore, [analysisRun.storeIdentity]);
       cache.collection = "completed";

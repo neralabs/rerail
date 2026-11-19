@@ -78,6 +78,12 @@ A fresh clone can still inherit repository-wide settings through its remote.
 The native `scanRrPoliciesAsync` call acquires one run for a durable batch when the caller omits the run handle.
 The batch publishes once all policies and required source reads succeed. A failed batch preserves the earlier owners of its scope.
 An explicit run handle lets the caller group several evaluations before publication.
+The home registry records a pending route for each named scan. Deletion can reach a scan while it runs.
+Successful publication promotes the route. An abort removes only that acquisition's route.
+After an interrupted update, deletion checks the acquisition in the identified content store. An offline store keeps its route until it can answer.
+When a process exits during a scan, cache collection discards abandoned staging rows. It also checks the pending routes for that store.
+Older registries recorded a route before a scan finished. During an upgrade, deletion checks the identified store for owners and completed runs.
+If an earlier writer can still publish, deletion retains its route. The old store format cannot identify which named scope a pending writer used.
 Use the run key to join facts. Two calls can supply the same scan ID.
 
 ```rr

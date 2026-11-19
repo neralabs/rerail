@@ -97,7 +97,8 @@ export function acquireNamedAnalysisRun(databasePath: string, name: string, stor
       run = new (loadNativeBinding().AnalysisScopeRun)(store, name, false, scanId, 0);
       const path = storedPath(store);
       maintenanceRegistration(index)(path, run.storeIdentity);
-      index.$client.prepare("INSERT OR IGNORE INTO analysis_named_store(name,path,identity) VALUES (?,?,?)").run(name, path, run.storeIdentity);
+      index.$client.prepare("INSERT INTO analysis_named_acquisition(name,path,identity,acquisition,scan) VALUES (?,?,?,?,?)")
+        .run(name, path, run.storeIdentity, run.acquisition, scanId);
       return run;
     }).immediate();
   } catch (error) {
@@ -108,7 +109,57 @@ export function acquireNamedAnalysisRun(databasePath: string, name: string, stor
 
 function ensureNamedRoutes(index: RerailDatabase): void {
   index.$client.exec(`CREATE TABLE IF NOT EXISTS analysis_named_store (
-    name TEXT NOT NULL, path TEXT NOT NULL, identity TEXT NOT NULL, PRIMARY KEY(name,path,identity)) STRICT`);
+    name TEXT NOT NULL, path TEXT NOT NULL, identity TEXT NOT NULL, published INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(name,path,identity)) STRICT;
+    CREATE TABLE IF NOT EXISTS analysis_named_acquisition (
+    name TEXT NOT NULL, path TEXT NOT NULL, identity TEXT NOT NULL, acquisition TEXT NOT NULL, scan TEXT NOT NULL,
+    PRIMARY KEY(name,identity,acquisition,scan)) STRICT;
+    CREATE INDEX IF NOT EXISTS analysis_named_acquisition_by_path ON analysis_named_acquisition(path)`);
+  if (!index.$client.prepare("SELECT 1 FROM pragma_table_info('analysis_named_store') WHERE name='published'").get()) {
+    index.$client.exec("ALTER TABLE analysis_named_store ADD COLUMN published INTEGER NOT NULL DEFAULT 0");
+  }
+}
+
+function finishNamedRoute(index: RerailDatabase, name: string, identity: string, acquisition: string, scan: string, published: boolean): void {
+  const key = [name, identity, acquisition, scan];
+  if (published) index.$client.prepare(`INSERT INTO analysis_named_store(name,path,identity,published)
+    SELECT name,path,identity,1 FROM analysis_named_acquisition WHERE name=? AND identity=? AND acquisition=? AND scan=?
+    ON CONFLICT(name,path,identity) DO UPDATE SET published=1`).run(...key);
+  index.$client.prepare("DELETE FROM analysis_named_acquisition WHERE name=? AND identity=? AND acquisition=? AND scan=?").run(...key);
+}
+
+export function finishNamedAnalysisRegistration(databasePath: string, name: string, scan: string, run: NativeAnalysisScopeRun): void {
+  if (run.publication == null) return;
+  const index = openSqliteDatabase(storeRegistryPath(databasePath));
+  try {
+    index.$client.transaction(() => finishNamedRoute(index, name, run.storeIdentity, run.acquisition, scan, run.publication === "published")).immediate();
+  } finally { index.$client.close(); }
+}
+
+/** A crashed caller can leave a route on either side of publication. Consult the store that issued its acquisition. */
+function recoverNamedAcquisitions(index: RerailDatabase, column: "name" | "path", value: string): void {
+  const pending = index.$client.prepare(`SELECT name,path,identity,acquisition,scan FROM analysis_named_acquisition WHERE ${column}=?`)
+    .all(value) as { name: string; path: string; identity: string; acquisition: string; scan: string }[];
+  for (const { name, path, identity, acquisition, scan } of pending) {
+    let state;
+    try { state = loadNativeBinding().namedAnalysisAcquisitionState(path, name, identity, acquisition, scan); }
+    catch { continue; } // An unavailable store can still own the run.
+    if (state !== "pending") finishNamedRoute(index, name, identity, acquisition, scan, state === "published");
+  }
+}
+
+function recoverNamedRoutes(index: RerailDatabase, name: string, requested?: string): void {
+  recoverNamedAcquisitions(index, "name", name);
+  const legacy = index.$client.prepare("SELECT path,identity FROM analysis_named_store WHERE name=? AND published=0")
+    .all(name) as { path: string; identity: string }[];
+  for (const { path, identity } of legacy) {
+    // Keep the original identity guard for an explicit release, even for a store with zero owners.
+    if (path === requested) continue;
+    let state;
+    try { state = loadNativeBinding().legacyNamedAnalysisRouteState(path, name, identity); }
+    catch { continue; }
+    if (state === "published") index.$client.prepare("UPDATE analysis_named_store SET published=1 WHERE name=? AND path=? AND identity=?").run(name, path, identity);
+    if (state === "absent") index.$client.prepare("DELETE FROM analysis_named_store WHERE name=? AND path=? AND identity=?").run(name, path, identity);
+  }
 }
 
 export async function deleteNamedAnalysisScope(databasePath: string, name: string, requested?: string): Promise<{ store: string; hadMembers: boolean }> {
@@ -119,8 +170,10 @@ export async function deleteNamedAnalysisScope(databasePath: string, name: strin
     // Acquisition and release take the registry's writer before touching the content store.
     released = index.$client.transaction(() => {
       ensureNamedRoutes(index);
-      const routes = index.$client.prepare("SELECT path,identity FROM analysis_named_store WHERE name=? ORDER BY path,identity")
-        .all(name) as { path: string; identity: string }[];
+      recoverNamedRoutes(index, name, requested === undefined ? undefined : storedPath(requested));
+      const routes = index.$client.prepare(`SELECT path,identity FROM analysis_named_store WHERE name=?
+        UNION SELECT path,identity FROM analysis_named_acquisition WHERE name=? ORDER BY path,identity`)
+        .all(name, name) as { path: string; identity: string }[];
       const paths = [...new Set(routes.map(route => route.path))];
       if (requested === undefined && paths.length > 1) {
         throw new Error(`Scope ${JSON.stringify(name)} has multiple stores. Select one with --store <file>.\n${paths.join("\n")}`);
@@ -129,7 +182,10 @@ export async function deleteNamedAnalysisScope(databasePath: string, name: strin
       assertContentStoreOwner(store);
       const identities = routes.filter(route => route.path === store).map(route => route.identity);
       const result = binding.releaseNamedAnalysisScope(store, name, identities);
-      if (result) index.$client.prepare("DELETE FROM analysis_named_store WHERE name=? AND path=? AND identity=?").run(name, store, result.identity);
+      if (result) {
+        index.$client.prepare("DELETE FROM analysis_named_store WHERE name=? AND path=? AND identity=?").run(name, store, result.identity);
+        index.$client.prepare("DELETE FROM analysis_named_acquisition WHERE name=? AND path=? AND identity=?").run(name, store, result.identity);
+      }
       return { store, result };
     }).immediate();
   } finally { index.$client.close(); }
@@ -282,15 +338,28 @@ export function queueAnalysisScopeReleases(tx: Transaction, directories: readonl
 
 export async function collectAnalysisCaches(databasePath: string): Promise<void> {
   const failures: string[] = [];
+  const collected: string[] = [];
   const { fallback: stores, maintenance } = analysisStores(databasePath);
   for (const store of stores) {
     try {
       if (statSync(store, { throwIfNoEntry: false }) === undefined) continue;
       assertContentStoreOwner(store);
       await loadNativeBinding().collectAnalysisCacheAsync(store, maintenance.get(store));
+      collected.push(store);
     } catch (error) {
       failures.push(`${store}: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+  const registry = storeRegistryPath(databasePath);
+  if (collected.length && existsSync(registry)) {
+    const index = openSqliteDatabase(registry);
+    try {
+      if (index.$client.prepare("SELECT 1 FROM sqlite_schema WHERE name='analysis_named_acquisition'").get()) {
+        index.$client.transaction(() => {
+          for (const path of collected) recoverNamedAcquisitions(index, "path", path);
+        }).immediate();
+      }
+    } finally { index.$client.close(); }
   }
   if (failures.length > 0) throw new Error(failures.join("\n"));
 }

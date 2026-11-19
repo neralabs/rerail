@@ -9,7 +9,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { runAuditCommand, SCAN_VIOLATIONS_EXIT } from "../../src/cli/audit-cli.js";
 import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import { describeScan, runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
-import { acquireDirectoryAnalysisGeneration, analysisScopeHome, collectAnalysisCaches, queueAnalysisScopeReleases, readAnalysisScopeGeneration, scanContentStore, settleAnalysisScopeReleases } from "../../src/engine/native/analysis-scope.js";
+import { acquireDirectoryAnalysisGeneration, acquireNamedAnalysisRun, analysisScopeHome, collectAnalysisCaches, deleteNamedAnalysisScope, finishNamedAnalysisRegistration, queueAnalysisScopeReleases, readAnalysisScopeGeneration, scanContentStore, settleAnalysisScopeReleases } from "../../src/engine/native/analysis-scope.js";
 import { loadNativeBinding } from "../../src/engine/native/native.js";
 import * as builds from "../../src/engine/native/rerail-build.js";
 import { openRerailDatabase, RERAIL_DATABASE_FILE } from "../../src/engine/storage/database.js";
@@ -1462,6 +1462,106 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
     } finally { vi.unstubAllEnvs(); }
   }, 30_000);
 
+  it("retires failed named routes while preserving concurrent acquisitions with the same scan ID", async () => {
+    const root = checkout(), home = root + "-home", database = join(home, RERAIL_DATABASE_FILE);
+    mkdirSync(home);
+    const first = join(home, "first.sqlite"), second = join(home, "second.sqlite"), name = "review";
+    const invalid = join(home, "invalid.rr");
+    writeFileSync(invalid, ".policy broken syntax");
+    try {
+      vi.stubEnv("RERAIL_CONTENT_STORE_PATH", first);
+      expect((await scan(root, { revision: "HEAD", analysisScope: name, databasePath: database, rr: [invalid] })).cache.publication).toBe("aborted");
+      const registry = database + ".analysis-stores.sqlite";
+      expect(queryContentStore(registry, "SELECT path FROM analysis_named_store")).toEqual([]);
+      expect(queryContentStore(registry, "SELECT path FROM analysis_named_acquisition")).toEqual([]);
+      const aborted = acquireNamedAnalysisRun(database, name, first, "same");
+      const active = acquireNamedAnalysisRun(database, name, first, "same");
+      const published = acquireNamedAnalysisRun(database, name, second, "same");
+      for (const run of [aborted, active, published]) run.selectSource(root);
+      aborted.finish(false);
+      finishNamedAnalysisRegistration(database, name, "same", aborted);
+      published.finish(true);
+      finishNamedAnalysisRegistration(database, name, "same", published);
+      await expect(deleteNamedAnalysisScope(database, name)).rejects.toThrow(/multiple stores/u);
+      expect(await deleteNamedAnalysisScope(database, name, first)).toEqual({ store: first, hadMembers: false });
+      active.finish(true);
+      expect(active.publication).toBe("released");
+      finishNamedAnalysisRegistration(database, name, "same", active);
+      expect(await deleteNamedAnalysisScope(database, name)).toEqual({ store: second, hadMembers: true });
+    } finally { vi.unstubAllEnvs(); }
+  }, 30_000);
+
+  it("recovers named routes after a process exits between store publication and registry update", async () => {
+    const root = checkout(), home = root + "-home", database = join(home, RERAIL_DATABASE_FILE);
+    mkdirSync(home);
+    const first = join(home, "aborted.sqlite"), second = join(home, "published.sqlite");
+    execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+      const {acquireNamedAnalysisRun} = await import(process.argv[1]);
+      const [root, database, first, second] = process.argv.slice(2);
+      for (const [path, publish] of [[first,false],[second,true]]) {
+        const run = acquireNamedAnalysisRun(database, "review", path, "same");
+        run.selectSource(root);
+        run.finish(publish);
+      }
+      process.exit(0);
+    `, new URL("../../src/engine/native/analysis-scope.ts", import.meta.url).href, root, database, first, second]);
+    const registry = database + ".analysis-stores.sqlite";
+    expect(queryContentStore(registry, "SELECT path FROM analysis_named_acquisition")).toHaveLength(2);
+    const away = first + ".away";
+    renameSync(first, away);
+    try { await expect(deleteNamedAnalysisScope(database, "review")).rejects.toThrow(/multiple stores/u); }
+    finally { renameSync(away, first); }
+    expect(await deleteNamedAnalysisScope(database, "review")).toEqual({ store: second, hadMembers: true });
+    expect(queryContentStore(registry, "SELECT path FROM analysis_named_acquisition")).toEqual([]);
+    expect(queryContentStore(registry, "SELECT path FROM analysis_named_store")).toEqual([]);
+  }, 30_000);
+
+  it("recovers pre-upgrade named routes only after the original store can rule out a pending writer", async () => {
+    const root = checkout(), home = root + "-home", database = join(home, RERAIL_DATABASE_FILE);
+    mkdirSync(home);
+    const first = join(home, "aborted.sqlite"), second = join(home, "published.sqlite");
+    const binding = loadNativeBinding();
+    const pending = new binding.AnalysisScopeRun(first, "review", false, "old", 0);
+    const published = new binding.AnalysisScopeRun(second, "review", false, "old", 0);
+    published.selectSource(root);
+    published.finish(true);
+    const index = new Database(database + ".analysis-stores.sqlite");
+    try {
+      index.exec("CREATE TABLE analysis_named_store(name TEXT NOT NULL,path TEXT NOT NULL,identity TEXT NOT NULL,PRIMARY KEY(name,path,identity)) STRICT");
+      const record = index.prepare("INSERT INTO analysis_named_store VALUES ('review',?,?)");
+      record.run(first, pending.storeIdentity);
+      record.run(second, published.storeIdentity);
+    } finally { index.close(); }
+    try { await expect(deleteNamedAnalysisScope(database, "review")).rejects.toThrow(/multiple stores/u); }
+    finally { pending.finish(false); }
+    binding.retireUpkeepUnder?.(home);
+    const away = first + ".away";
+    renameSync(first, away);
+    try { await expect(deleteNamedAnalysisScope(database, "review")).rejects.toThrow(/multiple stores/u); }
+    finally { renameSync(away, first); }
+    expect(await deleteNamedAnalysisScope(database, "review")).toEqual({ store: second, hadMembers: true });
+    expect(queryContentStore(database + ".analysis-stores.sqlite", "SELECT name FROM analysis_named_store")).toEqual([]);
+  }, 30_000);
+
+  it("removes the route and staging rows of a process killed before it can finish its named scan", async () => {
+    const root = checkout(), home = root + "-home", database = join(home, RERAIL_DATABASE_FILE);
+    mkdirSync(home);
+    const store = join(home, "interrupted.sqlite");
+    const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+      const {acquireNamedAnalysisRun} = await import(process.argv[1]);
+      const run = acquireNamedAnalysisRun(process.argv[2], "interrupted", process.argv[3], "one");
+      run.selectSource(process.argv[4]);
+      process.kill(process.pid, "SIGKILL");
+    `, new URL("../../src/engine/native/analysis-scope.ts", import.meta.url).href, database, store, root]);
+    expect(child.error).toBeUndefined();
+    const registry = database + ".analysis-stores.sqlite";
+    expect(queryContentStore(store, "SELECT id FROM analysis_scope_pending")).toHaveLength(1);
+    expect(queryContentStore(registry, "SELECT name FROM analysis_named_acquisition")).toEqual([{ name: "interrupted" }]);
+    await collectAnalysisCaches(database);
+    expect(queryContentStore(store, "SELECT id FROM analysis_scope_pending")).toEqual([]);
+    expect(queryContentStore(registry, "SELECT name FROM analysis_named_acquisition")).toEqual([]);
+  }, 30_000);
+
   it("keeps a Git snapshot owned by two scopes after one is deleted", async () => {
     const root = checkout();
     const databasePath = join(`${root}-home`, "rerail.sqlite");
@@ -2203,17 +2303,19 @@ Seen(@place("git",1), id, "snapshot", s) :- analysis_run_snapshot(r,s), analysis
     } finally { failure.mockRestore(); }
   });
 
-  it("reports a source resolution error even if cache cleanup also fails", async () => {
+  it("preserves a source error after acquisition even if cache cleanup also fails", async () => {
     const root = checkout();
-    const prototype = loadNativeBinding().AnalysisScopeRun.prototype;
+    const binding = loadNativeBinding(), prototype = binding.AnalysisScopeRun.prototype;
+    const configure = vi.spyOn(binding.GitRevisionSource.prototype, "setSourceLanguages").mockImplementationOnce(() => {
+      throw new Error("source configuration failed");
+    });
     const finish = vi.spyOn(prototype, "finish").mockImplementationOnce(() => {
       throw new Error("cache cleanup failed");
     });
     try {
-      await expect(scan(root, { revision: "missing-source-revision", analysisScope: "error" }))
-        .rejects.toThrow("missing-source-revision");
+      await expect(scan(root, { revision: "HEAD", analysisScope: "error" })).rejects.toThrow("source configuration failed");
       expect(finish).toHaveBeenCalledWith(false);
-    } finally { finish.mockRestore(); }
+    } finally { configure.mockRestore(); finish.mockRestore(); }
   });
 
   it("retries relational evaluation in memory when its selected cache fails", async () => {

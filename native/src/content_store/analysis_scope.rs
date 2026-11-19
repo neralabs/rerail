@@ -130,6 +130,7 @@ pub struct CompletedRun {
 impl AnalysisRun {
     pub fn store_path(&self) -> &Path { self.store.database_path() }
     pub fn store_identity(&self) -> i64 { self.store.identity() }
+    pub fn acquisition(&self) -> i64 { self.owner.acquisition }
 
     pub fn is_open(&self) -> bool { self.lease.is_some() }
 
@@ -484,6 +485,35 @@ pub fn release_named_scope(file: &Path, name: &str, expected: &[i64]) -> StoreRe
         let memberships = release_analysis_scopes(tx, &scope, None, None, None, None)?;
         Ok((identity, history || memberships > 0))
     })
+}
+
+/// Recover the registry update for one identified acquisition after a caller exits.
+pub fn named_acquisition_state(file: &Path, name: &str, identity: i64, acquisition: i64, scan: &str) -> StoreResult<&'static str> {
+    let db = rusqlite::Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let scope = named(name).ok_or_else(|| super::StoreError::Invalid("analysis scope name must not be empty".into()))?;
+    let pending = format!("pending:{identity}:{acquisition}:{scan}");
+    let state = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM analysis_scope_pending WHERE id=?2),
+                EXISTS(SELECT 1 FROM analysis_scope_run WHERE scope=?3 AND acquisition=?4 AND scan_id=?5)
+         FROM store_identity WHERE singleton=1 AND id=?1",
+        (identity, pending, scope, acquisition, scan), |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
+    )?;
+    Ok(match state { (_, true) => "published", (true, _) => "pending", _ => "absent" })
+}
+
+/// Old registries recorded a store before a named run had published. Their pending IDs omit the scope.
+pub fn legacy_named_route_state(file: &Path, name: &str, identity: i64) -> StoreResult<&'static str> {
+    let db = rusqlite::Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let scope = named(name).ok_or_else(|| super::StoreError::Invalid("analysis scope name must not be empty".into()))?;
+    Ok(db.query_row(
+        "SELECT CASE WHEN EXISTS(SELECT 1 FROM analysis_scope_run WHERE scope=?2)
+                       OR EXISTS(SELECT 1 FROM analysis_scope_manifest WHERE scope=?2)
+                       OR EXISTS(SELECT 1 FROM analysis_scope_snapshot WHERE scope=?2)
+                       OR EXISTS(SELECT 1 FROM analysis_scope_workspace_snapshot WHERE scope=?2) THEN 2
+                     WHEN EXISTS(SELECT 1 FROM analysis_scope_pending) THEN 1 ELSE 0 END
+         FROM store_identity WHERE singleton=1 AND id=?1",
+        (identity, scope), |row| Ok(match row.get::<_, i64>(0)? { 2 => "published", 1 => "pending", _ => "absent" }),
+    )?)
 }
 
 // Validate and modify the same open database throughout release, even if another file replaces it.

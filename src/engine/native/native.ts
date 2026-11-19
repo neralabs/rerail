@@ -415,6 +415,7 @@ export interface NativeCodeRuleDslExecution {
 
 export interface NativeAnalysisScopeRun {
   readonly storeIdentity: string;
+  readonly acquisition: string;
   readonly publication: "published" | "released" | "aborted" | "unavailable" | null;
   selectSource(root: string, source?: NativeGitRevisionSource): void;
   finish(succeeded: boolean): string | null;
@@ -477,6 +478,8 @@ export interface NativeBinding {
   contentStoreFileName(): string;
   deleteAnalysisScope(storePath: string, value: string, directory: boolean, release?: string, expectedStore?: string, recorded?: boolean): void;
   releaseNamedAnalysisScope(store: string, name: string, expectedIdentities: string[]): { identity: string; hadMembers: boolean } | null;
+  namedAnalysisAcquisitionState(store: string, name: string, identity: string, acquisition: string, scan: string): "published" | "pending" | "absent";
+  legacyNamedAnalysisRouteState(store: string, name: string, identity: string): "published" | "pending" | "absent";
   owningDirectoryAnalysisStore(storePath: string, directory: string, home: string, recorded?: boolean): string | null;
   existingDirectoryAnalysisOwnership(storePath: string, directory: string, home: string): boolean;
   retireUpkeepUnder?(directory: string): void;

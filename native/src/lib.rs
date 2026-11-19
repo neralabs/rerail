@@ -684,6 +684,22 @@ pub struct NamedScopeRelease { pub identity: String, pub had_members: bool }
 
 #[cfg(not(feature = "headless"))]
 #[napi]
+pub fn named_analysis_acquisition_state(store: String, name: String, identity: String, acquisition: String, scan: String) -> Result<String> {
+    let number = |value: &str| value.parse::<i64>().map_err(|_| Error::new(Status::InvalidArg, "invalid analysis acquisition identity"));
+    content_store::analysis_scope::named_acquisition_state(Path::new(&store), &name, number(&identity)?, number(&acquisition)?, &scan)
+        .map(str::to_owned).map_err(|e| Error::from_reason(e.to_string()))
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi]
+pub fn legacy_named_analysis_route_state(store: String, name: String, identity: String) -> Result<String> {
+    let identity = identity.parse().map_err(|_| Error::new(Status::InvalidArg, "invalid analysis store identity"))?;
+    content_store::analysis_scope::legacy_named_route_state(Path::new(&store), &name, identity)
+        .map(str::to_owned).map_err(|e| Error::from_reason(e.to_string()))
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi]
 pub fn release_named_analysis_scope(store: String, name: String, identities: Vec<String>) -> Result<Option<NamedScopeRelease>> {
     let file = Path::new(&store);
     if identities.is_empty() && !file.try_exists().map_err(|e| Error::from_reason(e.to_string()))? { return Ok(None); }

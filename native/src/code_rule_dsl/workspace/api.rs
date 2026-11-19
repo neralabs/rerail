@@ -232,6 +232,11 @@ impl AnalysisScopeRun {
         self.0.lock().unwrap_or_else(|err| err.into_inner()).store_identity().to_string()
     }
 
+    #[napi(getter)]
+    pub fn acquisition(&self) -> String {
+        self.0.lock().unwrap_or_else(|err| err.into_inner()).acquisition().to_string()
+    }
+
     #[napi]
     pub fn warn(&self, message: String) {
         self.0.lock().unwrap_or_else(|err| err.into_inner()).owner.warn(message);
