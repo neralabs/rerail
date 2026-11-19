@@ -607,11 +607,14 @@ pub fn report(paths: &[PathBuf], filter: Option<&str>) -> Result<serde_json::Val
     Ok(serde_json::Value::Array(rows))
 }
 
-/// Testing mode's store, one per build of the engine, kept between runs: `$TMPDIR/rerail-test-rr-stores/<build>.sqlite`.
-/// Not the project's store (`corpus::tape_cache_path`): a test's run would read what real runs left there, and wait
-/// behind their writes (O-test-rr-busy). Another build's store unused for a day is removed.
+/// Testing mode's store, one per build of the engine, kept between runs: `$TMPDIR/rerail-test-rr-stores/<build>.sqlite`,
+/// or the next of its slots that no other process owns (`corpus::owner::slot`: `<build>-2.sqlite`, …), so test-rr
+/// processes at once each have one. Not the project's store (`corpus::tape_cache_path`): a test's run would read what
+/// real runs left there, and wait behind their writes (O-test-rr-busy). Another build's store unused for a day is
+/// removed.
 fn testing_store() -> PathBuf {
-    crate::code_rule_dsl::logic::plan::corpus::build_store("rerail-test-rr-stores", None)
+    use crate::code_rule_dsl::logic::plan::corpus;
+    corpus::owner::slot(&corpus::build_store("rerail-test-rr-stores", None))
 }
 
 /// `rerail-engine test-rr <file or directory>... [--filter <text>] [--json]`: each test of each file, one line each
