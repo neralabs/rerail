@@ -1,6 +1,6 @@
-# 0440. A walk over a node's children or siblings reads its parent once, not at each hop
+# 0457. A walk over a node's children or siblings reads its parent once, not at each hop
 
-Status: accepted (2026-11-19). Follows 0437; closes Q270.
+Status: accepted (2026-11-19). Follows 0437; closes Q270. (0440 until 2026-11-19: CUDA-support's 0440 is UKL.)
 
 ## Intro
 

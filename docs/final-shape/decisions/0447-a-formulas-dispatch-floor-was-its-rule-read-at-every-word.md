@@ -1,11 +1,11 @@
 # 0447. A formula's dispatch floor was its rule, read at every word
 
-Status: accepted (2026-11-19). Follows 0440. Answers its "What is left" (the floor of a dispatch), and keeps the
+Status: accepted (2026-11-19). Follows 0457. Answers its "What is left" (the floor of a dispatch), and keeps the
 parent reads of ops 7 and 8.
 
 ## Intro
 
-After 0440, most step formulas took about as long as a formula of one leaf read: 240–330 µs a dispatch in
+After 0457, most step formulas took about as long as a formula of one leaf read: 240–330 µs a dispatch in
 one-formula mode (`RERAIL_FORMULA_TRACE`, `RERAIL_FORMULA_ONE`). That floor was taken to be the cost of a dispatch
 itself. Two questions were left (the user, 2026-11-19: "address these four"):
 
