@@ -153,8 +153,9 @@ policy keeps its policy set and gets a new cache key.
 Each directory membership records its acquisition sequence and the manifest's order within that run.
 Only successful publication can advance that order. An aborted run or a read in another scope can still use the same manifest.
 
-Deleting a named scope releases its memberships. The store retains a generation row to reject older writers.
-One-time named scopes can accumulate generation rows.
+Deleting a named scope releases its memberships and removes its generation row.
+The store allocates a fresh generation when a caller reuses the name. A writer with the earlier generation cannot publish after reuse or restart.
+Older stores can contain generation rows without evidence of whether a scope is still active. The next explicit release removes such a row.
 After a numbered stop, the home removes the directory registrations that the delivery covered.
 A concurrent acquisition in a later generation keeps its registration.
 The home keeps one maintenance address per store so the collector can still visit a released store.

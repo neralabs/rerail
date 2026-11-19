@@ -63,6 +63,36 @@ fn deleting_an_analysis_scope_rejects_an_active_runs_late_manifest() {
 }
 
 #[test]
+fn releasing_one_use_names_compacts_generations_and_never_revives_a_stale_owner() {
+    let (path, store) = store("named-scope-generation-compaction");
+    // Earlier binaries could advance a scope's generation independently of the acquisition sequence.
+    let db = store.connection.lock().unwrap();
+    db.execute("INSERT INTO analysis_scope_generation VALUES ('named:legacy',10000)", []).unwrap();
+    drop(db);
+    let old = store.begin_analysis_scope("named:legacy").unwrap();
+    let serialized = serde_json::to_vec(&old).unwrap();
+    store.delete_analysis_scope("named:legacy").unwrap();
+    for n in 0..100 {
+        let scope = format!("named:once-{n}");
+        store.begin_analysis_scope(&scope).unwrap();
+        store.delete_analysis_scope(&scope).unwrap();
+    }
+    let reopened = ContentStore::open(&path).unwrap();
+    let db = reopened.connection.lock().unwrap();
+    assert_eq!(db.query_row("SELECT count(*) FROM analysis_scope_generation WHERE scope GLOB 'named:*'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+    drop(db);
+    let fresh = reopened.begin_analysis_scope("named:legacy").unwrap();
+    let stale: crate::content_store::analysis_scope::AnalysisOwner = serde_json::from_slice(&serialized).unwrap();
+    let publish = |owner| reopened.record_corpus_run_retaining("/repo", &[], 1, 1, [7; 32], &[], None, None, 100, None, Some(owner)).unwrap();
+    assert!(!publish(&stale));
+    assert!(publish(&fresh));
+    reopened.delete_analysis_scope("named:legacy").unwrap();
+    let again = reopened.begin_analysis_scope("named:legacy").unwrap();
+    assert!(!publish(&fresh));
+    assert!(publish(&again));
+}
+
+#[test]
 fn replaying_a_directory_analysis_scope_release_keeps_a_later_run() {
     use crate::content_store::analysis_scope;
     let (_path, store) = store("analysis-scope-release-replay");

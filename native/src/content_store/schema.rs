@@ -274,6 +274,18 @@ CREATE TABLE IF NOT EXISTS store_state (
 ) STRICT;
 INSERT OR IGNORE INTO store_state(singleton, generation) VALUES (1, 1);
 
+-- Older writers also insert zero then read back the generation. Seed every new named scope
+-- from the store-wide sequence so deleting and reusing its name cannot revive an old permit.
+CREATE TRIGGER IF NOT EXISTS analysis_named_generation_begin AFTER INSERT ON analysis_scope_generation
+WHEN NEW.scope GLOB 'named:*' AND NEW.generation=0 BEGIN
+    UPDATE store_state SET analysis_acquisitions=analysis_acquisitions+1 WHERE singleton=1;
+    UPDATE analysis_scope_generation SET generation=(SELECT analysis_acquisitions FROM store_state WHERE singleton=1) WHERE scope=NEW.scope;
+END;
+CREATE TRIGGER IF NOT EXISTS analysis_named_generation_end BEFORE DELETE ON analysis_scope_generation
+WHEN OLD.scope GLOB 'named:*' BEGIN
+    UPDATE store_state SET analysis_acquisitions=max(analysis_acquisitions,OLD.generation) WHERE singleton=1;
+END;
+
 -- A home-qualified stop also covers unqualified owners acquired by the time it reaches this store.
 -- Capture that boundary for deliveries from older binaries too. Replays do not insert a receipt.
 CREATE TRIGGER IF NOT EXISTS analysis_scope_legacy_stop AFTER INSERT ON analysis_scope_release

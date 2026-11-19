@@ -497,6 +497,9 @@ fn release_analysis_scopes(tx: &rusqlite::Connection, scope: &str, subtree: Opti
     } else {
         let args = (scope, subtree);
         tx.execute_cached(&format!("UPDATE analysis_scope_generation SET generation=generation+1 WHERE {RELEASING}"), args)?;
+        if scope.starts_with("named:") {
+            tx.execute_cached("DELETE FROM analysis_scope_generation WHERE scope=?1", [scope])?;
+        }
         Ok(release_memberships(tx, RELEASING, args)?)
     }
 }
