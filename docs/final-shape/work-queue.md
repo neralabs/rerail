@@ -5305,8 +5305,20 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - 16z: 107-112 B at step 5, 120-124 B at the tip. System time doubles: 1.1-1.7 s against 2.3-4.1 s.
 - Debug builds (16z) do not show it: 650 B at step 5, 617-621 B at the hub's merge. The debug numbers are not the
   product's cost.
-- **Do**: profiling builds of 47ac05ff2 (before oscar) and 2d9898068 (oscar merged) say which step brought it; then
-  the profiles of the two ends say where.
+- **Where** (format 15 forced, interleaved, three runs each): step 5 71 B, 47ac05ff2 (before oscar) 69-70 B, the tip
+  82-92 B. It came with oscar's merge, which brought the hub's 47785e475 (Q55: the chunks in flight share the run's
+  headroom). Chunk sizes went from 262,144 nodes to about 11,000, run 3 at once: hogql's 2.6 M nodes are 90 chunks
+  against 32. Each stratum and matcher wave runs once a chunk, so 7,032 stratum runs against 2,255 and 119 matcher
+  launches against 46, and the host's per-run costs grow with them. 0365's anchors are not it (RERAIL_ANCHORS=off:
+  83-84 B).
+- **Why the chunks stay small**: the next chunk is sized by the most bytes a node measured this run (7,917, set by
+  one chunk that added 110 MB), not the latest. Peak footprint fell, 1,194 MB to 865 MB.
+- **Step 5's size no longer fits Metal**: at RERAIL_CHUNK_NODES=262144 the tip's label wave holds 887-1,044 MB of the
+  driver against the 512 MB budget, and the run stops (0382 §6; django-bugs' Q245). Before 1f88389be those refusals
+  ran the waves on the CPU unseen (39-59 a run), so step 5's 71 B already carried them.
+- **Do (a tradeoff, for the user)**: size by a recent measurement, not the run's most (fewer chunks, a higher
+  peak), or make the per-chunk host costs smaller; and split the label wave to the Metal budget (Q245) before chunks
+  grow back.
 
 ### Q260. A Metal buffer refused by the driver's count, with idle buffers holding the room, stopped hogql
 
