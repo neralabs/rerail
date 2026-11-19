@@ -49,7 +49,6 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/blocks/src/scratch.rs", "THREAD", Thread, "this thread's scratch region for a freeze's sort keys, emptied at each use"),
     ("crates/clif/src/rust.rs", "ADDRESSES", Thread, "this thread's scratch or counters in a backend"),
     ("crates/clif/src/rust.rs", "READS", Thread, "this thread's scratch or counters in a backend"),
-    ("crates/tape_format/src/f16.rs", "BLOCKS", Thread, "the 16z blocks this thread decoded last, keyed by their tape: correct on any thread"),
     ("crates/compiler/src/native_cpu_stream.rs", "IDS", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/buffer_observation.rs", "ACTIVE", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/launch.rs", "EVALUATION", Thread, "this thread's scratch or counters in a backend"),
@@ -62,6 +61,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/budget.rs", "BUDGET_COUNTDOWN", Call, "the state of one call in progress on this thread"),
     ("src/code_rule_dsl/budget.rs", "MATCH_BUDGET", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/budget.rs", "STEP_COUNTDOWN", Call, "the state of one call in progress on this thread"),
+    ("src/code_rule_dsl/calls/closure/reference_bindings.rs", "READS", Call, "records the table lookups of the binding contribution currently computed on this thread"),
     ("src/code_rule_dsl/calls/mod.rs", "EVALUATION", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/calls/mod.rs", "FILE_CALLS", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/calls/rust.rs", "ITEMS", Call, "the state of one call in progress on this thread, set and read within it"),
@@ -119,6 +119,9 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan/choices.rs", "DURABLE", Carried, ""),
     ("src/code_rule_dsl/logic/plan/compose.rs", "CACHE", Thread, "compiled compositions by digest: any thread's gives the same"),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "PREPARED", Thread, "prepared programs by key: any thread's gives the same program"),
+    ("src/git_snapshot.rs", "STORAGE_BATCH", Carried, ""),
+    ("src/git_snapshot.rs", "REPOSITORY", Thread, "a worker-local gix handle keyed by view and pack epoch"),
+    ("src/code_rule_dsl/logic/plan/corpus.rs", "THREAD_STORE", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "RUNS_UNDER_WAY", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "RUN_TOKEN", Carried, ""),
     ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "BY_LEVELS", Thread, "counts of this thread's own runs, which a test reads beside others (decision 0204)"),
@@ -306,6 +309,7 @@ const CARRIERS: &[fn(&mut Capture)] = &[
 
 /// The carried thread-locals of the crates below this one, which cannot name [`Capture`].
 fn carried_elsewhere(c: &mut Capture) {
+    c.copy(&["STORAGE_BATCH"], &crate::git_workspace::snapshot::STORAGE_BATCH);
     c.part(&["GIT_EVALUATION"], Shared(super::strings::git::current(), super::strings::git::enter));
     c.copy(&["IN_PHASE_0"], &crate::code_rule_dsl::phase_clock::IN_PHASE_0);
     c.copy(&["WAVES"], &crate::content_store::write_back::WAVES);

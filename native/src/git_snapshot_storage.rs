@@ -91,6 +91,8 @@ impl Storage {
     }
 
     pub fn is_current(&self) -> bool {
+        rerail_prof::count("git.pack_validations", 1);
+        rerail_prof::count("git.pack_paths_checked", self.watched.len());
         self.watched.iter().all(|(path, expected)| {
             let mut digest = Sha256::new();
             stat(&mut digest, path).is_some() && &<[u8; 32]>::from(digest.finalize()) == expected

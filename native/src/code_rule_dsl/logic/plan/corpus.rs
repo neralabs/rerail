@@ -2324,6 +2324,7 @@ thread_local! {
     static THREAD_STORE: std::cell::RefCell<Option<StoreSelection>> = const { std::cell::RefCell::new(None) };
 }
 
+#[derive(Clone)]
 struct StoreSelection {
     path: Option<PathBuf>,
     ownership: Option<(PathBuf, crate::content_store::analysis_scope::AnalysisOwner)>,
@@ -2610,6 +2611,7 @@ fn run_handed(
 ) -> Result<Report> {
     // The `RERAIL_*` switches stay as they are until the run ends: a test sets them only while no run reads them.
     let _switches = switches::reading();
+    let git_batch = crate::git_workspace::snapshot::StorageBatch::begin(root).map_err(|error| Error::Plan(error.to_string()))?;
     // Upkeep yields to the run (decision 0190 §8): this process's, and other processes' over its store and the cost
     // statistics, stop at their next check, their work left due, until the run ends.
     let store_file = tape_cache_path();
@@ -2742,6 +2744,9 @@ fn run_handed(
             "phase0":cpu(lifecycle_observed,lifecycle_seeded),"execution":cpu(lifecycle_seeded,lifecycle_executed),
             "observerFlush":cpu(lifecycle_executed,lifecycle_written)}).to_string()
     });
+    if report.is_ok() && let Some(batch) = git_batch && !batch.is_current() {
+        return Err(Error::Plan("Git pack storage changed during rule evaluation".into()));
+    }
     // The run is over: upkeep may go on. What the outermost run left due as utility work (the frames its keep
     // decision left unreachable, decision 0227) is done before it returns, unless another run has begun.
     drop(under_way.take());
@@ -2784,6 +2789,7 @@ thread_local! {
 /// run of 116 windows counted 120, and aged out (`MEMO_RUNS`) the entries its own first windows had used: the next
 /// run found none, parsed every file and wrote them all again (decision 0170).
 pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.cloned(&["THREAD_STORE"], &THREAD_STORE);
     c.copy(&["RUNS_UNDER_WAY"], &RUNS_UNDER_WAY);
     c.copy(&["RUN_TOKEN"], &RUN_TOKEN);
 }

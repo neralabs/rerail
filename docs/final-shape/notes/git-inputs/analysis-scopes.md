@@ -140,6 +140,11 @@ The Git view stays pinned during a run. Different revisions can use the same
 cache space, provided the engine compares their input facts before it reuses
 derived rows. Each report uses the inputs and source view of its own run.
 
+A rule evaluation checks the pack layout when it starts and again when it finishes.
+Its workers share the first check. Direct reads through the native source API check the layout on entry.
+In a fixture with 12 packs, both 4 and 64 unchanged paths took two checks of 26 storage paths.
+Both warm profiles recorded zero tree decodes.
+
 In a two-file Python fixture, three separate native processes used the same
 store and scope. The initial scan had zero file memo hits. A new commit with
 the same tree had two hits. After one file changed, the next scan had one hit

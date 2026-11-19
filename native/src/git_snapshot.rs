@@ -155,6 +155,7 @@ static VIEWS: Mutex<Vec<Arc<View>>> = Mutex::new(Vec::new());
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
 thread_local! {
     // One object-store handle per worker, reused across reads. No cache of a snapshot's whole contents.
+    pub static STORAGE_BATCH: std::cell::Cell<Option<(u64, u64)>> = const { std::cell::Cell::new(None) };
     static REPOSITORY: RefCell<Option<((u64, u64), gix::Repository)>> = const { RefCell::new(None) };
 }
 
@@ -195,6 +196,29 @@ pub fn decoded_commit<'a>(commit: &'a gix::Commit<'_>) -> io::Result<gix::objs::
 enum Entry {
     File(gix::ObjectId),
     Dir(gix::ObjectId),
+}
+
+/// One evaluation shares the validated pack layout across its workers. An independent API read
+/// validates the layout on entry. The evaluation checks its original layout before returning.
+pub struct StorageBatch {
+    previous: Option<(u64, u64)>,
+    storage: Arc<storage::Storage>,
+}
+
+impl StorageBatch {
+    pub fn begin(root: &Path) -> io::Result<Option<Self>> {
+        let Some(view) = view(root) else { return Ok(None) };
+        let state = view.current_repository()?;
+        let id = (view.id, state.epoch);
+        if STORAGE_BATCH.get() == Some(id) { return Ok(None); }
+        Ok(state.storage.clone().map(|storage| Self { previous: STORAGE_BATCH.replace(Some(id)), storage }))
+    }
+
+    pub fn is_current(&self) -> bool { self.storage.is_current() }
+}
+
+impl Drop for StorageBatch {
+    fn drop(&mut self) { STORAGE_BATCH.set(self.previous); }
 }
 
 impl View {
@@ -315,7 +339,8 @@ impl View {
 
     fn current_repository(&self) -> io::Result<std::sync::MutexGuard<'_, RepositoryState>> {
         let mut repository = self.repository.lock().unwrap_or_else(|e| e.into_inner());
-        if !repository.storage.as_deref().is_some_and(storage::Storage::is_current) {
+        if STORAGE_BATCH.get() != Some((self.id, repository.epoch))
+            && !repository.storage.as_deref().is_some_and(storage::Storage::is_current) {
             let repo = gix::ThreadSafeRepository::open(repository.repo.git_dir()).map_err(error)?;
             repository.storage = storage::Storage::of(&repo.to_thread_local()).map(Arc::new);
             repository.repo = repo;
