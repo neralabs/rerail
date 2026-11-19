@@ -465,6 +465,9 @@ pub struct Exp {
     out_cap: u32,
     q_cap: u32,
     words: MappedBuffer,
+    /// The scratch tokens (`#`'s and `##`'s): their bytes, and each one's (start, end, kind).
+    pub sbytes: MappedBuffer,
+    pub stoks: MappedBuffer,
     theads: MappedBuffer,
     delta: MappedBuffer,
     depth: MappedBuffer,
@@ -511,13 +514,17 @@ impl Exp {
             return Err(Error::BackendCapacity);
         }
         let va_opt = name_key(b"__VA_OPT__");
-        let words = [unit.table.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32];
+        // The scratch: bytes (64 KB at rung 0, doubling) and tokens.
+        let (sb, st) = ((64usize << 10) << rung, tok / 4 + 256);
+        let words = [unit.table.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32];
         Ok(Exp {
             tok_cap: tok as u32,
             list_cap: lists as u32,
             out_cap: out as u32,
             q_cap: q as u32,
             words: MappedBuffer::from_slice(&device, &words)?,
+            sbytes: MappedBuffer::zeroed::<u8>(&device, sb)?,
+            stoks: zeroed(st * 3)?,
             theads: zeroed(top)?,
             delta: zeroed(top)?,
             depth: zeroed(top)?,
@@ -546,7 +553,7 @@ impl Exp {
             args: zeroed(args * ARG_WORDS)?,
             slots: zeroed(q)?,
             qctl: zeroed(4)?,
-            ctl: zeroed(4)?,
+            ctl: zeroed(8)?,
             out: zeroed(out)?,
         })
     }
@@ -667,12 +674,26 @@ impl Exp {
                     &self.qctl.buffer,
                     &self.ctl.buffer,
                     &self.words.buffer,
+                    &self.sbytes.buffer,
+                    &self.stoks.buffer,
                 ],
                 &[],
                 Grid::Groups(WORKER_GROUPS),
             )?;
         }
         Ok(())
+    }
+
+    /// The scratch tokens' bytes and (start, end, kind) (after the command buffer).
+    pub fn scratch(&self) -> (Vec<u8>, Vec<[u32; 3]>) {
+        // SAFETY: the device finished; the tops are within the capacities where no room ran out.
+        unsafe {
+            let ctl = self.ctl.host().cast::<u32>();
+            let (nb, nt) = (*ctl.add(4) as usize, *ctl.add(5) as usize);
+            let nb = nb.min(self.sbytes.byte_length());
+            let nt = nt.min(self.stoks.byte_length() / 12);
+            (std::slice::from_raw_parts(self.sbytes.host(), nb).to_vec(), std::slice::from_raw_parts(self.stoks.host().cast::<[u32; 3]>(), nt).to_vec())
+        }
     }
 
     /// The refusals, and the output's refs where there are none (after the command buffer).
@@ -698,7 +719,14 @@ pub struct Expanded {
     pub rung: u32,
     /// The command buffer's launches (at most `KERNEL_LAUNCH_LIMIT`).
     pub launches: usize,
+    /// The scratch tokens (a ref with `SCRATCH` set): their bytes, and each one's (start, end,
+    /// kind).
+    pub scratch: Vec<u8>,
+    pub stoks: Vec<[u32; 3]>,
 }
+
+/// A ref to a scratch token, not a tape node.
+pub const SCRATCH: u32 = 0x8000_0000;
 
 /// The front passes, the definitions, the lookups and the expansion over `unit` laid out as
 /// `lay`, in one command buffer; from rung `rung`, and at the next where a store's room ran out.
@@ -729,7 +757,8 @@ pub fn expand_from(unit: &Unit, lay: &Layout, rung: u32) -> Result<Expanded, Err
             rung += 1;
             continue;
         }
-        return Ok(Expanded { ev: front.read()?, refused, out, rung, launches });
+        let (scratch, stoks) = exp.scratch();
+        return Ok(Expanded { ev: front.read()?, refused, out, rung, launches, scratch, stoks });
     }
 }
 

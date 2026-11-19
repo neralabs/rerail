@@ -368,6 +368,10 @@ fn expanded(files: &[(&str, &str)], cpp: bool, rung: u32) -> (Result<Vec<Vec<u8>
         .out
         .iter()
         .map(|&g| {
+            if g & rerail_metal::pp_expand::SCRATCH != 0 {
+                let [a, b, _] = x.stoks[(g & !rerail_metal::pp_expand::SCRATCH) as usize];
+                return x.scratch[a as usize..b as usize].to_vec();
+            }
             let f = x.ev.bases.partition_point(|&b| b <= g) - 1;
             let i = (g - x.ev.bases[f]) as usize;
             p1.files[f][views[f].start(i) as usize..views[f].end(i) as usize].to_vec()
@@ -466,6 +470,24 @@ fn calls_with_arguments_are_the_serial_passes() {
         &[("main.c", "#define L(x) x\nL(\n1\n,\n) L(L\n(2))\n")],
         &[("main.c", "#define C(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H) H G F E D C B A z y x w v u t s r q p o n m l k j i h g f e d c b a\nC(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34)\n")],
         &[("main.c", "#include \"m.h\"\nT(T(1)) U(2)\n"), ("m.h", "#define T(x) (x)\n#define U(x) T(x) T(U(x))\n")],
+    ];
+    let (tokens, launches) = shapes_agree(shapes);
+    eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
+}
+
+/// R6 of decision 0448, its second part: `#`, a parameter's raw argument as one string literal:
+/// its tokens' spellings, a space where a token had space or a line's start before it (the first
+/// token's left out), a literal's `"` and `\` escaped; an empty argument's `""`; spacing kept through
+/// a body (a parameter's space, the call's name's space), and the string rescanned in its list.
+#[test]
+fn stringizing_is_the_serial_passes() {
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define S(x) #x\nS(a) S(  a  +  b  ) S() S(\"s\\n\" 'c') S(a\n b)\n")],
+        &[("main.c", "#define S(x) #x\n#define T(x) S(x)\n#define A 1 + 2\nS(A) T(A) T( A ) T(S(A))\n")],
+        &[("main.c", "#define Q(x, y) # x # y x\nQ(1,2) Q((a,b),c) Q(,)\n")],
+        &[("main.c", "#define V(...) #__VA_ARGS__\nV() V(a,b , c) V( a )\n")],
+        &[("main.c", "#define S(x) #x\nS(a/**/b) S(a/**/ b) S('\\'' \"\\\\\")\n")],
+        &[("main.c", "#define S(x) #x\n#define F(x) [x]\nF(S(1)) F( S( 1 ) )\n")],
     ];
     let (tokens, launches) = shapes_agree(shapes);
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);

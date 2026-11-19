@@ -281,3 +281,14 @@ outermost call becomes the queue's first items.
   at an argument's end that its substitution calls, an argument across lines, 34 parameters, an
   included header's macros) give the serial pass's tokens (`calls_with_arguments_are_the_serial_passes`).
   An evaluation takes at most 151 launches.
+- **R6, its second part: `#`.** A token's flags carry `SPACE` as the serial pass's do: a top
+  token's from its tape (a `code` node's first leaf starts a line; any other has a gap of more
+  than splices), a body literal's from its item, a substituted argument's first token takes the
+  parameter's, and an expansion's first token takes the call's name's. `#` and its parameter are
+  one scratch token (a ref with its top bit set, its bytes and kind in the scratch store, rung
+  sized): the item's SIMD group measures the raw argument's tokens (a space before a token that
+  has one, its bytes, a literal's `"` and `\` escaped), one prefix sum places them, one atomic add
+  takes the bytes, and each lane writes its token. A parameter after `#` gets no expanded list.
+  Every shuffle runs with all 32 lanes active: one inside a lane's branch reads an idle lane
+  (found by the second `#` of `# x # y`). 6 shapes in C and C++ give the serial pass's tokens
+  (`stringizing_is_the_serial_passes`).
