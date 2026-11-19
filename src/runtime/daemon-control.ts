@@ -1,7 +1,7 @@
 import type { SpawnOptions } from "node:child_process";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync, writeSync } from "node:fs";
-import { mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
+import { mkdir, open, readFile, realpath, rm, stat } from "node:fs/promises";
 import { Agent as HttpsAgent, request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -11,7 +11,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { spawn, spawnShown } from "../engine/child-process.js";
 import { programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
 import { loadNativeBinding } from "../engine/native/native.js";
-import { forgetHomeDaemonHolder, homeDaemonHolder, homeDaemonLockHeld } from "../engine/native/home-daemon-lock.js";
+import { forgetHomeDaemonHolder, homeDaemonHeldSince, homeDaemonHolder, homeDaemonLockHeld } from "../engine/native/home-daemon-lock.js";
 import { forgetMainInstanceHolder, mainInstanceLockHeld } from "../engine/native/main-instance.js";
 import { withHomeLock } from "../engine/native/file-lock.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
@@ -731,10 +731,36 @@ export async function withStartLock<T>(home: string, operation: () => Promise<T>
   }, operation);
 }
 
-/** The last `lines` lines written to `path` from byte `offset` on: this launch's output, not earlier runs'. */
+/** How much of the end of daemon.log a start that failed reads: far more than the lines it shows, never the whole log. */
+const LOG_TAIL_BYTES = 64 * 1024;
+
+/**
+ * The last `lines` lines written to `path` from byte `offset` on: this launch's output, not earlier runs'. Only the
+ * last {@link LOG_TAIL_BYTES} are read, since the log grows across runs and a launch can write much; a log that cannot
+ * be read gives none.
+ */
 async function tailFile(path: string, offset: number, lines: number): Promise<string> {
-  const text = await readFile(path).then(bytes => bytes.subarray(offset).toString("utf8"), () => "");
+  const text = await readTail(path, offset).catch(() => "");
   return text.trimEnd().split("\n").slice(-lines).join("\n");
+}
+
+/**
+ * What `path` holds from byte `offset` on, or from {@link LOG_TAIL_BYTES} before its end when that is later. The read
+ * then starts one byte early, so the line that edge cuts into is known and left out.
+ */
+async function readTail(path: string, offset: number): Promise<string> {
+  const file = await open(path, "r");
+  try {
+    const { size } = await file.stat();
+    const edge = size - LOG_TAIL_BYTES;
+    const start = offset >= edge ? offset : edge - 1;
+    const length = Math.max(0, size - start);
+    const { buffer, bytesRead } = await file.read(Buffer.alloc(length), 0, length, start);
+    const text = buffer.subarray(0, bytesRead).toString("utf8");
+    return start === offset ? text : text.slice(text.indexOf("\n") + 1);
+  } finally {
+    await file.close();
+  }
 }
 
 export interface DaemonControl {
@@ -820,18 +846,41 @@ function homeDaemonRuns(home: string, machine: DaemonMachine): boolean {
  * ({@link homeDaemonRuns}) once it has recorded itself again. The daemon of a home writes daemon.json back within a
  * second of finding it gone or naming another process, so it is waited for, never started beside: a second daemon
  * would refuse to run beside it, as would every start after it, and `rerail daemon stop` would find none to stop.
+ * One that has not recorded itself by the end of the wait fails the lookup with what `unrecorded` says of the home.
  */
-async function lookupHomeDaemon(home: string, machine: DaemonMachine): Promise<DaemonLookup> {
+async function lookupHomeDaemon(home: string, machine: DaemonMachine, unrecorded = unrecordedDaemonProblem): Promise<DaemonLookup> {
   const deadline = Date.now() + START_TIMEOUT_MS;
   for (;;) {
     const lookup = await lookupDaemon(home, machine);
     if (lookup.status !== "absent" || !homeDaemonRuns(home, machine)) return lookup;
-    if (Date.now() >= deadline) throw new Error(unrecordedDaemonProblem(home));
+    if (Date.now() >= deadline) throw new Error(unrecorded(home));
     await sleep(POLL_INTERVAL_MS);
   }
 }
 
-/** What to tell the person when a daemon holds `home` and never records itself: which process to end. */
+/**
+ * What a start says when a daemon holds `home` and has not recorded itself within the start's wait, by how long that
+ * daemon has held the home ({@link holderComingUp}). One that took it less than a start's wait ago is still coming up,
+ * as the start that launched it said ({@link unansweredLaunch}): this start leaves it running too, and telling the person
+ * to end it would undo what that start said. One that has held it longer has had that start's whole wait and this
+ * one's without answering: the start names the process to end, as a stop does, and says it leaves it running.
+ */
+function holderNotRecorded(home: string): string {
+  if (holderComingUp(home)) return stillStarting(homeDaemonHolder(home), join(home, DAEMON_LOG_FILE));
+  return `${unrecordedDaemonProblem(home)} This start leaves that process running.`;
+}
+
+/**
+ * Whether the daemon that holds `home` took it less than a start's wait ago, by the time it recorded itself as it took
+ * the lock ({@link homeDaemonHeldSince}). Counted either way from the clock, as a claim is ({@link claimHolds}): a
+ * record made before the clock moved back has held the home a while too. A record that cannot be read is not counted.
+ */
+function holderComingUp(home: string): boolean {
+  const since = homeDaemonHeldSince(home);
+  return since !== undefined && Math.abs(Date.now() - since) < START_TIMEOUT_MS;
+}
+
+/** What a stop says when a daemon holds `home` and never records itself: which process to end. */
 function unrecordedDaemonProblem(home: string): string {
   const pid = homeDaemonHolder(home);
   return `A Rerail daemon${pid === undefined ? "" : ` (pid ${pid})`} holds ${home} but has not written ${DAEMON_STATE_FILE} `
@@ -844,7 +893,7 @@ export async function startDaemon(
   machine: DaemonMachine = THIS_MACHINE,
 ): Promise<StartDaemonResult> {
   return await startUnderLock(control.home, async () => {
-    const lookup = await lookupHomeDaemon(control.home, machine);
+    const lookup = await lookupHomeDaemon(control.home, machine, holderNotRecorded);
     if (lookup.status === "running") return { started: false, daemon: { state: lookup.state, health: lookup.health } };
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
     return await spawnDaemon(control, options, machine);
@@ -862,7 +911,7 @@ export async function startDaemonForPackage(
   machine: DaemonMachine = THIS_MACHINE,
 ): Promise<StartDaemonResult> {
   return await startUnderLock(control.home, async () => {
-    const lookup = await lookupHomeDaemon(control.home, machine);
+    const lookup = await lookupHomeDaemon(control.home, machine, holderNotRecorded);
     if (lookup.status === "running") {
       if (await daemonUsesPackageRoot(lookup.state, control.packageRoot)) {
         return { started: false, daemon: { state: lookup.state, health: lookup.health } };
@@ -1140,30 +1189,64 @@ async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions,
   // The log is appended to across runs; a failure shows only what this launch wrote.
   const logOffset = await stat(logFile).then(info => info.size, () => 0);
   const args = daemonArguments(control, options, stateFile);
-  const { pid, exitReason } = launchDaemonProcess(control, { args, env, logFile }, machine);
-  return { started: true, daemon: await readyDaemon({ pid, exitReason }, { stateFile, logFile, logOffset, platform: machine.platform }) };
+  const launched = launchDaemonProcess(control, { args, env, logFile }, machine);
+  return { started: true, daemon: await readyDaemon(launched, { stateFile, logFile, logOffset, platform: machine.platform }) };
+}
+
+/** Where a launched daemon records itself and writes its output, from `logOffset` on, read for `platform`. */
+interface LaunchRecords {
+  stateFile: string;
+  logFile: string;
+  logOffset: number;
+  platform: NodeJS.Platform;
 }
 
 /**
  * The daemon `launched` started, once its state file names it and it answers its probe as itself. A launch that exits
- * first, or does not answer within `START_TIMEOUT_MS`, fails with what it wrote to the log from `logOffset` on.
+ * first fails with what it wrote to the log; one that has not answered within `START_TIMEOUT_MS` fails as
+ * {@link unansweredLaunch} says.
  */
-async function readyDaemon(
-  { pid, exitReason }: LaunchedDaemon,
-  { stateFile, logFile, logOffset, platform }: { stateFile: string; logFile: string; logOffset: number; platform: NodeJS.Platform },
-): Promise<RunningDaemon> {
+async function readyDaemon(launched: LaunchedDaemon, records: LaunchRecords): Promise<RunningDaemon> {
   const deadline = Date.now() + START_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const exit = exitReason();
-    if (exit !== undefined) {
-      const output = await tailFile(logFile, logOffset, 20);
-      throw new Error(`Rerail daemon ${exit} before it was ready${output === "" ? "." : `:\n${output}`}`);
-    }
-    const daemon = await answeringDaemon(stateFile, pid, platform);
+    const exit = launched.exitReason();
+    if (exit !== undefined) throw await exitedLaunch(exit, records);
+    const daemon = await answeringDaemon(records.stateFile, launched.pid, records.platform);
     if (daemon !== undefined) return daemon;
     await sleep(POLL_INTERVAL_MS);
   }
-  throw new Error(`Rerail daemon did not become ready within ${START_TIMEOUT_MS / 1_000}s; see ${logFile}`);
+  throw await unansweredLaunch(launched, records);
+}
+
+/** A launch that exited (`exit` says how) before it answered, with what it wrote to the log from `logOffset` on. */
+async function exitedLaunch(exit: string, { logFile, logOffset }: LaunchRecords): Promise<Error> {
+  const output = await tailFile(logFile, logOffset, 20);
+  return new Error(`Rerail daemon ${exit} before it was ready${output === "" ? "." : `:\n${output}`}`);
+}
+
+/**
+ * What a start says of the daemon it launched when that daemon has not answered within `START_TIMEOUT_MS`: how it
+ * exited, asked once more since it may have exited during the last poll; else that it still runs, by its pid, and
+ * that this start leaves it running, with what it wrote so far. A daemon slow to come up, on a busy machine or while
+ * another program holds a file it reads, goes on to serve, and the next start uses it: a start that said it failed
+ * would tell the person nothing runs while one does.
+ */
+async function unansweredLaunch(launched: LaunchedDaemon, records: LaunchRecords): Promise<Error> {
+  const exit = launched.exitReason();
+  if (exit !== undefined) return await exitedLaunch(exit, records);
+  const output = await tailFile(records.logFile, records.logOffset, 20);
+  return new Error(`${stillStarting(launched.pid, records.logFile)}${output === "" ? "" : `:\n${output}`}`);
+}
+
+/**
+ * What a start says of the daemon `pid` that has not answered within its wait, whether it launched it or found it
+ * holding the home: it still starts, the start leaves it running, and the start run again waits for it once more, then
+ * finds it serving or names the process to end ({@link holderNotRecorded}).
+ */
+function stillStarting(pid: number | undefined, logFile: string): string {
+  return `Rerail daemon${pid === undefined ? "" : ` (pid ${pid})`} is still starting: it has not answered within `
+    + `${START_TIMEOUT_MS / 1_000}s, and this start leaves it running. Run rerail daemon start again to wait for it. `
+    + `See ${logFile}`;
 }
 
 /**

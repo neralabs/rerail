@@ -76,6 +76,18 @@ export function homeDaemonHolder(home: string): number | undefined {
 }
 
 /**
+ * When the holder of `home`'s lock recorded itself, in milliseconds since the epoch: the time it took the lock, since it
+ * records itself then and never again. Undefined without a record.
+ */
+export function homeDaemonHeldSince(home: string): number | undefined {
+  try {
+    return statSync(join(home, LOCKS_DIR, HOLDER_FILE)).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Removes the holder's record in `home` when it names `pid`, a daemon that ended without its exit handler, which removes
  * the record on every other exit. Windows ends a process that way at a kill, and soon gives its pid to another process.
  */

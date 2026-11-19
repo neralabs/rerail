@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
 import type * as FileSystem from "node:fs/promises";
@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as DaemonWaits from "../../../src/runtime/daemon/daemon-waits.js";
 import { DAEMON_PORT_FILE } from "../../../src/daemon/index.js";
@@ -38,6 +39,8 @@ import {
   watchedEnvironment,
 } from "../../support/processes/daemon-home.js";
 import { removeFolder, runningIn } from "../../support/platform/remove-folder.js";
+
+const execute = promisify(execFile);
 
 /** How long a start waits (`START_TIMEOUT_MS`), read at each wait: the product's, unless a test sets its own. */
 const waits = vi.hoisted(() => ({ startMs: undefined as number | undefined }));
@@ -88,6 +91,24 @@ function killGone(pid: number): void {
   } catch {
     // Gone already.
   }
+}
+
+/** The leading words of `text` that can name a command: lowercase words, up to the first option or placeholder. */
+function commandWords(text: string): string {
+  const words = text.split(" ");
+  const end = words.findIndex(word => !/^[a-z][a-z-]*$/u.test(word));
+  return words.slice(0, end === -1 ? undefined : end).join(" ");
+}
+
+/**
+ * The commands the first line of `message` names, `rerail` and the words after it, each cut where the longest of
+ * `listed` that starts them ends; words no listed command starts stay whole, so a test names them.
+ */
+function namedCommands(message: string, listed: readonly string[]): string[] {
+  const [line = ""] = message.split("\n");
+  const longest = (words: string): string | undefined =>
+    listed.filter(command => `${words} `.startsWith(`${command} `)).sort((a, b) => b.length - a.length)[0];
+  return [...line.matchAll(/(?<![\w./\\-])rerail ([a-z][a-z-]*(?: [a-z][a-z-]*)*)/gu)].map(([, words = ""]) => longest(words) ?? words);
 }
 
 /**
@@ -191,6 +212,40 @@ describe("the daemons of a Rerail home", () => {
     await once(child, "exit");
   }
 
+  /**
+   * `rerail <args>` from this checkout's build, as a person runs it in a terminal in the home, with a home folder of its
+   * own; what it printed, and its exit code.
+   */
+  async function rerail(args: readonly string[]): Promise<{ code: number; out: string }> {
+    const user = join(home, "user");
+    const own = { ...env, HOME: user, USERPROFILE: user, APPDATA: join(user, "AppData", "Roaming"), LOCALAPPDATA: join(user, "AppData", "Local") };
+    const said = (out: { stdout?: string; stderr?: string }): string => `${out.stdout ?? ""}${out.stderr ?? ""}`;
+    return await execute(process.execPath, [join(packageRoot, "dist", "cli", "cli.js"), ...args], { cwd: home, env: own, windowsHide: true })
+      .then(out => ({ code: 0, out: said(out) }), (error: { code?: number; stdout?: string; stderr?: string }) => ({ code: error.code ?? 1, out: said(error) }));
+  }
+
+  /** The commands the built CLI's usage lists, each as its words before any option or placeholder: `daemon stop`. */
+  async function listedCommands(): Promise<string[]> {
+    const { out } = await rerail(["help"]);
+    return out.split("\n").filter(line => line.startsWith("  rerail ")).map(line => commandWords(line.slice("  rerail ".length))).filter(Boolean);
+  }
+
+  /**
+   * Runs, through the built CLI, every command `messages` name, each once, in the order named: each is one the CLI lists
+   * and takes, never its usage error. What each printed, by command.
+   */
+  async function runNamedCommands(messages: readonly string[]): Promise<Map<string, string>> {
+    const listed = await listedCommands();
+    const said = new Map<string, string>();
+    for (const command of new Set(messages.flatMap(message => namedCommands(message, listed)))) {
+      expect(listed).toContain(command);
+      const { out } = await rerail(command.split(" "));
+      expect(out).not.toMatch(/^rerail: (?:Usage|Unknown command)/mu);
+      said.set(command, out);
+    }
+    return said;
+  }
+
   /** The daemons still running in the home a moment after the last start ended, and the pid daemon.json names. */
   async function settled(): Promise<{ live: number[]; recorded: number | undefined }> {
     await delay(2_500);
@@ -277,7 +332,7 @@ describe("the daemons of a Rerail home", () => {
     expect(recorded).toBe(first.pid);
   }, 90_000);
 
-  it("leaves the next start to use a daemon slow to come up after the first start's wait ran out, never a second", async () => {
+  it("says a daemon slow to come up still starts, and names the start that waits for it, which uses it, never a second", async () => {
     await writeFile(join(home, DAEMON_PORT_FILE), JSON.stringify({ port: await freePort() }));
     const slowStart = join(home, "slow-start");
     env = watchedEnvironment(home, undefined, slowStart);
@@ -285,22 +340,32 @@ describe("the daemons of a Rerail home", () => {
     // the first start's whole wait for it, 3 s here rather than 15 s.
     await writeFile(slowStart, "");
     waits.startMs = 3_000;
-    await expect(startDaemon(control(), { dev: true, env })).rejects.toThrow(/did not become ready within 3s/u);
+    const first = await startDaemon(control(), { dev: true, env }).then(() => "", (error: unknown) => (error as Error).message);
     waits.startMs = undefined;
-    // The next start finds the daemon holding the home and daemon.json not written yet; once it has looked for
-    // daemon.json, the daemon goes on and writes it.
     await until(() => existsSync(`${slowStart}.held`), 30_000);
+    const [launched] = liveDaemons(home);
+    // The start names the daemon it leaves running and the command that waits for it, never a failed start.
+    expect(first).toContain(`Rerail daemon (pid ${launched}) is still starting: it has not answered within 3s, and this start leaves it running. `
+      + "Run rerail daemon start again to wait for it.");
+    expect(first).not.toMatch(/did not become ready|end that process/u);
+    // That command finds the daemon holding the home and daemon.json not written yet; once it has looked for
+    // daemon.json, the daemon goes on and writes it, and the start uses it.
     reads.ended = path => {
       if (path !== stateFile) return;
       reads.ended = undefined;
       releaseSlowStart(slowStart);
     };
     const second = await startDaemon(control(), { dev: true, env });
+    expect(second).toMatchObject({ started: false, daemon: { state: { pid: launched } } });
+    // The same command, run through the built CLI as the person reads it, finds that daemon serving.
+    const said = await runNamedCommands([first]);
+    expect([...said.keys()]).toEqual(["daemon start"]);
+    expect(said.get("daemon start")).toContain("The Rerail daemon is already running.\nRerail daemon ");
+    expect(said.get("daemon start")).toContain(`(pid ${launched},`);
     await until(() => !existsSync(`${slowStart}.held`), 40_000);
     const { live, recorded } = await settled();
-    expect(live).toHaveLength(1);
+    expect(live).toEqual([launched]);
     expect(recorded).toBe(live[0]);
-    expect(second).toMatchObject({ started: false, daemon: { state: { pid: live[0] } } });
   }, 120_000);
 
   it("leaves a daemon started beside a busy one to exit, and keeps the record and the port with the busy one", async () => {
