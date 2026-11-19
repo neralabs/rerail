@@ -93,8 +93,8 @@ test.describe("History by rule over a mature repository", () => {
     const declined = violationRows(page).filter({ has: page.locator('.hoc[data-outcome="declined"]') });
     await expect(declined).toHaveCount(1);
     await expect(declined.locator(".hoc")).toHaveText("Declined");
-    await expect(declined.locator(".hsaid dt")).toHaveText("Agent said");
-    await expect(declined.locator(".hsaid dd")).not.toBeEmpty();
+    await expect(declined.locator(".hsaid .k")).toHaveText("Agent said");
+    await expect(declined.locator(".hsaid .v")).not.toBeEmpty();
     // Its other violations were steered and not declined.
     await expect(violationRows(page).locator('.hoc[data-outcome="steered"]').first()).toHaveText("Steered");
 

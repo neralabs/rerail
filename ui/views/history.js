@@ -63,9 +63,9 @@ function build() {
     OUTCOME_CHIPS.map(([v, label]) => h("button.chip", { "data-act": "houtcome", "data-i": v, "aria-pressed": "false" }, label)));
   // A chip that leaves the list empty: what the section says instead of a rule.
   const unmatched = h("div.empty", { hidden: true }, h("h3"), h("p"));
-  const detail = h("div.hdetail", null, h("div.l1", null, title, pickWrap), meta, kvs);
+  const open = h("span.acts", null, h("button.btn.sm", { "data-act": "detail" }, "Open rule"));
+  const detail = h("div.hdetail", null, h("div.l1", null, title, pickWrap, open), meta, kvs);
   const scroll = h("div.hscroll", null, nothing, violations, more);
-  const ltrow = h("div.hltrow", null, toggle);
   const aside = h("aside", null,
     h("div.hsearch", null, glyph(SEARCH_PATH, 13), search),
     chips,
@@ -73,9 +73,9 @@ function build() {
   const body = h("div.hist", null, aside,
     h("section", null, h("div.list", null, unmatched, detail, summaryLine, scroll)));
   pane = h("section.group.history", null,
-    h("div.ghead.hh", null, h("h2", null, "History by rule"), lead, h("div.act", null, range)),
-    empty, ltrow, body);
-  pane._a = { lead, range, toggle, search, chips, rows, noMatch, unmatched, detail, scroll, title, pick, pickLabel, pickWrap, meta, kvs, summaryLine, violations, more, nothing, empty, ltrow, body };
+    h("div.ghead.hh", null, h("h2", null, "History by rule"), lead, h("div.act", null, toggle, range)),
+    empty, body);
+  pane._a = { lead, range, toggle, search, chips, rows, noMatch, unmatched, detail, scroll, title, pick, pickLabel, pickWrap, open, meta, kvs, summaryLine, violations, more, nothing, empty, body };
 }
 
 const createListRow = () => h("button.hrow", { "data-act": "hsel" },
@@ -122,15 +122,16 @@ function toldOf(id) {
   return newest ?? (stored ? messageText(stored) : "");
 }
 
-/** The line under the title (where from · id · On or Off · Open rule), then the mode and what the agent is told. */
+/** Open rule beside the title, the line under it (where from · id · On or Off), then the mode and what the agent is told. */
 function renderMeta(a, id, told) {
   const stored = data.rules.get(id);
   const origin = historyOrigin(id);
   const mode = stored ? ruleMode(stored) : null;
+  setAttr(a.open, "hidden", !stored);
+  setAttr(a.open.firstChild, "data-i", id);
   setContent(a.meta, JSON.stringify([id, stored?.enabled, origin]), () => [
     h("span", null, origin), h("span.mono", null, id),
     stored ? h("span", null, stored.enabled ? "On" : "Off") : h("span", null, "Deleted rule"),
-    stored ? h("span.acts", null, h("button.btn.sm", { "data-act": "detail", "data-i": id }, "Open rule")) : null,
   ]);
   setAttr(a.kvs, "hidden", mode === null && told === "");
   setContent(a.kvs, JSON.stringify([mode, told]), () => [
@@ -146,9 +147,8 @@ function createViolation(item) {
   if (item.day !== undefined) return h("div.day", null, item.day);
   return h("div.ev.hr", null,
     h("span.when.num"),
-    h("div.what", null, h("span.loc.mono"), h("small.diff", { hidden: true }),
-      h("span.badge.hoc"),
-      h("dl.hsaid", { hidden: true }, h("dt", null, "Agent said"), h("dd"))),
+    h("div.what", null, h("div.wl", null, h("span.loc.mono"), h("span.badge.hoc")), h("small.diff", { hidden: true }),
+      h("div.hsaid", { hidden: true }, h("span.k", null, "Agent said"), h("span.v"))),
     h("button.open", { "data-act": "session", title: "Open this session" }));
 }
 
@@ -325,7 +325,7 @@ export function render(root) {
   const showBody = bodyShown(empty, id);
   renderLeadAndRange(a, ranked, empty, showBody);
   renderEmptyState(a, empty, showBody);
-  setAttr(a.ltrow, "hidden", !showBody);
+  setAttr(a.toggle, "hidden", !showBody);
   setAttr(a.body, "hidden", !showBody);
   if (showBody) renderHistoryBody(a, ranked, id);
 }
