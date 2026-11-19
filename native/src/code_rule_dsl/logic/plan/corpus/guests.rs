@@ -595,6 +595,16 @@ type Parsed = (Arc<core::Facts>, u32, [u8; 32]);
 #[derive(Default)]
 pub(super) struct Parses {
     kept: std::sync::Mutex<(usize, HashMap<(String, bool, String), Option<Parsed>>)>,
+    /// The texts parsed, not found kept (`Report::guest_parses`): decision 0431 R6, a text a run parsed is not
+    /// parsed again.
+    parsed: std::sync::atomic::AtomicUsize,
+}
+
+impl Parses {
+    /// The texts this run parsed.
+    pub(super) fn parsed(&self) -> usize {
+        self.parsed.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 /// `text` parsed as `label`, its root (a wrapped expression's) and its facts' digest; `None` when the parser gives no
@@ -607,6 +617,7 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, parses: &Parses) -> 
         crate::code_rule_dsl::prof::count("guests.parse_kept", 1);
         return Ok(hit.clone());
     }
+    parses.parsed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(key.2.clone()) };
     let built = core::build(&file).map_err(|e| format!("{path}: {e}"))?;
     let parsed = match built {

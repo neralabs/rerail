@@ -1813,3 +1813,70 @@ names(x) :- string_annotation(n), parsed(n, "annotation", r), within(m, r), node
     assert!(again.file_tapes.0 > 0, "{:?}", again.file_tapes);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Decision 0431 R6's runs: a workspace, a store, and a run of `names` (the annotations' identifiers, plus `extra` in
+/// the rule's body) over it, giving the run's report.
+fn tape_value_runs(name: &str, files: &[(&str, &str)]) -> (std::path::PathBuf, impl Fn(&str) -> super::Report) {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    let ws = dir.join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    for (path, text) in files {
+        std::fs::write(ws.join(path), text).unwrap();
+    }
+    let (d, w) = (dir.clone(), ws.clone());
+    let run = move |extra: &str| {
+        let program = format!(r#"
+.decl names(x: symbol)
+names(x) :- string_annotation(n), parsed(n, "annotation", r), within(m, r), kind(m, "identifier"), text(m, x){extra}.
+.output names
+"#);
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(d.join("store.sqlite")));
+        super::run(&program, &w, None, &d.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap()
+    };
+    (dir, run)
+}
+
+/// Decision 0431 R6, a guard of today's: within one run, equal texts are parsed once, whichever files hold them.
+#[test]
+fn equal_texts_are_parsed_once_a_run() {
+    let (dir, run) = tape_value_runs("tv-once", &[("a.py", "x: \"List[int]\" = []\ny: \"Baz\" = 1\n"), ("b.py", "z: \"List[int]\" = []\n")]);
+    let first = run("");
+    assert_eq!(first.guest_parses, 2, "\"List[int]\" and \"Baz\", once each");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0431 R6: a text the last run parsed is not parsed again when its file is edited elsewhere. The file is
+/// evaluated again; its annotation's tape is the last run's, found by the text's key.
+#[test]
+#[ignore = "0431 step 4: tape values kept"]
+fn an_edit_elsewhere_parses_no_text_the_last_run_parsed() {
+    let (dir, run) = tape_value_runs("tv-edit", &[("a.py", "x: \"List[int]\" = []\n")]);
+    assert_eq!(run("").guest_parses, 1);
+    std::fs::write(dir.join("ws/a.py"), "# an edit elsewhere\nx: \"List[int]\" = []\n").unwrap();
+    let edited = run("");
+    assert_eq!(edited.guest_parses, 0, "the annotation's text is the last run's");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0431 R6: a new file holding a text a run parsed before parses nothing: one text is one tape, wherever.
+#[test]
+#[ignore = "0431 step 4: tape values kept"]
+fn a_new_file_with_a_text_parsed_before_parses_nothing() {
+    let (dir, run) = tape_value_runs("tv-new-file", &[("a.py", "x: \"List[int]\" = []\n")]);
+    assert_eq!(run("").guest_parses, 1);
+    std::fs::write(dir.join("ws/b.py"), "y: \"List[int]\" = []\n").unwrap();
+    assert_eq!(run("").guest_parses, 0, "b.py's annotation is a.py's tape");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0431 R6: an edited rule (a new program, every file evaluated again) parses no text the last run parsed,
+/// as an edit parses no file (`an_edit_parses_no_file_the_last_run_read`).
+#[test]
+#[ignore = "0431 step 4: tape values kept"]
+fn an_edited_rule_parses_no_text_the_last_run_parsed() {
+    let (dir, run) = tape_value_runs("tv-rule-edit", &[("a.py", "x: \"List[int]\" = []\n"), ("b.py", "y: \"Optional[Foo]\" = None\n")]);
+    assert_eq!(run("").guest_parses, 2);
+    assert_eq!(run(", x != \"r6\"").guest_parses, 0, "the annotations' tapes are the last run's");
+    let _ = std::fs::remove_dir_all(&dir);
+}

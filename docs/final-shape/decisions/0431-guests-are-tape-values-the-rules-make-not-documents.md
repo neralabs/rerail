@@ -87,12 +87,12 @@ code may be named by which rules asked for it, or in what order.
 | R3 | One text is one tape and one set of nodes at every place; a tape value's node has no line of its own | `one_tape_at_two_places_is_one_set_of_nodes` |
 | R4 | No string is parsed unless a rule asks for it | `a_string_no_rule_asks_for_is_not_parsed` |
 | R5 | The batch is built once a chunk | written with step 3, on the report's count of builds |
-| R6 | A second run over unchanged files and program parses nothing | written with step 4, on the report's count of parses |
+| R6 | A text a run parsed is not parsed again: after an edit elsewhere in its file, in a new file, after a rule's edit (`Report::guest_parses`) | `an_edit_elsewhere_parses_no_text_the_last_run_parsed`, `a_new_file_with_a_text_parsed_before_parses_nothing`, `an_edited_rule_parses_no_text_the_last_run_parsed`; guard `equal_texts_are_parsed_once_a_run` |
 | R7 | A file read from the memo has its programs and tape values for a cross-file rule | written with step 4 |
 | R8 | CPU and Metal give the same rows, the device reading the same tapes | the Metal path's parity tests, with both kinds |
 | R9 | A finding placed at a tape value's node is refused by the lowering | written with step 2 |
 
-The tests for R1–R4 are in `logic/rr/tests.rs`, ignored until their step lands (`#[ignore = "0431 …"]`). 0055's tests
+The tests for R1–R4 are in `logic/rr/tests.rs`, R6's in `logic/plan/corpus/tests.rs`, ignored until their step lands (`#[ignore = "0431 …"]`). 0055's tests
 keep their meaning, rewritten for `guest_of` and the file's programs where they read `guest(g, …)`.
 
 ## Steps
