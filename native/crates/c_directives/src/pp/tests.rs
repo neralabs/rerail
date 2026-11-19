@@ -63,29 +63,65 @@ fn the_grammars_pp_tape_is_the_lean_writers() {
     }
 }
 
-/// R4 over every file of the C and C++ corpora: the same tape, or refused; none differ.
+/// R4 over every file of the C and C++ corpora: the same tape, or refused; none differ. Cranelift
+/// against the lean writer, and Metal's tapes against Cranelift's, a batch at a time; the
+/// interpreter too with `RERAIL_PP_INTERP` (its unit shapes are `the_grammars_…`). A chunk:
+/// `RERAIL_PP_SKIP` files of each language, then `RERAIL_PP_COUNT`.
 #[test]
 #[ignore = "the corpora"]
 fn the_corpus_pp_tapes() {
     let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
-    let (mut same, mut refused, mut differ) = (0, 0, Vec::new());
+    let n = |k: &str, d: usize| std::env::var(k).ok().and_then(|n| n.parse().ok()).unwrap_or(d);
+    let (skip, limit, interp) = (n("RERAIL_PP_SKIP", 0), n("RERAIL_PP_COUNT", usize::MAX), std::env::var_os("RERAIL_PP_INTERP").is_some());
+    let (mut same, mut differ) = (0, Vec::new());
+    let mut refused = std::collections::BTreeMap::<String, usize>::new();
     for (dir, cpp) in [("c", false), ("cpp", true)] {
         let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
         let mut paths: Vec<_> = rd.flatten().map(|e| e.path()).collect();
         paths.sort();
-        let limit = std::env::var("RERAIL_PP_COUNT").ok().and_then(|n| n.parse().ok()).unwrap_or(usize::MAX);
-        for p in paths.into_iter().take(limit) {
-            let Ok(src) = std::fs::read(&p) else { continue };
-            match check(&src, cpp) {
-                Ok(true) => same += 1,
-                Ok(false) => refused += 1,
-                Err(e) => differ.push(format!("{}: {e}", p.display())),
+        let c = compiled(cpp).unwrap();
+        let files: Vec<(std::path::PathBuf, Vec<u8>)> = paths.into_iter().skip(skip).take(limit).filter_map(|p| std::fs::read(&p).ok().map(|s| (p, s))).collect();
+        for batch in files.chunks(64) {
+            let images: Vec<_> = batch.iter().map(|(_, src)| c.parser.image(src)).collect();
+            #[cfg(target_os = "macos")]
+            let metal = c.metal_images(&batch.iter().map(|(_, s)| s.as_slice()).collect::<Vec<_>>());
+            for (k, ((p, src), image)) in batch.iter().zip(&images).enumerate() {
+                #[cfg(target_os = "macos")]
+                if let Some(m) = &metal {
+                    if m[k].as_ref() != image.as_ref().ok() {
+                        differ.push(format!("{}: Metal's tape differs", p.display()));
+                        continue;
+                    }
+                }
+                let _ = k;
+                if interp && c.interpreter_image(src) != image.as_ref().ok().cloned() {
+                    differ.push(format!("{}: the interpreter's tape differs", p.display()));
+                    continue;
+                }
+                match image {
+                    Err(r) => *refused.entry(r.why.to_string()).or_default() += 1,
+                    Ok(image) => {
+                        let lean = rerail_c_pp::tape::image(src, options(cpp));
+                        if *image == lean {
+                            same += 1;
+                        } else {
+                            let a = crate::outline(image, KINDS, FIELDS, src).unwrap();
+                            let b = crate::outline(&lean, KINDS, FIELDS, src).unwrap();
+                            let at = a.lines().zip(b.lines()).position(|(x, y)| x != y).unwrap_or(0);
+                            let around = |t: &str| t.lines().skip(at.saturating_sub(3)).take(7).collect::<Vec<_>>().join("\n");
+                            differ.push(format!("{}: node {at}\ngrammar:\n{}\nlean:\n{}", p.display(), around(&a), around(&b)));
+                        }
+                    }
+                }
             }
         }
     }
-    eprintln!("same {same}, refused {refused}, differ {}", differ.len());
-    for d in differ.iter().take(5) {
-        eprintln!("{d}\n");
+    eprintln!("same {same}, refused {}, differ {}", refused.values().sum::<usize>(), differ.len());
+    for (why, k) in &refused {
+        eprintln!("  refused {k}: {why}");
+    }
+    for d in differ.iter().take(6) {
+        eprintln!("DIFF {d}\n");
     }
     assert!(differ.is_empty());
 }
