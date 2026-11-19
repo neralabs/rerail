@@ -99,6 +99,8 @@ export interface ScanReport {
   scope: "repository" | "git-diff";
   base: { ref: string; mergeBase: string } | null;
   paths: string[] | null;
+  requestedPaths?: string[];
+  skippedPaths?: string[];
   rulesSource: { kind: "home" } | { kind: "worktree" } | RefRuleSource | { kind: "rr" };
   status: "completed" | "failed";
   rules: ScanRule[];
@@ -141,7 +143,7 @@ function git(cwd: string, args: readonly string[]): string {
 
 function gitMaybe(cwd: string, args: readonly string[]): string | null {
   const result = runGit(cwd, args);
-  return result.status === 0 ? result.stdout.trim() : null;
+  return result.status === 0 ? result.stdout.replace(/\n$/u, "") : null;
 }
 
 function nulList(text: string): string[] {
@@ -427,14 +429,16 @@ async function withScanScratch<T>(home: RerailDatabase | undefined, run: (scratc
 }
 
 /** What the scan covers: the paths asked for, what differs from the base or HEAD, or null for the whole repository. */
-function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGitRevisionSource | undefined): { base: ScanReport["base"]; paths: string[] | null; failures?: ScanFailure[] } {
+function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGitRevisionSource | undefined): Pick<ScanReport, "base" | "paths" | "requestedPaths" | "skippedPaths"> & { failures?: ScanFailure[] } {
   if (options.paths !== undefined) {
     const failures: ScanFailure[] = [];
     const inputs = [...new Set(options.paths.filter(path => path.length > 0).map(path => path.replace(/^(?:\.\/)+/u, "") || "."))];
-    if (inputs.includes(".")) return { base: null, paths: null };
+    const skippedPaths: string[] = [];
     const paths = inputs.filter(path => {
       try {
-        return source === undefined ? existsSync(join(root, path)) : source.containsPath(path);
+        if (path === "." || (source === undefined ? existsSync(join(root, path)) : source.containsPath(path))) return true;
+        skippedPaths.push(path);
+        return false;
       } catch (error) {
         failures.push({
           code: "adapter-error", path, ruleId: null,
@@ -443,7 +447,7 @@ function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGi
         return false;
       }
     }).sort((left, right) => left.localeCompare(right));
-    return { base: null, paths, failures };
+    return { base: null, paths: paths.includes(".") ? null : paths, requestedPaths: [...options.paths], skippedPaths, failures };
   }
   if (options.scope !== "git-diff") return { base: null, paths: null };
   if (options.base === undefined) {
@@ -623,7 +627,8 @@ async function scanReport(
   } finally {
     home?.$client.close();
   }
-  const { base, paths, failures: pathFailures = [] } = scanTarget(options, root, source);
+  const { failures: pathFailures = [], ...target } = scanTarget(options, root, source);
+  const { paths } = target;
   if (source !== undefined && paths !== null) source.restrictPaths(paths);
   let audits = explicitRr ? [] : await runScanAudits(databasePath, root, `scan-${scanId}`, paths, source, analysisStore, analysisRun, checkoutRules);
   const cacheFailure = audits.flatMap(audit => audit.result?.failures ?? []).find(failure => failure.code === "cache-unavailable");
@@ -696,8 +701,7 @@ async function scanReport(
     },
     ...(source === undefined || options.revision === undefined ? {} : { source: { revision: options.revision, tree: source.tree, commit: source.commit ?? null } }),
     scope: options.scope,
-    base,
-    paths,
+    ...target,
     rulesSource: explicitRr ? { kind: "rr" } : refRules?.provenance ?? { kind: useHome ? "home" : "worktree" },
     status: completed ? "completed" : "failed",
     rules: [...rules.values()].sort((left, right) => left.ruleId.localeCompare(right.ruleId)),

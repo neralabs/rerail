@@ -91,6 +91,34 @@ describe("headless rerail scan", () => {
     }]);
   });
 
+  it.skipIf(process.platform === "win32")("preserves spaces in the checkout and in paths from a list", async () => {
+    const sibling = checkout();
+    const root = sibling + " ";
+    const home = sibling + "-home";
+    roots.push(root);
+    git(sibling, "clone", "--quiet", sibling, root);
+    writeFileSync(join(root, " lead.py"), "NEEDLE\n");
+    git(root, "add", "--", " lead.py");
+    git(root, "commit", "-qm", "distinct checkout");
+    const list = join(root, "paths.txt");
+    writeFileSync(list, " lead.py\r\nmissing.py\n");
+    vi.stubEnv("RERAIL_HOME", home);
+    try {
+      for (const selection of [["--path", " lead.py", "--path", "missing.py"], ["--paths-from", list]]) {
+        let output = "";
+        const stdout = { write: (text: string) => { output += text; return true; } };
+        const args = ["--repo", root, "--revision", "HEAD", "--analysis-scope", "spaces", "--json", "--no-send", "--fail-on-violations", ...selection];
+        expect(await runAuditCommand("scan", args, { home, stdout })).toBe(SCAN_VIOLATIONS_EXIT);
+        expect(JSON.parse(output)).toMatchObject({
+          checkout: { path: root }, source: { commit: git(root, "rev-parse", "HEAD") }, paths: [" lead.py"],
+          requestedPaths: [" lead.py", "missing.py"], skippedPaths: ["missing.py"], violations: [{ path: " lead.py" }],
+        });
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("scans a historical commit and tree with today's policy and historical paths", async () => {
     const root = checkout();
     const commit = git(root, "rev-parse", "HEAD");
@@ -387,6 +415,7 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
       revision: tree, analysisScope: "paths", paths: ["a.py", "absent.py", "gaps/a.py"],
     });
     expect(report.status).toBe("failed");
+    expect(report.skippedPaths).toEqual(["absent.py"]);
     expect(report.violations.map(finding => finding.path)).toEqual(["a.py"]);
     expect(report.failures).toEqual([expect.objectContaining({ code: "adapter-error", path: "gaps/a.py" })]);
   });

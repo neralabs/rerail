@@ -248,7 +248,7 @@ function parseScanArguments(args: readonly string[]): ScanArguments {
         index += 2;
         break;
       case "--paths-from": {
-        const listed = readFileSync(requireValue(args, index, argument), "utf8").split(/\r?\n/u).map(line => line.trim()).filter(line => line.length > 0);
+        const listed = readFileSync(requireValue(args, index, argument), "utf8").split(/\r?\n/u).filter(line => line.length > 0);
         paths = [...(paths ?? []), ...listed];
         index += 2;
         break;

@@ -55,7 +55,14 @@ function locateInGit(requested: string): ReturnType<typeof runGit> | undefined {
 }
 
 function gitLocation(requested: string, stdout: string): RepositoryIdentityLocation {
-  const [top, commonDirectory, gitDirectory] = stdout.trim().split("\n").map(line => resolve(line.trim()));
+  const lines = stdout.replace(/\n$/u, "").split("\n");
+  // A Unix directory name can contain newlines. Read each field separately in that case.
+  const paths = lines.length === 3 ? lines : ["--show-toplevel", "--git-common-dir", "--git-dir"].map(flag => {
+    const result = runGit(requested, ["rev-parse", "--path-format=absolute", flag]);
+    if (result.status !== 0) throw new Error(`could not resolve ${flag} for ${requested}`);
+    return result.stdout.replace(/\n$/u, "");
+  });
+  const [top, commonDirectory, gitDirectory] = paths.map(path => resolve(path));
   if (top === undefined || commonDirectory === undefined || gitDirectory === undefined) {
     throw new Error(`could not resolve Git common directory for ${requested}`);
   }

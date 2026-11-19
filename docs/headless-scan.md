@@ -41,6 +41,8 @@ rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--revis
 <summary>Option details</summary>
 
 - With `--path` or `--paths-from`, paths are relative to the repository. The scan skips absent paths.
+  The JSON report records the supplied names in `requestedPaths` and the absent names in `skippedPaths`.
+  A path list accepts one name per line and preserves spaces in each name.
   If a Git object prevents path lookup, the scan reports the path and fails.
 - `--scope git-diff`: the merge base is of `<ref>` and `HEAD`, so `--base` gives a pull request's changes. Deleted
   files are not scanned. No changed files is a completed scan with nothing in it.
