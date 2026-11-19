@@ -44,7 +44,14 @@ impl Directories {
 
     pub(super) fn check(&self) -> io::Result<()> {
         for dir in &self.0 {
-            if !dir.is_current()? {
+            let current = dir.is_current().map_err(|err| {
+                if err.kind() == io::ErrorKind::NotFound {
+                    io::Error::other(format!("Git directory {} is unavailable: {err}", dir.path.display()))
+                } else {
+                    err
+                }
+            })?;
+            if !current {
                 return Err(io::Error::other(
                     "Git directory changed since the source view was opened",
                 ));

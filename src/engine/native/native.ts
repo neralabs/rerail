@@ -200,7 +200,10 @@ export interface NativeGitRevisionSource {
   containsPath(path: string): boolean;
   invalidPaths(): string[];
   sourceFailures(): { path: string; message: string }[];
+  /** Legacy nullable shorthand for a read with a 32,000,000-byte limit. */
   readSource(path: string): Buffer | null;
+  /** A required Git object that is unavailable or corrupt raises an error. */
+  readSourceChecked(path: string, limit: number): { status: "ok"; bytes: Buffer } | { status: "absent" } | { status: "too-large" };
   /** A missing directory gives no entries. An unreadable object throws. */
   readDirectory(path: string): { name?: string; nameBytes?: Buffer; mode: number }[] | null;
   /** A file above the byte limit gives no result. A read failure throws. */

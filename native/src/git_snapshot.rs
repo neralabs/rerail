@@ -655,9 +655,14 @@ impl Snapshot {
             return Err(io::Error::from(io::ErrorKind::IsADirectory));
         };
         self.view.with_repo(|repo, _, _| {
-            let header = repo.find_header(id).map_err(error)?;
+            let header = repo.find_header(id).map_err(|e| error(format_args!("cannot read Git blob {id}: {e}")))?;
+            if header.kind() != gix::object::Kind::Blob {
+                return Err(error(format_args!("expected Git blob {id}, found {}", header.kind())));
+            }
             f(header.size(), &|| {
-                let bytes = verified_blob(repo, id)?.data.clone();
+                let bytes = verified_blob(repo, id).map_err(|err| {
+                    if err.kind() == io::ErrorKind::NotFound { error(format_args!("missing Git blob object {id}")) } else { err }
+                })?.data.clone();
                 let key = gix::path::to_unix_separators_on_windows(gix::path::into_bstr(under.as_path()).map_err(error)?);
                 self.view.source_errors.lock().unwrap_or_else(|err| err.into_inner()).remove(key.to_str().map_err(error)?);
                 Ok(bytes)

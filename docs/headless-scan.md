@@ -264,3 +264,19 @@ A detached HEAD has a null ref and no `refHex`.
   The scan computes the fingerprint before it releases the evaluated source.
 
 </details>
+
+## Reading a file from a native revision view
+
+Use `GitRevisionSource.readSourceChecked(path, limit)` when a caller needs to report why a read failed.
+The limit is an integer from zero through 4,294,967,295 bytes.
+
+| Result | Meaning |
+| --- | --- |
+| `{ status: "ok", bytes }` | The blob fits the limit and its bytes match its Git object ID. Empty files return an empty buffer. |
+| `{ status: "absent" }` | The source tree has no regular file at the requested path. The view skips symlinks and submodules. |
+| `{ status: "too-large" }` | The blob header reports a size above the limit. |
+| Exception | The argument is invalid, the path names a directory, or the view cannot read a required tree or blob. |
+
+After restoring a missing object, a caller can retry the same view.
+The older `readSource(path)` uses a 32,000,000-byte limit and returns null for every failed read.
+The older `readFile(path, limit)` returns null for an oversized blob and throws on absence or a read error.

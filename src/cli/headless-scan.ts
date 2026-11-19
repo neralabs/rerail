@@ -234,11 +234,12 @@ function rulesAtRef(root: string, ref: string, loadedRr: NativeLoadedRrPolicies,
   const json = files.filter(file => file.name.endsWith(".json")).filter(file => {
     if (!file.regular) return true;
     try {
-      const contents = source.readFile(file.path, MAX_RULE_DOCUMENT_BYTES);
-      if (contents == null) file.size = MAX_RULE_DOCUMENT_BYTES + 1;
+      const contents = source.readSourceChecked(file.path, MAX_RULE_DOCUMENT_BYTES);
+      if (contents.status === "absent") throw new Error("Git tree no longer contains the listed policy");
+      if (contents.status === "too-large") file.size = MAX_RULE_DOCUMENT_BYTES + 1;
       else {
         try {
-          jsonText.set(file.path, utf8.decode(contents));
+          jsonText.set(file.path, utf8.decode(contents.bytes));
         } catch (error) {
           throw new Error("Git JSON policy has invalid UTF-8", { cause: error });
         }

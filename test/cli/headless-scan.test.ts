@@ -716,6 +716,39 @@ Field(@place("raw-signature",1), role) :- git_signature_bytes(_,_,role,_).
     }
   }, 30_000);
 
+  it("distinguishes a missing source path, byte limit, and missing object on a reusable revision view", () => {
+    const root = checkout();
+    mkdirSync(join(root, "pkg"));
+    writeFileSync(join(root, "pkg", "empty"), "");
+    git(root, "add", "pkg/empty");
+    git(root, "commit", "-qm", "empty file");
+    const source = new (loadNativeBinding().GitRevisionSource)(root, "HEAD", "read");
+    const bytes = readFileSync(join(root, "a.py"));
+    expect(source.readSourceChecked("absent.py", 100)).toEqual({ status: "absent" });
+    expect(source.readSourceChecked("pkg/empty", 0)).toEqual({ status: "ok", bytes: Buffer.alloc(0) });
+    expect(source.readSourceChecked("a.py", bytes.length - 1)).toEqual({ status: "too-large" });
+    expect(source.readSourceChecked("a.py", bytes.length)).toEqual({ status: "ok", bytes });
+    expect(() => source.readSourceChecked("a.py", -1)).toThrow(/byte limit/u);
+    expect(() => source.readSourceChecked("pkg", 100)).toThrow();
+    for (const [revision, path] of [["HEAD:a.py", "a.py"], ["HEAD:pkg", "pkg/empty"]] as const) {
+      const id = git(root, "rev-parse", revision);
+      const object = join(root, ".git", "objects", id.slice(0, 2), id.slice(2));
+      renameSync(object, object + ".offline");
+      try {
+        expect(() => source.readSourceChecked(path, 100)).toThrow(id);
+        expect(() => source.readFile(path, 100)).toThrow();
+        expect(source.readSource(path)).toBeNull();
+      } finally { renameSync(object + ".offline", object); }
+      expect(source.readSourceChecked(path, 100)).toEqual({ status: "ok", bytes: readFileSync(join(root, path)) });
+    }
+    const gitDirectory = join(root, ".git"), moved = join(root, "offline.git");
+    renameSync(gitDirectory, moved);
+    try {
+      expect(() => source.readSourceChecked("absent.py", 100)).toThrow(/Git directory.*unavailable/u);
+    } finally { renameSync(moved, gitDirectory); }
+    expect(source.readSourceChecked("a.py", 100)).toEqual({ status: "ok", bytes });
+  });
+
   it("requires a directory for explicit paths ending in a separator or slash dot on both providers", async () => {
     const root = checkout();
     mkdirSync(join(root, "src"));

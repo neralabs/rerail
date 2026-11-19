@@ -95,6 +95,21 @@ pub struct GitSourceFailure {
 }
 
 #[cfg(not(feature = "headless"))]
+#[napi(object)]
+pub struct GitSourceRead {
+    pub status: String,
+    pub bytes: Option<Buffer>,
+}
+
+#[cfg(not(feature = "headless"))]
+fn file_byte_limit(limit: f64) -> Result<u64> {
+    if !(0.0..=f64::from(u32::MAX)).contains(&limit) || limit.fract() != 0.0 {
+        return Err(invalid("file byte limit must be an integer between 0 and 4294967295"));
+    }
+    Ok(limit as u64)
+}
+
+#[cfg(not(feature = "headless"))]
 impl GitRevisionSource {
     pub fn pinned_snapshot(&self) -> Arc<crate::git_workspace::snapshot::Snapshot> {
         Arc::clone(&self.snapshot)
@@ -157,14 +172,22 @@ impl GitRevisionSource {
     /// An oversized file has no result. A read failure is an error.
     #[napi]
     pub fn read_file(&self, path: String, limit: f64) -> Result<Option<Buffer>> {
-        if !(0.0..=f64::from(u32::MAX)).contains(&limit) || limit.fract() != 0.0 {
-            return Err(invalid("file byte limit must be an integer between 0 and 4294967295"));
-        }
-        match self.snapshot.read_source(&path, limit as u64) {
+        match self.snapshot.read_source(&path, file_byte_limit(limit)?) {
             Ok(bytes) => Ok(Some(bytes.into())),
             Err(err) if err.kind() == std::io::ErrorKind::FileTooLarge => Ok(None),
             Err(err) => Err(invalid(err.to_string())),
         }
+    }
+
+    #[napi]
+    pub fn read_source_checked(&self, path: String, limit: f64) -> Result<GitSourceRead> {
+        let (status, bytes) = match self.snapshot.read_source(&path, file_byte_limit(limit)?) {
+            Ok(bytes) => ("ok", Some(bytes.into())),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => ("absent", None),
+            Err(err) if err.kind() == std::io::ErrorKind::FileTooLarge => ("too-large", None),
+            Err(err) => return Err(invalid(format!("cannot read {path}: {err}"))),
+        };
+        Ok(GitSourceRead { status: status.to_owned(), bytes })
     }
 
     #[napi]

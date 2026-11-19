@@ -4,6 +4,14 @@ The original [twenty cases and their regression tests](audit-c1b588f91.md) cover
 
 At `65e24db1d`, six of the 28 follow-up findings have verified repairs. The Windows checks for cases 21 and 22 also passed.
 
+## Native source reads
+
+Case 28 now has a checked read. One revision view returned distinct results for an absent path, an oversized blob, and an empty file.
+Removing a tracked blob or its containing tree raised an error with the missing object ID. Moving the Git directory also raised an error.
+Restoring each item made the file readable again on the same view.
+The headless rule loader uses the checked read for JSON policies at a Git ref.
+[Read contract](../../../headless-scan.md#reading-a-file-from-a-native-revision-view) · [Regression tests](../../../../test/cli/headless-scan.test.ts)
+
 ## Live checkout ownership
 
 Cases 95 and 96 reproduced on the same router before the repair. Moving a registered child's `.git` left the child in charge.
