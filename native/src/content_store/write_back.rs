@@ -45,8 +45,7 @@ fn cap_bytes_default() -> usize {
 
 /// The queue's cap: 192 MB, or `RERAIL_WRITE_QUEUE_MB` (a measurement aid: how far behind the writer may fall).
 fn cap_bytes() -> usize {
-    static CAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *CAP.get_or_init(|| std::env::var("RERAIL_WRITE_QUEUE_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or(cap_bytes_default(), |mb| mb << 20))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_WRITE_QUEUE_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or(cap_bytes_default(), |mb| mb << 20))
 }
 
 /// The first wait before a busy job runs again: a writer that held the store is often done at once.
@@ -399,9 +398,8 @@ struct Wave {
 /// The bytes under which a job is queued past the cap (back-pressure holds only a job of this size or more).
 /// `RERAIL_WRITES` (a measurement aid): seconds since the writer's first use in this process, for its timeline.
 fn writes_trace() -> Option<f64> {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_WRITES").is_some());
     static T0: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
-    (*ON).then(|| T0.elapsed().as_secs_f64())
+    (rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_WRITES").is_some())).then(|| T0.elapsed().as_secs_f64())
 }
 
 fn small_job() -> usize {

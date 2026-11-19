@@ -8,7 +8,9 @@
 //!
 //! It holds:
 //! - its limits and what it met of them (`width`, decision 0394);
-//! - the trees it decoded from versions (`Version::program`), for the check that a maintained run decodes none.
+//! - the trees it decoded from versions (`Version::program`), for the check that a maintained run decodes none;
+//! - its settings (`setting`: each read once by the run, as it first needs it; decision 0442) and its own values by
+//!   type (`local`: a measurement's sums, a log, a batch), where the process kept them in statics.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
@@ -22,12 +24,17 @@ pub struct Run {
     decoded: parking_lot::Mutex<(usize, Option<&'static std::panic::Location<'static>>)>,
     /// Set as the run ends: what watches it (its memory watch) ends too.
     ended: AtomicBool,
+    /// Its settings and its own values (`setting`, `local`).
+    values: super::profile::RunValues,
 }
 
 impl super::profile::RunOwn for Run {
     fn decoded(&self, at: &'static std::panic::Location<'static>) {
         let mut d = self.decoded.lock();
         *d = (d.0 + 1, Some(at));
+    }
+    fn values(&self) -> &super::profile::RunValues {
+        &self.values
     }
     fn any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
         self
@@ -36,7 +43,7 @@ impl super::profile::RunOwn for Run {
 
 impl Run {
     fn new(settings: width::Settings) -> Run {
-        Run { width: width::Width::new(settings), decoded: Default::default(), ended: AtomicBool::new(false) }
+        Run { width: width::Width::new(settings), decoded: Default::default(), ended: AtomicBool::new(false), values: Default::default() }
     }
     /// Whether the run has ended.
     pub fn ended(&self) -> bool {
@@ -48,6 +55,8 @@ impl Run {
         Record { width: self.width.record(), trees_decoded: (n, at.map(|l| format!("{}:{}", l.file(), l.line()))) }
     }
 }
+
+pub use super::profile::{local, local_if_any, setting};
 
 /// What a run returns of its own state with its result.
 #[derive(Clone, Debug, Default)]
@@ -135,6 +144,24 @@ mod tests {
         let later = b.finish().expect("a new run");
         assert!(later.width.cuts.is_empty() && later.trees_decoded.0 == 0, "a later run starts with nothing of the last");
         assert!(!width::Limits::here().cutting(), "a walk with no run stops at the cap");
+    }
+
+    /// A setting is read once a run, and again by the next run; a local is the run's own.
+    #[test]
+    fn a_runs_settings_and_locals_are_its_own() {
+        let read = std::sync::atomic::AtomicUsize::new(0);
+        let at = || setting(|| read.fetch_add(1, Relaxed));
+        let a = scope(cutting(10));
+        assert_eq!((at(), at()), (0, 0), "read once a run");
+        #[derive(Default)]
+        struct Sum(parking_lot::Mutex<u64>);
+        *local::<Sum>().0.lock() += 2;
+        *local::<Sum>().0.lock() += 3;
+        assert_eq!(*local_if_any::<Sum>().unwrap().0.lock(), 5);
+        drop(a);
+        let _b = scope(cutting(10));
+        assert_eq!(at(), 1, "the next run reads it again");
+        assert!(local_if_any::<Sum>().is_none(), "the next run has none of the last run's");
     }
 
     /// Runs on two threads at once keep apart.

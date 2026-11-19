@@ -198,8 +198,7 @@ pub(in crate::code_rule_dsl) const GPU_BIAS: f64 = 2.0;
 
 /// `GPU_BIAS`, or `RERAIL_GPU_BIAS` when set: a measurement aid only, to refit the bias over runs at several.
 pub(in crate::code_rule_dsl) fn gpu_bias() -> f64 {
-    static BIAS: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
-    *BIAS.get_or_init(|| std::env::var("RERAIL_GPU_BIAS").ok().and_then(|v| v.parse().ok()).filter(|b: &f64| *b > 0.0).unwrap_or(GPU_BIAS))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_GPU_BIAS").ok().and_then(|v| v.parse().ok()).filter(|b: &f64| *b > 0.0).unwrap_or(GPU_BIAS))
 }
 
 /// Where a thread's run may place strata: the CPU only, the device where it is the cheaper (the Metal binding), or
@@ -255,8 +254,7 @@ pub fn set_binding(b: Binding) -> Binding {
 }
 
 fn always_env() -> bool {
-    static ALWAYS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ALWAYS.get_or_init(|| std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "always"))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "always"))
 }
 
 /// A stratum's shape: its forms, and its planned work.
@@ -904,6 +902,5 @@ pub mod tests {
 /// A measurement aid only: `RERAIL_DEVICE_JOINS=off` keeps every stratum's joins on the CPU under a device binding,
 /// so a run can be paired against the same binding with them on. Placement still prices and reports as usual.
 pub(crate) fn device_joins_off() -> bool {
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *OFF.get_or_init(|| std::env::var("RERAIL_DEVICE_JOINS").is_ok_and(|v| v == "off"))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_DEVICE_JOINS").is_ok_and(|v| v == "off"))
 }

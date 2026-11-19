@@ -507,8 +507,7 @@ impl Drop for Reserved {
 /// Decision 0160's trial (`RERAIL_ATOMS_PROVISIONAL=1`): ids are provisional and the lease is never taken. Off, the
 /// lease is taken as before (decision 0049).
 fn lease_free() -> bool {
-    static FREE: LazyLock<bool> = LazyLock::new(|| std::env::var("RERAIL_ATOMS_PROVISIONAL").is_ok_and(|v| v == "1"));
-    *FREE
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_ATOMS_PROVISIONAL").is_ok_and(|v| v == "1"))
 }
 
 /// The error of a write refused after a fork (decisions 0160, 0170): its rows may name this process's ids, not the

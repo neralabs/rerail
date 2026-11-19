@@ -309,8 +309,7 @@ impl Keeper {
         // guest's it holds (the same rows in every file that holds that guest). Each group is counted as one
         // (`patch_own`): compared with the rows kept for that document, not hashed a row at a time.
         // `RERAIL_COUNT_OWN=off` counts every row a row at a time, as before decision 0220.
-        static OWN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        let by_file = *OWN.get_or_init(|| std::env::var("RERAIL_COUNT_OWN").map_or(true, |v| v != "off"));
+        let by_file = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_COUNT_OWN").map_or(true, |v| v != "off"));
         let doc_at = &self.doc_at;
         let mut ok = self.export_rels.iter().all(|rel| match (entry.rows.get(rel), doc_at.get(rel).copied().flatten()) {
             (Some((width, values)), Some(at)) if by_file && at < *width => {

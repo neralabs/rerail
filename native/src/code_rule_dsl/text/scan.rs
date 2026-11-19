@@ -225,8 +225,7 @@ impl Batch {
         }
         out.truncate(self.asked);
         // `RERAIL_SCAN_CHECK`: every verdict against the plan's test of the node's own text.
-        static CHECK: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_SCAN_CHECK").is_some());
-        if *CHECK {
+        if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SCAN_CHECK").is_some()) {
             for (unit, bits) in self.units.iter().zip(&out) {
                 let Some(bits) = bits else { continue };
                 let compiled = unit.lowered.compiled();

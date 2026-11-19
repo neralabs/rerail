@@ -11,11 +11,14 @@ use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 // The workspace profile (`RERAIL_PROFILE`) reports the stages too (its "Stages" section).
-static ON: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_PROF").is_some() || std::env::var_os("RERAIL_PROFILE").is_some());
+/// Whether stages are timed (`RERAIL_PROF`, `RERAIL_PROFILE`): read once a run (decision 0442).
+fn stages_on() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_PROF").is_some() || std::env::var_os("RERAIL_PROFILE").is_some())
+}
 static STAGES: Mutex<BTreeMap<String, (Duration, usize)>> = Mutex::new(BTreeMap::new());
 
 pub fn time<T>(stage: &str, f: impl FnOnce() -> T) -> T {
-    if !*ON {
+    if !stages_on() {
         return f();
     }
     let start = thread_cpu();
@@ -128,7 +131,7 @@ pub fn windows_peak_working_set() -> u64 {
 /// Prints the stages' times under `title` and clears them.
 
 pub fn report(title: &str) {
-    if !*ON {
+    if !stages_on() {
         return;
     }
     let stages = std::mem::take(&mut *STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
@@ -143,7 +146,7 @@ pub struct Stage(Option<(&'static str, Duration, Option<Duration>)>);
 
 impl Stage {
     pub fn start(stage: &'static str) -> Self {
-        Self(ON.then(|| (stage, thread_cpu(), (stage.starts_with("labels.") || stage.starts_with("demand.") || stage == "size.texts").then(process_cpu))))
+        Self(stages_on().then(|| (stage, thread_cpu(), (stage.starts_with("labels.") || stage.starts_with("demand.") || stage == "size.texts").then(process_cpu))))
     }
 }
 
@@ -163,7 +166,7 @@ impl Drop for Stage {
 
 /// Adds `amount` (bytes, records) to `stage`'s count, shown as its calls.
 pub fn count(stage: &'static str, amount: usize) {
-    if *ON {
+    if stages_on() {
         let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         stages.entry(stage.to_owned()).or_default().1 += amount;
     }
@@ -171,12 +174,12 @@ pub fn count(stage: &'static str, amount: usize) {
 
 /// Whether stages are timed (`RERAIL_PROF`, or the workspace profile's `RERAIL_PROFILE`).
 pub fn on() -> bool {
-    *ON
+    stages_on()
 }
 
 /// `count` with a name made at run time.
 pub fn count_named(stage: String, amount: usize) {
-    if *ON {
+    if stages_on() {
         let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         stages.entry(stage).or_default().1 += amount;
     }

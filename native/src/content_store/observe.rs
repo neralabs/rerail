@@ -525,8 +525,7 @@ impl Observer {
         for root in self.roots.iter_mut().filter(|r| !r.trusted && under(&path, &r.path)) {
             root.checked.insert(path.to_owned());
         }
-        static SHOW: OnceLock<bool> = OnceLock::new();
-        if *SHOW.get_or_init(|| std::env::var_os("RERAIL_OBSERVED_PATHS").is_some()) {
+        if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_OBSERVED_PATHS").is_some()) {
             let under = self.roots.iter().find(|r| under(&path, &r.path)).map(|r| if r.trusted { "trusted root, no answer" } else { "untrusted root" }).unwrap_or("no root");
             eprintln!("rerail: stat {} ({under})", path.display());
         }

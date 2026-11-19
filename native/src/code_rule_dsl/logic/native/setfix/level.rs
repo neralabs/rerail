@@ -41,14 +41,12 @@ impl Default for Uid {
 const MIN_LEFT: usize = 4096;
 
 fn min_left() -> usize {
-    static MIN: OnceLock<usize> = OnceLock::new();
-    *MIN.get_or_init(|| std::env::var("RERAIL_LEVEL_JOIN_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(MIN_LEFT))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LEVEL_JOIN_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(MIN_LEFT))
 }
 
 /// Whether a level's seed joins are batched.
 pub fn on() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("RERAIL_LEVEL_JOINS").map_or(true, |v| v != "off"))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LEVEL_JOINS").map_or(true, |v| v != "off"))
 }
 
 /// A level's batch of seed joins, running until the first seed that reads it waits.

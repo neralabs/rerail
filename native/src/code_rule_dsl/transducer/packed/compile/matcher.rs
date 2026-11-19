@@ -1922,7 +1922,6 @@ fn formulas(
 ) -> Vec<Option<Vec<(usize, Vec<u64>)>>> {
     use super::compile_sets::{Index, Reader, Set};
     use rayon::prelude::*;
-    static CHECK: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_SETS_CHECK").is_some());
     if !formulas_on() {
         return vec![None; level.len()];
     }
@@ -1973,7 +1972,7 @@ fn formulas(
                         Plan::Fact(fact) => Some(Arc::unwrap_or_clone(fact.nth_bits(view, &index.siblings).expect("a node set"))),
                         Plan::Set { walk, program, domain, set } => walk.texts(program, view).map(|texts| {
                             let bits = Reader { tape: view, index, labels: &sets[tape], texts: &texts }.eval(set);
-                            if *CHECK {
+                            if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SETS_CHECK").is_some()) {
                                 let starts = (0..view.transducer_len() as u32).filter(|&node| match domain {
                                     Domain::All => true,
                                     Domain::Kinds(kinds) => kinds.binary_search(&view.transducer_kind(node)).is_ok(),

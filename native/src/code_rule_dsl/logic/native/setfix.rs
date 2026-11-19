@@ -187,7 +187,6 @@ impl Interner {
 /// The process's symbols of each database, kept from run to run with their arena: a run need not read a large
 /// store's atoms again. They hold no file open: the store's last handle closes them (`ContentStore`'s drop).
 /// `RERAIL_LEVELS_ON_CYCLES`: a leveled component keeps levels only on its relations on a cycle (`open`).
-static LEVELS_ON_CYCLES: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_LEVELS_ON_CYCLES").is_some());
 static SYMS: LazyLock<Mutex<HashMap<String, Arc<RwLock<Interner>>>>> = LazyLock::new(Default::default);
 /// The symbols of `conn`'s database: the process's arena of it.
 pub fn symbols(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
@@ -352,11 +351,10 @@ fn hash_vals(vals: impl Iterator<Item = i64>) -> u64 {
 /// `[postings]`, `[lead]`). Measurement only: nothing reads it but the report.
 pub mod probed {
     use std::collections::HashMap;
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     static PROBES: std::sync::Mutex<Option<HashMap<(String, Vec<usize>), u64>>> = std::sync::Mutex::new(None);
     #[inline]
     pub(crate) fn on() -> bool {
-        *ON.get_or_init(|| std::env::var_os("RERAIL_INDEX_REPORT").is_some())
+        rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_INDEX_REPORT").is_some())
     }
     #[inline]
     pub(crate) fn note(rel: &str, cols: impl Iterator<Item = usize>) {
@@ -1559,8 +1557,7 @@ impl Rel {
 
 /// `RERAIL_LEVELS_TRACE=<value>`: the candidates holding the value, and how each is decided.
 fn levels_traced(row: &[i64]) -> bool {
-    static V: std::sync::LazyLock<Option<i64>> = std::sync::LazyLock::new(|| std::env::var("RERAIL_LEVELS_TRACE").ok().and_then(|v| v.parse().ok()));
-    V.is_some_and(|v| row.contains(&v))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LEVELS_TRACE").ok().and_then(|v| v.parse().ok())).is_some_and(|v| row.contains(&v))
 }
 
 impl Levels {
@@ -1741,8 +1738,7 @@ fn read_sql(conn: impl Scoped, sql: &str, types: &[u8], syms: &mut Interner) -> 
 /// Whether an environment setting is on, read once per process (these are asked per index and per join).
 macro_rules! env_set {
     ($name:literal) => {{
-        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *ON.get_or_init(|| std::env::var_os($name).is_some())
+        rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os($name).is_some())
     }};
 }
 
@@ -1984,7 +1980,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             // none, so the whole stratum (174 relations, O125 `acls`) was overdeleted and derived again instead. A
             // row's wave orders its supports whether or not a cycle reads it. `RERAIL_LEVELS_ON_CYCLES` keeps them
             // only on cycles, as before.
-            if !*LEVELS_ON_CYCLES { keep[r] = true; continue; }
+            if !rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_LEVELS_ON_CYCLES").is_some()) { keep[r] = true; continue; }
             // Whether `r` reaches itself.
             let mut seen = vec![false; n];
             let mut stack = next[r].clone();
@@ -5427,8 +5423,7 @@ impl InRel {
                 // `RERAIL_KEY_PRINTS` (measurement aids): `off` probes the sorted order by its rows, `hash` builds the hash
                 // table of before decision 0112's derived-input order.
                 // 0: prints (the default), 1: `off`, 2: `hash`.
-                static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-                let mode = *MODE.get_or_init(|| match std::env::var("RERAIL_KEY_PRINTS").as_deref() { Ok("off") => 1, Ok("hash") => 2, _ => 0 });
+                let mode = rerail_prof::code_rule_dsl::logic::profile::setting(|| match std::env::var("RERAIL_KEY_PRINTS").as_deref() { Ok("off") => 1, Ok("hash") => 2, _ => 0 });
                 if self.view.is_none() && mode != 2 {
                     // A derived relation's rows are its own: a sorted order on the key columns (dead rows are in
                     // it, as in a kept chain; readers skip them). Its probes give whole keys, so it keeps a print a
@@ -5436,8 +5431,7 @@ impl InRel {
                     // It is made on its first probe (`Csr::runs`), unless `RERAIL_LAZY_ORDERS=off` (a measurement aid).
                     let csr = Csr { ordered: Some(mode != 1), ..empty(false, false) };
                     ORDERS_OPENED.fetch_add(1, AtomicOrdering::Relaxed);
-                    static EAGER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-                    if *EAGER.get_or_init(|| std::env::var("RERAIL_LAZY_ORDERS").is_ok_and(|v| v == "off")) { csr.runs(self); }
+                    if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LAZY_ORDERS").is_ok_and(|v| v == "off")) { csr.runs(self); }
                     csr
                 } else if let Some(v) = self.view.as_ref().filter(|v| v.ids.is_none() && v.eqs.is_empty())
                     && let Some(ib) = v.src.in_block().filter(|ib| ib.rows as usize == v.src.len())
@@ -5987,8 +5981,7 @@ impl std::fmt::Debug for NodeTexts {
 /// on its caller's thread, as before (to compare).
 /// Not under `walks_whole`.
 fn morsels_on() -> bool {
-    static ON: LazyLock<bool> = LazyLock::new(|| std::env::var("RERAIL_MORSELS").map_or(true, |v| v != "off"));
-    *ON && !WALKS_WHOLE.with(std::cell::Cell::get)
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_MORSELS").map_or(true, |v| v != "off")) && !WALKS_WHOLE.with(std::cell::Cell::get)
 }
 
 thread_local! {

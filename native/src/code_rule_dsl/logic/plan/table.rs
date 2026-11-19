@@ -537,12 +537,11 @@ pub fn batches() -> [u64; 2] {
 /// else from `GPU_ROWS`, where one launch and the columns' upload cost less than the CPU's hashing.
 fn gpu_pays(rows: usize) -> bool {
     const GPU_ROWS: usize = 1 << 20;
-    static MODE: std::sync::LazyLock<Option<bool>> = std::sync::LazyLock::new(|| match std::env::var("RERAIL_STATS_GPU").as_deref() {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| match std::env::var("RERAIL_STATS_GPU").as_deref() {
         Ok("on") => Some(true),
         Ok("off") => Some(false),
         _ => None,
-    });
-    MODE.unwrap_or(rows >= GPU_ROWS)
+    }).unwrap_or(rows >= GPU_ROWS)
 }
 
 /// Columns' heavy values made on the registered device (`SolverDevice::column_stats`), exact; `None` without one.

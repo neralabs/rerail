@@ -1431,9 +1431,8 @@ impl Relation {
         // The first position whose value is not `below` (ascending): the fence's entry past it bounds the rows to
         // search to one fence's span.
         // `RERAIL_FENCE=off`: every row searched, as before (to measure the fence).
-        static OFF: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_FENCE").is_ok_and(|v| v == "off"));
         let first = |below: &dyn Fn(i64) -> bool| -> usize {
-            if *OFF {
+            if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_FENCE").is_ok_and(|v| v == "off")) {
                 return index.rows.partition_point(|&r| below(self.value(r as usize, column)));
             }
             let j = index.fence.partition_point(|&k| below(k));

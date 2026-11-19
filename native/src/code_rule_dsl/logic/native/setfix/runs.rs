@@ -204,8 +204,7 @@ pub(super) struct Sorted(Vec<(u32, u32, Arc<[usize]>)>);
 /// step's probes, an order sorted again). `RERAIL_KNOWN_SORTED=runs` (a measurement aid) keeps it to the runs
 /// (decision 0180); `off`, to nothing.
 pub(super) fn known_beyond_runs() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("RERAIL_KNOWN_SORTED").map_or(true, |v| v != "runs" && v != "off"))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_KNOWN_SORTED").map_or(true, |v| v != "runs" && v != "off"))
 }
 
 /// Whether rows in the order on `have` (relation of `k` columns) are in the order on `want` of the same relation.
@@ -247,8 +246,7 @@ impl Sorted {
     /// The parts of rows `lo..hi` known to be in the order on `cols`, in row order.
     pub(super) fn within(&self, cols: &[usize], k: usize, lo: u32, hi: u32) -> Vec<(u32, u32)> {
         // `RERAIL_KNOWN_SORTED=off` (a measurement aid): nothing known, every run sorted.
-        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *OFF.get_or_init(|| std::env::var("RERAIL_KNOWN_SORTED").is_ok_and(|v| v == "off")) {
+        if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_KNOWN_SORTED").is_ok_and(|v| v == "off")) {
             return Vec::new();
         }
         self.0.iter().filter(|(a, b, c)| *a < hi && *b > lo && implies(c, cols, k)).map(|&(a, b, _)| (a.max(lo), b.min(hi))).collect()
@@ -256,8 +254,7 @@ impl Sorted {
     /// The parts of rows `lo..hi` known to be sorted by a key (`implies_key`: column `tag`'s hash tag first, when
     /// given, then the values of `cols`), in row order.
     pub(super) fn within_key(&self, k: usize, tag: Option<usize>, cols: &[usize], lo: u32, hi: u32) -> Vec<(u32, u32)> {
-        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *OFF.get_or_init(|| std::env::var("RERAIL_KNOWN_SORTED").is_ok_and(|v| v == "off")) {
+        if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_KNOWN_SORTED").is_ok_and(|v| v == "off")) {
             return Vec::new();
         }
         self.0.iter().filter(|(a, b, c)| *a < hi && *b > lo && implies_key(c, k, tag, cols)).map(|&(a, b, _)| (a.max(lo), b.min(hi))).collect()
@@ -424,8 +421,7 @@ impl Clone for Index {
 const GALLOP: usize = 16;
 /// `RERAIL_GALLOP=off`: every merge walks both runs, as before (to compare).
 fn gallop_on() -> bool {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| !matches!(std::env::var("RERAIL_GALLOP").as_deref(), Ok("off")));
-    *ON
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| !matches!(std::env::var("RERAIL_GALLOP").as_deref(), Ok("off")))
 }
 
 #[inline]
@@ -956,8 +952,7 @@ pub(super) const HINTS: usize = 8;
 /// Each field is ordered as its value, so the packed keys sort as the tuples do. `RERAIL_SORT_PACKED=off` keeps
 /// the tuple (a measurement aid).
 pub(super) fn sort_keyed(ids: &mut [u32], tagged: bool, ncols: usize, val: impl Fn(u32, usize) -> i64, cmp: impl Fn(u32, u32) -> Ordering) -> Vec<u16> {
-    static PACKED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *PACKED.get_or_init(|| std::env::var("RERAIL_SORT_PACKED").map_or(true, |v| v != "off"))
+    if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_SORT_PACKED").map_or(true, |v| v != "off"))
         && let Some(tags) = sort_packed(ids, tagged, ncols, &val, &cmp)
     {
         return tags;
@@ -1381,8 +1376,7 @@ pub mod presorted {
     static COUNTS: [[AtomicU64; 7]; 2] = [const { [const { AtomicU64::new(0) }; 7] }; 2];
     /// Rows a run took in place, known sorted (decision 0180), into `COUNTS[_][6]`, when measuring.
     pub(super) fn known(rows: u64, printed: bool) {
-        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *ON.get_or_init(|| std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some()) {
+        if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some()) {
             COUNTS[usize::from(!printed)][6].fetch_add(rows, Relaxed);
         }
     }
@@ -1401,9 +1395,8 @@ pub mod presorted {
         }
     }
     pub(super) fn note<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], lo: u32, hi: u32, printed: bool) {
-        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         // `time`: the builds timed only, not counted (the count's pass over the rows would be timed too).
-        if !*ON.get_or_init(|| std::env::var("RERAIL_SPIKE_PRESORTED").is_ok_and(|v| v != "time")) || hi <= lo {
+        if !rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_SPIKE_PRESORTED").is_ok_and(|v| v != "time")) || hi <= lo {
             return;
         }
         let c = &COUNTS[usize::from(!printed)];
@@ -1429,8 +1422,7 @@ pub mod presorted {
     pub const REORDER: usize = 2;
     static SITES: [[AtomicU64; 5]; 3] = [const { [const { AtomicU64::new(0) }; 5] }; 3];
     fn counting() -> bool {
-        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *ON.get_or_init(|| std::env::var("RERAIL_SPIKE_PRESORTED").is_ok_and(|v| v != "time"))
+        rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_SPIKE_PRESORTED").is_ok_and(|v| v != "time"))
     }
     /// A sort at `site` of `n` items, `descent(i)` telling item `i` is before item `i - 1` in the wanted order.
     pub fn site(site: usize, n: usize, descent: impl Fn(usize) -> bool) {

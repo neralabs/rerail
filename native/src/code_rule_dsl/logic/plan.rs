@@ -1142,8 +1142,7 @@ static BUDGET_MISS: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atom
 static STATISTICS: [std::sync::atomic::AtomicU64; 3] = [const { std::sync::atomic::AtomicU64::new(0) }; 3];
 /// `RERAIL_PLAN_FRESH`: every plan searched, none reused (a measurement: what kept orders cost).
 fn plan_fresh() -> bool {
-    static FRESH: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_PLAN_FRESH").is_some());
-    *FRESH
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_PLAN_FRESH").is_some())
 }
 thread_local! {
     /// Where a plan is being made, for the profile's account of the planning budget's misses.
@@ -1213,10 +1212,9 @@ fn survivors(r: &Body<'_>, scc: &BTreeSet<String>, native_rels: &BTreeSet<String
 /// scans the other relations first) is never the right one for it.
 fn small_batches(rel: &str) -> bool {
     // `RERAIL_SMALL_WHOLE=dred`: DRed's and counting's relations take whole plans again, as before, to compare.
-    static DRED_WHOLE: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_SMALL_WHOLE").is_ok_and(|v| v == "dred"));
     let dred = ["__del", "__lost", "__ins", "__redo"];
     let levels = ["__cand", "__chk", "__gone", "__held"];
-    levels.iter().any(|s| rel.ends_with(s)) || (!*DRED_WHOLE && dred.iter().any(|s| rel.ends_with(s)))
+    levels.iter().any(|s| rel.ends_with(s)) || (!rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_SMALL_WHOLE").is_ok_and(|v| v == "dred")) && dred.iter().any(|s| rel.ends_with(s)))
 }
 
 /// A levels stratum's relations of `h`, when `scc` has all five (`native::setfix::Levels`): cand, chk, held, gone,
@@ -1231,8 +1229,7 @@ fn levels_of(h: &str, scc: &BTreeSet<String>) -> Option<[String; 5]> {
 /// cross product of `p` and `q` narrowed after by the test (decision 0099 item 4: `fl4317_typing_root`, 14 k rows,
 /// then 2.86 M, then 603). `RERAIL_EQUALITY_BINDS=off` keeps the left side the only one assigned, for comparison.
 fn binds_right<'t>(l: &Term, op: &str, r: &'t Term, bound: &BTreeSet<String>) -> Option<&'t crate::code_rule_dsl::logic::front::Name> {
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *OFF.get_or_init(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != "=" {
+    if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != "=" {
         return None;
     }
     let Term::Var(y) = r else { return None };
@@ -1311,8 +1308,7 @@ const START_CANDIDATES: f64 = 3.0;
 /// Decision 0123 §9: a probe with no kept plan is planned when its delta first has rows. `RERAIL_LAZY_PROBES=off`
 /// plans every probe when its stratum opens, as before (a measurement aid).
 fn lazy_probes() -> bool {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_LAZY_PROBES").map_or(true, |v| v != "off"));
-    *ON
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LAZY_PROBES").map_or(true, |v| v != "off"))
 }
 
 /// Decision 0123 §7: a kept order priced at `priced` rows of work, under what a search costs, whose line did `ran` rows,
@@ -1466,8 +1462,7 @@ type Kept = (Arc<[Step]>, f64, Option<super::profile::RulePlan>, f64, Option<Arc
 pub const SEARCH_WORK: f64 = 250.0;
 
 pub(in crate::code_rule_dsl) fn plan_budget() -> bool {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| !std::env::var("RERAIL_PLAN_BUDGET").is_ok_and(|v| v == "off"));
-    *ON
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| !std::env::var("RERAIL_PLAN_BUDGET").is_ok_and(|v| v == "off"))
 }
 
 /// How many times an order's work may have grown from sizes `then` to `now`: the product of each size's growth (each
@@ -1645,8 +1640,7 @@ fn orders_put(line: u128, order: &[Step]) {
 /// rule's), under `RERAIL_SOURCE_ORDERS=on`. Off by default: measured, it costs more planning than it saves (finding
 /// the order is most of it, and greedy-first already takes a cheap order under a search's cost), for the same plans.
 fn source_orders() -> bool {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_SOURCE_ORDERS").is_ok_and(|v| v == "on"));
-    *ON
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_SOURCE_ORDERS").is_ok_and(|v| v == "on"))
 }
 
 /// Whether `key` was planned in this thread's run (`RunPlans::planned_now`).
@@ -2139,8 +2133,7 @@ pub(in crate::code_rule_dsl) fn carried(c: &mut super::run_state::Capture) {
 
 /// `RERAIL_STATS_SKEW=f[:seed]`: the largest factor a statistic is skewed by, and the seed of the factors.
 fn skew_setting() -> Option<(f64, u64)> {
-    static SETTING: std::sync::OnceLock<Option<(f64, u64)>> = std::sync::OnceLock::new();
-    *SETTING.get_or_init(|| {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| {
         let v = std::env::var("RERAIL_STATS_SKEW").ok()?;
         let (f, seed) = v.split_once(':').map_or((v.as_str(), "0"), |(a, b)| (a, b));
         Some((f.parse().ok()?, seed.parse().ok()?))
@@ -3308,9 +3301,8 @@ impl Model {
     /// small to matter is never priced (decision 0122). `RERAIL_JOIN_MISSES=off` checks none (a measurement aid).
     #[allow(clippy::too_many_arguments)]
     fn line_miss(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, order: &[Step], key: PlanKey, steps: &[(u64, u64)], expected: &mut Option<(Vec<Step>, Vec<f64>)>) -> Option<joins::Miss> {
-        static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| !std::env::var("RERAIL_JOIN_MISSES").is_ok_and(|v| v == "off"));
         let work = super::profile::plan_work(steps) as f64;
-        if !*ON || work < joins::slow_factor() * SEARCH_WORK || positive_atoms(b) < 2 || joins::flagged(key, order) {
+        if !rerail_prof::code_rule_dsl::logic::profile::setting(|| !std::env::var("RERAIL_JOIN_MISSES").is_ok_and(|v| v == "off")) || work < joins::slow_factor() * SEARCH_WORK || positive_atoms(b) < 2 || joins::flagged(key, order) {
             return None;
         }
         if expected.as_ref().is_none_or(|(o, _)| !same_order(o, order)) {
@@ -3633,8 +3625,7 @@ impl Model {
         let cols_of = |i: usize| -> AtomCols {
             let a = b.atom(i).expect("an atom");
             let (rel, args) = (b.rel(a), b.args(i));
-            static COUNT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-            if *COUNT.get_or_init(|| std::env::var_os("RERAIL_PLAN_GREEDY_PROBE").is_some()) {
+            if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_PLAN_GREEDY_PROBE").is_some()) {
                 // Bulk planning's sharing (a measurement aid): column tables made per search, against the relations
                 // and (relation, constants) they are of.
                 static SEEN: parking_lot::Mutex<(u64, Option<std::collections::HashSet<String>>, Option<std::collections::HashSet<String>>)> = parking_lot::Mutex::new((0, None, None));
@@ -4266,8 +4257,7 @@ impl Model {
             }
             (done == full_mask).then_some((work, rows, order, bound, rest))
         };
-        static PROBE: std::sync::OnceLock<(bool, bool)> = std::sync::OnceLock::new();
-        let (probe, greedy_first) = *PROBE.get_or_init(|| (std::env::var_os("RERAIL_PLAN_GREEDY_PROBE").is_some(), std::env::var("RERAIL_PLAN_GREEDY_FIRST").map_or(true, |v| v != "off")));
+        let (probe, greedy_first) = rerail_prof::code_rule_dsl::logic::profile::setting(|| (std::env::var_os("RERAIL_PLAN_GREEDY_PROBE").is_some(), std::env::var("RERAIL_PLAN_GREEDY_FIRST").map_or(true, |v| v != "off")));
         let greedy_probe = (probe && joins.len() >= 3).then(|| { let mut c = 0; let g = greedy(&mut c); (g, c) });
         // Greedy first (decision 0123 §7; `RERAIL_PLAN_GREEDY_FIRST=off` searches as before): its order where its work
         // is under what the search would cost (`search_rows`), so the order a search finds could save less than the
@@ -5402,8 +5392,7 @@ impl Fx<'_> {
         }
         let _span = super::profile::span(|| "engine live statistics".into());
         // `RERAIL_LIVE_ALL=on`: every relation's, each time (to compare).
-        static ALL: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| matches!(std::env::var("RERAIL_LIVE_ALL").as_deref(), Ok("on")));
-        if *ALL {
+        if rerail_prof::code_rule_dsl::logic::profile::setting(|| matches!(std::env::var("RERAIL_LIVE_ALL").as_deref(), Ok("on"))) {
             seen.clear();
         }
         Ok(super::native::component::live_changed(self.db, name, seen)?
@@ -7770,8 +7759,7 @@ impl<'a> Run<'a, '_> {
     /// (ndv over it, and sq · ndv / rows² over 2) is raised; otherwise only raised columns are made. Returns the
     /// columns made.
     fn heavy_for(&mut self, rules: impl IntoIterator<Item = RuleKey>, raise: bool, key: Option<PlanKey>) -> usize {
-        static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_STATS_HEAVY").map_or(true, |v| v != "off"));
-        if !*ON || !raise && !joins::any_raised() {
+        if !rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_STATS_HEAVY").map_or(true, |v| v != "off")) || !raise && !joins::any_raised() {
             return 0;
         }
         let mut want: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
@@ -8529,8 +8517,7 @@ impl<'a> Run<'a, '_> {
     fn native_stratum(&mut self, scc: &BTreeSet<String>, rules: &[RuleKey]) -> Result<Native> {
         // `RERAIL_STRATA_LIVE`: each native stratum as it starts and ends, so a stalled run names its stratum (the
         // trace, `RERAIL_STRATA_TRACE`, is written when the loop ends).
-        static LIVE: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_STRATA_LIVE").is_some());
-        let t0 = LIVE.then(|| {
+        let t0 = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_STRATA_LIVE").is_some()).then(|| {
             eprintln!("RERAIL_STRATA_LIVE start {scc:?} ({} rules)", rules.len());
             std::time::Instant::now()
         });
@@ -10850,8 +10837,7 @@ pub trait Maintain {
 
 
 fn spike_delta() -> bool {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_SPIKE_DELTA").is_some());
-    *ON
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SPIKE_DELTA").is_some())
 }
 
 /// Holds `rel`'s kept rows `o` as the run's relation, with its cardinality (a quiet stratum's, decision 0117 step 3).
@@ -13745,9 +13731,8 @@ pub fn first_reads(f: Fields<'_>, vs: &body::Versions, sccs: &[BTreeSet<String>]
 /// so what a view reads lives as long as the view's last reader.
 /// Each stratum's rules (an index into `sccs`), found once: a scan of every rule per stratum was quadratic.
 /// `RERAIL_LEVEL_TRACE`, read once.
-fn level_trace() -> Option<&'static str> {
-    static PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    PATH.get_or_init(|| std::env::var("RERAIL_LEVEL_TRACE").ok()).as_deref()
+fn level_trace() -> Option<String> {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LEVEL_TRACE").ok())
 }
 
 /// This thread's CPU seconds (wasm32: `prof::single_thread_cpu`).

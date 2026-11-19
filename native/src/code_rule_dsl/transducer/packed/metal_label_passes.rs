@@ -577,8 +577,7 @@ pub(in crate::code_rule_dsl) fn text_slot(
 /// its passes are micro walks (`Runner::group`), else as rounds of levels. The host's sweeps
 /// between the GPU's segments (O26) stay as the reference, `RERAIL_HOST_SWEEPS`.
 pub(in crate::code_rule_dsl) fn host_sweeps() -> bool {
-    static HOST: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_HOST_SWEEPS").is_some());
-    *HOST
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_HOST_SWEEPS").is_some())
 }
 
 /// Whether a recursive group runs as sweeps: its passes are programs (or empty), whose results only
@@ -668,8 +667,7 @@ const SPILL_ITEM: usize = 20;
 
 /// Whether long micro walks spill their frames to other threads (`RERAIL_MICRO_SPILL=off`: not).
 fn spill_on() -> bool {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_MICRO_SPILL").map_or(true, |v| v != "off"));
-    *ON
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_MICRO_SPILL").map_or(true, |v| v != "off"))
 }
 
 /// Where a micro kernel binds its walk statistics (`Shape::profile`): below the slabs.
@@ -678,8 +676,7 @@ const WALK_STATS_SLOT: u64 = 26;
 /// Profiling (`RERAIL_GPU_WALK_STEPS`): each micro pass's walks, steps and longest walk, by its
 /// words, in the profile's stages (`walk_steps.`, `walk_items.`, `walk_max.`).
 fn walk_steps_on() -> bool {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_GPU_WALK_STEPS").is_some());
-    *ON
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_GPU_WALK_STEPS").is_some())
 }
 
 /// A micro walk's words as text: what a profile names the walk by.
@@ -1882,8 +1879,7 @@ impl Runner<'_> {
     /// its GPU time added to `kernel_us.<label>` and `kernel_n.<label>`, and a new one begun.
     /// Kernels then run one buffer each, in the same order on the same queue.
     fn split(&mut self, label: &str) {
-        static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_GPU_KERNEL_TIMES").is_some());
-        if !*ON {
+        if !rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_GPU_KERNEL_TIMES").is_some()) {
             return;
         }
         // Refused (the launch ledger is spent): the flush reports it.

@@ -557,8 +557,7 @@ impl std::fmt::Display for HeadText<'_, '_> {
 
 /// An equality of a bound variable or constant with an unbound variable assigns the right side (`plan::binds_right`).
 pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &VarSet) -> Option<Slot> {
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *OFF.get_or_init(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != CmpOp::Eq {
+    if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != CmpOp::Eq {
         return None;
     }
     let TermRef::Var(y) = r else { return None };

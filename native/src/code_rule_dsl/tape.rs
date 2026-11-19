@@ -2011,7 +2011,6 @@ pub mod reads {
     }
 
     /// With `E17_SITES` set, each read is also counted by its caller's source location (slow: a lock a read).
-    static SITES_ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("E17_SITES").is_some());
     type Site = (usize, &'static std::panic::Location<'static>);
     static SITES: std::sync::Mutex<Option<std::collections::HashMap<Site, [u64; 4]>>> = std::sync::Mutex::new(None);
 
@@ -2032,7 +2031,7 @@ pub mod reads {
             3
         };
         PATTERNS[part][class].fetch_add(1, Relaxed);
-        if *SITES_ON {
+        if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("E17_SITES").is_some()) {
             let site = std::panic::Location::caller();
             SITES.lock().expect("the sites").get_or_insert_default().entry((part, site)).or_default()[class] += 1;
         }

@@ -194,10 +194,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/strings/functions.rs", "TO_PRECISION"),
     // The rule being compiled: the step that first bound each slot, for a refusal's message.
     ("code_rule_dsl/logic/native/setfix/device.rs", "BINDER"),
-    // Measurement aids, read once or written as a process goes: a file appended to (`RERAIL_PREPARED_WHY`), the
-    // heap's span (`RERAIL_HEAP_AT`).
+    // A measurement aid written as a process goes: a file appended to (`RERAIL_PREPARED_WHY`).
     ("code_rule_dsl/logic/plan/prepared.rs", "LOG"),
-    ("code_rule_dsl/logic/profile/memory.rs", "AT"),
     // What registers at load: the world's files with the answerers installed, and the record's kinds' applies.
     ("code_rule_dsl/logic/rr/lower.rs", "ALL"),
     ("content_store/record.rs", "KINDS"),
@@ -293,8 +291,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
     ("code_rule_dsl/logic/native/setfix/table.rs", "BUILT"),
     ("code_rule_dsl/logic/plan.rs", "LOG"),
-    ("code_rule_dsl/logic/plan.rs", "PATH"),
-    ("code_rule_dsl/logic/plan.rs", "SETTING"),
     // core.rr's declarations (RER-131), read once from the engine's own library text: not a result kept.
     ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
     // This thread's zstd contexts by dictionary (RER-131): open things, not results.
@@ -392,10 +388,11 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
     // The run under way on the thread: its own state (decision 0441), carried to its jobs.
     ("code_rule_dsl/logic/profile.rs", "RUN"),
+    // This thread's copy of the settings its run read (decision 0442), held with that run.
+    ("code_rule_dsl/logic/profile.rs", "SEEN"),
     // Profiling: where a plan is made and the keys planned in a profiled run, for the planning budget's account.
     ("code_rule_dsl/logic/plan.rs", "PLAN_SITE"),
-    // Measurement aids under `RERAIL_PLAN_GREEDY_PROBE`: its switches, and the probe's counts and sums.
-    ("code_rule_dsl/logic/plan.rs", "PROBE"),
+    // Measurement aids under `RERAIL_PLAN_GREEDY_PROBE`: the probe's counts and sums.
     ("code_rule_dsl/logic/plan.rs", "SEEN"),
     ("code_rule_dsl/logic/plan.rs", "SUMS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),

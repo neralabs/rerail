@@ -1224,14 +1224,11 @@ pub fn span(name: impl FnOnce() -> String) -> Span {
     if !on() {
         // A timeline (dev, `RERAIL_TIMELINE`): the main thread's spans as they open, nothing measured.
         // `RERAIL_TIMELINE=all`: every thread's, named (a test runs on a thread of its own name).
-        static TIMELINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        static ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        let on = *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some());
-        let all = *ALL.get_or_init(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "all"));
+        let on = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_TIMELINE").is_some());
+        let all = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "all"));
         // `RERAIL_TIMELINE=sections`: the runs' sections alone (`corpus::run_observed`), no span: a line per span
         // costs as much as a small span's work, so a timeline of every span is not the run's instructions.
-        static SECTIONS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        let sections = *SECTIONS.get_or_init(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "sections"));
+        let sections = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "sections"));
         if on && !sections && (all || std::thread::current().name() == Some("main")) {
             // With the process's instructions retired so far (macOS): a gap between two spans is then its work, not
             // only its wall time.
@@ -1420,10 +1417,12 @@ thread_local! {
     pub static RUN: std::cell::RefCell<Option<std::sync::Arc<dyn RunOwn>>> = const { std::cell::RefCell::new(None) };
 }
 
-/// What the crates below `logic` tell the run under way (`RUN`; decision 0441).
+/// What the crates below `logic` tell the run under way, and read of it (`RUN`; decisions 0441, 0442).
 pub trait RunOwn: Send + Sync {
     /// A tree decoded from a program's version, at `at`.
     fn decoded(&self, at: &'static std::panic::Location<'static>);
+    /// Its settings and its own values (`setting`, `local`).
+    fn values(&self) -> &RunValues;
     /// The run itself, for the crate that defines it.
     fn any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync>;
 }
@@ -1431,6 +1430,82 @@ pub trait RunOwn: Send + Sync {
 /// The run under way on this thread (`RUN`), if any.
 pub fn run_own() -> Option<std::sync::Arc<dyn RunOwn>> {
     RUN.with(|r| r.borrow().clone())
+}
+
+type Shared = std::sync::Arc<dyn std::any::Any + Send + Sync>;
+
+/// A run's settings, by the place that reads each, and its own values, by type (decision 0442).
+#[derive(Default)]
+pub struct RunValues {
+    settings: parking_lot::Mutex<std::collections::HashMap<(&'static str, u32, u32, std::any::TypeId), Shared>>,
+    locals: parking_lot::Mutex<std::collections::HashMap<std::any::TypeId, Shared>>,
+}
+
+/// A setting of the run under way (decision 0442), by the place that reads it: `read` (the environment, as a rule) runs
+/// once a run, as the run first needs it, and the run keeps the value; a caller that changes the environment between
+/// runs gets the new value in the next. Outside a run, `read` runs each time.
+#[track_caller]
+#[inline]
+pub fn setting<T: Clone + Send + Sync + 'static>(read: impl FnOnce() -> T) -> T {
+    let at = std::panic::Location::caller();
+    // This thread's copy of the run's settings (`SEEN`): a read on a hot path takes no lock.
+    let site = at as *const std::panic::Location<'static> as usize;
+    let hit = SEEN.with(|seen| {
+        let seen = seen.borrow();
+        let same = RUN.with(|r| match (r.borrow().as_ref(), seen.0.as_ref()) {
+            (Some(now), Some(was)) => std::ptr::addr_eq(std::sync::Arc::as_ptr(now), was.as_ptr()),
+            _ => false,
+        });
+        if same { seen.1.get(&site).and_then(|v| v.downcast_ref::<T>()).cloned() } else { None }
+    });
+    match hit {
+        Some(v) => v,
+        None => setting_slow(at, site, read),
+    }
+}
+
+#[cold]
+fn setting_slow<T: Clone + Send + Sync + 'static>(at: &'static std::panic::Location<'static>, site: usize, read: impl FnOnce() -> T) -> T {
+    let Some(run) = run_own() else { return read() };
+    let key = (at.file(), at.line(), at.column(), std::any::TypeId::of::<T>());
+    let kept = run.values().settings.lock().get(&key).map(|v| v.downcast_ref::<T>().expect("a setting's type is its key's").clone());
+    let v = match kept {
+        Some(v) => v,
+        None => {
+            // Read outside the lock: a setting's read may read another.
+            let v = read();
+            run.values().settings.lock().entry(key).or_insert_with(|| std::sync::Arc::new(v.clone())).downcast_ref::<T>().expect("a setting's type is its key's").clone()
+        }
+    };
+    SEEN.with(|seen| {
+        let mut seen = seen.borrow_mut();
+        if !seen.0.as_ref().is_some_and(|was| std::ptr::addr_eq(std::sync::Arc::as_ptr(&run), was.as_ptr())) {
+            *seen = (Some(std::sync::Arc::downgrade(&run)), Default::default());
+        }
+        seen.1.insert(site, Box::new(v.clone()));
+    });
+    v
+}
+
+thread_local! {
+    /// This thread's copy of the settings the run under way on it read (`setting`; decision 0442): the run's own
+    /// values, by the reading place's address, held with the run (weakly: a run ended is never taken for another).
+    static SEEN: std::cell::RefCell<(Option<std::sync::Weak<dyn RunOwn>>, rustc_hash::FxHashMap<usize, Box<dyn std::any::Any>>)> = std::cell::RefCell::new((None, Default::default()));
+}
+
+/// The run's own value of type `T` (decision 0442): a measurement's sums, a log, a batch. Made on first use, it goes
+/// with the run. Outside a run, a new one each time (what is written to it is not kept).
+pub fn local<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
+    let Some(run) = run_own() else { return std::sync::Arc::new(T::default()) };
+    let v = std::sync::Arc::clone(run.values().locals.lock().entry(std::any::TypeId::of::<T>()).or_insert_with(|| std::sync::Arc::new(T::default())));
+    v.downcast::<T>().expect("a local's type is its key")
+}
+
+/// The run's own value of type `T`, if the run under way made it (a report reads what the run wrote, and makes none).
+pub fn local_if_any<T: Send + Sync + 'static>() -> Option<std::sync::Arc<T>> {
+    let run = run_own()?;
+    let v = run.values().locals.lock().get(&std::any::TypeId::of::<T>()).cloned()?;
+    v.downcast::<T>().ok()
 }
 
 /// A run starts on this thread (`plan::corpus`): before its first wave, unless it is nested in a run inside its
@@ -1470,8 +1545,7 @@ pub fn inside_waves() -> bool {
 /// the store's writer. Any other statement, on any connection of the process, ends it at once (`strict_statement`), naming
 /// the statement, its thread and span, and where it was sent from; so does a wave's wait for the writer.
 pub fn strict() -> bool {
-    static STRICT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *STRICT.get_or_init(|| std::env::var("RERAIL_SQL_STRICT").is_ok_and(|v| !matches!(v.as_str(), "" | "0" | "off")))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_SQL_STRICT").is_ok_and(|v| !matches!(v.as_str(), "" | "0" | "off")))
 }
 
 /// `RERAIL_WARM`, a development check for a run that is truly warm: one over a store that already holds everything
@@ -1499,8 +1573,7 @@ pub enum Warm {
 
 pub fn warm_mode() -> Warm {
     // The switch, read once as `strict` reads its own: 0 off, 1 fail, 2 list.
-    static WARM: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-    match *WARM.get_or_init(|| match std::env::var("RERAIL_WARM").as_deref() {
+    match rerail_prof::code_rule_dsl::logic::profile::setting(|| match std::env::var("RERAIL_WARM").as_deref() {
         Err(_) | Ok("" | "0" | "off") => 0,
         Ok("list") => 2,
         Ok(_) => 1,

@@ -53,8 +53,7 @@ fn setting(name: &str, or: f64) -> f64 {
 macro_rules! cached {
     ($name:ident, $env:literal, $or:expr) => {
         pub(super) fn $name() -> f64 {
-            static V: std::sync::LazyLock<f64> = std::sync::LazyLock::new(|| setting($env, $or));
-            *V
+            rerail_prof::code_rule_dsl::logic::profile::setting(|| setting($env, $or))
         }
     };
 }
@@ -80,8 +79,7 @@ cached!(trial_margin, "RERAIL_JOIN_TRIAL_MARGIN", 1.25);
 
 /// `RERAIL_JOIN_TRIALS=off`: a line's orders are never trialled (decision 0207).
 pub(super) fn trials_on() -> bool {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_JOIN_TRIALS").map_or(true, |v| v != "off"));
-    on() && *ON
+    on() && rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_JOIN_TRIALS").map_or(true, |v| v != "off"))
 }
 
 /// Decision 0274: whether line `key` was observed on a run's critical path: its note's share of the measured path
@@ -175,14 +173,12 @@ pub(super) fn proposals(key: &PlanKey) -> Vec<Vec<Step>> {
 
 /// `RERAIL_JOINS=off`: no memo, no flags, no exploration (the planner as before).
 pub(super) fn on() -> bool {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_JOINS").map_or(true, |v| v != "off"));
-    *ON
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_JOINS").map_or(true, |v| v != "off"))
 }
 
 /// `RERAIL_JOINS_LOG`: each flag, choice and critical path to standard error.
 pub(super) fn logging() -> bool {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_JOINS_LOG").is_some());
-    *ON
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_JOINS_LOG").is_some())
 }
 
 pub(in crate::code_rule_dsl) fn log(what: impl FnOnce() -> String) {
@@ -1278,12 +1274,10 @@ mod tests;
 
 /// Decision 0232: the bindings a key's walk carries through each step (`RERAIL_WALK_WIDTH`, 64).
 pub fn walk_width() -> usize {
-    static W: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| std::env::var("RERAIL_WALK_WIDTH").ok().and_then(|v| v.parse().ok()).unwrap_or(64));
-    *W
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_WALK_WIDTH").ok().and_then(|v| v.parse().ok()).unwrap_or(64))
 }
 
 /// Decision 0233: the rows of each part a line's first-phase walk samples (`RERAIL_WALK_ROWS`, 128).
 pub fn walk_rows() -> usize {
-    static R: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| std::env::var("RERAIL_WALK_ROWS").ok().and_then(|v| v.parse().ok()).unwrap_or(128));
-    *R
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_WALK_ROWS").ok().and_then(|v| v.parse().ok()).unwrap_or(128))
 }

@@ -434,8 +434,7 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     // Reads through a map of the file (the OS's page cache, shared by every connection and not the process's own
     // memory), not `pread` into the 1 MB cache: with the map off, a one-file edit spent 0.5 s in `pread`, the writer's
     // index descents reading the same pages again. `RERAIL_STORE_MMAP_MB` sets the map's bound (0: off).
-    static MMAP: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
-    let mmap = *MMAP.get_or_init(|| std::env::var("RERAIL_STORE_MMAP_MB").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(4096) << 20);
+    let mmap = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_STORE_MMAP_MB").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(4096) << 20);
     connection.pragma_update(None, "mmap_size", mmap)?;
     connection.pragma_update(None, "journal_size_limit", 16_777_216_i64)?;
     // Temporary B-trees (a statement's materialized CTEs and sorts, the prefilter's stages) stay
