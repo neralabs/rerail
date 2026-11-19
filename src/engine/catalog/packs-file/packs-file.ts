@@ -2,36 +2,41 @@
  * Internal testing: `.rerail/packs.json`, the rule packs a repository enables, declared in the repository so every
  * machine that scans a commit runs the same packs (docs/repository-packs.md). A published pack is named by its id or
  * package name at one exact version; a pack kept in the repository by its folder, relative to the repository's root.
- * Either may name the folders it judges (`folders`); without them it judges the whole repository. Reading the file
- * only says which packs and where: fetching them and approving their content are the caller's and the approval
- * policy's.
+ * Either may name the folders it judges (`folders`); without them it judges the whole repository. Either may set
+ * option values for its rules (`config`, resolved by `pack-config.ts`). Reading the file only says which packs, where
+ * and with which options: fetching them and approving their content are the caller's and the approval policy's.
  */
 import { lstatSync, readdirSync, readFileSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import semver from "semver";
 import { z } from "zod";
 import { parseJsonWithoutDuplicateKeys } from "../../json-duplicate-keys.js";
-import type { RuleCatalog } from "../repository-model.js";
+import type { RuleCatalog, RuleConfig } from "../repository-model.js";
 import { readRuleCatalog } from "../rule-catalog.js";
 import { packIdOfPackage, rulePackPackageOf, type RulePackLocalSource } from "../rule-packs.js";
 
 /** Where a repository declares its packs, relative to its top level. */
 export const PACKS_FILE = ".rerail/packs.json";
-/** The `schema` the file must carry: the shape repositories already commit, so `folders` stays optional in it. */
+/**
+ * The `schema` the file must carry: the shape repositories already commit, so `folders` and `config` stay optional in
+ * it. A key added to it stays optional and leaves a file without it meaning what it did (docs/repository-packs.md).
+ */
 export const PACKS_FILE_SCHEMA = "rerail.packs/1";
 /** A packs file larger than this is refused unread, as a rule document that large is. */
 export const MAX_PACKS_FILE_BYTES = 1024 * 1024;
 
 /**
- * Where a pack judges: `folders`, each relative to the repository's top level with `/` separators, as rule attachments
- * name folders; undefined for the whole repository.
+ * What either kind of entry may add. `folders`: where the pack judges, each relative to the repository's top level
+ * with `/` separators, as rule attachments name folders; undefined for the whole repository. `config`: option name →
+ * value, for every rule of the pack that declares the option; undefined for the rules' defaults.
  */
-interface PackFolders {
+interface DeclaredPackFields {
   readonly folders?: readonly string[];
+  readonly config?: RuleConfig;
 }
 
 /** A pack published to npm, at one exact version. */
-export interface PublishedPack extends PackFolders {
+export interface PublishedPack extends DeclaredPackFields {
   readonly kind: "published";
   readonly packageName: string;
   readonly id: string;
@@ -39,7 +44,7 @@ export interface PublishedPack extends PackFolders {
 }
 
 /** A pack kept in the repository: `path` is its folder, relative to the repository's top level, with `/` separators. */
-export interface RepositoryPack extends PackFolders {
+export interface RepositoryPack extends DeclaredPackFields {
   readonly kind: "repository";
   readonly path: string;
 }
@@ -89,10 +94,20 @@ function declaredFolders(value: unknown, at: string): readonly string[] | undefi
   });
 }
 
+/** An entry's `config`: a non-empty object of option names and values, or undefined when it has none. */
+function declaredConfig(value: unknown, at: string): RuleConfig | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value) || Object.keys(value).length === 0) {
+    throw new PacksFileError(`${at}.config must be an object of option names and their values; leave it out for the rules' defaults`);
+  }
+  return value as RuleConfig;
+}
+
 function declaredPack(entry: Readonly<Record<string, unknown>>, at: string): DeclaredPack {
-  const { folders: listed, ...rest } = entry;
+  const { folders: listed, config: set, ...rest } = entry;
   const folders = declaredFolders(listed, at);
-  const where = folders === undefined ? {} : { folders };
+  const config = declaredConfig(set, at);
+  const where = { ...(folders === undefined ? {} : { folders }), ...(config === undefined ? {} : { config }) };
   const keys = Object.keys(rest).sort().join(",");
   if (keys === "path") {
     if (typeof rest.path !== "string") throw new PacksFileError(`${at}.path is not a string`);
@@ -110,14 +125,15 @@ function declaredPack(entry: Readonly<Record<string, unknown>>, at: string): Dec
     }
     return { kind: "published", packageName, id: packIdOfPackage(packageName)!, version: rest.version, ...where };
   }
-  throw new PacksFileError(`${at} must have "id" and "version" for a published pack, or "path" for a pack in the repository, and optionally "folders", not ${keys === "" ? "no keys" : keys.split(",").map(key => JSON.stringify(key)).join(", ")}`);
+  throw new PacksFileError(`${at} must have "id" and "version" for a published pack, or "path" for a pack in the repository, and optionally "folders" and "config", not ${keys === "" ? "no keys" : keys.split(",").map(key => JSON.stringify(key)).join(", ")}`);
 }
 
 /**
  * The packs `text` declares, in the file's order. Throws `PacksFileError`, naming `label` and what is wrong, for text
  * that is not JSON or repeats a key, a `schema` other than `rerail.packs/1`, a key the format does not define, an
  * entry that is neither a published pack at an exact version nor a folder inside the repository, `folders` that are
- * not distinct folders inside the repository, or a pack listed twice.
+ * not distinct folders inside the repository, a `config` that is not an object of options, or a pack listed twice.
+ * Whether the pack's rules declare those options, and allow those values, is `pack-config.ts`'s to check.
  */
 export function parsePacksFile(text: string, label: string = PACKS_FILE): DeclaredPack[] {
   let value: unknown;
