@@ -22,9 +22,9 @@ import {
   statSync,
   type Stats,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import { pathsOwnedByCurrentUser } from "../../native/native.js";
-import { checkoutRealpath, storedPath } from "../checkout-control.js";
+import { checkoutRealpath, realpathNamesInTurn, storedPath } from "../checkout-control.js";
 
 /** What Git reads to place a folder holding a `.git` entry, as it was when read. */
 export interface PlacementInputs {
@@ -218,12 +218,33 @@ interface CommonFolder {
   readonly stamp: string;
 }
 
-/** The common Git folder `gitFolder`'s `commondir` names (undefined `linked` without one); undefined when unreadable. */
+/**
+ * The common Git folder `gitFolder`'s `commondir` names (undefined `linked` without one), as Git resolves it
+ * ({@link commonFolderOf}); undefined when it cannot be read or resolved.
+ */
 function commonOf(gitFolder: string): CommonFolder | undefined {
   const read = fileText(join(gitFolder, "commondir"));
   if (read === "none") return { linked: undefined, stamp: "-" };
   const named = isText(read) ? readPath(read.text) : undefined;
-  return named === undefined ? undefined : { linked: resolve(gitFolder, named), stamp: named };
+  const linked = named === undefined ? undefined : commonFolderOf(gitFolder, named);
+  return named === undefined || linked === undefined ? undefined : { linked, stamp: named };
+}
+
+/**
+ * The folder a `commondir` holding `named` leads to from the Git folder `gitFolder`, as Git resolves it
+ * (`get_common_dir_noenv` takes the real path of the two joined). Git on Linux and macOS resolves the names in turn,
+ * each link before the `..` after it, so the joined text is never cleaned first: `x/link/../y` leaves the folder the
+ * link reaches, where cleaning the text would cancel `link` and `..`. Undefined when that real path cannot be read,
+ * where Git finds no `objects` or stops. Git for Windows opens the joined path, and Windows takes a `..` off the path
+ * as written before it follows a link.
+ */
+function commonFolderOf(gitFolder: string, named: string): string | undefined {
+  if (process.platform === "win32") return resolve(gitFolder, named);
+  try {
+    return realpathNamesInTurn(isAbsolute(named) ? named : `${gitFolder}/${named}`);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -488,23 +509,13 @@ function gitEntryEnds({ dotGit, entry }: FolderLook): boolean {
 
 /**
  * Whether Git's search takes `path` for a Git folder (`is_git_directory`): a `HEAD` it takes ({@link validHead}), and
- * `objects` and `refs` it can reach in the common Git folder `commondir` names, else in `path` itself.
+ * `objects` and `refs` it can reach in the common Git folder `commondir` names ({@link commonOf}), else in `path`
+ * itself. On Linux and macOS a `..` in `commondir` leaves the folder a `.git` link reaches, as Git resolves it.
  */
 function takenAsGitFolder(path: string): boolean {
   const common = validHead(path) === true ? commonOf(path) : undefined;
-  const at = common === undefined ? undefined : commonGitReads(path, common);
+  const at = common === undefined ? undefined : (common.linked ?? path);
   return at !== undefined && reachable(join(at, "objects")) && reachable(join(at, "refs"));
-}
-
-/**
- * The folder Git reads `objects` and `refs` in for the Git folder `path` (`get_common_dir_noenv`): `path` itself, or the
- * one its `commondir` names, joined to `path` and taken through its real path. Git on Linux and macOS resolves the
- * names in turn, so a `..` there leaves the folder a `.git` link reaches; Git for Windows opens the joined path, and
- * Windows takes a `..` off the path as written before it follows a link.
- */
-function commonGitReads(path: string, common: CommonFolder): string {
-  if (common.linked === undefined || process.platform === "win32") return common.linked ?? path;
-  return resolve(realOf(path) ?? path, common.stamp);
 }
 
 /**
@@ -607,7 +618,8 @@ function headRaw(head: string): string {
  */
 function commonRaw(gitFolder: string, commondir: FileText | "none" | undefined): string {
   const named = isText(commondir) ? readPath(commondir.text) : undefined;
-  const common = named === undefined ? gitFolder : realOf(resolve(gitFolder, named));
+  const linked = named === undefined ? gitFolder : commonFolderOf(gitFolder, named);
+  const common = linked === undefined ? undefined : realOf(linked);
   if (common === undefined) return "?";
   const reached = `objects:${reachable(join(common, "objects"))} refs:${reachable(join(common, "refs"))}`;
   return [common, described(look(common)), reached, configRaw(join(common, "config"))].join("\n");
@@ -649,8 +661,24 @@ export interface ConfigFacts {
   readonly plainFormat: boolean;
 }
 
-/** Each config file's facts with the text they were read from, so an unchanged text is not parsed again. */
+/**
+ * Each config file's facts with the text they were read from, so an unchanged text is not parsed again. A file's entry
+ * leaves once the file is found gone ({@link forgetGoneConfigs}).
+ */
 const configs = new Map<string, { readonly text: string; readonly facts: ConfigFacts }>();
+
+/**
+ * Drops the facts kept for each config file in `folder`, or below it, that is gone, such as the `config.worktree` of a
+ * worktree Git removed from the common Git folder `folder`. One lstat per file kept there.
+ */
+export function forgetGoneConfigs(folder: string): void {
+  for (const path of configs.keys()) if (path.startsWith(`${folder}${sep}`) && look(path) === "none") configs.delete(path);
+}
+
+/** How many config files' facts are kept: for tests, which count what a removed worktree leaves behind. */
+export function keptConfigCount(): number {
+  return configs.size;
+}
 
 /** {@link ConfigFacts} of the config file at `path`, read now; undefined when it cannot be read. */
 function configFactsAt(path: string): ConfigFacts | undefined {

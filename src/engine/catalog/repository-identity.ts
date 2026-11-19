@@ -18,6 +18,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { checkoutRealpath, physicalPath, storedPath } from "./checkout-control.js";
 import {
   filePlacementInputs,
+  forgetGoneConfigs,
   gitEntryFacts,
   linkedWorktreeFromFiles,
   lookupEnvironment,
@@ -372,8 +373,37 @@ function registryAsPlaced(checkout: string): WorktreeRegistry | undefined | type
   if (registry === undefined) forget(checkout, commonDirectory);
   // Every checkout of the repository reads what is stored here, so only a list of this registry is.
   else if (!listsRegistryOf(registry)) return ANOTHER_REGISTRY;
-  else worktreeRegistries.set(commonDirectory, registry);
+  else keepList(place, registry);
   return registry;
+}
+
+/**
+ * Stores Git's list of the registry `place` names. Once its contents moved since the last list stored (a worktree
+ * added, removed, moved or pruned), what is kept for the repository's folders that are gone leaves ({@link forgetGone}).
+ */
+function keepList(place: RegistryPlace, registry: WorktreeRegistry & { readonly contents: string }): void {
+  if (worktreeRegistries.get(place.commonDirectory)?.contents !== registry.contents) forgetGone(place.gitCommon);
+  worktreeRegistries.set(place.commonDirectory, registry);
+}
+
+/**
+ * Drops each answer kept for a folder whose answer names `common` as its common Git folder once the folder is gone, and
+ * the config facts kept for files in `common` that are gone: a removed worktree's answers, its own and those of the
+ * folders in it, leave with it, and a checkout that stays keeps its own. No ask takes an answer kept for a folder that
+ * is gone ({@link registryPlace}, {@link placed}), so none that leaves would have served again. One existence check per
+ * answer kept for the repository, and none for another repository's: a share that stops answering holds only the lists
+ * of its own repositories, whose folders Git's list reads too.
+ */
+function forgetGone(common: string): void {
+  for (const kept of [heldTopLevels, gitAcceptances]) {
+    for (const [folder, { location }] of kept) if (dirname(location.identityPath) === common && !existsSync(folder)) kept.delete(folder);
+  }
+  forgetGoneConfigs(common);
+}
+
+/** How many answers each map keeps: for tests, which count what a removed worktree leaves behind. */
+export function keptAnswerCounts(): { readonly heldTopLevels: number; readonly gitAcceptances: number; readonly gitPlacedCommons: number } {
+  return { heldTopLevels: heldTopLevels.size, gitAcceptances: gitAcceptances.size, gitPlacedCommons: gitPlacedCommons.size };
 }
 
 /**
@@ -411,6 +441,8 @@ function forget(checkout: string, commonDirectory: string): void {
 interface RegistryPlace {
   /** The physical common directory Git reads for the checkout. */
   readonly commonDirectory: string;
+  /** That directory as the checkout's answer names it, as every answer kept for a checkout of the repository names it. */
+  readonly gitCommon: string;
   readonly unstamped: boolean;
 }
 
@@ -431,7 +463,9 @@ function registryPlace(checkout: string): RegistryPlace | undefined {
     return undefined;
   }
   const location = placed(requested, true);
-  return location.git ? { commonDirectory: physicalPath(dirname(location.identityPath)), unstamped: keptUnstamped(requested) } : undefined;
+  if (!location.git) return undefined;
+  const gitCommon = dirname(location.identityPath);
+  return { commonDirectory: physicalPath(gitCommon), gitCommon, unstamped: keptUnstamped(requested) };
 }
 
 /**
