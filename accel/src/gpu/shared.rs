@@ -81,6 +81,13 @@ fn leased(b: &Buffer) {
     }
 }
 
+/// What the device holds: the pool's leases and idle buffers and the ledger's reservations, all inside the Metal
+/// budget (decision 0126), which is on top of the overall one.
+pub fn device_held() -> usize {
+    let (live, idle) = held_bytes();
+    live + idle + other()
+}
+
 /// The bytes leased now, and the bytes the pool keeps idle: relational work's share of the device's memory.
 pub fn held_bytes() -> (usize, usize) {
     let idle = pool().lock().map_or(0, |p| p.held);

@@ -2891,6 +2891,24 @@ const CHUNK_MB: f64 = 384.0;
 /// above the footprint the chunk starts at (the program, its plans, the cross part's rows), so the run stays within
 /// it however large the program is.
 const RUN_MB: f64 = 1024.0;
+/// The device's MB (`gpu::shared::device_held`): its pool's leases and idle buffers and its ledger's slabs, which the
+/// Metal budget bounds, on top of the overall one (decision 0126). On unified memory the footprint counts them.
+fn device_mb() -> usize {
+    #[cfg(target_os = "macos")]
+    return rerail_accel::gpu::shared::device_held() >> 20;
+    #[cfg(not(target_os = "macos"))]
+    0
+}
+
+/// The MB a chunk added to the host's footprint, from its `[footprint, lifetime peak, device MB]` at its start and
+/// now: the peak when it rose during the chunk, else the footprint now, less the device's MB (Q180: counted, the
+/// device pool's slabs and buffers, bounded by their own budget whatever a chunk's size, sized Metal's chunks at
+/// half to a third of the CPU's). At least 1.
+pub fn host_added_mb([start, start_max, start_dev]: [usize; 3], [now, max, dev]: [usize; 3]) -> usize {
+    let end = if max > start_max { max } else { now };
+    end.saturating_sub(dev).saturating_sub(start.saturating_sub(start_dev)).max(1)
+}
+
 /// The fewest nodes a chunk is sized to: a smaller one costs more in each chunk's fixed work than it saves.
 const MIN_CHUNK_NODES: usize = 8_192;
 /// The least a chunk evaluating beside others is sized to (`RERAIL_CHUNK_FLOOR_MB`): fewer chunks at once, not
@@ -6213,6 +6231,8 @@ fn run_observed(
         chunk_own: Option<Own>,
         start_mb: usize,
         start_max_mb: usize,
+        /// The device's MB when the chunk started (`device_mb`).
+        start_dev_mb: usize,
         /// Chunks evaluating when it began, itself included: the footprint it saw grow was theirs.
         at_once: usize,
         /// Its documents' entries, where every one is a partial hit, and the relations it derives (decision 0225 §2).
@@ -6573,7 +6593,7 @@ fn run_observed(
                 }
                 phase("wait", statements.count());
                 statements.enter("local");
-                let (start_mb, start_max_mb) = (crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb());
+                let (start_mb, start_max_mb, start_dev_mb) = (crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb(), device_mb());
                 // Memo hits: their rows go to `x` and their lines to the outputs as an evaluated chunk's would.
                 if !hits.is_empty() {
                     let _replay = crate::code_rule_dsl::logic::profile::span(|| "memo replay".into());
@@ -6749,12 +6769,12 @@ fn run_observed(
                 phase("local", statements.count());
                 statements.enter("wait");
                 let task = Task { chunk_nodes_built, sources, documents, stats, mix, cone: cone.clone(), replay, seq: 0, view: None };
-                return Ok(Some((task, Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, start_max_mb, at_once, chunk_partials, cone })));
+                return Ok(Some((task, Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, start_max_mb, start_dev_mb, at_once, chunk_partials, cone })));
             }
         };
         phase("wait", statements.count());
         statements.enter("local");
-        let Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, start_max_mb, at_once, mut chunk_partials, cone } = ctx;
+        let Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, start_max_mb, start_dev_mb, at_once, mut chunk_partials, cone } = ctx;
         let Evaluated { got, host_of, askers, text_sources, stored_bound, totals_add, export_rows, mut mentioned, slice_rounds } = ev;
         for (rel, rows, measured) in &totals_add {
             totals.add(rel, *rows, measured);
@@ -6814,7 +6834,9 @@ fn run_observed(
         if chunk_nodes_built > 0 {
             // What this chunk added at its peak (the lifetime peak, when it rose here; else the footprint now).
             let (now, max) = (crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb());
-            let added = if max > start_max_mb { max } else { now }.saturating_sub(start_mb).max(1);
+            let added = host_added_mb([start_mb, start_max_mb, start_dev_mb], [now, max, device_mb()]);
+            // The memory line is the host's: the device's room is the Metal budget's, on top of it (decision 0126).
+            let start_mb = start_mb.saturating_sub(start_dev_mb);
             let measured = added as f64 * 1048576.0 / (chunk_nodes_built * at_once) as f64;
             // Credible only above the noise of pages reused: until one is, one chunk at a time, of the probe's size.
             let credible = added >= CHUNK_CREDIBLE_MB;
