@@ -9,13 +9,12 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { runAuditCommand, SCAN_VIOLATIONS_EXIT } from "../../src/cli/audit-cli.js";
 import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import { describeScan, runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
-import { acquireDirectoryAnalysisGeneration, acquireNamedAnalysisRun, analysisScopeHome, collectAnalysisCaches, deleteNamedAnalysisScope, finishNamedAnalysisRegistration, queueAnalysisScopeReleases, readAnalysisScopeGeneration, scanContentStore, settleAnalysisScopeReleases } from "../../src/engine/native/analysis-scope.js";
-import { loadNativeBinding } from "../../src/engine/native/native.js";
-import * as builds from "../../src/engine/native/rerail-build.js";
-import { openRerailDatabase, RERAIL_DATABASE_FILE } from "../../src/engine/storage/database.js";
-import { recordCheckout } from "../../src/engine/catalog/repository-registry.js";
-import { codeRuleSchema } from "../../src/engine/code-rule/code-rule-schema.js";
-import { setCheckoutStarted, stopRerail } from "../../src/runtime/repository-start.js";
+import {
+  acquireDirectoryAnalysisGeneration, acquireNamedAnalysisRun, analysisScopeHome, codeRuleSchema, collectAnalysisCaches,
+  deleteNamedAnalysisScope, finishNamedAnalysisRegistration, loadNativeBinding, openRerailDatabase, queueAnalysisScopeReleases,
+  readAnalysisScopeGeneration, recordCheckout, RERAIL_DATABASE_FILE, scanContentStore, settleAnalysisScopeReleases,
+} from "../../src/engine/index.js";
+import { setCheckoutStarted, stopRerail } from "../../src/runtime/index.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 import { queryContentStore } from "../support/query-content-store.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
@@ -2824,6 +2823,7 @@ Seen(n) :- kind(n, "identifier").
     writeFileSync(unregistered, "invalid database");
     const registeredRoot = join(root, "registered");
     await acquireDirectoryAnalysisGeneration(databasePath, registeredRoot, registered);
+    const builds = await vi.importActual<typeof import("../../src/engine/native/rerail-build.js")>("../../src/engine/native/rerail-build.js");
     const machineStore = vi.spyOn(builds, "mainContentStoreDirectory").mockReturnValue(main);
     vi.stubEnv("RERAIL_CONTENT_STORE_PATH", unregistered);
     const db = openRerailDatabase(databasePath);
