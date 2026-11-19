@@ -2870,6 +2870,18 @@ submitted" now hold device memory at once.
     409.4 M work at 11 chunks and 411.5 M at 17 (+0.5%), at 34.9 and 38.6 ns a unit (+11%; ab74: 35.5 and 39.8).
     ab75's loads were close (41 and 35), so not the host's. Next: why a unit of a join's work costs 11% more at
     17 chunks (more chunks in flight at once sharing the caches, or smaller relations probed with less locality).
+  - (the harness, ab76-ab78) The bench scripts since ab59 ran with `RERAIL_TIMELINE=1`: with the profile off,
+    every span the main thread opens prints a line and reads the instructions retired (`profile::span`), which
+    the code says costs as much as a small span's work; `sections` is the setting for counting. ab76 (=1): one
+    chunk at a time 933.6 G / 11 and 1,000.9 G / 16, 8 at once 594.1 / 12 and 634.5 / 17. ab77 sampled one at a
+    time: no spin (the pool parked 85-95%), the main thread 42% in `write` from those lines (`Batch::build`,
+    `Projected::narrowed`, `plan_rule_reused_in`, `granules::cut`: one at a time, the chunks run there).
+    ab78 (`sections`, loads 8-16): one at a time 581.9 G / 13 and 623.2 / 17; 8 at once 620.0 / 13 and 632.9 /
+    17. So every unprofiled count from ab59 on carries lines that grow with what the main thread runs: the
+    per-chunk slopes and the load correlation drawn from them (above) are not established. Clean, 8 at once:
+    ~3 G a chunk (12.9 G for 4), within one chunking's 4% spread (~25 G); one at a time ~10 G a chunk, and
+    ~38 G under 8 at once at 13 chunks. The profiled pairs (ab74, ab75) print no lines. Next: the slope again
+    with `sections`, three runs each of 13 and 17 chunks 8 at once, before any more is drawn from it.
   - (accounting, before 7562bf8a94) Thread CPU counts the jobs rayon's own joins steal: the text tests' "0.366 -> 1.795 s CPU" is
     other chunks' work run inside `Searchers::evaluate`'s `par_iter` (its own samples are equal, 365 -> 7284
     of which 6800 stolen); span `own_s` under any `par_iter` is inflated the same way. `exec::helped` covers
