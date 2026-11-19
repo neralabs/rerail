@@ -16,7 +16,8 @@ import {
 } from "../runtime/event-protocol.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
-import { daemonEngineEndpoint, engineEndpointAt, HOOK_DAEMON_WAIT_MS } from "../runtime/daemon-control.js";
+import { daemonEngineEndpoint, engineEndpointAt } from "../runtime/daemon-control.js";
+import { HOOK_DAEMON_WAIT_MS } from "../runtime/daemon/daemon-waits.js";
 import { ingestEngineEvent } from "../runtime/engine-service.js";
 import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { linkDeliveries } from "../presentation/session-presentation.js";

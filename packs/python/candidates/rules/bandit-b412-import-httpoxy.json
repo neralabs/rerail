@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "bandit-b412-import-httpoxy",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Avoid importing the CGI handlers from wsgiref and twisted.web; CGI handlers are exposed to the httpoxy proxy-header attack.",
   "scope": {
@@ -19,73 +19,81 @@
           "rule": {
             "any": [
               {
-                "pattern": "import wsgiref.handlers"
+                "kind": "import_statement",
+                "has": {
+                  "any": [
+                    {
+                      "kind": "dotted_name"
+                    },
+                    {
+                      "kind": "aliased_import"
+                    }
+                  ],
+                  "regex": "^(?:wsgiref\\s*\\.\\s*handlers\\s*\\.\\s*CGIHandler|twisted\\s*\\.\\s*web\\s*\\.\\s*twcgi\\s*\\.\\s*CGIScript|twisted\\s*\\.\\s*web\\s*\\.\\s*twcgi\\s*\\.\\s*CGIDirectory)"
+                }
               },
               {
-                "pattern": "import wsgiref.handlers as $ALIAS"
+                "kind": "import_from_statement",
+                "has": {
+                  "field": "module_name",
+                  "regex": "^[.\\s]*(?:wsgiref\\s*\\.\\s*handlers\\s*\\.\\s*CGIHandler|twisted\\s*\\.\\s*web\\s*\\.\\s*twcgi\\s*\\.\\s*CGIScript|twisted\\s*\\.\\s*web\\s*\\.\\s*twcgi\\s*\\.\\s*CGIDirectory)"
+                }
               },
               {
-                "pattern": "from wsgiref import handlers"
+                "kind": "import_from_statement",
+                "all": [
+                  {
+                    "has": {
+                      "field": "module_name",
+                      "regex": "^[.\\s]*wsgiref\\s*\\.\\s*handlers$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "dotted_name"
+                        },
+                        {
+                          "kind": "aliased_import"
+                        }
+                      ],
+                      "regex": "^CGIHandler",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^import$"
+                      }
+                    }
+                  }
+                ]
               },
               {
-                "pattern": "from wsgiref import handlers as $ALIAS"
-              },
-              {
-                "pattern": "import wsgiref.handlers.CGIHandler"
-              },
-              {
-                "pattern": "import wsgiref.handlers.CGIHandler as $ALIAS"
-              },
-              {
-                "pattern": "from wsgiref.handlers.CGIHandler import $$$NAMES"
-              },
-              {
-                "pattern": "from wsgiref.handlers import CGIHandler"
-              },
-              {
-                "pattern": "from wsgiref.handlers import CGIHandler as $ALIAS"
-              },
-              {
-                "pattern": "import twisted.web.twcgi"
-              },
-              {
-                "pattern": "import twisted.web.twcgi as $ALIAS"
-              },
-              {
-                "pattern": "from twisted.web import twcgi"
-              },
-              {
-                "pattern": "from twisted.web import twcgi as $ALIAS"
-              },
-              {
-                "pattern": "import twisted.web.twcgi.CGIScript"
-              },
-              {
-                "pattern": "import twisted.web.twcgi.CGIScript as $ALIAS"
-              },
-              {
-                "pattern": "from twisted.web.twcgi.CGIScript import $$$NAMES"
-              },
-              {
-                "pattern": "from twisted.web.twcgi import CGIScript"
-              },
-              {
-                "pattern": "from twisted.web.twcgi import CGIScript as $ALIAS"
-              },
-              {
-                "pattern": "import twisted.web.twcgi.CGIDirectory"
-              },
-              {
-                "pattern": "import twisted.web.twcgi.CGIDirectory as $ALIAS"
-              },
-              {
-                "pattern": "from twisted.web.twcgi.CGIDirectory import $$$NAMES"
-              },
-              {
-                "pattern": "from twisted.web.twcgi import CGIDirectory"
-              },
-              {
-                "pattern": "from twisted.web.twcgi import CGIDirectory as $ALIAS"
+                "kind": "import_from_statement",
+                "all": [
+                  {
+                    "has": {
+                      "field": "module_name",
+                      "regex": "^[.\\s]*twisted\\s*\\.\\s*web\\s*\\.\\s*twcgi$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "dotted_name"
+                        },
+                        {
+                          "kind": "aliased_import"
+                        }
+                      ],
+                      "regex": "^(?:CGIScript|CGIDirectory)",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^import$"
+                      }
+                    }
+                  }
+                ]
               }
             ]
           }
