@@ -32,7 +32,8 @@ import { loadNativeBinding, type NativeAnalysisScopeRun, type NativeGitRevisionS
 import { acquireDirectoryAnalysisGeneration, analysisScopeHome, scanContentStore } from "../engine/native/analysis-scope.js";
 import { assertContentStoreOwner } from "../engine/native/main-instance.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES } from "../engine/code-rule/code-rule-languages.js";
-import { runGit } from "../engine/git.js";
+import { runGit, runGitBytes } from "../engine/git.js";
+import { isUtf8 } from "node:buffer";
 import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
 import { compareDeterministicStrings } from "../engine/stable-json.js";
 import { defaultRerailDatabasePath, openRerailDatabase, openRerailDatabaseAsIs, type RerailDatabase } from "../engine/storage/database.js";
@@ -133,8 +134,8 @@ export interface HeadlessScanOptions {
   ruleDocuments?: Map<string, RuleDocument>;
 }
 
-function git(cwd: string, args: readonly string[]): string {
-  const result = runGit(cwd, args, { maxBuffer: 256 * 1024 * 1024 });
+function gitBytes(cwd: string, args: readonly string[]): Buffer {
+  const result = runGitBytes(cwd, args, { maxBuffer: 256 * 1024 * 1024 });
   if (result.error !== undefined) throw result.error;
   if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.trim()}`);
   return result.stdout;
@@ -145,18 +146,32 @@ function gitMaybe(cwd: string, args: readonly string[]): string | null {
   return result.status === 0 ? result.stdout.replace(/\n$/u, "") : null;
 }
 
-function nulList(text: string): string[] {
-  return text.split("\0").filter(entry => entry.length > 0);
-}
-
 /**
  * Changed files against `against` (the working tree, staged changes included) plus untracked files, sorted. With
  * `--no-renames` a rename is its new path, and Git needs no blob it would fetch to detect one: lazy fetch is off.
  */
-function diffPaths(root: string, against: string): string[] {
-  const changed = nulList(git(root, ["diff", "--name-only", "--no-renames", "--relative", "--diff-filter=ACMRTUXB", "-z", against, "--"]));
-  const untracked = nulList(git(root, ["ls-files", "--others", "--exclude-standard", "-z", "--"]));
-  return [...new Set([...changed, ...untracked])].sort((left, right) => left.localeCompare(right));
+function diffPaths(root: string, against: string): { paths: string[]; failures: ScanFailure[] } {
+  const paths = new Set<string>();
+  const invalid = new Set<string>();
+  for (const args of [
+    ["diff", "--name-only", "--no-renames", "--relative", "--diff-filter=ACMRTUXB", "-z", against, "--"],
+    ["ls-files", "--others", "--exclude-standard", "-z", "--"],
+  ]) {
+    const bytes = gitBytes(root, args);
+    let start = 0;
+    for (let end = bytes.indexOf(0); end >= 0; end = bytes.indexOf(0, start)) {
+      const name = bytes.subarray(start, end);
+      if (isUtf8(name)) paths.add(name.toString("utf8"));
+      else invalid.add(name.toString("hex"));
+      start = end + 1;
+    }
+  }
+  return {
+    paths: [...paths].sort((left, right) => left.localeCompare(right)),
+    failures: [...invalid].sort().map(hex => ({
+      code: "source-incomplete", path: `[hex:${hex}]`, message: "Git path has invalid UTF-8", ruleId: null,
+    })),
+  };
 }
 
 /** A rule read from `--rules-ref`, and what loading the ref's rules left out (each with why), as a session would. */
@@ -434,11 +449,12 @@ function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGi
   }
   if (options.scope !== "git-diff") return { base: null, paths: null };
   if (options.base === undefined) {
-    return { base: null, paths: diffPaths(root, gitMaybe(root, ["rev-parse", "--verify", "--quiet", "HEAD"]) === null ? git(root, ["hash-object", "-t", "tree", "/dev/null"]).trim() : "HEAD") };
+    const against = gitMaybe(root, ["rev-parse", "--verify", "--quiet", "HEAD"]) ?? gitBytes(root, ["hash-object", "-t", "tree", "--stdin"]).toString("ascii").trim();
+    return { base: null, ...diffPaths(root, against) };
   }
   const mergeBase = gitMaybe(root, ["merge-base", options.base, "HEAD"]);
   if (mergeBase === null) throw new Error(`--base ${options.base} has no merge base with HEAD in ${root}`);
-  return { base: { ref: options.base, mergeBase }, paths: diffPaths(root, mergeBase) };
+  return { base: { ref: options.base, mergeBase }, ...diffPaths(root, mergeBase) };
 }
 
 type ScanAudit = AuditInput & { result?: AuditResult };

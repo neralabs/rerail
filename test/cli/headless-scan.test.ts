@@ -119,6 +119,33 @@ describe("headless rerail scan", () => {
     }
   });
 
+  it("rejects an invalid UTF-8 path list before it can select a replacement-character name", async () => {
+    const root = checkout();
+    writeFileSync(join(root, "f�.py"), "NEEDLE");
+    const list = join(root, "paths.txt");
+    writeFileSync(list, Buffer.concat([Buffer.from("a.py\r\nf"), Buffer.from([0xff]), Buffer.from(".py\n")]));
+    await expect(runAuditCommand("scan", ["--repo", root, "--paths-from", list], { home: root + "-home" }))
+      .rejects.toThrow(/paths\.txt line 2 contains an invalid UTF-8 path/u);
+  });
+
+  it("preserves distinct Git diff names when one name contains invalid UTF-8", async () => {
+    const root = checkout();
+    const valid = "f�.py";
+    const invalid = Buffer.from([0x66, 0xff, 0x2e, 0x70, 0x79]);
+    const blob = git(root, "rev-parse", "HEAD:a.py");
+    writeFileSync(join(root, valid), "NEEDLE");
+    const names = [Buffer.from(valid), invalid];
+    execFileSync("git", ["update-index", "-z", "--index-info"], { cwd: root, input: Buffer.concat(
+      names.flatMap(name => [Buffer.from(`100644 ${blob}\t`), name, Buffer.from([0])])) });
+    execFileSync("git", ["update-index", "--skip-worktree", "-z", "--stdin"], { cwd: root, input: Buffer.concat(
+      names.flatMap(name => [name, Buffer.from([0])])) });
+    const report = await scan(root, { scope: "git-diff" });
+    expect(report.paths).toEqual([valid]);
+    expect(report.status).toBe("failed");
+    expect(report.failures).toContainEqual(expect.objectContaining({ path: "[hex:66ff2e7079]", code: "source-incomplete" }));
+    expect(report.violations.map(row => row.path)).toContain(valid);
+  });
+
   it("returns JSON and RR findings without writing a scan or phase directory", () => {
     const root = checkout(), home = root + "-home";
     const tmp = join(home, "temp");

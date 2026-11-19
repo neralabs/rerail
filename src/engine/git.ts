@@ -221,13 +221,18 @@ function gitEnvironment(): NodeJS.ProcessEnv {
  * missing, never on a non-zero exit.
  */
 export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
+  const result = runGitBytes(cwd, args, options);
+  return { ...result, stdout: result.stdout.toString("utf8") };
+}
+
+/** Preserve raw names in Git's NUL-delimited listings. */
+export function runGitBytes(cwd: string, args: readonly string[], options: RunGitOptions = {}): Omit<GitResult, "stdout"> & { stdout: Buffer } {
   const result = spawnSync(gitExecutable(), [...SAFE_CONFIG, "-C", cwd, ...args], {
-    encoding: "utf8",
     timeout: DEFAULT_TIMEOUT_MS,
     ...options,
     env: gitEnvironment(),
   });
-  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
+  return { status: result.status, stdout: result.stdout ?? Buffer.alloc(0), stderr: result.stderr?.toString("utf8") ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
 
 /** Trimmed stdout of a successful `git -C <cwd> <args>`, or undefined when it fails. */

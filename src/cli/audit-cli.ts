@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { isUtf8 } from "node:buffer";
 import { describeScan, runHeadlessScan, type HeadlessScanOptions, type ScanReport } from "./headless-scan.js";
 import { RemoteOutbox } from "../runtime/remote-outbox.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
@@ -220,6 +221,21 @@ interface ScanArguments {
   readonly flags: ReadonlySet<string>;
 }
 
+function readPathList(file: string): string[] {
+  const bytes = readFileSync(file);
+  const paths: string[] = [];
+  let start = 0;
+  for (let line = 1; start < bytes.length; line++) {
+    const newline = bytes.indexOf(10, start);
+    const end = newline < 0 ? bytes.length : newline;
+    const name = bytes.subarray(start, newline > start && bytes[newline - 1] === 13 ? newline - 1 : end);
+    if (!isUtf8(name)) throw new Error(`${file} line ${line} contains an invalid UTF-8 path`);
+    if (name.length > 0) paths.push(name.toString("utf8"));
+    start = end + 1;
+  }
+  return paths;
+}
+
 function parseScanArguments(args: readonly string[]): ScanArguments {
   const values = new Map<string, string>();
   const packs: string[] = [];
@@ -248,7 +264,7 @@ function parseScanArguments(args: readonly string[]): ScanArguments {
         index += 2;
         break;
       case "--paths-from": {
-        const listed = readFileSync(requireValue(args, index, argument), "utf8").split(/\r?\n/u).filter(line => line.length > 0);
+        const listed = readPathList(requireValue(args, index, argument));
         paths = [...(paths ?? []), ...listed];
         index += 2;
         break;

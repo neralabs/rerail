@@ -42,7 +42,9 @@ rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--revis
 
 - With `--path` or `--paths-from`, paths are relative to the repository. The scan skips absent paths.
   The JSON report records the supplied names in `requestedPaths` and the absent names in `skippedPaths`.
-  A path list accepts one name per line and preserves spaces in each name.
+  A path list accepts one UTF-8 name per line and preserves spaces in each name.
+  An invalid UTF-8 line stops the scan and reports its line number.
+  A Git diff can contain a path with invalid UTF-8. The scan reports its bytes in hex and continues with the readable names.
   If a Git object prevents path lookup, the scan reports the path and fails.
 - `--scope git-diff`: the merge base is of `<ref>` and `HEAD`, so `--base` gives a pull request's changes. Deleted
   files are not scanned. No changed files is a completed scan with nothing in it.
