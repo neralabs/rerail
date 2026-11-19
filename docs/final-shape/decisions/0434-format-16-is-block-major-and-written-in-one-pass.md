@@ -427,10 +427,21 @@ error entry's kind is `ERROR_CODE` (0, tree-sitter's end symbol, never a node's)
 Where the presence cannot tell (none kept, a clause over a derived document, project evidence, no root kinds) the
 index is asked as before (`kept_presences_skip_only_error_free_tapes_that_cannot_match`).
 
-**Next: the device's block skip.** A kept entry is one contiguous range with relative references only (0402: a roll-up
-moves it by `memcpy`), so a warm tape's presence is loaded into its room beside the tape, as the tape's stored frame
-is (a load of the stored bytes into their home, not a copy: 0353), and the label kernels read each block's words
-there through the packed column's read (`col_get`, written once in CLIF) before its 1,024 nodes.
+**Done (2026-11-18): the device's block skip.** A label pass's rule over codes holds, after the files it runs in, a
+bit for each of the batch's root groups (64 nodes, each document's from its first) set where the group's block
+(`tape::PRESENCE_BLOCK`, 1,024 nodes: 16 groups) may hold one of its kinds and each `KIND` test's kind
+(`Roots::group_bits`, by `TapeDoc::block_may_have_kind`: the block's presence where it is held, else the document's).
+The kernels' `root_mask_in` and `root_admits` test the group's bit before reading a code: a left-out block's codes are
+not read (`metal_passes_skip_the_blocks_their_presence_rules_out`; `lowered_clauses_find_the_same_roots_on_metal`
+holds).
+
+Not as planned above: the presence is not laid in the slabs for the kernels to read. What a kernel needs of it is one
+answer per (rule, block), and the planner already answers per (rule, file) from the same presence (part 2); the
+answer per block is the same planning, finer: a derived bit a group, a 1/64 of a node row, written once into the rule
+table the kernels read. Laying the words beside the tape would have made the kernels test each rule's kinds against
+W words a block in every task, needed an `IntCol` read in CLIF for the kept column (none exists: `col_get` is the
+row blocks'), and a writer's room for a cold run's presences, for the same skip. The presence stays where it lies:
+the writer's image, or the store's kept file, read in place by position on the host.
 
 ## Requirements, each with its test
 

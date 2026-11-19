@@ -391,6 +391,9 @@ pub struct TapeImage {
     pub presence: Option<TapePresence>,
 }
 
+/// Nodes a block's presence covers (`f16::PART`): block `b` is nodes `PRESENCE_BLOCK * b ..`.
+pub const PRESENCE_BLOCK: usize = rerail_tape_format::f16::PART;
+
 /// A format 16 tape's presence (decision 0434 §4): as the writer made it, or as the store keeps it, read in place.
 #[derive(Clone)]
 pub enum TapePresence {
@@ -404,6 +407,25 @@ impl TapePresence {
         match self {
             TapePresence::Made(p) => p.has_kind(kind),
             TapePresence::Kept(k) => k.word(usize::from(kind) / 64, k.kind_words).is_some_and(|w| w >> (kind % 64) & 1 != 0),
+        }
+    }
+
+    /// Whether block `b` (its nodes `1024 b ..`) has a node of kind `kind`; `None` where no block's presence is held.
+    pub fn block_has_kind(&self, b: usize, kind: u16) -> Option<bool> {
+        let k = usize::from(kind);
+        match self {
+            TapePresence::Made(p) => {
+                let (kinds, _) = p.block(b)?;
+                Some(kinds.get(k / 64).is_some_and(|w| w >> (k % 64) & 1 != 0))
+            }
+            TapePresence::Kept(p) => {
+                let w = p.kind_words + p.field_words;
+                if k / 64 >= p.kind_words {
+                    return Some(false);
+                }
+                // The document's words come first, then each block's.
+                Some(p.at(w * (b + 1) + k / 64)? >> (k % 64) & 1 != 0)
+            }
         }
     }
 }
@@ -442,9 +464,14 @@ impl KeptPresence {
 
     /// Word `i` of the document's kinds (`below` = `kind_words`) or fields, read in place.
     fn word(&self, i: usize, below: usize) -> Option<u64> {
+        (i < below).then(|| self.at(i)).flatten()
+    }
+
+    /// Row `i`'s word, read in place; `None` past the rows.
+    fn at(&self, i: usize) -> Option<u64> {
         // SAFETY: see the type's `Send`: the rows lie in `space`'s mapped files.
         let rows = unsafe { self.rows.as_ref() };
-        (i < below).then(|| rows.get(i, 0) as u64)
+        (i < rows.len()).then(|| rows.get(i, 0) as u64)
     }
 
     /// The words a document's presence, and each block's, has.
@@ -2855,6 +2882,13 @@ impl TapeDoc {
     /// kind is `ERROR_SYMBOL`, which no presence holds, so it is always possible.
     pub fn may_have_kind(&self, kind: u16) -> bool {
         kind == ERROR_SYMBOL || self.image.presence.as_ref().is_none_or(|p| p.has_kind(kind))
+    }
+
+    /// Whether block `b` (nodes `PRESENCE_BLOCK * b ..`) may hold a node of kind `kind`: as `may_have_kind`, by the
+    /// block's presence where it is held, else the document's.
+    pub fn block_may_have_kind(&self, b: usize, kind: u16) -> bool {
+        kind == ERROR_SYMBOL
+            || self.image.presence.as_ref().is_none_or(|p| p.block_has_kind(b, kind).unwrap_or_else(|| p.has_kind(kind)))
     }
 
     fn node_is_named(&self, node: u32) -> bool {

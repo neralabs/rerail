@@ -354,6 +354,47 @@ fn metal_passes_skip_the_files_their_presence_rules_out() {
     assert!(!metal[0].is_empty() && metal[1].is_empty(), "{metal:?}");
 }
 
+/// Decision 0434 step 6, the device's block skip: a pass over codes reads no codes in a block whose presence holds
+/// none of its kinds. A file of three blocks whose lists and operators are all in its last: the first two are left
+/// out, and the roots are the CPU's.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn metal_passes_skip_the_blocks_their_presence_rules_out() {
+    use super::compile_matcher::Backend;
+    use crate::code_rule_dsl::transducer::packed::metal_program_backend::label_passes::take_blocks_ruled_out;
+    let policy = r#"{
+        "format": "rerail.policy/v1", "id": "nested-recursion", "revision": 1, "mode": "steer",
+        "scope": { "include": ["**/*"], "exclude": [] },
+        "clauses": [{
+            "id": "nested",
+            "forbid": { "ast": {
+                "language": "python",
+                "utils": {
+                    "list-expr": { "any": [
+                        { "kind": "list" },
+                        { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "list-expr" } },
+                        { "matches": "list-add" }
+                    ] },
+                    "list-add": { "kind": "binary_operator", "has": { "stopBy": "neighbor", "matches": "list-expr" } }
+                },
+                "rule": { "kind": "assignment", "has": { "stopBy": "neighbor", "matches": "list-add" } }
+            } },
+            "violation": { "anchor": "witness.span", "code": "NESTED", "message": "A list concatenation." }
+        }]
+    }"#;
+    let compiled = CodeRuleDslRuntime::compile(policy.to_owned(), "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let (_, grammar) = python_matchers(&compiled).next().expect("a Python clause");
+    let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
+    let source = format!("{}x = ['a'] + b\ny = (['a'] + b) + c\n", "pass\n".repeat(2600));
+    let tapes = [python_tape(&source)];
+    assert!(tapes[0].transducer_len() > 2 * crate::code_rule_dsl::tape::PRESENCE_BLOCK, "{} nodes", tapes[0].transducer_len());
+    take_blocks_ruled_out();
+    let metal = program.roots_metal(&tapes).expect("the passes run on Metal").0;
+    assert!(take_blocks_ruled_out() >= 2, "the blocks of `pass` alone are left out");
+    assert_eq!(metal, program.roots_batch(Backend::Cpu, &tapes).expect("the CPU's roots"));
+    assert!(!metal[0].is_empty(), "{metal:?}");
+}
+
 /// S2's parity gate (O23, F1): every lowered clause's passes run on Metal over the whole batch of
 /// fixtures, in one command buffer (plus one per extra round of a recursive group), and give the
 /// CPU interpreter's root sets on every fixture.

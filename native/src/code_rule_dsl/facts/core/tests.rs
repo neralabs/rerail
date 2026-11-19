@@ -147,7 +147,8 @@ fn a_stored_tape_is_given_the_presence_its_writer_made() {
     use sha2::Digest as _;
     let dir = tempfile::tempdir().unwrap();
     let cache = crate::content_store::ContentStore::open(&dir.path().join("p.sqlite")).unwrap();
-    let file = Text("python".into(), Arc::new("class A:\n    def f(self):\n        return g(1)\n".into()));
+    // Past two blocks of nodes: the class is in the first alone.
+    let file = Text("python".into(), Arc::new(format!("class A:\n    def f(self):\n        return g(1)\n{}", "x = 1\n".repeat(500))));
     let (_, _, doc) = build_cached_with_tape(&file, &cache, None, true).unwrap();
     let Some(TapePresence::Made(made)) = doc.expect("the tape").image.presence.clone() else { panic!("a format 16 parse has its writer's presence") };
     cache.written().unwrap();
@@ -163,6 +164,17 @@ fn a_stored_tape_is_given_the_presence_its_writer_made() {
     for kind in 0..kinds as u16 {
         assert_eq!(kept.has_kind(kind), made.has_kind(kind), "kind {kind}");
     }
+    // Each block's, read in place, the writer's; past the last block, none.
+    let blocks = made.blocks.len() / (made.kind_words + made.field_words);
+    let writer = TapePresence::Made(Arc::clone(&made));
+    assert!(blocks >= 2, "{blocks} blocks");
+    for b in 0..=blocks {
+        for kind in 0..kinds as u16 {
+            assert_eq!(kept.block_has_kind(b, kind), writer.block_has_kind(b, kind), "block {b}, kind {kind}");
+        }
+    }
+    let class = (0..kinds as u16).find(|&kind| made.has_kind(kind) && !kept.block_has_kind(blocks - 1, kind).unwrap()).is_some();
+    assert!(class, "a kind of the document the last block lacks");
     // A build of the tape the store holds: its image is given the kept presence.
     let source = cache.source_by_hash(crate::content_store::HashKey::sha256(file.source().as_bytes())).unwrap().expect("the source, stored");
     let frame = cache.tape_frames_for(&[source], tag, gv, fv).unwrap().remove(0).expect("the tape, stored");

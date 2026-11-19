@@ -83,7 +83,8 @@ inline ulong root_row(device const uint* row,uint b){
 }
 // The roots of the rule at `at` among document `d`'s nodes 64*group + lo .. 64*group + hi (file `file` of the batch),
 // as bits of the group's 64. A rule over codes with an anchor (kind 2, decision 0365): its row (set by
-// `label_formula`) and the rule without it.
+// `label_formula`) and the rule without it. A rule over codes: {0, the files it runs in, the batch's groups whose block
+// may hold its roots (a bit each), the rule (`code_admits`)}.
 inline ulong root_mask_in(device const uchar* s,DocView d,device const uint* roots,uint at,uint file,uint group,uint lo,uint hi){
  uint from=group*ROOT_GROUP;if(from>=d.nodes)return 0ul;
  uint count=min(ROOT_GROUP,d.nodes-from);hi=min(hi,count);if(lo>=hi)return 0ul;
@@ -95,7 +96,11 @@ inline ulong root_mask_in(device const uchar* s,DocView d,device const uint* roo
  }else{
   uint files=roots[0];
   if(((roots[at+1u+file/32u]>>(file%32u))&1u)==0u)return 0ul;
-  device const uint* rule=roots+at+1u+(files+31u)/32u;
+  // The groups whose block's presence may hold a root (decision 0434 step 6): the others' codes are not read.
+  device const uint* groups=roots+at+1u+(files+31u)/32u;
+  uint g=roots_first_group(roots,file)+group;
+  if(((groups[g/32u]>>(g%32u))&1u)==0u)return 0ul;
+  device const uint* rule=groups+(roots_groups(roots)+31u)/32u;
   for(uint k=lo;k<hi;k++)if(code_admits(rule,tape_code(s,d,from+k)))mask|=1ul<<k;
  }
  mask&=anchor;
@@ -108,7 +113,10 @@ inline bool root_admits(device const uchar* s,DocView d,device const uint* roots
  if(roots[at]!=0u){device const uint* row=roots+at+1u;uint b=d.node_base+local;return ((row[b/32u]>>(b%32u))&1u)!=0u;}
  uint files=roots[0];
  if(((roots[at+1u+file/32u]>>(file%32u))&1u)==0u)return false;
- return code_admits(roots+at+1u+(files+31u)/32u,tape_code(s,d,local));
+ device const uint* groups=roots+at+1u+(files+31u)/32u;
+ uint g=roots_first_group(roots,file)+local/ROOT_GROUP;
+ if(((groups[g/32u]>>(g%32u))&1u)==0u)return false;
+ return code_admits(groups+(roots_groups(roots)+31u)/32u,tape_code(s,d,local));
 }
 // The roots among all the group's nodes.
 inline ulong root_mask(device const uchar* s,DocView d,device const uint* roots,uint at,uint file,uint group){return root_mask_in(s,d,roots,at,file,group,0u,ROOT_GROUP);}

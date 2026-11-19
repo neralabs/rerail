@@ -119,6 +119,38 @@ impl Roots {
         Ok(rule)
     }
 
+    /// A rule over codes' groups (`ROOT_GROUP` nodes, each document's from its first) that may hold its roots, as bits
+    /// over the batch's groups: those of the blocks (`tape::PRESENCE_BLOCK` nodes) whose presence may hold one of its kinds and
+    /// each `KIND` test's kind, in the files it runs in (decision 0434 step 6, the device's block skip). The planner's
+    /// answer, a bit a group: the presence stays where it lies (the image's, or the store's kept file, read in place).
+    fn group_bits(&self, files: &[TapeDoc]) -> Vec<u32> {
+        const PER: usize = crate::code_rule_dsl::tape::PRESENCE_BLOCK / ROOT_GROUP;
+        let Self::Codes { kinds, entry, active, .. } = self else { return Vec::new() };
+        let groups = files.iter().map(|tape| tape.transducer_len().div_ceil(ROOT_GROUP)).sum::<usize>();
+        let mut bits = vec![0_u32; groups.div_ceil(32)];
+        let mut first = 0;
+        for (file, tape) in files.iter().enumerate() {
+            let n = tape.transducer_len().div_ceil(ROOT_GROUP);
+            if active.get(file).copied().unwrap_or(false) {
+                for block in 0..n.div_ceil(PER) {
+                    let may = |kind: u16| tape.block_may_have_kind(block, kind);
+                    let holds = kinds.as_ref().is_none_or(|kinds| kinds.iter().any(|&kind| may(kind)))
+                        && entry.iter().all(|&(op, arg)| op != super::super::KIND || may(arg));
+                    if !holds {
+                        #[cfg(any(test, feature = "test-hooks"))]
+                        BLOCKS_RULED_OUT.set(BLOCKS_RULED_OUT.get() + 1);
+                        continue;
+                    }
+                    for group in first + block * PER..first + ((block + 1) * PER).min(n) {
+                        bits[group / 32] |= 1 << (group % 32);
+                    }
+                }
+            }
+            first += n;
+        }
+        bits
+    }
+
     /// The roots in file `file` on the host, ascending (the CPU's readers and the counters).
     pub(in crate::code_rule_dsl) fn nodes<'a>(&'a self, file: usize, tape: &'a TapeDoc) -> Box<dyn Iterator<Item = u32> + 'a> {
         match self {
@@ -174,6 +206,7 @@ impl Roots {
                     bits[file / 32] |= 1 << (file % 32);
                 }
                 words.extend(bits);
+                words.extend(self.group_bits(files));
                 words.extend(self.device_rule()?);
                 if let Some(row) = row {
                     return Ok(Some((row, 0)));
@@ -202,6 +235,17 @@ impl Roots {
 
 /// A batch's groups of 64 nodes, each document's from its first node (`ROOT_GROUP`).
 const ROOT_GROUP: usize = 64;
+
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    static BLOCKS_RULED_OUT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The (rule, block) pairs this thread's root tables left out by the blocks' presences, and the count restarted.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn take_blocks_ruled_out() -> usize {
+    BLOCKS_RULED_OUT.replace(0)
+}
 
 /// A run's pass roots as the device reads them (`root_mask`): the batch's file count and each
 /// file's first group (and the total), then one rule per distinct `Roots` (by its `Arc`), so passes
