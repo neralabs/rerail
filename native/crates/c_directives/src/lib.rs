@@ -378,6 +378,7 @@ mod facts;
 pub use facts::Facts;
 pub mod expand;
 pub mod tokens;
+pub mod pp;
 
 /// `src`'s mode (a) facts: from the compiled grammar's tape where it reads the file, else (a
 /// construct the ladder does not read, or a grammar that does not compile) the lean scan's.
