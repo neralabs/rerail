@@ -36,6 +36,7 @@ zstd = "=0.14.3"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 same-file = "1.0.6"
+tempfile = "=3.27.0"
 
 [target.'cfg(not(any(windows, target_family = "wasm")))'.dependencies]
 tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }

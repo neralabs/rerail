@@ -1592,6 +1592,115 @@ Seen(@place("git",1), "unexpected run") :- analysis_scope_run(_,_).
     } finally { vi.unstubAllEnvs(); }
   }, 30_000);
 
+  it("joins Git history across worktrees and moves while resolving HEAD in the selected worktree", async () => {
+    const root = checkout(), home = root + "-home", store = join(home, "history.sqlite"), databasePath = join(home, "rerail.sqlite");
+    mkdirSync(home);
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+    try {
+      const linked = join(home, "linked"), moved = join(home, "moved"), backup = join(home, "restored");
+      const seed = git(root, "rev-parse", "HEAD");
+      expect((await scan(root, { revision: seed, analysisScope: "release", databasePath })).cache.publication).toBe("published");
+      expect((await scan(root, { revision: seed, analysisScope: "older", databasePath })).cache.publication).toBe("published");
+      const oldKey = "repo:" + createHash("sha256").update(toNamespacedPath(realpathSync.native(join(root, ".git")))).digest("hex");
+      // Reproduce the old row format in the test store, using a separate SQLite process.
+      execFileSync(process.execPath, ["--input-type=module", "-e", `
+        import Database from "better-sqlite3";
+        const db = new Database(process.argv[1], { fileMustExist: true });
+        try { db.prepare("UPDATE analysis_scope_run SET repository=? WHERE scope='named:older'").run(process.argv[2]); }
+        finally { db.close(); }
+      `, "--", store, oldKey]);
+      const query = join(home, "identity.rr");
+      writeFileSync(query, `#include "git.rr"
+#include "analysis.rr"
+.policy "identities" revision 1
+.violation Seen(at: span, label: symbol, value: symbol) "{label} {value}"
+git_revision_request(r,"HEAD") :- git_root_repo(r).
+Seen(@place("git",1),"history",c) :- git_root_repo(r), analysis_named_scope("release",s), analysis_scope_run(s,run), analysis_run_commit(run,r,c).
+Seen(@place("git",1),"older",r) :- analysis_named_scope("older",s), analysis_scope_run(s,run), analysis_run_commit(run,r,_).
+Seen(@place("git",1),"misattributed",c) :- git_root_repo(r), analysis_named_scope("older",s), analysis_scope_run(s,run), analysis_run_commit(run,r,c).
+Seen(@place("git",1),"head",c) :- git_revision(_,"HEAD",c).
+Seen(@place("git",1),"view",v) :- git_root_view(_,v).
+`);
+      const inspect = async (repo: string, expected: string[]) => {
+        const result = await scan(repo, { revision: "HEAD", analysisScope: "lookup", rr: [query], databasePath });
+        expect(result.failures).toEqual([]);
+        const messages = result.violations.map(d => d.message);
+        expect(messages.filter(m => !m.startsWith("view ")).sort()).toEqual([...expected, "older " + oldKey].sort());
+        const views = messages.filter(m => m.startsWith("view "));
+        expect(views).toHaveLength(1);
+        return views[0]!;
+      };
+      const main = ["head " + seed, "history " + seed], originalView = await inspect(root, main);
+      git(root, "worktree", "add", "--detach", linked, "HEAD");
+      git(linked, "commit", "--allow-empty", "-qm", "linked head");
+      expect(await inspect(linked, ["head " + git(linked, "rev-parse", "HEAD"), "history " + seed])).not.toBe(originalView);
+      git(root, "worktree", "remove", linked);
+      loadNativeBinding().retireUpkeepUnder?.(root);
+      renameSync(root, moved);
+      expect(await inspect(moved, main)).toBe(originalView);
+      cpSync(moved, backup, { recursive: true });
+      expect(await inspect(backup, main)).not.toBe(originalView);
+      git(home, "clone", "--no-local", moved, root);
+      expect(await inspect(root, ["head " + seed])).not.toBe(originalView);
+    } finally { vi.unstubAllEnvs(); }
+  }, 30_000);
+
+  it("rejects a replacement Git directory while an open view follows ref changes in its original checkout", async () => {
+    const root = checkout(), other = checkout(), home = root + "-home";
+    mkdirSync(home);
+    const engine = loadNativeBinding(), view = new engine.GitRevisionSource(root, "HEAD", "live");
+    const policy = join(home, "head.rr");
+    writeFileSync(policy, `#include "git.rr"
+.policy "head" revision 1
+.violation Seen(at: span, value: symbol) "{value}"
+git_revision_request(r,"HEAD") :- git_root_repo(r).
+Seen(@place("git",1),c) :- git_revision(_,"HEAD",c).
+`);
+    const run = async () => JSON.parse(await engine.scanRrPoliciesAsync([policy], root, join(home, "store.sqlite"), "", undefined, undefined, view))[0];
+    git(root, "commit", "--allow-empty", "-qm", "same checkout, new HEAD");
+    expect((await run()).diagnostics.map((d: {message: string}) => d.message)).toEqual([git(root, "rev-parse", "HEAD")]);
+    git(other, "commit", "--allow-empty", "-qm", "replacement HEAD");
+    const original = join(home, "original");
+    renameSync(root, original);
+    renameSync(other, root);
+    const result = await run();
+    expect(result.error).toMatch(/Git directory changed/u);
+    expect(result.diagnostics ?? []).toEqual([]);
+    renameSync(root, other);
+    renameSync(original, root);
+    expect((await run()).diagnostics.map((d: {message: string}) => d.message)).toEqual([git(root, "rev-parse", "HEAD")]);
+  }, 30_000);
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("keeps first-use read-only repository history across restart when its Git directory becomes writable", async () => {
+    const root = checkout(), home = root + "-home", admin = join(root, ".git");
+    const mode = statSync(admin).mode, marker = join(admin, "rerail-repository-id");
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", join(home, "readonly.sqlite"));
+    try {
+      chmodSync(admin, 0o555);
+      const first = await scan(root, { revision: "HEAD", analysisScope: "readonly" });
+      expect(first.cache.publication).toBe("published");
+      expect(first.violations.map(d => d.path)).toEqual(["a.py"]);
+      expect(existsSync(marker)).toBe(false);
+      chmodSync(admin, mode);
+      const policy = join(home, "readonly.rr");
+      writeFileSync(policy, `#include "git.rr"
+#include "analysis.rr"
+.policy "known" revision 1
+.violation Seen(at: span, c: symbol) "{c}"
+Seen(@place("git",1),c) :- git_root_repo(r), analysis_named_scope("readonly",s), analysis_scope_run(s,run), analysis_run_commit(run,r,c).
+`);
+      const next: ScanReport = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+        const {runHeadlessScan} = await import(process.argv[1]);
+        const [repo, policy, databasePath] = process.argv.slice(2);
+        console.log(JSON.stringify(await runHeadlessScan({ repo, scope:"repository", packs:[], version:"test", databasePath,
+          revision:"HEAD", analysisScope:"lookup", rr:[policy] })));
+      `, new URL("../../src/cli/headless-scan.ts", import.meta.url).href, root, policy, join(home, "rerail.sqlite")], { encoding: "utf8" }));
+      expect(next.repository.key).toBe(first.repository.key);
+      expect(next.violations.map(d => d.message)).toEqual([git(root, "rev-parse", "HEAD")]);
+      expect(existsSync(marker)).toBe(true);
+    } finally { chmodSync(admin, mode); vi.unstubAllEnvs(); }
+  }, 30_000);
+
   it("joins published scan IDs to their actual directory, commit, tree and retained snapshot", async () => {
     const root = checkout(), home = root + "-home", store = join(home, "runs.sqlite"), databasePath = join(home, "rerail.sqlite");
     vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);

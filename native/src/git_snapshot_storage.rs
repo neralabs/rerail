@@ -242,7 +242,7 @@ use std::fs::{Metadata as StorageMetadata, metadata as read_metadata};
 
 #[cfg(windows)]
 #[path = "git_snapshot_windows_stat.rs"]
-mod windows;
+pub(super) mod windows;
 #[cfg(windows)]
 use windows::{StorageMetadata, read_metadata};
 

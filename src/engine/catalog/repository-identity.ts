@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   chmodSync,
@@ -12,6 +12,7 @@ import {
   readdirSync,
   readFileSync,
   readSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -178,15 +179,18 @@ const MAX_IDENTITY_BYTES = 128;
 function readIdentityFile(identityPath: string): string | undefined {
   let descriptor: number;
   try {
-    descriptor = openSync(identityPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    descriptor = openSync(identityPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0));
   } catch (error) {
     if (errorCode(error) === "ENOENT") return undefined;
     throw new Error(`Rerail repository identity at ${identityPath} is not a regular file`);
   }
   try {
-    if (!fstatSync(descriptor).isFile()) throw new Error(`Rerail repository identity at ${identityPath} is not a regular file`);
-    const buffer = Buffer.alloc(MAX_IDENTITY_BYTES);
-    const length = readSync(descriptor, buffer, 0, MAX_IDENTITY_BYTES, 0);
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile()) throw new Error(`Rerail repository identity at ${identityPath} is not a regular file`);
+    if (stat.size > MAX_IDENTITY_BYTES) throw new Error(`malformed Rerail repository identity at ${identityPath}`);
+    const buffer = Buffer.alloc(MAX_IDENTITY_BYTES + 1);
+    const length = readSync(descriptor, buffer, 0, buffer.length, 0);
+    if (length > MAX_IDENTITY_BYTES) throw new Error(`malformed Rerail repository identity at ${identityPath}`);
     const cloneId = buffer.subarray(0, length).toString("utf8").trim();
     if (!CLONE_ID.test(cloneId)) throw new Error(`malformed Rerail repository identity at ${identityPath}`);
     return cloneId;
@@ -212,6 +216,22 @@ export function legacyBareCloneId(location: RepositoryIdentityLocation): string 
   if (!lstatSync(directory, { throwIfNoEntry: false })?.isDirectory()) return undefined;
   if (gitText(common, ["rev-parse", "--is-bare-repository"]) !== "true") return undefined;
   return readIdentityFile(join(directory, "repository-id"));
+}
+
+/** Also used by the native reader before a clone has its first identity file. */
+function directoryCloneId(common: string): string | undefined {
+  const stat = statSync(common, { bigint: true });
+  if (!stat.ino || stat.birthtimeNs <= 0n) return undefined;
+  return "git:fs-" + createHash("sha256").update(`rerail.git-directory/v1\0${stat.dev}/${stat.ino}/${stat.birthtimeNs}`).digest("hex");
+}
+
+/** A marker is authoritative. Before publication, a stable Git identity can still match an existing catalog row. */
+export function checkoutIdentity(location: RepositoryIdentityLocation): { id: string | undefined; marked: boolean } {
+  const marker = readIdentityFile(location.identityPath);
+  if (marker !== undefined || !location.git) return { id: marker, marked: marker !== undefined };
+  const legacy = legacyBareCloneId(location) ?? gitText(location.workspaceRoot, ["config", "--local", "--get", "rerail.repository-id"]);
+  const id = legacy !== undefined && CLONE_ID.test(legacy) ? legacy : directoryCloneId(dirname(location.identityPath));
+  return { id, marked: false };
 }
 
 /** Publish complete identity bytes with an atomic no-clobber link. */
@@ -244,11 +264,16 @@ function readOrCreateIdentity(identityPath: string, candidate: string): string {
 export function resolveCloneId(workspace: string): { cloneId: string; location: RepositoryIdentityLocation } {
   const location = repositoryIdentityLocation(workspace);
   if (location.git) {
-    const existing = readIdentityFile(location.identityPath);
-    if (existing !== undefined) return { cloneId: existing, location };
-    const legacyId = gitText(location.workspaceRoot, ["config", "--local", "--get", "rerail.repository-id"]) ?? "";
-    const candidate = legacyBareCloneId(location) ?? (CLONE_ID.test(legacyId) ? legacyId : `git:${randomUUID()}`);
-    return { cloneId: readOrCreateIdentity(location.identityPath, candidate), location };
+    const { id: stable, marked } = checkoutIdentity(location);
+    if (stable !== undefined && marked) return { cloneId: stable, location };
+    try {
+      return { cloneId: readOrCreateIdentity(location.identityPath, stable ?? `git:${randomUUID()}`), location };
+    } catch (error) {
+      if (stable && ["EACCES", "EPERM", "EROFS"].includes(errorCode(error) ?? "")) {
+        return { cloneId: readIdentityFile(location.identityPath) ?? stable, location };
+      }
+      throw error;
+    }
   }
   const directory = dirname(location.identityPath);
   // Created first, so two processes recording the same folder at once both succeed; whichever made it, it must be a

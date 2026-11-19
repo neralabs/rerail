@@ -21,6 +21,10 @@ pub use revision::{failure_reason as revision_failure_reason, resolve as resolve
 #[path = "git_snapshot_storage.rs"]
 pub mod storage;
 
+#[path = "git_snapshot_identity.rs"]
+mod identity;
+pub use identity::Identity;
+
 #[derive(Debug)]
 struct View {
     id: u64,
@@ -30,7 +34,8 @@ struct View {
     tree: gix::ObjectId,
     commit: Option<gix::ObjectId>,
     cache_root: PathBuf,
-    repository_key: String,
+    identity: Identity,
+    directories: identity::Directories,
     scope: Option<String>,
     inventory: Mutex<InventoryState>,
     observed_trees: Mutex<std::collections::HashMap<gix::ObjectId, ObservedTree>>,
@@ -245,6 +250,7 @@ enum Entry {
 pub struct StorageBatch {
     previous: Option<(u64, u64)>,
     storage: Arc<storage::Storage>,
+    view: Arc<View>,
 }
 
 impl StorageBatch {
@@ -253,10 +259,12 @@ impl StorageBatch {
         let state = view.current_repository()?;
         let id = (view.id, state.epoch);
         if STORAGE_BATCH.get() == Some(id) { return Ok(None); }
-        Ok(state.storage.clone().map(|storage| Self { previous: STORAGE_BATCH.replace(Some(id)), storage }))
+        let storage = state.storage.clone();
+        drop(state);
+        Ok(storage.map(|storage| Self { previous: STORAGE_BATCH.replace(Some(id)), storage, view }))
     }
 
-    pub fn is_current(&self) -> bool { self.storage.is_current() }
+    pub fn is_current(&self) -> bool { self.view.directories.check().is_ok() && self.storage.is_current() }
 }
 
 impl Drop for StorageBatch {
@@ -387,10 +395,12 @@ impl View {
 
     fn current_repository(&self) -> io::Result<std::sync::MutexGuard<'_, RepositoryState>> {
         let mut repository = self.repository.lock().unwrap_or_else(|e| e.into_inner());
-        if STORAGE_BATCH.get() != Some((self.id, repository.epoch))
-            && !repository.storage.as_deref().is_some_and(storage::Storage::is_current) {
+        if STORAGE_BATCH.get() == Some((self.id, repository.epoch)) { return Ok(repository); }
+        self.directories.check()?;
+        if !repository.storage.as_deref().is_some_and(storage::Storage::is_current) {
             let options = super::checkout_options(Default::default()).open_path_as_is(true);
             let repo = gix::ThreadSafeRepository::open_opts(repository.repo.git_dir(), options).map_err(error)?;
+            self.directories.check()?;
             repository.storage = storage::Storage::of(&repo.to_thread_local()).map(Arc::new);
             repository.repo = repo;
             repository.epoch += 1;
@@ -408,7 +418,9 @@ impl View {
                 *slot = Some((epoch, physical_objects(repository.repo.to_thread_local())));
             }
             drop(repository);
-            Ok(f(&slot.as_ref().unwrap().1, storage.as_deref(), epoch.1))
+            let answer = f(&slot.as_ref().unwrap().1, storage.as_deref(), epoch.1);
+            if STORAGE_BATCH.get() != Some(epoch) { self.directories.check()?; }
+            Ok(answer)
         })
     }
 
@@ -471,17 +483,14 @@ pub struct SnapshotKey {
     object: gix::ObjectId,
 }
 
-/// Opaque repository identity shared by Git facts and completed-run records.
-pub fn repository_key(canonical_git_dir: &Path) -> String {
-    use sha2::Digest as _;
-    let digest = sha2::Sha256::digest(canonical_git_dir.as_os_str().as_encoded_bytes());
-    format!("repo:{}", crate::content_store::observe::hex(&digest.into()))
+pub fn pinned_identity(root: &Path) -> Option<Identity> {
+    view(root).map(|v| v.identity.clone())
 }
 
 impl Snapshot {
     pub fn run_source(&self) -> crate::content_store::analysis_scope::RunSource {
         crate::content_store::analysis_scope::RunSource::Git {
-            repository: self.view.repository_key.clone(), tree: self.tree(), commit: self.commit(),
+            repository: self.view.identity.repository.clone(), tree: self.tree(), commit: self.commit(),
         }
     }
 
@@ -664,6 +673,7 @@ impl Snapshot {
 
     fn open(source: &Path, revision: &str, scope: Option<String>, invocation: &Path) -> Result<Self, String> {
         let repo = physical_objects(super::discover_repository(source).map_err(|e| e.to_string())?);
+        let directories = identity::Directories::open(&repo).map_err(|e| e.to_string())?;
         let work = repo.workdir().map(std::fs::canonicalize).transpose().map_err(|e| e.to_string())?;
         let relative = |path: &Path| -> Result<PathBuf, String> {
             let Some(work) = &work else { return Ok(PathBuf::new()); };
@@ -714,7 +724,8 @@ impl Snapshot {
             root,
             tree,
             commit,
-            repository_key: repository_key(&git_dir),
+            identity: Identity::of(&repo, scope.is_some()).map_err(|err| err.to_string())?,
+            directories,
             cache_root: git_dir.join("rerail-object-facts").join(&prefix),
             prefix,
             scope,
@@ -723,6 +734,7 @@ impl Snapshot {
             source_errors: Mutex::default(),
             repository: Mutex::new(RepositoryState { epoch: 0, repo: repo.into_sync(), storage }),
         });
+        view.directories.check().map_err(|e| e.to_string())?;
         if !view.prefix.as_os_str().is_empty() {
             view.with_repo(|repo, storage, _| {
                 let entry = view.lookup_tree_entry(repo, storage, &view.prefix).map_err(|err| err.to_string())?

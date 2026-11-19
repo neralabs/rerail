@@ -123,9 +123,9 @@ impl World {
         self.git_observations.insert((operation.to_owned(), key), digest);
     }
 
-    pub(super) fn git_revision(&mut self, repo: &str, expression: &str) -> (String, &'static str) {
-        let (id, status) = self.git().resolve(repo, expression);
-        self.consulted_git(super::git::REVISION, repo, expression, format!("{status}:{id}"));
+    pub(super) fn git_revision(&mut self, operation: &str, key: &str, expression: &str) -> (String, &'static str) {
+        let (id, status) = self.git().resolve(operation, key, expression);
+        self.consulted_git(operation, key, expression, format!("{status}:{id}"));
         (id, status)
     }
 
@@ -371,7 +371,7 @@ impl World {
                 "file" | "digest" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
                 "load" => bytes_digest(Path::new(path)),
                 "refused" => self.probe(path),
-                super::git::REVISION | super::git::OBJECT => {
+                super::git::REVISION | super::git::REPO_REVISION | super::git::OBJECT => {
                     let Ok((repo, arg)) = serde_json::from_str::<(String, String)>(path) else {
                         return Some((c, None));
                     };

@@ -68,6 +68,13 @@ Include `analysis.rr` to query completed scans in the selected content store.
 Scope presence comes from published ownership or recorded history. A scope imported from an older store can own manifests or snapshots without a recorded scan.
 The engine reads the requested scope and run relations from one SQLite snapshot.
 A run has an opaque key. Its scan ID is the value that the caller supplied or the standalone command assigned.
+Git run records use the clone ID shared by the repository's worktrees. A rename preserves the ID.
+A copy that includes the existing clone ID can read the same history from a shared store.
+A new `git clone` has its own identity, even if the two clones have identical commits and remotes.
+Older records contain only a hash of the Git directory pathname. Their original repository remains unknown.
+Rules can still enumerate those records by scope and scan ID.
+Passive catalog lookup checks the same directory identity before using saved checkout settings.
+A fresh clone can still inherit repository-wide settings through its remote.
 Use the run key to join facts. Two calls can supply the same scan ID.
 
 ```rr

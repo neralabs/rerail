@@ -12,9 +12,9 @@ import type { RerailDatabase } from "../storage/database.js";
 import { gitExecutable, GitUnavailableError, runGit } from "../git.js";
 import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, RepositoryStatus } from "./repository-model.js";
 import {
+  checkoutIdentity,
   legacyBareCloneId,
   normalizeRemoteAddress,
-  readCloneIdAt,
   readRemoteAddress,
   repositoryFolderName,
   repositoryIdentityLocation,
@@ -176,8 +176,9 @@ function adoptRemoteOnce<C extends CheckoutContext>(db: RerailDatabase, context:
  * only in a recorded checkout Rerail runs in; false when nothing was recorded.
  */
 export function recordStartedWorktree(db: RerailDatabase, root: string, location: RepositoryIdentityLocation): boolean {
-  const cloneId = readCloneIdAt(location.identityPath);
-  if (!location.git || cloneId === undefined || physicalPath(location.workspaceRoot) !== root) return false;
+  if (!location.git || physicalPath(location.workspaceRoot) !== root) return false;
+  const { id: cloneId } = checkoutIdentity(location);
+  if (cloneId === undefined) return false;
   const commonDirectory = physicalPath(dirname(location.identityPath));
   const recorded = db.select({ path: checkouts.checkoutPath, key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.cloneId, cloneId)).all();
   const listed = recorded.some(peer =>
@@ -209,12 +210,13 @@ export function lookupCheckout(db: Reader, workspace: string): CheckoutContext |
 }
 
 function lookupAt(db: Reader, location: RepositoryIdentityLocation, remoteKeys: Map<string, RepositoryKey | undefined>): CheckoutContext | undefined {
-  const cloneId = readCloneIdAt(location.identityPath) ?? null;
+  const { id, marked } = checkoutIdentity(location);
+  const cloneId = id ?? null;
   const checkoutPath = physicalPath(location.workspaceRoot);
-  const repositoryKey = recordedRepositoryAt(db, checkoutPath, cloneId)
-    ?? (cloneId === null ? undefined : cloneRepository(db, cloneId))
-    ?? remoteRepository(db, location, checkoutPath, remoteKeys);
-  return repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, cloneId);
+  const recorded = location.git && cloneId === null ? undefined : recordedRepositoryAt(db, checkoutPath, cloneId);
+  const knownClone = recorded ?? (cloneId === null ? undefined : cloneRepository(db, cloneId));
+  const repositoryKey = knownClone ?? remoteRepository(db, location, checkoutPath, remoteKeys);
+  return repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, marked || knownClone !== undefined ? cloneId : null);
 }
 
 /** The repository of the row recorded at `checkoutPath`. Without an id file that row still names the checkout; a different id is a re-clone. */

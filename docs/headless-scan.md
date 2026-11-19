@@ -16,6 +16,9 @@ The scan runs without a daemon or session. It builds its scan configuration and 
 A checkout new to Rerail gets a clone ID in `<git common dir>/rerail-repository-id`, as it does with `rerail start`.
 A bare repository and its linked worktrees share this ID. Earlier versions could also write an ID under `<bare repo>/.rerail`.
 On upgrade, Rerail keeps the common ID when it exists. Otherwise it adopts the earlier bare ID.
+If the Git directory is read-only and has no ID, Rerail uses its volume, file number, and creation time when available.
+Without a stable directory identity or an existing ID in the local Git configuration, a read-only scan cannot establish ownership.
+The content store records this identity with each run. A later writable scan saves the same ID in the common directory.
 The scan can retain analysis results in the content cache beside the Rerail home database.
 
 </details>

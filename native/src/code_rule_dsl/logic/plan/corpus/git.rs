@@ -5,21 +5,23 @@ use crate::git_workspace::snapshot::{self, RawTreeEntry, storage};
 use gix::bstr::ByteSlice as _;
 use std::path::{Path, PathBuf};
 
-pub(super) const REVISION: &str = "git_revision_request";
+pub(super) const REVISION: &str = "git_view_revision_request";
+pub(super) const REPO_REVISION: &str = "git_revision_request";
 pub(super) const OBJECT: &str = "git_object_request";
 pub(super) const INVENTORY_CHILD: &str = "git_inventory_child_request";
 
 const ROOT: &str = "git_root_repo";
+const VIEW: &str = "git_root_view";
 const REPOSITORY: &str = "git_repository";
 const TREE: &str = "git_source_tree";
 const COMMIT: &str = "git_source_commit";
 const SELECTION: &str = "git_inventory_selection";
 const SOURCE_BLOB: &str = "git_selected_source_blob";
-pub(super) const INPUTS: [&str; 6] = [ROOT, REPOSITORY, TREE, COMMIT, SELECTION, SOURCE_BLOB];
+pub(super) const INPUTS: [&str; 7] = [ROOT, VIEW, REPOSITORY, TREE, COMMIT, SELECTION, SOURCE_BLOB];
 
 #[derive(Default)]
 pub(super) struct Git {
-    repository: Option<(String, gix::Repository)>,
+    repository: Option<(snapshot::Identity, gix::Repository)>,
     tree: Option<gix::ObjectId>,
     commit: Option<gix::ObjectId>,
     snapshot_root: Option<PathBuf>,
@@ -56,8 +58,8 @@ impl Git {
             None => (crate::git_workspace::discover_repository(root).ok().map(snapshot::physical_objects), None, None),
         };
         let repository = repo.and_then(|repo| {
-            let key = snapshot::repository_key(&repo.git_dir().canonicalize().ok()?);
-            Some((key, repo))
+            let identity = snapshot::pinned_identity(root).or_else(|| snapshot::Identity::of(&repo, false).ok())?;
+            Some((identity, repo))
         });
         Self {
             repository,
@@ -71,20 +73,23 @@ impl Git {
     fn repo(&self, key: &str) -> Result<&gix::Repository, &'static str> {
         self.repository
             .as_ref()
-            .filter(|(id, _)| id == key)
+            .filter(|(id, _)| id.repository == key)
             .map(|(_, repo)| repo)
             .ok_or("repository-not-open")
     }
 
-    fn revision(&self, key: &str, expression: &str) -> Result<gix::ObjectId, &'static str> {
-        self.with_repository(key, |repo, _| {
+    fn revision(&self, operation: &str, key: &str, expression: &str) -> Result<gix::ObjectId, &'static str> {
+        let repo_key = if operation == REVISION {
+            &self.repository.as_ref().filter(|(id, _)| id.view == key).ok_or("repository-not-open")?.0.repository
+        } else { key };
+        self.with_repository(repo_key, |repo, _| {
             let base = repo.workdir().map(|_| Path::new(""));
             snapshot::resolve_revision(repo, expression, base).map_err(|error| snapshot::revision_failure_reason(&error))
         })
     }
 
-    pub(super) fn resolve(&self, key: &str, expression: &str) -> (String, &'static str) {
-        match self.revision(key, expression) {
+    pub(super) fn resolve(&self, operation: &str, key: &str, expression: &str) -> (String, &'static str) {
+        match self.revision(operation, key, expression) {
             Ok(id) => (id.to_string(), "ok"),
             Err(reason) => (String::new(), reason),
         }
@@ -207,8 +212,8 @@ impl Git {
     /// Presence is a separate observation. Re-observe former misses and open the new ref each run.
     pub(super) fn observation(&self, operation: &str, key: &str, arg: &str) -> Option<String> {
         match operation {
-            REVISION => {
-                let (id, status) = self.resolve(key, arg);
+            REVISION | REPO_REVISION => {
+                let (id, status) = self.resolve(operation, key, arg);
                 Some(format!("{status}:{id}"))
             }
             OBJECT => {
@@ -226,9 +231,9 @@ impl Git {
         let key = self
             .repository
             .as_ref()
-            .map(|(key, _)| key.as_str())
+            .map(|(id, _)| (id.repository.as_str(), id.view.as_str()))
             .unwrap_or_default();
-        format!("{key}\n{:?}\n{:?}", self.tree, self.commit)
+        format!("{}\n{}\n{:?}\n{:?}", key.0, key.1, self.tree, self.commit)
     }
 }
 
@@ -271,7 +276,8 @@ pub(super) fn inputs(program: &Program, root: &Path, options: &serde_json::Value
             Some(vec![Value::Str(path.into()), Value::Str(oid.to_string().into())])
         }));
     }
-    if let Some((key, repo)) = &source.repository {
+    if let Some((identity, repo)) = &source.repository {
+        let key = &identity.repository;
         if let Some(rows) = inputs.get_mut(SELECTION)
             && let Some(selection) = crate::git_workspace::snapshot::inventory_selection(root)
         {
@@ -279,6 +285,7 @@ pub(super) fn inputs(program: &Program, root: &Path, options: &serde_json::Value
         }
         let rows = [
             (ROOT, vec![key.clone()]),
+            (VIEW, vec![key.clone(), identity.view.clone()]),
             (
                 REPOSITORY,
                 vec![
@@ -404,7 +411,7 @@ pub(super) fn metadata_only(program: &Program) -> bool {
     let needed = loop {
         let needed = super::front::needed(program, roots.clone());
         // A world answer also reads the rules that produced its request.
-        let requests: Vec<_> = [("git_revision_of", REVISION), ("git_object_of", OBJECT),
+        let requests: Vec<_> = [("git_view_revision_of", REVISION), ("git_revision_of", REPO_REVISION), ("git_object_of", OBJECT),
             ("git_inventory_child_of", INVENTORY_CHILD)]
             .into_iter().filter(|(answer, request)| needed.contains(*answer) && !needed.contains(*request))
             .map(|(_, request)| request.to_owned()).collect();
@@ -424,7 +431,7 @@ pub(super) fn metadata_only(program: &Program) -> bool {
                 || super::source_languages::is_input(rel)
                 // A declared relation with no producers is empty, unless a phase can supply it.
                 || (program.decls.contains_key(rel.as_str()) && !rel.contains("__") && !program.inputs.contains(rel))
-                || matches!(rel.as_str(), "git_revision_of" | "git_object_of" | "git_inventory_child_of"))
+                || matches!(rel.as_str(), "git_view_revision_of" | "git_revision_of" | "git_object_of" | "git_inventory_child_of"))
     })
 }
 

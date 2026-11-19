@@ -3,6 +3,10 @@
 Include `git.rr` in a program that runs with `rerail scan --rr`, `rerail-engine logic`, `run-rr`, or `run-policies`.
 The invocation supplies `git_root_repo(repo)` when the source root belongs to a local Git repository.
 Treat `repo` as an opaque value. Pass it to each request and join on it in each answer.
+Linked worktrees share the repository value. Use `git_root_view(repo, view)` to identify the invocation's Git view.
+Each linked worktree has its own view for HEAD, its reflog, and its index. A bare repository also has a view for resolving revisions.
+An open source view tracks the Git directories it opened. If another checkout takes their place, evaluation fails.
+Changing a ref inside the same checkout remains visible to a later evaluation.
 
 ## Read the selected commit
 

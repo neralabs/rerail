@@ -7086,7 +7086,7 @@ fn run_observed(
                     }
                     return unchanged;
                 }
-                if req == git::REVISION {
+                if matches!(req, git::REVISION | git::REPO_REVISION) {
                     return false;
                 }
                 if req == git::INVENTORY_CHILD {
@@ -7220,14 +7220,14 @@ fn run_observed(
                 t.rows += rows.len();
                 t.total += t_call.elapsed().as_secs_f64();
             });
-            if matches!(rel, git::REVISION | git::OBJECT) {
+            if matches!(rel, git::REVISION | git::REPO_REVISION | git::OBJECT) {
                 let mut out = Vec::new();
                 for row in rows {
                     let [repo, arg] = row.as_slice() else { return Err(Error::Plan(format!("{rel} takes a repository and a key"))); };
                     let key = text(*repo)?;
                     let arg_text = text(*arg)?;
-                    if rel == git::REVISION {
-                        let (id, status) = world.git_revision(&key, &arg_text);
+                    if rel != git::OBJECT {
+                        let (id, status) = world.git_revision(rel, &key, &arg_text);
                         let values = atoms(&[&id, status])?;
                         out.push(vec![*repo, *arg, values[0], values[1]]);
                     } else {
@@ -7237,7 +7237,7 @@ fn run_observed(
                         }
                     }
                 }
-                let answer = if rel == git::REVISION { "git_revision_of" } else { "git_object_of" };
+                let answer = match rel { git::REVISION => "git_view_revision_of", git::REPO_REVISION => "git_revision_of", _ => "git_object_of" };
                 return Ok(vec![(answer.to_owned(), out)]);
             }
             if rel == git::INVENTORY_CHILD {
@@ -11514,7 +11514,7 @@ fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], pro
     let mut parts = crate::code_rule_dsl::logic::answers::split(&whole).expect("the program has answers");
     // Git answers start empty and are produced by the fixpoint. Unlike a
     // document load's exports, they have no caller-supplied seed rows.
-    parts.load_inputs.retain(|rel| !matches!(rel.as_str(), "git_revision_of" | "git_object_of" | "git_inventory_child_of" | reference_facts::ANSWER | reference_facts::SIBLINGS_ANSWER | reference_facts::FILE_ANSWER | reference_facts::LINK_ANSWER));
+    parts.load_inputs.retain(|rel| !matches!(rel.as_str(), "git_view_revision_of" | "git_revision_of" | "git_object_of" | "git_inventory_child_of" | reference_facts::ANSWER | reference_facts::SIBLINGS_ANSWER | reference_facts::FILE_ANSWER | reference_facts::LINK_ANSWER));
     // The rest reads the answers as inputs: the runner binds what it gave.
     for rel in answers.values().flatten().filter(|r| !exports.contains(r)) {
         if !parts.rest_inputs.contains(rel) {

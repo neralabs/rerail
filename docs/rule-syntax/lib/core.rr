@@ -570,15 +570,17 @@
 .functor git_has(sha: symbol, path: symbol): number
 // Git's invocation inputs and native request answers. Include "git.rr" for the public views and requests.
 .decl git_root_repo(repo: symbol)
+.decl git_root_view(repo: symbol, view: symbol)
 .decl git_repository(repo: symbol, kind: symbol, object_format: symbol)
 .decl git_source_tree(repo: symbol, tree: symbol)
 .decl git_source_commit(repo: symbol, commit: symbol)
 .decl git_revision_of(repo: symbol, expression: symbol, oid: symbol, status: symbol)
+.decl git_view_revision_of(view: symbol, expression: symbol, oid: symbol, status: symbol)
 .decl git_object_of(repo: symbol, oid: symbol, field: symbol, position: number, first: symbol, second: symbol, value: number, offset: number)
 .decl source_grammar_suffix(grammar: symbol, suffix: symbol, order: number, built: number)
 .decl source_grammar_registry(version: symbol)
 .decl source_tape_version(grammar_build: symbol, tape_format: number)
-.input git_root_repo, git_repository, git_source_tree, git_source_commit
+.input git_root_repo, git_root_view, git_repository, git_source_tree, git_source_commit
 .input source_grammar_suffix, source_grammar_registry, source_tape_version
 // Python string constants as CPython builds them. str_part(lit, i, v, at, spec): piece i of the str Constant(s)
 // that literal lit becomes: adjacent literals are one constant, joined; an f-string gives one piece per literal

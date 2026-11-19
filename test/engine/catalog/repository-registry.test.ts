@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -302,6 +302,24 @@ describe("the repository registry", () => {
     const recorded = recordCheckout(database, checkout);
     mkdirSync(join(checkout, "src"));
     expect(lookupCheckout(database, join(checkout, "src"))).toEqual(recorded);
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("recognizes a moved read-only checkout and ignores its unrelated replacement", async () => {
+    const root = await temporary("rerail-registry-readonly-");
+    const database = open(join(root, "rerail.sqlite"));
+    const path = gitRepository(join(root, "checkout")), moved = join(root, "moved");
+    chmodSync(join(path, ".git"), 0o555);
+    try {
+      const recorded = recordCheckout(database, path);
+      expect(existsSync(repositoryIdentityLocation(path).identityPath)).toBe(false);
+      renameSync(path, moved);
+      gitRepository(path);
+      expect(lookupCheckout(database, moved)).toEqual({ ...recorded, checkoutPath: moved });
+      expect(lookupCheckout(database, path)).toBeUndefined();
+      expect(existsSync(repositoryIdentityLocation(path).identityPath)).toBe(false);
+    } finally {
+      chmodSync(join(existsSync(moved) ? moved : path, ".git"), 0o755);
+    }
   });
 
   it("finds a fresh clone without an id file by its remote, with no clone id, and records it under that repository", async () => {

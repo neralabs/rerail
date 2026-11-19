@@ -4,12 +4,12 @@ use std::path::Path;
 use sha2::{Digest as _, Sha256};
 use windows_sys::Win32::Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, FILE_BASIC_INFO};
 
-pub(super) struct StorageMetadata {
+pub(in crate::git_workspace::snapshot) struct StorageMetadata {
     file: BY_HANDLE_FILE_INFORMATION,
     basic: FILE_BASIC_INFO,
 }
 
-pub(super) fn read_metadata(path: &Path) -> std::io::Result<StorageMetadata> {
+pub(in crate::git_workspace::snapshot) fn read_metadata(path: &Path) -> std::io::Result<StorageMetadata> {
     use std::os::windows::{fs::OpenOptionsExt as _, io::AsRawHandle as _};
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, FileBasicInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
@@ -31,6 +31,11 @@ pub(super) fn read_metadata(path: &Path) -> std::io::Result<StorageMetadata> {
 }
 
 impl StorageMetadata {
+    pub(in crate::git_workspace::snapshot) fn directory_id(&self) -> (u64, u64) {
+        let index = (u64::from(self.file.nFileIndexHigh) << 32) | u64::from(self.file.nFileIndexLow);
+        (u64::from(self.file.dwVolumeSerialNumber), index)
+    }
+
     pub(super) fn hash(&self, digest: &mut Sha256) {
         digest.update(self.file.dwVolumeSerialNumber.to_le_bytes());
         digest.update(self.file.nFileIndexHigh.to_le_bytes());
