@@ -377,8 +377,9 @@ impl IndexFile {
     fn read(repository: &gix::Repository, volume: Volume) -> std::result::Result<Self, String> {
         let path = repository.index_path();
         // Stamped before it is read, so a write that lands meanwhile reads as a change at the
-        // next question. A stamp that cannot tell a later write is not kept.
-        let stamp = FileStamp::of(&path);
+        // next question. A stamp that cannot tell a later write is not kept, by the clock read
+        // with it, before the index: every write the read can miss comes after that reading.
+        let stamp = volume.keeps(FileStamp::of(&path));
         #[cfg(test)]
         INDEX_READS.with(|reads| reads.set(reads.get() + 1));
         let file = match repository.open_index() {
@@ -392,7 +393,7 @@ impl IndexFile {
         #[cfg(test)]
         tests::after_index_read();
         Ok(Self {
-            stamp: volume.keeps(stamp),
+            stamp,
             path,
             volume,
             file,
@@ -407,10 +408,13 @@ impl IndexFile {
         if now.is_some() && self.stamp == now {
             return true;
         }
+        // Whether the stamp tells a later write is decided by the clock before the checksum is
+        // read, as a read decides it before the index is read.
+        let kept = self.volume.keeps(now);
         if !self.same_checksum() {
             return false;
         }
-        self.stamp = self.volume.keeps(now);
+        self.stamp = kept;
         true
     }
 
@@ -431,6 +435,8 @@ fn trailing_bytes(path: &Path, len: usize) -> Option<Vec<u8>> {
     file.seek(SeekFrom::End(-i64::try_from(len).ok()?)).ok()?;
     let mut bytes = vec![0; len];
     file.read_exact(&mut bytes).ok()?;
+    #[cfg(test)]
+    tests::after_index_read();
     Some(bytes)
 }
 
@@ -960,7 +966,8 @@ pub mod tests {
         static ONE_IDENTITY: Cell<bool> = const { Cell::new(false) };
         /// Whether this thread's stats of a file are refused.
         static STAT_REFUSED: Cell<bool> = const { Cell::new(false) };
-        /// What runs once, right after this thread's next index read.
+        /// What runs once, right after this thread's next read of the index file: the whole
+        /// index, or the checksum at its end.
         static AFTER_READ: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
     }
 
@@ -2026,6 +2033,58 @@ pub mod tests {
         assert!(
             !ignore.ignored("gen/t.py", false).unwrap(),
             "the index Git wrote is read"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Git's two writes in the index's time step, the second onto the identity, time and size
+    /// read, then the clock leaving that step: the run standing for those writes and that tick
+    /// landing while the reader reads.
+    fn writes_then_the_clock_leaves_the_step(root: &Path, index: &Path) -> impl FnOnce() + use<> {
+        let read = std::fs::metadata(index).unwrap();
+        let (root, index) = (root.to_path_buf(), index.to_path_buf());
+        move || {
+            track_t_in_place_of_m(&root, &index, &read);
+            CLOCK_AHEAD.with(|kept| kept.set(Duration::from_secs(7_200)));
+        }
+    }
+
+    /// On a volume that gives an identity again, whether the stamp is kept is decided by the
+    /// clock as it read the stamp: where the clock leaves the index's step while the index is
+    /// read, Git's writes meanwhile are read at the next question.
+    #[test]
+    fn reads_the_index_git_wrote_while_the_clock_left_the_step_of_the_index_read() {
+        let (root, index) = two_entry_checkout("clock-left-in-read");
+        set_modified(&index, modified(&index) + Duration::from_secs(3_600));
+        let _seams = Seams::new()
+            .volume(Volume::Local)
+            .one_identity()
+            .after_index_read(writes_then_the_clock_leaves_the_step(&root, &index));
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert!(
+            !ignore.ignored("gen/t.py", false).unwrap(),
+            "the index Git wrote while the reader read"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The same where the clock leaves the step while a question reads the index's checksum: the
+    /// clock that decides whether the stamp is kept is read before that checksum.
+    #[test]
+    fn reads_the_index_git_wrote_while_the_clock_left_the_step_of_the_checksum_read() {
+        let (root, index) = two_entry_checkout("clock-left-in-checksum");
+        set_modified(&index, modified(&index) + Duration::from_secs(3_600));
+        let seams = Seams::new().volume(Volume::Local).one_identity();
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        let writes = writes_then_the_clock_leaves_the_step(&root, &index);
+        let _seams = seams.after_index_read(writes);
+        assert!(
+            ignore.ignored("gen/t.py", false).unwrap(),
+            "the index read: the file still ended with its checksum"
+        );
+        assert!(
+            !ignore.ignored("gen/t.py", false).unwrap(),
+            "the index Git wrote while the reader read its checksum"
         );
         std::fs::remove_dir_all(root).unwrap();
     }
