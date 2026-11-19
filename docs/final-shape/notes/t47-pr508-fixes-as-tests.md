@@ -150,3 +150,22 @@ The guard fixes pass (`every_switch_lowering_reads_is_classified`, `every_kept_m
 `NOT_YET_MAPS_PIN` lowered to 22, `every_table_is_facts_or_listed`), and so do the slow tier's two smallest of
 218e24cc1's families and acc0c3667's store test. The per-pack families of `dropping_unreached_clauses_*` and
 `lowering_is_idempotent_*` are left for a phase gate's full run.
+
+## The re-anchor (2026-11-19)
+
+#508 landed on `main` squashed: 7efcac9c6, one commit over ba0545900, with the tree of the PR's last tip
+a3172a793 (3db7c522e2c6…). The hub takes it in three merges, so `main` merges into it from here without
+conflicts:
+
+1. ba0545900 (`main` under the squash, 92 commits): 9f68e3703.
+2. a3172a793 (the tip: 302 commits past the second run's ledger, most of them CI, scripts and docs): 6b96395da.
+   Conflicts go by this ledger. Where every commit of Tim's on a file passes here, was ported the hub's way, is
+   rustfmt, clippy or a change of speed with nothing to pin, or is pending, the hub's side stands. Taken from
+   Tim: #750's PatternSyntax with its build pins, format 16's ECMAScript tables for #735 (7410a263b, Q245),
+   `ladder::dir()`, the `.rr` → `.rerail` rename over the hub's own files, the check scripts' underscore names.
+3. 7efcac9c6 with `-s ours` (equal trees): 4053b0c13. The squash is an ancestor; `origin/main`'s five commits
+   after it merge clean.
+
+Not in the ledger before the tip, and not taken: 819e672b6 and 80e74acd2 (compile time: the token census read in
+place as `&'static str`, the automata a kind at a time), which change the census's types under the hub's token
+tests. Q251.

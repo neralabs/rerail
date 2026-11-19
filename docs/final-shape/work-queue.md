@@ -5205,6 +5205,9 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - **Waits on** (2026-11-18): main's #735 (39b59e9d7: the grammars' Patches 18 and 30, `language.rs`, the packs'
   rules), which the hub has not merged. Tim's 7410a263b writes format 16's tables 2, 3 and 6 and the lean parser's
   implied tokens again for those grammars, so it follows #735 into the hub with the main merge, not before.
+- **Done** (2026-11-19, branch `pr508-fixes-as-tests`, 6b96395da): #735 came with `main` under #508's squash
+  (9f68e3703), and 7410a263b's tables 2, 3 and 6, `kinds.tsv` and the lean parser's kinds with #508's tip. The test
+  passes on Linux, with format 15's pinned digest (Tim's, 5e9b8dc4…) and the lean parsers' format tests.
 
 ### Q246. (PR #508, t47) The end of children meets implied tokens (RER-131)
 
@@ -5254,6 +5257,10 @@ Open:
   upstream fixtures, which are not in Git and no checkout holds whole: `npm run fixtures:pull` (AWS CLI, signed in)
   fetches them, then send them with the job (`--tree`).
 - Windows, Linux and x86-64 (12 commits, t47's portability class) come last, with the Windows work.
+- Linux's warnings in the hub's own code (2026-11-19, the first Linux build of the hub's library tests): parser_tests'
+  executors and block tests (an unused `Error`, `native` unread, `mut`s), c_directives' and prof's `mut`s,
+  json_lean's `vmull_p64` without its target feature, matcher_tests' `sibling_shape`, file_local's `cpu`. Each is a
+  use under a macOS `cfg`; Tim's clippy commits fixed his copies (t47: n/a).
 
 ### Q249. The typing oracles' node products are unbounded at the hub tip
 
@@ -5293,3 +5300,14 @@ Open:
     already synced; it now asks `journal::since` from the stored cursor in a new epoch, whose cookie follows the
     edit's events.
   All 31 observer tests pass on the M1 Max, twice, with the engine's warm-run tests (4 of 4).
+
+### Q251. (PR #508, t47) The compile-time work of 819e672b6 and 80e74acd2
+
+- **Seen**: packs whose rules compile in a millisecond or two (complexity, sql) compiled 1.2–1.6 times main's on
+  Tim's measure, most of it once a process per dialect (Tim's commits; not measured here).
+- **Keep**: the hub's token tests, which hold the census's names as `String`s and read the automata whole.
+- **Not taken** (2026-11-19, 6b96395da): the census read in place (`&'static str`), `token_tests::Reach` once per
+  process, the automata a kind at a time (`token_automata::Index`), `RequiredText`'s literals once a pattern. Their
+  `required_text.rs`, `language.rs`, `probes.rs` and `lib.rs` hunks came with the merge; token_census.rs,
+  token_automata.rs, tokens.rs and tokens_tests.rs are the hub's.
+- **Done when**: the four are ported onto the hub's token tests, or measured on the hub and judged not worth it.
