@@ -57,10 +57,14 @@ fn other() -> usize {
     OTHER_RESERVED.get().map_or(0, |f| f())
 }
 
-/// The bytes idle buffers may hold, with `need` more about to be leased: what the budget leaves past the ledger and
-/// the live leases.
-fn idle_room(need: usize) -> usize {
-    crate::budget::metal().saturating_sub(other() + LIVE.load(std::sync::atomic::Ordering::Relaxed) + need)
+/// The bytes idle buffers may hold, with `need` more about to be leased and `idle` held now: what the budget leaves
+/// past everything else the device holds. That is the ledger and the live leases, or the driver's count less the
+/// idle buffers when it is more: the driver counts buffers no ledger does (Q260), and a buffer refused by its count
+/// (`rerail_metal::runtime`) stopped a run while idle buffers held the room.
+fn idle_room(need: usize, idle: usize) -> usize {
+    let ledger = other() + LIVE.load(std::sync::atomic::Ordering::Relaxed);
+    let driver = get().map_or(0, |s| s.device.current_allocated_size() as usize).saturating_sub(idle);
+    crate::budget::metal().saturating_sub(ledger.max(driver) + need)
 }
 /// The bytes leased now (and not yet dropped): what relational work holds on the device, for the profile.
 static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -177,7 +181,7 @@ impl Pool {
     /// leased (and the slab cap, when set).
     fn trim(&mut self, need: usize) {
         let slab_limit = slab_idle_limit();
-        let room = idle_room(need);
+        let room = idle_room(need, self.held);
         while self.held > room || self.held_slabs > slab_limit {
             if !self.release_oldest(self.held <= room) {
                 break;
@@ -672,6 +676,28 @@ mod tests {
         // Nothing to give: the driver's count is the budget, past every idle buffer.
         assert!(!make_device_room(need, || crate::budget::metal()), "no room made from nothing");
         crate::budget::METAL_TEST.with(|m| m.set(0));
+    }
+
+    /// The trim counts what the driver holds beside the idle buffers (Q260): a device buffer no ledger counts takes
+    /// its room from the idle buffers, though the ledger's count leaves them room.
+    #[test]
+    fn idle_buffers_give_way_to_buffers_no_ledger_counts() {
+        let Some(s) = get() else { return };
+        let _big = big_leases();
+        drop(lease(64 << 20).unwrap());
+        let idle = || held_bytes().1;
+        assert!(idle() >= 64 << 20, "the dropped 64 MB lease is idle");
+        let unledgered = s.device.new_buffer(96 << 20, MTLResourceOptions::StorageModeShared);
+        let driver = s.device.current_allocated_size() as usize;
+        // The budget: the driver's count less 32 MB. The ledger leaves the idle buffers room; the driver does not.
+        let budget = driver - (32 << 20);
+        let (live, _) = held_bytes();
+        assert!(other() + live + idle() <= budget, "the ledger's count leaves the idle buffers room");
+        crate::budget::METAL_TEST.with(|m| m.set(budget));
+        trim_idle();
+        assert!(s.device.current_allocated_size() as usize <= budget, "the idle buffers gave way to the driver's count");
+        crate::budget::METAL_TEST.with(|m| m.set(0));
+        drop(unledgered);
     }
 
     #[test]

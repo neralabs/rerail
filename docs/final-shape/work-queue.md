@@ -5297,16 +5297,16 @@ Two slow ones timed out at 240 s at load 40–70 (`phase0::tests::bootstrap_reso
 `rr::tests::library_modules_link_to_the_lowering_of_them_together`).
 - **Do**: the hub's owners fix them where they arise; this branch takes the fixes at its next merge of the hub.
 
-### Q259. hogql's instructions after the merges of oscar and the hub: no rise (closed)
+### Q259. hogql retires 10-20% more instructions than at 0353 step 5, after the merges of oscar and the hub
 
-Filed as a 5-8 times rise, measured wrongly: the 547-771 B runs were debug builds, and the 65-113 B they were held
-against were profiling builds. Measured build against build on hogql cold (2026-11-18, load 15-30), with 1,629
-findings every time:
-- Debug, Metal binding, 16z: 650 B at step 5 (c3e855c09), 642 B before oscar's merge (47ac05ff2), 774 B at oscar's
-  merge (2d9898068), and 617-621 B at the hub's merge (03ef4f748). The hub's merge took nothing.
-- Profiling, at the hub's merge: 86-90 B in format 15 and 119-121 B in 16z. Step 5 recorded 106-113 B in 16z, and
-  earlier runs 65-75 B in format 15, at other loads.
-- **Done**: nothing to attribute. A rise of 10-25% in profiling builds is within what load moves.
+First filed as a 5-8 times rise. That compared debug builds with profiling builds; build against build it is smaller,
+and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 findings every time:
+- Format 15: 71-82 B at step 5 (c3e855c09), 86-90 B at the tip (9ae441f5b).
+- 16z: 107-112 B at step 5, 120-124 B at the tip. System time doubles: 1.1-1.7 s against 2.3-4.1 s.
+- Debug builds (16z) do not show it: 650 B at step 5, 617-621 B at the hub's merge. The debug numbers are not the
+  product's cost.
+- **Do**: profiling builds of 47ac05ff2 (before oscar) and 2d9898068 (oscar merged) say which step brought it; then
+  the profiles of the two ends say where.
 
 ### Q260. A Metal buffer refused by the driver's count, with idle buffers holding the room, stopped hogql
 
@@ -5316,9 +5316,12 @@ findings every time:
   buffer under 1 MB for `metal_label_passes`' supertypes: the driver held 525-533 MB. Of that, relational work's
   pool held 48-166 MB idle, and about 110 MB was in no ledger. The pool trims its idle buffers by the ledgers'
   count (`make_room`), which still left them room. Before 0382 §6 the wave ran on the CPU after this refusal, unseen.
-- **Done**: the refusal makes room first, by the driver's own count, in `make_room`'s order: idle buffers least
-  recently returned, then the residency's slabs (`rerail_accel::gpu::shared::make_device_room`). hogql format 15:
-  8 runs in 8 complete, 1,629 findings. The test is `the_driver_count_makes_room_from_idle_buffers`.
-- **Open**: the 110 MB that no ledger counts (kernels' buffers, the kernel store's): counted in a ledger, the two
-  counts would agree and the trim would keep idle buffers out of the driver's way at once. django-bugs' Q245 (a
-  big chunk's wave refused at 1 and 4 GB) may be this refusal.
+- **Done**, in two steps. (1) 9ae441f5b: the refusal makes room by the driver's count first (`make_device_room`: idle
+  buffers least recently returned, then the residency's slabs). Not enough: each call left 1-2 MB, another thread's
+  lease took it, and 2 profiling runs of 6 still stopped. (2) The pool trims its idle buffers against the larger of
+  the two counts (`idle_room`: the ledgers', or the driver's less the idle buffers), at every return. The idle buffers
+  stay out of the driver's room, and the refusal's room making never runs. hogql: format 15 8 runs of 8, 16z 4 of 4,
+  1,629 findings. Tests: `the_driver_count_makes_room_from_idle_buffers`, `idle_buffers_give_way_to_buffers_no_ledger_counts`
+  (fails without step 2).
+- **Open**: what the 110 MB no ledger counts is (kernels' buffers, the kernel store's?). django-bugs' Q245 (a big
+  chunk's wave refused at 1 and 4 GB) may be this refusal.
