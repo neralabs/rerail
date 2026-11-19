@@ -20,6 +20,18 @@ selected_message(r, c, msg) :- git_source_commit(r, c), git_message(r, c, msg).
 `git_source_tree` holds the root tree for a commit or tree snapshot.
 For a tree snapshot, `git_source_commit` has zero rows.
 
+### Standalone command results
+
+`rerail-engine run-policies` writes one JSON report to stdout. Its `runs` array follows the policy argument order.
+A policy that fails has a run entry with its `path` and `error`. The other policies still contribute their findings to `diagnostics`.
+A failed batch exits with status 1. A revision batch publishes its scope ownership only if all policies and required source reads succeed.
+
+If a required Git subtree or file is unreadable, `run-rr` and `run-policies` keep the available findings and list the affected paths in `sourceFailures`.
+The report has `status: "failed"` and the command exits with status 1.
+`logic` also exits with status 1 and identifies each unreadable path on stderr. Its output relations can contain partial results.
+A policy that only reads commit metadata can succeed when the commit's tree is unavailable.
+A cache warning alone leaves a successful analysis at exit status 0.
+
 ## Walk from HEAD
 
 ```rr
