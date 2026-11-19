@@ -114,3 +114,48 @@ is one mechanism: it already removed every `ROW` test from tier 2. At the merge 
 a test's ending added on another branch (0413's `run … once` and `CheckThen::Cut`, 0445's
 `kind_rows`) fails the build there until the emitter writes it or refuses it, never a wrong
 tier 1 that only `aot_tapes_are_the_jits` would catch.
+
+## Gap B, step 1: `return@` and `as?` are two tokens, joined by tier 2 (2026-11-19)
+
+Stage 1 decided `return@` (`break@`, `continue@`, `this@`, `super@`) and `as?` with masks spelled a
+byte at a time (`jat`, `jat_last`, `asq`), folded into the name's run and excluded from `punct`'s
+starts, and refused a label's definition with an escape over them (`lab_last`). 0429's table said
+the lean lexer's word reader makes them one token. It does not: the lean lexer reads `return`
+then `@`, and the lean parser joins them where its rule reads them, by `adjacent(0)` (the two
+tokens touch): `parse.rs` at `label_ahead` and the jumps, and `parse/expr.rs` at `as?`
+(`K::TAsQuestion` from the `as` to the `?`).
+
+The grammar now does the same, with what Bitlex already has:
+- **Tier 1** reads two tokens: the name's run is its word's bytes (`name_more = name_tok &
+  ~word_start`), `punct` starts at the `@` and the `?`, and the keywords `return@` … `as?` are
+  gone.
+- **Adjacency** is a gap mark, `apart` (a blank or a comment's first byte between two tokens),
+  read by token marks as `without apart`: `this_at` (`"this" "@"`), `jump_at` (`"return" |
+  "break" | "continue" "@"`), `as_q` (`"as" "?"`). Tier 2 tests token marks alone (0407), so
+  they cost no bit and no mask.
+- **The rules** take the mark and join the leaves with `merge`: `jump_at 'return' merge 'return@'
+  '@' …`, `as_q 'as' merge 'as?' '?'`. tree-sitter implies `this@`, so `this_label` implies both
+  of its tokens (`implied this_label 'this' '@'`) instead of merging them.
+- **A label's definition** is `label_at` (`simple_identifier "@" without apart`; a token mark's
+  kinds leave out the hard keywords). It is not hidden and no rule takes it, so it refuses the
+  file where it holds, as the escape did.
+
+**The code's mark bits.** The code holds 16 bits for marks and extras, and Kotlin used all 16:
+three token marks (`blk`, `lam_bare`, `lam_params`) sat before the last mark that holds a bit
+(`bt_cref`, which refuses alone), so they held bits they do not need. `bt_cref` now comes right
+after the mask marks and the token marks after it. Their order among the marks that hold at the
+same token is unchanged (`blk` before the lambda's marks); none of them shares a first token with
+the marks they moved past. The code now holds 13 marks and 15 bits.
+
+**Measured on the generated tier 1:** the block program went from 1,671 operations to 1,565;
+stage 1b (`masks`) from 1,776 values a block to 1,656, and its carried words from 383 to 347;
+`tier1_aot.rs` from 3,948 lines to 3,802.
+
+**Tests:** the compiler (128), Kotlin (51) and Bitlex (11) tests pass; the corpus is 448 the
+same, 43 refused, 0 differ; `aot_tapes_are_the_jits` passes on the 495 files. Checked by hand
+against the lean parser: `as?`, `as String?`, `return@run`, `return@forEach`, `this@A.g()`,
+`break`, `continue@x`, `x?.hashCode() ?: 0`; `loop@ for` refused.
+
+**What `token_level_probe` lists now:** the keyword tests read by the comment escape `goes_now`
+(`ctor_w`, `finally_w`, `where_w`, `catch_w`, `by_w`, `as_w`), by `awe_word` and `else_blk`
+(`else_w`), and `three` (`===`, `!==`, `..<`), read by `p_start`.
