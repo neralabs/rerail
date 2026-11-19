@@ -1,6 +1,6 @@
 # Secret-like files reached through links keep only their digest in the ledger
 
-For the pull request of branch `JeanFrancoisGagne/folder-link-earlier-text`, not opened yet, head 2737dd1dc. [report.html](report.html) is the same report as one page: download it and open it.
+For the pull request of branch `JeanFrancoisGagne/folder-link-earlier-text`, not opened yet, head 7d8cfc317. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -13,7 +13,7 @@ For the pull request of branch `JeanFrancoisGagne/folder-link-earlier-text`, not
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 281 lines in 5 files: 83 ship, 198 are tests and text | Careful. A maintainer weighs the two changes from `main`. | Nothing. It stands alone on `main` c21947263; nothing needs it. | 2 |
+| 402 lines in 9 files: 115 ship, 287 are tests and text | Careful. A maintainer weighs the two changes from `main`. | Nothing. It stands alone on `main` c21947263; nothing needs it. | 2 |
 
 ## 2. Intent, and the gap
 
@@ -36,6 +36,7 @@ Found in November 2026 on Linux x64 and Windows 11, through Rerail's runtime and
 ## 3. Where to look
 
 1. **Read first**, 10 min: `code-rule-bridge.ts`: `textPreimage`, `ledgerPreimage`, `keptPreimage`, `judgedWhereItLeads` and `#realPathInPlace`. Can any spelling of a file in such a folder reach the ledger, or an ordinary file lose its text?
+2. 3 min: `operations.ts`: `violationView`.
 
 **Then skim**, 5 min: Bridge cases read the ledger form of `.aws/config.py` spelled through links, on time and late, and on Windows by short names; a runtime case reads the ledger and the rollback.
 
