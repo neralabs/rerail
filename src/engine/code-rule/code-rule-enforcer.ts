@@ -11,6 +11,7 @@ import {
   loadNativeBinding,
   RESULT_PAGE_BYTES,
   type NativeCodeRuleDslWorkspace,
+  type NativeGitAccess,
   type NativeGitIgnoreMatch,
   type NativeGitIgnoreMatcher,
   type NativePackageFacts,
@@ -57,6 +58,7 @@ import { DEFAULT_AUDIT_SETTINGS } from "../audit/audit-control-schema.js";
 import { RULE_MODES, steers } from "../catalog/rule-mode.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { removeScratch } from "../file-replace.js";
+import { GIT_OPEN_AGAIN_MS, gitReadTimedOut, nativeGitAccess } from "../native/git-access.js";
 import { assertContentStoreOwner } from "../native/main-instance.js";
 import { contentStorePath } from "../native/rerail-build.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
@@ -670,8 +672,14 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #followGitignore: boolean;
   readonly #steerShell: SteerShell | undefined;
-  /** Git's exclude stack for this checkout, opened on first use; null outside Git or where it cannot be opened. */
+  /** Git's exclude stack for this checkout: undefined until first use, null outside Git or where it cannot be opened. */
   #gitIgnore: NativeGitIgnoreMatcher | null | undefined;
+  /** The owner `#gitIgnore` was opened with: a new one (Git answered at last) opens it again. */
+  #gitIgnoreAccess: NativeGitAccess | undefined;
+  /** When this lane may open its ignore rules again after an open that outran its time limit (`GIT_OPEN_AGAIN_MS`). */
+  #gitIgnoreOpenAgainAt = 0;
+  /** The ignore-read errors this lane has logged: each distinct one once, however many paths ask. */
+  readonly #gitIgnoreReported = new Set<string>();
   #scope: AuditScope;
   #mode: AuditMode;
   #workspace: PreparedWorkspace | undefined;
@@ -832,14 +840,39 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /** `ask` of this checkout's exclude stack while the lane follows `.gitignore`; undefined otherwise, and outside Git. */
   #askGitIgnore<T>(path: string, ask: (matcher: NativeGitIgnoreMatcher) => T): T | undefined {
     if (!this.#followGitignore) return undefined;
+    // A repository Git refuses is tried once: every later path sees no matcher. An open that outran its time limit
+    // (a disk that stopped answering) is tried again once GIT_OPEN_AGAIN_MS has passed; until then paths see no
+    // matcher. A matcher opened while Git had not said which config it reads is opened again once it has.
     try {
-      this.#gitIgnore ??= loadNativeBinding().openGitIgnoreMatcher(this.#workspaceRoot);
-      return this.#gitIgnore === null ? undefined : ask(this.#gitIgnore);
+      const access = nativeGitAccess();
+      if (access !== this.#gitIgnoreAccess) {
+        this.#gitIgnore = undefined;
+        this.#gitIgnoreAccess = access;
+      }
+      if (this.#gitIgnore === undefined) {
+        if (Date.now() < this.#gitIgnoreOpenAgainAt) return undefined;
+        this.#gitIgnore = access.openGitIgnoreMatcher(this.#workspaceRoot);
+      }
     } catch (error) {
-      this.#gitIgnore ??= null;
-      process.stderr.write(`rerail: cannot read Git ignore rules for ${path || "."}: ${errorMessage(error)}\n`);
+      if (gitReadTimedOut(error)) this.#gitIgnoreOpenAgainAt = Date.now() + GIT_OPEN_AGAIN_MS;
+      else this.#gitIgnore = null;
+      this.#reportGitIgnoreError(".", error);
       return undefined;
     }
+    if (this.#gitIgnore === null) return undefined;
+    try {
+      return ask(this.#gitIgnore);
+    } catch (error) {
+      this.#reportGitIgnoreError(path, error);
+      return undefined;
+    }
+  }
+
+  #reportGitIgnoreError(path: string, error: unknown): void {
+    const message = errorMessage(error);
+    if (this.#gitIgnoreReported.has(message)) return;
+    this.#gitIgnoreReported.add(message);
+    process.stderr.write(`rerail: cannot read Git ignore rules for ${path || "."}: ${message}\n`);
   }
 
   snapshotStatus(): CodeRuleResponse & { pending: boolean } {
@@ -1151,7 +1184,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     // This build's own store; only the main daemon may open the machine-wide one.
     const storePath = contentStorePath();
     assertContentStoreOwner(storePath);
-    const workspace = new (loadNativeBinding().CodeRuleDslWorkspace)();
+    const binding = loadNativeBinding();
+    // The storage attach discovers the checkout in the engine, which reads the config files Rerail's Git names.
+    nativeGitAccess(binding);
+    const workspace = new binding.CodeRuleDslWorkspace();
     let storage: Promise<boolean>;
     try {
       for (const codeRule of snapshot.codeRules) workspace.addCodeRule(codeRule.executable, JSON.stringify(codeRule.placement));

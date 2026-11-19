@@ -966,6 +966,8 @@ export interface GitResult {
 export interface RunGitOptions {
   maxBuffer?: number;
   timeout?: number;
+  /** Variables set over the inherited environment; an undefined value removes one. Rerail's fixed ones ({@link gitEnvironment}) still win. */
+  env?: Readonly<Record<string, string | undefined>>;
 }
 
 /** A repository's own config can't run programs through Rerail's git calls: no fsmonitor, no hooks. */
@@ -973,13 +975,14 @@ const SAFE_CONFIG: readonly string[] = ["-c", "core.fsmonitor=false", "-c", `cor
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
- * The environment of every Git process Rerail starts, a start of the Git at `executable`: this process's, as Git for
- * Windows' launcher would hand it to that Git ({@link gitStartEnvironment}), with no optional locks, and no lazy fetch
- * of a partial clone's missing objects. Git honours `GIT_NO_LAZY_FETCH` from 2.45.0 and in the 2024-04-19 security
- * releases 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4 and 2.44.1; an older Git ignores it and may fetch from the remote.
+ * The environment of every Git process Rerail starts, a start of the Git at `executable`: this process's with
+ * `overrides` set over it, as Git for Windows' launcher would hand it to that Git ({@link gitStartEnvironment}), with
+ * no optional locks, and no lazy fetch of a partial clone's missing objects, which no caller's `overrides` can lift.
+ * Git honours `GIT_NO_LAZY_FETCH` from 2.45.0 and in the 2024-04-19 security releases 2.39.4, 2.40.2, 2.41.1, 2.42.2,
+ * 2.43.4 and 2.44.1; an older Git ignores it and may fetch from the remote.
  */
-function gitEnvironment(executable: string): NodeJS.ProcessEnv {
-  return { ...processGit.startEnvironment(executable, process.env), GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
+function gitEnvironment(executable: string, overrides: RunGitOptions["env"] = {}): NodeJS.ProcessEnv {
+  return { ...processGit.startEnvironment(executable, { ...process.env, ...overrides }), GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
 }
 
 /**
@@ -1016,7 +1019,7 @@ function runGitWith(executable: string, args: readonly string[], options: RunGit
     encoding: "utf8",
     timeout: DEFAULT_TIMEOUT_MS,
     ...options,
-    env: gitEnvironment(executable),
+    env: gitEnvironment(executable, options.env),
   });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
