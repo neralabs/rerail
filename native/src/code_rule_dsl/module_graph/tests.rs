@@ -924,7 +924,7 @@ fn a_source_whose_data_is_offline_keeps_the_summary_of_its_last_write_with_no_re
 #[cfg(unix)]
 #[test]
 fn a_source_whose_read_is_denied_keeps_no_summary_on_unix() {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let root = temp_root("denied");
     write_file(&root, "package.json", NEXT_MANIFEST);
     write_file(&root, "app/page.tsx", "import './a';\nexport default 1;\n");
@@ -939,7 +939,19 @@ fn a_source_whose_read_is_denied_keeps_no_summary_on_unix() {
         .unwrap();
     let server = ["app/a.ts", "app/b.ts", "app/page.tsx"];
     assert_eq!(disk_graph(&root, "").unwrap(), server);
-    std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o000)).unwrap();
+    // The status-change time is as coarse as a scheduler tick, so a change of permissions within
+    // the tick of the time set above leaves it: the change repeats until the time moved.
+    let changed = || {
+        let metadata = std::fs::metadata(&source).unwrap();
+        (metadata.ctime(), metadata.ctime_nsec())
+    };
+    let cached = changed();
+    (0..10_000)
+        .find(|_| {
+            std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o000)).unwrap();
+            changed() != cached
+        })
+        .expect("a change of permissions moves the status-change time");
     // Permissions do not bind the superuser.
     if std::fs::read(&source).is_err() {
         assert_eq!(disk_graph(&root, ""), None);
