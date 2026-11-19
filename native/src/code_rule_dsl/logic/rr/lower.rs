@@ -977,36 +977,49 @@ pub fn link_in(m: Module, scope: &[&Module], core: &BTreeSet<String>) -> Result<
 /// its value cycles' check (`front::finish_given`), their kind sets' kinds and their columns' spans.
 pub fn link_seeded(m: Module, seeds: &Seeds, core: &BTreeSet<String>, library: Option<(&Program, &std::sync::Arc<SpanColumns>)>) -> Result<Program, Error> {
     let mut l = seeds.l.clone();
-    let seeded = &seeds.seeded;
     l.violations.clear();
     l.append(m);
-    // A kind set the module reads has the kinds the whole program read alone gives it, its library's relations' kinds
-    // among them. The scope seeds a library relation's declaration, not its facts or rules, so `kind_sets` found a
-    // set of the library (`nearest(f, s, scope)` over python/names.rerail's `scope`, eslint-a-control.rerail's
-    // `breakable_kind(k) :- loop_kind(k)`), or one of the module's own over one (no-unsafe-finally's
-    // `fn_stop(k) :- function_kind(k)`), without them: the program's `nearest` climbed to no kind or past a function
-    // in a pack (ruff-n807, RUF033, AIR303, F406, eslint's no-extra-label found nothing; no-unsafe-finally found more).
     if let Some((library, _)) = library {
-        let given: Vec<(String, Vec<String>)> =
-            l.sets.iter().filter(|set| !l.prog.kindsets.contains_key(*set)).filter_map(|set| Some((set.clone(), kinds_in(&l.prog, Some(library), set, &mut BTreeSet::new())?))).collect();
-        l.prog.kindsets.extend(given);
+        give_library_kind_sets(&mut l, library);
     }
     // A span its library's rules bind a library relation's column to is the column's here (`spans`).
     l.library_spans = library.map(|(_, spans)| std::sync::Arc::clone(spans));
     let mut program = whole(l, library.map(|(program, _)| program))?;
     crate::code_rule_dsl::logic::front::declared(&program)?;
-    // A relation of the scope is the library's, held once by the run's library part, unless that part does not
-    // declare it: `core.rerail`'s `within`, which the library's linking (`whole`) keeps only where a library rule
-    // reads it, was read by the program and declared by no part of the run (`no declaration of within`). A
-    // relation no part holds stays with the program, as `corpus::own_part` leaves a base relation it reads.
-    let gone = |r: &str| !core.contains(r) && library.is_none_or(|(library, _)| library.decls.contains_key(r));
-    program.decls.retain(|r, _| !(seeded.decls.contains(r.as_str()) && gone(r)));
-    program.inputs.retain(|r| !(seeded.inputs.contains(r) && gone(r)));
-    program.natives.retain(|r, _| !(seeded.natives.contains(r) && gone(r)));
-    program.lattice.retain(|r, _| !(seeded.lattice.contains(r) && gone(r)));
-    program.tapes.retain(|r, _| !(seeded.tapes.contains(r) && gone(r)));
-    program.qualifiers.retain(|r, _| !(seeded.qualifiers.contains(r) && gone(r)));
+    take_out_library_part(&mut program, &seeds.seeded, core, library.map(|(program, _)| program));
     Ok(program)
+}
+
+/// A kind set the module reads has the kinds the whole program read alone gives it, its library's relations' kinds
+/// among them. The scope seeds a library relation's declaration, not its facts or rules, so `kind_sets` found a
+/// set of the library (`nearest(f, s, scope)` over python/names.rerail's `scope`, eslint-a-control.rerail's
+/// `breakable_kind(k) :- loop_kind(k)`), or one of the module's own over one (no-unsafe-finally's
+/// `fn_stop(k) :- function_kind(k)`), without them: the program's `nearest` climbed to no kind or past a function
+/// in a pack (ruff-n807, RUF033, AIR303, F406, eslint's no-extra-label found nothing; no-unsafe-finally found more).
+fn give_library_kind_sets(l: &mut Lowerer, library: &Program) {
+    let given: Vec<(String, Vec<String>)> =
+        l.sets.iter().filter(|set| !l.prog.kindsets.contains_key(*set)).filter_map(|set| Some((set.clone(), kinds_in(&l.prog, Some(library), set, &mut BTreeSet::new())?))).collect();
+    l.prog.kindsets.extend(given);
+}
+
+/// The linked module's own part: what the scope seeded and the run's library part holds taken out of `program`.
+fn take_out_library_part(program: &mut Program, seeded: &Seeded, core: &BTreeSet<String>, library: Option<&Program>) {
+    let theirs = |set: &BTreeSet<String>, rel: &str| library_holds(set, rel, core, library);
+    program.decls.retain(|r, _| !theirs(&seeded.decls, r.as_str()));
+    program.inputs.retain(|r| !theirs(&seeded.inputs, r));
+    program.natives.retain(|r, _| !theirs(&seeded.natives, r));
+    program.lattice.retain(|r, _| !theirs(&seeded.lattice, r));
+    program.tapes.retain(|r, _| !theirs(&seeded.tapes, r));
+    program.qualifiers.retain(|r, _| !theirs(&seeded.qualifiers, r));
+}
+
+/// Whether `rel`, which the scope seeded where `seeded` holds it, is the library's: held once by the run's library
+/// part, unless that part does not declare it. `core.rerail`'s `within`, which the library's linking (`whole`) keeps
+/// only where a library rule reads it, was read by the program and declared by no part of the run (`no declaration
+/// of within`). A relation no part holds stays with the program, as `corpus::own_part` leaves a base relation it
+/// reads; `core.rerail`'s names stay too.
+fn library_holds(seeded: &BTreeSet<String>, rel: &str, core: &BTreeSet<String>, library: Option<&Program>) -> bool {
+    seeded.contains(rel) && !core.contains(rel) && library.is_none_or(|library| library.decls.contains_key(rel))
 }
 
 /// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`; `library` as

@@ -8,6 +8,8 @@ declare module "*/ui/sessions-model.js" {
     key: string;
     finding: { path?: string | null; at: number; span?: { startLine: number } | null; [k: string]: unknown };
     rule: unknown;
+    /** The coding agent's reasons for declining the steer, oldest first; null when it recorded none. */
+    declined?: string[] | null;
   }
   export interface CallView {
     key: string;
@@ -50,13 +52,16 @@ declare module "*/ui/sessions-model.js" {
   export function uncheckedBoundaries(s: { sessionId: string }): number;
   export function codeRulesPendingBoundaries(s: { sessionId: string }): number;
   export function sessionCorrections(sessionId: string): Correction[];
+  export function mcpToolLabel(toolName: unknown): string;
+  export function callToolLabel(call: { verb: string; level: string; label: string; toolName: string }): string | null;
   export function sessionViolationTotal(sessionId: string): number | null;
+  export function sessionDeclinedTotal(s: SessionRow): number;
   export function loadedFrom(sessionId: string): number;
   export const STALE_MIN: number;
-  export interface SessionRow { sessionId: string; startedAt: number; endedAt: number | null; lastEventAt?: number | null; violationCount?: number; steeredViolations?: number }
+  export interface SessionRow { sessionId: string; startedAt: number; endedAt: number | null; lastEventAt?: number | null; violationCount?: number; steeredViolations?: number; declinedViolations?: number }
   export function lastEventAt(s: SessionRow): number;
   export function openState(s: SessionRow, now?: number): "live" | "stale" | null;
-  export function violationCounts(s: SessionRow): { logged: number; steered: number };
+  export function violationCounts(s: SessionRow): { logged: number; steered: number; declined: number };
 }
 
 declare module "*/ui/poll.js" {
@@ -130,7 +135,7 @@ declare module "*/ui/state.js" {
   /** A cursor-paged list as the page holds it. */
   export interface PagedList<Row> { key: string | null; owner: string | null; rows: Row[]; total: number; next: string | null; pages: number }
   export function pagedList<Row = never>(key?: string | null, owner?: string | null): PagedList<Row>;
-  export interface SessionDetail { head: object | null; gaps: object | null; events: Array<{ sequence: number; observedAt: number; [k: string]: unknown }>; nextAfter: number; loaded: boolean; earlier: boolean; loading: Promise<unknown> | null }
+  export interface SessionDetail { head: object | null; gaps: object | null; declined?: { violations: number; notes: Array<{ ruleId: string; auditId: string | null; reason: string; recordedAt: number }> } | null; events: Array<{ sequence: number; observedAt: number; [k: string]: unknown }>; nextAfter: number; loaded: boolean; earlier: boolean; loading: Promise<unknown> | null }
   export type Violation = { id: string; auditId: string; ruleId: string; sessionId: string; mode?: string; at: number; host?: string | null };
   export const data: {
     rules: Map<string, unknown>;
@@ -234,7 +239,7 @@ declare module "*/ui/routes.js" {
   export type ViewName = "overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings" | "merge";
   export interface Route {
     view: ViewName | null; pack?: string; filterRule?: string; outcome?: "all" | "steered" | "logged";
-    sessionFilter?: "all" | "corr" | "open"; rule?: string; session?: string; jump?: boolean; conflict?: string;
+    sessionFilter?: "all" | "corr" | "declined"; rule?: string; session?: string; jump?: boolean; conflict?: string;
   }
   export function parseRoute(hash: string): Route;
   export function hashOf(route: Partial<Route>): string;
