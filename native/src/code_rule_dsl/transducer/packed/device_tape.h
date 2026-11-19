@@ -90,7 +90,7 @@ UKL_INLINE uint64_t root_row(UKL_GLOBAL const uint32_t* row,uint32_t b){
 }
 // The roots of the rule at `at` among document `d`'s nodes 64*group + lo .. 64*group + hi (file `file` of the batch),
 // as bits of the group's 64. A rule over codes with an anchor (kind 2, decision 0365): its row (set by
-// `label_formula`) and the rule without it.
+// `label_phase`) and the rule without it.
 // The roots among the group's nodes whose bits `among` holds: a rule over codes reads only those nodes' codes.
 UKL_INLINE uint64_t root_mask_among(UKL_GLOBAL const uint8_t* s,DocView d,UKL_GLOBAL const uint32_t* roots,uint32_t at,uint32_t file,uint32_t group,uint64_t among){
  uint32_t from=group*ROOT_GROUP;if(from>=d.nodes)return 0ul;

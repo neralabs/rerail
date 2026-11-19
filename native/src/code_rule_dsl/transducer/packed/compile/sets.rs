@@ -62,7 +62,7 @@ pub enum Set {
     Reached { step: Step, named: bool, from: Box<Set> },
 }
 
-/// A walk's anchor as the device evaluates it (`label_formula`, decision 0365): `Set` in postfix over a stack of node
+/// A walk's anchor as the device evaluates it (`label_phase`, decisions 0365, 0463): `Set` in postfix over a stack of node
 /// sets, a word an operation (`op | arg << 8`), `depth` the stack's slots (an axis step's output a slot past its
 /// input), and the labels it reads (by index, past `DERIVED_CLASS_BASE`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -76,7 +76,7 @@ pub struct DeviceFormula {
     pub texts: Vec<String>,
 }
 
-/// `DeviceFormula`'s operations (`label_formula` in `label_passes.uglykl`). A test pushes a set; `AND` and
+/// `DeviceFormula`'s operations (`label_phase` in `label_passes.uglykl`, compiled by `phase_program`). A test pushes a set; `AND` and
 /// `OR` combine the top `arg` sets; an axis step replaces the top set (a chain the top two: through, then to); `arg`
 /// of a step is whether its nodes are named.
 pub mod device_ops {

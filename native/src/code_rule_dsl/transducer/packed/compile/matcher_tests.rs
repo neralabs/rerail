@@ -994,7 +994,7 @@ fn anchored_walks_find_the_unanchored_roots() {
     assert!(!crate::code_rule_dsl::prof::on() || swept > 0, "the recursive groups' anchors dropped no start");
 }
 
-/// Decision 0365 on Metal: the anchors evaluated on the device (`label_formula`), for the label passes past the
+/// Decision 0365 on Metal: the anchors evaluated on the device (`label_phase`), for the label passes past the
 /// recursive groups, the wave's listed roots and the root records' walks, their text tests reading the walks' rows; and
 /// the formula passes as device formulas (§9). With and without them (`RERAIL_ANCHORS`, `RERAIL_SETS=walk`), on Metal
 /// both: the settled findings of the wave's roots are the same, and so are the root records from every node.
