@@ -861,6 +861,12 @@ pub fn with_repository<T>(root: &Path, f: impl FnOnce(&gix::Repository, Option<&
     view(root).ok_or_else(missing)?.with_repo(|repo, storage, _| f(repo, storage))
 }
 
+/// A reused source view keeps its object store. Mutable revision queries also need this evaluation's Git configuration.
+pub fn reopen_for_revisions(repo: &gix::Repository) -> io::Result<gix::Repository> {
+    let options = super::checkout_options(Default::default()).open_path_as_is(true);
+    Ok(physical_objects(gix::ThreadSafeRepository::open_opts(repo.git_dir(), options).map_err(error)?.to_thread_local()))
+}
+
 pub struct InventoryFilter {
     prefix: PathBuf,
     paths: Option<Vec<SelectedPath>>,

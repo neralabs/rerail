@@ -1166,6 +1166,58 @@ Seen(@place("git",1),reason) :- git_revision_error(_,"@{push}",reason).
     compare("@{push}");
   }, 30_000);
 
+  it("resolves the first local upstream and validates push configuration when resolving revisions", async () => {
+    const root = checkout(), home = root + "-home", engine = loadNativeBinding(), peer = git(root, "rev-parse", "HEAD");
+    mkdirSync(home);
+    git(root, "branch", "peer");
+    git(root, "commit", "--allow-empty", "-qm", "main moved");
+    const main = git(root, "rev-parse", "HEAD");
+    git(root, "remote", "add", "origin", "../offline");
+    git(root, "update-ref", "refs/remotes/origin/peer", main);
+    git(root, "update-ref", "refs/remotes/origin/main", peer);
+    git(root, "config", "push.default", "upstream");
+    git(root, "config", "branch.main.remote", ".");
+    git(root, "config", "branch.main.merge", "refs/heads/peer");
+    git(root, "config", "--add", "branch.main.merge", "refs/heads/main");
+    const pinned = new engine.GitRevisionSource(root, "HEAD", "tracking");
+    const file = join(home, "upstream.rr");
+    writeFileSync(file, `#include "git.rr"
+.policy "upstream" revision 1
+.violation Seen(at:span,e:symbol,c:symbol) "{e} {c}"
+git_revision_request(r,"@{u}") :- git_root_repo(r).
+git_revision_request(r,"@{push}") :- git_root_repo(r).
+Seen(@place("git",1),e,c) :- git_revision(_,e,c).
+Seen(@place("git",1),e,"error") :- git_revision_error(_,e,_).
+`);
+    const compare = async () => {
+      const messages: string[] = [];
+      for (const e of ["@{u}", "@{push}", "HEAD", "HEAD^{tree}"]) {
+        const result = spawnSync("git", ["rev-parse", "--verify", e], { cwd: root, encoding: "utf8" });
+        expect(result.error).toBeUndefined();
+        const select = () => new engine.GitRevisionSource(root, e, "tracking");
+        if (result.status === 0) {
+          const source = select();
+          expect(source.commit ?? source.tree, e).toBe(result.stdout.trim());
+        } else { expect(select, e).toThrow(); }
+        if (e.startsWith("@")) messages.push(e + " " + (result.status === 0 ? result.stdout.trim() : "error"));
+      }
+      const [report] = JSON.parse(await engine.scanRrPoliciesAsync([file], root, join(home, "store.sqlite"), "", undefined, undefined, pinned));
+      expect(report.error).toBeUndefined();
+      expect(report.diagnostics.map((d: {message: string}) => d.message).sort()).toEqual(messages.sort());
+    };
+    expect(git(root, "rev-parse", "@{u}")).toBe(peer);
+    await compare();
+    git(root, "config", "branch.main.remote", "origin");
+    expect(git(root, "rev-parse", "@{u}")).toBe(main);
+    await compare();
+    git(root, "config", "push.default", "CURRENT");
+    await compare();
+    git(root, "config", "--add", "push.default", "simple");
+    await compare();
+    git(root, "config", "--replace-all", "push.default", "upstream");
+    await compare();
+  }, 30_000);
+
   it("compares previous-branch reflogs and ambiguous tree paths with Git", async () => {
     const root = checkout();
     mkdirSync(join(root, "src", "two..dots"), { recursive: true });

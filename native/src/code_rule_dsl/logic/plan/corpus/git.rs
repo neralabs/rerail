@@ -25,6 +25,7 @@ pub(super) struct Git {
     tree: Option<gix::ObjectId>,
     commit: Option<gix::ObjectId>,
     snapshot_root: Option<PathBuf>,
+    revision_repository: std::cell::OnceCell<std::io::Result<gix::Repository>>,
     storage: std::cell::OnceCell<Option<storage::Storage>>,
 }
 
@@ -66,6 +67,7 @@ impl Git {
             tree,
             commit,
             snapshot_root: tree.map(|_| root.to_owned()),
+            revision_repository: Default::default(),
             storage: Default::default(),
         }
     }
@@ -83,6 +85,9 @@ impl Git {
             &self.repository.as_ref().filter(|(id, _)| id.view == key).ok_or("repository-not-open")?.0.repository
         } else { key };
         self.with_repository(repo_key, |repo, _| {
+            let repo = if self.snapshot_root.is_some() {
+                self.revision_repository.get_or_init(|| snapshot::reopen_for_revisions(repo)).as_ref().map_err(|_| "unreadable-object")?
+            } else { repo };
             let base = repo.workdir().map(|_| Path::new(""));
             snapshot::resolve_revision(repo, expression, base).map_err(|error| snapshot::revision_failure_reason(&error))
         })

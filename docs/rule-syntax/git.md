@@ -65,6 +65,10 @@ After a branch switch, `@{-1}@{0}` selects the previous branch's latest reflog e
 A detached previous checkout supplies a commit ID and has no branch reflog for this suffix.
 `@{upstream}` and `@{push}` resolve local tracking refs. With the default `simple` push mode, Git requires both tracking destinations to agree.
 An explicit push refspec or a mirror remote supplies its own destination.
+When a branch uses the local repository as its remote (`.`), its upstream can be another local branch.
+Git uses the first configured merge ref as the upstream. A named remote maps that ref through its fetch refspecs.
+Revision lookup reports invalid `push.default` configuration, including when the expression is `HEAD`.
+A new evaluation on an existing source view reads the current Git configuration. Its selected source commit stays pinned.
 Rerail accepts a single object wherever a revision is required. Git can interpret two dots in a path expression as a revision range.
 For example, if `HEAD:./src/` exists, `HEAD:./src/..` names a range. Use `HEAD:./src/../` to select the parent tree.
 Commit message searches accept POSIX extended regular expressions.
