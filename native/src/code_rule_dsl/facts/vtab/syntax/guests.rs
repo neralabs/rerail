@@ -27,6 +27,8 @@ pub struct GuestRows {
     parsed: Vec<[i64; 3]>,
     sub_tape: Vec<[i64; 3]>,
     host_node: Vec<[i64; 2]>,
+    guest_of: Vec<[i64; 2]>,
+    guest_place: Vec<[i64; 4]>,
     parse_of: Vec<[i64; 3]>,
     splice_of: Vec<[i64; 4]>,
     unparse_of: Vec<[i64; 2]>,
@@ -39,8 +41,8 @@ fn hex(digest: &[u8; 32]) -> String {
 impl GuestRows {
     /// Document `p`'s rows (`d` is its document, `guest` its place when it is one); `docs` are the batch's documents
     /// projected before it, its host among them.
-    /// `wants` says whether `host_node` and `unparse_of` are read.
-    pub(super) fn document(&mut self, p: &Projected, d: &Document, guest: Option<&Guest>, withheld: bool, docs: &[Projected], [host_nodes, unparse]: [bool; 2], string: &mut dyn FnMut(&str) -> usize) {
+    /// `wants` says whether `host_node`, `unparse_of`, `guest_of` and `guest_place` are read.
+    pub(super) fn document(&mut self, p: &Projected, d: &Document, guest: Option<&Guest>, withheld: bool, docs: &[Projected], [host_nodes, unparse, guest_of, guest_place]: [bool; 4], string: &mut dyn FnMut(&str) -> usize) {
         let key = i64::from(p.key);
         let tape = string(&hex(&d.digest)) as i64;
         self.tape.push([key, tape]);
@@ -57,6 +59,26 @@ impl GuestRows {
         // A value document has no host: what made it is its row.
         match &g.made {
             Made::Host => {}
+            // A tape value (decision 0431): a row of each relation for each place, and no `guest` row: it is no
+            // document's guest.
+            Made::Tape { places } => {
+                for at in places {
+                    self.sub_tape.push([at.at, grammar, tape]);
+                    if let Some(r) = root {
+                        self.parsed.push([at.at, grammar, r]);
+                        if guest_of {
+                            self.guest_of.extend(p.node_ids().map(|(_, _, n)| [n, at.at]));
+                        }
+                        if guest_place {
+                            self.guest_places(p, docs, at.host, at.at, &at.place);
+                        }
+                        if host_nodes && !matches!(at.place, Placement::At(_)) {
+                            self.host_nodes(p, docs, at.host, at.at, &at.place);
+                        }
+                    }
+                }
+                return;
+            }
             Made::Parse { text } => {
                 self.parse_of.push([string(text) as i64, grammar, tape]);
                 return;
@@ -70,19 +92,39 @@ impl GuestRows {
         self.sub_tape.push([g.at, grammar, tape]);
         let Some(r) = root else { return };
         self.parsed.push([g.at, grammar, r]);
+        if guest_of {
+            self.guest_of.extend(p.node_ids().map(|(_, _, n)| [n, g.at]));
+        }
         // A decoded value stands at its node as a whole: its nodes have no host node of their own.
         if !host_nodes || matches!(g.place, Placement::At(_)) {
             return;
         }
-        let Ok(h) = docs.binary_search_by_key(&g.host, |q| q.key) else { return };
+        self.host_nodes(p, docs, g.host, g.at, &g.place);
+    }
+
+    /// `guest_place`'s rows of tape value `p`'s nodes at string `at` of document `host`, placed by `place` (decision
+    /// 0431): each node's line and column in the host's text. A string inside a tape value is placed in that value's
+    /// text, which is no file's.
+    fn guest_places(&mut self, p: &Projected, docs: &[Projected], host: u32, at: i64, place: &Placement) {
+        let Ok(h) = docs.binary_search_by_key(&host, |q| q.key) else { return };
+        let Some(lines) = docs[h].extra.as_deref() else { return };
+        for ((_, span), (_, _, n)) in p.spans().zip(p.node_ids()) {
+            let (line, _, col) = lines.place(place.host(span));
+            self.guest_place.push([n, at, i64::from(line), i64::from(col)]);
+        }
+    }
+
+    /// `host_node`'s rows of document `p`'s nodes, placed at host node `at` of document `host` by `place`.
+    fn host_nodes(&mut self, p: &Projected, docs: &[Projected], host: u32, at: i64, place: &Placement) {
+        let Ok(h) = docs.binary_search_by_key(&host, |q| q.key) else { return };
         let host = &docs[h];
         // A node id's low bits are its local id only under preorder ids.
-        let Some(at) = host.local_of((g.at & 0xffff_ffff) as u32) else { return };
+        let Some(at) = host.local_of((at & 0xffff_ffff) as u32) else { return };
         if at >= host.len() {
             return;
         }
         for ((_, span), (_, _, n)) in p.spans().zip(p.node_ids()) {
-            let [a, b] = g.place.bounds(span);
+            let [a, b] = place.bounds(span);
             let mut over = at;
             while let Some(c) = host.children(over).find(|&c| {
                 let [x, y] = host.span(c);
@@ -106,6 +148,8 @@ impl GuestRows {
             ("parsed", rel(&["s", "grammar", "root"], &mut self.parsed.iter().map(|&[s, g, r]| vec![s, atom(g), r]))),
             ("sub_tape", rel(&["at", "grammar", "t"], &mut self.sub_tape.iter().map(|&[a, g, t]| vec![a, atom(g), atom(t)]))),
             ("host_node", rel(&["n", "h"], &mut self.host_node.iter().map(|r| r.to_vec()))),
+            ("guest_of", rel(&["n", "s"], &mut self.guest_of.iter().map(|r| r.to_vec()))),
+            ("guest_place", rel(&["n", "s", "l", "c"], &mut self.guest_place.iter().map(|r| r.to_vec()))),
             ("parse_of", rel(&["x", "g", "t"], &mut self.parse_of.iter().map(|&[x, g, t]| vec![atom(x), atom(g), atom(t)]))),
             ("splice_of", rel(&["t", "n", "t2", "t3"], &mut self.splice_of.iter().map(|&[t, n, t2, t3]| vec![atom(t), n, atom(t2), atom(t3)]))),
             ("unparse_of", rel(&["t", "x"], &mut self.unparse_of.iter().map(|&[t, x]| vec![atom(t), atom(x)]))),

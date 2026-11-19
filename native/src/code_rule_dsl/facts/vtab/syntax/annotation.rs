@@ -101,7 +101,11 @@ impl Annotations {
             .collect();
         if let Some(g) = d.guest.as_deref() {
             if g.grammar == GRAMMAR {
-                self.guests.push((g.at, by_range));
+                // A tape value (decision 0431) is at each string holding its text.
+                match &g.made {
+                    super::Made::Tape { places } => self.guests.extend(places.iter().map(|at| (at.at, by_range.clone()))),
+                    _ => self.guests.push((g.at, by_range)),
+                }
             }
             return Ok(());
         }

@@ -922,6 +922,8 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "tape_of" => &["d", "t"],
         "sub_tape" => &["at", "grammar", "t"],
         "host_node" => &["n", "h"],
+        "guest_of" => &["n", "s"],
+        "guest_place" => &["n", "s", "l", "c"],
         // Decision 0058's tape operations.
         "parse_of" => &["x", "g", "t"],
         "unparse_of" => &["t", "x"],

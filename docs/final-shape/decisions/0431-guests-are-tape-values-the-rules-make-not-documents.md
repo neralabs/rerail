@@ -53,10 +53,17 @@ code may be named by which rules asked for it, or in what order.
    derived by the program's own rules, the parse a functor inside the fixpoint: a rule that reads the tape's nodes is
    in a later stratum than the rule that makes it, and a string inside a parsed string is ordinary recursion. Nothing
    parses a string no rule asked for.
-3. **A tape value's node is named by its tape:** (the tape's interned key, its preorder). The same node for every
-   place, rule and program that reaches it. It has no `docof`, `line` or `col` of its own. `guest_of(n, s)` says n is a
-   node of the tape parsed at string node s (a row per place). A finding is placed through s (at s, or at n's bytes
-   mapped through s's placement); the lowering refuses a finding placed at a tape value's node.
+3. **A tape value's node is named by its tape:** (the tape's key, its preorder). The same node for every place, rule
+   and program that reaches it. It is no file's: `doc` has no row for its tape, so a finding on it has no path. Its
+   `line` and `col` are its tape's own text's, which every view holds for every node, on the CPU and the device alike
+   (a node with no row would make the views partial). A file's place comes through the string:
+   - `guest_of(n, s)`: n is a node of the code parsed at string s, a row per place;
+   - `guest_place(n, s, l, c)`: n, parsed at s, stands at line l, column c of s's file, through s's placement (the
+     escapes and parts of a normalized string, decision 0058 §3). A string inside a tape value is placed in that
+     value's text, which is no file's;
+   - a finding placed at a tape value's node is refused (R9).
+   A tape value is never shown as code to rules that do not name a guest (0058 §1's ranges): in the run's language it is
+   in the annotations' range, else hidden.
 4. **A program the grammar holds is part of its file.** The host language's parse makes it, as the matcher path makes
    its derived programs (`DerivedImage`): what a file embeds depends on its bytes and its grammar, not on rules. Its
    nodes are numbered in the file's id space after the file's own, in the order the parse found them, so `docof`,
@@ -84,13 +91,13 @@ code may be named by which rules asked for it, or in what order.
 |---|---|---|
 | R1 | A program the grammar holds is its file's: `docof` of its nodes is the file, its lines are the file's | `a_program_a_file_holds_is_the_files` |
 | R2 | `guest_of(n, s)` names the string a tape value's node was parsed at | `guest_of_names_the_string_a_node_was_parsed_from` |
-| R3 | One text is one tape and one set of nodes at every place; a tape value's node has no line of its own | `one_tape_at_two_places_is_one_set_of_nodes` |
+| R3 | One text is one tape and one set of nodes at every place; a tape value's node is no file's | `one_tape_at_two_places_is_one_set_of_nodes` |
 | R4 | No string is parsed unless a rule asks for it | `a_string_no_rule_asks_for_is_not_parsed` |
 | R5 | The batch is built once a chunk | written with step 3, on the report's count of builds |
 | R6 | A text a run parsed is not parsed again: after an edit elsewhere in its file, in a new file, after a rule's edit (`Report::guest_parses`) | `an_edit_elsewhere_parses_no_text_the_last_run_parsed`, `a_new_file_with_a_text_parsed_before_parses_nothing`, `an_edited_rule_parses_no_text_the_last_run_parsed`; guard `equal_texts_are_parsed_once_a_run` |
 | R7 | A file read from the memo has its programs and tape values for a cross-file rule | written with step 4 |
 | R8 | CPU and Metal give the same rows, the device reading the same tapes | the Metal path's parity tests, with both kinds |
-| R9 | A finding placed at a tape value's node is refused by the lowering | written with step 2 |
+| R9 | A finding placed at a tape value's node is refused: the lowering derives `rr_unplaced(clause)`, and the run fails naming the clauses | `a_finding_at_a_tape_values_node_is_refused` |
 
 The tests for R1–R4 are in `logic/rr/tests.rs`, R6's in `logic/plan/corpus/tests.rs`, ignored until their step lands (`#[ignore = "0431 …"]`). 0055's tests
 keep their meaning, rewritten for `guest_of` and the file's programs where they read `guest(g, …)`.
@@ -99,7 +106,8 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
 
 1. The record, its tests, Q261.
 2. Tape values: node ids by tape key and preorder, `guest_of`, findings placed through the string (R2, R3, R9); the
-   packs' `docof(n, d), guest(d, _, s, _)` (21 uses in 6 files) rewritten.
+   packs' `docof(n, d), guest(d, _, s, _)` over parsed strings rewritten (14 uses in 2 files; the `guest` rows left
+   are the grammar's programs, step 3's).
 3. Programs as the file's: made by the host's parse, numbered in the file's space, the file's program record; the views
    and the reads (CLIF) resolve ids through it; `with_matchers` runs once a chunk; guest documents go (R1, R5, R8).
 4. `@parse` as a functor in the fixpoint; `parsed` and `sub_tape` derived by the program; the embed slice, `DEPTH`,
@@ -111,4 +119,5 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
 
 - A value's tape (`@parse(g, x)` of a computed string, `parse_of`): a tape value like any, placed through its asking
   node. To check against the packs' one use.
-- `embed_value` (a `.rr` regex): a rule-made value, so a tape value; to confirm in step 2.
+- `embed_value` (step 2): a library's value placed at a node, as `embed` is, so the second kind: its file's, placed at
+  its node. Its one use in the packs is a `.rr` regex.

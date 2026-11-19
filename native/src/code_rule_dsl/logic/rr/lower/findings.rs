@@ -21,6 +21,9 @@ pub const HOLE: &str = "hole";
 /// The index of `message` in a finding's row (`HEAD`).
 pub const MESSAGE_COLUMN: usize = 6;
 
+/// Decision 0431 R9: the clauses whose findings are placed at a node no file holds (`corpus::refuse_unplaced`).
+pub const UNPLACED: &str = "rr_unplaced";
+
 /// Whether `rel` is a finding's relation.
 pub fn is_diagnostic(rel: &str) -> bool {
     rel.starts_with(PREFIX)
@@ -201,6 +204,15 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
                 vec![atom("docof", vec![v("rr_v0"), v("rr_d")]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), atom("line", vec![v("rr_v0"), v("rr_l")]), atom("col", vec![v("rr_v0"), v("rr_c")])]
             };
             self.write(Rule { head: head.clone(), body: std::iter::once(atom(&f.name, cols.clone())).chain(at).chain(scoped.iter().cloned()).collect() });
+            // Decision 0431 R9: a finding at a node whose document is no file's (a tape value's) is refused by the run.
+            {
+                self.prog.declare_absent(UNPLACED, &[("clause", "sym")]);
+                self.prog.add_output(UNPLACED);
+                let doc_of = if f.node { atom("node", vec![v("rr_d"), v("rr_v0"), Term::Wild, Term::Wild, Term::Wild]) } else { atom("docof", vec![v("rr_v0"), v("rr_d")]) };
+                let no_doc = Literal::Atom(Atom { rel: "doc".into(), args: [v("rr_d"), Term::Wild, Term::Wild].into(), neg: true, gated: false });
+                let unplaced = Atom { rel: UNPLACED.into(), args: [Term::Str(f.name.clone().into())].into(), neg: false, gated: false };
+                self.write(Rule { head: unplaced, body: [atom(&f.name, cols.clone()), doc_of, no_doc].into_iter().collect() });
+            }
             if !f.node && place_values {
                 let of = |g: &str| Term::Call(g.to_owned().into(), [v("rr_v0")].into());
                 let mut found = head.clone();
@@ -254,7 +266,7 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
         for (grammar, code) in guest_errors {
             let head = Atom { rel: "violation".into(), args: [Term::Str(policy.clone().into()), Term::Str("guest_error".into()), Term::Str(code.clone().into()), v("rr_p"), v("rr_l"), Term::Int(0)].into(), neg: false, gated: false };
             let g = grammar.map_or(Term::Wild, |g| Term::Str(g.into()));
-            let body = vec![atom("syntax_error", vec![v("rr_d"), v("rr_l"), Term::Wild]), atom("guest", vec![v("rr_d"), Term::Wild, Term::Wild, g]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild])];
+            let body = vec![atom("syntax_error", vec![v("rr_d"), v("rr_l"), Term::Wild]), atom("guest", vec![v("rr_d"), Term::Wild, Term::Wild, g.clone()]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild])];
             for (rel, cols) in [
                 ("syntax_error", &[("d", "int"), ("l", "int"), ("msg", "sym")][..]),
                 ("doc", &[("d", "int"), ("path", "sym"), ("module", "sym")][..]),
@@ -264,7 +276,24 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
             }
             self.guest_input();
             self.error_diagnostic(&policy, "guest_error", &code, body.clone())?;
-            self.write(Rule { head, body: body.into() });
+            self.write(Rule { head: head.clone(), body: body.into() });
+            // A string a rule parses is a tape value (decision 0431): no file's, its lines its own text's. It is
+            // reported at each string holding its text, at the string's line in the string's file.
+            let at_string = vec![
+                atom("syntax_error", vec![v("rr_d"), Term::Wild, Term::Wild]),
+                atom("tape_of", vec![v("rr_d"), v("rr_t")]),
+                atom("sub_tape", vec![v("rr_s"), g, v("rr_t")]),
+                atom("docof", vec![v("rr_s"), v("rr_h")]),
+                atom("doc", vec![v("rr_h"), v("rr_p"), Term::Wild]),
+                atom("line", vec![v("rr_s"), v("rr_l")]),
+            ];
+            for rel in ["tape_of", "sub_tape"] {
+                if self.prog.declares(rel) {
+                    self.prog.add_input(rel);
+                }
+            }
+            self.error_diagnostic(&policy, "guest_error", &code, at_string.clone())?;
+            self.write(Rule { head, body: at_string.into() });
         }
         Ok(true)
     }

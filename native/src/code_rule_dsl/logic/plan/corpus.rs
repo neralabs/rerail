@@ -2349,7 +2349,7 @@ fn own_names<P: link::Part>(part: &P, core: &BTreeSet<String>) -> BTreeSet<Strin
     let prog = part.head();
     let heads: Vec<String> = part.rules().into_iter().map(|(head, _)| head).collect();
     // `violation`, and each finding's relation (`rr::is_diagnostic`, named by its policy).
-    let shared_outputs = |r: &str| r == "violation" || crate::code_rule_dsl::logic::rr::is_diagnostic(r);
+    let shared_outputs = |r: &str| r == "violation" || r == crate::code_rule_dsl::logic::rr::UNPLACED || crate::code_rule_dsl::logic::rr::is_diagnostic(r);
     let file_inputs = file_inputs(prog);
     let inputs = prog.input_names();
     let (declared, facts) = (prog.declared_names(), prog.fact_names());
@@ -2932,6 +2932,20 @@ pub fn run_read(
     run_read_handing(read, None, root, out, modes, binding, chunk_nodes, typing, options)
 }
 
+/// Decision 0431 R9: a finding placed at a node no file holds (a tape value's: a string a rule parsed) has no place,
+/// so the run is refused, naming the clauses (`rr_unplaced`, the findings' lowering), not dropped.
+fn refuse_unplaced(out: &Path) -> Result<()> {
+    let Ok(rows) = output::shown(out, crate::code_rule_dsl::logic::rr::UNPLACED) else { return Ok(()) };
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let clauses: Vec<&str> = rows.iter().filter_map(|r| r.first().map(String::as_str)).collect();
+    Err(Error::Plan(format!(
+        "findings of {} are placed at a tape value's node, which no file holds (decision 0431): place them through the string (`guest_place`, or at the string)",
+        clauses.join(", ")
+    )))
+}
+
 /// `run_read` inside another run that hands it the source texts it read (`sources`, decision 0300): phase 1's.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_read_handing(
@@ -3074,6 +3088,7 @@ fn run_handed(
         Ok(Some(report)) => Ok(report),
         Err(e) => Err(e),
         Ok(None) => run_observed(&texts, root, t_facts, out, modes, binding, chunk_nodes, typing, options).and_then(|report| {
+            refuse_unplaced(out)?;
             if reuse {
                 reuse::record(&texts, root, out, modes, typing, options, &report)?;
             }
@@ -6343,12 +6358,12 @@ fn run_observed(
                     if memoised {
                         slice_rounds.push(asked.iter().filter(|(r, _)| guests::LIBRARY.contains(&r.as_str()) || guests::DEMANDS.contains(&r.as_str())).map(|(r, l)| (r.clone(), Arc::clone(l))).collect());
                     }
-                    let new = made.make(guests::requests(&asked), &docs, &guest_parses).map_err(Error::Plan)?;
-                    if new.is_empty() {
+                    // The documents made, and the tape values given a place more (decision 0431), added to `docs`.
+                    let changed = made.make(guests::requests(&asked), &mut docs, &guest_parses).map_err(Error::Plan)?;
+                    if changed.is_empty() {
                         break;
                     }
-                    round_new = new.iter().map(|d| i64::from(d.key)).collect();
-                    docs.extend(new);
+                    round_new = changed.iter().map(|&k| i64::from(k)).collect();
                     // Made from the entries, the batch is built once, after the last round: no slice reads it between.
                     if replay.is_none() {
                         let _rebuild = crate::code_rule_dsl::logic::profile::span(|| "batch with guests".into());

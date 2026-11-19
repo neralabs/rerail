@@ -45,18 +45,30 @@ pub(super) const SPLICE: &str = "rr_splice_req";
 pub(super) const DEMANDS: [&str; 3] = [DEMAND, PARSE, SPLICE];
 /// The relations a rule reads guests and values through (`rr::lower`'s guest relations): a program none of whose
 /// needed rules reads one makes no guest.
-pub(super) const READS: [&str; 10] = ["parsed", "sub_tape", "guest", "doc_root", "doc_role", "tape_of", "host_node", "parse_of", "unparse_of", "splice_of"];
+pub(super) const READS: [&str; 12] = ["parsed", "sub_tape", "guest", "doc_root", "doc_role", "tape_of", "host_node", "guest_of", "guest_place", "parse_of", "unparse_of", "splice_of"];
 /// Every relation a request is read from: a run with a rule deriving one makes guests.
 pub(in crate::code_rule_dsl) const REQUESTS: [&str; 5] = ["embed", "embed_value", DEMAND, PARSE, SPLICE];
 /// The engine's relations a combined run shares across its programs (`corpus::combine` prefixes no program's): the
 /// requests, which the runner reads by name, and the guest policy.
 pub(super) const SHARED: [&str; 6] = ["embed", "embed_value", DEMAND, PARSE, SPLICE, crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY];
 
+/// What a guest request gave (`Guests::guest`).
+enum Got {
+    /// A document made.
+    New(Document),
+    /// A place more of tape value `key`, made before.
+    Placed(u32, syntax::TapePlace),
+    /// None: no text, no grammar, not parsed, or not seen.
+    Not,
+}
+
 /// One document asked for.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(super) enum Request {
-    /// The code at host node `at`, in `grammar`, with its text when it is a value (`embed_value`).
-    Guest { at: i64, grammar: String, role: String, text: Option<String> },
+    /// The code at host node `at`, in `grammar`, with its text when it is a value (`embed_value`). `tape`: a string a
+    /// rule parses (`parsed`, `sub_tape`, `embed_value`), made a tape value (decision 0431); else a library's
+    /// `embed`, a program its file holds. Sorted first, a program is made before a rule's request for the same place.
+    Guest { tape: bool, at: i64, grammar: String, role: String, text: Option<String> },
     /// `@parse(grammar, text)`, asked at location `at` (the asking document's).
     Parse { at: i64, grammar: String, text: String },
     /// `@splice(_, node, with)`: node's tape, with node's text replaced by tape `with`'s.
@@ -88,17 +100,18 @@ pub(super) fn requests(outputs: &BTreeMap<String, std::sync::Arc<crate::code_rul
     };
     for c in rows("embed", 4) {
         if let [_, Cell::Int(at), Cell::Text(g), Cell::Text(r)] = c[..] {
-            out.push(Request::Guest { at, grammar: g.to_owned(), role: r.to_owned(), text: None });
+            out.push(Request::Guest { tape: false, at, grammar: g.to_owned(), role: r.to_owned(), text: None });
         }
     }
     for c in rows("embed_value", 5) {
         if let [_, Cell::Int(at), Cell::Text(g), Cell::Text(r), Cell::Text(t)] = c[..] {
-            out.push(Request::Guest { at, grammar: g.to_owned(), role: r.to_owned(), text: Some(t.to_owned()) });
+            // A library's value placed at a node: its file's, as an embed is (decision 0431).
+            out.push(Request::Guest { tape: false, at, grammar: g.to_owned(), role: r.to_owned(), text: Some(t.to_owned()) });
         }
     }
     for c in rows(DEMAND, 2) {
         if let [Cell::Int(at), Cell::Text(g)] = c[..] {
-            out.push(Request::Guest { at, grammar: g.to_owned(), role: "fragment".to_owned(), text: None });
+            out.push(Request::Guest { tape: true, at, grammar: g.to_owned(), role: "fragment".to_owned(), text: None });
         }
     }
     // `at`, the location that asked, says whose the value is; equal texts are one value (`Guests::value`).
@@ -373,10 +386,35 @@ impl Guests {
         }
     }
 
-    /// The documents `requests` ask for that are not made yet; `docs` holds their hosts.
-    pub(super) fn make(&mut self, requests: Vec<Request>, docs: &[Document], parses: &Parses) -> Result<Vec<Document>, String> {
+    /// The documents `requests` ask for that are not made yet, added to `docs` (which holds their hosts), and the
+    /// tape values made before that gained a place (decision 0431): the keys of both, which changed.
+    pub(super) fn make(&mut self, requests: Vec<Request>, docs: &mut Vec<Document>, parses: &Parses) -> Result<Vec<u32>, String> {
+        let mut places: Vec<(u32, syntax::TapePlace)> = Vec::new();
+        let mut out = {
+            let docs: &[Document] = docs;
+            self.made_from(requests, docs, parses, &mut places)?
+        };
+        let mut changed: Vec<u32> = out.iter().map(|d| d.key).collect();
+        for (key, place) in places {
+            let Some(d) = docs.iter_mut().chain(out.iter_mut()).find(|d| d.key == key) else { continue };
+            let Some(g) = d.guest.as_mut() else { continue };
+            if let Made::Tape { places } = &mut Arc::make_mut(g).made
+                && !places.contains(&place)
+            {
+                places.push(place);
+                changed.push(key);
+            }
+        }
+        docs.append(&mut out);
+        changed.sort_unstable();
+        changed.dedup();
+        Ok(changed)
+    }
+
+    /// The documents `requests` ask for that are not made yet; a tape value's further places, in `places`.
+    fn made_from(&mut self, requests: Vec<Request>, docs: &[Document], parses: &Parses, places: &mut Vec<(u32, syntax::TapePlace)>) -> Result<Vec<Document>, String> {
         let by_key: HashMap<u32, &Document> = docs.iter().map(|d| (d.key, d)).collect();
-        let mut out = Vec::new();
+        let mut out: Vec<Document> = Vec::new();
         for r in requests {
             // A guest is one per place and grammar, whatever its role.
             let first = match &r {
@@ -387,7 +425,14 @@ impl Guests {
                 continue;
             }
             let made = match r {
-                Request::Guest { at, grammar, role, text } => self.guest(&by_key, at, &grammar, &role, text, parses)?,
+                Request::Guest { tape, at, grammar, role, text } => match self.guest(&by_key, tape, at, &grammar, &role, text, parses)? {
+                    Got::New(d) => Some(d),
+                    Got::Placed(key, place) => {
+                        places.push((key, place));
+                        continue;
+                    }
+                    Got::Not => None,
+                },
                 // A value is never shown (`Range::Hidden`): a program that sees no hidden guest makes none.
                 Request::Parse { .. } | Request::Splice { .. } if !self.seen.sees(Range::Hidden) => {
                     self.unseen += 1;
@@ -419,44 +464,52 @@ impl Guests {
         Ok(out)
     }
 
-    /// The guest at host node `at`.
-    fn guest(&mut self, by_key: &HashMap<u32, &Document>, at: i64, grammar_name: &str, role: &str, text: Option<String>, parses: &Parses) -> Result<Option<Document>, String> {
+    /// The guest at host node `at`: a program its host holds (a library's `embed`), or a string a rule parses
+    /// (`tape`), made a tape value (decision 0431): one per grammar and text, its places the strings it was parsed
+    /// at; a text made already gains a place.
+    #[allow(clippy::too_many_arguments)]
+    fn guest(&mut self, by_key: &HashMap<u32, &Document>, tape: bool, at: i64, grammar_name: &str, role: &str, text: Option<String>, parses: &Parses) -> Result<Got, String> {
         let host_key = (at >> 32) as u32;
-        let Some(host) = by_key.get(&host_key).copied() else { return Ok(None) };
+        let Some(host) = by_key.get(&host_key).copied() else { return Ok(Got::Not) };
         if let Some(via) = embedding(host, grammar_name) {
-            return self.program(host, at, via, role);
+            return Ok(self.program(host, at, via, role)?.map_or(Got::Not, Got::New));
         }
-        let Some((label, wrap)) = grammar(grammar_name) else { return Ok(None) };
+        let Some((label, wrap)) = grammar(grammar_name) else { return Ok(Got::Not) };
         // Shown to rules that do not name it: code in the run's language. An annotation (a type expression, Python's
         // in a Python run) is not code: the rules that read one reach it through `parsed`. Shown, a string the
         // demand asked for only because its rule's inputs hold it (every string, for `type_ctx`) was code to every
         // rule: `"--host"` was `--host`, a doubled minus (B002 on 157 argparse lines).
-        let range = match (label == self.run, grammar_name == "annotation") {
+        // A tape value (decision 0431) is never code to such rules: its nodes are no file's, so a finding on one has
+        // no place. In the run's language it is in the annotations' range.
+        let range = match (label == self.run, grammar_name == "annotation" || tape) {
             (true, false) => Range::Code,
             (true, true) => Range::Annotation,
             (false, _) => Range::Hidden,
         };
         if !self.seen.sees(range) {
             self.unseen += 1;
-            return Ok(None);
+            return Ok(Got::Not);
         }
         let ids = self.numbering(host)?;
         // A node id's low bits are its local id only under preorder ids (`syntax::Numbering`).
-        let Some(local) = ids.local((at & 0xffff_ffff) as u32) else { return Ok(None) };
+        let Some(local) = ids.local((at & 0xffff_ffff) as u32) else { return Ok(Got::Not) };
         let placed = match text {
             Some(text) => {
-                let Some((id, _)) = ids.node(local) else { return Ok(None) };
+                let Some((id, _)) = ids.node(local) else { return Ok(Got::Not) };
                 Some((text, Placement::At([host.facts.start(id), host.facts.end(id)])))
             }
             None => host_text(host, ids, local),
         };
-        let Some((text, place)) = placed else { return Ok(None) };
+        let Some((text, place)) = placed else { return Ok(Got::Not) };
         let (text, place) = if wrap { wrapped(text, place) } else { (text, place) };
-        let Some((facts, root, digest)) = parse(&host.path, label, wrap, text, parses)? else { return Ok(None) };
+        if tape {
+            return self.tape_value(host, host_key, at, grammar_name, role, label, wrap, text, place, range, parses);
+        }
+        let Some((facts, root, digest)) = parse(&host.path, label, wrap, text, parses)? else { return Ok(Got::Not) };
         let key = self.key_for(&[host.path.as_bytes(), &at.to_le_bytes(), grammar_name.as_bytes()], range, &host.path);
         self.host_of.insert(i64::from(key), self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key)));
         let in_file = host.guest.as_ref().map_or_else(|| place.clone(), |h| h.in_file.then(place.clone()));
-        Ok(Some(Document {
+        Ok(Got::New(Document {
             key,
             path: host.path.clone(),
             core: format!("{}#guest:{grammar_name}:{at}", host.core),
@@ -464,6 +517,36 @@ impl Guests {
             facts,
             guest: Some(Arc::new(Guest { host: host_key, at, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
             module: host.module.clone(),
+            tape: None,
+        }))
+    }
+
+    /// String `at` of `host`, its `text` parsed as `label`: a tape value (decision 0431), keyed by its grammar and
+    /// text, not its place. A text made already in this chunk gains the place; else it is parsed (once a run,
+    /// `parse`) and made. Its rows are the files' that hold it (`files`, as a value's).
+    #[allow(clippy::too_many_arguments)]
+    fn tape_value(&mut self, host: &Document, host_key: u32, at: i64, grammar_name: &str, role: &str, label: &str, wrap: bool, text: String, place: Placement, range: Range, parses: &Parses) -> Result<Got, String> {
+        let identity = format!("tape:{wrap}:{text}");
+        let files = self.files_of(i64::from(host_key));
+        let here = syntax::TapePlace { host: host_key, at, place };
+        if let Some(key) = self.values.get(&(grammar_name.to_owned(), identity.clone())).copied() {
+            self.files.entry(key).or_default().extend(files);
+            return Ok(Got::Placed(key as u32, here));
+        }
+        let Some((facts, root, digest)) = parse(&host.path, label, wrap, text.clone(), parses)? else { return Ok(Got::Not) };
+        let key = self.key_for(&[b"tape", grammar_name.as_bytes(), identity.as_bytes()], range, &host.path);
+        self.values.insert((grammar_name.to_owned(), identity), i64::from(key));
+        self.files.insert(i64::from(key), files);
+        let none = Placement::At([0, 0]);
+        Ok(Got::New(Document {
+            key,
+            path: host.path.clone(),
+            core: format!("#tape:{grammar_name}:{key}"),
+            digest,
+            facts,
+            guest: Some(Arc::new(Guest { host: 0, at: 0, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place: none.clone(), in_file: none, made: Made::Tape { places: vec![here] } })),
+            // A tape value is no module's: its text is a string's, not a file's.
+            module: None,
             tape: None,
         }))
     }

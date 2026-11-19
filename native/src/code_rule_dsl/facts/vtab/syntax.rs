@@ -1211,7 +1211,28 @@ pub enum Made {
     /// `@splice(tape, node, with)`: tape `tape` with node `node`'s text replaced by tape `with`'s, parsed in its
     /// grammar; a value document.
     Splice { tape: String, node: i64, with: String },
+    /// A string a rule parses (`parsed`, `sub_tape`, `embed_value`): a tape value (decision 0431). One per grammar
+    /// and text, whatever holds it; `places` are the strings it was parsed at. Its nodes are its tape's: their
+    /// positions are in its own text, and it is no file's (`doc` has no row for it), so a file's place of one of
+    /// its nodes is reached through the string.
+    Tape { places: Vec<TapePlace> },
 }
+
+/// A string a tape value was parsed at (decision 0431): its host document, its node, and where the value's bytes
+/// stand in the host (for `host_node`). Two places are one when they are the same node.
+#[derive(Clone, Debug)]
+pub struct TapePlace {
+    pub host: u32,
+    pub at: i64,
+    pub place: Placement,
+}
+
+impl PartialEq for TapePlace {
+    fn eq(&self, o: &Self) -> bool {
+        (self.host, self.at) == (o.host, o.at)
+    }
+}
+impl Eq for TapePlace {}
 
 /// A document's text as a rule gets it back (`@unparse`): a wrapped fragment's root's text (the expression inside
 /// `( … )`), else the whole text.
@@ -3479,7 +3500,9 @@ impl Batch {
             let key = i64::from(d.key);
             // core.rr: a module for Python and Rust files, "" for the others; `pkg` for Python only. T's has both
             // for every file.
-            let py_file = d.path.ends_with(".py") || d.path.ends_with(".pyi");
+            // A tape value (decision 0431) is no file's: no `doc` row, no module or package.
+            let tape_value = d.guest.as_deref().is_some_and(|g| matches!(g.made, Made::Tape { .. }));
+            let py_file = !tape_value && (d.path.ends_with(".py") || d.path.ends_with(".pyi"));
             let dotted = py_file || d.path.ends_with(".rs");
             let named = d.module.as_deref();
             let module = match named {
@@ -3487,7 +3510,9 @@ impl Batch {
                 None if core && !dotted => String::new(),
                 None => module(&d.path),
             };
-            doc.push([key, string(&d.path) as i64, string(&module) as i64]);
+            if !tape_value {
+                doc.push([key, string(&d.path) as i64, string(&module) as i64]);
+            }
             if !core || py_file {
                 let package = match named {
                     Some(m) => package_of(&d.path, m),
@@ -3591,7 +3616,7 @@ impl Batch {
         // The guests' rows, once every document is projected: a guest's host may be a guest after it. Either shape:
         // a program that declares its base relations itself (T's) reads guests as core.rr's do.
         for ((p, d), &withheld) in docs.iter().zip(&documents).zip(&withheld_at) {
-            g.document(p, d, d.guest.as_deref(), withheld, &docs, [projection.wants("host_node"), projection.wants("unparse_of")], &mut string);
+            g.document(p, d, d.guest.as_deref(), withheld, &docs, [projection.wants("host_node"), projection.wants("unparse_of"), projection.wants("guest_of"), projection.wants("guest_place")], &mut string);
         }
         // Each lazy family's strings, where the batch has documents of its dialect.
         let vocabulary: Vec<Option<(u8, Vec<i64>)>> = families()
