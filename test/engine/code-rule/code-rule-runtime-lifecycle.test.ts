@@ -772,6 +772,73 @@ describe("source-scoped steers", () => {
         reader.close();
       }
     }, 180_000);
+
+    /**
+     * Removes the session's row, with every row that names it, in one commit of another connection, as a database put back
+     * from a copy taken before the session began does.
+     */
+    function removeSessionRow(store: string): void {
+      const database = new Database(join(store, "rerail.sqlite"));
+      try {
+        database.pragma("busy_timeout = 5000");
+        database.transaction(() => {
+          for (const table of ["events", "work_links", "steer_feedback", "audits", "audit_requests", "repository_audits", "policy_session_owners", "sessions"])
+            database.prepare(`DELETE FROM ${table} WHERE session_id = ?`).run(session.sessionId);
+        })();
+      } finally {
+        database.close();
+      }
+    }
+    /** The session's row and its claim (`policy_session_owners`) as the database holds them. */
+    function rowAndClaim(store: string): { session: unknown; claim: unknown } {
+      const database = new Database(join(store, "rerail.sqlite"), { readonly: true });
+      try {
+        return {
+          session: database.prepare("SELECT ended_at AS endedAt FROM sessions WHERE session_id = ?").get(session.sessionId),
+          claim: database.prepare("SELECT delivery, active, token FROM policy_session_owners WHERE session_id = ?").get(session.sessionId),
+        };
+      } finally {
+        database.close();
+      }
+    }
+    /** How long a write waits for another connection's write lock before it fails (`busy_timeout`, database.ts). */
+    const BUSY_TIMEOUT_MS = 5_000;
+
+    // The turn end's own event puts a removed row back before the walk. A row removed while the walk runs is first found
+    // gone by the place's write, in the transaction that writes the turn end's places; the claim that the put-back
+    // writes again goes through another connection, which would wait out the busy timeout behind that transaction.
+    it("writes the session's claim again at once when a turn end's place is the first write to find its row gone, and records the place once", async () => {
+      const root = await realpath(await temporaryDirectory());
+      const store = await realpath(await temporaryDirectory());
+      const locked = join(root, "locked");
+      await mkdir(locked);
+      const runtime = gapRuntime(root, store);
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      try {
+        await opened(runtime, root);
+        await turnEnd(runtime, 1);
+        const claimed = rowAndClaim(store);
+        expect(claimed).toEqual({ session: { endedAt: null }, claim: expect.objectContaining({ active: 1 }) });
+        const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
+        let removals = 0;
+        vi.mocked(opendir).mockImplementation(async (...args) => {
+          if (String(args[0]) !== locked) return actual.opendir(...args);
+          if (removals === 0) removeSessionRow(store);
+          removals += 1;
+          throw Object.assign(new Error(denial(locked)), { code: "EACCES" });
+        });
+        const startedAt = performance.now();
+        expect(await turnEnd(runtime, 2)).toEqual([]);
+        const tookMs = performance.now() - startedAt;
+        expect({ removed: removals > 0, ...rowAndClaim(store) }).toEqual({ removed: true, ...claimed });
+        expect(gapRows(store).map(row => row.payload)).toEqual([{ boundary: "turn", path: "locked", reason: denial(locked) }]);
+        expect(stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes("claim"))).toEqual([]);
+        expect(tookMs).toBeLessThan(BUSY_TIMEOUT_MS);
+      } finally {
+        stderr.mockRestore();
+        await runtime.dispose();
+      }
+    }, 60_000);
   });
 
   it("passes how long the session's code-rule evaluator took to open to the timing log", async () => {

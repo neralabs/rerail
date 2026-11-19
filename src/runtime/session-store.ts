@@ -210,6 +210,16 @@ function listWorkLinks(database: RerailDatabase, sessionId: string): WorkLinkRec
   return database.select().from(workLinks).where(eq(workLinks.sessionId, sessionId)).orderBy(asc(workLinks.linkId)).all();
 }
 
+/** The event that records `gap` in the session `sessionId` (`recordDiscoveryGap`): its id is the gap's key's digest. */
+function discoveryGapEvent(sessionId: string, gap: DiscoveryGap): SessionEvent {
+  return {
+    sessionId,
+    eventId: gap.more === true ? MORE_DISCOVERY_GAPS_EVENT : `source-discovery-gap:${createHash("sha256").update(gap.key).digest("hex")}`,
+    kind: "source-discovery-gap",
+    payload: { boundary: gap.boundary, ...(gap.path === undefined ? {} : { path: gap.path }), reason: gap.reason },
+  };
+}
+
 /**
  * The first `limit` places the session's walks could not check, in the order the session met them, and with `more` the
  * record that says they met more (`MORE_DISCOVERY_GAPS_EVENT`) where it falls. Indexed by session and kind.
@@ -357,22 +367,23 @@ export class SqliteSessionStore {
    * takes (`DiscoveryGap.more`) has an id of its own (`MORE_DISCOVERY_GAPS_EVENT`), which `gaps` counts apart.
    */
   recordDiscoveryGap(session: AdapterSession, gap: DiscoveryGap, attribution?: SessionAttribution): void {
-    this.append({
-      sessionId: session.sessionId,
-      eventId: gap.more === true ? MORE_DISCOVERY_GAPS_EVENT : `source-discovery-gap:${createHash("sha256").update(gap.key).digest("hex")}`,
-      kind: "source-discovery-gap",
-      payload: { boundary: gap.boundary, ...(gap.path === undefined ? {} : { path: gap.path }), reason: gap.reason },
-    }, session, attribution);
+    this.append(discoveryGapEvent(session.sessionId, gap), session, attribution);
   }
 
   /**
    * `recordDiscoveryGap` for each of `gaps`, in one transaction: a write each would wait for the disk once per place, 4 ms
-   * a place on Linux, and a turn end that first meets 1,000 places would answer 4 s late. All of them or none.
+   * a place on Linux, and a turn end that first meets 1,000 places would answer 4 s late. All of them or none. A write
+   * that finds the session's row gone puts it back inside the transaction, and `onRowPutBack` is told once it has
+   * committed: its claim write goes through another connection, which would wait out the busy timeout (5 s) behind this
+   * one's write lock and fail, holding the turn end that long.
    */
   recordDiscoveryGaps(session: AdapterSession, gaps: readonly DiscoveryGap[], attribution?: SessionAttribution): void {
-    this.#database.transaction(() => {
-      for (const gap of gaps) this.recordDiscoveryGap(session, gap, attribution);
+    const putBack = this.#database.transaction(() => {
+      let back = false;
+      for (const gap of gaps) back = this.#insert(discoveryGapEvent(session.sessionId, gap), session, attribution).putBack || back;
+      return back;
     });
+    if (putBack) this.#onRowPutBack?.(session.sessionId);
   }
 
   /** Marks a code-rule boundary answered before the session's evaluator had opened: what it would have checked reaches a later boundary. */
@@ -416,6 +427,16 @@ export class SqliteSessionStore {
   }
 
   append(event: SessionEvent, session?: AdapterSession, attribution?: SessionAttribution): string {
+    const { eventId, putBack } = this.#insert(event, session, attribution);
+    if (putBack) this.#onRowPutBack?.(event.sessionId);
+    return eventId;
+  }
+
+  /**
+   * Writes `event`, and the session's row again first when the write finds it gone and `session` is given; `putBack`
+   * says it did, so the caller tells `onRowPutBack` once its own transaction, if any, has committed.
+   */
+  #insert(event: SessionEvent, session?: AdapterSession, attribution?: SessionAttribution): { eventId: string; putBack: boolean } {
     const eventId = event.eventId ?? randomUUID();
     const row = {
       sessionId: event.sessionId,
@@ -438,9 +459,9 @@ export class SqliteSessionStore {
         endedAt: attribution?.endedAt ?? null,
       }).onConflictDoNothing().run();
       this.#database.insert(events).values(row).onConflictDoNothing().run();
-      this.#onRowPutBack?.(event.sessionId);
+      return { eventId, putBack: true };
     }
-    return eventId;
+    return { eventId, putBack: false };
   }
 
   closeSession(sessionId: string, endedAt = Date.now()): void {
