@@ -579,7 +579,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
         followGitignore: this.#options.followGitignore ?? false,
         // Asked as the lane first reads Git's ignore rules: the matcher a walk's questions opened for the checkout while
         // its sources are unchanged, so the checkout holds one index, else one opened now. A failed open throws to the
-        // lane, which opens again at its next question.
+        // lane: one refused stays none for the lane, and one that timed out opens again after GIT_OPEN_AGAIN_MS.
         openGitIgnore: () => this.#takeGitIgnore(root),
         steerShell: this.#options.steerShell,
         presentPath: path => relative(this.#sessionRoot, join(root, path)).split(sep).join("/"),
