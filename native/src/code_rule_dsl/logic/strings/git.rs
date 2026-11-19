@@ -7,9 +7,11 @@
 use crate::git_workspace::snapshot::{physical_objects, resolve_revision, revision_failure_reason, verified_object};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
 
 use rusqlite::types::Value;
+use gix::bstr::ByteSlice;
 
 struct Repo {
     repo: gix::Repository,
@@ -23,58 +25,55 @@ struct State {
     root: Option<PathBuf>,
     repo: Option<Option<Repo>>,
     answers: HashMap<(&'static str, String, String), Option<bool>>,
-    /// The index as this run read it, with its file's digest: read at most once per run.
+    /// The index as this run read it, with the digest of its paths: read at most once per run.
     index: Option<Option<(gix::index::File, String)>>,
 }
 
-static STATE: Mutex<Option<State>> = Mutex::new(None);
+#[derive(Clone)]
+pub struct Evaluation(Arc<Mutex<State>>);
+thread_local! {
+    static GIT_EVALUATION: RefCell<Option<Evaluation>> = const { RefCell::new(None) };
+}
 
-/// The root of a run, for the run's length: calls answer from the repository that holds it. A run inside another
-/// (phase 0's `bootstrap.rr` run, a phase) sets its own and puts the outer run's back when it ends.
-pub struct Scope(Option<PathBuf>);
+pub fn current() -> Option<Evaluation> { GIT_EVALUATION.with_borrow(Clone::clone) }
+
+pub fn enter(evaluation: Option<Evaluation>) -> Scope {
+    Scope(GIT_EVALUATION.replace(evaluation))
+}
+
+pub struct Scope(Option<Evaluation>);
 
 pub fn scope(root: &Path) -> Scope {
-    let previous = STATE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|s| s.root.clone());
-    set_root(root);
-    Scope(previous)
+    let state = State { root: Some(root.to_owned()), ..State::default() };
+    enter(Some(Evaluation(Arc::new(Mutex::new(state)))))
 }
 
 impl Drop for Scope {
     fn drop(&mut self) {
-        if let Some(previous) = self.0.take() {
-            let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
-            let state = state.get_or_insert_with(State::default);
-            if state.root.as_deref() != Some(previous.as_path()) {
-                *state = State { root: Some(previous), ..State::default() };
-            }
-        }
+        GIT_EVALUATION.replace(self.0.take());
     }
 }
 
-/// The run's root: later calls answer from the repository that holds it, opened on the first call.
-pub(in crate::code_rule_dsl) fn set_root(root: &Path) {
-    let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
-    *state = Some(State { root: Some(root.to_owned()), ..State::default() });
-}
-
-fn sha256_file(path: &Path) -> String {
+/// Tracking observes the paths of the decoded effective index, including shared split-index entries.
+fn tracking_index(repo: &Repo) -> Option<(gix::index::File, String)> {
+    let file = repo.repo.open_index().ok()?;
     use sha2::Digest as _;
-    std::fs::read(path).map(|b| sha2::Sha256::digest(&b).iter().map(|x| format!("{x:02x}")).collect()).unwrap_or_default()
+    let mut digest = sha2::Sha256::new();
+    for entry in file.entries() {
+        let path = entry.path(&file);
+        digest.update(&(path.len() as u64).to_le_bytes());
+        digest.update(path.as_bytes());
+    }
+    Some((file, crate::content_store::observe::hex(&digest.finalize().into())))
 }
 
 fn tracked(state: &mut State, path: &str) -> Option<bool> {
-    let root = state.root.clone();
-    let repo = state.repo.get_or_insert_with(|| root.as_deref().and_then(open)).as_ref()?;
+    let root = state.root.as_deref();
+    let repo = state.repo.get_or_insert_with(|| root.and_then(open)).as_ref()?;
     let full = repo.prefix.join(path);
-    let full = full.to_str()?.replace('\\', "/");
-    let index = state.index.get_or_insert_with(|| {
-        let file = repo.repo.open_index().ok()?;
-        let digest = sha256_file(&repo.repo.index_path());
-        Some((file, digest))
-    });
-    let (index, _) = index.as_ref()?;
-    use gix::bstr::ByteSlice;
-    Some(index.entry_by_path(full.as_bytes().as_bstr()).is_some())
+    let full = gix::path::to_unix_separators_on_windows(gix::path::into_bstr(full).ok()?);
+    let (index, _) = state.index.get_or_insert_with(|| tracking_index(repo)).as_ref()?;
+    Some(index.entry_by_path(full.as_ref()).is_some())
 }
 
 fn open(root: &Path) -> Option<Repo> {
@@ -126,14 +125,14 @@ fn has(repo: &Repo, sha: &str, path: &str) -> Option<bool> {
 }
 
 fn answer(name: &'static str, sha: &str, path: &str) -> Value {
-    let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
-    let state = guard.get_or_insert_with(State::default);
+    let Some(evaluation) = GIT_EVALUATION.with_borrow(Clone::clone) else { return Value::Null };
+    let mut state = evaluation.0.lock().unwrap_or_else(|e| e.into_inner());
     let key = (name, sha.to_owned(), path.to_owned());
     if name == "git_tracked" && let Some(known) = state.answers.get(&key) {
         return known.map_or(Value::Null, |b| Value::Integer(b.into()));
     }
     let found = if name == "git_tracked" {
-        tracked(state, path)
+        tracked(&mut state, path)
     } else {
         let root = state.root.clone();
         let repo = state.repo.get_or_insert_with(|| root.as_deref().and_then(open));
@@ -159,16 +158,14 @@ pub(super) fn git_tracked(path: &str) -> Value {
     answer("git_tracked", "", path)
 }
 
-/// What the run over `root` read that moves: `("git_index", root, digest)` when `@git_tracked` read the index. For
-/// the whole-run cutoff's record (`Report::consulted`). The state is the process's, one root at a time: a run over
-/// another root since gives nothing, so it is never recorded against this one.
+/// Observations made by this evaluation and its workers.
 pub fn consulted(root: &Path) -> Vec<(String, String, String)> {
-    let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(state) = guard.as_ref() else { return Vec::new() };
+    let Some(evaluation) = GIT_EVALUATION.with_borrow(Clone::clone) else { return Vec::new() };
+    let state = evaluation.0.lock().unwrap_or_else(|e| e.into_inner());
     if state.root.as_deref() != Some(root) { return Vec::new(); }
     let mut rows = Vec::new();
     if let Some(index) = &state.index {
-        rows.push(("git_index".to_owned(), root.to_string_lossy().into_owned(), index.as_ref().map(|i| i.1.clone()).unwrap_or_default()));
+        rows.push(("git_tracking_index".to_owned(), String::new(), index.as_ref().map(|i| i.1.clone()).unwrap_or_default()));
     }
     for ((name, sha, path), value) in &state.answers {
         if *name != "git_tracked" {
@@ -218,12 +215,14 @@ pub fn revisions(root: &Path, base: Option<&str>) -> Result<(Vec<(String, String
 }
 
 /// Whether what `consulted` recorded (and `git_rev`'s reads, `("git_rev", "REV", id)`) reads the same now.
-pub fn still(what: &str, path: &str, digest: &str) -> bool {
+pub fn still(root: &Path, what: &str, path: &str, digest: &str) -> bool {
     match what {
-        "git_index" => open(Path::new(path)).map(|r| sha256_file(&r.repo.index_path())).unwrap_or_default() == digest,
-        "git_rev" => {
-            let Some((root, rev)) = path.split_once('\t') else { return false };
-            let Ok((rows, _)) = revisions(Path::new(root), (!rev.is_empty()).then_some(rev)) else { return digest.is_empty() };
+        "git_tracking_index" => open(root).and_then(|repo| tracking_index(&repo)).map(|(_, digest)| digest).unwrap_or_default() == digest,
+        "git_revision_rows" => {
+            let rows = match revisions(root, (!path.is_empty()).then_some(path)) {
+                Ok((rows, _)) => rows,
+                Err(error) => return digest == format!("error:{error}"),
+            };
             rows.iter().map(|(n, id)| format!("{n}={id}")).collect::<Vec<_>>().join(",") == digest
         }
         _ => false,
@@ -257,7 +256,7 @@ pub mod tests {
         git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "one"]);
         let head = git(&["rev-parse", "HEAD"]);
         let blob = git(&["rev-parse", "HEAD:sub/docs/a.md"]);
-        set_root(&root);
+        let _scope = scope(&root);
         assert_eq!(git_commit(&head), Value::Integer(1));
         assert_eq!(git_commit(&head[..7]), Value::Integer(1), "an abbreviated id");
         assert_eq!(git_commit(&blob), Value::Integer(0), "a blob is not a commit");
@@ -272,14 +271,14 @@ pub mod tests {
         std::fs::write(root.join("docs/c.md"), "c\n").unwrap();
         assert_eq!(git_tracked("docs/b.md"), Value::Integer(0), "only on disk");
         git(&["add", "sub/docs/b.md"]);
-        set_root(&root);
+        let _scope = scope(&root);
         assert_eq!(git_tracked("docs/b.md"), Value::Integer(1), "staged, read again in the next run");
         assert_eq!(git_tracked("docs/c.md"), Value::Integer(0));
         let recorded = consulted(&root);
         assert!(consulted(Path::new("/elsewhere")).is_empty());
-        assert!(still(&recorded[0].0, &recorded[0].1, &recorded[0].2), "the index as it was");
+        assert!(still(&root, &recorded[0].0, &recorded[0].1, &recorded[0].2), "the index as it was");
         git(&["add", "sub/docs/c.md"]);
-        assert!(!still(&recorded[0].0, &recorded[0].1, &recorded[0].2), "the index moved");
+        assert!(!still(&root, &recorded[0].0, &recorded[0].1, &recorded[0].2), "the index moved");
         // git_rev: HEAD, and the merge base of HEAD and a branch that moved on.
         git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "two"]);
         let two = git(&["rev-parse", "HEAD"]);
@@ -307,10 +306,10 @@ pub mod tests {
         assert_eq!(crate::git_workspace::snapshot::read(snapshot.root().join("docs/a.md")).unwrap(), b"a\n");
         assert!(!snapshot.root().exists(), "no source directory is materialized");
         assert!(!crate::git_workspace::snapshot::is_file(snapshot.root().join("docs/d.md")));
-        set_root(snapshot.root());
+        let _selected = scope(snapshot.root());
         assert_eq!(git_tracked("docs/a.md"), Value::Integer(1));
         assert_eq!(git_tracked("docs/d.md"), Value::Integer(1), "the tracked predicate still reads the current index");
-        assert_eq!(consulted(snapshot.root())[0].0, "git_index");
+        assert_eq!(consulted(snapshot.root())[0].0, "git_tracking_index");
         let (selected, prefix) = revisions(snapshot.root(), Some(&two)).unwrap();
         assert_eq!(selected[0], ("head".to_owned(), head.clone()));
         assert_eq!(selected.last().unwrap(), &("base".to_owned(), head.clone()));
@@ -327,7 +326,7 @@ pub mod tests {
         assert!(Snapshot::new(&dir, &blob).is_err());
         assert!(Snapshot::new(&dir, "missing-revision").is_err());
         drop(snapshot);
-        set_root(&std::env::temp_dir().join("rerail-no-repo-here"));
+        let _missing = scope(&std::env::temp_dir().join("rerail-no-repo-here"));
         assert_eq!(git_commit(&head), Value::Null, "no repository: no value");
         std::fs::remove_dir_all(&dir).unwrap();
     }

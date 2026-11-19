@@ -1305,6 +1305,54 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
     }
   });
 
+  it("isolates concurrent evaluations of the tracking predicate", async () => {
+    const first = checkout(), second = checkout();
+    writeFileSync(join(second, "marked"), "staged\n");
+    git(second, "add", "marked");
+    const policy = join(first, "track.rr");
+    writeFileSync(policy, '#include "git.rr"\n.policy "tracked" revision 1\n.violation Value(at: span, v: number) "{v}"\nValue(@place("git",1), v) :- git_root_repo(_), v = @git_tracked("marked").\n');
+    const engine = loadNativeBinding();
+    const evaluate = async (root: string, id: number) => {
+      const [report] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, ":memory:", join(first, "out", String(id)), undefined, undefined, undefined));
+      return report.diagnostics.map((row: { message: string }) => row.message);
+    };
+    for (let batch = 0; batch < 3; batch++) {
+      const answers = await Promise.all([first, second, first, second].map((root, i) => evaluate(root, batch * 4 + i)));
+      expect(answers).toEqual([["0"], ["1"], ["0"], ["1"]]);
+    }
+  }, 60_000);
+
+  it.skipIf(process.platform === "win32")("revalidates split-index tracking and preserves literal backslashes", async () => {
+    const root = checkout();
+    const name = "folder\\file.py";
+    writeFileSync(join(root, name), "staged\n");
+    git(root, "add", "--", name);
+    git(root, "update-index", "--split-index");
+    const shared = join(root, git(root, "rev-parse", "--shared-index-path"));
+    const home = root + "-home";
+    mkdirSync(home);
+    const policy = join(home, "tracked.rr");
+    writeFileSync(policy, `#include "git.rr"
+.policy "tracked" revision 1
+.violation Value(at: span, v: number) "{v}"
+Value(@place("git",1), v) :- git_root_repo(_), v = @git_tracked(${JSON.stringify(name)}).
+`);
+    const engine = loadNativeBinding();
+    let sequence = 0;
+    const evaluate = async (store: string) => {
+      const source = new engine.GitRevisionSource(root, "HEAD", "tracked");
+      const [report] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, store, join(home, String(++sequence)), undefined, undefined, source));
+      return report.diagnostics.map((row: { message: string }) => row.message);
+    };
+    const store = join(home, "tracked.sqlite");
+    expect(await evaluate(store)).toEqual(["1"]);
+    renameSync(shared, shared + ".away");
+    expect(await evaluate(":memory:")).toEqual([]);
+    expect(await evaluate(store)).toEqual([]);
+    renameSync(shared + ".away", shared);
+    expect(await evaluate(store)).toEqual(["1"]);
+  }, 60_000);
+
   it("keeps findings from healthy policies in either order when a references setting fails", async () => {
     const root = checkout();
     const valid = join(root, "valid.rr"), invalid = join(root, "invalid.rr");

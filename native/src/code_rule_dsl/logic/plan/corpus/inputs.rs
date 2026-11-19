@@ -497,17 +497,17 @@ fn git_revisions(program: &mut front::Program, root: &Path, base: Option<&str>, 
         return;
     }
     program.inputs.retain(|n| n != "git_rev");
-    let key = format!("{}\t{}", root.display(), base.unwrap_or(""));
+    let key = base.unwrap_or("").to_owned();
     match crate::code_rule_dsl::logic::strings::git::revisions(root, base) {
         Ok((rows, _)) => {
-            consulted.push(("git_rev".to_owned(), key, rows.iter().map(|(n, id)| format!("{n}={id}")).collect::<Vec<_>>().join(",")));
+            consulted.push(("git_revision_rows".to_owned(), key, rows.iter().map(|(n, id)| format!("{n}={id}")).collect::<Vec<_>>().join(",")));
             program.facts.entry("git_rev".to_owned()).or_default().extend(rows.into_iter().map(|(n, id)| [Value::Str(n.into()), Value::Str(id.into())].into()));
             if base.is_none() {
                 return;
             }
         }
         Err(detail) => {
-            consulted.push(("git_rev".to_owned(), key, String::new()));
+            consulted.push(("git_revision_rows".to_owned(), key, format!("error:{detail}")));
             program.inputs.retain(|n| n != "input_error");
             program.facts.entry("input_error".to_owned()).or_default().push([Value::Str("git_rev".into()), Value::Str("unreadable".into()), Value::Str(detail.clone().into())].into());
             let withheld = withhold(program, &BTreeMap::from([("git_rev".to_owned(), "git_rev unreadable".to_owned())]));
@@ -533,7 +533,7 @@ pub(super) fn still(program: &front::Program, root: &Path, consulted: &[(String,
             }
             "git_object_predicate" => return crate::code_rule_dsl::logic::strings::git::predicate_still(root, path, digest),
             "git_root_repo" => return super::git::still(root, digest),
-            "git_rev" | "git_index" => return crate::code_rule_dsl::logic::strings::git::still(what, path, digest),
+            "git_rev" | "git_index" | "git_tracking_index" | "git_revision_rows" => return crate::code_rule_dsl::logic::strings::git::still(root, what, path, digest),
             "base" => {
                 let Some((rev, file)) = path.split_once('\t') else { return false };
                 of_result(&base_reader(root, (!rev.is_empty()).then_some(rev))(file))
