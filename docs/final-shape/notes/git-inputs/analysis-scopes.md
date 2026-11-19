@@ -414,6 +414,20 @@ The last run compiled all three programs again. The tape counter also includes p
 
 ## Recovery contract for a stopped directory
 
+### Retire an offline store
+
+`rerail scope stores` lists the registered store identities and their paths for this installation.
+`rerail scope retire-store <identity>` removes that identity's maintenance routes, including routes to an offline database.
+Retirement leaves the database and its scope memberships intact. Repeating the command has no further effect.
+
+A directory stop can occur before or after retirement. The release journal retains the original directory, cutoff and destination identity.
+Maintenance stops polling the retired route. A different database at the former path cannot receive the old stop.
+When a scan registers the original database again, Rerail delivers its outstanding stops at the new or original path.
+The returning database checks its own identity before accepting each stop. Surviving directory and named owners then use its current path.
+A run acquired after the stop cutoff survives replay. An unused store with no owners or deliveries needs no retained route.
+
+### Recover a committed stop
+
 The control database's `.analysis-releases.sqlite` file keeps the committed release ID, directory, acquisition cutoff and registered store identities until delivery completes.
 It uses SQLite's rollback journal so its attached connection uses full synchronization. The existing store registry continues to use WAL.
 A rolled-back stop leaves no release to deliver. An acknowledged stop must survive restoration of an older control database.
