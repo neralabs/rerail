@@ -262,7 +262,10 @@ gitlink (submodule) is recorded as a nested path, not descended into.
   on one commit share a snapshot. `publish_snapshot` registers the workspace in the snapshot's own
   transaction and requires a published root tree (test: `snapshots_require_a_published_root_tree`).
 - **`workspaces`:** root, repository (Git common directory), owner (`rerail:<pid>:<worktree>`),
-  snapshot, lease and state (1 active, 2 retiring).
+  snapshot, lease and state (1 active, 2 ended and aged, 3 released).
+- **`store_sessions`:** one row per durable owner (decision 0450 §2): a workspace's, keyed by its
+  root. It records the latest generation, when it was last registered or renewed, and, once it
+  ended, when and how many bytes its snapshot and overlay held.
 
 A clean file's committed blob is its alias, found without reading the file (`clean_source_alias`).
 Before a restore, `holds_blob_bytes` confirms the worktree still holds the blob's bytes: one `lstat`
@@ -436,7 +439,10 @@ path (`shared_content_store`). Every 30 seconds the thread:
 - builds search indexes.
 
 Collection starts at 7 GiB; from 9 GiB new sources, tapes and search indexes are refused. A closed
-workspace stops being renewed, so its lease expires and collection retires it.
+workspace stops being renewed, so its lease expires and its session ends. Its snapshot and
+overlay are then aged, not dropped (decision 0450 step 3). They are kept while the workspaces that
+ended after it hold together at most 384 MiB, and for at most 30 days, the oldest released first.
+A workspace registered again over its root is live again; its old overlay goes.
 
 <details>
 <summary>Capacity thresholds</summary>
@@ -459,8 +465,9 @@ Database relationships are the only liveness authority; there are no reference c
 `BEGIN IMMEDIATE` transaction, in this order:
 
 1. Expired `object_pins`.
-2. Workspaces whose lease expired become retiring; their overlay rows go, then the workspace and its
-   `completed_workspace_revisions` row.
+2. Workspaces whose lease expired end (state 2), and their sessions record when and how many bytes.
+   Ended workspaces past the age budget are released (state 3); their overlay rows go, then the
+   workspace, its session and its `completed_workspace_revisions` row.
 3. The files of one snapshot no workspace references, then the snapshot once empty.
 4. Tapes no snapshot file, overlay, pin or `file_documents.document_tape_id` references. A deleted
    primary tape takes its `file_documents` rows, search index set and FTS document with it, so a

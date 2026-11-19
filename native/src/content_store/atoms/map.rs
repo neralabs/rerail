@@ -581,6 +581,7 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("object_segments", &["seg"]),
     ("sqlite_sequence", &["name", "seq"]),
     ("store_identity", &["singleton", "id"]),
+    ("store_sessions", &["kind", "key", "latest", "last_used", "ended", "aged_bytes"]),
     ("store_state", &["singleton", "generation"]),
     ("strings", &["string_id", "domain_id", "content_hash_id", "collision_ordinal"]),
     ("tape_kind_counts", &["tape_id", "kind", "n", "size", "postings"]),

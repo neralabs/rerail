@@ -1,7 +1,7 @@
 # 0450: Sessions keep their latest data live in segments; the rest ages out, and may be kept compressed
 
 Status: decided by the user (2026-11-19): items 1–4 of §1, §2 (two sessions, how a store session ends, and its
-shape: "go ahead with 0450"). Step 2 built (floor 8). §3 (the cross-file memo): its history traced; its removal
+shape: "go ahead with 0450"). Step 2 built (floor 8); step 3's slices A and B built. §3 (the cross-file memo): its history traced; its removal
 decided by the user (2026-11-19, "go ahead with that split") and done. Follows 0295 (segments and the archive), 0053 (collection),
 0353 (blocks are never copied) and the store's floor 7 (0295 step 5: no source or tape in a row).
 
@@ -146,8 +146,25 @@ it: the `cross_rows` store" and 0083's "the mechanism stays for any program that
      now, `ended` NULL); `retire_workspace` or a lapsed lease ends it (`ended` then). Its overlay and snapshot are
      its latest data. An ended workspace's are aged, not dropped at the next pass as now: kept while the aged bytes
      are under the budget and it ended less than the backstop ago, the oldest-ended released first.
+     **Built (2026-11-19):** `store_sessions(kind, key, latest, last_used, ended, aged_bytes)`, kind 1 keyed by the
+     root's `path_id` (the row is the workspace's, so the id lives as long as it). A workspace's state is now 1 live,
+     2 ended and aged, 3 released. Collection ends a lapsed workspace's session with its lease's end and the bytes
+     (sources' and tapes' segment lengths) its snapshot and overlay name, counted once, at the end. It releases an
+     ended one when it ended `backstop_secs` ago or the sessions ended after it, with it, hold more than `bytes`
+     (`Ageing`, 384 MiB and 30 days, per store handle; a test's `set_session_ageing`). A workspace with no session
+     row (an older binary's) is released at once. Registering over an ended workspace's root starts its session
+     again and drops the old overlay, which was the ended session's: before, a revived row kept it. Test:
+     `an_ended_workspace_is_aged_and_released_oldest_first`; the store's other tests release at once (their
+     helper's `Ageing { bytes: 0, backstop_secs: 0 }`), as they pin collection's steps.
    - **B. Corpus lanes are store sessions** (kind 2, key root and lane): a lane's protected runs are its latest
      data, its older runs aged (0053 §3 as it is), under the same budget as A's.
+     **Built (2026-11-19):** each keep decision rewrites the kind-2 rows from the manifests it keeps: one per (root,
+     lane), keyed by the first eight bytes of a digest of both, `latest` its newest manifest, `last_used` its last
+     run, and `ended` its last run when none of its runs is protected. The one budget: ended workspaces' aged bytes
+     count first against the history's marks (`Aged`), and the sources and tapes they hold count for no manifest
+     again, so shared bytes are counted once. A workspace is released by its own rule (A) at 384 MiB; the history
+     takes what is left under 0053's marks. Tests: `ended_workspaces_aged_data_comes_first_under_the_one_budget`,
+     `each_lane_keeps_its_last_runs_plans` (six lanes, six live sessions).
    - **C. A pin's owner is a store session** (kind 3): its lease keeps it alive.
    - **The budget**, one for every kind: 0053 §3's marks (512 MB high, 384 MB low) and backstop (30 days), until
      the user sets others (§2 left the marks open).

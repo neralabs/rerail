@@ -22,9 +22,12 @@ fn temporary_database(label: &str) -> TemporaryDatabase {
 
 /// A store on a fresh temporary database. Bind the path to a name (`_path`, never `_`): dropping
 /// it removes the database.
+/// A test's store. It releases an ended workspace at the next pass, as before decision 0450 step 3: these tests pin
+/// collection's steps, and `an_ended_workspace_is_aged_and_released_oldest_first` the ageing.
 pub(super) fn store(label: &str) -> (TemporaryDatabase, ContentStore) {
     let path = temporary_database(label);
     let store = ContentStore::open(&path).unwrap();
+    store.set_session_ageing(super::Ageing { bytes: 0, backstop_secs: 0 });
     (path, store)
 }
 
@@ -1656,6 +1659,42 @@ fn snapshots_are_shared_and_workspace_overlays_are_isolated() {
         .unwrap();
     assert_eq!(store.get_source(source).unwrap(), b"x = 1\n");
     assert_eq!(store.get_source(changed).unwrap(), b"x = 2\n");
+}
+
+/// An ended workspace's data is aged (decision 0450 step 3): the workspaces ended last keep theirs while together
+/// they hold the budget, the older are released, and none outlives the backstop. Registered again, a workspace is a
+/// live session, whatever its age.
+#[test]
+fn an_ended_workspace_is_aged_and_released_oldest_first() {
+    let (_path, store) = store("ageing");
+    let workspace = |n: u8| {
+        let snapshot = store
+            .put_snapshot(published_tree(&store, HashKey::git_sha1([60 + n; 20])), 1, HashKey::sha256(b"grammar"), 1)
+            .unwrap();
+        let source = store.put_source(&[b'a' + n; 1000], &[]).unwrap();
+        store.put_snapshot_file(snapshot, "file.py", source, None).unwrap();
+        // Their leases end at 100 and 101.
+        store.open_workspace(&format!("/aged/{n}"), "repo", "owner", snapshot, 1, 100 + i64::from(n)).unwrap();
+        (snapshot, source)
+    };
+    let (_, first) = workspace(0);
+    let (second_snapshot, second) = workspace(1);
+    // Room for one ended workspace's 1000 bytes, for 1000 s.
+    store.set_session_ageing(super::Ageing { bytes: 1500, backstop_secs: 1000 });
+    let passes = |now| (0..8).for_each(|_| {
+        store.collect(now, 100).unwrap();
+    });
+    let held = |source| store.get_source(source).is_ok();
+    passes(200);
+    assert!(!held(first), "the workspace ended first is past the budget");
+    assert!(held(second), "the workspace ended last is aged, not released");
+    // Registered again, it is live past the backstop; ended, it is past it at once.
+    let again = store.open_workspace("/aged/1", "repo", "owner", second_snapshot, 2, 10_000).unwrap();
+    passes(1_101);
+    assert!(held(second));
+    store.retire_workspace(again).unwrap();
+    passes(1_101);
+    assert!(!held(second));
 }
 
 #[test]

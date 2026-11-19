@@ -76,7 +76,7 @@ pub struct CorpusKept {
     pub evicted: usize,
     /// Bytes the protected manifests hold.
     pub protected_bytes: u64,
-    /// Bytes the other kept manifests hold alone.
+    /// Bytes the other kept manifests hold alone, with the ended workspaces' aged bytes (decision 0450 step 3).
     pub history_bytes: u64,
     /// Entries of `corpus_live` removed.
     pub unlived: usize,
@@ -707,7 +707,34 @@ impl ContentStore {
                 present = manifests.iter().filter(|m| !gone_roots.contains(&m.root)).map(Manifest::clone).collect();
                 &present
             };
-            let decided = decide(considered, &sizes, policy, now);
+            let mut aged = Aged {
+                bytes: tx.query_row(
+                    "SELECT coalesce(sum(aged_bytes),0) FROM store_sessions WHERE kind=?1 AND ended IS NOT NULL",
+                    [super::reclamation::SESSION_WORKSPACE],
+                    |r| r.get::<_, i64>(0),
+                )? as u64,
+                ..Aged::default()
+            };
+            {
+                let mut rows = tx.prepare(
+                    "SELECT f.source_id, t.source_id, t.grammar_version, t.tape_format_version FROM workspaces w \
+                     JOIN snapshot_files f ON f.snapshot_id=w.snapshot_id LEFT JOIN tape_objects t ON t.tape_id=f.tape_id \
+                     WHERE w.state_id=2 \
+                     UNION SELECT v.source_id, t.source_id, t.grammar_version, t.tape_format_version FROM workspaces w \
+                     JOIN workspace_overlay v ON v.workspace_id=w.workspace_id LEFT JOIN tape_objects t ON t.tape_id=v.tape_id \
+                     WHERE w.state_id=2",
+                )?;
+                let mut q = rows.query([])?;
+                while let Some(r) = q.next()? {
+                    if let Some(source) = r.get::<_, Option<i64>>(0)? {
+                        aged.sources.insert(source);
+                    }
+                    if let (Some(s), Some(g), Some(f)) = (r.get(1)?, r.get(2)?, r.get(3)?) {
+                        aged.tapes.insert((s, g, f));
+                    }
+                }
+            }
+            let decided = decide(considered, &sizes, policy, now, &aged);
             let kept_ids: HashSet<i64> = decided.kept.iter().copied().collect();
             let mut keep_live: HashSet<(i64, i64, i64)> = HashSet::new();
             let mut keep_plans: BTreeSet<Vec<u8>> = BTreeSet::new();
@@ -737,6 +764,26 @@ impl ContentStore {
                         keep_plans.insert(p?);
                     }
                 }
+            }
+            // Each lane is a store session (decision 0450 §2, kind 2): its protected runs are its latest data, and a lane
+            // none of whose runs is protected ended at its last run. Rewritten by each decision from the kept manifests.
+            {
+                let mut lanes: HashMap<(i64, Option<&[u8]>), (i64, i64, bool)> = HashMap::new();
+                for m in manifests.iter().filter(|m| kept_ids.contains(&m.id)) {
+                    // Newest first: a lane's first manifest is its latest.
+                    let lane = lanes.entry((m.root, m.lane.as_deref())).or_insert((m.id, m.last_time, false));
+                    lane.2 |= protected_ids.contains(&m.id);
+                }
+                let rows: Vec<[Option<i64>; 4]> = lanes
+                    .iter()
+                    .map(|(&(root, lane), &(latest, last, protected))| [Some(lane_session(root, lane)), Some(latest), Some(last), (!protected).then_some(last)])
+                    .collect();
+                tx.execute_cached("DELETE FROM store_sessions WHERE kind=?1", [super::reclamation::SESSION_LANE])?;
+                tx.prepare_cached(
+                    "INSERT INTO store_sessions(kind,key,latest,last_used,ended,aged_bytes) SELECT ?1, json_extract(value,'$[0]'), \
+                     json_extract(value,'$[1]'), json_extract(value,'$[2]'), json_extract(value,'$[3]'), 0 FROM json_each(?2)",
+                )?
+                .execute(params![super::reclamation::SESSION_LANE, serde_json::to_string(&rows).expect("integers")])?;
             }
             let unlive: Vec<&(i64, i64, i64)> = live.iter().filter(|k| !keep_live.contains(k)).collect();
             let evicted: Vec<i64> = manifests.iter().map(|m| m.id).filter(|id| !kept_ids.contains(id)).collect();
@@ -929,15 +976,26 @@ struct Sizes {
 struct Decided {
     kept: Vec<i64>,
     protected: u64,
+    /// The aged bytes kept: the history's and the ended workspaces' (`Aged`).
     history: u64,
 }
 
+/// What ended workspaces hold while they are aged (decision 0450 step 3): one budget holds every store session's aged
+/// data, and theirs is counted first. Its bytes count against the history's marks, and its sources and tapes count for
+/// no manifest again.
+#[derive(Default)]
+struct Aged {
+    bytes: u64,
+    sources: HashSet<i64>,
+    tapes: HashSet<(i64, i64, i64)>,
+}
+
 /// The manifests to keep, `manifests` newest first (the module's rules).
-fn decide(manifests: &[Manifest], sizes: &Sizes, policy: &CorpusPolicy, now: i64) -> Decided {
+fn decide(manifests: &[Manifest], sizes: &Sizes, policy: &CorpusPolicy, now: i64, aged: &Aged) -> Decided {
     let walk = |cap: Option<u64>| -> Decided {
         let mut protection = Protection::over(manifests);
-        let (mut seen_sources, mut seen_tapes) = (HashSet::new(), HashSet::new());
-        let mut out = Decided { kept: Vec::new(), protected: 0, history: 0 };
+        let (mut seen_sources, mut seen_tapes) = (aged.sources.clone(), aged.tapes.clone());
+        let mut out = Decided { kept: Vec::new(), protected: 0, history: aged.bytes };
         for m in manifests {
             let protected = protection.protects(m, policy.protected_runs, policy.protected_lanes);
             if now - m.last_time > policy.backstop_secs {
@@ -977,6 +1035,15 @@ fn decide(manifests: &[Manifest], sizes: &Sizes, policy: &CorpusPolicy, now: i64
     };
     let all = walk(None);
     if all.history > policy.high_water { walk(Some(policy.low_water)) } else { all }
+}
+
+/// A corpus lane's store session key (decision 0450 §2, kind 2): the first eight bytes of a digest of its root and
+/// lane, so the key is the lane's durable name.
+fn lane_session(root: i64, lane: Option<&[u8]>) -> i64 {
+    let mut h = Sha256::new();
+    h.update(root.to_le_bytes());
+    h.update(lane.unwrap_or(&[]));
+    i64::from_le_bytes(h.finalize()[..8].try_into().expect("eight bytes"))
 }
 
 /// Sorted ids as delta varints.

@@ -42,6 +42,8 @@ const FACT_STORE: &[&str] = &[
     "snapshots",
     "snapshot_files",
     "workspaces",
+    // A store session per durable owner (decision 0450 §2): which data the store keeps.
+    "store_sessions",
     "workspace_overlay",
     "node",
     "tape",

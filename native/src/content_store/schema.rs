@@ -173,6 +173,20 @@ CREATE INDEX IF NOT EXISTS workspaces_by_lease ON workspaces(state_id, lease_unt
 CREATE INDEX IF NOT EXISTS workspaces_by_repository ON workspaces(repository_string_id);
 CREATE INDEX IF NOT EXISTS workspaces_by_owner ON workspaces(owner_string_id);
 CREATE INDEX IF NOT EXISTS workspaces_by_snapshot ON workspaces(snapshot_id);
+-- Store sessions (decision 0450 §2): the durable owners whose latest data is live. `kind` 1 is a workspace, `key` its
+-- root (`paths`); 2 a corpus lane, `key` a digest of its root and lane, its row written by each keep decision. `latest` is its latest generation, `last_used` the unix second it was last registered or renewed,
+-- `ended` the second its lease ended (NULL while something keeps it alive), and `aged_bytes` the bytes its data held
+-- then: an ended session's data is aged under one budget and backstop, the oldest-ended released first (0450 step 3).
+CREATE TABLE IF NOT EXISTS store_sessions (
+    kind INTEGER NOT NULL,
+    key INTEGER NOT NULL,
+    latest INTEGER NOT NULL,
+    last_used INTEGER NOT NULL,
+    ended INTEGER,
+    aged_bytes INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (kind, key)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS store_sessions_by_ended ON store_sessions(kind, ended) WHERE ended IS NOT NULL;
 CREATE TABLE IF NOT EXISTS workspace_overlay (
     workspace_id INTEGER NOT NULL REFERENCES workspaces(workspace_id),
     path_id INTEGER NOT NULL REFERENCES paths(path_id),

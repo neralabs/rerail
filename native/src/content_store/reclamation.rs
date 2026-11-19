@@ -13,6 +13,50 @@ use rusqlite::{Connection, OptionalExtension, Params, TransactionBehavior, param
 use std::fs;
 
 const OBJECT_TAPE: i64 = 1;
+/// A store session's kind (`store_sessions.kind`, decision 0450 §2): a workspace, keyed by its root's path.
+pub(super) const SESSION_WORKSPACE: i64 = 1;
+/// A corpus lane, keyed by a digest of its root and lane (`corpus_runs::lane_session`).
+pub(super) const SESSION_LANE: i64 = 2;
+
+/// How long an ended store session's data is kept (decision 0450 step 3; 0053 §3's marks and backstop until the user
+/// sets others): the sessions ended last keep theirs while together they hold at most `bytes`, and none past
+/// `backstop_secs` after it ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ageing {
+    pub bytes: u64,
+    pub backstop_secs: i64,
+}
+
+impl Default for Ageing {
+    fn default() -> Self {
+        Ageing { bytes: 384 << 20, backstop_secs: 30 * 86_400 }
+    }
+}
+
+/// A store handle's `Ageing`, which a test may change (`set_session_ageing`).
+#[derive(Default)]
+pub(super) struct SessionAgeing(parking_lot::Mutex<Ageing>);
+
+impl SessionAgeing {
+    pub(super) fn get(&self) -> Ageing {
+        *self.0.lock()
+    }
+}
+
+impl Clone for SessionAgeing {
+    fn clone(&self) -> Self {
+        SessionAgeing(parking_lot::Mutex::new(self.get()))
+    }
+}
+
+impl ContentStore {
+    /// Keeps ended sessions' data as `ageing` says, on this handle (a test's: `Ageing { bytes: 0, backstop_secs: 0 }`
+    /// releases an ended workspace at the next pass, as before decision 0450 step 3).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn set_session_ageing(&self, ageing: Ageing) {
+        *self.session_ageing.0.lock() = ageing;
+    }
+}
 const OBJECT_SOURCE: i64 = 2;
 pub(super) const STORE_SOFT_LIMIT: u64 = 7 * 1024 * 1024 * 1024;
 pub(super) const STORE_HARD_LIMIT: u64 = 9 * 1024 * 1024 * 1024;
@@ -208,24 +252,53 @@ impl ContentStore {
             "UPDATE workspaces SET state_id=2 WHERE state_id=1 AND lease_until < ?1",
             [now],
         )?;
+        // A workspace's store session ends when its lease does (decision 0450 §2), with the bytes its snapshot and
+        // overlay hold; its data is aged, not released at once.
+        execute_collect(
+            &transaction,
+            "UPDATE store_sessions SET ended=w.lease_until, aged_bytes=\
+             coalesce((SELECT sum(o.seg_len) FROM snapshot_files f JOIN source_objects o ON o.source_id=f.source_id WHERE f.snapshot_id=w.snapshot_id),0)\
+             +coalesce((SELECT sum(t.seg_len) FROM snapshot_files f JOIN tape_objects t ON t.tape_id=f.tape_id WHERE f.snapshot_id=w.snapshot_id),0)\
+             +coalesce((SELECT sum(o.seg_len) FROM workspace_overlay v JOIN source_objects o ON o.source_id=v.source_id WHERE v.workspace_id=w.workspace_id),0)\
+             +coalesce((SELECT sum(t.seg_len) FROM workspace_overlay v JOIN tape_objects t ON t.tape_id=v.tape_id WHERE v.workspace_id=w.workspace_id),0) \
+             FROM workspaces w WHERE store_sessions.kind=?1 AND store_sessions.key=w.root_path_id AND store_sessions.ended IS NULL \
+             AND w.state_id=2",
+            [SESSION_WORKSPACE],
+        )?;
+        // An ended workspace is released (state 3) once it ended `backstop` ago, or once the sessions that ended after
+        // it hold the budget; one with no session (a store of an older binary) at once.
+        let ageing = self.session_ageing.get();
+        execute_collect(
+            &transaction,
+            "UPDATE workspaces SET state_id=3 WHERE state_id=2 AND workspace_id IN (SELECT w.workspace_id FROM workspaces w \
+             LEFT JOIN (SELECT key, ended, sum(aged_bytes) OVER (ORDER BY ended DESC, key ROWS UNBOUNDED PRECEDING) held \
+                        FROM store_sessions WHERE kind=?1 AND ended IS NOT NULL) r ON r.key=w.root_path_id \
+             WHERE w.state_id=2 AND (r.key IS NULL OR r.ended <= ?2 - ?3 OR r.held > ?4))",
+            params![SESSION_WORKSPACE, now, ageing.backstop_secs, i64::try_from(ageing.bytes).unwrap_or(i64::MAX)],
+        )?;
+        execute_collect(
+            &transaction,
+            "DELETE FROM store_sessions WHERE kind=?1 AND key IN (SELECT root_path_id FROM workspaces WHERE state_id=3)",
+            [SESSION_WORKSPACE],
+        )?;
         execute_collect(
             &transaction,
             "DELETE FROM workspace_overlay WHERE (workspace_id,path_id) IN (\
              SELECT o.workspace_id,o.path_id FROM workspace_overlay o JOIN workspaces w ON w.workspace_id=o.workspace_id \
-             WHERE w.state_id=2 ORDER BY o.workspace_id,o.path_id LIMIT ?1)",
+             WHERE w.state_id=3 ORDER BY o.workspace_id,o.path_id LIMIT ?1)",
             [limit],
         )?;
         execute_collect(
             &transaction,
             "DELETE FROM completed_workspace_revisions WHERE workspace_id IN (SELECT w.workspace_id FROM workspaces w \
-             WHERE w.state_id=2 AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.workspace_id=w.workspace_id) \
+             WHERE w.state_id=3 AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.workspace_id=w.workspace_id) \
              ORDER BY w.workspace_id LIMIT ?1)",
             [limit],
         )?;
         report.retired_workspaces = execute_collect(
             &transaction,
             "DELETE FROM workspaces WHERE workspace_id IN (SELECT w.workspace_id FROM workspaces w \
-             WHERE w.state_id=2 AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.workspace_id=w.workspace_id) \
+             WHERE w.state_id=3 AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.workspace_id=w.workspace_id) \
              ORDER BY w.workspace_id LIMIT ?1)",
             [limit],
         )?;

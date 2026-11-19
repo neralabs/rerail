@@ -47,6 +47,7 @@ mod private_files;
 mod publication;
 mod read_cache;
 mod reclamation;
+pub use reclamation::Ageing;
 pub mod record;
 mod relationships;
 mod results;
@@ -671,6 +672,8 @@ pub struct ContentStore {
     /// This handle's shared collection lease (`hold_collection`): a file lock, which WASI has not.
     #[cfg(not(target_family = "wasm"))]
     lease: std::sync::Arc<collection_guard::SharedLease>,
+    /// How long an ended store session's data is kept (decision 0450 step 3).
+    session_ageing: reclamation::SessionAgeing,
     #[cfg(any(test, feature = "test-hooks"))]
     git_tree_lookup_count: AtomicUsize,
     #[cfg(any(test, feature = "test-hooks"))]
@@ -731,6 +734,7 @@ impl ContentStore {
             working_set: working_set::WorkingSet::default(),
             applying: parking_lot::Mutex::new((0, None)),
             write_back: None,
+            session_ageing: self.session_ageing.clone(),
             #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
@@ -788,6 +792,7 @@ impl ContentStore {
             applying: parking_lot::Mutex::new((0, None)),
             // A store created again at its path has a writer of its own too.
             write_back: Some(write_back::register_store(path, identity)),
+            session_ageing: reclamation::SessionAgeing::default(),
             #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
