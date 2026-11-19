@@ -1999,6 +1999,17 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   is noise (16–113 MB whatever its nodes), so no finer sizing rule was adopted. Gathering concurrent chunks' label runs
   is not built, since its prize is fewer runs and 0386 keeps each job's wave its own.
 
+### Q270. The children of members read a chain of child reads on one thread per member
+
+- **Found** (2026-11-18, 0437): with a chain's reach at the dispatch floor, op 9 (the children of members,
+  `tape_first_child` then `tape_next` per member) is `label_formula`'s largest step in one-formula mode: 103 ms over
+  224 passes at s1000, 461 µs a pass. A member's children are a chain of dependent reads, so a member with many
+  children holds its thread.
+- **Direction:** children of F are a chain's reach with `through` empty, but its blockers are every non-member below a
+  member, a size read each, and its levels follow how deeply members nest. Measure that against spreading a member's
+  children over the lanes (its child count, `tape_child_count`, and `tape_child`).
+- **Done when:** op 9's pass is near the dispatch floor (about 100 µs), with the rows the same as native.
+
 ### Q252. (Q220 until the hub merge) A chain's reach climbs a node at a time in each (file, formula) group
 
 - **Found** (2026-11-18, 0419): `label_formula`'s time is its steps (64–70 ms of 65–79 ms at s1000). A chain's reach
@@ -2011,6 +2022,9 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   go to device memory, coalesced.
 - **Done when:** `REACH_CHAIN` is node-parallel within the group, with the rows the same and the step's time measured
   before and after.
+- **Closed** (2026-11-18, 0437): not by pointer doubling but through the hot `tape_size` accessor (the user: "I
+  think this is mostly fixed by using an accessor"). The reach is descendant images, a level each time a member sits
+  below a blocker. A chain's pass went from 0.8–6.8 ms to 22–225 µs, with the rows the same as native.
 
 ### Q251. (Q219 until the hub merge) A level's fact constraints are uploaded rows
 

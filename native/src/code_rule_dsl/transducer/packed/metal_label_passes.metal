@@ -839,6 +839,38 @@ kernel void label_leaves(device const DocView* docs [[buffer(0)]],device const u
   }
 }
 
+// A chain's reach's level (`REACH_CHAIN`): the descendants of `level`'s members, as a targets image reads them (a
+// block of words a thread, its members' furthest end, the blocks' running maximum, then each word by masks), into
+// `out` (added, or with `cut` taken out), and `level` becomes them within `keep`. Each thread reads and writes only
+// its own block's words, so the levels need no device barrier. Whether this thread's share of `level` is not empty.
+static bool formula_descend(device const uchar* chunk,DocView d,device atomic_uint* level,device atomic_uint* out,device atomic_uint* keep,bool cut,threadgroup uint* partials,uint lane,uint width,uint fw,uint nodes,thread uint& childs){
+  uint block=(fw+width-1u)/width,low=min(lane*block,fw),high=min(low+block,fw),most=0u;
+  for(uint w=low;w<high;w++)for(uint bits=atomic_load_explicit(&level[w],memory_order_relaxed);bits!=0u;bits&=bits-1u){uint n=w*32u+ctz(bits);most=max(most,n+tape_size(chunk,d,n));}
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  partials[lane]=most;
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  if(lane==0u){uint run=0u;for(uint k=0u;k<width;k++){uint here=partials[k];partials[k]=run;run=max(run,here);}}
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  uint reach=partials[lane];
+  bool any=false;
+  for(uint w=low;w<high;w++){
+    uint b=w*32u,bits=reach>=b+32u?0xffffffffu:(reach>b?(1u<<(reach-b))-1u:0u);
+    for(uint rest=atomic_load_explicit(&level[w],memory_order_relaxed);rest!=0u;rest&=rest-1u){
+      uint k=ctz(rest),end=b+k+tape_size(chunk,d,b+k),hi=min(end,b+32u)-b;
+      childs++;
+      bits|=(hi==32u?0xffffffffu:((1u<<hi)-1u))&~((2u<<k)-1u);
+      reach=max(reach,end);
+    }
+    if(b+32u>nodes)bits&=(1u<<(nodes-b))-1u;
+    uint now=atomic_load_explicit(&out[w],memory_order_relaxed);
+    atomic_store_explicit(&out[w],cut?now&~bits:now|bits,memory_order_relaxed);
+    uint next=atomic_load_explicit(&keep[w],memory_order_relaxed)&bits;
+    atomic_store_explicit(&level[w],next,memory_order_relaxed);
+    any|=next!=0u;
+  }
+  return any;
+}
+
 kernel void label_formula(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const Formula* formulas [[buffer(2)]],device const uint* words [[buffer(3)]],device atomic_uint* roots [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],constant Shape& shape [[buffer(6)]],device const uint* leaves [[buffer(7)]],device atomic_uint* stats [[buffer(8)]],device const FormulaTarget* targets [[buffer(9)]],device atomic_uint* labelScratch [[buffer(10)]],device const uint* rules [[buffer(11)]],device const uint* texts [[buffer(12)]],device const uchar* chunk [[buffer(27)]],uint2 group [[threadgroup_position_in_grid]],uint2 grid [[threadgroups_per_grid]],uint2 lanes [[thread_position_in_threadgroup]],uint2 widths [[threads_per_threadgroup]]){
   uint file=group.x,lane=lanes.x,width=widths.x;
   // A descendant step's prefix of its members' counts (a block of words a thread, `FORMULA_WIDTH` threads), and the
@@ -1030,32 +1062,32 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
         FORMULA_EACH(from,fw,lane,width,n)for(uint c=tape_next(chunk,d,n);c!=TAPE_NONE;c=tape_next(chunk,d,c)){childs++;if(formula_set(out,c))break;}
       }else if(op==25u){
         // A chain's reach, as the CPU's `Reader` reads it: a node is reached where its parent is a member, or is in
-        // `through` and reached. In preorder a parent comes first, so each thread takes a block of words, as a
-        // descendant image does, and decides its nodes in order: a parent in the block is decided already (this
-        // word's bits, or an earlier word's row), and a node whose parent is before the block climbs while its
-        // ancestors are in `through` and not members. (Walking each member's subtree on its thread left a member's
-        // whole reach to one thread, a read of device memory a node: 2-3 ms a dispatch, 0425.)
-        device atomic_uint* through=SLOT(src+1u);
-        uint block=(fw+width-1u)/width,low=min(lane*block,fw),high=min(low+block,fw),first=low*32u;
-        for(uint w=low;w<high;w++){
-          uint bits=0u,b=w*32u;
-          for(uint k=0u;k<32u&&b+k<nodes;k++){
-            uint n=b+k,p=tape_parent(chunk,d,n);
-            if(p==TAPE_NONE)continue;
-            bool reached=false;
-            if(p>=first){
-              bool decided=p>=b?((bits>>(p-b))&1u)!=0u:formula_get(out,p);
-              reached=formula_get(from,p)||(decided&&formula_get(through,p));
-            }else{
-              for(;p!=TAPE_NONE;p=tape_parent(chunk,d,p)){
-                childs++;
-                if(formula_get(from,p)){reached=true;break;}
-                if(!formula_get(through,p))break;
-              }
-            }
-            if(reached)bits|=1u<<k;
-          }
-          atomic_store_explicit(&out[w],bits,memory_order_relaxed);
+        // `through` and reached. So a node is reached where its nearest ancestor that is a member or not in `through`
+        // (a blocker) is a member. The members' and blockers' subtrees are ranges in preorder (`tape_size`, a hot read),
+        // so this is descendant images (`formula_descend`), a level each time a member sits below a blocker below a
+        // member: the reach is the union over levels k of desc(F_k) \ desc(X_k), with F_0 the members,
+        // X_k = blockers ∩ desc(F_k) and F_k+1 = members ∩ desc(X_k). Work follows the members and the blockers within
+        // the reach, a word op each, and their reads are independent (0437). (A pass over every node reading its
+        // parent, `tape_parent`, a search of the tape, took 0.8-6.8 ms a pass; reading down from the members through
+        // the child reads, a round a level of the tree, as long.)
+        device atomic_uint* blockers=SLOT(src+1u);device atomic_uint* level=SLOT(at+1u);
+        for(uint w=lane;w<fw;w+=width){
+          uint members=atomic_load_explicit(&from[w],memory_order_relaxed);
+          atomic_store_explicit(&blockers[w],~atomic_load_explicit(&blockers[w],memory_order_relaxed)&~members&VALID(w),memory_order_relaxed);
+          atomic_store_explicit(&level[w],members,memory_order_relaxed);
+        }
+        threadgroup_barrier(mem_flags::mem_device);
+        for(;;){
+          formula_descend(chunk,d,level,out,blockers,false,partials,lane,width,fw,nodes,childs);
+          bool more=formula_descend(chunk,d,level,out,from,true,partials,lane,width,fw,nodes,childs);
+          threadgroup_barrier(mem_flags::mem_threadgroup);
+          if(lane==0u)partials[0]=0u;
+          threadgroup_barrier(mem_flags::mem_threadgroup);
+          if(more)partials[0]=1u;
+          threadgroup_barrier(mem_flags::mem_threadgroup);
+          bool again=partials[0]!=0u;
+          threadgroup_barrier(mem_flags::mem_threadgroup);
+          if(!again)break;
         }
       }else{
         // A chain: the parents of `to`'s members, and on up through `through`'s.
