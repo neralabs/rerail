@@ -27,11 +27,14 @@ permissions:
 # Warm starts: the engine builds and Rust jobs start from the cargo targets and compile caches the latest push to main
 # saved as artifacts (.github/actions/cargo-target, .github/actions/rust-compile-cache), and every engine build reuses
 # an engine built from the same inputs (.github/actions/engine-artifact). Only pushes to main save the targets and
-# caches, unless a manual run asks to (`save-warm`). A run on main starts from main's own whatever `warm-ref` says:
-# what it saves and the engines it uploads are main's for every later run, so another branch's never become main's.
+# caches, unless a manual run on a branch asks to (`save-warm`); a run on a tag never saves. A run on a ref named main
+# (the branch, or a tag) starts from main's own whatever `warm-ref` says: what it uploads reads as main's for every
+# later run (scripts/check/ci/trusted-artifact.mjs takes main's runs by name, event and history), so another branch's
+# never become main's. Both guards live in this file, so a tag named main on an older commit, whose ci.yml lacks
+# them, can still be dispatched to save as main's; only a ruleset refusing that tag name would close it.
 env:
-  WARM_REF: ${{ github.ref == 'refs/heads/main' && 'main' || inputs.warm-ref || 'main' }}
-  SAVE_WARM: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.save-warm) }}
+  WARM_REF: ${{ github.ref_name == 'main' && 'main' || inputs.warm-ref || 'main' }}
+  SAVE_WARM: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && inputs.save-warm) }}
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
