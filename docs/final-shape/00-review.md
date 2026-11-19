@@ -177,7 +177,7 @@ Any per-document IR has to respect main's document model.
 - The full "cohort" conversion turned captures, utilities and alternatives into a native continuation-frame scheduler. It ran at 1.49–1.65× native, with cycles 1.64× against instructions 1.3×. It was rejected, together with a dozen frame, dispatch and arena micro-optimizations.
 - The tip is at 1.585, failing its gate.
 
-**Its new plan** (`docs/sql-structural-execution-plan.md`, proposal only):
+**Its new plan** (`docs/sql-structural-execution-plan.md`, proposal only; removed; at 7efcac9c67):
 - the unit is a `ProgramGroup` over a bounded document batch with an exact scope;
 - every stage is one of: a local program, a native fact producer, a SQL relational query, or a declared fixpoint;
 - no interpreter remainder;

@@ -250,8 +250,43 @@ describe("rerail scan with the packs a repository declares in .rerail/packs.json
     await expect(scanIn(freshHome(), root)).rejects.toThrow(".rerail/packs.json lists @neralabs/rerail-pack-needles@9.9.9, which npm could not install");
   });
 
-  it("refuses --pack where the repository lists its packs", async () => {
+  it("runs only the home's installed version of each --pack, beside the tree's own rules, in place of the packs the file lists", async () => {
     const root = checkout();
-    await expect(scanIn(freshHome(), root, { packs: ["needles"] })).rejects.toThrow("--pack: this repository lists its packs in .rerail/packs.json; add needles there instead");
+    const home = freshHome();
+    installPackDirectory(TWO, "@neralabs/rerail-pack-needles", home.home, "2.0.0");
+    mkdirSync(join(root, ".rerail", "rules"));
+    writeFileSync(join(root, ".rerail", "rules", "tree-rule.json"), JSON.stringify(needle("tree-rule", "OWN")));
+    const installs = npm.installs.length;
+
+    const report = await scanIn(home, root, { packs: ["needles"] });
+
+    expect(report.status).toBe("completed");
+    expect(report.rulesSource).toEqual({ kind: "worktree" });
+    expect(report.packs).toEqual([{ id: "needles", packageName: "@neralabs/rerail-pack-needles", version: "2.0.0", from: "home" }]);
+    expect(report.rules.map(rule => [rule.ruleId, rule.mode])).toEqual([["needles-beta", "steer"], ["tree-rule", "log"]]);
+    expect(report.violations.map(violation => violation.ruleId)).toEqual(["needles-beta", "tree-rule"]);
+    expect(npm.installs.length).toBe(installs);
+
+    // The file is not read at all, so one that cannot be parsed does not stop the scan.
+    writePacksFile(root, "{ \"schema\": \"rerail.packs/1\", \"packs\": [");
+    expect((await scanIn(home, root, { packs: ["needles"] })).rules.map(rule => rule.ruleId)).toEqual(["needles-beta", "tree-rule"]);
+  });
+
+  it("with --rules-ref, runs --pack from the home and leaves the ref's packs out; a pack installed from a folder runs in Log until approved", async () => {
+    const root = checkout();
+    const home = freshHome();
+    installPackDirectory(writePack(folder("rerail-extra-pack-"), "@acme/rerail-pack-extra", "1.0.0", { "extra-own": "OWN" }), "@acme/rerail-pack-extra", home.home);
+    // The change under review lists another pack; with --pack, neither its file nor the ref's chooses the packs.
+    writePacksFile(root, [{ id: "needles", version: "2.0.0" }]);
+
+    const report = await scanIn(home, root, { packs: ["@acme/rerail-pack-extra"], rulesRef: "HEAD" });
+
+    expect(report.rulesSource).toEqual({ kind: "ref", ref: "HEAD" });
+    expect(report.packs).toEqual([{ id: "extra", packageName: "@acme/rerail-pack-extra", version: "1.0.0", from: "home" }]);
+    expect(report.rules.map(rule => [rule.ruleId, rule.mode])).toEqual([["extra-own", "log"]]);
+
+    expect(runRuleApproveCommand(["@acme/rerail-pack-extra", "--repo", root], () => "usage", { stdout: { write: () => true } }, home.databasePath)).toBe(0);
+    const approved = await scanIn(home, root, { packs: ["extra"], rulesRef: "HEAD" });
+    expect(approved.rules.map(rule => [rule.ruleId, rule.mode])).toEqual([["extra-own", "steer"]]);
   });
 });

@@ -11,7 +11,7 @@ Where do intermediate relations that several rules need, and relational per-docu
 - PR 2539 `docs/design/DECLARATIVE_LINTER_SQL_ONLY_BOUNDARY.md@281f500d7c` :8-29 (framework-owned generic facts only), :67-71 (operators including named queries), :105-106 (a relation named after a rule is suspect), :136-143 (dependency-cone invalidation), :169-186 ("Process Failure": Python prepares convenient rows, YAML queries them).
 - PR 2539 `LINTER_GENERIC_FRAMEWORK_FACTS_DESIGN.md@281f500d7c` :93-147 (Pass 2 "Generic Derived Facts" belongs to fact materialization); `default_catalog.py` :54-141 (declared dependency maps); `project_fact_cache.py` :13-54.
 - Moti facts-engine `docs/facts/DECLARED-FACTS.md` :53-54 (digest covers the lowered algebra, not its text); `facts_memo.rs` (content-hash memo keys).
-- DLRE `c4bd76bf` shared syntax facts (−74.7% cold CPU); `shared-producer-workplan.md:271` (naming alone does not improve performance).
+- DLRE `c4bd76bf` shared syntax facts (−74.7% cold CPU); `shared-producer-workplan.md:271` (removed; at 7efcac9c67) (naming alone does not improve performance).
 - lessons-ledger.md L11 (narrow per-family tables), L12 (interned atoms), L14 (per-file ownership), L16 (one physical owner per relation).
 Agreement: agrees with PR 2539's design and implements what its tip left unbuilt (persistent per-fact cache, wired dependency cones).
 

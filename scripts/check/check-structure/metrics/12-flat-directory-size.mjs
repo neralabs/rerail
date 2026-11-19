@@ -23,7 +23,6 @@ export const LIMIT = 25;
 /** Exemption `kept-records`: a directory, and why it stays flat. */
 const KEPT_FLAT = new Map([
   ["docs/final-shape/notes/", "the design notes, one file per numbered note, with the scripts a note ran"],
-  ["docs/rule-engine-direction/experiments/m2m7/", "an experiment record, kept as it ran"],
   ["docs/rule-syntax/data-layer/", "the workbench's data-layer rules, one `.rerail` per rule with the script that generates or checks it"],
   ["docs/rule-syntax/packs/javascript/", "the workbench's JavaScript rules, one `.rerail` per pack rule with its generator and check scripts"],
   ["docs/rule-syntax/packs/next/", "the workbench's Next.js rules, one `.rerail` per pack rule with its generator and check scripts"],
