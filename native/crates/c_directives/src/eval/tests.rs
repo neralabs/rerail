@@ -660,3 +660,26 @@ fn calls_past_an_end_are_the_serial_passes() {
     let (tokens, launches) = shapes_agree(shapes);
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
 }
+
+/// R8 of decision 0448: a unit past its rung's room. An 8⁴ fan-out used three times wants more
+/// than rung 0's arena of tokens, and a `#` of 512 long names more scratch bytes than rung 0's
+/// 64 KB: the device refuses (`X_ROOM`), the unit runs again at the next rung, and it gives the
+/// serial pass's tokens there.
+#[test]
+fn a_unit_past_its_room_runs_again_larger() {
+    let fan = "#define A0 x x x x x x x x\n#define A1 A0 A0 A0 A0 A0 A0 A0 A0\n#define A2 A1 A1 A1 A1 A1 A1 A1 A1\n#define A3 A2 A2 A2 A2 A2 A2 A2 A2\n";
+    let tokens = format!("{fan}A3 A3 A3\n");
+    // 512 names of 256 bytes: 131 KB stringized.
+    let name = "n".repeat(256);
+    let bytes = format!("#define B0 {name} {name} {name} {name} {name} {name} {name} {name}\n#define B1 B0 B0 B0 B0 B0 B0 B0 B0\n#define B2 B1 B1 B1 B1 B1 B1 B1 B1\n#define S(a) #a\n#define X(a) S(a)\nX(B2) end\n");
+    for (what, text) in [("tokens", tokens), ("scratch bytes", bytes)] {
+        let files = [("main.c", text.as_str())];
+        for cpp in [false, true] {
+            let (got, want, rung, _) = expanded(&files, cpp, 0);
+            let got = got.unwrap_or_else(|why| panic!("{what}: refused {why}"));
+            same(show(&got), show(&want), what);
+            assert!(rung > 0, "{what}: ran at rung 0");
+            eprintln!("{what}: {} tokens at rung {rung}", got.len());
+        }
+    }
+}

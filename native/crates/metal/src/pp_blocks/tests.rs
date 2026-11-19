@@ -128,3 +128,25 @@ fn search_and_expand_equal_the_host() {
         assert_eq!(got, want, "expand, n = {n}");
     }
 }
+
+/// R9 of decision 0448: an evaluation is one command buffer, so the host never reads between its
+/// passes. `pp_eval::run` takes a whole evaluation's encoding (an expansion's included) and
+/// refuses one that used a second buffer.
+#[test]
+fn an_evaluation_is_one_command_buffer() {
+    let device = crate::device().unwrap();
+    let n = buf(&[5u32]);
+    let args = buf(&[0u32; 3]);
+    let one = crate::pp_eval::run(|enc| enc.run("pb_args", None, &[&n.buffer, &args.buffer], &[0], Grid::Groups(1)));
+    assert_eq!(one.unwrap(), 1);
+    let two = crate::pp_eval::run(|enc| {
+        enc.run("pb_args", None, &[&n.buffer, &args.buffer], &[0], Grid::Groups(1))?;
+        // A second buffer, waited on mid-evaluation: a host read between passes.
+        let queue = crate::pool::queue(&device)?;
+        let other = queue.new_command_buffer();
+        Enc { command: other, source: SOURCE }.run("pb_args", None, &[&n.buffer, &args.buffer], &[0], Grid::Groups(1))?;
+        commit_checked(other)?;
+        wait_checked(other)
+    });
+    assert!(two.is_err(), "a second command buffer in one evaluation");
+}

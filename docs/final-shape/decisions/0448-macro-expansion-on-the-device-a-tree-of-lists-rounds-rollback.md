@@ -62,7 +62,7 @@ are no per-token atomics and the placement is deterministic.
 
 | Store | Per element | Lives | Capacity at rung k |
 |---|---|---|---|
-| Tokens (`ref` u32: a tape node, or a scratch token with the top bit set; `flags` u8; `list` u32) | 9 B | the run | (2·2^k)·active tokens + 256 |
+| Tokens (`ref` u32: a tape node, or a scratch token with the top bit set; `flags` u8; `list` u32) | 16 B (a ref, flags, a child, a depth) | the run | 2^(k+1)·(active tokens + 4,096): each rung doubles the whole arena, so a short text with a large expansion fits too |
 | Lists (parent, macro, fence, covered range, stretch position, state, pending children, first token, length) | 36 B | the run | an eighth of the tokens + 256 |
 | Calls (name, `(`, `)`, argument ranges a call, pending arguments) | 32 B + 8 B an argument | the run | as lists |
 | Close table, `)` keys `(list, depth, pos)` (sorted, kept for the exit searches) | 8 B | the run | as tokens / 2 |
@@ -364,3 +364,16 @@ outermost call becomes the queue's first items.
   The corpus is unchanged: 3,099 units give the serial pass's tokens, at most 174 launches.
   `px_work`'s scratch tokens and bytes now share one buffer (tokens, then bytes, 8-byte
   aligned), since Metal binds 31 buffers at most.
+- **R8: the rungs.** Each rung doubles the whole arena: `2^(k+1)·(top tokens + 4,096)` tokens,
+  and the stores sized from them. The old ladder, `(top << (k+1)) + 4,096`, grew with the text
+  only, so a short text with a large expansion never fit at any rung. An 8⁴ fan-out used three
+  times is refused at rung 0 (`X_ROOM`) and gives the serial pass's 12,288 tokens at rung 1. A
+  `#` of 512 names of 256 bytes is past rung 0's and rung 1's scratch bytes, and gives the
+  serial pass's literal at rung 2 (`a_unit_past_its_room_runs_again_larger`). Large units' rung
+  0 is the same size as before.
+- **R9: no host read between passes.** `pp_eval::run` takes a whole evaluation's encoding (the
+  front passes, the definitions, the lookups and the expansion with its two queue phases). It
+  commits it as one command buffer and waits once. Since R9 it refuses an evaluation whose
+  dispatches went into another buffer, so no pass can wait for one before it and the host
+  reads only after the whole buffer completed. A rerun at the next rung is a new evaluation
+  after that. `an_evaluation_is_one_command_buffer` shows the refusal.

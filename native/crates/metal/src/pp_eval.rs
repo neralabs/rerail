@@ -251,7 +251,14 @@ pub fn run(f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<usize, Error
         return Err(refused);
     }
     wait_checked(command)?;
-    Ok(scope.snapshot().len())
+    // R9 of decision 0448: every pass in this one command buffer, so the host reads nothing
+    // between passes (it reads only after the whole buffer completed). An encoding that put a
+    // dispatch in another buffer is refused.
+    let records = scope.snapshot();
+    if records.iter().any(|r| r.command != records[0].command) {
+        return Err(Error::BackendFailure);
+    }
+    Ok(records.len())
 }
 
 /// The front passes over `unit`, read back (`nodes`: each node as the device's reader gives it).

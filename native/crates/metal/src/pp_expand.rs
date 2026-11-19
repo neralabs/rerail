@@ -516,7 +516,8 @@ impl Exp {
         let device = crate::device()?;
         let zeroed = |k: usize| MappedBuffer::zeroed::<u32>(&device, k.max(1));
         let top = top_bound(unit, lay);
-        let tok = (top << (rung + 1)) + 4096;
+        // Each rung doubles the whole arena, so a short text with a large expansion fits too.
+        let tok = (top + 4096) << (rung + 1);
         let lists = top / 2 + tok / 4 + 256;
         let args = tok / 2 + 256;
         let out = top + tok;
