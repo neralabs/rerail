@@ -145,6 +145,8 @@ export const ui = {
   openEvents: new Set(),
   closedEvents: new Set(),
   openFolds: new Set(),
+  /** History by session: the cards (`${auditId}:${violationId}`) whose declined steer shows the agent's reason. */
+  openDeclines: new Set(),
   resumeOpen: false,
   /** Merge Assist conflicts being dismissed, by id, while their write is out (`merge-model.js` `conflictSections`). */
   mergeDismissing: new Set(),

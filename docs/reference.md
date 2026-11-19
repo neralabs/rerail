@@ -210,7 +210,7 @@ rerail feedback list [--rule <rule-id>]  # print the notes, oldest first, to att
 
 Rerail sends notes nowhere. To share them with Nera, attach `rerail feedback list --rule <rule-id>` output to a [Rule misfire](https://github.com/neralabs/rerail/issues/new?template=2-rule-misfire.yml) issue. Read the reasons first: each is the agent's own sentence about its work.
 
-The dashboard's History by session shows each note on the steer it answers: the card reads Declined beside Steered, with the agent's reason, and the session's row and header count declined steers. A note keeps no audit, so the steer is the latest audit in the note's session that steered the rule and started before the note. A steer with no note is not shown as followed: an agent can decline without recording why.
+The dashboard's History by session shows each note on the steer it answers: the card reads Declined beside Steered, and the badge opens the agent's reason, and the session's row and header count declined steers. A note keeps no audit, so the steer is the latest audit in the note's session that steered the rule and started before the note. A steer with no note is not shown as followed: an agent can decline without recording why.
 
 <details>
 <summary>What is recorded and printed</summary>

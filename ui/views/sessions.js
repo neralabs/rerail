@@ -314,7 +314,7 @@ function renderHeader(sess) {
   const declined = sessionDeclinedTotal(sess);
   setAttr(v.declined, "hidden", declined === 0);
   setText(v.declined, `${fmt(declined)} declined`);
-  setAttr(v.declined, "title", "Steered violations whose steer the coding agent declined, with its reason on each card.");
+  setAttr(v.declined, "title", "Steered violations whose steer the coding agent declined. Declined on a card opens its reason.");
   setText(v.sid, shortSessionId(sess.sessionId, sess.host));
   setAttr(v.sid, "title", sess.sessionId);
   const rc = resumeCommand(sess);
@@ -393,6 +393,7 @@ export const actions = {
     invalidate();
   },
   foldtoggle: id => { toggleSet(ui.openFolds, id); invalidate(); },
+  declinetoggle: id => { toggleSet(ui.openDeclines, id); invalidate(); },
   showall: () => { ui.showAll = true; invalidate(); },
   sfilter: id => { ui.sessFilter = id; invalidate(); },
   daytoggle: id => { toggleSet(ui.openDays, id); invalidate(); },

@@ -37,9 +37,17 @@ test.describe("History by session", () => {
     await expect(declined).toHaveCount(1);
     await expect(declined.locator(".ch .mono")).toHaveText("typescript-eslint-no-non-null-assertion");
     await expect(declined.locator(".badge.outcome")).toHaveText("Steered");
-    await expect(declined.locator("dd.reason")).toHaveText(/^The cart is checked for null two lines above/);
+    // The reason is folded, so the card is as tall as any other, until the badge opens it.
+    const reason = declined.locator("dd.reason");
+    await expect(reason).toBeHidden();
+    const badge = declined.locator(".badge.declined");
+    await badge.click();
+    await expect(badge).toHaveAttribute("aria-expanded", "true");
+    await expect(reason).toHaveText(/^The cart is checked for null two lines above/);
     // Every other card, steered or logged, has no decline on record and says nothing about one.
     await expect(page.locator("#content .corr dd.reason:visible")).toHaveCount(1);
+    await badge.click();
+    await expect(reason).toBeHidden();
 
     await page.locator('#content [data-act="sfilter"][data-i="declined"]').click();
     await expect(page).toHaveURL(/#sessions\?filter=declined$/);
