@@ -210,3 +210,29 @@ with the unit, because each primitive's number of levels was chosen by its capac
     it forced go with step 5, where a kernel binds the arena once and reads each store at its
     offset.
   - R4's guard is `the_arena_is_one_block`. All 14 evaluator tests and 5 block tests pass.
+- **Step 4** (this commit): `ukl/grid.h`, in UKL's library.
+  - `ukl_grid_barrier`, bounded at `UKL_GRID_SPINS` polls. Past the bound it sets the grid's
+    failure word, and every later barrier returns false.
+  - The persistent grid's primitives, each a device function every group calls, its count read
+    on the device:
+    - `ukl_grid_scan_n` and `ukl_grid_scan_exclusive_u32`;
+    - `ukl_grid_seg_scan_n`, add and max;
+    - `ukl_grid_sort_u64`, a stable LSD sort. Its passes are the library's own tile bodies
+      (`body/radix_tile.h`), included again over coherent rows: the body gains
+      `UKL_RADIX_SPACE`.
+  - Reads of other groups' writes go through `UKL_COHERENT`.
+  - Tests, on Metal (`rerail-gpu`'s `library_tests`), at 1, 8 and 32 groups:
+    - `grid_barriers_see_every_groups_writes`: 10,000 barriers, each round reading another
+      group's writes (R6);
+    - `a_grid_past_residency_fails_its_barrier`: 4,096 groups of 1,024 fail in about 0.4 s and
+      do not hang (R6);
+    - `the_grid_scan_equals_the_host` and `the_grid_segmented_scans_equal_the_host`, 0 to 10^6
+      values, a count past the buffers' lengths ignored (R5);
+    - `the_grid_sort_is_stable_and_equals_the_host`, 0 to 10^6 keys, 8 to 64 bits (R5).
+  - Results: the library's other 17 tests still pass, and `grid.h` stands alone on every backend
+    and as OpenCL C 1.2 (`rerail-ukl`'s tests, under cargo).
+  - Not yet as decided:
+    - R5's "the device's G" is tested at 32 groups, not at the device's resident count. That
+      count comes with the setup kernel in step 5.
+    - CUDA uses the same counter form: the device layer has no cooperative launch.
+    - The tests ran on Metal only, not on UKL's CPU backend.
