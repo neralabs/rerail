@@ -1721,8 +1721,9 @@ describe("CodeRuleBridge", () => {
   });
 
   // A command still runs as the first walk to miss the file it wrote begins: the walk at the result of a command run
-  // beside it. Its call ends after that walk began, so the walk at its result, which misses the file again, keeps it, and
-  // the walk that reads the file takes the write as the session's, by its stamp, and checks it.
+  // beside it. Its call ends after that walk began, so the walk at its result, which misses the file again, keeps it, as
+  // does each walk after that misses the file, and the walk that reads the file takes the write as the session's, by its
+  // stamp, and checks it.
   it("checks the write of a command still running as the first walk to miss the file began, though the walk at its result missed it too", async () => {
     const root = await workspace();
     const path = join(root, "src", "a.py");
@@ -1730,6 +1731,8 @@ describe("CodeRuleBridge", () => {
     const bridge = createBridge(root, auditor(auditGeneratedEdits));
     await bridge.openWorkspace("session-1");
     await bridge.checkpoint("turn");
+    const answered = vi.spyOn(ToolCallWindows.prototype, "answered");
+    onTestFinished(() => answered.mockRestore());
 
     await bridge.begin("shell-1", "Bash", { command: "python3 generate.py" });
     await writeFile(path, "x = 1\n");
@@ -1739,6 +1742,10 @@ describe("CodeRuleBridge", () => {
     await bridge.begin("shell-2", "Bash", { command: "ls" });
     await bridge.finish("shell-2");
     await bridge.finish("shell-1");
+    await bridge.begin("shell-4", "Bash", { command: "ls" });
+    await bridge.finish("shell-4");
+    // shell-1, the second call to end, stays through the walk at shell-4's result.
+    expect(answered.mock.calls).toEqual([1, 2, 3].map(ends => [ends, [{ after: 0, through: ends }]]));
     discovery.opens.delete(path);
     await bridge.begin("shell-3", "Bash", { command: "ls" });
     await bridge.finish("shell-3");
