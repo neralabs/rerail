@@ -83,6 +83,10 @@ describe("assertProgramPath", () => {
     for (const command of [String.raw`\tools\git.exe`, String.raw`\git.exe`, "/git.exe", "/tools/git.exe", String.raw`/tools\git.exe`]) {
       expect(() => assertProgramPath([command, []], "win32"), command).toThrow(/absolute path from a drive or a server/u);
     }
+    // Only the start of the path counts: a doubled separator or a drive further on leaves it a path from the root.
+    for (const command of [String.raw`\tools\\git.exe`, String.raw`\tools\C:\git.exe`]) {
+      expect(() => assertProgramPath([command, []], "win32"), command).toThrow(/absolute path from a drive or a server/u);
+    }
     // A drive, a server and share, or a device path names one file from any folder.
     for (const command of ["C:/tools/git.exe", "//server/share/git.exe", String.raw`\\?\C:\tools\git.exe`]) {
       expect(() => assertProgramPath([command, []], "win32"), command).not.toThrow();

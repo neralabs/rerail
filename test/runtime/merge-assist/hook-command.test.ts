@@ -1,8 +1,12 @@
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_HOOK_STATUS, runHookCommand, stopCommand, type HookAnswer, type HookPayload } from "../../../src/runtime/merge-assist/hook-command.js";
 import { sampleConflict } from "../../support/merge-assist/status.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 import { fromDriveRoot } from "../../support/platform/windows-paths.js";
 
 const payload: HookPayload = {
@@ -13,6 +17,42 @@ const payload: HookPayload = {
 async function answering(answer: unknown): Promise<HookAnswer> {
   const script = `process.stdout.write(${JSON.stringify(JSON.stringify(answer))})`;
   return await runHookCommand({ command: [process.execPath, "-e", script], timeoutSeconds: 10 }, payload, { cwd: tmpdir(), env: process.env });
+}
+
+const drives: string[] = [];
+const driveRoots: string[] = [];
+afterEach(async () => {
+  // A drive goes before its folder: Windows keeps a folder a drive maps.
+  for (const drive of drives.splice(0)) execFileSync("subst", [drive, "/d"], { stdio: "ignore" });
+  await Promise.all(driveRoots.splice(0).map(async root => await removeFolder(root)));
+});
+
+/**
+ * A free drive mapped to a folder of this test, holding `folder` (if given) at the path it has on its own drive,
+ * through a junction. Vitest runs test files at once and every file shares the user's drive letters, so this file takes
+ * only N to P (the PATH search's tests take R to T, the start state's U to W, the status line's X to Z, and the
+ * registry's tests count on Q being free), and the next one where `subst` refuses a letter.
+ */
+async function driveHolding(folder?: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "rerail-hook-drive-"));
+  driveRoots.push(root);
+  if (folder !== undefined) {
+    const link = join(root, fromDriveRoot(folder));
+    await mkdir(dirname(link), { recursive: true });
+    await symlink(folder, link, "junction");
+  }
+  for (const name of "NOP") {
+    const drive = `${name}:`;
+    if (existsSync(`${drive}\\`)) continue;
+    try {
+      execFileSync("subst", [drive, root], { stdio: "ignore" });
+      drives.push(drive);
+      return drive;
+    } catch {
+      // Taken since the check above: the next one.
+    }
+  }
+  throw new Error("no free drive letter from N to P");
 }
 
 describe("the conflict hook command's answer", () => {
@@ -48,9 +88,14 @@ describe("starting the conflict hook command", () => {
 
   it.runIf(process.platform === "win32")("starts a program named from the root of the checkout's drive by its full path on that drive", async () => {
     // Node itself, named without its drive (`\Program Files\nodejs\node.exe`), answering with the name it was started by.
-    const command = [fromDriveRoot(process.execPath), "-e", "process.stdout.write(JSON.stringify({ note: process.argv0 }))"];
-    const answer = await runHookCommand({ command, timeoutSeconds: 10 }, payload, { cwd: dirname(process.execPath), env: process.env });
-    expect(answer).toEqual({ ok: true, error: null, note: process.execPath, status: null });
+    // Each checkout sits on a drive of its own, not this process's: the answer shows which drive the name was read on.
+    const program = fromDriveRoot(process.execPath);
+    const command = [program, "-e", "process.stdout.write(JSON.stringify({ note: process.argv0 }))"];
+    const from = (checkout: string) => runHookCommand({ command, timeoutSeconds: 10 }, payload, { cwd: checkout, env: process.env });
+    const holding = await driveHolding(dirname(process.execPath));
+    expect(await from(`${holding}\\`)).toEqual({ ok: true, error: null, note: `${holding}${program}`, status: null });
+    const empty = await driveHolding();
+    expect(await from(`${empty}\\`)).toMatchObject({ ok: false, error: expect.stringContaining(`spawn ${empty}${program} ENOENT`) });
   });
 });
 
