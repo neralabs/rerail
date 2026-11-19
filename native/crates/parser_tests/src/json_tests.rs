@@ -46,6 +46,19 @@ fn simdjson_forms_starts_are_simdjsons_indexes() {
     assert!(c.parser.tier1.records.is_none(), "the CPU's tier 1 has no record pass");
     // Tier 2's tape is sized from the input once, as simdjson's: no room check a token.
     assert!(!c.parser.tier2.room_checked(), "no room check a token");
+    // The scan for a string's next part only in the string loops, as simdjson's `parse_string`
+    // only where a string is read: the `TOKEN`s whose switch takes the escapes.
+    let native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
+    let escapes: Vec<u16> = (0..9).collect();
+    let loops: Vec<usize> = (0..native.structural.len())
+        .filter(|&pc| matches!(native.structural[pc].operation, rerail_compiler::native_ir::StructuralOperation::Token { .. }))
+        .filter(|&pc| match native.structural.get(pc + 1).map(|w| w.operation) {
+            Some(rerail_compiler::native_ir::StructuralOperation::Switch { table }) => escapes.iter().all(|&e| native.switches[usize::from(table)].word(e).is_some()),
+            _ => false,
+        })
+        .collect();
+    assert!(!loops.is_empty(), "the string loops");
+    assert_eq!(c.parser.tier2.part_scans, loops, "the part scan in the string loops alone");
     // Nor a row of what tier 2 reads from the bytes (the run's mask, the string's quote), or
     // not at all: the string's escape part, as tier 2 reads a string as simdjson's
     // `parse_string` does (first quote or backslash), with no escape carry.

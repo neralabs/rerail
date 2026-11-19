@@ -354,7 +354,7 @@ by byte). Word ids: 12 `{`, 15 `}`, 16 `[`, 17 `]`, 13 `:`, 14 `,`, 9 to 11 the 
 | `array_continue`: `,` or `]` | 94–95 | yes, since step 7 |
 | `scope_end`: `is_array[depth]` picks the continue state | `PUSH` of the place to go back to (43, 94 or 150), `RETURN` there | yes: a stack of where to continue |
 | `parse_string`: one call reads the string | each part (content, an escape, the closing `"`) goes back through `TOKEN`, a `SWITCH` and an edge, then a `GOTO` | **no** |
-| `parse_string`'s loop only where a string is read | every `TOKEN` holds the part scanner (where a part is pending), at the continue states too | **no** |
+| `parse_string`'s loop only where a string is read | the part scan only in the four string loops (7, 38, 51, 126) | yes, since step 8 |
 
 ## Step 7, done: a continue state takes its punctuation by byte, straight to its target
 
@@ -370,6 +370,19 @@ switched on again by word. Now:
 So `array_continue` is the byte, `]` or `,`, and the target, as simdjson's
 `switch (*advance())`. The trees test gained documents that fail at the continue states
 (`[1 true]`, `{"a":1,}`, `{"a":[1}`, …). Taking the kind's target in place of the word's fails it.
+
+## Step 8, done: the part scan only where a string is read
+
+Every `TOKEN` held the scan for a string's next part (16 bytes, `cmeq` against `"` and `\\`),
+behind a test of `PartAt`, at `array_continue` and `object_continue` too. `parts_pending`
+finds where a part may be pending: over (place, a part pending), from the first word with none.
+- An opener's byte at a switch makes one pending.
+- Under one, the closer's kind ends it, and every other kind keeps it.
+
+Only those `TOKEN`s hold the scan. For JSON these are the four string loops: a root string, a key,
+an array's string and a pair's value. The starts test asserts it: the scans are at exactly the
+`TOKEN`s whose switch takes the escapes. With no part ever pending, the trees test fails; with
+one always pending, the starts test fails.
 
 ## Order
 

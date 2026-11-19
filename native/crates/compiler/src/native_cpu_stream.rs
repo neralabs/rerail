@@ -274,6 +274,9 @@ pub struct CompiledStream {
     pub lasts: Option<usize>,
     /// The marks `MARK` tests: a token can be switched on once per mark and once more.
     marks: u64,
+    /// The `TOKEN`s that hold the scan for a region's next part (`parts_pending`), where it is
+    /// read as simdjson's `parse_string`.
+    pub part_scans: Vec<usize>,
     /// The program has `WRAP`: the tape has the frames, chains and preorder columns.
     pub wraps: bool,
     /// The widths the tape is written at (docs/parser-generators/37), and the language's tag.
@@ -373,6 +376,50 @@ pub(crate) fn words_read(native: &Structure, pushes: &[u16], word_kinds: &[u8], 
     kinds.sort_unstable();
     kinds.dedup();
     Some(kinds)
+}
+
+/// The `TOKEN`s where a part of a region read as `parse_string` reads (`Fetch::seq_bytes`, its
+/// openers' bytes) may be pending: only they hold its scan (`split_next`), as simdjson's
+/// `parse_string` loop is only where a string is read. Over (place, a part pending), from the
+/// first word with none: a switch's edge of an opener's byte makes one pending (its record is
+/// the opener alone); under one, the token is a part or the closer, and the closer's kind (its
+/// bytes') ends it, every other kind keeps it. A switch with an offset keeps what it had.
+pub(crate) fn parts_pending(native: &Structure, pushes: &[u16], ft: &Fetch) -> Vec<bool> {
+    let n = native.structural.len();
+    let opener = |b: usize| ft.seq_bytes[b / 64] >> (b % 64) & 1 == 1;
+    let closing: Vec<bool> = (0..256).map(|b| (0..256).any(|x| opener(x) && ft.kinds[x] == ft.kinds[b])).collect();
+    let mut pend = vec![false; n];
+    let mut seen = vec![[false; 2]; n];
+    let mut work = vec![(0usize, false)];
+    while let Some((pc, p)) = work.pop() {
+        if pc >= n || std::mem::replace(&mut seen[pc][usize::from(p)], true) {
+            continue;
+        }
+        match native.structural[pc].operation {
+            Op::Token { .. } => {
+                pend[pc] |= p;
+                work.push((pc + 1, p));
+            }
+            Op::Switch { table } => {
+                let sw = &native.switches[usize::from(table)];
+                if sw.offset != 0 {
+                    work.extend(successors(native, pushes, pc).into_iter().map(|t| (t, p)));
+                    continue;
+                }
+                for (b, &t) in sw.targets.iter().enumerate() {
+                    if t != REFUSE {
+                        work.push((usize::from(t), if p { !closing[b] } else { opener(b) }));
+                    }
+                }
+                work.extend(sw.words.iter().filter(|&&(_, t)| t != REFUSE).map(|&(_, t)| (usize::from(t), p)));
+                if sw.end != REFUSE {
+                    work.push((usize::from(sw.end), false));
+                }
+            }
+            _ => work.extend(successors(native, pushes, pc).into_iter().map(|t| (t, p))),
+        }
+    }
+    pend
 }
 
 /// Each word's successors, as `stream::validate` reads them, `TOKEN`'s cut.
@@ -4196,6 +4243,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     let one_way = |e: usize| -> Option<u16> { if callee_takes { Some(1) } else { entered.binary_search(&e).ok().and_then(|i| one[i]) } };
     let mut word_fns: std::collections::HashMap<WordFn, (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)> = std::collections::HashMap::new();
     let mut lowered: Vec<Lowered> = Vec::new();
+    let mut all_scans: Vec<usize> = Vec::new();
     let mut word_insts: Vec<u32> = vec![0; words.len()];
     let phase = std::time::Instant::now();
     let times = std::env::var_os("RERAIL_STREAM_TIMES").is_some();
@@ -4337,6 +4385,9 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         let bound = bounds(native);
         let chains = bound.chains;
         let unchecked = bound.unchecked(marks_of(words));
+        // The `TOKEN`s where a string's part may be pending (`parts_pending`); all, where a region
+        // is read in parts with an escape carry.
+        let pending = table.fetch.filter(|ft| ft.seq.iter().any(|&x| x) && table.split.is_some_and(|(sp, _)| sp.seq.is_some())).map(|ft| parts_pending(native, &pushes, ft));
         // Programs without `WRAP` or a `relabel` pay nothing for them: no frames, no chains, no
         // reorder (which runs only once a wrap was made).
         let wrapping = framed(words);
@@ -4825,7 +4876,11 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         if flagged {
                             return Err(Error::UnsupportedFeature("a region tier 2 splits, with a token's taking flagged"));
                         }
+                        // Only where a part may be pending (`parts_pending`).
+                        if pending.as_ref().is_none_or(|p| p[pc]) {
+                        all_scans.push(pc);
                         split_next(&mut f, &env, sp, bw, fetched, words_read(native, &pushes, &word_kinds, pc + 1).as_deref(), &mut heads);
+                        }
                     }
                     // One compare a token (`Next` is one past the count once the end is
                     // taken): the end's token, or past it (refused).
@@ -6412,7 +6467,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     let marks = marks_of(words);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, widths, tag, classes: supertype_classes(native)?, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, tables, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
+    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, wraps, widths, tag, classes: supertype_classes(native)?, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, tables, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
