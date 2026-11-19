@@ -52,12 +52,12 @@ kernel void pb_sort_alone(device uint* ctl [[buffer(0)]], device ulong* keys [[b
                           uint groups [[threadgroups_per_grid]], uint lsz [[threads_per_threadgroup]]) {
     threadgroup uint flag;
     threadgroup uint scratch[UKL_TG_SCRATCH];
-    threadgroup uint big[UKL_RADIX_GROUPS * UKL_RADIX_DIGITS + 3u * UKL_RADIX_DIGITS];
+    threadgroup uint big[UKL_GRID_SORT_TILE_WORDS];
     UklGrid g;
     g.ctl = ctl; g.groups = groups; g.group = group; g.lid = lid; g.lsz = lsz;
     UklGridSortLocal sl;
     sl.counts = big; sl.h = big + UKL_RADIX_GROUPS * UKL_RADIX_DIGITS;
-    sl.before = sl.h + UKL_RADIX_DIGITS; sl.base = sl.before + UKL_RADIX_DIGITS;
+    sl.before = sl.h + UKL_RADIX_DIGITS; sl.base = sl.before + UKL_RADIX_DIGITS; sl.tile = big;
     ukl_grid_sort_u64(g, n, bits, true, (UKL_COHERENT uint64_t*)keys, (UKL_COHERENT uint32_t*)values, (UKL_COHERENT uint64_t*)keys2,
                       (UKL_COHERENT uint32_t*)values2, (UKL_COHERENT uint32_t*)hist, (UKL_COHERENT uint32_t*)sums, sl, scratch, &flag);
 }

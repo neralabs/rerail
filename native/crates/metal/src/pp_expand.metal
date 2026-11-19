@@ -410,15 +410,33 @@ inline void pe_rows_total(device const uint* scanned, device uint* n_rows, uint 
     if (i == 0u) n_rows[0] = scanned[0] + n_builtin;
 }
 
-// What `key` means at slot `slot`: the latest row of it before the slot, in the sorted rows
-// (`sorted`, their places in `perm`).
+// The first slot of the unit slot `slot` is in: a batch's units hold disjoint, rising ranges of
+// slots (`floors`, each unit's first, `n_units` of them; decision 0460, batching).
+inline uint unit_floor(device const uint* floors, uint n_units, uint slot) {
+    uint lo = 0u, hi = n_units;
+    for (uint k = 0u; k < 32u && hi - lo > 1u; k++) {
+        uint mid = (lo + hi) / 2u;
+        if (floors[mid] <= slot) lo = mid; else hi = mid;
+    }
+    return floors[lo];
+}
+
+// What `key` means at slot `slot`: the latest row of it before the slot and in the slot's unit,
+// else a built-in's (slot 0), in the sorted rows (`sorted`, their places in `perm`). A row of an
+// earlier unit sends the walk to the built-ins' rows at once.
 inline uint visible(device const ulong* sorted, device const uint* perm, uint n, device const ulong* name_keys,
-                    device const uint* values, ulong key, uint slot, device atomic_uint* bad) {
+                    device const uint* values, device const uint* floors, uint n_units, ulong key, uint slot, device atomic_uint* bad) {
     ulong q = (key & 0xffffffff00000000ul) | ulong(slot);
     uint c = pb_lower_bound(sorted, n, q);
+    uint floor = unit_floor(floors, n_units, slot);
     for (uint k = 0u; k < WALK; k++) {
         if (c == 0u || (sorted[c - 1u] >> 32) != (key >> 32)) return L_NONE;
         c--;
+        uint at = uint(sorted[c]);
+        if (at != 0u && at < floor) {
+            c = pb_lower_bound(sorted, n, (key & 0xffffffff00000000ul) | 1ul);
+            continue;
+        }
         uint p = perm[c];
         if (name_keys[p] == key) {
             uint v = values[p];
@@ -459,7 +477,7 @@ inline void pe_gap_counts(device const PpInst* insts, device const uint* n_insts
 
 // Each active stretch token's meaning where it stands (R4's test): `L_NOT_NAME` where it is no
 // identifier, else what its key means at its stretch's slot.
-inline void pe_lookups(device const PpFile* files, device const uchar* data, device const uint* bases, device const ulong* keys, device const uint* text_nodes, device const uint* gap_at, device const uint* n_gaps, device const uint* firsts, device const uint* gslot, device const uint* n_toks, device const ulong* sorted, device const uint* perm, device const uint* n_rows, device const ulong* name_keys, device const uint* values, device uint* out, device atomic_uint* bad, uint n_files, uint s) {
+inline void pe_lookups(device const PpFile* files, device const uchar* data, device const uint* bases, device const ulong* keys, device const uint* text_nodes, device const uint* gap_at, device const uint* n_gaps, device const uint* firsts, device const uint* gslot, device const uint* n_toks, device const ulong* sorted, device const uint* perm, device const uint* n_rows, device const ulong* name_keys, device const uint* values, device const uint* floors, uint n_units, device uint* out, device atomic_uint* bad, uint n_files, uint s) {
     if (s >= n_toks[0]) return;
     uint j = pb_item_of(gap_at, n_gaps[0], s);
     uint g = text_nodes[firsts[j] + (s - gap_at[j])];
@@ -469,7 +487,7 @@ inline void pe_lookups(device const PpFile* files, device const uchar* data, dev
         out[s] = L_NOT_NAME;
         return;
     }
-    out[s] = visible(sorted, perm, n_rows[0], name_keys, values, keys[g], gslot[j], bad);
+    out[s] = visible(sorted, perm, n_rows[0], name_keys, values, floors, n_units, keys[g], gslot[j], bad);
 }
 
 // --- Expansion -----------------------------------------------------------------------------------
@@ -581,6 +599,7 @@ struct Ux {
     device const uint* tdepth; ulong va_opt;
     device const uchar* sbytes; device const PxScratch* stoks; uint relex_options;
     device const ulong* closes; uint n_close;
+    device const uint* floors; uint n_units;
 };
 
 // Whether `p[0..n)` holds a line splice (`\`, blanks, a newline): its phase-2 spelling differs.
@@ -1072,7 +1091,7 @@ inline void px_scan(Ux u, Ar a, uint l, uint lane) {
         if (j < n && (a.tflag[first + j] & T_NOEXP) == 0u) {
             uint g = a.tok[first + j];
             if (ref_kind(u, g) == K_IDENTIFIER) {
-                m = visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, ref_key(u, g), L.slot, a.ctl + 2);
+                m = visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, u.floors, u.n_units, ref_key(u, g), L.slot, a.ctl + 2);
                 if (m == L_BUILTIN) {
                     px_refuse(a.ctl, X_BUILTIN);
                 } else if (px_one_token(m)) {
@@ -1755,7 +1774,7 @@ inline void px_place(Ar a, uint l, uint lane) {
 }
 
 // The queue's workers: a SIMD group each, lane 0 taking an item and the 32 lanes doing it.
-inline void px_worker(device const PpFile* files, device const uchar* data, device const uint* bases, device const ulong* keys, device const PpDef* defs, device const uint* items, device const ulong* sorted, device const uint* perm, device const uint* n_rows, device const ulong* name_keys, device const uint* values, device const uint* text_nodes, device const uint* gat, device const uint* n_gaps, device const uint* firsts, device const uint* n_toks, device const uint* top_depth, device PxList* lists, device uint* cols, device PxArg* args, device uint* out, device atomic_uint* slots, device atomic_uint* qctl, device atomic_uint* ctl, device const uint* words, device PxScratch* scratch, device const ulong* closes, device const uint* n_close, uint lane) {
+inline void px_worker(device const PpFile* files, device const uchar* data, device const uint* bases, device const ulong* keys, device const PpDef* defs, device const uint* items, device const ulong* sorted, device const uint* perm, device const uint* n_rows, device const ulong* name_keys, device const uint* values, device const uint* text_nodes, device const uint* gat, device const uint* n_gaps, device const uint* firsts, device const uint* n_toks, device const uint* top_depth, device PxList* lists, device uint* cols, device PxArg* args, device uint* out, device atomic_uint* slots, device atomic_uint* qctl, device atomic_uint* ctl, device const uint* words, device PxScratch* scratch, device const ulong* closes, device const uint* n_close, device const uint* floors, uint n_units, uint lane) {
     // words: n_files, tok_cap, list_cap, arg_cap, out_cap, q_cap, va_opt (low, high), the scratch
     // bytes' and tokens' capacities.
     Ux u;
@@ -1768,6 +1787,7 @@ inline void px_worker(device const PpFile* files, device const uchar* data, devi
     device uchar* sbytes = (device uchar*)(scratch + words[9]);
     u.sbytes = sbytes; u.stoks = stoks; u.relex_options = words[10];
     u.closes = closes; u.n_close = n_close[0];
+    u.floors = floors; u.n_units = n_units;
     Ar a;
     // The tokens' columns, `tok_cap` words each: the ref, the flags, the child, the depth, the origin.
     uint tc = words[1];

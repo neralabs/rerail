@@ -742,11 +742,19 @@ fn the_grid_sort_is_stable_and_equals_the_host() {
     }
     let mut rng = Rng(47);
     for groups in [1u32, 8, 32] {
-        for (n, bits) in [(0u32, 8u32), (1, 8), (1023, 16), (1025, 24), (70_001, 40), (1_000_000, 64)] {
-            let keys: Vec<u64> = (0..n).map(|_| rng.next() & if bits == 64 { !0 } else { (1u64 << bits) - 1 } & if rng.below(2) == 0 { 0xff } else { !0 }).collect();
+        // 4,099 keys of 64 bits that differ only in their low byte and in bit 40: two of the eight digits vary, so
+        // the sort runs two passes and moves nothing; 4,101 differ in the low byte alone: one pass, then a move to
+        // where an even count of digits leaves the rows.
+        for (n, bits) in [(0u32, 8u32), (1, 8), (1023, 16), (1025, 24), (4099, 64), (4101, 64), (70_001, 40), (1_000_000, 64)] {
+            let narrow = |k: u64| match n {
+                4099 => 0x5a5a_0000_0000_0000 | (k & 0xff) | (k & 1 << 40),
+                4101 => 0x5a5a_0000_0000_0000 | (k & 0xff),
+                _ => k,
+            };
+            let keys: Vec<u64> = (0..n).map(|_| narrow(rng.next() & if bits == 64 { !0 } else { (1u64 << bits) - 1 } & if rng.below(2) == 0 { 0xff } else { !0 })).collect();
             let tiles = n.div_ceil(1024).max(1);
             let (ctl, count, kb, vb, k2, v2) = (grid_ctl(), buffer_of(&[n]).unwrap(), buffer_of(&keys).unwrap(), alloc::<u32>(n as usize).unwrap(), alloc::<u64>(n as usize).unwrap(), alloc::<u32>(n as usize).unwrap());
-            let (hist, sums) = (alloc::<u32>(256 * tiles as usize + 1).unwrap(), alloc::<u32>(groups as usize + 1).unwrap());
+            let (hist, sums) = (alloc::<u32>(256 * tiles as usize + 1).unwrap(), alloc::<u32>(4 * groups as usize + 4).unwrap());
             launch(&q, p.function("t_grid_sort").unwrap())
                 .value("args", &TestArgs { n: n.max(1), w: groups | bits << 16 })
                 .buffer("ctl", &ctl)

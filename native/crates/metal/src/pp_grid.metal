@@ -32,12 +32,14 @@
 // A count the passes before wrote.
 #define N(s) AT(const uint, s)[0]
 
-// A group's threadgroup memory: the barrier's flag, the scans' scratch, and the sorts' counts
-// (the segmented scans' two rows alias them: no phase runs both).
+// A group's threadgroup memory: the barrier's flag, the scans' scratch, and the sorts' counts or
+// a sorted tile (the segmented scans' two rows alias them: no phase runs two of them).
+constant uint PP_TG_BIG = UKL_GRID_SORT_TILE_WORDS > UKL_RADIX_GROUPS * UKL_RADIX_DIGITS + 3u * UKL_RADIX_DIGITS
+                              ? UKL_GRID_SORT_TILE_WORDS : UKL_RADIX_GROUPS * UKL_RADIX_DIGITS + 3u * UKL_RADIX_DIGITS;
 struct PpTg {
     uint flag;
     uint scratch[UKL_TG_SCRATCH];
-    uint big[UKL_RADIX_GROUPS * UKL_RADIX_DIGITS + 3u * UKL_RADIX_DIGITS];
+    uint big[PP_TG_BIG];
 };
 
 // The stage word of `GRID` (after the barrier's three): 0 the queue's first phase, 1 its second,
@@ -56,7 +58,7 @@ constant uint PG_STAGE = 3u;
     g.ctl = AT(uint, GRID); g.groups = groups; g.group = group; g.lid = lid; g.lsz = lsz;               \
     UklGridSortLocal sl;                                                                               \
     sl.counts = tg.big; sl.h = tg.big + UKL_RADIX_GROUPS * UKL_RADIX_DIGITS;                           \
-    sl.before = sl.h + UKL_RADIX_DIGITS; sl.base = sl.before + UKL_RADIX_DIGITS;                       \
+    sl.before = sl.h + UKL_RADIX_DIGITS; sl.base = sl.before + UKL_RADIX_DIGITS; sl.tile = tg.big;     \
     device const PpFile* files = AT(const PpFile, FILES);                                              \
     uint nf = W(N_FILES);                                                                              \
     uint stop = 0u, phase = 0u;                                                                        \
@@ -116,7 +118,7 @@ kernel void pp_setup(PP_GRID_PARAMS) {
     TICK();
     BARRIER();
     SCAN(N(N_GAPS), GCOUNTS, GAT, GTOTAL);
-    EACH(s, N(GTOTAL)) pe_lookups(files, data, AT(const uint, BASES), AT(const ulong, KEYS), AT(const uint, TEXT_NODES), AT(const uint, GAT), AT(const uint, N_GAPS), AT(const uint, GFIRSTS), AT(const uint, SSLOT), AT(const uint, GTOTAL), AT(const ulong, SORT_KEYS), AT(const uint, SORT_VA), AT(const uint, N_ROWS), AT(const ulong, NAME_KEYS), AT(const uint, VALUES), AT(uint, LOOKUPS), AT(atomic_uint, VBAD), nf, s);
+    EACH(s, N(GTOTAL)) pe_lookups(files, data, AT(const uint, BASES), AT(const ulong, KEYS), AT(const uint, TEXT_NODES), AT(const uint, GAT), AT(const uint, N_GAPS), AT(const uint, GFIRSTS), AT(const uint, SSLOT), AT(const uint, GTOTAL), AT(const ulong, SORT_KEYS), AT(const uint, SORT_VA), AT(const uint, N_ROWS), AT(const ulong, NAME_KEYS), AT(const uint, VALUES), AT(const uint, FLOORS), W(N_UNITS), AT(uint, LOOKUPS), AT(atomic_uint, VBAD), nf, s);
     if (last == 3u) return;
     BARRIER();
     // --- The top level: depth, the close table, the calls, the outermost, the lists --------
@@ -147,7 +149,7 @@ kernel void pp_setup(PP_GRID_PARAMS) {
               AT(const uint, VALUES), AT(const uint, TEXT_NODES), AT(const uint, GAT), AT(const uint, N_GAPS),  \
               AT(const uint, GFIRSTS), AT(const uint, GTOTAL), AT(const uint, DEPTH), AT(PxList, LISTS),          \
               AT(uint, TOKENS), AT(PxArg, ARGS), AT(uint, OUT), AT(atomic_uint, SLOTS), AT(atomic_uint, QCTL),    \
-              AT(atomic_uint, CTL), AT(const uint, WORDS), AT(PxScratch, SCRATCH), closes, AT(const uint, CLOSE_TOTAL), lane)
+              AT(atomic_uint, CTL), AT(const uint, WORDS), AT(PxScratch, SCRATCH), closes, AT(const uint, CLOSE_TOTAL), AT(const uint, FLOORS), W(N_UNITS), lane)
 
 kernel void px_expand(PP_GRID_PARAMS) {
     PP_GRID_BEGIN

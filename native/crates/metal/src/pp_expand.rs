@@ -162,6 +162,54 @@ pub struct Layout {
     /// Each file's `__FILE__`: the string literal of its presumed path (its `"` and `\` escaped),
     /// by the unit's file index; then `__DATE__`'s, `__TIME__`'s and `__TIMESTAMP__`'s.
     pub file_literals: Vec<Vec<u8>>,
+    /// A batch's units (decision 0460, batching): each one's first slot (a lookup sees only its
+    /// unit's rows, and the built-ins'), and its first stretch in the slots' order. One unit's
+    /// layout: `[0]` each.
+    pub unit_floors: Vec<u32>,
+    pub unit_gaps: Vec<u32>,
+}
+
+impl Layout {
+    /// The layout of a batch of units, `parts` each a unit's layout and its files: its files,
+    /// directives and stretches after the earlier units', its slots past theirs. The units are of
+    /// one dialect (their built-ins and options the first's). `None` where the slots pass 32 bits.
+    pub fn join(parts: &[(&Layout, usize)]) -> Option<Layout> {
+        let first = parts.first()?.0;
+        let mut lay = Layout {
+            insts: Vec::new(),
+            dir_slots: Vec::new(),
+            dir_active: Vec::new(),
+            gap_slots: Vec::new(),
+            gap_active: Vec::new(),
+            builtins: first.builtins.clone(),
+            relex_options: first.relex_options,
+            file_literals: Vec::new(),
+            unit_floors: Vec::new(),
+            unit_gaps: Vec::new(),
+        };
+        let (mut files, mut floor) = (0u32, 0u64);
+        for &(l, n_files) in parts {
+            assert!(l.builtins == first.builtins && l.relex_options == first.relex_options, "a batch of one dialect");
+            let at = u32::try_from(floor).ok()?;
+            lay.unit_floors.push(at);
+            lay.unit_gaps.push(lay.gap_slots.len() as u32);
+            let (d0, g0) = (lay.dir_slots.len() as u32, lay.gap_slots.len() as u32);
+            lay.insts.extend(l.insts.iter().map(|i| PpInst { file: i.file + files, dir_first: i.dir_first + d0, gap_first: i.gap_first + g0 }));
+            lay.dir_slots.extend(l.dir_slots.iter().map(|&s| s + at));
+            lay.gap_slots.extend(l.gap_slots.iter().map(|&s| s + at));
+            // copy: not block data (P1's layout words, 0448's test input, joined on the host)
+            lay.dir_active.extend_from_slice(&l.dir_active);
+            // copy: not block data (P1's layout words, as above)
+            lay.gap_active.extend_from_slice(&l.gap_active);
+            lay.file_literals.extend(l.file_literals[..n_files].iter().cloned());
+            let top = l.dir_slots.iter().chain(&l.gap_slots).copied().max().unwrap_or(0);
+            floor += u64::from(top) + 1;
+            files += n_files as u32;
+        }
+        u32::try_from(floor).ok()?;
+        lay.file_literals.extend(first.file_literals[first.file_literals.len() - 3..].iter().cloned());
+        Some(lay)
+    }
 }
 
 /// What a lookup answers where it is no definition's row (`pp_expand.metal`'s `L_*`).
@@ -202,6 +250,8 @@ pub struct Vis {
     dactive: Buf,
     n_dirs: Buf,
     gslot: Buf,
+    floors: Buf,
+    n_units: u32,
     gactive: Buf,
     pub(crate) n_gaps: Buf,
     n_builtin: u32,
@@ -269,6 +319,8 @@ impl Vis {
             dactive: words(&lay.dir_active)?,
             n_dirs: words(&[nd as u32])?,
             gslot: words(&lay.gap_slots)?,
+            floors: words(&lay.unit_floors)?,
+            n_units: lay.unit_floors.len().max(1) as u32,
             gactive: words(&lay.gap_active)?,
             n_gaps: words(&[ng as u32])?,
             n_builtin: nb as u32,
@@ -306,7 +358,7 @@ impl Vis {
     /// (a sort of their keys, their counts and a scan) and the lookups, as phases of `pp_setup`.
     pub fn lay(&self, l: &mut Lay) {
         l.at("INSTS", &self.insts).at("N_INSTS", &self.n_insts).at("DSLOT", &self.dslot).at("DACTIVE", &self.dactive).at("N_DIRS", &self.n_dirs);
-        l.at("GSLOT", &self.gslot).at("GACTIVE", &self.gactive).at("N_GAPS", &self.n_gaps);
+        l.at("GSLOT", &self.gslot).at("GACTIVE", &self.gactive).at("N_GAPS", &self.n_gaps).at("FLOORS", &self.floors).word("N_UNITS", self.n_units);
         l.word("N_BUILTIN", self.n_builtin).word("ND", self.nd as u32).word("NG", self.ng as u32);
         l.at("OWNER_IN", &self.owner_in).at("VHEADS", &self.heads).at("OWNER", &self.owner).at("TFLAG", &self.tflag).at("TRANK", &self.trank);
         l.at("TTOTAL", &self.tscan.total).at("TEXT_NODES", &self.text_nodes).at("RFLAG", &self.rflag).at("RAT", &self.rat).at("RTOTAL", &self.rscan.total);
@@ -526,6 +578,27 @@ impl Exp {
         }
     }
 
+    /// Each unit's first output token: its first stretch's first top token (the stretches'
+    /// scan), that token's piece's place (the pieces' scan); then the output's end.
+    fn unit_out(&self, vis: &Vis, unit_gaps: &[u32], n_out: usize) -> Vec<u32> {
+        // SAFETY: the device finished; the scans hold `n_gaps` and `nt` words, their totals after.
+        unsafe {
+            let n_gaps = *vis.n_gaps.host().cast::<u32>();
+            let nt = *vis.gscan.total.host().cast::<u32>();
+            let gat = vis.gat.host().cast::<u32>();
+            let obase = self.obase.host().cast::<u32>();
+            let mut at: Vec<u32> = if unit_gaps.is_empty() { &[0][..] } else { unit_gaps }
+                .iter()
+                .map(|&g| {
+                    let t = if g < n_gaps { *gat.add(g as usize) } else { nt };
+                    if t < nt { *obase.add(t as usize) } else { n_out as u32 }
+                })
+                .collect();
+            at.push(n_out as u32);
+            at
+        }
+    }
+
     pub fn read(&self) -> (u32, Vec<u32>) {
         // SAFETY: the device finished; `out` holds at least `n_out` words where no room ran out.
         unsafe {
@@ -552,6 +625,8 @@ pub struct Expanded {
     pub groups: u64,
     /// The command buffer's time on the GPU (its last run's), in seconds.
     pub gpu_seconds: f64,
+    /// Where each unit of the batch begins in `out`, and its end (`Layout::unit_gaps`' units).
+    pub unit_out: Vec<u32>,
     /// The scratch tokens (a ref with `SCRATCH` set): their bytes, and each one's (start, end,
     /// kind).
     pub scratch: Vec<u8>,
@@ -606,7 +681,8 @@ pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Ex
             continue;
         }
         let (scratch, stoks) = exp.scratch();
-        return Ok(Expanded { ev: front.read()?, refused, out, rung, launches, groups, gpu_seconds, scratch, stoks, room: exp.room() });
+        let unit_out = if refused != 0 { Vec::new() } else { exp.unit_out(&vis, &lay.unit_gaps, out.len()) };
+        return Ok(Expanded { ev: front.read()?, refused, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room() });
     }
 }
 
@@ -693,4 +769,58 @@ pub fn stage_seconds(unit: &Unit, lay: &Layout, last: u32, stop: u32, groups: u6
     exp.lay(&mut l);
     l.word("STOP", stop);
     Ok(on_grid(&arena, unit, &front, &l, groups)?.map(|(_, s)| s))
+}
+
+/// One unit's answer from a batch (`expand_many`): the batch's expansion it ran in, its files
+/// there (`x.ev.bases`' and the refs' files), and its output (`x.out`'s range). Where the unit was
+/// refused, it ran alone, and `x.refused` says why.
+pub struct Part {
+    pub x: std::rc::Rc<Expanded>,
+    pub files: std::ops::Range<usize>,
+    pub out: std::ops::Range<usize>,
+}
+
+/// The units `units` (each a unit and its layout, of one dialect) expanded in as few batches as
+/// hold them (decision 0460, batching): one arena and one run of the grid a batch. A batch is
+/// split in halves where its documents are in more than one slab (a batch reads one, and
+/// gathering would copy them), where the budget refuses its arena, or where the device refuses
+/// it: a refusal is then a unit's alone.
+pub fn expand_many(units: &[(&Unit, &Layout)]) -> Result<Vec<Part>, Error> {
+    let mut parts = Vec::with_capacity(units.len());
+    many(units, &mut parts)?;
+    Ok(parts)
+}
+
+fn many(units: &[(&Unit, &Layout)], parts: &mut Vec<Part>) -> Result<(), Error> {
+    let split = |parts: &mut Vec<Part>| -> Result<(), Error> {
+        let (a, b) = units.split_at(units.len() / 2);
+        many(a, parts)?;
+        many(b, parts)
+    };
+    match units {
+        [] => Ok(()),
+        [(unit, lay)] => {
+            let x = std::rc::Rc::new(expand(unit, lay)?);
+            let out = 0..x.out.len();
+            parts.push(Part { x, files: 0..unit.len(), out });
+            Ok(())
+        }
+        _ => {
+            let Some(batch) = Unit::batch(&units.iter().map(|(u, _)| *u).collect::<Vec<_>>()) else { return split(parts) };
+            let joined: Vec<(&Layout, usize)> = units.iter().map(|(u, l)| (*l, u.len())).collect();
+            let Some(lay) = Layout::join(&joined) else { return split(parts) };
+            let x = match expand(&batch, &lay) {
+                Ok(x) if x.refused == 0 => std::rc::Rc::new(x),
+                Ok(_) | Err(Error::BackendCapacity) => return split(parts),
+                Err(e) => return Err(e),
+            };
+            let mut file = 0;
+            for (k, (unit, _)) in units.iter().enumerate() {
+                let out = x.unit_out[k] as usize..x.unit_out[k + 1] as usize;
+                parts.push(Part { x: std::rc::Rc::clone(&x), files: file..file + unit.len(), out });
+                file += unit.len();
+            }
+            Ok(())
+        }
+    }
 }

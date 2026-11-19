@@ -310,11 +310,12 @@ DEFINE_KERNEL2(tests, t_grid_sort,
                RWBUFFER, uint64_t, keys2,   "[n]",
                RWBUFFER, uint32_t, values2, "[n]",
                RWBUFFER, uint32_t, hist,    "[256 * n + 1]",
-               RWBUFFER, uint32_t, sums,    "[w + 1]",
+               RWBUFFER, uint32_t, sums,    "[4 * w + 4]",
                SHARED,   uint32_t, h,       UKL_RADIX_DIGITS,
                SHARED,   uint32_t, counts,  UKL_RADIX_GROUPS * UKL_RADIX_DIGITS,
                SHARED,   uint32_t, before,  UKL_RADIX_DIGITS,
                SHARED,   uint32_t, base,    UKL_RADIX_DIGITS,
+               SHARED,   uint32_t, tile,    UKL_GRID_SORT_TILE_WORDS,
                SHARED,   uint32_t, scratch, UKL_TG_SCRATCH,
                SHARED,   uint32_t, flag,    1,
                GSZ0,     uint32_t, gsz,     ,
@@ -325,7 +326,7 @@ DEFINE_KERNEL2(tests, t_grid_sort,
     UklGrid g;
     g.ctl = ctl; g.groups = gsz / lsz; g.group = group; g.lid = lid; g.lsz = lsz;
     UklGridSortLocal l;
-    l.h = h; l.counts = counts; l.before = before; l.base = base;
+    l.h = h; l.counts = counts; l.before = before; l.base = base; l.tile = tile;
     ukl_grid_sort_u64(g, ukl_atomic_load((UKL_GLOBAL uint32_t*)count), args.w >> 16, true, (UKL_COHERENT uint64_t*)keys,
                       (UKL_COHERENT uint32_t*)values, (UKL_COHERENT uint64_t*)keys2, (UKL_COHERENT uint32_t*)values2,
                       (UKL_COHERENT uint32_t*)hist, (UKL_COHERENT uint32_t*)sums, l, scratch, flag __UKL_ARGS);

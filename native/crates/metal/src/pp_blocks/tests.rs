@@ -117,7 +117,7 @@ fn the_grid_sort_alone_is_fast() {
     for (n, bits) in [(3usize, 32u32), (31, 64), (31, 32), (3, 64), (1000, 32)] {
         let keys: Vec<u64> = (0..n as u64).map(|k| k.wrapping_mul(0x9e37_79b9) & 0xffff_ffff).collect();
         let z32 = |k: usize| MappedBuffer::zeroed::<u32>(&dev, k).unwrap();
-        let (ctl, kb, va, k2, v2, hist, sums) = (z32(8), buf(&keys), z32(n), MappedBuffer::zeroed::<u64>(&dev, n).unwrap(), z32(n), z32(256 * n.div_ceil(1024) + 1), z32(4));
+        let (ctl, kb, va, k2, v2, hist, sums) = (z32(8), buf(&keys), z32(n), MappedBuffer::zeroed::<u64>(&dev, n).unwrap(), z32(n), z32(256 * n.div_ceil(1024) + 1), z32(8));
         let t = (0..5)
             .map(|_| {
                 crate::pp_eval::run_timed(|e| e.run("pb_sort_alone", None, &[&ctl.buffer, &kb.buffer, &va.buffer, &k2.buffer, &v2.buffer, &hist.buffer, &sums.buffer], &[n as u32, bits], Grid::Groups(1)))

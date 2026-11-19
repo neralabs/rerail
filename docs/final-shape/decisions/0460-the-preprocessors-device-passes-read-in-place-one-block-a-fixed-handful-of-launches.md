@@ -310,3 +310,36 @@ with the unit, because each primitive's number of levels was chosen by its capac
        rather than from work;
     3. serial per-file walks, which scale with a file's nodes on one thread;
     4. the queue's phases on large units.
+- **Step 5c: batches, and the grid's latency cut** (user, 2026-11-19: "please do all of these").
+  - **Batches** (`expand_many`): one arena and one run of the grid for many units.
+    - `Layout::join` lays the units out one after another: their files, directives and stretches,
+      with each unit's slots past the last unit's highest.
+    - `visible()` sees only rows from its unit's first slot on (`FLOORS`, a search by slot),
+      plus the built-ins' rows at slot 0. A row of an earlier unit sends the walk straight to
+      the built-ins, so another unit's rows never spend the walk's bound.
+    - `Unit::batch` reads the units' documents in the one slab they are in. It refuses documents
+      in more than one slab, because gathering them would copy them (0353).
+    - A batch splits in halves when its documents span slabs, when the budget refuses its arena
+      (at 500 units the arena is about 505 MB, against the 512 MB Metal budget), or when the
+      device refuses it. A refusal is therefore a lone unit's.
+    - Each unit's output starts at its first stretch's first top token's place, read from the
+      two scans already stored (`Expanded::unit_out`).
+    - Test: `a_batch_is_its_units`. Eight units define, undefine and use the same names
+      differently, one redefines `__FILE__` before another uses it, and one is refused. Each
+      unit gives its own serial answer, and the refused unit is refused alone.
+    - The first slice: 999 units equal, in 4 runs of about 250 units. GPU time is 74 to 84 ms,
+      down from 2,242 ms.
+  - **The grid's primitives** (`ukl/grid.h`, `ukl/group.h`):
+    - `ukl_grid_scans` runs up to 4 scans over shared barriers, and `ukl_grid_scan_n` is the case
+      of one.
+    - Up to `UKL_GRID_SMALL` (4,096) values, a scan or segmented scan is group 0's alone: one
+      barrier, not three.
+    - The sort of one tile (up to 1,024 keys) is group 0's rank sort in threadgroup memory: one
+      barrier, against 5 a digit.
+    - A larger sort first finds the bits that vary (an OR and an AND of the keys, one phase), then
+      passes over only the digits that hold them. A last pass moves the rows where the caller
+      reads them (`ukl_grid_sort_in_input`).
+    - `ukl_tg_or` and `ukl_tg_and` are new in `group.h`.
+    - Tests: the library's grid tests, with 64-bit sorts of keys that vary in two digits and in
+      one; 17 tests on Metal, and `rerail-ukl`'s 8 under cargo.
+  - A two-line unit's evaluation drops from 1,368 µs to 637 µs.

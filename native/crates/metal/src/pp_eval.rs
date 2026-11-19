@@ -129,6 +129,26 @@ impl Unit {
         Ok(Unit { views, documents, node_bound, dir_bound, file_nodes })
     }
 
+    /// The batch of `units`: their files in order, read in the slab they are in. `None` where
+    /// they are in more than one slab: a batch reads one, and gathering them would copy them.
+    pub fn batch(units: &[&Unit]) -> Option<Unit> {
+        let documents: Vec<Arc<Resident>> = units.iter().flat_map(|u| u.documents.iter().cloned()).collect();
+        if let Some(first) = documents.first()
+            && documents.iter().any(|d| d.slab.id != first.slab.id)
+        {
+            return None;
+        }
+        let views: Vec<DocView> = units.iter().flat_map(|u| u.views.iter().copied()).collect();
+        let file_nodes: Vec<u32> = views.iter().map(|v| v.nodes).collect();
+        Some(Unit {
+            node_bound: units.iter().map(|u| u.node_bound).sum::<usize>().max(1),
+            dir_bound: units.iter().map(|u| u.dir_bound).sum::<usize>().max(1),
+            views,
+            documents,
+            file_nodes,
+        })
+    }
+
     /// The unit's files.
     pub fn len(&self) -> usize {
         self.views.len()
@@ -211,7 +231,7 @@ pub const TO_VIS: u32 = 3;
 pub const TO_ALL: u32 = 4;
 
 impl Front {
-    /// `groups`: the grid's groups (the scans' sums are two words a group).
+    /// `groups`: the grid's groups (the scans' and sorts' sums are four words a group).
     pub fn new(arena: &Arena, unit: &Unit, nodes: bool, groups: u64) -> Result<Front, Error> {
         let n = unit.len();
         let per_file = || arena.zeroed::<u32>(n);
@@ -220,7 +240,7 @@ impl Front {
             nodes,
             files: arena.from_slice(&unit.views)?,
             grid: arena.zeroed::<u32>(8)?,
-            sums: arena.zeroed::<u32>(2 * groups as usize + 2)?,
+            sums: arena.zeroed::<u32>(4 * groups as usize + 4)?,
             lay: arena.zeroed::<u32>(crate::pp_blocks::SLOTS.len())?,
             counts: per_file()?,
             bases: per_file()?,

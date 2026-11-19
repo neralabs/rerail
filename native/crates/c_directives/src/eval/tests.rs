@@ -316,7 +316,7 @@ fn unit_of(p1: &rerail_c_pp::stream::parallel::P1, cpp: bool) -> (Unit, rerail_m
         }
         q.push(b'"');
         q
-    }).collect() } };
+    }).collect() }, unit_floors: vec![0], unit_gaps: vec![0] };
     for i in &p1.insts {
         lay.insts.push(PpInst { file: i.file, dir_first: lay.dir_slots.len() as u32, gap_first: lay.gap_slots.len() as u32 });
         let slot = |s: u64| u32::try_from(s).expect("a slot in 32 bits");
@@ -483,6 +483,77 @@ fn an_evaluation_is_a_fixed_handful_of_launches() {
     same(wide.refused, 0, "the halved grid's refusals");
     same(&wide.out, &narrow.out, "the halved grid's output");
     eprintln!("past residency: ran again at {} groups", wide.groups);
+}
+
+/// A part's output spelled: each ref's token in its file (`files` and `tapes`, the unit's), each
+/// scratch token's bytes.
+fn part_tokens(part: &rerail_metal::pp_expand::Part, files: &[Vec<u8>], tapes: &[Vec<u8>]) -> Vec<Vec<u8>> {
+    use rerail_metal::pp_expand::SCRATCH;
+    let x = &*part.x;
+    let views: Vec<View> = tapes.iter().map(|t| View::new(t).unwrap()).collect();
+    x.out[part.out.clone()]
+        .iter()
+        .map(|&g| {
+            if g & SCRATCH != 0 {
+                let [a, b, _] = x.stoks[(g & !SCRATCH) as usize];
+                return x.scratch[a as usize..b as usize].to_vec();
+            }
+            let f = x.ev.bases.partition_point(|&b| b <= g) - 1;
+            let i = (g - x.ev.bases[f]) as usize;
+            let f = f - part.files.start;
+            // The serial pass spells a token after phase 2: its line splices left out.
+            rerail_metal::pp_eval::phase2(&files[f][views[f].start(i) as usize..views[f].end(i) as usize]).into_owned()
+        })
+        .collect()
+}
+
+/// Decision 0460, batching: units expanded in one batch give each its own serial answer. The same
+/// names are defined differently, undefined, or left undefined from unit to unit, so a unit that
+/// saw an earlier unit's row would differ; `__FILE__` used after another unit redefined it; one
+/// unit the device refuses (a call across a stretch's end), so the batch splits and that unit
+/// alone is refused.
+#[test]
+fn a_batch_is_its_units() {
+    use rerail_c_pp::files::Search;
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define A 1\n#define F(x) x A\nA F(2) B\n")],
+        &[("main.c", "A F(3) B\n#define B b\nB\n")],
+        &[("main.c", "#define A 2\n#undef F\nF(4) A\n")],
+        &[("main.c", "#define __FILE__ x\n__FILE__ __LINE__\n")],
+        &[("main.c", "__FILE__ __LINE__ A\n")],
+        &[("main.c", "#define F(x) x\nF(\n#define A\n)\n")],
+        &[("main.c", "#include \"a.h\"\nH K\n"), ("a.h", "#define K k\n#define H(x) x\n")],
+        &[("main.c", "K H(1)\n")],
+    ];
+    let mut entries = Vec::new();
+    for files in shapes {
+        let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
+        let cfg = rerail_c_pp::Config::new(crate::pp::options(false));
+        let mut serial = Spelled::default();
+        let m2 = m.clone();
+        let mut io = Search::new(vec![], move |p: &str| m2.get(p).cloned());
+        let mut pp = rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut serial);
+        pp.run("main.c");
+        drop(pp);
+        let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
+        let p1 = rerail_c_pp::stream::parallel::p1_of(cfg, &mut io, "main.c").unwrap();
+        let (unit, lay, tapes) = unit_of(&p1, false);
+        entries.push((serial.0, p1, unit, lay, tapes));
+    }
+    let units: Vec<_> = entries.iter().map(|e| (&e.2, &e.3)).collect();
+    let parts = rerail_metal::pp_expand::expand_many(&units).unwrap();
+    let mut alone = Vec::new();
+    for (k, ((serial, p1, _, _, tapes), part)) in entries.iter().zip(&parts).enumerate() {
+        if part.x.refused != 0 {
+            alone.push((k, part.x.refused));
+            continue;
+        }
+        same(show(&part_tokens(part, &p1.files, tapes)), show(serial), format!("unit {k}"));
+    }
+    eprintln!("refused alone: {alone:?}");
+    same(alone, vec![(5, rerail_metal::pp_expand::X_ACROSS)], "the units refused: a call across a directive's stretch end");
+    // The units before a refused one ran in a batch of more than one.
+    assert!(std::rc::Rc::ptr_eq(&parts[0].x, &parts[1].x), "units 0 and 1 in one batch");
 }
 
 fn show(v: &[Vec<u8>]) -> String {
@@ -663,6 +734,7 @@ fn the_corpus_expands_on_the_device() {
     ];
     let (mut same_units, mut tokens, mut launches) = (0, 0, 0);
     let mut gpu: Vec<f64> = Vec::new();
+    let mut batches: Vec<usize> = Vec::new();
     let mut refused = std::collections::BTreeMap::<&str, usize>::new();
     let mut named = std::collections::BTreeMap::<String, usize>::new();
     let stub = |q: &str| std::fs::read(q).ok().or_else(|| q.starts_with("<stub>").then(Vec::new));
@@ -670,6 +742,16 @@ fn the_corpus_expands_on_the_device() {
         let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
         let mut paths: Vec<_> = rd.flatten().map(|e| e.path()).collect();
         paths.sort();
+        // Each unit's serial answer and its P1, then every unit of the language in batches.
+        struct Entry {
+            path: String,
+            serial: Vec<Vec<u8>>,
+            p1: rerail_c_pp::stream::parallel::P1,
+            unit: rerail_metal::pp_eval::Unit,
+            lay: Layout,
+            tapes: Vec<Vec<u8>>,
+        }
+        let mut entries = Vec::new();
         for p in paths.into_iter().skip(first).take(count) {
             let path = p.to_string_lossy().into_owned();
             let cfg = Config::new(crate::pp::options(cpp));
@@ -687,15 +769,22 @@ fn the_corpus_expands_on_the_device() {
                 }
             };
             let (unit, lay, tapes) = unit_of(&p1, cpp);
-            let x = match expand(&unit, &lay) {
-                Ok(x) => x,
-                Err(e) => {
-                    eprintln!("ERROR {path}: {e:?} ({} top tokens at most, {} nodes)", top_bound(&unit, &lay), unit.node_bound);
-                    panic!("{path}");
-                }
-            };
-            launches = launches.max(x.launches);
-            gpu.push(x.gpu_seconds);
+            entries.push(Entry { path, serial: serial.0, p1, unit, lay, tapes });
+        }
+        let units: Vec<_> = entries.iter().map(|e| (&e.unit, &e.lay)).collect();
+        let parts = match expand_many(&units) {
+            Ok(parts) => parts,
+            Err(e) => panic!("{dir}: {e:?}"),
+        };
+        let mut seen: Vec<*const Expanded> = Vec::new();
+        for (e, part) in entries.iter().zip(&parts) {
+            let (path, p1, x) = (&e.path, &e.p1, &*part.x);
+            if !seen.contains(&std::ptr::from_ref(x)) {
+                seen.push(std::ptr::from_ref(x));
+                launches = launches.max(x.launches);
+                gpu.push(x.gpu_seconds);
+                batches.push(x.unit_out.len().saturating_sub(1).max(1));
+            }
             // Room counts only alone: with another refusal the unit is not rerun, and the other is why.
             let refused_by = if x.refused & !X_ROOM != 0 { x.refused & !X_ROOM } else { x.refused };
             if refused_by & X_ROOM != 0 {
@@ -719,24 +808,11 @@ fn the_corpus_expands_on_the_device() {
                 }
                 continue;
             }
-            let views: Vec<View> = tapes.iter().map(|t| View::new(t).unwrap()).collect();
-            let got: Vec<Vec<u8>> = x
-                .out
-                .iter()
-                .map(|&g| {
-                    if g & SCRATCH != 0 {
-                        let [a, b, _] = x.stoks[(g & !SCRATCH) as usize];
-                        return x.scratch[a as usize..b as usize].to_vec();
-                    }
-                    let f = x.ev.bases.partition_point(|&b| b <= g) - 1;
-                    let i = (g - x.ev.bases[f]) as usize;
-                    rerail_metal::pp_eval::phase2(&p1.files[f][views[f].start(i) as usize..views[f].end(i) as usize]).into_owned()
-                })
-                .collect();
-            if got != serial.0 {
-                let k = got.iter().zip(&serial.0).position(|(a, b)| a != b).unwrap_or(got.len().min(serial.0.len()));
+            let got = part_tokens(part, &p1.files, &e.tapes);
+            if got != e.serial {
+                let k = got.iter().zip(&e.serial).position(|(a, b)| a != b).unwrap_or(got.len().min(e.serial.len()));
                 let near = |v: &[Vec<u8>]| show(&v[k.saturating_sub(8)..(k + 8).min(v.len())]);
-                eprintln!("DIFF {path}: token {k} (device {}, serial {})\n  device: {}\n  serial: {}", got.len(), serial.0.len(), near(&got), near(&serial.0));
+                eprintln!("DIFF {path}: token {k} (device {}, serial {})\n  device: {}\n  serial: {}", got.len(), e.serial.len(), near(&got), near(&e.serial));
                 panic!("{path}");
             }
             same_units += 1;
@@ -747,7 +823,7 @@ fn the_corpus_expands_on_the_device() {
     gpu.sort_by(f64::total_cmp);
     if let Some(&most) = gpu.last() {
         let all: f64 = gpu.iter().sum();
-        eprintln!("GPU time: {:.1} ms in all, median {:.3} ms, most {:.3} ms a unit", all * 1e3, gpu[gpu.len() / 2] * 1e3, most * 1e3);
+        eprintln!("GPU time: {:.1} ms in all over {} runs (units a run: {batches:?}), median {:.3} ms, most {:.3} ms a run", all * 1e3, gpu.len(), gpu[gpu.len() / 2] * 1e3, most * 1e3);
     }
     eprintln!("the built-ins in units refused for them: {named:?}");
 }
