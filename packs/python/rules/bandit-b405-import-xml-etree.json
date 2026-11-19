@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "bandit-b405-import-xml-etree",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Avoid importing xml.etree.ElementTree or cElementTree; use defusedxml instead, since the standard parsers are open to XML attacks on untrusted input.",
   "scope": {
@@ -19,34 +19,53 @@
           "rule": {
             "any": [
               {
-                "pattern": "import xml.etree.cElementTree"
+                "kind": "import_statement",
+                "has": {
+                  "any": [
+                    {
+                      "kind": "dotted_name"
+                    },
+                    {
+                      "kind": "aliased_import"
+                    }
+                  ],
+                  "regex": "^(?:xml\\s*\\.\\s*etree\\s*\\.\\s*cElementTree|xml\\s*\\.\\s*etree\\s*\\.\\s*ElementTree)"
+                }
               },
               {
-                "pattern": "import xml.etree.cElementTree as $ALIAS"
+                "kind": "import_from_statement",
+                "has": {
+                  "field": "module_name",
+                  "regex": "^[.\\s]*(?:xml\\s*\\.\\s*etree\\s*\\.\\s*cElementTree|xml\\s*\\.\\s*etree\\s*\\.\\s*ElementTree)"
+                }
               },
               {
-                "pattern": "from xml.etree.cElementTree import $$$NAMES"
-              },
-              {
-                "pattern": "from xml.etree import cElementTree"
-              },
-              {
-                "pattern": "from xml.etree import cElementTree as $ALIAS"
-              },
-              {
-                "pattern": "import xml.etree.ElementTree"
-              },
-              {
-                "pattern": "import xml.etree.ElementTree as $ALIAS"
-              },
-              {
-                "pattern": "from xml.etree.ElementTree import $$$NAMES"
-              },
-              {
-                "pattern": "from xml.etree import ElementTree"
-              },
-              {
-                "pattern": "from xml.etree import ElementTree as $ALIAS"
+                "kind": "import_from_statement",
+                "all": [
+                  {
+                    "has": {
+                      "field": "module_name",
+                      "regex": "^[.\\s]*xml\\s*\\.\\s*etree$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "dotted_name"
+                        },
+                        {
+                          "kind": "aliased_import"
+                        }
+                      ],
+                      "regex": "^(?:cElementTree|ElementTree)",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^import$"
+                      }
+                    }
+                  }
+                ]
               }
             ]
           }

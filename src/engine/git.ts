@@ -1,9 +1,11 @@
 import type { ChildProcess } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
-import { stat } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
-import { endProcessTree, spawn, spawnSync } from "./child-process.js";
+import { promisify } from "node:util";
+import { MessageChannel, type MessagePort, receiveMessageOnPort, Worker } from "node:worker_threads";
+import { endProcessTree, execFile, spawn, spawnSync } from "./child-process.js";
 import { fileStamp } from "./file-stamp.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
@@ -188,8 +190,6 @@ export class GitUnavailableError extends Error {
   }
 }
 
-let probed: FoundGit | undefined;
-
 /** What {@link gitInstalled} asks of the machine; tests pass their own. */
 export interface GitProbe {
   exists(path: string): boolean;
@@ -225,6 +225,226 @@ const machine: GitProbe & GitPathProbe = {
   },
 };
 
+/** What {@link GitProbe} and {@link GitPathProbe} ask, asked off this process's thread: each answer is a promise. */
+export interface GitProbeLater {
+  exists(path: string): Promise<boolean>;
+  runnable(path: string): Promise<boolean>;
+  realpath(path: string): Promise<string>;
+  developerDir(): Promise<string | undefined>;
+}
+
+/** {@link machine}'s questions, each asked through Node's thread pool or another process, so none waits in this thread. */
+const machineLater: GitProbeLater = {
+  async exists(path) {
+    return await access(path).then(() => true, () => false);
+  },
+  async runnable(path) {
+    try {
+      if (!(await stat(path)).isFile()) return false;
+      await access(path, constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  async realpath(path) {
+    return await realpath(path).catch(() => path);
+  },
+  async developerDir() {
+    const selected = promisify(execFile)("/usr/bin/xcode-select", ["-p"], { encoding: "utf8", env: { PATH: "/usr/bin:/bin" } });
+    return await selected.then(({ stdout }) => stdout.trim(), () => undefined);
+  },
+};
+
+/** Thrown by a disk {@link askedInThread} gives at a question asked once its time ran out. */
+class OutOfTime extends Error {}
+
+/**
+ * The code of the thread a look that must answer within a time limit reads the disk in ({@link askedInThread}): each
+ * question asked as {@link machine} asks it, its answer posted back, then counted in `answered` and the waiting thread
+ * woken.
+ */
+const DISK_THREAD = String.raw`
+const { workerData } = require("node:worker_threads");
+const { accessSync, constants, existsSync, realpathSync, statSync } = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const { answered, port } = workerData;
+const questions = {
+  exists: path => existsSync(path),
+  runnable(path) {
+    try {
+      if (!statSync(path).isFile()) return false;
+      accessSync(path, constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  realpath(path) {
+    try {
+      return realpathSync.native(path);
+    } catch {
+      return path;
+    }
+  },
+  developerDir() {
+    // Hidden, as every child of Rerail's is (child-process.ts); only macOS asks it.
+    const selected = spawnSync("/usr/bin/xcode-select", ["-p"], { encoding: "utf8", env: { PATH: "/usr/bin:/bin" }, windowsHide: true });
+    return selected.status === 0 ? selected.stdout.trim() : undefined;
+  },
+};
+// Counted once posted, so the count never runs ahead of the answers the waiting thread can read.
+port.on("message", ({ question, path }) => {
+  port.postMessage(questions[question](path));
+  Atomics.add(answered, 0, 1);
+  Atomics.notify(answered, 0);
+});
+`;
+
+/** A thread that answers the disk questions of {@link GitProbe} and {@link GitPathProbe} ({@link DISK_THREAD}). */
+interface DiskThread {
+  /** The answer to `question` about `path`; throws {@link OutOfTime} once `deadline` (on `performance.now()`) passes. */
+  ask(question: "exists" | "runnable" | "realpath" | "developerDir", path: string, deadline: number): unknown;
+  close(): void;
+}
+
+/** A {@link DiskThread} started now, or undefined when this process cannot start one. */
+function diskThread(): DiskThread | undefined {
+  const answered = new Int32Array(new SharedArrayBuffer(4));
+  const { port1, port2 } = new MessageChannel();
+  let thread: Worker;
+  try {
+    thread = new Worker(DISK_THREAD, { eval: true, workerData: { answered, port: port2 }, transferList: [port2] });
+  } catch {
+    port1.close();
+    return undefined;
+  }
+  // A question on a folder that does not answer holds the thread past its use; it then keeps no process running.
+  thread.unref();
+  let asked = 0;
+  return {
+    ask(question, path, deadline) {
+      asked += 1;
+      port1.postMessage({ question, path });
+      return reply(port1, { answered, asked }, deadline);
+    },
+    close() {
+      port1.close();
+      thread.terminate().catch(() => undefined);
+    },
+  };
+}
+
+/** How many questions a {@link DiskThread} was asked, and the count of answers its thread posted (`answered[0]`). */
+interface Answers {
+  readonly answered: Int32Array;
+  readonly asked: number;
+}
+
+/**
+ * The answer to the last question asked on `port`, waited for in this thread until `deadline`, past which it throws
+ * {@link OutOfTime}. It is read once the thread's count of answers reaches the questions asked, and each wait is for
+ * that count to move from what was read: an answer counted before the wait began ends the wait at once, and no count
+ * of an earlier answer can wake it with nothing to read, so the waiting thread sleeps until its answer comes.
+ */
+function reply(port: MessagePort, { answered, asked }: Answers, deadline: number): unknown {
+  for (;;) {
+    const count = Atomics.load(answered, 0);
+    const received = count === asked ? receiveMessageOnPort(port) : undefined;
+    if (received !== undefined) return received.message;
+    const left = deadline - performance.now();
+    if (left <= 0) throw new OutOfTime();
+    Atomics.wait(answered, 0, count, left);
+  }
+}
+
+/**
+ * What `decide`, which asks the disk only through the probe it is given, answers when each question is asked in another
+ * thread and waited for in this one, all within `timeoutMs`; undefined past it, or when no thread can be started. So a
+ * call that blocks this thread can look for Git: a folder that does not answer (a share off the network: Windows waits
+ * about 21 s for its server) holds it to its own time limit, as a Git start that waits on that folder is held.
+ */
+export function askedInThread<T>(timeoutMs: number, decide: (disk: GitProbe & GitPathProbe) => T): T | undefined {
+  const deadline = performance.now() + timeoutMs;
+  const thread = diskThread();
+  if (thread === undefined) return undefined;
+  try {
+    return decide(threadDisk(thread, deadline));
+  } catch (error) {
+    if (error instanceof OutOfTime) return undefined;
+    throw error;
+  } finally {
+    thread.close();
+  }
+}
+
+/** {@link machine}'s questions, each asked of `thread` and answered by the time `deadline` passes. */
+function threadDisk(thread: DiskThread, deadline: number): GitProbe & GitPathProbe {
+  return {
+    exists: path => thread.ask("exists", path, deadline) === true,
+    runnable: path => thread.ask("runnable", path, deadline) === true,
+    realpath(path) {
+      const real = thread.ask("realpath", path, deadline);
+      return typeof real === "string" ? real : path;
+    },
+    developerDir() {
+      const folder = thread.ask("developerDir", "", deadline);
+      return typeof folder === "string" ? folder : undefined;
+    },
+  };
+}
+
+/** Thrown by a {@link replayedProbe} at a question it has no answer for yet; `answer` asks it off the thread. */
+class Unanswered extends Error {
+  readonly answer: () => Promise<void>;
+
+  constructor(answer: () => Promise<void>) {
+    super("a look for Git asked the disk a question not answered yet");
+    this.answer = answer;
+  }
+}
+
+/**
+ * A probe that answers each question from the answers `later` gave it, and throws {@link Unanswered} at a question it
+ * has none for, carrying how to ask it.
+ */
+function replayedProbe(later: GitProbeLater): GitProbe & GitPathProbe {
+  const answered = <T>(ask: (key: string) => Promise<T>): ((key: string) => T) => {
+    const answers = new Map<string, { readonly value: T }>();
+    return key => {
+      const known = answers.get(key);
+      if (known !== undefined) return known.value;
+      throw new Unanswered(async () => {
+        answers.set(key, { value: await ask(key) });
+      });
+    };
+  };
+  const developerDir = answered(async () => await later.developerDir());
+  return {
+    exists: answered(async path => await later.exists(path)),
+    runnable: answered(async path => await later.runnable(path)),
+    realpath: answered(async path => await later.realpath(path)),
+    developerDir: () => developerDir(""),
+  };
+}
+
+/**
+ * What `decide`, which asks the disk only through the probe it is given, answers when every question it asks is asked
+ * off this thread: `probe` is a {@link replayedProbe}. It runs with the answers so far; at a question it has none for,
+ * that question is asked, and it runs again from the start. So it asks each question once, in its own order: a folder it
+ * never reaches is never asked about, and one that does not answer (a share off the network: Windows waits about 21 s
+ * for its server) delays this answer, never the thread.
+ */
+async function answeredLater<T>(decide: (probe: GitProbe & GitPathProbe) => T, probe: GitProbe & GitPathProbe): Promise<T> {
+  try {
+    return decide(probe);
+  } catch (error) {
+    if (!(error instanceof Unanswered)) throw error;
+    await error.answer();
+    return await answeredLater(decide, probe);
+  }
+}
+
 /**
  * Whether `path` is a Git that runs: a regular file this process may execute, so a folder named `git` or a `git`
  * without its execute bit is passed over, as a shell passes over them. On macOS `/usr/bin/git` is always there, a stub
@@ -239,21 +459,27 @@ export function gitInstalled(path: string, platform: NodeJS.Platform = process.p
   return developerDir !== undefined && probe.exists(posix.join(developerDir, "usr", "bin", "git"));
 }
 
-/** The folders Git for Windows keeps its own git.exe in: x64, ARM64 and 32-bit builds. */
-const GIT_FOR_WINDOWS_BUILDS = ["mingw64", "clangarm64", "mingw32"];
+/**
+ * The build folders Git for Windows keeps its own git.exe in, in the order they are tried: `mingw64` (x64),
+ * `clangarm64` (ARM64), `mingw32` (32-bit) and `ucrt64` (the x64 build of Git for Windows 2.56, whose install has no
+ * `mingw64`). `ucrt64` comes last, so an install that also holds one of the other folders keeps running that folder's
+ * git.exe.
+ */
+const GIT_FOR_WINDOWS_BUILDS = ["mingw64", "clangarm64", "mingw32", "ucrt64"];
 
 /**
  * The Git program behind Git for Windows' launcher at `path`, or `path` itself. `<Git>\cmd\git.exe` and
- * `<Git>\bin\git.exe` set up the environment and run `<Git>\mingw64\bin\git.exe` (`clangarm64` on ARM64, `mingw32` on
- * 32-bit) as their own child. A timeout kills only the process Rerail started, and on Windows killing a process leaves
- * its children running, so the real Git ran on in the repository after Rerail gave up on it. The real one runs the
- * commands Rerail gives it without the launcher: it finds its own DLLs, helpers and system configuration from its folder.
+ * `<Git>\bin\git.exe` set up the environment and run the build's own `<Git>\<build>\bin\git.exe` (a folder of
+ * {@link GIT_FOR_WINDOWS_BUILDS}) as their own child. A timeout kills only the process Rerail started, and on Windows
+ * killing a process leaves its children running, so the real Git ran on in the repository after Rerail gave up on it.
+ * The real one runs the commands Rerail gives it without the launcher: it finds its own DLLs, helpers and system
+ * configuration from its folder.
  *
  * A launcher is only a `git.exe` in a `cmd` or `bin` folder, which anyone can put on PATH beside a git.exe of their own,
  * so Rerail goes behind it only into a Git for Windows install: `<Git>\cmd\git.exe` runs, and `<Git>\etc\gitconfig` or
  * the build's `share\git` is there. The git.exe it then runs must pass what every PATH entry passes (`trustedFolder`):
  * outside `node_modules`, and outside the repository Rerail runs in by its path and its real path, which a junction
- * from `<Git>\mingw64` into the repository would reach.
+ * from `<Git>\<build>` into the repository would reach.
  */
 export function gitBehindLauncher(path: string, search: GitSearch = currentSearch(), probe: GitProbe & GitPathProbe = machine): string {
   return behindLauncher(path, gitTrust(search, probe), probe);
@@ -266,9 +492,133 @@ function behindLauncher(path: string, trust: GitTrust, probe: GitProbe): string 
   const root = win32.dirname(folder);
   if (!probe.runnable(win32.join(root, "cmd", "git.exe"))) return path;
   const real = GIT_FOR_WINDOWS_BUILDS.find(build => probe.runnable(win32.join(root, build, "bin", "git.exe"))
-    && (probe.exists(win32.join(root, "etc", "gitconfig")) || probe.exists(win32.join(root, build, "share", "git")))
+    && gitForWindowsFiles(root, build, probe)
     && trustedFolder(win32.join(root, build, "bin"), trust));
   return real === undefined ? path : win32.join(root, real, "bin", "git.exe");
+}
+
+/** Whether `root` holds what a Git for Windows install of `build` holds beside its git.exe: `etc\gitconfig` or `<build>\share\git`. */
+function gitForWindowsFiles(root: string, build: string, probe: GitProbe): boolean {
+  return probe.exists(win32.join(root, "etc", "gitconfig")) || probe.exists(win32.join(root, build, "share", "git"));
+}
+
+/** A Git for Windows install and the build folder ({@link GIT_FOR_WINDOWS_BUILDS}) whose own git.exe Rerail starts. */
+interface GitForWindowsBuild {
+  readonly root: string;
+  readonly build: string;
+}
+
+/**
+ * The install and build of `path` when it is a Git for Windows build's own git.exe, `<Git>\<build>\bin\git.exe`, in an
+ * install whose launcher `<Git>\cmd\git.exe` runs ({@link behindLauncher}'s checks); else undefined.
+ */
+function gitForWindowsBuild(path: string, probe: GitProbe): GitForWindowsBuild | undefined {
+  const bin = win32.dirname(path);
+  const root = win32.dirname(win32.dirname(bin));
+  const build = win32.basename(win32.dirname(bin)).toLowerCase();
+  if (win32.basename(path).toLowerCase() !== "git.exe" || win32.basename(bin).toLowerCase() !== "bin" || !GIT_FOR_WINDOWS_BUILDS.includes(build)) return undefined;
+  return probe.runnable(win32.join(root, "cmd", "git.exe")) && gitForWindowsFiles(root, build, probe) ? { root, build } : undefined;
+}
+
+/**
+ * The environment a start of the Git at `path` gets from `env`: as it is, unless `path` is a Git for Windows build's own
+ * git.exe ({@link gitForWindowsBuild}). Rerail starts that one without the launcher that would start it
+ * ({@link gitBehindLauncher}), so it gets what the launcher gives it, `git-wrapper.c`'s `setup_environment`:
+ * `PLINK_PROTOCOL` set to `ssh` when unset, `MSYSTEM` named for the build whatever it was, and `PATH` led by the build's
+ * `bin`, the install's `usr\bin` and the home's `bin` ({@link launcherHomes}, by `shareExists`), in that order and spelled
+ * as the launcher spells them. `HOME`, which the launcher sets when unset, git.exe sets itself by the same rule when
+ * started without it (`compat/mingw.c`), so Rerail leaves it to git.exe. Git looks on that `PATH` for every program it runs: `sh.exe` for
+ * a command it runs through its shell (a filter, a textconv, an alias, a credential helper), then the programs that
+ * command names. Started without it, git.exe with `MSYSTEM` set and no `sh.exe` on `PATH` crashes there, and with
+ * `MSYSTEM` unset puts the home's `bin` before its own folders, so a program of the person's of the same name runs in
+ * place of Git's.
+ *
+ * Where the launcher would put a folder on `PATH` that Windows finds from the folder Git runs in, the repository, Rerail
+ * puts none: the home's `bin` goes first only for a fully qualified home (`C:\Users\me`, `\\server\share\me`), never
+ * an empty, relative or drive-relative one, and an empty or unset `PATH` adds no empty entry after Git's folders.
+ */
+export function gitStartEnvironment(path: string, env: NodeJS.ProcessEnv = process.env, probe: GitProbe = machine, shareExists?: boolean): NodeJS.ProcessEnv {
+  const install = gitForWindowsBuild(path, probe);
+  return install === undefined ? env : launcherEnvironment(install, env, shareExists);
+}
+
+/**
+ * {@link gitStartEnvironment}'s environment for `install`, from `env` and what is known of the home share
+ * (`shareExists`) alone: it reads no file, so a start waits on none.
+ */
+function launcherEnvironment({ root, build }: GitForWindowsBuild, env: NodeJS.ProcessEnv, shareExists: boolean | undefined): NodeJS.ProcessEnv {
+  const first = [win32.join(root, build), win32.join(root, "usr"), ...launcherHomes(env, shareExists)].map(folder => win32.join(folder, "bin"));
+  return withVariables(withoutEmpty(env, "HOME"), {
+    MSYSTEM: build.toUpperCase(),
+    PLINK_PROTOCOL: variable(env, "PLINK_PROTOCOL") ?? "ssh",
+    PATH: [...first, ...listed(setVariable(env, "PATH"))].join(";"),
+  });
+}
+
+/**
+ * The homes whose `bin` goes on `PATH` after Git's folders, where the launcher puts its `HOME`'s: `HOME` when set, else
+ * the launcher's choice ({@link unsetHomes}), each once whatever its case. An empty `HOME`, `HOMEPATH` or `USERPROFILE`
+ * counts as unset, as {@link gitHome} reads them, and only a fully qualified home is kept.
+ */
+function launcherHomes(env: NodeJS.ProcessEnv, shareExists: boolean | undefined): string[] {
+  const home = setVariable(env, "HOME");
+  const homes = (home === undefined ? unsetHomes(env, shareExists) : [home]).filter(fullyQualified);
+  return homes.filter((folder, index) => homes.findIndex(other => other.toLowerCase() === folder.toLowerCase()) === index);
+}
+
+/**
+ * With `HOME` unset, the launcher takes the folder `HOMEDRIVE` and `HOMEPATH` name ({@link homeShare}) when it exists,
+ * else `USERPROFILE`, and git.exe started without `HOME` takes the same in its own process. Only a look at the folder
+ * tells which, and on a home share that does not answer (a domain account's home folder on a laptop off the network)
+ * Windows waits about 21 s for the server: a look in Rerail's thread stopped every call the daemon serves for that
+ * long. So a start in the daemon takes the answer of the last look off the thread (`shareExists`,
+ * {@link ProcessGit.livesOn}): the share, or the profile. In any other process, and in the daemon before the
+ * first answer, both, the share's first, so the launcher's is among them.
+ */
+function unsetHomes(env: NodeJS.ProcessEnv, shareExists: boolean | undefined): string[] {
+  const share = homeShare(env);
+  const profile = listed(setVariable(env, "USERPROFILE"));
+  if (share === undefined || shareExists === false) return profile;
+  return shareExists === true ? [share] : [share, ...profile];
+}
+
+/** The folder `HOMEDRIVE` and `HOMEPATH` name when `HOME` is unset and `HOMEPATH` set: the launcher's first choice of home. */
+function homeShare(env: NodeJS.ProcessEnv): string | undefined {
+  const homePath = setVariable(env, "HOMEPATH");
+  if (setVariable(env, "HOME") !== undefined || homePath === undefined) return undefined;
+  return `${variable(env, "HOMEDRIVE") ?? ""}${homePath}`;
+}
+
+/** Whether `folder` is a fully qualified Windows path: a drive's root or a share, and what is under it. */
+function fullyQualified(folder: string): boolean {
+  return /^(?:[A-Za-z]:[\\/]|\\\\)/.test(folder);
+}
+
+/** `env` without `name` when it is set to "": git.exe then sets it as when unset, as {@link gitHome} reads an empty `HOME`. */
+function withoutEmpty(env: NodeJS.ProcessEnv, name: string): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([key, value]) => value !== "" || key.toUpperCase() !== name));
+}
+
+/** `[value]`, or `[]` when it is undefined. */
+function listed(value: string | undefined): string[] {
+  return value === undefined ? [] : [value];
+}
+
+/** The value of `name` in `env`, whatever case `env` spells it in, as Windows reads it. */
+function variable(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  return Object.entries(env).find(([key]) => key.toUpperCase() === name)?.[1];
+}
+
+/** {@link variable}, undefined when it is empty. */
+function setVariable(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const value = variable(env, name);
+  return value === "" ? undefined : value;
+}
+
+/** `env` with each of `values` set, under the spelling `env` already has for it (Windows keeps `Path` as `Path`). */
+function withVariables(env: NodeJS.ProcessEnv, values: Record<string, string>): NodeJS.ProcessEnv {
+  const spelled = new Map(Object.keys(env).map(key => [key.toUpperCase(), key]));
+  return { ...env, ...Object.fromEntries(Object.entries(values).map(([name, value]) => [spelled.get(name) ?? name, value])) };
 }
 
 /** The Git a search found, undefined when none runs, and every place it looked, in order. */
@@ -283,7 +633,29 @@ export interface FoundGit {
  * are never resolved: the status line, a process of its own every few seconds, pays for the entries up to its Git only.
  */
 export function findGit(search: GitSearch = currentSearch(), probe: GitProbe & GitPathProbe = machine): FoundGit {
+  return gitLook(search, probe)();
+}
+
+/**
+ * A look for Git ({@link findGit}) by inputs read once ({@link gitLook}); each call looks again, reading the disk
+ * through `probe`, by default the one its inputs were read through.
+ */
+export type GitLook = (probe?: GitProbe & GitPathProbe) => FoundGit;
+
+/**
+ * {@link findGit} with its inputs read once, now: `search` (the folder, `PATH` and the account's home) and the
+ * repository above that folder ({@link gitTrust}). Each call of the look it returns decides by those inputs and reads
+ * only each candidate on disk: whether it is a Git that runs, and the real path of its folder. So `PATH` and the
+ * repository its entries are checked against stay those of the first look, whatever has happened since to that
+ * repository's `.git`, the process's folder or its `PATH`.
+ */
+export function gitLook(search: GitSearch = currentSearch(), probe: GitProbe & GitPathProbe = machine): GitLook {
   const trust = gitTrust(search, probe);
+  return (disk = probe) => firstInstalled(search, { ...trust, probe: disk }, disk);
+}
+
+/** The first candidate ({@link candidateOrder}) that {@link gitInstalled} takes, behind its launcher on Windows. */
+function firstInstalled(search: GitSearch, trust: GitTrust, probe: GitProbe & GitPathProbe): FoundGit {
   const looked: string[] = [];
   for (const candidate of candidateOrder(search, trust)) {
     looked.push(candidate);
@@ -294,17 +666,279 @@ export function findGit(search: GitSearch = currentSearch(), probe: GitProbe & G
   return { path: undefined, looked };
 }
 
-/** The system Git ({@link findGit}), probed once per process; throws {@link GitUnavailableError} when none is installed. */
+/**
+ * The look a process keeps ({@link gitLook}), the Git it found last, and that Git's Git for Windows build when it is
+ * one ({@link gitForWindowsBuild}), read by the same look.
+ */
+interface KeptGit {
+  readonly look: GitLook;
+  readonly found: FoundGit;
+  readonly build: GitForWindowsBuild | undefined;
+}
+
+/** What `look` finds when it reads the disk through `disk`, with the Git for Windows build of that Git, read there too. */
+function keptBy(look: GitLook, disk: GitProbe & GitPathProbe): KeptGit {
+  const found = look(disk);
+  return { look, found, build: found.path === undefined ? undefined : gitForWindowsBuild(found.path, disk) };
+}
+
+/**
+ * How a {@link ProcessGit} reads the disk: `now` in its thread, for the first look, which a process makes before its
+ * first Git call; `later` off its thread, for each look after a Git it kept is gone; `within`, in another thread with
+ * each answer waited for in this one ({@link askedInThread}), for such a look made by a call that blocks; and `folder`,
+ * off its thread, for whether the home share exists, in a process that follows it ({@link ProcessGit.livesOn}).
+ */
+export interface GitDisks {
+  readonly now: GitProbe & GitPathProbe;
+  readonly later: GitProbeLater;
+  within<T>(timeoutMs: number, decide: (disk: GitProbe & GitPathProbe) => T): T | undefined;
+  folder(path: string): Promise<boolean>;
+}
+
+/** This machine's disk, read as {@link GitDisks} says. */
+const machineDisks: GitDisks = {
+  now: machine,
+  later: machineLater,
+  within: askedInThread,
+  async folder(path) {
+    return await stat(path).then(found => found.isDirectory(), () => false);
+  },
+};
+
+/**
+ * Whether the folder `HOMEDRIVE` and `HOMEPATH` name exists, which the launcher asks before each start
+ * ({@link unsetHomes}): the answer of the last look, which each start asks again off this thread, one look at a time.
+ */
+class HomeShare {
+  readonly #folder: (path: string) => Promise<boolean>;
+  #answer: { readonly share: string; readonly exists: boolean } | undefined;
+  #asking = false;
+
+  constructor(folder: (path: string) => Promise<boolean>) {
+    this.#folder = folder;
+  }
+
+  /** For a start in `env`: the last answer for its share, undefined before the first; and has the share looked at again. */
+  exists(env: NodeJS.ProcessEnv): boolean | undefined {
+    const share = homeShare(env);
+    // A share that is not fully qualified puts no folder on PATH (launcherHomes), so no answer is needed for it.
+    if (share === undefined || !fullyQualified(share)) return undefined;
+    const answer = this.#answer;
+    this.#ask(share).catch(() => undefined);
+    return answer?.share.toLowerCase() === share.toLowerCase() ? answer.exists : undefined;
+  }
+
+  async #ask(share: string): Promise<void> {
+    if (this.#asking) return;
+    this.#asking = true;
+    try {
+      this.#answer = { share, exists: await this.#folder(share) };
+    } finally {
+      this.#asking = false;
+    }
+  }
+}
+
+/**
+ * The Git a process runs: looked for at the first ask and kept, and looked for again only when starting it found no
+ * program at its path ({@link afterMissing}), by the first look's own inputs. A daemon outlives an upgrade of Git, and
+ * Git for Windows 2.56 removed the `mingw64\bin\git.exe` that a daemon started on 2.55 runs (it moved to `ucrt64\bin`):
+ * every Git call it made then failed until it restarted.
+ */
+export class ProcessGit {
+  readonly #decide: () => GitLook;
+  readonly #disks: GitDisks;
+  #kept: KeptGit | undefined;
+  /** The Git for Windows build of every Git kept so far, by its path, as the look that found it read it. */
+  readonly #builds = new Map<string, GitForWindowsBuild | undefined>();
+  /** The look after the Git kept was found gone, while it runs: every start that failed on that Git waits for it. */
+  #looking: Promise<string | undefined> | undefined;
+  /** The home share's last answer, once {@link livesOn} has the process follow it. */
+  #share: HomeShare | undefined;
+  /** Whether this process lives on past each call ({@link livesOn}), so a look for Git may outlast the call. */
+  #livesOn = false;
+
+  /** `decide` makes the look at the first ask, after the daemon has named its repository (`searchGitFrom`). */
+  constructor(decide: () => GitLook, disks: GitDisks = machineDisks) {
+    this.#decide = decide;
+    this.#disks = disks;
+  }
+
+  /**
+   * Has this process work as one that lives on past each call, the daemon, from now on: each start puts the launcher's
+   * home's bin on `PATH` by the home share's last answer, asked again off this thread at each start ({@link HomeShare}),
+   * and a start that finds no program at the Git kept looks for Git again ({@link afterMissing}, {@link replacedNow}).
+   * Only the daemon calls this. Each leaves a question to the disk pending past the call that asked it: on a folder that
+   * does not answer (a share off the network: Windows waits about 21 s for its server) a process cannot end until that
+   * question returns, so a hook or a command, which ends after its answer, would live that long. Without it a start
+   * puts both homes' bin on `PATH`, the share's first ({@link unsetHomes}), and asks the disk nothing; and a start that
+   * finds no program at the Git kept fails as the start did, with no look, so the next process looks afresh at its
+   * first ask.
+   */
+  livesOn(): void {
+    this.#share ??= new HomeShare(path => this.#disks.folder(path));
+    this.#livesOn = true;
+  }
+
+  /** The Git's path; throws {@link GitUnavailableError} when none is installed. */
+  path(): string {
+    this.#kept ??= this.#keep(keptBy(this.#decide(), this.#disks.now));
+    const { found } = this.#kept;
+    if (found.path === undefined) throw new GitUnavailableError(found.looked);
+    return found.path;
+  }
+
+  /**
+   * The environment a start of `executable`, a Git this process kept, gets from `env`: as {@link gitStartEnvironment}
+   * gives it, by what the look that found that Git read and, in a process that follows it ({@link livesOn}),
+   * the last answer about the home share. It reads no file, so no start waits on a folder.
+   */
+  startEnvironment(executable: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+    const install = this.#builds.get(executable);
+    return install === undefined ? env : launcherEnvironment(install, env, this.#share?.exists(env));
+  }
+
+  /**
+   * The Git to start once more after a start of `failed`, the Git kept, found no program there (`ENOENT`): Git looked
+   * for again by the look the first ask made, with the folder, `PATH` and repository it read then ({@link gitLook}),
+   * and kept from then on. The look reads the disk off this thread, so a folder that does not answer delays the starts
+   * waiting for it and no other work. A start that failed on a Git another start has already replaced gets that one
+   * without a look, and every start that failed on the Git kept waits for the same look. Undefined when the look finds
+   * no Git, or `failed` again: that start's failure stands and the Git kept stays, so the next start that fails looks
+   * again, and no call starts the same missing program twice. With `limits`, the start waits for the look no longer
+   * than its time limit and only until its signal is aborted: past either it gets undefined, while the look goes on and
+   * keeps what it finds for the starts after it. Undefined with no look in a process that does not live on
+   * ({@link livesOn}).
+   */
+  async afterMissing(failed: string, limits?: ReadLimits): Promise<string | undefined> {
+    const kept = this.#kept;
+    if (kept === undefined || kept.found.path !== failed) return kept?.found.path;
+    if (!this.#livesOn) return undefined;
+    this.#looking ??= this.#lookAgain(kept);
+    return await (limits === undefined ? this.#looking : withinLimits(this.#looking, limits));
+  }
+
+  /**
+   * For a start that blocks this thread ({@link runGit}): the Git kept when another start has already replaced `failed`;
+   * else the Git a look finds and keeps, a look that reads the disk in another thread and is waited for here no longer
+   * than `timeoutMs`, the call's own time limit ({@link GitDisks}). Undefined when that look finds no Git or `failed`
+   * again, or runs out of time; then Git is looked for again off this thread ({@link afterMissing}) for the calls that
+   * follow, and this one fails as its start did. Undefined with no look in a process that does not live on
+   * ({@link livesOn}).
+   */
+  replacedNow(failed: string, timeoutMs: number): string | undefined {
+    const kept = this.#kept;
+    if (kept === undefined || kept.found.path !== failed) return kept?.found.path;
+    if (!this.#livesOn) return undefined;
+    const again = this.#disks.within(timeoutMs, disk => keptBy(kept.look, disk));
+    // A look that fails leaves the Git kept, so the next start that fails looks again.
+    if (again === undefined) this.#lookLater(failed);
+    return again === undefined ? undefined : this.#replace(kept, again);
+  }
+
+  /** The look {@link afterMissing} makes, for the calls after this one; a failure of it is written to stderr. */
+  #lookLater(failed: string): void {
+    this.afterMissing(failed).catch((error: unknown) => {
+      process.stderr.write(`rerail: looking for Git again after ${failed} was found gone failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    });
+  }
+
+  async #lookAgain(kept: KeptGit): Promise<string | undefined> {
+    try {
+      return this.#replace(kept, await answeredLater(disk => keptBy(kept.look, disk), replayedProbe(this.#disks.later)));
+    } finally {
+      this.#looking = undefined;
+    }
+  }
+
+  /** The Git `again` found, kept from now on, when it is not `kept`'s; else undefined, and the Git kept stays. */
+  #replace(kept: KeptGit, again: KeptGit): string | undefined {
+    if (again.found.path === undefined || again.found.path === kept.found.path) return undefined;
+    this.#kept = this.#keep(again);
+    return again.found.path;
+  }
+
+  #keep(kept: KeptGit): KeptGit {
+    if (kept.found.path !== undefined) this.#builds.set(kept.found.path, kept.build);
+    return kept;
+  }
+}
+
+/** The Git this process runs, looked for by {@link gitLook} from this process's folder and `PATH` at its first ask. */
+const processGit = new ProcessGit(() => gitLook());
+
+/**
+ * The system Git ({@link findGit}), kept for the process and looked for again only once it is gone ({@link ProcessGit});
+ * throws {@link GitUnavailableError} when none is installed.
+ */
 export function gitExecutable(): string {
-  probed ??= findGit();
-  if (probed.path === undefined) throw new GitUnavailableError(probed.looked);
-  return probed.path;
+  return processGit.path();
+}
+
+/**
+ * Has this process's Git work as one that lives on past each call ({@link ProcessGit.livesOn}): each start following
+ * the home share's last answer, and Git looked for again once the Git kept is gone. Only a process that lives on calls
+ * it: the daemon ({@link prepareDaemonGit}), and tests that look for Git again.
+ */
+export function gitLivesOn(): void {
+  processGit.livesOn();
+}
+
+/**
+ * Has this process's Git run as the daemon's, which serves the checkout in `folder` and lives on: looked for from that
+ * folder ({@link searchGitFrom}), and working as a process that lives on does ({@link gitLivesOn}). The daemon calls it
+ * as it starts, before anything runs Git.
+ */
+export function prepareDaemonGit(folder: string): void {
+  searchGitFrom(folder);
+  gitLivesOn();
+}
+
+/** Whether a Git start failed because no program was at the path it named: Node's `ENOENT` from the start itself. */
+function programMissing(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+/**
+ * The Git to start once more after a start of `executable`, the Git kept, found no program there (`missing`): the Git
+ * found again ({@link ProcessGit.afterMissing}), waited for within the call's time limit and until its signal is aborted
+ * (`limits`). Undefined when that start found a program, past either limit, or once the signal is aborted: a stopped
+ * call starts no other Git and looks for none, and its first answer stands, as when it is aborted during the look.
+ */
+async function gitAgain(executable: string, missing: boolean, limits: ReadLimits): Promise<string | undefined> {
+  if (!missing || stopped(limits.signal)) return undefined;
+  const again = await processGit.afterMissing(executable, limits);
+  return stopped(limits.signal) ? undefined : again;
+}
+
+/**
+ * `look`'s answer, or undefined once `timeoutMs` has passed or `signal` is aborted, should that come first; the look
+ * goes on either way.
+ */
+async function withinLimits<T>(look: Promise<T>, { timeoutMs, signal }: ReadLimits): Promise<T | undefined> {
+  const { promise: ended, resolve: end } = Promise.withResolvers<undefined>();
+  const stop = (): void => end(undefined);
+  const timer = setTimeout(stop, timeoutMs);
+  signal?.addEventListener("abort", stop, { once: true });
+  // The look can stop the call as it starts, before this listens: a read's owner stops it while the disk is asked.
+  if (signal?.aborted === true) stop();
+  try {
+    return await Promise.race([look, ended]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", stop);
+  }
+}
+
+/** Whether `signal` is aborted, read anew at each call: the look {@link gitAgain} waits for can outlast it. */
+function stopped(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
 }
 
 /**
  * Git Bash's `bash.exe` in the Git for Windows install Rerail runs Git from ({@link gitExecutable}), or undefined
  * without Git or a Git Bash beside it. `<Git>\bin\bash.exe` sits a folder or two above its git.exe: `cmd\`, `bin\` or
- * `mingw64\bin\`.
+ * `<build>\bin\` ({@link GIT_FOR_WINDOWS_BUILDS}).
  */
 export function gitBash(exists: (path: string) => boolean = existsSync): string | undefined {
   let folder: string;
@@ -339,28 +973,56 @@ const SAFE_CONFIG: readonly string[] = ["-c", "core.fsmonitor=false", "-c", `cor
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
- * The environment of every Git process Rerail starts: no optional locks, and no lazy fetch of a partial clone's missing
- * objects. Git honours `GIT_NO_LAZY_FETCH` from 2.45.0 and in the 2024-04-19 security releases 2.39.4, 2.40.2, 2.41.1,
- * 2.42.2, 2.43.4 and 2.44.1; an older Git ignores it and may fetch from the remote.
+ * The environment of every Git process Rerail starts, a start of the Git at `executable`: this process's, as Git for
+ * Windows' launcher would hand it to that Git ({@link gitStartEnvironment}), with no optional locks, and no lazy fetch
+ * of a partial clone's missing objects. Git honours `GIT_NO_LAZY_FETCH` from 2.45.0 and in the 2024-04-19 security
+ * releases 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4 and 2.44.1; an older Git ignores it and may fetch from the remote.
  */
-function gitEnvironment(): NodeJS.ProcessEnv {
-  return { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
+function gitEnvironment(executable: string): NodeJS.ProcessEnv {
+  return { ...processGit.startEnvironment(executable, process.env), GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
+}
+
+/**
+ * What is left of a time limit of `limitMs` that starts now, in whole milliseconds, as each call asks: 0 once it has
+ * passed. A call that starts Git once more ({@link ProcessGit.afterMissing}) gives its look and that start only what
+ * is left of its own limit, so the call ends within it.
+ */
+function timeLeft(limitMs: number): () => number {
+  const deadline = performance.now() + limitMs;
+  return () => Math.max(0, Math.floor(deadline - performance.now()));
 }
 
 /**
  * `git -C <cwd> <args>` with fsmonitor and hooks disabled, in {@link gitEnvironment} (no optional locks, no lazy fetch
  * of a partial clone's missing objects), and a 10 s default timeout; throws {@link GitUnavailableError} when Git is
- * missing, never on a non-zero exit.
+ * missing, never on a non-zero exit. When the Git kept for the process is gone, it runs once more with the Git found
+ * again ({@link ProcessGit.replacedNow}): the look and that second start get what is left of the call's time limit
+ * ({@link timeLeft}), since the call blocks the thread and a look may wait on a folder far longer; with none left, the
+ * call fails as its start did.
  */
 export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
-  const result = spawnSync(gitExecutable(), [...SAFE_CONFIG, "-C", cwd, ...args], {
+  const command = [...SAFE_CONFIG, "-C", cwd, ...args];
+  const left = timeLeft(options.timeout ?? DEFAULT_TIMEOUT_MS);
+  const executable = gitExecutable();
+  const result = runGitWith(executable, command, options);
+  const again = programMissing(result.error) ? processGit.replacedNow(executable, left()) : undefined;
+  const rest = left();
+  return again === undefined || rest === 0 ? result : runGitWith(again, command, { ...options, timeout: rest });
+}
+
+/** One blocking start of the Git at `executable` with `args`, as {@link runGit} makes it. */
+function runGitWith(executable: string, args: readonly string[], options: RunGitOptions): GitResult {
+  const result = spawnSync(executable, args, {
     encoding: "utf8",
     timeout: DEFAULT_TIMEOUT_MS,
     ...options,
-    env: gitEnvironment(),
+    env: gitEnvironment(executable),
   });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
+
+/** What {@link runGitAsync} takes: {@link RunGitOptions}, {@link GitReadOptions}, and the text written to Git's stdin. */
+type RunGitAsyncOptions = RunGitOptions & GitReadOptions & { input?: string };
 
 /**
  * {@link runGit} without blocking: the same safe configuration, environment and timeout, and `input` written to Git's
@@ -368,18 +1030,26 @@ export function runGit(cwd: string, args: readonly string[], options: RunGitOpti
  * start, timed out, was stopped by `signal` or overflowed `maxBuffer` (1 MiB by default, for stdout and stderr each)
  * answers a null status with its error. The timeout and `signal` end Git as they end a batch read
  * ({@link settleWhenDone}), with every process it started, and the answer comes once that Git has exited
- * ({@link GitReadOptions}); once `signal` is aborted it starts no Git.
+ * ({@link GitReadOptions}); once `signal` is aborted it starts no Git. When the Git kept for the process is gone, it
+ * runs once more with the Git found again, looked for off this thread while this call waits, all within its one time
+ * limit and unless `signal` is aborted by then ({@link startedWithin}).
  */
-export async function runGitAsync(
-  cwd: string,
-  args: readonly string[],
-  options: RunGitOptions & GitReadOptions & { input?: string } = {},
-): Promise<GitResult> {
-  const executable = gitExecutable();
+export async function runGitAsync(cwd: string, args: readonly string[], options: RunGitAsyncOptions = {}): Promise<GitResult> {
+  const command = [...SAFE_CONFIG, "-C", cwd, ...args];
+  const limits = { timeoutMs: options.timeout ?? DEFAULT_TIMEOUT_MS, signal: options.signal };
+  return await startedWithin(gitExecutable(), limits, async (executable, timeout) => {
+    const result = await runGitAsyncWith(executable, command, { ...options, timeout });
+    return { answer: result, missing: programMissing(result.error) };
+  });
+}
+
+/** One start of the Git at `executable` with `args`, as {@link runGitAsync} makes it. */
+async function runGitAsyncWith(executable: string, args: readonly string[], options: RunGitAsyncOptions): Promise<GitResult> {
   const { maxBuffer = 1024 * 1024, timeout = DEFAULT_TIMEOUT_MS, signal } = options;
   if (signal?.aborted === true) return { status: null, stdout: "", stderr: "", error: new Error("Git was not started: the read was stopped") };
   const { promise, resolve: settle } = Promise.withResolvers<GitResult>();
-  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], { env: gitEnvironment(), stdio: ["pipe", "pipe", "pipe"] });
+  const child = startGit(() => spawn(executable, args, { env: gitEnvironment(executable), stdio: ["pipe", "pipe", "pipe"] }));
+  if (child instanceof Error) return { status: null, stdout: "", stderr: "", error: child };
   const printed = { stdout: [] as string[], stderr: [] as string[] };
   let failure: Error | undefined;
   for (const stream of ["stdout", "stderr"] as const) {
@@ -471,6 +1141,70 @@ function readerGit(signal: AbortSignal | undefined): string | undefined {
   }
 }
 
+/** What one start of Git answered, and whether it found no program at the path it named ({@link programMissing}). */
+interface GitStart<T> {
+  readonly answer: T;
+  readonly missing: boolean;
+}
+
+/**
+ * `read` run with the Git to read with ({@link readerGit}), and once more with the Git found again when that start found
+ * no program at its path ({@link startedWithin}), within the read's one time limit and unless its signal was aborted by
+ * then (`limits`): a stopped read starts no other Git. Undefined without Git, or once the signal is aborted before the
+ * first start.
+ */
+async function readWithGit<T>(limits: ReadLimits, read: (executable: string, limits: ReadLimits) => Promise<GitStart<T>>): Promise<T | undefined> {
+  const executable = readerGit(limits.signal);
+  if (executable === undefined) return undefined;
+  return await startedWithin(executable, limits, async (git, timeoutMs) => await read(git, { ...limits, timeoutMs }));
+}
+
+/**
+ * `start` with the Git at `executable` and the call's time limit, and once more with the Git found again when that
+ * start found no program at its path ({@link gitAgain}), all within that one limit: the look and the second start get
+ * what is left of it ({@link timeLeft}), and with none left the first answer stands. So a call that starts Git twice
+ * ends within its own time limit, as one that starts it once does.
+ */
+async function startedWithin<T>(executable: string, limits: ReadLimits, start: (executable: string, timeoutMs: number) => Promise<GitStart<T>>): Promise<T> {
+  const left = timeLeft(limits.timeoutMs);
+  const first = await start(executable, limits.timeoutMs);
+  const again = await gitAgain(executable, first.missing, { ...limits, timeoutMs: left() });
+  const rest = left();
+  return again === undefined || rest === 0 ? first.answer : (await start(again, rest)).answer;
+}
+
+/**
+ * Starts a Git with `start` and gives back its process, or the error the start threw. Node tells of a start that failed
+ * with ENOENT, EACCES, EAGAIN, EMFILE or ENFILE through the process's `error` event, and throws any other: on Windows
+ * EFTYPE for a git.exe that is not a program, such as one an installer is still writing, which a look for Git can find.
+ * A call it ends so answers as one whose Git could not start, and only ENOENT looks for Git again.
+ */
+function startGit<T extends ChildProcess>(start: () => T): T | Error {
+  try {
+    return start();
+  } catch (error) {
+    if (startThrew(error)) return error;
+    throw error;
+  }
+}
+
+/** Whether `error` is one Node threw at the start of a program (its `syscall` is `spawn`), not a fault in the call. */
+function startThrew(error: unknown): error is Error {
+  return error instanceof Error && "syscall" in error && error.syscall === "spawn";
+}
+
+/**
+ * Whether the start of `child` found no program at its path ({@link programMissing}), as its `error` event tells; asked
+ * once the read has settled.
+ */
+function startMissing(child: ChildProcess): () => boolean {
+  let missing = false;
+  child.once("error", error => {
+    missing = programMissing(error);
+  });
+  return () => missing;
+}
+
 /** Resolves once `child` has exited, or at once when it never started. */
 async function exited(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
@@ -510,27 +1244,30 @@ type GitRead = { readonly ended: "printed"; readonly stdout: string } | { readon
  * Runs a Git command as `gitOutput` does, and says how it ended. Git's stderr goes to the null device, as `streamGit`'s
  * does: no answer reads it, and a process Git started that outlives Git (a repository's clean filter can leave one)
  * holds it for as long as it runs and writes there as much as it likes, while the read answers once Git has exited and
- * its output has closed.
+ * its output has closed. Run again with the Git found again when the one kept is gone ({@link readWithGit}).
  */
 async function readGit(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer: number): Promise<GitRead> {
-  const executable = readerGit(signal);
-  if (executable === undefined) return { ended: signal?.aborted === true ? "timed-out" : "failed" };
-  const { promise, resolve: settle } = Promise.withResolvers<GitRead>();
-  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" },
-    stdio: ["pipe", "pipe", "ignore"],
+  const read = await readWithGit<GitRead>({ timeoutMs: DEFAULT_TIMEOUT_MS, signal }, async (executable, limits) => {
+    const { promise, resolve: settle } = Promise.withResolvers<GitRead>();
+    const child = startGit(() => spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
+      env: { ...gitEnvironment(executable), GIT_TERMINAL_PROMPT: "0" },
+      stdio: ["pipe", "pipe", "ignore"],
+    }));
+    if (child instanceof Error) return { answer: { ended: "failed" }, missing: false };
+    const missing = startMissing(child);
+    const printed = gitPrinted(child, maxBuffer);
+    // This `close` listener comes first and answers with what a Git that exited with status 0 printed. The next answers
+    // every other end, saying whether the time limit or `signal` ended the read, and a Git that was ended and whose
+    // output stays open.
+    child.on("close", (status: number | null) => {
+      const stdout = printed(status);
+      if (stdout !== undefined && signal?.aborted !== true) settle({ ended: "printed", stdout });
+    });
+    settleWhenDone(child, ended => settle({ ended: ended ? "timed-out" : "failed" }), limits);
+    const [answer] = await Promise.all([promise, exited(child)]);
+    return { answer, missing: missing() };
   });
-  const printed = gitPrinted(child, maxBuffer);
-  // This `close` listener comes first and answers with what a Git that exited with status 0 printed. The next answers
-  // every other end, saying whether the time limit or `signal` ended the read, and a Git that was ended and whose output
-  // stays open.
-  child.on("close", (status: number | null) => {
-    const stdout = printed(status);
-    if (stdout !== undefined && signal?.aborted !== true) settle({ ended: "printed", stdout });
-  });
-  settleWhenDone(child, ended => settle({ ended: ended ? "timed-out" : "failed" }), { timeoutMs: DEFAULT_TIMEOUT_MS, signal });
-  const [read] = await Promise.all([promise, exited(child)]);
-  return read;
+  return read ?? { ended: signal?.aborted === true ? "timed-out" : "failed" };
 }
 
 /**
@@ -950,22 +1687,26 @@ interface GitStream extends GitReadOptions {
 /**
  * Runs `git -C <cwd> <args>` under `runGit`'s safe configuration without blocking, writes `stream.input` to it and hands
  * each chunk it prints to `stream.onData`. Settles once Git is done ({@link settleWhenDone}) and has exited
- * ({@link GitReadOptions}); without Git, or once `stream.signal` is aborted, it starts nothing.
+ * ({@link GitReadOptions}); without Git, or once `stream.signal` is aborted, it starts nothing. Run again with the Git
+ * found again when the one kept is gone ({@link readWithGit}); a start that found no program printed nothing.
  */
 async function streamGit(cwd: string, args: readonly string[], stream: GitStream): Promise<void> {
-  const executable = readerGit(stream.signal);
-  if (executable === undefined) return;
-  const { promise, resolve: settle } = Promise.withResolvers<void>();
-  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
-    env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
-    stdio: ["pipe", "pipe", "ignore"],
+  await readWithGit({ timeoutMs: stream.timeout ?? DEFAULT_TIMEOUT_MS, signal: stream.signal }, async (executable, limits) => {
+    const { promise, resolve: settle } = Promise.withResolvers<void>();
+    const child = startGit(() => spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
+      env: { ...gitEnvironment(executable), GIT_TERMINAL_PROMPT: "0" },
+      stdio: ["pipe", "pipe", "ignore"],
+    }));
+    if (child instanceof Error) return { answer: undefined, missing: false };
+    const missing = startMissing(child);
+    child.stdout.on("data", stream.onData);
+    settleWhenDone(child, () => settle(), limits);
+    // Git exits before reading every line when it cannot start in `cwd`; what it answered before that is kept.
+    child.stdin.on("error", () => undefined);
+    child.stdin.end(stream.input);
+    await Promise.all([promise, exited(child)]);
+    return { answer: undefined, missing: missing() };
   });
-  child.stdout.on("data", stream.onData);
-  settleWhenDone(child, () => settle(), { timeoutMs: stream.timeout ?? DEFAULT_TIMEOUT_MS, signal: stream.signal });
-  // Git exits before reading every line when it cannot start in `cwd`; what it answered before that is kept.
-  child.stdin.on("error", () => undefined);
-  child.stdin.end(stream.input);
-  await Promise.all([promise, exited(child)]);
 }
 
 /**
