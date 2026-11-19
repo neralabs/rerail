@@ -1970,7 +1970,12 @@ describe("CodeRuleBridge", () => {
 
       await writeFile(denied, "d = 22\n");
       try {
-        expect(await denyAccess(locked, { files: true, probe: denied })).toBe(true);
+        // A token holding the backup privilege, as an administrator's on a CI runner, reads through the deny rule: there the
+        // denied file is left to the cases above and below that make Windows' refusal themselves.
+        if (!await denyAccess(locked, { files: true, probe: denied })) {
+          console.info("The denied file's part did not run: this process reads a file its user is denied, a Windows token holding the backup privilege");
+          return;
+        }
         for (let turn = 0; turn < 3; turn += 1) await bridge.checkpoint("turn");
         expect(toldPaths(onDiscoveryGaps)).toEqual(["src/locked/denied.py"]);
       } finally {
