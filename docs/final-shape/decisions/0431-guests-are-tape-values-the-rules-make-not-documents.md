@@ -69,19 +69,20 @@ code may be named by which rules asked for it, or in what order.
    nodes are numbered in the file's id space after the file's own, in the order the parse found them, so `docof`,
    `line` and `col` are the file's and findings land at its lines. The libraries' structural `embed` rules (`html`,
    `vue`, `blade`, `markdown`, `rr` patterns) become the languages' declarations of what they embed.
-   How (step 3), under per-definition ids (0083 §3, `granules`): a program's nodes are granules of its file. A program
-   granule's key is its host node's granule key, then `embedded:<grammar>#<ordinal>`, then the program's own granule
-   key, and it is placed in the file's one slot table with the file's own granules (same hashing, same clash order).
-   So an edit inside a script renumbers that script's granules and no other's, and an edit to the file around it moves
-   none of the script's unless their keys change. The table answers which tape a slot is of, so a node id resolves to
-   (file, program, node) in place. In the batch a program is a document with its file's key and its own tape and rank
-   index; it has no span slots (its positions are the file's, through its map) and no `doc` row of its own.
-   It stays a document of its own tape for every per-tape reader, as the branches building them have them
-   (Native-and-GPU-strata 4498abe77, oscar 6bc56ac57, read 2026-11-18): 0353 step 4c's `child` probe reads within
-   one document's tape (a host node reaches its program through `parsed`, never `child`); 0399 step 6's presence is
-   a tape's, so a script's kinds are never ruled out by its HTML file's; the device's `ViewDoc`s are rows, found by
-   index, not key. Only the host's lookup of a document by id (`Batch::doc`, `Batch::node`) learns the slot table.
-   No CLIF tape read and no format 16 code changes.
+   **How a program is numbered is open** (2026-11-18, the user: "Step 4 first, then decide"). A first scheme put its
+   nodes in the file's key, as granules in a reserved slot range. It met 0058's hiding, which shows a node by one
+   comparison on its document's key (and on document columns), and Tim's 0168 (PR #508), which keeps that one
+   comparison and rejected per-asker keys as "a join on every bounded atom". The choices, from a survey of the
+   sibling branches (Native-and-GPU-strata, oscar's hub merge in progress, final-shape-rr-align's 0402,
+   CUDA-support, Tim's integration branch):
+   - the file's key, hiding by key and slot: no registry and no program document; hiding bounds node columns twice
+     and no longer hides by document column; order keys take a base in the CLIF id reads; a batch key holds a file
+     and its programs;
+   - a key of its own from 0391's registry, kept for programs alone: hiding, order keys and the batch unchanged; the
+     `docof` and `node` views map it to its file (a `ViewDoc` field); a program is still a document underneath.
+   A key of its own cannot be both stable and collision-free without a stored allocation (settled per chunk, it moves
+   when the chunk does, and kept facts name it). Either way a program stays a tape of its own (0353 step 4c's reads,
+   0399's per-tape presence), made by the host's parse at load, its `docof`, lines and findings the file's.
 5. **Format 16 does not change** (0426): a tape is one text, one tree, one grammar. A file's programs are each a tape of
    their own grammar; a tape value is a tape. Around them:
    - a file's record of its programs (each one's tape key, host node, grammar, first id, the map from its text to the
@@ -121,10 +122,12 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
 2. Tape values: node ids by tape key and preorder, `guest_of`, findings placed through the string (R2, R3, R9); the
    packs' `docof(n, d), guest(d, _, s, _)` over parsed strings rewritten (14 uses in 2 files; the `guest` rows left
    are the grammar's programs, step 3's).
-3. Programs as the file's: made by the host's parse, numbered in the file's space, the file's program record; the views
-   and the reads (CLIF) resolve ids through it; `with_matchers` runs once a chunk; guest documents go (R1, R5, R8).
-4. `@parse` as a functor in the fixpoint; `parsed` and `sub_tape` derived by the program; the embed slice, `DEPTH`,
-   `GUEST_ROUNDS_KEY` and 0391's registry go (R4). Tape values stored and loaded before the waves (R6, R7).
+3. Programs as the file's (3a done: HTML declares its embeds, an embedder builds a program per place). The rest
+   waits on the numbering above, decided after step 4: made by the host's parse at load, `with_matchers` once a chunk,
+   guest documents go (R1, R5, R8).
+4. (Done before 3's rest.) `@parse` as a functor in the fixpoint; `parsed` and `sub_tape` of strings derived by the
+   program; tape values stored and loaded before the waves (R4, R6, R7, R5's annotations). The embed slice and its
+   rounds stay for the grammar's programs until step 3.
 5. PostHog cold on CPU and Metal against 1ca497070's 32.1 s and 34.4 s of guests, findings unchanged (29,747,
    fa0efeaed6ff).
 
