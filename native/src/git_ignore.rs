@@ -379,6 +379,8 @@ impl IndexFile {
         // reads the index again.
         let stamp = FileStamp::of(&path);
         let stamp = stamp.as_ref().is_none_or(FileStamp::tells).then_some(stamp);
+        #[cfg(test)]
+        INDEX_READS.with(|reads| reads.set(reads.get() + 1));
         let file = match repository.open_index() {
             Ok(file) => file,
             Err(_) if !path.exists() => gix::index::File::from_state(
@@ -391,6 +393,12 @@ impl IndexFile {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// The index reads made on this thread, for the cases that check a question reads none.
+    static INDEX_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// What tells one index file from another and from itself rewritten: the file's identity (device
 /// and inode on Unix; volume serial and file index on Windows), which every write of Git's
 /// changes, and its modification time and size, which a write in place changes. All three come
@@ -398,16 +406,20 @@ impl IndexFile {
 /// to a new file and renames it over the old one, and ext4 gives a freed inode number to the next
 /// new file at once: two writes within one step of the file system's clock can land the second on
 /// the number of the file read, at its size and time. That needs the read taken within the step,
-/// so on Linux such a stamp is not kept ([`FileStamp::tells`]) and nothing is held open. On macOS
-/// the inode number tells them: APFS numbers each new file from its volume's next identifier, and
-/// HFS+ gives a number again only once its 32-bit count has wrapped. On Windows the file index
-/// tells them: NTFS gives every new file a file index of its own. The change time is left out:
-/// only a write in place that keeps the size and sets the time back would need it, and Git never
-/// writes the index in place.
+/// so on Linux such a stamp is not kept ([`FileStamp::tells`]) and nothing is held open. A tool
+/// can also set a file's time back to the one read; on Unix the stamp holds the time the file last
+/// changed, which the kernel sets at every write, rename and time set and no call sets, so such a
+/// file still differs once the clock has left that time's step too. On macOS the inode number tells
+/// them: APFS numbers each new file from its volume's next identifier, and HFS+ gives a number again
+/// only once its 32-bit count has wrapped. On Windows the file index tells them: NTFS gives every
+/// new file a file index of its own.
 #[derive(Debug, PartialEq, Eq)]
 struct FileStamp {
     identity: (u64, u64),
     modified: FileTime,
+    /// When the file last changed in any way, as a stat gives it (seconds, nanoseconds).
+    #[cfg(unix)]
+    changed: (i64, i64),
     len: u64,
 }
 
@@ -473,18 +485,25 @@ impl FileStamp {
         Some(Self {
             identity: (metadata.dev(), metadata.ino()),
             modified: metadata.modified().ok(),
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
             len: metadata.len(),
         })
     }
 
-    /// Whether this stamp tells its file from every later one Git writes: once the file clock has
-    /// left the step that gave the file's time, since a later write can get that time only within
-    /// it. A stamp taken within the step is not kept, so the next question reads the index again;
-    /// that read, taken later, is kept.
+    /// Whether this stamp tells its file from every later one: once the file clock has left the
+    /// steps that gave the file's time and the time it last changed, since a later write can get
+    /// either only within it. A stamp taken within a step is not kept, so the next question reads
+    /// the index again; that read, taken later, is kept.
     #[cfg(target_os = "linux")]
     fn tells(&self) -> bool {
-        self.modified
-            .is_some_and(|modified| past_step(modified, file_clock()))
+        let now = file_clock();
+        let (seconds, nanos) = self.changed;
+        let changed = std::time::UNIX_EPOCH
+            + std::time::Duration::new(
+                u64::try_from(seconds).unwrap_or(0),
+                u32::try_from(nanos).unwrap_or(0),
+            );
+        past_step(changed, now) && self.modified.is_some_and(|modified| past_step(modified, now))
     }
 
     /// Whether this stamp tells its file from every later one: the identity alone does here.
@@ -667,6 +686,26 @@ mod tests {
             .unwrap();
     }
 
+    /// The index reads this thread has made.
+    fn index_reads() -> usize {
+        INDEX_READS.with(std::cell::Cell::get)
+    }
+
+    /// Returns once the file clock has left the steps of `file`'s times, so a stamp of it read now
+    /// is kept (Linux; elsewhere every stamp is kept). It waits for a tick of the clock at most.
+    fn settle(file: &Path) {
+        #[cfg(target_os = "linux")]
+        {
+            let stamp = FileStamp::of(file).expect("a file");
+            let bound = std::time::Instant::now() + Duration::from_secs(5);
+            while !stamp.tells() && std::time::Instant::now() < bound {
+                std::thread::yield_now();
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = file;
+    }
+
     fn fixture(name: &str, files: &[(&str, &str)]) -> PathBuf {
         let root =
             std::env::temp_dir().join(format!("rerail-git-ignore-{name}-{}", std::process::id()));
@@ -813,25 +852,19 @@ mod tests {
         git(&root, &["init", "--initial-branch=main"]);
         git(&root, &["add", ".gitignore"]);
         let index = root.join(".git/index");
-        // A time every file clock has left, so the stamp of the read is kept.
-        set_modified(&index, modified(&index) - Duration::from_secs(5));
+        settle(&index);
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         assert!(ignore.ignored("e.py", false).unwrap());
-
-        // Bytes no index holds, in the same file at the same size and time: only a read sees them.
-        let time = modified(&index);
-        let len = std::fs::metadata(&index).unwrap().len();
-        std::fs::write(&index, vec![0; usize::try_from(len).unwrap()]).unwrap();
-        set_modified(&index, time);
-        assert!(
-            ignore.ignored("e.py", false).unwrap(),
+        let reads = index_reads();
+        assert!(ignore.ignored("e.py", false).unwrap());
+        assert_eq!(
+            index_reads(),
+            reads,
             "answered from the index read before, with one stat of its file"
         );
-        set_modified(&index, time + Duration::from_secs(1));
-        assert!(
-            ignore.ignored("e.py", false).is_err(),
-            "read again once its time moves, and said to be unreadable"
-        );
+        set_modified(&index, modified(&index) + Duration::from_secs(1));
+        assert!(ignore.ignored("e.py", false).unwrap());
+        assert_eq!(index_reads(), reads + 1, "read again once its time moves");
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1352,9 +1385,10 @@ mod tests {
         assert_eq!(open_under(&root), none, "once the checkout is removed");
     }
 
-    /// A stamp taken while the file clock still reads the index's time cannot tell a later write
-    /// within that step from the file read: it is not kept, so the next question reads the index
-    /// again. A stamp taken once the clock has left that time is kept, and a question costs a stat.
+    /// A stamp taken while the file clock still reads the index's time, or the time it last
+    /// changed, cannot tell a later write within that step from the file read: it is not kept, so
+    /// the next question reads the index again. A stamp taken once the clock has left both is kept,
+    /// and a question costs a stat.
     #[cfg(target_os = "linux")]
     #[test]
     fn keeps_a_stamp_once_the_file_clock_has_left_its_time() {
@@ -1362,34 +1396,65 @@ mod tests {
         git(&root, &["init", "--initial-branch=main"]);
         git(&root, &["add", ".gitignore"]);
         let index = root.join(".git/index");
-        let tracking = std::fs::read(&index).unwrap();
-        let zeros = vec![0; tracking.len()];
-        // Written in place at one size and time, so only a read tells the bytes apart.
-        let write = |bytes: &[u8], time: SystemTime| {
-            std::fs::write(&index, bytes).unwrap();
-            set_modified(&index, time);
-        };
-        let past = file_clock() - Duration::from_millis(1500);
-        write(tracking.as_slice(), past);
+        set_modified(&index, file_clock() - Duration::from_millis(1500));
+        settle(&index);
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         assert!(ignore.ignored("e.py", false).unwrap());
-        write(zeros.as_slice(), past);
-        assert!(
-            ignore.ignored("e.py", false).unwrap(),
-            "a time the clock has left: the stamp is kept and the index read before answers"
-        );
+        let reads = index_reads();
+        assert!(ignore.ignored("e.py", false).unwrap());
+        assert_eq!(index_reads(), reads, "times the clock has left: the stamp is kept");
 
-        let ahead = file_clock() + Duration::from_millis(3_600_500);
-        write(tracking.as_slice(), ahead);
-        assert!(
-            ignore.ignored("e.py", false).unwrap(),
-            "read at its new time"
+        set_modified(&index, file_clock() + Duration::from_millis(3_600_500));
+        assert!(ignore.ignored("e.py", false).unwrap());
+        assert!(ignore.ignored("e.py", false).unwrap());
+        assert_eq!(
+            index_reads(),
+            reads + 2,
+            "a time the clock still reads: read again at each question"
         );
-        write(zeros.as_slice(), ahead);
-        assert!(
-            ignore.ignored("e.py", false).is_err(),
-            "a time the clock still reads: read again, and said to be unreadable"
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A tool can set a file's time back, but not the time it last changed. After a read whose
+    /// stamp is kept, Git writes the index twice and its time is set back to the one read, as two
+    /// writes within one clock step leave it; on ext4 the second write can land on the inode number
+    /// read, at its size, so only the change time tells it from the file read. The writes are made
+    /// again until the number is reused; a file system that gives no number again cannot make it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reads_the_index_again_when_a_later_write_has_the_inode_number_size_and_time_read() {
+        use std::os::unix::fs::MetadataExt;
+        let root = fixture(
+            "set-back",
+            &[(".gitignore", "gen/\n"), ("gen/t.py", ""), ("z/m.py", "")],
         );
+        git(&root, &["init", "--initial-branch=main"]);
+        git(&root, &["add", ".gitignore", "z/m.py"]);
+        let index = root.join(".git/index");
+        settle(&index);
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        let made = (0..10).any(|_| {
+            assert!(ignore.ignored("gen/t.py", false).unwrap(), "read out of the index");
+            let read = std::fs::metadata(&index).unwrap();
+            git(&root, &["add", "-f", "gen/t.py"]);
+            git(&root, &["update-index", "--force-remove", "z/m.py"]);
+            set_modified(&index, read.modified().unwrap());
+            let now = std::fs::metadata(&index).unwrap();
+            assert_eq!(now.len(), read.len(), "both entries take 72 bytes");
+            assert!(
+                !ignore.ignored("gen/t.py", false).unwrap(),
+                "a file Git now tracks is not ignored (read on inode {}, the index now on inode {})",
+                read.ino(),
+                now.ino()
+            );
+            git(&root, &["update-index", "--add", "z/m.py"]);
+            git(&root, &["rm", "--cached", "-q", "gen/t.py"]);
+            settle(&index);
+            now.ino() == read.ino()
+        });
+        if !made {
+            eprintln!("no second write took the inode number of the file read in 10 tries");
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1484,8 +1549,6 @@ mod tests {
         );
         let next = root.join(".git/next-index");
         git_with_index(&root, &next, &["add", "-f", "b.py"]);
-        // A time every file clock has left, so the stamp of its read is kept.
-        set_modified(&next, modified(&next) - Duration::from_secs(5));
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         assert!(
             ignore.ignored("a.py", false).unwrap(),
@@ -1496,21 +1559,15 @@ mod tests {
         if let Some(_unreadable) = Unreadable::make(&root.join("named")) {
             let index = root.join(".git/index");
             std::fs::rename(&next, &index).unwrap();
+            settle(&index);
             assert!(
                 ignore.ignored("a.py", false).unwrap(),
                 "the rules read before"
             );
             assert!(!ignore.ignored("b.py", false).unwrap(), "the new index");
-            // Bytes no index holds, in the same file at the same size and time: only a read sees
-            // them.
-            let time = modified(&index);
-            let len = std::fs::metadata(&index).unwrap().len();
-            std::fs::write(&index, vec![0; usize::try_from(len).unwrap()]).unwrap();
-            set_modified(&index, time);
-            assert!(
-                ignore.ignored("a.py", false).unwrap(),
-                "the new index read once"
-            );
+            let reads = index_reads();
+            assert!(ignore.ignored("a.py", false).unwrap());
+            assert_eq!(index_reads(), reads, "the new index read once");
             assert!(
                 !ignore.sources_unchanged(),
                 "an open now cannot read the rules"
