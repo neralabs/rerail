@@ -13,7 +13,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
-import { worktreeRegistry, worktreeRegistryFolder } from "../catalog/repository-identity.js";
+import { worktreeRegistry } from "../catalog/repository-identity.js";
 import { loadNativeBinding, type NativeGitIgnoreMatcher } from "../native/native.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import type {
@@ -81,6 +81,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   readonly #gitIgnore = new Map<string, NativeGitIgnoreMatcher | null>();
   /** The checkouts with no lane whose Git ignore rules failed a read, reported once each. */
   readonly #gitIgnoreReported = new Set<string>();
+  /** Where Git registers the worktrees, as `worktreeRoots` last read them (`worktreeRegistry`). */
+  #registryFolder: string | undefined;
   #settings: Required<AuditSettings>;
   #sessionId: string | undefined;
   #closing = false;
@@ -243,14 +245,16 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    */
   worktreeRoots(): string[] {
     const starting = this.#options.startingCheckout;
-    return (worktreeRegistry(starting)?.worktrees ?? [])
+    const registry = worktreeRegistry(starting);
+    this.#registryFolder = registry === undefined ? undefined : join(registry.commonDirectory, "worktrees");
+    return (registry?.worktrees ?? [])
       .map(worktree => storedPath(worktree))
       .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
   }
 
-  /** Where Git registers the worktrees `worktreeRoots` reads, as it last read them (`worktreeRegistryFolder`). */
+  /** The folder where Git registers the worktrees `worktreeRoots` last named (`worktrees` in the common Git folder). */
   worktreeRegistry(): string | undefined {
-    return worktreeRegistryFolder(this.#options.startingCheckout);
+    return this.#registryFolder;
   }
 
   /**

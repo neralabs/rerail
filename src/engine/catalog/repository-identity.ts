@@ -166,15 +166,6 @@ export function worktreeRegistry(checkout: string): WorktreeRegistry | undefined
   return registry;
 }
 
-/**
- * The folder where Git registers the linked worktrees of `checkout` (`worktrees` in its common directory), physical, as
- * `worktreeRegistry` last found it; undefined before it did, or once Git could not answer there. Starts no Git process.
- */
-export function worktreeRegistryFolder(checkout: string): string | undefined {
-  const known = worktreeRegistries.get(checkout);
-  return known === undefined ? undefined : join(known.commonDirectory, "worktrees");
-}
-
 /** The physical common directory `checkout` reads, as Git first gave it; undefined when the folder is gone or not in Git. */
 function registryCommonDirectory(checkout: string): string | undefined {
   if (!existsSync(checkout)) return undefined;
