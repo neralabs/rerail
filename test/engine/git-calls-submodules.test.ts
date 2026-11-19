@@ -1,3 +1,4 @@
+import * as childProcess from "node:child_process";
 import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -5,8 +6,11 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { runGit } from "../../src/engine/git.js";
+import { runGit, type GitResult } from "../../src/engine/git.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+
+vi.mock("node:child_process", { spy: true });
+const actualChildProcess = await vi.importActual<typeof import("node:child_process")>("node:child_process");
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -497,5 +501,42 @@ describe("Rerail's diffs answer as Git's own for each Git folder a submodule's `
 
     expect(answers).toEqual([own(work, AUDIT_DIFF), own(work, SCAN_DIFF)]);
     expect(answers).toEqual([[true, "sub\0"], [true, "sub\0"]]);
+  }, 60_000);
+});
+
+describe("Rerail's diff of a checkout with submodules keeps the call's one time limit", () => {
+  it("as each Git it starts gets what is left of it, and none starts once it is spent", async () => {
+    const root = await folder();
+    const source = await repository(root, "source", { "inner.txt": "one\n" });
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    for (const name of ["one", "two", "three"]) git(work, "submodule", "add", "--quiet", source, name);
+    git(work, "commit", "--quiet", "-m", "submodules");
+    for (const name of ["one", "two", "three"]) await writeFile(join(work, name, "inner.txt"), "two\n");
+    // Asked once first: each process asks Git's version once, at its first call that reads worktree files.
+    runGit(work, AUDIT_DIFF);
+    const now = performance.now.bind(performance);
+    let used = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now() + used);
+    const limits: Array<number | undefined> = [];
+    // Each Git answers as itself, and as if it had taken 4 s of the call's 10 s.
+    vi.mocked(childProcess.spawnSync).mockImplementation(((file: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+      limits.push(options.timeout);
+      const result = actualChildProcess.spawnSync(file, args, options);
+      used += 4_000;
+      return result;
+    }) as unknown as typeof childProcess.spawnSync);
+    const answer = ((): GitResult => {
+      try {
+        return runGit(work, AUDIT_DIFF, { timeout: 10_000 });
+      } finally {
+        vi.mocked(childProcess.spawnSync).mockImplementation(actualChildProcess.spawnSync);
+        clock.mockRestore();
+      }
+    })();
+
+    // The config listing, the diff and the index's submodules ran; the question after them was not started.
+    expect(limits.map((limit, at) => limit !== undefined && limit > 0 && limit <= 10_000 - 4_000 * at)).toEqual([true, true, true]);
+    expect([answer.status, answer.stdout, answer.error?.message]).toEqual([null, "", expect.stringMatching(/^spawnSync .+ ETIMEDOUT$/u)]);
+    expect(answer.error).toMatchObject({ code: "ETIMEDOUT", syscall: expect.stringMatching(/^spawnSync /u) });
   }, 60_000);
 });
