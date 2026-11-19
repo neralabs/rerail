@@ -997,12 +997,12 @@ impl Observer {
     /// next generation; the root's cursor is that journal's. Naming nothing writes nothing, but a root's first
     /// cursor of that journal (a warm run writes none).
     fn check_listed(&mut self, root: PathBuf, volume: Option<[u8; 16]>, stored: Option<&str>) {
-        let (exact, whole) = self.listing_named(&root);
+        let (exact, whole, stale) = self.listing_named(&root);
         let (exact, whole): (Vec<PathBuf>, Vec<PathBuf>) = (exact.into_iter().filter(|p| !self.is_own(p)).collect(), whole.into_iter().filter(|p| !self.is_own(p)).collect());
         self.counts.checked_named += (exact.len() + whole.len()) as u64;
         // Kept under the volume's id where the system names one, as a journal's cursor is; else under none.
         let volume = volume.unwrap_or([0; 16]);
-        if exact.is_empty() && whole.is_empty() {
+        if exact.is_empty() && whole.is_empty() && stale.is_empty() {
             let next = format!("L{}", self.generation);
             if stored.and_then(listing_cursor).is_none() {
                 self.store_listing_cursor(&root, volume, &next);
@@ -1012,7 +1012,7 @@ impl Observer {
         }
         self.generation += 1;
         let next = format!("L{}", self.generation);
-        self.forget_named(&root, &exact, &whole, volume, &next);
+        self.forget_named(&root, &exact, &whole, &stale, volume, &next);
         self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: true });
     }
 
@@ -1021,12 +1021,12 @@ impl Observer {
     /// change after it told to the next replay). Naming nothing writes nothing: the stored cursor stays, and the next
     /// replay from it names again what this run found holding, a path looked at again, never one missed.
     fn check_behind(&mut self, root: PathBuf, volume: Option<[u8; 16]>, next: &str) {
-        let (exact, whole) = self.listing_named(&root);
+        let (exact, whole, stale) = self.listing_named(&root);
         let (exact, whole): (Vec<PathBuf>, Vec<PathBuf>) = (exact.into_iter().filter(|p| !self.is_own(p)).collect(), whole.into_iter().filter(|p| !self.is_own(p)).collect());
         self.counts.checked_named += (exact.len() + whole.len()) as u64;
-        if !(exact.is_empty() && whole.is_empty()) {
+        if !(exact.is_empty() && whole.is_empty() && stale.is_empty()) {
             self.generation += 1;
-            self.forget_named(&root, &exact, &whole, volume.unwrap_or([0; 16]), next);
+            self.forget_named(&root, &exact, &whole, &stale, volume.unwrap_or([0; 16]), next);
         }
         self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next.to_owned()), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: false });
     }
@@ -1034,17 +1034,23 @@ impl Observer {
     /// The answers under `root` that no longer hold, by its directories' listings: those to forget alone (`exact`),
     /// and the symbolic links that changed, forgotten with what is under them and their canonical forms (`whole`).
     /// Each directory holding an answer is listed once; the root itself, and each link, is `stat`ed on its own.
-    fn listing_named(&mut self, root: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    ///
+    /// A directory still a directory whose stat changed has a changed listing, not changed files: as a file event
+    /// would, its entries added or gone are named (`exact`, the parent rule catches its listing's readers), and its
+    /// own answer is forgotten unnamed (`stale`). Named, it covered every answer under it, and a file made in a
+    /// directory asked again for every unit read there (`a_header_edit_asks_again_only_for_the_units_that_read_it`).
+    fn listing_named(&mut self, root: &Path) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
         let kept: Vec<(PathBuf, Entry)> = self.entries.range::<Path, _>((std::ops::Bound::Included(root), std::ops::Bound::Unbounded)).take_while(|(k, _)| k.starts_with(root)).map(|(k, e)| (k.clone(), e.clone())).collect();
-        let (mut exact, mut whole) = (Vec::new(), Vec::new());
+        let (mut exact, mut whole, mut stale) = (Vec::new(), Vec::new(), Vec::new());
         let mut by_dir: BTreeMap<PathBuf, Vec<(PathBuf, Entry)>> = BTreeMap::new();
         for (path, e) in kept {
             match path.parent().filter(|_| path != root) {
                 Some(dir) => by_dir.entry(dir.to_path_buf()).or_default().push((path, e)),
                 None => {
                     self.counts.stats += 1;
-                    if !listed_holds(&e, kind_and_stat(&path)) {
-                        exact.push(path);
+                    let now = kind_and_stat(&path);
+                    if !listed_holds(&e, now) {
+                        self.dir_named(path, &e, now, &mut exact, &mut stale);
                     }
                 }
             }
@@ -1073,7 +1079,7 @@ impl Observer {
                     None => exact.push(path),
                     Some(Some(now)) => {
                         if !listed_holds(&e, Some(*now)) {
-                            exact.push(path);
+                            self.dir_named(path, &e, Some(*now), &mut exact, &mut stale);
                         }
                     }
                     // A symbolic link (or an entry the listing gave no stat for): its answer is of what it names.
@@ -1086,7 +1092,47 @@ impl Observer {
                 }
             }
         }
-        (exact, whole)
+        // A file gone is named as its own answer and as its directory's entry: once.
+        exact.sort();
+        exact.dedup();
+        (exact, whole, stale)
+    }
+
+    /// What `listing_named` names of `path`, whose answer `e` no longer holds (`now`): a directory still one, its
+    /// entries added or gone, its answer `stale`; a file of the same stat recorded inside the racy window, nothing
+    /// where its bytes are as they were (recorded again, outside it); anything else, itself. The journal names a
+    /// file only where it changed: a header written just before a run was named again by the next run's listings, and
+    /// asked again for the unit that read it.
+    fn dir_named(&mut self, path: PathBuf, e: &Entry, now: Option<(Kind, Stat)>, exact: &mut Vec<PathBuf>, stale: &mut Vec<PathBuf>) {
+        if let Some((Kind::File, stat)) = now
+            && e.kind == Kind::File
+            && e.stat == stat
+        {
+            let started = now_ns();
+            match std::fs::read(&path) {
+                Ok(bytes) if <[u8; 32]>::from(Sha256::digest(&bytes)) == e.digest => {
+                    self.counts.validated += 1;
+                    self.remember(&path, Entry { kind: Kind::File, stat, digest: e.digest, listing: None, recorded_ns: started });
+                }
+                _ => exact.push(path),
+            }
+            return;
+        }
+        if !(e.kind == Kind::Dir && matches!(now, Some((Kind::Dir, _)))) {
+            exact.push(path);
+            return;
+        }
+        // Never listed: its answer was its kind alone, which holds.
+        if let Some(was) = &e.listing {
+            let Some(listing) = self.read_listing(&path, false) else {
+                exact.push(path);
+                return;
+            };
+            let was: BTreeSet<&str> = was.iter().map(|(n, _)| n.as_str()).collect();
+            let is: BTreeSet<&str> = listing.iter().map(|(n, _)| n.as_str()).collect();
+            exact.extend(was.symmetric_difference(&is).map(|n| path.join(n)));
+        }
+        stale.push(path);
     }
 
     /// Stores `cursor` as `root`'s, the observer's own journal's (`check_listed`).
@@ -1104,10 +1150,11 @@ impl Observer {
     /// Forgets the answers a root's listings named (`listing_named`): each of `exact` alone, each of `whole` with
     /// what is under it and its canonical forms; records each in the observer's own journal under the current
     /// generation, with the root's cursor and the generation, in one transaction.
-    fn forget_named(&mut self, root: &Path, exact: &[PathBuf], whole: &[PathBuf], volume: [u8; 16], cursor: &str) {
+    /// `stale`: forgotten as `exact` is, but not named (`listing_named`).
+    fn forget_named(&mut self, root: &Path, exact: &[PathBuf], whole: &[PathBuf], stale: &[PathBuf], volume: [u8; 16], cursor: &str) {
         let generation = self.generation;
         let mut forgotten = 0u64;
-        for p in exact {
+        for p in exact.iter().chain(stale) {
             forgotten += u64::from(self.entries.remove(p.as_path()).is_some());
             self.canon.remove(p.as_path());
         }
@@ -1136,13 +1183,13 @@ impl Observer {
             format!("{}: {} paths named changed ({}), {forgotten} answers forgotten", root.display(), exact.len() + whole.len(), exact.iter().chain(whole).take(3).map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "))
         });
         k.deleted = true;
-        let (exact, whole, cursor) = (exact.to_vec(), whole.to_vec(), cursor.to_owned());
+        let (exact, whole, stale, cursor) = (exact.to_vec(), whole.to_vec(), stale.to_vec(), cursor.to_owned());
         k.writer.send(move |db| {
             let Ok(tx) = db.transaction() else { return };
             {
                 let Ok(mut one) = tx.prepare_cached("DELETE FROM observed WHERE path = ?1") else { return };
                 let Ok(mut canon_one) = tx.prepare_cached("DELETE FROM run_record WHERE key = ?1") else { return };
-                for p in &exact {
+                for p in exact.iter().chain(&stale) {
                     let _ = one.execute([p.to_string_lossy()]);
                     let _ = canon_one.execute([format!("{CANONICAL}{}", p.display())]);
                 }
@@ -2402,9 +2449,24 @@ mod tests {
             // and answers by when events came (decision 0400), so it would name the edit whatever the cursor.
             super::super::journal::forget_streams();
         };
-        edit_and_hide("x = 22\n");
-        let (missed, stale) = run(0);
-        assert_eq!((stale, missed.hashed), (first, 0), "with no window the journal's silence is trusted: the edit is missed ({missed})");
+        // With no window a replay is not started again for its marker: one whose history lacks it (a loaded host) is
+        // `Behind`, and the root is checked by its listings, which read the edit. The journal's silence is shown
+        // where the journal answered, a new edit each try.
+        let (mut answered, mut known) = (false, first);
+        for text in ["x = 22\n", "x = 4444\n", "x = 55555\n", "x = 666666\n", "x = 7777777\n"] {
+            edit_and_hide(text);
+            let (missed, stale) = run(0);
+            if missed.checked_dirs > 0 {
+                known = stale;
+                continue;
+            }
+            answered = true;
+            assert_eq!((stale, missed.hashed), (known, 0), "with no window the journal's silence is trusted: the edit is missed ({missed})");
+            break;
+        }
+        if !answered {
+            eprintln!("the replay was Behind at each try: the missed edit is not shown on this host now");
+        }
         edit_and_hide("x = 333\n");
         let (checked, fresh) = run(JOURNAL_SETTLE_NS);
         assert!(checked.stats >= 1 && checked.hashed == 1, "within the window the answer is checked and the edit read: {checked}");
@@ -3207,8 +3269,8 @@ mod tests {
     }
 
     /// R2: an edit is named and only it, also one that keeps the size and mtime (its ctime moves); a removed file is
-    /// named, and its directory's own answer (its listing), not its siblings'. A new file needs no answer named: its
-    /// directory's is.
+    /// named, and a new one, as entries of their directory (0433): not the directory, whose naming would cover its
+    /// siblings' answers too, and not the siblings.
     #[cfg(unix)]
     #[test]
     fn a_listing_names_an_edited_file_and_no_other() {
@@ -3231,11 +3293,32 @@ mod tests {
         std::fs::write(root.join("pkg/new.py"), "y = 1\n").unwrap();
         std::thread::sleep(std::time::Duration::from_nanos(RACY_NS as u64 + 50_000_000));
         let (fourth, listing, after) = listing_run(&store, &root, &files);
-        // The removed file and the directory's own answer; the others hold and are not read.
+        // The removed file and the new one; the others hold and are not read.
         assert_eq!((fourth.checked_named, fourth.hashed), (2, 0), "{fourth}");
+        assert_eq!(fourth.forgotten, 2, "the removed file's answer and the directory's own: {fourth}");
         assert_eq!(after[4], None);
         let names: Vec<String> = listing.unwrap().iter().map(|(n, _)| n.clone()).collect();
         assert_eq!(names, ["m0.py", "m1.py", "m2.py", "m3.py", "new.py"]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// An answer recorded inside the racy window (a file written just before a run) is checked by its bytes at the
+    /// next run's listings: named only where they changed (0433). The journal names only what changed; the listings
+    /// named every racy answer, and a header written before a run asked again for the unit that read it.
+    #[cfg(unix)]
+    #[test]
+    fn a_racy_answer_with_its_bytes_unchanged_is_not_named() {
+        let (base, root, files) = listing_tree("racy");
+        let store = base.join("store.files");
+        listing_run(&store, &root, &files);
+        std::thread::sleep(std::time::Duration::from_nanos(RACY_NS as u64 + 50_000_000));
+        listing_run(&store, &root, &files);
+        // Edited, then recorded at once by a run: inside the racy window.
+        std::fs::write(&files[1], "x = 22\n").unwrap();
+        let (_, _, edited) = listing_run(&store, &root, &files);
+        let (next, _, again) = listing_run(&store, &root, &files);
+        assert_eq!((next.checked_named, next.validated), (0, 1), "the racy answer read again, its bytes as they were: {next}");
+        assert_eq!(again, edited);
         let _ = std::fs::remove_dir_all(&base);
     }
 
