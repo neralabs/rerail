@@ -112,6 +112,17 @@ function askAfter(...checkouts: string[]): void {
   for (const checkout of checkouts) expectGitsRegistries(checkout, join(checkout, "sub"));
 }
 
+/**
+ * Asks again what a kept answer serves for each checkout, against Git: its list and the list of a folder in it, and its
+ * placement. A folder in a checkout is placed by Git at each placement, here as on `main`, so it is not placed here.
+ */
+function askAgain(...checkouts: string[]): void {
+  for (const checkout of checkouts) {
+    for (const folder of [checkout, join(checkout, "sub")]) expect(worktreeRegistry(folder)?.worktrees, folder).toEqual(gitsRegistry(folder));
+    expect(repositoryIdentityLocation(checkout), checkout).toEqual(gitsAnswer(checkout));
+  }
+}
+
 describe("what the catalog keeps for a worktree leaves with it", () => {
   it.each([
     ["placed from their files", false],
@@ -130,7 +141,7 @@ describe("what the catalog keeps for a worktree leaves with it", () => {
     expect(keptSince(before)).toEqual({ heldTopLevels: 3, gitAcceptances: 3, gitPlacedCommons: 1, configs: 1 + 2 * configsPerCheckout });
     // Each checkout that stays keeps its answers: asked again, none starts a Git process.
     const started = vi.mocked(runGit).mock.calls.length;
-    askAfter(main, ...stay);
+    askAgain(main, ...stay);
     expect(gitProcessesSince(started)).toBe(0);
   });
 
@@ -145,7 +156,7 @@ describe("what the catalog keeps for a worktree leaves with it", () => {
     expectGitsRegistries(main);
     expect(keptSince(before)).toEqual({ heldTopLevels: 3, gitAcceptances: 3, gitPlacedCommons: 1, configs: 1 });
     const started = vi.mocked(runGit).mock.calls.length;
-    askAfter(main, ...worktrees.slice(2));
+    askAgain(main, ...worktrees.slice(2));
     expect(gitProcessesSince(started)).toBe(0);
   });
 });
