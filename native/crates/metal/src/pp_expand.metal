@@ -522,36 +522,66 @@ kernel void pe_lookups(device const PpFile* files [[buffer(0)]], device const uc
     out[s] = visible(sorted, perm, n_rows[0], name_keys, values, keys[g], gslot[j], bad);
 }
 
-// --- Expansion (R5): the top level's grid passes, then the queue's items -------------------------
+// --- Expansion -----------------------------------------------------------------------------------
 //
 // The top level is the active stretches' tokens, one thread a token (a "top token" `s`, the
-// lookups' index), read in place through `text_nodes`. Its outermost calls are lists, each a macro's
-// expansion; a list's tokens are refs to tape nodes, written into the arena. The queue's workers
-// are SIMD groups: an EXPAND item writes a list's tokens and scans them for calls, each a child
-// list pushed as EXPAND; a list whose children are all final adds its size into its parent. After
-// the top level's places (a scan of the sizes), PLACE items write each list's tokens at its base,
-// top down, and push their children's.
+// lookups' index), read in place through `text_nodes`. Its outermost calls are lists. A list is a
+// macro's expansion, or an argument read in isolation (fenced); its tokens are refs (to tape
+// nodes) with flags, in the arena. The queue's workers are SIMD groups:
+// - CALL finds a call's arguments and makes a list for each parameter used expanded;
+// - an argument list's SCAN, then (once final) its flatten: PLACE items writing its tree's
+//   tokens into the arena, counted down;
+// - SUBST writes the body with the flattened arguments, then scans it (as SCAN does): each call
+//   a child list, pushed;
+// - a list whose children are all final adds its size into its parent;
+// - after the top level's places (a scan of the sizes), PLACE writes each list at its base.
 
-constant uint TOP = 0x80000000u;
-constant uint ITEM_PLACE = 0x80000000u;
+constant uint TOP = 0x80000000u, NO_DEF = 0xffffffffu;
+constant uint IT_SUBST = 0u, IT_PLACE = 1u << 30, IT_CALL = 2u << 30, IT_SCAN = 3u << 30, IT_KIND = 3u << 30;
 // Why a unit is refused (`ctl[2]`); `X_ROOM` reruns it at the next rung.
-constant uint X_BUILTIN = 1u, X_ARGS = 2u, X_PAST_END = 4u, X_PASTE = 8u, X_DEPTH = 16u, X_ROOM = 32u, X_QUEUE = 64u;
+constant uint X_BUILTIN = 1u, X_PAST_END = 4u, X_PASTE = 8u, X_DEPTH = 16u, X_ROOM = 32u, X_QUEUE = 64u;
+constant uint X_HASH = 128u, X_ACROSS = 256u, X_VA_OPT = 512u;
+// A token's flags: painted (never a candidate again).
+constant uint T_NOEXP = 1u;
+// A list's kind.
+constant uint LK_MACRO = 0u, LK_ARG = 1u;
+// The close table's keys: a depth (biased) above a top token's position.
+constant uint DEPTH_BIAS = 1u << 15, POS_BITS = 24u;
 // A chain's lists at most, and an idle worker's polls.
 constant uint MAX_CHAIN = 1024u;
 constant uint POLLS = 4096u;
 
-// A list: its parent (a list, or `TOP`), its definition's row, its stretch's slot, its tokens in
-// the arena, the range of its parent it covers (`lo..=hi`, tokens of the parent, or top tokens),
-// its tokens no child covers, its children not yet final and their sizes, its size and its base
-// in the output.
+// A list: its parent (a list, or `TOP`), its definition's row (`NO_DEF`: an argument), its
+// stretch's slot, its tokens in the arena, the range of its parent it covers (`lo..=hi`) or, an
+// argument, the raw range it was read from, its tokens no child covers, its children not yet
+// final and their sizes, its size and its base. A call: its arguments' entries and the argument
+// lists not yet flattened. An argument: its call's list, and its flatten's PLACE items not done.
+// `dest`: where its PLACE writes, the output (0) or the arena for argument list `dest - 1`.
 struct PxList {
     uint parent, def, slot, first, len, lo, hi, own;
     atomic_uint pending, acc;
-    uint size, base;
+    uint size, base, kind, call, dest, args, nargs;
+    atomic_uint apending, fpending;
+    uint pad;
 };
+// A call's argument: its raw range in the call's parent (`lo..hi`) and its list (0 none, 1 being
+// made, else the list + 2).
+struct PxArg { uint lo, hi; atomic_uint list; };
+
+// The lanes where `b` holds, as bits.
+inline ulong px_ballot(bool b) { return ulong(simd_vote::vote_t(simd_ballot(b))); }
 
 static void px_fence() { atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device); }
 static void px_refuse(device atomic_uint* ctl, uint why) { atomic_fetch_or_explicit(&ctl[2], why, memory_order_relaxed); }
+
+inline void px_init(device PxList& l, uint parent, uint def, uint slot, uint kind) {
+    l.parent = parent; l.def = def; l.slot = slot; l.first = 0u; l.len = 0u; l.lo = 0u; l.hi = 0u; l.own = 0u;
+    atomic_store_explicit(&l.pending, 1u, memory_order_relaxed);
+    atomic_store_explicit(&l.acc, 0u, memory_order_relaxed);
+    l.size = 0u; l.base = 0u; l.kind = kind; l.call = 0u; l.dest = 0u; l.args = 0u; l.nargs = 0u;
+    atomic_store_explicit(&l.apending, 1u, memory_order_relaxed);
+    atomic_store_explicit(&l.fpending, 0u, memory_order_relaxed);
+}
 
 // Reading a node of the unit: its file's tape and the node in it.
 struct At { Tape t; PpFile f; uint i; };
@@ -580,22 +610,76 @@ struct Ux {
     device const ulong* keys; device const PpDef* defs; device const uint* items;
     device const ulong* sorted; device const uint* perm; uint n_rows; device const ulong* name_keys; device const uint* values;
     device const uint* text_nodes; device const uint* gat; uint n_gaps; device const uint* firsts; uint n_toks;
+    device const uint* tdepth; ulong va_opt;
 };
 
 inline bool ref_is(Ux u, uint g, uchar c) {
     At a = node_at(u.files, u.data, u.bases, u.n_files, g);
     return punct_is(a.t, u.data, a.f, a.i, c);
 }
+inline uint ref_kind(Ux u, uint g) {
+    At a = node_at(u.files, u.data, u.bases, u.n_files, g);
+    return node_kind(a.t, a.i);
+}
+// A paren's depth change.
+inline uint paren_delta(Ux u, uint g) {
+    At a = node_at(u.files, u.data, u.bases, u.n_files, g);
+    return punct_is(a.t, u.data, a.f, a.i, '(') ? 1u : punct_is(a.t, u.data, a.f, a.i, ')') ? 0xffffffffu : 0u;
+}
 
-// Each top token's call (R5's): an object-like name, or a function-like one followed in its
-// stretch by `(` and `)`. `cend` is the call's last token + 1 (0: no call), the max scan's input.
+// --- The top level: depth, the close table, the calls --------------------------------------------
+
+// Each top token's stretch head (for the depth's segmented scan), its depth change, and whether it
+// is a `)` (for the close table).
+kernel void px_top_parens(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
+                          device const uint* bases [[buffer(2)]], device const uint* text_nodes [[buffer(3)]],
+                          device const uint* gat [[buffer(4)]], device const uint* n_gaps [[buffer(5)]],
+                          device const uint* firsts [[buffer(6)]], device const uint* n_toks [[buffer(7)]],
+                          device uint* heads [[buffer(8)]], device uint* delta [[buffer(9)]],
+                          device uint* close [[buffer(10)]], constant uint& n_files [[buffer(11)]],
+                          uint s [[thread_position_in_grid]]) {
+    if (s >= n_toks[0]) return;
+    Ux u; u.files = files; u.data = data; u.bases = bases; u.n_files = n_files;
+    uint j = pb_item_of(gat, n_gaps[0], s);
+    uint d = paren_delta(u, text_nodes[firsts[j] + (s - gat[j])]);
+    heads[s] = s == gat[j] ? 1u : 0u;
+    delta[s] = d;
+    close[s] = d == 0xffffffffu ? 1u : 0u;
+}
+
+// Each `)`'s key at its place: its depth after it (biased), its position below.
+kernel void px_close_keys(device const uint* depth [[buffer(0)]], device const uint* close [[buffer(1)]],
+                          device const uint* at [[buffer(2)]], device const uint* n_toks [[buffer(3)]],
+                          device ulong* keys [[buffer(4)]], device atomic_uint* ctl [[buffer(5)]],
+                          uint s [[thread_position_in_grid]]) {
+    if (s >= n_toks[0] || close[s] == 0u) return;
+    uint b = depth[s] + DEPTH_BIAS;
+    if (b >= 2u * DEPTH_BIAS || s >= (1u << POS_BITS)) { px_refuse(ctl, X_DEPTH); return; }
+    keys[at[s]] = (ulong(b) << POS_BITS) | ulong(s);
+}
+
+// The `)` that closes the `(` at top token `open`: the first after it back at the depth before
+// it, in its stretch (a search of the sorted close table); `0xffffffff` where none is.
+inline uint top_close(device const ulong* closes, uint n_close, device const uint* depth, uint open, uint end) {
+    uint b = (depth[open] - 1u + DEPTH_BIAS) & (2u * DEPTH_BIAS - 1u);
+    ulong q = (ulong(b) << POS_BITS) | ulong(open + 1u);
+    uint c = pb_lower_bound(closes, n_close, q);
+    if (c >= n_close || uint(closes[c] >> POS_BITS) != b) return 0xffffffffu;
+    uint pos = uint(closes[c] & ((1ul << POS_BITS) - 1ul));
+    return pos < end ? pos : 0xffffffffu;
+}
+
+// Each top token's call: an object-like name, or a function-like one followed in its stretch by
+// `(`, to its `)`. `cend` is the call's last token + 1 (0: no call), the max scan's input.
 kernel void px_top_calls(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
                          device const uint* bases [[buffer(2)]], device const PpDef* defs [[buffer(3)]],
                          device const uint* lookups [[buffer(4)]], device const uint* text_nodes [[buffer(5)]],
                          device const uint* gat [[buffer(6)]], device const uint* n_gaps [[buffer(7)]],
                          device const uint* firsts [[buffer(8)]], device const uint* n_toks [[buffer(9)]],
-                         device uint* cend [[buffer(10)]], device atomic_uint* ctl [[buffer(11)]],
-                         constant uint& n_files [[buffer(12)]], uint s [[thread_position_in_grid]]) {
+                         device const uint* depth [[buffer(10)]], device const ulong* closes [[buffer(11)]],
+                         device const uint* n_close [[buffer(12)]], device uint* cend [[buffer(13)]],
+                         device atomic_uint* ctl [[buffer(14)]], constant uint& n_files [[buffer(15)]],
+                         uint s [[thread_position_in_grid]]) {
     uint n = n_toks[0];
     if (s >= n) return;
     uint m = lookups[s];
@@ -609,8 +693,11 @@ kernel void px_top_calls(device const PpFile* files [[buffer(0)]], device const 
             uint end = top_end(gat, n_gaps[0], n, s);
             Ux u; u.files = files; u.data = data; u.bases = bases; u.n_files = n_files;
             if (s + 1u < end && ref_is(u, top_ref(text_nodes, gat, n_gaps[0], firsts, s + 1u), '(')) {
-                if (s + 2u < end && ref_is(u, top_ref(text_nodes, gat, n_gaps[0], firsts, s + 2u), ')')) e = s + 3u;
-                else px_refuse(ctl, X_ARGS);
+                uint c = top_close(closes, n_close[0], depth, s + 1u, end);
+                // A call whose arguments go on past its stretch (a directive among them, or its
+                // file's end) is the CPU's.
+                if (c == 0xffffffffu) px_refuse(ctl, X_ACROSS);
+                else e = c + 1u;
             }
         }
     }
@@ -629,24 +716,24 @@ kernel void px_top_outer(device const uint* cend [[buffer(0)]], device const uin
     oflag[s] = st == 1u ? 1u : 0u;
 }
 
-// Each outermost top call's list (its index the scan's) and its EXPAND item.
+// Each outermost top call's list (its index the scan's) and its item: CALL for a function-like
+// macro, SUBST for an object-like one.
 kernel void px_top_lists(device const uint* lookups [[buffer(0)]], device const uint* cend [[buffer(1)]],
                          device const uint* state [[buffer(2)]], device const uint* oid [[buffer(3)]],
                          device const uint* n_toks [[buffer(4)]], device const uint* gslot [[buffer(5)]],
                          device const uint* gat [[buffer(6)]], device const uint* n_gaps [[buffer(7)]],
                          device PxList* lists [[buffer(8)]], device atomic_uint* slots [[buffer(9)]],
-                         device atomic_uint* ctl [[buffer(10)]], constant uint& list_cap [[buffer(11)]],
-                         uint s [[thread_position_in_grid]]) {
+                         device atomic_uint* ctl [[buffer(10)]], device const PpDef* defs [[buffer(11)]],
+                         constant uint& list_cap [[buffer(12)]], uint s [[thread_position_in_grid]]) {
     if (s >= n_toks[0] || state[s] != 1u) return;
     uint c = oid[s];
     if (c >= list_cap) { px_refuse(ctl, X_ROOM); return; }
+    uint m = lookups[s];
     device PxList& l = lists[c];
-    l.parent = TOP; l.def = lookups[s]; l.slot = gslot[pb_item_of(gat, n_gaps[0], s)];
-    l.first = 0u; l.len = 0u; l.lo = s; l.hi = cend[s] - 1u; l.own = 0u;
-    atomic_store_explicit(&l.pending, 1u, memory_order_relaxed);
-    atomic_store_explicit(&l.acc, 0u, memory_order_relaxed);
-    l.size = 0u; l.base = 0u;
-    atomic_store_explicit(&slots[c], c + 1u, memory_order_relaxed);
+    px_init(l, TOP, m, gslot[pb_item_of(gat, n_gaps[0], s)], LK_MACRO);
+    l.lo = s; l.hi = cend[s] - 1u;
+    uint item = (defs[m].flags & D_FNLIKE) != 0u ? (c | IT_CALL) : (c | IT_SUBST);
+    atomic_store_explicit(&slots[c], item + 1u, memory_order_relaxed);
 }
 
 // The queue holds the top calls' items: head 0, tail and active their number; the arena's lists
@@ -663,6 +750,22 @@ kernel void px_seed(device const uint* n_calls [[buffer(0)]], device atomic_uint
     atomic_store_explicit(&ctl[1], n, memory_order_relaxed);
 }
 
+// --- The queue's items ---------------------------------------------------------------------------
+
+// The arena, as every item reads it.
+struct Ar {
+    device PxList* lists; device uint* tok; device uint* tflag; device uint* tchild; device uint* tdepth;
+    device PxArg* args; device uint* out; device atomic_uint* ctl; WorkQueue q;
+    uint tok_cap, list_cap, arg_cap, out_cap;
+};
+
+inline void px_push(Ar a, uint item) { if (!wq_push(a.q, item)) px_refuse(a.ctl, X_QUEUE); }
+
+// Token `k` of list `p` (or top token `k`, `p` being `TOP`): its ref, depth after it, and flags.
+inline uint par_ref(Ux u, Ar a, uint p, uint k) { return (p & TOP) != 0u ? top_ref(u.text_nodes, u.gat, u.n_gaps, u.firsts, k) : a.tok[a.lists[p].first + k]; }
+inline uint par_depth(Ux u, Ar a, uint p, uint k) { return (p & TOP) != 0u ? u.tdepth[k] : a.tdepth[a.lists[p].first + k]; }
+inline uint par_flags(Ar a, uint p, uint k) { return (p & TOP) != 0u ? 0u : a.tflag[a.lists[p].first + k]; }
+
 // Whether definition `m` is disabled for list `l`'s tokens: a list on its chain expands it.
 inline bool px_disabled(device PxList* lists, uint l, uint m, device atomic_uint* ctl) {
     uint k = l;
@@ -676,10 +779,12 @@ inline bool px_disabled(device PxList* lists, uint l, uint m, device atomic_uint
 }
 
 // Whether the next raw token after list `l`'s end is `(` (R-peek): the token after the range it
-// covers in its parent, climbing while that is the parent's end; never past a stretch's end.
+// covers in its parent, climbing while that is the parent's end; never past a fence (an argument
+// list's end) nor a stretch's end.
 inline bool px_peek_paren(Ux u, device PxList* lists, device const uint* tok, uint l) {
     uint k = l;
     for (uint step = 0u; step < MAX_CHAIN; step++) {
+        if (lists[k].kind == LK_ARG) return false;
         uint p = lists[k].parent, at = lists[k].hi + 1u;
         if ((p & TOP) != 0u) {
             if (at >= top_end(u.gat, u.n_gaps, u.n_toks, lists[k].lo)) return false;
@@ -691,102 +796,31 @@ inline bool px_peek_paren(Ux u, device PxList* lists, device const uint* tok, ui
     return false;
 }
 
-// List `l` is final where its last child is: its size into its parent, climbing (lane 0).
-inline void px_final(device PxList* lists, uint l) {
+// List `l` is final where its last child is (lane 0). A macro's list adds its size into its
+// parent, climbing; an argument's starts its flatten: room for its tokens, its PLACE pushed.
+inline void px_final(Ar a, uint l) {
     uint k = l;
     for (uint step = 0u; step < MAX_CHAIN; step++) {
         px_fence();
-        uint size = lists[k].own + atomic_load_explicit(&lists[k].acc, memory_order_relaxed);
-        lists[k].size = size;
-        uint p = lists[k].parent;
+        device PxList& K = a.lists[k];
+        uint size = K.own + atomic_load_explicit(&K.acc, memory_order_relaxed);
+        K.size = size;
+        if (K.kind == LK_ARG) {
+            uint base = atomic_fetch_add_explicit(&a.ctl[0], size, memory_order_relaxed);
+            if (base + size > a.tok_cap) { px_refuse(a.ctl, X_ROOM); return; }
+            K.base = base;
+            K.dest = k + 1u;
+            atomic_store_explicit(&K.fpending, 1u, memory_order_relaxed);
+            px_fence();
+            px_push(a, k | IT_PLACE);
+            return;
+        }
+        uint p = K.parent;
         if ((p & TOP) != 0u) return;
-        atomic_fetch_add_explicit(&lists[p].acc, size, memory_order_relaxed);
+        atomic_fetch_add_explicit(&a.lists[p].acc, size, memory_order_relaxed);
         px_fence();
-        if (atomic_fetch_sub_explicit(&lists[p].pending, 1u, memory_order_relaxed) != 1u) return;
+        if (atomic_fetch_sub_explicit(&a.lists[p].pending, 1u, memory_order_relaxed) != 1u) return;
         k = p;
-    }
-}
-
-// EXPAND `l`: its definition's body leaves as its tokens (one atomic add for all), then its
-// calls, 32 tokens at a time: a name whose macro is not disabled on its chain, function-like
-// ones followed by `(` and `)` in the list. Each call is a child list, pushed.
-inline void px_expand(Ux u, device PxList* lists, device uint* tok, device uint* tchild, device atomic_uint* ctl,
-                      WorkQueue q, uint tok_cap, uint list_cap, uint l, uint lane) {
-    device PxList& L = lists[l];
-    PpDef d = u.defs[L.def];
-    uint n = d.n_body;
-    bool paste = false;
-    for (uint j = lane; j < n; j += 32u) paste = paste || (u.items[d.ifirst + j] & I_PASTE) != 0u;
-    if (simd_any(paste)) px_refuse(ctl, X_PASTE);
-    uint base = 0u;
-    if (lane == 0u) base = atomic_fetch_add_explicit(&ctl[0], n, memory_order_relaxed);
-    base = simd_broadcast(base, 0);
-    if (base + n > tok_cap) {
-        if (lane == 0u) px_refuse(ctl, X_ROOM);
-        n = 0u;
-    }
-    for (uint j = lane; j < n; j += 32u) {
-        tok[base + j] = d.body + j;
-        tchild[base + j] = 0u;
-    }
-    if (lane == 0u) { L.first = base; L.len = n; }
-    px_fence();
-    simdgroup_barrier(mem_flags::mem_device);
-    uint covered = 0u;
-    for (uint c0 = 0u; c0 < n; c0 += 32u) {
-        uint j = c0 + lane, m = 0u, e = 0u;
-        bool call = false;
-        if (j < n) {
-            uint g = tok[base + j];
-            At a = node_at(u.files, u.data, u.bases, u.n_files, g);
-            if (node_kind(a.t, a.i) == K_IDENTIFIER) {
-                m = visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, u.keys[g], L.slot, ctl + 2);
-                if (m == L_BUILTIN) {
-                    px_refuse(ctl, X_BUILTIN);
-                } else if (m < L_BUILTIN && !px_disabled(lists, l, m, ctl)) {
-                    if ((u.defs[m].flags & D_FNLIKE) == 0u) {
-                        call = true; e = j;
-                    } else if (j + 1u < n) {
-                        if (ref_is(u, tok[base + j + 1u], '(')) {
-                            if (j + 2u < n && ref_is(u, tok[base + j + 2u], ')')) { call = true; e = j + 2u; }
-                            else px_refuse(ctl, X_ARGS);
-                        }
-                    } else if (px_peek_paren(u, lists, tok, l)) {
-                        px_refuse(ctl, X_PAST_END);
-                    }
-                }
-            }
-        }
-        uint k = simd_sum(call ? 1u : 0u);
-        if (k == 0u) continue;
-        uint first = 0u;
-        if (lane == 0u) {
-            first = atomic_fetch_add_explicit(&ctl[1], k, memory_order_relaxed);
-            atomic_fetch_add_explicit(&L.pending, k, memory_order_relaxed);
-        }
-        first = simd_broadcast(first, 0);
-        uint child = first + simd_prefix_exclusive_sum(call ? 1u : 0u);
-        if (call && child >= list_cap) {
-            px_refuse(ctl, X_ROOM);
-            call = false;
-            // Its count stays pending: the unit reruns at the next rung.
-        }
-        if (call) {
-            device PxList& C = lists[child];
-            C.parent = l; C.def = m; C.slot = L.slot; C.first = 0u; C.len = 0u; C.lo = j; C.hi = e; C.own = 0u;
-            atomic_store_explicit(&C.pending, 1u, memory_order_relaxed);
-            atomic_store_explicit(&C.acc, 0u, memory_order_relaxed);
-            C.size = 0u; C.base = 0u;
-            tchild[base + j] = child + 1u;
-        }
-        covered += simd_sum(call ? e - j + 1u : 0u);
-        px_fence();
-        if (call && !wq_push(q, child)) px_refuse(ctl, X_QUEUE);
-    }
-    if (lane == 0u) {
-        L.own = n - covered;
-        px_fence();
-        if (atomic_fetch_sub_explicit(&L.pending, 1u, memory_order_relaxed) == 1u) px_final(lists, l);
     }
 }
 
@@ -799,32 +833,354 @@ inline uint px_prefix_max(uint x, uint lane) {
     return x;
 }
 
+// SCAN `l`'s tokens (written): their depths (a SIMD scan carried 32 at a time), then their
+// calls: a name not painted whose macro is not disabled on the chain, a function-like one
+// followed by `(` in the list, to its `)` (a SIMD search a call); the outermost (a carried max of
+// the calls' reach) each a child list, pushed.
+inline void px_scan(Ux u, Ar a, uint l, uint lane) {
+    device PxList& L = a.lists[l];
+    uint n = L.len, first = L.first;
+    uint carry = 0u;
+    for (uint c0 = 0u; c0 < n; c0 += 32u) {
+        uint j = c0 + lane;
+        uint d = j < n ? paren_delta(u, a.tok[first + j]) : 0u;
+        uint depth = carry + simd_prefix_inclusive_sum(d);
+        if (j < n) a.tdepth[first + j] = depth;
+        carry += simd_sum(d);
+    }
+    px_fence();
+    simdgroup_barrier(mem_flags::mem_device);
+    uint covered = 0u, reach = 0u;
+    for (uint c0 = 0u; c0 < n; c0 += 32u) {
+        uint j = c0 + lane, m = 0u, e = 0u;
+        bool call = false, fn = false, open = false;
+        if (j < n && (a.tflag[first + j] & T_NOEXP) == 0u) {
+            uint g = a.tok[first + j];
+            if (ref_kind(u, g) == K_IDENTIFIER) {
+                m = visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, u.keys[g], L.slot, a.ctl + 2);
+                if (m == L_BUILTIN) {
+                    px_refuse(a.ctl, X_BUILTIN);
+                } else if (m < L_BUILTIN) {
+                    if (px_disabled(a.lists, l, m, a.ctl)) {
+                        a.tflag[first + j] |= T_NOEXP;
+                    } else if ((u.defs[m].flags & D_FNLIKE) == 0u) {
+                        call = true; e = j;
+                    } else if (j + 1u < n) {
+                        open = ref_is(u, a.tok[first + j + 1u], '(');
+                        fn = true;
+                    } else if (px_peek_paren(u, a.lists, a.tok, l)) {
+                        px_refuse(a.ctl, X_PAST_END);
+                    }
+                }
+            }
+        }
+        // Each `(` after a function-like name: its `)`, searched by the 32 lanes together.
+        ulong todo = px_ballot(fn && open);
+        for (uint guard = 0u; guard < 32u && todo != 0u; guard++) {
+            uint who = uint(ctz(todo));
+            todo &= todo - 1u;
+            uint jw = simd_shuffle(j, ushort(who));
+            uint target = a.tdepth[first + jw + 1u] - 1u;
+            uint found = 0xffffffffu;
+            for (uint k0 = jw + 2u; k0 < n && found == 0xffffffffu; k0 += 32u) {
+                uint k = k0 + lane;
+                bool hit = k < n && a.tdepth[first + k] == target && ref_is(u, a.tok[first + k], ')');
+                ulong h = px_ballot(hit);
+                if (h != 0u) found = k0 + uint(ctz(h));
+            }
+            if (lane == who) {
+                if (found == 0xffffffffu) px_refuse(a.ctl, X_PAST_END);
+                else { call = true; e = found; }
+            }
+        }
+        uint incl = px_prefix_max(call ? e + 1u : 0u, lane);
+        uint before = max(reach, lane == 0u ? 0u : simd_shuffle_up(incl, 1u));
+        reach = max(reach, simd_max(incl));
+        call = call && before <= j;
+        uint k = simd_sum(call ? 1u : 0u);
+        if (k == 0u) continue;
+        uint cfirst = 0u;
+        if (lane == 0u) {
+            cfirst = atomic_fetch_add_explicit(&a.ctl[1], k, memory_order_relaxed);
+            atomic_fetch_add_explicit(&L.pending, k, memory_order_relaxed);
+        }
+        cfirst = simd_broadcast(cfirst, 0);
+        uint child = cfirst + simd_prefix_exclusive_sum(call ? 1u : 0u);
+        if (call && child >= a.list_cap) {
+            px_refuse(a.ctl, X_ROOM);
+            call = false;
+        }
+        if (call) {
+            device PxList& C = a.lists[child];
+            px_init(C, l, m, L.slot, LK_MACRO);
+            C.lo = j; C.hi = e;
+            a.tchild[first + j] = child + 1u;
+        }
+        covered += simd_sum(call ? e - j + 1u : 0u);
+        px_fence();
+        if (call) px_push(a, child | ((u.defs[m].flags & D_FNLIKE) != 0u ? IT_CALL : IT_SUBST));
+    }
+    if (lane == 0u) {
+        L.own = n - covered;
+        px_fence();
+        if (atomic_fetch_sub_explicit(&L.pending, 1u, memory_order_relaxed) == 1u) px_final(a, l);
+    }
+}
+
+// Copies `n` tokens (refs and flags) from `src` to `dst` of the arena, by the 32 lanes.
+inline void px_copy(Ar a, uint dst, uint src, uint n, uint lane) {
+    for (uint j = lane; j < n; j += 32u) {
+        a.tok[dst + j] = a.tok[src + j];
+        a.tflag[dst + j] = a.tflag[src + j];
+        a.tchild[dst + j] = 0u;
+    }
+}
+
+// CALL `l`: its arguments in its parent (the top-level commas between its `(` and `)`, by
+// ballots carried 32 at a time; past the last parameter a variadic macro's commas join), the
+// count checked (a wrong one leaves the name alone, painted), and a list for each parameter used
+// expanded (claimed once), its tokens the argument's refs, its SCAN pushed. SUBST follows when the
+// last is flattened.
+inline void px_call(Ux u, Ar a, uint l, uint lane) {
+    device PxList& L = a.lists[l];
+    PpDef d = u.defs[L.def];
+    uint np = d.n_params >= 2u ? (d.n_params - 1u) / 2u : 0u;
+    bool va = (d.flags & D_VARIADIC) != 0u;
+    uint p = L.parent, open = L.lo + 1u, close = L.hi;
+    uint depth = par_depth(u, a, p, open);
+    // The splitting commas.
+    uint splits = 0u;
+    for (uint c0 = open + 1u; c0 < close; c0 += 32u) {
+        uint k = c0 + lane;
+        bool comma = k < close && par_depth(u, a, p, k) == depth && ref_is(u, par_ref(u, a, p, k), ',');
+        uint before = splits + simd_prefix_exclusive_sum(comma ? 1u : 0u);
+        comma = comma && !(va && before + 1u >= np);
+        splits += simd_sum(comma ? 1u : 0u);
+    }
+    bool empty = close == open + 1u;
+    uint nargs = np == 0u ? 0u : splits + 1u;
+    bool fill = np > 0u && va && nargs + 1u == np;
+    bool wrong = np == 0u ? !empty : (fill ? false : nargs != np);
+    if (wrong) {
+        // The name alone, painted.
+        uint base = 0u;
+        if (lane == 0u) base = atomic_fetch_add_explicit(&a.ctl[0], 1u, memory_order_relaxed);
+        base = simd_broadcast(base, 0);
+        if (lane == 0u) {
+            if (base + 1u > a.tok_cap) {
+                px_refuse(a.ctl, X_ROOM);
+                L.len = 0u;
+            } else {
+                a.tok[base] = par_ref(u, a, p, L.lo);
+                a.tflag[base] = par_flags(a, p, L.lo) | T_NOEXP;
+                a.tchild[base] = 0u;
+                L.len = 1u;
+            }
+            L.first = base;
+            L.own = L.len;
+            px_fence();
+            if (atomic_fetch_sub_explicit(&L.pending, 1u, memory_order_relaxed) == 1u) px_final(a, l);
+        }
+        return;
+    }
+    // The arguments' entries: each one's raw range.
+    uint ab = 0u;
+    if (lane == 0u) ab = atomic_fetch_add_explicit(&a.ctl[3], np, memory_order_relaxed);
+    ab = simd_broadcast(ab, 0);
+    if (ab + np > a.arg_cap) {
+        if (lane == 0u) px_refuse(a.ctl, X_ROOM);
+        np = 0u;
+    }
+    if (lane == 0u) {
+        L.args = ab; L.nargs = np;
+        if (np > 0u) a.args[ab].lo = open + 1u;
+        if (fill) { a.args[ab + np - 1u].lo = close; a.args[ab + np - 1u].hi = close; }
+    }
+    for (uint q = lane; q < np; q += 32u) atomic_store_explicit(&a.args[ab + q].list, 0u, memory_order_relaxed);
+    uint rank = 0u;
+    for (uint c0 = open + 1u; c0 < close && np > 0u; c0 += 32u) {
+        uint k = c0 + lane;
+        bool comma = k < close && par_depth(u, a, p, k) == depth && ref_is(u, par_ref(u, a, p, k), ',');
+        uint before = rank + simd_prefix_exclusive_sum(comma ? 1u : 0u);
+        comma = comma && !(va && before + 1u >= np);
+        uint r = rank + simd_prefix_exclusive_sum(comma ? 1u : 0u);
+        if (comma) { a.args[ab + r].hi = k; a.args[ab + r + 1u].lo = k + 1u; }
+        rank += simd_sum(comma ? 1u : 0u);
+    }
+    if (lane == 0u && np > 0u) a.args[ab + (fill ? np - 2u : np - 1u)].hi = close;
+    px_fence();
+    simdgroup_barrier(mem_flags::mem_device);
+    // The body's uses of parameters: `#` and `##` are later steps' (refused); each parameter used
+    // otherwise, with an argument, gets its list once.
+    uint n = d.n_body;
+    for (uint c0 = 0u; c0 < n; c0 += 32u) {
+        uint i = c0 + lane;
+        uint q = 0xffffu;
+        if (i < n) {
+            uint it = u.items[d.ifirst + i];
+            if ((it & I_PASTE) != 0u) px_refuse(a.ctl, X_PASTE);
+            uint kind = ref_kind(u, d.body + i);
+            if (kind == K_HASH) px_refuse(a.ctl, X_HASH);
+            if (va && kind == K_IDENTIFIER && u.keys[d.body + i] == u.va_opt) px_refuse(a.ctl, X_VA_OPT);
+            q = it & 0xffffu;
+        }
+        bool make = false;
+        if (q != NO_PARAM && q < np && a.args[ab + q].hi > a.args[ab + q].lo) {
+            // The weak exchange may fail with the slot still free: try again while it is.
+            for (uint t = 0u; t < 64u && !make; t++) {
+                uint none = 0u;
+                make = atomic_compare_exchange_weak_explicit(&a.args[ab + q].list, &none, 1u, memory_order_relaxed, memory_order_relaxed);
+                if (none != 0u) break;
+            }
+        }
+        // Each list made by the 32 lanes, one after another.
+        ulong todo = px_ballot(make);
+        for (uint guard = 0u; guard < 32u && todo != 0u; guard++) {
+            uint who = uint(ctz(todo));
+            todo &= todo - 1u;
+            uint qw = simd_shuffle(q, ushort(who));
+            uint lo = a.args[ab + qw].lo, len = a.args[ab + qw].hi - lo;
+            uint id = 0u, base = 0u;
+            if (lane == 0u) {
+                id = atomic_fetch_add_explicit(&a.ctl[1], 1u, memory_order_relaxed);
+                base = atomic_fetch_add_explicit(&a.ctl[0], len, memory_order_relaxed);
+            }
+            id = simd_broadcast(id, 0);
+            base = simd_broadcast(base, 0);
+            if (id >= a.list_cap || base + len > a.tok_cap) {
+                if (lane == 0u) px_refuse(a.ctl, X_ROOM);
+                continue;
+            }
+            for (uint j = lane; j < len; j += 32u) {
+                a.tok[base + j] = par_ref(u, a, p, lo + j);
+                a.tflag[base + j] = par_flags(a, p, lo + j);
+                a.tchild[base + j] = 0u;
+            }
+            if (lane == 0u) {
+                device PxList& A = a.lists[id];
+                px_init(A, p, NO_DEF, L.slot, LK_ARG);
+                A.first = base; A.len = len; A.lo = lo; A.hi = lo + len; A.call = l;
+                atomic_store_explicit(&a.args[ab + qw].list, id + 2u, memory_order_relaxed);
+                atomic_fetch_add_explicit(&L.apending, 1u, memory_order_relaxed);
+            }
+            px_fence();
+            simdgroup_barrier(mem_flags::mem_device);
+            if (lane == 0u) px_push(a, id | IT_SCAN);
+        }
+    }
+    if (lane == 0u) {
+        px_fence();
+        if (atomic_fetch_sub_explicit(&L.apending, 1u, memory_order_relaxed) == 1u) px_push(a, l | IT_SUBST);
+    }
+}
+
+// SUBST `l`: its body's items, a parameter used expanded its argument's flattened tokens (their
+// paint kept), at offsets by a SIMD scan of the items' counts (one atomic add for all); then the
+// list is scanned.
+inline void px_subst(Ux u, Ar a, uint l, uint lane) {
+    device PxList& L = a.lists[l];
+    PpDef d = u.defs[L.def];
+    uint n = d.n_body, total = 0u;
+    // The count of each item: 1, or its argument's flattened size.
+    for (uint c0 = 0u; c0 < n; c0 += 32u) {
+        uint i = c0 + lane, v = 0u;
+        if (i < n) {
+            uint q = u.items[d.ifirst + i] & 0xffffu;
+            if (q == NO_PARAM || q >= L.nargs) v = 1u;
+            else {
+                uint id = atomic_load_explicit(&a.args[L.args + q].list, memory_order_relaxed);
+                v = id >= 2u ? a.lists[id - 2u].size : 0u;
+            }
+        }
+        total += simd_sum(v);
+    }
+    uint base = 0u;
+    if (lane == 0u) base = atomic_fetch_add_explicit(&a.ctl[0], total, memory_order_relaxed);
+    base = simd_broadcast(base, 0);
+    if (base + total > a.tok_cap) {
+        if (lane == 0u) px_refuse(a.ctl, X_ROOM);
+        total = 0u;
+        n = 0u;
+    }
+    uint at = base;
+    for (uint c0 = 0u; c0 < n; c0 += 32u) {
+        uint i = c0 + lane, v = 0u, src = 0u;
+        bool param = false;
+        if (i < n) {
+            uint q = u.items[d.ifirst + i] & 0xffffu;
+            if (q == NO_PARAM || q >= L.nargs) v = 1u;
+            else {
+                param = true;
+                uint id = atomic_load_explicit(&a.args[L.args + q].list, memory_order_relaxed);
+                if (id >= 2u) { v = a.lists[id - 2u].size; src = a.lists[id - 2u].base; }
+            }
+        }
+        uint off = at + simd_prefix_exclusive_sum(v);
+        if (i < n && !param) {
+            a.tok[off] = d.body + i;
+            a.tflag[off] = 0u;
+            a.tchild[off] = 0u;
+        }
+        ulong todo = px_ballot(param && v > 0u);
+        for (uint guard = 0u; guard < 32u && todo != 0u; guard++) {
+            uint who = uint(ctz(todo));
+            todo &= todo - 1u;
+            px_copy(a, simd_shuffle(off, ushort(who)), simd_shuffle(src, ushort(who)), simd_shuffle(v, ushort(who)), lane);
+        }
+        at += simd_sum(v);
+    }
+    if (lane == 0u) { L.first = base; L.len = total; }
+    px_fence();
+    simdgroup_barrier(mem_flags::mem_device);
+    px_scan(u, a, l, lane);
+}
+
 // PLACE `l`: its tokens no child covers at its base, in order, and each child's base (a SIMD
-// scan of the pieces' sizes, carried 32 tokens at a time); each child pushed.
-inline void px_place(device PxList* lists, device const uint* tok, device const uint* tchild, device uint* out,
-                     device atomic_uint* ctl, WorkQueue q, uint out_cap, uint l, uint lane) {
-    device PxList& L = lists[l];
+// scan of the pieces' sizes, carried 32 at a time), each child's PLACE pushed. It writes to the
+// output, or (flattening an argument) to the arena with the tokens' paint, and counts its
+// flatten's items down: the last done tells the call.
+inline void px_place(Ar a, uint l, uint lane) {
+    device PxList& L = a.lists[l];
+    uint dest = L.dest;
     uint at = L.base, reach = 0u;
     for (uint c0 = 0u; c0 < L.len; c0 += 32u) {
         uint j = c0 + lane, v = 0u, child = 0u, ends = 0u;
         if (j < L.len) {
-            child = tchild[L.first + j];
-            if (child != 0u) ends = lists[child - 1u].hi + 1u;
+            child = a.tchild[L.first + j];
+            if (child != 0u) ends = a.lists[child - 1u].hi + 1u;
         }
         uint incl = px_prefix_max(ends, lane);
-        uint before = max(reach, simd_shuffle_up(incl, 1u) * (lane == 0u ? 0u : 1u));
-        if (j < L.len) v = child != 0u ? lists[child - 1u].size : before > j ? 0u : 1u;
+        uint before = max(reach, lane == 0u ? 0u : simd_shuffle_up(incl, 1u));
+        if (j < L.len) v = child != 0u ? a.lists[child - 1u].size : before > j ? 0u : 1u;
         uint off = at + simd_prefix_exclusive_sum(v);
         if (j < L.len && child == 0u && v == 1u) {
-            if (off < out_cap) out[off] = tok[L.first + j]; else px_refuse(ctl, X_ROOM);
+            if (dest == 0u) {
+                if (off < a.out_cap) a.out[off] = a.tok[L.first + j]; else px_refuse(a.ctl, X_ROOM);
+            } else {
+                a.tok[off] = a.tok[L.first + j];
+                a.tflag[off] = a.tflag[L.first + j];
+                a.tchild[off] = 0u;
+            }
         }
+        uint k = simd_sum(child != 0u ? 1u : 0u);
+        if (dest != 0u && lane == 0u && k != 0u) atomic_fetch_add_explicit(&a.lists[dest - 1u].fpending, k, memory_order_relaxed);
         if (child != 0u) {
-            lists[child - 1u].base = off;
+            a.lists[child - 1u].base = off;
+            a.lists[child - 1u].dest = dest;
             px_fence();
-            if (!wq_push(q, (child - 1u) | ITEM_PLACE)) px_refuse(ctl, X_QUEUE);
+            px_push(a, (child - 1u) | IT_PLACE);
         }
         at += simd_sum(v);
         reach = max(reach, simd_max(incl));
+    }
+    if (dest != 0u && lane == 0u) {
+        px_fence();
+        device PxList& A = a.lists[dest - 1u];
+        if (atomic_fetch_sub_explicit(&A.fpending, 1u, memory_order_relaxed) == 1u) {
+            device PxList& C = a.lists[A.call];
+            px_fence();
+            if (atomic_fetch_sub_explicit(&C.apending, 1u, memory_order_relaxed) == 1u) px_push(a, A.call | IT_SUBST);
+        }
     }
 }
 
@@ -837,24 +1193,29 @@ kernel void px_work(device const PpFile* files [[buffer(0)]], device const uchar
                     device const uint* values [[buffer(10)]], device const uint* text_nodes [[buffer(11)]],
                     device const uint* gat [[buffer(12)]], device const uint* n_gaps [[buffer(13)]],
                     device const uint* firsts [[buffer(14)]], device const uint* n_toks [[buffer(15)]],
-                    device PxList* lists [[buffer(16)]], device uint* tok [[buffer(17)]],
-                    device uint* tchild [[buffer(18)]], device uint* out [[buffer(19)]],
-                    device atomic_uint* slots [[buffer(20)]], device atomic_uint* qctl [[buffer(21)]],
-                    device atomic_uint* ctl [[buffer(22)]], constant uint& n_files [[buffer(23)]],
-                    constant uint& tok_cap [[buffer(24)]], constant uint& list_cap [[buffer(25)]],
-                    constant uint& out_cap [[buffer(26)]], constant uint& q_cap [[buffer(27)]],
+                    device const uint* top_depth [[buffer(16)]], device PxList* lists [[buffer(17)]],
+                    device uint* tok [[buffer(18)]], device uint* tflag [[buffer(19)]],
+                    device uint* tchild [[buffer(20)]], device uint* tdepth [[buffer(21)]],
+                    device PxArg* args [[buffer(22)]], device uint* out [[buffer(23)]],
+                    device atomic_uint* slots [[buffer(24)]], device atomic_uint* qctl [[buffer(25)]],
+                    device atomic_uint* ctl [[buffer(26)]], constant uint* words [[buffer(27)]],
                     uint lane [[thread_index_in_simdgroup]]) {
+    // words: n_files, tok_cap, list_cap, arg_cap, out_cap, q_cap, va_opt (low, high).
     Ux u;
-    u.files = files; u.data = data; u.bases = bases; u.n_files = n_files; u.keys = keys; u.defs = defs; u.items = items;
+    u.files = files; u.data = data; u.bases = bases; u.n_files = words[0]; u.keys = keys; u.defs = defs; u.items = items;
     u.sorted = sorted; u.perm = perm; u.n_rows = n_rows[0]; u.name_keys = name_keys; u.values = values;
     u.text_nodes = text_nodes; u.gat = gat; u.n_gaps = n_gaps[0]; u.firsts = firsts; u.n_toks = n_toks[0];
-    WorkQueue q; q.slots = slots; q.control = qctl; q.capacity = q_cap;
+    u.tdepth = top_depth; u.va_opt = ulong(words[6]) | (ulong(words[7]) << 32);
+    Ar a;
+    a.lists = lists; a.tok = tok; a.tflag = tflag; a.tchild = tchild; a.tdepth = tdepth; a.args = args; a.out = out; a.ctl = ctl;
+    a.q.slots = slots; a.q.control = qctl; a.q.capacity = words[5];
+    a.tok_cap = words[1]; a.list_cap = words[2]; a.arg_cap = words[3]; a.out_cap = words[4];
     uint polls = 0u;
     for (uint turn = 0u; turn < WQ_TURNS; turn++) {
         uint item = 0u, got = 0u, stop = 0u;
         if (lane == 0u) {
-            if (wq_take(q, item)) { got = 1u; polls = 0u; }
-            else if (wq_idle(q, polls, POLLS)) stop = 1u;
+            if (wq_take(a.q, item)) { got = 1u; polls = 0u; }
+            else if (wq_idle(a.q, polls, POLLS)) stop = 1u;
         }
         got = simd_broadcast(got, 0);
         if (got == 0u) {
@@ -863,11 +1224,16 @@ kernel void px_work(device const PpFile* files [[buffer(0)]], device const uchar
         }
         item = simd_broadcast(item, 0);
         px_fence();
-        if ((item & ITEM_PLACE) != 0u) px_place(lists, tok, tchild, out, ctl, q, out_cap, item & ~ITEM_PLACE, lane);
-        else px_expand(u, lists, tok, tchild, ctl, q, tok_cap, list_cap, item, lane);
+        uint l = item & ~IT_KIND;
+        switch (item & IT_KIND) {
+            case IT_PLACE: px_place(a, l, lane); break;
+            case IT_CALL: px_call(u, a, l, lane); break;
+            case IT_SCAN: px_scan(u, a, l, lane); break;
+            default: px_subst(u, a, l, lane); break;
+        }
         px_fence();
         simdgroup_barrier(mem_flags::mem_device);
-        if (lane == 0u) wq_done(q);
+        if (lane == 0u) wq_done(a.q);
     }
 }
 
@@ -899,9 +1265,10 @@ kernel void px_top_place(device const uint* state [[buffer(0)]], device const ui
     } else if (st == 1u) {
         uint c = oid[s];
         lists[c].base = obase[s];
+        lists[c].dest = 0u;
         px_fence();
         WorkQueue q; q.slots = slots; q.control = qctl; q.capacity = q_cap;
-        if (!wq_push(q, c | ITEM_PLACE)) px_refuse(ctl, X_QUEUE);
+        if (!wq_push(q, c | IT_PLACE)) px_refuse(ctl, X_QUEUE);
     }
 }
 

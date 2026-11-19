@@ -422,3 +422,51 @@ fn object_like_expansion_is_the_serial_passes() {
     }
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
 }
+
+/// The shapes of `shapes`, each in C and C++, expanded on the device, against the serial pass.
+fn shapes_agree(shapes: &[&[(&str, &str)]]) -> (usize, usize) {
+    let (mut tokens, mut launches) = (0, 0);
+    for (k, files) in shapes.iter().enumerate() {
+        for cpp in [false, true] {
+            let (got, want, _, n) = expanded(files, cpp, 0);
+            launches = launches.max(n);
+            let at = format!("shape {k} ({})", if cpp { "C++" } else { "C" });
+            match got {
+                Ok(got) => {
+                    same(show(&got), show(&want), &at);
+                    tokens += got.len();
+                }
+                Err(why) => same(why, 0, format!("{at}: refused")),
+            }
+        }
+    }
+    (tokens, launches)
+}
+
+/// R6 of decision 0448, its first part: calls with arguments, each parameter used expanded getting
+/// its argument expanded once, in isolation (a fenced list, its paint kept when substituted), then
+/// the body rescanned. Nested calls, calls in arguments and in bodies, parentheses and commas in
+/// arguments, empty arguments, the wrong count of arguments (the name alone), variadic macros (the
+/// variadic part left out, empty, or many), a name painted in an argument, and a function-like
+/// name at an argument's end that its substitution calls.
+#[test]
+fn calls_with_arguments_are_the_serial_passes() {
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define F(x) x x\nF(1) F((a,b)) F() F( )\n")],
+        &[("main.c", "#define G(a,b) b a\nG(1,2) G(G(1,2),3) G((1,2),(3))\n")],
+        &[("main.c", "#define I(x) x\n#define A I(A)\nA I(A) I(I(I(1)))\n")],
+        &[("main.c", "#define f(x) x(1)\n#define g(y) y+1\nf(g) f(f)\n")],
+        &[("main.c", "#define F(x) x\nF(1,2) z F z F\n")],
+        &[("main.c", "#define V(a, ...) a __VA_ARGS__\nV(1) V(1,2,3) V(1,) V((1,2),3)\n")],
+        &[("main.c", "#define W(...) [__VA_ARGS__]\nW() W(a,b) W(W(1),W(2,3))\n")],
+        &[("main.c", "#define H(x) [x]\n#define K H(H(1))\nK H(K) H(H(K))\n")],
+        &[("main.c", "#define P(x,y) x|y\n#define Q P(1,P(2,3))\nQ P(Q,Q)\n")],
+        &[("main.c", "#define N(x) x N\n#define M(x) N(x)\nM(1) M(M(2))\n")],
+        &[("main.c", "#define E(x)\n#define Z(x, y) y\nE(1) Z(,) Z(a,) Z(,b)\n")],
+        &[("main.c", "#define L(x) x\nL(\n1\n,\n) L(L\n(2))\n")],
+        &[("main.c", "#define C(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H) H G F E D C B A z y x w v u t s r q p o n m l k j i h g f e d c b a\nC(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34)\n")],
+        &[("main.c", "#include \"m.h\"\nT(T(1)) U(2)\n"), ("m.h", "#define T(x) (x)\n#define U(x) T(x) T(U(x))\n")],
+    ];
+    let (tokens, launches) = shapes_agree(shapes);
+    eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
+}

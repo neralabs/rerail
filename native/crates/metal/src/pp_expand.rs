@@ -428,17 +428,20 @@ impl Vis {
     }
 }
 
-/// A list (`PxList` in the MSL): 12 words.
-const LIST_WORDS: usize = 12;
+/// A list (`PxList` in the MSL): 20 words; an argument (`PxArg`): 3.
+const LIST_WORDS: usize = 20;
+const ARG_WORDS: usize = 3;
 
 /// Why a unit is refused (`pp_expand.metal`'s `X_*`). `X_ROOM` reruns it at the next rung.
 pub const X_BUILTIN: u32 = 1;
-pub const X_ARGS: u32 = 2;
 pub const X_PAST_END: u32 = 4;
 pub const X_PASTE: u32 = 8;
 pub const X_DEPTH: u32 = 16;
 pub const X_ROOM: u32 = 32;
 pub const X_QUEUE: u32 = 64;
+pub const X_HASH: u32 = 128;
+pub const X_ACROSS: u32 = 256;
+pub const X_VA_OPT: u32 = 512;
 
 /// The expansion's rungs: rung `k`'s arena holds `2^(k+1)` tokens a top token.
 pub const EXP_RUNGS: u32 = 5;
@@ -446,17 +449,31 @@ pub const EXP_RUNGS: u32 = 5;
 /// work; the others start where every worker exited with items left, and end at once if none).
 const WORKER_GROUPS: u64 = 64;
 const WORK_LAUNCHES: usize = 3;
+/// The close table's keys: a biased depth (16 bits) above a position (24 bits).
+const CLOSE_BITS: u32 = 40;
 
 /// The expansion's stores (0448 §2), placed before the command buffer, at a rung:
-/// - by top token (`top`): its call's end, the reach's max scan, its state, the outermost flags
-///   and their scan, its piece of the output and that piece's place;
-/// - the arena: tokens (a ref and a child each), lists, the queue (two items a list);
+/// - by top token (`top`): its stretch head, depth change and depth, its `)` flag and place, the
+///   close table and its sort, its call's end, the reach's max scan, its state, the outermost
+///   flags and their scan, its piece of the output and that piece's place;
+/// - the arena: tokens (a ref, flags, a child and a depth each), lists, arguments, the queue (two
+///   items a list);
 /// - the output (refs), and the control words (the arena's tops, the refusals).
 pub struct Exp {
     tok_cap: u32,
     list_cap: u32,
     out_cap: u32,
     q_cap: u32,
+    words: MappedBuffer,
+    theads: MappedBuffer,
+    delta: MappedBuffer,
+    depth: MappedBuffer,
+    depth_scan: SegScan,
+    close: MappedBuffer,
+    close_at: MappedBuffer,
+    close_scan: Scan,
+    close_keys: MappedBuffer,
+    close_sort: Sort,
     cend: MappedBuffer,
     heads: MappedBuffer,
     reach: MappedBuffer,
@@ -470,7 +487,10 @@ pub struct Exp {
     vscan: Scan,
     lists: MappedBuffer,
     tok: MappedBuffer,
+    tflag: MappedBuffer,
     tchild: MappedBuffer,
+    tdepth: MappedBuffer,
+    args: MappedBuffer,
     slots: MappedBuffer,
     qctl: MappedBuffer,
     pub ctl: MappedBuffer,
@@ -484,16 +504,29 @@ impl Exp {
         let top = top_bound(unit, lay);
         let tok = (top << (rung + 1)) + 4096;
         let lists = top / 2 + tok / 4 + 256;
+        let args = tok / 2 + 256;
         let out = top + tok;
         let q = 2 * lists + 64;
         if tok >= u32::MAX as usize / 2 || q >= u32::MAX as usize / 2 {
             return Err(Error::BackendCapacity);
         }
+        let va_opt = name_key(b"__VA_OPT__");
+        let words = [unit.table.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32];
         Ok(Exp {
             tok_cap: tok as u32,
             list_cap: lists as u32,
             out_cap: out as u32,
             q_cap: q as u32,
+            words: MappedBuffer::from_slice(&device, &words)?,
+            theads: zeroed(top)?,
+            delta: zeroed(top)?,
+            depth: zeroed(top)?,
+            depth_scan: SegScan::new(top)?,
+            close: zeroed(top)?,
+            close_at: zeroed(top)?,
+            close_scan: Scan::new(top)?,
+            close_keys: MappedBuffer::zeroed::<u64>(&device, top)?,
+            close_sort: Sort::new(top)?,
             cend: zeroed(top)?,
             heads: zeroed(top)?,
             reach: zeroed(top)?,
@@ -507,7 +540,10 @@ impl Exp {
             vscan: Scan::new(top)?,
             lists: zeroed(lists * LIST_WORDS)?,
             tok: zeroed(tok)?,
+            tflag: zeroed(tok)?,
             tchild: zeroed(tok)?,
+            tdepth: zeroed(tok)?,
+            args: zeroed(args * ARG_WORDS)?,
             slots: zeroed(q)?,
             qctl: zeroed(4)?,
             ctl: zeroed(4)?,
@@ -515,18 +551,45 @@ impl Exp {
         })
     }
 
-    /// The top level's grid passes (one thread a top token, sized by the lookups' count), the
-    /// queue's first phase (EXPAND items to every list's final), the top level's places (a scan
-    /// of the pieces), the queue's second phase (PLACE items), and the check.
+    /// The top level's grid passes (one thread a top token, sized by the lookups' count): its
+    /// depth (a segmented scan by stretch), the close table (a scan, one 40-bit sort), the calls,
+    /// the outermost (a max scan of the reach, a scan); the queue's first phase (CALL, SCAN,
+    /// SUBST, flattening PLACE items, to every list's final); the top level's places (a scan of
+    /// the pieces); the queue's second phase (PLACE items to the output), and the check.
     pub fn encode(&self, enc: &Enc<'_>, unit: &Unit, front: &Front, defs: &Defs, vis: &Vis) -> Result<(), Error> {
         let n32 = unit.table.len() as u32;
         let (u_files, u_data) = (&unit.files.buffer as &BufferRef, &unit.data.buffer as &BufferRef);
         let n_toks = &vis.gscan.total.buffer;
         let by_top = Grid::Indirect(&vis.targs.buffer, 0);
+        let top_in = [u_files, u_data, &front.bases.buffer, &vis.text_nodes.buffer, &vis.gat.buffer, &vis.n_gaps.buffer, &vis.gfirsts.buffer, n_toks];
+        let mut parens = top_in.to_vec();
+        parens.extend([&self.theads.buffer as &BufferRef, &self.delta.buffer, &self.close.buffer]);
+        enc.run("px_top_parens", None, &parens, &[n32], by_top)?;
+        self.depth_scan.encode(enc, SegOp::Add, n_toks, 0, &self.delta.buffer, &self.theads.buffer, &self.depth.buffer)?;
+        self.close_scan.encode(enc, n_toks, 0, &self.close.buffer, &self.close_at.buffer)?;
+        enc.run("px_close_keys", None, &[&self.depth.buffer, &self.close.buffer, &self.close_at.buffer, n_toks, &self.close_keys.buffer, &self.ctl.buffer], &[], by_top)?;
+        self.close_sort.encode(enc, &self.close_scan.total.buffer, 0, &self.close_keys.buffer, CLOSE_BITS)?;
+        let closes = if Sort::in_input(CLOSE_BITS) { &self.close_keys.buffer as &BufferRef } else { &self.close_sort.keys_b.buffer };
         enc.run(
             "px_top_calls",
             None,
-            &[u_files, u_data, &front.bases.buffer, &defs.defs.buffer, &vis.lookups.buffer, &vis.text_nodes.buffer, &vis.gat.buffer, &vis.n_gaps.buffer, &vis.gfirsts.buffer, n_toks, &self.cend.buffer, &self.ctl.buffer],
+            &[
+                u_files,
+                u_data,
+                &front.bases.buffer,
+                &defs.defs.buffer,
+                &vis.lookups.buffer,
+                &vis.text_nodes.buffer,
+                &vis.gat.buffer,
+                &vis.n_gaps.buffer,
+                &vis.gfirsts.buffer,
+                n_toks,
+                &self.depth.buffer,
+                closes,
+                &self.close_scan.total.buffer,
+                &self.cend.buffer,
+                &self.ctl.buffer,
+            ],
             &[n32],
             by_top,
         )?;
@@ -536,7 +599,7 @@ impl Exp {
         enc.run(
             "px_top_lists",
             None,
-            &[&vis.lookups.buffer, &self.cend.buffer, &self.state.buffer, &self.oid.buffer, n_toks, &vis.sslot.buffer, &vis.gat.buffer, &vis.n_gaps.buffer, &self.lists.buffer, &self.slots.buffer, &self.ctl.buffer],
+            &[&vis.lookups.buffer, &self.cend.buffer, &self.state.buffer, &self.oid.buffer, n_toks, &vis.sslot.buffer, &vis.gat.buffer, &vis.n_gaps.buffer, &self.lists.buffer, &self.slots.buffer, &self.ctl.buffer, &defs.defs.buffer],
             &[self.list_cap],
             by_top,
         )?;
@@ -571,7 +634,6 @@ impl Exp {
 
     /// The queue's persistent dispatch, `WORK_LAUNCHES` times.
     fn work(&self, enc: &Enc<'_>, unit: &Unit, front: &Front, defs: &Defs, vis: &Vis) -> Result<(), Error> {
-        let n32 = unit.table.len() as u32;
         for _ in 0..WORK_LAUNCHES {
             enc.run(
                 "px_work",
@@ -593,15 +655,20 @@ impl Exp {
                     &vis.n_gaps.buffer,
                     &vis.gfirsts.buffer,
                     &vis.gscan.total.buffer,
+                    &self.depth.buffer,
                     &self.lists.buffer,
                     &self.tok.buffer,
+                    &self.tflag.buffer,
                     &self.tchild.buffer,
+                    &self.tdepth.buffer,
+                    &self.args.buffer,
                     &self.out.buffer,
                     &self.slots.buffer,
                     &self.qctl.buffer,
                     &self.ctl.buffer,
+                    &self.words.buffer,
                 ],
-                &[n32, self.tok_cap, self.list_cap, self.out_cap, self.q_cap],
+                &[],
                 Grid::Groups(WORKER_GROUPS),
             )?;
         }

@@ -259,3 +259,25 @@ outermost call becomes the queue's first items.
   stretches, an included header, a doubling chain to 128 tokens) give the serial pass's tokens
   (`object_like_expansion_is_the_serial_passes`). An evaluation (the front passes, the
   definitions, the lookups and the expansion) takes at most 119 launches.
+- **R6, its first part: calls with arguments** (no `#`, `##` or `__VA_OPT__` yet; those are
+  refused, `X_HASH`, `X_PASTE`, `X_VA_OPT`):
+  - the top level's `)`: a segmented add scan by stretch gives each token's depth; each `)` is a
+    key (its depth after it, biased to 16 bits, above its position, 24 bits), placed by a scan
+    and sorted once (40 bits, 5 passes); a call's `)` is a lower-bound search for the first `)`
+    after its `(` back at the depth before it, inside its stretch (past it, a directive or the
+    file's end among the arguments, is `X_ACROSS`);
+  - in a list (a SIMD group): the depths by a SIMD scan carried 32 at a time, each candidate's
+    `)` by the 32 lanes' ballot, the outermost by a carried max of the reaches;
+  - CALL: the splitting commas by ballots (a variadic macro's past its last parameter join), the
+    count checked (a wrong one leaves the name alone, painted), each argument's raw range, and a
+    fenced list for each parameter used expanded, claimed once by a compare-exchange, its tokens
+    the argument's refs with their flags, its SCAN pushed;
+  - an argument list, once final, is flattened: PLACE items write its tree into the arena with
+    each token's paint (a token painted where it was read keeps `NOEXP`), counted down; the
+    last tells the call, whose SUBST writes the body with the flattened arguments and rescans
+    it.
+  14 shapes in C and C++ (nested calls, calls in arguments and bodies, parentheses and commas in
+  arguments, empty arguments, a wrong count, variadic macros, paint through an argument, a name
+  at an argument's end that its substitution calls, an argument across lines, 34 parameters, an
+  included header's macros) give the serial pass's tokens (`calls_with_arguments_are_the_serial_passes`).
+  An evaluation takes at most 151 launches.
