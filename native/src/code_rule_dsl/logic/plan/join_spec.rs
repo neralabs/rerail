@@ -2,7 +2,7 @@
 //! handles (decision 0173, t36 item 4): the rule's `Body` and its steps, in plan order, each step a `JoinItem` over
 //! numbered slots, then the head. A literal with no native step (an aggregate other than `count`, `sum`, `min`, `max`
 //! and `join`, a descent, a document range, top) has no spec: that rule stays SQL.
-use super::body::{Body, VarSet};
+use super::body::Body;
 use super::{Mode, Run, Step, sym_char};
 use super::super::native::component::spec::{Arg, Extreme, HeadTok, InputKey, JoinItem, JoinSpec, Source as JoinSource, Tok};
 use super::super::program_image::{AggRef, CmpOp, Lit, Slot, TermRef};
@@ -164,7 +164,7 @@ impl<'a> Run<'a, '_> {
         native_rels: &BTreeSet<String>,
     ) -> Option<Arc<JoinSpec>> {
         let _span = super::super::profile::span(|| "a line's join spec".into());
-        let mut bound = VarSet::new();
+        let mut bound = b.bound_before();
         for s in steps {
             let mut add = |t: TermRef<'_>| {
                 if let TermRef::Var(v) = t {
@@ -221,6 +221,8 @@ impl<'a> Run<'a, '_> {
     ) -> Option<Arc<JoinSpec>> {
         let pf = self.fields();
         let inputs = |d: &mut super::super::derived::Inputs| {
+            // A recheck's spec starts from its head's variables bound (`Body::with_head_bound`): another spec.
+            d.u64(u64::from(b.head_bound()));
             if bare {
                 // A head of no terms, as `Body::digest_atom` writes it.
                 d.str(b.rel(b.head()));
@@ -302,6 +304,14 @@ impl<'a> Run<'a, '_> {
         let pf = self.fields();
         let atoms = self.model.inputs.atoms;
         let mut slots = Slots::default();
+        // A recheck's head variables are bound by its candidate row before the first step (`Body::with_head_bound`):
+        // their slots come first, and each step reads them bound, as the planner priced its order.
+        let pre = b.bound_before();
+        for v in b.head().args().filter_map(|t| t.var()) {
+            if pre.contains(v) {
+                slots.slot(Key::Var(v));
+            }
+        }
         // A variable's type: its column's in a positive atom; a count's, a sum's or a number function's value is a
         // number. A variable equal to another (`$m = $a`, a capture's alias) has the other's type.
         let typ = |t: TermRef<'_>| -> Option<String> {

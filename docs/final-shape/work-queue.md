@@ -5316,4 +5316,10 @@ use added, every recheck line is priced" (left 2, right 0). R7 is an agreed requ
 regression of the maintain mode's plans (0328 §4), not a stale test.
 
 - **Done when**: the two lines are priced as the others are, and R7 passes.
-- **Record**: —
+- **Record** (2026-11-19, Typing-support): fixed. The planner priced each recheck's order with its head bound
+  (`Body::with_head_bound`, Q208), but its native join spec was written from the rule with nothing bound, so an
+  order whose first step reads a bound variable one way (`docof` from its node) could not be written, and the line
+  fell back to the rule's own order, unpriced. The spec writer now starts a head-bound body with the head's
+  variables in their slots (`join_spec_made`; the executor binds them from the candidate, `join_rule_bound`), the
+  recheck's spec is written from the head-bound body, and the spec's cache key says which it is. R7 passes; the 139
+  maintain, session, recheck and plan tests pass.

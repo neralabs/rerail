@@ -8161,13 +8161,15 @@ impl<'a> Run<'a, '_> {
             // Its recheck: the rule run once per candidate row, its head's variables bound before its first step. The
             // planner prices its orders from that binding and one row, and keeps the order chosen under the recheck's
             // own key (`Body::with_head_bound`, Q208), taken or priced again as the other lines' are.
-            // Where that order has no native join (a step that runs one way only, `docof` from its node), the rule's
-            // own order: correct with the head bound too, its binds then tests.
+            // Its spec is written with the head's variables bound, as the order was priced (`join_spec_made`): a step
+            // that runs one way only (`docof` from its node) reads its bound side. Where no native join is made, the
+            // rule's own order: correct with the head bound too, its binds then tests (0364 R7 counts it).
             let bound = b.with_head_bound();
             self.model.late(pf, &bound, None, false)?;
             plan_site("the maintain mode's recheck");
             let priced = match self.model.plan_rule_reused(pf, &bound, None) {
-                Ok(((order, _, _), _)) => self.whole_join_spec(b, &order, None, &ri, scc, &native_rels).map(|spec| (spec, self.model.reused_key(&bound, None))),
+                // The spec of the order as priced: its head's variables bound before its first step (`with_head_bound`).
+                Ok(((order, _, _), _)) => self.whole_join_spec(&bound, &order, None, &ri, scc, &native_rels).map(|spec| (spec, self.model.reused_key(&bound, None))),
                 Err(_) => None,
             };
             let (spec, key) = match priced {
