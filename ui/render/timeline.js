@@ -30,12 +30,12 @@ function build(tl) {
 
 /* ---------- event rows ---------- */
 
+/** A call's outcome on its row: only what is worth a glance (no result yet, failed, a read's length); a success says nothing. */
 function outcome(ev) {
   if (ev.resSeq === null) return [h("span.dim", null, "…")];
   if (ev.failed) return [h("span.bad", null, "failed")];
   if (ev.verb === "read" && ev.lines) return [`${fmt(ev.lines)} ${plural(ev.lines, "line")}`];
-  if (ev.verb === "run") return [h("span.ok", null, "ok")];
-  return [h("span.ok", null, "ok")];
+  return [];
 }
 
 const str = v => (typeof v === "string" ? v : "");
@@ -50,9 +50,10 @@ function inputRows(ev, i, row) {
   else row("Path", ev.target, true);
 }
 
+/** The opened call's Result: a failure in red; a success plainly, with no colour. */
 function resultCell(ev) {
   if (ev.resSeq === null) return "no result recorded";
-  return ev.failed ? h("span.bad", null, "failed") : h("span.ok", null, "ok");
+  return ev.failed ? h("span.bad", null, "failed") : "ok";
 }
 
 const diffLines = (cls, sign, text) => text.split("\n").map(l => h(cls, null, `${sign} ${l}`));
@@ -99,7 +100,7 @@ function createEvent(ev) {
   return h("div.evt", null,
     h("button.eh", { "data-act": "etoggle", "data-i": ev.key, "aria-expanded": "false" }, chevron(),
       h("span.vcell", null, h("span.vb"), h("span.vtool", { hidden: true })), h("span.tg"),
-      h("span.out", null, h("span.oc"), h("span.tn"), h("span.sq.num"), h("span.tm.num"))),
+      h("span.out", null, h("span.oc"), h("span.tn"), h("span.tm.num"))),
     h("span.spk", { hidden: true }),
     h("div.pay"));
 }
@@ -147,9 +148,8 @@ function updateEvent(node, ev, who = null) {
   const oc = eh.querySelector(".oc");
   if (oc.dataset.sig !== sig) { oc.dataset.sig = sig; oc.replaceChildren(...outcome(ev)); }
   const tn = eh.querySelector(".tn"); setText(tn, ev.toolName); setAttr(tn, "title", ev.toolName);
-  const sq = eh.querySelector(".sq"); setText(sq, ev.resSeq === null ? `#${ev.callSeq}` : `#${ev.callSeq}–${ev.resSeq}`);
+  // The sequence numbers are in the time's tooltip and the opened call's Raw, not on the row.
   const resultRef = ev.resSeq === null ? "" : `, Result #${ev.resSeq}`;
-  setAttr(sq, "title", `Call #${ev.callSeq}${resultRef}`);
   const took = ev.dur ? ` · ${ev.dur}s` : "";
   const tm = eh.querySelector(".tm");
   setText(tm, `${clockSeconds(ev.callTime)}${took}`);
@@ -235,8 +235,8 @@ function updateCorr(node, item) {
 
 function createTurn(turn) {
   return h("div.turn", null,
-    h("div.msgrow.u", null, h("span.who", null, "You"), h("div.msg"), h("span.mt", { title: "user-prompt" })),
-    h("div.msgrow.a", null, h("span.who", null, "Agent"), h("div.msg"), h("span.mt", { title: "assistant-message" })),
+    h("div.msgrow.u", { "data-kind": "user-prompt" }, h("span.who", null, "You"), h("div.msg"), h("span.mt")),
+    h("div.msgrow.a", { "data-kind": "assistant-message" }, h("span.who", null, "Agent"), h("div.msg"), h("span.mt")),
     h("button.fold", { "data-act": "foldtoggle", "aria-expanded": "false", hidden: true }, chevron(), h("span")),
     h("div.foldbody", { hidden: true }),
     h("div.tbody"));
@@ -257,7 +257,10 @@ function updateMessage(row, text, seq, time) {
   setAttr(row, "hidden", text === null);
   if (text === null) return;
   setText(row.querySelector(".msg"), text);
-  setText(row.querySelector(".mt"), `#${seq} · ${clockSeconds(time)}`);
+  // Its time; its event and sequence number in the tooltip.
+  const mt = row.querySelector(".mt");
+  setText(mt, clockSeconds(time));
+  setAttr(mt, "title", `${row.dataset.kind} #${seq}`);
 }
 
 /** The fold of a turn's quiet calls (reads, searches, plan updates): offered only while every event shows. */

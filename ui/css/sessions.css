@@ -193,21 +193,19 @@ body[data-panel="open"] .sess > aside{display:none}
 .tg.desc{font-family:var(--font-sans);font-size:13px}
 .out{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--muted-foreground);white-space:nowrap}
 .out > span{flex:none;text-align:right}
-.out .oc{width:84px;display:inline-flex;justify-content:flex-end;gap:6px;margin-right:0}
+/* Right of a call: an outcome only when it says something (no result, failed, a read's length), then its time; the
+ * description to its left takes every other pixel. */
+.out .oc{display:inline-flex;justify-content:flex-end;gap:6px}
+.out .oc:empty{display:none}
 .out .tn{display:none;width:104px;font-family:var(--font-mono);font-size:11px;opacity:.8;overflow:hidden;text-overflow:ellipsis}
-.out .sq{min-width:62px;font-family:var(--font-mono);font-size:11px;opacity:.8}
-.out .tm{min-width:100px}
 @media (min-width:1600px){.out .tn{display:inline-block}}
-body[data-panel="open"] .out .tn,body[data-panel="open"] .out .sq{display:none}
-@media (max-width:1180px){.out .sq{display:none}}
+body[data-panel="open"] .out .tn{display:none}
 /* A narrow timeline (a small window, or the sheet open beside it): a call's right side keeps its outcome and time and
- * lets go of the fixed column widths, the sequence numbers and the tool, so the time is never cut off; a message's
- * number and time go under it instead of squeezing it. The time's tooltip still names the call. */
+ * lets go of the tool, so the time is never cut off; a message's time goes under it instead of squeezing it. The
+ * time's tooltip still names the call. */
 @container (max-width:640px){
   .out{gap:8px}
-  .out .oc{width:auto}
-  .out .tm{min-width:0}
-  .out .sq,.out .tn{display:none}
+  .out .tn{display:none}
   .msgrow{grid-template-columns:40px minmax(0,1fr)}
   .msgrow .mt{grid-column:2;line-height:18px;padding-right:0}
 }
