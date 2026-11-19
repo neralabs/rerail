@@ -188,8 +188,18 @@ process.stdin.resume();
 process.stdin.on("end", () => { release(); process.stdout.write("released\\n"); });
 `;
 
-/** Starts `HOLDER` writing `content` to `file` and returns once the file is written and nothing can read it, with what lets it go. */
-async function holdFromReads(file: string, content: string): Promise<() => Promise<void>> {
+/** How `HOLDER` ended once let go: its exit code and all it said. */
+interface HolderEnd {
+  readonly code: number | null;
+  readonly said: string;
+}
+
+/**
+ * Starts `HOLDER` writing `content` to `file` and returns once the file is written and nothing can read it, with what
+ * lets it go: it ends the holder's input and waits for the holder to end, which gives the file back. A holder that
+ * fails to start, or a file still readable, lets it go before the error is thrown.
+ */
+async function holdFromReads(file: string, content: string): Promise<() => Promise<HolderEnd>> {
   const child = spawn(process.execPath, ["--input-type=module", "-e", HOLDER], {
     env: environment({ HOLD_PATH: file, HOLD_TEXT: content, HOLD_STAGING: join(root, "staged") }), stdio: ["pipe", "pipe", "inherit"], windowsHide: true,
   });
@@ -198,14 +208,20 @@ async function holdFromReads(file: string, content: string): Promise<() => Promi
   const closed = once(child, "close");
   await new Promise<void>((held, failed) => {
     child.stdout.on("data", (chunk: string) => { said += chunk; if (said.includes("held\n")) held(); });
-    void closed.then(([code]) => { failed(new Error(`the holder ended before it held ${file}, code ${String(code)}`)); });
+    void closed.then(([code]) => { failed(new Error(`the holder ended before it held ${file}, code ${String(code)}`)); }, failed);
   });
-  await expect(readFile(file)).rejects.toThrow();
-  return async () => {
+  const release = async (): Promise<HolderEnd> => {
     child.stdin.end();
-    expect((await closed)[0]).toBe(0);
-    expect(said).toContain("released\n");
+    const [code] = await closed;
+    return { code: code as number | null, said };
   };
+  try {
+    await expect(readFile(file)).rejects.toThrow();
+  } catch (error) {
+    await release();
+    throw error;
+  }
+  return release;
 }
 
 /** The steer reached the coding agent in the hook's answer: it names the rule and the file. */
@@ -315,18 +331,22 @@ describe("the Claude Code hook against a daemon of this build", () => {
     await expectRulesFired(session, files);
   }, 120_000);
 
-  it("steers and logs a Bash command's write at the next command when another program held the file through the check at its result", async () => {
+  // A folder with no search permission keeps no file from root, which reads it all the same.
+  it.skipIf(process.platform !== "win32" && process.getuid?.() === 0)("steers and logs a Bash command's write at the next command when another program held the file through the check at its result", async () => {
     const session: Session = { id: "held-write-session", projectDir: repo };
     const file = join(repo, "src", "app", "held", "held_write.py");
     await startSession(session);
-    let release = async (): Promise<void> => undefined;
+    let release = async (): Promise<HolderEnd | undefined> => undefined;
+    let ended: HolderEnd | undefined;
     try {
       await runCommand(session, "toolu_held_write", async () => { release = await holdFromReads(file, tooComplex("held_write")); });
       // The state the steer below is about: the session's checks met the file only held, and recorded the failed read.
       await expectReadFailed(session, file);
     } finally {
-      await release();
+      ended = await release();
     }
+    // Checked after the holder let go, so a failure above is the one reported.
+    expect(ended).toEqual({ code: 0, said: expect.stringContaining("released\n") });
     expectSteeredInOne(await runCommand(session, "toolu_after_held_write", async () => undefined), file);
     await endTurn(session);
     await expectRulesFired(session, [file]);
