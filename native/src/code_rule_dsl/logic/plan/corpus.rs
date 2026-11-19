@@ -7062,7 +7062,6 @@ fn run_observed(
                     return key.get(1).and_then(|&atom| sym_text(atom)).as_ref()
                         == git_selection.get_or_init(|| crate::git_workspace::snapshot::inventory_selection(&git_root)).as_ref();
                 }
-                if req == git::INVENTORY_TRAIL { return true; }
                 if matches!(req, reference_facts::REQUEST | reference_facts::SIBLINGS_REQUEST | reference_facts::FILE_REQUEST) {
                     return !rows.is_empty();
                 }
@@ -7225,21 +7224,6 @@ fn run_observed(
                     }
                 }
                 return Ok(vec![("git_inventory_child_of".to_owned(), out)]);
-            }
-            if rel == git::INVENTORY_TRAIL {
-                let mut out = Vec::new();
-                for row in rows {
-                    let [_, path, object, trail] = row.as_slice() else { return Err(Error::Plan(format!("{rel}: invalid tree path"))); };
-                    let object = text(*object)?;
-                    let trail = text(*trail)?;
-                    if trail.split(':').any(|ancestor| ancestor == object) {
-                        return Err(Error::Plan(format!("cycle in Git tree at {}", text(*path)?)));
-                    }
-                    let mut found = row.clone();
-                    found.extend(atoms(&[&format!("{trail}{object}:")])?);
-                    out.push(found);
-                }
-                return Ok(vec![("git_inventory_trail_of".to_owned(), out)]);
             }
             if rel == reference_facts::REQUEST {
                 let mut out = Vec::with_capacity(rows.len());

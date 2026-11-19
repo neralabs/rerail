@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 pub(super) const REVISION: &str = "git_revision_request";
 pub(super) const OBJECT: &str = "git_object_request";
 pub(super) const INVENTORY_CHILD: &str = "git_inventory_child_request";
-pub(super) const INVENTORY_TRAIL: &str = "git_inventory_trail_request";
 
 const ROOT: &str = "git_root_repo";
 const REPOSITORY: &str = "git_repository";
@@ -419,7 +418,7 @@ pub(super) fn metadata_only(program: &Program) -> bool {
         let needed = super::front::needed(program, roots.clone());
         // A world answer also reads the rules that produced its request.
         let requests: Vec<_> = [("git_revision_of", REVISION), ("git_object_of", OBJECT),
-            ("git_inventory_child_of", INVENTORY_CHILD), ("git_inventory_trail_of", INVENTORY_TRAIL)]
+            ("git_inventory_child_of", INVENTORY_CHILD)]
             .into_iter().filter(|(answer, request)| needed.contains(*answer) && !needed.contains(*request))
             .map(|(_, request)| request.to_owned()).collect();
         if requests.is_empty() { break needed; }
@@ -437,7 +436,7 @@ pub(super) fn metadata_only(program: &Program) -> bool {
                 || super::source_languages::is_input(rel)
                 // A declared relation with no producers is empty, unless a phase can supply it.
                 || (program.decls.contains_key(rel.as_str()) && !rel.contains("__") && !program.inputs.contains(rel))
-                || matches!(rel.as_str(), "git_revision_of" | "git_object_of" | "git_inventory_child_of" | "git_inventory_trail_of"))
+                || matches!(rel.as_str(), "git_revision_of" | "git_object_of" | "git_inventory_child_of"))
     })
 }
 

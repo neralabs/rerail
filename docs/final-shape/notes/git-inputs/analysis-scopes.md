@@ -46,7 +46,9 @@ The filter can skip an ignored tree if no descendant can match a rule that
 includes it after the later rules apply. It checks files and directories
 separately because a rule can apply only to directories.
 If the filter cannot prove that the tree is excluded, it keeps the tree.
-The inventory returns its rows through an in-memory fact image.
+For each selected child, the inventory rules follow its parent placements back to the root.
+They admit the child if its tree ID differs from every ancestor on that path.
+Two siblings can therefore share one tree. The inventory returns its rows through an in-memory fact image.
 
 The library first derives the set of reachable tree IDs. That set bounds the
 depth of path construction. A valid Git tree graph is acyclic. The number of
