@@ -79,15 +79,16 @@ export class StampTreeWatch implements TreeWatch {
   /**
    * Makes `change` in `root` with no notice, as a write through a hard link or a memory map does: a take while it runs
    * hands none for `root`, so the walks' notice pump asks for no walk on its account, and every write it made is then
-   * taken in silently.
+   * taken in silently. A hold the test already had on `root` stays until its own `release`.
    */
   async unnoticed(root: string, change: () => Promise<unknown>): Promise<void> {
+    const heldBefore = this.#held.has(root);
     this.hold(root);
     try {
       await change();
       this.#silence(root);
     } finally {
-      this.release(root);
+      if (!heldBefore) this.release(root);
     }
   }
 
