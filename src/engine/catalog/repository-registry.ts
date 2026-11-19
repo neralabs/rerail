@@ -3,7 +3,7 @@
  * physical git top-level, and belongs to one repository: the repository of another checkout of the same clone, else
  * the one its `origin` (or sole) remote names, else a repository of its own keyed by its clone id.
  */
-import { existsSync } from "node:fs";
+import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, parse } from "node:path";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
@@ -82,20 +82,17 @@ function deleteCheckoutSettings(db: Writer, checkoutPaths: readonly string[]): v
   db.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "checkout"), inArray(ruleSettings.ownerId, [...checkoutPaths]))).run();
 }
 
-/** Clone-keyed repositories whose remote this process already tried to adopt; a clone with no remote is checked again. */
-const adoptionChecked = new Set<RepositoryKey>();
-
 /**
  * Record the checkout `workspace` is in, creating its clone id, repository and checkout rows as needed. A path
  * recorded for another clone id (a re-clone) is recorded again and loses its own settings. A clone-keyed repository
- * adopts the checkout's remote once per process.
+ * adopts the checkout's remote when the catalog still records the clone key.
  */
 export function recordCheckout(db: RerailDatabase, workspace: string, now = Date.now()): CheckoutContext & { readonly cloneId: string } {
   refuseUnboundedFolder(repositoryIdentityLocation(workspace));
   const { cloneId, location } = resolveCloneId(workspace);
   const checkoutPath = physicalPath(location.workspaceRoot);
   const context = db.transaction(tx => recordCheckoutRow(tx, location, checkoutPath, cloneId, now), { behavior: "immediate" });
-  return adoptRemoteOnce(db, context, location, now);
+  return adoptCheckoutRemote(db, context, location, now);
 }
 
 /** Outside git a folder is its own checkout; a filesystem root or the home folder would claim everything below it. */
@@ -153,12 +150,11 @@ function remoteRepositoryCreated(tx: Writer, location: RepositoryIdentityLocatio
   return repositoryKey;
 }
 
-/** A clone-keyed repository adopts the checkout's remote once per process; "no remote" is not remembered, so a remote added later is adopted. */
-function adoptRemoteOnce<C extends CheckoutContext>(db: RerailDatabase, context: C, location: RepositoryIdentityLocation, now: number): C {
-  if (!context.repositoryKey.startsWith(CLONE_KEY_PREFIX) || adoptionChecked.has(context.repositoryKey)) return context;
+/** Only a checkout still recorded under a clone key needs to check its remote. */
+function adoptCheckoutRemote<C extends CheckoutContext>(db: RerailDatabase, context: C, location: RepositoryIdentityLocation, now: number): C {
+  if (!context.repositoryKey.startsWith(CLONE_KEY_PREFIX)) return context;
   const remoteKey = remoteKeyOf(location.workspaceRoot);
   if (remoteKey === undefined) return context;
-  adoptionChecked.add(context.repositoryKey);
   const target = repositoryByKeyOrAlias(db, remoteKey)?.repositoryKey ?? remoteKey;
   adoptRemote(db, context.repositoryKey, target, now);
   const adopted = db.select({ key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.checkoutPath, context.checkoutPath)).get();
@@ -213,17 +209,15 @@ function lookupAt(db: Reader, location: RepositoryIdentityLocation): CheckoutCon
   const { id, marked } = checkoutIdentity(location);
   const cloneId = id ?? null;
   const checkoutPath = physicalPath(location.workspaceRoot);
-  const recorded = location.git && cloneId === null ? undefined : recordedRepositoryAt(db, checkoutPath, cloneId);
-  const knownClone = recorded ?? (cloneId === null ? undefined : cloneRepository(db, cloneId));
+  const knownClone = cloneId === null ? undefined : recordedRepositoryAt(db, checkoutPath, cloneId) ?? cloneRepository(db, cloneId);
   const repositoryKey = knownClone ?? remoteRepository(db, location);
   return repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, marked || knownClone !== undefined ? cloneId : null);
 }
 
-/** The repository of the row recorded at `checkoutPath`. Without an id file that row still names the checkout; a different id is a re-clone. */
-function recordedRepositoryAt(db: Reader, checkoutPath: string, cloneId: string | null): RepositoryKey | undefined {
-  const recorded = db.select({ key: checkouts.repositoryKey, cloneId: checkouts.cloneId }).from(checkouts)
-    .where(eq(checkouts.checkoutPath, checkoutPath)).get();
-  return recorded !== undefined && (cloneId === null || recorded.cloneId === cloneId) ? recorded.key : undefined;
+/** The repository of the row for the current identity at this path. */
+function recordedRepositoryAt(db: Reader, checkoutPath: string, cloneId: string): RepositoryKey | undefined {
+  return db.select({ key: checkouts.repositoryKey }).from(checkouts)
+    .where(and(eq(checkouts.checkoutPath, checkoutPath), eq(checkouts.cloneId, cloneId))).get()?.key;
 }
 
 /** Check the effective remote for an unrecorded Git checkout. Git includes and branch configuration can change between calls. */
@@ -379,23 +373,37 @@ export function repositoryHistoryIds(repository: RepositoryListing): string[] {
   return [...new Set([repository.repositoryKey, ...repository.aliases, ...repository.checkouts.map(row => row.cloneId)])];
 }
 
-/** Whether git still lists `checkoutPath` as a worktree of its clone; true where git can't say (outside git, no git). */
-function listedByGit(checkoutPath: string): boolean {
-  const listed = worktreeRegistry(checkoutPath);
-  return listed === undefined || listed.worktrees.some(path => storedPath(path) === checkoutPath);
+/** A missing directory or an unlisted worktree. Git can list the metadata directory for a main checkout with a separate Git directory. */
+function checkoutIsGone({ checkoutPath, cloneId }: typeof checkouts.$inferSelect): boolean {
+  try {
+    if (!statSync(checkoutPath, { throwIfNoEntry: false })) return true;
+    const registry = worktreeRegistry(checkoutPath);
+    if (!registry || registry.worktrees.some(path => storedPath(path) === checkoutPath)) return false;
+    const location = repositoryIdentityLocation(checkoutPath);
+    return !(location.git && location.main && storedPath(location.workspaceRoot) === checkoutPath
+      && physicalPath(dirname(location.identityPath)) === registry.commonDirectory && checkoutIdentity(location).id === cloneId);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EACCES" || code === "EPERM") return false;
+    throw error;
+  }
 }
 
 /** Forget checkouts whose folder is gone or that git no longer lists as a worktree, with their own settings. */
 export function pruneCheckouts(db: RerailDatabase): string[] {
-  const gone = db.select({ path: checkouts.checkoutPath }).from(checkouts).all()
-    .map(row => row.path)
-    .filter(path => !existsSync(path) || !listedByGit(path));
-  if (gone.length === 0) return gone;
-  db.transaction(tx => {
+  const candidates = db.select().from(checkouts).all().filter(checkoutIsGone);
+  if (candidates.length === 0) return [];
+  return db.transaction(tx => {
+    const gone = candidates.filter(previous => {
+      const current = tx.select().from(checkouts).where(eq(checkouts.checkoutPath, previous.checkoutPath)).get();
+      return current?.cloneId === previous.cloneId && current.createdAt === previous.createdAt
+        && current.lastSeenAt === previous.lastSeenAt && checkoutIsGone(current);
+    }).map(row => row.checkoutPath);
+    if (gone.length === 0) return [];
     deleteCheckoutSettings(tx, gone);
     tx.delete(checkouts).where(inArray(checkouts.checkoutPath, gone)).run();
+    return gone;
   }, { behavior: "immediate" });
-  return gone;
 }
 
 /**

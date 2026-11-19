@@ -43,6 +43,11 @@ Its Python dictionaries are not the cache architecture for rerail.
 
 ## 3. User operations
 
+The catalog keeps a live main checkout with a separate Git directory. It also keeps a registration while the checkout is inaccessible.
+Before pruning, the writer checks that the same registration still exists and the checkout is still absent or unlisted.
+A replacement directory needs its own identity to use checkout settings.
+Each catalog records remote adoption independently. If an adoption transaction fails, registration can retry it.
+
 ### 3.1 One source snapshot
 
 Proposed command behavior:

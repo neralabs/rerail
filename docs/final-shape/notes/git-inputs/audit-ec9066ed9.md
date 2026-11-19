@@ -8,6 +8,11 @@ The headless regression for case 102 reproduced the permission change before the
 After the repair, each scan reported the expected violation and published its scope. The existing parents kept modes `0755` and `1777`.
 Both database files had mode `0600`. The native tests also check the journal mode and repair a managed cache directory on reopen.
 
+The catalog regressions cover cases 88–91 and 94. Pruning kept a main checkout with a separate Git directory, its linked checkout, and their settings.
+It kept settings through an access denial and collected them after an actual removal.
+It also kept settings when the original checkout returned or a second connection registered a replacement before the prune transaction.
+An ordinary replacement directory had no checkout identity. Both catalogs adopted a later remote, including after a forced transaction rollback.
+
 ## Checks repeated at `e7e4bf393`
 
 The review still has 28 open items. That count excludes the two Windows runtime checks and the optional language features below.

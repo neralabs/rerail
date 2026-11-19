@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import {
   adoptRemote,
@@ -263,6 +263,21 @@ describe("the repository registry", () => {
     expect(recordCheckout(database, clone).repositoryKey).toBe("remote:github.com/acme/late");
   });
 
+  it("adopts a clone's remote in both catalogs and retries a rolled-back adoption", async () => {
+    const root = await temporary("rerail-registry-catalog-adopt-");
+    const first = open(join(root, "first.sqlite")), second = open(join(root, "second.sqlite"));
+    const clone = gitRepository(join(root, "clone"));
+    const { repositoryKey } = recordCheckout(second, clone);
+    expect(recordCheckout(first, clone).repositoryKey).toBe(repositoryKey);
+    git(clone, "remote", "add", "origin", "https://example.com/acme/web.git");
+    first.$client.exec("CREATE TRIGGER refuse_adoption BEFORE UPDATE OF repository_key ON repositories BEGIN SELECT RAISE(ABORT, 'fixture'); END");
+    expect(() => recordCheckout(first, clone)).toThrow(/fixture/u);
+    expect(recordCheckout(second, clone).repositoryKey).toBe("remote:example.com/acme/web");
+    expect(listRepositories(first)[0]?.repositoryKey).toBe(repositoryKey);
+    first.$client.exec("DROP TRIGGER refuse_adoption");
+    expect(recordCheckout(first, clone).repositoryKey).toBe("remote:example.com/acme/web");
+  });
+
   it("gives an unconfigured target the clone repository's configuration, and moves only checkouts to a configured one", async () => {
     const root = await temporary("rerail-registry-adopt-");
     const database = open(join(root, "rerail.sqlite"));
@@ -314,6 +329,70 @@ describe("the repository registry", () => {
     expect(pruneCheckouts(database)).toEqual([worktree]);
     expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual([main]);
     expect(settingOwners(database)).toEqual([{ owner_kind: "checkout", owner_id: main }]);
+  });
+
+  it("keeps a main checkout with a separate Git directory and its linked worktree", async () => {
+    const root = await temporary("rerail-registry-separate-git-");
+    const database = open(join(root, "rerail.sqlite"));
+    const checkout = gitRepository(join(root, "checkout")), linked = join(root, "linked");
+    git(checkout, "init", "--quiet", "--separate-git-dir", join(root, "metadata"));
+    git(checkout, "worktree", "add", "-q", "--detach", linked);
+    for (const dir of [checkout, linked]) {
+      recordCheckout(database, dir);
+      checkoutSetting(database, dir);
+    }
+    expect(pruneCheckouts(database)).toEqual([]);
+    expect(settingOwners(database)).toHaveLength(2);
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("keeps settings while a checkout parent is inaccessible", async () => {
+    const root = await temporary("rerail-registry-inaccessible-");
+    const database = open(join(root, "rerail.sqlite"));
+    const parent = join(root, "private"), dir = gitRepository(join(parent, "checkout"));
+    recordCheckout(database, dir);
+    checkoutSetting(database, dir);
+    chmodSync(parent, 0);
+    try {
+      expect(pruneCheckouts(database)).toEqual([]);
+    } finally { chmodSync(parent, 0o700); }
+    expect(pruneCheckouts(database)).toEqual([]);
+    expect(settingOwners(database)).toHaveLength(1);
+    renameSync(dir, join(root, "moved"));
+    expect(pruneCheckouts(database)).toEqual([dir]);
+  });
+
+  it.each(["restored", "replaced"])("keeps a checkout %s between enumeration and pruning", async change => {
+    const root = await temporary("rerail-registry-prune-race-"), path = join(root, "catalog.sqlite");
+    const db = open(path), other = open(path), moved = join(root, "moved");
+    const dir = gitRepository(join(root, "checkout"));
+    const original = recordCheckout(db, dir);
+    checkoutSetting(db, dir);
+    renameSync(dir, moved);
+    const transaction = db.transaction.bind(db);
+    vi.spyOn(db, "transaction").mockImplementationOnce((run, options) => {
+      if (change === "restored") renameSync(moved, dir);
+      else {
+        gitRepository(dir);
+        expect(recordCheckout(other, dir).cloneId).not.toBe(original.cloneId);
+        checkoutSetting(other, dir);
+      }
+      return transaction(run, options);
+    });
+    expect(pruneCheckouts(db)).toEqual([]);
+    expect(lookupCheckout(db, dir)?.cloneId).toBe(recordCheckout(other, dir).cloneId);
+    expect(settingOwners(db)).toEqual([{ owner_kind: "checkout", owner_id: dir }]);
+  });
+
+  it("requires a replacement directory's own identity before using the recorded checkout", async () => {
+    const root = await temporary("rerail-registry-replaced-"), db = open(join(root, "catalog.sqlite"));
+    const dir = gitRepository(join(root, "checkout")), moved = join(root, "moved");
+    const recorded = recordCheckout(db, dir);
+    renameSync(dir, moved);
+    mkdirSync(dir);
+    expect(lookupCheckout(db, dir)).toBeUndefined();
+    rmSync(dir, { recursive: true });
+    renameSync(moved, dir);
+    expect(lookupCheckout(db, dir)).toEqual(recorded);
   });
 
   it.skipIf(!caseInsensitiveFilesystem())("keeps a worktree Git registered under a path typed in another case than the folder has", async () => {
