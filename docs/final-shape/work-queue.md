@@ -5316,9 +5316,11 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Step 5's size no longer fits Metal**: at RERAIL_CHUNK_NODES=262144 the tip's label wave holds 887-1,044 MB of the
   driver against the 512 MB budget, and the run stops (0382 §6; django-bugs' Q245). Before 1f88389be those refusals
   ran the waves on the CPU unseen (39-59 a run), so step 5's 71 B already carried them.
-- **Do (a tradeoff, for the user)**: size by a recent measurement, not the run's most (fewer chunks, a higher
-  peak), or make the per-chunk host costs smaller; and split the label wave to the Metal budget (Q245) before chunks
-  grow back.
+- **Corrected by t49** (the spike on chunks without sizing up front): chunking explains part, not all. With the
+  Metal budget lifted, fixed 262,144-node chunks retire 85-87 B. That is 5-10 B below the default's 89-98 B, and
+  still 15 B above the 69-70 B before oscar's merge. The rest is unattributed.
+- **Do**: profile 47ac05ff2 against the tip, both at 262,144-node chunks with RERAIL_METAL_MB=4096, to find the
+  remaining 15 B.
 
 ### Q260. A Metal buffer refused by the driver's count, with idle buffers holding the room, stopped hogql
 
@@ -5337,3 +5339,16 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   (fails without step 2).
 - **Open**: what the 110 MB no ledger counts is (kernels' buffers, the kernel store's?). django-bugs' Q245 (a big
   chunk's wave refused at 1 and 4 GB) may be this refusal.
+
+### Q261. The Metal budget counts lengths reserved, not memory: chunks are sized up front to fit it (t49)
+
+- **Seen** (t49, hogql): the driver's count, and every ledger, charges a buffer's whole length. Real memory is the
+  pages written. Row blocks are leased whole (64 MB or 16 MB) and hold about 70 MB of rows in 260-290 MB of the
+  512 MB budget. So the chunk sizing guesses up front, and 65,536-node chunks or more stop every Metal run. With the
+  budget at 4 GB, 262,144-node chunks run in the same 906-927 MB peak footprint as the default's small ones.
+- **Do**, in t49 §6's order:
+  1. The budget counts bytes written.
+  2. Row blocks are reserved large, wrapped once for the device, grown in place, and their tails released.
+  3. Chunks grow from small by the latest measure (`RERAIL_CHUNK_GROW=double`, the spike's switch).
+  First t49 §7's open questions: GPU-written pages counted twice in the footprint, and Metal's short chunks.
+

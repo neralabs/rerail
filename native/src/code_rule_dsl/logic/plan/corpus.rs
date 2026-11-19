@@ -2885,6 +2885,8 @@ const DENSE_TEXT_DOCS: usize = 64;
 
 /// The first chunk's nodes, at most: what it adds per node sizes the rest.
 const PROBE_NODES: usize = 65_536;
+/// SPIKE: the first chunk's nodes when chunks grow (`RERAIL_CHUNK_GROW=double`).
+const GROW_FIRST_NODES: usize = 4_096;
 /// What a chunk's file-local run may add to the footprint (`RERAIL_CHUNK_MB`).
 const CHUNK_MB: f64 = 384.0;
 /// The run's whole footprint budget (`RERAIL_RUN_MB`): a chunk adds at most three quarters of what is left of it
@@ -4854,7 +4856,10 @@ fn run_observed(
     // The chunks' size: the caller's, at most, but sized to what a chunk's run holds (`CHUNK_MB`): the first chunk is
     // `PROBE_NODES` nodes, and each run measures the footprint it adds per node. 64 data-layer rules hold about
     // 5 KB a node at their peak, so the caller's 262,144 nodes took 1.3 GB; the converted rules hold much less.
-    let chunk_target = Arc::new(std::sync::atomic::AtomicUsize::new(chunk_nodes.min(PROBE_NODES)));
+    // SPIKE (`RERAIL_CHUNK_GROW=double`): the first chunk is small, and each next twice the last, held to what the
+    // latest chunk added a node, in the host's footprint and the device's, against the headroom and the Metal budget.
+    let grow = std::env::var("RERAIL_CHUNK_GROW").is_ok_and(|v| v == "double");
+    let chunk_target = Arc::new(std::sync::atomic::AtomicUsize::new(chunk_nodes.min(if grow { GROW_FIRST_NODES } else { PROBE_NODES })));
     let worker_target = Arc::clone(&chunk_target);
     // The documents the builder reads, in batches, each ended by `None` on the chunks' channel: the corpus's, then
     // each load's (decision 0065 §2a). A run that loads nothing closes the channel after the corpus's, so the
@@ -6201,6 +6206,7 @@ fn run_observed(
         chunk_docs: Vec<(i64, String, Option<memo::Content>, u64, usize, Option<[u8; 32]>)>,
         chunk_own: Option<Own>,
         start_mb: usize,
+        device_start: usize,
         start_max_mb: usize,
         /// Chunks evaluating when it began, itself included: the footprint it saw grow was theirs.
         at_once: usize,
@@ -6563,6 +6569,10 @@ fn run_observed(
                 phase("wait", statements.count());
                 statements.enter("local");
                 let (start_mb, start_max_mb) = (crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb());
+                #[cfg(target_os = "macos")]
+                let device_start = rerail_accel::gpu::shared::take_driver_peak().1;
+                #[cfg(not(target_os = "macos"))]
+                let device_start = 0usize;
                 // Memo hits: their rows go to `x` and their lines to the outputs as an evaluated chunk's would.
                 if !hits.is_empty() {
                     let _replay = crate::code_rule_dsl::logic::profile::span(|| "memo replay".into());
@@ -6738,12 +6748,12 @@ fn run_observed(
                 phase("local", statements.count());
                 statements.enter("wait");
                 let task = Task { chunk_nodes_built, sources, documents, stats, mix, cone: cone.clone(), replay, seq: 0, view: None };
-                return Ok(Some((task, Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, start_max_mb, at_once, chunk_partials, cone })));
+                return Ok(Some((task, Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, device_start, start_max_mb, at_once, chunk_partials, cone })));
             }
         };
         phase("wait", statements.count());
         statements.enter("local");
-        let Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, start_max_mb, at_once, mut chunk_partials, cone } = ctx;
+        let Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, device_start, start_max_mb, at_once, mut chunk_partials, cone } = ctx;
         let Evaluated { got, host_of, askers, text_sources, stored_bound, totals_add, export_rows, mut mentioned, slice_rounds } = ev;
         for (rel, rows, measured) in &totals_add {
             totals.add(rel, *rows, measured);
@@ -6821,6 +6831,26 @@ fn run_observed(
             // `RERAIL_CHUNK_NODES` (a measurement aid): every chunk after the first of this many nodes (at most
             // `chunk_nodes`), whatever the footprint measured, so two runs cut the corpus alike (Q88).
             let next = std::env::var("RERAIL_CHUNK_NODES").ok().and_then(|v| v.parse::<usize>().ok()).map_or(next, |n| n.clamp(1, chunk_nodes));
+            // SPIKE: twice the last, held to the latest chunk's own measures (host and device), one chunk at a time.
+            let (next, allowed) = if grow {
+                #[cfg(target_os = "macos")]
+                let (device_peak, _) = rerail_accel::gpu::shared::take_driver_peak();
+                #[cfg(not(target_os = "macos"))]
+                let device_peak = 0usize;
+                let device_added = device_peak.saturating_sub(device_start).max(1 << 20);
+                let device_per_node = device_added as f64 / chunk_nodes_built as f64;
+                let host_per_node = (added as f64 * 1048576.0 / chunk_nodes_built as f64).max(1.0);
+                let host_fit = (headroom * 1048576.0 / host_per_node) as usize;
+                let metal = rerail_accel::budget::metal() as f64 * 0.75;
+                let device_fit = ((metal - device_start as f64).max(0.0) / device_per_node) as usize;
+                let next = (2 * chunk_nodes_built).min(host_fit).min(device_fit).clamp(GROW_FIRST_NODES.min(chunk_nodes), chunk_nodes);
+                crate::code_rule_dsl::logic::profile::decision("chunk grows", || format!(
+                    "a chunk of {chunk_nodes_built} nodes added {added} MB on the host ({host_per_node:.0} B a node) and {} MB on the device from {} MB ({device_per_node:.0} B a node); next {next} nodes (twice {}, host fit {host_fit}, device fit {device_fit})",
+                    device_added >> 20, device_start >> 20, 2 * chunk_nodes_built));
+                (next, 1)
+            } else {
+                (next, allowed)
+            };
             chunk_target.store(next, std::sync::atomic::Ordering::Relaxed);
             at_once_allowed.store(allowed, std::sync::atomic::Ordering::Relaxed);
             // The device pool's share of the footprint the chunk was sized under: its blocks leased and idle.
