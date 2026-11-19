@@ -1034,8 +1034,14 @@ pass.
 - **Placement chosen** (the user, 2026-11-18): (a), the passes as a transducer side program.
   Decision 0430: the array-program format, the passes as ROUND and TEXT, the calls on the
   words, the operations on Metal (equal to the interpreter).
-- **Next (0430, "What is left"):** every unit of a batch in the same launches; fewer syncs;
-  the calls on the device through 0408's batch; Cranelift; timing through `quiet-run`.
+- **Built (0430):** every unit of a batch in the same launches; the calls' readings on the
+  device, every unit's in one lockstep batch a wave; the Cranelift executor; timing under a
+  lease (M1 Max, 200 C units: interpreter 20.4 s, Cranelift 15.7 s, Metal 63.6 s; 0408's gate
+  is about 0.15 s for the corpus). The whole C corpus with the words' calls: 1,572 the same,
+  2 refused, 0 differ (C++ running, `tmp/pp-prog/words.log`).
+- **Next (0430, "What is left"):** less work a round (fused elementwise passes; only the
+  changed elements recomputed; the words' host side on the device made once); fewer launches
+  and syncs; P0 on the device.
 
 ## Questions for the user
 
