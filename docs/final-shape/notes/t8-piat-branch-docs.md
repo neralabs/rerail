@@ -1,6 +1,6 @@
 # T8 notes: Pulling-it-all-together branch docs
 
-Source root: `/Users/jeremy/orca/workspaces/rerail/Pulling-it-all-together/docs/` (excluding `rule-engine-direction/`). This repository's copies of these docs were removed; at 7efcac9c67, except `sql-workload-profiling.md`, the guide to the profiling tools CI still runs.
+Source root: `/Users/jeremy/orca/workspaces/rerail/Pulling-it-all-together/docs/` (excluding `rule-engine-direction/`). This repository's copies of these docs were removed; at 7efcac9c67.
 Citations are `file:line` relative to that root. Read-only research; nothing built or run.
 
 Number tags: **M** = measured (the doc reports a run), **D** = design target/limit/declared constant, **A** = arithmetic/derived by the doc or by me from the doc's numbers (I mark mine "A, mine").
