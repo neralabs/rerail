@@ -198,6 +198,17 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/strings.rs", "FUNCTORS"),
     ("code_rule_dsl/logic/strings/functions.rs", "PY_REPR"),
     ("code_rule_dsl/logic/strings/functions.rs", "TO_PRECISION"),
+    // Registered functions for reference extraction and store record replay.
+    ("code_rule_dsl/logic/plan/corpus/reference_facts.rs", "SUMMARIZE"),
+    ("content_store/record.rs", "KINDS"),
+    // Execution state scoped to the evaluation or the native plan currently being compiled.
+    ("code_rule_dsl/logic/strings/git.rs", "GIT_EVALUATION"),
+    ("code_rule_dsl/logic/native/setfix/device.rs", "OWN_TEXTS"),
+    // The open allocation block for relation rows.
+    ("code_rule_dsl/logic/native/setfix/rows.rs", "OPEN"),
+    // Per-thread decode instrumentation and the record replay test's log.
+    ("code_rule_dsl/logic/program_image/version.rs", "DECODED"),
+    ("content_store/record.rs", "LOG"),
     // The rule being compiled: the step that first bound each slot, for a refusal's message.
     ("code_rule_dsl/logic/native/setfix/device.rs", "BINDER"),
     // This thread's run's binding (CPU or Metal).
@@ -405,7 +416,6 @@ const STATE: &[(&str, &str)] = &[
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "CONSULTED", "1"),
-    ("code_rule_dsl/logic/strings/git.rs", "STATE", "1"),
     ("code_rule_dsl/logic/rr.rs", "LIBRARIES", "2"),
     ("code_rule_dsl/logic/rr.rs", "PARSED", "2"),
     ("code_rule_dsl/logic/rr.rs", "PROGRAMS", "2"),
@@ -433,7 +443,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/text.rs", "NAMES", "7"),
 ];
 /// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised.
-const NOT_YET_MAPS_PIN: usize = 24;
+const NOT_YET_MAPS_PIN: usize = 22;
 
 fn src() -> PathBuf {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")

@@ -339,11 +339,11 @@ fn source_checks(root: &Path, paths: &[String]) -> super::Result<SourceChecks> {
     if paths.is_empty() {
         return Ok(Default::default());
     }
-    let program = super::embedded_program!(concat!(
+    let program = concat!(
         include_str!("../../../../../../docs/rule-syntax/lib/core.rr"), "\n",
         include_str!("../../../../../../docs/rule-syntax/lib/git.rr"), "\n",
         include_str!("../../../typing/programs/git-source-objects.rr"),
-    )).map_err(super::Error::Plan)?;
+    );
     let options = serde_json::json!({ "reuse": false, "inputFiles": [], "gitSourcePaths": paths });
     let image = super::run_fact_image(program, root, &options)?;
     let outputs = Outputs::of(&image).map_err(super::Error::Plan)?;
@@ -448,11 +448,11 @@ pub(super) fn prime_root(root: &Path) -> super::Result<()> {
     if !snapshot::contains(root) || reads.as_deref().is_some_and(|reads| snapshot::root_observed(root, reads)) {
         return Ok(());
     }
-    let program = super::embedded_program!(concat!(
+    let program = concat!(
         include_str!("../../../../../../docs/rule-syntax/lib/core.rr"), "\n",
         include_str!("../../../../../../docs/rule-syntax/lib/git.rr"), "\n",
         include_str!("../../../typing/programs/git-root-tree.rr"),
-    )).map_err(super::Error::Plan)?;
+    );
     let options = serde_json::json!({ "reuse": false, "inputFiles": [] });
     let image = super::run_fact_image(program, root, &options)?;
     let outputs = Outputs::of(&image).map_err(super::Error::Plan)?;
@@ -490,12 +490,12 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>, own
         other => InventoryError::Source(other.to_string()),
     })?;
     // Installed addons have no source checkout. Embed the same library used by .rr policies.
-    let program = super::embedded_program!(concat!(
+    let program = concat!(
         include_str!("../../../../../../docs/rule-syntax/lib/core.rr"), "\n",
         include_str!("../../../../../../docs/rule-syntax/lib/git.rr"), "\n",
         include_str!("../../../../../../docs/rule-syntax/lib/source-language.rr"), "\n",
         include_str!("../../../typing/programs/git-inventory.rr"),
-    ))?;
+    );
     let options = serde_json::json!({ "reuse": false, "inputFiles": [] });
     let image = super::run_fact_image(program, root, &options).map_err(|error| match error {
         super::Error::Cache(error) => InventoryError::Cache(error),

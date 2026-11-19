@@ -2691,8 +2691,10 @@ Seen(n) :- kind(n, "identifier").
         console.log(report.diagnostics.length);`,
     });
     expect(Number(count)).toBeGreaterThan(0);
-    const repeated = readFileSync(join(profile, "profile.txt"), "utf8").split("\n")
-      .filter(line => /^\s*count\s+[1-9]\d*\s+(git\.tree_decodes$|source_tape\.(?:parses$|input\.))/u.test(line));
+    const trace = readFileSync(join(profile, "profile.txt"), "utf8");
+    expect(trace).toMatch(/^\s*count\s+[1-9]\d*\s+rr\.embedded_program_hits$/mu);
+    const repeated = trace.split("\n")
+      .filter(line => /^\s*count\s+[1-9]\d*\s+(rr\.embedded_program_compiles$|git\.tree_decodes$|source_tape\.(?:parses$|input\.))/u.test(line));
     expect(repeated).toEqual([]);
   }, 60_000);
 
@@ -3218,11 +3220,17 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
       const profile = join(home, phase);
       const script = 'import {runHeadlessScan} from "./src/cli/headless-scan.ts"; const [repo,rr,databasePath] = process.argv.slice(2); console.log(JSON.stringify(await runHeadlessScan({repo,rr:[rr],databasePath,scope:"repository",revision:"HEAD",analysisScope:"links",packs:[],version:"test"})));';
       const report = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, policy, join(home, "home.sqlite")], {
-        input: script, encoding: "utf8", env: { ...process.env, RERAIL_PROFILE: profile, RERAIL_CONTENT_STORE_PATH: join(home, "store.sqlite") },
+        input: script, encoding: "utf8", env: {
+          ...process.env, RERAIL_PROFILE: profile, RERAIL_SHIPPED_IMAGES: "off", RERAIL_CONTENT_STORE_PATH: join(home, "store.sqlite"),
+        },
       })) as ScanReport;
       expect(report.status, JSON.stringify(report.failures)).toBe("completed");
       const trace = readFileSync(join(profile, "profile.txt"), "utf8");
-      if (phase === "warm") expect(trace).not.toMatch(/^\s*count\s+[1-9]\d*\s+source_tape\.parses$/mu);
+      if (phase === "cold") expect(trace).toMatch(/^\s*count\s+[1-9]\d*\s+rr\.embedded_program_compiles$/mu);
+      if (phase === "warm") {
+        expect(trace).toMatch(/^\s*count\s+[1-9]\d*\s+rr\.embedded_program_hits$/mu);
+        expect(trace).not.toMatch(/^\s*count\s+[1-9]\d*\s+(rr\.embedded_program_compiles|source_tape\.parses)$/mu);
+      }
       const count = trace.match(/^\s*count\s+(\d+)\s+reference\.binding_contributions$/mu)?.[1];
       return [report.violations.map(v => v.path), Number(count ?? 0)];
     };

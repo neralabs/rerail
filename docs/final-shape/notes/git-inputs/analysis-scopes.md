@@ -339,3 +339,16 @@ It ran zero classification strata.
 The headless runner uses the selected content store when it first reads the policy and its includes.
 In a two-file Python reference fixture, the cold profile counted nine tape parses.
 A second process using the same scope and store reported the same finding with zero tape parses.
+
+Five separate processes checked an unchanged Python file with a policy that reports the file.
+Each process reported `a.py`. The fixture used two named scopes and a separate empty store for comparison.
+
+| Run | Embedded programs compiled | Embedded programs reused | Tape parses across all inputs |
+| --- | ---: | ---: | ---: |
+| First scope in an empty store | 3 | 0 | 8 |
+| Second scope in the same store | 0 | 3 | 0 |
+| Second scope after deletion and collection of the first | 0 | 3 | 0 |
+| Independent empty store | 3 | 0 | 8 |
+| Original store after deletion and collection of its last scope | 3 | 0 | 1 |
+
+The last run compiled all three programs again. The tape counter also includes policy and library reads.

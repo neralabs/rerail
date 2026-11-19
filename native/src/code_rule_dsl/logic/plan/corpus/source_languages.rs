@@ -56,11 +56,11 @@ pub fn classify(
         return Ok(HashMap::new());
     }
     let _store = ThreadStore::select(store, owner.map(|owner| (root.to_owned(), owner)));
-    let program = super::embedded_program!(concat!(
+    let program = concat!(
         include_str!("../../../../../../docs/rule-syntax/lib/core.rr"), "\n",
         include_str!("../../../../../../docs/rule-syntax/lib/source-language.rr"), "\n",
         include_str!("../../../typing/programs/workspace-source-languages.rr"),
-    )).map_err(Error::Plan)?;
+    );
     let basename = |path: &str| path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
     let names: std::collections::BTreeSet<_> = paths.iter().map(|path| basename(path)).collect();
     let options = serde_json::json!({

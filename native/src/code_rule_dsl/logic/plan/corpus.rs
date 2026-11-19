@@ -688,7 +688,7 @@ pub struct Texts<'a> {
     /// The source texts of the run inside which this one runs (phase 1's: the outer run's, decision 0300), which its
     /// builder borrows.
     pub sources: Option<&'a texts::Sources>,
-    reference_inputs: reference_facts::Input<'a>,
+    phase: FactPhase<'a>,
     reads: std::cell::RefCell<Vec<crate::code_rule_dsl::logic::rr::TextRead>>,
     names: std::cell::OnceCell<Vec<crate::code_rule_dsl::logic::rr::TextNames>>,
 }
@@ -699,7 +699,7 @@ impl<'a> Texts<'a> {
     pub fn of_read(key: &'a [&'a str], read: &'a front::Program) -> Self {
         let names = std::cell::OnceCell::new();
         let _ = names.set(vec![crate::code_rule_dsl::logic::rr::TextNames::of_program(read)]);
-        Texts { programs: key, graphs: vec![None], derived: Vec::new(), read: Some(read), sources: None, reference_inputs: Default::default(), reads: std::cell::RefCell::new(Vec::new()), names }
+        Texts { programs: key, graphs: vec![None], derived: Vec::new(), read: Some(read), sources: None, phase: Default::default(), reads: std::cell::RefCell::new(Vec::new()), names }
     }
 
     /// `programs`, each parsed once, and phase 0's graphs derived for those that include something.
@@ -709,7 +709,7 @@ impl<'a> Texts<'a> {
         let derived = if phase0::active() { Vec::new() } else { phase0::graphs(&seeds)? };
         let mut at = derived.iter();
         let graphs = reads.iter().map(|r| r.seed.as_ref().and_then(|_| at.next()).map(|g| g.digest())).collect();
-        Ok(Texts { programs, graphs, derived, read: None, sources: None, reference_inputs: Default::default(), reads: std::cell::RefCell::new(reads), names: std::cell::OnceCell::new() })
+        Ok(Texts { programs, graphs, derived, read: None, sources: None, phase: Default::default(), reads: std::cell::RefCell::new(reads), names: std::cell::OnceCell::new() })
     }
 
     /// Each text's library files, declared relations and phase (`rr::TextRead::resolved`).
@@ -2577,28 +2577,26 @@ pub(super) fn run_read_handing(
     run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options, image, Default::default())
 }
 
-/// A parser result belongs to the engine binary and the library bytes embedded at this call site.
-macro_rules! embedded_program {
-    ($source:expr) => {{
-        static PROGRAM: std::sync::OnceLock<std::result::Result<
-            crate::code_rule_dsl::logic::front::Program, String,
-        >> = std::sync::OnceLock::new();
-        PROGRAM.get_or_init(|| crate::code_rule_dsl::logic::rr::parse($source).map_err(|error| error.to_string()))
-            .as_ref().map_err(Clone::clone)
-    }};
-}
-use embedded_program;
-
-/// Evaluate a fact-only phase against the retained store and return its output image.
-fn run_fact_image(read: &front::Program, root: &Path, options: &serde_json::Value) -> Result<Vec<u8>> {
-    run_fact_image_with_references(read, root, options, Default::default())
+/// Inputs specific to an embedded fact phase. Its own manifest retains the compiled program,
+/// including when another evaluation calls this phase before it publishes its own manifest.
+#[derive(Clone, Copy, Default)]
+struct FactPhase<'a> {
+    program_entry: Option<[u8; 32]>,
+    references: reference_facts::Input<'a>,
 }
 
-fn run_fact_image_with_references(read: &front::Program, root: &Path, options: &serde_json::Value, reference_inputs: reference_facts::Input<'_>) -> Result<Vec<u8>> {
-    let key = read_key(read)?;
+fn run_fact_image(source: &str, root: &Path, options: &serde_json::Value) -> Result<Vec<u8>> {
+    run_fact_image_with_references(source, root, options, Default::default())
+}
+
+fn run_fact_image_with_references(source: &str, root: &Path, options: &serde_json::Value, references: reference_facts::Input<'_>) -> Result<Vec<u8>> {
+    let store = if cfg!(feature = "tape-cache") { phases::reading_store() } else { None };
+    let _reading = store.as_ref().map(|store| store.hold_collection()).transpose()?;
+    let (program, program_entry) = combined::embedded_program(source, store.as_deref())?;
+    let key = read_key(&program)?;
     let mut image = Vec::new();
-    run_handed(&[key.as_str()], Some(read), None, root, None, Path::new(""), "program",
-        Binding::Cpu, 1 << 18, &Typing::default(), options, Some(&mut image), reference_inputs)?;
+    run_handed(&[key.as_str()], Some(&program), None, root, None, Path::new(""), "program",
+        Binding::Cpu, 1 << 18, &Typing::default(), options, Some(&mut image), FactPhase { program_entry, references })?;
     Ok(image)
 }
 
@@ -2623,7 +2621,7 @@ fn run_handed(
     typing: &Typing,
     options: &serde_json::Value,
     mut image: Option<&mut Vec<u8>>,
-    reference_inputs: reference_facts::Input<'_>,
+    phase: FactPhase<'_>,
 ) -> Result<Report> {
     // The `RERAIL_*` switches stay as they are until the run ends: a test sets them only while no run reads them.
     let _switches = switches::reading();
@@ -2678,7 +2676,7 @@ fn run_handed(
     };
     let texts = Texts {
         sources,
-        reference_inputs,
+        phase,
         ..texts
     };
     let mut component_seeded = false;
@@ -3156,7 +3154,7 @@ fn run_observed(
         source_checks.push((analysis_history::INPUT.to_owned(), history.key().to_owned(), digest));
     }
     phased.extend(source_languages::inputs(&prog, root, options));
-    let reference_sources = match given.reference_inputs {
+    let reference_sources = match given.phase.references {
         reference_facts::Input::Sources(sources, preparation) => {
             phased.insert(reference_facts::SETTINGS.to_owned(), vec![vec![front::Value::Str(preparation.settings.into())]]);
             sources
@@ -3541,7 +3539,10 @@ fn run_observed(
     let _combined_pins = durable.is_some().then(|| combined::Pins::new(store, &texts));
     // And the rule files' entries read before the run (`rr::read_file`, decision 0275), by the outermost run: a nested
     // one (phase 0's) did not read them.
-    let rule_files = if durable.is_some() && !nested { combined::take_read_before() } else { Vec::new() };
+    let mut rule_files = if durable.is_some() && !nested { combined::take_read_before() } else { Vec::new() };
+    if durable.is_some() {
+        rule_files.extend(given.phase.program_entry);
+    }
     let _rule_file_pins: Vec<combined::Pins> = rule_files.iter().map(|k| combined::Pins::new(store, k)).collect();
     if durable.is_some() {
         for key in std::iter::once(&texts).chain(&rule_files) {
@@ -6936,7 +6937,7 @@ fn run_observed(
         // and goes with it (decision 0252, `observe::collect`).
         part_keys.lock().expect("the parts' keys").extend(rounds_key);
         // A new tree starts from the preceding run. A retained tree can start from its own round.
-        let history = if !matches!(given.reference_inputs, reference_facts::Input::None)
+        let history = if !matches!(given.phase.references, reference_facts::Input::None)
             && let (Some(tree), Some(key), Some(round)) = (crate::git_workspace::snapshot::scoped_tree(root), rounds_key, &round)
         {
             use sha2::{Digest, Sha256};
@@ -7275,7 +7276,7 @@ fn run_observed(
                 return Ok(vec![(reference_facts::ANSWER.to_owned(), out)]);
             }
             if rel == reference_facts::SIBLINGS_REQUEST {
-                let reference_facts::Input::Sources(_, preparation) = given.reference_inputs else {
+                let reference_facts::Input::Sources(_, preparation) = given.phase.references else {
                     return Err(Error::Plan("reference settings are unavailable".into()));
                 };
                 let mut out = Vec::with_capacity(rows.len());
@@ -7290,7 +7291,7 @@ fn run_observed(
                 return Ok(vec![(reference_facts::SIBLINGS_ANSWER.to_owned(), out)]);
             }
             if rel == reference_facts::FILE_REQUEST {
-                let reference_facts::Input::Sources(_, preparation) = given.reference_inputs else {
+                let reference_facts::Input::Sources(_, preparation) = given.phase.references else {
                     return Err(Error::Plan("reference file inputs are unavailable".into()));
                 };
                 let mut out = Vec::with_capacity(rows.len());
@@ -7304,7 +7305,7 @@ fn run_observed(
                 return Ok(vec![(reference_facts::FILE_ANSWER.to_owned(), out)]);
             }
             if matches!(rel, reference_facts::LINK_REQUEST | reference_facts::LINK_VALIDATE) {
-                let reference_facts::Input::Links(_, provider) = given.reference_inputs else {
+                let reference_facts::Input::Links(_, provider) = given.phase.references else {
                     return Err(Error::Plan("reference link inputs are unavailable".into()));
                 };
                 let mut out = Vec::with_capacity(rows.len());

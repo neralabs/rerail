@@ -74,6 +74,26 @@ pub(super) fn lookup(store: &ContentStore, key: &[u8; 32], lists: &crate::code_r
     Ok(lookup_read(store, key, lists)?.map(|(program, _)| program))
 }
 
+/// The embedded phase's text determines its source. The common program plan supplies the engine
+/// and grammar versions. The caller names this entry in the manifest of the phase that reads it.
+pub(super) fn embedded_program(source: &str, store: Option<&ContentStore>) -> super::Result<(Program, Option<[u8; 32]>)> {
+    let Some(store) = store else { return Ok((rr::parse(source)?, None)) };
+    let mut hash = Sha256::new();
+    hash.update(b"rerail/embedded-phase/v1\0");
+    hash.update(source.as_bytes());
+    let key = hash.finalize().into();
+    store.settle(&queued(&key));
+    if let Some(program) = lookup(store, &key, &Default::default())? {
+        crate::code_rule_dsl::prof::count("rr.embedded_program_hits", 1);
+        return Ok((program, Some(key)));
+    }
+    crate::code_rule_dsl::prof::count("rr.embedded_program_compiles", 1);
+    let (program, read) = rr::recording(|| rr::parse(source));
+    let program = program?;
+    record(store, "an embedded phase program", &key, &read, &program, &[]);
+    Ok((program, Some(key)))
+}
+
 /// The key of a rule file's entry (decision 0275): the program `rr::read_file` reads of the file at `path` (canonical)
 /// whose bytes' sha256 is `sha256`. The path is in it: the files an include finds beside it are another directory's
 /// elsewhere, and the read record names this one's.
