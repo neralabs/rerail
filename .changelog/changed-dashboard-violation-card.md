@@ -1,1 +1,1 @@
-On History by session's violation cards, the rule's title opens the rule, underlined on hover, in place of the Open rule button. The rule id and the Steered, Logged or Declined badges sit on lines of their own under the title.
+On History by session's violation cards, the rule's title opens the rule, underlined on hover, in place of the Open rule button, with the rule id and the badges on lines of their own under it. Tool calls are labelled Agent and violations Rerail, as your prompts are labelled You.

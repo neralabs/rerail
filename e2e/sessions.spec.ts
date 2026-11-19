@@ -82,6 +82,24 @@ test.describe("History by session", () => {
     await expect(rows).not.toHaveCount(manifest.sessionIds.length);
   });
 
+  test("mature: the transcript names who each run is from, and every day's header stays on one line", async ({ page, rerail }) => {
+    await page.goto(await rerail.dashboard("mature", { hash: "sessions" }));
+    // You, then the agent's first call, then Rerail's first card: a speaker is named once per run.
+    await expect(page.locator("#content .tl .msgrow.u .who").first()).toHaveText("You");
+    await expect(page.locator("#content .tl .evt > .spk:visible").first()).toHaveText("Agent");
+    const cards = page.locator("#content .tl .tbody .corr");
+    await expect(cards.first().locator("> .spk")).toHaveText("Rerail");
+    await expect(cards.nth(1).locator("> .spk")).toBeHidden();
+
+    await page.locator('#content [data-act="sfilter"][data-i="corr"]').click();
+    const lines = await page.locator("#content .daygrp").evaluateAll(groups => groups.map(group => {
+      const name = group.querySelector(".name")!.getBoundingClientRect(), count = group.querySelector(".cnt") as HTMLElement;
+      return { sameLine: Math.abs(name.top - count.getBoundingClientRect().top) < 2, cut: count.scrollWidth > count.clientWidth };
+    }));
+    expect(lines.length).toBeGreaterThan(5);
+    expect(lines.every(line => line.sameLine && !line.cut)).toBe(true);
+  });
+
   test("mature: a session from Overview's recent sessions opens selected in History by session", async ({ page, rerail }) => {
     await page.goto(await rerail.dashboard("mature"));
     const link = page.locator('#content [data-act="session"]').last();

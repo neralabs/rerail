@@ -91,36 +91,45 @@ body[data-panel="open"] .sess > aside{display:none}
 .pask textarea.one{min-height:0;height:54px}
 /* The controls row: the rule dropdown, then Show all events at the right end. */
 .tfilter{display:flex;flex-wrap:wrap;gap:6px 12px;padding:10px 16px;border-bottom:1px solid var(--border);align-items:center}
-.tfilter .srule select{max-width:min(360px,50vw);overflow:hidden;text-overflow:ellipsis}
+.tfilter .srule{min-width:0;max-width:100%}
+.tfilter .srule select{max-width:min(360px,100%);overflow:hidden;text-overflow:ellipsis}
 .tfilter .tall{margin-left:auto;display:inline-flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;white-space:nowrap}
 .tfilter .tall input{width:15px;height:15px;margin:0;accent-color:var(--brand)}
 .ssearch{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:6px 9px;margin-bottom:8px}
 .ssearch input{flex:1;border:0;background:none;font:inherit;font-size:13px;color:inherit;min-width:0}
 .ssearch input::placeholder{color:var(--muted-foreground)}
-.daygrp{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:8px;width:100%;padding:7px 12px;background:var(--muted);border-top:1px solid var(--border);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted-foreground);text-align:left}
+.daygrp{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:6px;width:100%;padding:7px 12px;background:var(--muted);border-top:1px solid var(--border);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted-foreground);text-align:left}
 .daygrp:first-child{border-top:0}
-.daygrp .cnt{margin-left:auto;text-transform:none;letter-spacing:0;font-size:11.5px}
+/* One line whatever the counts: the day never wraps, and a count too long for the row ends in an ellipsis (its
+ * tooltip has it whole). */
+.daygrp .name{flex:none;white-space:nowrap}
+.daygrp .cnt{margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:none;letter-spacing:0;font-size:11px}
 .daygrp svg{transition:transform .15s;flex:none}
 .daygrp[aria-expanded="true"] svg{transform:rotate(90deg)}
 .smore{padding:8px 12px;border-top:1px solid var(--border);text-align:center}
 
 /* ---- the transcript ---- */
-.tlwrap{display:grid;grid-template-columns:28px minmax(0,1fr);position:relative}
+.tlwrap{display:grid;grid-template-columns:24px minmax(0,1fr);position:relative}
 .rail{grid-column:1;position:relative}
-.rail .line{position:absolute;left:13px;top:0;bottom:0;width:2px;background:var(--border)}
-.rail .tick{position:absolute;left:8px;width:12px;height:12px;border-radius:50%;background:var(--steer-fg);border:2px solid var(--card);box-shadow:0 0 0 1px var(--steer-fg);cursor:pointer;transform:translateY(-6px)}
+.rail .line{position:absolute;left:11px;top:0;bottom:0;width:2px;background:var(--border)}
+.rail .tick{position:absolute;left:6px;width:12px;height:12px;border-radius:50%;background:var(--steer-fg);border:2px solid var(--card);box-shadow:0 0 0 1px var(--steer-fg);cursor:pointer;transform:translateY(-6px)}
 .rail .tick:hover{transform:translateY(-6px) scale(1.25)}
-.tl{grid-column:2;padding:6px 16px 16px 14px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.tl{grid-column:2;padding:6px 16px 16px 8px;display:flex;flex-direction:column;gap:4px;min-width:0;container-type:inline-size}
 .tl .turns{display:flex;flex-direction:column;gap:4px}
 .bound{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:.05em;padding:8px 0}
 .bound::after{content:"";flex:1;height:1px;background:var(--border)}
 .turn{display:block;padding:8px 0}
-.msgrow{display:grid;grid-template-columns:48px minmax(0,1fr) auto;gap:0 10px;align-items:start;padding:3px 0}
+/* "You" / "Agent" in a 40px column and an 8px gap: the 48px that calls and cards indent by. */
+.msgrow{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:0 8px;align-items:start;padding:3px 0}
 .msgrow .who{font-size:12px;font-weight:600;color:var(--muted-foreground);line-height:22px;white-space:nowrap}
 .msgrow .msg{font-size:14px;line-height:22px;max-width:74ch;min-width:0;overflow-wrap:break-word;white-space:pre-line}
 .msgrow.u .msg{background:var(--brand-subtle);border-radius:var(--radius-lg);padding:5px 10px;font-weight:500;margin:-1px 0}
 .msgrow .mt{font-family:var(--font-mono);font-size:11px;line-height:22px;color:var(--muted-foreground);white-space:nowrap;padding-right:8px}
-.corr{margin:6px 0 6px 58px;border-radius:var(--radius-xl);background:var(--card);padding:13px 15px;scroll-margin-top:90px}
+/* A call's or card's speaker, in the 40px column "You" and "Agent" sit in, left of its 8px gap. */
+.evt > .spk,.corr > .spk{position:absolute;right:calc(100% + 8px);width:40px;font-size:12px;font-weight:600;line-height:22px;color:var(--muted-foreground);white-space:nowrap}
+.evt > .spk{top:3px}
+.corr > .spk{top:11px}
+.corr{position:relative;margin:6px 0 6px 48px;border-radius:var(--radius-xl);background:var(--card);padding:13px 15px;scroll-margin-top:90px}
 .corr[data-outcome="logged"]{background:var(--log-bg)}
 .corr[data-outcome="steered"]{background:var(--steer-bg)}
 .corr.hit{animation:hit 1.2s ease-out}
@@ -130,16 +139,23 @@ body[data-panel="open"] .sess > aside{display:none}
 .corr .ch .ctitle{color:var(--foreground);font-weight:600;font-size:13px;text-align:left;text-underline-offset:2px}
 .corr .ch .ctitle:not(:disabled):hover{text-decoration:underline}
 .corr .ch .ctitle:disabled{cursor:text}
+.corr .ch .mono,.corr .ch .ctitle{max-width:100%;overflow-wrap:anywhere}
 .corr .ch .badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:3px}
 .beats{display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 12px;margin:8px 0 0;font-size:13px}
 .beats dt{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-foreground);padding-top:2px}
 .beats dt.nera{color:var(--brand-foreground)}
-.beats dd{margin:0}
+/* A card can be narrow (the rule's sheet open beside it): a long word, id or path wraps inside it, never past its edge. */
+.beats dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.beats dd code{-webkit-box-decoration-break:clone;box-decoration-break:clone}
 /* A declined steer: its red badge beside the outcome's, and the agent's reasons, one per line, however long a word. */
 .corr .badge.declined{background:var(--danger-subtle);color:var(--danger-foreground)}
 .beats dt.reason{color:var(--danger-foreground)}
-.beats dd.reason{white-space:pre-line;overflow-wrap:anywhere}
-.evt{margin-left:58px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);margin-top:4px;overflow:hidden}
+.beats dd.reason{white-space:pre-line}
+/* No overflow clip, so the speaker can sit outside the row: the header and the payload round their own corners. */
+.evt{position:relative;margin-left:48px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);margin-top:4px}
+.evt .eh{border-radius:calc(var(--radius-lg) - 1px)}
+.evt[data-open="true"] .eh{border-radius:calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px) 0 0}
+.evt .pay{border-radius:0 0 calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px)}
 .evt.failed{border-color:var(--fail-border)}
 .evt.lvl-outside{border-color:var(--outside-border)}
 .evt .eh{display:grid;grid-template-columns:20px auto minmax(0,1fr) auto;gap:0 8px;align-items:center;width:100%;padding:5px 8px;text-align:left}
@@ -162,6 +178,17 @@ body[data-panel="open"] .sess > aside{display:none}
 @media (min-width:1600px){.out .tn{display:inline-block}}
 body[data-panel="open"] .out .tn,body[data-panel="open"] .out .sq{display:none}
 @media (max-width:1180px){.out .sq{display:none}}
+/* A narrow timeline (a small window, or the sheet open beside it): a call's right side keeps its outcome and time and
+ * lets go of the fixed column widths, the sequence numbers and the tool, so the time is never cut off; a message's
+ * number and time go under it instead of squeezing it. The time's tooltip still names the call. */
+@container (max-width:640px){
+  .out{gap:8px}
+  .out .oc{width:auto}
+  .out .tm{min-width:0}
+  .out .sq,.out .tn{display:none}
+  .msgrow{grid-template-columns:40px minmax(0,1fr)}
+  .msgrow .mt{grid-column:2;line-height:18px;padding-right:0}
+}
 .ok{color:var(--success-foreground)}
 .bad{color:var(--danger-foreground);font-weight:600}
 .pay{display:none;border-top:1px solid var(--border);padding:8px 10px 10px 36px;font-size:12.5px;background:var(--nested)}
@@ -176,7 +203,7 @@ body[data-panel="open"] .out .tn,body[data-panel="open"] .out .sq{display:none}
 .pay .diff .d{background:var(--danger-subtle)}
 .pay details{margin-top:8px}
 .pay details summary{font-size:12px;padding:5px 10px}
-.fold{margin:4px 0 0 58px;display:grid;grid-template-columns:20px minmax(0,1fr);gap:0 8px;align-items:center;width:calc(100% - 58px);padding:5px 8px;font-size:12.5px;color:var(--muted-foreground);border:1px dashed var(--border);border-radius:var(--radius-lg);text-align:left}
+.fold{margin:4px 0 0 48px;display:grid;grid-template-columns:20px minmax(0,1fr);gap:0 8px;align-items:center;width:calc(100% - 48px);padding:5px 8px;font-size:12.5px;color:var(--muted-foreground);border:1px dashed var(--border);border-radius:var(--radius-lg);text-align:left}
 .fold:hover{background:var(--subtle)}
 .fold svg{transition:transform .15s}
 .fold[aria-expanded="true"] svg{transform:rotate(90deg)}

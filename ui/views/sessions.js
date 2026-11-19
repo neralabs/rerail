@@ -158,7 +158,9 @@ function updateListItem(node, item) {
     setAttr(node, "aria-expanded", String(item.open));
     setText(node.querySelector(".name"), item.name);
     const withC = item.withC ? ` · ${fmt(item.withC)} with violations` : "";
-    setText(node.querySelector(".cnt"), `${fmt(item.count)} ${plural(item.count, "session")}${withC}`);
+    const cnt = node.querySelector(".cnt"), counts = `${fmt(item.count)} ${plural(item.count, "session")}${withC}`;
+    setText(cnt, counts);
+    setAttr(cnt, "title", counts);
     return;
   }
   const s = item.s;

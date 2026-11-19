@@ -99,7 +99,15 @@ function createEvent(ev) {
   return h("div.evt", null,
     h("button.eh", { "data-act": "etoggle", "data-i": ev.key, "aria-expanded": "false" }, chevron(), h("span.vb"), h("span.tg"),
       h("span.out", null, h("span.oc"), h("span.tn"), h("span.sq.num"), h("span.tm.num"))),
+    h("span.spk", { hidden: true }),
     h("div.pay"));
+}
+
+/** Who a call or card is from ("Agent", "Rerail"), in the column "You" sits in; `null` continues the row above's. */
+function setSpeaker(node, who) {
+  const spk = node.querySelector(":scope > .spk");
+  setAttr(spk, "hidden", !who);
+  setText(spk, who ?? "");
 }
 
 function verbLabel(ev) {
@@ -108,7 +116,8 @@ function verbLabel(ev) {
   return ev.label;
 }
 
-function updateEvent(node, ev) {
+function updateEvent(node, ev, who = null) {
+  setSpeaker(node, who);
   const isOpen = ui.openEvents.has(ev.key) || (ev.failed && !ui.closedEvents.has(ev.key));
   setAttr(node, "class", `evt lvl-${ev.level}${ev.failed ? " failed" : ""}`);
   setAttr(node, "data-open", String(isOpen));
@@ -128,7 +137,9 @@ function updateEvent(node, ev) {
   const resultRef = ev.resSeq === null ? "" : `, Result #${ev.resSeq}`;
   setAttr(sq, "title", `Call #${ev.callSeq}${resultRef}`);
   const took = ev.dur ? ` · ${ev.dur}s` : "";
-  setText(eh.querySelector(".tm"), `${clockSeconds(ev.callTime)}${took}`);
+  const tm = eh.querySelector(".tm");
+  setText(tm, `${clockSeconds(ev.callTime)}${took}`);
+  setAttr(tm, "title", `Call #${ev.callSeq}${resultRef} · ${ev.toolName}`);
   const pay = node.lastChild;
   const paySig = isOpen ? `${ev.key}|${ev.resSeq}` : "";
   if (pay.dataset.sig !== paySig) { pay.dataset.sig = paySig; pay.replaceChildren(...(isOpen ? payload(ev) : [])); }
@@ -137,6 +148,7 @@ function updateEvent(node, ev) {
 /** A violation's card: its rule's title, which opens the rule, the rule id, then its badges, over what Rerail said. */
 function createCorr(item) {
   return h("div.corr", { id: `c-${item.key}`, "data-key": item.key },
+    h("span.spk", { hidden: true }),
     h("div.ch", null, h("button.ctitle"), h("span.mono"),
       h("span.badges", null, h("span.badge.outcome"),
         h("span.badge.declined", { hidden: true, title: "The coding agent didn’t follow this steer and recorded why with rerail feedback." }, "Declined"))),
@@ -155,6 +167,13 @@ function updateDeclined(node, reasons) {
   setText(said, declined ? reasons.join("\n") : "");
 }
 
+/** A path as text that a narrow card breaks after a `/` first (`<wbr>`), so a folder name stays whole where it can. */
+function setPath(code, text) {
+  if (code.dataset.text === text) return;
+  code.dataset.text = text;
+  code.replaceChildren(...text.split("/").flatMap((part, i, parts) => (i < parts.length - 1 ? [`${part}/`, document.createElement("wbr")] : [part])));
+}
+
 /** `path:line` of a finding, or `""` when it has no path. */
 function whereText(f) {
   if (!f.path) return "";
@@ -162,16 +181,28 @@ function whereText(f) {
   return `${f.path}${line}`;
 }
 
+/**
+ * The card's title, which opens the rule. A rule taken out of the repository since keeps its card: named from its
+ * pack, else by id, as plain text with nothing to open.
+ */
+function updateTitle(title, rule, ruleId) {
+  if (rule === null) {
+    setText(title, `${packRuleOf(ruleId)?.rule.title ?? ruleId} (no longer in this repository)`);
+    for (const name of ["data-act", "data-i", "title"]) setAttr(title, name, null);
+    setAttr(title, "disabled", true);
+    return;
+  }
+  setText(title, titleOf(rule));
+  setAttr(title, "data-act", "detail");
+  setAttr(title, "data-i", ruleId);
+  setAttr(title, "title", "Open the rule");
+  setAttr(title, "disabled", false);
+}
+
 function updateCorr(node, item) {
   const c = item.c, f = c.finding;
-  // A rule taken out of the repository since keeps its card: named from its pack, else by id, with nothing to open.
-  // The title opens the rule; a removed rule's title is plain text, with nothing to open.
-  const title = node.querySelector(".ctitle"), opens = c.rule !== null;
-  setText(title, opens ? titleOf(c.rule) : `${packRuleOf(f.ruleId)?.rule.title ?? f.ruleId} (no longer in this repository)`);
-  setAttr(title, "data-act", opens ? "detail" : null);
-  setAttr(title, "data-i", opens ? f.ruleId : null);
-  setAttr(title, "disabled", !opens);
-  setAttr(title, "title", opens ? "Open the rule" : null);
+  setSpeaker(node, item.who);
+  updateTitle(node.querySelector(".ctitle"), c.rule, f.ruleId);
   setText(node.querySelector(".mono"), f.ruleId);
   const result = violationOutcome(f);
   node.dataset.outcome = result;
@@ -181,7 +212,7 @@ function updateCorr(node, item) {
   updateDeclined(node, c.declined);
   setText(node.querySelector(".said"), f.message);
   const where = whereText(f);
-  setText(node.querySelector("dd.where code"), where);
+  setPath(node.querySelector("dd.where code"), where);
   setAttr(node.querySelector("dt.where"), "hidden", where === "");
   setAttr(node.querySelector("dd.where"), "hidden", where === "");
 }
@@ -227,7 +258,11 @@ function updateFold(fold, foldBody, turn, sessionId) {
   syncChildren(foldBody, showFold && fopen ? quiet : [], e => e.key, createEvent, updateEvent);
 }
 
-/** The turn's body: its shown loud calls, each followed by its shown cards. */
+/**
+ * The turn's body: its shown loud calls, each followed by its shown cards. Each item says who it is from (`who`) only
+ * where the speaker changes, as a chat names a speaker once per run: the agent's calls after its reply or your
+ * prompt, Rerail's cards after them.
+ */
 function turnItems(turn) {
   const card = c => ({ key: `c:${c.key}`, c });
   // Orphans are older than every loaded call, so they lead the turn.
@@ -237,6 +272,12 @@ function turnItems(turn) {
     items.push({ key: `e:${ev.key}`, ev });
     items.push(...ev.corrections.filter(cardShown).map(card));
   }
+  let last = turn.a !== null ? "Agent" : turn.u !== null ? "You" : null;
+  for (const item of items) {
+    const who = item.ev ? "Agent" : "Rerail";
+    item.who = who === last ? null : who;
+    last = who;
+  }
   return items;
 }
 
@@ -245,7 +286,7 @@ function updateTurn(node, turn, sessionId) {
   updateMessage(u, turn.u, turn.uSeq, turn.uTime);
   updateMessage(a, turn.a === null ? null : truncate(turn.a, 600), turn.aSeq, turn.aTime);
   updateFold(fold, foldBody, turn, sessionId);
-  syncChildren(body, turnItems(turn), i => i.key, i => (i.ev ? createEvent(i.ev) : createCorr(i)), (n, i) => (i.ev ? updateEvent(n, i.ev) : updateCorr(n, i)));
+  syncChildren(body, turnItems(turn), i => i.key, i => (i.ev ? createEvent(i.ev) : createCorr(i)), (n, i) => (i.ev ? updateEvent(n, i.ev, i.who) : updateCorr(n, i)));
 }
 
 const turnVisible = turn => EF() === "all" || turn.tools.some(evMatches) || turn.orphans.some(cardShown);
