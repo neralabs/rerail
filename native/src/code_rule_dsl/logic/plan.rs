@@ -1601,6 +1601,8 @@ pub struct RunPlans {
     /// plans, and those this run made, by the version's identity; and whether it made any.
     prepared: arc_swap::ArcSwap<prepared::ByVersion>,
     prepared_new: std::sync::atomic::AtomicBool,
+    /// The lines this run found heavy while they ran their prepared plan: searched from then on (`prepared_heavy`).
+    prepared_searched: parking_lot::Mutex<HashSet<u128>>,
 }
 
 impl Default for RunPlans {
@@ -1684,6 +1686,7 @@ impl RunPlans {
             orders: arc_swap::ArcSwap::from_pointee(orders),
             prepared: Default::default(),
             prepared_new: Default::default(),
+            prepared_searched: Default::default(),
         }
     }
 
@@ -1872,6 +1875,11 @@ pub fn take_stored_plans(stored: Arc<StoredPlans>) {
 
 /// Whether this thread runs with kept plans (`PLANS`): only then are prepared plans read from or kept for the store.
 #[doc(hidden)]
+/// Whether this thread's run searches line `line` rather than take its prepared plan: it ran heavy (`prepared_heavy`).
+pub fn prepared_searched(line: u128) -> bool {
+    PLANS.with(|p| p.borrow().as_ref().is_some_and(|p| p.prepared_searched.lock().contains(&line)))
+}
+
 pub fn run_holds_plans() -> bool {
     PLANS.with(|p| p.borrow().is_some())
 }
@@ -2075,7 +2083,7 @@ impl Drop for KeepPlans {
             let st: Vec<u64> = STATISTICS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let searches: Vec<u64> = SEARCHES.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let lazy = lazy_probes_counted();
-            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late, {} answered by layouts; {} lines prepared, {} refused ({} versions' plans read, {} made); orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], SHAPED.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::TAKEN.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::REFUSED.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[0].swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[1].swap(0, std::sync::atomic::Ordering::Relaxed), searches[0], searches[1], lazy.0, lazy.1);
+            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late, {} answered by layouts; {} lines prepared, {} searched once heavy ({} versions' plans read, {} made); orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], SHAPED.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::TAKEN.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::SEARCHED.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[0].swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[1].swap(0, std::sync::atomic::Ordering::Relaxed), searches[0], searches[1], lazy.0, lazy.1);
         }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
@@ -3003,7 +3011,7 @@ impl Model {
             return self.plan_inner(pf, b, first, None, true);
         }
         // A line planned with the program (decision 0361 step 5): no key, no cache, no price.
-        if let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, &|r| self.card(r)) {
+        if let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes) {
             super::profile::decision("prepared plans (decision 0361 step 5)", || "a live plan taken as prepared: not searched or priced".to_owned());
             return Ok((plan, None));
         }
@@ -3252,6 +3260,39 @@ impl Model {
     }
 
     /// `plan_for_rows` under `cx`: its runners-up handed back there (decision 0207's trials).
+    /// Decision 0361 step 5 with 0203: a line running the order prepared for it (planned with the program, from its
+    /// layouts' estimates), checked as heavy (`joins::check`: past a search's work, then at each doubling), is searched
+    /// from now on in this run: its key returned, for the caller to plan it again with the run's statistics. A prepared
+    /// order that is only worse than another is priced right by those statistics and so is never slow (§3); this
+    /// finds it at a search's price, once a line, where its work pays for one (decision 0122). The order the search
+    /// gives is the one kept (`decide`), so a later run starts from it. Its assumed sizes against the run's, in the
+    /// profile: the estimate and what it met.
+    /// Whether a line running the order prepared for it has done `work` past `joins::slow_factor` times what that plan
+    /// priced it at (at least a search's work, `SEARCH_WORK`: a search is never made for less than it costs). Checked
+    /// at every chunk, as it costs a lookup: the prepared price is the plan's, not one worked out again.
+    #[doc(hidden)]
+    pub fn prepared_horribly_slow(&self, b: &Body<'_>, firsts: &[Option<usize>], running: &[Step], work: f64) -> bool {
+        firsts.iter().filter_map(|f| self.stats.prepared.0.get(&line_key(b, *f))).find(|p| same_order(&p.order, running)).is_some_and(|p| {
+            work > joins::slow_factor() * (p.work_per_node * self.stats.nodes.max(1.0)).max(SEARCH_WORK)
+        })
+    }
+
+    #[doc(hidden)]
+    pub fn prepared_heavy(&self, b: &Body<'_>, firsts: &[Option<usize>], running: &[Step]) -> Option<u128> {
+        let (line, p) = firsts.iter().map(|f| line_key(b, *f)).find_map(|k| self.stats.prepared.0.get(&k).filter(|p| same_order(&p.order, running)).map(|p| (k, p)))?;
+        let fresh = PLANS.with(|s| s.borrow().as_ref().is_some_and(|s| s.prepared_searched.lock().insert(line)));
+        if !fresh {
+            return None;
+        }
+        prepared::SEARCHED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        super::profile::decision("prepared plans (decision 0361 step 5)", || {
+            let n = self.stats.nodes.max(1.0);
+            let met: Vec<String> = p.assumed.iter().map(|(r, per)| format!("{r} assumed {:.0} rows, holds {:.0}", per * n, self.card(r))).collect();
+            format!("{}: heavy on its prepared order, searched{}{}", b.head_text(), if met.is_empty() { "" } else { "; " }, met.join(", "))
+        });
+        Some(line)
+    }
+
     fn plan_for_rows_in(&mut self, pf: Fields<'_>, b: &Body<'_>, at: usize, rows: f64, cx: &mut joins::SearchCx) -> Option<Vec<Step>> {
         let rel = b.atom(at).map(|a| b.rel(a).to_owned())?;
         let was = self.stats.delta_rows.insert(rel.clone(), rows.max(1.0));
@@ -3354,7 +3395,7 @@ impl Model {
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
         // A line planned with the program from its layouts (decision 0361 step 5): taken as kept, not searched.
         if fixed.is_none()
-            && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, &|r| self.card(r))
+            && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes)
         {
             super::profile::decision("prepared plans (decision 0361 step 5)", || "a line's plan taken as prepared: not searched".to_owned());
             let explained = if explain { self.explain_order(pf, b, first, &plan.0) } else { None };
@@ -9413,10 +9454,19 @@ impl<'a> Run<'a, '_> {
                     }
                     let (Some(Some(key)), Some(c)) = (keys.get(line).copied(), counted.get(line)) else { continue };
                     let work = super::profile::plan_work(c) as f64;
-                    if !joins::check(key, work, &probes[k].2) {
+                    let (r, ai) = (probes[k].0, probes[k].1);
+                    // Its prepared order, horribly slow (past `slow_factor` of what it was prepared at) or heavy (the
+                    // check below): planned again next round with the run's statistics (`prepared_heavy`).
+                    let checked = joins::check(key, work, &probes[k].2);
+                    if (checked || self.model.prepared_horribly_slow(&vs.at(r), &[Some(ai)], &probes[k].2, work))
+                        && self.model.prepared_heavy(&vs.at(r), &[Some(ai)], &probes[k].2).is_some()
+                    {
+                        replanned_at.force(k);
                         continue;
                     }
-                    let (r, ai) = (probes[k].0, probes[k].1);
+                    if !checked {
+                        continue;
+                    }
                     let b = vs.at(r);
                     // A body of one positive atom has one order: nothing to plan again.
                     if positive_atoms(&b) < 2 {
@@ -9672,6 +9722,16 @@ impl<'a> Run<'a, '_> {
                 // A seed or whole plan is checked here, at its cut (a probe was, above).
                 if led && let Some(key) = keys.get(line).copied().flatten() {
                     let running = order_now(&orders, &probes, &wholes);
+                    // Its prepared order, heavy: searched now with the run's statistics, and a better order goes on
+                    // under the handoff (decision 0206), which goes back to this one where it runs slower a row.
+                    if self.model.prepared_heavy(&b, &[first, None], &running).is_some() {
+                        let mut cx = joins::SearchCx::default();
+                        if let Some(new) = self.model.plan_for_rows_in(pf, &b, cut_lead, c.left.max(1) as f64, &mut cx)
+                            && !same_order(&new, &running)
+                        {
+                            place!(new);
+                        }
+                    }
                     // The walk cut now is judged by its own work over its own rows (a line's work so far may be an
                     // earlier walk's too: then a few rows read under a short budget stood for all of it).
                     let ran = c.work as f64;

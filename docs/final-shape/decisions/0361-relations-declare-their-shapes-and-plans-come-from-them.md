@@ -453,3 +453,27 @@ run saw (Q184) cost 31% and was dropped. So on a warm store prepared plans save 
 save little (planning is 1-3% of the run). The criterion that a run plans none of the relations with shapes is met
 where facts size them; for derived relations it is open (Q184), as is reading plans across stores (Q185).
 
+**Taken by default; a slow one searched where it runs** (2026-11-18, the user's design). A prepared plan is taken
+as it is, estimates and all: the run's planning stays lean for the plans that are right, approximations are
+accepted, and the drift check that sent a line to the search (above) is gone. A wrong one is found where it runs:
+
+- **Horribly slow:** at each chunk, a line running its prepared order past `RERAIL_JOIN_SLOW` (8) times what the plan
+  priced it at, at least a search's work (`SEARCH_WORK`), is searched (`Model::prepared_horribly_slow`). Its price is
+  the plan's own, so the check is a lookup. The slow flag of decision 0203 §3 cannot find it: that compares the work
+  with the running order priced under the run's statistics, and a worse order is priced right there.
+- **Heavy:** a line reaching decision 0203's check (100,000 rows, then each doubling) on its prepared order is
+  searched too.
+- **Searched once a line, a run** (`Model::prepared_heavy`): from then on `Prepared::take` gives it none and its
+  plans are searched, the wider search and trials of 0203 included. A probe is planned again at the next round; a
+  seed's new order goes on under the handoff (decisions 0206, 0271), which goes back to the old one where it runs
+  slower a row. The searched order is the one kept (`decide`), so a later run starts from it.
+- The plan's assumed sizes beside what the run holds go in the profile's decision for the line: estimate and actual,
+  for the misprediction classifier (O166) to learn from.
+
+corpus0 x B-now, profiling, M3: joins 38.1 s off, 38.5 s on (cold, a new store); a second run on the store over the
+corpus edited, 38.7 s on against about 37.5 s off. 48 lines a run searched as slow. User CPU 88.1 s off, 88.4 s on;
+instructions 1,039 billion off, 1,075-1,090 on (+3.5-5%, spread over many spans, none of them planning's).
+463 findings, d067ec2ebf6f, in all. Before this check (prepared plans taken and kept with no check) the joins ran
+70% longer. Still to come from the design: the background learning that improves the wrongly planned and the
+critical path's plans through the classifier (O166, decision 0203 §5).
+

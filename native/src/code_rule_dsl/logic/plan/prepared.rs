@@ -38,8 +38,8 @@ pub struct Prepared(pub HashMap<u128, PreparedPlan>);
 
 /// Lines a run took from the prepared plans (`RERAIL_PLAN_CACHE_COUNTS`).
 pub static TAKEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-/// Lines whose prepared plan a run did not take: a derived relation it assumed was not near its estimate.
-pub static REFUSED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Lines a run found heavy while they ran their prepared plan, and searched once (`Model::prepared_heavy`).
+pub static SEARCHED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// Versions whose prepared plans a run read from the store, and made (Q183; `RERAIL_PLAN_CACHE_COUNTS`).
 pub static VERSIONS: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
 
@@ -116,18 +116,16 @@ impl Prepared {
         Some(Prepared(out))
     }
 
-    /// Line `line`'s plan, scaled to a run of `nodes` nodes: its order, work and rows. `None` where it has none, or
-    /// where a derived relation it assumed the size of is not near it now (`card`, the run's rows of a relation;
-    /// `super::near`, within `PRICE_DRIFT`): the line is searched, as one with no plan is. An estimate carried up
-    /// the strata errs, and its order costs what the error does (0361 step 6: a plan checked against what it assumed).
-    pub fn take(&self, line: u128, nodes: f64, card: &dyn Fn(&str) -> f64) -> Option<super::Plan> {
+    /// Line `line`'s plan, scaled to a run of `nodes` nodes: its order, work and rows. Taken as it is, estimates and
+    /// all: the run's planning stays lean for the plans that are right, and one that turns out heavy is searched where
+    /// it runs (`Model::prepared_heavy`). `None` where it has none, or where this run searched it so.
+    pub fn take(&self, line: u128, nodes: f64) -> Option<super::Plan> {
         let p = self.0.get(&line)?;
-        let n = nodes.max(1.0);
-        if !p.assumed.iter().all(|(rel, per_node)| super::near(&[per_node * n], &[card(rel)])) {
-            REFUSED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if super::prepared_searched(line) {
             return None;
         }
         TAKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let n = nodes.max(1.0);
         Some((p.order.clone(), p.work_per_node * n, p.rows_per_node * n))
     }
 }

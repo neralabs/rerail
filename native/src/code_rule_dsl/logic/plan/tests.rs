@@ -3163,19 +3163,23 @@ fn a_run_takes_a_prepared_plan_without_searching() {
     model.stats.prepared = std::sync::Arc::new(prepared::Prepared(
         [(crate::code_rule_dsl::logic::plan::line_key(&b, None), prepared::PreparedPlan { order: odd.clone(), work_per_node: 3.0, rows_per_node: 0.5, assumed: vec![("child2".to_owned(), 0.5)] })].into_iter().collect(),
     ));
-    // It assumed `child2` at 0.5 rows a node (1,000 at 2,000 nodes), as the run's statistics hold it: taken.
+    // Taken as it is, whatever the run's statistics say of what it assumed (`child2` at 0.5 rows a node).
     let got = model.plan_rule(f, &b, None).unwrap();
     assert_eq!(got, (odd.clone(), 6_000.0, 1_000.0));
     // Another line (its delta) is not held: searched.
     assert!(model.plan_rule(f, &b, Some(0)).is_ok());
-    // Assumed at 5 rows a node (10,000), past `PRICE_DRIFT` of the run's 1,000: not taken, searched as with none.
-    model.stats.prepared = std::sync::Arc::new(prepared::Prepared(
-        [(crate::code_rule_dsl::logic::plan::line_key(&b, None), prepared::PreparedPlan { order: odd.clone(), work_per_node: 3.0, rows_per_node: 0.5, assumed: vec![("child2".to_owned(), 5.0)] })].into_iter().collect(),
-    ));
-    let refused = prepared::REFUSED.load(std::sync::atomic::Ordering::Relaxed);
+    // Found heavy on its prepared order, in a run: searched from then on, once (decision 0361 step 5 with 0203).
+    let _plans = KeepPlans::start(None);
+    let line = crate::code_rule_dsl::logic::plan::line_key(&b, None);
+    // Horribly slow past 8 times its prepared price: 3 rows of work a node at 2,000 nodes is 6,000; 48,000 the line.
+    assert!(!model.prepared_horribly_slow(&b, &[None], &odd, 40_000.0));
+    assert!(model.prepared_horribly_slow(&b, &[None], &odd, 50_000.0));
+    assert!(!model.prepared_horribly_slow(&b, &[None], &planned.0, 50_000.0), "not the order it runs");
+    assert_eq!(model.prepared_heavy(&b, &[Some(0), None], &planned.0), None, "not the order it runs");
+    assert_eq!(model.prepared_heavy(&b, &[Some(0), None], &odd), Some(line));
+    assert_eq!(model.prepared_heavy(&b, &[Some(0), None], &odd), None, "once a line");
     let got = model.plan_rule(f, &b, None).unwrap();
-    assert_ne!(got.0, odd, "searched, not the order kept");
-    assert!(prepared::REFUSED.load(std::sync::atomic::Ordering::Relaxed) > refused);
+    assert_ne!(got.0, odd, "searched, not the order prepared");
 }
 
 /// The prepared plans as an image stores them (decision 0333 §4): read back the same.
