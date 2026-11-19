@@ -1221,11 +1221,11 @@ impl LoweredWave {
             #[cfg(not(target_os = "macos"))]
             let released = false;
             if left <= 0.0 || !released {
+                let spent = t0.elapsed().as_secs_f64();
                 #[cfg(target_os = "macos")]
                 eprintln!(
-                    "rerail: a one-tape matcher wave found no room after {waits} waits, {:.3} s ({}); the device: {}",
-                    t0.elapsed().as_secs_f64(),
-                    if left <= 0.0 { "its patience" } else { "nothing held by threads that go on" },
+                    "rerail: a one-tape matcher wave found no room after {waits} waits, {spent:.3} s ({}); the device: {}",
+                    if spent >= WAVE_ROOM_PATIENCE { "its patience" } else { "nothing held by threads that go on" },
                     rerail_accel::gpu::shared::describe()
                 );
                 break;

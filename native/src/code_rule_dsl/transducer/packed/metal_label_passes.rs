@@ -3428,7 +3428,7 @@ impl Runner<'_> {
 /// buffers made after sizing (program buffers, walk and root records).
 const LANE_SHARE: (usize, usize) = (3, 4);
 
-/// The most lanes, up to `wanted`, whose workspace fits `LANE_SHARE` of the free buffer budget,
+/// The most lanes, up to `wanted`, whose workspace fits `LANE_SHARE` of the buffer room left (`buffer_room`),
 /// each lane with its states (decision 0033, O38): lanes are sized from the space, not states
 /// halved until a fixed lane count fits. `BackendBudget` where not even one lane fits.
 fn fit_lanes(batch: &mut PackedBatch, programs: &[Program], specs: &[[u32; 5]], wanted: usize) -> Result<usize, Error> {
@@ -3439,7 +3439,8 @@ fn fit_lanes(batch: &mut PackedBatch, programs: &[Program], specs: &[[u32; 5]], 
     let (one, two) = (bytes(1)?, bytes(2)?);
     let per_lane = two.saturating_sub(one).max(1);
     let fixed = one.saturating_sub(per_lane);
-    let share = metal_backend::buffer_free() / LANE_SHARE.1 * LANE_SHARE.0;
+    // Of the room a reservation can have now, not of the budget less the ledger alone (Q180).
+    let share = metal_backend::buffer_room() / LANE_SHARE.1 * LANE_SHARE.0;
     if fixed + per_lane > share {
         return Err(Error::BackendBudget);
     }

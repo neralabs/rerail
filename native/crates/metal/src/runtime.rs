@@ -77,6 +77,16 @@ pub fn buffer_free() -> usize {
     metal_buffer_limit().saturating_sub(pool().load(Ordering::Acquire))
 }
 
+/// The bytes of `metal_buffer_limit()` a reservation can have now (`BufferReservation::acquire`): past the pool's
+/// ledger, the relational leases and reservations (`gpu::shared::bound_bytes`), less nothing for idle buffers, which
+/// room is made of. Sized from `buffer_free` instead, a matcher wave's workspace was three quarters of the budget
+/// while the chunk's row blocks held 275-384 MB of it: refused at every size, split down to one tape, then failed
+/// (Q180). A test's ledger is its thread's: as `acquire`, the pool's leases are not counted there.
+pub fn buffer_room() -> usize {
+    let bound = if cfg!(any(test, feature = "test-hooks")) { 0 } else { rerail_accel::gpu::shared::bound_bytes() };
+    metal_buffer_limit().saturating_sub(pool().load(Ordering::Acquire) + bound)
+}
+
 /// The bytes of Metal buffers alive now (their reservations), in MB.
 pub fn reserved_mb() -> usize {
     pool().load(Ordering::Acquire) >> 20

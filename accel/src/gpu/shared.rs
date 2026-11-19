@@ -88,6 +88,12 @@ pub fn device_held() -> usize {
     live + idle + other()
 }
 
+/// The bytes no other lease can have until they come back: the pool's leases and the reservations not yet leased
+/// (`admit`). Its idle buffers are not counted: room is made of them on demand (`make_room`).
+pub fn bound_bytes() -> usize {
+    LIVE.load(std::sync::atomic::Ordering::Relaxed) + reserved()
+}
+
 /// The bytes leased now, and the bytes the pool keeps idle: relational work's share of the device's memory.
 pub fn held_bytes() -> (usize, usize) {
     let idle = pool().lock().map_or(0, |p| p.held);
