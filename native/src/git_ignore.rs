@@ -72,40 +72,51 @@ impl GitIgnore {
     /// root `.gitignore`, `info/exclude` and that excludes file are as this matcher read them.
     /// When it would, the stack leaves every folder it entered, so the next path below a folder
     /// reads that folder's `.gitignore` again; with `read_index_again`, for a host that hands the
-    /// matcher on as one opened now, the next question also reads the index from disk.
+    /// matcher on as one opened now, the matcher takes the repository and the stack that open
+    /// makes, which read the index from disk.
     pub fn sources_unchanged(&mut self, read_index_again: bool) -> bool {
-        let now = Self::sources_now(&self.root);
-        self.take_sources(now, read_index_again)
+        let now = Self::sources_now(&self.root, read_index_again);
+        self.take_sources(now)
     }
 
     /// The repository around `root` as an open now finds it, through the engine's opener, with
-    /// the sources it reads the rules from; `None` where that open fails or finds no worktree.
-    fn sources_now(root: &Path) -> Option<(gix::Repository, Sources)> {
+    /// the sources it reads the rules from and, when `fresh`, the stack it makes; `None` where
+    /// that open fails or finds no worktree.
+    fn sources_now(root: &Path, fresh: bool) -> Option<Found> {
         let (repository, worktree) = discover_worktree(root).ok()??;
         let sources = Sources::read(&repository, &worktree)?;
-        Some((repository, sources))
+        let stack = if fresh {
+            Some(exclude_stack(&repository).ok()?)
+        } else {
+            None
+        };
+        Some(Found {
+            repository,
+            sources,
+            stack,
+        })
     }
 
     /// Whether `now`, from [`Self::sources_now`], holds the sources this matcher read; when it
     /// does, the matcher goes on as `sources_unchanged` says.
-    fn take_sources(
-        &mut self,
-        now: Option<(gix::Repository, Sources)>,
-        read_index_again: bool,
-    ) -> bool {
-        let Some((repository, sources)) = now else {
+    fn take_sources(&mut self, now: Option<Found>) -> bool {
+        let Some(found) = now else {
             return false;
         };
-        if self.sources.as_ref() != Some(&sources) {
+        if self.sources.as_ref() != Some(&found.sources) {
             return false;
         }
-        if read_index_again {
-            // The repository just found holds no index yet, and the one read before is dropped
-            // with the old repository: an index rewritten at the time it was read is not taken
-            // for it.
-            self.repository = repository;
+        match found.stack {
+            // Handed on as a matcher opened now: the index read before and the stack made from it,
+            // which names each `.gitignore` the index marks skip-worktree by the blob it held then,
+            // go with the old repository, so an index rewritten since, even at the very time it was
+            // read, is not taken for them.
+            Some(stack) => {
+                self.stack = stack;
+                self.repository = found.repository;
+            }
+            None => self.leave_folders(),
         }
-        self.leave_folders();
         true
     }
 
@@ -218,6 +229,14 @@ fn exclude_stack(
         )
         .map_err(|error| format!("cannot read Git excludes: {error}"))?
         .detach())
+}
+
+/// What a check of a matcher's sources found as an open now finds it: the repository, the sources
+/// and, for a matcher handed on as one opened now, the stack that open makes.
+struct Found {
+    repository: gix::Repository,
+    sources: Sources,
+    stack: Option<gix::worktree::Stack>,
 }
 
 /// What a matcher reads Git's ignore rules from, besides the `.gitignore` of each folder below
@@ -418,16 +437,17 @@ impl GitIgnoreMatcher {
     #[napi(catch_unwind)]
     pub fn sources_unchanged(&self, read_index_again: Option<bool>) -> Result<bool> {
         let root = self.read(|inner| Ok(inner.root.clone()))?;
+        let fresh = read_index_again.unwrap_or(true);
         // Opened again as an open is: a disk that stops answering costs the check, not the host's
         // thread, and while an open of this root gives no answer the check fails at once.
         let now = pool::run(
             "checking Git's ignore rules",
             &self.opened_as,
             GIT_READ_TIME_LIMIT,
-            move || GitIgnore::sources_now(&root),
+            move || GitIgnore::sources_now(&root, fresh),
         )
         .map_err(|error| Error::new(Status::GenericFailure, error.message))?;
-        self.read(|inner| Ok(inner.take_sources(now, read_index_again.unwrap_or(true))))
+        self.read(|inner| Ok(inner.take_sources(now)))
     }
 }
 
@@ -736,6 +756,56 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// A `.gitignore` the index marks skip-worktree and the worktree lacks is read from the blob
+    /// the index names. A matcher handed on as one opened now reads the blob the index names
+    /// then, as that open does; a holder that asks again keeps the one it read, as a matcher of
+    /// its own would.
+    #[test]
+    fn reads_a_skipped_gitignore_as_the_index_names_it_when_handed_on() {
+        let root = fixture(
+            "skipped",
+            &[
+                ("docs/.gitignore", "x.py\n"),
+                ("docs/x.py", ""),
+                ("docs/y.py", ""),
+            ],
+        );
+        git(&root, &["init", "--initial-branch=main"]);
+        git(&root, &["add", "docs/.gitignore"]);
+        git(&root, &["update-index", "--skip-worktree", "docs/.gitignore"]);
+        std::fs::remove_file(root.join("docs/.gitignore")).unwrap();
+        let root = root.canonicalize().unwrap();
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        let answers = |ignore: &mut GitIgnore| {
+            (
+                ignore.ignored("docs/x.py", false).unwrap(),
+                ignore.ignored("docs/y.py", false).unwrap(),
+            )
+        };
+        assert_eq!(answers(&mut ignore), (true, false), "the index's blob");
+        let other = root.join("other-gitignore");
+        std::fs::write(&other, "y.py\n").unwrap();
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["hash-object", "-w"])
+            .arg(&other)
+            .output()
+            .unwrap();
+        let blob = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        std::fs::remove_file(&other).unwrap();
+        let info = format!("100644,{blob},docs/.gitignore");
+        git(&root, &["update-index", "--cacheinfo", &info]);
+        git(&root, &["update-index", "--skip-worktree", "docs/.gitignore"]);
+        let mut fresh = GitIgnore::open(&root).unwrap().unwrap();
+        assert_eq!(answers(&mut fresh), (false, true), "the new blob");
+        assert!(ignore.sources_unchanged(false));
+        assert_eq!(answers(&mut ignore), (true, false), "a holder keeps it");
+        assert!(ignore.sources_unchanged(true));
+        assert_eq!(answers(&mut ignore), (false, true), "handed on");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// The check of a matcher's sources opens the repository again as an open does, under its
     /// root's time limit: while an open of that root has given no answer, the check fails at once
     /// rather than wait on the same disk on the host's thread.
@@ -751,22 +821,18 @@ mod tests {
         let (release, wait) = std::sync::mpsc::channel::<()>();
         let (started, began) = std::sync::mpsc::channel::<()>();
         let key = PathBuf::from(&named);
+        let limit = std::time::Duration::from_millis(100);
         let stuck = std::thread::spawn(move || {
-            pool::run(
-                "a stuck open",
-                &key,
-                std::time::Duration::from_millis(100),
-                move || {
-                    started.send(()).unwrap();
-                    let _ = wait.recv();
-                },
-            )
+            pool::run("a stuck open", &key, limit, move || {
+                started.send(()).unwrap();
+                let _ = wait.recv();
+            })
         });
         began.recv().unwrap();
         assert!(stuck.join().unwrap().unwrap_err().timed_out);
         let checked = std::time::Instant::now();
         let refused = matcher.sources_unchanged(Some(true)).unwrap_err();
-        assert!(refused.reason.contains("has not ended"), "{}", refused.reason);
+        assert!(refused.reason.contains("has not ended"));
         assert!(checked.elapsed() < std::time::Duration::from_secs(1));
         release.send(()).unwrap();
         std::fs::remove_dir_all(root).unwrap();
