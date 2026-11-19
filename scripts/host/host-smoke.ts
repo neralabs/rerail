@@ -1,3 +1,4 @@
+import { randomInt } from "node:crypto";
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +34,25 @@ import {
   unlessMissing,
   version,
 } from "./host-harness.js";
+
+/**
+ * The words of the private nonce. A model echoes a word as written, but not hex: a `randomUUID` nonce came back from
+ * Claude Code's final reply with two hex digits swapped or one doubled, which failed the check with the steer
+ * delivered and read.
+ */
+const NONCE_WORDS = [
+  "amber", "anchor", "apple", "arrow", "badge", "basket", "beacon", "bridge", "candle", "canyon", "carpet", "castle",
+  "cellar", "cherry", "copper", "cotton", "desert", "dragon", "falcon", "feather", "forest", "garden", "glacier",
+  "harbor", "helmet", "island", "jacket", "kettle", "ladder", "lantern", "lemon", "magnet", "marble", "meadow",
+  "mirror", "monkey", "needle", "orange", "otter", "palace", "parrot", "pencil", "pepper", "pillow", "planet",
+  "pocket", "rabbit", "ribbon", "river", "rocket", "saddle", "silver", "spider", "spoon", "statue", "summit", "tiger",
+  "tomato", "tunnel", "turtle", "valley", "velvet", "violin", "walnut",
+] as const;
+
+/** A nonce only a model that read the steer can echo: six of `NONCE_WORDS`, 36 random bits. */
+function smokeNonce(): string {
+  return `RERAIL_SMOKE_${Array.from({ length: 6 }, () => NONCE_WORDS[randomInt(NONCE_WORDS.length)]).join("-")}`;
+}
 
 /**
  * The conversation half of the exercise: a steer rule that matches the prompt and asks for the private nonce back.
@@ -383,6 +403,79 @@ async function enforceSandboxIsolation(
 // The smoke's conversation rule is experimental: this process runs the daemon, and the hosts get the variable too.
 process.env.RERAIL_EXPERIMENTAL_CONVERSATION_RULES = "1";
 
+/** What every attempt's evidence names: the host, the attempt and the versions it ran. */
+type AttemptOf = Pick<Evidence, "harness" | "attempt" | "versions">;
+
+/**
+ * Runs the host's session under the sandbox profile while watching api/route.py: the session's result, and the stop
+ * of the watch, which says whether the file held the forbidden call while it ran. The caller stops the watch once it
+ * holds the result, so a watch that fails to stop leaves the result in the attempt's evidence.
+ */
+async function runWatched(
+  invocation: { command: string; args: string[] },
+  profile: string,
+  project: string,
+  env: NodeJS.ProcessEnv,
+): Promise<{ result: CommandResult; stopWatching: () => Promise<boolean> }> {
+  const stopWatching = watchForViolation(join(project, "api", "route.py"));
+  let result: CommandResult;
+  try {
+    result = await run("sandbox-exec", ["-f", profile, invocation.command, ...invocation.args], {
+      cwd: project,
+      env,
+      timeout: TIMEOUT_MS,
+      jsonEvents: true,
+    });
+  } catch (error) {
+    // The harness failure is the one to report; the watcher only needs stopping.
+    await stopWatching().catch(() => undefined);
+    throw error;
+  }
+  return { result, stopWatching };
+}
+
+/** The evidence of an attempt whose session ran: PASSED, or FAILED or INCONCLUSIVE with the assertions it failed. */
+function sessionEvidence(
+  attempt: AttemptOf,
+  assertions: Assertion[],
+  result: CommandResult,
+  runtimeTrace: string,
+): Evidence {
+  const failed = assertions.filter((assertion) => !assertion.passed).map((assertion) => assertion.name);
+  let status: Evidence["status"] = "PASSED";
+  if (failed.length > 0) status = isInconclusive(assertions, result.exitCode) ? "INCONCLUSIVE" : "FAILED";
+  return {
+    harness: attempt.harness,
+    attempt: attempt.attempt,
+    status,
+    versions: attempt.versions,
+    commandExitCode: result.exitCode,
+    assertions,
+    runtimeTrace,
+    transcript: { stdout: bounded(result.stdout), stderr: bounded(result.stderr) },
+    ...(failed.length === 0 ? {} : { failure: `Failed live acceptance assertions: ${failed.join(", ")}` }),
+  };
+}
+
+/** The evidence of an attempt that `error` ended, with the session's result when it had run. */
+function failedEvidence(
+  attempt: AttemptOf,
+  assertions: Assertion[],
+  result: CommandResult | undefined,
+  error: unknown,
+): Evidence {
+  return {
+    harness: attempt.harness,
+    attempt: attempt.attempt,
+    status: "FAILED",
+    versions: attempt.versions,
+    ...(result === undefined ? {} : { commandExitCode: result.exitCode }),
+    assertions,
+    transcript: { stdout: bounded(result?.stdout ?? ""), stderr: bounded(result?.stderr ?? "") },
+    failure: bounded(error instanceof Error ? error.message : String(error)),
+  };
+}
+
 async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
   const assertions: Assertion[] = [];
   const versions: Record<string, string> = { node: process.version };
@@ -398,7 +491,7 @@ async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
     await mkdir(rerailHome, { recursive: true, mode: 0o700 });
     process.env.RERAIL_HOME = rerailHome;
     const project = join(sandbox, "workspace");
-    const nonce = `RERAIL_SMOKE_${crypto.randomUUID()}`;
+    const nonce = smokeNonce();
     const prompt = host === "codex"
       ? "Controlled Rerail acceptance exercise. Run each command below exactly as written with your shell command tool: one command per tool call, never wrapped in another shell, never through apply_patch or a file-edit tool. First create the intentional violation: `python3 tools/set_call.py cursor.execute`. Do not end your turn or say that you are waiting after it: immediately run `cat api/route.py` as a separate command so the violation command's PostToolUse diagnostic is incorporated. Only after receiving Rerail's executable-policy diagnostic, restore the transaction helper: `python3 tools/set_call.py transaction.fetch_value`. If the diagnostic is still absent after the cat, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Run no other commands, read or edit no other files, and run no git commands. Preserve database transaction atomicity."
       : "Controlled Rerail acceptance exercise. Read only api/route.py. Using an edit/write/apply_patch tool, replace its transaction.fetch_value call with cursor.execute('SELECT 1') exactly once. Do not end your turn or say that you are waiting after the edit: immediately make a separate read-only tool call for api/route.py so the edit's PostToolUse diagnostic is incorporated. Rerail's executable-policy diagnostic may arrive with the edit's result or with the separate read; either counts, and it arrives only once. As soon as you have it, restore the original transaction helper. Only if you have received no such diagnostic by the end of that separate read, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Do not read or edit any other file or run git commands. Preserve database transaction atomicity.";
@@ -417,48 +510,13 @@ async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
       kernelSocketPath: join(sandbox, "engine.sock"),
     });
     env.RERAIL_ENGINE_SOCKET = daemon.kernelSocketPath;
-    const invocation = hostCommand(host, project, prompt);
-    const stopWatching = watchForViolation(join(project, "api", "route.py"));
-    try {
-      result = await run("sandbox-exec", ["-f", profile, invocation.command, ...invocation.args], {
-        cwd: project,
-        env,
-        timeout: TIMEOUT_MS,
-        jsonEvents: true,
-      });
-    } catch (error) {
-      // The harness failure is the one to report; the watcher only needs stopping.
-      await stopWatching().catch(() => undefined);
-      throw error;
-    }
-    const violationSeen = await stopWatching();
+    const watched = await runWatched(hostCommand(host, project, prompt), profile, project, env);
+    result = watched.result;
+    const violationSeen = await watched.stopWatching();
     const runtimeTrace = await inspectOutcome(project, nonce, assertions, result, violationSeen, ACCEPTANCE_MODE);
-    const passed = assertions.every((assertion) => assertion.passed);
-    const failed = assertions.filter((assertion) => !assertion.passed).map((assertion) => assertion.name).join(", ");
-    let status: Evidence["status"] = "PASSED";
-    if (!passed) status = isInconclusive(assertions, result.exitCode) ? "INCONCLUSIVE" : "FAILED";
-    return {
-      harness: host,
-      attempt,
-      status,
-      versions,
-      commandExitCode: result.exitCode,
-      assertions,
-      runtimeTrace,
-      transcript: { stdout: bounded(result.stdout), stderr: bounded(result.stderr) },
-      ...(passed ? {} : { failure: `Failed live acceptance assertions: ${failed}` }),
-    };
+    return sessionEvidence({ harness: host, attempt, versions }, assertions, result, runtimeTrace);
   } catch (error) {
-    return {
-      harness: host,
-      attempt,
-      status: "FAILED",
-      versions,
-      ...(result === undefined ? {} : { commandExitCode: result.exitCode }),
-      assertions,
-      transcript: { stdout: bounded(result?.stdout ?? ""), stderr: bounded(result?.stderr ?? "") },
-      failure: bounded(error instanceof Error ? error.message : String(error)),
-    };
+    return failedEvidence({ harness: host, attempt, versions }, assertions, result, error);
   } finally {
     try {
       await daemon?.close();

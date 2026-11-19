@@ -1,4 +1,4 @@
-// What a cell's time is made of, beside the gross figures the 1.10× bar judges (reported, never a status):
+// What a cell's time is made of, beside the gross figures the 1.15× bar judges (reported, never a status):
 //
 //   fixed    each side's start-up, T0: the product path with an empty rule set over the same corpus, cold and warm;
 //   net      the run less its side's T0 (wall and CPU, cold and warm), and the candidate's net over the baseline's;
@@ -6,7 +6,7 @@
 //            empty set's) per rule per syntax node of the languages the rules read;
 //   workload the corpus's files, bytes, lines and lexical tokens per language, and the engine's own node count
 //            (rerail-engine run-rr with a one-line counting rule per language);
-//   multiple each rule timed alone in the drill-down over the pack's median rule on that corpus, flagged above
+//   multiple each rule timed alone in slice B over the pack's median rule on that corpus, flagged above
 //            MULTIPLE_FLAG, or when a rule at least as costly as the median grew more than MULTIPLE_GROWTH_FLAG times
 //            (informational).
 //
@@ -323,7 +323,7 @@ export function cellCost(input: { baseline: { runs: readonly CostRun[]; fixed: r
   };
 }
 
-// ---------------------------------------------------------------- the drill-down's rule cost multiple
+// ---------------------------------------------------------------- slice B's rule cost multiple
 
 /** A rule above this many times the pack's median rule is flagged. */
 export const MULTIPLE_FLAG = 10;

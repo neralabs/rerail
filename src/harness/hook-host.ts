@@ -11,10 +11,10 @@ import {
   daemonEngineEndpoint,
   daemonNotRunningMessage,
   engineEndpointAt,
-  HOOK_DAEMON_WAIT_MS,
   runningDaemonEngineEndpoint,
   type HookDaemon,
 } from "../runtime/daemon-control.js";
+import { HOOK_DAEMON_WAIT_MS } from "../runtime/daemon/daemon-waits.js";
 import { recordHookFailure } from "./hook-failures.js";
 import {
   bindSteerReceipt,

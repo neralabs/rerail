@@ -117,7 +117,7 @@ describe("audit controls", () => {
         sql("INSERT INTO repositories (repository_key, display_name, started, configured_at, created_at, updated_at) VALUES ('clone:another', 'Another', 1, 1, 1, 1)");
         sql("UPDATE checkouts SET repository_key = 'clone:another', clone_id = 'another' WHERE checkout_path = ?", earlierKey);
       };
-      return { stored, spelled, earlierKey, controls, sessionStore, rows, saveAsEarlier, recordedForAnother, sql };
+      return { stored, spelled, earlierKey, repositoryKey: recorded.repositoryKey, controls, sessionStore, rows, saveAsEarlier, recordedForAnother, sql };
     }
 
     /** `check` on a fresh {@link spelledFixture}, its stores closed however it ends, so the folder can be removed. */
@@ -147,6 +147,15 @@ describe("audit controls", () => {
       expect(controls.hasUserSettings("spelled")).toBe(true);
       controls.updateSettings("spelled", { steerStrategy: "rewind" });
       expect(rows()[stored]).toEqual({ scope: "repository", mode: "log", steerStrategy: "rewind" });
+    }, { recordedHere: false }));
+
+    // The runtime reads a running session's settings by its folder and repository, which another program can leave
+    // with no session row: a copy taken while 0.1.4 ran, put back, holds neither the row nor this build's record.
+    it("reads it by the folder as the session spelt it and the session's repository, as for the session, once the session's row is gone", () => inSpelledFolder(({ spelled, repositoryKey, controls, saveAsEarlier, sql }) => {
+      saveAsEarlier({ scope: "ai-output", mode: "log" });
+      expect(controls.getSettings("spelled").settings).toEqual(LOG);
+      sql("DELETE FROM sessions WHERE session_id = ?", "spelled");
+      expect(controls.getWorkspaceSettings(spelled, repositoryKey)).toEqual(LOG);
     }, { recordedHere: false }));
 
     it("by the folder as spelt, a change of one setting starts from what 0.1.4 saved there, as a read of it finds it", () => inSpelledFolder(({ spelled, controls, saveAsEarlier }) => {
