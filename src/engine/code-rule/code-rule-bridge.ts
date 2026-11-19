@@ -472,13 +472,13 @@ function holdMissedFiles(discovery: SourceDiscovery, walk: WalkStart, scan: Sour
 }
 /**
  * Each file the walk could not read, with the calls it keeps: from those that ended after the last walk that listed
- * every folder before its first miss began, up to this walk's start. A file under a folder the walk could not list
- * keeps what it had, if anything: the walk tried no read of it, and the folder keeps every call.
+ * every folder before its first miss began, up to this walk's start. A walk that could not list a folder keeps what each
+ * file it found no source of had: it answers for no call (`holdMissedFiles`), so the next walk to list every folder
+ * judges that file by the calls it kept.
  */
 function missedFiles(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Map<string, EndedCalls> {
   const missed = new Map(scan.failedRoots.size > 0 ? discovery.missedFiles : undefined);
   for (const [path, source] of scan.sources) {
-    if (underBaselineRoot(scan.failedRoots, path)) continue;
     if (missedRead(source)) missed.set(path, missedThrough(discovery, path, walk.callsEnded));
     else missed.delete(path);
   }
