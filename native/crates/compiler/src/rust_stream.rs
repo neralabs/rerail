@@ -75,6 +75,9 @@ struct Facts<'a> {
     one: Option<OneFn>,
     /// Each node's code written as it is made (`coded`), no commit pass after.
     coded: bool,
+    /// Format 16 (decision 0434): each node passed to the writer's ops at its word (`OPEN`, `LEAF`, `CLOSE`, the
+    /// root's at `ACCEPT`), its number by its key, which `coded` knows there; no format 15 image.
+    sixteen: bool,
     /// The stream's end as a start: past the last token, `TOKEN` gives the file's length as its
     /// start, with no branch (`sentinel`), as simdjson's index ends with one past the last.
     sentinel: bool,
@@ -343,6 +346,17 @@ pub fn rust_source(native: &Structure) -> Result<String, String> {
 
 /// As `rust_source`, the tape written at `widths` with the language's `tag`.
 pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, tag: u8) -> Result<String, String> {
+    source(native, widths, tag, false)
+}
+
+/// As `rust_source_at`, writing format 16 by the writer's ops as it parses (decision 0434 §6, R17), for
+/// `CompiledStream::write16`'s harness: the entry takes `Ctx::writer` and `Ctx::numbers`. Only where each node's key
+/// is known at its word (`Facts::coded`), so each node is passed once, as it is made, and nothing is passed again.
+pub fn rust_source_16(native: &Structure, widths: rerail_tape_format::Widths, tag: u8) -> Result<String, String> {
+    source(native, widths, tag, true)
+}
+
+fn source(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixteen: bool) -> Result<String, String> {
     if !crate::native_cpu_stream::calls_on_stack(native) {
         return Err("calls are not on the machine's stack (`calls_on_stack`)".into());
     }
@@ -393,7 +407,7 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
         return Err("records made in tier 2, with a token's taking flagged or extras: not yet ahead of time".into());
     }
     let unchecked = crate::native_cpu_stream::bounds(native).unchecked(crate::native_cpu_stream::marks_of(words));
-    let mut facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false };
+    let mut facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false, sixteen };
     facts.sentinel = sentinel(&facts);
     // Where tier 2 makes the records, the program is one function, as `walk_document`.
     if facts.fetch.is_some() && !facts.context {
@@ -405,6 +419,9 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
             one.stacked = st;
         }
         facts.coded = coded(&facts);
+    }
+    if sixteen && !facts.coded {
+        return Err("format 16 ahead of time: a node's key not known at its word (`coded`)".into());
     }
     if let Some(fx) = &facts.fetch {
         for pc in 0..words.len() {
@@ -423,6 +440,12 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
     prelude(&mut out, &facts)?;
     for &e in &facts.entries {
         rule(&mut out, &facts, e)?;
+    }
+    if facts.sixteen {
+        // The writer's ops, the host's own (`f16::Writer`'s), compiled with the run.
+        out.push_str("\n/// The tape's writer's ops (decision 0434 §6), as `rerail_tape_format` compiles them.\nmod w {\n");
+        out.push_str(rerail_tape_format::WRITER_RUST);
+        out.push_str("}\n");
     }
     let h = crate::clif_rust::fingerprint(&out);
     writeln!(out, "\n/// This source's fingerprint (`clif_rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};").unwrap();
@@ -457,6 +480,7 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
         fbase: c.frame_base, head: c.head, link: c.link, place: c.place,
         size_c: c.size_c as *mut SizeT, off_c: c.off_c as *mut OffT, tail_c: c.tail_c as *mut TailT, base_c: c.base_c,
         image: c.image, id_of: c.id_of, code_kf: c.code_kf, code_first: c.code_first,
+        writer: c.writer, numbers: c.numbers,
         block_base: 0, coded: 0, ncodes: 0, wide: 0,
         room_nodes: c.room_nodes as usize, room_supers: c.room_supers as usize,
         next: 0, start: 0, end: 0, rec_end: 0, code: 0, last_end: 0, at_end: false, need: true, part_at: 0, live: 0,
@@ -682,6 +706,8 @@ struct S {
     /// key and first node.
     size_c: *mut SizeT, off_c: *mut OffT, tail_c: *mut TailT, base_c: *mut u32,
     image: *mut u8, id_of: *mut u16, code_kf: *mut u32, code_first: *mut u32,
+    /// A format 16 run's (`Facts::sixteen`): the writer's state, each key's number in the language's table.
+    writer: *mut u8, numbers: *const u32,
     /// The last block's base; the nodes committed and the codes; the values past their width.
     block_base: u32, coded: u32, ncodes: u32, wide: u32,
     room_nodes: usize, room_supers: usize,
@@ -1370,8 +1396,59 @@ $COMMIT_CLOSE        Ok(())
             format!("\n                let mut k = k;\n                while sk < self.supers && *Self::col(self.snode, sk) == i {{\n                    k |= match *Self::col(self.skind, sk) {{ {}, _ => 0 }};\n                    sk += 1;\n                }}", arms.join(", ")),
         )
     };
-    out.push_str(&s.replace("$CLASS_FIRST", &first).replace("$CLASS_BITS", &bits).replace("$COMMIT_CLOSE", if x.coded { "" } else { "        if self.nopen == 1 {\n            self.commit(at);\n        }\n" }));
-    if x.coded {
+    out.push_str(&s.replace("$CLASS_FIRST", &first).replace("$CLASS_BITS", &bits).replace(
+        "$COMMIT_CLOSE",
+        if x.sixteen {
+            "        // SAFETY: the writer's state, its room reserved for the run (`f16::Writer::reserve_run`).\n        unsafe { w::w_close(self.writer, u64::from(end)) };\n"
+        } else if x.coded {
+            ""
+        } else {
+            "        if self.nopen == 1 {\n            self.commit(at);\n        }\n"
+        },
+    ));
+    if x.sixteen {
+        out.push_str(
+            "    /// A node's number in the language's table: its key's (its kind, its field, its supertypes'
+    /// classes), as `CompiledStream::numbers` keys it; `Err` where the table has none, the file
+    /// the engine's (`fail::NUMBER` in the JIT's run).
+    #[inline(always)]
+    fn number16(&self, kf: u32, classes: u32) -> Result<u32, bool> {
+        let k = (kf & 0x3ff) | ((kf >> 16) & 0x3f) << KIND_BITS | classes;
+        let number = unsafe { *self.numbers.add(k as usize) };
+        if number == u32::MAX {
+            return Err(false);
+        }
+        Ok(number)
+    }
+
+    /// The node `OPEN` made, passed to the writer's ops (`Facts::sixteen`): opened by its number at its
+    /// start, then committed, as `native_cpu_tape::pass` passes a node.
+    #[inline(always)]
+    fn open16(&mut self, kf: u32, classes: u32) -> R {
+        let number = self.number16(kf, classes)?;
+        // SAFETY: the writer's state, its room reserved for the run (`f16::Writer::reserve_run`).
+        unsafe {
+            w::w_open(self.writer, number, u64::from((*self.row(self.nodes - 1)).start));
+            w::w_commit(self.writer);
+        }
+        Ok(())
+    }
+
+    /// The node `LEAF` made, passed to the writer's ops: its number, its bytes, then committed.
+    #[inline(always)]
+    fn leaf16(&mut self, kf: u32, classes: u32) -> R {
+        let number = self.number16(kf, classes)?;
+        // SAFETY: as `open16`'s.
+        unsafe {
+            let r = self.row(self.nodes - 1);
+            w::w_leaf(self.writer, number, u64::from((*r).start), u64::from((*r).end));
+            w::w_commit(self.writer);
+        }
+        Ok(())
+    }
+",
+        );
+    } else if x.coded {
         out.push_str(
             "    /// A node's code as it is made (`Facts::coded`): its key's id (its kind, its field, its
     /// supertypes' classes), numbered by first use, as `commit_from` numbers them, in one pass.
@@ -1508,6 +1585,14 @@ $COMMIT_ALL        let total = self.finish(nodes);
         .enumerate()
         .map(|(j, cl)| format!("\n                (place as *mut u16).write_unaligned({cl});\n                if key >> {} & 1 != 0 {{\n                    place = place.add(2);\n                    count += 1;\n                }}", 16 + j))
         .collect();
+    let src = if x.sixteen {
+        // The root closed in the ops, and no image: the host finishes the writer (`CompiledStream::write16`).
+        // Values past format 15's widths do not reach format 16.
+        src.replace("$COMMIT_ALL        let total = self.finish(nodes);", "        // SAFETY: as `close`'s.\n        unsafe { w::w_close(self.writer, u64::from(self.len)) };\n        let total = 0;")
+            .replace("        if self.wide != 0 {\n            return Err(false);\n        }", "")
+    } else {
+        src.to_string()
+    };
     out.push_str(&src.replace("$COMMIT_ALL", if x.coded { "" } else { "        self.commit(nodes);\n" }).replace("$AT_END", &x.at_end("self")).replace("$PROVISIONAL", &provisional).replace("$FEW", few).replace("$IS_EXTRA", &is_extra).replace("$CLASS_PUT", &put));
 }
 
@@ -2070,7 +2155,7 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
             let code = if x.coded {
                 let (field, classes) = key_after(x, pc);
                 let kf = if field != 0 { kf & 0xffff | field } else { kf };
-                format!("s.code_now({kf}, {classes:#x});\n")
+                if x.sixteen { format!("s.open16({kf}, {classes:#x})?;\n") } else { format!("s.code_now({kf}, {classes:#x});\n") }
             } else {
                 String::new()
             };
@@ -2096,7 +2181,8 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
             if x.coded {
                 let (field, classes) = key_after(x, pc);
                 let kf = if field != 0 { format!("kf & 0xffff | {field}") } else { "kf".into() };
-                return Ok(format!("let kf = {k};\ns.leaf::<{deferred}, {extra}>(kf, {end});\ns.code_now({kf}, {classes:#x});\n{}", jump(0)?));
+                let now = if x.sixteen { format!("s.leaf16({kf}, {classes:#x})?;") } else { format!("s.code_now({kf}, {classes:#x});") };
+                return Ok(format!("let kf = {k};\ns.leaf::<{deferred}, {extra}>(kf, {end});\n{now}\n{}", jump(0)?));
             }
             format!("s.leaf::<{deferred}, {extra}>({k}, {end});\n{}", jump(0)?)
         }

@@ -593,6 +593,44 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 25, done: format 16 written by the writer's ops at each node word, in the generated Rust
+
+Step 24 left one copy: format 15's columns follow the code column, a column's place known only
+from the node count, so `finish` copies them there at the end. Format 16, as decision 0434 laid
+it out (merged from the hub's tape branch, 664c1f8411), has no such copy: its tape is blocks of
+1,024 nodes at a fixed stride, so each cell's place is known when it is written. At the end the
+writer moves only the last block's columns down and lays the side lists (`w_finish`).
+
+0434's writer is a set of ops written once in CLIF (`w_open`, `w_leaf`, `w_close`, `w_commit`,
+…), with Rust generated from them (`tape_format`'s `generated_writer`). The JIT's tier 2 writes
+format 16 through them (0434's R17), but from its working rows: at each top-level close, a pass
+over the nodes since the last one opens each in the ops (`native_cpu_tape::pass`). That is a
+second walk over every node.
+
+simdjson writes each tape word as it parses. Step 24's check (`coded`) already proves that
+every node's key, and so its number in the language's table, is known at its own word. So the
+generated Rust (`rust_source_16`) holds the writer's ops as a module of its own (`mod w`,
+`WRITER_RUST`) and calls them directly, with no pass:
+- the `OPEN` and `LEAF` words: `open16` and `leaf16` (the node's number by its key, then
+  `w_open` or `w_leaf`, then `w_commit`, as `pass` commits after each node);
+- `CLOSE`: `w_close` at the node's end;
+- `ACCEPT`: the root's `w_close`, and no format 15 image (no `finish`, no `commit`).
+
+The host's harness is the JIT's (`write16`: the writer's state and the numbers in `Ctx`, the
+room reserved for the run, `w_finish` after).
+
+**The check.** On all 82 parsed files, the Rust's format 16 and 16z tapes equal the JIT's run's
+byte for byte. Each of these fails it:
+- the classes left out of format 16's key (the numbers then miss; tier 2 refuses);
+- the `w_close` at a `CLOSE` taken out (the ops fail at the root's close).
+
+The test had a fault of its own: `aot_entry` built every source into one library path, and the
+loader gives back a library already loaded at its path, so the second source ran the first's
+code. Each source now gets a directory of its own.
+
+**Not yet:** the Rust's format 16 run still writes format 15's working columns (sizes, offsets,
+tails, block bases), which nothing reads in it. That is the next step.
+
 ## Step 24, done: each node's code as it is made, in the generated Rust
 
 simdjson writes each tape word once, in place. Our image was written in three passes:
@@ -789,7 +827,7 @@ The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` write
 | `parse_string`: `copy_and_find`, 32 bytes a step, then one branch on `has_quote_first`; the stop handled in the same pass | `part_stop`, 32 bytes a step, the closer's and the escape's masks, the stop's kind from them; content, then its stop in the same pass | yes, since step 23 |
 | an escape: `escape_map[c]`, the `\u` work only after a `u` | `CODES2[c]`, then `\u` to its two checks and the eight others, one range, past them | yes, since step 16 |
 | the closing quote ends the string | the closer's arm goes on at once | yes, since step 16 |
-| the tape: a word a value, written once, in place | each node's row and its columns as it is made, its code too (`code_now`); at the end the columns copied after the code column | the codes since step 24; the columns' copy not (a format decision) |
+| the tape: a word a value, written once, in place | format 16 (decision 0434): each node passed to the writer's ops at its word, as it is made (`open16`, `leaf16`, `w_close`), each cell at its final place; the ops' `finish` moves the last block down and lays the tail | since step 25 |
 
 What follows, in order, each change made in `rust_stream` or in the compiler, and judged on
 the Rust it writes:
@@ -807,7 +845,8 @@ The next six, from reading the Rust after step 19 (each a step, its assertion an
 4. Done in step 23.
 5. Done in step 23.
 6. The tape written once: each node's code as it is made, done in step 24. The columns where the
-   image has them: open, a format decision (step 24).
+   image has them: format 16 (decision 0434), written by the writer's ops at each node word, done
+   in step 25.
 
 ## Order
 

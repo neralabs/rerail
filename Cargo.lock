@@ -4212,6 +4212,7 @@ dependencies = [
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-rr-syntax",
+ "rerail-tape-format",
  "tree-sitter",
  "tree-sitter-json",
 ]

@@ -8293,6 +8293,14 @@ impl Parser {
         w.sixteen.get_or_init(|| compile_with(&w.native, &w.cut, widths, w.native.tag, true).ok()).as_ref()
     }
 
+    /// The format 16 tier 2 (`sixteen`), to set its entry (`CompiledStream::set_entry`): a test runs another
+    /// backend's code of the same program on its harness.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn sixteen_mut(&mut self) -> Option<&mut CompiledStream> {
+        self.sixteen()?;
+        self.wide.as_mut()?.sixteen.get_mut()?.as_mut()
+    }
+
     /// The format 16 tape (16z where `z`) of `bytes` in `lang`, written by tier 2 as it parses, through the
     /// writer's ops (decision 0434 §6, R17): no format 15 image is made. `numbers`: `lang`'s numbers by the format
     /// 16 tier 2's keys (`CompiledStream::numbers`). The writer's room is reserved for the bound's nodes and a

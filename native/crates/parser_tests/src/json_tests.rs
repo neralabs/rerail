@@ -338,13 +338,54 @@ fn simdjson_forms_rust_trees_are_the_jits() {
         if want.is_some() { parsed += 1 } else { refused += 1 }
     }
     eprintln!("{} files: {parsed} parsed, {refused} refused, by the Rust and the JIT alike, tape bytes and all", inputs.len());
+    // Format 16 (decision 0434): the Rust passes each node to the writer's ops at its word, as it is
+    // made (`rust_source_16`), and writes the JIT's format 16 run's bytes, 16 and 16z: the ops' calls
+    // are `native_cpu_tape::pass`'s, with no rows passed again.
+    let (widths16, tag16) = jit.parser.sixteen().expect("a format 16 tier 2").widths_tag();
+    let src16 = rerail_compiler::rust_stream::rust_source_16(&native, widths16, tag16).expect("tier 2 writing format 16, as Rust");
+    let made16 = src16.matches("s.open16(").count() + src16.matches("s.leaf16(").count();
+    assert!(made16 == made && src16.contains("mod w {") && !src16.contains("self.finish(") && !src16.contains("s.code_now("), "each node to the ops as it is made, no image");
+    if let Ok(dir) = std::env::var("RERAIL_DUMP_TIER2") {
+        std::fs::write(std::path::Path::new(&dir).join("simdjson16.rs"), &src16).expect("writes the source");
+    }
+    let entry16 = aot_entry(&src16);
+    // SAFETY: as the format 15 entry's, on the format 16 run's harness (`write16`: the writer and numbers set).
+    unsafe { aot.parser.sixteen_mut().expect("a format 16 tier 2").set_entry(entry16, 4) };
+    let bytes_of = |w: &rerail_tape_format::f16::Written| match w {
+        rerail_tape_format::f16::Written::F16(t) => t.as_bytes().to_vec(),
+        rerail_tape_format::f16::Written::F16Z(t) => t.as_bytes().to_vec(),
+    };
+    let mut written = 0;
+    for (k, f) in inputs.iter().enumerate() {
+        let Ok(image) = jit.parser.image(f) else { continue };
+        let (_, table) = rerail_tape_format::tape::f15_columns(&image).expect("a format 15 tape");
+        let lang = rerail_tape_format::f16::Lang::new(table, [1, 1, 1], 1).expect("a language");
+        let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
+        for z in [false, true] {
+            let want = jit.parser.image16(f, &lang, &numbers, z).map(|w| bytes_of(&w));
+            let got = aot.parser.image16(f, &lang, &numbers, z).map(|w| bytes_of(&w));
+            assert!(want.is_ok(), "file {k}: the JIT's format 16 run: {want:?}");
+            if got != want {
+                let (g, w) = (got.clone().unwrap_or_default(), want.clone().unwrap_or_default());
+                let first = (0..g.len().min(w.len())).find(|&i| g[i] != w[i]);
+                panic!("file {k} (16z {z}): the Rust's format 16 tape: {:?}, lengths {} and {}, first differing at {first:?}\n  rust {:?}\n  jit  {:?}", got.as_ref().err(), g.len(), w.len(), &g[..g.len().min(160)], &w[..w.len().min(160)]);
+            }
+        }
+        written += 1;
+    }
+    assert_eq!(written, parsed, "every parsed file written in format 16");
+    eprintln!("{written} files in format 16 and 16z, the Rust's bytes the JIT's");
 }
 
 /// `src`, tier 2's Rust, built by rustc (optimized, as the ahead-of-time build) into a library
 /// and loaded: its entry.
 #[cfg(target_arch = "aarch64")]
 fn aot_entry(src: &str) -> rerail_compiler::native_cpu_stream::Entry {
-    let dir = std::env::temp_dir().join(format!("rerail-json-aot-{}", std::process::id()));
+    // A directory a source: the loader gives back the library already loaded at a path, so two
+    // sources built at one path would both run the first.
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(src, &mut h);
+    let dir = std::env::temp_dir().join(format!("rerail-json-aot-{}-{:x}", std::process::id(), std::hash::Hasher::finish(&h)));
     std::fs::create_dir_all(&dir).expect("a directory");
     let (rs, lib) = (dir.join("tier2.rs"), dir.join("libtier2.dylib"));
     std::fs::write(&rs, format!("{src}\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn rerail_tier2_entry(ctx: u64) -> u64 {{\n    unsafe {{ tier2_entry(ctx) }}\n}}\n")).expect("writes");

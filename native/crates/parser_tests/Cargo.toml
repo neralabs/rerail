@@ -12,6 +12,8 @@ test-hooks = ["rerail-compiler/test-hooks", "rerail-metal/test-hooks", "rerail-r
 [dependencies]
 rerail-compiler = { path = "../compiler", features = ["test-hooks"] }
 rerail-rr-syntax = { path = "../rr_syntax" }
+# Format 16's tapes, which the JSON suite compares (decision 0434).
+rerail-tape-format = { path = "../tape_format" }
 bitlex = { path = "../../../tools/bitlex", default-features = false }
 # The JSON suite's comparisons: the grammar the engine links (ast-grep's), at its version.
 tree-sitter = "=0.27.1"
