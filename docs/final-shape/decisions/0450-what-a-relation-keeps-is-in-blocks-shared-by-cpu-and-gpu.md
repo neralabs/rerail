@@ -133,3 +133,18 @@ The pending atoms in atoms blocks: hogql cold, profiling builds, format 15, load
 runs each on the CPU: 84.4 and 88.9 B instructions against 85.5 and 87.6 B, peak 289 and 334 MB against 298 and
 339 MB; Metal 74.7 B, 1,283 MB. 1,629 findings in every run. `Interner::store_upto` no longer copies the atoms still
 pending into a new buffer.
+
+## Built (2026-11-19, step 2b)
+
+- `rerail_blocks::atoms::AtomsDir`: a directory of runs of atoms in a block of its own (`AtomsDirRoot`, its
+  entries `DirEntry`). Each entry names a run's ids, its block's first id, and spans to the block's `ends` and
+  `strings`, whose offsets are in the reader's address space. It is made for the host (`|p| p as u64`) or for the
+  device (each block's GPU address); nothing of an atom is copied into it.
+- `atoms_len` and `atoms_at`, in CLIF (`rerail_clif::atoms_reads`): an id's run found by a binary search of the
+  runs, its string's bounds from the block's `ends`. Generated as the blocks crate's Rust (`generated_reads.rs`,
+  `atoms::str_in`) and MSL (`relation_reads.metal`, `clif_atoms_len`, `clif_atoms_at`), which every join kernel now
+  compiles with.
+- `Interner::dir` lists the store's views below `base`, then the pending blocks.
+- Tests: `the_directorys_reads_find_every_atom_where_its_block_holds_it` (blocks, a run that begins past its block's
+  first id), and in `a_commit_past_a_blocks_room_starts_the_next` every sampled id across a rolled-up base and pending
+  blocks reads as `Interner::str` does. A kernel reading through a device directory comes with 2d, its first reader.

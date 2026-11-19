@@ -388,6 +388,22 @@ fn a_commit_past_a_blocks_room_starts_the_next() {
     for i in [0, 69_999] {
         assert_eq!(store.atom(&words[i]).unwrap(), Some(ids[i]), "read through the base here");
     }
+    // Decision 0450 step 2b: every atom read through the directory, by the reads written once in CLIF, is the
+    // store's: across the base, and the pending blocks of atoms interned since.
+    let more: Vec<String> = (0..300).map(|i| format!("x{i}")).collect();
+    let more_ids = store.intern_atoms(&more.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
+    {
+        let state = store.atoms.state.read();
+        let dir = state.atoms.dir(&|p| p as u64);
+        let last = *more_ids.last().unwrap();
+        for id in (0..=last).step_by(97).chain([1, cap, cap + 1, 70_001 + cap, more_ids[0], last]) {
+            // SAFETY: a host directory over blocks this process maps.
+            let got = unsafe { rerail_blocks::atoms::str_in(dir.root(), id) };
+            assert_eq!(got, state.atoms.str(id).map(str::as_bytes), "id {id}");
+        }
+        // SAFETY: as above.
+        assert_eq!(unsafe { rerail_blocks::atoms::str_in(dir.root(), last + 1) }, None, "past every atom");
+    }
     drop(store);
     let copy = elsewhere(&path, "next-block-again");
     let store = ContentStore::open(&copy).unwrap();

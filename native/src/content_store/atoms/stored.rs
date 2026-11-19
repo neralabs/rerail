@@ -190,6 +190,19 @@ impl Stored {
         self.at(id)?.str(id)
     }
 
+    /// The ids read, as a directory's runs (decision 0450 step 2b): each view's from its first id to the next's, at
+    /// most to the end below which ids are read here.
+    pub(crate) fn runs(&self, below: Sym) -> Vec<rerail_blocks::atoms::Run> {
+        let end = self.end.min(below);
+        (0..self.views.len())
+            .map(|k| {
+                let next = self.views.get(k + 1).map_or(end, |(_, v)| v.first().min(end));
+                self.views[k].1.run_upto(next)
+            })
+            .filter(|r| r.first < r.end)
+            .collect()
+    }
+
     pub(crate) fn hash(&self, id: Sym) -> Option<u64> {
         self.at(id)?.hash(id)
     }

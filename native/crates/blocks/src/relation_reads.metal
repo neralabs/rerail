@@ -52,6 +52,8 @@ inline uint clif_rel_dead(device const uchar* t,ulong a0,uint a1);
 inline ulong clif_rel_group(device const uchar* t,ulong a0,uint a1,ulong a2);
 inline uint clif_rel_group_row(device const uchar* t,ulong a0,uint a1,uint a2);
 inline ulong clif_rel_key_mix(device const uchar* t,ulong a0,ulong a1,ulong a2);
+inline uint clif_atoms_len(device const uchar* t,ulong a0,uint a1);
+inline ulong clif_atoms_at(device const uchar* t,ulong a0,uint a1);
 inline ulong clif_rows_col(device const uchar* t,ulong a0,uint a1){
  ulong v0=0;
  uint v1=0;
@@ -313,4 +315,177 @@ inline ulong clif_rel_key_mix(device const uchar* t,ulong a0,ulong a1,ulong a2){
  ulong v5=ulong((ulong)(v4)>>(uint(29)&63u));
  ulong v6=v4^v5;
  return v6;
+}
+inline uint clif_atoms_len(device const uchar* t,ulong a0,uint a1){
+ ulong v0=0;
+ uint v1=0;
+ uint v3=0;
+ ulong v9=0;
+ uint v11=0;
+ uint v12=0;
+ uint v13=0;
+ ulong v32=0;
+ uint v36=0;
+ ulong v44=0;
+ ulong v45=0;
+ ulong v47=0;
+ v0=a0;
+ v1=a1;
+ uchar v2=uchar((uint)(v1)==(uint)(uint(0ul)));
+ if(v2!=0){
+  uint v4=uint(0ul);
+  {uint t0=v4;v3=t0;}
+ }else{
+  ulong v5=ulong(*(device const ulong*)(t+v0));
+  uint v6=uint(v5);
+  ulong v7=ulong(*(device const ulong*)(t+(v0+ulong(long(8)))));
+  ulong v8=v0+ulong(8ul);
+  v9=v8+v7;
+  uint v10=uint(0ul);
+  {uint t0=v10;uint t1=v6;v11=t0;v12=t1;}
+  while(true){
+   uchar v14=uchar((uint)(v11)<(uint)(v12));
+   if(v14!=0){
+    uint v15=v11+v12;
+    uint v16=uint((uint)(v15)>>(uint(1)&31u));
+    ulong v17=ulong(v16);
+    ulong v18=v17*ulong(48ul);
+    ulong v19=v9+v18;
+    uint v20=uint(*(device const uint*)(t+v19));
+    uchar v21=uchar((uint)(v20)<=(uint)(v1));
+    uint v22=v16+uint(1ul);
+    uint v23=v21!=0?v22:v11;
+    uint v24=v21!=0?v12:v16;
+    {uint t0=v23;uint t1=v24;v11=t0;v12=t1;}
+    continue;
+   }else{
+    {uint t0=v11;v13=t0;}
+    break;
+   }
+  }
+  uchar v25=uchar((uint)(v13)!=(uint)(uint(0ul)));
+  uint v26=uint(1ul);
+  uint v27=v13-v26;
+  uint v28=uint(0ul);
+  uint v29=v25!=0?v27:v28;
+  ulong v30=ulong(v29);
+  ulong v31=v30*ulong(48ul);
+  v32=v9+v31;
+  uint v33=uint(*(device const uint*)(t+(v32+ulong(long(4)))));
+  uchar v34=uchar((uint)(v1)<(uint)(v33));
+  uchar v35=v25&v34;
+  if(v35!=0){
+   uint v37=uint(*(device const uint*)(t+(v32+ulong(long(8)))));
+   uint v38=v1-v37;
+   ulong v39=ulong(*(device const ulong*)(t+(v32+ulong(long(16)))));
+   ulong v40=v32+ulong(16ul);
+   ulong v41=v40+v39;
+   ulong v42=ulong(v38);
+   ulong v43=v42*ulong(8ul);
+   v44=v41+v43;
+   v45=ulong(*(device const ulong*)(t+v44));
+   uchar v46=uchar((uint)(v38)==(uint)(uint(0ul)));
+   if(v46!=0){
+    ulong v48=ulong(0ul);
+    {ulong t0=v48;v47=t0;}
+   }else{
+    ulong v49=ulong(*(device const ulong*)(t+(v44+ulong(long(-8)))));
+    {ulong t0=v49;v47=t0;}
+   }
+   ulong v50=v45-v47;
+   uint v51=uint(v50);
+   {uint t0=v51;v36=t0;}
+  }else{
+   uint v52=uint(4294967295ul);
+   {uint t0=v52;v36=t0;}
+  }
+  {uint t0=v36;v3=t0;}
+ }
+ return v3;
+}
+inline ulong clif_atoms_at(device const uchar* t,ulong a0,uint a1){
+ ulong v0=0;
+ uint v1=0;
+ ulong v3=0;
+ ulong v8=0;
+ uint v10=0;
+ uint v11=0;
+ uint v12=0;
+ ulong v31=0;
+ ulong v35=0;
+ ulong v43=0;
+ ulong v46=0;
+ v0=a0;
+ v1=a1;
+ uchar v2=uchar((uint)(v1)==(uint)(uint(0ul)));
+ if(v2!=0){
+  {ulong t0=v0;v3=t0;}
+ }else{
+  ulong v4=ulong(*(device const ulong*)(t+v0));
+  uint v5=uint(v4);
+  ulong v6=ulong(*(device const ulong*)(t+(v0+ulong(long(8)))));
+  ulong v7=v0+ulong(8ul);
+  v8=v7+v6;
+  uint v9=uint(0ul);
+  {uint t0=v9;uint t1=v5;v10=t0;v11=t1;}
+  while(true){
+   uchar v13=uchar((uint)(v10)<(uint)(v11));
+   if(v13!=0){
+    uint v14=v10+v11;
+    uint v15=uint((uint)(v14)>>(uint(1)&31u));
+    ulong v16=ulong(v15);
+    ulong v17=v16*ulong(48ul);
+    ulong v18=v8+v17;
+    uint v19=uint(*(device const uint*)(t+v18));
+    uchar v20=uchar((uint)(v19)<=(uint)(v1));
+    uint v21=v15+uint(1ul);
+    uint v22=v20!=0?v21:v10;
+    uint v23=v20!=0?v11:v15;
+    {uint t0=v22;uint t1=v23;v10=t0;v11=t1;}
+    continue;
+   }else{
+    {uint t0=v10;v12=t0;}
+    break;
+   }
+  }
+  uchar v24=uchar((uint)(v12)!=(uint)(uint(0ul)));
+  uint v25=uint(1ul);
+  uint v26=v12-v25;
+  uint v27=uint(0ul);
+  uint v28=v24!=0?v26:v27;
+  ulong v29=ulong(v28);
+  ulong v30=v29*ulong(48ul);
+  v31=v8+v30;
+  uint v32=uint(*(device const uint*)(t+(v31+ulong(long(4)))));
+  uchar v33=uchar((uint)(v1)<(uint)(v32));
+  uchar v34=v24&v33;
+  if(v34!=0){
+   uint v36=uint(*(device const uint*)(t+(v31+ulong(long(8)))));
+   uint v37=v1-v36;
+   ulong v38=ulong(*(device const ulong*)(t+(v31+ulong(long(16)))));
+   ulong v39=v31+ulong(16ul);
+   ulong v40=v39+v38;
+   ulong v41=ulong(v37);
+   ulong v42=v41*ulong(8ul);
+   v43=v40+v42;
+   ulong v44=ulong(*(device const ulong*)(t+v43));
+   uchar v45=uchar((uint)(v37)==(uint)(uint(0ul)));
+   if(v45!=0){
+    ulong v47=ulong(0ul);
+    {ulong t0=v47;v46=t0;}
+   }else{
+    ulong v48=ulong(*(device const ulong*)(t+(v43+ulong(long(-8)))));
+    {ulong t0=v48;v46=t0;}
+   }
+   ulong v49=ulong(*(device const ulong*)(t+(v31+ulong(long(32)))));
+   ulong v50=v31+ulong(32ul);
+   ulong v51=v50+v49;
+   ulong v52=v51+v46;
+   {ulong t0=v52;v35=t0;}
+  }else{
+   {ulong t0=v0;v35=t0;}
+  }
+  {ulong t0=v35;v3=t0;}
+ }
+ return v3;
 }

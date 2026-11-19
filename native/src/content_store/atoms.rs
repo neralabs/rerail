@@ -93,6 +93,16 @@ impl Interner {
         self.pending.iter().map(rerail_blocks::atoms::AtomsW::region).collect()
     }
 
+    /// Every atom this process holds as a directory of runs where their blocks hold them (decision 0450 step 2b):
+    /// the store's chain below `base`, then the pending blocks. `at` gives a host address in the reader's address
+    /// space (`|p| p as u64` for the host). The atoms reads written once in CLIF (`atoms_at`, `atoms_len`) read an
+    /// id's string through it, on the host and the device alike. A directory is good until the next intern or store.
+    pub fn dir(&self, at: &dyn Fn(*const u8) -> u64) -> rerail_blocks::atoms::AtomsDir {
+        let mut runs = self.stored.runs(self.base);
+        runs.extend(self.pending.iter().map(|w| w.run_from(self.base)).filter(|r| r.first < r.end));
+        rerail_blocks::atoms::AtomsDir::new(&runs, at)
+    }
+
     /// The string of `s`, if this process holds it: the store's (mapped), or pending.
     pub fn str(&self, s: Sym) -> Option<&str> {
         if s >= self.base {

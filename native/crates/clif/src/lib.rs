@@ -22,6 +22,9 @@ pub mod id_reads;
 pub mod inline;
 #[cfg(feature = "ir")]
 pub mod jit;
+/// The atoms' reads (decision 0450 step 2b).
+#[cfg(feature = "ir")]
+pub mod atoms_reads;
 #[cfg(feature = "ir")]
 pub mod reads;
 #[cfg(feature = "ir")]

@@ -128,6 +128,9 @@ pub const READS: &[Read] = &[
     Read { family: Family::View, name: "view_child_first", params: &[I32], ret: I32, hot: false, body: crate::view_reads::child_first },
     Read { family: Family::View, name: "view_child_next", params: &[I32], ret: I32, hot: false, body: crate::view_reads::child_next },
     Read { family: Family::View, name: "view_number", params: &[I32], ret: I32, hot: false, body: crate::view_reads::number },
+    // An atom's string in a directory of runs of atoms (decision 0450 step 2b): the descriptor is an `AtomsDirRoot`.
+    Read { family: Family::Relation, name: "atoms_len", params: &[I32], ret: I32, hot: true, body: crate::atoms_reads::atoms_len },
+    Read { family: Family::Relation, name: "atoms_at", params: &[I32], ret: I64, hot: true, body: crate::atoms_reads::atoms_at },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
