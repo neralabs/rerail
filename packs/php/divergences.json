@@ -1768,14 +1768,6 @@
     "evidence": "`foreach (... as [&$a, $_])` binds `$a` by reference to an element. Rerail reads a variable that is a reference as unknown: native/src/code_rule_dsl/scope/usage/php.rs makes every binding in `flow.aliased` (a binding of a variable a reference, `global`, `static` or a by-reference parameter, `use` or `foreach` value names; scope/php.rs `bind`) neither used nor unused, since what it assigns may be read through another name; `binds.used: false` claims nothing there."
   },
   {
-    "rule": "psalm-unused-variable",
-    "source": "fixtures",
-    "path": "UnusedVariableTest/valid/SKIPPED-referenceUsedInDestructuredForeach.php",
-    "line": 3,
-    "kind": "rerail-unknown",
-    "evidence": "`$a += 1` writes through the by-reference `foreach` value `$a`. Rerail reads a variable that is a reference as unknown: native/src/code_rule_dsl/scope/usage/php.rs makes every binding in `flow.aliased` (a binding of a variable a reference, `global`, `static` or a by-reference parameter, `use` or `foreach` value names; scope/php.rs `bind`) neither used nor unused, since what it assigns may be read through another name; `binds.used: false` claims nothing there."
-  },
-  {
     "rule": "phpcs-squiz-php-disallow-size-functions-in-loops",
     "source": "samples",
     "path": "symfony-src-symfony-component-console-helper-questionhelper.php-3e353468739f/src/Symfony/Component/Console/Helper/QuestionHelper.php",

@@ -1,5 +1,6 @@
 //! Bulk overlay publication: object preparation, identity resolution, and the publish transaction.
 
+use super::compression::{compress_source, compress_tape, file_tag};
 use super::connection::retry_busy;
 use super::objects::{compress_documents, validate_tape_payload};
 use super::relationships::{
@@ -9,21 +10,20 @@ use super::rows::{hash_params, validate_relative_path};
 use super::{
     BusyRetries, CODEC_ZSTD, CandidateClause, ContentStore, HashKey, MAX_PUBLICATION_BATCH,
     OverlayFilePublication, PublicationResult, STRING_CLAUSE_KEY, STRING_PATH, SourceId,
-    StoreError, StoreResult, StoredFile, TapeId, TapePayload, WorkspaceId, compress,
+    StoreError, StoreResult, StoredFile, TapeId, TapePayload, WorkspaceId,
 };
-use crate::WORK_POOL;
 use rayon::prelude::*;
 use rusqlite::limits::Limit;
-use rusqlite::{Connection, Transaction, TransactionBehavior, params};
-#[cfg(test)]
+use rusqlite::{Connection, TransactionBehavior, params};
+#[cfg(any(test, feature = "test-hooks"))]
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Instant;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 type PublicationTestHook = RefCell<Option<Box<dyn FnOnce()>>>;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Run on the publishing thread, so a hook never fires in another test's publication.
     pub(super) static AFTER_PUBLICATION_READ_HOOK: PublicationTestHook =
@@ -32,7 +32,7 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn run_publication_test_hook(hook: &'static std::thread::LocalKey<PublicationTestHook>) {
     if let Some(hook) = hook.take() {
         hook();
@@ -111,25 +111,26 @@ impl ContentStore {
                 "overlay publication batch must contain 1 to {MAX_PUBLICATION_BATCH} files"
             )));
         }
-        let identities = WORK_POOL.install(|| {
-            publications
-                .par_iter()
-                .map(|publication| {
-                    validate_relative_path(publication.path)?;
-                    if publication.state_id <= 0 {
-                        return Err(StoreError::Invalid(
-                            "overlay state must be positive".to_owned(),
-                        ));
-                    }
-                    validate_tape_payload(publication.tape)?;
-                    Ok((
-                        publication,
-                        HashKey::sha256(publication.source),
-                        publication.tape.map(|tape| HashKey::sha256(tape.bytes)),
-                    ))
-                })
-                .collect::<StoreResult<Vec<_>>>()
-        })?;
+        let identities = publications
+            .par_iter()
+            .map(|publication| {
+                validate_relative_path(publication.path)?;
+                if publication.state_id <= 0 {
+                    return Err(StoreError::Invalid(
+                        "overlay state must be positive".to_owned(),
+                    ));
+                }
+                validate_tape_payload(publication.tape)?;
+                let source = HashKey::sha256(publication.source);
+                Ok((
+                    publication,
+                    source,
+                    publication
+                        .tape
+                        .map(|tape| HashKey::tape_identity(source, tape.bytes)),
+                ))
+            })
+            .collect::<StoreResult<Vec<_>>>()?;
         let candidate_identities = publication_candidate_identities(publications);
         // Path identities are hashed once, before any transaction takes the write lock.
         let path_hashes = publications
@@ -147,54 +148,58 @@ impl ContentStore {
                 .lock()
                 .expect("content store connection unavailable");
             let transaction =
-                connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+                super::connection::begin(&mut connection, TransactionBehavior::Deferred)?;
             let existing = stored_object_identities(&transaction, &identities)?;
             let path_ids = stored_path_ids(&transaction, &path_hashes)?;
             let interned = resolve_publication_identities(&transaction, &candidate_identities)?;
-            transaction.commit()?;
+            self.commit(transaction)?;
             (existing, path_ids, interned)
         };
         let initial_objects = existing.clone();
         // Source and tape are always independent Zstandard frames.
         // Hashing, lookup, compression, and validation finish before the transaction starts.
-        let mut prepared: Vec<PreparedOverlayPublication<'_>> = WORK_POOL.install(|| {
-            identities
-                .into_par_iter()
-                .zip(existing.into_par_iter())
-                .map(
-                    |((publication, source_hash, tape_hash), (source_id, tape_id))| {
-                        let source_frame = source_id
-                            .is_none()
-                            .then(|| compress(publication.source, self.compression_level))
-                            .transpose()?;
-                        let tape_frame = publication
-                            .tape
-                            .filter(|_| tape_id.is_none())
-                            .map(|payload| compress(payload.bytes, self.compression_level))
-                            .transpose()?;
-                        // A stored tape's documents are stored with it: only a new tape's are
-                        // written.
-                        let document_frames = publication
-                            .tape
-                            .filter(|payload| tape_id.is_none() && !payload.documents.is_empty())
-                            .map(|payload| {
-                                compress_documents(payload.documents, self.compression_level)
-                            })
-                            .transpose()?;
-                        Ok((
-                            publication,
-                            source_hash,
-                            source_id,
-                            source_frame,
-                            tape_hash,
-                            tape_id,
-                            tape_frame,
-                            document_frames,
-                        ))
-                    },
-                )
-                .collect::<StoreResult<Vec<_>>>()
-        })?;
+        let mut prepared: Vec<PreparedOverlayPublication<'_>> = identities
+            .into_par_iter()
+            .zip(existing.into_par_iter())
+            .map(
+                |((publication, source_hash, tape_hash), (source_id, tape_id))| {
+                    let source_frame = source_id
+                        .is_none()
+                        .then(|| {
+                            compress_source(
+                                publication.source,
+                                self.compression_level,
+                                file_tag(publication.path, publication.tape.map(|tape| tape.bytes)),
+                            )
+                        })
+                        .transpose()?;
+                    let tape_frame = publication
+                        .tape
+                        .filter(|_| tape_id.is_none())
+                        .map(|payload| compress_tape(payload.bytes, self.compression_level))
+                        .transpose()?;
+                    // A stored tape's documents are stored with it: only a new tape's are
+                    // written.
+                    let document_frames = publication
+                        .tape
+                        .filter(|payload| tape_id.is_none() && !payload.documents.is_empty())
+                        .map(|payload| {
+                            compress_documents(payload.documents, self.compression_level)
+                        })
+                        .transpose()?;
+                    Ok((
+                        publication,
+                        source_hash,
+                        source_id,
+                        source_frame,
+                        tape_hash,
+                        tape_id,
+                        tape_frame,
+                        document_frames,
+                    ))
+                },
+            )
+            .collect::<StoreResult<Vec<_>>>()?;
         let reused_sources = prepared.iter().filter(|item| item.2.is_some()).count();
         let reused_tapes = prepared.iter().filter(|item| item.5.is_some()).count();
         let compressed_sources = prepared.len() - reused_sources;
@@ -240,7 +245,7 @@ impl ContentStore {
         let (stored_objects, path_ids, known_interned) = if initial_complete {
             (initial_objects, initial_path_ids, initial_interned)
         } else {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             run_publication_test_hook(&AFTER_PUBLICATION_READ_HOOK);
             let mut current_objects = initial_objects;
             let mut current_path_ids = initial_path_ids;
@@ -275,7 +280,7 @@ impl ContentStore {
                         .lock()
                         .expect("content store connection unavailable");
                     let transaction =
-                        connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                        super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
                     #[cfg(test)]
                     let _write_lock = super::WriteLockSection::enter();
                     let started = Instant::now();
@@ -286,7 +291,7 @@ impl ContentStore {
                             statement_count
                         )));
                     }
-                    transaction.commit()?;
+                    self.commit(transaction)?;
                     Ok((
                         u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
                         statement_count,
@@ -310,13 +315,13 @@ impl ContentStore {
                         .lock()
                         .expect("content store connection unavailable");
                     let transaction =
-                        connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+                        super::connection::begin(&mut connection, TransactionBehavior::Deferred)?;
                     let stored_objects =
                         stored_object_identities(&transaction, &corrected_identities)?;
                     let path_ids = stored_path_ids(&transaction, &path_hashes)?;
                     let known_interned =
                         resolve_publication_identities(&transaction, &candidate_identities)?;
-                    transaction.commit()?;
+                    self.commit(transaction)?;
                     (stored_objects, path_ids, known_interned)
                 };
                 read_data_statements += 3;
@@ -386,7 +391,7 @@ impl ContentStore {
             &known_interned,
             variable_limit,
         )?;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         run_publication_test_hook(&BEFORE_RELATIONSHIP_WRITE_HOOK);
         let (elapsed, statement_count, current) = retry_busy(busy, || {
             if cancelled() {
@@ -399,7 +404,7 @@ impl ContentStore {
                 .lock()
                 .expect("content store connection unavailable");
             let transaction =
-                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
             #[cfg(test)]
             let _write_lock = super::WriteLockSection::enter();
             let transaction_started = Instant::now();
@@ -424,7 +429,7 @@ impl ContentStore {
                     "overlay publication was cancelled".to_owned(),
                 ));
             }
-            transaction.commit()?;
+            self.commit(transaction)?;
             Ok((
                 u64::try_from(transaction_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
                 statement_count,
@@ -534,13 +539,17 @@ fn prepare_missing_object_frames(
     ) in prepared.iter_mut().zip(stored_objects)
     {
         if source_id.is_none() && source_frame.is_none() {
-            *source_frame = Some(compress(publication.source, compression_level)?);
+            *source_frame = Some(compress_source(
+                publication.source,
+                compression_level,
+                file_tag(publication.path, publication.tape.map(|tape| tape.bytes)),
+            )?);
         }
         if let Some(tape) = publication.tape
             && tape_id.is_none()
         {
             if tape_frame.is_none() {
-                *tape_frame = Some(compress(tape.bytes, compression_level)?);
+                *tape_frame = Some(compress_tape(tape.bytes, compression_level)?);
             }
             if document_frames.is_none() && !tape.documents.is_empty() {
                 *document_frames = Some(compress_documents(tape.documents, compression_level)?);
@@ -639,7 +648,7 @@ fn prepare_object_pass(
                     payload.documents.iter().zip(frames).enumerate()
                 {
                     let document_source = HashKey::sha256(document.source);
-                    let document_tape = HashKey::sha256(document.tape);
+                    let document_tape = HashKey::tape_identity(document_source, document.tape);
                     hashes.insert(document_source);
                     hashes.insert(document_tape);
                     source_rows.push((
@@ -874,10 +883,7 @@ fn prepare_object_pass(
     })
 }
 
-fn execute_object_pass(
-    transaction: &Transaction<'_>,
-    pass: &PreparedObjectPass,
-) -> StoreResult<usize> {
+fn execute_object_pass(transaction: &Connection, pass: &PreparedObjectPass) -> StoreResult<usize> {
     let mut statements = 0;
     transaction.prepare_cached(
         "WITH input AS (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) algorithm,\

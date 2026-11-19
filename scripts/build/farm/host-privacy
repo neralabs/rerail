@@ -1,0 +1,90 @@
+#!/usr/bin/python3
+"""Keeps the farm's files on each host out of Time Machine and Spotlight (README.md, "Hosts").
+
+    scripts/build/farm/host-privacy              # Time Machine exclusions (no root); a report
+    scripts/build/farm/host-privacy --spotlight  # also Spotlight's privacy list: asks each host's
+                                                 # sudo password, so run it in a terminal
+
+A host keeps everything of the farm's under `~/Library/Caches/rerail-farm`: the mirrored checkouts
+in `root.noindex`, the test target directories in `targets.noindex`. Relax keeps its store in
+`~/Library/Caches/rerail-relax`. Indexing them costs a host CPU on every send, and backing them up
+fills its backup disks with copies of what lives here.
+
+- Time Machine: `tmutil addexclusion` on each path (a sticky exclusion, kept if the path moves;
+  no root needed). `setup` runs this part.
+- Spotlight skips a folder whose name ends in `.noindex` (a folder's `.metadata_never_index` is
+  ignored on macOS 15): the root and the targets need nothing more. `--spotlight` also puts the
+  paths into Spotlight's privacy list (`Exclusions` of the data volume's
+  VolumeConfiguration.plist, which System Settings > Spotlight > Search Privacy writes), with
+  sudo, and restarts Spotlight; it then drops what it had indexed there (a host that held the
+  farm's files elsewhere before).
+
+The report counts what Spotlight still has indexed under each path.
+"""
+import os
+import shlex
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import farm  # noqa: E402
+
+# What the farm writes on a host, relative to its home (farm-agent: ROOT, TARGETS).
+PATHS = ["Library/Caches/rerail-farm", "Library/Caches/rerail-relax"]
+PLIST = "/System/Volumes/Data/.Spotlight-V100/VolumeConfiguration.plist"
+
+TIME_MACHINE = """
+cd
+for p in {paths}; do
+  [ -e "$p" ] || continue
+  tmutil isexcluded "$p" | grep -q '^\\[Excluded\\]' || tmutil addexclusion "$p"
+  printf '%s\\t%s\\t%s\\n' "$p" "$(tmutil isexcluded "$p" | grep -c '^\\[Excluded\\]')" "$(mdfind -onlyin "$p" 'kMDItemContentTypeTree == public.item' 2>/dev/null | wc -l | tr -d ' ')"
+done
+"""
+
+SPOTLIGHT = """
+set -e
+cd
+for p in {paths}; do
+  [ -e "$p" ] || continue
+  full="$HOME/$p"
+  if ! sudo /usr/libexec/PlistBuddy -c 'Print :Exclusions' {plist} 2>/dev/null | grep -qxF "    $full"; then
+    sudo /usr/libexec/PlistBuddy -c "Add :Exclusions: string $full" {plist} 2>/dev/null ||
+      {{ sudo /usr/libexec/PlistBuddy -c 'Add :Exclusions array' {plist}; sudo /usr/libexec/PlistBuddy -c "Add :Exclusions: string $full" {plist}; }}
+    echo "added to Spotlight's privacy list: ~/$p"
+  fi
+done
+sudo launchctl kickstart -k system/com.apple.metadata.mds
+"""
+
+
+def main(argv):
+    paths = " ".join(shlex.quote(p) for p in PATHS)
+    status = 0
+    for host in farm.hosts():
+        if not host.get("enabled", True):
+            continue
+        name = host["name"]
+        if "--spotlight" in argv:
+            print(f"{name}: Spotlight's privacy list (its sudo password):", flush=True)
+            r = subprocess.run(["ssh", "-t", name, SPOTLIGHT.format(paths=paths, plist=PLIST)])
+            if r.returncode != 0:
+                print(f"{name}: not done (exit {r.returncode}); System Settings > Spotlight > Search Privacy does the same")
+                status = 1
+        try:
+            r = subprocess.run(farm.ssh(name, TIME_MACHINE.format(paths=paths), "health"), capture_output=True, text=True, timeout=60)
+        except subprocess.TimeoutExpired:
+            r = None
+        if r is None or r.returncode != 0:
+            print(f"{name}: unreachable, skipped")
+            status = 1
+            continue
+        for line in r.stdout.splitlines():
+            path, excluded, indexed = line.split("\t")
+            print(f"{name}: ~/{path}: Time Machine {'excluded' if excluded == '1' else 'NOT excluded'}; "
+                  f"Spotlight {'has none indexed' if indexed == '0' else 'has ' + indexed + ' files indexed (host-privacy --spotlight)'}")
+    sys.exit(status)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

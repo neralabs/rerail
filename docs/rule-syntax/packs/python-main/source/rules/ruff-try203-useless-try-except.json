@@ -1,0 +1,149 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-try203-useless-try-except",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove exception handlers that only re-raise; the try block adds nothing when every handler immediately raises the same error again.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "reraise-only-handler",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "name-chain": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$N"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-chain"
+                  }
+                }
+              ]
+            },
+            "first-raise": {
+              "kind": "raise_statement",
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "not": {
+                    "kind": "comment"
+                  }
+                }
+              },
+              "all": [
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^from$"
+                    }
+                  }
+                }
+              ]
+            },
+            "useless-handler": {
+              "kind": "except_clause",
+              "any": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "first-raise",
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "regex": "^raise$"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "block",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "first-raise",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "name-chain"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "as_pattern",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "as_pattern_target",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "identifier",
+                            "pattern": "$N"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "all-useless": {
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "try_statement",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "except_clause",
+                    "not": {
+                      "matches": "useless-handler"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "rule": {
+            "kind": "except_clause",
+            "regex": "(?s)^(?<HANDLER>(?:(?:[^'\"#]|#[^\\n]*)*?(?:[^\\s'\"#;]|'''(?:[^'\\\\]|\\\\.|''?(?:[^'\\\\]|\\\\.))*'''|\"\"\"(?:[^\"\\\\]|\\\\.|\"\"?(?:[^\"\\\\]|\\\\.))*\"\"\"|'(?:[^'\\\\\\n]|\\\\.)*'|\"(?:[^\"\\\\\\n]|\\\\.)*\"))+?)(?:\\s|;|#[^\\n]*)*$",
+            "matches": "all-useless"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.HANDLER",
+        "code": "TRY203",
+        "message": "This handler only re-raises: drop the `try`/`except` so the error propagates, moving any `else` code after the body and keeping any `finally`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "TRY203"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
