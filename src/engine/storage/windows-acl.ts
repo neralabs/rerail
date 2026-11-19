@@ -37,7 +37,8 @@ export interface WindowsAcl {
    * Gives folder `path` the ACL {@link restrictToOwner} gives, holding no thread while Windows passes it to everything
    * already in the folder, which takes time in step with what is there: about 0.1 to 0.2 ms an entry. Windows sets the
    * folder's own ACL after everything in it, so a run cut short, as by the daemon stopping, leaves the folder still
-   * inheriting, and the next daemon sets it again. Nobody waits for it, so it has no time limit.
+   * inheriting, and the next daemon sets it again. Nobody waits for it on a records folder; a session waits for it
+   * only on its own new folder, whose few entries take one `icacls` start, so it has no time limit.
    */
   restrictFolderToOwner(path: string): Promise<void>;
 }
