@@ -1,4 +1,5 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { createPrivateKey } from "node:crypto";
 import { once } from "node:events";
 import { chmod, mkdir, mkdtemp, open, readFile, rm, truncate, writeFile, type FileHandle } from "node:fs/promises";
 import { createServer as createHttpsServer } from "node:https";
@@ -252,16 +253,20 @@ Start-Sleep 60`;
     await writeFile(blank, " \r\n\n");
     const text = join(root, "text.pem");
     await writeFile(text, "not a key\n");
+    // A PEM private key that needs a passphrase, which a start does not take: the line must not say it holds no key.
+    const locked = join(root, "locked.pem");
+    await writeFile(locked, createPrivateKey(key).export({ type: "pkcs8", format: "pem", cipher: "aes-256-cbc", passphrase: "stand-in" }));
     // A key only its owner reads, on every system, so each start below reaches the files' text.
     const ownerOnly = { platform: "win32" as const, acl: { otherReaders: (): string[] => [] } };
     // An empty key started a daemon that said it listened on https and failed every handshake.
     const refused: [{ certFile: string; keyFile: string }, string][] = [
       [{ ...files, keyFile: empty }, `The TLS private key ${empty} is empty: it must hold a PEM private key`],
-      [{ ...files, keyFile: blank }, `The TLS private key ${blank} is not a PEM private key: `],
-      [{ ...files, keyFile: text }, `The TLS private key ${text} is not a PEM private key: `],
-      [{ ...files, keyFile: files.certFile }, `The TLS private key ${files.certFile} is not a PEM private key: `],
+      [{ ...files, keyFile: blank }, `The TLS private key ${blank} could not be read as a PEM private key: `],
+      [{ ...files, keyFile: text }, `The TLS private key ${text} could not be read as a PEM private key: `],
+      [{ ...files, keyFile: files.certFile }, `The TLS private key ${files.certFile} could not be read as a PEM private key: `],
+      [{ ...files, keyFile: locked }, `The TLS private key ${locked} could not be read as a PEM private key: `],
       [{ ...files, certFile: empty }, `The TLS certificate ${empty} is empty: it must hold a PEM X.509 certificate`],
-      [{ ...files, certFile: text }, `The TLS certificate ${text} is not a PEM X.509 certificate: `],
+      [{ ...files, certFile: text }, `The TLS certificate ${text} could not be read as a PEM X.509 certificate: `],
     ];
     for (const [named, line] of refused) {
       const error = await loadDaemonTls(named, ownerOnly).then(() => undefined, (thrown: unknown) => thrown);
@@ -361,8 +366,8 @@ Start-Sleep 60`;
     // certificate is not this key's. Each is a mistake in the command, which the start names once the key is private.
     const certificates: [string, string][] = [
       [join(root, "certt.pem"), await readError(join(root, "certt.pem"))], [root, await readError(root)],
-      [join(root, "text.pem"), `The TLS certificate ${join(root, "text.pem")} is not a PEM X.509 certificate: `],
-      [keyFile, `The TLS certificate ${keyFile} is not a PEM X.509 certificate: `], [join(root, "other.pem"), "key values mismatch"],
+      [join(root, "text.pem"), `The TLS certificate ${join(root, "text.pem")} could not be read as a PEM X.509 certificate: `],
+      [keyFile, `The TLS certificate ${keyFile} could not be read as a PEM X.509 certificate: `], [join(root, "other.pem"), "key values mismatch"],
     ];
     for (const [certFile, error] of certificates) {
       const refused = loadDaemonTls({ certFile, keyFile }, shared);

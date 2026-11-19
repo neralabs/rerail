@@ -256,7 +256,7 @@ describe("Rerail daemon CLI", () => {
       const starts: [string[], string][] = [
         [["--tls-cert", misspelled], notFound], [["--host", "0.0.0.0", "--allow-remote", "--tls-cert", misspelled], notFound],
         [["--tls-cert", root], `EISDIR: illegal operation on a directory, read '${literal(root)}'`],
-        [["--tls-cert", keyFile], `The TLS certificate ${literal(keyFile)} is not a PEM X\\.509 certificate: `],
+        [["--tls-cert", keyFile], `The TLS certificate ${literal(keyFile)} could not be read as a PEM X\\.509 certificate: `],
         [["--tls-cert", join(root, "other.pem")], "error:\\w+:x509 certificate routines::key values mismatch"],
       ];
       for (const [options, message] of starts) {
@@ -289,7 +289,7 @@ describe("Rerail daemon CLI", () => {
       for (const file of [keyFile, emptyKey, textKey]) await makePrivate(file);
       const starts: [string, string, string][] = [
         [certFile, emptyKey, `The TLS private key ${literal(emptyKey)} is empty: it must hold a PEM private key`],
-        [certFile, textKey, `The TLS private key ${literal(textKey)} is not a PEM private key: `],
+        [certFile, textKey, `The TLS private key ${literal(textKey)} could not be read as a PEM private key: `],
         [emptyCert, keyFile, `The TLS certificate ${literal(emptyCert)} is empty: it must hold a PEM X\\.509 certificate`],
       ];
       for (const [tlsCert, tlsKey, line] of starts) {

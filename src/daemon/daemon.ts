@@ -994,13 +994,16 @@ interface TlsFileKind {
 const PRIVATE_KEY_FILE: TlsFileKind = { name: "TLS private key", holds: "a PEM private key", parse: key => createSecureContext({ key }) };
 const CERTIFICATE_FILE: TlsFileKind = { name: "TLS certificate", holds: "a PEM X.509 certificate", parse: pem => new X509Certificate(pem) };
 
-/** Stops the start, in one line that names `file`, when `text`, read from it, is empty or does not parse as `kind`. */
+/**
+ * Stops the start, in one line that names `file`, when `text`, read from it, is empty or does not parse as `kind`. The
+ * line says the file could not be read as what it must hold, which stays true of a key that needs a passphrase.
+ */
 function refuseUnparsed(kind: TlsFileKind, file: string, text: string): void {
   if (text === "") throw new Error(`The ${kind.name} ${file} is empty: it must hold ${kind.holds}`);
   try {
     kind.parse(text);
   } catch (error) {
-    throw new Error(`The ${kind.name} ${file} is not ${kind.holds}: ${errorText(error)}`);
+    throw new Error(`The ${kind.name} ${file} could not be read as ${kind.holds}: ${errorText(error)}`);
   }
 }
 
