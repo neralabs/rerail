@@ -294,6 +294,72 @@ describe("Rerail daemon CLI", () => {
       await rm(root, { recursive: true, force: true });
     }
   }, 15_000);
+
+  // A daemon killed without its cleanup leaves daemon.json and the home lock's holder record naming its pid, which the
+  // OS can give to any process started since. On Windows a lookup asks about that pid only while the recorded engine
+  // pipe is there, so the test keeps it open; there `rerail status` has used its 2 s on the pipe before it could read
+  // when the process started, so it keeps the record, and the stop, which has its own wait, removes it. macOS reads no
+  // start time, so there the stop ends nothing and says it could not prove whose process it is.
+  test.runIf(process.platform !== "darwin")("ends no process a dead daemon's records name, and says the record named no daemon of the home", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-not-daemon-cli-"));
+    const stateFile = join(root, "daemon.json");
+    const env = { ...process.env, RERAIL_HOME: root };
+    const others: ChildProcess[] = [];
+    try {
+      // A home that is set up: its database is there, so rerail status reports on the daemon.
+      const workspace = join(root, "workspace");
+      await mkdir(workspace);
+      startTestRepository(workspace, join(root, "rerail.sqlite"));
+      const daemon = spawn(process.execPath, [join(process.cwd(), ENTRY_POINTS.daemon), "--dev", "--port", "0", "--state-file", stateFile], { stdio: ["ignore", "pipe", "ignore"], env });
+      others.push(daemon);
+      await Promise.race([once(daemon.stdout!, "data"), once(daemon, "close").then(([code]) => { throw new Error(`daemon exited with code ${code}`); })]);
+      const record = await readFile(stateFile, "utf8");
+      const state = JSON.parse(record) as DaemonState;
+      const closed = once(daemon, "close");
+      daemon.kill("SIGKILL");
+      await closed;
+      if (process.platform === "win32") {
+        const pipe = spawn(process.execPath, ["-e", `require("node:net").createServer(socket => socket.pause())
+          .listen(process.argv[1], () => process.stdout.write("listening\\n"));`, state.kernelSocketPath], { stdio: ["ignore", "pipe", "ignore"] });
+        others.push(pipe);
+        await once(pipe.stdout!, "data");
+      }
+      const unrelated = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
+      others.push(unrelated);
+      // The records as the daemon wrote them an hour before the process that has its pid now started.
+      const recordsName = async (pid: number): Promise<void> => {
+        await writeFile(stateFile, JSON.stringify({ ...state, pid, startedAt: state.startedAt - 3_600_000 }));
+        await writeFile(join(root, "locks", "daemon.json"), JSON.stringify({ pid }));
+      };
+      const cli = async (...args: string[]): Promise<{ code: number; stdout: string }> => await promisify(execFile)(process.execPath, [join(process.cwd(), "dist", "cli", "cli.js"), ...args], { env })
+        .then(({ stdout }) => ({ code: 0, stdout }), (error: { code: number; stdout: string }) => ({ code: error.code, stdout: error.stdout }));
+      const note = "The process daemon.json named is not a Rerail daemon of this home, so Rerail ended nothing and removed that record.";
+
+      await recordsName(unrelated.pid!);
+      const status = await cli("status");
+      if (process.platform === "win32") {
+        expect(status.code).toBe(4);
+        expect(existsSync(stateFile)).toBe(true);
+      } else {
+        expect(status.code).toBe(3);
+        expect(status.stdout).toContain(`${note}\nThe Rerail daemon is not running`);
+        expect(existsSync(stateFile)).toBe(false);
+      }
+      await recordsName(unrelated.pid!);
+      expect(await cli("daemon", "stop")).toEqual({ code: 0, stdout: `${note}\nThe Rerail daemon is not running.\n` });
+      expect(existsSync(stateFile)).toBe(false);
+      expect(unrelated.exitCode === null && unrelated.signalCode === null).toBe(true);
+    } finally {
+      for (const child of others) {
+        if (child.exitCode === null && child.signalCode === null) {
+          const closed = once(child, "close");
+          child.kill("SIGKILL");
+          await closed;
+        }
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
 
 /** Runs the built CLI with `args`, resolving with its exit code and output whatever the code. */
