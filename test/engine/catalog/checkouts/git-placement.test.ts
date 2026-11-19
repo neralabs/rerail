@@ -7,6 +7,7 @@ import {
   mkdirSync,
   openSync,
   realpathSync,
+  statSync,
   Stats,
   symlinkSync,
   writeFileSync,
@@ -16,7 +17,7 @@ import {
 } from "node:fs";
 import { chmod, mkdtemp, open, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, delimiter, dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkoutRealpath, physicalPath } from "../../../../src/engine/catalog/checkout-control.js";
 import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
@@ -44,10 +45,11 @@ vi.mock("../../../../src/engine/catalog/checkout-control.js", async importOrigin
   return { ...actual, checkoutRealpath: vi.fn(actual.checkoutRealpath) };
 });
 
-// Every lstat passes through, so a case can count what Rerail reads and stand in for what a folder's lstat gives.
+// Every lstat and stat passes through, so a case can count what Rerail reads and stand in for what a folder's lstat
+// gives.
 vi.mock("node:fs", async importOriginal => {
   const actual = await importOriginal<typeof import("node:fs")>();
-  return { ...actual, lstatSync: vi.fn(actual.lstatSync) };
+  return { ...actual, lstatSync: vi.fn(actual.lstatSync), statSync: vi.fn(actual.statSync) };
 });
 
 vi.mock("../../../../src/engine/native/native.js", async importOriginal => {
@@ -1405,6 +1407,27 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expect(gitProcessesSince(started)).toEqual([]);
   }, 90_000);
 
+  it("reads nothing behind a .git link in a folder between such a checkout and the repository above at a kept list, where a share that stops answering would hold it", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    const middle = join(outer, "middle");
+    const inner = join(middle, "inner");
+    mkdirSync(inner, { recursive: true });
+    // A link to an empty folder elsewhere, as to a share: Git passes over it as it searches up.
+    mkdirSync(join(root, "share"));
+    const link = join(middle, ".git");
+    linkFolder(join(root, "share"), link);
+    expect(registryPlacements(inner)).toBe(1);
+
+    const stats = vi.mocked(statSync).mock.calls.length;
+    const lstats = vi.mocked(lstatSync).mock.calls.length;
+    expect(gitsProcessesForThreeLists(inner)).toEqual([]);
+    // The link's own lstat and text are read where the link is; a stat through it, or an lstat below it, reaches the share.
+    expect(behindLink(link, vi.mocked(statSync).mock.calls.slice(stats))).toEqual([]);
+    expect(behindLink(link, vi.mocked(lstatSync).mock.calls.slice(lstats)).filter(path => path !== link)).toEqual([]);
+  });
+
   it("lists as Git does once a folder between such a checkout and the repository above gets a .git link to another repository's Git folder", async () => {
     const root = await temporaryRoot();
     const outer = repository(join(root, "outer"));
@@ -1457,7 +1480,7 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expect(gitsRegistry(inner)).not.toEqual(listed);
   });
 
-  it("lists the folder between's list once the empty folder a .git link in a folder between such a checkout and the repository above names is made a repository in place", async () => {
+  it("keeps the repository above's list until such a checkout is placed again once the empty folder a .git link in a folder between names is made a repository in place", async () => {
     const root = await temporaryRoot();
     const outer = repository(join(root, "outer"));
     git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
@@ -1469,14 +1492,15 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     linkFolder(join(root, "middle.git"), join(middle, ".git"));
     expect(gitsAnswer(inner).workspaceRoot).toBe(outer);
     expect(registryPlacements(inner)).toBe(1);
+    const kept = gitsRegistry(inner);
 
     git(middle, "init", "--quiet");
     git(middle, "commit", "--quiet", "--allow-empty", "-m", "seed");
-    expectGitsRegistries(inner);
+    keptUntilPlaced(inner, kept);
     expect(gitsRegistry(inner)).toEqual(gitsRegistry(middle));
   });
 
-  it("lists the folder between's list once a Git folder is made where a .git link in a folder between such a checkout and the repository above ends, through a second link", async () => {
+  it("keeps the repository above's list until such a checkout is placed again once a Git folder is made where a .git link in a folder between ends, through a second link", async () => {
     const root = await temporaryRoot();
     const outer = repository(join(root, "outer"));
     git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
@@ -1488,10 +1512,11 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     linkFolder(join(root, "hop"), join(middle, ".git"));
     expect(gitsAnswer(inner).workspaceRoot).toBe(outer);
     expect(registryPlacements(inner)).toBe(1);
+    const kept = gitsRegistry(inner);
 
     // Neither link moves: a Git folder is made where the second one ends.
     await rename(join(repository(join(root, "made")), ".git"), join(root, "middle.git"));
-    expectGitsRegistries(inner);
+    keptUntilPlaced(inner, kept);
     expect(gitsAnswer(inner).workspaceRoot).toBe(middle);
   });
 
@@ -1533,7 +1558,7 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expect(gitsRegistry(inner)).toHaveLength(1);
   });
 
-  it("lists as Git does once the .git file a .git link of the folder Git places such a checkout in names is rewritten in place to name another repository", async context => {
+  it("keeps the old list until such a checkout is placed again once the .git file a .git link of the folder Git places it in names is rewritten in place to name another repository", async context => {
     const root = await temporaryRoot();
     const x = repository(join(root, "x"));
     git(x, "worktree", "add", "--quiet", "-b", "xw", join(root, "xw"));
@@ -1548,9 +1573,11 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expect(registryPlacements(inner)).toBe(1);
     expect(gitsRegistry(inner)).toHaveLength(2);
 
+    const kept = gitsRegistry(inner);
+
     // The link and the file's identity stay as they were; only the file's text names another Git folder.
     await rewriteInPlace(file, `gitdir: ${join(y, ".git")}\n`);
-    expectGitsRegistries(inner);
+    keptUntilPlaced(inner, kept);
     expect(gitsRegistry(inner)).toHaveLength(1);
   });
 
@@ -1603,7 +1630,7 @@ describe.skipIf(process.platform !== "win32")("a .git symbolic link on Windows, 
     expect(gitsRegistry(inner)).toHaveLength(1);
   });
 
-  it("lists the folder between's list once the empty folder a .git symbolic link in a folder between a checkout and the repository above names is made a repository in place", async context => {
+  it("keeps the repository above's list until a checkout is placed again once the empty folder a .git symbolic link in a folder between names is made a repository in place", async context => {
     const root = await temporaryRoot();
     const outer = repository(join(root, "outer"));
     git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
@@ -1614,17 +1641,18 @@ describe.skipIf(process.platform !== "win32")("a .git symbolic link on Windows, 
     symlinkOrSkip(context, join(root, "middle.git"), join(middle, ".git"), "dir");
     expect(gitsAnswer(inner).workspaceRoot).toBe(outer);
     expect(registryPlacements(inner)).toBe(1);
+    const kept = gitsRegistry(inner);
 
     git(middle, "init", "--quiet");
     git(middle, "commit", "--quiet", "--allow-empty", "-m", "seed");
-    expectGitsRegistries(inner);
+    keptUntilPlaced(inner, kept);
     expect(gitsRegistry(inner)).toEqual(gitsRegistry(middle));
   });
 });
 
 // Root reads every file, so only a user other than root can make an entry it cannot read.
 describe.skipIf(process.platform === "win32" || process.geteuid?.() === 0)("an entry behind a .git link that the user cannot read", () => {
-  it("gives no list once the folder a .git link in a folder between names, which the user cannot read, is replaced by a file the user cannot read", async () => {
+  it("gives no list once such a checkout is placed again after the folder a .git link in a folder between names, which the user cannot read, is replaced by a file the user cannot read", async () => {
     const root = await temporaryRoot();
     const outer = repository(join(root, "outer"));
     const middle = join(outer, "middle");
@@ -1638,12 +1666,15 @@ describe.skipIf(process.platform === "win32" || process.geteuid?.() === 0)("an e
     cleanups.push(() => chmod(target, 0o700).catch(() => undefined));
     expect(gitsAnswer(inner).workspaceRoot).toBe(outer);
     expect(registryPlacements(inner)).toBe(1);
+    const kept = gitsRegistry(inner);
 
     // A file the user cannot read where that folder was: Git stops there with an error.
     await chmod(target, 0o700);
     await removeFolder(target);
     await writeFile(target, "gitdir: elsewhere\n", { mode: 0o000 });
     expect(gitsAnswer(inner).git).toBe(false);
+    expect(worktreeRegistry(inner)?.worktrees, "the kept list").toEqual(kept);
+    expect(repositoryIdentityLocation(inner)).toEqual(gitsAnswer(inner));
     expect(worktreeRegistry(inner)).toBeUndefined();
   });
 });
@@ -1682,6 +1713,21 @@ describe("an entry Git reads through a link is read through it", () => {
     expect(vi.mocked(pathsOwnedByCurrentUser).mock.lastCall?.[0][0]).toBe(real);
   });
 });
+
+/**
+ * A kept list reads nothing behind a `.git` link (a link can lead to a share that stops answering): after a change
+ * there, `checkout`'s list stays `kept` until the checkout is placed again, and is Git's from then on.
+ */
+function keptUntilPlaced(checkout: string, kept: string[]): void {
+  expect(worktreeRegistry(checkout)?.worktrees, "the kept list").toEqual(kept);
+  expect(repositoryIdentityLocation(checkout), "the placement").toEqual(gitsAnswer(checkout));
+  expectGitsRegistries(checkout);
+}
+
+/** The paths of `calls` at the link `link` or below it, each resolved. */
+function behindLink(link: string, calls: ReadonlyArray<readonly unknown[]>): string[] {
+  return calls.map(([path]) => resolve(String(path))).filter(path => path === link || path.startsWith(`${link}${sep}`));
+}
 
 /** `git worktree list` in `checkout`, read as `worktreeRegistry` reads it. */
 function gitsRegistry(checkout: string): string[] {

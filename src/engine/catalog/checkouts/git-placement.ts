@@ -444,7 +444,7 @@ function lookIn(folder: string): FolderLook {
 /**
  * What Git's search for a repository reads in `folder`, read now: the `.git` entry's facts ({@link described}) and what
  * it holds ({@link heldIn}), and the facts of the folder's own `HEAD`, which a bare repository has. Two lstats where
- * nothing is there, a third in a `.git` folder, a readlink and a stat more through a `.git` link, and no Git process.
+ * nothing is there, a third in a `.git` folder, a readlink more for a `.git` link, and no Git process.
  */
 export function searchedIn(folder: string): string {
   return entriesOf(lookIn(folder));
@@ -509,26 +509,17 @@ function commonGitReads(path: string, common: CommonFolder): string {
 
 /**
  * What the `.git` entry `dotGit`, whose lstat is `looked`, holds where Git's search reads it: the `objects` folder in a
- * folder, or the text of a file (rewritten in place to name another Git folder); for a link, what Git reads through it
- * ({@link throughLink}). `git init` makes `objects` as it fills an empty `.git` folder where it is; a branch switch, a
- * commit, a rebase, a fetch or a gc in that repository leaves its facts as they were, where each writes `HEAD` anew.
+ * folder, or the text of a file (rewritten in place to name another Git folder); for a link (or junction), the link's
+ * own text, which a link pointed at another Git folder moves even where the new link gets the freed file id of the one
+ * it replaced. `git init` makes `objects` as it fills an empty `.git` folder where it is; a branch switch, a commit, a
+ * rebase, a fetch or a gc in that repository leaves its facts as they were, where each writes `HEAD` anew. Nothing is
+ * read through a link: a kept ask reads this at every tool call, and a link can lead to a share on another machine
+ * that stops answering, where a read would hold the daemon's thread until the share answers.
  */
 function heldIn(dotGit: string, looked: Looked): string {
-  if (isEntry(looked) && looked.isSymbolicLink()) return throughLink(dotGit);
+  if (isEntry(looked) && looked.isSymbolicLink()) return `link:${linkText(dotGit)}`;
   if (isFolder(looked)) return entryFacts(join(dotGit, "objects"));
   return isEntry(looked) && looked.isFile() ? textFact(fileText(dotGit)) : "-";
-}
-
-/**
- * What Git's search reads through the `.git` link (or junction) `dotGit`: the link's text, then the entry the system
- * reaches through every link on the way, a link to a link included, as Git's `stat` and `open` reach it, with its
- * facts and what it holds ({@link heldIn}): a link pointed at another Git folder, even one given the freed file id of the
- * link it replaced, or a Git folder behind it that `git init` fills, moves them. A link whose target is gone holds
- * `none`, which a target made there moves. One readlink and one stat more than a `.git` folder.
- */
-function throughLink(dotGit: string): string {
-  const reached = reach(dotGit);
-  return `link:${linkText(dotGit)}>${described(reached)}:${heldIn(dotGit, reached)}`;
 }
 
 /** A stat of `path` through every link, as Git's search reads a `.git` entry: `"none"` where nothing is reached. */
