@@ -284,7 +284,7 @@ fn reference_edge_matches_the_eager_graph_after_git_cache_reuse() {
     write_files(&repo, PACKAGE.into_iter());
     let git = |args: &[&str]| {
         let output = std::process::Command::new("git")
-            .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
+            .args(["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgSign=false"])
             .args(args).current_dir(&repo).output().unwrap();
         assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
     };
