@@ -1667,6 +1667,8 @@ Seen(n) :- kind(n, "identifier").
       expect(report.diagnostics.length).toBeGreaterThan(0);
       expect(run.finish(publish)).toBeNull();
     };
+    // A daemon can have already inspected these libraries for a different store.
+    await evaluate(open(), join(home, "priming.sqlite"), true);
     await evaluate(view, first, true);
     const baseline = retained(first);
     expect(new Set(baseline.map(row => row.policy)).size).toBeGreaterThan(2);
@@ -1695,7 +1697,9 @@ Seen(n) :- kind(n, "identifier").
         console.log(report.diagnostics.length);`,
     });
     expect(Number(count)).toBeGreaterThan(0);
-    expect(readFileSync(join(profile, "profile.txt"), "utf8")).not.toMatch(/^\s*count\s+[1-9]\d*\s+(git\.tree_decodes|source_tape\.parses)$/mu);
+    const repeated = readFileSync(join(profile, "profile.txt"), "utf8").split("\n")
+      .filter(line => /^\s*count\s+[1-9]\d*\s+(git\.tree_decodes$|source_tape\.(?:parses$|input\.))/u.test(line));
+    expect(repeated).toEqual([]);
   }, 60_000);
 
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("retries an unreadable store with real directory ownership", async () => {

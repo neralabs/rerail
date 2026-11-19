@@ -2,11 +2,61 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners. The experiments ran on macOS.
 
+## Open findings at `0c5fb730a`
+
+Sixteen of the previous 25 findings remain open. Their original fixtures and repair checks appear under the case numbers below.
+
+| Cases | What remains |
+| --- | --- |
+| 11, 18, 28 | A large binary fails a revision scan. A view retains decoded trees without a bound. The nullable source reader hides object failures. |
+| 13–15, 17, 23 | Rules lack scope membership. Named deletion depends on the configured store. Generation rows accumulate. Failed probes retry without a reason. Restoring the control database can lose a committed stop. |
+| 29–30, 41–42 | Reports omit retention scope. Text output misreports a collector failure. Maintenance misses named-only custom stores and retains obsolete store paths. |
+| 34–35 | Previous-checkout reflog suffixes and a terminal `..` in a relative tree selector disagree with Git. Both differences recurred in this audit. |
+| 21–22 | A same-size rewrite on NTFS and the selector comparison with Git for Windows still need Windows results. |
+
+Cases 19 and 36–37 have repairs in `944998813`. Native selection, membership, listing, and checked file reads now accept the same relative path spellings.
+The store tests check equivalent selections against the same inventory key and generation.
+Four targeted headless tests passed with the rebuilt addon. The reference-edge comparison also passed under Cargo after the fixture stopped requesting a signing key.
+
+Eight additional implementation and interface findings follow. Case 51 concerns the evidence for collection.
+
+| Case | What the check showed | Repair and acceptance check |
+| --- | --- | --- |
+| 43. Cross-store policy parsing | After store A warmed the process, a scan published its plans to store B. A fresh process reopening B parsed seven unchanged rule inputs, including the policy itself and two reads of `core.rr`. There were zero Python parses and zero Git tree decodes. | On a process-cache hit, make the compiled policy and its include graph available to the consuming store. Check the graph and program independently. Repeat the A-to-B test after restarting and count parses by input digest. |
+| 44. Read-only Git directory | Git resolved `HEAD` in a readable checkout with no clone-ID file. With a read-only `.git`, a revision scan failed creating `rerail-repository-id.*.tmp`. | Look up the existing clone ID first. When writing is unavailable, keep a local identity in the Rerail home. Test the first scan and restart with a read-only repository. |
+| 45. Bare clone identity | A bare repository and its linked worktree produced different repository keys for the same commit. The bare root acquired both `.rerail/repository-id` and `rerail-repository-id`. | Discover the Git common directory independently of the worktree top level. Reconcile existing IDs and check both scan orders in a repository without a remote. |
+| 46. Case-insensitive path selection | On a case-insensitive volume, selecting `SRC/A.PY` listed it as selected in the filesystem report but found zero identifiers. Selecting the stored spelling `src/a.py` found one. The Git report skipped the uppercase spelling. | Resolve requested names against the source inventory. Pass the selected spelling to both the filter and the report. Repeat on case-sensitive and case-insensitive volumes. |
+| 47. Reason for a skipped path | With a tracked symlink `alias.py`, a revision report put the link in `skippedPaths`, the documented list of absent paths. The filesystem scan returned the identifier from its target. | Report an excluded Git entry with its mode and a reason. Preserve Git's rule for symlinks and gitlinks. Check a symlink, a gitlink and a genuinely absent path in one report. |
+| 48. Non-UTF-8 branch name | A packed ref ended in byte `ff`. The report named its U+FFFD sibling. Resolving the reported ref with Git returned a different commit from the reported HEAD. | Read the reference name as bytes. Emit text after strict decoding or preserve the raw name in a byte field. Compare both refs and their different commits. |
+| 49. Path starting with two dashes | For the tracked file `--alpha.py`, literal `--path --alpha.py` failed with “requires a value”. A path list selected it successfully. | Accept an unambiguous value form such as `--path=--alpha.py`. Compare the selected path, finding, and exit status with the path-list form. |
+| 50. Mixed repository provenance | A scan explicitly selected checkout A. With `GIT_DIR` set to B's Git directory, the completed report identified A's source commit and B's checkout HEAD. Setting `GIT_WORK_TREE` to B as well failed with “prefix not found”. | Resolve the explicitly selected repository once. Use that identity for source selection, discovery and checkout metadata. Test both environment settings through the CLI and rule interface. |
+| 51. Collection evidence | The reused-view test requests collection and checks the surviving plans. The collector can skip or bound a pass. The test has no discarded control that proves eviction happened. | Force collection pressure. Check that a released control plan disappears and a shared plan survives. Then reopen the store and check parse counts. |
+
+Two full headless and Git-helper runs each passed 138 of 139 tests. Case 43 failed both times.
+The first run parsed five rule inputs. After priming another store, the full run and the isolated test each reported seven parses.
+The five inputs in the first run were `core.rr`, `source-language.rr`, `python/env.rr`, `python/modules.rr`, and `sources.rr`.
+The phase trace on reopening the store showed no saved include graph for either the policy or `sources.rr`.
+The store suite passed 255 tests and skipped four. These results use the macOS development addon with test hooks.
+Product builds can use a shared rule-image store. This audit measured the per-project store configuration.
+
+The [scan report](../../../../src/cli/headless-scan.ts), [argument reader](../../../../src/cli/audit-cli.ts), and [repository identity](../../../../src/engine/catalog/repository-identity.ts) supply cases 44–50.
+The [cache regression](../../../../test/cli/headless-scan.test.ts) supplies cases 43 and 51.
+
+### Repair order and choices
+
+1. Bind each scan to one repository. Check the source ID, checkout HEAD, branch bytes, and clone identity in the same fixture.
+2. Define which committed stop records survive a restore. A generation alone cannot identify the stores and directories that a lost stop covered.
+3. Publish the include graph and compiled policy to each consuming store. Force eviction of a released control before measuring reuse.
+4. Expose committed run membership through relations such as `analysis_scope_run(scope, run)` and `analysis_run_snapshot(run, snapshot)`. These are proposed names.
+   A rule can join those rows on explicit keys. Keep pending work private until publication unless a policy needs its own pending run.
+5. Make selection and reporting agree on each analyzed file. Keep the excluded Git mode available as a skip reason.
+
 ## Repairs after `8a328d0a0`
 
 Case 40 now has a regression that compares each retained policy and plan in the same store.
 The old addon lost the root and inventory program memberships after scope deletion. The corrected addon passes with a reused view and a fresh view.
-The test covers abort, reuse in a second store, and collection. A separate process found the Python identifiers with zero source-tape parses and zero tree decodes.
+The test covers abort and reuse in a second store. The isolated run found the Python identifiers with zero parses and zero tree decodes.
+Cases 43 and 51 above describe the limits of that result.
 
 Cases 38 and 39 now pass for both signature roles, including a message search through the commit.
 The fixture compares the subject and dates with Git and checks both header positions through the rule library.
