@@ -2,10 +2,10 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { deflateSync } from "node:zlib";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { runAuditCommand, SCAN_VIOLATIONS_EXIT } from "../../src/cli/audit-cli.js";
 import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import { runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
@@ -63,6 +63,11 @@ const directoryOwnerCount = (store: string): number | undefined =>
   queryContentStore<{ count: number }>(store, "SELECT count(*) AS count FROM analysis_scope_workspace_snapshot")[0]?.count;
 
 describe("headless rerail scan", () => {
+  const suiteStore = process.env.RERAIL_CONTENT_STORE_PATH;
+  afterAll(() => {
+    if (suiteStore) loadNativeBinding().retireUpkeepUnder?.(dirname(suiteStore));
+  });
+
   it("scans a checkout with no daemon and no set-up, reporting 1-based positions with an exclusive end", async () => {
     const root = checkout();
     const report = await scan(root);
