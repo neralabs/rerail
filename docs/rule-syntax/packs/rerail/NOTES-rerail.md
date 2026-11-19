@@ -84,10 +84,6 @@ ordinal and offsets): it reported every regex rule here as ungrounded, and three
 
 ### Engine faults met on the way (worked around, not changed)
 
-- `run-policies` panics with `no declaration of within` (`native/src/code_rule_dsl/logic/plan/fields.rs`, `width`)
-  when `rerail-ui-pure-modules` read `within(n, a)` and ran together with another JavaScript policy
-  (`rerail-ui-api-precedence` or `rerail-ui-color-tokens.javascript`); each ran alone. The rule now reads the binders
-  through `inside` with their kinds.
 - `test-rr` over the whole directory fails tests with `unable to open database file` under the default limit of
   1,024 open files; with `ulimit -n 65536` all 125 pass.
 
