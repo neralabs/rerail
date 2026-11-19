@@ -24,4 +24,3 @@ TypeScript side (`src/engine/`) calls it through `src/engine/native/`.
 Generated files carry `.generated.` in their names, and their generators live in `scripts/generate/` (manifest:
 `scripts/generate/README.md`). `value/names/names.bin` is in Git LFS. Run the engine's tests with `npm run test:native`,
 and fmt and clippy with `npm run check:native`.
-
