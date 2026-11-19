@@ -10,7 +10,9 @@
 // whose sources name it (`dataMentions`), and every package above them: a string literal that names the root and the
 // file's first directory under it (`packs/python/...` for packs/python/rules/x.rerail; `fixtures_dir!().join("php/..")`
 // or `oracle!("php/..")` for fixtures/php/...), or names the root alone (a loader that joins the rest at run time),
-// which counts for every file under it. A literal with whitespace in it is prose (a message), not a path.
+// which counts for every file under it. A literal made of `..` alone that reaches the repository root from the
+// package's directory (`CARGO_MANIFEST_DIR` joined with `../../..`, a test walking the whole repository) counts for
+// every file under every root. A literal with whitespace in it is prose (a message), not a path.
 //
 // Everything is selected (`all`) when the change reaches every package, or when this cannot tell:
 //   - the build's own inputs: the lockfile, the workspace manifest, the toolchain, cargo's configuration, the patched
@@ -29,7 +31,7 @@
 // The files list holds one repository-relative path per line (a rename lists both names).
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Globs (`**` whole segments, `*` within one) whose change selects every package. */
@@ -179,32 +181,69 @@ const ROOT_PATTERNS = DATA_ROOTS.map((root) => [root, new RegExp(`(?:^|[^A-Za-z0
 const firstSegment = (path) => path.replace(/^\/+/u, "").split("/")[0];
 
 /**
- * Which data under DATA_ROOTS a source file names: `{ <root>: Set of first directories, or "*" for the root alone }`.
- * Paths are its string literals without whitespace, and the fixtures' macros: `fixtures_dir!()` followed by
- * `.join("<dir>/...")` or `, "/<dir>/..."` names `<dir>`, followed by anything else the whole of fixtures/;
- * `oracle!("<dir>/...")` names `<dir>`.
+ * The key under which `dataMentions` lists the literals made of `..` alone (`"../../.."`, or `"/../.."` as
+ * `concat!(env!("CARGO_MANIFEST_DIR"), ...)` appends it), resolved by `select` against each package's directory.
+ */
+const PARENTS = "..";
+const PARENTS_PATTERN = /^\/?(?:\.\.\/)*\.\.\/?$/u;
+
+/** Whether token `i` opens a call of the macro `name`: `name ! (`. */
+const isMacroCall = (t, i, name) => t[i].ident === name && t[i + 1]?.punct === "!" && t[i + 2]?.punct === "(";
+
+/** Adds what a path (a literal's value, `/`-separated) names under each data root. */
+function rootMentions(path, add) {
+  for (const [root, pattern] of ROOT_PATTERNS) {
+    for (const match of path.matchAll(pattern)) add(root, match[1]);
+  }
+}
+
+/** A string literal without whitespace: the data roots it names, or itself when it is made of `..` alone. */
+function literalMention(t, i, add) {
+  const { string } = t[i];
+  if (string === undefined || /\s/u.test(string)) return false;
+  const path = string.replaceAll("\\", "/");
+  rootMentions(path, add);
+  if (PARENTS_PATTERN.test(path)) add(PARENTS, path.replace(/^\//u, ""));
+  return true;
+}
+
+/** The literal that follows `fixtures_dir!()` from token `j`: `.join("<path>")` or `, "<path>"`. */
+function fixturesSuffix(t, j) {
+  if (t[j]?.punct === "." && t[j + 1]?.ident === "join" && t[j + 2]?.punct === "(") return t[j + 3]?.string;
+  return t[j]?.punct === "," ? t[j + 1]?.string : undefined;
+}
+
+/** `fixtures_dir!()`: the first directory of the path joined to it, or the whole of fixtures/. */
+function fixturesDirMention(t, i, add) {
+  if (!isMacroCall(t, i, "fixtures_dir") || t[i + 3]?.punct !== ")") return false;
+  let j = i + 4;
+  while (t[j]?.punct === ")") j++;
+  const next = fixturesSuffix(t, j);
+  add("fixtures", next === undefined ? undefined : firstSegment(next));
+  return true;
+}
+
+/** `oracle!("<dir>/...")`: `<dir>` under fixtures/. */
+function oracleMention(t, i, add) {
+  if (!isMacroCall(t, i, "oracle") || t[i + 3]?.string === undefined) return false;
+  add("fixtures", firstSegment(t[i + 3].string));
+  return true;
+}
+
+/** The forms that name data, tried in order on each token: the first that matches it adds what it names. */
+const MENTIONS = [literalMention, fixturesDirMention, oracleMention];
+
+/**
+ * Which data under DATA_ROOTS a source file names: `{ <root>: Set of first directories, or "*" for the root alone }`,
+ * and under PARENTS the literals made of `..` alone. Paths are its string literals without whitespace, and the
+ * fixtures' macros: `fixtures_dir!()` followed by `.join("<dir>/...")` or `, "/<dir>/..."` names `<dir>`, followed
+ * by anything else the whole of fixtures/; `oracle!("<dir>/...")` names `<dir>`.
  */
 export function dataMentions(text) {
   const t = tokens(text);
   const found = {};
   const add = (root, sub) => (found[root] ??= new Set()).add(sub === undefined || sub === "" ? "*" : sub);
-  for (let i = 0; i < t.length; i++) {
-    const { string, ident } = t[i];
-    if (string !== undefined && !/\s/u.test(string)) {
-      const path = string.replaceAll("\\", "/");
-      for (const [root, pattern] of ROOT_PATTERNS) {
-        for (const match of path.matchAll(pattern)) add(root, match[1]);
-      }
-    } else if (ident === "fixtures_dir" && t[i + 1]?.punct === "!" && t[i + 2]?.punct === "(" && t[i + 3]?.punct === ")") {
-      let j = i + 4;
-      while (t[j]?.punct === ")") j++;
-      const next =
-        t[j]?.punct === "." && t[j + 1]?.ident === "join" && t[j + 2]?.punct === "(" ? t[j + 3]?.string : t[j]?.punct === "," ? t[j + 1]?.string : undefined;
-      add("fixtures", next === undefined ? undefined : firstSegment(next));
-    } else if (ident === "oracle" && t[i + 1]?.punct === "!" && t[i + 2]?.punct === "(" && t[i + 3]?.string !== undefined) {
-      add("fixtures", firstSegment(t[i + 3].string));
-    }
-  }
+  for (let i = 0; i < t.length; i++) MENTIONS.some((mention) => mention(t, i, add));
   return found;
 }
 
@@ -269,6 +308,144 @@ export function workspaceMetadata(root) {
   return JSON.parse(run.stdout);
 }
 
+/** Adds `value` to the set `map` holds at `key`, creating it. */
+const addTo = (map, key, value) => (map.get(key) ?? map.set(key, new Set()).get(key)).add(value);
+
+/** Whether `dir` (absolute) is the repository root `root` or a directory above it. */
+function reachesRoot(root, dir) {
+  const down = relative(dir, root);
+  return down === "" || !(down.startsWith("..") || isAbsolute(down));
+}
+
+/**
+ * What a package whose directory is `dir` reads of the data, from a file's `dataMentions`: `[root, subs]` pairs, and
+ * every root whole when a literal made of `..` alone reaches the repository root from `dir`.
+ */
+function dataReads(found, root, dir) {
+  const { [PARENTS]: parents = [], ...named } = found;
+  const whole = [...parents].some((path) => reachesRoot(root, resolve(dir, path)));
+  return [...Object.entries(named), ...(whole ? DATA_ROOTS.map((data) => [data, ["*"]]) : [])];
+}
+
+/** Records the data a package's source file reads: `graph.readers`, data root -> package -> first directories. */
+function addReader(graph, pkg, file) {
+  let found = graph.mentions.get(file);
+  if (found === undefined) graph.mentions.set(file, (found = dataMentions(readFileSync(file, "utf8"))));
+  for (const [root, subs] of dataReads(found, graph.root, dirname(pkg.manifest_path))) {
+    const byPackage = (graph.readers[root] ??= new Map());
+    for (const sub of subs) addTo(byPackage, pkg.name, sub);
+  }
+}
+
+/** Records the files a package's target compiles (`graph.claimed`) and the data its Rust sources read. */
+function addTarget(graph, pkg, target) {
+  for (const file of moduleFiles(target.src_path, graph.modules)) {
+    addTo(graph.claimed, graph.rel(file), pkg.name);
+    if (file.endsWith(".rs")) addReader(graph, pkg, file);
+  }
+}
+
+/** Records a package's path dependencies: their directories as graph nodes, and the package among their dependents. */
+function addDependencies(graph, metadata, pkg) {
+  for (const dep of pkg.dependencies) {
+    if (dep.path === undefined) continue;
+    const node = metadata.packages.find((p) => dirname(p.manifest_path) === dep.path)?.name ?? `path:${graph.rel(dep.path)}`;
+    if (!graph.dirs.has(graph.rel(dep.path))) graph.dirs.set(graph.rel(dep.path), node);
+    addTo(graph.dependents, node, pkg.name);
+  }
+}
+
+/**
+ * The workspace at `root` as `select` reads it: package directories and path dependencies outside the workspace
+ * (tools/bitlex) as graph nodes (`dirs`, relative directory -> node), each node's dependents, the packages compiling
+ * each file (`claimed`, relative file -> packages), and who reads which data (`readers`).
+ */
+function workspaceGraph(root, metadata) {
+  const rel = (abs) => relative(root, abs).split(sep).join("/");
+  const graph = { root, rel, dirs: new Map(), dependents: new Map(), claimed: new Map(), readers: {}, modules: new Map(), mentions: new Map() };
+  for (const pkg of metadata.packages) {
+    graph.dirs.set(rel(dirname(pkg.manifest_path)), pkg.name);
+    addDependencies(graph, metadata, pkg);
+    for (const target of pkg.targets) addTarget(graph, pkg, target);
+  }
+  return graph;
+}
+
+/** The packages whose sources name the data file `path` under `root`: the root alone, or its first directory. */
+function dataReaders(readers, root, path) {
+  const sub = path.slice(root.length + 1).split("/");
+  const first = sub.length > 1 ? sub[0] : undefined;
+  return [...(readers[root] ?? new Map())].filter(([, subs]) => subs.has("*") || first === undefined || subs.has(first)).map(([name]) => name);
+}
+
+/** Whether the relative directory `dir` holds the relative path `path` ("" holds everything). */
+const holds = (dir, path) => dir === "" || path === dir || path.startsWith(`${dir}/`);
+
+/** The deepest graph node whose directory holds `path`: `[dir, node]`. */
+function owner(dirs, path) {
+  let best;
+  for (const [dir, node] of dirs) if (holds(dir, path) && (best === undefined || dir.length > best[0].length)) best = [dir, node];
+  return best;
+}
+
+const forcedAll = matcher(FORCE_ALL);
+const unclaimedAll = matcher(UNCLAIMED_ALL);
+
+/** A file some module tree claims selects the packages compiling it. */
+function compiledBy(graph, path) {
+  const compiling = graph.claimed.get(path);
+  return compiling === undefined ? undefined : { seeds: [...compiling] };
+}
+
+/** A file under a data root selects the packages reading it. */
+function readBy(graph, path) {
+  const root = DATA_ROOTS.find((data) => path.startsWith(`${data}/`));
+  if (root === undefined) return undefined;
+  const seeds = dataReaders(graph.readers, root, path);
+  return { seeds, reason: seeds.length > 0 ? `${path} is read by ${seeds.join(", ")}` : undefined };
+}
+
+/** A file in a package's own directory selects that package. */
+function ownedBy(graph, path) {
+  const own = owner(graph.dirs, path);
+  // The engine's directory holds the sources every crate mounts: a file there no tree claims could be anyone's.
+  if (own === undefined || own[0] === "" || (own[1] === "rerail-engine" && unclaimedAll(path))) return undefined;
+  return { seeds: [own[1]] };
+}
+
+/** A file under native/ nothing above claims selects every package. */
+function unclaimed(graph, path) {
+  return unclaimedAll(path) ? { all: `${path} is under native/ and no package's module tree claims it` } : undefined;
+}
+
+/**
+ * What a changed file selects, by the first rule that answers: `{ seeds, reason? }`, or `{ all: reason }`. A file no
+ * rule answers for (TypeScript, docs) selects nothing.
+ */
+const PATH_RULES = [compiledBy, readBy, ownedBy, unclaimed];
+
+/** The verdict of the first of PATH_RULES that answers for `path`. */
+function classify(graph, path) {
+  for (const rule of PATH_RULES) {
+    const verdict = rule(graph, path);
+    if (verdict !== undefined) return verdict;
+  }
+  return { seeds: [] };
+}
+
+/** The nodes `seeds` and every package that depends on one of them, transitively. */
+function withDependents(seeds, dependents) {
+  const selected = new Set();
+  const queue = [...seeds];
+  while (queue.length > 0) {
+    const node = queue.pop();
+    if (selected.has(node)) continue;
+    selected.add(node);
+    queue.push(...(dependents.get(node) ?? []));
+  }
+  return selected;
+}
+
 /**
  * The selection for `changed` (repository-relative paths) in the workspace at `root` described by `metadata`:
  * `{ all, packages, reasons }`, `packages` sorted.
@@ -276,89 +453,20 @@ export function workspaceMetadata(root) {
 export function select(root, metadata, changed) {
   const names = metadata.packages.map((p) => p.name).sort();
   const everything = (reason) => ({ all: true, packages: names, reasons: [reason] });
-  const forced = matcher(FORCE_ALL);
-  for (const path of changed) if (forced(path)) return everything(`${path} reaches every package`);
-
-  const rel = (abs) => relative(root, abs).split(sep).join("/");
-  // Package directories, and path dependencies outside the workspace (tools/bitlex), as graph nodes.
-  const dirs = new Map(); // directory (relative) -> node name
-  const dependents = new Map(); // node -> packages that depend on it
-  const cache = new Map();
-  const claimed = new Map(); // file (relative) -> packages compiling it
-  const mentionCache = new Map(); // source file (absolute) -> dataMentions
-  const readers = {}; // data root -> package -> first directories it names ("*": the root alone)
-  for (const pkg of metadata.packages) {
-    dirs.set(rel(dirname(pkg.manifest_path)), pkg.name);
-    for (const dep of pkg.dependencies) {
-      if (dep.path === undefined) continue;
-      const node = metadata.packages.find((p) => dirname(p.manifest_path) === dep.path)?.name ?? `path:${rel(dep.path)}`;
-      if (!dirs.has(rel(dep.path))) dirs.set(rel(dep.path), node);
-      if (!dependents.has(node)) dependents.set(node, new Set());
-      dependents.get(node).add(pkg.name);
-    }
-    for (const target of pkg.targets) {
-      for (const file of moduleFiles(target.src_path, cache)) {
-        const key = rel(file);
-        if (!claimed.has(key)) claimed.set(key, new Set());
-        claimed.get(key).add(pkg.name);
-        if (!file.endsWith(".rs")) continue;
-        let found = mentionCache.get(file);
-        if (found === undefined) mentionCache.set(file, (found = dataMentions(readFileSync(file, "utf8"))));
-        for (const [root, subs] of Object.entries(found)) {
-          const byPackage = (readers[root] ??= new Map());
-          if (!byPackage.has(pkg.name)) byPackage.set(pkg.name, new Set());
-          for (const sub of subs) byPackage.get(pkg.name).add(sub);
-        }
-      }
-    }
-  }
-  // The packages whose sources name the data file `path` under `root`: the root alone, or its first directory.
-  const dataReaders = (root, path) => {
-    const sub = path.slice(root.length + 1).split("/");
-    const first = sub.length > 1 ? sub[0] : undefined;
-    return [...(readers[root] ?? new Map())].filter(([, subs]) => subs.has("*") || first === undefined || subs.has(first)).map(([name]) => name);
-  };
-  const owner = (path) => {
-    let best;
-    for (const [dir, node] of dirs) {
-      if ((dir === "" || path === dir || path.startsWith(`${dir}/`)) && (best === undefined || dir.length > best[0].length)) best = [dir, node];
-    }
-    return best;
-  };
-  const unclaimedAll = matcher(UNCLAIMED_ALL);
+  const forced = changed.find((path) => forcedAll(path));
+  if (forced !== undefined) return everything(`${forced} reaches every package`);
+  const graph = workspaceGraph(root, metadata);
   const seeds = new Set();
   const reasons = [];
   for (const path of changed) {
-    const compiling = claimed.get(path);
-    if (compiling !== undefined) {
-      for (const name of compiling) seeds.add(name);
-      continue;
-    }
-    const root = DATA_ROOTS.find((data) => path.startsWith(`${data}/`));
-    if (root !== undefined) {
-      const readBy = dataReaders(root, path);
-      for (const name of readBy) seeds.add(name);
-      if (readBy.length > 0) reasons.push(`${path} is read by ${readBy.join(", ")}`);
-      continue;
-    }
-    const own = owner(path);
-    // The engine's directory holds the sources every crate mounts: a file there no tree claims could be anyone's.
-    if (own !== undefined && own[0] !== "" && !(own[1] === "rerail-engine" && unclaimedAll(path))) {
-      seeds.add(own[1]);
-      continue;
-    }
-    if (unclaimedAll(path)) return everything(`${path} is under native/ and no package's module tree claims it`);
+    const verdict = classify(graph, path);
+    if (verdict.all !== undefined) return everything(verdict.all);
+    for (const name of verdict.seeds) seeds.add(name);
+    if (verdict.reason !== undefined) reasons.push(verdict.reason);
   }
-  const selected = new Set();
-  const queue = [...seeds];
-  while (queue.length > 0) {
-    const node = queue.pop();
-    if (selected.has(node)) continue;
-    selected.add(node);
-    for (const dependent of dependents.get(node) ?? []) queue.push(dependent);
-  }
+  const selected = withDependents(seeds, graph.dependents);
   const packages = names.filter((name) => selected.has(name));
-  for (const seed of [...seeds].sort()) reasons.push(`${seed} selected`);
+  reasons.push(...[...seeds].sort().map((seed) => `${seed} selected`));
   return { all: packages.length === names.length, packages, reasons };
 }
 
