@@ -321,6 +321,8 @@ const MAX_MACOS_UNIX_SOCKET_PATH_BYTES = 103;
 export interface RunningDaemon {
   state: DaemonState;
   health: DaemonHealth;
+  /** A daemon of a release before the engine's proof, as a lookup marks it ({@link DaemonLookup}). */
+  older?: true;
 }
 
 /**
@@ -1045,7 +1047,7 @@ export async function startDaemonForPackage(
  * own package (`packageRoot`), unless it runs a release before the engine's proof (`older`, known on Windows), which
  * predates the fields the hook sends whichever package it ran from.
  */
-export async function daemonServesPackage(found: Extract<DaemonLookup, { status: "running" }>, packageRoot: string): Promise<boolean> {
+export async function daemonServesPackage(found: Pick<RunningDaemon, "state" | "older">, packageRoot: string): Promise<boolean> {
   return found.older !== true && await daemonUsesPackageRoot(found.state, packageRoot);
 }
 
@@ -1087,11 +1089,12 @@ export function daemonNotRunningMessage(env: NodeJS.ProcessEnv = process.env): s
 /**
  * The engine endpoint main host clients send events to; only the daemon evaluates them, since it alone opens
  * the machine-wide content store. `replaceOtherPackage` brings up this package's daemon in place of one from
- * another package, which is how a hook keeps an older daemon from receiving fields it predates; a client that
- * outlives an update passes false after its first event so it keeps using the newer daemon instead of displacing
- * it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon, and throws `AutostartOffError` without
- * one. A daemon that is alive but busy is waited for (`patientLookup`), until `deadline` (epoch ms) when the caller
- * names one, as a hook does.
+ * another package or of a release before the engine's proof ({@link daemonServesPackage}), which is how a hook keeps
+ * an older daemon from receiving fields it predates, and sends such a daemon nothing where it may not replace it; a
+ * client that outlives an update passes false after its first event so it keeps using the newer daemon instead of
+ * displacing it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon, and throws `AutostartOffError`
+ * without one. A daemon that is alive but busy is waited for (`patientLookup`), until `deadline` (epoch ms) when the
+ * caller names one, as a hook does.
  */
 export async function daemonEngineEndpoint(
   replaceOtherPackage: boolean,
@@ -1106,16 +1109,17 @@ export async function daemonEngineEndpoint(
   if (daemon === undefined) {
     throw new AutostartOffError(`RERAIL_AUTOSTART=${machine.env.RERAIL_AUTOSTART} requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET`);
   }
-  if (replaceOtherPackage && !(await daemonUsesPackageRoot(daemon.state, control.packageRoot))) {
+  if (replaceOtherPackage && !(await daemonServesPackage(daemon, control.packageRoot))) {
     throw new Error(otherPackageDaemon(machine.env));
   }
   return engineEndpointOf(daemon.state);
 }
 
 /**
- * Why the caller sends no event to the daemon of another package it found. An off autostart may not replace that
- * daemon, so the error names the setting as the person set it. With autostart on, a start replaces it unless it was
- * busy when the start looked and answered only later, so the error names no setting.
+ * Why the caller sends no event to the daemon it found of another package or of a release before the engine's proof
+ * ({@link daemonServesPackage}). An off autostart may not replace that daemon, so the error names the setting as the
+ * person set it. With autostart on, a start replaces it unless it was busy when the start looked and answered only
+ * later, so the error names no setting.
  */
 function otherPackageDaemon(env: NodeJS.ProcessEnv): string {
   return autostartOff(env)
@@ -1131,7 +1135,7 @@ function otherPackageDaemon(env: NodeJS.ProcessEnv): string {
 async function runningDaemon(home: string, deadline: number | undefined, machine: DaemonMachine): Promise<RunningDaemon | undefined> {
   const lookup = await patientLookup(home, machine, deadline);
   if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
-  return lookup.status === "running" ? { state: lookup.state, health: lookup.health } : undefined;
+  return lookup.status === "running" ? lookup : undefined;
 }
 
 /**
@@ -1153,7 +1157,7 @@ async function startedDaemon(
     if (!(error instanceof LiveDaemonError) || error.lookup.status !== "unresponsive") throw error;
     const answered = await patientLookup(control.home, machine, deadline, error.lookup);
     if (answered.status !== "running") throw error;
-    return { state: answered.state, health: answered.health };
+    return answered;
   }
 }
 

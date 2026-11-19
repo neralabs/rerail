@@ -1001,6 +1001,35 @@ describe("a state file Windows left behind", () => {
     expect(events.filter(event => event !== "/healthz")).toEqual([]);
   });
 
+  // With RERAIL_AUTOSTART=0 the person runs the daemon and a hook replaces none, so it sends that daemon nothing and
+  // says it is not the active package's, as for a daemon of another install. Its record stays for the stop.
+  it("sends no event of a session to a daemon whose engine has no proof while RERAIL_AUTOSTART=0 keeps it", async () => {
+    const events: string[] = [];
+    const older = await besideOlderDaemon(OLDER_STARTED_AT - 600, OWN_ROOT, events);
+    const machine: DaemonMachine = { ...older, env: { RERAIL_HOME: home, RERAIL_AUTOSTART: "0" } };
+    await expect(runningDaemonEngineEndpoint(undefined, machine)).rejects.toThrow("RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package");
+    expect(events.filter(event => event !== "/healthz")).toEqual([]);
+    expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(true);
+  });
+
+  // A start does not replace a daemon that was busy when it looked and answered only later, as for a busy daemon of
+  // another install: the hook sends one whose engine has no proof nothing either, and says why.
+  it("sends no event to a daemon whose engine has no proof that answered only after a hook's start looked", async () => {
+    const events: string[] = [];
+    const machine = await besideOlderDaemon(OLDER_STARTED_AT - 600, OWN_ROOT, events);
+    let probes = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: URL) => {
+      const path = new URL(url).pathname;
+      events.push(path);
+      if (path === "/healthz" && ++probes === 1) throw new Error("connect ECONNREFUSED");
+      return path === "/healthz" ? Response.json({ status: "ok", pid: DEAD_PID }) : new Response(null, { status: 404 });
+    }));
+    await expect(daemonEngineEndpoint(true, undefined, machine)).rejects.toThrow(
+      new Error("the running Rerail daemon is from another Rerail package; run rerail daemon stop, then rerail daemon start"),
+    );
+    expect(events).toEqual(["/healthz", "/healthz"]);
+  });
+
   // Nothing proves that daemon this home's, so the hook's start launches its own as beside a gone one: one that waited
   // for a daemon it may neither use nor replace would fail every event of the session.
   it("launches a hook's daemon beside a daemon whose engine has no proof and whose start cannot be read", async () => {
