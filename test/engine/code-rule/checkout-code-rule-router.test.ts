@@ -810,7 +810,10 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     await sessionReadsMarkdown(session);
     expect(() => auditor.refreshCodeRules()).not.toThrow();
     expect(auditor.acceptsPath("README.md")).toBe(true);
-    const response = await auditor.auditGeneratedEdits("answered-fails", { revision: 1, checkpoints: ["edit"], edits: [] });
+    const edits = [{ path: "api/x.py", language: "python" as const, generatedText: "seed\n" }];
+    const response = await auditor.auditGeneratedEdits("answered-fails", { revision: 1, checkpoints: ["edit"], edits });
+    // The session's lane installs its new rules before the router closes, so no store of theirs is still opening then.
+    await auditor.settleGeneratedEdits();
     expect(response.failures).toContainEqual(expect.objectContaining({ clauseId: "catalog", code: "adapter-error", message: expect.stringContaining("not JSON representable") }));
   });
 
@@ -827,6 +830,8 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     await sessionReadsMarkdown(session);
     expect(() => auditor.refreshCodeRules()).not.toThrow();
     expect(auditor.acceptsPath("README.md")).toBe(true);
+    // The session's lane installs its new rules before the router closes, so no store of theirs is still opening then.
+    await edit(auditor, "never-read", 1, "api/x.py");
     broken = false;
   });
 
