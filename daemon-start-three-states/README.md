@@ -1,6 +1,6 @@
 # A daemon start ends in the state it reports, in three cases
 
-For the pull request of branch `JeanFrancoisGagne/daemon-start-three-states`, not opened yet, head e30f3ae42. [report.html](report.html) is the same report as one page: download it and open it.
+For the pull request of branch `JeanFrancoisGagne/daemon-start-three-states`, not opened yet, head c1a0c0f2d. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For the pull request of branch `JeanFrancoisGagne/daemon-start-three-states`, no
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 912 lines in 15 files: 258 ship, 654 are tests and text | Standard. No ruling asked; no high-risk path. | Nothing. No CI run on GitHub yet: not pushed. | 1 |
+| 866 lines in 14 files: 220 ship, 646 are tests and text | Standard. No ruling asked; no high-risk path. | Nothing. CI passed at e30f3ae42; the run at this head follows. | 1 |
 
 ## 2. Intent, and the gap
 
@@ -34,12 +34,11 @@ Found in November 2026 on Linux x64 and Windows 11 machines, with a real daemon 
 
 ## 3. Where to look
 
-<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Empty TLS key serves locally, low risk, 60 lines; B, Start names a daemon still starting, low risk, 172 lines; C, Fallback pipe beside a capped holder, low risk, 26 lines. Read first: daemon.ts, daemon-control.ts, engine-service.ts. To skim: 645 lines of tests and 9 lines of what each start now does..">
+<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Empty TLS key serves locally, low risk, 69 lines; B, Start names a daemon still starting, low risk, 125 lines; C, Fallback pipe beside a capped holder, low risk, 26 lines. Read first: daemon.ts, daemon-control.ts, engine-service.ts. To skim: 637 lines of tests and 9 lines of what each start now does..">
 
 1. **Read first**, 5 min: `daemon.ts`: `loadDaemonTls`, `refuseUnparsed`, `serveRerailDaemon`. Does an empty key get what a key others can read gets?
-2. **Read first**, 10 min: `daemon-control.ts`: `unansweredLaunch`, `holderNotRecorded`, `holderComingUp`, `readTail`. Can a daemon that never answers be told it may still be starting by every start?
+2. **Read first**, 10 min: `daemon-control.ts`: `unansweredLaunch`, `holderNotRecorded`, `readTail`. Does a later start name a daemon that never answers, and how to check it, as `main` does?
 3. **Read first**, 5 min: `engine-service.ts`: `listenBesideHeldPipe`, `HELD_PIPE_CODES`. Can a start skip the question beside this home's own busy engine?
-4. 1 min: B: `home-daemon-lock.ts`, `homeDaemonHeldFor`.
 
 **Then skim**, 10 min: The tests: each change's cases at its seam, and one case where a slow daemon meets a held pipe on Windows. The release notes and five doc lines.
 
@@ -73,9 +72,9 @@ Three changes, one source area each; none gives less than `main`.
 
 - **Problem:** The start waited 15 s, said the daemon did not become ready, and exited 1, while the daemon it launched went on to serve.
 - **Who meets it:** Every start whose daemon takes over 15 s to answer: a busy machine, or a key file another program holds. 4 of 4 starts through the built CLI at `main` 7efcac9c6 on Linux x64 and Windows 11.
-- **What it does:** `unansweredLaunch` asks the process once more when the wait ends, names it by pid as possibly still starting and points to `rerail status`. `holderNotRecorded` judges a daemon not yet in `daemon.json` by `homeDaemonHeldFor`, read on the clock that stamped its record: within one wait the same line, else the stop's text. `readTail` reads at most 64 KiB.
+- **What it does:** `unansweredLaunch` asks the process once more when the wait ends, names it by pid as possibly still starting and points to `rerail status`. `holderNotRecorded` gives a daemon not yet in `daemon.json` when a later start's wait ends `main`'s text, and says the start leaves it running. `readTail` reads at most 64 KiB.
 - **Risk:** Low: one message at the end of a wait that ran out; the 15 s wait, the exit code and when a daemon ends are `main`'s.
-- **Check:** `holderComingUp`: can a daemon that never answers be told "may still be starting" by every start? It compares two times the file system stamped, the holder's record and a file written beside it, by their distance either way. Does `readTail` leave out the line its 64 KiB edge cuts into?
+- **Check:** `holderNotRecorded`: does a later start name a daemon that never answers, with how to check it before ending it? Does `readTail` leave out the line its 64 KiB edge cuts into?
 - **Picture:** Through the built CLI on Linux x64 and Windows 11, a daemon paused right after it took the home, two runs a side on each system: at main 7efcac9c6 every first start said the daemon did not become ready and every daemon then served; here each said it may still be starting, and each daemon served.
 - **Method:** Linux x64 and Windows 11, the built CLI, a daemon paused right after it took the home and resumed once the first start ended, two runs a side at `main` 7efcac9c6 and at this head on one machine; a second start, `rerail status` and `rerail daemon stop` after it.
 
@@ -99,11 +98,11 @@ Three changes, one source area each; none gives less than `main`.
 
 | Option | What a user gets | Cost | What it breaks |
 |---|---|---|---|
-| Ask once more; decide a later start by when the daemon took the home **(chosen)** | A true message in every state, and `main`'s text naming a daemon that never answers. | One file written and removed beside the holder's record, once, when a wait runs out. | A second start that ends before a slow daemon answers gives `main`'s text. |
+| Ask once more; a later start gives `main`'s text and leaves the daemon running **(chosen)** | A true message in every state, and `main`'s text naming a daemon that never answers. | Nothing. | A second start that ends before a slow daemon answers gives `main`'s text. |
 | End the daemon when the wait runs out | A true "failed". | Nothing. | A daemon slower than 15 s never comes up; `main` keeps it for the next start. |
 | Every later start says "still starting" | Starts that agree while a daemon comes up. | Nothing. | No start names a hung daemon to end, and `rerail status` says nothing runs. |
 
-**Evidence.** Through the built CLI on Linux x64, two rounds a side: a hung daemon was named to end from the second and third starts at `main` and here, and here also "This start leaves that process running." A refused remote start already exits 1 while a daemon keeps running.
+**Evidence.** Through the built CLI on Linux x64 and Windows 11, a daemon paused as it starts: each second start, begun 0.6 to 1.6 s or 4 to 5.4 s after the first or once it gave up, ended with the daemon 25.5 to 30.0 s in the home, naming it to check before ending, at `main`, at e30f3ae42 and here, here adding "This start leaves that process running." A refused remote start already exits 1 while a daemon runs.
 
 **Ask a holder that capped the pipe's instances whether it is this home's engine?**
 
@@ -120,11 +119,11 @@ Three changes, one source area each; none gives less than `main`.
 
 <details><summary><b>7. How it fits</b></summary>
 
-It stands on `main` d0c10e05e, merged in; nothing has to merge first. That `main` holds #677, which edits the same lookup: the merge keeps #677's read limit and text, and reads the holder's age as before.
+It stands on `main` cccb25a8d, merged in; nothing has to merge first. That `main` holds #677, which edits the same lookup: the merge keeps #677's read limit and text.
 
-This pull request is based on main at d0c10e05e, which holds #677, and needs no other change; nothing waits on it. In trial merges it adds no conflict to three open pull requests that share a file.
+This pull request is based on main at cccb25a8d, which holds #677, and needs no other change; nothing waits on it. In trial merges it adds no conflict to three open pull requests that share a file.
 
-**Shared files and trial merges.** Trial merges of e30f3ae42 on 19 November 2026, to refresh against GitHub: `main` d0c10e05e, with #677, merged in. #674, #676 and #812 share a file each and add no conflict beyond their own with `main`.
+**Shared files and trial merges.** Trial merges of c1a0c0f2d on 19 November 2026, to refresh against GitHub: `main` cccb25a8d, with #677, merged in. #674, #676 and #812 share a file each and add no conflict beyond their own with `main`.
 
 </details>
 
@@ -136,7 +135,7 @@ This pull request is based on main at d0c10e05e, which holds #677, and needs no 
 
 - A pipe holder that may make more instances but keeps every one taken still makes a start wait 30 s for its answer, as on `main`.
 - Two starts at once while a daemon takes 15 to 30 s: whether the second finds it depends on which wait ends first, as on `main`.
-- A file system that keeps file times to the second or two moves the 15 s line by as much.
+- A second start that ends before a slow daemon answers names it to check before ending, as on `main`, and says it leaves it running.
 - Until a daemon still coming up answers, `rerail status` says it is not running or not answering, as on `main`.
 - A start with the key fixed, beside the daemon an empty key left serving this computer alone, finds it serving and exits 0 still over http; run `rerail daemon stop` first, as for a key others can read.
 
@@ -153,14 +152,14 @@ The description on GitHub is the record: "How you tested it" holds the runs at `
 | Where | What ran | Result |
 |---|---|---|
 | Windows 11 | The built CLI and two Claude Code hooks beside a one-instance pipe on the engine pipe's name, `main` 7efcac9c6, ba0545900 and here on one machine | `main` 7efcac9c6: the start exited 1 with `listen EBUSY` in 2.0 to 4.3 s, 4 of 4, and the hooks recorded nothing (ba0545900: 1.3 and 1.5 s). Here: the fallback pipe in 2.4 and 4.7 s, http 200, 7 ledger lines. |
-| Linux x64 and Windows 11 | At this head: a daemon paused while it starts, and #677's paused daemon asked six times | The start says the daemon may still be starting, by pid, where `main` d0c10e05e said it did not become ready; status and the next start give `main`'s text. Six `rerail status` beside the paused daemon: each `alive but not answering` in 2.2 to 2.3 s, `daemon.json` kept. |
+| Linux x64 and Windows 11 | At this head: two starts beside a daemon paused while it starts, the second begun while the first waits or after | Each second start ended 30.2 to 31.2 s after the first began and named the process to check before ending it, at `main`, at e30f3ae42 and here, here adding that it leaves it running; the first said it may still be starting, where `main` said it did not become ready. At e30f3ae42: a daemon still coming up kept paused, and #677's paused daemon asked six times, as on `main`. |
 | Linux x64 and Windows 11 | The built CLI with a daemon paused right after it took the home, two runs a side | `main` 7efcac9c6: the first start said it did not become ready at 15.3 to 16.7 s and the daemon then served, as at ba0545900. Here: it said the daemon may still be starting, by pid; resumed, `rerail status` showed it running and the next start found it. Kept paused, `rerail status` and the next start gave what `main` gives, in each of three states. |
 | Linux x64 and Windows 11 | The built CLI and the built Claude Code hook with an empty TLS key, two runs a side | `main` 7efcac9c6: the start exited 1 after 15.2 to 17.0 s, its port reset http and failed https; hooks on the engine socket recorded 7 ledger lines a run, as at ba0545900. Here: exit 0 in 0.7 s on Linux and 2.7 to 14.0 s on Windows, naming the file, http 200 on loopback, 7 ledger lines a run. |
 | Linux x64 and Windows 11 | Each fix's cases at this head; each fix's first line out | Linux 17 passed in each of 3 runs, Windows 21 in each of 2. Lines out: each fails its cases on Linux x64; on Windows 11 a commit with the four first lines out failed 2 of 2 runs, 12 cases each. |
-| Linux x64 and Windows 11 | The test files of this change and of #677, at this head and at `main` d0c10e05e | Windows 11, 12 files: here 420 passed, `main` 400, none failing at either. Linux, with every importing file (27): here 708 passed, `main` 692, none failing. At 16cd83190 the 23 files passed beside `main` 7efcac9c6 on both systems. |
+| Linux x64 and Windows 11 | The test files of this change and of #677, at this head and at e30f3ae42 | 12 files, here and at e30f3ae42: Linux 424 passed, Windows 420, none failing at either. At e30f3ae42 beside `main` d0c10e05e: Windows 420 against 400; Linux, with every importing file (27), 708 against 692. At 16cd83190 the 23 files passed beside `main` 7efcac9c6 on both systems. |
 | Linux x64 | CI's integration job, at 1be9a52aa | 91 passed, 4 skipped. |
-| Linux x64 | The automated reviewer's rules at `main` d0c10e05e over the diff | no new finding, with the published 0.1.5 and with Rerail built from `main`; no function this change adds or edits counts over 6. |
+| Linux x64 | The automated reviewer's rules at `main` cccb25a8d over the diff | no new finding, with the published 0.1.5 and with Rerail built from `main`; no function this change adds or edits counts over 6. |
 
-**Sources.** The branch at 16cd83190, `main` 7efcac9c6 merged into it, and its diff against that `main`, read on 19 November 2026; runs at 16cd83190, 1be9a52aa, 7efcac9c6 and ba0545900 on Linux x64 machines and Windows 11 virtual machines, each beside other test runs.
+**Sources.** The branch at c1a0c0f2d, `main` cccb25a8d merged into it, and its diff against that `main`, read on 19 November 2026; runs at c1a0c0f2d, e30f3ae42, 16cd83190, 1be9a52aa, 7efcac9c6 and ba0545900 on Linux x64 machines and Windows 11 virtual machines, each beside other test runs.
 
 </details>
