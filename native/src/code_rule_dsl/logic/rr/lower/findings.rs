@@ -175,7 +175,7 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
         // on one line are two rows. A finding with no column (a place, an error of a file or input) has column 0.
         self.prog.declare("violation", &[("rule", "sym"), ("clause", "sym"), ("code", "sym"), ("path", "sym"), ("line", "int"), ("col", "int")]);
         // A program that derives `violation` itself, in the older five columns, is read at column 0: the caller's
-        // (`widen_violation_heads`), for this sees no rules.
+        // (`lowering_tail`'s findings step), for this sees no rules.
         // Where it is already (a printed program's `.output`), else last.
         self.prog.add_output("violation");
         let v = |s: &str| Term::Var(s.to_owned().into());
@@ -541,7 +541,7 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
 }
 
 /// The findings (`Findings`) of `pending` over `prog`'s fields: the rules they make, and whether they wrote the
-/// findings (then the program's own `violation` heads of five columns are widened, `widen_violation_heads`).
+/// findings (then the caller widens the program's own `violation` heads of five columns, `lowering_tail`).
 pub fn findings_on(prog: &mut (impl FieldsMut + ?Sized), pending: &PendingFindings, seen: RulesSeen) -> Result<(Vec<Rule>, bool), Error> {
     let mut f = Findings { prog, next: pending.next, made: Vec::new(), rules: Vec::new() };
     let wrote = f.findings(pending.violations.clone(), seen)?;

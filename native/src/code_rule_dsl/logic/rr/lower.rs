@@ -90,26 +90,6 @@ pub(super) fn test_of(rel: &str) -> Option<&'static str> {
     TESTS.iter().find(|(rr, _)| *rr == rel).map(|(_, engine)| *engine)
 }
 
-/// The whole-string regex of a pattern computed in a rule, `p`: `^(?:p)$` made as the row's pattern is.
-pub(super) fn anchored(p: Term) -> Term {
-    let concat = |a: Term, b: Term| Term::Call("concat".into(), [a, b].into());
-    concat(Term::Str("^(?:".into()), concat(p, Term::Str(")$".into())))
-}
-
-/// The pattern `anchored` made `p` of, if `p` is one.
-pub(super) fn unanchored(p: &Term) -> Option<&Term> {
-    match p {
-        Term::Call(f, args) if f == "concat" => match args.as_slice() {
-            [Term::Str(open), Term::Call(g, inner)] if open == "^(?:" && g == "concat" => match inner.as_slice() {
-                [p, Term::Str(close)] if close == ")$" => Some(p),
-                _ => None,
-            },
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
 /// The built-ins that take a relation, and its position.
 /// Relations the lowering makes itself rather than a `.decl` (`check::undeclared`): regex matches, tree axes and
 /// walks, the dotted-name split.
@@ -465,16 +445,6 @@ pub struct Written {
 }
 
 impl Written {
-    /// `rule` written onto `b`, the lowerer's header; once, when `once`.
-    fn write(&mut self, b: &mut crate::code_rule_dsl::logic::program_image::Builder<'static>, rule: &Rule, once: bool) {
-        match put_rule(b, rule) {
-            Ok(o) => self.close(b, o, once),
-            Err(e) => {
-                self.error.get_or_insert(e);
-            }
-        }
-    }
-
     /// Ends rule `o` open on `b`; once, when `once` (left out when a rule of its hash was written once before).
     fn close(&mut self, b: &mut crate::code_rule_dsl::logic::program_image::Builder<'static>, o: crate::code_rule_dsl::logic::program_image::Open, once: bool) {
         let closed = if once { b.close_rule_once(o, &mut self.seen) } else { b.close_rule(o).map(Some) };
@@ -495,57 +465,6 @@ impl Written {
         let bytes = b.finish_bytes().map_err(Error::Syntax)?;
         crate::code_rule_dsl::logic::program_image::Version::open(&bytes).map_err(Error::Syntax)
     }
-}
-
-/// `rule` put on `b` literal by literal (`Builder::open_rule`), open for `Written::close`. (Until each lowering
-/// writes its literals itself, decision 0276 A3.)
-fn put_rule(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'static>, rule: &Rule) -> Result<crate::code_rule_dsl::logic::program_image::Open, String> {
-    let mut o = b.open_rule();
-    b.put_head(&mut o, rule.head.rel.as_ref(), &ts(&rule.head.args));
-    for l in rule.body.iter() {
-        if let Err(e) = put_literal(b, &mut o, l) {
-            b.abandon_rule(o);
-            return Err(e);
-        }
-    }
-    Ok(o)
-}
-
-/// Term `x` to write (`Builder::put_*`).
-fn t(x: &Term) -> crate::code_rule_dsl::logic::program_image::T<'_> {
-    use crate::code_rule_dsl::logic::program_image::T;
-    match x {
-        Term::Var(v) => T::Var(v.as_ref()),
-        Term::Wild => T::Wild,
-        Term::Int(i) => T::Int(*i),
-        Term::Str(s) => T::Str(s.as_ref()),
-        Term::Top => T::Top,
-        Term::Call(f, args) => T::Call(f.as_ref(), args.iter().map(t).collect()),
-        Term::Branded(b) => T::Branded(*b),
-    }
-}
-
-fn ts(args: &[Term]) -> Vec<crate::code_rule_dsl::logic::program_image::T<'_>> {
-    args.iter().map(t).collect()
-}
-
-/// Literal `l` written into rule `o`, open on `b`.
-fn put_literal(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'static>, o: &mut crate::code_rule_dsl::logic::program_image::Open, l: &Literal) -> Result<(), String> {
-    use crate::code_rule_dsl::logic::program_image::CmpOp;
-    match l {
-        Literal::Atom(a) => b.put_atom(o, a.rel.as_ref(), &ts(&a.args), a.neg, a.gated),
-        Literal::Cmp { l, op, r } => {
-            let Some(op) = CmpOp::of(op) else { return Err(format!("comparison {op:?}")) };
-            b.put_cmp(o, t(l), op, t(r));
-        }
-        Literal::Agg { var, op, over, atom } => b.put_agg(o, var, op, over.as_deref(), atom.rel.as_ref(), &ts(&atom.args)),
-        Literal::Nearest { n, a, kindset } => b.put_nearest(o, n, a, kindset),
-        Literal::Ast { document, node, matcher, captures } => {
-            let caps: Vec<(&str, &str)> = captures.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
-            b.put_ast(o, document, node, matcher, &caps);
-        }
-    }
-    Ok(())
 }
 
 /// A helper relation's stem, column types and rules (their templates: variables numbered in order, so the fresh
@@ -1700,24 +1619,6 @@ pub struct RulesSeen {
     pub reads_guest_policy: bool,
 }
 
-impl RulesSeen {
-    pub fn of(rules: &[Rule]) -> Self {
-        RulesSeen {
-            place_values: rules.iter().any(|r| r.head.args.iter().chain(r.body.iter().flat_map(literal_terms)).any(has_place)),
-            reads_guest_policy: rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == GUEST_POLICY),
-        }
-    }
-}
-
-/// A program that derives `violation` itself, in the older five columns, is read at column 0.
-pub fn widen_violation_heads<'r>(heads: impl Iterator<Item = &'r mut Atom>) {
-    for h in heads {
-        if h.rel == "violation" && h.args.len() == 5 {
-            h.args.push(Term::Int(0));
-        }
-    }
-}
-
 /// Whether a term makes a `@place` value (`RulesSeen`).
 pub fn is_place_call(name: &str) -> bool {
     name == PLACE
@@ -2091,20 +1992,6 @@ impl Lowerer {
         name
     }
 
-    /// A rule the walk made, written onto its header (`out`); nothing in a replay, whose deciding walk wrote it.
-    fn write(&mut self, rule: Rule) {
-        if self.replay.is_none() {
-            self.out.write(&mut self.prog, &rule, false);
-        }
-    }
-
-    /// `rule`, unless the walk wrote it already: a demand is written once.
-    fn write_once(&mut self, rule: Rule) {
-        if self.replay.is_none() {
-            self.out.write(&mut self.prog, &rule, true);
-        }
-    }
-
     /// How many rules the walk has written.
     fn written(&self) -> usize {
         self.out.n
@@ -2164,30 +2051,53 @@ impl Lowerer {
         Tm::StrAtom(self.prog.atom(s))
     }
 
-    /// Term `t` of the clause, a builder term (`term`).
-    fn term_tm(&mut self, t: &At) -> Result<Tm, Error> {
-        let t = self.term(t)?;
-        Ok(self.tm_of(&t))
-    }
-
-    /// Term `t` of the builder, its texts interned there (`Tm`).
-    fn tm_of(&mut self, t: &Term) -> Tm {
-        match t {
-            Term::Var(v) => Tm::VarAtom(self.prog.atom(v)),
-            Term::Wild => Tm::Wild,
-            Term::Int(i) => Tm::Int(*i),
-            Term::Str(s) => Tm::StrAtom(self.prog.atom(s)),
-            Term::Top => Tm::Top,
-            Term::Call(f, args) => {
-                let f = self.prog.atom(f);
-                Tm::CallAtom(f, args.iter().map(|a| self.tm_of(a)).collect())
+    /// `@printf(format, args…)` of a constant format as the concatenation of its pieces: literal text, `%d` an
+    /// integer's digits (`rr_to_string`), `%0Nd` its digits zero-padded to N columns, the sign first, never truncated
+    /// (`zero_pad`), `%s` a text as it is, `%%` a percent sign. `None`: another conversion, or not one argument each.
+    fn printf_pieces(&mut self, format: &str, args: &[Tm]) -> Option<Tm> {
+        let mut pieces: Vec<Tm> = Vec::new();
+        let mut literal = String::new();
+        let mut args = args.iter();
+        let mut chars = format.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '%' {
+                literal.push(c);
+                continue;
             }
-            Term::Branded(b) => Tm::Branded(*b),
+            let mut width = String::new();
+            while let Some(d) = chars.peek().filter(|d| d.is_ascii_digit()) {
+                width.push(*d);
+                chars.next();
+            }
+            let piece = match (chars.next()?, width.as_str()) {
+                ('%', "") => {
+                    literal.push('%');
+                    continue;
+                }
+                ('d', "") => Tm::CallAtom(self.prog.atom("rr_to_string"), vec![args.next()?.clone()]),
+                ('d', w) if w.starts_with('0') && w.len() > 1 => Tm::CallAtom(self.prog.atom("zero_pad"), vec![args.next()?.clone(), Tm::Int(w[1..].parse().ok()?)]),
+                ('s', "") => args.next()?.clone(),
+                _ => return None,
+            };
+            if !literal.is_empty() {
+                pieces.push(self.str_tm(&std::mem::take(&mut literal)));
+            }
+            pieces.push(piece);
         }
+        if args.next().is_some() {
+            return None;
+        }
+        if !literal.is_empty() || pieces.is_empty() {
+            pieces.push(self.str_tm(&literal));
+        }
+        let mut pieces = pieces.into_iter();
+        let first = pieces.next()?;
+        let concat = self.prog.atom("concat");
+        Some(pieces.fold(first, |acc, p| Tm::CallAtom(concat, vec![acc, p])))
     }
 
     /// The whole-string regex of a pattern computed in a rule, `p`: `^(?:p)$` made as the row's pattern is
-    /// (`anchored`).
+    /// (`print::unanchored` reads it back).
     fn anchored_tm(&mut self, p: Tm) -> Tm {
         let concat = self.prog.atom("concat");
         let (open, close) = (self.str_tm("^(?:"), self.str_tm(")$"));
@@ -5264,37 +5174,44 @@ impl Lowerer {
         self.emit_agg(var, &op, over.as_deref(), &name, args)
     }
 
-    fn term(&mut self, t: &At) -> Result<Term, Error> {
+    /// Term `t` of the clause, a builder term, its texts interned there (`Tm`).
+    fn term_tm(&mut self, t: &At) -> Result<Tm, Error> {
+        // `f(args)`, the engine's function `f`.
+        let call = |me: &mut Self, f: &str, args: Vec<Tm>| Tm::CallAtom(me.prog.atom(f), args);
+        // `a` joined to `b`, and so on, as `concat` of two.
+        let concat = |me: &mut Self, args: Vec<Tm>| {
+            let mut args = args.into_iter();
+            let first = args.next().expect("two or more");
+            args.fold(first, |acc, a| call(me, "concat", vec![acc, a]))
+        };
         Ok(match self.tv(t) {
-            T::Var(v) if v == "top" && !self.top_is_var => Term::Top,
-            T::Var(v) => Term::Var(v.into()),
-            T::Wild => Term::Wild,
-            T::Num(n) => Term::Int(n),
-            T::Str(s) => Term::Str(s.into()),
+            T::Var(v) if v == "top" && !self.top_is_var => Tm::Top,
+            T::Var(v) => self.var_tm(&v),
+            T::Wild => Tm::Wild,
+            T::Num(n) => Tm::Int(n),
+            T::Str(s) => self.str_tm(&s),
             T::Call { name, functor: true, args } => {
-                let mut args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
+                let mut terms = args.iter().map(|a| self.term_tm(a)).collect::<Result<Vec<_>, _>>()?;
                 // The data-layer programs' SQL builtins (decision 0107): the engine's functions of SQLite's meaning.
-                if let Some((f, swap)) = crate::code_rule_dsl::logic::strings::functions::catalogue(&name, args.len()) {
+                if let Some((f, swap)) = crate::code_rule_dsl::logic::strings::functions::catalogue(&name, terms.len()) {
                     if swap {
-                        args.swap(0, 1);
+                        terms.swap(0, 1);
                     }
-                    return Ok(Term::Call(f.to_owned().into(), args.into()));
+                    return Ok(call(self, f, terms));
                 }
                 // `@printf` of a constant format: its pieces concatenated (`printf_pieces`), each one a function every
                 // executor has.
                 if name == "printf"
-                    && let Some(Term::Str(format)) = args.first()
-                    && let Some(t) = printf_pieces(format, &args[1..])
+                    && let Some(T::Str(format)) = args.first().map(|a| self.tv(a))
+                    && let Some(t) = self.printf_pieces(&format, &terms[1..])
                 {
                     return Ok(t);
                 }
                 // `@concat(a, b, c)` is `@concat(@concat(a, b), c)`, as Soufflé's `cat` is.
-                if name == "concat" && args.len() > 2 {
-                    let mut args = args.into_iter();
-                    let first = args.next().expect("three or more");
-                    return Ok(args.fold(first, |acc, a| Term::Call("concat".into(), [acc, a].into())));
+                if name == "concat" && terms.len() > 2 {
+                    return Ok(concat(self, terms));
                 }
-                Term::Call(if name == "dot" { "cat".into() } else { name.into() }, args.into())
+                call(self, if name == "dot" { "cat" } else { &name }, terms)
             }
             T::Call { name, functor: false, args } => {
                 // Soufflé's functions: `cat` joins strings (the engine's `cat` joins with a dot, so it is `concat`).
@@ -5308,14 +5225,12 @@ impl Lowerer {
                     _ => return not_yet(format!("the built-in function {name}/{}", args.len())),
                 };
                 let f = f.to_owned();
-                let args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
+                let terms = args.iter().map(|a| self.term_tm(a)).collect::<Result<Vec<_>, _>>()?;
                 // `cat(a, b, c)` is `cat(cat(a, b), c)`.
                 if f == "concat" {
-                    let mut args = args.into_iter();
-                    let first = args.next().expect("two or more");
-                    return Ok(args.fold(first, |acc, a| Term::Call("concat".into(), [acc, a].into())));
+                    return Ok(concat(self, terms));
                 }
-                Term::Call(f.into(), args.into())
+                call(self, &f, terms)
             }
             T::Bin { op, l, r } => {
                 // Float arithmetic is on floats' keys (`strings::functions::float_key`), by functions of them.
@@ -5332,17 +5247,19 @@ impl Lowerer {
                     "%" if !float => "mod",
                     other => return not_yet(format!("arithmetic ({other})")),
                 };
-                Term::Call(f.to_owned().into(), [self.term(&l)?, self.term(&r)?].into())
+                let terms = vec![self.term_tm(&l)?, self.term_tm(&r)?];
+                call(self, f, terms)
             }
             // `-t` is `0 - t`.
             T::Neg(x) => {
                 let f = if self.is_float(&x) { "float_sub" } else { "sub" };
-                Term::Call(f.to_owned().into(), [Term::Int(0), self.term(&x)?].into())
+                let terms = vec![Tm::Int(0), self.term_tm(&x)?];
+                call(self, f, terms)
             }
             T::Agg { op, .. } => return not_yet(format!("the aggregate {op} as a term")),
             T::Tick(t) => return not_yet(format!("the template `{t}`")),
             // A decimal number is its float's key, which orders as the floats do.
-            T::Float(f) => Term::Int(float_key(f.parse::<f64>().map_err(|_| Error::Syntax(format!("bad decimal number {f}")))?)),
+            T::Float(f) => Tm::Int(float_key(f.parse::<f64>().map_err(|_| Error::Syntax(format!("bad decimal number {f}")))?)),
             T::Json(_) | T::Named(..) => return Err(Error::Syntax("a JSON term or an `ast` capture outside `ast(…)`".to_owned())),
         })
     }
@@ -5732,65 +5649,6 @@ const OUTLINE_PAST: usize = 16;
 pub(super) const PLACE: &str = "place";
 pub(super) const PLACE_PATH: &str = "place_path";
 pub(super) const PLACE_LINE: &str = "place_line";
-
-fn has_place(t: &Term) -> bool {
-    match t {
-        Term::Call(f, args) => f == PLACE || args.iter().any(has_place),
-        _ => false,
-    }
-}
-
-fn literal_terms(l: &Literal) -> Vec<&Term> {
-    match l {
-        Literal::Atom(a) | Literal::Agg { atom: a, .. } => a.args.iter().collect(),
-        Literal::Cmp { l, r, .. } => vec![l, r],
-        _ => Vec::new(),
-    }
-}
-
-/// `@printf(format, args…)` of a constant format as the concatenation of its pieces: literal text, `%d` an
-/// integer's digits (`rr_to_string`), `%0Nd` its digits zero-padded to N columns, the sign first, never truncated
-/// (`zero_pad`), `%s` a text as it is, `%%` a percent sign. `None`: another conversion, or not one argument each.
-fn printf_pieces(format: &str, args: &[Term]) -> Option<Term> {
-    let mut pieces: Vec<Term> = Vec::new();
-    let mut literal = String::new();
-    let mut args = args.iter();
-    let mut chars = format.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '%' {
-            literal.push(c);
-            continue;
-        }
-        let mut width = String::new();
-        while let Some(d) = chars.peek().filter(|d| d.is_ascii_digit()) {
-            width.push(*d);
-            chars.next();
-        }
-        let piece = match (chars.next()?, width.as_str()) {
-            ('%', "") => {
-                literal.push('%');
-                continue;
-            }
-            ('d', "") => Term::Call("rr_to_string".into(), [args.next()?.clone()].into()),
-            ('d', w) if w.starts_with('0') && w.len() > 1 => Term::Call("zero_pad".into(), [args.next()?.clone(), Term::Int(w[1..].parse().ok()?)].into()),
-            ('s', "") => args.next()?.clone(),
-            _ => return None,
-        };
-        if !literal.is_empty() {
-            pieces.push(Term::Str(std::mem::take(&mut literal).into()));
-        }
-        pieces.push(piece);
-    }
-    if args.next().is_some() {
-        return None;
-    }
-    if !literal.is_empty() || pieces.is_empty() {
-        pieces.push(Term::Str(literal.into()));
-    }
-    let mut pieces = pieces.into_iter();
-    let first = pieces.next()?;
-    Some(pieces.fold(first, |acc, p| Term::Call("concat".into(), [acc, p].into())))
-}
 
 /// `prog` reading the base relation `rel` (`child`, `node`): declared as the engine declares it, and an input unless
 /// a rule makes it (`derived`). For rules added to a program already read (`corpus::bridge`), as lowering adds them for

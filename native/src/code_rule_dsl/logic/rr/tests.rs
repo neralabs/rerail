@@ -2,7 +2,6 @@
 //! engine's forms, and every `.rdl` program translates to `.rr` that lowers to the same program.
 
 use super::*;
-use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef, TermRef, Version, about::About, analyses};
 use std::collections::BTreeSet;

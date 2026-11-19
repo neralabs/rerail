@@ -375,7 +375,6 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
     statements.extend(test.rules.iter().cloned());
     let read = super::lower_files(path, modules).map_err(|e| format!("{id}: {e}"))?;
     // The relations the test's `.expect`s read are outputs of its run.
-    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
     let declared: BTreeSet<String> = read.declared_names().into_iter().collect();
     let mut program = crate::code_rule_dsl::logic::program_image::Builder::on(&read);
     for e in &test.expects {
