@@ -62,7 +62,7 @@ A checkout uses its own start value, else that of the nearest recorded checkout 
 | State | What happens |
 |---|---|
 | **started** | Rules run. |
-| **stopped** | Nothing is recorded, evaluated or delivered; hooks don't contact the daemon. |
+| **stopped** | Nothing is recorded, evaluated or delivered. Hooks start no daemon, but ask a running one whether Rerail is on, waiting up to 2 s while it is busy (4 s on Windows). |
 | **not-set-up** | Started, but the repository has no configuration yet: sessions are recorded, no rule runs. |
 
 - `/rerail-start` and `/rerail-stop` (or `rerail start` and `rerail stop`) act on this checkout and its nested checkouts, which follow it again.
