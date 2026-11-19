@@ -112,7 +112,6 @@ Document IDs belong to one evaluation. Use the view and path to identify a file 
 #include "git.rr"
 
 .decl selected_message(repo: symbol, commit: symbol, message: symbol)
-git_object_request(r, c) :- git_source_commit(r, c).
 selected_message(r, c, msg) :- git_source_commit(r, c), git_message(r, c, msg).
 
 .output selected_message
@@ -122,19 +121,20 @@ selected_message(r, c, msg) :- git_source_commit(r, c), git_message(r, c, msg).
 `git_source_tree` holds the root tree for a commit or tree snapshot.
 For a tree snapshot, `git_source_commit` has zero rows.
 
-Request the object before using the absence of a metadata row. For example, a root commit has a readable commit record and zero parents.
+Bind the repository and commit to read metadata. Both can come from another relation, including a parent from an earlier lookup.
+A root commit has a readable commit record and zero parents.
 
 ```rr
 #include "git.rr"
 
 .decl parentless_commit(repo: symbol, commit: symbol)
-git_object_request(r, c) :- git_source_commit(r, c).
-parentless_commit(r, c) :- git_source_commit(r, c), git_commit(r, c, _), !git_parent(r, c, _, _).
+parentless_commit(r, c) :- git_source_commit(r, c), !git_parent(r, c, _, _).
 .output parentless_commit
 ```
 
-The `git_commit` join checks that decoding succeeded. A failed object request has a `git_object_error` row.
-Without an object request, the parent relation can be empty even for a commit with parents.
+The negative parent test requires a decoded commit. A child, a tree and an unavailable commit each produce zero root findings.
+Read `git_object_error(repo, oid, reason)` to report a failed object read.
+To enumerate a batch, you can still derive `git_object_request(repo, oid)` for every key you want to inspect.
 
 ### Read commit trailers
 
@@ -182,7 +182,6 @@ A cache warning alone leaves a successful analysis at exit status 0.
 .decl reachable(repo: symbol, commit: symbol)
 git_revision_request(r, "HEAD") :- git_root_repo(r).
 reachable(r, c) :- git_revision(r, "HEAD", c).
-git_object_request(r, c) :- reachable(r, c).
 reachable(r, p) :- reachable(r, c), git_parent(r, c, _, p).
 
 .output reachable

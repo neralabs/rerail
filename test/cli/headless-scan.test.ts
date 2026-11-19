@@ -598,6 +598,27 @@ Origin(@place(p,1), v, b, g, profile, cat("", t)) :- git_source_file(v, p, _, b)
     expect(await read(["copy.py", "a.py"])).toEqual(both);
   }, 90_000);
 
+  it("checks for a readable root commit through bound metadata in revision policies", async () => {
+    const root = checkout();
+    const initial = git(root, "rev-parse", "HEAD");
+    git(root, "commit", "--allow-empty", "-qm", "child");
+    const policy = join(root, "roots.rr");
+    const missing = "1".repeat(40);
+    writeFileSync(policy, `#include "git.rr"
+.policy "roots" revision 1
+.decl candidate(repo: symbol, oid: symbol)
+candidate(r, c) :- git_source_commit(r, c).
+candidate(r, "${missing}") :- git_root_repo(r).
+.violation Root(at: span, id: symbol) "{id}"
+Root(@place("log",1), c) :- candidate(r, c), !git_parent(r, c, _, _).
+`);
+    for (const [revision, roots] of [[initial, [initial]], ["HEAD", []]] as const) {
+      const report = await scan(root, { revision, analysisScope: "roots", rr: [policy] });
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      expect(report.violations.filter(v => v.ruleId === "roots").map(v => v.message)).toEqual(roots);
+    }
+  }, 60_000);
+
   it("reads binary object content from the selected revision through a rule handle", async () => {
     const root = checkout();
     const file = join(root, "example.bin"), policy = join(root, "signature.rr");

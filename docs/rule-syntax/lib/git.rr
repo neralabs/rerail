@@ -47,6 +47,13 @@ git_object_kind(r, oid, kind) :- git_record(r, oid, _, "kind", _, kind, _, _, _)
 .decl git_commit(repo: symbol, commit: symbol, tree: symbol)
 git_commit(r, c, t) :- git_record(r, c, _, "tree", _, t, _, _, _).
 
+.decl git_commit_readable(repo: symbol, oid: symbol)
+git_commit_readable(r, c) :- git_commit(r, c, _).
+.decl git_message_readable(repo: symbol, oid: symbol)
+git_message_readable(r, c) :- git_message(r, c, _).
+.pragma "bound-family" "git_object_request git_commit_readable git_commit git_parent git_message_bytes git_message_encoding git_author git_committer git_signature_bytes git_signature_time git_header git_header_bytes"
+.pragma "bound-family" "git_object_request git_message_readable git_message git_subject git_trailer"
+
 .decl git_parent(repo: symbol, commit: symbol, position: number, parent: symbol)
 git_parent(r, c, i, p) :- git_record(r, c, _, "parent", i, p, _, _, _).
 

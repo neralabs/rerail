@@ -143,6 +143,7 @@ impl Git {
                 return Ok(records);
             }
         }
+        crate::code_rule_dsl::logic::profile::decision("Git metadata object read", || oid.to_owned());
         let object = snapshot::verified_object(repo, id).map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }
         })?;

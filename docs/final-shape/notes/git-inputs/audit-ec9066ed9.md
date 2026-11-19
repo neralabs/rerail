@@ -2,14 +2,25 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Twenty-four of the 28 follow-up findings have verified results. Four remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+Twenty-five of the 28 follow-up findings have verified results. Three remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
 
 | Open finding | What still needs to pass |
 | --- | --- |
 | 11. Large Git blobs | Skip a binary after a bounded prefix read. Distinguish large text from an unreadable blob for loose and packed objects. |
 | 42. Removed stores | Retire a route by store identity. Apply its outstanding stop if that store returns. Preserve a different store at the same path. |
-| Bound commit metadata | Request the bound commit when a rule reads its metadata. Verify root commits, non-root commits and unavailable objects under negation. |
 | Commit diagnostic locations | Identify the repository, commit and optional field in the report. Distinguish a commit finding from a finding in a file named `git`. |
+
+## Bound commit metadata
+
+The standalone policy tested four IDs with `!git_parent`. It reported the initial commit as a root.
+The child, the tree and the missing object produced zero root findings. The missing object also produced a `missing` error.
+The policy read the child's subject and followed its parent ID to read the initial commit's subject.
+Explicitly requesting the four IDs gave the same answers and request keys.
+
+A second policy joined two batch entries to one selected label. In a fresh store it requested one commit.
+The evaluation profile recorded one native metadata read, for that commit. The headless scan also reported only the root when given the same negative parent test.
+All 16 standalone revision tests passed on Linux. Six related headless tests passed on macOS.
+[Rule examples](../../../rule-syntax/git.md#read-the-selected-commit) · [Standalone regression](../../../../native/tests/git_revision_cli.rs) · [Headless regression](../../../../test/cli/headless-scan.test.ts)
 
 ## Verified Git content handles
 

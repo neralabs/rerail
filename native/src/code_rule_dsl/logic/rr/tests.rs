@@ -558,6 +558,38 @@ fn a_negated_match_reads_its_named_groups_as_groups() {
     assert!(text.contains("(?:.*)") && !text.contains("(?<z>"), "{text}");
 }
 
+#[test]
+fn bound_family_keeps_its_contract_when_printed_and_rejects_incompatible_keys() {
+    let source = r#"
+.decl selected(r: symbol, k: number)
+.decl ask(r: symbol, k: number) extensible
+.decl complete(r: symbol, k: number)
+.decl member(r: symbol, k: number, value: symbol)
+.pragma "bound-family" "ask complete member"
+.decl empty(r: symbol, k: number)
+empty(r,k) :- selected(r,k), !member(r,k,_).
+.output empty
+"#;
+    let check = |p: &front::Program| {
+        let demand: Vec<_> = p.rules.iter().filter(|r| r.head.rel == "ask").collect();
+        assert_eq!(demand.len(), 1);
+        assert_eq!(demand[0].body[0].atom().unwrap().rel.as_str(), "selected");
+        let query = p.rules.iter().find(|r| r.head.rel == "empty").unwrap();
+        assert_eq!(query.body.iter().filter_map(Literal::atom).filter(|a| a.rel == "complete" && !a.neg).count(), 1);
+    };
+    let program = parse(source).unwrap();
+    check(&program);
+    check(&parse(&print(&program).unwrap()).unwrap());
+    for (from, to, why) in [
+        ("ask complete member", "ask complete absent", "undeclared relation absent"),
+        ("complete(r: symbol, k: number)", "complete(r: symbol)", "needs the key columns"),
+        ("member(r: symbol, k: number", "member(r: symbol, k: symbol", "needs the key columns"),
+    ] {
+        let error = parse(&source.replace(from, to)).unwrap_err().to_string();
+        assert!(error.contains(why), "{error}");
+    }
+}
+
 /// What is not lowered yet says so by name. A `must` head needs its relation declared `must, may`; a `.violation`
 /// at a span or loc whose values can be spans the engine does not make lowers (such a row has no `docof`, and so no
 /// finding).

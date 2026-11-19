@@ -10,6 +10,14 @@ struct Checkout {
     policy: PathBuf,
 }
 
+/// Each decision row contains its detail and, when it repeats, a count such as "(x2)".
+fn profile_decisions(directory: &Path, topic: &str) -> Vec<String> {
+    let trace = fs::read_to_string(directory.join("profile.txt")).unwrap();
+    let mut lines = trace.lines();
+    if !lines.any(|line| line.strip_suffix(':') == Some(topic)) { return Vec::new(); }
+    lines.map_while(|line| line.strip_prefix("  - ")).map(str::to_owned).collect()
+}
+
 impl Checkout {
     fn new() -> Self {
         let area = tempfile::tempdir().unwrap();
@@ -557,16 +565,16 @@ errors(id,why) :- git_content_error(_,id,why).
             assert_eq!(read("errors").trim_end(), format!("{blob}\t{}", failure.unwrap()));
             for name in ["acquired","signature","git_content_bytes"] { assert!(read(name).is_empty(), "{name}"); }
         }
-        fs::read_to_string(profile.join("profile.txt")).unwrap().lines().filter(|l| l.contains("Git payload verified")).count()
+        profile_decisions(&profile, "Git payload verified")
     };
     let stored = || ContentStore::open(&database).unwrap().source_by_hash(canonical).unwrap();
-    assert_eq!(scan("first", None), 1);
+    assert_eq!(scan("first", None), [blob.as_str()]);
     let id = stored().expect("the ordinary source store holds the payload");
     assert_eq!(ContentStore::open(&database).unwrap().get_source(id).unwrap(), payload);
     fs::write(f.repo.join("a.py"), "another = 2\n").unwrap();
     f.git(&["add", "--", "a.py"]);
     f.git(&["commit", "-qm", "unrelated"]);
-    assert_eq!(scan("second", None), 0, "an unrelated commit reuses the verified bytes");
+    assert!(scan("second", None).is_empty(), "an unrelated commit reuses the verified bytes");
     assert_eq!(stored(), Some(id));
     let release = |scope: &str| {
         let (store_id, members) = content_store::analysis_scope::release_named_scope(&database, scope, &[]).unwrap();
@@ -634,6 +642,68 @@ checked(k,id,h,bytes) :- git_object(_,id,k,h), git_content_bytes(h,0,_,bytes).
     expected.sort();
     assert_eq!(rows, expected);
     assert_eq!(fs::read_to_string(out.join("git_content_error.csv")).unwrap().trim_end(), "unopened\tx\trepository-not-open");
+}
+
+#[test]
+fn bound_commit_metadata_requests_each_key_and_guards_absence() {
+    let f = Checkout::new();
+    let root = f.git(&["rev-parse", "HEAD"]);
+    f.git(&["commit", "--allow-empty", "-qm", "child"]);
+    let child = f.git(&["rev-parse", "HEAD"]);
+    let tree = f.git(&["rev-parse", "HEAD^{tree}"]);
+    let missing = "1111111111111111111111111111111111111111";
+    let policy = f.area.path().join("bound.rr");
+    let out = f.area.path().join("bound-results");
+    let direct = format!(r#"#include "git.rr"
+.decl candidate(id: symbol)
+candidate("{root}"). candidate("{child}"). candidate("{tree}"). candidate("{missing}").
+.decl roots(id: symbol)
+roots(id) :- git_root_repo(r), candidate(id), !git_parent(r, id, _, _).
+.decl selected(id: symbol, message: symbol)
+selected(id, msg) :- git_source_commit(r, id), git_subject(r, id, msg).
+.decl parent_subject(id: symbol, subject: symbol)
+parent_subject(p, subject) :- git_subject(r, p, subject), git_parent(r, c, _, p), git_source_commit(r, c).
+.decl failed(id: symbol, reason: symbol)
+failed(id, reason) :- git_object_error(_, id, reason).
+.output roots, selected, parent_subject, failed, git_object_request
+"#);
+    for requests in ["", "git_object_request(r, id) :- git_root_repo(r), candidate(id)."] {
+        fs::write(&policy, format!("{direct}\n{requests}\n")).unwrap();
+        let result = f.run("logic", &[&policy, &f.repo, &out], Some("metadata"));
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        assert!(f.run("csv", &[&out], None).status.success());
+        let read = |name: &str| fs::read_to_string(out.join(format!("{name}.csv"))).unwrap().trim_end().to_owned();
+        assert_eq!(read("roots"), root);
+        assert_eq!(read("selected"), format!("{child}\tchild"));
+        assert_eq!(read("parent_subject"), format!("{root}\ttwo identifiers"));
+        assert_eq!(read("failed"), format!("{missing}\tmissing"));
+        let rows = read("git_object_request");
+        let mut keys: Vec<_> = rows.lines().map(|row| row.split_once('\t').unwrap().1).collect();
+        keys.sort();
+        let mut expected = [&*root, &*child, &*tree, missing];
+        expected.sort();
+        assert_eq!(keys, expected);
+    }
+    // The join key selects the commit. Projecting it away too early would also ask for the missing object.
+    fs::write(&policy, format!(r#"#include "git.rr"
+.decl batch(label: symbol, oid: symbol)
+batch("keep", "{root}"). batch("drop", "{missing}").
+.decl chosen(label: symbol)
+chosen("keep").
+.decl subject(s: symbol)
+subject(s) :- git_root_repo(r), batch(label, c), chosen(label), git_subject(r, c, s).
+.output subject, git_object_request
+"#)).unwrap();
+    let profile = f.area.path().join("profile-batch");
+    let result = f.command("logic", &[&policy, &f.repo, &out], Some("metadata"))
+        .env("RERAIL_TAPE_CACHE", f.area.path().join("batch.sqlite"))
+        .env("RERAIL_PROFILE", &profile).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert_eq!(profile_decisions(&profile, "Git metadata object read"), [root.as_str()]);
+    assert!(f.run("csv", &[&out], None).status.success());
+    assert_eq!(fs::read_to_string(out.join("subject.csv")).unwrap().trim_end(), "two identifiers");
+    let requests = fs::read_to_string(out.join("git_object_request.csv")).unwrap();
+    assert_eq!(requests.lines().map(|row| row.split_once('\t').unwrap().1).collect::<Vec<_>>(), [root]);
 }
 
 #[test]

@@ -32,12 +32,11 @@ The ordinary invocation does not require a programmer to write a repository path
 
 .decl empty_head_message(repo: symbol, view: symbol, commit: symbol)
 git_view_revision_request(v, "HEAD") :- git_root_view(_, v).
-git_object_request(r, c) :- git_root_view(r, v), git_view_revision(v, "HEAD", c).
 empty_head_message(r, v, c) :- git_root_view(r, v), git_view_revision(v, "HEAD", c), git_message(r, c, "").
 .output empty_head_message
 ```
 
-The executable example requests the commit explicitly. Section 6 describes the remaining work on direct bound lookup.
+The join binds the repository and the commit. Section 6 describes how the engine requests that key.
 
 ## 2. Mutable names and immutable objects
 
@@ -194,6 +193,9 @@ The implementation needs a binding-mode contract for each keyed public view.
 For example, bound `(repo, commit)` in `git_message` must reach an object request through the library rules.
 
 The library declares the request, completeness relation and member relations together.
+For example, `.pragma "bound-family" "git_object_request git_commit_readable git_parent"` declares one member.
+The first name identifies the request. The second identifies a relation with one row for each complete key.
+The remaining names identify relations that supply values for the key.
 For each member, the first columns have the same types and order as the request key.
 A rule can bind those columns with literals, a fact, a selection, or the result of another lookup.
 The compiler derives a request for each bound key. Rules can still populate the request relation directly for batch enumeration.

@@ -66,6 +66,7 @@ use crate::code_rule_dsl::logic::front::{AXIS, AggOp, Atom, DESCENDANTS, Error, 
 use crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY;
 use crate::code_rule_dsl::logic::strings::SET;
 pub mod findings;
+mod bound_family;
 
 /// The text tests: their `.rr` names and the engine's.
 pub const TESTS: [(&str, &str); 11] = [
@@ -364,6 +365,7 @@ pub struct Seeds {
     given: BTreeMap<String, Vec<String>>,
     /// The demands the scope's modules stated.
     printed: BTreeSet<String>,
+    families: Vec<String>,
 }
 
 /// `scope`, seeded (`Seeds`).
@@ -376,7 +378,8 @@ pub fn seeds(scope: &[&Module]) -> Seeds {
         given.extend(m.written.iter().map(|(k, v)| (k.clone(), v.clone())));
     }
     let printed = scope.iter().flat_map(|m| m.l.printed_demands.iter().cloned()).collect();
-    Seeds { l, seeded, given, printed }
+    let families = scope.iter().flat_map(|m| bound_family::specs(&m.l.prog)).map(str::to_owned).collect();
+    Seeds { l, seeded, given, printed, families }
 }
 
 pub fn lower_module_in(statements: Vec<Statement>, scope: &[&Module]) -> Result<Module, Error> {
@@ -427,6 +430,10 @@ pub fn lower_module_seeded(statements: Vec<Statement>, seeds: &Seeds) -> Result<
                 l.lattices.insert(name, (ty(&base), lub.clone()));
             }
             Item::Pragma(words) => match words.as_slice() {
+                [key, family] if key == "bound-family" => {
+                    bound_family::check_names(family).map_err(at)?;
+                    l.prog.settings.push(("pragma".to_owned(), format!("\"bound-family\" {}", quote(family))));
+                }
                 [magic, relations] if magic == "magic-transform" => {
                     l.prog.demand.extend(relations.split(',').map(str::trim).filter(|r| !r.is_empty()).map(str::to_owned));
                 }
@@ -494,6 +501,7 @@ pub fn lower_module_seeded(statements: Vec<Statement>, seeds: &Seeds) -> Result<
             e => e,
         })?;
     }
+    bound_family::lower(&mut l.prog, &seeds.families, &l.deps)?;
     // Each directive names what its rules read: a relation of their body, and the variables it waits for.
     for (shape, line) in shapes {
         use crate::code_rule_dsl::logic::front::{ShapeWait, shape_base};
