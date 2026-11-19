@@ -194,8 +194,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/strings/functions.rs", "TO_PRECISION"),
     // The rule being compiled: the step that first bound each slot, for a refusal's message.
     ("code_rule_dsl/logic/native/setfix/device.rs", "BINDER"),
-    // A measurement aid written as a process goes: a file appended to (`RERAIL_PREPARED_WHY`).
-    ("code_rule_dsl/logic/plan/prepared.rs", "LOG"),
     // What registers at load: the world's files with the answerers installed, and the record's kinds' applies.
     ("code_rule_dsl/logic/rr/lower.rs", "ALL"),
     ("content_store/record.rs", "KINDS"),
@@ -257,22 +255,18 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/extension/setfix.rs", "COMPONENTS"),
     ("code_rule_dsl/logic/native/extension/setfix.rs", "DERIVED"),
     ("code_rule_dsl/logic/native/extension/setfix.rs", "INPUTS"),
-    ("code_rule_dsl/logic/native/extension/setfix.rs", "LOADS"),
     ("code_rule_dsl/logic/native/extension/setfix.rs", "SYMS"),
     ("code_rule_dsl/logic/native/setfix.rs", "ADOPTED"),
     ("code_rule_dsl/logic/native/setfix.rs", "CHANGING"),
     ("code_rule_dsl/logic/native/setfix.rs", "COMPONENTS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "DERIVATIONS"),
     ("code_rule_dsl/logic/native/setfix.rs", "DERIVED"),
     ("code_rule_dsl/logic/native/setfix.rs", "INPUTS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "LOADS"),
     ("code_rule_dsl/logic/native/setfix.rs", "STORED"),
     ("code_rule_dsl/logic/native/setfix.rs", "SYMS"),
     // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
     ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
     ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
-    ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
     // A live connection's file and symbol table, by its handle (dropped as it closes, `forget_scope`): state of the
     // connections, not a result kept.
     ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
@@ -290,7 +284,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
     ("code_rule_dsl/logic/native/setfix/table.rs", "BUILT"),
-    ("code_rule_dsl/logic/plan.rs", "LOG"),
     // core.rr's declarations (RER-131), read once from the engine's own library text: not a result kept.
     ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
     // This thread's zstd contexts by dictionary (RER-131): open things, not results.
@@ -309,14 +302,12 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "PATH"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "SAID"),
     // Profiling totals, consumed and cleared by each report; no reusable results.
-    ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "FACTS_DIR"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN"),
     // Phase 1's exports while the run that ran it is under way: the run's own facts, gone when it ends.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "PHASE_ONE"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING"),
-    ("code_rule_dsl/logic/plan/sketch.rs", "FILE"),
     ("code_rule_dsl/logic/profile.rs", "DIR"),
     // Ended threads' CPU accounts and their CPU outside spans, summed for the report; no reusable results.
     ("code_rule_dsl/logic/profile.rs", "EXITED"),
@@ -392,9 +383,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "SEEN"),
     // Profiling: where a plan is made and the keys planned in a profiled run, for the planning budget's account.
     ("code_rule_dsl/logic/plan.rs", "PLAN_SITE"),
-    // Measurement aids under `RERAIL_PLAN_GREEDY_PROBE`: the probe's counts and sums.
-    ("code_rule_dsl/logic/plan.rs", "SEEN"),
-    ("code_rule_dsl/logic/plan.rs", "SUMS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),
@@ -404,7 +392,6 @@ const STATE: &[(&str, &str)] = &[
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
-    ("code_rule_dsl/logic/plan/corpus/inputs.rs", "CONSULTED", "1"),
     ("code_rule_dsl/logic/strings/git.rs", "STATE", "1"),
     ("code_rule_dsl/logic/rr.rs", "LIBRARIES", "2"),
     ("code_rule_dsl/logic/rr.rs", "PARSED", "2"),
@@ -432,7 +419,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/text.rs", "NAMES", "7"),
 ];
 /// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised.
-const NOT_YET_MAPS_PIN: usize = 22;
+const NOT_YET_MAPS_PIN: usize = 21;
 
 fn src() -> PathBuf {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")

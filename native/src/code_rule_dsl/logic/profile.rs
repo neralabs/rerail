@@ -1452,11 +1452,7 @@ pub fn setting<T: Clone + Send + Sync + 'static>(read: impl FnOnce() -> T) -> T 
     let site = at as *const std::panic::Location<'static> as usize;
     let hit = SEEN.with(|seen| {
         let seen = seen.borrow();
-        let same = RUN.with(|r| match (r.borrow().as_ref(), seen.0.as_ref()) {
-            (Some(now), Some(was)) => std::ptr::addr_eq(std::sync::Arc::as_ptr(now), was.as_ptr()),
-            _ => false,
-        });
-        if same { seen.1.get(&site).and_then(|v| v.downcast_ref::<T>()).cloned() } else { None }
+        if seen.is_current() { seen.settings.get(&site).and_then(|v| v.downcast_ref::<T>()).cloned() } else { None }
     });
     match hit {
         Some(v) => v,
@@ -1477,28 +1473,43 @@ fn setting_slow<T: Clone + Send + Sync + 'static>(at: &'static std::panic::Locat
             run.values().settings.lock().entry(key).or_insert_with(|| std::sync::Arc::new(v.clone())).downcast_ref::<T>().expect("a setting's type is its key's").clone()
         }
     };
-    SEEN.with(|seen| {
-        let mut seen = seen.borrow_mut();
-        if !seen.0.as_ref().is_some_and(|was| std::ptr::addr_eq(std::sync::Arc::as_ptr(&run), was.as_ptr())) {
-            *seen = (Some(std::sync::Arc::downgrade(&run)), Default::default());
-        }
-        seen.1.insert(site, Box::new(v.clone()));
-    });
+    SEEN.with(|seen| seen.borrow_mut().of(&run).settings.insert(site, Box::new(v.clone())));
     v
 }
 
-thread_local! {
-    /// This thread's copy of the settings the run under way on it read (`setting`; decision 0442): the run's own
-    /// values, by the reading place's address, held with the run (weakly: a run ended is never taken for another).
-    static SEEN: std::cell::RefCell<(Option<std::sync::Weak<dyn RunOwn>>, rustc_hash::FxHashMap<usize, Box<dyn std::any::Any>>)> = std::cell::RefCell::new((None, Default::default()));
-}
-
-/// The run's own value of type `T` (decision 0442): a measurement's sums, a log, a batch. Made on first use, it goes
-/// with the run. Outside a run, a new one each time (what is written to it is not kept).
+/// The run's own value of type `T` (a measurement's sums, a log's state; decision 0442), made the first time the
+/// run asks for it. Outside a run, a value of its own that nothing keeps.
 pub fn local<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
     let Some(run) = run_own() else { return std::sync::Arc::new(T::default()) };
     let v = std::sync::Arc::clone(run.values().locals.lock().entry(std::any::TypeId::of::<T>()).or_insert_with(|| std::sync::Arc::new(T::default())));
     v.downcast::<T>().expect("a local's type is its key")
+}
+
+/// `f` of the run's own value of type `T` (`local`), on a hot path: this thread's copy of the run's locals
+/// (`SEEN`) answers with no lock and no count of references. Outside a run, `f` of a value of its own.
+#[inline]
+pub fn with_local<T: Default + Send + Sync + 'static, R>(f: impl FnOnce(&T) -> R) -> R {
+    let held = SEEN.with(|seen| {
+        let seen = seen.borrow();
+        if !seen.is_current() {
+            return None;
+        }
+        seen.locals.get(&std::any::TypeId::of::<T>()).and_then(|v| v.downcast_ref::<T>()).map(|t| t as *const T)
+    });
+    match held {
+        // SAFETY: `SEEN` holds the value (an `Arc` of the run's own, the run's `locals` another) while the run under
+        // way on this thread is the one it was copied from; nothing `f` runs ends that run (a run nested in it joins it).
+        Some(t) => f(unsafe { &*t }),
+        None => with_local_slow(f),
+    }
+}
+
+#[cold]
+fn with_local_slow<T: Default + Send + Sync + 'static, R>(f: impl FnOnce(&T) -> R) -> R {
+    let Some(run) = run_own() else { return f(&T::default()) };
+    let v = local::<T>();
+    SEEN.with(|seen| seen.borrow_mut().of(&run).locals.insert(std::any::TypeId::of::<T>(), v.clone()));
+    f(&v)
 }
 
 /// The run's own value of type `T`, if the run under way made it (a report reads what the run wrote, and makes none).
@@ -1506,6 +1517,40 @@ pub fn local_if_any<T: Send + Sync + 'static>() -> Option<std::sync::Arc<T>> {
     let run = run_own()?;
     let v = run.values().locals.lock().get(&std::any::TypeId::of::<T>()).cloned()?;
     v.downcast::<T>().ok()
+}
+
+/// This thread's copy of what the run under way on it read (`setting`, `with_local`; decision 0442): the run's
+/// own values, held with the run (weakly: a run ended is never taken for another).
+#[derive(Default)]
+struct Seen {
+    run: Option<std::sync::Weak<dyn RunOwn>>,
+    /// Settings by the reading place's address.
+    settings: rustc_hash::FxHashMap<usize, Box<dyn std::any::Any>>,
+    /// The run's locals by type.
+    locals: rustc_hash::FxHashMap<std::any::TypeId, std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+}
+
+impl Seen {
+    /// Whether the copy is of the run under way on this thread.
+    #[inline]
+    fn is_current(&self) -> bool {
+        RUN.with(|r| match (r.borrow().as_ref(), self.run.as_ref()) {
+            (Some(now), Some(was)) => std::ptr::addr_eq(std::sync::Arc::as_ptr(now), was.as_ptr()),
+            _ => false,
+        })
+    }
+
+    /// The copy for `run`, emptied first if it was another's.
+    fn of(&mut self, run: &std::sync::Arc<dyn RunOwn>) -> &mut Self {
+        if !self.run.as_ref().is_some_and(|was| std::ptr::addr_eq(std::sync::Arc::as_ptr(run), was.as_ptr())) {
+            *self = Seen { run: Some(std::sync::Arc::downgrade(run)), ..Default::default() };
+        }
+        self
+    }
+}
+
+thread_local! {
+    static SEEN: std::cell::RefCell<Seen> = std::cell::RefCell::new(Seen::default());
 }
 
 /// A run starts on this thread (`plan::corpus`): before its first wave, unless it is nested in a run inside its

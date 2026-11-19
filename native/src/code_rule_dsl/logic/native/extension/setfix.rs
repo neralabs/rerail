@@ -698,13 +698,24 @@ fn thread_cpu() -> f64 {
     t.tv_sec as f64 + t.tv_nsec as f64 / 1e9
 }
 
-/// CPU seconds and rows of input loads and index builds: [base facts (construction), lower strata's tables].
-static LOADS: Mutex<[(f64, u64); 2]> = Mutex::new([(0.0, 0); 2]);
+/// CPU seconds and rows of input loads and index builds: [base facts (construction), lower strata's tables], over
+/// the run (decision 0442).
+#[derive(Default)]
+struct Loads(Mutex<[(f64, u64); 2]>);
+
+/// Adds `cpu` seconds and `rows` to the run's loads of part `i` (`Loads`).
+fn loaded(i: usize, cpu: f64, rows: u64) {
+    crate::code_rule_dsl::logic::run::with_local(|l: &Loads| {
+        let l = &mut l.0.lock().unwrap()[i];
+        l.0 += cpu;
+        l.1 += rows;
+    });
+}
 
 /// `set_fixpoint_loads()`: "base_cpu_ms base_rows derived_cpu_ms derived_rows". Base-fact relations and their
 /// indexes are construction (the product's tape and anchor index hold them), reported apart from execution.
 pub fn loads() -> String {
-    let l = LOADS.lock().unwrap();
+    let l = crate::code_rule_dsl::logic::run::local_if_any::<Loads>().map(|l| *l.0.lock().unwrap()).unwrap_or_default();
     format!("{:.1} {} {:.1} {}", l[0].0 * 1e3, l[0].1, l[1].0 * 1e3, l[1].1)
 }
 
@@ -773,8 +784,7 @@ impl InRel {
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
             let m = if cols.is_empty() { Csr { cols: Vec::new(), table: HashTable::new(), ids: Vec::new() } } else { Csr::build(self, cols) };
-            let l = &mut LOADS.lock().unwrap()[usize::from(!self.base)];
-            l.0 += thread_cpu() - c0;
+            loaded(usize::from(!self.base), thread_cpu() - c0, 0);
             if std::env::var_os("RDL_PROFILE").is_some() {
                 eprintln!("      index on {cols:?} of {} rows in {:.1} ms", self.len(), t0.elapsed().as_secs_f64() * 1e3);
             }
@@ -799,11 +809,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
         n += 1;
     }
     let rel = Arc::new(InRel { k: types.len(), n, rows, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()) });
-    {
-        let l = &mut LOADS.lock().unwrap()[usize::from(!base)];
-        l.0 += thread_cpu() - c0;
-        l.1 += rel.len() as u64;
-    }
+    loaded(usize::from(!base), thread_cpu() - c0, rel.len() as u64);
     if std::env::var_os("RDL_PROFILE").is_some() {
         eprintln!("      input {} rows in {:.1} ms: SELECT {cols} FROM {table}", rel.len(), t0.elapsed().as_secs_f64() * 1e3);
     }

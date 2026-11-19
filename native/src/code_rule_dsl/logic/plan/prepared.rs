@@ -441,12 +441,12 @@ fn prepare_rule(model: &mut Model, f: super::fields::Fields<'_>, b: &super::body
 /// `RERAIL_PREPARED_WHY=FILE` (a measurement aid): each rule not prepared, appended as a version's plans are made:
 /// why (the first literal that stops it: its kind, or the relation with no size or the column with no distinct
 /// values) and its head.
-fn why_log() -> Option<&'static parking_lot::Mutex<std::fs::File>> {
-    static LOG: std::sync::LazyLock<Option<parking_lot::Mutex<std::fs::File>>> = std::sync::LazyLock::new(|| {
+/// The run's own (opened once a run, decision 0442).
+fn why_log() -> Option<std::sync::Arc<parking_lot::Mutex<std::fs::File>>> {
+    crate::code_rule_dsl::logic::run::setting(|| {
         let p = std::env::var_os("RERAIL_PREPARED_WHY")?;
-        std::fs::OpenOptions::new().create(true).append(true).open(p).ok().map(parking_lot::Mutex::new)
-    });
-    LOG.as_ref()
+        std::fs::OpenOptions::new().create(true).append(true).open(p).ok().map(|f| std::sync::Arc::new(parking_lot::Mutex::new(f)))
+    })
 }
 
 fn mode_code(m: Option<super::Mode>) -> i64 {

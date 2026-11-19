@@ -1941,12 +1941,12 @@ pub fn plans_to_store() -> Option<StoredPlans> {
 /// `RERAIL_JOIN_LINES=FILE` (a measurement aid): each line that ran a search's work or more, appended as it ends,
 /// tab-separated: its stratum, its delta, its order (literal positions), its rows of work, its price for the rows it
 /// read, its wall seconds, its plan key and its rule.
-fn line_log() -> Option<&'static parking_lot::Mutex<std::fs::File>> {
-    static LOG: std::sync::LazyLock<Option<parking_lot::Mutex<std::fs::File>>> = std::sync::LazyLock::new(|| {
+/// The run's own (opened once a run, decision 0442).
+fn line_log() -> Option<std::sync::Arc<parking_lot::Mutex<std::fs::File>>> {
+    crate::code_rule_dsl::logic::run::setting(|| {
         let p = std::env::var_os("RERAIL_JOIN_LINES")?;
-        std::fs::OpenOptions::new().create(true).append(true).open(p).ok().map(parking_lot::Mutex::new)
-    });
-    LOG.as_ref()
+        std::fs::OpenOptions::new().create(true).append(true).open(p).ok().map(|f| std::sync::Arc::new(parking_lot::Mutex::new(f)))
+    })
 }
 
 /// Adds a stratum's lines as they ran to the run's (decision 0203 §4): sent to its log (decision 0301: a channel,
@@ -3497,8 +3497,8 @@ impl Model {
             && let Ok((priced, _)) = self.plan_search(pf, b, first, Some(&got.0.0), false, &mut joins::SearchCx::default())
         {
             use std::io::Write as _;
-            static LOG: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::OnceLock::new();
-            let log = LOG.get_or_init(|| std::env::var_os("RERAIL_STATS_SKEW_LOG").and_then(|p| std::fs::OpenOptions::new().create(true).append(true).open(p).ok()).map(std::sync::Mutex::new));
+            // The run's own (opened once a run, decision 0442).
+            let log = crate::code_rule_dsl::logic::run::setting(|| std::env::var_os("RERAIL_STATS_SKEW_LOG").and_then(|p| std::fs::OpenOptions::new().create(true).append(true).open(p).ok()).map(|f| std::sync::Arc::new(std::sync::Mutex::new(f))));
             if let Some(f) = log {
                 let same = b.shown(&got.0.0) == b.shown(&truth.0);
                 let head = b.head_text();
@@ -3628,8 +3628,11 @@ impl Model {
             if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_PLAN_GREEDY_PROBE").is_some()) {
                 // Bulk planning's sharing (a measurement aid): column tables made per search, against the relations
                 // and (relation, constants) they are of.
-                static SEEN: parking_lot::Mutex<(u64, Option<std::collections::HashSet<String>>, Option<std::collections::HashSet<String>>)> = parking_lot::Mutex::new((0, None, None));
-                let mut g = SEEN.lock();
+                // The run's own (decision 0442).
+                #[derive(Default)]
+                struct Seen(parking_lot::Mutex<(u64, Option<std::collections::HashSet<String>>, Option<std::collections::HashSet<String>>)>);
+                let seen = crate::code_rule_dsl::logic::run::local::<Seen>();
+                let mut g = seen.0.lock();
                 g.0 += 1;
                 g.1.get_or_insert_default().insert(rel.to_string());
                 let with_constants = format!("{}{:?}", rel, args.iter().map(|t| b.constant(*t)).collect::<Vec<_>>());
@@ -4671,8 +4674,11 @@ impl Model {
             // could save less than the search would cost.
             let cost = SEARCH_FIXED_ROWS + candidates as f64;
             let taken = g.as_ref().is_some_and(|g| g.0 <= cost);
-            static SUMS: parking_lot::Mutex<[f64; 8]> = parking_lot::Mutex::new([0.0; 8]);
-            let mut s = SUMS.lock();
+            // The run's own (decision 0442).
+            #[derive(Default)]
+            struct Sums(parking_lot::Mutex<[f64; 8]>);
+            let sums = crate::code_rule_dsl::logic::run::local::<Sums>();
+            let mut s = sums.0.lock();
             let at = if taken { 0 } else { 4 };
             s[at] += 1.0;
             s[at + 1] += candidates as f64;

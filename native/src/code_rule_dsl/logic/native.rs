@@ -21,7 +21,7 @@
 pub mod setfix;
 pub mod width;
 #[cfg(any(test, feature = "test-hooks"))]
-pub use setfix::DERIVATIONS;
+pub use setfix::Derivations;
 pub use setfix::{forget_engine, forget_scope};
 pub mod aggregation;
 /// `dfs_first` and `dfs_first_memo` (`core.rr`): a relation the evaluator makes from its inputs' rows.

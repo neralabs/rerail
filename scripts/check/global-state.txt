@@ -173,22 +173,18 @@ native/src/code_rule_dsl/logic/native/extension.rs::TAPE	run	a run's own results
 native/src/code_rule_dsl/logic/native/extension/setfix.rs::COMPONENTS	run	a run's own results or batch: two runs at once collide
 native/src/code_rule_dsl/logic/native/extension/setfix.rs::DERIVED	run	a run's own results or batch: two runs at once collide
 native/src/code_rule_dsl/logic/native/extension/setfix.rs::INPUTS	run	a run's own results or batch: two runs at once collide
-native/src/code_rule_dsl/logic/native/extension/setfix.rs::LOADS	run	a run's measurement: two runs at once mix their numbers
 native/src/code_rule_dsl/logic/native/extension/setfix.rs::SYMS	run	a run's own results or batch: two runs at once collide
 native/src/code_rule_dsl/logic/native/setfix.rs::ADOPTED	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/native/setfix.rs::CHANGING	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/native/setfix.rs::COMPONENTS	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/native/setfix.rs::CUTS	review	
 native/src/code_rule_dsl/logic/native/setfix.rs::DEFERRED_WALKS	review	
-native/src/code_rule_dsl/logic/native/setfix.rs::DERIVATIONS	run	a run's measurement: two runs at once mix their numbers
 native/src/code_rule_dsl/logic/native/setfix.rs::DERIVED	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/native/setfix.rs::INPUTS	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/native/setfix.rs::LEFT_IN_ORDER	review	
-native/src/code_rule_dsl/logic/native/setfix.rs::LOADS	run	a run's measurement: two runs at once mix their numbers
 native/src/code_rule_dsl/logic/native/setfix.rs::ONCE	review	
 native/src/code_rule_dsl/logic/native/setfix.rs::ORDERS_MADE	review	
 native/src/code_rule_dsl/logic/native/setfix.rs::ORDERS_OPENED	review	
-native/src/code_rule_dsl/logic/native/setfix.rs::PROBES	run	a run's measurement: two runs at once mix their numbers
 native/src/code_rule_dsl/logic/native/setfix.rs::SCOPE_PATHS	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/native/setfix.rs::SCOPE_SYMS	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/native/setfix.rs::STORED	run	a run's own results or batch: two runs at once collide
@@ -213,17 +209,14 @@ native/src/code_rule_dsl/logic/plan.rs::BUDGET_MISS	review
 native/src/code_rule_dsl/logic/plan.rs::INPUT_VIEWS	review	
 native/src/code_rule_dsl/logic/plan.rs::KEPT	run	a run's own results or batch: two runs at once collide
 native/src/code_rule_dsl/logic/plan.rs::LAZY	review	
-native/src/code_rule_dsl/logic/plan.rs::LOG	run	a run's measurement: two runs at once mix their numbers
 native/src/code_rule_dsl/logic/plan.rs::MODE_STRATA	review	
 native/src/code_rule_dsl/logic/plan.rs::PLAN_CACHE	review	
 native/src/code_rule_dsl/logic/plan.rs::PUBLISHED	review	
 native/src/code_rule_dsl/logic/plan.rs::RUNS	review	
 native/src/code_rule_dsl/logic/plan.rs::SEARCHES	review	
-native/src/code_rule_dsl/logic/plan.rs::SEEN	run	a run's measurement: two runs at once mix their numbers
 native/src/code_rule_dsl/logic/plan.rs::SHAPED	review	
 native/src/code_rule_dsl/logic/plan.rs::SHOWN	review	
 native/src/code_rule_dsl/logic/plan.rs::STATISTICS	review	
-native/src/code_rule_dsl/logic/plan.rs::SUMS	run	a run's measurement: two runs at once mix their numbers
 native/src/code_rule_dsl/logic/plan.rs::TEMP_LEFT	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/plan.rs::UNSIZED_DELTAS	review	
 native/src/code_rule_dsl/logic/plan/choices.rs::KEPT	shared	a cache (decision 0104 moves it to facts, in the shared store)
@@ -236,10 +229,8 @@ native/src/code_rule_dsl/logic/plan/corpus.rs::PREPARED	shared	a cache (decision
 native/src/code_rule_dsl/logic/plan/corpus.rs::RUNS_STARTED	review	
 native/src/code_rule_dsl/logic/plan/corpus.rs::STORE	run	a run's own results or batch: two runs at once collide
 native/src/code_rule_dsl/logic/plan/corpus/inputs.rs::BASE	review	
-native/src/code_rule_dsl/logic/plan/corpus/inputs.rs::CONSULTED	run	a run's measurement: two runs at once mix their numbers
 native/src/code_rule_dsl/logic/plan/corpus/inputs.rs::FACTS_DIR	review	
 native/src/code_rule_dsl/logic/plan/corpus/inputs.rs::REQUIRE_FACTS	review	
-native/src/code_rule_dsl/logic/plan/corpus/memo.rs::SIZES	run	a run's measurement: two runs at once mix their numbers
 native/src/code_rule_dsl/logic/plan/corpus/phase0.rs::KEPT	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/logic/plan/corpus/phase0.rs::RUNS	review	
 native/src/code_rule_dsl/logic/plan/corpus/phases.rs::BATCH	run	a run's own results or batch: two runs at once collide
@@ -266,11 +257,9 @@ native/src/code_rule_dsl/logic/plan/keeps.rs::OBSERVED	review
 native/src/code_rule_dsl/logic/plan/output.rs::WRITES	review	
 native/src/code_rule_dsl/logic/plan/placement.rs::RECORDED	run	a run's measurement: two runs at once mix their numbers
 native/src/code_rule_dsl/logic/plan/placement.rs::RECORDING	review	
-native/src/code_rule_dsl/logic/plan/prepared.rs::LOG	run	a run's measurement: two runs at once mix their numbers
 native/src/code_rule_dsl/logic/plan/prepared.rs::SEARCHED	review	
 native/src/code_rule_dsl/logic/plan/prepared.rs::TAKEN	review	
 native/src/code_rule_dsl/logic/plan/prepared.rs::VERSIONS	review	
-native/src/code_rule_dsl/logic/plan/sketch.rs::FILE	run	a run's measurement: two runs at once mix their numbers
 native/src/code_rule_dsl/logic/plan/table.rs::BATCHES	review	
 native/src/code_rule_dsl/logic/plan/table.rs::IN_PLACE	review	
 native/src/code_rule_dsl/logic/plan/table.rs::NAMES	shared	shared by design: an interner (names are visible to every caller holding it)
@@ -294,7 +283,7 @@ native/src/code_rule_dsl/logic/profile/memory.rs::PEAK	review
 native/src/code_rule_dsl/logic/profile/memory.rs::SAMPLED	run	a run's measurement: two runs at once mix their numbers
 native/src/code_rule_dsl/logic/profile/memory.rs::START	review	
 native/src/code_rule_dsl/logic/profile/memory.rs::STARTED	review	
-native/src/code_rule_dsl/logic/profile/roofline.rs::ROOFS	run	a run's measurement: two runs at once mix their numbers
+native/src/code_rule_dsl/logic/profile/roofline.rs::ROOFS	shared	the machine's measured roofs: a model of the machine, from the shared object
 native/src/code_rule_dsl/logic/profile/watch.rs::SNAPSHOTS	review	
 native/src/code_rule_dsl/logic/rr.rs::CORE	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/rr.rs::LIBRARIES	shared	a cache (decision 0104 moves it to facts, in the shared store)
@@ -491,7 +480,7 @@ native/src/content_store/record.rs::KINDS	stays	code a crate above registers at 
 native/src/content_store/record.rs::LOG	review	
 native/src/content_store/schema.rs::SCHEMA_OBJECTS	stays	computed once from the engine's own files
 native/src/content_store/segments.rs::WRITES	review	
-native/src/content_store/write_back.rs::BY_KIND	run	a run's measurement: two runs at once mix their numbers
+native/src/content_store/write_back.rs::BY_KIND	shared	the store writer's account: every run's jobs share the writer; goes on the writer with the store's resources
 native/src/content_store/write_back.rs::RUNS	review	
 native/src/content_store/write_back.rs::T0	stays	the process's start, for timestamps
 native/src/content_store/write_back.rs::TOLD	review	

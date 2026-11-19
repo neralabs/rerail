@@ -56,7 +56,7 @@ impl Run {
     }
 }
 
-pub use super::profile::{local, local_if_any, setting};
+pub use super::profile::{local, local_if_any, setting, with_local};
 
 /// What a run returns of its own state with its result.
 #[derive(Clone, Debug, Default)]

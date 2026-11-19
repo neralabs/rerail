@@ -351,7 +351,9 @@ fn hash_vals(vals: impl Iterator<Item = i64>) -> u64 {
 /// `[postings]`, `[lead]`). Measurement only: nothing reads it but the report.
 pub mod probed {
     use std::collections::HashMap;
-    static PROBES: std::sync::Mutex<Option<HashMap<(String, Vec<usize>), u64>>> = std::sync::Mutex::new(None);
+    /// The run's probes (decision 0442).
+    #[derive(Default)]
+    struct Probes(std::sync::Mutex<HashMap<(String, Vec<usize>), u64>>);
     #[inline]
     pub(crate) fn on() -> bool {
         rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_INDEX_REPORT").is_some())
@@ -366,12 +368,11 @@ pub mod probed {
     fn add(rel: &str, mut cols: Vec<usize>) {
         cols.sort_unstable();
         cols.dedup();
-        let mut p = PROBES.lock().unwrap_or_else(|e| e.into_inner());
-        *p.get_or_insert_with(HashMap::new).entry((rel.to_owned(), cols)).or_insert(0) += 1;
+        crate::code_rule_dsl::logic::run::with_local(|p: &Probes| *p.0.lock().unwrap_or_else(|e| e.into_inner()).entry((rel.to_owned(), cols)).or_insert(0) += 1);
     }
     /// The probes since the last `take`.
     pub(crate) fn take() -> HashMap<(String, Vec<usize>), u64> {
-        PROBES.lock().unwrap_or_else(|e| e.into_inner()).take().unwrap_or_default()
+        crate::code_rule_dsl::logic::run::local_if_any::<Probes>().map(|p| std::mem::take(&mut *p.0.lock().unwrap_or_else(|e| e.into_inner()))).unwrap_or_default()
     }
 }
 
@@ -1030,8 +1031,10 @@ const IN_ORDER: usize = 64;
 /// derives many rows already held keeps at most about this many more.
 const FRESH_BATCH: usize = 1 << 16;
 
-/// `RERAIL_SPIKE_DERIVATIONS`: rows derived (new or already held) and rows held new, by relation, over the process.
-pub static DERIVATIONS: std::sync::Mutex<std::collections::BTreeMap<String, (u64, u64)>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+/// `RERAIL_SPIKE_DERIVATIONS`: rows derived (new or already held) and rows held new, by relation, over the run
+/// (`run::local`, decision 0442).
+#[derive(Default)]
+pub struct Derivations(pub std::sync::Mutex<std::collections::BTreeMap<String, (u64, u64)>>);
 impl Fresh {
     /// Rows another writer wrote in place (`placed`): distinct, none held by the relation; with `rounds`, each row's
     /// round of the device's fixpoint (its level, as `add_leveled`'s).
@@ -2537,10 +2540,12 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             any |= { let _s = big.then(|| crate::code_rule_dsl::logic::profile::span(|| "a wave's rows settled (Fresh::settle)".into())); rel.push_fresh(f, gates_done.contains(&r)) };
             limits.note_rows(&rel.table, rel.n);
             if counting && emitted > 0 {
-                let mut all = DERIVATIONS.lock().unwrap();
-                let e = all.entry(rel.table.clone()).or_default();
-                e.0 += emitted;
-                e.1 += (rel.n - lo) as u64;
+                crate::code_rule_dsl::logic::run::with_local(|all: &Derivations| {
+                    let mut all = all.0.lock().unwrap();
+                    let e = all.entry(rel.table.clone()).or_default();
+                    e.0 += emitted;
+                    e.1 += (rel.n - lo) as u64;
+                });
             }
             lo_of[r] = lo;
             if !gates_done.contains(&r) { let hi = rel.n; let _s = (big && hi > lo).then(|| crate::code_rule_dsl::logic::profile::span(|| "a wave's rows indexed (set_delta)".into())); rel.set_delta(lo, hi); }
@@ -3499,8 +3504,19 @@ pub fn thread_cpu() -> f64 {
     (user + kernel).as_secs_f64()
 }
 
-/// CPU seconds and rows of input loads and index builds: [base facts (construction), lower strata's tables].
-static LOADS: Mutex<[(f64, u64); 2]> = Mutex::new([(0.0, 0); 2]);
+/// CPU seconds and rows of input loads and index builds: [base facts (construction), lower strata's tables], over
+/// the run (decision 0442).
+#[derive(Default)]
+struct Loads(Mutex<[(f64, u64); 2]>);
+
+/// Adds `cpu` seconds and `rows` to the run's loads of part `i` (`Loads`).
+fn loaded(i: usize, cpu: f64, rows: u64) {
+    crate::code_rule_dsl::logic::run::with_local(|l: &Loads| {
+        let l = &mut l.0.lock().unwrap()[i];
+        l.0 += cpu;
+        l.1 += rows;
+    });
+}
 
 /// Derived inputs' orders opened (an index asked for at a join's compile) and made (first probed), decision 0186.
 static ORDERS_OPENED: OrderCount = OrderCount::new(0);
@@ -3512,7 +3528,7 @@ pub fn orders_counted() -> (u64, u64) {
 /// `set_fixpoint_loads()`: "base_cpu_ms base_rows derived_cpu_ms derived_rows". Base-fact relations and their
 /// indexes are construction (the product's tape and anchor index hold them), reported apart from execution.
 pub fn loads() -> String {
-    let l = LOADS.lock().unwrap();
+    let l = crate::code_rule_dsl::logic::run::local_if_any::<Loads>().map(|l| *l.0.lock().unwrap()).unwrap_or_default();
     format!("{:.1} {} {:.1} {}", l[0].0 * 1e3, l[0].1, l[1].0 * 1e3, l[1].1)
 }
 
@@ -3770,7 +3786,7 @@ impl Csr {
                 let mut order = if printed { Index::printed(self.cols.clone()) } else { Index::new(self.cols.clone()) };
                 order.add_run_in(&rel.rows, rel.k, 0, rel.n, 0, &rel.sorted.within(&self.cols, rel.k, 0, rel.n as u32));
                 ORDERS_MADE.fetch_add(1, AtomicOrdering::Relaxed);
-                LOADS.lock().unwrap()[1].0 += thread_cpu() - c0;
+                loaded(1, thread_cpu() - c0, 0);
                 if env_set!("RERAIL_SPIKE_INDEX") {
                     eprintln!("O125 order made took {:.3} ms rows={} cols={:?} of {} viewed={}", (thread_cpu() - c0) * 1e3, rel.len(), self.cols, rel.name.get().map_or("?", String::as_str), rel.viewed);
                 }
@@ -4245,7 +4261,7 @@ impl InRel {
         }
         // Duplicates offered: (derived - new) / new of the relation's derivations, spread evenly, each a row of an
         // earlier wave.
-        let dup = DERIVATIONS.lock().unwrap().get(name).map_or(0.0, |&(d, nw)| if nw > 0 { d.saturating_sub(nw) as f64 / nw as f64 } else { 0.0 });
+        let dup = crate::code_rule_dsl::logic::run::with_local(|all: &Derivations| all.0.lock().unwrap().get(name).copied()).map_or(0.0, |(d, nw)| if nw > 0 { d.saturating_sub(nw) as f64 / nw as f64 } else { 0.0 });
         let mut offers: Vec<Vec<u32>> = Vec::with_capacity(waves.len());
         let mut owed = 0.0f64;
         let mut seed = 0x9e37_79b9u64;
@@ -5447,8 +5463,7 @@ impl InRel {
             if env_set!("RERAIL_SPIKE_INDEX") {
                 eprintln!("O125 index base={} took {:.3} ms rows={} cols={cols:?} chain={} source={} sorted={} lead={} view={} of {:?}", self.base, (thread_cpu() - c0) * 1e3, self.len(), m.chain.is_some(), m.source, m.sorted, m.lead, self.view.is_some(), self.view.as_ref().map(|v| (v.src.columns(), v.cols.clone())));
             }
-            let l = &mut LOADS.lock().unwrap()[usize::from(!self.base)];
-            l.0 += thread_cpu() - c0;
+            loaded(usize::from(!self.base), thread_cpu() - c0, 0);
             if env_set!("RDL_PROFILE") {
                 eprintln!("      index on {cols:?} of {} rows in {:.1} ms", self.len(), t0.elapsed().as_secs_f64() * 1e3);
             }
@@ -5521,13 +5536,13 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
                 && let Some(held) = held_rel(view.src.as_ref(), types.len())
             {
                 let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k: held.k, n: held.n, rows: held.rows.clone(), view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: held.dead.clone(), ndead: held.ndead, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
-                LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
+                loaded(0, thread_cpu() - c0, 0);
                 keep(&rel);
                 return Ok(rel);
             }
             let n = view.ids.as_ref().map_or(0, Vec::len);
             let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k: types.len(), n, rows: Rows::new(types.len()), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
-            LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
+            loaded(0, thread_cpu() - c0, 0);
             if env_set!("RDL_PROFILE") {
                 eprintln!("      view of {n} rows in {:.1} ms: SELECT {cols} FROM {table}", t0.elapsed().as_secs_f64() * 1e3);
             }
@@ -5543,11 +5558,7 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
         n += 1;
     }
     let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k: types.len(), n, rows: Rows::frozen(types.len(), rows, n), view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
-    {
-        let l = &mut LOADS.lock().unwrap()[usize::from(!base)];
-        l.0 += thread_cpu() - c0;
-        l.1 += rel.len() as u64;
-    }
+    loaded(usize::from(!base), thread_cpu() - c0, rel.len() as u64);
     if env_set!("RDL_PROFILE") {
         eprintln!("      input {} rows in {:.1} ms: SELECT {cols} FROM {table}", rel.len(), t0.elapsed().as_secs_f64() * 1e3);
     }

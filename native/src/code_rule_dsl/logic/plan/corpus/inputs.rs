@@ -389,10 +389,12 @@ pub fn stamp(raw: &Path, out: &Path, root: &Path, declared: &BTreeMap<String, Ve
 /// What the readers of the last `populate` read, as the whole-run cutoff records it (`Report::consulted`, `reuse`):
 /// `("input", path, digest)` for a repository file, `("input_dir", dir, listing)`, `("artifact", name, digest of
 /// the stamped file and of its inputs)` and `("base", "REV\tpath", digest)`. `still` checks each again.
-static CONSULTED: std::sync::Mutex<Vec<(String, String, String)>> = std::sync::Mutex::new(Vec::new());
+/// The run's own (`run::local`, decision 0442).
+#[derive(Default)]
+struct Consulted(std::sync::Mutex<Vec<(String, String, String)>>);
 
 pub(super) fn take_consulted() -> Vec<(String, String, String)> {
-    std::mem::take(&mut *CONSULTED.lock().unwrap_or_else(|e| e.into_inner()))
+    crate::code_rule_dsl::logic::run::local_if_any::<Consulted>().map(|c| std::mem::take(&mut *c.0.lock().unwrap_or_else(|e| e.into_inner()))).unwrap_or_default()
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -454,7 +456,7 @@ pub(super) fn populate(program: &mut front::Program, shape: &super::shape::Shape
     )?;
     consulted.extend(seen.into_inner());
     git_revisions(program, shape, root, base, &mut consulted);
-    CONSULTED.lock().unwrap_or_else(|e| e.into_inner()).extend(consulted);
+    crate::code_rule_dsl::logic::run::local::<Consulted>().0.lock().unwrap_or_else(|e| e.into_inner()).extend(consulted);
     if REQUIRE_FACTS.load(std::sync::atomic::Ordering::Relaxed) {
         required_by(program, shape)?;
     }
