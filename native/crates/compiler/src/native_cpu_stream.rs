@@ -665,24 +665,13 @@ pub(crate) const STATE_SLOTS: usize = Mem::COUNT as usize;
 /// stack loads over `.rr`'s tier 2, against 161 in the lean parser).
 pub const HELD_IN_RULES: [u32; 0] = [];
 
-/// The fields tier 2 holds as SSA values where it is one function (`Cut::one`): the token
-/// loop's own, which every token reads and writes (the next token's index, its start, end,
-/// limit and code, the end of the one before, the stream's end, the nodes made and open, a split
-/// region's cursor), as simdjson's stage 2 keeps `next_structural` in a register. The rest stays
-/// in the frame, where few words touch it.
-pub const HELD_IN_ONE: [u32; 11] = [
-    Mem::Next as u32,
-    Mem::Taken as u32,
-    Mem::Start as u32,
-    Mem::End as u32,
-    Mem::Limit as u32,
-    Mem::LastEnd as u32,
-    Mem::AtEnd as u32,
-    Mem::Nodes as u32,
-    Mem::Open as u32,
-    Mem::PartAt as u32,
-    Mem::PartEnd as u32,
-];
+/// The fields tier 2 holds as SSA values where it is one function (`Cut::one`): those every
+/// token reads and writes (the next token's index, its start, limit and code, the nodes made
+/// and open, a split region's cursor), as simdjson's stage 2 keeps `next_structural` in a
+/// register. Seven, with `ctx`, within the ten registers a call keeps (x19 to x28): the loop's
+/// cold calls (a wide tape entry) clobber the rest, and eleven held were spilled more (1,482
+/// frame references in JSON's code against 1,339). The rest stays in the frame.
+pub const HELD_IN_ONE: [u32; 7] = [Mem::Next as u32, Mem::Start as u32, Mem::Limit as u32, Mem::Taken as u32, Mem::Nodes as u32, Mem::Open as u32, Mem::PartAt as u32];
 
 /// A compare tree over a byte (or a place), as rustc lowers a `match` (LLVM's switch lowering):
 /// `runs` are runs of one target (the first from 0, the last on to `end`, past every value the

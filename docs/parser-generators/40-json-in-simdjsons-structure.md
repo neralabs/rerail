@@ -238,8 +238,9 @@ word as simdjson's `visit_primitive` does `true`:
 Another token of those bytes takes the rule's run and the word table, as before.
 
 **The state.** One-function tier 2 (`Cut::one`) holds the token loop's fields as SSA values
-(`HELD_IN_ONE`: the next index, the token's start, end, limit and code, the end before, the
-stream's end, the nodes made and open, a split region's cursor), and each word loads the `ctx`
+(`HELD_IN_ONE`: the next index, the token's start, limit and code, the nodes made and open,
+a split region's cursor: seven, with `ctx` within the ten registers a call keeps, as the
+loop's cold calls clobber the rest), and each word loads the `ctx`
 fields it reads where it runs (`Cut::reload`). The frame's loads and stores in the IR fell
 from 587 and 836 to 161 and 248.
 
