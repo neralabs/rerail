@@ -139,7 +139,9 @@ body[data-panel="open"] .sess > aside{display:none}
 .msgrow .who{font-size:12px;font-weight:600;color:var(--muted-foreground);line-height:22px;white-space:nowrap}
 .msgrow .msg{font-size:14px;line-height:22px;max-width:74ch;min-width:0;overflow-wrap:break-word;white-space:pre-line}
 .msgrow.u .msg{background:var(--brand-subtle);border-radius:var(--radius-lg);padding:5px 10px;font-weight:500;margin:-1px 0}
-.msgrow .mt{font-family:var(--font-mono);font-size:11px;line-height:22px;color:var(--muted-foreground);white-space:nowrap;padding-right:8px}
+/* A message's time reads like a call's: the same size and colour, at the same right edge (a call's row border and
+ * padding, 1px and 8px). */
+.msgrow .mt{font-size:11.5px;line-height:22px;color:var(--muted-foreground);white-space:nowrap;text-align:right;padding-right:9px}
 /* A call's or card's speaker, in the 40px column "You" and "Agent" sit in, left of its 8px gap. */
 .evt > .spk,.corr > .spk{position:absolute;right:calc(100% + 8px);width:40px;font-size:12px;font-weight:600;line-height:22px;color:var(--muted-foreground);white-space:nowrap}
 .evt > .spk{top:3px}
@@ -198,19 +200,20 @@ body[data-panel="open"] .sess > aside{display:none}
 @media (min-width:1600px){.out .tn{display:inline-block}}
 body[data-panel="open"] .out .tn{display:none}
 /* Where the timeline is narrow (the sheet open beside it, or a small window), a message's time goes under it instead of
- * squeezing it. */
+ * squeezing it, still at the right edge every time sits on. */
 @media (min-width:1100px){
   body[data-panel="open"] .msgrow{grid-template-columns:40px minmax(0,1fr)}
-  body[data-panel="open"] .msgrow .mt{grid-column:2;line-height:18px;padding-right:0}
+  body[data-panel="open"] .msgrow .mt{grid-column:2;justify-self:end;line-height:18px}
 }
 @media (max-width:760px){
   .msgrow{grid-template-columns:40px minmax(0,1fr)}
-  .msgrow .mt{grid-column:2;line-height:18px;padding-right:0}
+  .msgrow .mt{grid-column:2;justify-self:end;line-height:18px}
 }
-/* A phone: a call's outcome and time take a second line under it, so a long label never pushes them out. */
+/* A phone: a call's outcome and time take a second line under it, at the right edge, so a long label never pushes them
+ * out. */
 @media (max-width:640px){
   .evt .eh{grid-template-columns:20px minmax(0,auto) minmax(0,1fr);row-gap:2px}
-  .evt .eh .out{grid-column:2 / -1;justify-self:start}
+  .evt .eh .out{grid-column:2 / -1;justify-self:end}
 }
 .ok{color:var(--success-foreground)}
 .bad{color:var(--danger-foreground);font-weight:600}

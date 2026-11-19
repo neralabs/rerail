@@ -152,6 +152,24 @@ test.describe("History by session", () => {
     await expect(page.locator("#content .tl .evt").filter({ has: page.locator(".vb", { hasText: "Create" }) }).first().locator(".vtool")).toBeHidden();
   });
 
+  test("mature: every time in the transcript ends at the same right edge, in the same type, with the sheet closed or open", async ({ page, rerail }) => {
+    await page.goto(await rerail.dashboard("mature", { hash: "sessions" }));
+    await page.locator("#content .tl .corr").first().waitFor();
+    const times = () => page.locator("#content .tl").evaluate(tl => [...tl.querySelectorAll<HTMLElement>(".msgrow .mt, .evt .tm")]
+      .filter(time => time.offsetParent !== null && time.textContent !== "")
+      .map(time => {
+        const style = getComputedStyle(time);
+        return { right: Math.round(time.getBoundingClientRect().right - parseFloat(style.paddingRight)), type: `${style.fontFamily} ${style.fontSize}` };
+      }));
+    for (const sheet of [false, true]) {
+      if (sheet) await page.locator("#content .corr .ctitle").first().click();
+      const shown = await times();
+      expect(shown.length).toBeGreaterThan(1);
+      expect(new Set(shown.map(time => time.right)).size).toBe(1);
+      expect(new Set(shown.map(time => time.type)).size).toBe(1);
+    }
+  });
+
   test("mature: a session from Overview's recent sessions opens selected in History by session", async ({ page, rerail }) => {
     await page.goto(await rerail.dashboard("mature"));
     const link = page.locator('#content [data-act="session"]').last();
