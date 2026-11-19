@@ -672,3 +672,24 @@ own, as before.
 O125 step 05, kept, on the M1 Max (load 13): 3 jobs and 0.115 s, against 112 jobs and 2.95 s. Kept instructions
 at 01-05 are 181, 163, 217, 152 and 323 G, against step 15's 189, 170, 233, 161 and 327 G.
 
+## Step 17: a changed input's old rows are its new rows of the unchanged documents
+
+`Retained::load` read each changed input's old rows whole from the frames: every granule decoded into columns,
+then every row hashed against its documents' digests (O125 step 05: 105 inputs; 1.0 s copying and 0.63 s
+checking). Only the changed documents' old rows differ from the run's own new rows.
+
+A changed input is now a `retain::OldInput`, a source over two parts:
+
+- the runs of the new source's rows of the unchanged documents (`same_docs`, step 14), read in place;
+- the changed documents' old rows, from their granules alone, checked against their digests and grouped by
+  document. Their ranges are what `document_delta_except` reads the old side by.
+
+It builds a column's lookup index where that column is first probed, as `Held` does. An input whose unchanged
+documents hold other row counts than the last run's, or a semi-join's, is read whole, as before
+(`shape::inputs_read_whole`). The R2 kept-path test asserts that count is 0 after each small edit.
+
+O125 step 05, kept, on the M1 Max: 103 of 105 inputs are read this way. The load is 1.43 s against 1.65 s, since
+the 14 changed documents (of 77) hold most of the rows. Kept instructions at 01-05 are 174, 157, 211, 145 and
+321 G, against step 16's 181, 163, 217, 152 and 323 G. `RERAIL_LOAD_TRACE` prints each input's granules, rows
+decoded and rows kept.
+

@@ -137,6 +137,7 @@ pub mod shape {
     static INPUTS_HASHED: AtomicUsize = AtomicUsize::new(0);
     static INPUTS_FROM_ENTRIES: AtomicUsize = AtomicUsize::new(0);
     static INPUTS_HASHED_WHOLE: AtomicUsize = AtomicUsize::new(0);
+    static INPUTS_READ_WHOLE: AtomicUsize = AtomicUsize::new(0);
     static DRIVERS_UNLED: AtomicUsize = AtomicUsize::new(0);
 
     /// The counts so far.
@@ -167,6 +168,9 @@ pub mod shape {
         /// R2: of `inputs_hashed`, those whose every row was hashed (`retain::document_delta`'s pass), not only the
         /// rows of the documents that changed (`retain::document_delta_except`).
         pub inputs_hashed_whole: usize,
+        /// R2 (0353): a new process's changed inputs whose old rows `retain::Retained::load` read whole from the
+        /// frames (copied into columns, every row hashed), not their changed documents' alone (`retain::OldInput`).
+        pub inputs_read_whole: usize,
     }
 
     pub fn now() -> Shape {
@@ -181,6 +185,7 @@ pub mod shape {
             inputs_hashed: INPUTS_HASHED.load(Relaxed),
             inputs_from_entries: INPUTS_FROM_ENTRIES.load(Relaxed),
             inputs_hashed_whole: INPUTS_HASHED_WHOLE.load(Relaxed),
+            inputs_read_whole: INPUTS_READ_WHOLE.load(Relaxed),
         }
     }
 
@@ -198,6 +203,7 @@ pub mod shape {
             inputs_hashed: n.inputs_hashed - before.inputs_hashed,
             inputs_from_entries: n.inputs_from_entries - before.inputs_from_entries,
             inputs_hashed_whole: n.inputs_hashed_whole - before.inputs_hashed_whole,
+            inputs_read_whole: n.inputs_read_whole - before.inputs_read_whole,
         }
     }
 
@@ -215,6 +221,9 @@ pub mod shape {
     }
     pub fn input_hashed_whole() {
         INPUTS_HASHED_WHOLE.fetch_add(1, Relaxed);
+    }
+    pub fn input_read_whole() {
+        INPUTS_READ_WHOLE.fetch_add(1, Relaxed);
     }
     pub fn input_from_entries() {
         INPUTS_FROM_ENTRIES.fetch_add(1, Relaxed);

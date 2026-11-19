@@ -213,6 +213,9 @@ fn r2_a_new_process_hashes_only_the_changed_documents_rows_of_its_inputs() {
         // documents as they were are not read again, only the changed documents' rows are hashed.
         assert!(ran.shape.inputs_hashed > 0, "R2: after {what}, the inputs' deltas are found by their documents");
         assert_eq!(ran.shape.inputs_hashed_whole, 0, "R2: after {what}, no input's every row is hashed, only the changed documents' ({} inputs)", ran.shape.inputs_hashed);
+        // Its changed inputs' old rows of the unchanged documents are their new rows, read in place
+        // (`retain::OldInput`, 0353): only the changed documents' rows are read from the frames.
+        assert_eq!(ran.shape.inputs_read_whole, 0, "R2: after {what}, no changed input's old rows are read whole from the frames");
     }
 }
 

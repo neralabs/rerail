@@ -454,10 +454,12 @@ against the forms' figures (t43, "Measurements").
   per-document relations no entry holds (`doc_key`, `observer__source_file`, `doc`, `tape_of`), and a semi-join
   input (`child`) whose kept rows for an unchanged document grow when another document's exports start to mention
   its nodes (phase 1's imports name other documents' nodes), so the changed entries' rows do not add up.
-- **A new process's inputs read from the frames are copied and hashed whole.** `Retained::load` decodes an input it
-  reads from the frames into columns (0353 row 12) and checks them by hashing every row against the frame's
-  documents (O125 step 05, kept: inside "the kept part's rows, from the frames", 1.4-1.7 s). The rows of a changed
-  document alone are needed, read where the frame holds them.
+- **A new process reads its changed documents' old rows from the frames, decoded and hashed** (t43 step 17). A
+  changed input is an `OldInput`: its new rows of the unchanged documents, read in place, then the changed
+  documents' old rows, decoded from their granules (64 an input) into columns and checked against their digests.
+  That is work in proportion to the changed documents' rows (O125 step 05: 14 of 77 documents, 1.1 s), and it
+  stays until frames are read in place (0402's packed columns). A semi-join input (`child`), and an input whose
+  unchanged documents' row counts differ, is still read whole.
 - **A dump artifact.** In the data-layer history's first state, the run split into 2 chunks and dumped 210
   `dotted_expr` rows that no `drv` rule derives. It is a file-local relation, and the rows measured are the heads,
   but the cause is not known (`REC_LAX`).

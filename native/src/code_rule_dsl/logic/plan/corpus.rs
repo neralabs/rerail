@@ -8971,10 +8971,34 @@ fn run_observed(
                     if kept_frames.is_some() {
                         cross_kept = Some(cut.strata);
                     }
+                    // Outside a session, the documents whose content and key are its last run's (the documents it read,
+                    // kept as a frame: `retain::write_run_docs`): an input's rows of them are as they were, and only
+                    // the others' rows are hashed (`retain::document_delta_except`). Not a semi-join's relation, whose
+                    // rows of a document follow what other documents' exports mention.
+                    let same_docs: Option<rustc_hash::FxHashSet<i64>> = match (cell.as_ref(), session.as_ref()) {
+                        (Some(kept), None) => kept.docs(&memo_whole).map(|was| {
+                            let now = run_docs_held.lock().expect("the run's documents");
+                            was.iter().filter(|(p, w)| now.get(*p) == Some(*w)).map(|(_, (_, d))| *d).collect()
+                        }),
+                        _ => None,
+                    };
+                    crate::code_rule_dsl::logic::profile::decision("documents as the last run read them", || match &same_docs {
+                        Some(s) => format!("{} of {} documents: their inputs' rows not hashed again", s.len(), run_docs_held.lock().expect("the run's documents").len()),
+                        None => "no record of the last run's documents (a session, or none kept)".to_owned(),
+                    });
                     // Decision 0117 step 4: a maintained run reads the kept rows where a stratum it reaches reads them.
                     let drive = cross_f.gates().is_empty() && std::env::var_os("RERAIL_MAINTAIN_WHOLE").is_none();
+                    // A changed input's old rows of the unchanged documents are its new rows, read in place
+                    // (`retain::OldInput`); not a semi-join's (above).
+                    let new_input = |rel: &str| -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+                        if semijoin.contains(rel) {
+                            return None;
+                        }
+                        cross_inputs.iter().find(|(r, _)| r == rel).map(|(_, s)| Arc::clone(s))
+                    };
+                    let news = same_docs.as_ref().map(|same| retain::NewInputs { same, source: &new_input });
                     if let Some(kept) = cell.as_mut().filter(|_| from_frames.is_some()) {
-                        if let Some((rels, rows)) = kept.load(store, &cut, &cross_placed, &split.locations, drive)? {
+                        if let Some((rels, rows)) = kept.load(store, &cut, &cross_placed, &split.locations, drive, news.as_ref())? {
                             crate::code_rule_dsl::logic::profile::decision("the kept part, from the frames (t33 K4)", || format!("{rels} relations' rows read ({rows} rows) for the strata that run"));
                         } else {
                             cut = retain::cut(None, ckey, &cross_placed, &cross_sccs, &digests)?;
@@ -9043,21 +9067,6 @@ fn run_observed(
                         _ => None,
                     };
                     let (mut from_entries, mut from_entries_rows, mut hashed) = (0usize, 0usize, Vec::<String>::new());
-                    // Outside a session, the documents whose content and key are its last run's (the documents it read,
-                    // kept as a frame: `retain::write_run_docs`): an input's rows of them are as they were, and only
-                    // the others' rows are hashed (`retain::document_delta_except`). Not a semi-join's relation, whose
-                    // rows of a document follow what other documents' exports mention.
-                    let same_docs: Option<rustc_hash::FxHashSet<i64>> = match (cell.as_ref(), session.as_ref()) {
-                        (Some(kept), None) => kept.docs(&memo_whole).map(|was| {
-                            let now = run_docs_held.lock().expect("the run's documents");
-                            was.iter().filter(|(p, w)| now.get(*p) == Some(*w)).map(|(_, (_, d))| *d).collect()
-                        }),
-                        _ => None,
-                    };
-                    crate::code_rule_dsl::logic::profile::decision("documents as the last run read them", || match &same_docs {
-                        Some(s) => format!("{} of {} documents: their inputs' rows not hashed again", s.len(), run_docs_held.lock().expect("the run's documents").len()),
-                        None => "no record of the last run's documents (a session, or none kept)".to_owned(),
-                    });
                     // The kept inputs' digests by owner after the edit (decision 0117 step 2), for the frames written back.
                     let mut input_docs: HashMap<String, Arc<retain::DocDigests>> = std::mem::take(&mut kept_input_docs);
                     let mut from_owners = 0usize;
