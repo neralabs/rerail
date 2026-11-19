@@ -392,7 +392,22 @@ The plan, in three parts:
 presence holds (`TapeDoc::may_have_kind`; an error root is always possible) before its anchor index is built:
 `a_clause_whose_root_kinds_the_presence_lacks_does_not_run`.
 
-Next: step 6, part 2's blocks (a walk for a clause's roots passes over the blocks that hold none of them).
+A document where no clause runs builds no anchor index (`FileAnchorIndex::build` walks every node whatever its
+plans), so a document the presence rules out entirely is not read past its parse.
+
+**Done (2026-11-18): part 2 on the device, by file.** A label pass's roots over codes run in a file only where its
+presence may hold one of the domain's kinds and each `KIND` entry test's kind (`matcher_metal::may_have_roots`, into
+the `active` bits `Roots::runs_in` reads), and so do a wave's clause roots:
+`metal_passes_skip_the_files_their_presence_rules_out`; `lowered_clauses_find_the_same_roots_on_metal` still holds.
+
+**Blocks: what is left, and why.** On the CPU a clause's roots come from the file's kind index (`memo::kind_index`,
+the anchor index's postings), one walk that serves every kind of every clause; leaving out the blocks one clause's
+kinds miss saves nothing there unless no clause needs the block. A block skip pays where a walk is for given kinds:
+the device's sweeps, which would read each block's presence words before its 1,024 nodes. The kernels read only
+what lies in the residency slabs, so the block presence must be laid there beside the tape, not uploaded from the
+image's `Vec` (0353); that is part 3's layout, so the device's block skip comes with it.
+
+Next: part 3, once 0402's kept facts are merged here.
 
 ## Requirements, each with its test
 

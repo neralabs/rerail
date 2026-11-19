@@ -313,6 +313,47 @@ fn a_recursive_utility_inside_another_settles() {
     assert_eq!(program.roots(&tape).unwrap(), expected);
 }
 
+/// Decision 0399 §4, step 6: on Metal, a label pass over codes runs only in the files whose presence may hold its
+/// domain's kinds. The nested-recursion clause's passes start at lists, parentheses and binary operators; a file with
+/// none of them is ruled out, and the roots are the CPU's.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn metal_passes_skip_the_files_their_presence_rules_out() {
+    use super::compile_matcher::Backend;
+    use super::compile_matcher::matcher_metal::take_presence_ruled_out;
+    let policy = r#"{
+        "format": "rerail.policy/v1", "id": "nested-recursion", "revision": 1, "mode": "steer",
+        "scope": { "include": ["**/*"], "exclude": [] },
+        "clauses": [{
+            "id": "nested",
+            "forbid": { "ast": {
+                "language": "python",
+                "utils": {
+                    "list-expr": { "any": [
+                        { "kind": "list" },
+                        { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "list-expr" } },
+                        { "matches": "list-add" }
+                    ] },
+                    "list-add": { "kind": "binary_operator", "has": { "stopBy": "neighbor", "matches": "list-expr" } }
+                },
+                "rule": { "kind": "assignment", "has": { "stopBy": "neighbor", "matches": "list-add" } }
+            } },
+            "violation": { "anchor": "witness.span", "code": "NESTED", "message": "A list concatenation." }
+        }]
+    }"#;
+    let compiled = CodeRuleDslRuntime::compile(policy.to_owned(), "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let (_, grammar) = python_matchers(&compiled).next().expect("a Python clause");
+    let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
+    let tapes = [python_tape("x = ['a'] + b\ny = (['a'] + b) + c\n"), python_tape("pass\n")];
+    assert!(tapes.iter().all(|tape| tape.image.presence.is_some()), "a format 16 parse keeps its presence");
+    take_presence_ruled_out();
+    let metal = program.roots_metal(&tapes).expect("the passes run on Metal").0;
+    let ruled_out = take_presence_ruled_out();
+    assert!(ruled_out > 0, "the file without lists or operators is ruled out");
+    assert_eq!(metal, program.roots_batch(Backend::Cpu, &tapes).expect("the CPU's roots"));
+    assert!(!metal[0].is_empty() && metal[1].is_empty(), "{metal:?}");
+}
+
 /// S2's parity gate (O23, F1): every lowered clause's passes run on Metal over the whole batch of
 /// fixtures, in one command buffer (plus one per extra round of a recursive group), and give the
 /// CPU interpreter's root sets on every fixture.
