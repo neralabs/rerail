@@ -2,19 +2,29 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-The repair goal covers the original cases and every open follow-up below. Windows runtime verification is a separate acceptance check for two cases.
+At `65e24db1d`, six of the 28 follow-up findings have verified repairs. The Windows checks for cases 21 and 22 also passed.
 
-On Windows 11 ARM64, the build at `250c76fd4` failed before the tests could load the addon.
-The grammar build script appended a slash to a verbatim Windows path. All eight grammar reads failed with Windows error 123.
-Joining file names to native paths let Rust read the inputs. MSVC then rejected the verbatim scanner and header paths.
-The build must pass the ordinary absolute paths from Cargo's package directory to the compiler.
-The build then reached the JSON parser. Its SHA-256 code used GCC byte-swap and target intrinsics that MSVC rejected.
-The MSVC build needs its own compiler intrinsics. The parser must produce the same digest and tape through each supported kernel.
-The engine's `repeat` command also called Unix `getrusage` on Windows. It must read user and kernel time from the existing platform profiler.
+## Windows results at `65e24db1d`
 
-The Windows addon matched Git on every message selector. The NTFS test reached teardown, where Windows refused to delete the open stores.
-The packaged addon keeps maintenance jobs for the life of the process. The test must let each scan exit before removing its store.
-Keep the native view open across corruption and restoration. Reopen the same warm store from a new CLI process to check persistent invalidation.
+Both checks ran under Parallels on Windows 11 Pro ARM64, build 26200. The fixtures used NTFS.
+Node 24.14.1 loaded the ARM64 addon built with MSVC and Rust 1.99.1. Git for Windows was 2.52.0.windows.2.
+
+| Check | Result |
+| --- | --- |
+| Message selectors | Git resolved 22 expressions and rejected 16. The addon returned the same 22 commit IDs and rejected the same 16 expressions. |
+| In-place tree rewrite | The damaged object retained its size, modification time, creation time, and file ID. Both the open view and a new view rejected it. Warm and cold CLI scans reported identical failures. After restoration, the open view read the directory and the warm scan reported the original finding again. |
+
+The first build at `250c76fd4` failed. Windows rejected a slash appended to a verbatim grammar path. MSVC also rejected verbatim scanner and header paths.
+`01f5ff02c` passes ordinary native paths to the compiler. All eight vendored grammars built.
+`0f0ca72bf` supplies MSVC intrinsics for the JSON kernels. The Windows ARM64 parser passed its tape and digest regression, and MSVC compiled the x64 translation unit.
+`74e7a153d` reads process CPU time from the platform profiler. On Windows, a `repeat` invocation returned 6,487 grammar rows and reported user and kernel time.
+
+The initial NTFS test reached teardown, where Windows refused to delete the open stores.
+`65e24db1d` runs each scan in a separate CLI process. Each process releases its store handles on exit.
+The native view stays open across the rewrite and restoration. Both Windows tests passed together on the committed checkout. The CLI rewrite test also passed on macOS.
+[Regression tests](../../../../test/cli/headless-scan.test.ts)
+
+## Earlier repairs to the catalog and store
 
 The headless regression for case 102 reproduced the permission change before the repair.
 After the repair, each scan reported the expected violation and published its scope. The existing parents kept modes `0755` and `1777`.
@@ -27,7 +37,7 @@ An ordinary replacement directory had no checkout identity. Both catalogs adopte
 
 ## Checks repeated at `e7e4bf393`
 
-The review still has 28 open items. That count excludes the two Windows runtime checks and the optional language features below.
+At that commit, the review had 28 open items. That count excludes the two Windows runtime checks and the optional language features below.
 Six fixtures ran again on macOS with the current TypeScript code and the native addon from `6507e1a65`. The intervening commit changed tests and notes.
 
 | Case | Input and observation |
@@ -109,7 +119,7 @@ Eight simultaneous evaluations on two workers also returned all forty expected a
 The Linux package check runs the opposite-repository test with two workers. [Answer handling](../../../../native/src/code_rule_dsl/logic/plan/corpus.rs)
 
 The Linux selector comparisons, the Linux same-length rewrite, and all six standalone revision command tests passed.
-Git for Windows and the NTFS rewrite still need Windows runtime results. The package job checks the test volume format.
+The package job checks the test volume format. The [Windows results](#windows-results-at-65e24db1d) came from a subsequent run.
 [Package checks](../../../../.github/workflows/package.yml)
 
 The Linux headless and native health suites passed 142 tests as root. The two skipped permission tests both passed as an ordinary user.
