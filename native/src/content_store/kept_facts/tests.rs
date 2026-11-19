@@ -151,3 +151,28 @@ fn a_rolled_back_write_is_not_the_spaces() {
     assert_eq!(read(&path, &c).iter().map(|(r, _, d, _)| (r.as_str(), *d)).collect::<Vec<_>>(), [("p", 1), ("q", 3)]);
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+/// A wave's puts are gathered by space: one block a space, whatever the callers that put them (each input's job), a
+/// key put twice keeping its last put.
+#[test]
+fn a_waves_kept_puts_are_one_block_a_space_and_a_key_keeps_its_last() {
+    use crate::content_store::write_back::Gather as _;
+    const OTHER: [u8; 32] = [9; 32];
+    let mut g = KeptGather::default();
+    g.add(SPACE, vec![put("a", 0, 1, flat(&[1, 2]))]);
+    g.add(OTHER, vec![put("c", 0, 5, flat(&[7, 7]))]);
+    g.add(SPACE, vec![put("b", 0, 2, flat(&[3, 4])), put("a", 0, 3, flat(&[5, 6]))]);
+    assert_eq!(g.bytes(), 4 * 2 * 8 + 4 * 64);
+    let closed = Box::new(g).close().expect("a job");
+    let super::super::write_back::Work(super::super::write_back::Kind::Kept(w)) = closed.job else { panic!("a kept write") };
+    let spaces: Vec<([u8; 32], Vec<(String, u64)>)> = w.spaces.iter().map(|(s, puts)| (*s, puts.iter().map(|p| (p.rel.clone(), p.digest)).collect())).collect();
+    assert_eq!(spaces, vec![(SPACE, vec![("b".into(), 2), ("a".into(), 3)]), (OTHER, vec![("c".into(), 5)])]);
+    // Written, the space reads back the last put of each key.
+    let (path, c) = store("gathered");
+    let mut w = w;
+    let puts = w.spaces.remove(0).1;
+    write(&path, &c, puts);
+    let mut got: Vec<(String, u64)> = read(&path, &c).into_iter().map(|(r, _, d, _)| (r, d)).collect();
+    got.sort();
+    assert_eq!(got, vec![("a".into(), 3), ("b".into(), 2)]);
+}
