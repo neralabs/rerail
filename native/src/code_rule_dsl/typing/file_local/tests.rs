@@ -705,7 +705,7 @@ at(f, l) :- uses(f, _), docof(f, d), line(f, l), d > 0.
 
 #[test]
 fn a_local_join_can_export_a_node_bound_by_equality() {
-    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
     let text = r#"
         .decl node(d: number, n: node, k: symbol, start: number, end: number)
         .decl child(p: node, c: node, i: number)
@@ -719,8 +719,7 @@ fn a_local_join_can_export_a_node_bound_by_equality() {
     "#;
     // The tree's pass is gone (0276 step 6): the version's is checked alone. `push_equal_columns`'s switch, read as
     // it reads it (the test is compiled in crates that see only `rerail-logic`'s public items).
-    let program = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-    let (image, _) = Builder::of_program(&program).unwrap().finish().unwrap();
+    let image = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
     let mut pass = PushLocalJoins::default();
     let mut pipeline = Pipeline::new("test", image);
     pipeline.program(&mut pass);
