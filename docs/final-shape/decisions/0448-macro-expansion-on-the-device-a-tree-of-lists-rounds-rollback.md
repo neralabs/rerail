@@ -204,3 +204,11 @@ outermost call becomes the queue's first items.
   - Every one of the corpus's 8,136 `#define`s and the unit shapes' (malformed ones, empty
     parameter lists, GNU's and C99's variadics, `##` at the ends, splices) equals the serial
     pass's `Def` (`the_definitions_are_the_serial_passes`).
+- **R3, the paste relexer** (`pp_expand.metal`'s `relex`): the lean lexer's `token_at`, branch
+  for branch, over the joined spelling in device memory: a comment start, a pp-number, `#`,
+  `##`, `%:`, `%:%:`, C++'s `<::`, the digraphs, `::` where the dialect has it, a literal (and
+  its C++ suffix), a prefixed or raw string, a name, the longest punctuator. Its answer is the
+  token's tape kind, none, or refused: a byte past ASCII or a `\u` escape, whose classes the
+  device does not read, sends the unit to the CPU. On every pair of 102 spellings (10,506
+  spellings) under C17, C23, GNU C17, C++17 and C++20 it answers as the lexer does
+  (`the_paste_relexer_is_the_lexers`).

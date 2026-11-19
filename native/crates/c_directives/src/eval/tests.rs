@@ -193,3 +193,49 @@ fn the_definitions_are_the_serial_passes() {
     }
     eprintln!("{} files, {defines} defines, {malformed} malformed", files.len());
 }
+
+/// R3 of decision 0448: the paste relexer (`pp_expand.metal`'s `relex`) answers as the lean
+/// lexer does (`Pp::paste`: one token from the first byte to the last, not `Other`), with the
+/// token's tape kind, for every pair of a set of spellings (every punctuator, digraph, `#`, `##`,
+/// names, literal prefixes, numbers, literals), under C17, C23, GNU C, C++17 and C++20.
+#[test]
+fn the_paste_relexer_is_the_lexers() {
+    use rerail_c_lean::pp::{DIGRAPH, Options, P, PpLexer};
+    use rerail_metal::pp_expand::{RELEX_NONE, relex, relex_options};
+    let one: &[&str] = &[
+        "(", ")", "[", "]", "{", "}", ";", ",", "~", "?", ":", "::", ".", "...", ".*", "=", "==", "!", "!=", "+", "++", "+=", "-", "--", "-=", "->", "->*", "*", "*=", "/",
+        "/=", "%", "%=", "^", "^=", "&", "&&", "&=", "|", "||", "|=", "<", "<<", "<<=", "<=", "<=>", ">", ">>", ">>=", ">=", "<:", ":>", "<%", "%>", "%:", "%:%:", "#", "##",
+        "a", "_x", "$", "L", "u", "U", "u8", "R", "LR", "x1", "e", "E", "p", "_", "1", "0x", "1e", "1.", ".5", "1'0", "'", "\"", "\"s\"", "'c'", "L\"w\"", "u8'c'", "\"s\"_x",
+        "0", "9e", "+1", "'0", "1'", ">", "=>", ".", "..", "<::", "*/", "//", "\"(x)\"", "\"d(x)d\"", "(x)\"", "\"\\\"\"", "'\\n'",
+    ];
+    let mut texts = Vec::new();
+    for a in one {
+        texts.push(a.as_bytes().to_vec());
+        for b in one {
+            texts.push(format!("{a}{b}").into_bytes());
+        }
+    }
+    let dialects = [("C17", Options::c(17, false)), ("C23", Options::c(23, false)), ("GNU C17", Options::c(17, true)), ("C++17", Options::cpp(17, false)), ("C++20", Options::cpp(20, true))];
+    for (name, opts) in dialects {
+        let got = relex(&texts, relex_options(opts.cpp, opts.colons, opts.digit_separators, opts.raw_strings)).unwrap();
+        for (t, g) in texts.iter().zip(got) {
+            let tk = PpLexer::new(t, opts).next();
+            let whole = tk.start == 0 && tk.end as usize == t.len() && !matches!(tk.kind, P::Eof | P::Other | P::Header);
+            let want = if !whole {
+                RELEX_NONE
+            } else {
+                u32::from(match tk.kind {
+                    P::Ident => rerail_c_pp::tape::IDENTIFIER,
+                    P::Number => rerail_c_pp::tape::NUMBER,
+                    P::Char | P::Str | P::RawStr => rerail_c_pp::tape::LITERAL,
+                    P::Hash => rerail_c_pp::tape::HASH,
+                    P::HashHash => rerail_c_pp::tape::HASHHASH,
+                    P::Punct if tk.flags & DIGRAPH != 0 => rerail_c_pp::tape::DIGRAPH_KIND,
+                    _ => rerail_c_pp::tape::PUNCT,
+                })
+            };
+            same(g, want, format!("{name}: {:?}", String::from_utf8_lossy(t)));
+        }
+    }
+    eprintln!("{} spellings, 5 dialects", texts.len());
+}

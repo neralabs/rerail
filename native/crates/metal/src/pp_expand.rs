@@ -161,3 +161,32 @@ pub fn definitions_from(unit: &Unit, rung: u32) -> Result<(crate::pp_eval::Evalu
     };
     Ok((ev, read))
 }
+
+/// The dialect's options as the relexer reads them (`pp_expand.metal`'s `O_*`): C++, `::`, digit
+/// separators, raw strings.
+pub fn relex_options(cpp: bool, colons: bool, digit_separators: bool, raw_strings: bool) -> u32 {
+    u32::from(cpp) | u32::from(colons) << 1 | u32::from(digit_separators) << 2 | u32::from(raw_strings) << 3
+}
+
+/// The relexer's answer where a spelling is no one token, and where the device refuses it.
+pub const RELEX_NONE: u32 = 0;
+pub const RELEX_REFUSED: u32 = 0xffff;
+
+/// For tests: the relexer's answer for each spelling (a tape kind, `RELEX_NONE` or
+/// `RELEX_REFUSED`), under `options`.
+pub fn relex(texts: &[Vec<u8>], options: u32) -> Result<Vec<u32>, Error> {
+    let device = crate::device()?;
+    let mut bytes = Vec::new();
+    let mut offsets = vec![0u32];
+    for t in texts {
+        bytes.extend_from_slice(t);
+        offsets.push(bytes.len() as u32);
+    }
+    bytes.extend_from_slice(&[0; 16]);
+    let (b, o) = (MappedBuffer::from_slice(&device, &bytes)?, MappedBuffer::from_slice(&device, &offsets)?);
+    let out = MappedBuffer::zeroed::<u32>(&device, texts.len().max(1))?;
+    let n = texts.len() as u32;
+    crate::pp_eval::run(|enc| enc.run("pd_relex_test", None, &[&b.buffer, &o.buffer, &out.buffer], &[n, options], Grid::Groups(u64::from(n).div_ceil(crate::pp_blocks::TG))))?;
+    // SAFETY: the device finished writing `out`.
+    Ok(unsafe { std::slice::from_raw_parts(out.host().cast::<u32>(), texts.len()).to_vec() })
+}

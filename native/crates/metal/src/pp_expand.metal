@@ -182,3 +182,158 @@ kernel void pd_items(device const PpFile* files [[buffer(0)]], device const ucha
     if (k > 0u && gap_is_space(data, files[f], node_end(t, i - 1u), node_start(t, i))) item |= I_SPACE;
     items[s] = item;
 }
+
+// --- The paste relexer ---------------------------------------------------------------------------
+//
+// `l ## r` is one token where the lexer reads the two spellings, joined, as one token from the
+// first byte to the last (`Pp::paste`). This is the lean lexer's `token_at` (`rerail_c_lean::pp`),
+// branch for branch, over ASCII; a spelling with a byte past ASCII, a `\` or a raw string's `R"`
+// sends the unit to the CPU (`RELEX_REFUSED`), as the device reads no Unicode classes.
+
+constant uint K_NUMBER = 29u, K_LITERAL = 30u, K_DIGRAPH = 32u, K_HASH = 33u;
+// The relexer's answer where the spelling is no one token, and where the device refuses it.
+constant uint RELEX_NONE = 0u, RELEX_REFUSED = 0xffffu;
+// The dialect's options (`rerail_c_lean::pp::Options`), as bits.
+constant uint O_CPP = 1u, O_COLONS = 2u, O_DIGIT_SEP = 4u, O_RAW = 8u;
+
+inline bool is_word(uint c) { return (c >= uint('a') && c <= uint('z')) || (c >= uint('A') && c <= uint('Z')) || (c >= uint('0') && c <= uint('9')) || c == uint('_'); }
+inline bool is_alpha(uint c) { return (c >= uint('a') && c <= uint('z')) || (c >= uint('A') && c <= uint('Z')); }
+inline bool is_digit(uint c) { return c >= uint('0') && c <= uint('9'); }
+
+// The punctuator's length at the spelling's start (`Lexer::punct`), 0 where none starts.
+inline uint punct_len(device const uchar* b, uint n, uint o) {
+    uint c = b[0], d = n > 1u ? b[1] : 0u, e = n > 2u ? b[2] : 0u;
+    bool cpp = (o & O_CPP) != 0u;
+    switch (c) {
+        case '(': case ')': case '[': case ']': case '{': case '}': case ';': case ',': case '~': case '?': return 1u;
+        case ':': return (d == ':' && cpp) ? 2u : 1u;
+        case '.': return (d == '.' && e == '.') ? 3u : (d == '*' && cpp) ? 2u : 1u;
+        case '=': case '!': case '*': case '/': case '%': case '^': return d == '=' ? 2u : 1u;
+        case '+': return (d == '+' || d == '=') ? 2u : 1u;
+        case '-': return (d == '-' || d == '=') ? 2u : (d == '>' && e == '*' && cpp) ? 3u : d == '>' ? 2u : 1u;
+        case '&': return (d == '&' || d == '=') ? 2u : 1u;
+        case '|': return (d == '|' || d == '=') ? 2u : 1u;
+        case '<': return (d == '<' && e == '=') ? 3u : d == '<' ? 2u : (d == '=' && e == '>' && cpp) ? 3u : d == '=' ? 2u : 1u;
+        case '>': return (d == '>' && e == '=') ? 3u : (d == '>' || d == '=') ? 2u : 1u;
+        default: return 0u;
+    }
+}
+
+// A pp-number's end from 0 (`pp_number_end`), over ASCII.
+inline uint number_end(device const uchar* b, uint n, uint o) {
+    uint i = 1u;
+    for (uint k = 0u; k < n && i < n; k++) {
+        uint c = b[i], prev = b[i - 1u];
+        if (is_word(c) || c == uint('.') || c == uint('$')) i++;
+        else if ((c == uint('+') || c == uint('-')) && (prev == 'e' || prev == 'E' || prev == 'p' || prev == 'P')) i++;
+        else if (c == uint('\'') && (o & O_DIGIT_SEP) != 0u && i + 1u < n && is_word(b[i + 1u])) i += 2u;
+        else break;
+    }
+    return i;
+}
+
+// A literal's end from its quote at `q` (`quoted`), then its C++ suffix; 0 where it is unclosed.
+inline uint quoted_end(device const uchar* b, uint n, uint q, uint o) {
+    uint close = b[q];
+    uint i = q + 1u, end = 0u;
+    for (uint k = 0u; k < n && i < n; k++) {
+        if (b[i] == close) { end = i + 1u; break; }
+        if (b[i] == uchar('\n')) break;
+        i += b[i] == uchar('\\') ? 2u : 1u;
+    }
+    if (end == 0u) return 0u;
+    if ((o & O_CPP) != 0u && end < n && (is_alpha(b[end]) || b[end] == uchar('_'))) {
+        uint e = end;
+        for (uint k = 0u; k < n && e < n && (is_word(b[e]) || b[e] == uchar('$')); k++) e++;
+        end = e;
+    }
+    return end;
+}
+
+// `b[0..n)` as a name: the identifier's kind where it is one name to its end.
+inline uint ident_whole(device const uchar* b, uint n) {
+    uint e = 1u;
+    for (uint k = 0u; k < n && e < n && (is_word(b[e]) || b[e] == uchar('$')); k++) e++;
+    return e == n ? K_IDENTIFIER : RELEX_NONE;
+}
+
+// A raw string's end from `i`, after its `"` (`Lexer::raw_end`): its delimiter to `(`, then the
+// first `)` with the delimiter and `"` after it; then its C++ suffix. 0 where it is unclosed.
+inline uint raw_end(device const uchar* b, uint n, uint i, uint o) {
+    uint k = i;
+    for (; k < n && k - i <= 16u; k++) {
+        uint c = b[k];
+        if (c == '(' || c == ')' || c == '\\' || c == ' ' || c == '\t' || c == '\n' || c == '"') break;
+    }
+    if (k >= n || b[k] != uchar('(')) return 0u;
+    uint dl = k - i;
+    for (uint j = k + 1u; j < n; j++) {
+        if (b[j] != uchar(')')) continue;
+        uint after = j + 1u;
+        bool same = after + dl < n;
+        for (uint q = 0u; same && q < dl; q++) same = b[after + q] == b[i + q];
+        if (same && b[after + dl] == uchar('"')) {
+            uint end = after + dl + 1u;
+            if ((o & O_CPP) != 0u && end < n && (is_alpha(b[end]) || b[end] == uchar('_'))) {
+                uint e = end;
+                for (uint q = 0u; q < n && e < n && (is_word(b[e]) || b[e] == uchar('$')); q++) e++;
+                end = e;
+            }
+            return end;
+        }
+    }
+    return 0u;
+}
+
+// The tape kind of the one token `b[0..n)` spells, `RELEX_NONE` where it spells none or more than
+// one, `RELEX_REFUSED` where the device does not read it.
+inline uint relex(device const uchar* b, uint n, uint o) {
+    if (n == 0u) return RELEX_NONE;
+    for (uint k = 0u; k < n; k++) {
+        if (b[k] >= 0x80u || (b[k] == uchar('\\') && k + 1u < n && (b[k + 1u] == uchar('u') || b[k + 1u] == uchar('U')))) return RELEX_REFUSED;
+    }
+    uint c = b[0], d = n > 1u ? b[1] : 0u;
+    // A comment where a token would start: the lexer passes it, so no token starts at 0.
+    if (c == '/' && (d == '/' || d == '*')) return RELEX_NONE;
+    if (is_digit(c) || (c == '.' && is_digit(d))) return number_end(b, n, o) == n ? K_NUMBER : RELEX_NONE;
+    if (c == '#') return (d == '#' ? n == 2u : n == 1u) ? (d == '#' ? K_HASHHASH : K_HASH) : RELEX_NONE;
+    if (c == '%' && d == ':') {
+        bool two = n >= 4u && b[2] == '%' && b[3] == ':';
+        return n == (two ? 4u : 2u) ? (two ? K_HASHHASH : K_HASH) : RELEX_NONE;
+    }
+    if (c == '<' && d == ':') {
+        // C++'s `<::` is `<`, unless `:` or `>` follows.
+        if ((o & O_CPP) != 0u && n > 2u && b[2] == ':' && !(n > 3u && (b[3] == ':' || b[3] == '>'))) return RELEX_NONE;
+        return n == 2u ? K_DIGRAPH : RELEX_NONE;
+    }
+    if ((c == ':' && d == '>') || (c == '<' && d == '%') || (c == '%' && d == '>')) return n == 2u ? K_DIGRAPH : RELEX_NONE;
+    if (c == ':' && d == ':' && (o & O_COLONS) != 0u) return n == 2u ? K_PUNCT : RELEX_NONE;
+    if (c == '"' || c == '\'') return quoted_end(b, n, 0u, o) == n ? K_LITERAL : RELEX_NONE;
+    if (is_alpha(c) || c == '_' || c == '$') {
+        // A literal's prefix: `L`, `U`, `u`, `u8`, then `R` where raw strings are read.
+        uint k = 0u;
+        if (c == 'L' || c == 'U') k = 1u;
+        else if (c == 'u') k = d == '8' ? 2u : 1u;
+        bool raw = (o & O_RAW) != 0u && k < n && b[k] == 'R';
+        uint kq = raw ? k + 1u : k;
+        if (kq > 0u && kq < n && (b[kq] == '"' || (b[kq] == '\'' && !raw))) {
+            uint e = raw ? raw_end(b, n, kq + 1u, o) : quoted_end(b, n, kq, o);
+            // An unclosed raw string's prefix is a name.
+            if (raw && e == 0u) return ident_whole(b, n);
+            // An unclosed literal is an `Other` of its quote: no one token.
+            return e == n ? K_LITERAL : RELEX_NONE;
+        }
+        return ident_whole(b, n);
+    }
+    uint p = punct_len(b, n, o);
+    return p != 0u && p == n ? K_PUNCT : RELEX_NONE;
+}
+
+// For tests: each spelling's answer (`offsets[i]..offsets[i + 1]` of `bytes`).
+kernel void pd_relex_test(device const uchar* bytes [[buffer(0)]], device const uint* offsets [[buffer(1)]],
+                          device uint* out [[buffer(2)]], constant uint& n [[buffer(3)]],
+                          constant uint& o [[buffer(4)]], uint i [[thread_position_in_grid]]) {
+    if (i >= n) return;
+    uint a = offsets[i];
+    out[i] = relex(bytes + a, offsets[i + 1u] - a, o);
+}
