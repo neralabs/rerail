@@ -2293,32 +2293,57 @@ fn fetched_helpers(out: &mut String, x: &Facts<'_>, fx: &Fetched) -> Result<(), 
         run_check(out, r, ft.run_class[usize::from(r)].as_ref().expect("checked in `fetched`"), ci, &x.native.local_checks[ci])?;
     }
     if let Some((q, _)) = &fx.seq {
-        let test = set_test(q.stops, "v", "STOPS", &mut consts)?;
+        if q.stops[0] & 1 != 0 {
+            return Err("a region whose stops hold 0, the padding past the file".into());
+        }
+        let parts: [u64; 4] = std::array::from_fn(|k| q.stops[k] & !q.xs[k]);
+        let closers = set_test(q.xs, "v", "CLOSERS", &mut consts)?;
+        let parts = set_test(parts, "v", "PARTS", &mut consts)?;
         let codes2 = q.codes2.as_ref().expect("checked in `fetched`");
         let t: Vec<String> = codes2.iter().map(|c| format!("{c:#x}")).collect();
         writeln!(consts, "    /// A part's code by its second byte (`records::pass` of its two bytes), as simdjson's `escape_map`.\n    const CODES2: [u32; 256] = [{}];", t.join(", ")).unwrap();
         writeln!(
             out,
-            "    /// The region's next stop from `at`, a clean place: the first byte of the closer's or the
-    /// part's, 16 bytes a vector, as `parse_string`'s `copy_and_find`. None before the file's end
-    /// refuses the file (the region open there).
+            "    /// The closers' bytes of a vector, and the bytes that begin a part of two (`\\`).
     #[inline(always)]
-    fn part_stop(&self, at: u32) -> Result<u32, bool> {{
+    fn closers(v: uint8x16_t) -> uint8x16_t {{
+        unsafe {{ {closers} }}
+    }}
+
+    #[inline(always)]
+    fn parts(v: uint8x16_t) -> uint8x16_t {{
+        unsafe {{ {parts} }}
+    }}
+
+    /// Two vectors' lanes that are all ones, four bits each (`vshrn`, then `vshrn2`).
+    #[inline(always)]
+    fn nib32(a: uint8x16_t, b: uint8x16_t) -> u128 {{
+        unsafe {{
+            let n = vreinterpretq_u64_u8(vshrn_high_n_u16::<4>(vshrn_n_u16::<4>(vreinterpretq_u16_u8(a)), vreinterpretq_u16_u8(b)));
+            u128::from(vgetq_lane_u64::<0>(n)) | u128::from(vgetq_lane_u64::<1>(n)) << 64
+        }}
+    }}
+
+    /// The region's next stop from `at`, a clean place: the first byte of a closer or a part,
+    /// 32 bytes a step, and whether it is a closer, from the two masks, as `parse_string`'s
+    /// `copy_and_find` and its `has_quote_first`. None before the file's end refuses the file
+    /// (the region open there).
+    #[inline(always)]
+    fn part_stop(&self, at: u32) -> Result<(u32, bool), bool> {{
         let mut p = at;
         loop {{
             if p >= self.len {{
                 return Err(false);
             }}
-            let left = self.len - p;
-            let v = unsafe {{ vld1q_u8(self.bytes.add(p as usize)) }};
-            let mut m = Self::nib(unsafe {{ {test} }});
-            if left < 16 {{
-                m &= (1u64 << (4 * left)) - 1;
-            }}
+            // Past the file the bytes are 0 (its padding), no stop's: no mask, as simdjson's.
+            let (a, b) = unsafe {{ (vld1q_u8(self.bytes.add(p as usize)), vld1q_u8(self.bytes.add(p as usize + 16))) }};
+            let c = Self::nib32(Self::closers(a), Self::closers(b));
+            let m = c | Self::nib32(Self::parts(a), Self::parts(b));
             if m != 0 {{
-                return Ok(p + m.trailing_zeros() / 4);
+                let first = m & m.wrapping_neg();
+                return Ok((p + m.trailing_zeros() / 4, c & first != 0));
             }}
-            p += 16;
+            p += 32;
         }}
     }}
 "
@@ -2390,9 +2415,12 @@ fn fetched_arms(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, p: &mut Plan) -> S
             pats.push(if i == j { format!("{:#04x}", bytes[i]) } else { format!("{:#04x}..={:#04x}", bytes[i], bytes[j]) });
             i = j + 1;
         }
+        // A one-byte token (punctuation, an opener): its place's test of that (`SPAN`) holds,
+        // and is not made again (`past_span`).
+        let one = past_span(x, t, 1);
         let body = match form {
-            0 => format!("s.rec_end = s.start + 1;\n{}{}", code_set(x, &[t], a), p.to(t)),
-            1 => format!("s.rec_end = s.start + 1;\n{}s.part_at = s.start + 1;\n{}", code_set(x, &[t], a), p.to(t)),
+            0 => format!("s.rec_end = s.start + 1;\n{}{}", code_set(x, &[one], a), p.to(one)),
+            1 => format!("s.rec_end = s.start + 1;\n{}s.part_at = s.start + 1;\n{}", code_set(x, &[one], a), p.to(one)),
             _ => {
                 let r = a;
                 let mut words = String::new();
@@ -2660,9 +2688,14 @@ fn part_plan(x: &Facts<'_>, fx: &Fetched, pc: usize) -> Plan {
     let pf = part_facts(x, fx, pc).expect("checked in `rust_source_at`");
     let (q, _) = fx.seq.as_ref().expect("checked");
     let mut p = Plan::default();
-    let xs: Vec<u8> = (0..=255u8).filter(|&b| q.xs[usize::from(b) / 64] >> (b % 64) & 1 == 1).collect();
-    let is_closer = xs.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(" | ");
-    let content = p.to(pf.content);
+    let _ = q;
+    // A content part whose words go straight back to this one: they are written here, and the
+    // stop found is taken on at once, not found again, as `copy_and_find` handles its stop.
+    let room = if x.unchecked { "" } else { "s.room()?;\n" };
+    let (content, then) = match straight_to(x, pf.content, pc) {
+        Some(code) => (format!("{code}{room}s.last_end = s.rec_end;\n"), "}\n"),
+        None => (p.to(pf.content), "} else "),
+    };
     // The closer is one byte: its place's test of that (`SPAN`) holds, and is not made again.
     let closer = p.to(past_span(x, pf.closer, 1));
     // Each escape's word to its place, past the checks its bytes cannot hold at (as simdjson's
@@ -2679,14 +2712,14 @@ fn part_plan(x: &Facts<'_>, fx: &Fetched, pc: usize) -> Plan {
     p.code = format!(
         "{}s.last_end = s.rec_end;
 let at = s.part_at;
-let i = s.part_stop(at)?;
+let (i, closer) = s.part_stop(at)?;
 if i != at {{
 // The bytes before the stop: content (its code read by no word after).
 s.start = at;
 s.rec_end = i;
 s.part_at = i;
 {content}
-}} else if matches!(s.byte(i), {is_closer}) {{
+{then}if closer {{
 // The closer: the region's last token.
 s.start = i;
 s.rec_end = i + 1;
@@ -2705,6 +2738,28 @@ s.part_at = i + 2;
         code_set(x, &[past_span(x, pf.closer, 1)], pf.closer_code)
     );
     p
+}
+
+/// The code of the words from `from` to word `to`, where each has one successor and is a node
+/// word (`LEAF` of a fixed kind, a supertype, a field), a `GOTO` or a last byte's `SPAN`; `None`
+/// where the way is other.
+fn straight_to(x: &Facts<'_>, from: u16, to: usize) -> Option<String> {
+    let words = &x.native.structural;
+    let (mut q, mut out) = (usize::from(from), String::new());
+    for _ in 0..16 {
+        if q == to {
+            return Some(out);
+        }
+        let &[t] = succ(x, q).as_slice() else { return None };
+        match words.get(q)?.operation {
+            Op::Leaf { kind, .. } if kind != WORD_KIND && kind != REMEMBERED => {}
+            Op::NodeSuper { .. } | Op::NodeField { .. } | Op::Goto { .. } | Op::Span { last: true, .. } => {}
+            _ => return None,
+        }
+        out.push_str(&word(x, q, &|_| Ok(String::new())).ok()?);
+        q = t;
+    }
+    None
 }
 
 /// Place `t` past its `SPAN` of `len` bytes, where the token is known to be that long.

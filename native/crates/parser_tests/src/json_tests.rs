@@ -308,6 +308,11 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     let code_writes: Vec<&str> = src.lines().filter(|l| l.starts_with("s.code = ")).collect();
     assert!(code_writes.iter().all(|l| l.starts_with("s.code = S::CODES2[")) && !code_writes.is_empty(), "code written where no word reads it: {code_writes:?}");
     assert!(!src.contains("live =") && !src.contains("rec_end = 0;") && !src.contains("s.word_kind()") && !src.contains("rec_end == 0"), "a field written that no word reads");
+    // A string as `copy_and_find`: 32 bytes a step, the stop's kind from the masks (no byte read
+    // again), a content part then its stop in the same pass, and no test of a one-byte token's
+    // length after it is set.
+    let parts = src.matches("let (i, closer) = s.part_stop(at)?;").count();
+    assert!(parts > 0 && src.contains("p += 32;") && !src.contains("matches!(s.byte(i)") && src.matches("}\nif closer {").count() == parts && !src.contains("!= s.rec_end"), "a string's stops as copy_and_find's");
     // No dispatch's arm only sets `d` again for its own loop (`Shape::threaded`).
     let resets = dispatch_resets(&src);
     assert!(resets.is_empty(), "a dispatch's arm only re-sets d: {resets:?}");

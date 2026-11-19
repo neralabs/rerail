@@ -593,6 +593,28 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 23, done: a string as `copy_and_find`, in the generated Rust
+
+Three differences in a string's code:
+- **The stop read 16 bytes a step, and was read again.** `part_stop` found the first closer or
+  escape, then the arm read its byte (`matches!(s.byte(i), 0x22)`) to tell which. It now reads
+  32 bytes a step, makes the closers' mask and the escapes' (`closers`, `parts`: one compare
+  each for JSON, as simdjson's `quote_bits` and `bs_bits`), and gives back whether the first stop
+  is a closer: `c & first`, simdjson's `has_quote_first`.
+- **A content part then scanned again from the stop it had found.** Its place goes straight back
+  to the part's word (a leaf, a `GOTO`). That is now written in place (`straight_to`), and the
+  stop already found is taken on at once.
+- **A one-byte token's length was tested right after it was set:** `if s.start + 1 != s.rec_end`,
+  at each string opener. The one-byte arms now go past their place's `SPAN` (`past_span`), as the
+  closer's has since step 16.
+
+The bytes past the file are 0 on every path (step 20), and 0 is never a stop, so the last step
+needs no mask, as in simdjson. `fetched_helpers` refuses a region whose stops hold 0.
+
+The Rust trees test asserts 32 bytes a step, no byte read again, each content part followed by
+its stop, and no length test. Inverting the closer's flag fails it at the first file. Not writing
+the content in place fails it on its assertion.
+
 ## Step 22, done: one stack, the nodes', in the generated Rust
 
 There were two stacks: the calls' (`s.ret`, `s.depth`) and the open nodes' (`s.open`, `s.nopen`).
@@ -733,7 +755,7 @@ The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` write
 | `case ','`, `case ']'` in the continue states | each punctuation byte straight to its place, every other byte refused | yes |
 | atoms: `str4ncmp(src, "true")`, then the byte after not structural or white space; `visit_true_atom` writes its own tape word | the same test, a word load; the arm writes its leaf with its kind | yes, since step 21 |
 | `parse_number`: the digits read once, validated as they are read | `run_0_check_0`: one read of 16 bytes, the end and the check from it, then on past the check | yes, since step 14 (a number past 15 bytes: as before) |
-| `parse_string`: `copy_and_find`, then one branch: quote, backslash or neither | `part_stop`, then one branch: closer, escape or content | yes |
+| `parse_string`: `copy_and_find`, 32 bytes a step, then one branch on `has_quote_first`; the stop handled in the same pass | `part_stop`, 32 bytes a step, the closer's and the escape's masks, the stop's kind from them; content, then its stop in the same pass | yes, since step 23 |
 | an escape: `escape_map[c]`, the `\u` work only after a `u` | `CODES2[c]`, then `\u` to its two checks and the eight others, one range, past them | yes, since step 16 |
 | the closing quote ends the string | the closer's arm goes on at once | yes, since step 16 |
 | the tape: a word a value | the node rows (`open`, `leaf`, `close`, the supertype's record), committed to the tape's columns | the output's form, not a difference to remove |
@@ -751,8 +773,8 @@ The next six, from reading the Rust after step 19 (each a step, its assertion an
 1. Done in step 20.
 2. Done in step 21.
 3. Done in step 22.
-4. No test of the string opener's length right after it is set.
-5. `part_stop` 32 bytes a step, and which stop it found from its masks, not the byte read again.
+4. Done in step 23.
+5. Done in step 23.
 6. The tape written once: each node's code as it is made, the columns where the image has them.
 
 ## Order
