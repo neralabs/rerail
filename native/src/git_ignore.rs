@@ -904,10 +904,7 @@ mod tests {
         assert!(!ignore.ignored("a.py", false).unwrap());
         assert!(ignore.sources_unchanged(), "nothing changed");
         std::fs::write(root.join(".gitignore"), "gen/\na.py\n").unwrap();
-        assert!(
-            !ignore.sources_unchanged(),
-            "the root .gitignore changed"
-        );
+        assert!(!ignore.sources_unchanged(), "the root .gitignore changed");
         let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
         assert!(ignore.ignored("a.py", false).unwrap());
         assert!(ignore.sources_unchanged());
@@ -924,7 +921,10 @@ mod tests {
     /// change of the rules the matcher follows.
     #[test]
     fn says_its_rules_changed_once_a_file_read_again_with_the_index_is_put_back() {
-        let root = fixture("put-back", &[(".gitignore", "gen/\n"), ("a.py", ""), ("b.py", "")]);
+        let root = fixture(
+            "put-back",
+            &[(".gitignore", "gen/\n"), ("a.py", ""), ("b.py", "")],
+        );
         git(&root, &["init", "--initial-branch=main"]);
         let root = root.canonicalize().unwrap();
         let exclude = root.join(".git").join("info").join("exclude");
@@ -963,10 +963,7 @@ mod tests {
         let file = std::fs::File::options().write(true).open(&index).unwrap();
         file.set_modified(read).unwrap();
         drop(file);
-        assert!(
-            ignore.sources_unchanged(),
-            "the rules' sources are as read"
-        );
+        assert!(ignore.sources_unchanged(), "the rules' sources are as read");
         assert!(
             !ignore.ignored("gen/x.py", false).unwrap(),
             "a force-added file is tracked, as a matcher opened now reads it"
@@ -1024,7 +1021,11 @@ mod tests {
         let mut fresh = GitIgnore::open(&root).unwrap().unwrap();
         assert_eq!(answers(&mut fresh), (false, true), "the new blob");
         assert!(ignore.sources_unchanged());
-        assert_eq!(answers(&mut ignore), (false, true), "handed on or asked again");
+        assert_eq!(
+            answers(&mut ignore),
+            (false, true),
+            "handed on or asked again"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
