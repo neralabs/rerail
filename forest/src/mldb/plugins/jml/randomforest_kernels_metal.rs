@@ -19,11 +19,11 @@ pub const SOURCE: &str = include_str!(concat!(env!("OUT_DIR"), "/randomforest_ke
 
 /// The kernels for `backend` (CUDA, the CPU): the UKL source, carried in the binary, preprocessed in-process
 /// through the backend's shim (`rerail-ukl`), as its compiler takes it.
-pub fn ukl_source(backend: rerail_ukl::Backend) -> Result<String, String> {
+pub fn ukl_source(preprocess: rerail_ukl::Preprocess) -> Result<String, String> {
     const ROOT: &str = "/<forest>";
     const MAIN: &str = "mldb/plugins/jml/randomforest_kernels_ukl.h";
     const COMMON: &str = "mldb/plugins/jml/randomforest_kernels_common.h";
-    rerail_ukl::Preprocess::new(backend)
+    preprocess
         .dir(ROOT)
         .file(format!("{ROOT}/{MAIN}"), include_str!("randomforest_kernels_ukl.h"))
         .file(format!("{ROOT}/{COMMON}"), include_str!("randomforest_kernels_common.h"))
@@ -61,9 +61,9 @@ pub fn library() -> Result<&'static ComputeFunctionLibrary, String> {
     LIB.get_or_init(|| {
         let shared = crate::gpu::shared::get().ok_or("no device")?;
         #[cfg(target_os = "macos")]
-        let source = if shared.device.is_cpu() { ukl_source(shared.device.ukl_backend())? } else { SOURCE.to_string() };
+        let source = if shared.device.is_cpu() { ukl_source(shared.device.preprocess())? } else { SOURCE.to_string() };
         #[cfg(target_os = "linux")]
-        let source = ukl_source(shared.device.ukl_backend())?;
+        let source = ukl_source(shared.device.preprocess())?;
         ComputeFunctionLibrary::compile_from_source(&shared.device, &source, "randomforest_kernels_ukl.h")
     })
     .as_ref()

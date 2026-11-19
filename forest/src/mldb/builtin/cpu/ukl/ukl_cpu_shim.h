@@ -15,6 +15,10 @@
       one slot a thread, between two suspensions.
     - **A thread that has returned no longer counts** at a barrier or in its SIMD group, as on a GPU (`if (i >= n)
       return;` before a barrier works).
+    - **OpenCL's rule, checked** (`UKL_CPU_OPENCL_RULE`, `RERAIL_CPU_OPENCL_RULE=1`): a SIMD-group operation waits
+      for every live thread of the threadgroup, as OpenCL's emulated SIMD groups do (decision 0400 §3.5). A kernel
+      whose SIMD groups diverge at an operation fails here, naming its waits, where it would hang on such a device.
+      `RERAIL_CPU_SIMD_WIDTH` runs SIMD groups of another width (a power of two up to 32).
     - **A barrier no thread can pass is an error here**: a SIMD group's lanes split between a SIMD-group operation
       and a threadgroup barrier (or another operation's wait) is reported (which thread waits where), and the
       launch fails, where a GPU would hang or give garbage. That is what the CPU backend is for: a kernel's bugs,
@@ -32,7 +36,11 @@
 #include "ukl_auto_macros.h"
 #include "ukl_macros.h"
 
+// 32 lanes, as on Metal and CUDA; another power of two up to 32 (`RERAIL_CPU_SIMD_WIDTH`) runs a kernel as a narrower
+// device would.
+#ifndef UKL_SIMD_WIDTH
 #define UKL_SIMD_WIDTH 32
+#endif
 
 typedef unsigned int uint32_t;
 typedef int int32_t;
@@ -244,8 +252,25 @@ template <typename F> static int __ukl_cpu_group(__ukl_cpu_sched* s, F& f)
         if (ran)
             continue;
         // Every thread waits or is done: release a SIMD group whose live lanes all wait at a SIMD-group operation,
-        // else every thread if all live ones wait at a threadgroup barrier.
+        // else every thread if all live ones wait at a threadgroup barrier. Under OpenCL's rule (`UKL_CPU_OPENCL_RULE`:
+        // its SIMD groups emulated through threadgroup memory, whose only wait is the threadgroup's barrier), a SIMD
+        // group is released only when every live thread of the threadgroup waits at a SIMD-group operation.
         bool released = false;
+#if defined(UKL_CPU_OPENCL_RULE)
+        {
+            uint32_t live = 0, at = 0;
+            for (uint32_t i = 0; i < n; i++) {
+                live += s->threads[i].state != __UKL_DONE;
+                at += s->threads[i].state == __UKL_AT_SG;
+            }
+            if (live && at == live) {
+                for (uint32_t i = 0; i < n; i++)
+                    if (s->threads[i].state == __UKL_AT_SG)
+                        s->threads[i].state = __UKL_RUN;
+                released = true;
+            }
+        }
+#else
         for (uint32_t g = 0; g * UKL_SIMD_WIDTH < n; g++) {
             uint32_t live = 0, at = 0;
             for (uint32_t i = g * UKL_SIMD_WIDTH; i < n && i < (g + 1) * UKL_SIMD_WIDTH; i++) {
@@ -258,6 +283,7 @@ template <typename F> static int __ukl_cpu_group(__ukl_cpu_sched* s, F& f)
                 released = true;
             }
         }
+#endif
         if (released)
             continue;
         uint32_t live = 0, at = 0;
@@ -451,7 +477,7 @@ static inline uint32_t ukl_simdgroup_ballot(bool val, uint16_t simd_lane, atomic
 
 static inline uint32_t ukl_simdgroup_sum(uint32_t val, uint16_t simd_lane, atomic_uint * tmp)
 {
-    for (uint32_t d = 16; d > 0; d >>= 1)
+    for (uint32_t d = UKL_SIMD_WIDTH / 2; d > 0; d >>= 1)
         val += (uint32_t)__ukl_cpu_exchange(val, __ukl_self->lane ^ d);
     return val;
 }
@@ -529,7 +555,7 @@ static inline uint32_t ukl_simdgroup_broadcast_first(uint32_t val, uint16_t simd
 #define PASS_INNER_ARG_TGID1(Type, Name) (__ukl_sched->tgid[1])
 #define PASS_INNER_ARG_TGID2(Type, Name) (__ukl_sched->tgid[2])
 #define PASS_INNER_ARG_LANE(Type, Name) (__ukl_self->lane)
-#define PASS_INNER_ARG_NLANES(Type, Name) 32u
+#define PASS_INNER_ARG_NLANES(Type, Name) ((uint32_t)UKL_SIMD_WIDTH)
 #define PASS_INNER_ARG_SHARED(Type, Name) Name
 
 #define PASS_INNER_ARG2(Access, Type, Name, Bounds) CALL2_A(PASS_INNER_ARG_, Access, Type, Name)

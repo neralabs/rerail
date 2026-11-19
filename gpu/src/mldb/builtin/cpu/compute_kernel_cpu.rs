@@ -26,6 +26,31 @@ use std::ffi::{c_char, c_void, CStr, CString};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex, OnceLock};
 
+/// The defines a CPU compile takes from the environment: `RERAIL_CPU_SIMD_WIDTH` (SIMD groups of another width, a
+/// power of two up to 32: how a narrower device runs the kernel) and `RERAIL_CPU_OPENCL_RULE=1` (a SIMD-group
+/// operation waits for the whole threadgroup, as OpenCL's emulated groups do: a kernel that breaks the rule fails).
+pub fn defines() -> Vec<(&'static str, String)> {
+    let mut v = Vec::new();
+    if simd_width() != 32 {
+        v.push(("UKL_SIMD_WIDTH", format!("{}u", simd_width())));
+    }
+    if std::env::var("RERAIL_CPU_OPENCL_RULE").is_ok_and(|v| v == "1") {
+        v.push(("UKL_CPU_OPENCL_RULE", "1".to_string()));
+    }
+    v
+}
+
+/// The CPU's SIMD groups' lanes: `RERAIL_CPU_SIMD_WIDTH`, else 32.
+pub fn simd_width() -> u32 {
+    match std::env::var("RERAIL_CPU_SIMD_WIDTH") {
+        Err(_) => 32,
+        Ok(w) => match w.parse::<u32>() {
+            Ok(n) if n.is_power_of_two() && n <= 32 => n,
+            _ => panic!("RERAIL_CPU_SIMD_WIDTH={w}: a power of two from 1 to 32"),
+        },
+    }
+}
+
 /// Each thread's stack.
 const STACK_BYTES: usize = 256 << 10;
 

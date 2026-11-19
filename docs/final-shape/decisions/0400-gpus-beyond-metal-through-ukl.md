@@ -358,6 +358,38 @@ that OpenCL C 1.2 accepts. It also keeps compile times down: no templates to ins
 - **Unchanged behaviour:** the library's 16 tests on Metal, CUDA (V100) and the CPU; the reads' gate on all three;
   the engine's reads tests, the device join tests and the label kernels on Metal.
 
+**The SIMD group on any width, and its state as parameters (the user, 2026-11-18).** Two choices settle the
+subgroup problem above:
+
+- **`UKL_SIMD_WIDTH` is the device's native width**, a constant each compile is given (32 on Metal, CUDA and the
+  CPU; an OpenCL device's own subgroup width; 32 when it has none and they are emulated; 1 as a last fallback).
+  The library takes any power of two from 1 to 32. The ballot and match stay 32-bit masks; a 64-wide device
+  (AMD) needs a wider mask type first.
+- **`__UKL_PARAMS` and `__UKL_ARGS`**: every function that reaches a SIMD-group operation takes `__UKL_PARAMS`
+  after its parameters and passes `__UKL_ARGS` after its arguments. They are empty where the hardware holds the
+  group (Metal, CUDA, the CPU). Under OpenCL's emulation they carry the threadgroup's scratch (`__local` memory,
+  which OpenCL C 1.2 can declare only in a kernel), declared by the kernel's entry.
+- **The rule under emulation**: OpenCL 1.2's only wait is the workgroup's barrier, so every SIMD-group operation
+  must be reached by every live thread of the threadgroup, not only by its SIMD group.
+
+**Done (2026-11-18):**
+- `__UKL_PARAMS`/`__UKL_ARGS` are threaded through `simd.h`, `group.h`, `scan.h`, `workqueue.h`, `backend.h`'s
+  primitives, the radix body and the library's test kernels (a script found every function that reaches a
+  primitive, to a fixpoint).
+- `group.h` takes any width: with more SIMD groups than lanes (a 1,024-thread group of width 8), the partials are
+  summed by a loop and scanned by one thread. `UKL_TG_SCRATCH` is a word per SIMD group of the largest group
+  (`UKL_TG_MAX`, 1,024) and the total.
+- `radix.h` needs 8 lanes or more (its counts by SIMD group fill a threadgroup's memory below that); narrower,
+  its kernels are left out, and `radix_sort_pairs` says why.
+- The device gives the preprocessing (`Device::preprocess()`, with its defines) and its width
+  (`Device::simd_width()`); the tests' references use the width.
+- The CPU backend runs a kernel as a narrower device would (`RERAIL_CPU_SIMD_WIDTH`), and checks the rule
+  (`RERAIL_CPU_OPENCL_RULE=1`: a SIMD-group operation waits for every live thread of the threadgroup, so a kernel
+  that breaks the rule fails with its waits named, where it would hang on the device).
+- Measured: the library's 16 tests pass on the CPU at widths 32, 16, 8 and 1 (the radix sort skipped at 1) and
+  under the rule, the work queue's test included (its SIMD groups stay together); unchanged on Metal and on CUDA
+  (V100: 16 + 7, the reads' gate).
+
 The gate: every library header compiles as OpenCL C 1.2 (clang's front end, `-x cl -cl-std=CL1.2`), and still
 preprocesses and compiles as before on Metal, CUDA and the CPU. Then an OpenCL section of `backend.h`, the
 OpenCL shim and runtime, and the library's tests on Apple's OpenCL.

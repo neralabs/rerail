@@ -10,6 +10,14 @@
 // Metal's `simd_*`). A 1-D threadgroup's SIMD groups are its threads in order, `UKL_SIMD_WIDTH` at a time.
 
 #pragma once
+
+// The SIMD group's state, for a backend that keeps it in memory (OpenCL without subgroups: a threadgroup's scratch,
+// decision 0400 §3.5): every function that reaches a SIMD-group operation takes `__UKL_PARAMS` after its parameters,
+// and passes `__UKL_ARGS` after its arguments. Empty where the hardware holds the group (Metal, CUDA, the CPU).
+#ifndef __UKL_PARAMS
+#define __UKL_PARAMS
+#define __UKL_ARGS
+#endif
 #include <ukl>
 
 #if defined(UKL_METAL)
@@ -36,11 +44,11 @@ UKL_INLINE uint32_t ukl_clz64(uint64_t x) { return (uint32_t)clz(x); }
 UKL_INLINE uint32_t ukl_ctz32(uint32_t x) { return ctz(x); }
 UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return (uint32_t)ctz(x); }
 
-UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane) { return simd_shuffle(v, (ushort)lane); }
-UKL_INLINE uint32_t ukl_sg_shuffle_up(uint32_t v, uint32_t d) { return simd_shuffle_up(v, (ushort)d); }
-UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d) { return simd_shuffle_down(v, (ushort)d); }
-UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m) { return simd_shuffle_xor(v, (ushort)m); }
-UKL_INLINE uint32_t ukl_sg_ballot(bool b) { return (uint32_t)(uint64_t)(simd_vote::vote_t)simd_ballot(b); }
+UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return simd_shuffle(v, (ushort)lane); }
+UKL_INLINE uint32_t ukl_sg_shuffle_up(uint32_t v, uint32_t d __UKL_PARAMS) { return simd_shuffle_up(v, (ushort)d); }
+UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS) { return simd_shuffle_down(v, (ushort)d); }
+UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return simd_shuffle_xor(v, (ushort)m); }
+UKL_INLINE uint32_t ukl_sg_ballot(bool b __UKL_PARAMS) { return (uint32_t)(uint64_t)(simd_vote::vote_t)simd_ballot(b); }
 
 UKL_INLINE void ukl_sg_barrier() { simdgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup); }
 UKL_INLINE void ukl_tg_barrier() { threadgroup_barrier(mem_flags::mem_threadgroup); }
@@ -74,12 +82,12 @@ UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { re
 
 // Native forms.
 #define UKL_NATIVE_SG_REDUCE 1
-UKL_INLINE uint32_t ukl_sg_sum_native(uint32_t v) { return simd_sum(v); }
-UKL_INLINE uint32_t ukl_sg_min_native(uint32_t v) { return simd_min(v); }
-UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v) { return simd_max(v); }
+UKL_INLINE uint32_t ukl_sg_sum_native(uint32_t v __UKL_PARAMS) { return simd_sum(v); }
+UKL_INLINE uint32_t ukl_sg_min_native(uint32_t v __UKL_PARAMS) { return simd_min(v); }
+UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return simd_max(v); }
 #define UKL_NATIVE_SG_SCAN 1
-UKL_INLINE uint32_t ukl_sg_inclusive_sum_native(uint32_t v) { return simd_prefix_inclusive_sum(v); }
-UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v) { return simd_prefix_exclusive_sum(v); }
+UKL_INLINE uint32_t ukl_sg_inclusive_sum_native(uint32_t v __UKL_PARAMS) { return simd_prefix_inclusive_sum(v); }
+UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v __UKL_PARAMS) { return simd_prefix_exclusive_sum(v); }
 
 #elif defined(UKL_CUDA)
 
@@ -101,11 +109,11 @@ UKL_INLINE uint32_t ukl_clz64(uint64_t x) { return __clzll(x); }
 UKL_INLINE uint32_t ukl_ctz32(uint32_t x) { return x == 0u ? 32u : (uint32_t)(__ffs(x) - 1); }
 UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return x == 0u ? 64u : (uint32_t)(__ffsll(x) - 1); }
 
-UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane) { return __shfl_sync(0xffffffffu, v, lane); }
-UKL_INLINE uint32_t ukl_sg_shuffle_up(uint32_t v, uint32_t d) { return __shfl_up_sync(0xffffffffu, v, d); }
-UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d) { return __shfl_down_sync(0xffffffffu, v, d); }
-UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m) { return __shfl_xor_sync(0xffffffffu, v, m); }
-UKL_INLINE uint32_t ukl_sg_ballot(bool b) { return __ballot_sync(0xffffffffu, b); }
+UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return __shfl_sync(0xffffffffu, v, lane); }
+UKL_INLINE uint32_t ukl_sg_shuffle_up(uint32_t v, uint32_t d __UKL_PARAMS) { return __shfl_up_sync(0xffffffffu, v, d); }
+UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS) { return __shfl_down_sync(0xffffffffu, v, d); }
+UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return __shfl_xor_sync(0xffffffffu, v, m); }
+UKL_INLINE uint32_t ukl_sg_ballot(bool b __UKL_PARAMS) { return __ballot_sync(0xffffffffu, b); }
 
 UKL_INLINE void ukl_sg_barrier() { __syncwarp(); }
 UKL_INLINE void ukl_tg_barrier() { __syncthreads(); }
@@ -125,13 +133,13 @@ UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { re
 
 // The lanes holding the same value as this one (Volta and later).
 #define UKL_NATIVE_SG_MATCH 1
-UKL_INLINE uint32_t ukl_sg_match_native(uint32_t v) { return __match_any_sync(0xffffffffu, v); }
+UKL_INLINE uint32_t ukl_sg_match_native(uint32_t v __UKL_PARAMS) { return __match_any_sync(0xffffffffu, v); }
 
 #if __CUDA_ARCH__ >= 800
 #define UKL_NATIVE_SG_REDUCE 1
-UKL_INLINE uint32_t ukl_sg_sum_native(uint32_t v) { return __reduce_add_sync(0xffffffffu, v); }
-UKL_INLINE uint32_t ukl_sg_min_native(uint32_t v) { return __reduce_min_sync(0xffffffffu, v); }
-UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v) { return __reduce_max_sync(0xffffffffu, v); }
+UKL_INLINE uint32_t ukl_sg_sum_native(uint32_t v __UKL_PARAMS) { return __reduce_add_sync(0xffffffffu, v); }
+UKL_INLINE uint32_t ukl_sg_min_native(uint32_t v __UKL_PARAMS) { return __reduce_min_sync(0xffffffffu, v); }
+UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return __reduce_max_sync(0xffffffffu, v); }
 #endif
 
 #elif defined(UKL_CPU)
@@ -156,19 +164,19 @@ UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return x == 0u ? 64u : (uint32_t)__b
 
 // A lane past the group's end, or the group's own (`shuffle_up` below lane `d`, `shuffle_down` past the last lane),
 // reads its own value, as CUDA's do.
-UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane) { return (uint32_t)__ukl_cpu_exchange(v, lane); }
-UKL_INLINE uint32_t ukl_sg_shuffle_up(uint32_t v, uint32_t d)
+UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return (uint32_t)__ukl_cpu_exchange(v, lane); }
+UKL_INLINE uint32_t ukl_sg_shuffle_up(uint32_t v, uint32_t d __UKL_PARAMS)
 {
     uint32_t l = __ukl_self->lane;
     return (uint32_t)__ukl_cpu_exchange(v, l >= d ? l - d : l);
 }
-UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d)
+UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS)
 {
     uint32_t l = __ukl_self->lane;
     return (uint32_t)__ukl_cpu_exchange(v, l + d < UKL_SIMD_WIDTH ? l + d : l);
 }
-UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m) { return (uint32_t)__ukl_cpu_exchange(v, __ukl_self->lane ^ m); }
-UKL_INLINE uint32_t ukl_sg_ballot(bool b) { return __ukl_cpu_ballot(b); }
+UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return (uint32_t)__ukl_cpu_exchange(v, __ukl_self->lane ^ m); }
+UKL_INLINE uint32_t ukl_sg_ballot(bool b __UKL_PARAMS) { return __ukl_cpu_ballot(b); }
 
 UKL_INLINE void ukl_sg_barrier() { __ukl_cpu_wait(__UKL_AT_SG); }
 UKL_INLINE void ukl_tg_barrier() { __ukl_cpu_wait(__UKL_AT_TG); }

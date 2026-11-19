@@ -40,7 +40,7 @@ UKL_INLINE void UKL_RADIX_NAME(ukl_radix_scatter_tile)(UKL_GLOBAL const UKL_RADI
         UKL_RADIX_KEY key = live ? keys[r] : (UKL_RADIX_KEY)0;
         // A row past the end has a digit of its own, equal to no live row's.
         uint32_t d = live ? UKL_RADIX_NAME(ukl_radix_digit)(key, args.shift) : UKL_RADIX_DIGITS;
-        uint32_t m = ukl_sg_match(d);
+        uint32_t m = ukl_sg_match(d __UKL_ARGS);
         uint32_t rank = ukl_rank32(m, lane);
         bool last = (m >> lane) == 1u;
         for (uint32_t s = 0u; s < UKL_RADIX_GROUPS; s++)

@@ -44,6 +44,11 @@ pub fn cpu_chosen() -> bool {
     *CPU.get_or_init(|| std::env::var("RERAIL_GPU").is_ok_and(|v| v.eq_ignore_ascii_case("cpu")))
 }
 
+/// The lanes of the process's device's SIMD groups (`UKL_SIMD_WIDTH`).
+pub fn simd_width() -> u32 {
+    crate::shared::get().map_or(32, |s| s.device.simd_width())
+}
+
 /// The backend's name, for messages: the process's device's.
 pub fn backend() -> &'static str {
     match crate::shared::get().map(|s| &s.device) {
@@ -86,6 +91,14 @@ impl Device {
         }
     }
 
+    /// The lanes of the device's SIMD groups, as its kernels are compiled (`UKL_SIMD_WIDTH`).
+    pub fn simd_width(&self) -> u32 {
+        match self {
+            Device::Native(_) => 32,
+            Device::Cpu(_) => cpu::simd_width(),
+        }
+    }
+
     pub fn is_cpu(&self) -> bool {
         matches!(self, Device::Cpu(_))
     }
@@ -99,6 +112,18 @@ impl Device {
             #[cfg(target_os = "linux")]
             Device::Native(d) => rerail_ukl::Backend::Cuda { sm: d.sm },
         }
+    }
+
+    /// A preprocessing of UKL for this device: its backend, and the defines its compile takes (the CPU's knobs,
+    /// `compute_kernel_cpu::defines`).
+    pub fn preprocess(&self) -> rerail_ukl::Preprocess {
+        let mut p = rerail_ukl::Preprocess::new(self.ukl_backend());
+        if let Device::Cpu(_) = self {
+            for (name, value) in cpu::defines() {
+                p = p.define(name, Some(&value));
+            }
+        }
+        p
     }
 
     pub fn new_shared_event(&self) -> SharedEvent {

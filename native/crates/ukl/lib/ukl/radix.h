@@ -23,6 +23,10 @@
 #define UKL_RADIX_ROUNDS 4u
 #define UKL_RADIX_TILE (UKL_RADIX_THREADS * UKL_RADIX_ROUNDS)
 #define UKL_RADIX_GROUPS (UKL_RADIX_THREADS / UKL_SIMD_WIDTH)
+// The counts by SIMD group (`UKL_RADIX_GROUPS * UKL_RADIX_DIGITS` words) fit a threadgroup's memory from 8 lanes up.
+// Narrower, the sort's kernels are not defined (`rerail_gpu::library::radix_sort_pairs` says so), and the rest of a
+// program that includes it builds.
+#if UKL_SIMD_WIDTH >= 8
 
 typedef struct UklRadixArgs {
     uint32_t n;
@@ -72,3 +76,5 @@ UKL_INLINE uint32_t ukl_radix_row(uint32_t tile, uint32_t k, uint32_t t) { retur
 
 UKL_DEFINE_RADIX_KERNELS(u32, uint32_t)
 UKL_DEFINE_RADIX_KERNELS(u64, uint64_t)
+
+#endif // UKL_SIMD_WIDTH >= 8

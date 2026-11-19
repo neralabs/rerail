@@ -155,6 +155,9 @@ pub fn radix_sort_pairs<K: RadixKey>(
     n: u32,
     bits: u32,
 ) -> Result<Sorted, String> {
+    if crate::device::simd_width() < 8 {
+        return Err(format!("the radix sort needs SIMD groups of 8 lanes or more; the device's have {}", crate::device::simd_width()));
+    }
     let lib = library()?;
     let (hist_kernel, scatter_kernel) = (lib.function(K::HIST)?, lib.function(K::SCATTER)?);
     let tiles = n.div_ceil(RADIX_TILE).max(1);

@@ -204,17 +204,19 @@ fn simd_group_operations_and_their_references() {
     launch(&q, p.function("t_simd").unwrap()).value("args", &TestArgs { n, w: 0 }).buffer("in", &inb).buffer("out", &out).run(&[(n / 128) as u64], &[128]).unwrap();
     q.flush().await_().unwrap();
     let got: Vec<u32> = read(&out, n as usize * 16);
-    for g in 0..groups as usize {
-        let v = &vals[g * 32..g * 32 + 32];
+    // The device's SIMD groups: 32 lanes, or another width (the CPU's `RERAIL_CPU_SIMD_WIDTH`, an OpenCL device's).
+    let w = crate::device::simd_width() as usize;
+    for g in 0..n as usize / w {
+        let v = &vals[g * w..g * w + w];
         let sum = v.iter().fold(0u32, |a, &b| a.wrapping_add(b));
         let odd: Vec<bool> = v.iter().map(|x| x & 1 == 1).collect();
         let first = v.iter().position(|x| x % 5 == 0).map_or(u32::MAX, |l| l as u32);
-        for lane in 0..32 {
+        for lane in 0..w {
             let incl = v[..=lane].iter().fold(0u32, |a, &b| a.wrapping_add(b));
             let below = odd[..lane].iter().filter(|&&b| b).count() as u32;
             let mn = *v.iter().min().unwrap();
             let mx = *v.iter().max().unwrap();
-            let same = (0..32).filter(|&j| v[j] % 4 == v[lane] % 4).fold(0u32, |m, j| m | 1 << j);
+            let same = (0..w).filter(|&j| v[j] % 4 == v[lane] % 4).fold(0u32, |m, j| m | 1 << j);
             let want = [
                 sum,
                 sum,
@@ -229,11 +231,11 @@ fn simd_group_operations_and_their_references() {
                 below,
                 odd.iter().filter(|&&b| b).count() as u32,
                 first,
-                v[g % 32],
+                v[g % w],
                 same,
                 same,
             ];
-            let i = g * 32 + lane;
+            let i = g * w + lane;
             assert_eq!(&got[i * 16..i * 16 + 16], &want, "{}: group {g}, lane {lane}: sum min max (backend, reference), scans, votes, broadcast, match", crate::device::backend());
         }
     }
@@ -497,6 +499,10 @@ fn sort_and_check<K: RadixKey + Ord + std::fmt::Debug + Into<u64> + From<u32>>(q
 #[test]
 fn radix_sorts_are_stable() {
     let Some((_, mut q)) = setup() else { return };
+    if crate::device::simd_width() < 8 {
+        eprintln!("SIMD groups of {} lanes: no radix sort (ukl/radix.h): skipped", crate::device::simd_width());
+        return;
+    }
     let mut rng = Rng(41);
     for n in [0usize, 1, 31, 1023, 1024, 1025, 70_000] {
         // Few distinct keys (long runs: stability), and keys over all their bits.

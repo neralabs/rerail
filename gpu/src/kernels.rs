@@ -9,15 +9,11 @@ use crate::Pod;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-/// The backend the process's device compiles for.
-fn backend() -> Result<rerail_ukl::Backend, String> {
-    Ok(crate::shared::get().ok_or("no device")?.device.ukl_backend())
-}
 
 /// `text`, a UKL source named `name`, preprocessed for the process's device.
 pub fn preprocess(name: &str, text: &str) -> Result<String, String> {
     let path = format!("/<kernels>/{name}");
-    rerail_ukl::Preprocess::new(backend()?).file(&path, text).run(&path).map_err(|e| e.to_string())
+    crate::shared::get().ok_or("no device")?.device.preprocess().file(&path, text).run(&path).map_err(|e| e.to_string())
 }
 
 /// A compiled program: its library, and its functions as they are asked for.

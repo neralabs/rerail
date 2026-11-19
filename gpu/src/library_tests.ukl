@@ -109,22 +109,22 @@ DEFINE_KERNEL2(tests, t_simd,
 {
     uint32_t v = in[i];
     RWBUFFER(uint32_t) o = out + i * 16u;
-    o[0] = ukl_sg_sum(v);
-    o[1] = ukl_sg_sum_ref(v);
-    o[2] = ukl_sg_min(v);
-    o[3] = ukl_sg_min_ref(v);
-    o[4] = ukl_sg_max(v);
-    o[5] = ukl_sg_max_ref(v);
-    o[6] = ukl_sg_inclusive_sum(v, lane);
-    o[7] = ukl_sg_inclusive_sum_ref(v, lane);
-    o[8] = ukl_sg_exclusive_sum(v, lane);
-    o[9] = ukl_sg_exclusive_sum_ref(v, lane);
-    o[10] = ukl_sg_count_below((v & 1u) != 0u, lane);
-    o[11] = ukl_sg_count((v & 1u) != 0u);
-    o[12] = ukl_sg_first(v % 5u == 0u);
-    o[13] = ukl_sg_broadcast(v, (i / 32u) % 32u);
-    o[14] = ukl_sg_match(v % 4u);
-    o[15] = ukl_sg_match_ref(v % 4u);
+    o[0] = ukl_sg_sum(v __UKL_ARGS);
+    o[1] = ukl_sg_sum_ref(v __UKL_ARGS);
+    o[2] = ukl_sg_min(v __UKL_ARGS);
+    o[3] = ukl_sg_min_ref(v __UKL_ARGS);
+    o[4] = ukl_sg_max(v __UKL_ARGS);
+    o[5] = ukl_sg_max_ref(v __UKL_ARGS);
+    o[6] = ukl_sg_inclusive_sum(v, lane __UKL_ARGS);
+    o[7] = ukl_sg_inclusive_sum_ref(v, lane __UKL_ARGS);
+    o[8] = ukl_sg_exclusive_sum(v, lane __UKL_ARGS);
+    o[9] = ukl_sg_exclusive_sum_ref(v, lane __UKL_ARGS);
+    o[10] = ukl_sg_count_below((v & 1u) != 0u, lane __UKL_ARGS);
+    o[11] = ukl_sg_count((v & 1u) != 0u __UKL_ARGS);
+    o[12] = ukl_sg_first(v % 5u == 0u __UKL_ARGS);
+    o[13] = ukl_sg_broadcast(v, (i / UKL_SIMD_WIDTH) % UKL_SIMD_WIDTH __UKL_ARGS);
+    o[14] = ukl_sg_match(v % 4u __UKL_ARGS);
+    o[15] = ukl_sg_match_ref(v % 4u __UKL_ARGS);
 }
 
 // ukl/group.h: the group's sum, and each thread's exclusive scan and the total.
@@ -138,8 +138,8 @@ DEFINE_KERNEL2(tests, t_group,
                LSZ0,     uint32_t, lsz,     )
 {
     uint32_t v = in[i];
-    uint32_t s = ukl_tg_sum(v, lid, lsz, scratch);
-    UklScan r = ukl_tg_exclusive_sum(v, lid, lsz, scratch);
+    uint32_t s = ukl_tg_sum(v, lid, lsz, scratch __UKL_ARGS);
+    UklScan r = ukl_tg_exclusive_sum(v, lid, lsz, scratch __UKL_ARGS);
     out[i * 3u + 0u] = s;
     out[i * 3u + 1u] = r.exclusive;
     out[i * 3u + 2u] = r.total;
@@ -215,10 +215,10 @@ DEFINE_KERNEL2(tests, t_workqueue_sg,
     uint32_t polls = 0u;
     for (uint32_t turn = 0u; turn < UKL_WQ_TURNS; turn++) {
         uint32_t item = 0u;
-        bool got = ukl_wq_take_sg(q, lane, &item);
+        bool got = ukl_wq_take_sg(q, lane, &item __UKL_ARGS);
         if (got)
             visit(q, visits, args.w, item);
-        if (ukl_wq_idle_sg(q, got, &polls, args.n))
+        if (ukl_wq_idle_sg(q, got, &polls, args.n __UKL_ARGS))
             break;
     }
 }

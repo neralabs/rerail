@@ -55,7 +55,7 @@ DEFINE_KERNEL2(ukl, ukl_scan_u32_tile_sums,
     uint32_t s = 0u;
     for (uint32_t k = 0u; k < UKL_SCAN_ITEMS; k++)
         s += ukl_scan_load(in, first + k, args);
-    uint32_t t = ukl_tg_sum(s, lid, lsz, scratch);
+    uint32_t t = ukl_tg_sum(s, lid, lsz, scratch __UKL_ARGS);
     if (lid == 0u)
         sums[tile] = t;
 }
@@ -77,7 +77,7 @@ DEFINE_KERNEL2(ukl, ukl_scan_u32_tiles,
         v[k] = ukl_scan_load(in, first + k, args);
         s += v[k];
     }
-    UklScan r = ukl_tg_exclusive_sum(s, lid, lsz, scratch);
+    UklScan r = ukl_tg_exclusive_sum(s, lid, lsz, scratch __UKL_ARGS);
     uint32_t base = args.hasOffsets != 0u ? offsets[tile] : 0u;
     uint32_t run = base + r.exclusive;
     for (uint32_t k = 0u; k < UKL_SCAN_ITEMS; k++) {
