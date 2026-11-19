@@ -116,6 +116,19 @@ describe("a linked worktree is placed from the files Git reads, as Git places it
     expect(expectGitsAnswers(join(root, "beside"), join(main, ".claude", "worktrees", "nested"), join(root, "deep", "detached"))).toBe(0);
   });
 
+  it("as Git places it once the worktree's own Git folder's HEAD names its ref past the 255 bytes Git reads of it", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    const worktree = join(root, "w");
+    git(main, "worktree", "add", "--quiet", "-b", "w", worktree);
+    expect(expectGitsAnswers(main, worktree)).toBe(1);
+
+    // Git refuses a worktree whose HEAD it does not take, though its files still name the repository.
+    await writeFile(join(main, ".git", "worktrees", "w", "HEAD"), LATE_REF);
+    expect(gitsAnswer(worktree).git).toBe(false);
+    expectGitsAnswers(worktree, worktree);
+  });
+
   it("asks Git for the first checkout of a repository it has not placed, and places the others from their files", async () => {
     const root = await temporaryRoot();
     const main = repository(join(root, "main"));
@@ -454,6 +467,11 @@ async function deepRoot(): Promise<string> {
 /** A `HEAD` naming `refs/heads/main` after `ref:` and 260 spaces: Git reads 255 bytes of a `HEAD`, and so takes no ref here. */
 const LATE_REF = `ref:${" ".repeat(260)}refs/heads/main\n`;
 
+/** A `HEAD` naming `refs/heads/main` whose `refs/` ends at byte `end`: spaces after `ref:` push it there. */
+function headWithRefsEndingAt(end: number): string {
+  return `ref:${" ".repeat(end - "ref:".length - "refs/".length)}refs/heads/main\n`;
+}
+
 describe("the read before Git places a folder ends in the folder where Git's search ends", () => {
   it("reads no folder above the repository a checkout is placed in, six folders or more below the root", async () => {
     const root = await deepRoot();
@@ -480,6 +498,7 @@ describe("the read before Git places a folder ends in the folder where Git's sea
   const HALF_MADE: ReadonlyArray<readonly [string, (gitFolder: string, root: string) => Promise<void>]> = [
     ["a HEAD Git does not take", gitFolder => writeFile(join(gitFolder, "HEAD"), "ref:\vrefs/heads/main\n")],
     ["a HEAD naming its ref past the 255 bytes Git reads of it", gitFolder => writeFile(join(gitFolder, "HEAD"), LATE_REF)],
+    ["a HEAD whose refs/ ends one byte past the 255 bytes Git reads of it", gitFolder => writeFile(join(gitFolder, "HEAD"), headWithRefsEndingAt(256))],
     ["no objects", gitFolder => removeFolder(join(gitFolder, "objects"))],
     ["no refs", gitFolder => removeFolder(join(gitFolder, "refs"))],
     ["a commondir naming a folder with neither objects nor refs", async (gitFolder, root) => {
@@ -503,6 +522,20 @@ describe("the read before Git places a folder ends in the folder where Git's sea
     await rename(join(outer, ".git"), join(root, "outer.git"));
     expect(gitsAnswer(inner).git).toBe(false);
     expect(worktreeRegistry(inner)).toBeUndefined();
+  });
+
+  it("ends the read in a folder whose HEAD's refs/ ends at the last of the 255 bytes Git reads of it", async () => {
+    const root = await deepRoot();
+    const outer = repository(join(root, "outer"));
+    const half = join(outer, "half");
+    const folder = join(half, "d0");
+    mkdirSync(folder, { recursive: true });
+    git(half, "init", "--quiet");
+    await writeFile(join(half, ".git", "HEAD"), headWithRefsEndingAt(255));
+    expect(gitsAnswer(folder).workspaceRoot).toBe(half);
+    const before = vi.mocked(lstatSync).mock.calls.length;
+    expect(worktreeRegistry(folder)?.worktrees).toEqual(listedByGit(folder));
+    expect(gitEntriesReadIn(before)).toEqual(foldersUpTo(folder, half));
   });
 
   it("lists the list of a folder made a repository above a folder between whose HEAD names its ref past the 255 bytes Git reads of it", async () => {
