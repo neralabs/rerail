@@ -268,10 +268,59 @@ impl Scan {
 #[derive(Default)]
 struct Writing(Option<Sink>);
 
+/// A term the walk writes: the builder's (`program_image::T`), its texts interned in the builder (`Builder::atom`), so
+/// it borrows none.
+type Tm = crate::code_rule_dsl::logic::program_image::T<'static>;
+
+/// The name of variable `t`, where it is one.
+fn tm_var<'b>(b: &'b crate::code_rule_dsl::logic::program_image::Builder<'static>, t: &Tm) -> Option<&'b str> {
+    match t {
+        Tm::VarAtom(a) => Some(b.text(*a)),
+        Tm::Var(v) => Some(v),
+        _ => None,
+    }
+}
+
+/// The variables of `t`, into `out`.
+fn tm_vars(b: &crate::code_rule_dsl::logic::program_image::Builder<'static>, t: &Tm, out: &mut BTreeSet<String>) {
+    match t {
+        Tm::Call(_, args) | Tm::CallAtom(_, args) => args.iter().for_each(|a| tm_vars(b, a, out)),
+        t => {
+            if let Some(v) = tm_var(b, t) {
+                out.insert(v.to_owned());
+            }
+        }
+    }
+}
+
+/// `t`'s function and arguments, where it is a call.
+fn tm_call<'b, 't>(b: &'b crate::code_rule_dsl::logic::program_image::Builder<'static>, t: &'t Tm) -> Option<(&'b str, &'t [Tm])>
+where
+    't: 'b,
+{
+    match t {
+        Tm::CallAtom(f, args) => Some((b.text(*f), args)),
+        Tm::Call(f, args) => Some((f, args)),
+        _ => None,
+    }
+}
+
+/// `t` with each variable of `vars` the empty value (`UNSET`).
+fn tm_unset(b: &crate::code_rule_dsl::logic::program_image::Builder<'static>, t: &mut Tm, vars: &BTreeSet<String>) {
+    match t {
+        Tm::Call(_, args) | Tm::CallAtom(_, args) => args.iter_mut().for_each(|a| tm_unset(b, a, vars)),
+        _ => {
+            if tm_var(b, t).is_some_and(|v| vars.contains(v)) {
+                *t = Tm::Int(UNSET);
+            }
+        }
+    }
+}
+
 enum Sink {
     /// The rule open on the header, its variables `unset(x)` binds empty, and the negated test held back.
     /// (`None`: `unset(x)` written as it is, in a helper's rule.)
-    Rule(crate::code_rule_dsl::logic::program_image::Open, Option<BTreeSet<String>>, Option<Literal>),
+    Rule(crate::code_rule_dsl::logic::program_image::Open, Option<BTreeSet<String>>, Option<Tm>),
 }
 
 impl Clone for Writing {
@@ -2096,92 +2145,121 @@ impl Lowerer {
         self.open.0 = Some(Sink::Rule(o, None, None));
     }
 
-    /// What literal `l` says of its variables, into the scan (`Scan`).
-    fn scan_literal(&mut self, l: &Literal) {
+    /// What atom `rel(args)` (negated: `neg`) says of its variables, into the scan (`Scan`).
+    fn scan_atom(&mut self, rel: &str, args: &[Tm], neg: bool) {
+        let mut typed: Vec<(String, String)> = Vec::new();
+        let mut vars = BTreeSet::new();
+        args.iter().for_each(|t| tm_vars(&self.prog, t, &mut vars));
+        if !neg {
+            let cols = self.prog.columns_of(rel);
+            let axis = crate::code_rule_dsl::logic::front::is_axis(rel);
+            for (i, t) in args.iter().enumerate() {
+                if let Some(v) = tm_var(&self.prog, t) {
+                    if axis {
+                        typed.push((v.to_owned(), "node".to_owned()));
+                    } else if let Some((_, ty)) = cols.as_ref().and_then(|c| c.get(i)) {
+                        typed.push((v.to_owned(), ty.clone()));
+                    }
+                }
+            }
+        }
+        let unset_of = (rel == "unset" && !neg).then(|| match args {
+            [t] if tm_var(&self.prog, t).is_some() => Ok(tm_var(&self.prog, t).map(str::to_owned)),
+            [Tm::Wild] => Ok(None),
+            _ => Err(()),
+        });
+        let scan = self.scan.as_mut().expect("a scan");
+        if rel == "unset" {
+            scan.unset = true;
+        }
+        match (unset_of, &mut scan.unset_vars) {
+            (Some(Ok(Some(v))), Ok(set)) => {
+                set.insert(v);
+            }
+            (Some(Err(())), Ok(_)) => scan.unset_vars = not_yet("`unset` of a value"),
+            _ => {}
+        }
+        if !neg {
+            scan.bound.extend(vars.iter().cloned());
+        }
+        scan.vars.extend(vars);
+        self.scan_types(typed, None);
+    }
+
+    /// What comparison `l op r` says of its variables, into the scan.
+    fn scan_cmp(&mut self, l: &Tm, op: &str, r: &Tm) {
         let mut typed: Vec<(String, String)> = Vec::new();
         let mut equal = None;
-        let int = || "int".to_owned();
-        let node = || "node".to_owned();
-        match l {
-            Literal::Cmp { l: Term::Var(x), op: "=", r: Term::Var(y) } => equal = Some((x.to_string(), y.to_string())),
-            Literal::Atom(a) if !a.neg => {
-                let cols = self.prog.columns_of(a.rel.as_str());
-                let axis = crate::code_rule_dsl::logic::front::is_axis(&a.rel);
-                for (i, t) in a.args.iter().enumerate() {
-                    if let Term::Var(v) = t {
-                        if axis {
-                            typed.push((v.to_string(), node()));
-                        } else if let Some((_, ty)) = cols.as_ref().and_then(|c| c.get(i)) {
-                            typed.push((v.to_string(), ty.clone()));
-                        }
-                    }
+        let mut binds = Vec::new();
+        if op == "=" {
+            // Either side, a variable, from the other's.
+            for (x, t) in [(l, r), (r, l)] {
+                if let Some(x) = tm_var(&self.prog, x) {
+                    let mut vs = BTreeSet::new();
+                    tm_vars(&self.prog, t, &mut vs);
+                    binds.push((x.to_owned(), vs));
                 }
             }
-            Literal::Nearest { n, a, .. } => typed.extend([(n.clone(), node()), (a.clone(), node())]),
-            // A computed value: a number from arithmetic and the functions of numbers, else a symbol.
-            Literal::Cmp { l: Term::Var(x), op: "=", r: r @ (Term::Int(_) | Term::Call(..)) } => {
-                let number = match r {
-                    Term::Int(_) => true,
-                    Term::Call(f, _) => {
-                        matches!(f.as_str(), "add" | "sub" | "mul" | "div" | "mod" | "max" | "min" | "strlen" | "to_number" | "to_float" | "count_matches") || f.starts_with("float_") && f != "float_str"
+            if let Some(x) = tm_var(&self.prog, l) {
+                match r {
+                    _ if tm_var(&self.prog, r).is_some() => equal = Some((x.to_owned(), tm_var(&self.prog, r).expect("a variable").to_owned())),
+                    // A computed value: a number from arithmetic and the functions of numbers, else a symbol.
+                    Tm::Int(_) => typed.push((x.to_owned(), "int".to_owned())),
+                    _ if let Some((f, _)) = tm_call(&self.prog, r) => {
+                        let number = matches!(f, "add" | "sub" | "mul" | "div" | "mod" | "max" | "min" | "strlen" | "to_number" | "to_float" | "count_matches") || f.starts_with("float_") && f != "float_str";
+                        typed.push((x.to_owned(), if number { "int" } else { "sym" }.to_owned()));
                     }
-                    _ => false,
-                };
-                typed.push((x.to_string(), if number { int() } else { "sym".to_owned() }));
+                    Tm::Str(_) | Tm::StrAtom(_) => typed.push((x.to_owned(), "sym".to_owned())),
+                    _ => {}
+                }
             }
-            Literal::Cmp { l: Term::Var(x), op: "=", r: Term::Str(_) } => typed.push((x.to_string(), "sym".to_owned())),
-            Literal::Agg { var, op, over, atom } => {
-                let ty = match op {
-                    AggOp::Count | AggOp::Sum | AggOp::Product => int(),
-                    AggOp::Join { .. } => "sym".to_owned(),
-                    AggOp::Min | AggOp::Max => {
-                        let col = atom.args.iter().position(|t| over.as_ref().is_some_and(|o| *t == Term::Var(o.clone().into())));
-                        col.and_then(|c| self.prog.columns_of(atom.rel.as_str())?.get(c).map(|(_, ty)| ty.clone())).unwrap_or_else(int)
-                    }
-                };
-                typed.push((var.clone(), ty));
-            }
-            Literal::Ast { document, node: n, captures, .. } => {
-                typed.push((document.clone(), int()));
-                typed.push((n.clone(), node()));
-                typed.extend(captures.iter().map(|(_, c)| (c.clone(), node())));
-            }
-            _ => {}
         }
+        let mut vars = BTreeSet::new();
+        tm_vars(&self.prog, l, &mut vars);
+        tm_vars(&self.prog, r, &mut vars);
         let scan = self.scan.as_mut().expect("a scan");
-        scan.vars.extend(l.vars());
-        match l {
-            Literal::Atom(a) if a.rel == "unset" => {
-                scan.unset = true;
-                if !a.neg
-                    && let Ok(vars) = &mut scan.unset_vars
-                {
-                    match a.args.as_slice() {
-                        [Term::Var(v)] => {
-                            vars.insert(v.to_string());
-                        }
-                        [Term::Wild] => {}
-                        _ => scan.unset_vars = not_yet("`unset` of a value"),
-                    }
-                }
-                if !a.neg {
-                    scan.bound.extend(a.vars());
-                }
+        scan.vars.extend(vars);
+        scan.binds.extend(binds);
+        self.scan_types(typed, equal);
+    }
+
+    /// What aggregate `var = op over : { rel(args) }` says of its variables, into the scan.
+    fn scan_agg(&mut self, var: &str, op: &AggOp, over: Option<&str>, rel: &str, args: &[Tm]) {
+        let ty = match op {
+            AggOp::Count | AggOp::Sum | AggOp::Product => "int".to_owned(),
+            AggOp::Join { .. } => "sym".to_owned(),
+            AggOp::Min | AggOp::Max => {
+                let col = args.iter().position(|t| over.is_some() && tm_var(&self.prog, t) == over);
+                col.and_then(|c| self.prog.columns_of(rel)?.get(c).map(|(_, ty)| ty.clone())).unwrap_or_else(|| "int".to_owned())
             }
-            Literal::Atom(a) if !a.neg => scan.bound.extend(a.vars()),
-            Literal::Cmp { l, op: "=", r } => {
-                // Either side, a variable, from the other's.
-                for (x, t) in [(l, r), (r, l)] {
-                    if let Term::Var(x) = x {
-                        let mut vs = BTreeSet::new();
-                        t.vars(&mut vs);
-                        scan.binds.push((x.to_string(), vs));
-                    }
-                }
-            }
-            Literal::Nearest { n, a, .. } => scan.binds.push((a.clone(), [n.clone()].into())),
-            _ => {}
-        }
+        };
+        let mut vars = BTreeSet::new();
+        args.iter().for_each(|t| tm_vars(&self.prog, t, &mut vars));
+        vars.insert(var.to_owned());
+        vars.extend(over.map(str::to_owned));
+        self.scan.as_mut().expect("a scan").vars.extend(vars);
+        self.scan_types(vec![(var.to_owned(), ty)], None);
+    }
+
+    /// What `nearest(n, a, …)` says of its variables (two nodes, a bound from n), into the scan.
+    fn scan_nearest(&mut self, n: &str, a: &str) {
+        let scan = self.scan.as_mut().expect("a scan");
+        scan.vars.extend([n.to_owned(), a.to_owned()]);
+        scan.binds.push((a.to_owned(), [n.to_owned()].into()));
+        self.scan_types(vec![(n.to_owned(), "node".to_owned()), (a.to_owned(), "node".to_owned())], None);
+    }
+
+    /// What `ast(document, node, …)` says of its variables (a document, nodes), into the scan.
+    fn scan_ast(&mut self, document: &str, node: &str, captures: &[(String, String)]) {
+        let mut typed = vec![(document.to_owned(), "int".to_owned()), (node.to_owned(), "node".to_owned())];
+        typed.extend(captures.iter().map(|(_, c)| (c.clone(), "node".to_owned())));
+        self.scan.as_mut().expect("a scan").vars.extend(typed.iter().map(|(v, _)| v.clone()));
+        self.scan_types(typed, None);
+    }
+
+    /// Variables' types and an equality, into the scan: a type from the first literal that gives one.
+    fn scan_types(&mut self, typed: Vec<(String, String)>, equal: Option<(String, String)>) {
+        let scan = self.scan.as_mut().expect("a scan");
         for (v, ty) in typed {
             let e = scan.types.entry(v).or_default();
             if e.0.is_none() {
@@ -2283,65 +2361,291 @@ impl Lowerer {
         r.map(|()| made)
     }
 
-    /// Literal `l` of the open rule (`begin_rule`), when one is: its `unset` applied, and a negated test merged with
-    /// the one before it.
+    /// Literal `l` of the open rule, as the term-level writes below (a bridge while the walk still makes literals).
     fn emit(&mut self, l: Literal) -> Result<(), Error> {
+        if self.off || self.open.0.is_none() && self.scan.is_none() {
+            return Ok(());
+        }
+        match l {
+            Literal::Atom(a) => {
+                let args = a.args.iter().map(|t| self.tm(t)).collect();
+                self.emit_atom(&a.rel, args, a.neg, a.gated)
+            }
+            Literal::Cmp { l, op, r } => {
+                let (l, r) = (self.tm(&l), self.tm(&r));
+                self.emit_cmp(l, op, r)
+            }
+            Literal::Agg { var, op, over, atom } => {
+                let args = atom.args.iter().map(|t| self.tm(t)).collect();
+                self.emit_agg(&var, &op, over.as_deref(), &atom.rel, args)
+            }
+            Literal::Nearest { n, a, kindset } => self.emit_nearest(&n, &a, &kindset),
+            Literal::Ast { document, node, matcher, captures } => self.emit_ast(&document, &node, &matcher, &captures),
+        }
+    }
+
+    /// Term `t` of the builder, its texts interned there (`Tm`).
+    fn tm(&mut self, t: &Term) -> Tm {
+        match t {
+            Term::Var(v) => Tm::VarAtom(self.prog.atom(v)),
+            Term::Wild => Tm::Wild,
+            Term::Int(i) => Tm::Int(*i),
+            Term::Str(s) => Tm::StrAtom(self.prog.atom(s)),
+            Term::Top => Tm::Top,
+            Term::Call(f, args) => {
+                let f = self.prog.atom(f);
+                Tm::CallAtom(f, args.iter().map(|a| self.tm(a)).collect())
+            }
+            Term::Branded(b) => Tm::Branded(*b),
+        }
+    }
+
+    /// Runs `f` with the open rule's variables `unset(x)` binds empty (`None`: a helper's rule, which writes
+    /// `unset(x)` as it is).
+    fn under_unset<R>(&mut self, f: impl FnOnce(&mut Self, Option<&BTreeSet<String>>) -> R) -> R {
+        let unset = match self.open.0.as_mut() {
+            Some(Sink::Rule(_, u, _)) => u.take(),
+            None => None,
+        };
+        let r = f(self, unset.as_ref());
+        if let Some(Sink::Rule(_, u, _)) = self.open.0.as_mut() {
+            *u = unset;
+        }
+        r
+    }
+
+    /// Atom `rel(args)` (negated: `neg`; gated: `gated`) of the open rule (`begin_rule`), when one is: `unset(x)`
+    /// taken out (`x` is the empty value in the rule), `!unset(x)` is `x != -1`, and `text` of the empty value is
+    /// "" (decision O77).
+    fn emit_atom(&mut self, rel: &str, mut args: Vec<Tm>, neg: bool, gated: bool) -> Result<(), Error> {
         if self.off {
             return Ok(());
         }
         if self.scan.is_some() {
-            self.scan_literal(&l);
+            self.scan_atom(rel, &args, neg);
         }
-        let (unset, held) = match self.open.0.as_mut() {
-            None => return Ok(()),
-            Some(Sink::Rule(_, unset, held)) => (unset, held),
-        };
-        let is_unset = matches!(&l, Literal::Atom(a) if a.rel == "unset" && !a.neg);
-        let l = match unset {
-            Some(unset) => unset_literal(l, unset)?,
-            None => Some(l),
-        };
-        let Some(l) = l else {
-            // `unset(x)` goes; the tests either side of it are not adjacent.
-            if is_unset && let Some(h) = held.take() {
-                self.put_open(&h)?;
-            }
+        if self.open.0.is_none() {
             return Ok(());
-        };
-        let l = match held.as_mut() {
-            Some(h) => match merge_negated_test(h, l) {
-                None => return Ok(()),
-                Some(l) => {
-                    let h = held.take().expect("held");
-                    self.put_open(&h)?;
-                    l
+        }
+        self.under_unset(|me, unset| {
+            if let Some(vars) = unset {
+                if rel == "unset" && !neg {
+                    // `unset(x)` goes; the tests either side of it are not adjacent.
+                    return me.flush_held();
                 }
-            },
-            None => l,
-        };
-        if negated_test(&l).is_some() {
-            if let Some(Sink::Rule(_, _, held)) = self.open.0.as_mut() {
-                *held = Some(l);
+                if rel == "unset" {
+                    let [x] = args.as_slice() else { return not_yet("`!unset` of a value") };
+                    if tm_var(&me.prog, x).is_none() {
+                        return not_yet("`!unset` of a value");
+                    }
+                    let x = args.pop().expect("one");
+                    return me.put_cmp_under(x, "!=", Tm::Int(UNSET), unset);
+                }
+                if !vars.is_empty() {
+                    args.iter_mut().for_each(|t| tm_unset(&me.prog, t, vars));
+                    // The empty value's text is "".
+                    if rel == "text" && matches!(args.first(), Some(Tm::Int(UNSET))) {
+                        let t = args.get(1).cloned().unwrap_or(Tm::Wild);
+                        return match (t, neg) {
+                            (Tm::Wild, false) => Ok(()),
+                            (Tm::Wild, true) => me.put_cmp_under(Tm::Int(1), "=", Tm::Int(0), None),
+                            (t, neg) => {
+                                let empty = Tm::StrAtom(me.prog.atom(""));
+                                me.put_cmp_under(t, if neg { "!=" } else { "=" }, empty, None)
+                            }
+                        };
+                    }
+                }
             }
-            return Ok(());
-        }
-        self.put_open(&l)
+            me.flush_held()?;
+            let Some(Sink::Rule(o, ..)) = me.open.0.as_mut() else { unreachable!("a rule open") };
+            me.prog.put_atom(o, rel, &args, neg, gated);
+            Ok(())
+        })
     }
 
-    fn put_open(&mut self, l: &Literal) -> Result<(), Error> {
+    /// Comparison `l op r` of the open rule, when one is: its empty values (`unset`), and a negated test merged with
+    /// the one before it (`!glob("a", s), !glob("b", s)` is one negated test of the set).
+    fn emit_cmp(&mut self, l: Tm, op: &'static str, r: Tm) -> Result<(), Error> {
+        if self.off {
+            return Ok(());
+        }
+        if self.scan.is_some() {
+            self.scan_cmp(&l, op, &r);
+        }
+        if self.open.0.is_none() {
+            return Ok(());
+        }
+        self.under_unset(|me, unset| me.put_cmp_under(l, op, r, unset))
+    }
+
+    /// `emit_cmp` past its scan, under the open rule's empty values `unset`.
+    fn put_cmp_under(&mut self, mut l: Tm, op: &'static str, mut r: Tm, unset: Option<&BTreeSet<String>>) -> Result<(), Error> {
+        if let Some(vars) = unset.filter(|v| !v.is_empty()) {
+            tm_unset(&self.prog, &mut l, vars);
+            tm_unset(&self.prog, &mut r, vars);
+        }
+        let test = op == "=" && matches!(r, Tm::Int(0)) && self.negated_test(&l).is_some();
+        let held = match self.open.0.as_mut() {
+            Some(Sink::Rule(_, _, h)) => h.take(),
+            None => unreachable!("a rule open"),
+        };
+        let held = match held {
+            Some(h) if test => match self.merge_negated_test(h, l) {
+                Ok(merged) => {
+                    self.hold(merged);
+                    return Ok(());
+                }
+                Err((h, back)) => {
+                    l = back;
+                    Some(h)
+                }
+            },
+            h => h,
+        };
+        if let Some(h) = held {
+            self.put_cmp_open(h, "=", Tm::Int(0))?;
+        }
+        if test {
+            self.hold(l);
+            return Ok(());
+        }
+        self.put_cmp_open(l, op, r)
+    }
+
+    /// Holds negated test `l = 0` back until the next literal shows whether it merges with it.
+    fn hold(&mut self, l: Tm) {
+        if let Some(Sink::Rule(_, _, h)) = self.open.0.as_mut() {
+            *h = Some(l);
+        }
+    }
+
+    /// Writes the negated test held back, if one is.
+    fn flush_held(&mut self) -> Result<(), Error> {
+        let held = match self.open.0.as_mut() {
+            Some(Sink::Rule(_, _, h)) => h.take(),
+            None => None,
+        };
+        match held {
+            Some(h) => self.put_cmp_open(h, "=", Tm::Int(0)),
+            None => Ok(()),
+        }
+    }
+
+    /// `l op r` into the open rule.
+    fn put_cmp_open(&mut self, l: Tm, op: &'static str, r: Tm) -> Result<(), Error> {
+        let Some(op) = crate::code_rule_dsl::logic::program_image::CmpOp::of(op) else { return Err(Error::Syntax(format!("comparison {op:?}"))) };
         let Some(Sink::Rule(o, ..)) = self.open.0.as_mut() else { unreachable!("a rule open") };
-        put_literal(&mut self.prog, o, l).map_err(Error::Syntax)
+        self.prog.put_cmp(o, l, op, r);
+        Ok(())
+    }
+
+    /// A negated test of a string's left side, `glob("a", s)` of `glob("a", s) = 0`: its string and pattern.
+    fn negated_test<'t>(&self, l: &'t Tm) -> Option<(&'t Tm, &'t Tm)> {
+        let (op, args) = tm_call(&self.prog, l)?;
+        let ok = args.len() == 2 && crate::code_rule_dsl::logic::strings::is_test(op) && op != "rx" && op != "irx";
+        ok.then(|| (&args[0], &args[1]))
+    }
+
+    /// Negated test `l` merged into `last` where both test one string by one test, the second of a constant pattern
+    /// (`!glob("a", s), !glob("b", s)` is one negated test of the set); else both back.
+    fn merge_negated_test(&mut self, last: Tm, l: Tm) -> Result<Tm, (Tm, Tm)> {
+        let mergeable = match (self.negated_test(&l), self.negated_test(&last)) {
+            (Some((s, p)), Some((last_s, last_p))) => {
+                let same_op = matches!((&l, &last), (Tm::CallAtom(a, _), Tm::CallAtom(b, _)) if a == b) || tm_call(&self.prog, &l).map(|c| c.0) == tm_call(&self.prog, &last).map(|c| c.0);
+                same_op && s == last_s && matches!(p, Tm::Str(_) | Tm::StrAtom(_)) && (matches!(last_p, Tm::Str(_) | Tm::StrAtom(_)) || tm_call(&self.prog, last_p).is_some_and(|(f, _)| f == SET))
+            }
+            _ => false,
+        };
+        if !mergeable {
+            return Err((last, l));
+        }
+        let (Tm::CallAtom(op, args), Tm::CallAtom(_, new)) = (last, l) else { unreachable!("negated tests are interned calls") };
+        let [s, last_p]: [Tm; 2] = args.try_into().expect("a test of two");
+        let p = new.into_iter().nth(1).expect("a test of two");
+        let mut patterns = match last_p {
+            Tm::CallAtom(f, items) if self.prog.text(f) == SET => items,
+            last_p => vec![last_p],
+        };
+        patterns.push(p);
+        let set = self.prog.atom(SET);
+        Ok(Tm::CallAtom(op, vec![s, Tm::CallAtom(set, patterns)]))
+    }
+
+    /// Aggregate `var = op over : { rel(args) }` of the open rule, when one is: its body reads an empty variable from
+    /// outside as the empty value too; its result and `over` are its own, never empty.
+    fn emit_agg(&mut self, var: &str, op: &AggOp, over: Option<&str>, rel: &str, mut args: Vec<Tm>) -> Result<(), Error> {
+        if self.off {
+            return Ok(());
+        }
+        if self.scan.is_some() {
+            self.scan_agg(var, op, over, rel, &args);
+        }
+        if self.open.0.is_none() {
+            return Ok(());
+        }
+        self.under_unset(|me, unset| {
+            if let Some(vars) = unset.filter(|v| !v.is_empty()) {
+                if vars.contains(var) || over.is_some_and(|o| vars.contains(o)) {
+                    return not_yet("`unset` in an aggregate, `nearest` or `ast`");
+                }
+                args.iter_mut().for_each(|t| tm_unset(&me.prog, t, vars));
+            }
+            me.flush_held()?;
+            let Some(Sink::Rule(o, ..)) = me.open.0.as_mut() else { unreachable!("a rule open") };
+            me.prog.put_agg(o, var, op, over, rel, &args);
+            Ok(())
+        })
+    }
+
+    /// `nearest(n, a, kindset)` of the open rule, when one is.
+    fn emit_nearest(&mut self, n: &str, a: &str, kindset: &str) -> Result<(), Error> {
+        if self.off {
+            return Ok(());
+        }
+        if self.scan.is_some() {
+            self.scan_nearest(n, a);
+        }
+        if self.open.0.is_none() {
+            return Ok(());
+        }
+        self.under_unset(|me, unset| {
+            if unset.is_some_and(|v| v.contains(n) || v.contains(a)) {
+                return not_yet("`unset` in an aggregate, `nearest` or `ast`");
+            }
+            me.flush_held()?;
+            let Some(Sink::Rule(o, ..)) = me.open.0.as_mut() else { unreachable!("a rule open") };
+            me.prog.put_nearest(o, n, a, kindset);
+            Ok(())
+        })
+    }
+
+    /// `ast(document, node, matcher)` of the open rule, when one is, its captures (name, variable) in order.
+    fn emit_ast(&mut self, document: &str, node: &str, matcher: &str, captures: &[(String, String)]) -> Result<(), Error> {
+        if self.off {
+            return Ok(());
+        }
+        if self.scan.is_some() {
+            self.scan_ast(document, node, captures);
+        }
+        if self.open.0.is_none() {
+            return Ok(());
+        }
+        self.under_unset(|me, unset| {
+            if unset.is_some_and(|v| v.contains(document) || v.contains(node) || captures.iter().any(|(_, c)| v.contains(c))) {
+                return not_yet("`unset` in an aggregate, `nearest` or `ast`");
+            }
+            me.flush_held()?;
+            let caps: Vec<(&str, &str)> = captures.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+            let Some(Sink::Rule(o, ..)) = me.open.0.as_mut() else { unreachable!("a rule open") };
+            me.prog.put_ast(o, document, node, matcher, &caps);
+            Ok(())
+        })
     }
 
     /// Ends the open rule (`begin_rule`).
     fn end_rule(&mut self) -> Result<(), Error> {
-        let held = match self.open.0.as_mut() {
-            Some(Sink::Rule(_, _, h)) => h.take(),
-            _ => unreachable!("a rule open"),
-        };
-        if let Some(h) = held
-            && let Err(e) = self.put_open(&h)
-        {
+        if let Err(e) = self.flush_held() {
             self.drop_rule();
             return Err(e);
         }
@@ -3271,9 +3575,14 @@ impl Lowerer {
     /// What `lits` say of their variables, in order (`Scan`).
     fn scan_of<'a>(&mut self, lits: impl IntoIterator<Item = &'a Literal>) -> Scan {
         let outer = self.scan.replace(Scan::default());
+        let sink = self.open.0.take();
+        let off = std::mem::replace(&mut self.off, false);
         for l in lits {
-            self.scan_literal(l);
+            // With no rule open, a literal is only scanned: nothing fails.
+            let _ = self.emit(l.clone());
         }
+        self.open.0 = sink;
+        self.off = off;
         std::mem::replace(&mut self.scan, outer).expect("the scan")
     }
 
@@ -5379,37 +5688,6 @@ const OUTLINE_PAST: usize = 16;
 
 
 
-/// A negated test of a string, `!glob("a", s)` (`op(s, p) = 0`): its operation, string and pattern.
-fn negated_test(l: &Literal) -> Option<(&str, &Term, &Term)> {
-    match l {
-        Literal::Cmp { l: Term::Call(op, args), op: "=", r: Term::Int(0) } if args.len() == 2 && crate::code_rule_dsl::logic::strings::is_test(op) && op != "rx" && op != "irx" => Some((op, &args[0], &args[1])),
-        _ => None,
-    }
-}
-
-/// `literal` merged into `last` where both negate one test of one string, the second of a constant pattern (`!glob("a",
-/// s), !glob("b", s)` is one negated test of the set); else `literal` back, to follow it.
-fn merge_negated_test(last: &mut Literal, literal: Literal) -> Option<Literal> {
-    let mergeable = match (negated_test(&literal), negated_test(last)) {
-        (Some((op, s, p)), Some((last_op, last_s, last_p))) => {
-            op == last_op && s == last_s && matches!(p, Term::Str(_)) && (matches!(last_p, Term::Str(_)) || matches!(last_p, Term::Call(f, _) if f == SET))
-        }
-        _ => false,
-    };
-    if !mergeable {
-        return Some(literal);
-    }
-    let (Literal::Cmp { l: Term::Call(op, args), .. }, Literal::Cmp { l: Term::Call(_, new), .. }) = (std::mem::replace(last, Literal::Cmp { l: Term::Wild, op: "=", r: Term::Wild }), literal) else { unreachable!("negated tests") };
-    let [s, last_p]: [Term; 2] = args.to_vec().try_into().expect("a test of two");
-    let p = new[1].clone();
-    let mut patterns = match last_p {
-        Term::Call(f, items) if f == SET => items,
-        last_p => [last_p].into(),
-    };
-    patterns.push(p);
-    *last = Literal::Cmp { l: Term::Call(op, [s, Term::Call(SET.to_owned().into(), patterns)].into()), op: "=", r: Term::Int(0) };
-    None
-}
 
 /// `@place(path, line)` (`core.rr`) outside a `.violation`'s head: a place with no node, as a `loc` value:
 /// `-2 - (path << 32 | line)`, `path` the path's symbol (its atom) and `0 <= line < 2^32`, so no node id

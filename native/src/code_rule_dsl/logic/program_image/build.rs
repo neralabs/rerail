@@ -27,7 +27,7 @@ use crate::code_rule_dsl::logic::program_facts::Facts;
 use std::sync::Arc;
 
 /// A term to write, by text or by id.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum T<'a> {
     Var(&'a str),
     /// A variable of the rule being written, by the atom naming it.
