@@ -14,10 +14,10 @@ body[data-page="history"] #content,body[data-page="history"] #content > .history
 .hh p{margin-top:2px}
 .hh .act{align-self:end}
 /* Beside the rule's sheet the list is already hidden and the rule is open, so Hide list and Open rule go. The sheet
- * sits beside the page from 1101 px (base.css overlays it below); up to 1180 px that leaves a narrow column, where the
- * range sits under the heading rather than squeezing it, as on a narrow page. */
+ * sits beside the page above 1100 px (base.css overlays it up to 1100); up to 1180 px that leaves a narrow column,
+ * where the range sits under the heading rather than squeezing it, as on a narrow page. */
 body[data-panel="open"] .hltoggle,body[data-panel="open"] .hdetail .l1 .acts{display:none}
-@media (min-width:1101px) and (max-width:1180px){
+@media (min-width:1100px) and (max-width:1180px){
   body[data-panel="open"] .hh{grid-template-columns:minmax(0,1fr)}
   body[data-panel="open"] .hh .act{grid-column:1;grid-row:auto;justify-content:flex-start;margin-top:8px}
 }
@@ -103,20 +103,20 @@ body[data-panel="open"] .hist > aside{display:none}
 .hkv .oc-blocked{color:var(--danger-foreground)}
 .hkv .said2{display:block;flex:1;min-width:0;padding:4px 10px;box-sizing:border-box;border-left:2px solid var(--brand);background:var(--brand-subtle);border-radius:0 var(--radius-md) var(--radius-md) 0;font-size:13px;line-height:1.45}
 .hkv .said2 > span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
-/* A phone, or the narrow column beside the rule's sheet (1101 to 1180 px): each label over its value, and a
+/* A phone, or the narrow column beside the rule's sheet (1100 to 1180 px): each label over its value, and a
  * violation's session under it, so the message and the agent's reasons get the column's full width. */
-@media (min-width:1101px) and (max-width:1180px){
+@media (min-width:1100px) and (max-width:1180px){
   body[data-panel="open"] .hkv{grid-template-columns:minmax(0,1fr);gap:2px 0}
   body[data-panel="open"] .hkv dt{min-height:0}
   body[data-panel="open"] .hkv dd + dt{margin-top:8px}
-  body[data-panel="open"] .hist .ev{grid-template-columns:44px minmax(0,1fr)}
+  body[data-panel="open"] .hist .ev{grid-template-columns:48px minmax(0,1fr)}
   body[data-panel="open"] .hist .ev .open{grid-column:2;justify-self:start}
 }
 @media (max-width:640px){
   .hkv{grid-template-columns:minmax(0,1fr);gap:2px 0}
   .hkv dt{min-height:0}
   .hkv dd + dt{margin-top:8px}
-  .hist .ev{grid-template-columns:44px minmax(0,1fr)}
+  .hist .ev{grid-template-columns:48px minmax(0,1fr)}
   .hist .ev .open{grid-column:2;justify-self:start}
 }
 .hsum{display:flex;align-items:center;padding:10px 18px;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
@@ -128,7 +128,7 @@ body[data-panel="open"] .hist > aside{display:none}
 
 /* One violation: when, where (and its message only when it differs from the header's), its session. */
 .hrows{padding:0 18px 8px}
-.hist .ev{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:4px 12px;padding:10px 0;font-size:13px;align-items:baseline}
+.hist .ev{display:grid;grid-template-columns:48px minmax(0,1fr) auto;gap:4px 12px;padding:10px 0;font-size:13px;align-items:baseline}
 .hist .ev + .ev{border-top:1px solid var(--border)}
 .hist .ev .when{color:var(--muted-foreground);font-size:12px;white-space:nowrap}
 .hist .ev .what{min-width:0}

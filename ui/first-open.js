@@ -3,6 +3,7 @@
  * first-open state (which banner, which empty block), the tiles' figures and the Most violations logged ranking.
  * Nothing here reads `data` or `ui`; `views/overview.js` passes in what it needs.
  */
+import { violationOutcomes } from "./derive.js";
 
 /**
  * @typedef {"no-repo" | "missing" | "not-set-up" | "stopped" | "no-packs" | "packs-no-session" | "mature"} FirstOpenState
@@ -71,9 +72,7 @@ export function steeredTally(activity) {
   for (const a of Object.values(activity)) {
     if (a.measured === false) continue;
     total += a.distinctViolations;
-    // As History by rule counts them: a declined violation is declined, even when another audit recorded it on Log.
-    const logOnly = (a.loggedViolations ?? 0) - (a.declinedLoggedViolations ?? 0);
-    steered += Math.max(0, a.distinctViolations - logOnly - (a.declinedViolations ?? 0));
+    steered += violationOutcomes(a).steered;
   }
   return { steered, total };
 }

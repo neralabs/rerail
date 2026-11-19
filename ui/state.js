@@ -174,6 +174,9 @@ export function sinceFor(range = ui.range) {
 
 const RANGE_LABEL = { 0: "today", 7: "in the last 7 days", 30: "in the last 30 days" };
 export const rangeLabel = () => RANGE_LABEL[ui.range] ?? "since install";
+/** The range on its own, as a count's caption reads it: "last 7 days" under "6 logged". */
+const RANGE_CAPTION = { 0: "today", 7: "last 7 days", 30: "last 30 days" };
+export const rangeCaption = () => RANGE_CAPTION[ui.range] ?? "since install";
 
 const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, declinedViolations: 0, declinedLoggedViolations: 0, rerails: 0 };
 export const activityOf = id => data.activity[id] ?? NONE;

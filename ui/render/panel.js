@@ -8,7 +8,7 @@
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
 import { fmt, whenLabel, clock, shortSessionId } from "../format.js";
 import { ruleMode, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
-import { data, ui, rangeLabel, fires, allFires, isMeasured, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
+import { data, ui, rangeCaption, fires, allFires, isMeasured, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
 import { outcomesOf } from "../history-model.js";
 import { ASK, ASK_OPEN, LOG_NOTE, askPrompt, agentSeesHint, askHint, fmtDay, canDelete, deleteConsequences, splitPath } from "./rule-sheet-model.js";
@@ -132,8 +132,8 @@ function renderStats(stored, id) {
   // Off is off in every folder: `enabled` also reads off for a rule on in only some of them.
   if (none) { setText(p.statsNone, stored.folderStates.every(state => !state.on) ? "Off. Nothing is logged or steered." : "No violations logged yet."); return; }
   const [s1, s2, s3] = p.stats.children, declined = outcomesOf(id).declined;
-  // "in the last 7 days" reads "last 7 days" under its count; an uncounted rule says so in its cards' place.
-  const when = measured ? rangeLabel().replace(/^in the /u, "") : "not counted yet";
+  // An uncounted rule says so where the range would be.
+  const when = measured ? rangeCaption() : "not counted yet";
   setText(s1.firstChild, measured ? fmt(f) : "–");
   setText(s1.lastChild, when);
   setText(s2.firstChild, measured ? fmt(declined) : "–");
