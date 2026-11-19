@@ -220,6 +220,20 @@ async function turn(...sessions: Session[]): Promise<void> {
   }
 }
 
+/**
+ * The session's next audit of edits from here on, waited for itself rather than for a set time: a walk's delivery
+ * comes when the walks' gap allows, which on a loaded runner is later than a fixed wait.
+ */
+function nextAudit({ auditGeneratedEdits }: Session): Promise<void> {
+  const delivered = Promise.withResolvers<void>();
+  const audit = auditGeneratedEdits.getMockImplementation()!;
+  auditGeneratedEdits.mockImplementation(async (sessionId, batch) => {
+    delivered.resolve();
+    return await audit(sessionId, batch);
+  });
+  return delivered.promise;
+}
+
 /** Every edit a session's auditor was given, with its mode, in order. */
 function audited({ auditGeneratedEdits }: Session): Array<[string[], string | undefined]> {
   return auditGeneratedEdits.mock.calls.map(([, batch]) => [
@@ -772,9 +786,11 @@ describe("a walk of the other worktrees with change notices", () => {
     await turn(watching);
     expect([watch.folders.has(w3), watch.folders.has(registry), watch.unwatched.includes(registry)]).toEqual([false, true, false]);
     git(main, "worktree", "add", "--quiet", "--force", "--detach", w3);
-    await vi.waitFor(() => expect(watch.folders.has(w3)).toBe(true), { timeout: 4_000 });
+    await watch.until(() => watch.folders.has(w3));
+    const delivered = nextAudit(watching);
     await writeFile(join(w3, "src", "a.py"), "old\nmine\n");
-    await vi.waitFor(() => expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"]]), { timeout: 4_000 });
+    await delivered;
+    expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"]]);
     await watching.bridge.close();
     expect(watch.unwatched).toContain(registry);
   });
@@ -790,10 +806,12 @@ describe("a walk of the other worktrees with change notices", () => {
     git(main, "worktree", "add", "--quiet", "--force", "--detach", w3);
     watch.end(w3);
     watch.release(w3);
-    await vi.waitFor(() => expect(watch.unwatched).toContain(w3), { timeout: 4_000 });
-    await vi.waitFor(() => expect(watch.folders.has(w3)).toBe(true), { timeout: 4_000 });
+    await watch.until(() => watch.unwatched.includes(w3));
+    await watch.until(() => watch.folders.has(w3));
+    const delivered = nextAudit(watching);
     await writeFile(join(w3, "src", "a.py"), "old\nmine\n");
-    await vi.waitFor(() => expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"]]), { timeout: 4_000 });
+    await delivered;
+    expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"]]);
   });
 
   it("records no deletion of a file its tool call made in another worktree when the walk after it had no notice of it yet", async () => {
