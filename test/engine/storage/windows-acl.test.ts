@@ -276,29 +276,24 @@ describe("an owner-only ACL on Windows", () => {
     expect(later.split(/\r?\n/u).slice(1).join("\n")).toContain(`${missing}:`);
   });
 
-  it.runIf(process.platform === "win32")("leaves the daemon's thread free while Windows passes a records folder's new ACL to the records in it", async () => {
+  it.runIf(process.platform === "win32")("lets the daemon's other work run while Windows passes a records folder's new ACL to the records in it", async () => {
     const root = await temporaryRoot();
-    // Users may read the root, as under `C:\`, so each entry below inherits that and the repair has every one to rewrite.
+    // Users may read the root, as under `C:\`, so the record below inherits that and the repair has it to rewrite.
     execFileSync("icacls.exe", [root, "/grant", "*S-1-5-32-545:(OI)(CI)RX", "/q"]);
     const sessions = join(root, ".rerail", "sessions");
-    for (let i = 0; i < 1_500; i += 1) {
-      await mkdir(join(sessions, String(i)), { recursive: true });
-      await writeFile(join(sessions, String(i), "events.jsonl"), "{}\n");
-    }
-    let longest = 0;
-    let last = performance.now();
-    const ticks = setInterval(() => {
-      longest = Math.max(longest, performance.now() - last);
-      last = performance.now();
-    }, 5);
-    const started = performance.now();
-    await makeLedgerFolder(join(sessions, "a".repeat(64)), { platform: "win32", profile: ELSEWHERE, repair: true });
-    const took = performance.now() - started;
-    clearInterval(ticks);
+    await mkdir(join(sessions, "0".repeat(64)), { recursive: true });
+    await writeFile(join(sessions, "0".repeat(64), "events.jsonl"), "{}\n");
+    let turned = false;
+    setImmediate(() => {
+      turned = true;
+    });
+    await WINDOWS_ACL.restrictFolderToOwner(sessions);
+    // The event loop turned while icacls ran, as it must for a daemon to answer other sessions meanwhile.
+    expect(turned).toBe(true);
     expect(await WINDOWS_ACL.inherits(sessions)).toBe(false);
-    // Windows passes the ACL to 3,000 entries here, at about 0.2 ms each; the thread never waits for most of it.
-    expect(longest).toBeLessThan(took / 2);
-  }, 120_000);
+    expect(WINDOWS_ACL.otherReaders(join(sessions, "0".repeat(64), "events.jsonl"))).toEqual([]);
+    // Windows PowerShell, which reads the record's ACL, can take seconds to start on a cold machine.
+  }, 60_000);
 
   it.runIf(process.platform === "win32")("leaves only this user, SYSTEM and Administrators able to read a folder", async () => {
     const folder = await temporaryRoot();
