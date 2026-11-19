@@ -123,23 +123,25 @@ function renderModes(stored) {
   setText(p.modeText, MODE_PLAIN[mode] ?? "");
 }
 
+/** The three cards' count and caption: logged and declined in the range, logged since install; dashes if uncounted. */
+function statCards(id) {
+  if (!isMeasured(id)) return Array.from({ length: 3 }, () => ["–", "not counted yet"]);
+  const when = rangeCaption();
+  return [[fmt(fires(id)), when], [fmt(outcomesOf(id).declined), when], [fmt(allFires(id)), "since install"]];
+}
+
 function renderStats(stored, id) {
-  const measured = isMeasured(id), f = fires(id), all = allFires(id);
   // A measured rule that never logged one says so in a line; the three cells would all read nothing.
-  const none = measured && all === 0;
+  const none = isMeasured(id) && allFires(id) === 0;
   setAttr(p.stats, "hidden", none);
   setAttr(p.statsNone, "hidden", !none);
   // Off is off in every folder: `enabled` also reads off for a rule on in only some of them.
   if (none) { setText(p.statsNone, stored.folderStates.every(state => !state.on) ? "Off. Nothing is logged or steered." : "No violations logged yet."); return; }
-  const [s1, s2, s3] = p.stats.children, declined = outcomesOf(id).declined;
-  // An uncounted rule says so where the range would be.
-  const when = measured ? rangeCaption() : "not counted yet";
-  setText(s1.firstChild, measured ? fmt(f) : "–");
-  setText(s1.lastChild, when);
-  setText(s2.firstChild, measured ? fmt(declined) : "–");
-  setText(s2.lastChild, when);
-  setText(s3.firstChild, measured ? fmt(all) : "–");
-  setText(s3.lastChild, measured ? "since install" : "not counted yet");
+  statCards(id).forEach(([count, caption], i) => {
+    const card = p.stats.children[i];
+    setText(card.firstChild, count);
+    setText(card.lastChild, caption);
+  });
 }
 
 /**

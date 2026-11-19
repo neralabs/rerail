@@ -237,9 +237,14 @@ function renderViolations(a, id, told) {
   setAttr(a.summaryLine.firstChild, "hidden", none);
   if (none) renderNothing(a.nothing, id);
   syncChildren(a.violations, violationItems(id), i => i.key, createViolation, (node, item) => updateViolation(node, item, told));
-  const left = loaded && slot.next !== null ? slot.total - slot.rows.length : 0;
-  setAttr(a.more, "hidden", left <= 0);
-  if (left > 0) setText(a.more.firstChild, `Load more · ${fmt(left)} left`);
+  renderMore(a.more, loaded ? slot : null);
+}
+
+/** "Load more · N left" while the loaded violations (`slot`, null before its first page) have a page after them. */
+function renderMore(more, slot) {
+  const left = slot === null || slot.next === null ? 0 : slot.total - slot.rows.length;
+  setAttr(more, "hidden", left <= 0);
+  if (left > 0) setText(more.firstChild, `Load more · ${fmt(left)} left`);
 }
 
 const EMPTY_TEXT = {

@@ -294,6 +294,47 @@ const ruleActivitySchema = z.object({
   removed: z.literal(true).optional().describe("Set on a rule no longer among the rules reported (taken out of the repository, or no longer installed or in the library) that has violations in range: listed for its history, with nothing to turn off."),
 }).strict();
 
+type RuleActivity = z.infer<typeof ruleActivitySchema>;
+
+/** What `rules_activity` reads for a range: each rule's audit totals, steer deliveries and declined violations. */
+interface RuleActivityCounts {
+  activity: ReturnType<RerailApiStores["audits"]["ruleActivity"]>;
+  rerails: ReadonlyMap<string, number>;
+  declined: ReadonlyMap<string, DeclinedViolations>;
+}
+
+/**
+ * A catalog rule's activity. Every rule is reported, so a caller never has to infer absence from a missing key; a
+ * conversation rule writes no audit (so nothing of it is steered or declined) and an inactive code rule is never
+ * evaluated, so neither is measured.
+ */
+function catalogRuleActivity(
+  { id, kind, rule }: ReturnType<typeof activityRules>[number],
+  counts: RuleActivityCounts,
+): RuleActivity {
+  const { inactive } = inactiveOf(kind, rule);
+  const totals = kind === "conversation" ? undefined : counts.activity.get(id);
+  return {
+    measured: kind !== "conversation" && inactive === undefined,
+    distinctViolations: totals?.distinctViolations ?? 0,
+    sessions: totals?.sessions ?? 0,
+    lastSeenAt: totals?.lastSeenAt ?? null,
+    audits: totals?.audits ?? 0,
+    loggedViolations: totals?.loggedViolations ?? 0,
+    ...declinedOf(counts.declined, id),
+    rerails: kind === "conversation" ? 0 : counts.rerails.get(id) ?? 0,
+    ...(inactive === undefined ? {} : { inactive }),
+  };
+}
+
+/** A rule taken out since keeps its violations: History still lists it, marked removed, while it has some in range. */
+function addRemovedRuleActivity(rules: Record<string, RuleActivity>, counts: RuleActivityCounts): void {
+  for (const [id, totals] of counts.activity) {
+    if (rules[id] !== undefined || totals.distinctViolations === 0) continue;
+    rules[id] = { measured: true, ...totals, ...declinedOf(counts.declined, id), rerails: counts.rerails.get(id) ?? 0, removed: true };
+  }
+}
+
 const violationRecordSchema = z.object({
   id: z.string(),
   ruleId: z.string(),
@@ -422,33 +463,17 @@ export const operations: readonly Operation[] = [
     }),
     handler: (stores, input, caller) => {
       const ids = historyScope(stores, caller, input.repository);
-      const activity = stores.audits.ruleActivity(input.since, ids);
-      const rerails = stores.reader.steersByRule(input.since, ids);
-      const declined = stores.reader.declinedByRule(input.since, ids);
-      const rules: Record<string, z.infer<typeof ruleActivitySchema>> = {};
+      const counts: RuleActivityCounts = {
+        activity: stores.audits.ruleActivity(input.since, ids),
+        rerails: stores.reader.steersByRule(input.since, ids),
+        declined: stores.reader.declinedByRule(input.since, ids),
+      };
+      const rules: Record<string, RuleActivity> = {};
       // A coding agent's rules are its own repository's, as its counts are: never the machine's whole library.
-      for (const { id, kind, rule } of activityRules(stores, callerRepositoryKey(stores, caller) ?? input.repository)) {
-        // Every rule is reported, so a caller never has to infer absence from a missing key.
-        const { inactive } = inactiveOf(kind, rule);
-        const totals = kind === "conversation" ? undefined : activity.get(id);
-        rules[id] = {
-          measured: kind !== "conversation" && inactive === undefined,
-          distinctViolations: totals?.distinctViolations ?? 0,
-          sessions: totals?.sessions ?? 0,
-          lastSeenAt: totals?.lastSeenAt ?? null,
-          audits: totals?.audits ?? 0,
-          loggedViolations: totals?.loggedViolations ?? 0,
-          // A conversation rule writes no audit, so no steer of it is ever declined.
-          ...declinedOf(declined, id),
-          rerails: kind === "conversation" ? 0 : rerails.get(id) ?? 0,
-          ...(inactive === undefined ? {} : { inactive }),
-        };
+      for (const entry of activityRules(stores, callerRepositoryKey(stores, caller) ?? input.repository)) {
+        rules[entry.id] = catalogRuleActivity(entry, counts);
       }
-      // A rule taken out since keeps its violations: History still lists it, marked removed.
-      for (const [id, totals] of activity) {
-        if (rules[id] !== undefined || totals.distinctViolations === 0) continue;
-        rules[id] = { measured: true, ...totals, ...declinedOf(declined, id), rerails: rerails.get(id) ?? 0, removed: true };
-      }
+      addRemovedRuleActivity(rules, counts);
       return {
         since: input.since,
         rules,

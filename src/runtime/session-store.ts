@@ -685,12 +685,13 @@ export class SqliteSessionReader {
     const database = this.#database.open();
     if (database === undefined || sessionIds.length === 0) return [];
     return database.all<DeclineNote & { auditId: string }>(sql`
-      SELECT * FROM (
-        SELECT note.rule_id AS ruleId, note.reason AS reason, note.recorded_at AS recordedAt, ${DECLINED_AUDIT} AS auditId
+      SELECT ruleId, reason, recordedAt, auditId FROM (
+        SELECT note.rule_id AS ruleId, note.reason AS reason, note.recorded_at AS recordedAt, ${DECLINED_AUDIT} AS auditId,
+          note.rowid AS seq
         FROM ${steerFeedback} note
         WHERE note.session_id IN (${sql.join(sessionIds.map(id => sql`${id}`), sql`, `)})
-        ORDER BY note.recorded_at, note.rowid
       ) WHERE auditId IS NOT NULL
+      ORDER BY recordedAt, seq
     `);
   }
 
