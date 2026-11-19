@@ -11,7 +11,7 @@
 //!   and Soufflé's built-ins;
 //! - every text test (`.rr`'s names, `rr::lower::TESTS`), with a constant, a set and a bound pattern;
 //! - every aggregate (`front::AggOp`, matched exhaustively: a new one does not compile until it has a probe);
-//! - every literal form (`front::Literal`, matched exhaustively), negation, recursion and computed heads.
+//! - every literal form (`program_image::Lit`, matched exhaustively), negation, recursion and computed heads.
 //!
 //! Each probe is a one-rule program over a few facts. It runs on SQLite, on the native engine and on the device
 //! (placed there wherever it has every form, `placement::Binding::Always`), and the native engine's rows must be
@@ -109,12 +109,12 @@ fn aggregate(op: &AggOp) -> Probe {
     }
 }
 
-/// A literal form's probes, one or more per `Literal` variant: the match has no wildcard, so a new form needs its
+/// A literal form's probes, one or more per `Lit` variant: the match has no wildcard, so a new form needs its
 /// probe to compile. `nearest` and `ast` read the syntax tree, which these facts have none of: their probes run in
 /// `tree_forms_run_on_every_executor`.
-fn form(l: &Literal) -> Vec<Probe> {
+fn form(l: crate::code_rule_dsl::logic::program_image::Lit<'_>) -> Vec<Probe> {
     match l {
-        Literal::Atom(_) => vec![
+        crate::code_rule_dsl::logic::program_image::Lit::Atom(_) => vec![
             probe("join", &["atom"], "x: number, y: number", "{HEAD}(x, y) :- e(x, y), n(y)."),
             probe("join of three", &["atom"], "x: number, z: number", "{HEAD}(x, z) :- e(x, y), e(y, z), n(z)."),
             probe("negation", &["atom", "negation"], "x: number", "{HEAD}(x) :- n(x), !m(x)."),
@@ -129,10 +129,10 @@ fn form(l: &Literal) -> Vec<Probe> {
             probe("computed head", &["atom", "call add"], "x: number", "{HEAD}(x + 1) :- n(x)."),
             probe("computed symbol head", &["atom", "call cat"], "a: symbol", "{HEAD}(@dot(a, \"x\")) :- s(a)."),
         ],
-        Literal::Cmp { .. } => Vec::new(),
-        Literal::Agg { .. } => Vec::new(),
-        Literal::Nearest { .. } => Vec::new(),
-        Literal::Ast { .. } => Vec::new(),
+        crate::code_rule_dsl::logic::program_image::Lit::Cmp { .. } => Vec::new(),
+        crate::code_rule_dsl::logic::program_image::Lit::Agg { .. } => Vec::new(),
+        crate::code_rule_dsl::logic::program_image::Lit::Nearest { .. } => Vec::new(),
+        crate::code_rule_dsl::logic::program_image::Lit::Ast { .. } => Vec::new(),
     }
 }
 
@@ -250,16 +250,23 @@ fn probes() -> Vec<Probe> {
         ".decl {HEAD}_l(a: number, d: min<>) widen 8\n{HEAD}_l(x, 0) :- n(x), x = 1.\n{HEAD}_l(y, d + 1) :- {HEAD}_l(x, d), e(x, y).\n{HEAD}(a, d) :- {HEAD}_l(a, d)."));
     out.push(probe("aggregate count = 0 (a negation)", &["agg count"], "a: symbol", "{HEAD}(a) :- s(a), count : { p(a, _) } = 0."));
     out.push(probe("aggregate over two atoms' bag", &["agg count"], "a: symbol, c: number", "{HEAD}(a, c) :- t(a), c = count : { q(a, _) }."));
-    let a = Atom { rel: "n".into(), args: Vec::new().into(), neg: false, gated: false };
-    let t = Term::Wild;
-    for l in [
-        Literal::Atom(a.clone()),
-        Literal::Cmp { l: t.clone(), op: "=", r: t },
-        Literal::Agg { var: String::new(), op: AggOp::Count, over: None, atom: a },
-        Literal::Nearest { n: String::new(), a: String::new(), kindset: String::new() },
-        Literal::Ast { document: String::new(), node: String::new(), matcher: String::new(), captures: Vec::new() },
-    ] {
-        out.extend(form(&l));
+    // One rule holding each literal form, read back as the image's literals.
+    use crate::code_rule_dsl::logic::program_image::{Builder, CmpOp, T};
+    let mut b = Builder::base();
+    b.declare("h", &[]);
+    b.declare("n", &[]);
+    let mut o = b.open_rule();
+    b.put_head(&mut o, "h", &[]);
+    b.put_atom(&mut o, "n", &[], false, false);
+    b.put_cmp(&mut o, T::Wild, CmpOp::of("=").expect("equality"), T::Wild);
+    b.put_agg(&mut o, "c", &AggOp::Count, None, "n", &[]);
+    b.put_nearest(&mut o, "x", "y", "k");
+    b.put_ast(&mut o, "d", "x", "m", &[]);
+    b.close_rule(o).expect("a rule of every form");
+    let (v, _) = b.finish().expect("the forms' version");
+    let rule = v.rules().next().expect("the rule");
+    for l in rule.body() {
+        out.extend(form(l.view()));
     }
     out
 }
