@@ -1,0 +1,1 @@
+Rerail's Git calls no longer start a filter or signature program that only a repository's own config names, nor let Git look into submodules to do so; your own drivers, such as Git LFS, still run. A file under a repository-only driver is listed as changed when only its timestamp changed. Git older than 2.31 runs as before.

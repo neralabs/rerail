@@ -231,9 +231,25 @@ without hooks or network.
   - Skips relative `PATH` entries, entries in a `node_modules` folder, and entries in the repository it runs in (the
     nearest folder above its working folder with a `.git`). This stops a repository's `bin/` or `node_modules/.bin`
     going first, but not every route (T11).
-  - Every call sets `core.fsmonitor=false` and `core.hooksPath=/dev/null`, `GIT_TERMINAL_PROMPT=0` and
-    `GIT_NO_LAZY_FETCH=1` where relevant, and a 10 s timeout.
-  - No network commands; `cat-file --batch` runs no textconv.
+  - Every call sets `core.fsmonitor=false`, `core.hooksPath=/dev/null` and `log.showSignature=false` (a `git reflog`
+    or `git log` then starts no `gpg.program`), `GIT_TERMINAL_PROMPT=0` and `GIT_NO_LAZY_FETCH=1` where relevant, and
+    a 10 s timeout.
+  - A call through `runGit`, or a read that does not block, that reads worktree files (the audit's and the scan's
+    `git diff`, the session walk's `git ls-files --modified`) first lists the config with its scopes, and sets each
+    filter driver a repository's own config defines (its `config`, `config.worktree` and the files they include) as
+    the person's own config (system, global, command line) defines it, or to no program
+    (`src/engine/git-filter-drivers.ts`). A driver the person installed, such as Git LFS, still runs. A file under a
+    driver only a repository defines is compared as it is on disk: its stat changing alone lists it as changed where
+    that program would have mapped it to the index's bytes. A `git diff --name-only` that would look into submodules
+    runs with `--ignore-submodules=dirty`, so Git opens no submodule's Git folder for it, and Rerail asks each
+    checked-out submodule through the same guard, in the Git folder its `.git` named when Rerail read it, refused
+    when that folder holds no repository at the listing (`src/engine/git-submodule-state.ts`). A call whose config
+    Git cannot list is not made. With a Git older than 2.31 every call runs as it would without these overrides, and the
+    process says so once. `runGitAsync` and `streamGit` set no filter drivers: of their calls, only Merge Assist's diff
+    of its base against the working files ([internal testing](internal-testing.md)) reads worktree files. The listing
+    and the call are two Git processes (T11).
+  - No network commands; `cat-file --batch` runs no textconv, and a `--name-only` diff runs no textconv or external
+    diff.
 - **Git read in process** (`native/src/git_access/`): the engine opens every repository it reads through one opener.
   It starts no Git process and runs no filter driver a repository or user configures: the config files outside the
   repository are the ones Rerail's Git names, and the reads drop every `filter.*` section before they convert a file.
@@ -761,6 +777,11 @@ should not widen it.
   call, and the next process looks for Git afresh at its first call. The daemon alone also asks whether the home share
   `HOMEDRIVE` and `HOMEPATH` name is a folder, to put that home's `bin` on `PATH` as Git for Windows' launcher does; a
   hook's or a command's Git gets both homes' `bin`, the share's first.
+- A Git call that reads worktree files lists the repository's config, then runs as a second Git process that reads
+  the config again: a writer that changes the config, or a file it includes, between the two can have its filter
+  driver started, as the person's own `git status` would start it (`src/engine/git.ts`). The person's own Git LFS
+  runs the programs a repository's config names under `lfs.extension`. A Git older than 2.31 runs a repository's
+  filter drivers in Rerail's calls, as it runs them for the person.
 - If the recorded `node` is gone, the hook falls back to `node` on `PATH`, which a version manager or direnv can shim.
   Where set-up found another `node` first on `PATH`, Claude Code's hooks on Windows run `cmd.exe /d /c` by its
   System32 path, which looks for that fallback `node.exe` on `PATH` alone, never in the hook's working folder
