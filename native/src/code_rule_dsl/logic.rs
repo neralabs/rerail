@@ -34,7 +34,7 @@ pub mod front {
         #[path = "caches_tests.rs"]
         pub mod tests;
         #[allow(unused_imports)]
-        use crate::code_rule_dsl::logic::front::{Error, Literal, Term};
+        use crate::code_rule_dsl::logic::front::Error;
         #[allow(unused_imports)]
         use std::collections::BTreeSet;
     }
@@ -49,7 +49,7 @@ pub mod front {
         #[cfg(any(test, feature = "test-hooks"))]
         pub mod tests;
         #[allow(unused_imports)]
-        use crate::code_rule_dsl::logic::front::{Atom, Error, Literal, Rule, Term};
+        use crate::code_rule_dsl::logic::front::Error;
         #[allow(unused_imports)]
         use serde_json::Value;
     }
@@ -130,7 +130,5 @@ pub mod strings {
     use crate::code_rule_dsl::text::{Domain, Lowered, Source, Spelling, lower};
     #[allow(unused_imports)]
     use rusqlite::Connection;
-    #[allow(unused_imports)]
-    use crate::code_rule_dsl::logic::front::ast::{Atom, Literal, Term};
 }
 // cratify: `convert` is rerail-engine's (it mounts it)

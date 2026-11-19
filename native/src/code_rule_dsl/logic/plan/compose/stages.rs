@@ -147,7 +147,7 @@ pub(super) fn run(p: &Placed, db: &Connection, inputs: Inputs, lowered: Option<l
     run_with(p,db,inputs,lowered,hooks,BTreeSet::new())
 }
 
-/// Whether terms `a` and `b` of one rule of `v` are equal, term by term (`front::Term`'s equality).
+/// Whether terms `a` and `b` of one rule of `v` are equal, term by term.
 fn same_terms(v: &Version, mut a: Terms<'_>, mut b: Terms<'_>) -> bool {
     loop {
         match (a.next(), b.next()) {

@@ -404,7 +404,6 @@ const STATE: &[(&str, &str)] = &[
     // of the compilation, not a result kept. (PR #508's 5420af2ef.)
     ("code_rule_dsl/logic/native/setfix/device.rs", "OWN_TEXTS"),
     // A count of the trees this thread decoded from versions, and where the last was (0281's measure): a counter.
-    ("code_rule_dsl/logic/program_image/version.rs", "DECODED"),
     // The open submission of this thread's device wave, which its strata share: the wave's state.
     ("code_rule_dsl/logic/lanes.rs", "OPEN"),
     // A run's given versions of its changed reads (`give_versions`), dropped with its engine: the run's state.

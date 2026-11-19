@@ -2,7 +2,6 @@
 //! numbers what it adds after its parent's id spaces, and finds what its parent holds by its parent's tables, so a
 //! delta holds only what it adds. Hashes are of texts, never of ids, so a rule or part hashes the same in any image.
 use super::{AtomId, Cell, R, RelId, Version, Writer, bad, csr, extents::Extents, kind, meta, strings::{self, Strings}};
-use crate::code_rule_dsl::logic::front::ast::{AggOp, Atom, Literal, Rule, Term};
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
 
@@ -367,108 +366,6 @@ impl<'p> Encoder<'p> {
         self.from[k as usize] = src.0;
     }
 
-    // -- a rule from the tree --
-
-    fn term(&mut self, t: &Term) {
-        match t {
-            Term::Var(v) => self.var(v),
-            Term::Wild => self.leaf(kind::WILD, 0),
-            Term::Top => self.leaf(kind::TOP, 0),
-            Term::Int(i) => self.int(*i),
-            Term::Branded(b) => self.leaf(kind::BRANDED | super::brand_code(b.class) << 5, b.atom),
-            Term::Str(s) => {
-                let a = self.atom(s);
-                self.leaf(kind::STR, a)
-            }
-            Term::Call(f, args) => {
-                let a = self.atom(f);
-                let at = self.open(kind::CALL, a);
-                for x in args.iter() {
-                    self.term(x);
-                }
-                self.close(at);
-            }
-        }
-    }
-    fn tree_atom(&mut self, a: &Atom) {
-        let flags = if a.neg { kind::NEG } else { 0 } | if a.gated { kind::GATED } else { 0 };
-        let r = self.rel(&a.rel);
-        let at = self.open(kind::ATOM | flags, r);
-        for x in a.args.iter() {
-            self.term(x);
-        }
-        self.close(at);
-    }
-    fn literal(&mut self, l: &Literal) -> Result<(), String> {
-        match l {
-            Literal::Atom(a) => self.tree_atom(a),
-            Literal::Cmp { l, op, r } => {
-                let o = super::CmpOp::of(op).ok_or_else(|| bad(format!("comparison {op:?}")))? as u32;
-                let at = self.open(kind::CMP, o);
-                self.term(l);
-                self.term(r);
-                self.close(at);
-            }
-            Literal::Agg { var, op, over, atom } => {
-                let code = match op {
-                    AggOp::Count => 0,
-                    AggOp::Min => 1,
-                    AggOp::Max => 2,
-                    AggOp::Sum => 3,
-                    AggOp::Product => 4,
-                    AggOp::Join { .. } => 5,
-                };
-                let a = self.atom(var);
-                let s = self.slot_of(a);
-                let at = self.open(kind::AGG | code << 5, s);
-                match over {
-                    Some(v) => self.var(v),
-                    None => self.leaf(kind::WILD, 0),
-                }
-                if let AggOp::Join { by, sep } = op {
-                    for b in by {
-                        self.var(b);
-                    }
-                    let a = self.atom(sep);
-                    self.leaf(kind::STR, a);
-                }
-                self.tree_atom(atom);
-                self.close(at);
-            }
-            Literal::Nearest { n, a, kindset } => {
-                let k = self.atom(kindset);
-                let at = self.open(kind::NEAREST, k);
-                self.var(n);
-                self.var(a);
-                self.close(at);
-            }
-            Literal::Ast { document, node, matcher, captures } => {
-                let m = self.atom(matcher);
-                let at = self.open(kind::AST, m);
-                self.var(document);
-                self.var(node);
-                for (n, v) in captures {
-                    let a = self.atom(n);
-                    self.leaf(kind::STR, a);
-                    self.var(v);
-                }
-                self.close(at);
-            }
-        }
-        Ok(())
-    }
-    /// Appends `rule`, from the tree. Its local index.
-    pub fn tree_rule(&mut self, rule: &Rule) -> Result<u32, String> {
-        let at = self.begin_rule();
-        self.tree_atom(&rule.head);
-        for l in rule.body.iter() {
-            if let Err(e) = self.literal(l) {
-                self.abandon(at);
-                return Err(e);
-            }
-        }
-        Ok(self.end_rule(at))
-    }
     /// Drops the rule begun at `at` (a rule that failed to encode).
     pub fn abandon(&mut self, at: usize) {
         self.kind.truncate(at);

@@ -1,8 +1,9 @@
-//! The tree's `Debug` text of a rule and of a relation's fields (`front::Rule`, `front::Native`, …), written from a
-//! version's handles. A relation's identity (`plan::identities`, decision 0103) is a digest of that text, and it keys
-//! the strata a store keeps, so the text must be the tree's byte for byte. Each type here mirrors a tree type field
-//! by field, under the same names, so its derived `Debug` writes what the tree's derived `Debug` writes (a `Name` or
-//! a `List` writes as its `str` or slice does). Until a version's own digest keys them (decision 0173, step 6).
+//! The `Debug` text the rule tree (gone, decision 0276 §6) wrote of a rule, and of a relation's fields (`front::Native`,
+//! …), written from a version's handles. A relation's identity (`plan::identities`, decision 0103) is a digest of that
+//! text, and it keys the strata a store keeps, so the text stays the tree's byte for byte. Each type here mirrors a
+//! tree type field by field, under the same names, so its derived `Debug` writes what the tree's derived `Debug`
+//! wrote (a `Name` or a `List` writes as its `str` or slice does). Until a version's own digest keys them (decision
+//! 0173, step 6).
 use super::super::program_image::{AggRef, AtomRef, Cell, Lit, TermRef};
 use super::body::Body;
 use super::fields::Fields;

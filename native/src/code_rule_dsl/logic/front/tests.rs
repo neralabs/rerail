@@ -424,9 +424,12 @@ fn regex_group_gaps() {
 }
 
 /// Decision 0276 §6: a program is written through the builder and read as a version, never held as a tree. The tree
-/// program (`front`'s `Program`) and the lowered program's tree (`lower`'s `Tree`) are gone, and this refuses either in the
-/// engine's sources (`native/src` and each crate's `src`): a path naming one, an import of one from `front`, or a
-/// definition of one where they lived. The names are built at run time, so this file does not name them itself.
+/// program (`front`'s `Program`), the lowered program's tree (`lower`'s `Tree`), the tree's rules and their parts
+/// (`front`'s rule, literal, atom and term forms), a version's rules read as those (`program_image`'s `Tree`) and the
+/// encoder of a tree rule into an image (`tree_rule`, the builder's `add` of one) are gone, and this refuses each in
+/// the engine's code (`native/src` and each crate's `src`, comments aside): a path naming one, an import of one from
+/// `front`, or a definition of one where they lived. The names are built at run time, so this file does not name them
+/// itself.
 #[test]
 fn no_tree_program_comes_back() {
     fn files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
@@ -449,13 +452,18 @@ fn no_tree_program_comes_back() {
         }
     }
     assert!(all.len() > 100, "the engine's sources are read: {} files", all.len());
-    let (program, tree) = (["Pro", "gram"].concat(), ["Tr", "ee"].concat());
-    let paths = [format!("front::{program}"), format!("front::ast::{program}"), format!("lower::{tree}")];
-    // An import from `front` (or `front::ast`) that lists the tree program.
+    let tree = ["Tr", "ee"].concat();
+    // The tree's forms, by name: what `front` (or `front::ast`) defined.
+    let forms: Vec<String> = [["Pro", "gram"], ["Ru", "le"], ["Lite", "ral"], ["At", "om"], ["Te", "rm"]].iter().map(|p| p.concat()).collect();
+    let mut paths: Vec<String> = forms.iter().flat_map(|f| [format!("front::{f}"), format!("front::ast::{f}")]).collect();
+    paths.extend([format!("lower::{tree}"), format!("program_image::{tree}"), ["tree_", "rule("].concat()]);
+    // Whether `line` names `p` as a whole path (the next character ends the name).
+    let names = |line: &str, p: &str| line.match_indices(p).any(|(at, _)| !line[at + p.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '_'));
+    // An import from `front` (or `front::ast`) that lists a form.
     let imports = |line: &str| {
         line.match_indices("front::").any(|(at, _)| {
             let rest = line[at + "front::".len()..].trim_start_matches("ast::");
-            rest.strip_prefix('{').and_then(|r| r.split('}').next()).is_some_and(|list| list.split(',').any(|item| item.trim() == program))
+            rest.strip_prefix('{').and_then(|r| r.split('}').next()).is_some_and(|list| list.split(',').any(|item| forms.iter().any(|f| item.trim() == f)))
         })
     };
     let mut found = Vec::new();
@@ -464,9 +472,14 @@ fn no_tree_program_comes_back() {
         let rel = path.strip_prefix(native).unwrap_or(path).display().to_string();
         let home = rel.ends_with("logic/front/ast.rs") || rel.ends_with("logic/front.rs");
         let lowering = rel.contains("logic/rr/lower");
+        let image = rel.contains("logic/program_image");
         for (n, line) in text.lines().enumerate() {
-            let named = paths.iter().any(|p| line.contains(p.as_str()) && !line.contains(&format!("{p}_")) && !line.contains(&format!("{p}A")));
-            let defined = (home && line.contains(&format!("struct {program} "))) || (lowering && line.contains(&format!("struct {tree} ")));
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            let named = paths.iter().any(|p| names(line, p));
+            let defined = (home && forms.iter().any(|f| names(line, &format!("struct {f}")) || names(line, &format!("enum {f}"))))
+                || ((lowering || image) && names(line, &format!("struct {tree}")));
             if named || imports(line) || defined {
                 found.push(format!("{rel}:{}: {}", n + 1, line.trim()));
             }

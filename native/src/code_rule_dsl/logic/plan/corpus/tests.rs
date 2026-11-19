@@ -723,9 +723,8 @@ unused(f) :- def(f, _), !used(f).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Decision 0173 (t36 item 7): a maintained run reads its programs as versions. The maintained part is a tree of
-/// its version (`maintain::rewrite`), decoded by no reader, and the run's copy of the prepared split shares the
-/// parts' trees, copying none. The outputs are a run's with an empty store.
+/// Decision 0173 (t36 item 7): a maintained run reads its programs as versions, in place: there is no tree form to
+/// decode one into (`front::tests::no_tree_program_comes_back`). The outputs are a run's with an empty store.
 #[test]
 fn a_maintained_run_decodes_and_copies_no_tree() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
@@ -758,15 +757,10 @@ unused(f) :- def(f, _), !used(f).
     };
     run("kept.sqlite");
     write("c.py", "def h():\n    pass\n");
-    crate::code_rule_dsl::logic::program_image::forget_trees_decoded();
     let (maintained, rows) = run("kept.sqlite");
-    // The run's program is a version (`lower::Lowered`): no tree to copy or read beside it. A tree is made only by
-    // decoding one (`Version::program`), counted.
-    let decoded = crate::code_rule_dsl::logic::program_image::trees_decoded();
     let (_, fresh) = run("fresh.sqlite");
     assert_eq!(rows, fresh);
     assert!(maintained > 0, "a changed stratum maintained from the kept rows ({maintained})");
-    assert_eq!(decoded.0, 0, "the maintained run decoded trees from their versions, the last at {:?}", decoded.1);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

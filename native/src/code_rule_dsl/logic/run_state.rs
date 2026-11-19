@@ -146,7 +146,6 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/profile.rs", "STACK", Thread, "this thread's open spans; a job opens its span under its caller's (`profile::here`, carried)"),
     ("src/code_rule_dsl/logic/profile.rs", "STAGE", Carried, ""),
     ("src/code_rule_dsl/logic/profile.rs", "WARM_SCOPE", Thread, "the warm check's mark of the transaction a store writer has open on this thread; its commit hook runs on it"),
-    ("src/code_rule_dsl/logic/program_image/version.rs", "DECODED", Thread, "the trees this thread decoded (0281 step 4), counted by a check around a run on the same thread"),
     ("src/code_rule_dsl/logic/rr.rs", "READS", Call, "the libraries read while `recording` runs; a job records its own and hands them back (`rr::recorded_on_worker`)"),
     ("src/code_rule_dsl/logic/strings/functions.rs", "CACHE", Thread, "compiled regexes by pattern: any thread's gives the same"),
     ("src/code_rule_dsl/matcher/binding.rs", "FOLLOWING", Call, "the state of one call in progress on this thread, set and read within it"),

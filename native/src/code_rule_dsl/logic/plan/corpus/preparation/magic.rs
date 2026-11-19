@@ -126,7 +126,7 @@ impl<'v> M<'v> {
             M::True | M::Call(..) | M::Gated(_) => None,
         }
     }
-    /// The atom it reads (`front::Literal::atom`): its relation, whether negated or aggregated.
+    /// The atom it reads: its relation, whether negated or aggregated.
     fn atom(&self, v: &'v Version) -> Option<(&str, bool, bool)> {
         match self {
             M::Own(l) | M::Gated(l) => match l.view() {

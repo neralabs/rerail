@@ -560,6 +560,12 @@ Progress (2026-11-18):
     `lowering_tail`, text and the compose stages. Smallest first, each one's tests ported before its tree path goes.
   - **D. The forms go**: `front::Rule`/`Literal`/`Atom`/`Term`, `Builder::add(&Rule)`, `encoder::tree_rule` and
     `program_image::Tree`, and §6's guard refuses them.
+    - *Done (D).* The four forms, their `Display` and `Shallow` impls, `cmp_binds`, `join`, `front::template`,
+      `Builder::add`/`add_from`, `encoder::tree_rule` and `program_image::Tree` are deleted; `front::name::Lists` keeps
+      only its column and value tables (its term and literal tables and the read stacks had no reader left). The
+      decode counter (`trees_decoded`) counted nothing once `Version::program` went, and goes with them: the
+      maintained run's test now rests on the guard. `front::tests::no_tree_program_comes_back` refuses each form by
+      path, by import from `front`, or by a definition where it lived, in the engine's code (comments aside).
 
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 

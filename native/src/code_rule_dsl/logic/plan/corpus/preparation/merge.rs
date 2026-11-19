@@ -4,7 +4,7 @@
 //!
 //! The classes are `congruence`'s (the coarsest partition of the
 //! mergeable relations in which every two of a class have the same column types and the same rules once each
-//! relation is named by its class), a rule compared as `front::template::canonical` writes it, and each class named
+//! relation is named by its class), a rule compared by its template (`Canon` below), and each class named
 //! and written as `merge` names and writes it.
 
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
@@ -458,7 +458,7 @@ enum Tok<'v> {
     V(u32),
 }
 
-/// A rule's template (`front::template::canonical` with every relation a placeholder): its tokens, and the
+/// A rule's template (every variable named by its place, every relation a placeholder): its tokens, and the
 /// relations it reads, in the order it names them. Two rules of equal templates and equal labels of the relations
 /// they read are equal under those labels, as their texts are.
 struct Canon<'v> {

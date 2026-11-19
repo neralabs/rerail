@@ -505,23 +505,6 @@ impl Version {
     }
 }
 
-thread_local! {
-    /// The trees this thread decoded from versions (`Version::program`): a count, and the place of the last.
-    static DECODED: std::cell::Cell<(usize, Option<&'static std::panic::Location<'static>>)> = const { std::cell::Cell::new((0, None)) };
-}
-
-/// How many trees this thread decoded from versions so far (`Version::program`), and where the last was
-/// (`file:line`): a run reads its versions on its own thread, so a check around a run on one thread reads that run's.
-pub fn trees_decoded() -> (usize, Option<String>) {
-    let (n, at) = DECODED.with(|d| d.get());
-    (n, at.map(|l| format!("{}:{}", l.file(), l.line())))
-}
-
-/// Forgets this thread's decodes (`trees_decoded`): a check counts a run's alone.
-pub fn forget_trees_decoded() {
-    DECODED.with(|d| d.set((0, None)));
-}
-
 /// Whether `a` and `b` are one program, as a debug check compares a version with the tree's image: the same size, the
 /// same digest apart from the request record's `asked` rows, and the record the same by rule. The digest is a sum,
 /// blind to the rules' order, but the record states each request rule's readers by its place among its relation's

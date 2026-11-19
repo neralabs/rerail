@@ -4,7 +4,6 @@
 //! ```text
 //! let mut b = Builder::on(&parent);
 //! b.remove(rule.id());                                    // a rule of the parent
-//! b.add(&tree_rule)?;                                     // a rule from the tree
 //! b.copy(&other, other_rule);                             // a rule of another version, by its handles
 //! b.rule().head("p", &[T::Var("x")]).atom("e", &[T::Var("x"), T::Wild]).finish()?;
 //! b.declare("p", &[("x", "int")]);  b.set_inputs(&["e"]);
@@ -22,7 +21,7 @@ use super::encoder::{self, CellText, Decl, Encoder, FactRel, Parts};
 use super::handles::{AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
 use super::version::{Made, Version, max_ranges};
 use super::{ABOUT_BIT, AtomId, Cell, RelId, RuleId, Slot, kind};
-use crate::code_rule_dsl::logic::front::{ast::{Rule, Value}, name::List};
+use crate::code_rule_dsl::logic::front::{ast::Value, name::List};
 use crate::code_rule_dsl::logic::program_facts::Facts;
 use std::sync::Arc;
 
@@ -243,18 +242,6 @@ impl<'p> Builder<'p> {
     /// The id the next added rule gets.
     pub fn next_id(&self) -> RuleId {
         RuleId(self.enc.rule_base() + self.enc.rules())
-    }
-    /// Adds `rule`, from the tree.
-    pub fn add(&mut self, rule: &Rule) -> Result<RuleId, String> {
-        let id = self.next_id();
-        self.enc.tree_rule(rule)?;
-        Ok(id)
-    }
-    /// Adds a rewritten tree rule and records which input rule it came from.
-    pub fn add_from(&mut self, rule: &Rule, source: RuleId) -> Result<RuleId, String> {
-        let id = self.add(rule)?;
-        self.enc.set_from(id.0 - self.enc.rule_base(), source);
-        Ok(id)
     }
     /// Adds a copy of `rule`, one of `from`'s rules: its nodes as they are when `from`'s ids are this builder's,
     /// else each name by its text.

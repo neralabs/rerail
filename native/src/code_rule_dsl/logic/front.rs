@@ -21,12 +21,11 @@ use std::fmt;
 
 pub mod caches;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
-pub use name::{List, Lists, Name, Stacks};
+pub use name::{List, Lists, Name};
 pub mod cycles;
 pub mod graph;
-pub mod template;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
-pub use ast::{AXIS, AggOp, Algo, Atom, Branded, Class, DESCENDANTS, EVERY_KIND, FEW, Fan, GLOBAL, LIBRARY, LatticeDecl, LayoutFact, Literal, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, Shape, ShapeWait, Size as LayoutSize, SpanIn, Term, Value, Values as LayoutValues, add_layout, axis, carried_record, cmp_binds, globals, is_axis, is_transduced, join, layout_facts, readers_of_heads, record_copy, shape_base};
+pub use ast::{AXIS, AggOp, Algo, Branded, Class, DESCENDANTS, EVERY_KIND, FEW, Fan, GLOBAL, LIBRARY, LatticeDecl, LayoutFact, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, Shape, ShapeWait, Size as LayoutSize, SpanIn, Value, Values as LayoutValues, add_layout, axis, carried_record, globals, is_axis, is_transduced, layout_facts, readers_of_heads, record_copy, shape_base};
 
 use ast::PUNCT;
 

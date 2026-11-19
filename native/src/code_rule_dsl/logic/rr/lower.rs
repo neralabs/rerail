@@ -63,7 +63,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::from_tape::{S, Stmt};
 use rerail_rr_syntax::syntax::quote;
-use crate::code_rule_dsl::logic::front::{AXIS, AggOp, Atom, DESCENDANTS, Error, LatticeDecl, List, Literal, Native, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis};
+use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, Error, LatticeDecl, List, Native, RESERVED, SCOPE_NOT, SpanIn, Value, axis};
 use crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY;
 use crate::code_rule_dsl::logic::strings::SET;
 use crate::code_rule_dsl::logic::program_facts::Field;

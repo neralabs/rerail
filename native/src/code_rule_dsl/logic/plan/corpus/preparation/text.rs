@@ -93,7 +93,7 @@ fn term_vars(t: TermRef<'_>, out: &mut BTreeSet<Slot>) {
     }
 }
 
-/// The variables literal `l` names (`front::Literal::vars`).
+/// The variables literal `l` names.
 fn lit_vars(l: LitRef<'_>) -> BTreeSet<Slot> {
     let mut out = BTreeSet::new();
     match l.view() {
@@ -116,7 +116,7 @@ fn lit_vars(l: LitRef<'_>) -> BTreeSet<Slot> {
     out
 }
 
-/// The head's variables, each a whole argument (`front::Atom`'s `Term::Var` arguments).
+/// The head's variables, each a whole argument.
 fn head_vars(r: RuleRef<'_>) -> BTreeSet<Slot> {
     r.head().args().filter_map(TermRef::var).collect()
 }

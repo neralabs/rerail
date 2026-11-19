@@ -618,7 +618,7 @@ fn a_negated_match_reads_its_named_groups_as_groups() {
     // A negated match binds nothing, so its named groups are plain groups: `!match("(?<z>.*)", y)` is
     // `!match("(?:.*)", y)` (it was refused as "named groups … not lowered yet").
     let p = parse(".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).").unwrap();
-    let text = format!("{p:?}");
+    let text = shown(&p, |h| h == "a").join("\n");
     assert!(text.contains("(?:.*)") && !text.contains("(?<z>"), "{text}");
 }
 

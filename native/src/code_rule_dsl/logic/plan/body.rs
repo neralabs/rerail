@@ -71,7 +71,7 @@ impl VarSet {
     }
 }
 
-/// The variables of term `t`, into `out` (`front::Term::vars`).
+/// The variables of term `t`, into `out`.
 pub fn term_vars(t: TermRef<'_>, out: &mut VarSet) {
     match t {
         TermRef::Var(s) => {
@@ -82,14 +82,14 @@ pub fn term_vars(t: TermRef<'_>, out: &mut VarSet) {
     }
 }
 
-/// The variables of atom `a` (`front::Atom::vars`).
+/// The variables of atom `a`.
 pub fn atom_vars(a: AtomRef<'_>) -> VarSet {
     let mut out = VarSet::new();
     a.args().for_each(|t| term_vars(t, &mut out));
     out
 }
 
-/// The variables of literal `l` (`front::Literal::vars`).
+/// The variables of literal `l`.
 pub fn lit_vars(l: LitRef<'_>) -> VarSet {
     match l.view() {
         Lit::Atom(a) => atom_vars(a),
@@ -291,7 +291,7 @@ impl<'v> Body<'v> {
             _ => 1.0,
         }
     }
-    /// Whether literals `i` and `j` read equal atoms (`front::Atom`'s equality: relation, flags and arguments).
+    /// Whether literals `i` and `j` read equal atoms: the same relation, flags and arguments.
     pub fn same_atom(&self, i: usize, j: usize) -> bool {
         match (self.atom(i), self.atom(j)) {
             (Some(a), Some(b)) => a.gated() == b.gated() && self.show_atom(a) == self.show_atom(b),
@@ -339,7 +339,7 @@ impl<'v> Body<'v> {
     pub fn view(&self, i: usize) -> Lit<'v> {
         self.lits[i].view()
     }
-    /// The atom literal `i` reads: its own, or its aggregate's (`front::Literal::atom`).
+    /// The atom literal `i` reads: its own, or its aggregate's.
     pub fn atom(&self, i: usize) -> Option<AtomRef<'v>> {
         self.lits[i].atom()
     }
@@ -426,7 +426,7 @@ impl<'v> Body<'v> {
         }
         None
     }
-    /// `@cat` over variables only (`front::Term::is_cat`).
+    /// `@cat` over variables only.
     pub fn is_cat(&self, t: TermRef<'_>) -> bool {
         matches!(t, TermRef::Call(f, args) if self.v.text(f) == "cat" && { args.clone().all(|a| matches!(a, TermRef::Var(_))) })
     }
@@ -544,7 +544,7 @@ impl<'v> Body<'v> {
         }
     }
 
-    /// Literal `i` as text (`front::Literal`'s).
+    /// Literal `i` as text, as `show_rule` writes it.
     pub fn show(&self, i: usize) -> String {
         self.v.show_lit(self.rule, self.lits[i])
     }

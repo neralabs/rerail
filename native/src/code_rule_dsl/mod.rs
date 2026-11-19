@@ -1615,14 +1615,14 @@ pub(crate) mod logic {
         pub use rerail_rr::code_rule_dsl::logic::front::*;
         pub mod caches {
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::front::{Error, Literal, Term};
+            use crate::code_rule_dsl::logic::front::Error;
             #[allow(unused_imports)]
             use std::collections::BTreeSet;
         }
         pub mod yaml {
             pub use rerail_rr::code_rule_dsl::logic::front::yaml::*;
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::front::{Atom, Error, Literal, Rule, Term};
+            use crate::code_rule_dsl::logic::front::Error;
             #[allow(unused_imports)]
             use serde_json::Value;
         }
@@ -1633,7 +1633,7 @@ pub(crate) mod logic {
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::name::Name;
         #[allow(unused_imports)]
-        pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
+        pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, SpanIn, Value, axis, globals, is_axis, is_transduced};
         #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
     }
@@ -1837,7 +1837,7 @@ pub(crate) mod logic {
         #[cfg(test)]
         pub mod coverage;
         #[allow(unused_imports)]
-        use crate::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Rule, Term, Value, cmp_binds};
+        use crate::code_rule_dsl::logic::front::{AggOp, Value};
         #[allow(unused_imports)]
         use crate::code_rule_dsl::logic::native::TOP;
         #[allow(unused_imports)]
@@ -1895,7 +1895,7 @@ pub(crate) mod logic {
         pub mod aggregate_demand {
             pub use rerail_rr::code_rule_dsl::logic::rr::aggregate_demand::*;
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::front::{self, AggOp, Atom, Literal, Rule, Term};
+            use crate::code_rule_dsl::logic::front::{self, AggOp};
             #[allow(unused_imports)]
             use std::collections::{BTreeMap, BTreeSet};
         }
@@ -1948,8 +1948,6 @@ pub(crate) mod logic {
         use crate::code_rule_dsl::text::{Domain, Lowered, Source, Spelling, lower};
         #[allow(unused_imports)]
         use rusqlite::Connection;
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::logic::front::ast::{Atom, Literal, Term};
     }
 }
 /// The profile's SQL hazards, which the content store's connections and writer report (`content_store::hazards`, set as

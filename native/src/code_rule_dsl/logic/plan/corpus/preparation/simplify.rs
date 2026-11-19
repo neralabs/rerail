@@ -236,7 +236,7 @@ fn term_slots(t: TermRef<'_>, out: &mut BTreeSet<Slot>) {
     }
 }
 
-/// The variables literal `l` names (`front::Literal::vars`).
+/// The variables literal `l` names.
 fn lit_slots(l: LitRef<'_>) -> BTreeSet<Slot> {
     let mut out = BTreeSet::new();
     match l.view() {
@@ -1510,7 +1510,7 @@ impl RulePass for CatVariables {
     }
 }
 
-/// Whether `t` is `@cat` of variables alone (`front::Term::is_cat`).
+/// Whether `t` is `@cat` of variables alone.
 fn is_cat(v: &Version, t: TermRef<'_>) -> bool {
     matches!(t, TermRef::Call(f, args) if v.text(f) == "cat" && args.clone().all(|a| matches!(a, TermRef::Var(_))))
 }
@@ -2280,7 +2280,7 @@ impl ProgramPass for ProjectExistentials {
     }
 }
 
-/// A part's template (`front::template::template` of `exists(d) :- lits`): its literals by text, its variables
+/// A part's template (of `exists(d) :- lits`): its literals by text, its variables
 /// numbered by first appearance, the head's first.
 fn template_of(v: &Version, r: RuleRef<'_>, d: Slot, lits: &[LitRef<'_>]) -> Vec<Made> {
     let mut names: Vec<String> = vec![v.text(r.var(d)).to_owned()];
