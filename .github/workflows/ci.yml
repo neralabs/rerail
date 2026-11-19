@@ -873,7 +873,7 @@ jobs:
       # P's producer-shape and SQL-budget gates measure P's SQL anchor engine, which this engine places test-only
       # (docs/final-shape/open-items.md O20; P's tests that need P's addon, O84). On this addon they find no anchor
       # batches or producer plans, and the 100-submission budget "remains an expected acceptance failure"
-      # (docs/sql-performance-recovery-workplan.md). As vitest.config.ts does for P's relational suites, they run only
+      # (docs/sql-performance-recovery-workplan.md, removed; at 7efcac9c67). As vitest.config.ts does for P's relational suites, they run only
       # with RERAIL_RELATIONAL_TESTS=1 (set it in this job's env) until O20 picks one anchor engine. By hand,
       # `npm run test:producer-shape` and `npm run test:sql-execution-budget -- <directory>` run as they are.
       # The shape gate requires profiling spans and must never silently skip on a production addon.
@@ -1222,13 +1222,14 @@ jobs:
           name: cargo-target-x86_64-pc-windows-msvc
           mode: save
 
-  # The engine's #[cfg(windows)] tests (process starts, Windows import roots, the tree watch's oplock watch) are
-  # compiled out on Linux, where the rust job runs every other test; these filters select them and the Windows-neutral
-  # tests beside them: the process tests are the engine's, the tree watch's rerail-tree-watch's, the import roots'
-  # rerail-lang-ecma's, which mounts `import_target`. The `.rerail` library's canonical path is joined with `/` by `bootstrap.rerail`, which only
-  # Windows' verbatim paths broke: its test runs here too. A debug build, as in the rust job, through its own compile
-  # cache. Its own job, beside build-windows and the shards rather than on one of them. Gated as the rust job is, and
-  # only when the change selects the engine's tests (`rust-engine`).
+  # The engine's #[cfg(windows)] tests (process starts, Windows import roots, the tree watch's oplock watch, the path
+  # owner read) are compiled out on Linux, where the rust job runs every other test; these filters select them and the
+  # Windows-neutral tests beside them: the process and path owner tests are the engine's, the tree watch's
+  # rerail-tree-watch's, the import roots' rerail-lang-ecma's, which mounts `import_target`. The `.rerail` library's
+  # canonical path is joined with `/` by `bootstrap.rerail`, which only Windows' verbatim paths broke: its test runs here
+  # too. A debug build, as in the rust job, through its own compile cache. Its own job, beside build-windows and the
+  # shards rather than on one of them. Gated as the rust job is, and only when the change selects the engine's tests
+  # (`rust-engine`).
   rust-windows:
     name: Rust engine (Windows)
     needs: changes
@@ -1283,7 +1284,7 @@ jobs:
           ref: ${{ env.WARM_REF }}
 
       - name: Engine Windows tests
-        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma -p rerail-tree-watch --lib -- process:: code_rule_dsl::import_target:: tree_watch:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
+        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma -p rerail-tree-watch --lib -- process:: code_rule_dsl::import_target:: tree_watch:: path_owner:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
 
       - name: Save the compile cache
         if: ${{ !cancelled() && env.SAVE_WARM == 'true' }}

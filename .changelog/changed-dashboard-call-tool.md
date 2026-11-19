@@ -1,0 +1,1 @@
+In History by session, each tool call names its tool beside its badge (Bash beside Run, an MCP call's server and tool beside MCP); a file change still names its file. Rows drop the green ok and the sequence numbers, which move to the time's tooltip, so more of each description shows.

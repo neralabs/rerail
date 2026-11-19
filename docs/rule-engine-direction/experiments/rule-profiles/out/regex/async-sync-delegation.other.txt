@@ -1,6 +1,0 @@
-(?i)(?:sync|async)
-(?i)lazy
-(?s).*
-^async\b
-^def\b
-_lazy$

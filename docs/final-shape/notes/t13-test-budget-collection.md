@@ -301,7 +301,7 @@ already produces.
   `docs/rule-syntax/lib/core.rr`. Aggregates: `logic/rr/lower.rs`
   (`AggOp`)
 - The spike's files, copied from its session's scratchpad on
-  2026-11-08 into `notes/t13/`: `collect_est.py` (the model, a dev
+  2026-11-08 into `notes/t13/` (removed; at 7efcac9c67): `collect_est.py` (the model, a dev
   tool), `pytest-collect.draft.rr` (the rules, not compiled),
   `truth-full.json` / `truth-head.json` (real collection per file),
   `est-full-6.json` / `est-head-6.json` (level 6, with `unresolved`)
