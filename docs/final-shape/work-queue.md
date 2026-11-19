@@ -5378,3 +5378,7 @@ Open:
     (`found_items`), the hub's `holds` and `implied_count` unchanged; `comparison.implied` set for `tokens`.
   - The replay lab copied a capture's database without its atoms blocks (0401): it copies them now.
   - Linux: the token, gap, matcher, violations, compare, compile, prefilter and anchors tests 1,102 of 1,104.
+  - The two `compile_matcher_tests` (2026-11-19): the farm never sends gitignored files (its mirror lists
+    `git ls-files --cached --others --exclude-standard`), so the fixtures stay here. The six files they read are
+    upstream ruff copies, byte-equal at 236fc98d2~1 and in the hub's worktree (#191 added Rerail's own fixtures,
+    not these): placed from git history, sent with `--tree packs/python/upstream/ruff/fixtures`, both pass on Linux.

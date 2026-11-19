@@ -456,7 +456,10 @@ pub mod heap {
         pub(super) fn record(at: usize) {
             let Some(t) = table() else { return };
             let row = &t[at * DEPTH..(at + 1) * DEPTH];
-            let mut got = [0usize; DEPTH + SKIP];
+            let got = [0usize; DEPTH + SKIP];
+            // The frame walk fills it (Apple silicon only; elsewhere it stays empty).
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+            let mut got = got;
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             {
                 let mut fp: usize;

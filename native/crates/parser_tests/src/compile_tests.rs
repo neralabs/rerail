@@ -187,7 +187,10 @@ fn every_total_is_one_flag_on_every_executor() {
     assert!(want.iter().any(|w| w[0] == 0) && want.iter().any(|w| w[0] == 1), "both kinds of file");
     let files: Vec<&[u8]> = cases.iter().map(Vec::as_slice).collect();
     let batch: Vec<block::BatchFile<'_>> = files.iter().map(|&bytes| block::BatchFile { bytes, program: 0 }).collect();
-    let mut runs: Vec<(String, Vec<block::BlockRun>)> = vec![("cpu interpreter".into(), block.run_files(&files)), ("cranelift".into(), cranelift.run_files(&files))];
+    let runs: Vec<(String, Vec<block::BlockRun>)> = vec![("cpu interpreter".into(), block.run_files(&files)), ("cranelift".into(), cranelift.run_files(&files))];
+    // The Metal executors' runs (macOS only).
+    #[cfg(target_os = "macos")]
+    let mut runs = runs;
     #[cfg(target_os = "macos")]
     {
         use metal_program_backend::block_program::serial::{Segments, run_serial_split};
