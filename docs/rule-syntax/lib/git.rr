@@ -7,13 +7,17 @@
 .decl git_view_revision_request(view: symbol, expression: symbol) extensible
 git_view_revision_request(v, expr) :- git_root_view(r, v), git_revision_request(r, expr).
 
+.decl git_view_revision(view: symbol, expression: symbol, oid: symbol)
+git_view_revision(v, expr, oid) :- git_view_revision_request(v, expr), git_view_revision_of(v, expr, oid, "ok").
+
+.decl git_view_revision_error(view: symbol, expression: symbol, reason: symbol)
+git_view_revision_error(v, expr, reason) :- git_view_revision_request(v, expr), git_view_revision_of(v, expr, _, reason), reason != "ok".
+
 .decl git_revision(repo: symbol, expression: symbol, oid: symbol)
-git_revision(r, expr, oid) :- git_revision_request(r, expr), git_root_view(r, v), git_view_revision_request(v, expr),
-    git_view_revision_of(v, expr, oid, "ok").
+git_revision(r, expr, oid) :- git_revision_request(r, expr), git_root_view(r, v), git_view_revision(v, expr, oid).
 
 .decl git_revision_error(repo: symbol, expression: symbol, reason: symbol)
-git_revision_error(r, expr, reason) :- git_revision_request(r, expr), git_root_view(r, v), git_view_revision_request(v, expr),
-    git_view_revision_of(v, expr, _, reason), reason != "ok".
+git_revision_error(r, expr, reason) :- git_revision_request(r, expr), git_root_view(r, v), git_view_revision_error(v, expr, reason).
 git_revision_error(r, expr, "repository-not-open") :- git_revision_request(r, expr), !git_root_repo(r).
 
 .decl git_object_error(repo: symbol, oid: symbol, reason: symbol)

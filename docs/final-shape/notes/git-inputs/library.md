@@ -11,6 +11,7 @@ A value's contract still distinguishes repository IDs, algorithm-qualified objec
 
 ```prolog
 .decl git_root_repo(repo: symbol)
+.decl git_root_view(repo: symbol, view: symbol)
 .decl git_repository(repo: symbol, kind: symbol, format: symbol)
 .decl git_repository_dir(repo: symbol, path: symbol)
 .decl git_worktree(repo: symbol, path: symbol)
@@ -20,26 +21,28 @@ A value's contract still distinguishes repository IDs, algorithm-qualified objec
 
 `git_root_repo` contains one repository for an invocation with a Git root.
 `git_worktree` has no row for a bare repository.
-The repository value identifies the opened view, including linked-worktree reference context.
+The repository identifies the clone. The view identifies the opened worktree's reference context.
 No request changes the repository argument of another predicate.
 A scan supplies one snapshot request. A rule can issue additional object lookups for its own evidence.
 
 The ordinary invocation does not require a programmer to write a repository path:
 
-```prolog
-empty_head_message(commit) :-
-    git_root_repo(repo),
-    git_ref(repo, "HEAD", commit),
-    git_message(repo, commit, "").
+```rr
+#include "git.rr"
+
+.decl empty_head_message(repo: symbol, view: symbol, commit: symbol)
+git_view_revision_request(v, "HEAD") :- git_root_view(_, v).
+git_object_request(r, c) :- git_root_view(r, v), git_view_revision(v, "HEAD", c).
+empty_head_message(r, v, c) :- git_root_view(r, v), git_view_revision(v, "HEAD", c), git_message(r, c, "").
+.output empty_head_message
 ```
 
-This example requires bound lookup demand to reach the provider through the library.
-Section 6 specifies that requirement rather than assuming that an unbound repository scan exists.
+The executable example requests the commit explicitly. Section 6 describes the remaining work on direct bound lookup.
 
 ## 2. Mutable names and immutable objects
 
 ```prolog
-.decl git_ref(repo: symbol, name: symbol, oid: symbol)
+.decl git_view_revision(view: symbol, expression: symbol, oid: symbol)
 .decl git_revision(repo: symbol, expression: symbol, oid: symbol)
 .decl git_object(repo: symbol, oid: symbol, kind: symbol, content: symbol)
 
@@ -48,7 +51,7 @@ Section 6 specifies that requirement rather than assuming that an unbound reposi
 .decl git_tag_target(repo: symbol, tag: symbol, kind: symbol, target: symbol)
 ```
 
-`git_ref` resolves an explicit name, including symbolic `HEAD` in the named repository view.
+`git_view_revision` resolves a name or a single-object expression in the requested view. A fully qualified ref can be its expression.
 `git_revision` resolves a standard single-object Git expression.
 It does not interpret a two-dot expression as an arbitrary single object.
 Rules that compare endpoints resolve each endpoint explicitly.
@@ -88,7 +91,7 @@ Reusable metadata rules keep repository and selection explicit:
 
 ```prolog
 check_commit(repo, commit) :-
-    git_root_repo(repo), git_ref(repo, "HEAD", commit).
+    git_root_view(repo, view), git_view_revision(view, "HEAD", commit).
 
 empty_message(repo, commit) :-
     check_commit(repo, commit), git_message(repo, commit, "").

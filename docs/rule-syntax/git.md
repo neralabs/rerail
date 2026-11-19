@@ -8,6 +8,21 @@ Each linked worktree has its own view for HEAD, its reflog, and its index. A bar
 An open source view tracks the Git directories it opened. If another checkout takes their place, evaluation fails.
 Changing a ref inside the same checkout remains visible to a later evaluation.
 
+Use a view for a mutable name such as HEAD. This program returns the repository, worktree view, and commit together.
+
+```rr
+#include "git.rr"
+
+.decl view_tip(repo: symbol, view: symbol, commit: symbol)
+git_view_revision_request(v, "HEAD") :- git_root_view(_, v).
+view_tip(r, v, c) :- git_root_view(r, v), git_view_revision(v, "HEAD", c).
+.output view_tip
+```
+
+`git_view_revision_error(view, expression, reason)` retains the requested view on failure.
+The repository convenience relation `git_revision(repo, expression, oid)` uses the invocation's root view.
+For immutable data such as a commit message, pass the repository and the resolved object ID.
+
 ## Read the selected commit
 
 ```rr

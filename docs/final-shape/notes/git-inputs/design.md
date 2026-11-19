@@ -103,7 +103,8 @@ The following are different identities:
 
 | Value | Meaning | Required distinction |
 | --- | --- | --- |
-| `repo` | Opened local Git repository view | Linked worktrees with different refs remain distinct |
+| `repo` | The local clone | Linked worktrees share its immutable objects and run history |
+| `view` in `git_root_view(repo, view)` | The Git context for mutable lookups | Linked worktrees keep their own HEAD, reflog, and index |
 | `oid` | Full Git object ID, including hash algorithm | SHA-1 and SHA-256 IDs are distinct |
 | `content` | Immutable bytes in the ordinary source store | Equal bytes can share content across repositories and Git formats |
 | `tape` | Parsed content under an effective parser configuration | A grammar or parser change can produce another tape |

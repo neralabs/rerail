@@ -9562,9 +9562,9 @@ fn retainable_stratum(f: Fields<'_>, vs: &body::Versions, scc: &BTreeSet<String>
         && !rules.iter().any(|&r| vs.rule_at(r).1.body().any(|l| matches!(l.view(), Lit::Ast { .. })))
 }
 
-/// What a stratum read names a native step's answers for `p` by: `answer:<p>`.
+/// Old frames could record a nonempty answer digest beside an unmaterialized, empty payload.
 fn answer_read(p: &str) -> String {
-    format!("answer:{p}")
+    format!("answer:v2:{p}")
 }
 
 /// A set of answered rows' digest (`rows_digest`, of no rows when none), of relation `p`'s content (`Cells`).
@@ -9576,7 +9576,7 @@ fn answers_digest(f: Fields<'_>, db: &Connection, p: &str, rows: Option<&BTreeSe
     rows_digest(&Cells::new(&atoms, &stored_types(f, p, vec![b'i'; width])), &flat, rows.len())
 }
 
-/// A stratum's reads with its native step's answers (`answer:<p>` for each relation its requests produce), when
+/// A stratum's reads with its native step's answers (one digest per produced relation), when
 /// it makes requests of its own.
 fn with_answers(f: Fields<'_>, db: &Connection, scc: &BTreeSet<String>, reads: Option<Vec<(String, u64)>>, log: Option<BTreeMap<String, BTreeSet<Vec<i64>>>>) -> Option<Vec<(String, u64)>> {
     let mut reads = reads?;
@@ -9607,7 +9607,7 @@ fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BT
         let got = if run.native_rels.contains(r) {
             super::native::component::kept_rows(db, r)
         } else if f.produced(r) && !f.is_input(r) {
-            // A produced relation's answers, in its table (none when no rule reads it).
+            // SQL holds the answers when the relation is outside the native component.
             produced_rows(db, run, r)
         } else {
             None
@@ -11409,7 +11409,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             // A stratum the engine makes otherwise (a native operator, a lattice, a view, a produced request, a
             // tree pattern read off the documents) always runs.
             // A request this stratum makes and answers inside its fixpoint (decision 0065 §2a) is its native step:
-            // its answers are among what it reads (`answer:<p>`), so it is clean while they are as they were.
+            // Its reads include the observed answers. A changed answer invalidates the stratum.
             // (A request whose answers are all above the stratum is answered there, once its rows are whole.)
             let asks: Vec<&String> = scc.iter().filter(|r| f0.answers_of(r).iter().any(|p| scc.contains(*p))).collect();
             // A stratum of produced relations above their requests is their native step: their rows are the answers.
@@ -11561,8 +11561,14 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                 if let Some(at) = run.logging {
                     run.answer_logs.entry(at).or_default().entry(rel.clone()).or_default().extend(rows.iter().cloned());
                 }
-                // An input's rows are the caller's to bind; a relation no rule reads has no table.
-                if f0.is_input(rel) || rows.is_empty() || !body::Versions::keys(0, p0.len()).any(|r| reads_of(&run.versions, r).any(|a| a == rel.as_str())) {
+                // A later program can reuse this producer even when the current cone has no local reader.
+                // Retain its actual answers alongside their observed digest whenever this stratum publishes frames.
+                if f0.is_input(rel) || rows.is_empty() {
+                    continue;
+                }
+                if strata_kept.is_none()
+                    && !body::Versions::keys(0, p0.len()).any(|r| reads_of(&run.versions, r).any(|a| a == rel.as_str()))
+                {
                     continue;
                 }
                 // Held by the native engine, as a component's own answers are (`answer_pending`): a native stratum above

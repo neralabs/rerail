@@ -194,6 +194,48 @@ fn standalone_logic_publishes_each_source_after_its_history_query_finishes() {
 }
 
 #[test]
+fn the_documented_head_queries_preserve_the_worktree_in_answers_and_errors() {
+    let f = Checkout::new();
+    let linked = f.area.path().join("linked");
+    let linked_path = linked.to_str().unwrap();
+    f.git(&["worktree", "add", "--detach", linked_path]);
+    f.git(&["-C", linked_path, "commit", "--allow-empty", "--allow-empty-message", "-qm", ""]);
+    let tips = [f.git(&["rev-parse", "HEAD"]), f.git(&["-C", linked_path, "rev-parse", "HEAD"])];
+    assert_ne!(tips[0], tips[1]);
+    let policy = f.area.path().join("head.rr");
+    let out = f.area.path().join("facts");
+    let evaluate = |source: &Path, program: &str, relation: &str| {
+        fs::write(&policy, program).unwrap();
+        let run = f.run("logic", &[&policy, source, &out], Some("shared"));
+        assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+        let export = f.run("csv", &[&out], None);
+        assert!(export.status.success(), "{}", String::from_utf8_lossy(&export.stderr));
+        fs::read_to_string(out.join(format!("{relation}.csv"))).unwrap()
+    };
+    let example = |doc: &'static str, relation: &str| {
+        doc.split("```rr\n").skip(1).filter_map(|block| block.split_once("```"))
+            .map(|(program, _)| program).find(|program| program.lines().any(|line| line == format!(".output {relation}"))).unwrap()
+    };
+    let view_tip = example(include_str!("../../docs/rule-syntax/git.md"), "view_tip");
+    let empty = example(include_str!("../../docs/final-shape/notes/git-inputs/library.md"), "empty_head_message");
+    let main_row = evaluate(&f.repo, view_tip, "view_tip");
+    let link_row = evaluate(&linked, view_tip, "view_tip");
+    let main: Vec<_> = main_row.trim_end().split('\t').collect();
+    let link: Vec<_> = link_row.trim_end().split('\t').collect();
+    assert_eq!((main.len(), link.len()), (3, 3));
+    assert_eq!(main[0], link[0]);
+    assert_ne!(main[1], link[1]);
+    assert_eq!([main[2], link[2]], [tips[0].as_str(), tips[1].as_str()]);
+    assert_eq!(evaluate(&f.repo, empty, "empty_head_message"), "");
+    assert_eq!(evaluate(&linked, empty, "empty_head_message"), link_row);
+
+    let missing = format!("#include \"git.rr\"\ngit_view_revision_request(\"{}\", \"HEAD\").\ngit_view_revision_request(v,\"no-such-ref\") :- git_root_view(_, v).\n.output git_view_revision_error\n", main[1]);
+    let errors = evaluate(&linked, &missing, "git_view_revision_error");
+    assert!(errors.lines().any(|row| row == format!("{}\tHEAD\trepository-not-open", main[1])), "{errors}");
+    assert!(errors.lines().any(|row| row == format!("{}\tno-such-ref\tmissing-revision", link[1])), "{errors}");
+}
+
+#[test]
 fn a_failed_working_tree_batch_preserves_the_previous_directory_memberships() {
     let f = Checkout::new();
     let out = f.area.path().join("batch");

@@ -64,6 +64,10 @@ The scan still checks other requested paths whose trees it can read.
 
 ## Retention and invalidation
 
+A policy can read a Git revision and a later policy can use that same answer to request a commit.
+When the engine saves an answer for reuse, it saves the rows even if the first policy uses them only in its output.
+On upgrade, the engine rechecks entries written with the earlier native-answer format before it reuses them.
+
 Include `analysis.rr` to query completed scans in the selected content store.
 Scope presence comes from published ownership or recorded history. A scope imported from an older store can own manifests or snapshots without a recorded scan.
 The engine reads the requested scope and run relations from one SQLite snapshot.
