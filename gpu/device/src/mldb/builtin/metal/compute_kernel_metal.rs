@@ -208,6 +208,12 @@ impl MetalComputeFunction {
         desc.set_compute_function(Some(&function));
         let options = MTLPipelineOption::ArgumentInfo | MTLPipelineOption::BufferTypeInfo;
         let (state, reflection) = device.new_compute_pipeline_state_with_reflection(&desc, options).map_err(|e| format!("Error making pipeline state for function: {e}"))?;
+        Self::from_reflection(function, state, &reflection)
+    }
+
+    /// A function whose pipeline was made elsewhere (the engine's kernel store, from its binary archives), with
+    /// the reflection made with it (`ArgumentInfo | BufferTypeInfo`).
+    pub fn from_reflection(function: Function, state: ComputePipelineState, reflection: &metal::ComputePipelineReflectionRef) -> Result<Self, String> {
         let args = reflection.arguments();
         let mut arguments = Vec::new();
         for i in 0..args.count() {

@@ -33,9 +33,7 @@ core-foundation-sys = "0.8.7"
 rerail-ukl = { path = "../native/crates/ukl" }
 # The pool's buffers and the blocks' wraps: the device layer's (decision 0440 step B).
 rerail-device = { path = "../gpu/device" }
-
-[dev-dependencies]
-# The UKL library's device-wide calls, timed against the lane's own kernels (decision 0440 step 5's speed gate).
+# Kernels on a device other than Metal, compiled from UKL by the device layer (`gpu::kernels::function`, 0440 step C).
 rerail-gpu = { path = "../gpu" }
 
 [build-dependencies]

@@ -67,6 +67,12 @@ fn idle_room(need: usize) -> usize {
 /// The bytes leased now (and not yet dropped): what relational work holds on the device, for the profile.
 static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+thread_local! {
+    /// The deferrable leases this thread holds open, in bytes: a test's own part of `LIVE`, which the tests beside
+    /// it move.
+    static DEFERRABLE_HERE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// A profiler's hook (`set_lease_hook`): told each lease's buffer address and length when it is leased, and its address
 /// with length 0 when it is dropped.
 static LEASE_HOOK: OnceLock<fn(usize, usize)> = OnceLock::new();
@@ -106,7 +112,30 @@ pub struct Shared {
     pub max_buffer: u64,
 }
 
-/// The process's device and queue: `None` without a Metal device.
+/// The process's device in the device layer, whatever its backend (decision 0440 step C): what the pool leases
+/// from and the blocks wrap for, and the queue the engine's kernels on the device layer submit to. On Metal the
+/// same device and queue as [`get`]'s.
+pub struct Layer {
+    pub device: &'static rerail_device::device::Device,
+    pub queue: &'static rerail_device::device::QueueRoot,
+    /// The device's largest buffer.
+    pub max_buffer: u64,
+}
+
+/// The process's device in the device layer: `None` without one. On Metal, `RERAIL_GPU=cpu` or `=opencl`.
+pub fn layer() -> Option<&'static Layer> {
+    static LAYER: OnceLock<Option<Layer>> = OnceLock::new();
+    LAYER
+        .get_or_init(|| {
+            crate::blocks::install();
+            let one = rerail_forest::gpu::shared::get()?;
+            Some(Layer { device: &one.device, queue: &one.queue, max_buffer: one.device.max_buffer_length() })
+        })
+        .as_ref()
+}
+
+/// The process's device and queue as Metal's: `None` without a Metal device. The engine's kernels not yet on the
+/// device layer (decision 0440 step C) run here alone.
 pub fn get() -> Option<&'static Shared> {
     static SHARED: OnceLock<Option<Shared>> = OnceLock::new();
     SHARED
@@ -254,9 +283,14 @@ impl Pooled {
         self.fresh
     }
 
-    /// The buffer's host address.
+    /// The buffer's length in bytes, on every backend.
+    pub fn length(&self) -> u64 {
+        self.device_buffer().length()
+    }
+
+    /// The buffer's host address (on every backend: the pool's buffers are the host's memory).
     pub fn host(&self) -> *mut u8 {
-        self.buffer().contents().cast()
+        self.device_buffer().contents().cast()
     }
 
     /// Hands the lease to `cmd`: it goes back to the pool when `cmd` completes, not before (a GPU read is never
@@ -364,11 +398,13 @@ fn lease_file(kind: u32, bytes: usize, path: &std::path::Path, for_device: bool)
         Some(old) => std::fs::rename(&old, path).is_err(),
         None => true,
     };
-    let device = if for_device { get().map(|s| &s.layer) } else { None };
+    let device = if for_device { layer().map(|s| s.device) } else { None };
     let mut d = rerail_blocks::deferrable::Deferrable::create(path, kind, class, fresh, device).map_err(|e| format!("{}: {e}", path.display()))?;
     LIVE.fetch_add(class, std::sync::atomic::Ordering::Relaxed);
+    DEFERRABLE_HERE.set(DEFERRABLE_HERE.get() + class);
     d.on_release(move || {
         LIVE.fetch_sub(class, std::sync::atomic::Ordering::Relaxed);
+        DEFERRABLE_HERE.set(DEFERRABLE_HERE.get().saturating_sub(class));
     });
     let mut p = pool().lock().expect("the pool");
     if fresh {
@@ -439,13 +475,13 @@ impl Drop for Pooled {
 
 /// A buffer of at least `bytes`. Its contents are a previous lease's: every reader writes it first.
 pub fn lease(bytes: usize) -> Result<Pooled, String> {
-    let shared = get().ok_or("no Metal device")?;
+    let shared = layer().ok_or("no device")?;
     let class = class(bytes);
     if class as u64 > shared.max_buffer {
         if bytes as u64 > shared.max_buffer {
             return Err(format!("a buffer of {bytes} bytes is past the device's largest ({})", shared.max_buffer));
         }
-        let b = rerail_device::device::alloc_uninitialized_array_sync::<u8>(&shared.layer, bytes);
+        let b = rerail_device::device::alloc_uninitialized_array_sync::<u8>(shared.device, bytes);
         leased(&b);
         return Ok(Pooled { buffer: Some(b), keep: false, fresh: true });
     }
@@ -459,7 +495,7 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
     // A new buffer: idle ones give way to it first, so the budget holds both.
     p.trim(class);
     drop(p);
-    let b = crate::score::phase("new buffer", || rerail_device::device::alloc_uninitialized_array_sync::<u8>(&shared.layer, class));
+    let b = crate::score::phase("new buffer", || rerail_device::device::alloc_uninitialized_array_sync::<u8>(shared.device, class));
     leased(&b);
     Ok(Pooled { buffer: Some(b), keep: true, fresh: true })
 }
@@ -814,7 +850,8 @@ mod tests {
         let _big = big_leases();
         let dir = std::env::temp_dir().join(format!("rerail-deferrable-pool-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let live = || LIVE.load(std::sync::atomic::Ordering::Relaxed);
+        // This thread's deferrable leases: the process's count (`LIVE`) moves with the tests beside this one.
+        let live = || DEFERRABLE_HERE.get();
         let before = live();
         let d = lease_deferrable(kind::JOURNAL, 1 << 20, &dir.join("seg-1")).unwrap();
         assert_eq!(live(), before + class(SLAB_MIN), "a deferrable lease counts in the budget while open");

@@ -137,6 +137,17 @@ impl Device {
         }
     }
 
+    /// The largest buffer the device makes: Metal's own; OpenCL's largest allocation; on CUDA and the CPU, the
+    /// host's memory bounds it, not the device.
+    pub fn max_buffer_length(&self) -> u64 {
+        match self {
+            #[cfg(target_os = "macos")]
+            Device::Native(d) => d.max_buffer_length(),
+            Device::OpenCl(d) => d.max_alloc(),
+            _ => 1 << 40,
+        }
+    }
+
     pub fn is_cpu(&self) -> bool {
         matches!(self, Device::Cpu(_))
     }
@@ -361,6 +372,15 @@ impl ComputeEvent {
             ComputeEvent::Native(e) => e.is_complete(),
             ComputeEvent::Cpu(e) => e.is_complete(),
             ComputeEvent::OpenCl(e) => e.is_complete(),
+        }
+    }
+
+    /// The Metal command buffer, when the process's device is Metal (its host-clock times, its label).
+    #[cfg(target_os = "macos")]
+    pub fn metal(&self) -> Option<&metal::CommandBufferRef> {
+        match self {
+            ComputeEvent::Native(e) => Some(&e.command_buffer),
+            _ => None,
         }
     }
 

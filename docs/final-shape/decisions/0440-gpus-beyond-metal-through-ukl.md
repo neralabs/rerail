@@ -1000,6 +1000,32 @@ the program backend) include it as before, preprocessed for Metal.
   caller's bound (Q184) for the settle window's wait (Q179). Both fixed. Four observer tests that fail with or
   without the fix are Q262.
 
+**C: the engine's lane on the device layer, and the first family on it (2026-11-19).** What every ported family
+stands on:
+- **The pool on any device** (`accel::gpu::shared::layer`): the process's device in the device layer, whatever its
+  backend, and its queue (on Metal the same as `get`'s). The pool leases from it and the blocks wrap for it, so the
+  engine's blocks are leased on the CPU and OpenCL too. `get` stays Metal's, for the kernels not yet moved.
+- **Kernels from the engine's store as the device layer's** (`accel::gpu::kernels::function`, `function_fixed`,
+  `ready_function`): on Metal the store's pipelines, from its shipped and stored binary archives as before, now
+  made with their arguments' reflection (`MetalComputeFunction::from_reflection`), so a launch binds them by name;
+  elsewhere the device layer's compile and store, the constant given as a define (`UKL_CONSTANT_0`). The device
+  layer's programs are now kept by their text's digest too: two sources of one name were one program.
+- **The lane** (`rerail_metal::lane`): a command of launches on the device layer, each charged to the evaluation's
+  launch budget and recorded as Metal's dispatches are (`launch::attempt`, `mark`), bound by argument names; a
+  command past the budget runs none of its launches, as Metal's rule says, on every backend (its launches are held
+  until the commit, since an OpenCL or CPU queue starts a launch when it is enqueued). Its times are the device's
+  and, on Metal, the command buffer's host-clock times. The launch guard's source check counts it with
+  `launch.rs` as a checked layer.
+- **Nearest ancestors** (`nearest.ukl`, was `metal_nearest.metal`) is the first family on it: the kernel in UKL, its
+  host on the lane, in fresh device-layer buffers or the pool's blocks. A new conformance test
+  (`the_device_finds_each_cells_nearest_ancestor_in_its_set`: 5,000 nodes, two sets, both kinds of buffer, against
+  one pass in preorder) passes on Metal, the CPU and OpenCL (`RERAIL_GPU=cpu`, `=opencl`); its only test before was
+  an ignored measurement.
+- Found on the way: a pool lease's length and host address went through its Metal buffer (fixed: the device
+  layer's); an accel test compared a process-wide live count exactly, which its neighbours move (it counts its own
+  thread's deferrable leases now); the device layer gained a device's largest buffer (OpenCL's
+  `CL_DEVICE_MAX_MEM_ALLOC_SIZE`).
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

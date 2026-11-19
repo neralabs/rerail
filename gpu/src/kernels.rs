@@ -33,16 +33,24 @@ pub struct Program {
 }
 
 /// The program `text`, compiled the first time `name` is asked for. A failure is the same failure every time.
-pub fn program(name: &'static str, text: &'static str) -> Result<&'static Program, String> {
+pub fn program(name: &str, text: &str) -> Result<&'static Program, String> {
     program_with(name, text, &[])
 }
 
 /// The program `text` specialized by `defines` (decision 0440 step B): each value a program of its own, compiled the
 /// first time it is asked for, as Metal's function constants make a pipeline a value (the label passes' tape format).
 /// A define is portable where a function constant is Metal's alone, and the compiler folds it the same way.
-pub fn program_with(name: &'static str, text: &'static str, defines: &[(&str, &str)]) -> Result<&'static Program, String> {
+///
+/// A program is kept by its name, its text and its defines: two texts of one name are two programs.
+pub fn program_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<&'static Program, String> {
     static PROGRAMS: OnceLock<Mutex<HashMap<String, Result<&'static Program, String>>>> = OnceLock::new();
-    let key: String = std::iter::once(name.to_string()).chain(defines.iter().map(|(n, v)| format!(" -D{n}={v}"))).collect();
+    let digest = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut h);
+        h.finish()
+    };
+    let key: String = std::iter::once(format!("{name} {digest:016x}")).chain(defines.iter().map(|(n, v)| format!(" -D{n}={v}"))).collect();
     let mut programs = PROGRAMS.get_or_init(Default::default).lock().unwrap();
     programs
         .entry(key.clone())
@@ -56,6 +64,11 @@ pub fn program_with(name: &'static str, text: &'static str, defines: &[(&str, &s
 }
 
 impl Program {
+    /// The compiled library.
+    pub fn library(&self) -> &ComputeFunctionLibrary {
+        &self.library
+    }
+
     /// The kernel `name`, with its arguments (made once).
     pub fn function(&self, name: &str) -> Result<&'static ComputeFunction, String> {
         let mut fns = self.functions.lock().unwrap();

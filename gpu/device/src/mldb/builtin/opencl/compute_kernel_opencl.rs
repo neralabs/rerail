@@ -40,6 +40,7 @@ const CL_DEVICE_VERSION: ClUint = 0x102F;
 const CL_DEVICE_MAX_WORK_GROUP_SIZE: ClUint = 0x1004;
 const CL_DEVICE_HOST_UNIFIED_MEMORY: ClUint = 0x1035;
 const CL_DEVICE_MEM_BASE_ADDR_ALIGN: ClUint = 0x1019;
+const CL_DEVICE_MAX_MEM_ALLOC_SIZE: ClUint = 0x1010;
 const CL_BUFFER_CREATE_TYPE_REGION: ClUint = 0x1220;
 const CL_MEM_READ_WRITE: u64 = 1;
 const CL_MEM_USE_HOST_PTR: u64 = 1 << 3;
@@ -192,6 +193,8 @@ struct DeviceInner {
     max_group: usize,
     /// The alignment of a sub-buffer's origin, in bytes (`CL_DEVICE_MEM_BASE_ADDR_ALIGN`, given in bits).
     base_align: u64,
+    /// The largest buffer (`CL_DEVICE_MAX_MEM_ALLOC_SIZE`).
+    max_alloc: u64,
 }
 
 unsafe impl Send for DeviceInner {}
@@ -239,7 +242,9 @@ impl ClDevice {
         check("clCreateContext", e)?;
         let ba = device_info_bytes(a, device, CL_DEVICE_MEM_BASE_ADDR_ALIGN);
         let base_align = (u32::from_ne_bytes(ba[..4].try_into().unwrap()) as u64 / 8).max(1);
-        let d = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, base_align }));
+        let ma = device_info_bytes(a, device, CL_DEVICE_MAX_MEM_ALLOC_SIZE);
+        let max_alloc = u64::from_ne_bytes(ma[..8].try_into().unwrap());
+        let d = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, base_align, max_alloc }));
         d.reads_host_pages_in_place()?;
         Ok(d)
     }
@@ -278,6 +283,11 @@ impl ClDevice {
 
     pub fn name(&self) -> &str {
         &self.0.name
+    }
+
+    /// The largest buffer the device makes.
+    pub fn max_alloc(&self) -> u64 {
+        self.0.max_alloc
     }
 
     /// The largest threadgroup, and so the emulated SIMD group's scratch (`UKL_TG_MAX`).
