@@ -550,13 +550,22 @@ describe("Rerail tool results waiting for their edit's check", () => {
   });
 
   it("answers a tool call's result with its edit's steer while a walk's log edits queued ahead of it are still being checked", async () => {
-    const { runtime, check, edit, walk, walkQueued } = await hookSession();
+    const { runtime, check, checking, steered, edit, walk, walkQueued } = await hookSession();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       await walkQueued();
+      let answered = false;
       const { answering } = await edit("t1", BAD);
+      void answering.finally(() => { answered = true; });
+      await checking.promise;
       check.resolve();
+      await steered.promise;
+      // The answer goes out once the edit's own check ends, not when the one-second wait for the walk's checks runs out.
+      await vi.advanceTimersByTimeAsync(999);
+      expect(answered).toBe(true);
       expect((await answering).map(delivery => delivery.content)).toEqual([STEER]);
     } finally {
+      vi.useRealTimers();
       walk.resolve();
       check.resolve();
       await runtime.dispose();

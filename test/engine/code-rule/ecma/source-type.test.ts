@@ -430,18 +430,19 @@ describe("a package.json edit alone", () => {
     }
   });
 
+  // A count across files makes a lane check a tool call's edit with the log edits queued ahead of it in one apply.
+  const CROSS_FILE = codeRuleSchema.parse({
+    format: "rerail.policy/v1", id: "package-facts:manifest-edit-together", revision: 1, mode: "steer",
+    scope: { include: ["**/*.js", "**/*.ts"], exclude: [] },
+    clauses: [...CODE_RULE.clauses, {
+      id: "budget", violation: { code: "BUDGET", anchor: "witness.span", message: "Too many files" },
+      budget: { query: { evidence: { as: "n", query: { ast: { language: "typescript", rule: { kind: "program" } } }, project: { path: "file.path" } } }, count: { lte: 100 } },
+    }],
+  });
+
   it("refreshes the sources below a walk's manifest edit checked in one engine call with a tool call's edit, where a rule counts across files", async () => {
-    // A count across files makes the lane check a tool call's edit with the log edits queued ahead of it in one apply.
-    const crossFile = codeRuleSchema.parse({
-      format: "rerail.policy/v1", id: "package-facts:manifest-edit-together", revision: 1, mode: "steer",
-      scope: { include: ["**/*.js", "**/*.ts"], exclude: [] },
-      clauses: [...CODE_RULE.clauses, {
-        id: "budget", violation: { code: "BUDGET", anchor: "witness.span", message: "Too many files" },
-        budget: { query: { evidence: { as: "n", query: { ast: { language: "typescript", rule: { kind: "program" } } }, project: { path: "file.path" } } }, count: { lte: 100 } },
-      }],
-    });
     const root = await repository(false, SOURCES);
-    const { edit, enforcer, auditCount, reportedSince, close } = await enforcerFor(root, crossFile, SOURCES);
+    const { edit, enforcer, auditCount, reportedSince, close } = await enforcerFor(root, CROSS_FILE, SOURCES);
     const manifest = '{ "type": "module" }\n';
     try {
       expect(await edit()).toEqual(both(["PROGRAM", "REQUIRE"]));
@@ -458,6 +459,37 @@ describe("a package.json edit alone", () => {
       await enforcer.settle();
       // The manifest's edit reports the sources it made modules, as a check of it alone does: no CommonJS require now.
       expect(reportedSince(before)).toEqual({ ...both(["PROGRAM"]), "lib/own.ts PROGRAM": 1 });
+    } finally {
+      await close();
+    }
+  });
+
+  it("leaves a source with its own edit in a walk's batch to that edit, when the batch is checked with a tool call's edit in one engine call", async () => {
+    const root = await repository(false, SOURCES);
+    const { edit, enforcer, auditCount, reportedSince, close } = await enforcerFor(root, CROSS_FILE, SOURCES);
+    const manifest = '{ "type": "commonjs", "bin": "./lib/plain.js" }\n';
+    try {
+      expect(await edit()).toEqual(both(["PROGRAM", "REQUIRE"]));
+      await writeFile(join(root, "package.json"), manifest);
+      await writeFile(join(root, "lib/plain.js"), "exports.a = 1;\n");
+      await writeFile(join(root, "lib/own.ts"), "export const own = 1;\n");
+      const before = auditCount();
+      // The walk found the manifest and lib/plain.js changed; the manifest gives lib/plain.js other facts, but its own
+      // edit, in the same apply, is what the engine evaluates: its old text, which required, is not sent again.
+      await enforcer.auditGeneratedEdits("package-facts", {
+        revision: 10, checkpoints: ["edit"], mode: "log", edits: [
+          { path: "package.json", language: "json", generatedText: manifest },
+          { path: "lib/plain.js", language: "javascript", generatedText: "exports.a = 1;\n" },
+        ],
+      });
+      await enforcer.auditGeneratedEdits("package-facts", {
+        revision: 11, checkpoints: ["edit"], edits: [{ path: "lib/own.ts", language: "typescript", generatedText: "export const own = 1;\n" }],
+      });
+      await enforcer.settle();
+      const reported = reportedSince(before);
+      expect(reported["lib/plain.js BIN"]).toBe(1);
+      expect(reported["lib/plain.js REQUIRE"]).toBeUndefined();
+      expect(reported["lib/own.ts PROGRAM"]).toBe(1);
     } finally {
       await close();
     }
