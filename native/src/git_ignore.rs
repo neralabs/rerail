@@ -772,7 +772,10 @@ mod tests {
         );
         git(&root, &["init", "--initial-branch=main"]);
         git(&root, &["add", "docs/.gitignore"]);
-        git(&root, &["update-index", "--skip-worktree", "docs/.gitignore"]);
+        git(
+            &root,
+            &["update-index", "--skip-worktree", "docs/.gitignore"],
+        );
         std::fs::remove_file(root.join("docs/.gitignore")).unwrap();
         let root = root.canonicalize().unwrap();
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
@@ -796,7 +799,10 @@ mod tests {
         std::fs::remove_file(&other).unwrap();
         let info = format!("100644,{blob},docs/.gitignore");
         git(&root, &["update-index", "--cacheinfo", &info]);
-        git(&root, &["update-index", "--skip-worktree", "docs/.gitignore"]);
+        git(
+            &root,
+            &["update-index", "--skip-worktree", "docs/.gitignore"],
+        );
         let mut fresh = GitIgnore::open(&root).unwrap().unwrap();
         assert_eq!(answers(&mut fresh), (false, true), "the new blob");
         assert!(ignore.sources_unchanged(false));
