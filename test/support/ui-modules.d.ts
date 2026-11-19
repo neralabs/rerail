@@ -168,7 +168,7 @@ declare module "*/ui/state.js" {
   };
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;
   export const ui: {
-    filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "steered" | "logged"; view: string; settingUp: boolean;
+    filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "logged" | "steered" | "declined"; view: string; settingUp: boolean;
     selectedSession: string | null; panel: object | null;
   };
   export function keptPacks(): readonly string[];
@@ -238,7 +238,7 @@ declare module "*/ui/pack-model.js" {
 declare module "*/ui/routes.js" {
   export type ViewName = "overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings" | "merge";
   export interface Route {
-    view: ViewName | null; pack?: string; filterRule?: string; outcome?: "all" | "steered" | "logged";
+    view: ViewName | null; pack?: string; filterRule?: string; outcome?: "all" | "logged" | "steered" | "declined";
     sessionFilter?: "all" | "corr" | "declined"; rule?: string; session?: string; jump?: boolean; conflict?: string;
   }
   export function parseRoute(hash: string): Route;
@@ -256,10 +256,13 @@ declare module "*/ui/views/index.js" {
 }
 
 declare module "*/ui/history-model.js" {
-  export interface RankedRule { id: string; title: string; origin: string; count: number }
+  export type Outcome = "all" | "logged" | "steered" | "declined";
+  export interface RankedRule { id: string; title: string; origin: string; count: number; declined: number }
   export function filterRanked(ranked: RankedRule[], query: string): RankedRule[];
   export function historyOrigin(id: string): string;
-  export function rankedRules(outcome?: "all" | "steered" | "logged"): RankedRule[];
+  export function rankedRules(outcome?: Outcome): RankedRule[];
+  export function outcomesOf(id: string): Record<Outcome, number>;
+  export function inRange(id: string, outcome?: Outcome): number;
   export function historyRuleId(ranked?: RankedRule[]): string | null;
   export function historyTitle(id: string): string;
   export type HistoryEmpty = { kind: "noRules" } | { kind: "noSessions" } | { kind: "noViolations"; sessions: number } | { kind: "nothingInRange" };
@@ -331,7 +334,7 @@ declare module "*/ui/first-open.js" {
   export function firstOpenState(facts: RepositoryFacts): FirstOpenState;
   export function bannerFor(state: FirstOpenState, welcomeDismissed: boolean): "stopped" | "welcome" | null;
   export function overviewBody(facts: { ruleCount: number; sessionsEver: number; topCount: number }): "no-rules" | "no-sessions" | "no-violations" | "lists";
-  export function steeredTally(activity: Record<string, { measured?: boolean; distinctViolations: number; loggedViolations?: number; rerails?: number }>): { steered: number; total: number };
+  export function steeredTally(activity: Record<string, { measured?: boolean; distinctViolations: number; loggedViolations?: number; declinedViolations?: number; declinedLoggedViolations?: number; rerails?: number }>): { steered: number; total: number };
   export const TOP_RULES: number;
   export function topRules<R extends { id: string; title: string; fires: number }>(rules: readonly R[], limit?: number): R[];
   export function rulesOnSource(packCount: number, mineCount: number): string;
