@@ -1686,7 +1686,7 @@ describe("CodeRuleBridge", () => {
     discovery.stamps.set(path, Math.max(during.mtimeMs, during.ctimeMs));
     await bridge.begin("shell-3", "Bash", { command: "ls" });
     await bridge.finish("shell-3");
-    expect(answered).toHaveBeenCalledTimes(3);
+    expect(answered.mock.calls).toEqual([2, 3, 4].map(ends => [ends, [{ after: 1, through: ends }]]));
     expect(audited(auditGeneratedEdits).at(-1)).toEqual({ mode: "log", edits: [{ path: "src/a.py", generatedText: "y = 9\n", readError: undefined }] });
   });
 
@@ -1710,7 +1710,7 @@ describe("CodeRuleBridge", () => {
       await bridge.begin(id, "Bash", { command: "ls" });
       await bridge.finish(id);
     }
-    expect(answered).toHaveBeenCalledTimes(3);
+    expect(answered.mock.calls).toEqual([1, 2, 3].map(ends => [ends, [{ after: 0, through: ends }]]));
     discovery.opens.delete(path);
     await bridge.begin("shell-4", "Bash", { command: "ls" });
     await bridge.finish("shell-4");
