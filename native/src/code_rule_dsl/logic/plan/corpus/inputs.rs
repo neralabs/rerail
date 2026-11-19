@@ -275,9 +275,11 @@ fn blob_id(bytes: &[u8]) -> String {
 }
 
 /// The files of `root` the corpus sees (`corpus_paths`: Git's listing in a work tree, so none Git ignores, else the
-/// walk; none under a directory the host's walk never enters), relative and sorted.
+/// walk; none under a directory the host's walk never enters), relative and sorted. Git lists a committed symbolic
+/// link as an entry of its own (mode 120000), where the walk enters a linked folder: a link to a folder is no file.
 fn walk(root: &Path) -> Result<Vec<String>> {
     let mut out = super::corpus_paths(root)?;
+    out.retain(|path| root.join(path).is_file());
     out.sort();
     Ok(out)
 }
@@ -886,6 +888,33 @@ grew(e) :- now_entry(e), !was(_, e).
         std::fs::write(root.join("pkg/a.py"), "x = 2\n").unwrap();
         assert_ne!(inputs_digest(&root, &globs).unwrap(), hidden);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// In a Git work tree the digest reads Git's listing, which holds a committed link to a folder as an entry of its
+    /// own: no input file, so a glob matching it leaves the digest as the files alone make it. Two work trees, each
+    /// listed once.
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_folder_in_a_work_tree_is_no_input_file() {
+        let tree = |linked: bool| {
+            let work = tempfile::tempdir().unwrap();
+            let root = work.path();
+            std::fs::create_dir_all(root.join("shared")).unwrap();
+            std::fs::create_dir_all(root.join("docs")).unwrap();
+            std::fs::write(root.join("docs/a.md"), "one\n").unwrap();
+            std::fs::write(root.join("shared/b.md"), "two\n").unwrap();
+            if linked {
+                std::os::unix::fs::symlink("../shared", root.join("docs/shared")).unwrap();
+            }
+            let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(root).args(args).output().unwrap().status.success(), "git {args:?}");
+            git(&["init", "-q"]);
+            git(&["add", "-A"]);
+            git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "files"]);
+            work
+        };
+        let globs = vec!["docs/**".to_owned()];
+        let (plain, linked) = (tree(false), tree(true));
+        assert_eq!(inputs_digest(linked.path(), &globs), inputs_digest(plain.path(), &globs));
     }
 
     const BUDGET: &str = r#"
