@@ -57,14 +57,16 @@ const BINARY_EXTENSION = /^\.(?:exe|com)$/iu;
 
 /**
  * The absolute path of the program PATH finds for `name`, as a spawn without a shell can start it, or undefined when
- * nothing on PATH is. An absolute `name` is returned as it is. On Windows only a `.exe` or `.com` counts, in PATHEXT's
+ * nothing on PATH is. A `name` written from a root is read as a PATH entry is ({@link onThisMachine}): as it is where it
+ * names one file, and on Windows with the current folder's drive where it starts at the root of the current drive
+ * (`\nodejs\node.exe`), or undefined inside the repository there. On Windows only a `.exe` or `.com` counts, in PATHEXT's
  * order: Node refuses a `.cmd` or `.bat` there (EINVAL), and a version manager's `node.cmd` shim can come first on
  * PATH. Entries are read there unquoted, as cmd.exe reads them, and only those that name one folder on this machine
  * ({@link searchedFolder}): a relative one names the current folder and is skipped. Elsewhere the first file this
  * process may execute counts.
  */
 export function programOnPath(name: string, { env = process.env, platform = process.platform }: ProgramSearch = {}): string | undefined {
-  if (isAbsolute(name)) return name;
+  if (isAbsolute(name)) return onThisMachine(name);
   const windows = platform === "win32";
   const extensions = windows ? binaryExtensions(env) : [""];
   const found = windows ? existsSync : runnable;
@@ -92,9 +94,16 @@ function searchedEntries(env: NodeJS.ProcessEnv, windows: boolean): string[] {
  * which can be another, so the search would check one file and the start run another.
  */
 function searchedFolder(entry: string): string[] {
-  if (namesOneFile(entry)) return [entry];
-  const folder = fromCurrentDrive(entry);
+  const folder = onThisMachine(entry);
   return folder === undefined ? [] : [folder];
+}
+
+/**
+ * The file or folder `path` names on this machine: `path` where it names one ({@link namesOneFile}), else, for one from
+ * the root of the current drive on Windows, what {@link fromCurrentDrive} reads; undefined for one that names none.
+ */
+function onThisMachine(path: string): string | undefined {
+  return namesOneFile(path) ? path : fromCurrentDrive(path);
 }
 
 /**
