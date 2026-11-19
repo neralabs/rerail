@@ -11174,7 +11174,13 @@ pub mod tests {
         let dir = tempfile::tempdir().unwrap();
         let work = dir.path().join("work");
         std::fs::create_dir_all(work.join("ignored/pkg")).unwrap();
-        let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&work).args(args).output().unwrap().status.success(), "git {args:?}");
+        let git = |args: &[&str]| {
+            let result = std::process::Command::new("git")
+                .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .arg("-C").arg(&work).args(args).output().unwrap();
+            assert!(result.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&result.stderr));
+        };
         git(&["init", "-q"]);
         std::fs::write(work.join(".gitignore"), "/ignored/\n").unwrap();
         std::fs::write(work.join("ignored/pkg/a.py"), "x = 1\n").unwrap();
