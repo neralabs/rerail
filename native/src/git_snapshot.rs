@@ -199,9 +199,6 @@ pub fn decoded_commit<'a>(commit: &'a gix::Commit<'_>) -> io::Result<gix::objs::
     let decoded = commit.decode().map_err(error)?;
     decoded.author().and_then(|sig| sig.time()).map_err(error)?;
     decoded.committer().and_then(|sig| sig.time()).map_err(error)?;
-    for (name, _) in &decoded.extra_headers {
-        std::str::from_utf8(name).map_err(error)?;
-    }
     Ok(decoded)
 }
 

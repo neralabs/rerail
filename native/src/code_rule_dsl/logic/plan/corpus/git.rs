@@ -153,29 +153,23 @@ impl Git {
                     records.push(Record::text("encoding", hex(encoding)));
                 }
                 for (position, (name, value)) in decoded.extra_headers.iter().enumerate() {
-                    let mut record =
-                        Record::text("header", name.to_str().map_err(|_| "malformed")?);
+                    let mut record = match name.to_str() {
+                        Ok(text) => Record::text("header", text),
+                        Err(_) => Record::text("header-bytes", hex(name)),
+                    };
                     record.position = position as i64;
                     record.second = hex(value.as_ref());
                     records.push(record);
                 }
                 let author = commit.author().map_err(|_| "malformed")?;
                 let committer = commit.committer().map_err(|_| "malformed")?;
-                for (role, signature) in [("author", author), ("committer", committer)] {
+                for (role, signature, bytes) in [("author", author, decoded.author), ("committer", committer, decoded.committer)] {
                     let time = signature.time().map_err(|_| "malformed")?;
-                    let (Ok(name), Ok(email)) = (signature.name.to_str(), signature.email.to_str())
-                    else {
-                        let mut record = Record::text("signature-bytes", role);
-                        record.second = hex(if role == "author" {
-                            decoded.author
-                        } else {
-                            decoded.committer
-                        });
-                        records.push(record);
-                        continue;
+                    let (mut record, email_or_bytes) = match (signature.name.to_str(), signature.email.to_str()) {
+                        (Ok(name), Ok(email)) => (Record::text(role, name), email.to_owned()),
+                        _ => (Record::text("signature-bytes", role), hex(bytes)),
                     };
-                    let mut record = Record::text(role, name);
-                    record.second = email.to_owned();
+                    record.second = email_or_bytes;
                     record.number = time.seconds;
                     record.offset = i64::from(time.offset);
                     records.push(record);

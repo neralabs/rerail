@@ -16,7 +16,7 @@ git_object_error(r, oid, reason) :- git_object_of(r, oid, "error", _, reason, _,
 
 // Successful records are immutable, keyed by authorized repository, object ID and decoder version.
 .decl git_record_key(repo: symbol, oid: symbol, version: symbol)
-git_record_key(r, oid, "git-record-3") :- git_root_repo(r), git_object_request(r, oid).
+git_record_key(r, oid, "git-record-4") :- git_root_repo(r), git_object_request(r, oid).
 
 .decl git_record(repo: symbol, oid: symbol, version: symbol, field: symbol, position: number, first: symbol, second: symbol, value: number, offset: number)
 git_record(r, oid, v, field, pos, a, b, n, o) :-
@@ -53,8 +53,16 @@ git_author(r, c, name, mail, secs, offset) :- git_record(r, c, _, "author", _, n
 .decl git_committer(repo: symbol, commit: symbol, name: symbol, email: symbol, seconds: number, offset_seconds: number)
 git_committer(r, c, name, mail, secs, offset) :- git_record(r, c, _, "committer", _, name, mail, secs, offset).
 
+.decl git_signature_time(repo: symbol, commit: symbol, role: symbol, seconds: number, offset_seconds: number)
+git_signature_time(r, c, "author", secs, offset) :- git_author(r, c, _, _, secs, offset).
+git_signature_time(r, c, "committer", secs, offset) :- git_committer(r, c, _, _, secs, offset).
+git_signature_time(r, c, role, secs, offset) :- git_record(r, c, _, "signature-bytes", _, role, _, secs, offset).
+
 .decl git_header(repo: symbol, commit: symbol, position: number, name: symbol, hex: symbol)
 git_header(r, c, i, name, value) :- git_record(r, c, _, "header", i, name, value, _, _).
+
+.decl git_header_bytes(repo: symbol, commit: symbol, position: number, hex_name: symbol, hex_value: symbol)
+git_header_bytes(r, c, i, name, value) :- git_record(r, c, _, "header-bytes", i, name, value, _, _).
 
 .decl git_tree_entry(repo: symbol, tree: symbol, name: symbol, mode: number, target: symbol)
 git_tree_entry(r, t, name, mode, target) :- git_record(r, t, _, "entry", _, name, target, mode, _).

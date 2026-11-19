@@ -540,6 +540,38 @@ Found(@place("git", 1), oid) :- git_revision(_, "${gitlink}", oid).
     ].sort());
   });
 
+  it("reads commit metadata with byte header names and returns dates independently of signature text", async () => {
+    const root = checkout(), tree = git(root, "rev-parse", "HEAD^{tree}");
+    const policy = join(root, "bytes.rr");
+    writeFileSync(policy, `#include "git.rr"
+.policy "commit-bytes" revision 1
+git_object_request(r,c) :- git_source_commit(r,c).
+.violation Field(at: span, value: symbol) "{value}"
+Field(@place("name",1), s) :- git_source_commit(r,c), git_subject(r,c,s).
+Field(@place("header",1), n) :- git_header(_,_,0,n,"6f6b").
+Field(@place("raw-header",1), n) :- git_header_bytes(_,_,1,n,"76616c").
+Field(@place("time",1), role) :- git_signature_time(_,_,role,123,9000).
+Field(@place("raw-signature",1), role) :- git_signature_bytes(_,_,role,_).
+`);
+    for (const role of ["author", "committer"]) {
+      const signature = (r: string) => Buffer.concat([Buffer.from(r + " "), r === role ? Buffer.from([0xfc]) : Buffer.from("Test"), Buffer.from(" <a@example.org> 123 +0230\n")]);
+      const bytes = Buffer.concat([Buffer.from(`tree ${tree}\n`), signature("author"), signature("committer"),
+        Buffer.from("normal ok\nx"), Buffer.from([0xff]), Buffer.from(" val\n\nbyte metadata\n")]);
+      const commit = execFileSync("git", ["hash-object", "-t", "commit", "--literally", "-w", "--stdin"], { cwd: root, input: bytes, encoding: "utf8" }).trim();
+      expect(git(root, "show", "-s", "--format=%s", commit)).toBe("byte metadata");
+      expect(git(root, "show", "-s", "--format=%at %ct", commit)).toBe("123 123");
+      git(root, "fsck", "--strict", "--no-reflogs", commit);
+      for (const revision of [commit, `${commit}^{/byte metadata}`]) {
+        const report = await scan(root, { revision, analysisScope: "bytes", rr: [policy] });
+        expect(report.source).toMatchObject({ commit, tree });
+        expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+        expect(report.violations.map(v => `${v.path} ${v.message}`).sort()).toEqual([
+          "header normal", "name byte metadata", "raw-header 78ff", `raw-signature ${role}`, "time author", "time committer",
+        ]);
+      }
+    }
+  }, 30_000);
+
   it("requires a directory for explicit paths ending in a separator or slash dot on both providers", async () => {
     const root = checkout();
     mkdirSync(join(root, "src"));

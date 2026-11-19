@@ -8,6 +8,10 @@ Case 40 now has a regression that compares each retained policy and plan in the 
 The old addon lost the root and inventory program memberships after scope deletion. The corrected addon passes with a reused view and a fresh view.
 The test covers abort, reuse in a second store, and collection. A separate process found the Python identifiers with zero source-tape parses and zero tree decodes.
 
+Cases 38 and 39 now pass for both signature roles, including a message search through the commit.
+The fixture compares the subject and dates with Git and checks both header positions through the rule library.
+A second experiment populated a store with decoder version 3. Version 4 returned the typed date and the raw signature from that checkout.
+
 ## Status at `8a328d0a0`
 
 Of the twenty cases open at `8a490c35e`, seven now have repairs.

@@ -87,7 +87,9 @@ If the readable history has no match, the search reports its read failure.
 | `git_message` | Commit ID, UTF-8 message including its trailing newline |
 | `git_subject` | Commit ID, first line of the UTF-8 message |
 | `git_author`, `git_committer` | Commit ID, name, email, Unix seconds, UTC offset in seconds |
+| `git_signature_time` | Commit ID, role (`author` or `committer`), Unix seconds, UTC offset in seconds |
 | `git_header` | Commit ID, position from zero among extra headers, name, hex value |
+| `git_header_bytes` | Commit ID, position, hex name, hex value for an extra header with a non-UTF-8 name |
 | `git_tree_entry` | Tree ID, immediate entry name, numeric Git mode, target ID |
 | `git_tree_walk_request` | Root tree ID to walk |
 | `git_tree_member` | Root tree ID, reached tree ID |
@@ -124,6 +126,8 @@ policy that only requests commits can run without a source inventory.
 Use `git_message_bytes` for messages with invalid UTF-8.
 `git_message_encoding` gives the declared encoding as hex when the header exists.
 `git_signature_bytes` and `git_tree_entry_bytes` expose signatures and names with invalid UTF-8 as hex.
+Use `git_signature_time` to read the date even when the signature contains a non-UTF-8 name or email.
+A non-UTF-8 extra header name appears in `git_header_bytes`. Header positions retain their original order across both header relations.
 A successful object-kind row gives the completeness signal for that object's decoded rows.
 A root commit has a successful kind row and zero parent rows.
 A request for a missing or unreadable object has an error row and zero successful rows.
