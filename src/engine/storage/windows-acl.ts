@@ -35,8 +35,9 @@ export interface WindowsAcl {
   inherits(path: string): Promise<boolean>;
   /**
    * Gives folder `path` the ACL {@link restrictToOwner} gives, holding no thread while Windows passes it to everything
-   * already in the folder, which takes time in step with what is there: about 0.2 ms an entry. It is never cut short,
-   * since a folder whose own ACL is set before everything in it is reached reads as kept private from then on.
+   * already in the folder, which takes time in step with what is there: about 0.1 to 0.2 ms an entry. Windows sets the
+   * folder's own ACL after everything in it, so a run cut short, as by the daemon stopping, leaves the folder still
+   * inheriting, and the next daemon sets it again. Nobody waits for it, so it has no time limit.
    */
   restrictFolderToOwner(path: string): Promise<void>;
 }
