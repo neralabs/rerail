@@ -2,9 +2,79 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners. The experiments ran on macOS.
 
+## Open findings after testing the standalone commands
+
+At `00ca25ab7`, 23 implementation findings remain. Three come from new fixtures against the rebuilt standalone CLI and native addon.
+Two additional checks require Windows. The full headless and Git helper suites passed 146 tests on this build.
+
+### Three new reproductions
+
+| Case | What the fixture returned | Repair and acceptance check |
+| --- | --- | --- |
+| 55. One failed policy discards a standalone batch report | The standalone `run-policies` command found two Python identifiers at `HEAD`. Adding a second policy without a violation declaration gave exit 1 and empty stdout in both orders. | Keep a result for every policy. Emit the two findings and the failing policy's path in the report. Return a failure status and abort scope publication. Test both orders through the executable. |
+| 56. Partial source coverage gives a successful exit | A repository contained `a.py` and `sub/b.py`. I removed the loose tree for `sub` from the fixture. The `logic` command processed one file, reported the missing tree on stderr and exited 0. The `run-rr` command returned one finding and a `sourceFailures` entry for `sub`. It also exited 0. | Carry the evaluation outcome to the executable separately from its output. Preserve partial findings. Require a failing exit for incomplete source coverage. Restore the subtree and check both the exit status and the recovered results. A metadata-only policy that reads no files must still succeed. |
+| 57. A loaded policy depends on path spelling | A native catalog loaded `src/words.rr`. Evaluating `src//words.rr` through that catalog reported “policy was not loaded”. Direct evaluation of both spellings and catalog evaluation of the original spelling each returned two findings. | Use the same normalized repository-relative key for insertion and lookup. Keep the repository and revision in the key. Test both spellings, two policy revisions and an attempted escape from the root. |
+
+To reproduce case 55, use a fixture checkout with two Python files. Give each file one assignment, such as `x = 1`.
+Save this policy as `good.rr`. In `bad.rr`, put only the line `.policy "broken" revision 1`.
+
+```rr
+#include "core.rr"
+.policy "working" revision 1
+.language python
+.violation Seen(at: node) "identifier"
+Seen(n) :- kind(n, "identifier").
+```
+
+```sh
+nice -n 19 rerail-engine run-policies "$repo" "$out/control" good.rr --revision HEAD --analysis-scope review
+nice -n 19 rerail-engine run-policies "$repo" "$out/batch" good.rr bad.rr --revision HEAD --analysis-scope review
+```
+
+The first command returned a JSON report with both diagnostics. The second returned zero bytes on stdout.
+The batch runner returns at the first error. The executable writes a report to stdout only for a successful result. [Executable](../../../../native/src/bin/rerail-engine.rs) · [Batch and revision runners](../../../../native/src/code_rule_dsl/tools.rs)
+The native catalog indexes policy versions by the caller's path string. [Native policy catalog](../../../../native/src/lib.rs)
+
+### Scope membership at publication
+
+Case 13 requires a durable run ID as well as public relations.
+I ran an explicit Python policy three times against the same commit. Each report had a different scan ID and one finding.
+The first two scans used the named scope `release`. Each left the same five manifest memberships and zero pending rows.
+The third scan used `comparison` and added five memberships under that name. Deleting `release` preserved all five under `comparison`.
+The named scope snapshot table stayed empty throughout this fixture.
+
+Publication stores membership by scope and manifest. It removes the staging row that contains the scan ID.
+A reader cannot recover both completed runs from those five memberships. [Store schema](../../../../native/src/content_store/schema.rs) · [Publication](../../../../native/src/content_store/analysis_scope.rs)
+
+The repair should publish the run ID, scope and selected source in the transaction that publishes its cache ownership.
+For a revision run, record the repository, tree and optional commit even when the policy only needs metadata.
+Expose explicitly keyed scope-to-run and run-to-source relations in the rule library.
+Resolve both scan IDs after reopening the store. Delete one scope and verify that the other still resolves its run and retains shared cache entries.
+
+### Remaining cases by affected operation
+
+| Operation | Open case numbers and effects |
+| --- | --- |
+| Rule-visible scope ownership | 13. A policy cannot join a completed run to its scope and source. |
+| Recovery and deletion | 23. A control database restore can lose a committed stop. 14. Deletion can succeed against the wrong store. 41. Maintenance misses a store used only by named scans. |
+| Long-lived stores | 42. Retired store paths remain registered. 15. Deleted scope names retain generation rows. 17. Failed store probes retry every five seconds without recording a reason. |
+| Scan reports | 29. The report omits the retention scope. 30. Text output describes collection failure as failed retention. |
+| Repository and revision selection | 44. First use fails with a read-only Git directory. 45. A bare clone and its linked worktree get different clone IDs. 34–35. Two single-revision expressions disagree with Git. |
+| File selection and reading | 46. A case-insensitive filesystem accepts a spelling that the policy filter misses. 11. A large binary can fail a revision scan. 28. The nullable reader hides a missing object. 47. Excluded symlinks appear absent. |
+| Cache cost | 18. A view retains decoded trees across disjoint selections. 52. Repeated Git policy inspection lowers the program again. 53. A new catalog in the same store decodes a program already in memory. |
+| Standalone commands and native catalog | 55–57. Batch findings, exit status and path lookup have the failures reproduced above. |
+
+I repeated cases 34, 35, 46, 47 and 29 with the current addon.
+Git resolved `@{-1}@{0}` after a branch switch. Rerail rejected it.
+Git rejected `HEAD:./src/..` as a single revision. Both tools resolved `HEAD:./src/../` to the same tree.
+On the case-insensitive test volume, `SRC/A.PY` gave zero findings and `src/a.py` gave one. Both reports listed their path as selected.
+One revision report put a tracked symlink and an absent file in the same skipped list. It omitted the supplied analysis scope.
+The [earlier fixtures and repair checks](#status-at-6e3f1618e) supply the evidence for the other cases.
+The [Windows checks](#status-at-00ca25ab7) still need an execution result for NTFS invalidation and Git message selection.
+
 ## Status at `00ca25ab7`
 
-Four more follow-up cases have repairs. Twenty implementation findings and two Windows runtime checks remain open.
+Four more follow-up cases had repairs at this checkpoint. The open count was twenty before the standalone command tests above. Two Windows runtime checks were pending.
 The [original repair list](audit-c1b588f91.md#checks-for-the-other-gaps-in-the-original-audit) covers the numbered cases and the additional requirements separately.
 
 | Case | Commit | Verification |
