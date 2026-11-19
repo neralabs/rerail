@@ -56,6 +56,7 @@ The caller now gives a pool worker first claim and starts a service thread if th
 The repaired Linux regression finished in 4.2 seconds. All 11 CLI tests passed there.
 On macOS the policy returned the expected row with one, two and four workers.
 On Windows the complete 11-test revision suite passed with two CPU workers in 46.98 seconds.
+The guest then built commit `3c80ef43c9` and passed the same 11 tests in 47.99 seconds.
 The nested regression sets the worker count itself and checks both the result and the caller's existing files. [CLI regression](../../../../native/tests/git_revision_cli.rs)
 
 The Windows 11 ARM64 guest in Parallels built the native store tests and the Node addon with test hooks.
