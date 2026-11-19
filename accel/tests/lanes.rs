@@ -650,6 +650,40 @@ fn learned_rates_come_from_warm_samples_of_one_kernel() {
     assert!((fitted[0].per_unit - 2e-9).abs() < 1e-12, "{}", fitted[0].per_unit);
 }
 
+/// A stored rate is fitted from its kernel's newest points alone (`FIT_HELD`, the samples newest first): many
+/// thousand older samples at another rate neither move it nor cost the fit their pairs.
+#[test]
+fn a_stored_rate_is_fitted_from_its_newest_samples() {
+    use rerail_accel::price::{FIT_HELD, Prices, fit_rates};
+    use rerail_accel::score::Sample;
+    let fixed = Prices::default().fixed[Lane::Gpu.index()];
+    let sample = |units: f64, per: f64| Sample {
+        lane: Lane::Gpu,
+        forms: "test-newest-span".to_owned(),
+        launches: 1,
+        units,
+        estimate: 0.0,
+        host_estimate: 0.0,
+        wall: fixed.submission + fixed.launch + per * units,
+        cpu: 0.0,
+        waited: 0.0,
+        phases: String::new(),
+        cold: false,
+        ok: true,
+        load: 1.0,
+        threads: 1,
+    };
+    let mut samples: Vec<Sample> = (0..FIT_HELD).map(|i| sample(1e5 * (1.0 + i as f64), 3e-9)).collect();
+    samples.extend((0..20_000).map(|i| sample(1e5 * (1.0 + (i % 500) as f64), 9e-9)));
+    let t = std::time::Instant::now();
+    let fitted = fit_rates(&samples);
+    let took = t.elapsed();
+    assert_eq!(fitted.len(), 1, "{fitted:?}");
+    assert_eq!(fitted[0].samples, FIT_HELD);
+    assert!((fitted[0].per_unit - 3e-9).abs() < 1e-12, "the newest points' rate: {}", fitted[0].per_unit);
+    assert!(took < std::time::Duration::from_millis(500), "the fit took {took:?}");
+}
+
 /// A program that holds its lane's host for `hold` (a wave's encoding and its wait on the device), and says which
 /// thread ran it.
 struct Holds(std::time::Duration);

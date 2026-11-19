@@ -1089,9 +1089,11 @@ fn the_tree_text_from_handles_is_the_trees() {
             .chain(prog.lattice.keys().map(|k| k.as_str())).chain(prog.nullary.iter().map(|k| k.as_str()))
             .chain(prog.rules.iter().map(|r| r.head.rel.as_str())).chain(["no_such_relation"]).collect();
         for rel in names {
-            let shape = (prog.decls.get(rel), prog.facts.get(rel), prog.natives.get(rel), prog.lattice.get(rel), prog.nullary.contains(rel));
+            // Facts are a set: their text is of their rows sorted by text, whatever order a program holds them in.
+            let facts = prog.facts.get(rel).map(|rows| tree_text::sorted_facts(rows));
+            let shape = (prog.decls.get(rel), &facts, prog.natives.get(rel), prog.lattice.get(rel), prog.nullary.contains(rel));
             assert_eq!(tree_text::shape(&f, rel), format!("{shape:?}"), "{rel}");
-            assert_eq!(tree_text::leaf(&f, rel), format!("{:?}\n{:?}", prog.decls.get(rel), prog.facts.get(rel)), "{rel}");
+            assert_eq!(tree_text::leaf(&f, rel), format!("{:?}\n{:?}", prog.decls.get(rel), facts), "{rel}");
             rels += 1;
         }
     }
@@ -1809,6 +1811,13 @@ fn a_request_record_over_an_edit_is_a_run_from_scratchs() {
     for (i, (add, ran)) in [(r_of_f(30), Ran::Delta), (r_of_f(31), Ran::Delta), (reads_e("q"), Ran::Whole), (r_of_f(32), Ran::Delta)].into_iter().enumerate() {
         let gone: Vec<RuleId> = if ran == Ran::Delta { vec![prog.rules().filter(|r| prog.rel_name(r.head().rel()) == "r").nth(5).unwrap().id()] } else { Vec::new() };
         prog = fresh(&edited(&prog, &gone, &[add]));
+        if ran == Ran::Whole {
+            // A request's rule added with its entry in the record, which states each rule's readers (decision 0331):
+            // a record of another length than its relation's rules is no record (`AskedByRule::of`, 0276 steps 3-4).
+            let mut b = prog.builder();
+            b.set_asked(&std::collections::BTreeMap::from([("q".to_owned(), vec![std::collections::BTreeSet::from(["p".to_owned()]); 2])]));
+            prog = fresh(&b.finish().unwrap().0);
+        }
         let v = rebase(last.input(), &prog).unwrap().expect("an edit of the last input");
         let mut p = Pipeline::again(last, v);
         p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
@@ -2025,4 +2034,25 @@ mod layouts {
         assert!(shown.contains("f: key(c) (by rule #"), "{shown}");
         assert!(shown.contains("tree(p -> c) (by rule #"), "{shown}");
     }
+}
+
+/// A relation's facts are a set (decision 0456 K3): the same facts in another order are the same program, its digest
+/// and each relation's identity unchanged. A phase's export maintained from kept rows comes in their canonical order,
+/// one derived anew in another; the cone's rounds' space is named by the program's digest, and its kept relations by
+/// their identities, so an order-sensitive digest lost every kept round when a library file went.
+#[test]
+fn facts_in_another_order_are_the_same_program() {
+    use crate::code_rule_dsl::logic::plan::{body::{Placed, Versions}, leaf_identity};
+    let prog = every_part();
+    let mut reordered = prog.clone();
+    reordered.facts.get_mut("k").expect("every part has facts k").reverse();
+    assert_ne!(prog.facts["k"], reordered.facts["k"], "the rows in another order");
+    let (a, b) = (Placed::of_program(&prog).unwrap(), Placed::of_program(&reordered).unwrap());
+    assert_eq!(a.digest(), b.digest(), "the program's digest");
+    let (va, vb) = (Versions::with(&prog, a), Versions::with(&reordered, b));
+    assert_eq!(leaf_identity(va.fields(0).unwrap(), "k"), leaf_identity(vb.fields(0).unwrap(), "k"), "the relation's identity");
+    // Other rows are another program.
+    let mut other = prog.clone();
+    other.facts.get_mut("k").unwrap().pop();
+    assert_ne!(Placed::of_program(&prog).unwrap().digest(), Placed::of_program(&other).unwrap().digest());
 }

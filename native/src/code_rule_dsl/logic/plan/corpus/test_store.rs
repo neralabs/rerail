@@ -333,9 +333,9 @@ fn sweep_templates(dir: &Path, key: &str) {
     }
 }
 
-/// The folders beside a store's file that its rows name files in: its atoms' blocks (decision 0401), its tapes' and
-/// sources' segments, its frames' and its memo's (0295).
-const FOLDERS: [&str; 5] = [".atoms", ".facts", ".objects", ".frames", ".memo"];
+/// The folders beside a store's file that its rows name files in: its atoms' and kept facts' blocks (decision 0401),
+/// its tapes' and sources' segments and its memo's (0295).
+const FOLDERS: [&str; 4] = [".atoms", ".facts", ".objects", ".memo"];
 
 /// The folder `suffix` beside the store at `path`.
 fn beside(path: &Path, suffix: &str) -> PathBuf {

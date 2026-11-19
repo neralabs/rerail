@@ -56,44 +56,6 @@ pub(super) fn encode(width: usize, values: &[i64]) -> Vec<u8> {
     out
 }
 
-/// `encode`'s bytes of rows given a window at a time (`each` calls its argument with each window, rows of `width`,
-/// flat): the rows read once, each column encoded into its own buffer (`cols`), then
-/// the columns written one after another into one entry (`write`, given the total). The rows are not copied; the
-/// frame's bytes are built once and written into their entry (Q89).
-///
-/// The encoding is outside `write`: a writer that holds a lock (`FramePlacer::place_rows`) holds it for the copy
-/// alone. Encoding under it (reading the rows a second time, to write what a first pass counted) made the jobs that
-/// frame a write's inputs take turns: on 50 files of B-now, 0.25 s of CPU became 1.8 s, and its waits more.
-pub(super) fn encode_windows<E>(width: usize, each: &dyn Fn(&mut dyn FnMut(&[i64])), cols: &mut Vec<Vec<u8>>, write: impl FnOnce(usize, &mut dyn FnMut(&mut [u8])) -> Result<(), E>) -> Result<(), E> {
-    cols.resize_with(width, Vec::new);
-    for c in cols.iter_mut() {
-        c.clear();
-    }
-    let mut last = vec![0i64; width];
-    each(&mut |rows: &[i64]| {
-        for row in rows.chunks_exact(width) {
-            for c in 0..width {
-                let mut z = ((row[c].wrapping_sub(last[c]) << 1) ^ (row[c].wrapping_sub(last[c]) >> 63)) as u64;
-                last[c] = row[c];
-                let out = &mut cols[c];
-                while z >= 0x80 {
-                    out.push((z as u8) | 0x80);
-                    z >>= 7;
-                }
-                out.push(z as u8);
-            }
-        }
-    });
-    let total = cols.iter().map(Vec::len).sum();
-    write(total, &mut |out: &mut [u8]| {
-        let mut at = 0;
-        for c in cols.iter() {
-            out[at..at + c.len()].copy_from_slice(c);
-            at += c.len();
-        }
-    })
-}
-
 /// Column `c` of `values` (rows of `width`) onto `out`, as `encode` writes it: `last` is the value of the row above
 /// the first.
 fn encode_column(width: usize, c: usize, values: &[i64], mut last: i64, out: &mut Vec<u8>) {

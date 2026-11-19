@@ -1,6 +1,12 @@
-# 0417: Kept facts are packed chunks, appended to a chain of mapped files
+# 0456: Kept facts are packed chunks, appended to a chain of mapped files
 
-Status (numbered 0402 when written; renumbered at the hub merge of 2026-11-19, the hub's 0402 being byte-pair rules): decided by the user (2026-11-18: "I would prefer a single format if possible … We certainly shouldn't be
+Numbered 0402 where it was written (the sibling branch `final-rerail-shape-rr-align`), beside 0402 "Byte-pair
+rules are one lookup"; renumbered 0442 when merged, and 0456 when that number turned out to be taken
+(cost-classifier's 0442, "no process-global state"), past the highest number in any worktree. The sibling branch
+renumbered it 0417 at its own hub merge (c8ec6ba92); merged back (535cc2c8b), it is 0456 in both, and a citation of
+0417 or 0442 for the kept facts on either branch is this decision.
+
+Status: decided by the user (2026-11-18: "I would prefer a single format if possible … We certainly shouldn't be
 storing 8-byte quantities … please go ahead and design and build this"). Replaces 0401 F1, F2 and F6's copy of a
 run's relation as it lies (8-byte cells in doubling chunks, its hash indexes, a cumulative delta). Keeps 0401's
 intent (F3–F5): the store's kept facts are blocks in mapped files, SQLite holds only which files, and readers
@@ -246,7 +252,8 @@ SELECT c0, c1 FROM kept_facts WHERE space = ?1 AND rel = 'calls' AND part = 0;
 SELECT c1 FROM kept_facts WHERE space = ?1 AND rel = 'calls' AND c0 = 42;
 ```
 
-Columns `space`, `rel`, `ident`, `part`, `level` (or NULL), then `c0` to `c15` (NULL past the arity). `space`,
+Columns `space`, `rel`, `ident`, `part`, `level` (or NULL), `id` (the row's place in its entry, from 0), then `c0` to
+`c15` (NULL past the arity). `space`,
 `rel` and `part` choose entries; `c0` narrows each. Only each key's newest entry is read; a gone one is absent.
 
 ## Required behavior, asserted (a test each)
@@ -348,3 +355,39 @@ sorted or a cursor's probe has no work to save there.
 5. (built) Bind kept relations from the chain in place of the frames; K-R8a, K-R8.
 6. (built) The frames hold no rows (6a, K-R9); kept relations read in place (6b); the virtual table (6c, K-R10).
 7. (built) Sorted outputs (K7, K-R11; Q251).
+
+## Merged with 0439 (2026-11-19)
+
+Merged into the tree that had retired the frames (0439, 0401 step 9) ahead of this format. Kept from here: the
+format whole (K1–K7: `Packed` entries, `GROUPS` and split columns, the chain `facts_chain` of files
+`c<seq>-<tag>.blk`, tiered merging, the sweep, sorted outputs) and the store's floor 7 (`content-v7.sqlite`).
+What 0439 supersedes, and how each step's intent is kept:
+
+- **Steps 5 and 6a (binding through the frames, frames as metadata).** There are no frames. A run binds one commit
+  of a space's chain (`retain::kept_read::Bound`, 0438): the chain's rows (`facts_chain`) are in the store's held
+  snapshot, read before the first wave, so no SQL runs in the waves (0104). An entry is a relation's when its
+  digest and width are the run's; nothing else is consulted.
+- **Step 6b (read in place).** Kept: an entry with no levels is a view of its `Packed` where it lies
+  (`kept_source::KeptSource`, `InRel::over_source`). An input's granules are one such view, each granule's rows in
+  turn, in their order (was: read into one relation). An entry with levels is read into a relation with them, the
+  one listed copy (`copy (0353 step 8)`). An entry whose atoms are another numbering's (past a fork, 0170) is
+  derived again, as in 0438, not read through a map of ids.
+- **Every frame write puts its entry (the `every_frame_write_puts_its_kept_entry` guard).** Nothing writes a
+  frame, so the guard is gone; every keep is a `queue_kept`, and a wave's puts are one file a space
+  (`KeptGather`, Q284).
+- **Step 6c (the virtual table).** `kept_facts` as here (K-R10), with `kept_entries` beside it (0439 F-R5: each
+  entry's key, digest, rows, types and reads). 0439's `kept_rows(space, rel, ident, part)` is `kept_facts`'s
+  `space`, `rel`, `ident` and `part` constraints, and its `id` (a row's place in its entry) is `kept_facts`'s; the
+  function went.
+- **K-R8a and K-R9.** Their frame halves went with the frames; their store halves (levels follow their rows into
+  canonical order; an entry put as given keeps its order, every row) are
+  `levels_follow_their_rows_and_an_entry_put_as_given_keeps_its_order`. K-R7 compared the chain with the frames,
+  and went with them (its measurement stands, above); the encodings' report (`chain_columns_by_candidate`) stays an
+  `#[ignore]`d report over a store.
+- **The lazy input (`Lazy`, a granule decoded where read).** Gone with the frames: a granule is a view where it lies.
+- **Merged with 0439 (dc113d27e, 2026-11-19).** The 50 data-layer files, profiling build, load 18 on the M5: the
+  chain takes 31.6 MB after a cold run and 38.9 MB after the edit's legs (5.0 MB of it files a merge replaced, which
+  the next write removes), where 0401's blocks took 211 MB and the frames 39 MB (0439 "Met"); 589 outputs equal.
+  Two faults the merge found: a fact relation's rows hashed in order, so a phase export maintained from kept rows
+  (canonical order) renamed the cone's rounds' space (`facts_in_another_order_are_the_same_program`); and a round
+  dropped a kept relation read in place as a view (`Source::kept`, `InRel::kept_in_place`).

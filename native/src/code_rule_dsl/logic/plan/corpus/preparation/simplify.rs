@@ -2528,8 +2528,10 @@ impl ProgramPass for DropUnread {
     }
 }
 
-/// `simplify::location_column`: whether column `c` of derived relation `rel` holds a location.
-fn location_column(v: &Version, f: &Fields<'_>, rel: &str, c: usize) -> bool {
+/// `simplify::location_column`: whether column `c` of derived relation `rel` holds a location. `rules` are `rel`'s, by
+/// its head (`ProjectAll` indexes them once: a scan of every rule for each relation and column was quadratic in the
+/// program).
+fn location_column(v: &Version, f: &Fields<'_>, rel: &str, rules: &[RuleRef<'_>], c: usize) -> bool {
     if f.column_type(rel, c) == Some("node") {
         return true;
     }
@@ -2537,7 +2539,6 @@ fn location_column(v: &Version, f: &Fields<'_>, rel: &str, c: usize) -> bool {
         let name = v.rel_name(a.rel());
         crate::code_rule_dsl::typing::file_local::document_column(name) == Some(i) || (name == "docof" && i == 1) || f.column_type(name, i) == Some("node")
     };
-    let rules: Vec<RuleRef<'_>> = v.rules().filter(|r| v.rel_name(r.head().rel()) == rel).collect();
     !rules.is_empty()
         && rules.iter().all(|r| {
             let Some(TermRef::Var(x)) = r.head().args().nth(c) else { return false };
@@ -2589,17 +2590,20 @@ impl ProgramPass for ProjectAll {
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
         let (v, d) = fields(cx)?;
         let f = Fields::over(v, &d);
-        let heads: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
+        let mut by_head: BTreeMap<&str, Vec<RuleRef<'_>>> = BTreeMap::new();
+        for r in v.rules() {
+            by_head.entry(v.rel_name(r.head().rel())).or_default().push(r);
+        }
         let mut keep_of: HashMap<String, Vec<usize>> = HashMap::new();
-        for rel in heads {
+        for (&rel, rules) in &by_head {
             if kept(&f, rel) || f.nullary(rel) || f.answer(rel) {
                 continue;
             }
             let Some(Some(cols)) = self.read.get(rel) else { continue };
             let Some(n) = f.arity(rel) else { continue };
             let mut keep: Vec<usize> = (0..n).filter(|c| cols.contains(c)).collect();
-            if !keep.iter().any(|&c| location_column(v, &f, rel, c))
-                && let Some(c) = (0..n).find(|&c| location_column(v, &f, rel, c))
+            if !keep.iter().any(|&c| location_column(v, &f, rel, rules, c))
+                && let Some(c) = (0..n).find(|&c| location_column(v, &f, rel, rules, c))
             {
                 keep.push(c);
                 keep.sort_unstable();

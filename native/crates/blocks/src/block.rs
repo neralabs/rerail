@@ -452,7 +452,10 @@ impl Block {
 
     /// `try_alloc`; a dirty block's memory is zeroed only when `zeroed` asks it.
     fn alloc_filled(&self, size: usize, align: usize, zeroed: bool) -> Option<usize> {
-        assert!(self.writable, "alloc in a frozen block");
+        // A read-only block (a frozen file's mapping, `share`) has no room: an index a reader would add goes elsewhere.
+        if !self.writable {
+            return None;
+        }
         let mut cur = self.ext.top.load(Relaxed);
         loop {
             let start = round_up(cur, align);
@@ -494,6 +497,11 @@ impl Block {
         unsafe { self.base.add(off) as *mut T }
     }
 
+    /// Whether `p` lies in this block's reserved range.
+    pub fn holds<T>(&self, p: *const T) -> bool {
+        (p as usize).wrapping_sub(self.base as usize) < self.reserved
+    }
+
     pub fn offset_of<T>(&self, p: *const T) -> usize {
         let o = p as usize - self.base as usize;
         assert!(o < self.reserved);
@@ -502,6 +510,11 @@ impl Block {
 
     pub fn base_ptr(&self) -> *mut u8 {
         self.base
+    }
+
+    /// Whether it may be written: an open block's, not a frozen file's mapping or a shared handle (`share`).
+    pub fn is_writable(&self) -> bool {
+        self.writable
     }
 
     pub fn reserved(&self) -> usize {

@@ -51,6 +51,11 @@ impl Prepared {
         if v.analyses().holds::<Prepared>() {
             return manager::analysis::<Prepared>(v).unwrap_or_default();
         }
+        // A program of no rules (a cross part whose every stratum was kept) has no plan to make, read or keep: kept,
+        // it was a write of every warm run, which makes it fresh each time.
+        if v.rules().next().is_none() {
+            return Default::default();
+        }
         // The run's kept plans' entry holds the plans an earlier process made of a version the same as this one (Q228):
         // read, not made.
         let Some(id) = super::run_holds_plans().then(|| manager::identity(v)) else { return manager::analysis::<Prepared>(v).unwrap_or_default() };
@@ -236,6 +241,12 @@ pub fn store_rows(by: &ByVersion) -> Vec<Row> {
     let mut out: Vec<Row> = Vec::new();
     for (id, p) in by {
         let head: Vec<Value> = id.chunks(8).map(|c| Value::Int(i64::from_le_bytes(c.try_into().expect("eight bytes")))).collect();
+        // A version with no prepared plan is kept too, as its id alone: else it is not read back, and the next run
+        // makes its (empty) plans again and writes them.
+        if p.0.is_empty() {
+            out.push(head);
+            continue;
+        }
         out.extend(p.to_rows().into_iter().map(|r| head.iter().cloned().chain(r).collect()));
     }
     out.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
@@ -252,7 +263,12 @@ pub fn of_store_rows(rows: &[Row]) -> ByVersion {
         for (k, i) in ids.iter().enumerate() {
             id[k * 8..k * 8 + 8].copy_from_slice(&i.to_le_bytes());
         }
-        by.entry(id).or_default().push(&r[4..]);
+        let plans = by.entry(id).or_default();
+        // Its id alone: a version with no prepared plan (`store_rows`).
+        if r.len() == 4 {
+            continue;
+        }
+        plans.push(&r[4..]);
         if r.len() < 8 {
             bad.insert(id);
         }

@@ -182,9 +182,10 @@ fn opening_a_store_without_the_facts_tables_adds_them_at_the_same_floor() {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(floor, SCHEMA_VERSION);
-        // The facts memo is additive: it raised no floor (6 is the atoms' blocks, decision 0401; 5 the frames'
-        // segments, decision 0295; 4 the manifests' lane column; 3 was the atom segments', decision 0049).
-        assert_eq!(SCHEMA_VERSION, 6);
+        // The facts memo is additive: it raised no floor (7 is the kept facts' chain of packed files, decision 0456;
+        // 6 the atoms' blocks, decision 0401; 5 the frames' segments, decision 0295; 4 the manifests' lane column; 3
+        // was the atom segments', decision 0049).
+        assert_eq!(SCHEMA_VERSION, 7);
         assert_eq!(STORE_FILE_NAME, "content-v7.sqlite");
     }
     assert_eq!(store.get_source(old).unwrap(), b"older source");

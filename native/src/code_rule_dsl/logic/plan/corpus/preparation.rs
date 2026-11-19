@@ -118,8 +118,7 @@ pub struct Front {
     pub vocabulary: crate::code_rule_dsl::logic::strings::Vocabulary,
 }
 
-/// `version` pruned to the rules its outputs read (`front::prune`): what the bridged programs' check reads
-/// (`bridge::wanted`), before the run prepares the program.
+/// `version` pruned to the rules its outputs read (`front::prune`), before the run prepares the program.
 pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
     let mut p = Pipeline::new("pruned", version);
     p.program(&mut prune::Prune::default());

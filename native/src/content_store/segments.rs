@@ -71,11 +71,11 @@ fn private_dir(dir: &Path) -> std::io::Result<()> {
     b.create(dir)
 }
 
-/// The bytes of the store's segments on disk (the memo's, the frames', the tapes' and sources'): the directories
+/// The bytes of the store's segments on disk (the memo's, the tapes' and sources', the atoms', the kept facts'): the directories
 /// beside its file, as the store's disk budget counts them.
 pub(super) fn segment_bytes(database: &Path) -> u64 {
     let mut bytes = 0;
-    for suffix in [".memo", ".frames", ".objects", ".atoms", ".facts"] {
+    for suffix in [".memo", ".objects", ".atoms", ".facts"] {
         let mut dir = database.as_os_str().to_owned();
         dir.push(suffix);
         let Ok(entries) = std::fs::read_dir(PathBuf::from(dir)) else { continue };

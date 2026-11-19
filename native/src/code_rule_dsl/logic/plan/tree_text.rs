@@ -131,13 +131,27 @@ fn decl<'v>(f: &Fields<'v>, rel: &str) -> Option<Vec<(&'v str, &'v str)>> {
     f.columns(rel)
 }
 
+/// A relation's facts, sorted by each row's text: a set, its text the same whatever order the program holds its rows
+/// in (a phase's export maintained from kept rows comes in their canonical order, decision 0456 K3), as its hash is
+/// (`encoder::facts_hash`). A tree's facts sorted by their rows' text give the same text (`sorted_facts`).
 fn facts<'v>(f: &Fields<'v>, rel: &str) -> Option<Vec<Vec<Value<'v>>>> {
     let v = f.v;
-    f.facts(rel).map(|fs| fs.rows().map(|row| row.map(|c| match c {
-        Cell::Int(i) => Value::Int(i),
-        Cell::Str(a) => Value::Str(v.text(a)),
-        Cell::Branded(b) => Value::Branded(b),
-    }).collect()).collect())
+    f.facts(rel).map(|fs| {
+        let mut rows: Vec<Vec<Value<'v>>> = fs.rows().map(|row| row.map(|c| match c {
+            Cell::Int(i) => Value::Int(i),
+            Cell::Str(a) => Value::Str(v.text(a)),
+            Cell::Branded(b) => Value::Branded(b),
+        }).collect()).collect();
+        rows.sort_by_cached_key(|row| format!("{row:?}"));
+        rows
+    })
+}
+
+/// A tree's facts of a relation as the text of its handles gives them (`facts`): sorted by each row's text.
+pub fn sorted_facts<T: std::fmt::Debug>(rows: &[T]) -> Vec<&T> {
+    let mut out: Vec<&T> = rows.iter().collect();
+    out.sort_by_cached_key(|row| format!("{row:?}"));
+    out
 }
 
 fn native<'v>(f: &Fields<'v>, rel: &str) -> Option<Native<'v>> {

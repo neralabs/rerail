@@ -614,7 +614,7 @@ named(n, x) :- def(n, x), x = "g".
         .unwrap();
     assert!(changed >= 1);
     // This process holds the frames in memory (decision 0104): an edit from outside is the next process's to read.
-    crate::content_store::forget_frames_snapshot(&path);
+    crate::content_store::forget_held_snapshot(&path);
     executor.bind_corpus(dir.to_string_lossy().into_owned(), Some(vec!["def".into()])).unwrap();
     assert_eq!(rows(&mut executor, &format!("SELECT count(*) FROM def WHERE n = {a_node}")), json!([[1]]));
     let err = executor.query("SELECT count(*) FROM def".into(), None, None).unwrap_err().to_string();

@@ -62,6 +62,58 @@ impl Facts {
     }
 }
 
+/// Values a relation holds beside its rows (its dead bits, its rows' levels). Read as a slice; never written in
+/// place.
+pub enum Shared<T: Copy + 'static> {
+    Own(Vec<T>),
+}
+
+impl<T: Copy + 'static> Shared<T> {
+    /// The values it holds on the heap.
+    pub fn capacity(&self) -> usize {
+        match self {
+            Shared::Own(v) => v.capacity(),
+        }
+    }
+}
+
+impl<T: Copy + 'static> Default for Shared<T> {
+    fn default() -> Self {
+        Shared::Own(Vec::new())
+    }
+}
+
+impl<T: Copy + 'static> Clone for Shared<T> {
+    fn clone(&self) -> Self {
+        match self {
+            // copy: not block data: a relation's own values, as a clone of it always copied them.
+            Shared::Own(v) => Shared::Own(v.clone()),
+        }
+    }
+}
+
+impl<T: Copy + 'static> std::ops::Deref for Shared<T> {
+    type Target = [T];
+    #[inline(always)]
+    fn deref(&self) -> &[T] {
+        match self {
+            Shared::Own(v) => v,
+        }
+    }
+}
+
+impl<T: Copy + 'static> From<Vec<T>> for Shared<T> {
+    fn from(v: Vec<T>) -> Self {
+        Shared::Own(v)
+    }
+}
+
+impl<T: Copy + std::fmt::Debug + 'static> std::fmt::Debug for Shared<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
 /// How long a relation's rows live, which picks the blocks they go in: a block is given back with its last part,
 /// so rows that die together share blocks, and rows that outlive them do not keep their blocks.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
@@ -521,6 +573,12 @@ pub struct Held {
     /// Its rows' count while its writer is free for a relation started from its frozen rows to take (`Rows::freeze`,
     /// `Rows::shared`, decision 0384 step 2); `u32::MAX` while it has a writer (or none may write past its rows).
     free_at: std::sync::atomic::AtomicU32,
+    /// The relation it continues (a fork's tail, decision 0384 step 7, `Part::continuing`), kept while it is: its ids
+    /// below the base's rows read there.
+    base: Option<Part>,
+    /// Rows of a continuation's base it took when it moved (`grow`, `moved_room`): its rows start at id 0 then, and the
+    /// `Rows` holding it drops the base's segment (`Rows::absorbed`).
+    absorbed: u32,
 }
 
 /// Room past a relation's rows lent to another writer (the device, `Part::room`): rows `at..` of it, which the writer
@@ -589,6 +647,10 @@ impl Drop for Held {
         // free list, their whole pages past the list's link back to the OS (Q76: a block lives while any relation in
         // it does, so a chunk's dead relations otherwise kept their pages resident; about 500 MB of a 300-file cold
         // run's footprint, Q76).
+        // A read-only block is never written: nothing is given back to it.
+        if !self.facts.block.is_writable() {
+            return;
+        }
         let given = unsafe { (*self.rel).release(&self.facts.block) };
         GIVEN_BACK.fetch_add(given, std::sync::atomic::Ordering::Relaxed);
     }
@@ -661,7 +723,7 @@ impl Part {
                 }
                 let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
                 let rel = std::ptr::from_ref(rel);
-                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX) }), cap: u32::MAX });
+                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: None, absorbed: 0 }), cap: u32::MAX });
             }
         }
         unreachable!("a new block of {} bytes holds a relation of {need}", 2 * need + MARGIN)
@@ -816,14 +878,11 @@ impl Part {
     /// (`Rows::claim_tail`), as a push past a full block moves it (`grow`). The rows are written once more, as a
     /// vector's growth writes them.
     pub fn moved_room(&self, rows: u32, n: usize) -> Lent {
-        let k = self.rel().rows.ncols as usize;
-        let need = rows as usize + n;
-        let mut moved = Part::new(self.life, k, need.max(2 * rows as usize));
-        // copy: growth: a relation moved out of a full block, once, as a vector's growth moves it.
-        moved.copy_from(self, 0, rows);
-        assert!(moved.rel().rows.try_reserve(&moved.facts.block, need as u64), "a new relation's room for its rows");
+        let moved = self.moved_whole(rows, (rows as usize + n).max(2 * rows as usize));
+        let at = moved.len();
+        assert!(moved.rel().rows.try_reserve(&moved.facts.block, u64::from(at) + n as u64), "a new relation's room for its rows");
         moved.lent.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-        Lent { tail: moved, at: rows, from: Some(self.clone()) }
+        Lent { tail: moved, at, from: Some(self.clone()) }
     }
 
     /// Rows `0..n` written by the writer it was made for (`for_writes`), now its rows.
@@ -862,10 +921,81 @@ impl Part {
         if self.rel().rows.try_reserve(&self.facts.block, n) {
             return;
         }
-        let k = self.rel().rows.ncols as usize;
-        let mut moved = Part::new(self.life, k, 2 * n as usize);
-        moved.copy_from(self, 0, self.len());
+        let moved = self.moved_whole(self.len(), 2 * n as usize);
         *self = moved;
+    }
+
+    /// Its first `rows` rows moved into a new relation of its life with room for `room` rows of its own more: a
+    /// continuation's base's rows first (it absorbs them: `Held::absorbed`, its ids then from 0), as a relation moves
+    /// out of a full block (a vector's growth).
+    fn moved_whole(&self, rows: u32, room: usize) -> Part {
+        let k = self.rel().rows.ncols as usize;
+        let pre = self.base.as_ref().map_or(0, |_| self.rel().base_rows);
+        let mut moved = Part::new(self.life, k, room.max(rows as usize) + pre as usize);
+        if let Some(base) = &self.base {
+            // copy: growth: a continuation moved out of a full block takes the rows of its chain with it, once.
+            moved.copy_reads(base, pre);
+        }
+        // copy: growth: a relation moved out of a full block, once, as a vector's growth moves it.
+        moved.copy_from(self, 0, rows);
+        Arc::get_mut(&mut moved.held).expect("a new relation's one holder").absorbed = pre;
+        moved
+    }
+
+    /// Appends the first `upto` rows `from` reads, down its chain of bases (a continuation's: its bases' first).
+    fn copy_reads(&mut self, from: &Part, upto: u32) {
+        let own_from = match &from.base {
+            Some(base) => {
+                let b = from.rel().base_rows.min(upto);
+                self.copy_reads(base, b);
+                from.rel().base_rows
+            }
+            None => 0,
+        };
+        if upto > own_from {
+            self.copy_from(from, 0, upto - own_from);
+        }
+    }
+
+    /// The rows it reads by id, from 0: a continuation's base's first (`Relation::len_all`), then its own.
+    pub fn reads(&self) -> u32 {
+        self.base.as_ref().map_or(0, |_| self.rel().base_rows) + self.len()
+    }
+
+    /// Whether it continues another relation's rows (`continuing`).
+    pub fn is_continuation(&self) -> bool {
+        self.base.is_some()
+    }
+
+    /// A relation continuing the rows `base` reads (decision 0384 steps 7 and 8, `Relation::try_continue`): its ids
+    /// below them read in `base` (and down `base`'s own chain, when it continues another), its own after, in
+    /// `base`'s block, `base` kept while it is. A relation started from frozen rows whose writer another took
+    /// (`Rows::shared`), or a copy's first row past them (`Rows::clone`), goes on in it: one relation a reader binds
+    /// whole. `None` when `base`'s block has no room for it.
+    fn continuing(base: &Part) -> Option<Part> {
+        let k = base.rel().rows.ncols as usize;
+        let rel = Relation::try_continue(&base.facts.block, &spec(k), base.rel(), base.reads())?;
+        let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
+        let held = Held { facts: base.facts.clone(), life: base.life, rel: std::ptr::from_ref(rel), cols, lent: std::sync::atomic::AtomicU32::new(0),
+                          free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: Some(base.prefix()), absorbed: 0 };
+        Some(Part { held: Arc::new(held), cap: u32::MAX })
+    }
+
+    /// Whether it continues `base`'s rows, all it reads (`continuing`).
+    fn continues_of(&self, base: &Part) -> bool {
+        self.base.as_ref().is_some_and(|b| Arc::ptr_eq(&b.held, &base.held) && b.len() == base.len()) && self.rel().base_rows == base.reads()
+    }
+
+    /// A relation of its own with `room` rows more holding every row it reads (its chain's absorbed, `moved_whole`):
+    /// where a continuation cannot be made in its block. It absorbed every row it reads, its own too, so a `Rows`
+    /// opening it as the tail past it (`Rows::opened`) drops every segment (`Rows::absorbed`): with only its base's
+    /// counted, a relation of its own (no base: a kept relation bound over its read-only mapping, or one whose block is
+    /// full) kept its segment as well, the tail's first rows a second copy of its rows read at the ids past them, and
+    /// the rows pushed after read at no id (an edit's maintained `kind` lost the new nodes').
+    fn moved_all(&self, room: usize) -> Part {
+        let mut moved = self.moved_whole(self.len(), room);
+        Arc::get_mut(&mut moved.held).expect("a new relation's one holder").absorbed = self.reads();
+        moved
     }
 
     /// Appends rows `lo..hi` of `from` (as many columns).
@@ -966,7 +1096,7 @@ impl InBlock {
     /// built now.
     pub fn own_index_for(&self, cols: &[u16], keys: usize) -> Option<usize> {
         let r = self.relation();
-        if self.dead != 0 || r.base_rows != 0 || cols.is_empty() || cols.len() > rerail_blocks::relation::MAX_KEY {
+        if self.dead != 0 || (r.base_rows != 0 && !r.continues()) || cols.is_empty() || cols.len() > rerail_blocks::relation::MAX_KEY {
             return None;
         }
         let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
@@ -1061,7 +1191,58 @@ impl Rows {
         }
         match &mut self.tail {
             Some(t) => t.grow(u64::from(t.len()) + (values / self.k) as u64),
-            None => self.tail = Some(Part::new(self.life, self.k, values / self.k)),
+            None => {
+                let t = self.opened(values / self.k);
+                self.tail = Some(t);
+            }
+        }
+        self.absorbed();
+    }
+
+    /// A tail for rows past these (decision 0384 steps 7 and 8): with no rows before it, a relation of its own; past
+    /// segments that read as one relation (`chain`), a continuation of it in its block, so the rows stay one
+    /// relation however many relations went on from the same rows (forks, copies); where that block has no room, a
+    /// relation of its own holding every row (a growth move, `Part::moved_all`), which `absorbed` makes the only part.
+    fn opened(&self, rows: usize) -> Part {
+        if self.segs.is_empty() {
+            return Part::new(self.life, self.k, rows);
+        }
+        let Some(end) = self.chain() else {
+            crate::code_rule_dsl::logic::profile::decision("tails opened past rows of many relations (merged when bound)", || format!("{} segments", self.segs.len()));
+            return Part::new(self.life, self.k, rows);
+        };
+        // Past a kept relation bound over its read-only mapping (decision 0401 F3): nothing is written in its block,
+        // and its rows are not moved out of it (0353), so the tail is a relation of its own past them.
+        if !end.facts.block.is_writable() {
+            crate::code_rule_dsl::logic::profile::decision("tails opened past kept rows read where they lie (merged when bound)", || format!("{} rows", self.from));
+            return Part::new(self.life, self.k, rows);
+        }
+        match Part::continuing(end) {
+            Some(t) => {
+                crate::code_rule_dsl::logic::profile::decision("relations continued from rows another writer went on from (forks)", || format!("{} rows, {} segments", self.from, self.segs.len()));
+                t
+            }
+            None => end.moved_all(rows),
+        }
+    }
+
+    /// The last segment, when the segments read as one relation: each a continuation of the one before (decision
+    /// 0384 steps 7 and 8), the first a relation of its own, so the last reads every row by id. `None` otherwise.
+    fn chain(&self) -> Option<&Part> {
+        let end = chain_of(self.segs.iter().map(|(f, p)| (*f, p)))?;
+        (end.reads() == self.from).then_some(end)
+    }
+
+    /// A continuation tail that moved took its base's rows (`Held::absorbed`): its ids are from 0 now, so the base's
+    /// segment goes, and it is one relation of its own.
+    fn absorbed(&mut self) {
+        if let Some(t) = &self.tail
+            && t.absorbed > 0
+            && self.from == t.absorbed
+        {
+            debug_assert_eq!(self.segs.iter().map(|(_, p)| p.len()).sum::<u32>(), t.absorbed, "a continuation's chain of segments");
+            self.segs.clear();
+            self.from = 0;
         }
     }
 
@@ -1076,13 +1257,18 @@ impl Rows {
         self.merged.take();
         *self.kills.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
         let n = rows.len() / self.k;
-        let tail = self.tail.get_or_insert_with(|| Part::new(self.life, self.k, self.hint.max(n).max(16)));
+        if self.tail.is_none() {
+            let t = self.opened(self.hint.max(n).max(16));
+            self.tail = Some(t);
+        }
+        let tail = self.tail.as_mut().expect("opened");
         if n > 1 {
             tail.grow(u64::from(tail.len()) + n as u64);
         }
         for row in rows.chunks_exact(self.k) {
             tail.push(row);
         }
+        self.absorbed();
     }
 
     /// The values of rows `lo..hi`, copied into one vector.
@@ -1107,13 +1293,25 @@ impl Rows {
         }
         self.from = n as u32;
         while self.segs.len() > MAX_SEGMENTS {
-            // The newest two, merged: a session's edits add small segments after one large one.
+            // The newest two, merged: a session's edits add small segments after one large one. Segments that read as
+            // one relation (a chain of continuations, decision 0384 step 8) stay one: the two go on in one continuation
+            // of the one before them, so a read goes down at most `MAX_SEGMENTS` relations (`rel_get`).
+            let chained = self.chain().is_some();
             let (_, b) = self.segs.pop().expect("two segments");
             let (first, a) = self.segs.pop().expect("two segments");
-            let mut both = Part::new(self.life, self.k, (a.len() + b.len()) as usize);
+            let made = if chained { self.segs.last().and_then(|(_, base)| Part::continuing(base)) } else { None };
+            let mut both = made.unwrap_or_else(|| Part::new(self.life, self.k, (a.len() + b.len()) as usize));
+            // copy (0353 step 6): a chain's newest two segments written into one, bounding its length: the small ones a
+            // session's edits add, once per `MAX_SEGMENTS` forks of forks. It goes with the merged part (0353).
             both.copy_from(&a, 0, a.len());
             both.copy_from(&b, 0, b.len());
-            self.segs.push((first, both));
+            if both.absorbed > 0 {
+                // Moved out of a full block: it holds every row.
+                self.segs.clear();
+                self.segs.push((0, both.prefix()));
+            } else {
+                self.segs.push((first, both.prefix()));
+            }
         }
         // The last segment's writer, free for a relation started from these rows, at its rows: a prefix of its relation,
         // which a writer goes on past.
@@ -1149,6 +1347,8 @@ impl Rows {
                 let took = Some(Took { writer: writer.clone(), at: writer.len() });
                 Rows { segs, from: first, tail: Some(writer), k: self.k, hint: 0, life: self.life, took, ..Rows::default() }
             }
+            // A fork (decision 0384 steps 7 and 8): the writer is another's, so this one's first row opens a tail that
+            // continues the rows' relation (`opened`): a reader binds the rows as one (`one`), each where it lies.
             _ => Rows { segs, from: n as u32, tail: None, k: self.k, hint: 0, life: self.life, ..Rows::default() },
         }
     }
@@ -1156,15 +1356,15 @@ impl Rows {
     /// The rows as one relation in one block, ids from 0: the one part, or every part merged into one (made once,
     /// and kept while these rows are). `None` for no rows.
     pub fn in_block(&self) -> Option<InBlock> {
-        let one = self.one()?;
-        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: 0, part: Some(one.clone()) })
+        let (one, rows) = self.one()?;
+        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows, dead: 0, part: Some(one.clone()) })
     }
 
     /// `in_block`, with the rows `dead` marks (bit `id`, as setfix keeps them) dead in it: a delta of the one
     /// relation in its block, no rows of its own, whose dead bits are these (kept, and made again when the dead rows
     /// are others). `None` for no rows, or when the block cannot hold the delta.
     pub fn in_block_dead(&self, dead: &[u64]) -> Option<InBlock> {
-        let one = self.one()?;
+        let (one, rows) = self.one()?;
         let block = &one.facts.block;
         let mut kills = self.kills.lock().unwrap_or_else(|e| e.into_inner());
         // A relation's dead rows change with no row added (a level's rows killed, then brought back as their levels
@@ -1180,18 +1380,34 @@ impl Rows {
                 at
             }
         };
-        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: at, part: Some(one.clone()) })
+        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows, dead: at, part: Some(one.clone()) })
     }
 
-    /// The rows as one relation: the one part, or every part merged into one (made once and kept).
-    fn one(&self) -> Option<&Part> {
-        Some(match (&self.segs[..], &self.tail) {
-            ([], None) => return None,
-            ([], Some(t)) if self.from == 0 => t,
-            // A prefix too (a frozen relation's rows, its writer handed on): every reader of a bound relation reads
-            // the rows it is bound with (`InBlock::rows`), and its indexes are of them (`find_index`'s rows).
-            ([(0, p)], None) => p,
-            (segs, tail) => self.merged.get_or_init(|| {
+    /// The rows as one relation, and how many rows a reader binding it reads (ids from 0): the one part, a
+    /// continuation of the one segment (a fork, decision 0384 step 7: its base's rows read through it), or every part
+    /// merged into one (made once and kept).
+    fn one(&self) -> Option<(&Part, u32)> {
+        let tail = self.tail.as_ref().filter(|t| t.len() > 0);
+        if self.segs.is_empty() {
+            // One part (or an empty tail from row 0).
+            return match (tail, &self.tail) {
+                (Some(t), _) => Some((t, t.len())),
+                (None, Some(t)) if self.from == 0 => Some((t, 0)),
+                _ => None,
+            };
+        }
+        // Segments and the tail that read as one relation (decision 0384 steps 7 and 8: each a continuation of the
+        // one before, the first a relation of its own, as a fork's and a fork of a fork's are): the last, read down its
+        // chain. A frozen relation's prefix too: every reader of a bound relation reads the rows it is bound with
+        // (`InBlock::rows`), and its indexes are of them (`find_index`'s rows).
+        if let Some(end) = chain_of(self.segs.iter().map(|(f, p)| (*f, p)).chain(tail.map(|t| (self.from, t))))
+            && end.reads() as usize == self.rows()
+        {
+            return Some((end, end.reads()));
+        }
+        let (segs, tail) = (&self.segs[..], &self.tail);
+        // Parts that do not: merged (a part appended after rows of another relation, `append_part`, counted there).
+        Some((self.merged.get_or_init(|| {
                 let parts: Vec<&Part> = segs.iter().map(|(_, p)| p).chain(tail.iter()).collect();
                 let rows: usize = parts.iter().map(|p| p.len() as usize).sum();
                 MERGED[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1202,8 +1418,7 @@ impl Rows {
                     one.copy_from(p, 0, p.len());
                 }
                 one
-            }),
-        })
+            }), self.rows() as u32))
     }
 
     /// `part`'s rows after these, not copied (decision 0325 step 4, a head's rows the device wrote in place): it
@@ -1220,6 +1435,11 @@ impl Rows {
         self.k = k;
         self.merged.take();
         *self.kills.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
+        // The device writes past rows in their tail (`tail_room`, which opens one past segments), so a relation of its
+        // own comes only after none.
+        if self.rows() > 0 {
+            crate::code_rule_dsl::logic::profile::decision("parts appended after rows of another relation (merged when bound)", || format!("{n} rows after {}", self.rows()));
+        }
         if let Some(t) = self.tail.take().filter(|t| t.len() > 0) {
             let next = self.from + t.len();
             self.segs.push((self.from, t));
@@ -1234,13 +1454,23 @@ impl Rows {
     /// has no room for them (the tail is never moved for a writer that is not its own), or its room is lent already
     /// (it would be the same rows).
     pub fn tail_room(&self, n: usize) -> Option<Lent> {
-        self.tail.as_ref()?.room(n)
+        match &self.tail {
+            Some(t) => t.room(n),
+            // Past segments and no tail yet (a relation started from frozen rows another goes on from, decision 0384
+            // steps 7 and 8): a tail opened for them, a continuation of the segments' relation (or, where its block has
+            // no room, a relation holding every row), which the claim makes the tail.
+            None if !self.segs.is_empty() => {
+                let t = self.opened(n);
+                t.room(n).or_else(|| Some(t.moved_room(t.len(), n)))
+            }
+            None => None,
+        }
     }
 
     /// `tail_room`, when the tail's block has no room: the tail moved into a relation with room for them
     /// (`Part::moved_room`), which the claim makes the tail. `None` with no tail that has rows, or one lent already.
     pub fn tail_moved(&self, n: usize) -> Option<Lent> {
-        let t = self.tail.as_ref().filter(|t| t.len() > 0 && t.lent.load(std::sync::atomic::Ordering::Acquire) == 0)?;
+        let t = self.tail.as_ref().filter(|t| (t.len() > 0 || t.is_continuation()) && t.lent.load(std::sync::atomic::Ordering::Acquire) == 0)?;
         Some(t.moved_room(t.len(), n))
     }
 
@@ -1249,13 +1479,22 @@ impl Rows {
     /// # Safety
     /// The writer has finished, and wrote every value of those rows.
     pub unsafe fn claim_tail(&mut self, lent: &Lent, n: u32) {
+        // A tail opened for the writer (`tail_room` past segments): it is the tail now.
+        if self.tail.is_none() {
+            let t = &lent.tail;
+            let end = self.chain();
+            assert!(end.is_some_and(|e| t.continues_of(e)) || (t.absorbed == self.from && t.len() == lent.at), "rows written into a tail opened past other rows");
+            self.tail = Some(t.clone());
+            self.absorbed();
+        }
         let t = self.tail.as_ref().expect("the tail written in place");
         // Rows lent in a relation the tail was moved into (its block had no room): that relation is the tail now, its
         // rows the tail's (moved when the room was lent, none pushed since: asserted below).
         if let Some(from) = &lent.from && !Arc::ptr_eq(&t.held, &lent.tail.held) {
             assert!(Arc::ptr_eq(&t.held, &from.held), "rows written into a relation moved from another tail");
-            assert_eq!(t.len(), lent.at, "rows pushed into a tail after it was moved for another writer");
+            assert_eq!(t.len() + lent.tail.absorbed, lent.at, "rows pushed into a tail after it was moved for another writer");
             self.tail = Some(lent.tail.clone());
+            self.absorbed();
         }
         let t = self.tail.as_ref().expect("the tail written in place");
         let at = lent.at;
@@ -1365,6 +1604,24 @@ impl Rows {
         (p, id - first)
     }
 
+}
+
+/// The last of `parts` (each its first row's id and the part), when they read as one relation (decision 0384 steps
+/// 7 and 8): the last a continuation of the one before, down to the first, a relation of its own from row 0, each
+/// part's first id its own rows' first. The last then reads every row by id, down its chain (`rel_get`).
+fn chain_of<'a>(parts: impl DoubleEndedIterator<Item = (u32, &'a Part)>) -> Option<&'a Part> {
+    let mut parts = parts.rev().peekable();
+    let &(_, last) = parts.peek()?;
+    let mut want = Some(last);
+    for (first, p) in parts {
+        let w = want?;
+        let start = if w.is_continuation() { w.rel().base_rows } else { 0 };
+        if !Arc::ptr_eq(&w.held, &p.held) || w.len() != p.len() || first != start {
+            return None;
+        }
+        want = w.base.as_ref();
+    }
+    want.is_none().then_some(last)
 }
 
 /// The columns a row holds on the stack; a wider row's values are on the heap.
@@ -1566,6 +1823,159 @@ mod tests {
         assert!(BlockVec::<u8>::new().facts().is_none(), "empty holds no chunk");
     }
 
+    /// A tail opened past a relation of its own that cannot be continued in its block (a full one) holds every row it
+    /// reads (`Part::moved_all`): it absorbed them all, so the segment goes and its ids are from 0. With only a
+    /// continuation's base counted as absorbed, a relation of its own kept its segment too, and the rows pushed after
+    /// were read at no id (a second copy of the old rows at theirs).
+    #[test]
+    fn a_tail_moved_past_its_rows_holds_every_row_once() {
+        let k = 2;
+        let mut rows = Rows::new(k);
+        // copy: not block data: a test's rows
+        rows.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
+        let rows = rows.sealed();
+        let end = rows.chain().expect("one relation").clone();
+        let mut next = Rows { segs: rows.segs.clone(), from: rows.from, tail: Some(end.moved_all(4)), k, life: rows.life, ..Rows::default() };
+        next.absorbed();
+        assert_eq!((next.parts().count(), next.from), (1, 0), "the segment absorbed");
+        // copy: not block data: a test's rows
+        next.extend_from_slice(&[7, 8]);
+        for (i, want) in [[1i64, 2], [3, 4], [5, 6], [7, 8]].iter().enumerate() {
+            assert_eq!(&*next.row(i as u32, k), &want[..], "row {i}, read where it lies");
+        }
+    }
+
+    /// Decision 0384 step 7: a fork (a second relation started from frozen rows whose writer the first took) goes on
+    /// in a continuation of their relation, in its block: bound as one relation (nothing merged), its base's rows read
+    /// through it, frozen and started from again; moved out of a full block it takes its base's rows and is a relation
+    /// of its own.
+    #[test]
+    fn a_fork_goes_on_in_a_continuation_of_its_rows() {
+        let k = 2;
+        let mut rows = Rows::new(k);
+        // copy: not block data: a test's rows
+        rows.extend_from_slice(&[1, 2, 3, 4]);
+        let kept = rows.freeze(2);
+        let mut first = kept.shared(2);
+        let mut fork = kept.shared(2);
+        // copy: not block data: a test's rows
+        first.extend_from_slice(&[5, 6]);
+        // copy: not block data: a test's rows
+        fork.extend_from_slice(&[7, 8, 9, 10]);
+        assert!(fork.tail.as_ref().is_some_and(|t| t.rel().continues()), "the second goes on in a continuation");
+        let merged = MERGED[0].load(std::sync::atomic::Ordering::Relaxed);
+        let b = fork.in_block().expect("bound");
+        assert_eq!(b.rows, 4, "the base's 2 and its own 2");
+        let rel = b.relation();
+        let got: Vec<i64> = (0..4).flat_map(|id| [rel.get(id, 0), rel.get(id, 1)]).collect();
+        assert_eq!(got, [1, 2, 3, 4, 7, 8, 9, 10], "each row where it lies, by the read written once");
+        assert_eq!(MERGED[0].load(std::sync::atomic::Ordering::Relaxed), merged, "nothing merged");
+        assert_eq!(first.in_block().expect("bound").rows, 3);
+        // Frozen, then started from again: its writer the next one's, still one relation.
+        let kept2 = fork.freeze(4);
+        assert_eq!(kept2.in_block().expect("bound").rows, 4);
+        let mut next = kept2.shared(4);
+        // copy: not block data: a test's rows
+        next.extend_from_slice(&[11, 12]);
+        let b = next.in_block().expect("bound");
+        assert_eq!((b.rows, b.relation().get(4, 1), b.relation().get(1, 0)), (5, 12, 3));
+        assert_eq!(MERGED[0].load(std::sync::atomic::Ordering::Relaxed), merged, "nothing merged");
+        // Moved for another writer (as from a full block): its base's rows go with it, and it is one relation.
+        let lent = next.tail.as_ref().expect("a tail").moved_room(next.tail.as_ref().expect("a tail").len(), 1);
+        assert_eq!(lent.at, 5, "every row it reads, then the room");
+        // SAFETY: row 5 is the loan's, reserved, and nothing else writes it.
+        unsafe {
+            lent.tail().rel().rows.put(5, 0, 13);
+            lent.tail().rel().rows.put(5, 1, 14);
+            next.claim_tail(&lent, 1);
+        }
+        drop(lent);
+        assert_eq!((next.parts().count(), next.from), (1, 0), "the base's segment absorbed");
+        // copy: not block data: a test's rows
+        let all: Vec<Vec<i64>> = (0..6).map(|i| next.row(i, k).to_vec()).collect();
+        assert_eq!(all, [[1, 2], [3, 4], [7, 8], [9, 10], [11, 12], [13, 14]].map(|r| r.to_vec()));
+        assert!(!next.in_block().expect("bound").relation().continues());
+    }
+
+    /// Decision 0384 step 8: forks of forks stay one relation. A fork frozen and forked again (while another holds its
+    /// writer) goes on in a continuation of the continuation, read down the chain; so does a copy's first row past
+    /// the rows it shares (`clone`), and the device's rows written past a fork that has no tail yet (`tail_room`).
+    /// Past `MAX_SEGMENTS` levels the newest two go on in one continuation; moved out of a full block, the chain's
+    /// rows go with it. Nothing is merged when bound.
+    #[test]
+    fn forks_of_forks_stay_one_relation() {
+        let k = 1;
+        let merged = || MERGED[0].load(std::sync::atomic::Ordering::Relaxed);
+        let before = merged();
+        let read = |r: &Rows| -> Vec<i64> {
+            let b = r.in_block().expect("bound");
+            assert_eq!(b.rows as usize, r.rows(), "bound whole");
+            (0..b.rows).map(|id| b.relation().get(id, 0)).collect()
+        };
+        let mut start = Rows::new(k);
+        // copy: not block data: a test's rows
+        start.extend_from_slice(&[0, 1]);
+        let mut kept = start.freeze(2);
+        let mut want = vec![0, 1];
+        // Ten levels: at each, one run takes the writer and writes a row nobody else reads; a fork goes on.
+        for level in 0..10 {
+            let n = kept.rows();
+            let mut taker = kept.shared(n);
+            // copy: not block data: a test's rows
+            taker.extend_from_slice(&[-1]);
+            let mut fork = kept.shared(n);
+            // copy: not block data: a test's rows
+            fork.extend_from_slice(&[10 * level + 2, 10 * level + 3]);
+            want.extend([10 * level + 2, 10 * level + 3]);
+            assert!(fork.tail.as_ref().is_some_and(|t| t.rel().continues()), "level {level}: a continuation");
+            assert_eq!(read(&fork), want, "level {level}: read down the chain");
+            assert_eq!(read(&taker)[n], -1, "the taker's row its own");
+            kept = fork.freeze(want.len());
+            assert!(kept.segs.len() <= MAX_SEGMENTS, "level {level}: a chain of at most MAX_SEGMENTS");
+            assert_eq!(read(&kept), want);
+        }
+        // A copy's first row past the rows it shares: a continuation too.
+        let mut copy = kept.clone();
+        let taker = kept.shared(kept.rows());
+        // copy: not block data: a test's rows
+        copy.extend_from_slice(&[99]);
+        assert!(copy.tail.as_ref().is_some_and(|t| t.rel().continues()));
+        assert_eq!(read(&copy).last(), Some(&99));
+        drop(taker);
+        // The device's rows past a fork with no tail yet: a tail opened for them, claimed.
+        let mut fork = kept.shared(kept.rows());
+        let _first = kept.shared(kept.rows());
+        let mut fork2 = kept.shared(kept.rows());
+        assert!(fork.tail.is_none() || fork2.tail.is_none());
+        if fork.tail.is_some() {
+            std::mem::swap(&mut fork, &mut fork2);
+        }
+        let lent = fork.tail_room(2).expect("room past the fork");
+        // SAFETY: rows `at..at + 2` are the loan's, reserved, and nothing else writes them.
+        unsafe {
+            lent.tail().rel().rows.put(lent.at, 0, 500);
+            lent.tail().rel().rows.put(lent.at + 1, 0, 501);
+            fork.claim_tail(&lent, 2);
+        }
+        drop(lent);
+        let mut w = want.clone();
+        w.extend([500, 501]);
+        assert_eq!(read(&fork), w);
+        // Moved for another writer, as from a full block: the whole chain's rows go with it, one relation.
+        let t = fork.tail.as_ref().expect("a tail");
+        let lent = t.moved_room(t.len(), 1);
+        // SAFETY: as above.
+        unsafe {
+            lent.tail().rel().rows.put(lent.at, 0, 502);
+            fork.claim_tail(&lent, 1);
+        }
+        drop(lent);
+        w.push(502);
+        assert_eq!((fork.parts().count(), fork.from), (1, 0), "the chain absorbed");
+        assert_eq!(read(&fork), w);
+        assert_eq!(merged(), before, "nothing merged");
+    }
+
     /// Decision 0384: a tail whose block has no room for the device's rows is moved into a relation with room
     /// (`tail_moved`, and `Lent::moved` for a next lot), and the claims make that its tail: one relation, nothing
     /// merged, every row by its id.
@@ -1699,7 +2109,8 @@ mod tests {
 
     /// Decision 0384 step 2: a relation started from frozen rows takes their relation's writer and goes on in it, one
     /// relation (bound with nothing merged), while the frozen rows read only their own. A second started from them while
-    /// the first holds the writer starts a tail of its own; a taker dropped with nothing written gives the writer back.
+    /// the first holds the writer goes on in a continuation of their relation (step 7); a taker dropped with nothing
+    /// written gives the writer back.
     #[test]
     fn a_relation_started_from_frozen_rows_goes_on_in_their_relation() {
         let k = 1;
@@ -1717,9 +2128,12 @@ mod tests {
         assert_eq!(next.in_block().expect("bound").rows, 4);
         assert_eq!(kept.in_block().expect("bound").rows, 3, "a prefix bound as its rows");
         assert_eq!(MERGED[0].load(std::sync::atomic::Ordering::Relaxed), merged, "nothing merged");
-        // The writer is the first's: a second goes on in a tail of its own.
-        let other = kept.shared(3);
-        assert!(other.tail.is_none() && other.segs.len() == 1);
+        // The writer is the first's: a second's first row opens a continuation of the kept rows' relation (step 7).
+        let mut other = kept.shared(3);
+        assert!(other.segs.len() == 1 && other.tail.is_none());
+        // copy: not block data: a test's rows
+        other.extend_from_slice(&[9]);
+        assert!(other.tail.as_ref().is_some_and(|t| t.rel().continues()));
         drop(other);
         // Frozen with a row written, its relation's writer is free at its 4 rows, not the kept 3.
         let kept2 = next.freeze(4);

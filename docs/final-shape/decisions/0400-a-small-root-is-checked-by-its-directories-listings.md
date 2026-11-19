@@ -61,10 +61,12 @@ changes its directory's. ctime cannot be set from user space, so a copy that kee
 - R1 `a_small_root_is_checked_by_listings_not_stats`: a second run over an unchanged root makes no `stat` of a
   file, lists each directory once, and trusts every answer.
 - R2 `a_listing_names_an_edited_file_and_no_other`: an edit (also one that keeps size and mtime) is named, and only
-  it; a new file and a removed file are named, and their directory's own answer, not its siblings'.
+  it; a new file and a removed file are named, not their directory (0433: its own answer is forgotten unnamed), nor
+  its siblings.
 - R3 `a_directory_that_cannot_be_listed_names_what_it_held`: a missing path under a missing directory holds; a
   removed directory names each answer under it.
-- R4 `a_racy_answer_is_named_by_the_listing`: an answer recorded inside the racy window is not trusted.
+- R4 `a_racy_answer_is_named_by_the_listing`: an answer recorded inside the racy window is not trusted (0433: its
+  file is read again, and named only where its bytes changed).
 - R5 `the_bulk_listing_gives_what_stat_gives`: for files (a compressed one too, on macOS), directories and a
   symbolic link, the listing's stat equals `std::fs::metadata`'s (directories: all but size).
 - R6 `a_run_record_is_answered_from_the_observers_own_journal`: a record made at `L<g>` is told of what changed
