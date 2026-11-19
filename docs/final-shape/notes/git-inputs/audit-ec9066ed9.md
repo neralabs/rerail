@@ -6,6 +6,13 @@ At `65e24db1d`, six of the 28 follow-up findings have verified repairs. The Wind
 
 ## Live checkout ownership
 
+Cases 95 and 96 reproduced on the same router before the repair. Moving a registered child's `.git` left the child in charge.
+Adding a gitlink for an unregistered child left the parent in charge.
+After the repair, moving and restoring `.git` changed ownership on the next lookup. An unregistered nested repository stayed under its parent.
+Adding or removing either the configured submodule path or the gitlink changed ownership.
+A configured ancestor directory did not claim a descendant gitlink. Removing and restoring the shared index also changed ownership.
+[Router regressions](../../../../test/engine/code-rule/checkout-code-rule-router.test.ts)
+
 Case 97 passed with two registered directories outside Git. Moving the first and pruning its registration released its files in the same resolver.
 The second directory kept its files. Restoring the first marker alone left the path unowned.
 Recording it again restored ownership. [Owner regression](../../../../test/engine/catalog/checkout-owner.test.ts)

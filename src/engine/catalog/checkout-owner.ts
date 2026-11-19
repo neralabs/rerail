@@ -3,11 +3,11 @@
  * confirms as a checkout's top level, found the same way from the file's lexical and real paths. Whether that
  * checkout judges the file with its own rules, or leaves it to the checkout around it, is the router's decision.
  */
-import { lstatSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { physicalPath } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
-import { recordedCheckoutsVersion, recordedPlainRoot } from "./repository-registry.js";
+import { recordedPlainRoot } from "./repository-registry.js";
 import { runGit } from "../git.js";
 import { repositoryIdentityLocation } from "./repository-identity.js";
 
@@ -33,21 +33,10 @@ function within(root: string, candidate: string): boolean {
   return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`));
 }
 
-/**
- * Resolves owning checkouts for one runtime. Each folder's `.git` entry is looked at once, and each candidate root
- * is confirmed once with Git, so a lookup costs a map access per file once its folders are known. When
- * a catalog is given, every answer is forgotten once it changes: a checkout Rerail records later (a folder that
- * became a checkout) then owns its files from the next lookup, without a restart.
- */
+/** Resolves the checkout boundary at the time a watched path is routed. */
 export class CheckoutOwners {
   readonly #database: RerailDatabase | undefined;
-  #version: string | undefined;
-  /** Lexical folder → physical root of the checkout that owns it (undefined: no Git checkout above it). */
-  readonly #roots = new Map<string, string | undefined>();
-  /** Lexical folder → its physical root when it holds `.git` and Git confirms it as a top level. */
-  readonly #confirmed = new Map<string, string | undefined>();
-  /** Physical checkout root → whether the checkout around it declares it as a submodule (a gitlink). */
-  readonly #submodules = new Map<string, boolean>();
+
   constructor(database?: RerailDatabase) {
     this.#database = database;
   }
@@ -57,7 +46,6 @@ export class CheckoutOwners {
    * differ (a symlink into another checkout) or when the real path leaves the owner (a symlink escaping it).
    */
   ownerOf(absolute: string): CheckoutOwner | undefined {
-    this.#revalidate();
     const lexical = resolve(absolute);
     const real = physicalPath(lexical);
     const root = this.#rootOf(lexical, real);
@@ -68,17 +56,11 @@ export class CheckoutOwners {
 
   /**
    * Whether the checkout at `root` (a physical checkout top level) is a submodule the checkout around it declares: a
-   * gitlink in that checkout's index. Git runs only in the enclosing checkout, once per root.
+   * gitlink in that checkout's effective index and a path in its current `.gitmodules`.
    */
   isDeclaredSubmodule(root: string): boolean {
-    this.#revalidate();
-    let declared = this.#submodules.get(root);
-    if (declared === undefined) {
-      const enclosing = this.ownerOf(dirname(root));
-      declared = enclosing !== undefined && this.declaredSubmodules(enclosing.checkoutRoot).includes(root);
-      this.#submodules.set(root, declared);
-    }
-    return declared;
+    const enclosing = this.ownerOf(dirname(root));
+    return enclosing !== undefined && this.declaredSubmodules(enclosing.checkoutRoot).includes(root);
   }
 
   /**
@@ -86,65 +68,35 @@ export class CheckoutOwners {
    * as a gitlink and that Git confirms as a checkout top level. Physical roots.
    */
   declaredSubmodules(root: string): string[] {
+    if (!existsSync(join(root, ".gitmodules"))) return [];
     const configured = runGit(root, ["config", "--file", ".gitmodules", "--null", "--get-regexp", String.raw`^submodule\..*\.path$`]);
     if (configured.status !== 0) return [];
-    const paths = configured.stdout.split("\0").filter(Boolean).map(entry => entry.slice(entry.indexOf("\n") + 1));
-    if (paths.length === 0) return [];
+    const paths = new Set(configured.stdout.split("\0").filter(Boolean).map(entry => entry.slice(entry.indexOf("\n") + 1)));
+    if (paths.size === 0) return [];
     const index = runGit(root, ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", ...paths]);
     if (index.status !== 0) return [];
     return index.stdout.split("\0")
       .filter(entry => entry.startsWith("160000 "))
-      .map(entry => join(root, entry.slice(entry.indexOf("\t") + 1)))
+      .map(entry => entry.slice(entry.indexOf("\t") + 1))
+      .filter(path => paths.has(path))
+      .map(path => join(root, path))
       .filter(folder => within(root, folder) && this.#confirm(folder) === physicalPath(folder));
   }
 
   /** The checkout root above `path` (the path itself when it is one), searched from `path`; `real` finds plain roots. */
   #rootOf(path: string, real: string): string | undefined {
-    // Only folders are remembered: the path itself is a checkout root only when it holds `.git`.
-    const own = holdsGitEntry(path) ? this.#confirm(path) : undefined;
-    return own ?? this.#gitRoot(dirname(path)) ?? (this.#database && recordedPlainRoot(this.#database, real));
-  }
-
-  /** Forget every cached answer when the recorded checkouts changed since the last lookup. */
-  #revalidate(): void {
-    if (this.#database === undefined) return;
-    const version = recordedCheckoutsVersion(this.#database);
-    if (version === this.#version) return;
-    this.#version = version;
-    this.#roots.clear();
-    this.#confirmed.clear();
-    this.#submodules.clear();
-  }
-
-  #gitRoot(lexical: string): string | undefined {
-    const unresolved: string[] = [];
-    let directory = lexical;
-    let root: string | undefined;
-    for (;;) {
-      if (this.#roots.has(directory)) {
-        root = this.#roots.get(directory);
-        break;
-      }
-      unresolved.push(directory);
-      root = this.#confirm(directory);
-      if (root !== undefined) break;
-      const parent = dirname(directory);
-      if (parent === directory) break;
-      directory = parent;
+    for (let directory = path; ; directory = dirname(directory)) {
+      const root = this.#confirm(directory);
+      if (root !== undefined) return root;
+      if (dirname(directory) === directory) break;
     }
-    for (const folder of unresolved) this.#roots.set(folder, root);
-    return root;
+    return this.#database && recordedPlainRoot(this.#database, real);
   }
 
   #confirm(directory: string): string | undefined {
-    if (this.#confirmed.has(directory)) return this.#confirmed.get(directory);
-    let root: string | undefined;
-    if (holdsGitEntry(directory)) {
-      const location = repositoryIdentityLocation(directory);
-      const top = location.git ? physicalPath(location.workspaceRoot) : undefined;
-      if (top !== undefined && top === physicalPath(directory)) root = top;
-    }
-    this.#confirmed.set(directory, root);
-    return root;
+    if (!holdsGitEntry(directory)) return undefined;
+    const location = repositoryIdentityLocation(directory);
+    const root = physicalPath(directory);
+    return location.git && physicalPath(location.workspaceRoot) === root ? root : undefined;
   }
 }
