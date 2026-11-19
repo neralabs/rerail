@@ -1,0 +1,1 @@
+When an agent made several edits in a row, a rule broken by one of them was recorded at once but told to the agent only after every edit queued behind it was checked, often not until the end of its turn. Each tool call's steer now goes out at the next hook after its own check ends.
