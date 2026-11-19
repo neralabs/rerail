@@ -54,12 +54,33 @@ pub struct Facts {
     pub block: Block,
     /// Held while an index is added to one of its relations (`Relation::try_reserve_index`, decision 0325 step 5).
     pub ix: Mutex<()>,
+    /// The chunk's tally it adds its bytes written to when given back (`in_chunk_measured`), when a chunk made it.
+    tally: Option<Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 impl Facts {
+    /// A block of relations: the chunk's evaluating on this thread, if one is, counted in its tally.
     fn new(block: Block) -> Facts {
-        Facts { block, ix: Mutex::new(()) }
+        let tally = CHUNK.with(|c| c.borrow().as_ref().map(|c| Arc::clone(&c.tally)));
+        Facts { block, ix: Mutex::new(()), tally }
     }
+}
+
+impl Drop for Facts {
+    fn drop(&mut self) {
+        if let Some(t) = &self.tally {
+            t.fetch_add(self.block.used(), std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+/// What a chunk's evaluation wrote in blocks of relations (decision 0435 §4, Q261): every block it made, at its
+/// most (a block's used bytes never fall), and of those the ones still held when it ended (rows it handed on). A
+/// function of the chunk and its plans, not of the threads' timing, as the process's count is not.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Written {
+    pub bytes: usize,
+    pub held: usize,
 }
 
 /// How long a relation's rows live, which picks the blocks they go in: a block is given back with its last part,
@@ -105,6 +126,9 @@ pub fn held() -> [(usize, usize, usize); 3] {
 pub struct Chunk {
     open: [Mutex<Option<Arc<Facts>>>; 4],
     made: Mutex<Vec<std::sync::Weak<Facts>>>,
+    /// The bytes written in its blocks given back (`Facts`'s drop), and in those held when it ended (`Written`).
+    tally: Arc<std::sync::atomic::AtomicUsize>,
+    held: std::sync::atomic::AtomicUsize,
 }
 
 thread_local! {
@@ -116,6 +140,11 @@ thread_local! {
 /// with the last of its rows (decision 0289: a chunk is a block). What outlives the chunk keeps only its own block;
 /// the profile counts those (`a chunk's blocks outlived it`).
 pub fn in_chunk<R>(f: impl FnOnce() -> R) -> R {
+    in_chunk_measured(f).0
+}
+
+/// `in_chunk`, and what the chunk's blocks wrote (`Written`).
+pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
     struct Leave(Option<Arc<Chunk>>, Arc<Chunk>);
     impl Drop for Leave {
         fn drop(&mut self) {
@@ -125,6 +154,7 @@ pub fn in_chunk<R>(f: impl FnOnce() -> R) -> R {
             }
             let made = std::mem::take(&mut *self.1.made.lock().unwrap_or_else(|e| e.into_inner()));
             let (n, live) = (made.len(), made.iter().filter_map(std::sync::Weak::upgrade).map(|f| f.block.used()).collect::<Vec<_>>());
+            self.1.held.store(live.iter().sum(), std::sync::atomic::Ordering::Relaxed);
             if !live.is_empty() {
                 let bytes: usize = live.iter().sum();
                 crate::code_rule_dsl::logic::profile::decision("a chunk's blocks outlived it", || {
@@ -134,8 +164,12 @@ pub fn in_chunk<R>(f: impl FnOnce() -> R) -> R {
         }
     }
     let chunk = Arc::new(Chunk::default());
-    let _leave = Leave(CHUNK.with(|c| c.borrow_mut().replace(chunk.clone())), chunk);
-    f()
+    let leave = Leave(CHUNK.with(|c| c.borrow_mut().replace(chunk.clone())), chunk.clone());
+    let r = f();
+    // Its open blocks are let go here: a block none of its relations holds is given back, and tallied.
+    drop(leave);
+    let held = chunk.held.load(std::sync::atomic::Ordering::Relaxed);
+    (r, Written { bytes: chunk.tally.load(std::sync::atomic::Ordering::Relaxed) + held, held })
 }
 
 /// A block of at least `bytes` for relations, from the one block policy (decision 0342): a run bound to the device
@@ -1787,6 +1821,29 @@ mod tests {
         let kept = in_chunk(some_rows);
         assert_eq!(*kept.row(1, 2), [3, 4]);
         assert_ne!(Arc::as_ptr(&block_of(&kept)) as usize, run);
+    }
+
+    /// What a chunk wrote (decision 0435 R6) is its blocks' bytes, whatever was given back before it ended, and the
+    /// same on every run of the same chunk: of the rows it keeps past it, the held part.
+    #[test]
+    fn a_chunk_measures_what_its_blocks_wrote_the_same_every_time() {
+        let fill = |n: i64| {
+            let mut r = Rows::new(2);
+            // copy: not block data (a test's literal rows)
+            r.extend_from_slice(&(0..2 * n).collect::<Vec<i64>>());
+            r
+        };
+        let run = || in_chunk_measured(|| {
+            drop(fill(200_000));
+            fill(1_000)
+        });
+        let ((kept, w), (_, again)) = (run(), run());
+        assert_eq!(w, again, "the same chunk measures the same");
+        assert!(w.bytes >= 2 * 200_000 * 8, "the dropped relation's rows count: {w:?}");
+        assert!(w.held > 0 && w.held <= w.bytes, "{w:?}");
+        assert_eq!(*kept.row(999, 2), [1_998, 1_999]);
+        let (_, none) = in_chunk_measured(|| ());
+        assert_eq!(none, Written::default());
     }
 
     /// A relation a chunk drops gives its chunks back to the chunk's block (decision 0342): the next relation of

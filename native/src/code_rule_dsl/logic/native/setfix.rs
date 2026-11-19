@@ -46,7 +46,7 @@ pub mod keys;
 mod held;
 use runs::{Index, RowData};
 mod rows;
-pub use rows::{Facts, InBlock, Row, in_chunk};
+pub use rows::{Facts, InBlock, Row, Written, in_chunk, in_chunk_measured};
 use rows::Rows;
 /// A column's statistics in a fixed size (decision 0112): no index is kept for them.
 pub mod sketch;

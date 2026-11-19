@@ -83,7 +83,7 @@ pub fn metal_share(at_default: usize) -> usize {
 static HEAP: std::sync::OnceLock<fn() -> usize> = std::sync::OnceLock::new();
 
 /// Sets the reader of the heap's live bytes (once per process; a second call is ignored), and starts the sampler that
-/// keeps the count's most (`take_most`): every `SAMPLE` while the process lives.
+/// keeps the count's most (`written_most`): every `SAMPLE` while the process lives.
 pub fn set_heap_reader(f: fn() -> usize) {
     if HEAP.set(f).is_ok() {
         let _ = std::thread::Builder::new().name("rerail-budget-sampler".into()).spawn(|| loop {
@@ -127,7 +127,6 @@ pub fn written() -> Written {
     let ((leased, idle), ledger) = ((0, 0), 0);
     let w = Written { heap, host_blocks, leased, idle, ledger };
     MOST.fetch_max(w.total(), Ordering::Relaxed);
-    LATEST.fetch_max(w.total(), Ordering::Relaxed);
     w
 }
 
@@ -138,16 +137,6 @@ static MOST: AtomicUsize = AtomicUsize::new(0);
 pub fn written_most() -> usize {
     MOST.load(Ordering::Relaxed)
 }
-
-/// The most the count has been since the last call (read now too), and starts the next span from the count now: a
-/// chunk's peak, when it takes this at its start and at its end (decision 0435 §4).
-pub fn take_most() -> usize {
-    let now = written().total();
-    LATEST.swap(now, Ordering::Relaxed).max(now)
-}
-
-/// The most since the last `take_most`, beside the run's most (`MOST`).
-static LATEST: AtomicUsize = AtomicUsize::new(0);
 
 /// What the count is weighed against: the overall budget and Metal's together (decision 0435 §3; 0126's two numbers,
 /// one memory on a machine whose device shares it).

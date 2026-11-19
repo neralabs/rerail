@@ -4837,11 +4837,8 @@ fn run_observed(
         crate::content_store::StatIndex::default()
     };
     let stat_index = &stat_index;
-    // The chunks' size (decision 0435 §4): the first small, each next from what the latest added to what the run
-    // wrote (`sizing`); at most the caller's.
+    // The heap's part of the run's count (decision 0435 §3), which the profile reports and the chunks' room starts from.
     rerail_accel::budget::set_heap_reader(crate::code_rule_dsl::logic::profile::memory::heap_live);
-    let chunk_target = Arc::new(std::sync::atomic::AtomicUsize::new(chunk_nodes.min(sizing::FIRST_NODES)));
-    let worker_target = Arc::clone(&chunk_target);
     // The documents the builder reads, in batches, each ended by `None` on the chunks' channel: the corpus's, then
     // each load's (decision 0065 §2a). A run that loads nothing closes the channel after the corpus's, so the
     // builder ends without waiting (as it must without threads).
@@ -5764,7 +5761,8 @@ fn run_observed(
         build: &'a B,
         project: &'a P,
         run_docs: &'a std::sync::Mutex<input_delta::Docs>,
-        target: &'a std::sync::atomic::AtomicUsize,
+        /// The chunks' sizes, by their order (Q261): a cut waits for its size.
+        schedule: &'a parking_lot::Mutex<sizing::Schedule>,
         keep_docs: bool,
         doing: &'a crate::code_rule_dsl::logic::profile::Activity,
         /// Rung when the builder may have handed on a chunk, and when a chunk's evaluation ends: the main thread, which
@@ -5985,6 +5983,11 @@ fn run_observed(
                 self.doing.set(if matches!(c.out.front(), Some(Out::Projecting(..))) && projecting > in_flight { "wait for a chunk's projection" } else { "hand on (a chunk)" });
                 return progress;
             }
+            // The next chunk's size is decided by the chunks filed before it (Q261): until it is, no document is taken.
+            if c.next < len && self.schedule.lock().next_size().is_none() {
+                self.doing.set("wait for the next chunk's size");
+                return progress;
+            }
             if c.next < len {
                 let Some(made) = docs.built.lock().remove(&c.next) else {
                     self.doing.set("parse");
@@ -6051,7 +6054,7 @@ fn run_observed(
                 }
                 return;
             }
-            if c.pending_nodes < self.target.load(std::sync::atomic::Ordering::Relaxed) && !last {
+            if c.pending_nodes < self.schedule.lock().next_size().unwrap_or(usize::MAX) && !last {
                 return;
             }
             self.cut_chunk(c, jobs);
@@ -6066,6 +6069,10 @@ fn run_observed(
             // A chunk whose rules ask for guests keeps its documents: the guests are made from them (decision 0055).
             let kept_docs = if self.keep_docs { c.pending.clone() } else { Vec::new() };
             let n = std::mem::take(&mut c.pending_nodes);
+            // A chunk of documents is the schedule's next (its order is the filing's: the main thread files them so).
+            if n > 0 {
+                self.schedule.lock().cut();
+            }
             let (docs_of, hits_of) = (std::mem::take(&mut c.pending_docs), std::mem::take(&mut c.hits));
             let pending = std::mem::take(&mut c.pending);
             let id = c.posted;
@@ -6095,6 +6102,21 @@ fn run_observed(
     // Q88: what chunk `n` plans with is the run's as filed once chunks `0..=n - plan_window` were, whether the chunks
     // evaluate at once or one by one: the same plans either way, and whatever the threads' timing.
     let plan_window = crate::code_rule_dsl::logic::plan::PLAN_WINDOW.max(chunks_at_once);
+    // The chunks' sizes (decision 0435 §4, Q261): the first `sizing::FIRST_NODES`, each next decided from the chunks
+    // filed before it in their order, by what their blocks wrote, against the limit less the run's count now; the
+    // builder holds a cut until its size is decided, so every run cuts the same chunks. `RERAIL_RUN_MB` (a
+    // measurement aid: "the memory line lifted") replaces the limit; `RERAIL_CHUNK_NODES` (another) sizes every chunk
+    // after the first, whatever was measured (Q88).
+    let size_limit = std::env::var("RERAIL_RUN_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or_else(rerail_accel::budget::limit, |mb| mb << 20);
+    let schedule = parking_lot::Mutex::new(sizing::Schedule::new(
+        sizing::FIRST_NODES,
+        chunk_nodes,
+        plan_window,
+        chunks_at_once,
+        size_limit,
+        rerail_accel::budget::written().total(),
+        std::env::var("RERAIL_CHUNK_NODES").ok().and_then(|v| v.parse::<usize>().ok()).map(|n| n.clamp(1, chunk_nodes)),
+    ));
     // The chunks begun, numbered in the order they are filed.
     let chunk_seq = std::cell::Cell::new(0usize);
     crate::code_rule_dsl::logic::profile::decision("chunks at once (decision 0254)", || format!("up to {chunks_at_once} chunks evaluate at once, each on a connection of its own, as many as the room holds at the size reached (Q74, decision 0435); the main thread files them in order"));
@@ -6138,7 +6160,7 @@ fn run_observed(
         build: &build,
         project: &project,
         run_docs,
-        target: &worker_target,
+        schedule: &schedule,
         keep_docs: slice.is_some(),
         doing: &worker_doing,
         bell: Default::default(),
@@ -6177,14 +6199,14 @@ fn run_observed(
         mentioned: std::collections::HashSet<i64>,
         /// The slice's request lines of each round, for the entries (`memo::GUESTS`).
         slice_rounds: Vec<BTreeMap<String, Arc<output::Rows>>>,
+        /// What its blocks wrote (`in_chunk_measured`): its next chunks' size (`sizing`).
+        written: crate::code_rule_dsl::logic::native::setfix::Written,
     }
     /// What the main thread keeps of a chunk between its `Begin` and its `Finish`.
     struct Ctx {
         chunk_nodes_built: usize,
         chunk_docs: Vec<(i64, String, Option<memo::Content>, u64, usize, Option<[u8; 32]>)>,
         chunk_own: Option<Own>,
-        /// What the run wrote when it began (decision 0435 §3).
-        count_start: usize,
         /// Chunks evaluating when it began, itself included: the count's growth it saw was theirs.
         at_once: usize,
         /// Its documents' entries, where every one is a partial hit, and the relations it derives (decision 0225 §2).
@@ -6473,17 +6495,21 @@ fn run_observed(
             }
         }
         crate::code_rule_dsl::logic::native::forget_inputs(db);
-        Ok(Evaluated { got, host_of, askers, text_sources, stored_bound, totals_add, export_rows, mentioned, slice_rounds })
+        Ok(Evaluated { got, host_of, askers, text_sources, stored_bound, totals_add, export_rows, mentioned, slice_rounds, written: Default::default() })
     };
     // A chunk's relations go in blocks of its own, given back with it (Q58): not in blocks every chunk at once
     // shares, which a few rows of each kept whole and the memory line counted whole.
     // Within its view of the run's plans (Q88): what it planned, learnt and observed comes back with it.
     let evaluate = |mut task: Task, db: &Connection, modules: &Modules, hand: Option<Hand<'_>>| -> (Result<Evaluated>, crate::code_rule_dsl::logic::plan::ChunkPlans) {
         let view = task.view.take();
-        crate::code_rule_dsl::logic::native::setfix::in_chunk(|| match view {
+        let ((mut got, plans), written) = crate::code_rule_dsl::logic::native::setfix::in_chunk_measured(|| match view {
             Some(v) => crate::code_rule_dsl::logic::plan::in_view(&v, || evaluate_in(task, db, modules, hand)),
             None => (evaluate_in(task, db, modules, hand), Default::default()),
-        })
+        });
+        if let Ok(ev) = &mut got {
+            ev.written = written;
+        }
+        (got, plans)
     };
     // The connections chunks evaluate on beside the main thread's, each opened as the run's is (its atoms, the
     // engine's functions, `x` attached when SQL first runs) and given the run's inputs bound before the chunks.
@@ -6545,9 +6571,6 @@ fn run_observed(
                 }
                 phase("wait", statements.count());
                 statements.enter("local");
-                // The count now, and its most since starts here (the sampler keeps it, decision 0435 §4).
-                let _ = rerail_accel::budget::take_most();
-                let count_start = rerail_accel::budget::written().total();
                 // Memo hits: their rows go to `x` and their lines to the outputs as an evaluated chunk's would.
                 if !hits.is_empty() {
                     let _replay = crate::code_rule_dsl::logic::profile::span(|| "memo replay".into());
@@ -6652,6 +6675,13 @@ fn run_observed(
                 // run over them derives nothing a hit does not already hold (`RERAIL_WARM` found it planned and run, its tree
                 // counts measured and written, on every warm run).
                 if sources.is_empty() || chunk_docs.is_empty() {
+                    // A chunk of documents is filed in the schedule all the same (its order is the cuts', Q261).
+                    if chunk_nodes_built > 0 {
+                        let mut s = schedule.lock();
+                        let n = s.counts().1;
+                        let d = s.file(n, sizing::Measured { nodes: chunk_nodes_built, ..Default::default() });
+                        at_once_allowed.store(d.at_once, std::sync::atomic::Ordering::Relaxed);
+                    }
                     phase("local", statements.count());
                     statements.enter("wait");
                     // Its replayed hits' writes are the chunk's wave (decision 0259).
@@ -6723,13 +6753,13 @@ fn run_observed(
                 phase("local", statements.count());
                 statements.enter("wait");
                 let task = Task { chunk_nodes_built, sources, documents, stats, mix, cone: cone.clone(), replay, seq: 0, view: None };
-                return Ok(Some((task, Ctx { chunk_nodes_built, chunk_docs, chunk_own, count_start, at_once, chunk_partials, cone })));
+                return Ok(Some((task, Ctx { chunk_nodes_built, chunk_docs, chunk_own, at_once, chunk_partials, cone })));
             }
         };
         phase("wait", statements.count());
         statements.enter("local");
-        let Ctx { chunk_nodes_built, chunk_docs, chunk_own, count_start, at_once, mut chunk_partials, cone } = ctx;
-        let Evaluated { got, host_of, askers, text_sources, stored_bound, totals_add, export_rows, mut mentioned, slice_rounds } = ev;
+        let Ctx { chunk_nodes_built, chunk_docs, chunk_own, at_once, mut chunk_partials, cone } = ctx;
+        let Evaluated { got, host_of, askers, text_sources, stored_bound, totals_add, export_rows, mut mentioned, slice_rounds, written } = ev;
         for (rel, rows, measured) in &totals_add {
             totals.add(rel, *rows, measured);
         }
@@ -6786,18 +6816,13 @@ fn run_observed(
             }
         }
         if chunk_nodes_built > 0 {
-            // What the chunk added to what the run wrote at its peak (decision 0435 §3): the count's most since it began,
-            // kept by the sampler (its relations are given back by now).
-            let count_end = rerail_accel::budget::take_most();
-            // `RERAIL_RUN_MB` (a measurement aid: "the memory line lifted") replaces the limit.
-            let limit = std::env::var("RERAIL_RUN_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or_else(rerail_accel::budget::limit, |mb| mb << 20);
-            let measured = sizing::Measured { nodes: chunk_nodes_built, at_once, start: count_start, end: count_end };
-            let sized = sizing::next(&measured, limit, sizing::FIRST_NODES, chunk_nodes, chunks_at_once);
-            // `RERAIL_CHUNK_NODES` (a measurement aid): every chunk after the first of this many nodes (at most
-            // `chunk_nodes`), whatever was measured, so two runs cut the corpus alike (Q88).
-            let next = std::env::var("RERAIL_CHUNK_NODES").ok().and_then(|v| v.parse::<usize>().ok()).map_or(sized.nodes, |n| n.clamp(1, chunk_nodes));
-            chunk_target.store(next, std::sync::atomic::Ordering::Relaxed);
-            at_once_allowed.store(sized.at_once, std::sync::atomic::Ordering::Relaxed);
+            // What the chunk's blocks wrote sizes a later chunk, in the chunks' order (decision 0435 §4, Q261).
+            let d = {
+                let mut s = schedule.lock();
+                let n = s.counts().1;
+                s.file(n, sizing::Measured { nodes: chunk_nodes_built, bytes: written.bytes, held: written.held })
+            };
+            at_once_allowed.store(d.at_once, std::sync::atomic::Ordering::Relaxed);
             // The device pool's share of what the chunk was sized under: its blocks leased and idle, the rows' blocks.
             #[cfg(target_os = "macos")]
             crate::code_rule_dsl::logic::profile::decision("chunk size: the device pool", || {
@@ -6817,25 +6842,29 @@ fn run_observed(
                 )
             });
             crate::code_rule_dsl::logic::profile::decision("chunk size", || {
-                let by = match sized.by {
-                    sizing::By::Grown => "grown from the last",
+                let by = match d.by {
+                    sizing::By::First => "the first's",
+                    sizing::By::Grown => "grown from this",
                     sizing::By::Most => "the caller's most",
                     sizing::By::Room => "what the room holds",
                 };
                 format!(
-                    "a chunk of {chunk_nodes_built} nodes ({at_once} at once) added {} MB to what the run wrote ({:.0} bytes a node), from {} MB of a limit of {} MB; the next are {next} nodes ({by}; the room holds {}), {} at once",
-                    count_end.saturating_sub(count_start) >> 20,
-                    sized.per_node,
-                    count_start >> 20,
-                    limit >> 20,
-                    sized.fit,
-                    sized.at_once
+                    "a chunk of {chunk_nodes_built} nodes ({at_once} at once) wrote {} MB in its blocks ({:.0} bytes a node), {} MB of them held past it; chunk {} is {} nodes ({by}; {} MB of room left of a limit of {} MB holds {}), {} at once",
+                    written.bytes >> 20,
+                    d.per_node,
+                    written.held >> 20,
+                    d.chunk,
+                    d.nodes,
+                    d.room >> 20,
+                    size_limit >> 20,
+                    d.fit,
+                    d.at_once
                 )
             });
             // The memory limit, not the caller's most, set it: every stratum and matcher launch runs per chunk, so a
             // held chunk is a smaller grain for the device and more runs for the same work (the profile's warnings).
-            if sized.by == sizing::By::Room {
-                crate::code_rule_dsl::logic::profile::decision("chunk cut by the run's memory line", || format!("held to {} nodes by what {} MB leaves past {} MB written", sized.nodes, limit >> 20, count_start >> 20));
+            if d.by == sizing::By::Room {
+                crate::code_rule_dsl::logic::profile::decision("chunk cut by the run's memory line", || format!("chunk {} held to {} nodes by the {} MB of room {} MB leaves", d.chunk, d.nodes, d.room >> 20, size_limit >> 20));
             }
         }
         let outputs_of = |rel: &str| head_outputs.iter().any(|o| o == rel);
