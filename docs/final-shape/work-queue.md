@@ -2789,6 +2789,24 @@ submitted" now hold device memory at once.
     function of the corpus and the memory line; (ii) per-chunk per-stratum work that does not depend on the chunk's
     rows (the program's lookups by name, specs, plans) made once a run and read by each chunk (prepared plans,
     [[planning-lean-replan-slow]]); then 7 vs 16 forced chunks again, by instructions.
+  - (3, done (i), b6d2c1eba) Each chunk keeps an account (`rows::Chunk`): its live blocks' bytes and its jobs' net
+    allocation (jemalloc's per-thread counters, carried into its jobs), at their most; the sizer reads that. Bench
+    (ab72, M1 Max, load 7-21, cost store off; the connection was lost after five runs): default 601.5 G / 10
+    chunks and 720.3 G / 12 chunks; forced 65,300 nodes 604.8 G / 10 chunks, 28,600 nodes 667.9 G / 16 chunks
+    (t54 earlier: 625.0 G / 16). So: the count no longer swings 7-14 on footprint noise, but still 10-12, as the
+    most bytes a node seen depends on which chunks finish first; and the default runs differ by 119 G at 10 vs 12
+    chunks, more than six chunks' cost (~10 G each). The run-to-run spread at a fixed chunking, not the count, is
+    now the larger variance.
+  - (3, measured before (ii)) The row-independent per-chunk work (ab68 profiles, 7 vs 15 chunks): the program's
+    version (`normalized`, 12 ms a chunk), statistics and plan, spec, engine open, live statistics: +0.6 s CPU
+    over 8 chunks, under 0.1 s a chunk of the ~2 s. The growth is in the joins: "engine run (joins)" own CPU
+    9.4 -> 25.3 s at the same step rows (325.1 M in, 413.2 M out in both), every join internal 1.3-1.5x in the
+    samples: a slower rate, not more work. So (ii) as written fixes about 5% of a chunk's cost; it is not done
+    yet, as the rest's cause (the joins' rate, and the spread at a fixed chunking) is not known.
+  - (accounting) Thread CPU counts the jobs rayon's own joins steal: the text tests' "0.366 -> 1.795 s CPU" is
+    other chunks' work run inside `Searchers::evaluate`'s `par_iter` (its own samples are equal, 365 -> 7284
+    of which 6800 stolen); span `own_s` under any `par_iter` is inflated the same way. `exec::helped` covers
+    only `help_once`.
   - (5, regression) e22c75a47's deadline was inherited by jobs run in the wait, and rayon's own waits inside them
     declined and re-stole in a loop; job walls sat under one contended lock. Fixed (a9e38758b).
 - **Open**: (c) the refusals left are leases past a stratum's reservation (an estimate under its rows, or an
