@@ -402,6 +402,26 @@ async function stopWhileScanWaits(ws: Workspace, github: HeldGithub): Promise<{ 
 /** How many rows hold the checkout's kept conflict events: none once a change has taken them. */
 const keptRows = (ws: Workspace): number => ws.database.select().from(mergeAssistState).where(eq(mergeAssistState.key, `unheard:${ws.repo}`)).all().length;
 
+/** The checkout's kept conflict events as stored, each entry as it is. */
+function keptEntries(ws: Workspace): Array<{ event?: unknown; conflict?: unknown }> {
+  const row = ws.database.select().from(mergeAssistState).where(eq(mergeAssistState.key, `unheard:${ws.repo}`)).get();
+  return row === undefined ? [] : (JSON.parse(row.valueJson) as Array<{ event?: unknown; conflict?: unknown }>);
+}
+
+/**
+ * Adds to the checkout's kept events one this build cannot read, an event of a kind it does not know, as a later
+ * build might keep one; `alone`, in their place.
+ */
+function keepUnreadable(ws: Workspace, alone = false): void {
+  const kept = keptEntries(ws);
+  const unreadable = { event: "reopened", conflict: kept[0]?.conflict };
+  const valueJson = JSON.stringify(alone ? [unreadable] : [...kept, unreadable]);
+  ws.database.update(mergeAssistState).set({ valueJson }).where(eq(mergeAssistState.key, `unheard:${ws.repo}`)).run();
+}
+
+/** `count` times `event`. */
+const times = (count: number, event: string): string[] => Array.from({ length: count }, () => event);
+
 /** The checkout's last scan, scan mark and conflicts as a new service reads them. */
 async function stored(ws: Workspace): Promise<Pick<MergeAssistStatus, "lastScan" | "scanning" | "conflicts">> {
   const { lastScan, scanning, conflicts } = await ws.service().status(ws.repo);
@@ -578,6 +598,39 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
 
     const events = byConflict(heard());
     expect({ conflicts: events.size, open: await openConflicts(ws), kept: keptRows(ws) }).toEqual({ conflicts: PEERS, open: PEERS, kept: 0 });
+    for (const sequence of events.values()) expect(sequence).toEqual(["detected", "closed", "detected"]);
+  });
+
+  it.each([
+    ["beside the kept events it can read", false],
+    ["alone", true],
+  ] as const)("hands the hook every kept event it can read and removes the key at the next pass when one kept entry has a shape this build does not know, %s", async (_, alone) => {
+    const ws = await workspace();
+    await conflictsNew(ws);
+    const heard = await loggedHook(ws);
+    await scanEndingWithinStop(ws, "--name-only", []);
+    keepUnreadable(ws, alone);
+
+    await nextPass(ws, []);
+
+    expect({ heard: heard().map(({ event }) => event), kept: keptRows(ws) }).toEqual({ heard: alone ? [] : times(PEERS, "detected"), kept: 0 });
+  });
+
+  it("keeps the kept events it can read beside the events of a scan that ends within the stop's wait when one kept entry has a shape this build does not know, and leaves that entry out", async () => {
+    const ws = await workspace();
+    const heard = await loggedHook(ws);
+    await conflictsStored(ws);
+    peersElsewhere(ws);
+    await scanEndingWithinStop(ws, "--name-only", []);
+    keepUnreadable(ws);
+    peersBack(ws);
+
+    await scanEndingWithinStop(ws, "--name-only", []);
+
+    expect(keptEntries(ws).map(({ event }) => event)).toEqual([...times(PEERS, "closed"), ...times(PEERS, "detected")]);
+    await nextPass(ws, []);
+    const events = byConflict(heard());
+    expect({ conflicts: events.size, kept: keptRows(ws) }).toEqual({ conflicts: PEERS, kept: 0 });
     for (const sequence of events.values()) expect(sequence).toEqual(["detected", "closed", "detected"]);
   });
 

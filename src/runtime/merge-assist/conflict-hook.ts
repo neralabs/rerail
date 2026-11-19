@@ -63,8 +63,16 @@ export function conflictEvents(before: readonly StoredConflict[], after: readonl
   return [...changed, ...gone.map(entry => ({ event: "closed" as const, conflict: entry }))];
 }
 
-/** The checkout's conflict events the hook did not hear, in the order the store changed (`unheard:<checkout>`). */
-const unheardSchema = z.array(z.object({ event: z.enum(CONFLICT_EVENTS), conflict: storedConflictSchema }));
+/** One of the checkout's conflict events the hook did not hear, kept under `unheard:<checkout>` in the order the store changed. */
+const unheardSchema = z.object({ event: z.enum(CONFLICT_EVENTS), conflict: storedConflictSchema });
+
+/** The kept events this build can read: each entry is read on its own, and one it cannot read is left out. */
+function readUnheard(tx: StateQueries, key: string): ConflictFire[] {
+  return (readState(tx, key, z.array(z.unknown())) ?? []).flatMap(entry => {
+    const parsed = unheardSchema.safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
 
 /**
  * A change to the checkout's conflicts that makes `fires` over `before`, the conflicts the store held when it began,
@@ -82,17 +90,17 @@ export interface ConflictChange {
  * The events to hand the hook for `change`, asked in the change's own transaction. While muted, none: its events are
  * kept under the checkout's `unheard` key. Else the events kept there first, then its own, and the key goes: one change
  * takes them, in whichever process, so the hook hears each once and in the order the store changed. A kept event the
- * store contradicts is never handed (`agreeing`).
+ * store contradicts is never handed (`agreeing`), nor one this build cannot read: the key goes with it, and a muted
+ * change that keeps events of its own writes the key without it.
  */
 export function handedEvents(tx: StateQueries, change: ConflictChange): ConflictFire[] {
   const key = STATE_KEYS.unheard(change.checkoutPath);
-  const stored = readState(tx, key, unheardSchema) ?? [];
-  const kept = agreeing(stored, change.before);
+  const kept = agreeing(readUnheard(tx, key), change.before);
   if (change.muted) {
     if (change.fires.length > 0) keepUnheard(tx, key, unheardAfter(kept, change.fires), change.now);
     return [];
   }
-  if (stored.length > 0) deleteState(tx, key);
+  deleteState(tx, key);
   return [...kept, ...change.fires];
 }
 
