@@ -632,7 +632,7 @@ Progress (2026-11-18):
       `ukl_fence_device`), and bit counts and minimums as `ukl_clz32`, `ukl_min` and so on. The reads' own helper
       block is gone;
     - a read marked cold (0310's policy: `tape_f16_side`, `tape_parent`, `tape_z_block`, two of the numbering's) as
-      `UKL_COLD`. That is a call on CUDA (`__noinline__`) and `static inline` on Metal, as before. Every read forced
+      `UKL_COLD`. That is a call on CUDA (`__noinline__`) and on Metal (`noinline`; below). Every read forced
       inline (CUDA's `UKL_INLINE`) put 16z's block decode into each of a kernel's 23 calls: NVRTC ran past 500 s and
       3 GB on the conformance kernel. With the cold reads called it takes 12 s on the V100.
     - The structs the reads are over (`TapeView`, `ViewRow`, `ViewDir`, `ViewDoc`, `Run`, `Numbering`) are written
@@ -666,10 +666,14 @@ Progress (2026-11-18):
     (`a_sources_rows_in_their_block_are_read_in_place`, `column_statistics_...`), the join kernels with all four
     (`a_strata_seeds_on_the_device_...`) and the label kernels (`the_label_kernels_compile_for_every_format`).
   - **Found on the way:**
-    - `the_view_reads_are_the_hosts_rows` times out cold, with the old MSL as with the new. Its kernel's Metal back
-      end takes 412 s with the old reads and 387 s with the new, measured with no shader cache. It passes only when
-      the system's shader cache already holds the kernel. That is the view reads' code size in one kernel, and it
-      is still open.
+    - `the_view_reads_are_the_hosts_rows` timed out cold, with the old MSL as with the new: its kernel's Metal back
+      end took 412 s with the old reads and 387 s with the new, measured with no shader cache. The front end took
+      under a second, so the text the back end never reaches (dead code) is not the cost; the code it reaches after
+      inlining is. A kernel calling `view_node` alone took 138 s; `child` 42 s, `field` 54 s, `line` 14 s. Fixed:
+      `UKL_COLD` is a call on Metal too (`__attribute__((noinline))`). The whole kernel's back end takes 2.9 s, the
+      test 3.2 s, and `the_label_kernels_compile_for_every_format` 55 s (86 s before). The price, measured: a kernel
+      that only walks parents (`clif_tape_parent` is cold), 2^20 threads over format 16, runs in 11.60 ms called and
+      11.45 ms inlined (best of 7, twice each), 1.3%. A kernel may define `UKL_COLD` as `UKL_INLINE` first.
     - The engine's and `rerail-device-metal`'s test targets did not compile on this branch. Five calls predated
       `in_format`'s `source` argument and `DocTape::new`'s, and a glob re-export missed a `pub(super)` function.
       They are fixed.
