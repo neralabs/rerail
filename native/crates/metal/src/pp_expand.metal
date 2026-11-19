@@ -337,3 +337,177 @@ kernel void pd_relex_test(device const uchar* bytes [[buffer(0)]], device const 
     uint a = offsets[i];
     out[i] = relex(bytes + a, offsets[i + 1u] - a, o);
 }
+
+// --- Setup: the text map -----------------------------------------------------------------------
+//
+// A file's text tokens are the leaves of its `code` nodes, in order. Each node's owner is the
+// nearest node at or before it with leaves (a max scan of their indexes); a text token is a leaf
+// whose owner is a `code` node. A scan of those flags gives each its rank, and the ranks place
+// the unit's text tokens (`text_nodes`), each file's from its root's rank.
+
+// Each node's index where it has leaves, else 0: the max scan's input.
+kernel void pe_owner_in(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
+                        device const uint* bases [[buffer(2)]], device const uint* total [[buffer(3)]],
+                        device uint* out [[buffer(4)]], constant uint& n_files [[buffer(5)]],
+                        uint g [[thread_position_in_grid]]) {
+    if (g >= total[0]) return;
+    uint f = file_of(bases, n_files, g);
+    Tape t = tape_at(data, files[f].tape);
+    out[g] = node_size(t, g - bases[f]) > 1u ? g : 0u;
+}
+
+// Whether each node is a text token: a leaf whose owner is a `code` node.
+kernel void pe_text_flag(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
+                         device const uint* bases [[buffer(2)]], device const uint* total [[buffer(3)]],
+                         device const uint* owner [[buffer(4)]], device uint* flag [[buffer(5)]],
+                         constant uint& n_files [[buffer(6)]], uint g [[thread_position_in_grid]]) {
+    if (g >= total[0]) return;
+    uint f = file_of(bases, n_files, g);
+    Tape t = tape_at(data, files[f].tape);
+    uint i = g - bases[f];
+    flag[g] = node_size(t, i) == 1u && node_kind(t, owner[g] - bases[f]) == K_CODE ? 1u : 0u;
+}
+
+// Each text token's node at its rank.
+kernel void pe_text_nodes(device const uint* flag [[buffer(0)]], device const uint* rank [[buffer(1)]],
+                          device const uint* total [[buffer(2)]], device uint* text_nodes [[buffer(3)]],
+                          uint g [[thread_position_in_grid]]) {
+    if (g < total[0] && flag[g] != 0u) text_nodes[rank[g]] = g;
+}
+
+// --- Setup: the visibility rows (S6, S7) --------------------------------------------------------
+//
+// Each active `#define` (well-formed) and `#undef` (named) of each instance is a row at its
+// directive's slot: its name's key, and its definition (its directive row) or none. A scan
+// places the rows after the built-ins' (at slot 0, given by the configuration); one stable radix
+// sort orders them by (the key's upper 32 bits, slot). A use at slot `p` sees the latest row of
+// its name before `p`: a search, then a walk back past rows of other names whose keys share the
+// upper 32 bits (a collision; the walk is bounded, past it the unit is refused).
+
+// An instance of a file in the unit's layout (test input until P1 runs on the device): its file,
+// its first directive and its first stretch in the layout's per-directive and per-stretch arrays.
+struct PpInst { uint file, dir_first, gap_first; };
+
+// A row's definition where it is an `#undef`, and a lookup's answers that are no row.
+constant uint V_UNDEF = 0xffffffffu, L_NOT_NAME = 0xffffffffu, L_NONE = 0xfffffffeu, L_BUILTIN = 0xfffffffdu;
+// A row's definition where it is a built-in.
+constant uint V_BUILTIN = 0xfffffffdu;
+constant uint WALK = 64u;
+
+// Each instance's directive `j`'s row, where it makes one (a flag, then its place by a scan).
+kernel void pe_row_flag(device const PpInst* insts [[buffer(0)]], device const uint* n_insts [[buffer(1)]],
+                        device const uint* dactive [[buffer(2)]], device const uint* n_dirs [[buffer(3)]],
+                        device const uint* dir_bases [[buffer(4)]], device const PpDir* rows [[buffer(5)]],
+                        device const PpDef* defs [[buffer(6)]], device const ulong* dir_keys [[buffer(7)]],
+                        device uint* flag [[buffer(8)]], uint j [[thread_position_in_grid]]) {
+    if (j >= n_dirs[0]) return;
+    uint i = 0u, lo = 0u, hi = n_insts[0];
+    for (uint k = 0u; k < 32u && hi - lo > 1u; k++) {
+        uint mid = (lo + hi) / 2u;
+        if (insts[mid].dir_first <= j) lo = mid; else hi = mid;
+    }
+    i = lo;
+    uint r = dir_bases[insts[i].file] + (j - insts[i].dir_first);
+    uint kind = rows[r].kind;
+    bool row = dactive[j] != 0u && ((kind == K_DEFINE && (defs[r].flags & D_BAD) == 0u) || (kind == K_UNDEF && dir_keys[r] != 0ul));
+    flag[j] = row ? 1u : 0u;
+}
+
+// The rows at their places (`at`, the flags' scan) after the `n_builtin` built-ins': each its sort
+// key (the name's upper 32 bits, its slot), its name's key, and its definition.
+kernel void pe_rows(device const PpInst* insts [[buffer(0)]], device const uint* n_insts [[buffer(1)]],
+                    device const uint* dslot [[buffer(2)]], device const uint* n_dirs [[buffer(3)]],
+                    device const uint* dir_bases [[buffer(4)]], device const PpDir* rows [[buffer(5)]],
+                    device const ulong* dir_keys [[buffer(6)]], device const uint* flag [[buffer(7)]],
+                    device const uint* at [[buffer(8)]], device ulong* sort_keys [[buffer(9)]],
+                    device ulong* name_keys [[buffer(10)]], device uint* values [[buffer(11)]],
+                    constant uint& n_builtin [[buffer(12)]], uint j [[thread_position_in_grid]]) {
+    if (j >= n_dirs[0] || flag[j] == 0u) return;
+    uint lo = 0u, hi = n_insts[0];
+    for (uint k = 0u; k < 32u && hi - lo > 1u; k++) {
+        uint mid = (lo + hi) / 2u;
+        if (insts[mid].dir_first <= j) lo = mid; else hi = mid;
+    }
+    uint r = dir_bases[insts[lo].file] + (j - insts[lo].dir_first);
+    ulong key = dir_keys[r];
+    uint place = n_builtin + at[j];
+    sort_keys[place] = (key & 0xffffffff00000000ul) | ulong(dslot[j]);
+    name_keys[place] = key;
+    values[place] = rows[r].kind == K_DEFINE ? r : V_UNDEF;
+}
+
+// The rows in all: the built-ins' and the scan's.
+kernel void pe_rows_total(device const uint* scanned [[buffer(0)]], device uint* n_rows [[buffer(1)]],
+                          constant uint& n_builtin [[buffer(2)]], uint i [[thread_position_in_grid]]) {
+    if (i == 0u) n_rows[0] = scanned[0] + n_builtin;
+}
+
+// What `key` means at slot `slot`: the latest row of it before the slot, in the sorted rows
+// (`sorted`, their places in `perm`).
+inline uint visible(device const ulong* sorted, device const uint* perm, uint n, device const ulong* name_keys,
+                    device const uint* values, ulong key, uint slot, device atomic_uint* bad) {
+    ulong q = (key & 0xffffffff00000000ul) | ulong(slot);
+    uint c = pb_lower_bound(sorted, n, q);
+    for (uint k = 0u; k < WALK; k++) {
+        if (c == 0u || (sorted[c - 1u] >> 32) != (key >> 32)) return L_NONE;
+        c--;
+        uint p = perm[c];
+        if (name_keys[p] == key) {
+            uint v = values[p];
+            return v == V_UNDEF ? L_NONE : v == V_BUILTIN ? L_BUILTIN : v;
+        }
+    }
+    atomic_fetch_or_explicit(bad, 1u << 29, memory_order_relaxed);
+    return L_NONE;
+}
+
+// --- Setup: the stretches (S8) and their names' meanings (R4) ------------------------------------
+
+// Each instance's stretch `j`'s tokens (0 where it is not active): from the directive before it
+// to the one after it, by the rows' text counts; the file's text after its last directive.
+kernel void pe_gap_counts(device const PpInst* insts [[buffer(0)]], device const uint* n_insts [[buffer(1)]],
+                          device const uint* gactive [[buffer(2)]], device const uint* n_gaps [[buffer(3)]],
+                          device const uint* dir_bases [[buffer(4)]], device const uint* dir_total [[buffer(5)]],
+                          device const PpDir* rows [[buffer(6)]], device const uint* bases [[buffer(7)]],
+                          device const uint* total [[buffer(8)]], device const uint* text_rank [[buffer(9)]],
+                          device const uint* text_total [[buffer(10)]], device uint* counts [[buffer(11)]],
+                          device uint* firsts [[buffer(12)]], constant uint& n_files [[buffer(13)]],
+                          uint j [[thread_position_in_grid]]) {
+    if (j >= n_gaps[0]) return;
+    uint lo = 0u, hi = n_insts[0];
+    for (uint k = 0u; k < 32u && hi - lo > 1u; k++) {
+        uint mid = (lo + hi) / 2u;
+        if (insts[mid].gap_first <= j) lo = mid; else hi = mid;
+    }
+    uint f = insts[lo].file, k = j - insts[lo].gap_first;
+    uint d0 = dir_bases[f], d1 = f + 1u < n_files ? dir_bases[f + 1u] : dir_total[0];
+    uint t0 = text_rank[bases[f]], t1 = f + 1u < n_files ? text_rank[bases[f + 1u]] : text_total[0];
+    uint first = k == 0u ? 0u : rows[d0 + k - 1u].text_before;
+    uint end = d0 + k < d1 ? rows[d0 + k].text_before : t1 - t0;
+    counts[j] = gactive[j] != 0u ? end - first : 0u;
+    firsts[j] = t0 + first;
+}
+
+// Each active stretch token's meaning where it stands (R4's test): `L_NOT_NAME` where it is no
+// identifier, else what its key means at its stretch's slot.
+kernel void pe_lookups(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
+                       device const uint* bases [[buffer(2)]], device const ulong* keys [[buffer(3)]],
+                       device const uint* text_nodes [[buffer(4)]], device const uint* gap_at [[buffer(5)]],
+                       device const uint* n_gaps [[buffer(6)]], device const uint* firsts [[buffer(7)]],
+                       device const uint* gslot [[buffer(8)]], device const uint* n_toks [[buffer(9)]],
+                       device const ulong* sorted [[buffer(10)]], device const uint* perm [[buffer(11)]],
+                       device const uint* n_rows [[buffer(12)]], device const ulong* name_keys [[buffer(13)]],
+                       device const uint* values [[buffer(14)]], device uint* out [[buffer(15)]],
+                       device atomic_uint* bad [[buffer(16)]], constant uint& n_files [[buffer(17)]],
+                       uint s [[thread_position_in_grid]]) {
+    if (s >= n_toks[0]) return;
+    uint j = pb_item_of(gap_at, n_gaps[0], s);
+    uint g = text_nodes[firsts[j] + (s - gap_at[j])];
+    uint f = file_of(bases, n_files, g);
+    Tape t = tape_at(data, files[f].tape);
+    if (node_kind(t, g - bases[f]) != K_IDENTIFIER) {
+        out[s] = L_NOT_NAME;
+        return;
+    }
+    out[s] = visible(sorted, perm, n_rows[0], name_keys, values, keys[g], gslot[j], bad);
+}

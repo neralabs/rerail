@@ -164,6 +164,11 @@ impl Front {
         &self.scan.total
     }
 
+    /// The indirect arguments of a pass a node each (after `encode`).
+    pub fn node_args(&self) -> &MappedBuffer {
+        &self.args
+    }
+
     /// The unit's directive rows in all (after `encode`).
     pub fn dir_total(&self) -> &MappedBuffer {
         &self.dir_scan.total

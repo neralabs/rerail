@@ -156,6 +156,130 @@ pub fn run(cfg: Config, io: &mut dyn Files, path: &str) -> (Outcome, Stats) {
     (out, stats)
 }
 
+/// What a name in the text means where it stands (decision 0448, R4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lookup {
+    /// The token is no identifier.
+    NotName,
+    /// No macro (none defined, or `#undef`).
+    None,
+    /// A built-in macro.
+    Builtin,
+    /// The `#define` at directive `dir` of unit file `file`.
+    Def { file: u32, dir: u32 },
+}
+
+/// An instance of a file in a unit's include tree, laid out (the test input of 0448's P1, until
+/// P1's includes and conditionals run on the device): its file, each directive's slot (a
+/// position `SUB` bits down) and whether it is active, and each stretch of text between
+/// directives (`k` from 0: before directive `k`, the last after all): its first slot, whether
+/// it is active, and its tokens' range in the file's text.
+#[derive(Clone, Debug)]
+pub struct P1Inst {
+    pub file: u32,
+    pub dir_slots: Vec<u64>,
+    pub dir_active: Vec<bool>,
+    pub gap_slots: Vec<u64>,
+    pub gap_active: Vec<bool>,
+    pub gap_tokens: Vec<(u32, u32)>,
+}
+
+/// A unit's P1 state at its fixpoint, as the spike reads it: its files' sources (by the spike's
+/// file id; 0 is the predefines), its instances in the unit's order, and every token of every
+/// active stretch in that order, with what it means where it stands.
+pub struct P1 {
+    pub files: Vec<Vec<u8>>,
+    /// The built-in macros' names: rows at slot 0, before every other.
+    pub builtins: Vec<Vec<u8>>,
+    pub insts: Vec<P1Inst>,
+    pub lookups: Vec<Lookup>,
+}
+
+/// The unit whose main file is `path`, read by the spike's P1, under `cfg` and `io`; or why it
+/// is not one the device's expansion reads yet (push and pop rows, pragmas made in text).
+pub fn p1_of(cfg: Config, io: &mut dyn Files, path: &str) -> Result<P1, &'static str> {
+    let mut stats = Stats::default();
+    let mut null = Null;
+    let mut pp = Pp::new(cfg, io, &mut null);
+    let src = pp.io.read(path).ok_or("the main file is not read")?;
+    let mut pre = String::new();
+    for (n, b) in &pp.cfg.predefines {
+        match b {
+            Some(b) => pre.push_str(&format!("#define {n} {b}\n")),
+            None => pre.push_str(&format!("#undef {n}\n")),
+        }
+    }
+    let builtin = pp.add_file("<built-in>".into(), pre.into_bytes(), None);
+    let main = pp.add_file(path.to_string(), src, None);
+    pp.base = main;
+    let builtins: Vec<(u32, u64, u32)> = pp.macros.iter().enumerate().filter(|&(_, &d)| d != 0).map(|(s, &d)| (s as u32, 0, d)).collect();
+    let mut tu = rounds::Tu::new(&mut pp, builtin, main);
+    let (state, lay) = rounds::settle(&mut pp, &mut tu, &builtins, &mut stats)?;
+    // Each definition's directive.
+    let mut def_at = std::collections::HashMap::new();
+    for (file, tab) in tu.tabs.iter().enumerate() {
+        for (d, dir) in tab.iter().flat_map(|t| t.dirs.iter()).enumerate() {
+            if let files::Act::Define(k) = dir.act {
+                def_at.insert(k, (file as u32, d as u32));
+            }
+        }
+    }
+    let vis = pp.vis.as_ref().ok_or("no positional table")?;
+    let (mut insts, mut lookups) = (Vec::new(), Vec::new());
+    for &i in &lay.order {
+        let tab = tu.tab_of(i);
+        if !state.events[i as usize].is_empty() {
+            return Err("pragmas made in text");
+        }
+        let n = tab.dirs.len();
+        let mut inst = P1Inst { file: tu.insts[i as usize].file, dir_slots: Vec::new(), dir_active: Vec::new(), gap_slots: Vec::new(), gap_active: Vec::new(), gap_tokens: Vec::new() };
+        for (d, dir) in tab.dirs.iter().enumerate() {
+            let active = state.active(tab, i, d);
+            if active && matches!(dir.act, files::Act::Push(_) | files::Act::Pop(_)) {
+                return Err("push and pop");
+            }
+            inst.dir_slots.push(lay.dir_pos(tab, i, d) >> SUB);
+            inst.dir_active.push(active);
+        }
+        for k in 0..=n {
+            let group = if k == 0 { 0 } else { tab.dirs[k - 1].after };
+            let first = if k == 0 { 0 } else { tab.dirs[k - 1].text_before };
+            let end = if k < n { tab.dirs[k].text_before } else { tab.text.len() as u32 };
+            let pos = lay.text_pos(tab, i, k);
+            let active = state.groups[i as usize][group as usize];
+            inst.gap_slots.push(pos >> SUB);
+            inst.gap_active.push(active);
+            inst.gap_tokens.push((first, end));
+            if active {
+                for t in &tab.text[first as usize..end as usize] {
+                    lookups.push(if t.kind != rerail_c_lean::pp::P::Ident {
+                        Lookup::NotName
+                    } else {
+                        match vis.at(t.sym, pos) {
+                            None => Lookup::None,
+                            Some(d) if pp.defs[d as usize].builtin.is_some() => Lookup::Builtin,
+                            Some(d) => {
+                                let &(file, dir) = def_at.get(&d).ok_or("a definition of no directive")?;
+                                Lookup::Def { file, dir }
+                            }
+                        }
+                    });
+                }
+            }
+        }
+        insts.push(inst);
+    }
+    let files = pp.files.iter().map(|f| f.src.to_vec()).collect();
+    let mut names = Vec::new();
+    for &(sym, _, d) in &builtins {
+        if pp.defs[d as usize - 1].builtin.is_none() {
+            return Err("a definition before the predefines");
+        }
+        names.push(pp.syms.text(sym).to_vec());
+    }
+    Ok(P1 { files, builtins: names, insts, lookups })
+}
+
 /// A directive of a file's P0 tables (`files::tabulate`), as the evaluator's file pass makes it
 /// from the file's tape (decision 0436): its tape kind (`tape::kind_id`), the text tokens before
 /// it, the group it is read in, the group after it, and its chain (`u32::MAX`: none).

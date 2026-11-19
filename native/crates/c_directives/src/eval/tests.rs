@@ -239,3 +239,89 @@ fn the_paste_relexer_is_the_lexers() {
     }
     eprintln!("{} spellings, 5 dialects", texts.len());
 }
+
+/// One unit of R4: its main file read by the spike's P1, then its layout's lookups on the device
+/// against `Vis::at`'s. `None` where P1 refuses it (the reason counted).
+fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, path: &str, cpp: bool, what: &str) -> Result<[usize; 3], &'static str> {
+    use rerail_c_pp::stream::parallel::{Lookup, p1_of};
+    use rerail_metal::pp_expand::{L_BUILTIN, L_NONE, L_NOT_NAME, Layout, PpInst, lookups};
+    let p1 = p1_of(cfg, io, path)?;
+    let tapes: Vec<Vec<u8>> = p1.files.iter().map(|s| image(s, crate::pp::options(cpp))).collect();
+    let unit = Unit::load(&p1.files.iter().zip(&tapes).map(|(s, t)| (s.as_slice(), t.as_slice())).collect::<Vec<_>>()).unwrap();
+    let mut lay = Layout { insts: Vec::new(), dir_slots: Vec::new(), dir_active: Vec::new(), gap_slots: Vec::new(), gap_active: Vec::new(), builtins: p1.builtins.iter().map(|n| name_key(n)).collect() };
+    for i in &p1.insts {
+        lay.insts.push(PpInst { file: i.file, dir_first: lay.dir_slots.len() as u32, gap_first: lay.gap_slots.len() as u32 });
+        let slot = |s: u64| u32::try_from(s).expect("a slot in 32 bits");
+        lay.dir_slots.extend(i.dir_slots.iter().map(|&s| slot(s)));
+        lay.dir_active.extend(i.dir_active.iter().map(|&a| u32::from(a)));
+        lay.gap_slots.extend(i.gap_slots.iter().map(|&s| slot(s)));
+        lay.gap_active.extend(i.gap_active.iter().map(|&a| u32::from(a)));
+    }
+    let (ev, got) = lookups(&unit, &lay).unwrap();
+    same(got.len(), p1.lookups.len(), format!("{what}: the active text's tokens"));
+    for (k, (&g, want)) in got.iter().zip(&p1.lookups).enumerate() {
+        let g = match g {
+            L_NOT_NAME => Lookup::NotName,
+            L_NONE => Lookup::None,
+            L_BUILTIN => Lookup::Builtin,
+            r => {
+                let f = ev.dir_bases.partition_point(|&b| b <= r) - 1;
+                Lookup::Def { file: f as u32, dir: r - ev.dir_bases[f] }
+            }
+        };
+        same(g, *want, format!("{what}: token {k}"));
+    }
+    let defs = p1.lookups.iter().filter(|l| matches!(l, Lookup::Def { .. })).count();
+    let builtins = p1.lookups.iter().filter(|l| matches!(l, Lookup::Builtin)).count();
+    Ok([got.len(), defs, builtins])
+}
+
+/// R4 of decision 0448: every token of the unit's active text has the meaning on the device that
+/// the spike's `Vis::at` gives it (no name, no macro, a built-in, or the `#define` it sees),
+/// from the visibility rows (a row an active `#define` or `#undef`, one stable sort) and a
+/// search a token. On shapes of includes, conditionals, redefinitions and undefs, then on the
+/// corpus, each file its own unit with empty stubs for the headers it names.
+#[test]
+fn every_name_sees_the_spikes_definition() {
+    use rerail_c_pp::Config;
+    use rerail_c_pp::files::{DirKind, Search};
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define A 1\nA B\n#undef A\nA\n#define A 2\nA __LINE__ __FILE__\n")],
+        &[("main.c", "#include \"a.h\"\nX Y\n#include \"a.h\"\nX\n"), ("a.h", "#ifndef X\n#define X x\n#else\n#undef X\n#define Y y\n#endif\n")],
+        &[("main.c", "#if defined(Q)\n#define R 1\n#elif 1\n#define R 2\n#endif\nR\n#define Q\n#include \"b.h\"\nR\n"), ("b.h", "#ifdef Q\n#define R 3\nR\n#endif\n")],
+        &[("main.c", "#define F(x) x\nF(F)(1)\n#define F 0\nF\n#include \"c.h\"\nF\n"), ("c.h", "F\n#undef F\nF\n")],
+        &[("main.c", "int main(void) { return 0; }\n")],
+        &[("main.c", "")],
+    ];
+    let mut tokens = [0; 3];
+    let mut add = |n: [usize; 3]| (0..3).for_each(|i| tokens[i] += n[i]);
+    for (k, files) in shapes.iter().enumerate() {
+        for cpp in [false, true] {
+            let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
+            let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
+            add(lookups_agree(Config::new(crate::pp::options(cpp)), &mut io, "main.c", cpp, &format!("shape {k}")).unwrap());
+        }
+    }
+    let root = std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus");
+    let count = std::env::var("RERAIL_PP_COUNT").ok().and_then(|n| n.parse().ok()).unwrap_or(40);
+    let first = std::env::var("RERAIL_PP_FIRST").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+    let (mut units, mut refused) = (0, std::collections::BTreeMap::<&str, usize>::new());
+    for (dir, cpp) in [("c", false), ("cpp", true)] {
+        let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
+        let mut paths: Vec<_> = rd.flatten().map(|e| e.path()).collect();
+        paths.sort();
+        for p in paths.into_iter().skip(first).take(count) {
+            let path = p.to_string_lossy().into_owned();
+            // Every header a stub, empty: `<>` ones after the search path, `""` ones beside it.
+            let mut io = Search::new(vec![("<stub>".into(), DirKind::After)], |q: &str| std::fs::read(q).ok().or_else(|| q.starts_with("<stub>").then(Vec::new)));
+            match lookups_agree(Config::new(crate::pp::options(cpp)), &mut io, &path, cpp, &path) {
+                Ok(n) => {
+                    units += 1;
+                    add(n);
+                }
+                Err(why) => *refused.entry(why).or_default() += 1,
+            }
+        }
+    }
+    eprintln!("{} shapes, {units} corpus units: {} tokens, {} of a definition, {} of a built-in; refused {refused:?}", shapes.len() * 2, tokens[0], tokens[1], tokens[2]);
+}

@@ -212,3 +212,21 @@ outermost call becomes the queue's first items.
   device does not read, sends the unit to the CPU. On every pair of 102 spellings (10,506
   spellings) under C17, C23, GNU C17, C++17 and C++20 it answers as the lexer does
   (`the_paste_relexer_is_the_lexers`).
+- **R4, the visibility rows and the lookups** (`pp_expand.rs`'s `Vis`, `pp_expand.metal`'s
+  `pe_*`), each pass one thread an element, sized on the device:
+  - the text map: a file's text tokens are the leaves of its `code` nodes; a max scan of the
+    nodes with leaves gives each leaf its owner, a scan ranks the text leaves, and each is placed
+    at its rank (`text_nodes`), so a stretch's tokens are a range of tape nodes, read in place;
+  - the rows: a flag an active, well-formed `#define` or named `#undef`, a scan, the rows after
+    the configuration's built-ins (slot 0), then one stable radix sort by (the key's upper 32
+    bits, slot);
+  - the stretches: a count of each active one's tokens, a scan;
+  - a lookup a stretch token: a search for the latest row of its key before its stretch's slot,
+    walking back past rows whose keys share the upper half (bounded at 64; past it the unit is
+    refused).
+  The layout (instances, slots, active groups) is the spike's, as test input (`parallel::p1_of`,
+  which refuses units with push/pop rows or pragmas made in text). On 12 shapes (includes,
+  guards, conditionals, redefinitions, undefs, built-ins) and the whole corpus, each file a unit
+  with empty stubs for its headers (3,133 units, 6.9 M active text tokens, 25,979 uses of a
+  definition, 184 of a built-in), every token's meaning is `Vis::at`'s; 2 units are refused by
+  the spike (`#line`). `every_name_sees_the_spikes_definition`.
