@@ -280,6 +280,7 @@ pub fn inspect_rr_policy(path: String, source: Option<&rerail_w::code_rule_dsl::
 #[cfg(not(feature = "headless"))]
 #[derive(Clone)]
 struct LoadedRrPolicy {
+    local_path: Option<std::path::PathBuf>,
     program: rerail_rr_syntax::code_rule_dsl::logic::front::ast::Program,
     files: Vec<code_rule_dsl::logic::rr::LibraryFile>,
 }
@@ -288,8 +289,9 @@ struct LoadedRrPolicy {
 impl LoadedRrPolicy {
     fn read(path: &str, snapshot: Option<&git_workspace::snapshot::Snapshot>) -> Result<Self> {
         let path = rr_policy_path(path, snapshot)?;
-        let (program, files) = tools::read_policy(&path).map_err(Error::from_reason)?;
-        Ok(Self { program, files })
+        let local_path = if snapshot.is_none() { Some(path.canonicalize().map_err(|error| Error::from_reason(format!("{}: {error}", path.display())))?) } else { None };
+        let (program, files) = tools::read_policy(local_path.as_deref().unwrap_or(&path)).map_err(Error::from_reason)?;
+        Ok(Self { local_path, program, files })
     }
 
     fn inspection(&self) -> Result<String> {
@@ -317,14 +319,22 @@ impl LoadedRrPolicies {
 
     #[napi]
     pub fn load(&self, path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
-        let read = || LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()).as_deref());
-        let policy = match &self.store {
+        let read = || {
+            if source.is_none() && let Ok(local) = Path::new(&path).canonicalize()
+                && let Some(policy) = self.programs.lock().unwrap_or_else(|err| err.into_inner()).get(&path)
+                && policy.local_path.as_ref() == Some(&local) && policy.files.iter().all(|file| file.unchanged())
+            {
+                return policy.inspection();
+            }
+            let policy = LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()).as_deref())?;
+            let inspection = policy.inspection()?;
+            self.programs.lock().unwrap_or_else(|err| err.into_inner()).insert(path.clone(), policy);
+            Ok(inspection)
+        };
+        match &self.store {
             Some(store) => code_rule_dsl::logic::plan::corpus::with_tape_cache_path(store, None, read),
             None => read(),
-        }?;
-        let inspection = policy.inspection()?;
-        self.programs.lock().unwrap_or_else(|error| error.into_inner()).insert(path, policy);
-        Ok(inspection)
+        }
     }
 }
 
@@ -388,6 +398,7 @@ impl napi::Task for ScanRrPolicies {
         let ownership = self.owner.clone().map(|owner| (root.to_owned(), owner));
         code_rule_dsl::logic::plan::corpus::with_tape_cache_path(path, ownership, || {
             let options = serde_json::json!({ "sourcePaths": self.source_paths, "scanSpans": true, "reuse": path != Path::new(":memory:") });
+            let preloaded = self.policies.is_some();
             let policies = self.policies.take().unwrap_or_else(|| self.paths.iter().map(|path|
                 LoadedRrPolicy::read(path, self.policy_snapshot.as_deref()).map_err(|error| error.to_string())
             ).collect());
@@ -407,7 +418,7 @@ impl napi::Task for ScanRrPolicies {
             let mut reports = Vec::new();
             let mut ephemeral = path == Path::new(":memory:");
             for (i, policy) in policies.into_iter().enumerate() {
-                let (LoadedRrPolicy { program, files }, ids) = match policy {
+                let (LoadedRrPolicy { program, files, local_path }, ids) = match policy {
                     Ok(policy) => policy,
                     Err(error) => {
                         reports.push(serde_json::json!({"error": error, "ruleId": null}));
@@ -422,6 +433,9 @@ impl napi::Task for ScanRrPolicies {
                 let report = if ephemeral {
                     None
                 } else {
+                    if preloaded && let Some(path) = &local_path && files.iter().all(|file| file.unchanged()) {
+                        code_rule_dsl::logic::rr::retain_read_program(path, &files, &program);
+                    }
                     match tools::run_program_checked(program.clone(), &files, root, &out, &options) {
                         Ok(report) => Some(Ok(report)),
                         Err(tools::ProgramRunError::Cache(error)) => {

@@ -1645,6 +1645,29 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
     }
   }, 30_000);
 
+  it("runs the inspected policy after an include changes and refreshes it on the next inspection", async () => {
+    const root = checkout(), home = root + "-home";
+    mkdirSync(home);
+    const engine = loadNativeBinding(), policy = join(home, "files.rr"), include = join(home, "word.rr");
+    const catalog = new engine.LoadedRrPolicies(join(home, "inspection.sqlite"));
+    const store = join(home, "execution.sqlite");
+    const view = new engine.GitRevisionSource(root, "HEAD", "policy-edits");
+    const word = (value: string) => `.decl ref_message(text: symbol)\nref_message("${value}").\n`;
+    writeFileSync(policy, '#include "git.rr"\n#include "word.rr"\n.policy "words" revision 1\n.violation Seen(at: span, w: symbol) "{w}"\nSeen(@place("a.py", 1), w) :- git_source_commit(_, _), ref_message(w).\n');
+    writeFileSync(include, word("one"));
+    const inspect = () => JSON.parse(catalog.load(policy)).programInputs.find((input: { path: string }) => input.path === include)?.sha256;
+    const run = async (pinned: boolean) => {
+      const [report] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, store, "", undefined, undefined, view, undefined, pinned ? catalog : undefined));
+      return report.diagnostics.map((row: { message: string }) => row.message);
+    };
+    expect(inspect()).toBe(createHash("sha256").update(word("one")).digest("hex"));
+    writeFileSync(include, word("two"));
+    expect(await run(true)).toEqual(["one"]);
+    expect(await run(false)).toEqual(["two"]);
+    expect(inspect()).toBe(createHash("sha256").update(word("two")).digest("hex"));
+    expect(await run(true)).toEqual(["two"]);
+  });
+
   it("retains the inventory plans of a reused view after scope deletion and across stores", async () => {
     const root = checkout(), home = root + "-home";
     mkdirSync(home);
@@ -1657,18 +1680,22 @@ Seen(n) :- kind(n, "identifier").
 `);
     const open = () => new engine.GitRevisionSource(root, "HEAD", "repeat");
     const view = open(), first = join(home, "first.sqlite"), other = join(home, "other.sqlite");
-    const retained = (store: string) => queryContentStore<{ policy: string; plan: string }>(store,
+    const retained = (store: string, scope = "repeat") => queryContentStore<{ policy: string; plan: string }>(store,
       `SELECT DISTINCT hex(m.policy) AS policy, hex(p.plan_digest) AS plan FROM analysis_scope_manifest a
        JOIN corpus_manifests m USING(manifest_id) JOIN corpus_manifest_plans p USING(manifest_id)
-       WHERE a.scope='named:repeat' ORDER BY policy,plan`);
-    const evaluate = async (source: typeof view, store: string, publish: boolean) => {
-      const run = new engine.AnalysisScopeRun(store, "repeat", false, "test", 0);
-      const [report] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, store, "", run, undefined, source));
+       WHERE a.scope=? ORDER BY policy,plan`, ["named:" + scope]);
+    const priming = join(home, "priming.sqlite");
+    const inspected = new engine.LoadedRrPolicies(priming);
+    inspected.load(policy);
+    const evaluate = async (source: typeof view, store: string, publish: boolean, file = policy, scope = "repeat") => {
+      const run = new engine.AnalysisScopeRun(store, scope, false, "test", 0);
+      const loaded = store === first && file === policy ? inspected : undefined;
+      const [report] = JSON.parse(await engine.scanRrPoliciesAsync([file], root, store, "", run, undefined, source, undefined, loaded));
       expect(report.diagnostics.length).toBeGreaterThan(0);
       expect(run.finish(publish)).toBeNull();
     };
     // A daemon can have already inspected these libraries for a different store.
-    await evaluate(open(), join(home, "priming.sqlite"), true);
+    await evaluate(open(), priming, true);
     await evaluate(view, first, true);
     const baseline = retained(first);
     expect(new Set(baseline.map(row => row.policy)).size).toBeGreaterThan(2);
@@ -1683,7 +1710,23 @@ Seen(n) :- kind(n, "identifier").
     engine.deleteAnalysisScope(other, "repeat", false);
     await evaluate(open(), other, true);
     expect(retained(other)).toEqual(otherPlans);
+    const control = join(home, "control.rr");
+    writeFileSync(control, readFileSync(policy, "utf8").replace('policy "files"', 'policy "control"').replace('kind(n, "identifier")', 'kind(n, "integer")'));
+    await evaluate(open(), first, true, control, "release-only");
+    const survivingPlans = new Set(baseline.map(row => row.plan));
+    const controlPlans = retained(first, "release-only").map(row => row.plan);
+    const exclusive = controlPlans.filter(plan => !survivingPlans.has(plan));
+    const shared = controlPlans.filter(plan => survivingPlans.has(plan));
+    const memoRows = (plans: string[]) => queryContentStore<{ count: number }>(first,
+      "SELECT count(*) AS count FROM facts_results WHERE hex(plan_digest) IN (SELECT value FROM json_each(?))",
+      [JSON.stringify(plans)])[0]!.count;
+    expect(memoRows(exclusive)).toBeGreaterThan(0);
+    expect(memoRows(shared)).toBeGreaterThan(0);
+    engine.deleteAnalysisScope(first, "release-only", false);
+    expect(memoRows(exclusive)).toBeGreaterThan(0);
     await engine.collectAnalysisCacheAsync(first);
+    expect(memoRows(exclusive)).toBe(0);
+    expect(memoRows(shared)).toBeGreaterThan(0);
     expect(retained(first)).toEqual(baseline);
     const profile = join(home, "reopened");
     const count = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, policy, first], {

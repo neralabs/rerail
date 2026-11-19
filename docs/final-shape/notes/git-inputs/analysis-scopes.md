@@ -86,6 +86,12 @@ Each evaluation that uses a Git inventory records the root and inventory program
 A reused source view can supply their verified tree entries. The programs publish their manifests under the current acquisition.
 Repeated inventory requests within that evaluation can use the same materialized result.
 After scope deletion, a new acquisition must retain the same plans as a fresh view of that source.
+Each store that consumes a compiled policy needs its input record and the graph of its includes.
+The process can reuse a checked graph from another store. It must save that graph in the selected image store.
+On restart, the engine checks the recorded file digests and missing include candidates before it reuses a graph.
+A scan can execute a policy inspected for another store. It retains the program there while the inspected inputs still match.
+If an include changes after inspection, the scan executes the inspected version. The next inspection reads the new version.
+The collection check gives a second scope its own policy and memo rows. After releasing that scope, it checks which rows collection removed.
 The inventory key uses the set of selected paths. Reordering paths, repeating one, or adding a child of a selected directory preserves the key.
 Selecting the root has the same key as an unrestricted walk. An empty selection covers no files.
 Native path restrictions preserve a trailing directory requirement. A read of a regular file with a final `/.` fails.

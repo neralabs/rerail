@@ -154,6 +154,14 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
             *g = None;
         }
     }
+    let images = Images::here();
+    if let Some(images) = &images {
+        for (seed, graph) in seeds.iter().zip(&found) {
+            if let Some(graph) = graph {
+                crate::code_rule_dsl::logic::rr::retain_graph_image(images.store.as_deref(), images.key(seed), || images.encode(graph));
+            }
+        }
+    }
     let wanted: Vec<Seed> = {
         let mut w: Vec<Seed> = seeds.iter().zip(&found).filter(|(_, g)| g.is_none()).map(|(s, _)| s.clone()).collect();
         w.sort();
@@ -164,7 +172,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     // A seed's graph kept as an image (the shipped bundle, or an earlier process of this build) is taken where it
     // holds: a digest of each file and a look at each absent candidate, not a run of `bootstrap.rr`.
     let mut wanted = wanted;
-    if !wanted.is_empty() && let Some(images) = Images::here() {
+    if !wanted.is_empty() && let Some(images) = &images {
         let mut accepted = HashMap::new();
         // A pack's graphs share their modules: each file is looked at once for all of them, not once a graph.
         let mut looked: HashMap<PathBuf, Option<[u8; 32]>> = HashMap::new();
@@ -207,7 +215,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     }
     if !wanted.is_empty() {
         if std::env::var_os("RERAIL_PHASE0_TRACE").is_some() {
-            eprintln!("rerail: phase 0 derives {} seeds (images {})", wanted.len(), if Images::here().is_some() { "on" } else { "off" });
+            eprintln!("rerail: phase 0 derives {} seeds (images {})", wanted.len(), if images.is_some() { "on" } else { "off" });
         }
         let whole = match derive(&wanted) {
             Err(PlanError::Cache(_)) if super::tape_cache_path().is_some() => {
@@ -218,7 +226,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
         let made: HashMap<Seed, Arc<Graph>> = wanted.iter().enumerate().map(|(k, seed)| (seed.clone(), Arc::new(whole.of(seed, k)))).collect();
         // Kept as images (decision 0246) whichever process derived them: an image is the engine build's, not the
         // process's.
-        if let Some(images) = Images::here() {
+        if let Some(images) = &images {
             for (seed, g) in &made {
                 crate::code_rule_dsl::logic::rr::keep_graph_image(images.store.as_deref(), images.key(seed), images.encode(g));
             }

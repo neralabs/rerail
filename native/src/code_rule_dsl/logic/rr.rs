@@ -732,6 +732,17 @@ pub(in crate::code_rule_dsl) fn graph_image(store: Option<&crate::content_store:
     Some(bytes.into_owned())
 }
 
+/// A process can first read this graph for a different store. Keep it where this reader can find it on restart.
+pub(in crate::code_rule_dsl) fn retain_graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey, encode: impl FnOnce() -> Vec<u8>) {
+    let Some(store) = store else { return };
+    if images::shipped().is_some_and(|bundle| bundle.get(key).is_some()) { return; }
+    if let Ok(Some(id)) = store.source_by_alias(key) {
+        renew_image(store, id);
+    } else {
+        keep_graph_image(Some(store), key, encode());
+    }
+}
+
 /// Keeps a graph's image (`graph_image`) where none is kept under its key yet. A seed's key names the seed, not the
 /// files its graph reached, so an edited library gives the same key another graph: the store's alias holds one
 /// image, and the first stays. A run then finds it does not hold (`Graph::holds`) and derives the graph, as without
@@ -1226,11 +1237,13 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     static PROGRAMS: OnceLock<Mutex<HashMap<PathBuf, (Vec<LibraryFile>, Program)>>> = OnceLock::new();
     let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let cache = PROGRAMS.get_or_init(Default::default);
-    if let Some((files, program)) = cache.lock().expect("the program cache").get(&key)
-        && files.iter().all(|file| LibraryFile::now(&file.path) == *file)
-    {
+    let cached = cache.lock().expect("the program cache").get(&key)
+        .filter(|(files, _)| files.iter().all(|file| LibraryFile::now(&file.path) == *file)).cloned();
+    if let Some((files, program)) = cached {
+        retain_read_program(&key, &files, &program);
+        files.iter().for_each(noted);
         crate::code_rule_dsl::prof::count("rr.program_reused", 1);
-        return Ok((program.clone(), files.clone()));
+        return Ok((program, files));
     }
     // Decision 0275: rederived until a key hits. The file's sha (by its `stat` while that holds), then the entry kept
     // under its path and sha, taken while every file it read still reads as recorded (by `stat`, then sha).
@@ -1310,17 +1323,31 @@ pub fn kept_program_found(path: &Path) -> Option<(Program, Vec<LibraryFile>)> {
     kept_program(path).and_then(|(_, _, found)| found)
 }
 
+/// Attach an inspected program to the store selected by its consumer. The inputs belong to that inspection.
+pub fn retain_read_program(path: &Path, files: &[LibraryFile], program: &Program) {
+    let Some(sha) = files.iter().find(|file| file.path == path).and_then(|file| file.sha256) else { return };
+    if let Some((entry, Some(store), None)) = kept_program_by_digest(path, &sha) {
+        super::plan::corpus::combined::record(&store, "a rule file's program", &entry, files, program, &[]);
+        super::plan::corpus::combined::read_before_the_run(entry);
+    }
+}
+
 /// The entry of the rule file at `path` (canonical): its key, the store it is kept in, and its program and read
 /// record when the store keeps one that still holds (`combined::lookup_read`). `None` where there is no file to key
 /// by, or the program is phase 0's own (its builtin reader).
 #[allow(clippy::type_complexity)]
 fn kept_program(path: &Path) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(Program, Vec<LibraryFile>)>)> {
+    let sha = super::plan::corpus::observe(|o| o.digest(path))?;
+    kept_program_by_digest(path, &sha)
+}
+
+#[allow(clippy::type_complexity)]
+fn kept_program_by_digest(path: &Path, sha: &[u8; 32]) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(Program, Vec<LibraryFile>)>)> {
     use super::plan::corpus::{combined, phases};
     if !cfg!(feature = "tape-cache") || super::plan::corpus::phase0::active() {
         return None;
     }
-    let sha = super::plan::corpus::observe(|o| o.digest(path))?;
-    let key = combined::rule_file_key(path, &sha);
+    let key = combined::rule_file_key(path, sha);
     let Some(store) = phases::reading_store() else { return Some((key, None, None)) };
     let found = {
         // Read while collection is held off, as a combined program's is (`combine_stored`).
@@ -1598,7 +1625,7 @@ fn noted(file: &LibraryFile) {
 
 impl LibraryFile {
     /// Whether the file still reads as recorded: the same bytes, or still no file.
-    pub(in crate::code_rule_dsl) fn unchanged(&self) -> bool {
+    pub fn unchanged(&self) -> bool {
         Self::now(&self.path) == *self
     }
 }
