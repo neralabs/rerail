@@ -2,7 +2,7 @@ import * as childProcess from "node:child_process";
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { connect, createServer, type AddressInfo, type Socket } from "node:net";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -364,82 +364,6 @@ describe("Rerail daemon control", () => {
       .rejects.toBe(launching);
     expect(Date.now() - asked).toBeLessThan(5_000);
   }, 40_000);
-
-  // A daemon that holds the home and has not recorded itself by the end of a start's wait. One that took the home less
-  // than a start's wait before, as one a start launched a moment ago or one that restarted itself meanwhile, may still
-  // be coming up: the start says what the start that launched it said. One that has held it longer had that start's
-  // whole wait too, and has not answered, hung or not: the start says what a stop says of it, the pid its record names
-  // and how to see that process's command line before ending it, and that it leaves it running. A stop says the same
-  // either way. How long it has held the home is read on the clock that stamped its record, as on a home on a share
-  // whose file server's clock is 30 s off this machine's.
-  it.each(["linux", "win32"] as const)("says a daemon that holds the home and has not recorded itself may still be starting while it took the home within a start's wait, and names it to end after that (%s)", async platform => {
-    const record = join(home, LOCKS_DIR, "daemon.json");
-    await mkdir(join(home, LOCKS_DIR), { recursive: true });
-    const pipe = pipeNameOf(enginePipeName(join(home, "rerail.sqlite")));
-    // The clock passes the 15 s wait each time the waiting start or stop asks the home's lock, inside its wait. It moves
-    // there and then, never in a callback that could run once the test has put the real clock back. With `leaves`, the
-    // holder then lets the home go and removes its record.
-    let leaves = false;
-    const lockHeld = (): boolean => {
-      vi.setSystemTime(Date.now() + 16_000);
-      if (leaves) rmSync(record, { force: true });
-      return true;
-    };
-    const machine = fakeMachine(platform, { kill: (pid, signal) => process.kill(pid, signal), pipes: () => [pipe], homeDaemonLockHeld: lockHeld });
-    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-    const launching = new Error("the start went on to launch a daemon");
-    const stillStarting = `Rerail daemon (pid ${process.pid}) has not answered within 15s and may still be starting; this start leaves it running. `
-      + `Once it answers, rerail status shows it running. See ${join(home, DAEMON_LOG_FILE)}`;
-    const commandLine = platform === "win32"
-      ? `powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter 'ProcessId=${process.pid}').CommandLine"`
-      : `ps -p ${process.pid} -o command=`;
-    const unrecorded = `A Rerail daemon holds ${home} but has not written daemon.json within 15s`;
-    const named = `${unrecorded}. ${record} names pid ${process.pid}, which Rerail could not show is that daemon: see its command `
-      + `line with ${commandLine}, and end it only if it runs Rerail's daemon-entry.js for this home. Then run rerail daemon start.`;
-    const unnamed = `${unrecorded}; end that process, then run rerail daemon start.`;
-    const leftRunning = " This start leaves that process running.";
-    // How long before the end of the start's wait the holder recorded itself, on the file system's clock: 16 s, as the
-    // wait began; 32 s, one whole start's wait before it, as the start that launched it waited; 44 s ahead, on a clock
-    // that moved back since; a record gone as the wait ran out; with this machine's clock 30 s behind the file
-    // system's, 30 s; then 12 s, as one that came up 4 s into a 16 s wait, and with this machine's clock 30 s behind
-    // and 30 s ahead, 2 s and 5 s. The real clock runs on while a start comes to its check, which the first start in
-    // this file, loading the engine, can take seconds to do on a busy machine: the holders it makes older come first,
-    // and the ones it must find young stand 3 s or more inside the wait.
-    const holders = [
-      { heldFor: 16_000, machineAhead: 0, says: `${named}${leftRunning}` },
-      { heldFor: 32_000, machineAhead: 0, says: `${named}${leftRunning}` },
-      { heldFor: -44_000, machineAhead: 0, says: `${named}${leftRunning}` },
-      { heldFor: undefined, machineAhead: 0, says: `${unnamed}${leftRunning}` },
-      { heldFor: 30_000, machineAhead: -30_000, says: `${named}${leftRunning}` },
-      { heldFor: 12_000, machineAhead: 0, says: stillStarting },
-      { heldFor: 2_000, machineAhead: -30_000, says: stillStarting },
-      { heldFor: 5_000, machineAhead: 30_000, says: stillStarting },
-    ];
-    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
-    try {
-      for (const { heldFor, machineAhead, says } of holders) {
-        // Set-up's and a person's start, and a hook's start before it sends its settings.
-        for (const start of [startDaemon, startDaemonForPackage]) {
-          await writeFile(record, JSON.stringify({ pid: process.pid }));
-          leaves = heldFor === undefined;
-          // The file system stamps files on the real clock, which the fake `Date` leaves alone; the start's wait ends on
-          // this machine's clock, the fake one, `machineAhead` past the file system's.
-          const fileSystemNow = performance.timeOrigin + performance.now();
-          await utimes(record, new Date(), new Date(fileSystemNow - (heldFor ?? 0)));
-          vi.setSystemTime(fileSystemNow + machineAhead - 16_000);
-          const holder = `held ${heldFor ?? "with no record"} ms, this machine ${machineAhead} ms ahead`;
-          await expect(start({ home, packageRoot, ensureSqlite: async () => { throw launching; } }, { dev: true, port: 0 }, machine), holder).rejects.toThrow(says);
-          expect(readdirSync(join(home, LOCKS_DIR)).filter(name => name.startsWith("daemon-clock"))).toEqual([]);
-        }
-      }
-      leaves = false;
-      await writeFile(record, JSON.stringify({ pid: process.pid }));
-      const stop = await stopDaemon(home, machine).then(String, (error: unknown) => (error as Error).message);
-      expect(stop).toBe(named);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
 
   it("repairs the SQLite binding before spawning, and surfaces an unrepairable binding instead of a daemon crash", async () => {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -2277,6 +2201,64 @@ describe("launching the daemon", () => {
       } };
       await expect(startDaemon(control, { dev: true, port: 0 }, next)).rejects.toThrow(/^Rerail daemon exited with code 1 before it was ready\.$/u);
       expect(launchedAgain).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 20_000);
+
+  // A daemon a start launched, which took the home's lock and recorded itself beside it as it did, and has not written
+  // daemon.json. A start after that one finds it recorded at each look of its own wait, so by the end of that wait the
+  // daemon has held the home at least that long, after the wait of the start that launched it. The start says what a
+  // stop says of it, the pid its record names and how to see that process's command line before ending it, and that
+  // it leaves it running; a holder whose record is gone by the end of the wait, as one that exited then, is named by no
+  // pid.
+  it.each(["linux", "win32"] as const)("names the daemon a start launched that holds the home and has not recorded itself by the end of the next start's wait, to check before ending, and leaves it running (%s)", async platform => {
+    const record = join(home, LOCKS_DIR, "daemon.json");
+    const takesTheLock = (): void => {
+      mkdirSync(join(home, LOCKS_DIR), { recursive: true });
+      writeFileSync(record, JSON.stringify({ pid: 4242 }));
+    };
+    // The next start asks the home's lock at each look, as its polls make them, and its clock passes the 15 s wait at
+    // the third. With `leaves`, the holder lets the home go and removes its record as that start's wait ends.
+    let asks = 0;
+    let leaves = false;
+    const lockHeld = (): boolean => {
+      asks += 1;
+      vi.setSystemTime(Date.now() + 5_000);
+      if (leaves && asks % 3 === 0) rmSync(record, { force: true });
+      return true;
+    };
+    // The daemon's pid is alive, and on Windows its engine pipe is listed, as a paused one's is.
+    const machine: DaemonMachine = {
+      ...launchPastTheWait(platform, false, takesTheLock),
+      kill: () => true,
+      pipes: () => [pipeNameOf(enginePipeName(join(home, "rerail.sqlite")))],
+      homeDaemonLockHeld: lockHeld,
+    };
+    const control = { home, packageRoot: resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."), ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    const commandLine = platform === "win32"
+      ? `powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter 'ProcessId=4242').CommandLine"`
+      : "ps -p 4242 -o command=";
+    const unrecorded = `A Rerail daemon holds ${home} but has not written daemon.json within 15s`;
+    const named = `${unrecorded}. ${record} names pid 4242, which Rerail could not show is that daemon: see its command line `
+      + `with ${commandLine}, and end it only if it runs Rerail's daemon-entry.js for this home. Then run rerail daemon start.`;
+    const leftRunning = " This start leaves that process running.";
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+    try {
+      const first = await startDaemon(control, { dev: true, port: 0 }, machine).then(() => "", (error: unknown) => (error as Error).message);
+      expect(first).toMatch(mayStillStart);
+      expect(asks).toBe(0);
+      // Set-up's and a person's start, and a hook's start before it sends its settings.
+      for (const next of [startDaemon, startDaemonForPackage]) {
+        asks = 0;
+        await expect(next(control, { dev: true, port: 0 }, machine)).rejects.toThrow(`${named}${leftRunning}`);
+        expect(asks).toBe(3);
+      }
+      leaves = true;
+      await expect(startDaemon(control, { dev: true, port: 0 }, machine)).rejects.toThrow(`${unrecorded}; end that process, then run rerail daemon start.${leftRunning}`);
+      leaves = false;
+      takesTheLock();
+      expect(await stopDaemon(home, machine).then(String, (error: unknown) => (error as Error).message)).toBe(named);
     } finally {
       vi.useRealTimers();
     }

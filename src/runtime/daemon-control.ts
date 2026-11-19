@@ -13,7 +13,6 @@ import { programOnPath, windowsSystemProgram } from "../engine/system-programs.j
 import { loadNativeBinding } from "../engine/native/native.js";
 import {
   forgetHomeDaemonHolder,
-  homeDaemonHeldFor,
   homeDaemonHolder,
   homeDaemonHolderFile,
   homeDaemonHolderWrittenAt,
@@ -986,27 +985,14 @@ async function lookupHomeDaemon(
 }
 
 /**
- * What a start says when a daemon holds `home` and has not recorded itself within the start's wait, by how long that
- * daemon has held the home ({@link holderComingUp}). One that took it less than a start's wait ago may still be coming
- * up, as the start that launched it said ({@link unansweredLaunch}): this start leaves it running too, and telling the
- * person to end it would undo what that start said. One that has held it longer has had that start's whole wait and
- * this one's without answering: the start says what a stop says of it ({@link unrecordedDaemonProblem}), and that it
- * leaves that process running.
+ * What a start says when a daemon holds `home` and has not recorded itself within the start's wait: what a stop says
+ * of it ({@link unrecordedDaemonProblem}), and that the start leaves that process running. The start gets here only
+ * after its whole wait, with the holder recorded beside the lock at every look, so that daemon has held the home at
+ * least that long, and a start that waited for the start lock first, as one begun while the start that launched the
+ * daemon still waited, adds that start's wait.
  */
 function holderNotRecorded(home: string, platform: NodeJS.Platform): string {
-  if (holderComingUp(home)) return mayStillStart(homeDaemonHolder(home), join(home, DAEMON_LOG_FILE));
   return `${unrecordedDaemonProblem(home, platform)} This start leaves that process running.`;
-}
-
-/**
- * Whether the daemon that holds `home` took it less than a start's wait ago, by the time it recorded itself as it took
- * the lock, read on the clock that stamped that record ({@link homeDaemonHeldFor}): this machine's clock may differ
- * from a file server's by more than the wait. Counted either way, as a claim is ({@link claimHolds}): a record made
- * before the clock moved back has held the home a while too. A record that cannot be read is not counted.
- */
-function holderComingUp(home: string): boolean {
-  const heldFor = homeDaemonHeldFor(home);
-  return heldFor !== undefined && Math.abs(heldFor) < START_TIMEOUT_MS;
 }
 
 /**
@@ -1379,9 +1365,8 @@ async function unansweredLaunch(launched: LaunchedDaemon, records: LaunchRecords
 }
 
 /**
- * What a start says of the daemon `pid` that has not answered within its wait, whether it launched it or found it
- * holding the home: it may still be starting, the start leaves it running, and `rerail status` shows it running once it
- * answers. It names no second start, which waits again only for a daemon that holds the home, has not written
+ * What a start says of the daemon `pid` it launched that has not answered within its wait: it may still be starting,
+ * the start leaves it running, and `rerail status` shows it running once it answers. It names no second start, which waits again only for a daemon that holds the home, has not written
  * daemon.json and, on Windows, has its engine pipe listed: one that has written daemon.json and does not answer is
  * named to stop, and on Windows a start beside one whose pipe is not listed yet launches a second daemon, which exits.
  */
