@@ -249,7 +249,21 @@ fn unit_of(p1: &rerail_c_pp::stream::parallel::P1, cpp: bool) -> (Unit, rerail_m
     let mut lay = Layout { insts: Vec::new(), dir_slots: Vec::new(), dir_active: Vec::new(), gap_slots: Vec::new(), gap_active: Vec::new(), builtins: p1.builtins.iter().map(|n| name_key(n)).collect(), relex_options: {
         let o = crate::pp::options(cpp);
         rerail_metal::pp_expand::relex_options(o.cpp, o.colons, o.digit_separators, o.raw_strings)
-    } };
+    }, file_literals: {
+        // Each file's `__FILE__` literal, then `__DATE__`'s, `__TIME__`'s and `__TIMESTAMP__`'s: the
+        // string, its `"` and `\` escaped (the serial pass's `string_tok`).
+        let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+        p1.paths.iter().chain([&cfg.date, &cfg.time, &cfg.timestamp]).map(|p| {
+        let mut q = vec![b'"'];
+        for &c in p.as_bytes() {
+            if c == b'"' || c == b'\\' {
+                q.push(b'\\');
+            }
+            q.push(c);
+        }
+        q.push(b'"');
+        q
+    }).collect() } };
     for i in &p1.insts {
         lay.insts.push(PpInst { file: i.file, dir_first: lay.dir_slots.len() as u32, gap_first: lay.gap_slots.len() as u32 });
         let slot = |s: u64| u32::try_from(s).expect("a slot in 32 bits");
@@ -265,7 +279,7 @@ fn unit_of(p1: &rerail_c_pp::stream::parallel::P1, cpp: bool) -> (Unit, rerail_m
 /// against `Vis::at`'s. `None` where P1 refuses it (the reason counted).
 fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, path: &str, cpp: bool, what: &str) -> Result<[usize; 3], &'static str> {
     use rerail_c_pp::stream::parallel::{Lookup, p1_of};
-    use rerail_metal::pp_expand::{L_BUILTIN, L_NONE, L_NOT_NAME, lookups};
+    use rerail_metal::pp_expand::{L_BUILTIN, L_DATE, L_FILE, L_IDENT, L_LINE, L_NONE, L_NOT_NAME, L_TIME, L_TIMESTAMP, lookups};
     let p1 = p1_of(cfg, io, path)?;
     let (unit, lay, _) = unit_of(&p1, cpp);
     let (ev, got) = lookups(&unit, &lay).unwrap();
@@ -274,7 +288,7 @@ fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::File
         let g = match g {
             L_NOT_NAME => Lookup::NotName,
             L_NONE => Lookup::None,
-            L_BUILTIN => Lookup::Builtin,
+            L_BUILTIN | L_LINE | L_FILE | L_DATE | L_TIME | L_TIMESTAMP | L_IDENT => Lookup::Builtin,
             r => {
                 let f = ev.dir_bases.partition_point(|&b| b <= r) - 1;
                 Lookup::Def { file: f as u32, dir: r - ev.dir_bases[f] }
@@ -561,6 +575,7 @@ fn the_corpus_expands_on_the_device() {
     ];
     let (mut same_units, mut tokens, mut launches) = (0, 0, 0);
     let mut refused = std::collections::BTreeMap::<&str, usize>::new();
+    let mut named = std::collections::BTreeMap::<String, usize>::new();
     let stub = |q: &str| std::fs::read(q).ok().or_else(|| q.starts_with("<stub>").then(Vec::new));
     for (dir, cpp) in [("c", false), ("cpp", true)] {
         let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
@@ -597,6 +612,15 @@ fn the_corpus_expands_on_the_device() {
                 let full: Vec<_> = ROOM_STORES.iter().zip(x.room).filter(|(_, (u, c))| u > c).map(|(n, (u, c))| format!("{n} {u}/{c}")).collect();
                 eprintln!("ROOM {path} at rung {}: {}", x.rung, full.join(", "));
             }
+            // The built-ins a unit refused for them names in its text.
+            if refused_by & X_BUILTIN != 0 {
+                for name in &p1.builtins {
+                    let n = name.as_slice();
+                    if p1.files.iter().any(|f| f.windows(n.len()).any(|w| w == n)) {
+                        *named.entry(String::from_utf8_lossy(n).into_owned()).or_default() += 1;
+                    }
+                }
+            }
             if x.refused != 0 {
                 for (bit, why) in reasons {
                     if refused_by & bit != 0 {
@@ -630,6 +654,7 @@ fn the_corpus_expands_on_the_device() {
         }
     }
     eprintln!("{same_units} units the serial pass's ({tokens} tokens), at most {launches} launches; refused {refused:?}");
+    eprintln!("the built-ins in units refused for them: {named:?}");
 }
 
 /// R7 of decision 0448: calls whose `(` or `)` is past their list's end. The call reads the
@@ -682,4 +707,24 @@ fn a_unit_past_its_room_runs_again_larger() {
             eprintln!("{what}: {} tokens at rung {rung}", got.len());
         }
     }
+}
+
+/// Plan step 11 of decision 0448 (the built-ins): `__LINE__` is the line of the outermost call's
+/// end (the serial pass's: a token's origin climbed through each expansion's end), `__FILE__` the
+/// file the stretch is in. In text, in a body, in an argument (expanded and raw, `#`), in a call
+/// over many lines, in an exit's call, and in an included file; `__DATE__`, `__TIME__` and
+/// `__TIMESTAMP__` (the configuration's), and `__has_include` and its kin as plain names in text.
+#[test]
+fn line_and_file_are_the_serial_passes() {
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "__LINE__ __FILE__\n\n  __LINE__\n#define L __LINE__\nL\n#define F __FILE__\nF\n")],
+        &[("main.c", "#define call(a, b) a b\ncall(__LINE__,\n  __LINE__) call(L,\n\n L)\n#define L __LINE__\ncall(L,\n L)\n")],
+        &[("main.c", "#define S(a) #a\n#define X(a) S(a)\n#define I(a) a\nS(__LINE__) X(__LINE__) I(\nI(\n__LINE__))\n")],
+        &[("main.c", "#define f(x) g\n#define g(y) __LINE__ y\n#define G g\nf(1)\n(2)\nG\n(\n3)\n")],
+        &[("main.c", "#include \"i.h\"\n__FILE__ __LINE__ H\n"), ("i.h", "\n#define H __FILE__ __LINE__\n__FILE__ __LINE__ H\n")],
+        &[("main.c", "// a line\n/* two\nlines */ __LINE__ \\\n __LINE__\n#define C(a, b) a ## b\nC(__LI, NE__) C(__FILE, __)\n")],
+        &[("main.c", "__DATE__ __TIME__ __TIMESTAMP__\n#define D __DATE__ x\nD __has_include __has_include(<a.h>) __has_embed(\"e\") __has_include_next\n")],
+    ];
+    let (tokens, launches) = shapes_agree(shapes);
+    eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
 }

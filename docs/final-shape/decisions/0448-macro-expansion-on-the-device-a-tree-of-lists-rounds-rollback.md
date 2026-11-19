@@ -377,3 +377,30 @@ outermost call becomes the queue's first items.
   dispatches went into another buffer, so no pass can wait for one before it and the host
   reads only after the whole buffer completed. A rerun at the next rung is a new evaluation
   after that. `an_evaluation_is_one_command_buffer` shows the refusal.
+- **The built-ins (plan step 11).** A built-in's row holds its answer. Each of these expands to
+  one token, its use an object-like call whose SUBST writes that token with the name's space:
+  - `__LINE__` is the line of the outermost call's end, the serial pass's `exps[..].end` climb.
+    A token column, `texp`, holds the list whose substitution wrote each token (the serial
+    pass's `exp`). Every copy carries it: arguments, flattens, joins and raw uses. A paste is its
+    list's, and a placemarker keeps the other token's. The climb goes from the use's own token
+    through each expansion's `end` in its source, to a token read from a file. That token's
+    physical line comes from a line index: each 4 KB block's newlines, a word at a time (one
+    thread a block), their scan, and the words of the token's block before it (32 lanes).
+  - `__FILE__` is the literal of its stretch's file's path.
+  - `__DATE__`, `__TIME__` and `__TIMESTAMP__` are the configuration's literals. The host
+    places those literals and the paths' as the first scratch tokens, before the run
+    (configuration input, like the built-ins' names), so a use refers to one and allocates
+    nothing.
+
+  `__has_include`, `__has_include_next` and `__has_embed` are plain names in text (`L_IDENT`):
+  they are operators of `#if` alone. The rest (`__COUNTER__`, `__INCLUDE_LEVEL__`,
+  `__FILE_NAME__`, `__BASE_FILE__`, `_Pragma`, the `__has_*` features) are still refused
+  (`X_BUILTIN`); the corpus uses none of them in text. The token columns are now one buffer, a
+  column each at `tok_cap` offsets, since `px_work` binds 31 buffers at most. 7 shapes in C and
+  C++ give the serial pass's tokens (`line_and_file_are_the_serial_passes`): uses in text, a
+  body, arguments expanded and raw, a call over many lines, an exit's call, an included file,
+  and a pasted `__LI ## NE__`.
+
+  On the corpus, 3,132 units give the serial pass's tokens, 7.56 M in all. Three are refused:
+  two by the spike's P1 (`#line`), and one for a call across a stretch's end (`X_ACROSS`), at
+  most 176 launches.

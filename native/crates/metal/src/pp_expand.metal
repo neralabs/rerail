@@ -388,10 +388,16 @@ kernel void pe_text_nodes(device const uint* flag [[buffer(0)]], device const ui
 // its first directive and its first stretch in the layout's per-directive and per-stretch arrays.
 struct PpInst { uint file, dir_first, gap_first; };
 
-// A row's definition where it is an `#undef`, and a lookup's answers that are no row.
+// A row's definition where it is an `#undef`, and a lookup's answers that are no row: no name,
+// no definition, a built-in the device refuses, one it expands to one token (`__FILE__`,
+// `__LINE__`, `__DATE__`, `__TIME__`, `__TIMESTAMP__`), or one that is a plain name in text
+// (`__has_include`, `__has_include_next`, `__has_embed`: operators of `#if` alone). A built-in's
+// row holds its answer; a definition's row is below `L_DEFS`.
 constant uint V_UNDEF = 0xffffffffu, L_NOT_NAME = 0xffffffffu, L_NONE = 0xfffffffeu, L_BUILTIN = 0xfffffffdu;
-// A row's definition where it is a built-in.
-constant uint V_BUILTIN = 0xfffffffdu;
+constant uint L_FILE = 0xfffffffcu, L_LINE = 0xfffffffbu, L_DATE = 0xfffffffau, L_TIME = 0xfffffff9u;
+constant uint L_TIMESTAMP = 0xfffffff8u, L_IDENT = 0xfffffff7u, L_DEFS = 0xfffffff7u;
+// A built-in that expands to one token, a use of it an object-like call.
+inline bool px_one_token(uint m) { return m >= L_TIMESTAMP && m <= L_FILE; }
 constant uint WALK = 64u;
 
 // Each instance's directive `j`'s row, where it makes one (a flag, then its place by a scan).
@@ -454,7 +460,7 @@ inline uint visible(device const ulong* sorted, device const uint* perm, uint n,
         uint p = perm[c];
         if (name_keys[p] == key) {
             uint v = values[p];
-            return v == V_UNDEF ? L_NONE : v == V_BUILTIN ? L_BUILTIN : v;
+            return v == V_UNDEF ? L_NONE : v;
         }
     }
     atomic_fetch_or_explicit(bad, 1u << 29, memory_order_relaxed);
@@ -631,6 +637,7 @@ struct Ux {
     device const uint* tdepth; ulong va_opt;
     device const uchar* sbytes; device const PxScratch* stoks; uint relex_options;
     device const ulong* closes; uint n_close;
+    device const uint* lines;
 };
 
 // Whether `p[0..n)` holds a line splice (`\`, blanks, a newline): its phase-2 spelling differs.
@@ -752,7 +759,9 @@ kernel void px_top_calls(device const PpFile* files [[buffer(0)]], device const 
     uint e = 0u;
     if (m == L_BUILTIN) {
         px_refuse(ctl, X_BUILTIN);
-    } else if (m < L_BUILTIN) {
+    } else if (px_one_token(m)) {
+        e = s + 1u;
+    } else if (m < L_DEFS) {
         if ((defs[m].flags & D_FNLIKE) == 0u) {
             e = s + 1u;
         } else {
@@ -798,7 +807,7 @@ kernel void px_top_lists(device const uint* lookups [[buffer(0)]], device const 
     device PxList& l = lists[c];
     px_init(l, TOP, m, gslot[pb_item_of(gat, n_gaps[0], s)], LK_MACRO);
     l.lo = s; l.hi = cend[s] - 1u; l.at = l.lo; l.end = l.hi;
-    uint item = (defs[m].flags & D_FNLIKE) != 0u ? (c | IT_CALL) : (c | IT_SUBST);
+    uint item = m < L_DEFS && (defs[m].flags & D_FNLIKE) != 0u ? (c | IT_CALL) : (c | IT_SUBST);
     atomic_store_explicit(&slots[c], item + 1u, memory_order_relaxed);
 }
 
@@ -820,7 +829,7 @@ kernel void px_seed(device const uint* n_calls [[buffer(0)]], device atomic_uint
 
 // The arena, as every item reads it.
 struct Ar {
-    device PxList* lists; device uint* tok; device uint* tflag; device uint* tchild; device uint* tdepth;
+    device PxList* lists; device uint* tok; device uint* tflag; device uint* tchild; device uint* tdepth; device uint* texp;
     device PxArg* args; device uint* out; device atomic_uint* ctl; WorkQueue q;
     uint tok_cap, list_cap, arg_cap, out_cap;
     device uchar* sbytes; device PxScratch* stoks; uint sb_cap, st_cap;
@@ -831,6 +840,9 @@ inline void px_push(Ar a, uint item) { if (!wq_push(a.q, item)) px_refuse(a.ctl,
 // Token `k` of list `p` (or top token `k`, `p` being `TOP`): its ref, depth after it, and flags.
 inline uint par_ref(Ux u, Ar a, uint p, uint k) { return (p & TOP) != 0u ? top_ref(u.text_nodes, u.gat, u.n_gaps, u.firsts, k) : a.tok[a.lists[p].first + k]; }
 inline uint par_depth(Ux u, Ar a, uint p, uint k) { return (p & TOP) != 0u ? u.tdepth[k] : a.tdepth[a.lists[p].first + k]; }
+// The list whose substitution wrote token `k` of `p` (+ 1; 0 a token read from a file): the
+// serial pass's `exp`, which `__LINE__` climbs.
+inline uint par_exp(Ar a, uint p, uint k) { return (p & TOP) != 0u ? 0u : a.texp[a.lists[p].first + k]; }
 inline uint par_flags(Ux u, Ar a, uint p, uint k) {
     if ((p & TOP) != 0u) return top_space(u, top_ref(u.text_nodes, u.gat, u.n_gaps, u.firsts, k)) ? T_SPACE : 0u;
     return a.tflag[a.lists[p].first + k];
@@ -949,6 +961,7 @@ inline Walked px_walk(Ar a, uint k, uint lane, bool place) {
                     a.tok[off] = a.tok[first + j];
                     a.tflag[off] = (f & T_PAINT) != 0u ? (f | T_NOEXP) & ~T_PAINT : f;
                     a.tchild[off] = 0u;
+                    a.texp[off] = a.texp[first + j];
                 }
             }
             // The live children and their chains, each placed after the one before.
@@ -1088,6 +1101,7 @@ inline void px_exit(Ux u, Ar a, uint l, uint j, uint m, uint lane) {
             a.tok[w + q] = par_ref(u, a, segl[t], seglo[t] + q);
             a.tflag[w + q] = par_flags(u, a, segl[t], seglo[t] + q) & ~(T_PAINT | T_PASTE | T_DROP);
             a.tchild[w + q] = 0u;
+            a.texp[w + q] = par_exp(a, segl[t], seglo[t] + q);
         }
         w += len;
     }
@@ -1145,7 +1159,9 @@ inline void px_scan(Ux u, Ar a, uint l, uint lane) {
                 m = visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, ref_key(u, g), L.slot, a.ctl + 2);
                 if (m == L_BUILTIN) {
                     px_refuse(a.ctl, X_BUILTIN);
-                } else if (m < L_BUILTIN) {
+                } else if (px_one_token(m)) {
+                    call = true; e = j;
+                } else if (m < L_DEFS) {
                     if (px_disabled(a.lists, l, m, a.ctl)) {
                         a.tflag[first + j] |= T_PAINT;
                     } else if ((u.defs[m].flags & D_FNLIKE) == 0u) {
@@ -1212,7 +1228,7 @@ inline void px_scan(Ux u, Ar a, uint l, uint lane) {
             a.tchild[first + j] = child + 1u;
         }
         px_fence();
-        if (call) px_push(a, child | ((u.defs[m].flags & D_FNLIKE) != 0u ? IT_CALL : IT_SUBST));
+        if (call) px_push(a, child | (m < L_DEFS && (u.defs[m].flags & D_FNLIKE) != 0u ? IT_CALL : IT_SUBST));
     }
     if (xj != NO_POS) px_exit(u, a, l, xj, xm, lane);
     px_done(a, l, lane);
@@ -1224,6 +1240,7 @@ inline void px_copy(Ar a, uint dst, uint src, uint n, uint lane) {
         a.tok[dst + j] = a.tok[src + j];
         a.tflag[dst + j] = a.tflag[src + j];
         a.tchild[dst + j] = 0u;
+        a.texp[dst + j] = a.texp[src + j];
     }
 }
 
@@ -1269,6 +1286,7 @@ inline void px_call(Ux u, Ar a, uint l, uint lane) {
                 a.tok[base] = par_ref(u, a, p, L.at);
                 a.tflag[base] = (par_flags(u, a, p, L.at) & ~T_PAINT) | T_NOEXP;
                 a.tchild[base] = 0u;
+                a.texp[base] = par_exp(a, p, L.at);
                 L.len = 1u;
             }
             L.first = base;
@@ -1351,6 +1369,7 @@ inline void px_call(Ux u, Ar a, uint l, uint lane) {
                 a.tok[base + j] = par_ref(u, a, p, lo + j);
                 a.tflag[base + j] = par_flags(u, a, p, lo + j) & ~T_PAINT;
                 a.tchild[base + j] = 0u;
+                a.texp[base + j] = par_exp(a, p, lo + j);
             }
             if (lane == 0u) {
                 // Its context the call's (R-args): the frame holding `)`.
@@ -1548,6 +1567,102 @@ inline Vo px_va_opts(Ux u, Ar a, PpDef d, device PxList& L, uint lane) {
     return vo;
 }
 
+// --- The built-ins ---------------------------------------------------------------------------------
+
+// The line index's blocks: 4 KB of the unit's bytes each.
+constant uint LINE_BLOCK = 4096u;
+
+// The newlines in a word, a word at a time (the zero bytes of `w ^ "\n"*8`, exactly).
+inline uint px_nl(ulong w) {
+    ulong t = w ^ 0x0a0a0a0a0a0a0a0aul, h = 0x7f7f7f7f7f7f7f7ful;
+    return popcount(~(((t & h) + h) | t | h));
+}
+
+// Each block's newlines, one thread a block (512 words), for the index's scan.
+kernel void px_line_blocks(device const ulong* data [[buffer(0)]], device uint* counts [[buffer(1)]],
+                           constant uint& n_words [[buffer(2)]], constant uint& n_blocks [[buffer(3)]],
+                           uint b [[thread_position_in_grid]]) {
+    if (b >= n_blocks) return;
+    uint k0 = b * (LINE_BLOCK / 8u), k1 = min(k0 + LINE_BLOCK / 8u, n_words), c = 0u;
+    for (uint k = k0; k < k1; k++) c += px_nl(data[k]);
+    counts[b] = c;
+}
+
+// The newlines before byte `x` of the unit's bytes: its block's (the index) and the words of its
+// block before it (the 32 lanes).
+inline uint px_newlines(Ux u, uint x, uint lane) {
+    device const ulong* w = (device const ulong*)u.data;
+    uint b = x / LINE_BLOCK, kn = x / 8u, c = 0u;
+    for (uint k = b * (LINE_BLOCK / 8u) + lane; k < kn; k += 32u) c += px_nl(w[k]);
+    if (lane == 0u && (x & 7u) != 0u) c += px_nl(w[kn] & ((1ul << (8u * (x & 7u))) - 1ul));
+    return u.lines[b] + simd_sum(c);
+}
+
+// The physical line of tape node `g` (from 1): the newlines before it in its file.
+inline uint px_line(Ux u, uint g, uint lane) {
+    At at = node_at(u.files, u.data, u.bases, u.n_files, g);
+    uint o = at.f.src + node_start(at.t, at.i);
+    return px_newlines(u, o, lane) - px_newlines(u, at.f.src, lane) + 1u;
+}
+
+// A built-in's use, list `l` (an object-like call), by the 32 lanes: `__LINE__` the line of the
+// outermost call's end (the serial pass's: the token's origin climbed, each expansion's end
+// token, to one read from a file), as a number; `__FILE__` its stretch's file's literal, and
+// `__DATE__`, `__TIME__` and `__TIMESTAMP__` the configuration's (scratch tokens the host placed:
+// one a file, then those three). One token with the name's space; then scanned.
+inline void px_builtin(Ux u, Ar a, uint l, uint lane) {
+    device PxList& L = a.lists[l];
+    uint ref = SCRATCH;
+    if (L.def == L_DATE || L.def == L_TIME || L.def == L_TIMESTAMP) {
+        ref = SCRATCH | (u.n_files + (L_DATE - L.def));
+    } else if (L.def == L_FILE) {
+        uint k = l;
+        for (uint step = 0u; step < MAX_CHAIN && (a.lists[k].parent & TOP) == 0u; step++) k = a.lists[k].parent;
+        ref = SCRATCH | file_of(u.bases, u.n_files, top_ref(u.text_nodes, u.gat, u.n_gaps, u.firsts, a.lists[k].lo));
+    } else {
+        uint p = L.src, k = L.at, x = par_exp(a, p, k);
+        for (uint step = 0u; step < MAX_CHAIN && x != 0u; step++) {
+            p = a.lists[x - 1u].src;
+            k = a.lists[x - 1u].end;
+            x = par_exp(a, p, k);
+        }
+        uint g = par_ref(u, a, p, k);
+        uint line = (g & SCRATCH) == 0u ? px_line(u, g, lane) : 0u;
+        uint nd = 1u;
+        for (uint v = line; v >= 10u; v /= 10u) nd++;
+        uint base = 0u, id = 0u;
+        if (lane == 0u) {
+            base = atomic_fetch_add_explicit(&a.ctl[4], nd, memory_order_relaxed);
+            id = atomic_fetch_add_explicit(&a.ctl[5], 1u, memory_order_relaxed);
+            if (base + nd > a.sb_cap || id >= a.st_cap) {
+                px_refuse(a.ctl, X_ROOM);
+            } else {
+                uint v = line;
+                for (uint q = 0u; q < nd; q++) { a.sbytes[base + nd - 1u - q] = uchar('0' + v % 10u); v /= 10u; }
+                a.stoks[id].start = base; a.stoks[id].end = base + nd; a.stoks[id].kind = K_NUMBER;
+            }
+        }
+        ref = SCRATCH | simd_broadcast(id, 0);
+    }
+    if (lane == 0u) {
+        uint base = atomic_fetch_add_explicit(&a.ctl[0], 1u, memory_order_relaxed);
+        if (base + 1u > a.tok_cap) {
+            px_refuse(a.ctl, X_ROOM);
+            L.len = 0u;
+        } else {
+            a.tok[base] = ref;
+            a.tflag[base] = par_flags(u, a, L.src, L.at) & T_SPACE;
+            a.tchild[base] = 0u;
+            a.texp[base] = l + 1u;
+            L.len = 1u;
+        }
+        L.first = base;
+    }
+    px_fence();
+    simdgroup_barrier(mem_flags::mem_device);
+    px_scan(u, a, l, lane);
+}
+
 // SUBST `l`: its body's items (`px_role`), at offsets by a SIMD scan of their counts (one atomic
 // add for all): a parameter used expanded its argument's flattened tokens (their paint kept, the
 // first taking the parameter's space), one beside `##` its raw tokens (an empty one a
@@ -1556,6 +1671,10 @@ inline Vo px_va_opts(Ux u, Ar a, PpDef d, device PxList& L, uint lane) {
 // list compacted in place (a carried SIMD scan) without the pasted-away tokens and placemarkers;
 // the first token takes the call's name's space; then the list is scanned.
 inline void px_subst(Ux u, Ar a, uint l, uint lane) {
+    if (px_one_token(a.lists[l].def)) {
+        px_builtin(u, a, l, lane);
+        return;
+    }
     device PxList& L = a.lists[l];
     PpDef d = u.defs[L.def];
     uint n = d.n_body, total = 0u;
@@ -1604,6 +1723,7 @@ inline void px_subst(Ux u, Ar a, uint l, uint lane) {
             a.tok[off] = d.body + i;
             a.tflag[off] = sp | (r.role == R_PASTE ? T_PASTE : 0u);
             a.tchild[off] = 0u;
+            a.texp[off] = l + 1u;
         }
         // An expanded argument: its flattened tokens. Every shuffle with all 32 lanes active: one
         // in a branch reads an idle lane.
@@ -1630,10 +1750,11 @@ inline void px_subst(Ux u, Ar a, uint l, uint lane) {
                 a.tok[dst + j] = par_ref(u, a, L.src, lo + j);
                 a.tflag[dst + j] = par_flags(u, a, L.src, lo + j) & ~(T_PASTE | T_DROP | T_PAINT);
                 a.tchild[dst + j] = 0u;
+                a.texp[dst + j] = par_exp(a, L.src, lo + j);
             }
             simdgroup_barrier(mem_flags::mem_device);
             if (lane == 0u) {
-                if (len == 0u) { a.tok[dst] = PLACEMARKER; a.tflag[dst] = 0u; a.tchild[dst] = 0u; }
+                if (len == 0u) { a.tok[dst] = PLACEMARKER; a.tflag[dst] = 0u; a.tchild[dst] = 0u; a.texp[dst] = 0u; }
                 else a.tflag[dst] = (a.tflag[dst] & ~T_SPACE) | spw;
             }
         }
@@ -1649,6 +1770,7 @@ inline void px_subst(Ux u, Ar a, uint l, uint lane) {
                 a.tok[dst] = ref;
                 a.tflag[dst] = spw;
                 a.tchild[dst] = 0u;
+                a.texp[dst] = l + 1u;
             }
         }
         at += simd_sum(r.count);
@@ -1671,25 +1793,28 @@ inline void px_subst(Ux u, Ar a, uint l, uint lane) {
                 head = (f0 & T_PASTE) == 0u && (f1 & T_PASTE) != 0u && (j == 0u || (a.tflag[base + j - 1u] & T_PASTE) == 0u);
             }
             if (head) {
-                uint acc = a.tok[base + j], accf = a.tflag[base + j], w = j;
+                uint acc = a.tok[base + j], accf = a.tflag[base + j], accx = a.texp[base + j], w = j;
                 uint k = j + 1u;
                 for (uint step = 0u; step < total && k + 1u < total && (a.tflag[base + k] & T_PASTE) != 0u; step++) {
-                    uint r = a.tok[base + k + 1u], rf = a.tflag[base + k + 1u];
+                    uint r = a.tok[base + k + 1u], rf = a.tflag[base + k + 1u], rx = a.texp[base + k + 1u];
                     a.tflag[base + k] |= T_DROP;
                     uint f = 0u;
                     bool ok = false;
                     uint m = px_paste(u, a, acc, accf, r, rf, f, ok);
                     if (ok) {
+                        // A placemarker gives the other token, its origin kept; a paste is this list's.
+                        accx = acc == PLACEMARKER ? rx : r == PLACEMARKER ? accx : l + 1u;
                         acc = m; accf = f;
                         a.tflag[base + k + 1u] |= T_DROP;
                     } else {
-                        a.tok[base + w] = acc; a.tflag[base + w] = accf;
-                        w = k + 1u; acc = r; accf = rf;
+                        a.tok[base + w] = acc; a.tflag[base + w] = accf; a.texp[base + w] = accx;
+                        w = k + 1u; acc = r; accf = rf; accx = rx;
                     }
                     k += 2u;
                 }
                 a.tok[base + w] = acc;
                 a.tflag[base + w] = accf & ~T_DROP;
+                a.texp[base + w] = accx;
             }
         }
         px_fence();
@@ -1698,11 +1823,12 @@ inline void px_subst(Ux u, Ar a, uint l, uint lane) {
     // The compaction, in place: a token's new place is never after its old one.
     uint kept = 0u;
     for (uint c0 = 0u; c0 < total; c0 += 32u) {
-        uint j = c0 + lane, t = 0u, f = 0u;
+        uint j = c0 + lane, t = 0u, f = 0u, x = 0u;
         bool keep = false;
         if (j < total) {
             t = a.tok[base + j];
             f = a.tflag[base + j];
+            x = a.texp[base + j];
             keep = t != PLACEMARKER && (f & T_DROP) == 0u;
         }
         uint w = kept + simd_prefix_exclusive_sum(keep ? 1u : 0u);
@@ -1711,6 +1837,7 @@ inline void px_subst(Ux u, Ar a, uint l, uint lane) {
             a.tok[base + w] = t;
             a.tflag[base + w] = f & ~(T_PASTE | T_DROP);
             a.tchild[base + w] = 0u;
+            a.texp[base + w] = x;
         }
         kept += simd_sum(keep ? 1u : 0u);
         simdgroup_barrier(mem_flags::mem_device);
@@ -1750,13 +1877,12 @@ kernel void px_work(device const PpFile* files [[buffer(0)]], device const uchar
                     device const uint* gat [[buffer(12)]], device const uint* n_gaps [[buffer(13)]],
                     device const uint* firsts [[buffer(14)]], device const uint* n_toks [[buffer(15)]],
                     device const uint* top_depth [[buffer(16)]], device PxList* lists [[buffer(17)]],
-                    device uint* tok [[buffer(18)]], device uint* tflag [[buffer(19)]],
-                    device uint* tchild [[buffer(20)]], device uint* tdepth [[buffer(21)]],
-                    device PxArg* args [[buffer(22)]], device uint* out [[buffer(23)]],
-                    device atomic_uint* slots [[buffer(24)]], device atomic_uint* qctl [[buffer(25)]],
-                    device atomic_uint* ctl [[buffer(26)]], constant uint* words [[buffer(27)]],
-                    device PxScratch* scratch [[buffer(28)]], device const ulong* closes [[buffer(29)]],
-                    device const uint* n_close [[buffer(30)]],
+                    device uint* cols [[buffer(18)]], device PxArg* args [[buffer(19)]],
+                    device uint* out [[buffer(20)]], device atomic_uint* slots [[buffer(21)]],
+                    device atomic_uint* qctl [[buffer(22)]], device atomic_uint* ctl [[buffer(23)]],
+                    constant uint* words [[buffer(24)]], device PxScratch* scratch [[buffer(25)]],
+                    device const ulong* closes [[buffer(26)]], device const uint* n_close [[buffer(27)]],
+                    device const uint* lines [[buffer(28)]],
                     uint lane [[thread_index_in_simdgroup]]) {
     // words: n_files, tok_cap, list_cap, arg_cap, out_cap, q_cap, va_opt (low, high), the scratch
     // bytes' and tokens' capacities.
@@ -1769,9 +1895,12 @@ kernel void px_work(device const PpFile* files [[buffer(0)]], device const uchar
     device PxScratch* stoks = scratch;
     device uchar* sbytes = (device uchar*)(scratch + words[9]);
     u.sbytes = sbytes; u.stoks = stoks; u.relex_options = words[10];
-    u.closes = closes; u.n_close = n_close[0];
+    u.closes = closes; u.n_close = n_close[0]; u.lines = lines;
     Ar a;
-    a.lists = lists; a.tok = tok; a.tflag = tflag; a.tchild = tchild; a.tdepth = tdepth; a.args = args; a.out = out; a.ctl = ctl;
+    // The tokens' columns, `tok_cap` words each: the ref, the flags, the child, the depth, the origin.
+    uint tc = words[1];
+    a.lists = lists; a.tok = cols; a.tflag = cols + tc; a.tchild = cols + 2u * tc; a.tdepth = cols + 3u * tc; a.texp = cols + 4u * tc;
+    a.args = args; a.out = out; a.ctl = ctl;
     a.q.slots = slots; a.q.control = qctl; a.q.capacity = words[5];
     a.tok_cap = words[1]; a.list_cap = words[2]; a.arg_cap = words[3]; a.out_cap = words[4];
     a.sbytes = sbytes; a.stoks = stoks; a.sb_cap = words[8]; a.st_cap = words[9];

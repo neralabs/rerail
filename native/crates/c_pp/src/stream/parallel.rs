@@ -189,6 +189,8 @@ pub struct P1Inst {
 /// of every active stretch in the unit's order (by slot), with what it means where it stands.
 pub struct P1 {
     pub files: Vec<Vec<u8>>,
+    /// Each file's path as the unit opened it (`__FILE__`'s presumed path, with no `#line`).
+    pub paths: Vec<String>,
     /// The built-in macros' names: rows at slot 0, before every other.
     pub builtins: Vec<Vec<u8>>,
     pub insts: Vec<P1Inst>,
@@ -282,7 +284,8 @@ pub fn p1_of(cfg: Config, io: &mut dyn Files, path: &str) -> Result<P1, &'static
         }
         names.push(pp.syms.text(sym).to_vec());
     }
-    Ok(P1 { files, builtins: names, insts, lookups })
+    let paths = pp.files.iter().map(|f| f.path.clone()).collect();
+    Ok(P1 { files, paths, builtins: names, insts, lookups })
 }
 
 /// A directive of a file's P0 tables (`files::tabulate`), as the evaluator's file pass makes it

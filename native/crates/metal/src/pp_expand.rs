@@ -187,12 +187,38 @@ pub struct Layout {
     pub builtins: Vec<u64>,
     /// The dialect's options as the paste relexer reads them (`relex_options`).
     pub relex_options: u32,
+    /// Each file's `__FILE__`: the string literal of its presumed path (its `"` and `\` escaped),
+    /// by the unit's file index; then `__DATE__`'s, `__TIME__`'s and `__TIMESTAMP__`'s.
+    pub file_literals: Vec<Vec<u8>>,
 }
 
 /// What a lookup answers where it is no definition's row (`pp_expand.metal`'s `L_*`).
 pub const L_NOT_NAME: u32 = 0xffff_ffff;
 pub const L_NONE: u32 = 0xffff_fffe;
 pub const L_BUILTIN: u32 = 0xffff_fffd;
+/// The built-ins the device expands to one token, and those that are plain names in text
+/// (`__has_include`, `__has_include_next`, `__has_embed`); a definition's row is below `L_IDENT`.
+pub const L_FILE: u32 = 0xffff_fffc;
+pub const L_LINE: u32 = 0xffff_fffb;
+pub const L_DATE: u32 = 0xffff_fffa;
+pub const L_TIME: u32 = 0xffff_fff9;
+pub const L_TIMESTAMP: u32 = 0xffff_fff8;
+pub const L_IDENT: u32 = 0xffff_fff7;
+
+/// A built-in's lookup value, by its name.
+fn builtin_value(key: u64) -> u32 {
+    let named: [(&[u8], u32); 8] = [
+        (b"__LINE__", L_LINE),
+        (b"__FILE__", L_FILE),
+        (b"__DATE__", L_DATE),
+        (b"__TIME__", L_TIME),
+        (b"__TIMESTAMP__", L_TIMESTAMP),
+        (b"__has_include", L_IDENT),
+        (b"__has_include_next", L_IDENT),
+        (b"__has_embed", L_IDENT),
+    ];
+    named.iter().find(|(n, _)| name_key(n) == key).map_or(L_BUILTIN, |&(_, v)| v)
+}
 
 /// S6–S8 and the lookups (R4): the text map, the visibility rows and their sort, the active
 /// stretches, and each stretch token's meaning where it stands.
@@ -265,7 +291,7 @@ impl Vis {
         for (k, &key) in lay.builtins.iter().enumerate() {
             sk[k] = key & 0xffff_ffff_0000_0000;
             nk[k] = key;
-            vals[k] = L_BUILTIN;
+            vals[k] = builtin_value(key);
         }
         Ok(Vis {
             insts: MappedBuffer::from_slice(&device, if lay.insts.is_empty() { &NO_INST } else { &lay.insts })?,
@@ -455,6 +481,9 @@ const WORKER_GROUPS: u64 = 64;
 const WORK_LAUNCHES: usize = 3;
 /// The close table's keys: a biased depth (16 bits) above a position (24 bits).
 const CLOSE_BITS: u32 = 40;
+/// The line index's blocks (`pp_expand.metal`'s `LINE_BLOCK`), and a string literal's tape kind.
+const LINE_BLOCK: usize = 4096;
+const K_LITERAL: u32 = 30;
 
 /// The expansion's stores (0448 §2), placed before the command buffer, at a rung:
 /// - by top token (`top`): its stretch head, depth change and depth, its `)` flag and place, the
@@ -500,10 +529,15 @@ pub struct Exp {
     xcover: MappedBuffer,
     vscan: Scan,
     lists: MappedBuffer,
-    tok: MappedBuffer,
-    tflag: MappedBuffer,
-    tchild: MappedBuffer,
-    tdepth: MappedBuffer,
+    /// The tokens' columns, `tok_cap` words each: the ref, the flags, the child, the depth and the
+    /// origin (the list whose substitution wrote it).
+    tokens: MappedBuffer,
+    /// The line index: each 4 KB block's newlines, and their scan.
+    line_counts: MappedBuffer,
+    lines: MappedBuffer,
+    line_scan: Scan,
+    line_words: [u32; 2],
+    n_blocks: MappedBuffer,
     args: MappedBuffer,
     slots: MappedBuffer,
     qctl: MappedBuffer,
@@ -527,8 +561,29 @@ impl Exp {
         }
         let va_opt = name_key(b"__VA_OPT__");
         // The scratch: bytes (64 KB at rung 0, doubling) and tokens, in one buffer: the tokens (an
-        // even number, so the bytes after them are 8-byte aligned), then the bytes.
-        let (sb, st) = ((64usize << 10) << rung, (tok / 4 + 256).next_multiple_of(2));
+        // even number, so the bytes after them are 8-byte aligned), then the bytes. The first of
+        // each are the files' `__FILE__` literals, placed here.
+        let nf = unit.table.len() + 3;
+        let lit_bytes: usize = (0..nf).map(|f| lay.file_literals.get(f).map_or(2, Vec::len)).sum();
+        let (sb, st) = (((64usize << 10) << rung) + lit_bytes, (tok / 4 + 256 + nf).next_multiple_of(2));
+        let mut scratch = vec![0u8; st * 12 + sb + 16];
+        let mut at = 0usize;
+        for f in 0..nf {
+            let lit: &[u8] = lay.file_literals.get(f).map_or(b"\"\"", Vec::as_slice);
+            scratch[st * 12 + at..st * 12 + at + lit.len()].copy_from_slice(lit);
+            let tok3 = [at as u32, (at + lit.len()) as u32, K_LITERAL];
+            for (k, w) in tok3.iter().enumerate() {
+                scratch[f * 12 + 4 * k..f * 12 + 4 * k + 4].copy_from_slice(&w.to_le_bytes());
+            }
+            at += lit.len();
+        }
+        // The control words: the scratch's tops past the literals.
+        let mut ctl = [0u32; 8];
+        ctl[4] = lit_bytes as u32;
+        ctl[5] = nf as u32;
+        // The line index over the unit's bytes.
+        let words_n = unit.data.byte_length().div_ceil(8);
+        let blocks = words_n.div_ceil(LINE_BLOCK / 8).max(1);
         let words = [unit.table.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32, lay.relex_options];
         Ok(Exp {
             list_cap: lists as u32,
@@ -536,7 +591,7 @@ impl Exp {
             q_cap: q as u32,
             words: MappedBuffer::from_slice(&device, &words)?,
             // Slack past the last byte: a name's key reads 8 bytes at a time.
-            scratch: MappedBuffer::zeroed::<u8>(&device, st * 12 + sb + 16)?,
+            scratch: MappedBuffer::from_slice(&device, &scratch)?,
             st_cap: st,
             theads: zeroed(top)?,
             delta: zeroed(top)?,
@@ -564,14 +619,16 @@ impl Exp {
             xcover: zeroed(top)?,
             vscan: Scan::new(top)?,
             lists: zeroed(lists * LIST_WORDS)?,
-            tok: zeroed(tok)?,
-            tflag: zeroed(tok)?,
-            tchild: zeroed(tok)?,
-            tdepth: zeroed(tok)?,
+            tokens: zeroed(tok * 5)?,
+            line_counts: zeroed(blocks)?,
+            lines: zeroed(blocks)?,
+            line_scan: Scan::new(blocks)?,
+            line_words: [words_n as u32, blocks as u32],
+            n_blocks: MappedBuffer::from_slice(&device, &[blocks as u32])?,
             args: zeroed(args * ARG_WORDS)?,
             slots: zeroed(q)?,
             qctl: zeroed(4)?,
-            ctl: zeroed(8)?,
+            ctl: MappedBuffer::from_slice(&device, &ctl)?,
             out: zeroed(out)?,
         })
     }
@@ -590,6 +647,10 @@ impl Exp {
         let mut parens = top_in.to_vec();
         parens.extend([&self.theads.buffer as &BufferRef, &self.delta.buffer, &self.close.buffer]);
         enc.run("px_top_parens", None, &parens, &[n32], by_top)?;
+        // The line index (`__LINE__`): each block's newlines, one thread a block, and their scan.
+        let [nw, nb] = self.line_words;
+        enc.run("px_line_blocks", None, &[u_data, &self.line_counts.buffer], &[nw, nb], Grid::Groups((nb as u64).div_ceil(TG)))?;
+        self.line_scan.encode(enc, &self.n_blocks.buffer, 0, &self.line_counts.buffer, &self.lines.buffer)?;
         self.depth_scan.encode(enc, SegOp::Add, n_toks, 0, &self.delta.buffer, &self.theads.buffer, &self.depth.buffer)?;
         self.close_scan.encode(enc, n_toks, 0, &self.close.buffer, &self.close_at.buffer)?;
         enc.run("px_close_keys", None, &[&self.depth.buffer, &self.close.buffer, &self.close_at.buffer, n_toks, &self.close_keys.buffer, &self.ctl.buffer], &[], by_top)?;
@@ -688,10 +749,7 @@ impl Exp {
                     &vis.gscan.total.buffer,
                     &self.depth.buffer,
                     &self.lists.buffer,
-                    &self.tok.buffer,
-                    &self.tflag.buffer,
-                    &self.tchild.buffer,
-                    &self.tdepth.buffer,
+                    &self.tokens.buffer,
                     &self.args.buffer,
                     &self.out.buffer,
                     &self.slots.buffer,
@@ -701,6 +759,7 @@ impl Exp {
                     &self.scratch.buffer,
                     closes,
                     &self.close_scan.total.buffer,
+                    &self.lines.buffer,
                 ],
                 &[],
                 Grid::Groups(WORKER_GROUPS),
