@@ -49,7 +49,7 @@ function catalogItem(pack) {
     return h("div.pcard", { "data-act": "viewpack", "data-i": pack.id, role: "button", tabindex: "0" },
       h("div.pc-top", null, packIcon(pack), h("div.pc-name", null, h("b", null, pack.name), h("span.kind", null, packKind(pack))),
         status ? h("span.pstatus", null, status) : null),
-      h("span.sub", null, pack.covers),
+      h("span.sub", { title: pack.covers }, pack.covers),
       question,
       h("div.pc-foot", null, h("span.meta", null, packMeta(pack)), action));
   }
