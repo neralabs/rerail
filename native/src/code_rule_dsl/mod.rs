@@ -4367,11 +4367,26 @@ impl CodeRuleDslRuntime {
 
     /// The tests the `.rr` files under `paths_json` (a JSON array of files and directories) carry, each run (decision
     /// 0130, `rerail-engine test-rr`): `[{file, test, line, status, failures, findings}]` as JSON. `rerail rules test`
-    /// calls it for a `.rr` file.
+    /// calls it for a `.rr` file. The runs read the engine's own `.rr` programs (`typing/programs`) and the rule
+    /// library (`logic::rr::library`) from a checkout (`source_tree`), which the package does not ship: without them,
+    /// an error that says so.
     #[napi(catch_unwind)]
     pub fn test_rr(paths_json: String, filter: Option<String>) -> Result<String> {
-        let paths: Vec<std::path::PathBuf> = serde_json::from_str(&paths_json).map_err(json::json_error)?;
-        let report = logic::rr::testing::report(&paths, filter.as_deref()).map_err(json::invalid)?;
+        let paths: Vec<std::path::PathBuf> =
+            serde_json::from_str(&paths_json).map_err(json::json_error)?;
+        let programs =
+            rerail_store::source_tree::native().join("src/code_rule_dsl/typing/programs");
+        if !programs.join("sources.rr").is_file() || !logic::rr::library().join("core.rr").is_file()
+        {
+            return Err(json::invalid(
+                "a .rr file's tests read the engine's .rr programs and rule library from a Rerail checkout \
+                 (native/src/code_rule_dsl/typing/programs, docs/rule-syntax/lib), which Rerail's package does not \
+                 ship: run them from a Rerail checkout, or set RERAIL_SOURCE_ROOT to one"
+                    .to_owned(),
+            ));
+        }
+        let report =
+            logic::rr::testing::report(&paths, filter.as_deref()).map_err(json::invalid)?;
         serde_json::to_string(&report).map_err(json::json_error)
     }
 
