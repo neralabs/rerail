@@ -491,6 +491,38 @@ unused(f) :- def(f, _), !used(f).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A `finding` of another shape than the findings form (`finding(key, n)`) is an output like any other: held in the
+/// cross-file part, where no nodes or documents are bound, it is read where it is held, not from a table nothing
+/// wrote ("no such table: finding" on internal_dead_code's `finding(category, symbol, n)`).
+#[test]
+fn a_finding_of_three_columns_held_cross_file_is_read_where_it_is() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("finding3");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def f():\n    pass\n").unwrap();
+    std::fs::write(dir.join("b.py"), "from a import f\ndef g():\n    pass\n").unwrap();
+    let rule = dir.join("finding.rr");
+    std::fs::write(&rule, r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl used(f: node)
+used(f) :- imp(_, q), def(f, q).
+.decl finding(category: symbol, q: symbol, n: node)
+finding("unused", q, f) :- def(f, q), !used(f).
+.output finding
+"#).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "finding").unwrap();
+    let names: Vec<&str> = rows.iter().map(|row| row[1].as_str()).collect();
+    assert!(rows.iter().all(|row| row.len() == 3 && row[0] == "unused"), "{rows:?}");
+    assert!(names.iter().any(|q| q.ends_with("g")) && !names.iter().any(|q| q.ends_with(".f")), "g is unused, f is imported: {rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The cone of requests is kept like any relation (t33 K1, K3): its stratum that asks for directories, files and
 /// loads and answers them inside its fixpoint is clean while what it reads and its answers are as they were. An
 /// edit that changes neither evaluates none of the cone; a new import, or a library file whose own imports

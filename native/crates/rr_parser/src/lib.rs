@@ -1145,6 +1145,7 @@ pub mod tests {
     /// (`compiles`). Each run: the corpus (`RR_REPEAT` times) as batches under the device's
     /// budget, halved where refused; its GPU seconds by kind (the first pass, the runs again,
     /// the positions), its launches and rounds, and the host's CPU and wall.
+    #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "a benchmark: run by hand"]
     fn rr_metal_bench() {

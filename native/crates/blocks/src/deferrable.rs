@@ -269,6 +269,13 @@ fn written_back(base: *mut u8, len: usize) -> io::Result<()> {
     }
 }
 
+/// Elsewhere `mincore` reports residency, not dirtiness, and no driver holds the pages wired: one `MS_SYNC` writes
+/// the range back.
+#[cfg(not(target_os = "macos"))]
+fn written_back(base: *mut u8, len: usize) -> io::Result<()> {
+    msync(base, len, libc::MS_SYNC)
+}
+
 fn msync(base: *mut u8, len: usize, flags: i32) -> io::Result<()> {
     if len == 0 {
         return Ok(());

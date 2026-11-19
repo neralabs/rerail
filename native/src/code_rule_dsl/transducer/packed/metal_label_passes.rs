@@ -324,9 +324,16 @@ fn formula_leaf(word: u32) -> bool {
 /// where the walk is not a micro walk, or the anchor tests no more than a rule over codes does (`narrowing`).
 ///
 /// A label `unknown` names (a recursive group's own, Q133) is read as every node, as on the CPU (`anchor_bits`).
-pub(in crate::code_rule_dsl) fn device_anchor(program: &Program, unknown: &dyn Fn(u16) -> bool) -> Option<std::sync::Arc<DeviceFormula>> {
+///
+/// A pass that starts within a demand's set (`Domain::Within`, decision 0460) has it in its anchor, as on the CPU.
+pub(in crate::code_rule_dsl) fn device_anchor(program: &Program, demand: Option<&compile_sets::Set>, unknown: &dyn Fn(u16) -> bool) -> Option<std::sync::Arc<DeviceFormula>> {
     let walk = Micro::of(program)?;
-    let mut formula = narrowing(&compile_sets::Set::anchor(&walk.words, &|_| true).labels_unknown(unknown))?;
+    let anchor = compile_sets::Set::anchor(&walk.words, &|_| true);
+    let anchor = match demand {
+        Some(demand) => compile_sets::Set::all_of(vec![anchor, demand.clone()]),
+        None => anchor,
+    };
+    let mut formula = narrowing(&anchor.labels_unknown(unknown))?;
     formula.texts = (0..walk.texts.len()).map(|slot| walk.slot_key(program, slot)).collect();
     Some(std::sync::Arc::new(formula))
 }
@@ -1241,6 +1248,11 @@ struct Runner<'a> {
     /// The anchors' leaf tests for the whole run (`size`), and their rows once read (`formulas`).
     run_leaves: Vec<u32>,
     run_leaf_rows: Option<MappedBuffer>,
+    /// `label_formula`'s scratch, one for the run: each level's formulas run after the last level's in the command
+    /// buffer, so they reuse it, and it grows where a level needs more, to `FORMULA_SCRATCH_BYTES` at most. A new one
+    /// each level counted toward the segment as an upload, so two levels of formulas ended the command buffer
+    /// (`SEGMENT_BYTES`; `the_wave_is_one_evaluation_on_metal`: 3 of them, 50 s against 0.9 s).
+    formula_scratch: Option<MappedBuffer>,
     /// The loop tier's stacks (`MICRO_POOL` of them), committed only as walks use them.
     stacks: Option<MappedBuffer>,
     /// The deep fused groups' stacks, one buffer for all of them: the groups run one after
@@ -1621,6 +1633,7 @@ fn encode(
         formula_stats: Vec::new(),
         run_leaves: Vec::new(),
         run_leaf_rows: None,
+        formula_scratch: None,
         stacks: kept.as_mut().and_then(|kept| kept.stacks.as_ref().map(|stacks| MappedBuffer::wrap(stacks.buffer.clone()))),
         group_stacks: [None, None, None, None, None],
         encoded: false,
@@ -2583,7 +2596,15 @@ impl Runner<'_> {
         let leaves = leaves.cloned().unwrap_or_else(|| own.as_ref().expect("the group's leaves").buffer.clone());
         let stride = depth as usize * region;
         let per = (FORMULA_SCRATCH_BYTES / 4 / stride).clamp(1, count);
-        let scratch = MappedBuffer::untouched::<u32>(self.device, stride * per)?;
+        if self.formula_scratch.as_ref().is_none_or(|scratch| (scratch.buffer.length() as usize) < 4 * stride * per) {
+            // Not an upload: one buffer for the run, at most `FORMULA_SCRATCH_BYTES`, as the stacks are.
+            let grown = MappedBuffer::untouched::<u32>(self.device, stride * per)?;
+            // The smaller one may still be read by the levels encoded before: it is kept with the command buffer.
+            if let Some(old) = self.formula_scratch.replace(grown) {
+                self.retained.push(old);
+            }
+        }
+        let scratch = self.formula_scratch.as_ref().expect("the formulas' scratch").buffer.clone();
         let docs = self.tapes.docs.buffer.clone();
         let head = self.tapes.supertypes.buffer.clone();
         let base = Shape { round: depth, recursive: region as u32, ..self.shape() };
@@ -2599,7 +2620,7 @@ impl Runner<'_> {
             encoder.set_label(KERNELS[FORMULA_KERNEL]);
             crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[FORMULA_KERNEL]), 1);
             encoder.set_compute_pipeline_state(&state);
-            for (index, buffer) in [&docs, &head, &headers, &words, rows, &scratch.buffer].into_iter().enumerate() {
+            for (index, buffer) in [&docs, &head, &headers, &words, rows, &scratch].into_iter().enumerate() {
                 encoder.set_buffer(index as u64, Some(buffer), 0);
             }
             encoder.set_bytes(6, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
@@ -2616,8 +2637,6 @@ impl Runner<'_> {
             self.outcome.dispatches += 1;
             self.split(KERNELS[FORMULA_KERNEL]);
         }
-        self.segment_bytes += scratch.buffer.length() as usize;
-        self.retained.push(scratch);
         if let Some(own) = own {
             self.segment_bytes += own.buffer.length() as usize;
             self.retained.push(own);
@@ -2718,12 +2737,16 @@ impl Runner<'_> {
         let labels = self.tapes.supertypes.buffer.clone();
         let (state, flags) = (self.tapes.supertypes.buffer.clone(), self.flags.buffer.clone());
         let (scratch, counts) = ((&state, self.tapes.scratch_at), (&state, self.tapes.counts_at));
+        // The facts' constraints, once for the level's pattern kernels (each group's binds them; only the first's
+        // tasks read them). copy (0353 step 4): the fact's rows, Q289.
+        let constraints = if matches.iter().any(|matches| !matches.is_empty()) { Some(self.upload(&constraints)?) } else { None };
         for (group, (matches, pattern_threads)) in matches.iter().zip(pattern_threads).enumerate() {
             if matches.is_empty() {
                 continue;
             }
             let task_count = (matches.len() / 6) as u32;
-            let (items, constraints) = (self.upload(matches)?, self.upload(&constraints)?);
+            // copy: not block data (the group's task list).
+            let (items, constraints) = (self.upload(matches)?, constraints.clone().ok_or(Error::BackendFailure)?);
             let docs = self.tapes.docs.buffer.clone();
             let root_words = self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
             let shape = Shape {
@@ -3146,7 +3169,7 @@ impl Runner<'_> {
                 slot_rows.insert(walk.slot_key(program, slot), text_start + slot as u32);
             }
             // The fourth word: set mode with one label, so the walk ends at its first emit.
-            let anchor = anchor_of(device_anchor(program, &|_| false));
+            let anchor = anchor_of(device_anchor(program, None, &|_| false));
             passes.push([words.len() as u32, walk.words.len() as u32, text_start, u32::from(walk.key_stop()), anchor]);
             longest = longest.max(walk.words.len());
             match &self.label_rows {

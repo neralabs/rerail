@@ -313,6 +313,89 @@ fn a_recursive_utility_inside_another_settles() {
     assert_eq!(program.roots(&tape).unwrap(), expected);
 }
 
+/// The lowerings of t45's plan (decisions 0459, 0460), each a clause: a bare `$X` is the named-node test, not a
+/// pattern label; a clause that is one `inside … end` copies its label; the labels made inside an `all` that tests a
+/// neighbor (`inside` or `has`, by a field or not) start within the set of the nodes it holds at, a formula, not a
+/// seed label. Each finds W's roots.
+fn seeded_clauses() -> (crate::code_rule_dsl::CompiledCodeRuleDsl, TapeDoc) {
+    let clause = |id: &str, rule: &str| {
+        format!(
+            r#"{{"id": "{id}", "forbid": {{"ast": {{"language": "python", "rule": {rule}}}}}, "violation": {{"anchor": "witness.span", "code": "X", "message": "x"}}}}"#
+        )
+    };
+    let clauses = [
+        clause("named", r#"{"all": [{"pattern": "$X"}, {"kind": "identifier"}, {"inside": {"kind": "parameters", "stopBy": "neighbor"}}]}"#),
+        clause("in-function", r#"{"inside": {"kind": "function_definition", "stopBy": "end"}}"#),
+        clause("top", r#"{"kind": "expression_statement", "inside": {"kind": "module", "stopBy": "neighbor"}, "not": {"has": {"kind": "call", "stopBy": "neighbor"}}}"#),
+        clause("named-function", r#"{"kind": "function_definition", "has": {"field": "name", "kind": "identifier", "stopBy": "neighbor"}}"#),
+        clause("function-name", r#"{"kind": "identifier", "inside": {"kind": "function_definition", "field": "name", "stopBy": "neighbor"}}"#),
+        clause("lone", r#"{"not": {"inside": {"kind": "argument_list", "stopBy": "neighbor"}}}"#),
+        // A neighbor tested by text (ruff F541's shape): its set has no text test, since a text slot is its own
+        // program's (0460).
+        clause(
+            "fstring",
+            r#"{"kind": "string", "has": {"kind": "string_start", "regex": "^[fF]", "stopBy": "neighbor"}, "not": {"has": {"kind": "interpolation", "stopBy": "neighbor"}}}"#,
+        ),
+    ];
+    let policy = format!(
+        r#"{{"format": "rerail.policy/v1", "id": "seeded", "revision": 1, "mode": "steer", "description": "t45's lowerings.",
+            "scope": {{"include": ["**/*"], "exclude": []}}, "clauses": [{}]}}"#,
+        clauses.join(", ")
+    );
+    let compiled = CodeRuleDslRuntime::compile(policy, "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let tape = python_tape("import os\nx = 1\nprint(x)\n\ndef f(a, b=2, *c):\n    g(a, b)\n    return a\n\nclass K:\n    def m(self):\n        x\n\ns = f\"plain\"\nt = f\"{x}\"\nu = \"{x}\"\nv = f\"{1:>10}\"\n");
+    (compiled, tape)
+}
+
+#[test]
+fn seeded_and_copied_labels_find_ws_roots() {
+    let (compiled, tape) = seeded_clauses();
+    let root = Root::doc(tape.clone());
+    let mut seen = BTreeSet::new();
+    for (clause, grammar) in python_matchers(&compiled) {
+        let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
+        let mut work = usize::MAX;
+        let expected = (0..tape.transducer_len() as u32)
+            .filter(|&ordinal| grammar.match_root(node_at(&root, ordinal), &mut work).ok().flatten().is_some())
+            .collect::<BTreeSet<_>>();
+        assert!(!expected.is_empty(), "{clause}: W's matcher finds a root");
+        assert_eq!(program.roots(&tape).unwrap(), expected, "{clause}");
+        let census = program.census();
+        let patterns = census.iter().filter(|(kind, _)| *kind == "pattern").count();
+        // A neighbor's set is a formula a pass's anchor reads (0460), not a targets label of its own (0459's seed). The
+        // targets label of an `inside … end` reach is no seed: a clause that is one copies it (`label_copy`).
+        let copied = program.label_copy().map(|id| program.labels.def(id) as *const Label);
+        let seeds = program.labels.defs.iter().filter(|label| matches!(label, Label::Targets(..)) && Some(*label as *const Label) != copied).count();
+        assert_eq!(seeds, 0, "{clause}: no seed label");
+        let within = program.labels.defs.iter().any(|label| matches!(label, Label::Roots(_, super::compile_matcher::Domain::Within(..))));
+        match clause {
+            "named" => assert_eq!(patterns, 0, "named: `$X` is a node test, not a pattern pass"),
+            "in-function" => assert!(program.label_copy().is_some(), "in-function: its roots copy the descendant label"),
+            "top" => assert!(within, "top: the `not has` label starts within the module's children"),
+            "named-function" | "function-name" | "lone" | "fstring" => {}
+            other => panic!("an unexpected clause {other}"),
+        }
+        seen.insert(clause.to_owned());
+    }
+    assert_eq!(seen.len(), 7);
+}
+
+/// The same clauses on Metal: a label-domain pass starts only at the label's members, read from its row on the
+/// device (`root_mask_label`), and a clause that copies a label reads its row (decision 0459).
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn seeded_and_copied_labels_match_on_metal() {
+    use super::compile_matcher::Backend;
+    let (compiled, tape) = seeded_clauses();
+    let tapes = vec![tape.clone(), tape];
+    for (clause, grammar) in python_matchers(&compiled) {
+        let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
+        let cpu = program.roots_batch(Backend::Cpu, &tapes).unwrap();
+        let (metal, _) = program.roots_metal(&tapes).unwrap();
+        assert_eq!(metal, cpu, "{clause}");
+    }
+}
+
 /// S2's parity gate (O23, F1): every lowered clause's passes run on Metal over the whole batch of
 /// fixtures, in one command buffer (plus one per extra round of a recursive group), and give the
 /// CPU interpreter's root sets on every fixture.
