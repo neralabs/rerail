@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { deserialize, serialize } from "node:v8";
-import { and, asc, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { AdapterSession } from "../engine/adapter-contract.js";
 import type { DiscoveryPendingBoundary, IgnoredEdit } from "../engine/code-rule/code-rule-bridge.js";
@@ -39,6 +39,12 @@ export interface StoredSessionSummary {
   startedAt: number;
   endedAt: number | null;
   eventCount: number;
+}
+
+/** A session as a surface drawn ahead of time reads it (`SqliteSessionReader.drawnSessions`). */
+export interface DrawnSession extends Pick<StoredSessionSummary, "sessionId" | "cwd" | "endedAt"> {
+  /** When its latest event was observed; when it started, for a session with none. */
+  lastActiveAt: number;
 }
 
 export interface SessionEventRecord {
@@ -452,6 +458,29 @@ export class SqliteSessionReader {
   session(sessionId: string): StoredSessionSummary | undefined {
     const database = this.#database.open();
     return database === undefined ? undefined : listSessions(database, { sessionId })[0];
+  }
+
+  /**
+   * The sessions of `host` active at or after `since`, and those among `sessionIds` whatever their activity: what a
+   * surface drawn ahead of time for each session (the Claude Code status files) reads to keep them current. Ended
+   * sessions are among them: a daemon's stop ends every open session, and the session's next event opens it again, so
+   * an ended one may still be running. So may one that never ended, whose end hook did not arrive; its activity alone
+   * says whether anything still reads it.
+   */
+  drawnSessions(host: AdapterSession["host"], since: number, sessionIds: readonly string[]): DrawnSession[] {
+    const database = this.#database.open();
+    if (database === undefined) return [];
+    const named = sessionIds.length === 0 ? sql`0` : sql`drawn.sessionId IN (${sql.join(sessionIds.map(sessionId => sql`${sessionId}`), sql`, `)})`;
+    // Each session's latest event by sequence, read from the (session, sequence) index.
+    return database.all<DrawnSession>(sql`
+      SELECT * FROM (
+        SELECT
+          session.session_id AS sessionId, session.cwd AS cwd, session.ended_at AS endedAt,
+          coalesce((SELECT event.observed_at FROM ${events} AS event WHERE event.session_id = session.session_id
+            ORDER BY event.sequence DESC LIMIT 1), session.started_at) AS lastActiveAt
+        FROM ${sessions} AS session WHERE session.host = ${host}
+      ) AS drawn WHERE drawn.lastActiveAt >= ${since} OR ${named}
+    `);
   }
 
   hud(sessionId: string): SessionHud {

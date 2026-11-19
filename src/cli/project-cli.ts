@@ -1,13 +1,16 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
 import { renameWithRetrySync, replaceFileSync } from "../engine/file-replace.js";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { BLOCK_STEERS_NOTE } from "../engine/catalog/rule-mode.js";
 import type { UpdateResult } from "../setup/updater.js";
 import { NO_PROGRESS, type Progress } from "../runtime/progress.js";
 import { parseArguments } from "../daemon/daemon.js";
-import { defaultRerailDatabasePath, eraseFreedPages, openRerailDatabase, resetRepositoryHistoryIn } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, eraseFreedPages, openRerailDatabase, resetRepositoryHistoryIn, type RerailDatabase } from "../engine/storage/database.js";
+import { STATUS_LINES_FOLDER } from "../engine/storage/rerail-home.js";
+import { removeUnrecordedStatusFiles } from "../presentation/claude-status-files.js";
+import { SqliteSessionReader } from "../runtime/session-store.js";
 import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
 import { listRepositories, lookupCheckout, repositoryHistoryIds } from "../engine/catalog/repository-registry.js";
 import { defaultRulesDumpPath, exportRulesDump, importRulesDump } from "../engine/catalog/rule-bootstrap.js";
@@ -176,43 +179,58 @@ function plural(count: number, noun: string): string {
   return count === 1 ? noun : `${noun}s`;
 }
 
-/**
- * Delete this repository's execution history, across all its checkouts, from the Rerail database: sessions recorded
- * under its key or aliases, and older ones under its checkouts' clone ids. Rules, other repositories, and settings
- * stay; live sessions never observe a rule reset. The file is then rewritten (`eraseFreedPages`) so the deleted
- * history cannot be read back from its bytes or its WAL. When that rewrite fails or another reader keeps the WAL, the
- * history is still deleted; the command says what may remain and exits 1, and running it again finishes the rewrite.
- */
-export function runResetCommand(args: readonly string[], usage: () => string): number {
-  parseArguments(args, { flags: [], options: [] }, argument => `Unknown reset option: ${argument}\n\n${usage()}`);
-  const database = defaultRerailDatabasePath();
-  if (!existsSync(database)) {
-    process.stdout.write(`No Rerail database at ${database}; nothing to reset.\n`);
-    return 0;
-  }
-  const db = openRerailDatabase(database);
-  let repositoryKey: string;
-  let sessions: number;
-  let openSessions: number;
-  let erased = false;
-  let eraseFailure: string | undefined;
+/** Removes the Claude Code status file of each session a reset of the database at `database` deleted, from the folder beside it. */
+function removeDeletedStatusFiles(database: string): void {
+  const folder = join(dirname(database), STATUS_LINES_FOLDER);
+  const reader = new SqliteSessionReader(database);
   try {
-    const checkout = lookupCheckout(db, process.cwd());
-    if (checkout === undefined) {
-      process.stdout.write("Rerail has not seen this repository; nothing to reset.\n");
-      return 0;
-    }
-    repositoryKey = checkout.repositoryKey;
+    removeUnrecordedStatusFiles(folder, reader);
+  } catch (error) {
+    process.stdout.write(`Could not remove the deleted sessions' status lines from ${folder} (${error instanceof Error ? error.message : String(error)}).\n`);
+  } finally {
+    reader.close();
+  }
+}
+
+/** What a reset of one repository's history did. */
+interface HistoryReset {
+  repositoryKey: string;
+  /** Ended sessions deleted. */
+  sessions: number;
+  /** Running sessions kept, their history dropped. */
+  openSessions: number;
+  /** The file was rewritten, so the deleted history cannot be read back from it (`eraseFreedPages`). */
+  erased: boolean;
+  /** Why the rewrite failed, when it did. */
+  eraseFailure: string | undefined;
+}
+
+/** Deletes the history of the repository `cwd` is in from the database at `database`; undefined when Rerail has not seen it. */
+function resetHistoryOf(database: string, cwd: string): HistoryReset | undefined {
+  const db = openRerailDatabase(database);
+  try {
+    const checkout = lookupCheckout(db, cwd);
+    if (checkout === undefined) return undefined;
+    const { repositoryKey } = checkout;
     const repository = listRepositories(db).find(candidate => candidate.repositoryKey === repositoryKey);
-    ({ sessions, openSessions } = resetRepositoryHistoryIn(db, repository === undefined ? [repositoryKey] : repositoryHistoryIds(repository)));
-    try {
-      erased = eraseFreedPages(db);
-    } catch (error) {
-      eraseFailure = error instanceof Error ? error.message : String(error);
-    }
+    const { sessions, openSessions } = resetRepositoryHistoryIn(db, repository === undefined ? [repositoryKey] : repositoryHistoryIds(repository));
+    return { repositoryKey, sessions, openSessions, ...eraseFreedHistory(db) };
   } finally {
     db.$client.close();
   }
+}
+
+/** Rewrites the database so the history just deleted cannot be read back; a failure is returned, not thrown. */
+function eraseFreedHistory(db: RerailDatabase): Pick<HistoryReset, "erased" | "eraseFailure"> {
+  try {
+    return { erased: eraseFreedPages(db), eraseFailure: undefined };
+  } catch (error) {
+    return { erased: false, eraseFailure: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** What a reset says it deleted and kept. */
+function reportRemovedHistory(database: string, { repositoryKey, sessions, openSessions }: HistoryReset): void {
   const kept = openSessions > 0 ? `, ${openSessions} running ${plural(openSessions, "session")} kept (history dropped)` : "";
   process.stdout.write(
     `Removed the history of this repository (${repositoryKey}, across all its checkouts) from ${database}: `
@@ -220,6 +238,10 @@ export function runResetCommand(args: readonly string[], usage: () => string): n
     + kept
     + ". Rules and other repositories are unchanged.\n",
   );
+}
+
+/** What may remain of the deleted history in the file; the reset's exit code, 1 when anything may. */
+function reportErase(database: string, { erased, eraseFailure }: HistoryReset): number {
   if (eraseFailure !== undefined) {
     process.stdout.write(
       `Could not rewrite ${database} to erase the deleted history (${eraseFailure}). The history is deleted, but its `
@@ -233,4 +255,29 @@ export function runResetCommand(args: readonly string[], usage: () => string): n
     return 1;
   }
   return 0;
+}
+
+/**
+ * Delete this repository's execution history, across all its checkouts, from the Rerail database: sessions recorded
+ * under its key or aliases, and older ones under its checkouts' clone ids, and with each deleted session the Claude
+ * Code status line the daemon drew for it. Rules, other repositories, and settings stay; live sessions never observe a
+ * rule reset. The file is then rewritten (`eraseFreedPages`) so the deleted history cannot be read back from its bytes
+ * or its WAL. When that rewrite fails or another reader keeps the WAL, the history is still deleted; the command says
+ * what may remain and exits 1, and running it again finishes the rewrite.
+ */
+export function runResetCommand(args: readonly string[], usage: () => string): number {
+  parseArguments(args, { flags: [], options: [] }, argument => `Unknown reset option: ${argument}\n\n${usage()}`);
+  const database = defaultRerailDatabasePath();
+  if (!existsSync(database)) {
+    process.stdout.write(`No Rerail database at ${database}; nothing to reset.\n`);
+    return 0;
+  }
+  const reset = resetHistoryOf(database, process.cwd());
+  if (reset === undefined) {
+    process.stdout.write("Rerail has not seen this repository; nothing to reset.\n");
+    return 0;
+  }
+  reportRemovedHistory(database, reset);
+  removeDeletedStatusFiles(database);
+  return reportErase(database, reset);
 }

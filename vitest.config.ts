@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { TimeBalancedSequencer } from "./test/support/shards/time-balanced-sequencer.js";
 
 // Pulling-it-all-together's tests of its `relational` clause, merged in at cbee7a03c. This engine
 // compiles that clause only under `cargo test` (open item O18: it carries SQL, which rules do not),
@@ -42,6 +43,9 @@ export default defineConfig({
     // session runtime and a daemon takes 2 to 9 s there in a whole run, past the 5 s default, so the limits are wider.
     ...(process.platform === "win32" ? { testTimeout: 30_000, hookTimeout: 60_000 } : {}),
     setupFiles: ["./test/support/setup-rerail-home.ts"],
+    // CI's shards split the files by how long each takes on CI (test/support/shards/time-balanced-sequencer.ts), and
+    // every run starts the longest files first.
+    sequence: { sequencer: TimeBalancedSequencer },
     // Not vitest suites: upstream tools' copied tests are fixture data for the expected findings, real-code samples
     // extracted under .rerail/ include upstream projects' test files, ensure-sqlite's, the SQL profiling and the
     // transducer design's tests run under `node --test` (`npm run test:scripts`, `npm run test:profiling`), and nested
