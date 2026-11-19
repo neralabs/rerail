@@ -5163,10 +5163,14 @@ fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
     use super::formats::Format;
     use rerail_tape_format::tape::{Tape, children};
     let source: String = (0..400).map(|i| format!("x{i} = f(a, {i})\n")).collect();
-    let (_, doc, _, _) = fixture(&source, GrammarDialect::Python);
+    // The parser's image as a run of format 15 writes it, which each format is written from: a run writes its own
+    // format (16 by default since 2026-11-17), and `in_format` keeps a tape in another format as it is, so "format
+    // 15" read from the run's tape was format 16.
+    let (_, _, image, _) = super::formats::as_run(Format::F15, || fixture(&source, GrammarDialect::Python));
+    assert_eq!(image.format(), Format::F15, "the parser writes format 15");
     let grammar = Arc::new(Grammar::new(GrammarDialect::Python).unwrap());
     for format in Format::ALL {
-        let bytes = doc.doc_tape().image().clone().in_format(format, source.as_bytes()).to_bytes().unwrap();
+        let bytes = image.clone().in_format(format, source.as_bytes()).to_bytes().unwrap();
         let own = TapeImage::from_bytes(&bytes, &grammar).unwrap();
         let home = super::placed::place(bytes.len(), |out| {
             out.copy_from_slice(&bytes);

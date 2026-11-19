@@ -4399,7 +4399,7 @@ Test: `an_export_is_one_relation_of_the_chunks_new_rows`, which replaces the tes
 
 Still merged: 157 relations, nearly all of two parts. Steps 2 and 3 of 0384 cover them.
 
-### Q282. (Q241 here before the hub merge 535cc2c8b) Test targets that did not compile at the hub's ffc390de8, and what they show once they do (open)
+### Q282. (Q241 here before the hub merge 535cc2c8b) Test targets that did not compile at the hub's ffc390de8, and what they show once they do (done)
 
 Found 2026-11-18, merging the hub (ffc390de8) into phased-facts.
 - **Fixed in the merge.** The device crate's, the engine's and the store's lib test targets did not compile:
@@ -4421,6 +4421,13 @@ Found 2026-11-18, merging the hub (ffc390de8) into phased-facts.
     merge of benchmarks-on-integration (afe42e396) took `WAIT.max(settle)`. Restoring
     `wait.unwrap_or(WAIT.max(settle))` made two `observe` tests fail, so the hub's form stays. Which bound the
     journal owes its callers is open.
+- **Done** (2026-11-19, after the hub merge 535cc2c8b): `layouts_are_carried_with_the_program` and the settle-window
+  `observe` test pass on the hub's code as merged; `kept_facts/tests.rs` is declared (`kept_facts.rs`, `mod tests`)
+  and its tests run; the journal takes `wait.unwrap_or(WAIT.max(settle))` again (the hub's), and the 117 tests of
+  `observe`, `journal` and `tape` pass with it. `a_placed_tape_reads_as_one_held_in_its_own_bytes` wrote each format
+  from the document's tape, which is held in the run's format (16 since 2026-11-17), and `in_format` keeps a tape
+  in another format as it is: its "format 15" was format 16. It now writes them from the parser's image of a run of
+  format 15 (`formats::as_run`), and checks all three.
 
 ### Q283. (Q242 here before the hub merge 535cc2c8b) The inline pricing (0099) prices a data-layer demand relation at 1e12 rows, and its unfolding never ends (done)
 
