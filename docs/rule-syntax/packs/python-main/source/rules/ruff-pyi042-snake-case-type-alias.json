@@ -1,0 +1,151 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi042-snake-case-type-alias",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Name type aliases in CamelCase so they read as types and are not mistaken for ordinary variables.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "snake-case-type-alias",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "type-alias-marker": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "type-alias-marker"
+                  }
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.TypeAlias",
+                  "typing_extensions.TypeAlias",
+                  "_typeshed.TypeAlias"
+                ]
+              }
+            },
+            "alias-assignment": {
+              "kind": "assignment",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "type-alias-marker"
+                }
+              }
+            },
+            "assignment-target": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "matches": "alias-assignment"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "tuple_pattern",
+                    "matches": "assignment-target",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "statement-name": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "type_alias_statement",
+                      "field": "left"
+                    }
+                  }
+                },
+                {
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "kind": "type_parameter"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "generic_type",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "type",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "type_alias_statement",
+                        "field": "left"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "kind": "identifier",
+                "pattern": "$NAME"
+              },
+              {
+                "regex": "^_?[a-z0-9]"
+              },
+              {
+                "any": [
+                  {
+                    "matches": "assignment-target"
+                  },
+                  {
+                    "matches": "statement-name"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI042",
+        "message": "Rename type alias `$NAME` to CamelCase, e.g. `MyAlias`, and update every reference; leave it if the lowercase name mirrors a runtime name that other code imports.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI042"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

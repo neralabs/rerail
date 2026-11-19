@@ -1,0 +1,197 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-dtz001-call-datetime-without-tzinfo",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Pass a real timezone when constructing a datetime; a naive datetime carries no zone information and causes subtle bugs.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "shared",
+   "define": {
+    "language": "python",
+    "utils": {
+     "callee": {
+      "any": [
+       {
+        "any": [
+         {
+          "kind": "identifier"
+         },
+         {
+          "kind": "attribute"
+         }
+        ],
+        "resolves": {
+         "import": [
+          "datetime.datetime"
+         ]
+        }
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "callee"
+        }
+       }
+      ]
+     },
+     "astz-safe": {
+      "inside": {
+       "stopBy": {
+        "not": {
+         "kind": "parenthesized_expression"
+        }
+       },
+       "kind": "attribute",
+       "any": [
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "field": "attribute",
+          "regex": "^astimezone$"
+         }
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "field": "attribute",
+          "regex": "^replace$"
+         },
+         "inside": {
+          "stopBy": {
+           "not": {
+            "kind": "parenthesized_expression"
+           }
+          },
+          "kind": "call",
+          "matches": "astz-safe"
+         }
+        }
+       ]
+      }
+     },
+     "none-lit": {
+      "any": [
+       {
+        "kind": "none"
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "none-lit"
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "no-tzinfo",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "callee"
+      },
+      "not": {
+       "matches": "astz-safe"
+      },
+      "arguments": {
+       "signature": [
+        "year",
+        "month",
+        "day",
+        "hour",
+        "minute",
+        "second",
+        "microsecond",
+        "tzinfo"
+       ],
+       "absent": [
+        "tzinfo"
+       ],
+       "mode": "syntactic"
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ001",
+    "message": "Add `tzinfo=` with a timezone, such as `tzinfo=datetime.timezone.utc`, so this datetime is aware. Leave it naive only if the code receiving it requires a naive value.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ001"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "tzinfo-none",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "callee"
+      },
+      "not": {
+       "matches": "astz-safe"
+      },
+      "arguments": {
+       "signature": [
+        "year",
+        "month",
+        "day",
+        "hour",
+        "minute",
+        "second",
+        "microsecond",
+        "tzinfo"
+       ],
+       "bind": {
+        "TZ": "tzinfo"
+       },
+       "mode": "syntactic"
+      }
+     },
+     "constraints": {
+      "TZ": {
+       "matches": "none-lit"
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ001",
+    "message": "Replace `tzinfo=None` with a real timezone, such as `datetime.timezone.utc`, so this datetime is aware. Keep `None` only if the code receiving it requires a naive value.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ001"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

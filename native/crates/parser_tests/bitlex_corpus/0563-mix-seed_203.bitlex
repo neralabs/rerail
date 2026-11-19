@@ -1,0 +1,16 @@
+# corpus: mix: seed 203
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask m0 = ~nul
+mask m1 = (span(lasts(high), 12) & digit)
+mask m2 = next((lasts(lf) & ~(x | m1)), 7)
+mask m3 = toggle(quote)
