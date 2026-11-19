@@ -23,6 +23,10 @@ Each scan published under a different scope. Collection preserved the bytes afte
 Removing the warmed blob produced `missing`. Replacing it with a valid blob under the wrong ID produced `unreadable`.
 Restoring the original object restored the bytes. Repacking the repository preserved them.
 All 15 standalone revision tests and both headless content and provenance tests passed on macOS.
+Windows 11 ARM64 on NTFS passed the same 15 standalone tests in 44.13 seconds at `220b3ed57a`.
+Both headless tests passed with the Windows addon in 46.79 seconds.
+The first Windows run caught the provenance fixture retaining the previous same-size blob at one path.
+The fixture now stages the intended blob ID and checks the committed tree before scanning.
 [Rule example](../../../rule-syntax/git.md#read-bytes-through-a-git-content-handle) · [Standalone regression](../../../../native/tests/git_revision_cli.rs) · [Headless regression](../../../../test/cli/headless-scan.test.ts)
 
 ## Selected document provenance
