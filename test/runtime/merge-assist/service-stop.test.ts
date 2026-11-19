@@ -791,6 +791,51 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     }
   });
 
+  it("keeps in two checkouts the events turning Merge Assist off has not handed yet when a stop with a wait meets another process's write lock: it waits for the lock, which frees within Rerail's wait for one", async () => {
+    const ws = await workspace();
+    // A second checkout with the main checkout's work: every peer conflicts with it too.
+    const checkouts = [ws.repo, addCheckout(ws, "mine-too", "mine")];
+    addPeers(ws);
+    const first = ws.service();
+    await first.setEnabled(ws.repo, true);
+    for (const checkout of checkouts) expect((await first.scan(checkout)).conflicts).toHaveLength(PEERS);
+    // Rerail's own connection, which waits five seconds for a lock.
+    const { service } = ownConnection(ws, new FakeGithub());
+    const reading = Promise.withResolvers<ChildProcess>();
+    let held = false;
+    // The turn-off's first branch read is held until the test ends it.
+    vi.mocked(spawn).mockImplementation((...args: Parameters<typeof spawn>) => {
+      if (held || !commandLine(args).includes("symbolic-ref")) return actualSpawn(...args);
+      held = true;
+      const child = actualSpawn(process.execPath, HELD_READ, { stdio: ["pipe", "pipe", "pipe"] });
+      reading.resolve(child);
+      return child;
+    });
+    let written: string[] = [];
+    try {
+      const turnOff = service.setEnabled(ws.repo, false).catch(() => undefined);
+      const read = await reading.promise;
+      const holder = holdWriteLock(ws.databasePath, ws.folder);
+      await holder.held;
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      // The other process gives the lock back at its bound, within the five seconds: a stop that waits for the lock holds
+      // this thread until then and keeps the events; one that did not wait would meet the lock held and lose them.
+      try {
+        await service.stop(UNREACHED_MS);
+      } finally {
+        written = stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes("Merge Assist"));
+        stderr.mockRestore();
+      }
+      await holder.release();
+      read.kill("SIGKILL");
+      await turnOff;
+    } finally {
+      vi.mocked(spawn).mockImplementation(actualSpawn);
+    }
+
+    expect({ written, kept: checkouts.map(checkout => keptRows(ws, checkout)) }).toEqual({ written: [], kept: [1, 1] });
+  });
+
   it("hands the `closed` of conflicts another pass stores in a checkout as Merge Assist is being turned off, as it hands those of the other checkouts", async () => {
     const ws = await workspace();
     const heard = await loggedHook(ws);
