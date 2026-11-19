@@ -699,6 +699,13 @@ impl Snapshot {
         })
     }
 
+    pub fn read_source_prefix(&self, path: &str, limit: u64) -> io::Result<Vec<u8>> {
+        self.with_blob_header(path, |_, storage, id, size, _| {
+            storage.ok_or_else(|| error("cannot locate Git blob storage"))?
+                .blob_prefix(id, size, limit).map_err(|e| error(format_args!("cannot read Git blob prefix {id}: {e}")))
+        })
+    }
+
     pub fn contains_path(&self, path: &Path) -> io::Result<bool> {
         let Ok(under) = relative_path(path) else { return Ok(false) };
         match self.view.relative_entry(&under, requires_directory(path)) {
@@ -750,24 +757,30 @@ impl Snapshot {
         path: &str,
         f: impl FnOnce(u64, &dyn Fn() -> io::Result<Vec<u8>>) -> io::Result<T>,
     ) -> io::Result<T> {
+        self.with_blob_header(path, |repo, _, id, size, under| {
+            f(size, &|| {
+                let bytes = verified_blob(repo, id).map_err(|err| {
+                    if err.kind() == io::ErrorKind::NotFound { error(format_args!("missing Git blob object {id}")) } else { err }
+                })?.data.clone();
+                let key = gix::path::to_unix_separators_on_windows(gix::path::into_bstr(under).map_err(error)?);
+                self.view.source_errors.lock().unwrap_or_else(|err| err.into_inner()).remove(key.to_str().map_err(error)?);
+                Ok(bytes)
+            })
+        })
+    }
+
+    fn with_blob_header<T>(&self, path: &str, f: impl FnOnce(&gix::Repository, Option<&storage::Storage>, gix::ObjectId, u64, &Path) -> io::Result<T>) -> io::Result<T> {
         let path = Path::new(path);
         let under = relative_path(path)?;
         let Entry::File(id) = self.view.relative_entry(&under, requires_directory(path))? else {
             return Err(io::Error::from(io::ErrorKind::IsADirectory));
         };
-        self.view.with_repo(|repo, _, _| {
+        self.view.with_repo(|repo, storage, _| {
             let header = repo.find_header(id).map_err(|e| error(format_args!("cannot read Git blob {id}: {e}")))?;
             if header.kind() != gix::object::Kind::Blob {
                 return Err(error(format_args!("expected Git blob {id}, found {}", header.kind())));
             }
-            f(header.size(), &|| {
-                let bytes = verified_blob(repo, id).map_err(|err| {
-                    if err.kind() == io::ErrorKind::NotFound { error(format_args!("missing Git blob object {id}")) } else { err }
-                })?.data.clone();
-                let key = gix::path::to_unix_separators_on_windows(gix::path::into_bstr(under.as_path()).map_err(error)?);
-                self.view.source_errors.lock().unwrap_or_else(|err| err.into_inner()).remove(key.to_str().map_err(error)?);
-                Ok(bytes)
-            })
+            f(repo, storage, id, header.size(), &under)
         })?
     }
 

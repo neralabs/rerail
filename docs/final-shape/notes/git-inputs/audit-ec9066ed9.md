@@ -2,12 +2,24 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Twenty-six of the 28 follow-up findings have verified results. Two remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+Twenty-seven of the 28 follow-up findings have verified results. One remains open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
 
 | Open finding | What still needs to pass |
 | --- | --- |
-| 11. Large Git blobs | Skip a binary after a bounded prefix read. Distinguish large text from an unreadable blob for loose and packed objects. |
 | 42. Removed stores | Retire a route by store identity. Apply its outstanding stop if that store returns. Preserve a different store at the same path. |
+
+## Oversized Git blobs
+
+The same broad policy found the text violation in `a.py` on the filesystem and at both revisions.
+A 32,000,001-byte blob with a NUL at byte offset 7,999 produced no failure. The text revision produced `budget-exceeded`.
+Both results survived repacking and removal of the loose copies. A missing loose blob and damaged compressed data in a pack each produced `source-incomplete`.
+The current working file held text during the historical binary checks.
+
+The storage test compared six prefix lengths with the original bytes for loose objects and both Git delta encodings.
+It checked the actual pack entry types for a base identified by offset and a base identified by object ID.
+After truncating a loose compressed stream to 16 KiB, 8,000 bytes could still be read. Requesting 32 KiB failed.
+The scan regression and both storage tests passed on macOS.
+[Scan contract](../../../headless-scan.md) · [Storage regression](../../../../native/src/git_snapshot_storage.rs) · [Headless regression](../../../../test/cli/headless-scan.test.ts)
 
 ## Commit diagnostic locations
 

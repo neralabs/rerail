@@ -598,6 +598,62 @@ Origin(@place(p,1), v, b, g, profile, cat("", t)) :- git_source_file(v, p, _, b)
     expect(await read(["copy.py", "a.py"])).toEqual(both);
   }, 90_000);
 
+  it("classifies oversized loose and packed Git blobs through the same scan policy as the filesystem", async () => {
+    const root = checkout();
+    const path = "unlisted.dat", file = join(root, path);
+    const broad = { ...(needle("broad", "NEEDLE") as Record<string, unknown>), scope: { include: ["**/*"], exclude: [] } };
+    writeRule(root, "broad.json", broad);
+    const payload = Buffer.alloc(32_000_001, 65);
+    payload[7999] = 0;
+    writeFileSync(file, payload);
+    git(root, "add", "--", path);
+    git(root, "commit", "-qm", "oversized binary");
+    const binary = git(root, "rev-parse", "HEAD");
+    const binaryId = git(root, "rev-parse", "HEAD:" + path);
+    const check = async (revision: string | undefined, failure?: string) => {
+      const report = await scan(root, { ...(revision && { revision, analysisScope: "large" }), paths: [path, "a.py"] });
+      expect(report.violations.some(v => v.ruleId === "broad" && v.path === "a.py"), JSON.stringify(report.failures)).toBe(true);
+      expect(report.failures.map(f => [f.path, f.code]), JSON.stringify(report.failures)).toEqual(failure ? [[path, failure]] : []);
+      expect(report.status).toBe(failure ? "failed" : "completed");
+    };
+    await check(undefined);
+    payload[7999] = 65;
+    writeFileSync(file, Buffer.concat([payload, Buffer.from("Z")]));
+    git(root, "add", "--", path);
+    git(root, "commit", "-qm", "oversized text");
+    const text = git(root, "rev-parse", "HEAD");
+    await check(binary);
+    await check(text, "budget-exceeded");
+    const object = join(root, ".git", "objects", binaryId.slice(0, 2), binaryId.slice(2));
+    renameSync(object, object + ".offline");
+    try {
+      await check(binary, "source-incomplete");
+    } finally { renameSync(object + ".offline", object); }
+    // A one-blob pack keeps the revision, its tree, and the text witness readable when the blob stream fails.
+    const packBase = join(root, ".git", "objects", "pack", "pack");
+    const packId = execFileSync("git", ["pack-objects", packBase], { cwd: root, input: binaryId + "\n", encoding: "utf8" }).trim();
+    const pack = packBase + "-" + packId + ".pack", saved = pack + ".original";
+    renameSync(pack, saved);
+    const damaged = readFileSync(saved);
+    let stream = 12;
+    do { stream++; } while ((damaged[stream - 1]! & 0x80) !== 0);
+    damaged[stream] = 0;
+    writeFileSync(pack, damaged);
+    renameSync(object, object + ".offline");
+    try {
+      await check(binary, "source-incomplete");
+    } finally {
+      renameSync(object + ".offline", object);
+      rmSync(pack);
+      renameSync(saved, pack);
+    }
+    git(root, "repack", "-adf", "--window=50", "--depth=10");
+    git(root, "prune-packed");
+    expect(existsSync(object)).toBe(false);
+    await check(binary);
+    await check(text, "budget-exceeded");
+  }, 120_000);
+
   it("reports typed commit locations beside a real file named git", async () => {
     const root = checkout();
     writeFileSync(join(root, "git"), "file witness\n");
