@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, type BigIntStats } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, type BigIntStats } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { replaceFileSync } from "../file-replace.js";
@@ -15,6 +15,8 @@ import { loadNativeBinding, type NativeExclusiveFileLock } from "./native.js";
  */
 const LOCK_FILE = "daemon.lock";
 const HOLDER_FILE = "daemon.json";
+/** What a start writes beside the holder's record, and removes, to read the clock that stamped that record. */
+const CLOCK_FILE = "daemon-clock";
 
 /**
  * How long a daemon keeps trying for a lock another process holds. A start that asks whether a daemon runs
@@ -76,14 +78,30 @@ export function homeDaemonHolder(home: string): number | undefined {
 }
 
 /**
- * When the holder of `home`'s lock recorded itself, in milliseconds since the epoch: the time it took the lock, since it
- * records itself then and never again. Undefined without a record.
+ * How long ago, in milliseconds, the holder of `home`'s lock recorded itself, which it does as it takes the lock and
+ * never again: the time the file system stamped on that record, against the time it stamps on a file written beside it
+ * now. Both come from one clock, the file server's on a home on a share, whatever this machine's clock reads. Negative
+ * when that clock moved back since. Undefined without a record, or where the file cannot be written.
  */
-export function homeDaemonHeldSince(home: string): number | undefined {
+export function homeDaemonHeldFor(home: string): number | undefined {
+  const clock = join(home, LOCKS_DIR, CLOCK_FILE);
   try {
-    return statSync(join(home, LOCKS_DIR, HOLDER_FILE)).mtimeMs;
+    const since = statSync(join(home, LOCKS_DIR, HOLDER_FILE)).mtimeMs;
+    writeFileSync(clock, `${process.pid}\n`, { mode: 0o600 });
+    return statSync(clock).mtimeMs - since;
   } catch {
     return undefined;
+  } finally {
+    removeQuietly(clock);
+  }
+}
+
+/** Removes `path` if it is there; one that cannot be removed now (Windows: another program has it open) is left. */
+function removeQuietly(path: string): void {
+  try {
+    rmSync(path, { force: true });
+  } catch {
+    // Written again over, by the next start that reads the clock.
   }
 }
 

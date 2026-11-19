@@ -11,7 +11,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { spawn, spawnShown } from "../engine/child-process.js";
 import { programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
 import { loadNativeBinding } from "../engine/native/native.js";
-import { forgetHomeDaemonHolder, homeDaemonHeldSince, homeDaemonHolder, homeDaemonLockHeld } from "../engine/native/home-daemon-lock.js";
+import { forgetHomeDaemonHolder, homeDaemonHeldFor, homeDaemonHolder, homeDaemonLockHeld } from "../engine/native/home-daemon-lock.js";
 import { forgetMainInstanceHolder, mainInstanceLockHeld } from "../engine/native/main-instance.js";
 import { withHomeLock } from "../engine/native/file-lock.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
@@ -873,12 +873,13 @@ function holderNotRecorded(home: string): string {
 
 /**
  * Whether the daemon that holds `home` took it less than a start's wait ago, by the time it recorded itself as it took
- * the lock ({@link homeDaemonHeldSince}). Counted either way from the clock, as a claim is ({@link claimHolds}): a
- * record made before the clock moved back has held the home a while too. A record that cannot be read is not counted.
+ * the lock, read on the clock that stamped that record ({@link homeDaemonHeldFor}): this machine's clock may differ
+ * from a file server's by more than the wait. Counted either way, as a claim is ({@link claimHolds}): a record made
+ * before the clock moved back has held the home a while too. A record that cannot be read is not counted.
  */
 function holderComingUp(home: string): boolean {
-  const since = homeDaemonHeldSince(home);
-  return since !== undefined && Math.abs(Date.now() - since) < START_TIMEOUT_MS;
+  const heldFor = homeDaemonHeldFor(home);
+  return heldFor !== undefined && Math.abs(heldFor) < START_TIMEOUT_MS;
 }
 
 /** What a stop says when a daemon holds `home` and never records itself: which process to end. */

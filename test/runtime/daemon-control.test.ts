@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { connect, createServer, type AddressInfo, type Socket } from "node:net";
-import { appendFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -349,7 +349,8 @@ describe("Rerail daemon control", () => {
   // than a start's wait before, as one a start launched a moment ago or one that restarted itself meanwhile, is still
   // coming up: the start says what the start that launched it said. One that has held it longer had that start's whole
   // wait too, and has not answered, hung or not: the start names the process to end, as main's starts did, and says it
-  // leaves it running. A stop names the process to end either way.
+  // leaves it running. A stop names the process to end either way. How long it has held the home is read on the clock
+  // that stamped its record, as on a home on a share whose file server's clock is 30 s off this machine's.
   it.each(["linux", "win32"] as const)("says a daemon that holds the home and has not recorded itself still starts while it took the home within a start's wait, and names it to end after that (%s)", async platform => {
     const record = join(home, LOCKS_DIR, "daemon.json");
     await mkdir(join(home, LOCKS_DIR), { recursive: true });
@@ -370,25 +371,34 @@ describe("Rerail daemon control", () => {
       + `Run rerail daemon start again to wait for it. See ${join(home, DAEMON_LOG_FILE)}`;
     const toEnd = (named: string): string => `A Rerail daemon${named} holds ${home} but has not written daemon.json within 15s; end that `
       + "process, then run rerail daemon start. This start leaves that process running.";
-    // When the holder recorded itself, from the start's own begin, which its wait ends 16 s after: 2 s into the wait,
-    // 14 s before its end; as it began, 16 s before; one whole start's wait before it, as the start that launched it
-    // waited; 60 s ahead, on a clock that moved back since; or a record gone as the wait ran out.
+    // How long before the end of the start's wait the holder recorded itself, on the file system's clock: 14 s, as one
+    // that came up 2 s into a 16 s wait; 16 s, as the wait began; 32 s, one whole start's wait before it, as the start
+    // that launched it waited; 44 s ahead, on a clock that moved back since; or a record gone as the wait ran out. Then
+    // with this machine's clock 30 s behind the file system's, and 30 s ahead of it: 30 s and 2 s, 5 s.
     const holders = [
-      { recorded: 2_000, says: stillStarting },
-      { recorded: 0, says: toEnd(` (pid ${process.pid})`) },
-      { recorded: -16_000, says: toEnd(` (pid ${process.pid})`) },
-      { recorded: 60_000, says: toEnd(` (pid ${process.pid})`) },
-      { recorded: undefined, says: toEnd("") },
+      { heldFor: 14_000, machineAhead: 0, says: stillStarting },
+      { heldFor: 16_000, machineAhead: 0, says: toEnd(` (pid ${process.pid})`) },
+      { heldFor: 32_000, machineAhead: 0, says: toEnd(` (pid ${process.pid})`) },
+      { heldFor: -44_000, machineAhead: 0, says: toEnd(` (pid ${process.pid})`) },
+      { heldFor: undefined, machineAhead: 0, says: toEnd("") },
+      { heldFor: 30_000, machineAhead: -30_000, says: toEnd(` (pid ${process.pid})`) },
+      { heldFor: 2_000, machineAhead: -30_000, says: stillStarting },
+      { heldFor: 5_000, machineAhead: 30_000, says: stillStarting },
     ];
     vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
     try {
-      for (const { recorded, says } of holders) {
+      for (const { heldFor, machineAhead, says } of holders) {
         // Set-up's and a person's start, and a hook's start before it sends its settings.
         for (const start of [startDaemon, startDaemonForPackage]) {
           await writeFile(record, JSON.stringify({ pid: process.pid }));
-          leaves = recorded === undefined;
-          await utimes(record, new Date(), new Date(Date.now() + (recorded ?? 0)));
+          leaves = heldFor === undefined;
+          // The file system stamps files on the real clock, which the fake `Date` leaves alone; the start's wait ends on
+          // this machine's clock, the fake one, `machineAhead` past the file system's.
+          const fileSystemNow = performance.timeOrigin + performance.now();
+          await utimes(record, new Date(), new Date(fileSystemNow - (heldFor ?? 0)));
+          vi.setSystemTime(fileSystemNow + machineAhead - 16_000);
           await expect(start({ home, packageRoot, ensureSqlite: async () => { throw launching; } }, { dev: true, port: 0 }, machine)).rejects.toThrow(says);
+          expect(readdirSync(join(home, LOCKS_DIR)).filter(name => name.startsWith("daemon-clock"))).toEqual([]);
         }
       }
       leaves = false;
