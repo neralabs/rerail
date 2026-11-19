@@ -7,6 +7,9 @@ import { promisify } from "node:util";
 import { MessageChannel, type MessagePort, receiveMessageOnPort, Worker } from "node:worker_threads";
 import { endProcessTree, execFile, spawn, spawnSync } from "./child-process.js";
 import { fileStamp } from "./file-stamp.js";
+import {
+  CONFIG_LISTING, configEntryVariables, driverOverrides, listedEntries, oldGitNotice, readDriverConfig, worktreeRead, type ListedEntry,
+} from "./git-filter-drivers.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
 export interface GitSearch {
@@ -971,14 +974,19 @@ export interface RunGitOptions {
 }
 
 /**
- * What every Git call sets so that a repository's own config cannot start these programs through it: no fsmonitor, no
- * hooks, and no signature check, which `git reflog` and `git log` make under `log.showSignature` by starting
- * `gpg.program` for each signed commit they list.
+ * What every Git call sets so that a repository's own config starts no program through it: no fsmonitor, no hooks, and
+ * no signature check, which `git reflog` and `git log` make under `log.showSignature` by starting `gpg.program` for each
+ * signed commit they list. A call that reads worktree files also needs the filter drivers a repository's config
+ * defines set to no program, which {@link runGit} and the reads that do not block do on Git 2.31 or later
+ * ({@link guardedSync}); `runGitAsync` and `streamGit` do not, and of their calls only Merge Assist's diff of its base
+ * against the working files (internal testing) reads a worktree file.
  */
 const SAFE_CONFIG: readonly string[] = [
   "-c", "core.fsmonitor=false", "-c", `core.hooksPath=${process.platform === "win32" ? "NUL" : "/dev/null"}`, "-c", "log.showSignature=false",
 ];
 const DEFAULT_TIMEOUT_MS = 10_000;
+/** The most bytes a listing of a repository's config takes for the guard: past it, the call it guards is not made. */
+const MAX_LISTING_BYTES = 1024 * 1024 * 1024;
 
 /**
  * The environment of every Git process Rerail starts, a start of the Git at `executable`: this process's with
@@ -1004,13 +1012,105 @@ function timeLeft(limitMs: number): () => number {
 /**
  * `git -C <cwd> <args>` with fsmonitor, hooks and signature checks disabled ({@link SAFE_CONFIG}), in
  * {@link gitEnvironment} (no optional locks, no lazy fetch of a partial clone's missing objects), and a 10 s default
- * timeout; throws {@link GitUnavailableError} when Git is
- * missing, never on a non-zero exit. When the Git kept for the process is gone, it runs once more with the Git found
- * again ({@link ProcessGit.replacedNow}): the look and that second start get what is left of the call's time limit
- * ({@link timeLeft}), since the call blocks the thread and a look may wait on a folder far longer; with none left, the
- * call fails as its start did.
+ * timeout; throws {@link GitUnavailableError} when Git is missing, never on a non-zero exit. A call that reads worktree
+ * files ({@link worktreeRead}) runs with each filter driver the repository's config defines set as the person's own
+ * config sets it, or to no program ({@link guardedSync}). A call whose config Git cannot list is not made: its result
+ * carries the listing's status and error, and none of its output.
+ * On a Git older than 2.31 every call runs as it did before the guard, and the process says why once ({@link guardWorks}).
  */
 export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
+  const read = worktreeRead(args);
+  if (read === "none" || !guardWorks(cwd)) return startGitSync(cwd, args, options);
+  const guarded = guardedSync(cwd, options.env);
+  return "entries" in guarded ? startGitSync(cwd, args, { ...options, env: guarded.env }) : guarded;
+}
+
+/** The variables a Git call sets over the inherited environment ({@link RunGitOptions.env}). */
+type GitVariables = NonNullable<RunGitOptions["env"]>;
+
+/** A repository's config as the guard listed it, and the variables its calls run with: each driver it defines set. */
+interface Guarded {
+  readonly entries: readonly ListedEntry[];
+  readonly env: GitVariables;
+}
+
+/**
+ * The guard for calls in `cwd`'s repository with `env` set: its config listed once ({@link CONFIG_LISTING}), and `env`
+ * with each filter driver the repository's config defines set as the person's own config sets it, or to no program
+ * (`git-filter-drivers.ts`). How the listing failed instead (a config Git cannot parse, a timeout), with none of its
+ * output. The listing runs without `GIT_CONFIG`, which `git config` alone reads in place of every config file, so a
+ * listing in its presence would miss the files the guarded call reads. The listing and the call are two Git
+ * processes: a writer that changes the config between them can have its driver started (docs/threat-model.md, T11).
+ */
+function guardedSync(cwd: string, env: GitVariables = {}): Guarded | GitResult {
+  const listing = startGitSync(cwd, CONFIG_LISTING, { env: { ...env, GIT_CONFIG: undefined }, maxBuffer: MAX_LISTING_BYTES });
+  return listing.status === 0 && listing.error === undefined ? guardedBy(listing.stdout, env) : unanswered(listing);
+}
+
+/** {@link Guarded} from the config `listing` of a repository whose calls run with `env` set. */
+function guardedBy(listing: string, env: GitVariables): Guarded {
+  const entries = listedEntries(listing);
+  const drivers = configEntryVariables({ ...process.env, ...env }, driverOverrides(readDriverConfig(entries)));
+  return { entries, env: { ...env, ...drivers } };
+}
+
+/** A failed question asked for a call, as that call's result: its status, stderr and error, none of its output. */
+function unanswered(failure: GitResult): GitResult {
+  return { status: failure.status, stdout: "", stderr: failure.stderr, ...(failure.error === undefined ? {} : { error: failure.error }) };
+}
+
+/** What this process's Git means for the guard: what Rerail says when it is too old ({@link oldGitNotice}), and whether it said it. */
+interface GuardGit {
+  readonly notice: string | undefined;
+  told: boolean;
+}
+
+let guardGit: GuardGit | undefined;
+
+/** {@link GuardGit} from `git version` asked in `cwd`; undefined when Git did not answer, so a later call asks again. */
+function askedGuardGitSync(cwd: string): GuardGit | undefined {
+  const answer = startGitSync(cwd, ["version"]);
+  return answer.status === 0 ? { notice: oldGitNotice(answer.stdout), told: false } : undefined;
+}
+
+/**
+ * Whether the guard covers this process's Git calls: a Git it works with (2.31 or later), asked once. With an older one
+ * every call runs as it ran before the guard, so each answers as that Git answers, and the first call the guard would
+ * cover says why on the process's error stream, which for the daemon is its log.
+ */
+function guardWorks(cwd: string): boolean {
+  guardGit ??= askedGuardGitSync(cwd);
+  return guardCovers(guardGit);
+}
+
+/** {@link guardWorks} for a read that does not block. */
+async function guardWorksLater(cwd: string, signal: AbortSignal | undefined): Promise<boolean> {
+  const asked = guardGit ?? await askedGuardGit(cwd, signal);
+  guardGit ??= asked;
+  return guardCovers(asked);
+}
+
+/** {@link askedGuardGitSync} without blocking. */
+async function askedGuardGit(cwd: string, signal: AbortSignal | undefined): Promise<GuardGit | undefined> {
+  const answer = await readGitWith(cwd, ["version"], { signal, maxBuffer: GIT_OUTPUT_MAX_BYTES, env: {} });
+  return answer.ended === "printed" ? { notice: oldGitNotice(answer.stdout), told: false } : undefined;
+}
+
+/** Whether `git` is one the guard works with, saying once why not when it is older. */
+function guardCovers(git: GuardGit | undefined): boolean {
+  if (git?.notice === undefined) return true;
+  if (!git.told) process.stderr.write(`rerail: ${git.notice}\n`);
+  git.told = true;
+  return false;
+}
+
+/**
+ * `git -C <cwd> <args>` as {@link runGit} makes every call, with no guard of its own: when the Git kept for the process
+ * is gone, it runs once more with the Git found again ({@link ProcessGit.replacedNow}): the look and that second start
+ * get what is left of the call's time limit ({@link timeLeft}), since the call blocks the thread and a look may wait on
+ * a folder far longer; with none left, the call fails as its start did.
+ */
+function startGitSync(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
   const command = [...SAFE_CONFIG, "-C", cwd, ...args];
   const left = timeLeft(options.timeout ?? DEFAULT_TIMEOUT_MS);
   const executable = gitExecutable();
@@ -1254,13 +1354,42 @@ type GitRead = { readonly ended: "printed"; readonly stdout: string } | { readon
  * Runs a Git command as `gitOutput` does, and says how it ended. Git's stderr goes to the null device, as `streamGit`'s
  * does: no answer reads it, and a process Git started that outlives Git (a repository's clean filter can leave one)
  * holds it for as long as it runs and writes there as much as it likes, while the read answers once Git has exited and
- * its output has closed. Run again with the Git found again when the one kept is gone ({@link readWithGit}).
+ * its output has closed. Run again with the Git found again when the one kept is gone ({@link readWithGit}). A read of
+ * worktree files runs under the guard {@link runGit} puts on such a call ({@link readerGuard}).
  */
 async function readGit(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer: number): Promise<GitRead> {
+  const guard = await readerGuard(cwd, args, signal);
+  return "ended" in guard ? guard : await readGitWith(cwd, args, { signal, maxBuffer, env: guard.env });
+}
+
+/**
+ * The variables a read of `args` in `cwd` runs with: for one that reads worktree files, each filter driver the
+ * repository's config defines set as {@link guardedSync} sets it, from a listing that does not block; how that listing
+ * ended instead.
+ */
+async function readerGuard(cwd: string, args: readonly string[], signal: AbortSignal | undefined): Promise<{ readonly env: GitVariables } | GitReadEnd> {
+  const read = worktreeRead(args);
+  if (read === "none" || !(await guardWorksLater(cwd, signal))) return { env: {} };
+  const listing = await readGitWith(cwd, CONFIG_LISTING, { signal, maxBuffer: MAX_LISTING_BYTES, env: { GIT_CONFIG: undefined } });
+  return listing.ended === "printed" ? guardedBy(listing.stdout, {}) : listing;
+}
+
+/** How a Git read ended without an answer ({@link GitRead}). */
+type GitReadEnd = Exclude<GitRead, { readonly ended: "printed" }>;
+
+/** What one start of a Git read takes: its stop, the most it prints, and the variables it sets. */
+interface ReadStart {
+  readonly signal: AbortSignal | undefined;
+  readonly maxBuffer: number;
+  readonly env: GitVariables;
+}
+
+/** One Git read as {@link readGit} makes it, with `start.env` set and no guard of its own. */
+async function readGitWith(cwd: string, args: readonly string[], { signal, maxBuffer, env }: ReadStart): Promise<GitRead> {
   const read = await readWithGit<GitRead>({ timeoutMs: DEFAULT_TIMEOUT_MS, signal }, async (executable, limits) => {
     const { promise, resolve: settle } = Promise.withResolvers<GitRead>();
     const child = startGit(() => spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
-      env: { ...gitEnvironment(executable), GIT_TERMINAL_PROMPT: "0" },
+      env: { ...gitEnvironment(executable, env), GIT_TERMINAL_PROMPT: "0" },
       stdio: ["pipe", "pipe", "ignore"],
     }));
     if (child instanceof Error) return { answer: { ended: "failed" }, missing: false };

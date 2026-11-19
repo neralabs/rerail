@@ -187,13 +187,18 @@ describe("Git runs with its window hidden", () => {
 
   it("in runGit, gitHead, readGitBlobIds and readGitBlobs", async () => {
     const root = await repository();
+    // Rerail asks Git's version once in each process, at its first call that reads worktree files: asked here, so the
+    // Gits counted below are those of the calls and of the config listing a call that reads worktree files makes.
+    runGit(root, ["status", "--porcelain"]);
+    vi.clearAllMocks();
     expect(runGit(root, ["status", "--porcelain"]).status).toBe(0);
     expect(await gitHead(root)).toMatch(/^[0-9a-f]{40}/u);
     expect((await readGitBlobIds(root, ["HEAD:a.txt"])).size).toBe(1);
     expect((await readGitBlobs(root, ["HEAD:a.txt"], { maxBlobBytes: 1024 })).get("HEAD:a.txt")?.toString()).toBe("a\n");
     const calls = [childProcess.spawnSync, childProcess.execFile, childProcess.spawn].map(gitCalls);
-    // gitHead's read starts its Git as the blob reads do.
-    expect(calls.map(list => list.length)).toEqual([1, 0, 3]);
+    // runGit lists the config before a `git status`, which reads worktree files; gitHead's read starts its Git as the
+    // blob reads do.
+    expect(calls.map(list => list.length)).toEqual([2, 0, 3]);
     expect(calls.flat().every(hidesWindow)).toBe(true);
   });
 
