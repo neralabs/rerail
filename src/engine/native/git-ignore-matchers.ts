@@ -21,6 +21,8 @@ export class GitIgnoreMatchers {
   readonly #current = new Map<string, Shared>();
   /** Every matcher a router holds: the current ones, and those a change left with the routers that took them. */
   readonly #held = new Set<Shared>();
+  /** The checkouts whose matcher could not say whether what it read changed, said once each. */
+  readonly #checkFailed = new Set<string>();
 
   constructor(open: (root: string) => NativeGitIgnoreMatcher | null = root => loadNativeBinding().openGitIgnoreMatcher(root)) {
     this.#open = open;
@@ -42,7 +44,24 @@ export class GitIgnoreMatchers {
   /** `root`'s current matcher while it reads the rules a matcher opened now would. */
   #unchangedCurrent(root: string): Shared | undefined {
     const current = this.#current.get(root);
-    return current !== undefined && sourcesUnchanged(current.matcher) ? current : undefined;
+    return current !== undefined && this.#unchanged(current) ? current : undefined;
+  }
+
+  /**
+   * Whether `shared` reads the rules a matcher opened now would. A check that fails reads as a change, and is said once
+   * per checkout, as a failed open is: one that keeps failing gives each router a matcher of its own.
+   */
+  #unchanged(shared: Shared): boolean {
+    try {
+      return shared.matcher.sourcesUnchanged();
+    } catch (error) {
+      if (!this.#checkFailed.has(shared.root)) {
+        this.#checkFailed.add(shared.root);
+        const message = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`rerail: cannot tell whether Git ignore rules changed for ${shared.root}, so a router opens its own: ${message}\n`);
+      }
+      return false;
+    }
   }
 
   /** A matcher opened now for `root`, current from now on; undefined outside Git. */
@@ -73,14 +92,5 @@ export class GitIgnoreMatchers {
   /** How many matchers routers hold now. */
   get size(): number {
     return this.#held.size;
-  }
-}
-
-/** Whether `matcher` reads the rules a matcher opened now would; a check that fails reads as a change. */
-function sourcesUnchanged(matcher: NativeGitIgnoreMatcher): boolean {
-  try {
-    return matcher.sourcesUnchanged();
-  } catch {
-    return false;
   }
 }

@@ -102,6 +102,25 @@ describe("GitIgnoreMatchers", () => {
     expect(opens).toBe(2);
   });
 
+  it("says once per checkout that a shared matcher cannot tell whether what it read changed, with the error", async () => {
+    const { main, linked } = await checkout();
+    const errors = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const binding = loadNativeBinding();
+    const matchers = new GitIgnoreMatchers(root => {
+      const matcher = binding.openGitIgnoreMatcher(root);
+      return matcher === null ? null : {
+        ignored: (path, directory) => matcher.ignored(path, directory),
+        ignoredBy: (path, directory) => matcher.ignoredBy(path, directory),
+        sourcesUnchanged: () => { throw new Error("cannot read the Git configuration"); },
+      };
+    });
+    for (const name of ["first", "second", "third"]) matchers.matcher(main, user(name));
+    for (const name of ["first", "second"]) matchers.matcher(linked, user(name));
+    const said = errors.mock.calls.map(([text]) => String(text)).filter(text => text.includes("cannot tell whether Git ignore rules changed"));
+    expect(said).toHaveLength(2);
+    expect(said.every(text => text.includes("cannot read the Git configuration"))).toBe(true);
+  });
+
   it("gives a router that asks after the checkout's .gitignore changed a matcher that follows it, and leaves an earlier one's as it was", async () => {
     const { main } = await checkout();
     const matchers = new GitIgnoreMatchers();
