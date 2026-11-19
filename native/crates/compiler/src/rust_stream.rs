@@ -176,7 +176,19 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
     let pops = |per: u64| if per > 0 { format!(" + self.depth as usize * {per}") } else { String::new() };
     writeln!(
         out,
-        "    /// The tape's room for the path to the next token (`native_cpu_stream::Bounds`).
+        "    /// A call one level deeper, as the lean parser's `deeper()`: refused past `DEPTH`.
+    #[inline(always)]
+    fn deeper(&mut self, rule: impl FnOnce(&mut S) -> Result<bool, bool>) -> Result<bool, bool> {{
+        if self.depth == DEPTH {{
+            return Err(false);
+        }}
+        self.depth += 1;
+        let again = rule(self)?;
+        self.depth -= 1;
+        Ok(again)
+    }}
+
+    /// The tape's room for the path to the next token (`native_cpu_stream::Bounds`).
     #[inline(always)]
     fn room(&mut self) -> R {{
         if self.nodes as usize + {}{} > self.room_nodes || self.supers as usize + {}{} > self.room_supers {{
@@ -1651,7 +1663,7 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
         Op::Span { last: false, len } => format!("if s.start + {len} != s.rec_end {{ return Err(false); }}\n{}{}", if x.flagged { "s.end = s.rec_end;\ns.need = true;\n" } else { "" }, jump(0)?),
         Op::Span { last: true, .. } => format!("{}{}", if x.flagged { "s.end = s.rec_end;\ns.need = true;\n" } else { "" }, jump(0)?),
         Op::Empty { total } => format!("if s.total({total}) != 0 {{ return Err(false); }}\n{}", jump(0)?),
-        Op::Word { string, test: true } => format!("if s.word() == {} {{ {} }} else {{ {} }}", u32::from(string) + 1, jump(0)?, jump(1)?),
+        Op::Word { string, test: true } => format!("if s.word() == {} {{\n{}\n}}{}", u32::from(string) + 1, jump(0)?, or_else(&jump(1)?)),
         Op::Word { string, test: false } => format!("if s.word() != {} {{ return Err(false); }}\n{}", u32::from(string) + 1, jump(0)?),
         Op::Open { kind } => format!("s.open({});\n{}", u32::from(kind) | u32::from(field_after(x, pc).unwrap_or(0)) << 16, jump(0)?),
         Op::Close { this } => format!("s.close::<{this}>({})?;\n{}", if this { end } else { "0" }, jump(0)?),
@@ -1688,9 +1700,10 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
                 format!("(if s.at_end {{ {end} }} else {{ {w}s.bit({o}, s.start) }})")
             };
             let take = if keep { String::new() } else { format!("s.live &= !((2u64 << {k}) - 1);\n") };
-            format!("if s.live >> {k} & 1 != 0 && {here} {{\n{take}{}\n}} else {{\n{}\n}}", jump(0)?, jump(1)?)
+            let here = if here == "true" { String::new() } else { format!(" && {here}") };
+            format!("if s.live >> {k} & 1 != 0{here} {{\n{take}{}\n}}{}", jump(0)?, or_else(&jump(1)?))
         }
-        Op::Row { mask } => format!("if s.bit({}, s.start) {{ {} }} else {{ {} }}", mask_output(n, mask)?, jump(0)?, jump(1)?),
+        Op::Row { mask } => format!("if s.bit({}, s.start) {{\n{}\n}}{}", mask_output(n, mask)?, jump(0)?, or_else(&jump(1)?)),
         Op::Retag { kind, on: On::Here } => format!("s.here_kind({kind})?;\n{}", jump(0)?),
         Op::Retag { kind, on: On::Moved } => format!("s.moved_kind({});\n{}", kind_of(kind), jump(0)?),
         Op::Retag { kind, on: On::Made } => format!("s.made_kind::<{}>({})?;\n{}", kind == DEAD, kind_of(kind), jump(0)?),
@@ -1716,13 +1729,13 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
             } else {
                 String::new()
             };
-            format!("if s.depth == DEPTH {{ return Err(false); }}\ns.depth += 1;\nlet again = r{callee}(s{args})?;\ns.depth -= 1;\nif again {{ {} }} else {{ {} }}", jump(1)?, jump(0)?)
+            format!("if s.deeper(move |s| r{callee}(s{args}))? {{\n{}\n}}{}", jump(1)?, or_else(&jump(0)?))
         }
         Op::Remember { kind: WORD_KIND } => format!("word = s.word_kind()?;\n{}", jump(0)?),
         Op::Remember { kind } => format!("word = {kind};\n{}", jump(0)?),
         Op::Flag { flag, op: FlagOp::Set } => format!("flags |= {};\n{}", 1u32 << flag, jump(0)?),
         Op::Flag { flag, op: FlagOp::Clear } => format!("flags &= !{};\n{}", 1u32 << flag, jump(0)?),
-        Op::Flag { flag, op: FlagOp::Test } => format!("if flags & {} != 0 {{ {} }} else {{ {} }}", 1u32 << flag, jump(0)?, jump(1)?),
+        Op::Flag { flag, op: FlagOp::Test } => format!("if flags & {} != 0 {{\n{}\n}}{}", 1u32 << flag, jump(0)?, or_else(&jump(1)?)),
         Op::Count { count, up: true, max } => format!("s.counts[{count}] += 1;\nif s.counts[{count}] > {max} {{ return Err(false); }}\n{}", jump(0)?),
         Op::Count { count, up: false, .. } => format!("s.counts[{count}] = s.counts[{count}].saturating_sub(1);\n{}", jump(0)?),
         Op::Check { check } => format!("s.check_{check}()?;\n{}", jump(0)?),
@@ -1732,6 +1745,70 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
         Op::Goto { .. } => jump(0)?,
         ref op => return Err(format!("word {pc}: {op:?} is not tier 2's")),
     })
+}
+
+/// An `if`'s `else`: `else if …` where the branch is one `if` chain (as a hand-written chain of
+/// tests reads), else `else { … }`.
+fn or_else(e: &str) -> String {
+    let t = e.trim();
+    if t.starts_with("if ") && one_if(t) {
+        format!(" else {t}")
+    } else {
+        format!(" else {{\n{e}\n}}")
+    }
+}
+
+/// Whether `t`, an `if`, is one statement: every brace that closes at its outer level is followed
+/// by `else` or the end.
+fn one_if(t: &str) -> bool {
+    let mut depth = 0i32;
+    for (i, c) in t.char_indices() {
+        match c {
+            '(' | '{' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    let rest = t[i + 1..].trim_start();
+                    if !(rest.is_empty() || rest.starts_with("else")) {
+                        return false;
+                    }
+                }
+            }
+            ';' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
+/// `body` indented by its braces, four spaces a level from `base` (the generated code has no
+/// braces in strings or characters; a comment's are not counted).
+fn indent(body: &str, base: usize) -> String {
+    let mut out = String::with_capacity(body.len() * 2);
+    let mut depth = base as i32;
+    for line in body.lines() {
+        let l = line.trim();
+        if l.is_empty() {
+            continue;
+        }
+        let code = l.split("//").next().unwrap_or("");
+        let lead = code.chars().take_while(|c| matches!(c, '}' | ')' | ']')).count() as i32;
+        let level = (depth - lead).max(0);
+        for _ in 0..level {
+            out.push_str("    ");
+        }
+        out.push_str(l);
+        out.push('\n');
+        for c in code.chars() {
+            match c {
+                '(' | '{' | '[' => depth += 1,
+                ')' | '}' | ']' => depth -= 1,
+                _ => {}
+            }
+        }
+    }
+    out
 }
 
 /// The function of the rule entered at `entry`: its words reachable from there, structured.
@@ -1752,7 +1829,7 @@ fn rule(out: &mut String, x: &Facts<'_>, entry: usize) -> Result<(), String> {
     let sizes = vec![1; nodes.len()];
     let shape = Shape::of(first, &sizes).ok_or_else(|| format!("rule at {entry}: an irreducible graph"))?;
     let emit = |node: usize, jump: &dyn Fn(usize) -> Result<String, String>| -> Result<String, String> { word(x, nodes[node], jump) };
-    let body = shape.tree(&emit, 0)?;
+    let body = indent(&shape.tree(&emit, 0)?, 1);
     let params = if x.context { ", mut word: u32, mut flags: u32" } else { "" };
     writeln!(out, "/// The rule entered at word {entry}.\n#[inline(never)]\nfn r{entry}(s: &mut S{params}) -> Result<bool, bool> {{\n    let mut d: u32 = 0;\n{body}}}\n").unwrap();
     Ok(())
