@@ -15,6 +15,7 @@ import { access } from "node:fs/promises";
 import { basename } from "node:path";
 import type { CheckoutContext } from "../../engine/catalog/repository-model.js";
 import { mergeAssistEnabled } from "../../engine/catalog/repository-registry.js";
+import type { GitReads } from "../../engine/git.js";
 import {
   baseBranchAsync,
   branchBeingRebased,
@@ -22,6 +23,7 @@ import {
   gitReadAsync,
   isAncestorAsync,
   mergeBaseAsync,
+  readsStoppedBy,
   resolveCommit,
   upstreamOf,
 } from "../../engine/merge-assist/branch-git.js";
@@ -30,10 +32,11 @@ import { conflictId, overlapQuestion, quietFiles, shortConflictId } from "../../
 import type { Conflict, ConflictSide } from "../../engine/merge-assist/model.js";
 import { ADJACENT_LINES, clipLines, type GitConflict, HUNK_LINES, identify, OverlapReader, type RefHunk, workspaceRanges } from "../../engine/merge-assist/overlap.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
+import { conflictEvents, type ConflictFire } from "./conflict-hook.js";
 import { mergeDetected, readConflicts, type StoredConflict, writeConflicts } from "./conflict-store.js";
 import { PULL_REQUEST_LIMIT, type PullRequestSummary } from "./github.js";
 import { personName } from "./people.js";
-import { isoSeconds } from "./state.js";
+import { isoSeconds, type StateQueries } from "./state.js";
 
 /** What a pass that could compare nothing (no base branch, no shared history) says of the open conflicts it kept. */
 export const UNCOMPARED_KEPT_PROBLEM = "The open conflicts found before stay as they were until this branch can be compared again.";
@@ -71,6 +74,16 @@ export interface DetectContext {
   readonly pulls: readonly PullRequestSummary[] | null;
   /** The person's GitHub login, as `gh` is signed in; absent or null when unknown. */
   readonly login?: string | null;
+  /**
+   * The owner of the pass's Git reads: once it stops, the pass's Git read running ends and no other starts
+   * (`readsStoppedBy`), and a pass that has not stored yet stores nothing and answers null.
+   */
+  readonly reads?: GitReads;
+  /**
+   * The conflict events the pass hands the hook for storing `after` over `before`, asked in the store's own transaction
+   * (`tx`); the events between the two when absent.
+   */
+  readonly events?: (tx: StateQueries, before: readonly StoredConflict[], after: readonly StoredConflict[]) => ConflictFire[];
 }
 
 /** This checkout's side: where its work starts, its head and branch, the person, and its changed hunks per file. */
@@ -518,23 +531,42 @@ export interface DetectedConflicts {
   readonly problems: string[];
   /** The branch checked out and the base branch's short name, as the pass read them; null where there is none. */
   readonly checkout: { readonly branch: string | null; readonly base: string | null };
+  /** The conflict events to hand the hook (`events`); none for a pass that stored nothing. */
+  readonly fires: ConflictFire[];
 }
 
 /**
  * Find the checkout's conflicts and store them with the dismissed ones. A detection that finishes after Merge Assist
- * was turned off stores nothing and answers null.
+ * was turned off, or once the owner of its `reads` stops, stores nothing and answers null; one that stored answers what
+ * it stored, though its `reads` stop after.
  */
 export async function detectConflicts(context: DetectContext): Promise<DetectedConflicts | null> {
+  return await readsStoppedBy(context.reads, () => detectPass(context));
+}
+
+/** Whether the owner of the pass's Git reads has stopped them. */
+function readsStopped(context: DetectContext): boolean {
+  return context.reads?.stopped === true;
+}
+
+/**
+ * What a pass that could compare nothing answers, for `problem`: the open conflicts stay as they were, unexamined, as
+ * a ref's do when it cannot be read.
+ */
+function uncompared(known: StoredConflict[], problem: string): DetectedConflicts {
+  const stay = known.some(entry => entry.conflict.status === "open") ? [UNCOMPARED_KEPT_PROBLEM] : [];
+  return { before: known, after: known, peers: { branches: 0, pullRequests: 0 }, problems: [problem, ...stay], checkout: { branch: null, base: null }, fires: [] };
+}
+
+/** {@link detectConflicts}, its Git reads run by its `reads`. */
+async function detectPass(context: DetectContext): Promise<DetectedConflicts | null> {
   const root = context.checkout.checkoutPath;
   // What the store held when this pass began: an open conflict another pass stores while this one runs was never
   // examined here, so it stays as it is (below).
   const known = readConflicts(context.database, root);
   const view = await mineView(root);
-  if (typeof view === "string") {
-    // Nothing could be compared: the open conflicts stay as they were, unexamined, as a ref's do when it cannot be read.
-    const stay = known.some(entry => entry.conflict.status === "open") ? [UNCOMPARED_KEPT_PROBLEM] : [];
-    return { before: known, after: known, peers: { branches: 0, pullRequests: 0 }, problems: [view, ...stay], checkout: { branch: null, base: null } };
-  }
+  // Stopped meanwhile (here and before the store below): its reads ended early and what they gave is no finding.
+  if (typeof view === "string") return readsStopped(context) ? null : uncompared(known, view);
   const refs = await liveRefs(root, view, context);
   const { conflicts: detected, failed } = await overlapConflicts(context, view, [...refs.pulls, ...refs.branches]);
   // A ref this pass could not read, or every branch when they could not be listed, keeps the open conflicts it had.
@@ -544,6 +576,8 @@ export async function detectConflicts(context: DetectContext): Promise<DetectedC
     ...(refs.branchesListed ? [] : [UNLISTED_BRANCHES_PROBLEM]), ...(refs.remotesCut ? [REMOTE_LIMIT_PROBLEM] : []),
     ...failed.map(({ ref, reason }) => `Could not compare ${ref.label}: ${reason}`),
   ];
+  // Stopped meanwhile: its reads ended early and what they gave is no finding, and the database may be closing.
+  if (readsStopped(context)) return null;
   const now = context.now();
   const examined = new Set([...known.filter(entry => !kept(entry)), ...detected].map(entry => entry.conflict.id));
   return context.database.transaction(tx => {
@@ -556,7 +590,7 @@ export async function detectConflicts(context: DetectContext): Promise<DetectedC
     writeConflicts(tx, root, after, now);
     return {
       before, after, peers: { branches: refs.branches.length, pullRequests: refs.pulls.length }, problems,
-      checkout: { branch: view.checkedOut, base: view.base.name },
+      checkout: { branch: view.checkedOut, base: view.base.name }, fires: context.events?.(tx, before, after) ?? conflictEvents(before, after),
     };
   }, { behavior: "immediate" });
 }

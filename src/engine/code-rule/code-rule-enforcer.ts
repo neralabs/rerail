@@ -670,6 +670,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /** Audits this evaluator started and has not finished: all it may end when the session-wide interrupt is not its to make. */
   readonly #runningAudits = new Set<string>();
   #reportableViolations: CodeRuleViolation[] = [];
+  /** The revision `#reportableViolations` holds: the newest published, so a revision published late never replaces it. */
+  #reportableRevision = 0;
   #responseMode: AuditMode;
   #evaluation = emptyEvaluation();
 
@@ -709,6 +711,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#steerDelivery = options.steerDelivery;
     this.#scope = options.scope ?? DEFAULT_AUDIT_SETTINGS.scope;
     this.#mode = options.mode ?? DEFAULT_AUDIT_SETTINGS.mode;
+    // The answer before any revision, set here rather than through `#answerWith` so the field is definitely assigned.
     this.#responseMode = this.#mode;
     this.#presentPath = options.presentPath ?? (path => path);
     this.#nestedCheckouts = options.nestedCheckouts ?? (() => []);
@@ -1255,7 +1258,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (readFailure !== undefined) {
       this.#readFailures.set(path, readFailure);
       this.#finishAudit(stored.auditId, "failed", [], [readFailure]);
-      if (this.#pending.size === 0) await this.#publishReady();
+      await this.#publishReady();
       return;
     }
     if (prepared === undefined) throw new Error("Policy workspace could not be initialized");
@@ -1368,15 +1371,14 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /**
    * A steer queued for a source this evaluation reported again speaks for its older facts. The runtime drops each such
    * steer whole, so the other sources it spoke for are steered again with the findings they last reported. Then what is
-   * ready is published, once nothing is pending: with nothing reported again, that is decided without a wait, so an
-   * edit queued meanwhile cannot put the publishing off.
+   * ready is published (`#publishReady`).
    */
   async #steerAgainThenPublish(stored: StoredEdit, reported: ReadonlyMap<string, CodeRuleViolation[]>): Promise<void> {
     if (reported.size > 0 && this.#sessionId !== undefined) {
       const revised = [...reported.keys()].map(source => this.#presentPath(source));
       await this.#steerAgain(this.#steerDelivery.revised?.(this.#sessionId, stored.revision, revised) ?? []);
     }
-    if (this.#pending.size === 0) await this.#publishReady();
+    await this.#publishReady();
   }
 
   /**
@@ -1402,9 +1404,16 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   async #recordPendingEvaluationError(path: string, stored: StoredEdit, error: unknown): Promise<void> {
     if (this.#closing) return;
     const problem = failure("worker", "adapter-error", errorMessage(error), path, "evaluate");
-    if (this.#pending.size === 0) await this.#publishReady();
+    // Recorded before the publish, which waits for the runtime and may throw, so neither holds this audit open.
     this.#readFailures.set(path, problem);
     this.#finishAudit(stored.auditId, "failed", [], [problem]);
+    try {
+      await this.#publishReady();
+    } catch (publishError) {
+      // Recorded as `#run` records a publish that throws after a check or a read failure, so the evaluator goes on to
+      // the next queued edit. The publish it makes again asks only for revisions that became ready since.
+      await this.#recordPendingEvaluationError(path, stored, publishError);
+    }
   }
   /**
    * Where the edit of `path` measures what it generated: from the preimage of the source's oldest edit whose lines may
@@ -1650,10 +1659,29 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   }
 
   async #finishScopeAudit(completion: ScopeAuditCompletion): Promise<ScopeAuditSummary | undefined> {
-    const { workspace, auditId, revision, scope, mode, sourcePaths, failures, stopped, generatedEdit, indexed } =
-      completion;
+    const { workspace, auditId, revision, scope, mode, sourcePaths, failures, generatedEdit } = completion;
+    if (!(await this.#completeScopeAuditRequest(completion))) return;
+    const resultPagesStartedAt = performance.now();
+    const streamed = await this.#resultPages(workspace, scope, auditId, mode === "log" && !generatedEdit, failures);
+    const resultPagesMilliseconds = performance.now() - resultPagesStartedAt;
+    const { result, allFailures, unboundedFailures, status } = this.#recordScopeAuditResult(completion, streamed);
+    this.#answerScopeAudit(revision, mode, result, allFailures);
+    this.#keepAuditFindings(completion, result.violations);
+    await this.#publish(
+      revision,
+      scope === "repository" ? [] : sourcePaths,
+      result.violations,
+      mode,
+      { kind: scope === "repository" ? "audit" : "edit" },
+      generatedEdit,
+    );
+    return { resultPagesMilliseconds, violations: streamed.violationCount, failures: unboundedFailures.length, status };
+  }
+
+  /** Applies a scope audit's last request and keeps its index for reuse; false when the evaluator closes meanwhile. */
+  async #completeScopeAuditRequest({ workspace, stopped, indexed }: ScopeAuditCompletion): Promise<boolean> {
     await this.#waitForEvaluationIdle();
-    if (this.#closing) return;
+    if (this.#closing) return false;
     await this.#applyRequest(workspace, {
       files: [],
       removed: [],
@@ -1665,10 +1693,14 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       await workspace.completeStorageRevisionAsync().catch((error: unknown) => {
         process.stderr.write(`rerail: repository reuse was not recorded: ${errorMessage(error)}\n`);
       });
-    if (this.#closing) return;
-    const resultPagesStartedAt = performance.now();
-    const streamed = await this.#resultPages(workspace, scope, auditId, mode === "log" && !generatedEdit, failures);
-    const resultPagesMilliseconds = performance.now() - resultPagesStartedAt;
+    return !this.#closing;
+  }
+
+  /** A scope audit's result from its pages, recorded as the audit's end. */
+  #recordScopeAuditResult(
+    { auditId, scope, failures }: ScopeAuditCompletion,
+    streamed: Pick<Evaluation, "violations" | "failures"> & { paged: boolean },
+  ) {
     // Gaps are listed but do not fail the audit; files read only in part are gaps of a repository audit alone.
     const result: Evaluation = {
       status: failsAudit(streamed.failures, scope) ? "failed" : "completed",
@@ -1683,37 +1715,32 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const allFailures = auditFailureCap(scope)(unboundedFailures);
     // The paged list is capped by the same rule over the same failures, so it leaves out as many.
     const unlisted = unboundedFailures.length - allFailures.length;
-    const status = failsAudit(unboundedFailures, scope) ? "failed" : "completed";
+    const status: AuditResult["status"] = failsAudit(unboundedFailures, scope) ? "failed" : "completed";
     if (streamed.paged && auditId !== undefined) {
       this.#record(() => this.#audits.finishResultPages?.(auditId, status, unlisted));
       this.#runningAudits.delete(auditId);
     } else {
       this.#finishAudit(auditId, status, result.violations, allFailures, unlisted);
     }
-    if (this.#scope === "repository" && revision === this.#revision) {
-      this.#reportableViolations = result.violations;
-      this.#responseMode = mode;
-      this.#evaluation = { ...result, failures: allFailures };
-    }
-    // A touched-files steer speaks for each of its sources: a revision of one drops it whole, so each source's findings
-    // are recorded for `#steerAgain` to steer the others again. A source a later revision reached keeps what it reported.
-    if (scope === "touched-files" && mode === "steer")
-      for (const path of sourcePaths)
-        if ((this.#versions.get(path) ?? 0) <= revision)
-          this.#auditFindings.set(path, {
-            revision,
-            mode,
-            violations: result.violations.filter((violation) => violation.path === path),
-          });
-    await this.#publish(
-      revision,
-      scope === "repository" ? [] : sourcePaths,
-      result.violations,
-      mode,
-      { kind: scope === "repository" ? "audit" : "edit" },
-      generatedEdit,
-    );
-    return { resultPagesMilliseconds, violations: streamed.violationCount, failures: unboundedFailures.length, status };
+    return { result, allFailures, unboundedFailures, status };
+  }
+
+  /** In repository scope, the repository audit of the newest revision is what `#response` answers with. */
+  #answerScopeAudit(revision: number, mode: AuditMode, result: Evaluation, failures: Evaluation["failures"]): void {
+    if (this.#scope !== "repository" || revision !== this.#revision) return;
+    this.#answerWith(revision, result.violations, mode);
+    this.#evaluation = { ...result, failures };
+  }
+
+  /**
+   * A touched-files steer speaks for each of its sources: a revision of one drops it whole, so each source's findings
+   * are recorded for `#steerAgain` to steer the others again. A source a later revision reached keeps what it reported.
+   */
+  #keepAuditFindings({ scope, mode, revision, sourcePaths }: ScopeAuditCompletion, violations: Evaluation["violations"]): void {
+    if (scope !== "touched-files" || mode !== "steer") return;
+    for (const path of sourcePaths)
+      if ((this.#versions.get(path) ?? 0) <= revision)
+        this.#auditFindings.set(path, { revision, mode, violations: violations.filter((violation) => violation.path === path) });
   }
 
   async #waitForEvaluationIdle(): Promise<void> {
@@ -2104,17 +2131,20 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#workspaceEvaluations.set(workspace, evaluation);
     return evaluation;
   }
+  /**
+   * Publishes the findings of each revision none of whose edits is still queued, as soon as the last of them is
+   * recorded: an edit of another call or a walk still queued holds back none of them, so a recorded finding rides the
+   * session's next boundary. A tool call's edits go out together, except one still being stored (`#store` spools it to
+   * disk) when the evaluator ends the others: its findings follow in a steer of their own.
+   */
   async #publishReady(): Promise<void> {
-    const ready = [...this.#readyViolations.entries()];
-    this.#readyViolations.clear();
-    for (const [revision, byPath] of ready) {
+    for (const [revision, byPath] of this.#takeReady()) {
       const current = [...byPath].filter(([path]) => this.#versions.get(path) === revision);
       if (current.length === 0) continue;
       const violations = current.flatMap(([, pathViolations]) => pathViolations);
       const mode = this.#readyModes.get(revision) ?? this.#mode;
       this.#readyModes.delete(revision);
-      this.#reportableViolations = violations;
-      this.#responseMode = mode;
+      this.#answerWith(revision, violations, mode);
       await this.#publish(
         revision,
         current.map(([path]) => path),
@@ -2124,6 +2154,22 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         true,
       );
     }
+  }
+
+  /** The ready revisions none of whose edits is still queued, in the order they became ready, taken from the ready map. */
+  #takeReady(): [number, Map<string, CodeRuleViolation[]>][] {
+    const queued = new Set([...this.#pending.values()].map(stored => stored.revision));
+    const ready = [...this.#readyViolations].filter(([revision]) => !queued.has(revision));
+    for (const [revision] of ready) this.#readyViolations.delete(revision);
+    return ready;
+  }
+
+  /** What `#response` answers with: the findings of the newest revision published, as when revisions went out in order. */
+  #answerWith(revision: number, violations: CodeRuleViolation[], mode: AuditMode): void {
+    if (revision < this.#reportableRevision) return;
+    this.#reportableRevision = revision;
+    this.#reportableViolations = violations;
+    this.#responseMode = mode;
   }
 
   async #publish(

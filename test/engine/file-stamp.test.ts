@@ -1,7 +1,7 @@
 import { runInNewContext } from "node:vm";
 import { setFlagsFromString } from "node:v8";
 import { describe, expect, it } from "vitest";
-import { fileStamp } from "../../src/engine/file-stamp.js";
+import { fileStamp, stampTime } from "../../src/engine/file-stamp.js";
 
 setFlagsFromString("--expose-gc");
 const gc = runInNewContext("gc") as () => void;
@@ -18,6 +18,12 @@ function retainedBy<T>(make: () => T): { value: T; bytes: number } {
 describe("a file's stamp", () => {
   it("names the file's device, inode, size and times", () => {
     expect(fileStamp({ dev: 1, ino: 2, size: 3, mtimeMs: 4.5, ctimeMs: 6 })).toBe("1:2:3:4.5:6");
+  });
+
+  it("gives back the later of its two times, whichever that is", () => {
+    // A file whose modification time was set back (`touch -d`, `cp -p`) has the later change time.
+    expect(stampTime(fileStamp({ dev: 9, ino: 8, size: 7, mtimeMs: 1_794_240_777_123.617, ctimeMs: 1_794_240_777_163.572 }))).toBe(1_794_240_777_163.572);
+    expect(stampTime(fileStamp({ dev: 9, ino: 8, size: 7, mtimeMs: 1_794_240_777_163.572, ctimeMs: 1_794_240_777_123.617 }))).toBe(1_794_240_777_163.572);
   });
 
   it("is one flat string, since a walk keeps one for every file of the checkout in every session and walk", () => {

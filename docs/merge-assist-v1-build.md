@@ -148,7 +148,9 @@ array run without a shell, from the checkout's root, with a timeout of 10 second
 - On macOS and Linux it runs in its own process group: past its timeout the group gets SIGTERM, then SIGKILL 2 seconds
   later, and its pipes are closed. When the daemon stops, every running command's group gets SIGTERM, then SIGKILL
   within half a second. Windows has no signal that asks a process to stop, so there the command and everything it
-  started end at once (`taskkill /T /F`), at the timeout or the stop.
+  started end at once (`taskkill /T /F`), at the timeout or the stop. A pass that ends within the stop's 2 s wait
+  still stores what it found; the hook hears its events at the next pass in that checkout, in this daemon or a later
+  one, before that pass's own.
 - A command that cannot start, exits non-zero, times out, writes more than 4 KiB or prints anything else is recorded on
   the conflict as `hook: { ok: false, error }` and shown on the dashboard and in the CLI. It never changes delivery.
 
@@ -171,8 +173,11 @@ it. Otherwise the conflict closes when the overlap is gone.
   content anchor its id rests on), `scan:<checkout>` and `scanning:<checkout>` (the scanning process's pid, so a mark
   left by a process that died does not block scans), `github:<repository>` (`gh` readiness, reused for five minutes;
   one that could not be read for one), `delivered:<session>` (the notes a session was handed) and
-  `settings:<repository>` (the hook command). A value that does not match what the build expects reads as absent, one
-  conflict at a time. A checkout Rerail forgets takes its `conflicts:`, `scan:` and `scanning:` rows with it; a
+  `settings:<repository>` (the hook command), and `unheard:<checkout>` (conflict events stored while Merge Assist was
+  stopping, which the next pass that stores in the checkout, a dismissal or Merge Assist turned off hands to the hook
+  first, once, leaving out a conflict's events where the stored conflicts say otherwise, as after a build without this
+  key changed them). A value that does not match what the build expects reads as absent, one
+  conflict or one kept event at a time. A checkout Rerail forgets takes its `conflicts:`, `scan:`, `scanning:` and `unheard:` rows with it; a
   repository that takes a new key (a clone that gains a remote) takes its `settings:` row along and drops its
   `github:` one, and a repository Rerail removes takes both with it; `rerail reset` drops the `delivered:` rows of the
   sessions it removes.

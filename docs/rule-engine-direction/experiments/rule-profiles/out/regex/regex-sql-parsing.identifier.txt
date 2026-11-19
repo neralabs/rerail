@@ -1,4 +1,0 @@
-^(?:compile|findall|fullmatch|match|search|split)$
-^(?:compile|findall|fullmatch|match|search|split|sub)$
-^(?:re)$
-^(?:sub)$

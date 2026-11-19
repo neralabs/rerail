@@ -675,11 +675,11 @@ These diagnostics share retained roots. Additional indexes requested by extensio
 An earlier frame can become active when an edit shortens an upstream dependency gate.
 Immutable initial templates supply its retained roots. Accumulated journals reconcile external edits before that frame evaluates.
 Native savepoints restore roots, bindings, and schemas if initial execution fails.
-See the [implementation plan](sql-unification-and-updates-plan.md#retained-recursive-iterations) for measurements, root causes, and remaining work.
+See the implementation plan, `sql-unification-and-updates-plan.md` (removed; at 7efcac9c67), for measurements, root causes, and remaining work.
 
 ## Explain and profiling
 
-The cost database and SQL plan forecasts are described in [Cost-based SQL planning](sql-planning-feedback.md).
+The cost database and SQL plan forecasts are described in Cost-based SQL planning, `sql-planning-feedback.md` (removed; at 7efcac9c67).
 
 SQL sessions use the shared query profiler, including the standalone headless engine.
 Set `RERAIL_SQL_PROFILE_DIR` before the process opens a session:
