@@ -22,12 +22,12 @@ concurrency:
 # rule packs from npm with one. GitHub withholds secrets from fork and Dependabot pull requests, so those jobs run on
 # pushes and same-repository pull requests only; there a missing secret or variable is a configuration error and
 # fails the job. The jobs that read the packs' test data (the Rust tests, unit tests and the conformance check) are
-# guarded the same way: the archives the tool-packs' test-data.lock files name reach the Actions cache from S3 under an
-# OIDC token, which GitHub does not give those pull requests either. A test-data job holds that token and only fills
-# the cache (.github/actions/pack-test-data, `fetch: "true"`); the jobs that read the data hold none, and restore,
-# verify and extract what it saved (`fetch: "false"`). The data reaches CI only as the archives the locks name, each
-# verified by its sha256 (CONTRIBUTING.md, "Pack test data"), and S3 must hold every archive the locks name
-# (test-data-in-s3, so nothing merges that main cannot read).
+# guarded the same way: the archives the tool-packs' test-data.lock files name come from S3 under an OIDC token, which
+# GitHub does not give those pull requests either. A test-data job holds that token and only fetches them, uploading
+# them as the run's artifacts (.github/actions/pack-test-data, `fetch: "true"`); the jobs that read the data hold none,
+# and download, verify and extract what it uploaded (`fetch: "false"`). The data reaches CI only as the archives the
+# locks name, each verified by its sha256 (CONTRIBUTING.md, "Pack test data"), and S3 must hold every archive the locks
+# name (test-data-in-s3, so nothing merges that main cannot read).
 #
 # CI does not derive pack test data again, on purpose: the data is a point-in-time artifact. What a pull request
 # publishes is checked by the code owner who approves its upload, reading the publish workflow's prep summary (what each
@@ -192,8 +192,18 @@ jobs:
       e2e: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.e2e || 'true' }}
       integration: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.integration || 'true' }}
       sessions: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.sessions || 'true' }}
+      # Which Rust packages' tests the change can affect (scripts/check/ci/rust-selection.mjs): the changed crates and every
+      # crate that depends on one. Everything off pull requests, past 3000 files, and when the step fails: rust-all
+      # 'true', rust-packages every package (or ["all"] when even the package list could not be read), rust-cargo-args
+      # `--workspace`, rust-nextest-filter `all()`, rust-engine 'true'. rust-packages '[]': no crate's tests to run.
+      rust-all: ${{ steps.select.outputs.rust-all || 'true' }}
+      rust-packages: ${{ steps.select.outputs.rust-packages || '["all"]' }}
+      rust-cargo-args: ${{ steps.select.outputs.rust-all == 'false' && steps.select.outputs.rust-cargo-args || '--workspace' }}
+      rust-nextest-filter: ${{ steps.select.outputs.rust-nextest-filter || 'all()' }}
+      rust-engine: ${{ steps.select.outputs.rust-engine || 'true' }}
     steps:
-      # Pull requests only: paths-filter lists a pull request's files through the API, so no checkout is needed.
+      # paths-filter lists a pull request's files through the API; the Rust selection reads the crates' manifests and
+      # module trees from a checkout.
       # `common`, `engine` and `package` are only shared by the filters below (YAML anchors); nothing reads their outputs.
       - id: filter
         if: github.event_name == 'pull_request'
@@ -202,15 +212,57 @@ jobs:
           filters: |
             rust:
               - 'native/**'
+              - 'accel/**'
+              - 'forest/**'
               - 'conformance/**'
               - 'fixtures/**'
               - 'packs/**'
               - 'languages/**'
+              - 'docs/rule-syntax/**'
+              - 'gate/data-layer/**'
               - 'src/engine/code-rule/code-rule-language-registry.generated.ts'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - '.cargo/**'
+              - 'scripts/check/check-rustfmt.mjs'
+              - 'scripts/check/check-rustfmt/files.txt'
+              - 'scripts/check/ci/native-test-legs.mjs'
+              - 'scripts/profiling/reachability/**'
+              - 'scripts/profiling/preparation/**'
+              - 'scripts/profiling/composition.py'
+              - 'test/scripts/test_sql_composition.py'
+              - 'scripts/profiling/reachability_*.py'
+              - 'scripts/profiling/native_*_*.py'
+              - 'test/scripts/test_reachability.py'
+              - 'test/scripts/test_native_relations.py'
+              - 'test/scripts/test_native_sql_plan.py'
+              - 'scripts/profiling/producer-shape.mjs'
+              - 'scripts/profiling/sql-budget.mjs'
+              - 'fixtures/host/data-layer-port/sql-budget-recording.json'
+              - 'fixtures/host/data-layer-port/profiling/sql-execution-opportunities-20261024.json'
+              - 'scripts/profiling/sql-report.mjs'
+              - 'scripts/profiling/sql-session.mjs'
+              - 'benchmark/sql-profile/**'
+              - 'test/scripts/sql-execution-budget.test.mjs'
+              - 'test/scripts/sql-profile.test.mjs'
+              - 'test/scripts/sql-profile/**'
+              - 'test/engine/native/relational-batch.test.ts'
+              - 'test/engine/native/relational-completed.test.ts'
+              - 'test/engine/native/candidate-admission.test.ts'
+              - 'test/engine/native/candidate-publication.test.ts'
+              - 'test/engine/native/compiler-schema.test.ts'
+              - 'test/engine/native/shared-producers.test.ts'
+              - 'test/engine/native/frontier-determinism.test.ts'
+              - 'test/engine/native/recovery/child-demand.test.ts'
+              - 'test/engine/native/recovery/relational-storage.test.ts'
+              - 'test/engine/native/recovery/input-admission.test.ts'
+              - 'test/engine/native/recovery/eponymous-sources.test.ts'
+              - 'test/engine/native/recovery/state-syntax-domain.test.ts'
+              - 'test/engine/native/recovery/selector-materialization.test.ts'
+              - 'scripts/profiling/frontier-audit.mjs'
+              - 'scripts/profiling/post_c_spikes/**'
+              - 'test/scripts/test_post_c_spikes.py'
               - 'package.json'
               - '.github/workflows/ci.yml'
               - '.gitattributes'
@@ -218,6 +270,8 @@ jobs:
               - '.github/actions/pack-test-data/**'
               - 'scripts/s3/**'
               - 'scripts/samples/**'
+              - '.github/actions/rust-compile-cache/**'
+              - 'scripts/check/ci/rust-selection.mjs'
             # What every job installs, builds or runs with: this workflow and its actions, the dependencies, the Rust
             # toolchain and the engine's crates, the LFS attributes.
             common: &common
@@ -231,9 +285,12 @@ jobs:
               - 'rust-toolchain.toml'
               - '.cargo/**'
               - '.gitattributes'
-            # The native engine the build job makes: its crate, and the language registry its build.rs reads.
+            # The native engine the build job makes: its crates (native/crates/, and the accelerators' accel/ and
+            # forest/ it depends on), and the language registry its build.rs reads.
             engine: &engine
               - 'native/**'
+              - 'accel/**'
+              - 'forest/**'
               - 'languages/**'
             # The package the build job makes and the daemon runs from source: every source file (tsc compiles all of
             # src/), the page, the bundled model, the hosts' hooks, skills and plugin manifests, the build scripts.
@@ -298,11 +355,37 @@ jobs:
               - *package
               - 'scripts/host/**'
 
-  # Fills the Actions cache with every key the jobs below restore (.github/actions/pack-test-data, `fetch: "true"`): every
-  # tool-pack's archives for the unit jobs (Linux and Windows) and the conformance jobs, and the three tool-packs the
-  # Rust tests read, each its own key. It holds the OIDC token, which only a miss uses, runs nothing but the pull
-  # (scripts/s3/pack-fixtures.mjs, this commit's code), and never extracts a cache entry; the jobs that read the data
-  # restore it holding no token. The Release pull request reads none.
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The pull request's files (a rename lists both names) against the crates; any other event, or a pull request the
+      # API cannot list whole, selects everything (Cargo.lock reaches every package). The runner's stable cargo reads the
+      # manifests (`cargo metadata --no-deps`); rust-toolchain.toml's channel would be a download for nothing.
+      - id: select
+        name: Select the Rust packages to test
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          FILES: ${{ github.event.pull_request.changed_files || 0 }}
+          RUSTUP_TOOLCHAIN: stable
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$FILES" -lt 3000 ]; then
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/changed.txt"
+          else
+            echo Cargo.lock > "$RUNNER_TEMP/changed.txt"
+          fi
+          node scripts/check/ci/rust-selection.mjs "$RUNNER_TEMP/changed.txt" --github >> "$GITHUB_OUTPUT"
+
+  # Uploads, as this run's artifacts, every set of archives the jobs below download (.github/actions/pack-test-data,
+  # `fetch: "true"`): every tool-pack's archives for the unit jobs (Linux and Windows) and the conformance jobs, and the
+  # four tool-packs the Rust tests read, each its own artifact. It holds the OIDC token, runs nothing but the pull
+  # (scripts/s3/pack-fixtures.mjs, this commit's code), and never downloads an artifact; the jobs that read the data
+  # download it holding no token. Artifacts rather than the Actions cache: the cache's 10 GB evicted the entry between
+  # this job and its readers. The Release pull request reads none.
   test-data:
     name: Pack test data
     needs: changes
@@ -316,7 +399,7 @@ jobs:
       }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # id-token: the archives from S3 on a cache miss, with credentials only the action's pull step holds.
+    # id-token: the archives from S3, with credentials only the action's pull step holds.
     permissions:
       contents: read
       id-token: write
@@ -327,7 +410,7 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # Every tool-pack first: on a miss the single tool-packs below then read the archives it downloaded, not S3.
+      # Every tool-pack first: the single tool-packs below then read the archives it downloaded, not S3.
       - uses: ./.github/actions/pack-test-data
         with:
           fetch: "true"
@@ -348,6 +431,12 @@ jobs:
         with:
           pack: vue
           tool: eslint-plugin-vue
+          fetch: "true"
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: data-layer
+          tool: lint
           fetch: "true"
 
   # S3 holds every archive each test-data.lock names and every samples archive each samples.lock names
@@ -404,15 +493,13 @@ jobs:
           AWS_REGION: us-east-2
         run: node scripts/s3/pack-fixtures.mjs check
 
-  # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
-  # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts. The tests read three
-  # tool-packs' test data (native/src/code_rule_dsl/test_support.rs's callers), restored from what the test-data job
-  # saved, so the job runs where that job does (the note at the top). The tests run in two legs of about equal time on
-  # a runner: the workspace's (much of it waiting out the store's busy timeouts) and the anchor index's, then every other,
-  # the second skipping exactly what the first runs.
-  rust:
-    name: Rust engine (${{ matrix.name }})
-    needs: [changes, test-data]
+  # rustfmt (on the files scripts/check/check-rustfmt/files.txt lists) and clippy, the engine's own tests, and the
+  # profiling labs' checks, side by side; nothing downstream waits for them. They keep no Actions cache (the
+  # repository's 10 GB hold the other jobs' entries): each compiles from scratch, and the tests' compile happens once
+  # per run (rust-tests-build).
+  rust-clippy:
+    name: Rust engine (fmt, clippy)
+    needs: changes
     if: >-
       ${{
         needs.changes.outputs.rust != 'false' && needs.changes.outputs.release-pr != 'true' &&
@@ -425,21 +512,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - task: clippy
-            name: fmt, clippy
-            run: npm run check:native
-          - task: test
-            name: tests, workspace and anchors
-            run: "npm run test:native -- -- code_rule_dsl::workspace:: code_rule_dsl::matcher::anchors::"
-          - task: test
-            name: tests, the rest
-            run: "npm run test:native -- -- --skip code_rule_dsl::workspace:: --skip code_rule_dsl::matcher::anchors::"
-    # Line tables keep file:line in panics at a fraction of full debuginfo; incremental state only
-    # bloats the cache, since dependencies never build incrementally.
+    # Line tables keep file:line in panics at a fraction of full debuginfo; nothing here builds twice incrementally.
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
@@ -451,29 +524,6 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/lfs
-
-      # The clippy leg only compiles the tests; the tests leg runs them, and three read pack test data: Ruff's fixtures,
-      # SQLFluff's expected findings and fixtures, and eslint-plugin-vue's fixtures.
-      - if: matrix.task == 'test'
-        uses: ./.github/actions/pack-test-data
-        with:
-          pack: python
-          tool: ruff
-          fetch: "false"
-
-      - if: matrix.task == 'test'
-        uses: ./.github/actions/pack-test-data
-        with:
-          pack: sql
-          tool: sqlfluff
-          fetch: "false"
-
-      - if: matrix.task == 'test'
-        uses: ./.github/actions/pack-test-data
-        with:
-          pack: vue
-          tool: eslint-plugin-vue
-          fetch: "false"
 
       # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
       # so the toolchain installed here must be the same channel.
@@ -487,25 +537,173 @@ jobs:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           components: rustfmt, clippy
 
-      - name: Cache cargo artifacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Run fmt, clippy
+        run: npm run check:native
+
+  # The engine's test binaries, compiled once for the legs of the rust job (scripts/check/ci/native-test-legs.mjs): it runs
+  # `cargo test --workspace` with that script as cargo's target runner, which records each test binary with the
+  # working directory and environment cargo gives it instead of running it, and runs the doc tests. It then lists every
+  # binary's tests whole and under each leg's filters, fails unless each test is in exactly one leg, and hands the
+  # binaries on as an artifact (1.5 GB). It reads no pack test data, so it starts with the test-data job. A cold compile
+  # takes 13 to 17 minutes on the 4-vCPU runner; from main's compile cache (.github/actions/rust-compile-cache, an
+  # artifact a push to main saves) about 5. Without one it compiles cold: never a failure.
+  rust-tests-build:
+    name: Rust engine (test build)
+    needs: changes
+    if: >-
+      ${{
+        needs.changes.outputs.rust-packages != '[]' &&
+        needs.changes.outputs.rust != 'false' && needs.changes.outputs.release-pr != 'true' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # actions: main's compile cache, an artifact of another run.
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      legs: ${{ steps.build.outputs.legs }}
+    # Line tables keep file:line in panics at a fraction of full debuginfo; nothing here builds twice incrementally.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: rerail-${{ matrix.task }}-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            rerail-${{ matrix.task }}-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
+      # so the toolchain installed here must be the same channel.
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      # sccache, starting from main's newest store (an artifact): what main compiled the same way is fetched.
+      - id: compile-cache
+        uses: ./.github/actions/rust-compile-cache
+        with:
+          name: test
+
+      # The crates a pull request's changes reach (the changes job): `--workspace`, or `-p <package>` for each.
+      - id: build
+        name: Build the test binaries, run the doc tests and check the legs
+        env:
+          NATIVE_TESTS_CARGO_ARGS: ${{ needs.changes.outputs.rust-cargo-args }}
+        run: node scripts/check/ci/native-test-legs.mjs build "$RUNNER_TEMP/native-tests"
+
+      - name: Hand the test binaries to the legs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-tests
+          path: ${{ runner.temp }}/native-tests/native-tests.tar.zst
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+
+      - name: Save the compile cache for later runs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/rust-compile-cache/save
+        with:
+          artifact: ${{ steps.compile-cache.outputs.artifact }}
+          dir: ${{ steps.compile-cache.outputs.dir }}
+
+  # The engine's tests, in the legs scripts/check/ci/native-test-legs.mjs names, each running the binaries the
+  # rust-tests-build job compiled with its libtest filters, as `cargo test --workspace -- <filters>` would. Four read pack
+  # test data (native/src/code_rule_dsl/test_support.rs's callers): Ruff's fixtures, SQLFluff's expected findings and
+  # fixtures, eslint-plugin-vue's fixtures, and the data-layer port's recordings and rule corpus (the converter, census,
+  # replay and text tests), restored from what the test-data job saved, so the job runs where that job does (the note
+  # at the top). Each leg runs 3 to 8 minutes of tests after a minute taking the binaries; the slowest, the waves', is
+  # bounded by its two 8-minute tests. The test watchdog stops a hung test at 10 minutes (native/src/test_watchdog.rs):
+  # the timeout leaves room for that.
+  rust:
+    name: Rust engine (${{ matrix.name }})
+    needs: [changes, test-data, rust-tests-build]
+    if: >-
+      ${{
+        needs.rust-tests-build.outputs.legs != '[]' &&
+        needs.changes.outputs.rust != 'false' && needs.changes.outputs.release-pr != 'true' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.rust-tests-build.outputs.legs) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: python
+          tool: ruff
+          fetch: "false"
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: sql
+          tool: sqlfluff
+          fetch: "false"
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: vue
+          tool: eslint-plugin-vue
+          fetch: "false"
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: data-layer
+          tool: lint
+          fetch: "false"
+
+      # The canonical Python AST facts (`value::python_ast`) run CPython 3.13 as `python3.13`; the runner has 3.12.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Put CPython 3.13 on PATH
+        run: |
+          uv python install 3.13
+          dirname "$(uv python find 3.13)" >> "$GITHUB_PATH"
+
+      - name: Take the test binaries
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-tests
+          path: ${{ runner.temp }}/native-tests
 
       - name: Run ${{ matrix.name }}
-        run: ${{ matrix.run }}
+        run: node scripts/check/ci/native-test-legs.mjs run "${{ matrix.leg }}" "$RUNNER_TEMP/native-tests"
 
-  # The tree watch's FSEvents adapter (native/src/tree_watch/fsevents.rs) is compiled out everywhere but macOS, so its
-  # tests and the tree watch's shared tests run here, on the engine's inputs, gated as the rust job is. They read no
-  # pack test data. A debug build, as in the rust job.
-  rust-macos:
-    name: Rust engine (macOS tree watch)
+  # The profiling labs: the reachability spike and the SQL preparation lab, each its own manifest and target directory,
+  # checked, built and tested apart from the engine's tests. Their builds are small (the job takes 2 minutes cold), so
+  # they keep no cache.
+  rust-profiling:
+    name: Rust engine (profiling labs)
     needs: changes
     if: >-
       ${{
@@ -515,10 +713,140 @@ jobs:
           (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
         )
       }}
-    runs-on: macos-15
-    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
+    # Line tables keep file:line in panics at a fraction of full debuginfo; nothing here builds twice incrementally.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
+      # so the toolchain installed here must be the same channel.
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          components: rustfmt, clippy
+
+      - name: Check isolated reachability spike
+        run: |
+          cargo fmt --manifest-path scripts/profiling/reachability/Cargo.toml -- --check
+          cargo clippy --manifest-path scripts/profiling/reachability/Cargo.toml --locked --target-dir target/reachability-spike -- -D warnings
+
+      - name: Build isolated reachability extension
+        run: cargo build --manifest-path scripts/profiling/reachability/Cargo.toml --release --locked --target-dir target/reachability-spike
+
+      # The extension is bound to the bundled SQLite's API (modern_sqlite) and refuses an older host. The runner's
+      # Python links the system SQLite 3.45.1 (the CPython 3.13 put on PATH above links its own, older one, statically):
+      # build the amalgamation the lock resolves and load it into the runner's Python for the tests.
+      - name: Build the SQLite the reachability extension is bound to
+        run: |
+          sys=$(cargo metadata --manifest-path scripts/profiling/reachability/Cargo.toml --format-version 1 --locked \
+            | jq -r '.packages[] | select(.name == "libsqlite3-sys") | .manifest_path')
+          mkdir -p "$RUNNER_TEMP/sqlite"
+          gcc -O2 -shared -fPIC -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_LOAD_EXTENSION=1 -DSQLITE_ENABLE_MATH_FUNCTIONS \
+            -o "$RUNNER_TEMP/sqlite/libsqlite3.so.0" "$(dirname "$sys")/sqlite3/sqlite3.c" -lm -lpthread -ldl
+
+      - name: Test SQL and Rust reachability adapters
+        env:
+          RERAIL_REACH_EXTENSION: ${{ github.workspace }}/target/reachability-spike/release/librerail_reachability_spike.so
+          PYTHONDONTWRITEBYTECODE: "1"
+          LD_LIBRARY_PATH: ${{ runner.temp }}/sqlite
+        run: |
+          /usr/bin/python3 test/scripts/test_reachability.py
+          /usr/bin/python3 test/scripts/test_native_relations.py
+          /usr/bin/python3 test/scripts/test_native_sql_plan.py
+
+      # P's producer-shape and SQL-budget gates measure P's SQL anchor engine, which this engine places test-only
+      # (docs/final-shape/open-items.md O20; P's tests that need P's addon, O84). On this addon they find no anchor
+      # batches or producer plans, and the 100-submission budget "remains an expected acceptance failure"
+      # (docs/sql-performance-recovery-workplan.md). As vitest.config.ts does for P's relational suites, they run only
+      # with RERAIL_RELATIONAL_TESTS=1 (set it in this job's env) until O20 picks one anchor engine. By hand,
+      # `npm run test:producer-shape` and `npm run test:sql-execution-budget -- <directory>` run as they are.
+      # The shape gate requires profiling spans and must never silently skip on a production addon.
+      # Keep this debug addon separate from the package's release artifact.
+      - uses: ./.github/actions/node-deps
+        if: env.RERAIL_RELATIONAL_TESTS == '1'
+
+      - name: Build profiling addon for the producer shape gate
+        if: env.RERAIL_RELATIONAL_TESTS == '1'
+        run: |
+          cargo build --manifest-path native/Cargo.toml --features code-rule-profile
+          cp target/debug/librerail_engine.so "$RUNNER_TEMP/rerail-producer-shape.node"
+
+      - name: Enforce broad producer execution shape
+        if: env.RERAIL_RELATIONAL_TESTS == '1'
+        env:
+          RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
+        run: npm run test:producer-shape
+
+      - name: Enforce 100 engine SQL submissions for the complete cold job
+        if: env.RERAIL_RELATIONAL_TESTS == '1'
+        env:
+          RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
+        run: npm run test:sql-execution-budget -- "$RUNNER_TEMP/rerail-sql-budget"
+
+      - name: Preserve SQL execution budget evidence
+        if: always() && env.RERAIL_RELATIONAL_TESTS == '1'
+        uses: actions/upload-artifact@v7
+        with:
+          name: sql-execution-budget
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/rerail-sql-budget/provenance.json
+            ${{ runner.temp }}/rerail-sql-budget/chunk-a-budget.json
+            ${{ runner.temp }}/rerail-sql-budget/chunk-b-budget.json
+            ${{ runner.temp }}/rerail-sql-budget/chunk-c-budget.json
+            ${{ runner.temp }}/rerail-sql-budget/capture/profile.json
+            ${{ runner.temp }}/rerail-sql-budget/capture/parity.json
+            ${{ runner.temp }}/rerail-sql-budget/capture/summary.txt
+            ${{ runner.temp }}/rerail-sql-budget/capture/sql/summary.md
+            ${{ runner.temp }}/rerail-sql-budget/capture/sql/execution-budget.json
+
+      - name: Test SQL statement capture and deferred explanations
+        run: cargo test --manifest-path scripts/profiling/reachability/Cargo.toml --no-default-features --locked code_rule_dsl::sql::tests
+
+      - name: Check and test captured SQL replay and composition kernels
+        run: |
+          cargo fmt --manifest-path scripts/profiling/preparation/Cargo.toml -- --check
+          cargo clippy --manifest-path scripts/profiling/preparation/Cargo.toml --locked --all-targets --target-dir target/sql-preparation-lab -- -D warnings
+          cargo test --manifest-path scripts/profiling/preparation/Cargo.toml --locked --target-dir target/sql-preparation-lab
+
+  # The tree watch's FSEvents adapter (native/src/tree_watch/fsevents.rs) is compiled out everywhere but macOS, so its
+  # tests and the tree watch's shared tests run here, on the engine's inputs, gated as the rust job is. They read no
+  # pack test data. A debug build, as in the rust job.
+  rust-macos:
+    name: Rust engine (macOS tree watch)
+    needs: changes
+    if: >-
+      ${{
+        needs.changes.outputs.rust-engine != 'false' &&
+        needs.changes.outputs.rust != 'false' && needs.changes.outputs.release-pr != 'true' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: macos-15
+    timeout-minutes: 30
+    # actions: main's compile cache, an artifact of another run.
+    permissions:
+      contents: read
+      actions: read
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
@@ -541,27 +869,34 @@ jobs:
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      - name: Cache cargo artifacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - id: compile-cache
+        uses: ./.github/actions/rust-compile-cache
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: rerail-test-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            rerail-test-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-
+          name: test
 
       - name: Tree watch tests
         run: "cargo test --manifest-path native/Cargo.toml --lib tree_watch::"
 
-  # Builds the package once: dist/ and the release native engine, handed to every test job.
+      - name: Save the compile cache for later runs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/rust-compile-cache/save
+        with:
+          artifact: ${{ steps.compile-cache.outputs.artifact }}
+          dir: ${{ steps.compile-cache.outputs.dir }}
+
+  # Builds the package once: dist/ and the release native engine, handed to every test job as an artifact. The engine
+  # builds incrementally from the cargo target main's last run uploaded (.github/actions/cargo-target); pushes to main
+  # upload theirs.
   build:
     name: Build
     needs: changes
     if: needs.changes.outputs.release-pr != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # actions: read finds and downloads main's cargo target.
+    permissions:
+      actions: read
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -575,46 +910,34 @@ jobs:
         name: Read pinned Rust toolchain
         run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
 
-      # The release engine depends only on the engine's sources, the language registry (build.rs generates
-      # its tables from languages/), the lockfile, the workspace profile, the toolchain and the napi CLI.
-      # Most pull requests change none of them and reuse main's build.
-      - id: napi
-        name: Read the napi CLI version
-        run: echo "version=$(node -p "require('./package.json').devDependencies['@napi-rs/cli']")" >> "$GITHUB_OUTPUT"
-
-      - id: native-cache
-        name: Restore the release native engine
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            native/*.node
-            native/index.js
-            native/index.d.ts
-          key: rerail-native-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-napi${{ steps.napi.outputs.version }}-${{ hashFiles('native/**', '!native/*.node', '!native/index.js', '!native/index.d.ts', 'languages/**', 'Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml') }}
-
       - name: Install pinned Rust toolchain
-        if: steps.native-cache.outputs.cache-hit != 'true'
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      - name: Cache cargo artifacts
-        if: steps.native-cache.outputs.cache-hit != 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: ./.github/actions/cargo-target
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: rerail-release-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            rerail-release-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-
+          name: cargo-target-x86_64-unknown-linux-gnu
+          mode: restore
 
       - uses: ./.github/actions/node-deps
 
+      # As package.yml builds it for a release: through napi-rs's cross toolchain, against glibc 2.17. A host build
+      # links against the runner's glibc and C++ runtime, so only this form shows a pull request whose engine a
+      # release could not link, or one that needs more than the oldest supported Linux has.
       - name: Build the native engine
-        if: steps.native-cache.outputs.cache-hit != 'true'
-        run: npm run build:native
+        run: node scripts/build/release-engine.mjs x86_64-unknown-linux-gnu
+
+      # Straight after the build, so a later step's failure keeps it.
+      - name: Save the cargo target
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/cargo-target
+        with:
+          name: cargo-target-x86_64-unknown-linux-gnu
+          mode: save
+
+      - name: Check the native engine loads on glibc 2.28
+        run: node scripts/check/check-linux-engine.mjs native/rerail_engine.*.node
 
       - name: Build the package
         run: npm run build:js
@@ -680,33 +1003,173 @@ jobs:
         if: matrix.shard == 1
         run: npm run test:coverage:lint-config
 
+  # The Windows engine the Windows unit shards load, built once per run and handed to them as an artifact, as the build
+  # job hands Linux's to the Linux jobs: the release form package.yml builds, incrementally from the cargo target main's
+  # last run uploaded (main uploads its own). Gated as the shards are.
+  build-windows:
+    name: Build (Windows)
+    needs: changes
+    if: >-
+      ${{
+        needs.changes.outputs.release-pr != 'true' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: windows-2025
+    # A cold release build took 27 minutes on windows-2025 (44363497802, with rerail-logic and rerail-engine split).
+    timeout-minutes: 45
+    # actions: read finds and downloads main's cargo target.
+    permissions:
+      actions: read
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Windows refuses paths over 260 characters unless Git is told to use long paths (as in package.yml). Line ends
+      # stay as Git for Windows sets them (core.autocrlf true), as in the unit shards.
+      - name: Allow long paths in Git on Windows
+        run: git config --system core.longpaths true
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - uses: ./.github/actions/cargo-target
+        with:
+          name: cargo-target-x86_64-pc-windows-msvc
+          mode: restore
+
+      - uses: ./.github/actions/node-deps
+
+      # build:native's checks, then the release build as package.yml runs it.
+      - name: Build the native engine
+        run: |
+          node scripts/build/require-cargo.mjs
+          node scripts/build/require-lfs.mjs
+          node scripts/build/release-engine.mjs x86_64-pc-windows-msvc
+
+      - name: Upload the Windows engine
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: engine-windows
+          path: |
+            native/*.node
+            native/index.js
+            native/index.d.ts
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Save the cargo target
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/cargo-target
+        with:
+          name: cargo-target-x86_64-pc-windows-msvc
+          mode: save
+
+  # The engine's #[cfg(windows)] tests (process starts, Windows import roots, the tree watch's oplock watch) are
+  # compiled out on Linux, where the rust job runs every other test; these filters select them and the Windows-neutral
+  # tests beside them: the process and tree watch tests are the engine's, the import roots' rerail-lang-ecma's, which
+  # mounts `import_target`. The `.rerail` library's canonical path is joined with `/` by `bootstrap.rerail`, which only
+  # Windows' verbatim paths broke: its test runs here too. A debug build, as in the rust job, through its own compile
+  # cache. Its own job, beside build-windows and the shards rather than on one of them. Gated as the rust job is, and
+  # only when the change selects the engine's tests (`rust-engine`).
+  rust-windows:
+    name: Rust engine (Windows)
+    needs: changes
+    if: >-
+      ${{
+        needs.changes.outputs.rust != 'false' && needs.changes.outputs.rust-engine != 'false' &&
+        needs.changes.outputs.release-pr != 'true' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: windows-2025
+    # A cold build of the two crates' tests took 20 to 21 minutes on windows-2025 (44351818975, 44363497802), the tests
+    # seconds.
+    timeout-minutes: 30
+    # actions: read finds and downloads main's compile cache.
+    permissions:
+      actions: read
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Allow long paths in Git on Windows
+        run: git config --system core.longpaths true
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - id: compile-cache
+        uses: ./.github/actions/rust-compile-cache
+        with:
+          name: test-windows-engine
+
+      - name: Engine Windows tests
+        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma --lib -- process:: code_rule_dsl::import_target:: tree_watch:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
+
+      - name: Save the compile cache
+        if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: ./.github/actions/rust-compile-cache/save
+        with:
+          artifact: ${{ steps.compile-cache.outputs.artifact }}
+          dir: ${{ steps.compile-cache.outputs.dir }}
+
   # The unit suite on Windows, the one job that runs it there: paths, shells, process starts and file locks behave
   # differently on Windows, and every other test job runs on Linux or macOS. Five shards where Linux has two: the suite
   # runs more than twice as slowly here, and vitest splits the files by a hash of their path, not by how long they
   # take, so with two shards one held nearly two thirds of the test time and CI result waited about 10 minutes for it.
   # With five, the slowest shard's tests take about 4 minutes, so Windows ends with the Linux unit job. The count is
   # the matrix's alone: the name and `--shard` read it as `strategy.job-total`. Gated as the unit job is, and reads the
-  # same test data: the pack-test-data action saves and restores its cache entry cross-OS, so each shard restores the
-  # entry the test-data job saved on Linux, verified against the locks as on Linux. The build job's engine is Linux's,
-  # so the shards use a Windows one: restored from the cache keyed by the build job's inputs on this OS, and on a miss
-  # built by each shard (12 to 15 minutes, side by side) and saved straight away, so a failing test run still keeps
-  # it; a shard that saves after another finds the key taken and saves nothing. No cargo cache: release-cache.yml's
-  # for this target is keyed by files checked out with CRLF line ends, which this checkout's are not. The package is
-  # built here too, which takes seconds. On the same miss shard 2 also runs the engine's Windows-only Rust tests, which
-  # the Linux rust job compiles out, so they run whenever the engine's inputs change.
+  # same test data: the test-data job's artifact, downloaded and verified against the locks as on Linux. The engine is
+  # build-windows' artifact; the package is built here, which takes seconds.
   unit-windows:
     name: Unit tests (Windows, ${{ matrix.shard }}/${{ strategy.job-total }})
-    needs: test-data
+    needs: [test-data, build-windows]
     if: >-
       ${{
         github.event_name != 'pull_request' ||
         (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
       }}
     runs-on: windows-2025
-    # With the engine in the cache the slowest shard takes about 7 minutes, its tests about 4. On a miss each shard
-    # builds the engine first, and shard 2 then makes a debug build for its Rust tests (about 4 minutes more), which
-    # the limit leaves room for.
-    timeout-minutes: 45
+    # A shard took 4 to 9 minutes with the engine downloaded (44363497802).
+    timeout-minutes: 15
     permissions:
       contents: read
     strategy:
@@ -735,56 +1198,13 @@ jobs:
         with:
           fetch: "false"
 
-      - id: rust-toolchain
-        name: Read pinned Rust toolchain
-        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
-
-      - id: napi
-        name: Read the napi CLI version
-        run: echo "version=$(node -p "require('./package.json').devDependencies['@napi-rs/cli']")" >> "$GITHUB_OUTPUT"
-
-      # The build job's key, which names the runner's OS.
-      - id: native-cache
-        name: Restore the release native engine
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            native/*.node
-            native/index.js
-            native/index.d.ts
-          key: rerail-native-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-napi${{ steps.napi.outputs.version }}-${{ hashFiles('native/**', '!native/*.node', '!native/index.js', '!native/index.d.ts', 'languages/**', 'Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml') }}
-
-      - name: Install pinned Rust toolchain
-        if: steps.native-cache.outputs.cache-hit != 'true'
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
-        with:
-          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
-
       - uses: ./.github/actions/node-deps
 
-      - name: Build the native engine
-        if: steps.native-cache.outputs.cache-hit != 'true'
-        run: npm run build:native
-
-      - name: Save the native engine
-        if: steps.native-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Download the Windows engine
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          path: |
-            native/*.node
-            native/index.js
-            native/index.d.ts
-          key: ${{ steps.native-cache.outputs.cache-primary-key }}
-
-      # The engine's #[cfg(windows)] tests (process starts, Windows import roots, the tree watch's oplock watch) are
-      # compiled out on Linux, where the rust job runs every other test; these filters select them and the
-      # Windows-neutral tests beside them. A debug build, as in the rust job, so none of the release build above is reused.
-      - name: Engine Windows tests
-        if: steps.native-cache.outputs.cache-hit != 'true' && matrix.shard == 2
-        env:
-          CARGO_PROFILE_DEV_DEBUG: line-tables-only
-          CARGO_INCREMENTAL: "0"
-        run: "cargo test --manifest-path native/Cargo.toml --lib -- process:: code_rule_dsl::import_target:: tree_watch::"
+          name: engine-windows
+          path: native
 
       - name: Build the package
         run: npm run build:js
@@ -1031,6 +1451,7 @@ jobs:
       - name: Script tests and reference examples
         run: |
           npm run test:scripts
+          npm run test:profiling
           npm run test:reference
 
       # The not-gated and pending lists may only shrink against the base: the pull request's base, or the push's previous
@@ -1200,8 +1621,11 @@ jobs:
           cat "$results/pi.log"
           exit "$status"
 
-  provider-smoke:
-    name: Real Claude Code, Codex, and Cursor sessions
+  # The macOS engine the real-session smoke loads (it runs the hosts under sandbox-exec, so on macOS only), built as
+  # build-windows builds Windows' and handed over as an artifact, in its own job so a smoke that times out or is re-run
+  # never costs a build. Gated as the smoke is.
+  build-macos:
+    name: Build (macOS)
     needs: changes
     if: >-
       ${{
@@ -1216,8 +1640,81 @@ jobs:
         )
       }}
     runs-on: macos-15
-    # Three provider attempts of up to 3 minutes each, on top of a cold native build.
-    timeout-minutes: 25
+    # A cold release build took 20 minutes on macos-15 (44363497802, with rerail-logic and rerail-engine split).
+    timeout-minutes: 35
+    # actions: read finds and downloads main's cargo target.
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - uses: ./.github/actions/cargo-target
+        with:
+          name: cargo-target-aarch64-apple-darwin
+          mode: restore
+
+      - uses: ./.github/actions/node-deps
+
+      # build:native's checks, then the release build as package.yml runs it.
+      - name: Build the native engine
+        run: |
+          node scripts/build/require-cargo.mjs
+          node scripts/build/require-lfs.mjs
+          node scripts/build/release-engine.mjs aarch64-apple-darwin
+
+      - name: Upload the macOS engine
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: engine-macos
+          path: |
+            native/*.node
+            native/index.js
+            native/index.d.ts
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Save the cargo target
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/cargo-target
+        with:
+          name: cargo-target-aarch64-apple-darwin
+          mode: save
+
+  provider-smoke:
+    name: Real Claude Code, Codex, and Cursor sessions
+    needs: [changes, build-macos]
+    if: >-
+      ${{
+        needs.changes.outputs.sessions != 'false' &&
+        (
+          github.event_name != 'pull_request' ||
+          (
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            github.actor != 'dependabot[bot]' &&
+            needs.changes.outputs.release-pr != 'true'
+          )
+        )
+      }}
+    runs-on: macos-15
+    # Three provider attempts of up to 3 minutes each, side by side, after about 2 minutes of set-up and the host
+    # assets' build; the engine is build-macos'.
+    timeout-minutes: 20
     env:
       # One Azure AI key serves both the Foundry Anthropic endpoint and the Azure OpenAI endpoint.
       ANTHROPIC_FOUNDRY_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
@@ -1256,43 +1753,6 @@ jobs:
           node-version: "24"
           cache: "npm"
 
-      - id: rust-toolchain
-        name: Read pinned Rust toolchain
-        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
-
-      # As in the build job: reuse main's release engine when its inputs are unchanged.
-      - id: napi
-        name: Read the napi CLI version
-        run: echo "version=$(node -p "require('./package.json').devDependencies['@napi-rs/cli']")" >> "$GITHUB_OUTPUT"
-
-      - id: native-cache
-        name: Restore the release native engine
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            native/*.node
-            native/index.js
-            native/index.d.ts
-          key: rerail-native-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-napi${{ steps.napi.outputs.version }}-${{ hashFiles('native/**', '!native/*.node', '!native/index.js', '!native/index.d.ts', 'Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml') }}
-
-      - name: Install pinned Rust toolchain
-        if: steps.native-cache.outputs.cache-hit != 'true'
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
-        with:
-          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
-
-      - name: Cache cargo artifacts
-        if: steps.native-cache.outputs.cache-hit != 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: rerail-release-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            rerail-release-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-
-
       - name: Install dependencies
         run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
 
@@ -1310,9 +1770,11 @@ jobs:
           ln -s "$HOME/.local/share/cursor-agent/cursor-agent" "$HOME/.local/bin/agent"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Build the native engine
-        if: steps.native-cache.outputs.cache-hit != 'true'
-        run: npm run build:native
+      - name: Download the macOS engine
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine-macos
+          path: native
 
       - name: Build host assets
         run: |
@@ -1355,9 +1817,15 @@ jobs:
       - changes
       - test-data
       - test-data-in-s3
+      - rust-clippy
+      - rust-tests-build
       - rust
+      - rust-profiling
       - rust-macos
       - build
+      - build-windows
+      - build-macos
+      - rust-windows
       - unit
       - unit-windows
       - ui-e2e

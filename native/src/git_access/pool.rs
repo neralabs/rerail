@@ -18,14 +18,14 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 /// The limit `src/engine/git.ts` gives a Git process (`DEFAULT_TIMEOUT_MS`).
-pub(crate) const GIT_READ_TIME_LIMIT: Duration = Duration::from_secs(10);
+pub const GIT_READ_TIME_LIMIT: Duration = Duration::from_secs(10);
 
 /// Why an open gave no answer: `timed_out` when it, or an earlier open of the same root, outran
 /// its limit, so a later try may answer; otherwise it failed (a panic, no thread).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GitReadError {
-    pub(crate) timed_out: bool,
-    pub(crate) message: String,
+pub struct GitReadError {
+    pub timed_out: bool,
+    pub message: String,
 }
 
 impl std::fmt::Display for GitReadError {
@@ -76,7 +76,7 @@ impl Drop for Running {
 /// Runs `read`, an open of `root`, on a thread of its own and returns its answer, or an error
 /// naming `what` when it panics, has not answered within `limit`, or an open of `root` that outran
 /// its limit has not ended yet.
-pub(crate) fn run<T: Send + 'static>(
+pub fn run<T: Send + 'static>(
     what: &str,
     root: &Path,
     limit: Duration,

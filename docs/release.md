@@ -14,8 +14,12 @@ test-installs it on each platform before publishing.
 <details>
 <summary>Build and check steps</summary>
 
-1. Compile the native kernel for macOS, Linux glibc and Windows MSVC, on arm64 and x64.
-   - Linux builds against glibc 2.17 with napi-rs's cross toolchain; a kernel needing glibc newer than 2.28 is rejected.
+1. Compile the native kernel for macOS, Linux glibc and Windows MSVC, on arm64 and x64
+   (`scripts/build/release-engine.mjs`: the library only, not the engine's developer tool `rerail-engine`).
+   - Linux builds against glibc 2.17 and its libstdc++ with napi-rs's cross toolchain, the C and C++ compiled against
+     that sysroot's headers. A kernel needing glibc newer than 2.28, or leaving a symbol unresolved for the loading
+     machine, is rejected (`scripts/check/check-linux-engine.mjs`). CI's build job builds the Linux x64 kernel the
+     same way, so a pull request that breaks this fails there first.
    - A Windows kernel importing the Visual C++ runtime is rejected. The kernels link it statically, so a clean Windows
      install needs no redistributable.
 2. Smoke-test native loading and device storage on each host.

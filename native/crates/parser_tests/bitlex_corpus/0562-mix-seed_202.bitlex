@@ -1,0 +1,17 @@
+# corpus: mix: seed 202
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask m0 = x
+mask m1 = span(alpha, 6)
+mask m2 = ws
+mask m3 = escaped(m2)
+mask m4 = next(lf, 2)

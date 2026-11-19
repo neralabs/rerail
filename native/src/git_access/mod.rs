@@ -6,15 +6,16 @@
 //! - [`setup`]: what Rerail's Git reported, installed once per process.
 //! - [`pool`]: each open of a repository on a thread of its own under a time limit, a panic
 //!   caught. The store's walk and the ignore questions run on the caller's thread.
-//! - [`owner`]: the one Node-API object per process that installs the setup and hands out readers.
+//! - `owner.rs`: the one Node-API object per process that installs the setup and hands out readers.
+//!   The opener, setup and pool are built in the store's crate (`rerail-store`), which the workspace
+//!   discovery and the ignore matcher reach; the owner is the engine's (`crate::git_access::owner`
+//!   in `native/src/lib.rs`), where Node-API and the ignore matcher are.
 //!
 //! The ignore matcher (`git_ignore.rs`) and the workspace discovery (`git_workspace.rs`) open
 //! their repositories here.
 
-pub(crate) mod opener;
-pub mod owner;
-pub(crate) mod pool;
-pub(crate) mod setup;
+pub mod opener;
+pub mod pool;
+pub mod setup;
 
-#[cfg(test)]
-mod tests;
+// The tests (`tests.rs`) are the engine's (`native/src/lib.rs`): they ask the ignore matcher too.
