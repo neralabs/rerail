@@ -6,7 +6,8 @@ Paths are relative to the repository root. Each section is self-contained: sympt
 code, evidence, the workaround used, and a suggested fix. "Not confirmed" marks what was inferred and not proven.
 
 The last column is each bug on main after the final-shape engine landed (2026-11-19): read from the code, and for 3, 4,
-7, 8 and 10 run as a probe rule with its own test (`rerail-engine test-rr`). Bug 10 is new on main.
+7, 8 and 10 run as a probe rule with its own test (`rerail-engine test-rr`). Bug 10 appeared with the final-shape
+engine and is fixed on main by #862.
 
 | # | Bug | Area | Status | On main, 2026-11-19 |
 |---|---|---|---|---|
@@ -19,7 +20,7 @@ The last column is each bug on main after the final-shape engine landed (2026-11
 | 7 | `sym_of` has no row for an attribute of a class of the same module | `lib/python/names.rerail` | Reproduced with a probe; cause found | Present (probe fails as described) |
 | 8 | A call to a def under an outside decorator has no call target | `lib/python/calls.rerail` | Reproduced with a probe | Present (probe fails as described) |
 | 9 | Rules that read the call graph take hours on large repositories | `python/calls` typing program, scale | Observed; not profiled | Not re-measured; the typing program is unchanged |
-| 10 | A negated tree axis is read wrong below a node a sym_of relation found | engine: lowering or demand of `!inside`/`within_stop` | Reproduced with a probe; bisected to a merge | Present; fixed by #862. Until it merges three rules fail their cases |
+| 10 | A negated tree axis is read wrong below a node a sym_of relation found | engine: lowering or demand of `!inside`/`within_stop` | Reproduced with a probe; bisected to a merge | Fixed by #862; the three rules it broke pass their cases |
 
 ---
 
@@ -400,9 +401,7 @@ alone, so the commit inside the hub is not found. The cause, found by #862: of t
 for the nodes that may be annotations, and the other (`fold_own`) folds those copies back and deletes the set, but
 redirects only `nearest`, so the negated axis is left reading a set that no longer exists.
 
-**Workaround used.** None: the rules keep `within_stop` as written. Until #862 merges, atomic-around-caught-db-error,
-enqueue-on-commit and select-for-update-outside-atomic fail their cases (`.test cases`); with it, all 27 rules pass.
-Writing the region without a negation, `within(n, b), nearest(n, s, S'), within(b, s)` with S' the def, lambda and
-class kinds and the module, gives the right answer on today's engine.
+**Workaround used.** None: the rules keep `within_stop` as written. Before #862, atomic-around-caught-db-error,
+enqueue-on-commit and select-for-update-outside-atomic failed their cases (`.test cases`); with it, all 27 rules pass.
 
 **Fix.** #862.
