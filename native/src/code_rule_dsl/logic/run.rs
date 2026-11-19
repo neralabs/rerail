@@ -99,12 +99,15 @@ pub fn scope(settings: impl FnOnce() -> width::Settings) -> Scope {
 }
 
 /// `scope`, a new run sharing by design what `shared` holds with every other run handed it (decision 0442). A run
-/// handed none (`None`) has `profile::default_shared`'s: its own in a product build, the tests' in a test build. A nested scope joins the run under way, whose object it is.
+/// handed none (`None`) has the object its thread holds (`profile::within`: a workspace's task, a service), else
+/// `profile::default_shared`'s: its own in a product build, the tests' in a test build. A nested scope joins the run
+/// under way, whose object it is.
 pub fn scope_in(shared: Option<&Arc<Shared>>, settings: impl FnOnce() -> width::Settings) -> Scope {
     if let Some(run) = current() {
         return Scope { run, outer: false, was: None };
     }
-    let run = Arc::new(Run::new(settings(), shared.map_or_else(super::profile::default_shared, Arc::clone)));
+    let shared = shared.map_or_else(|| shared_object().unwrap_or_else(super::profile::default_shared), Arc::clone);
+    let run = Arc::new(Run::new(settings(), shared));
     width::watch(&run);
     let was = super::profile::RUN.with(|r| r.replace(Some(Arc::clone(&run) as Arc<dyn super::profile::RunOwn>)));
     Scope { run, outer: true, was }
@@ -180,6 +183,12 @@ mod tests {
         {
             let _c = scope_in(Some(&Shared::new()), cutting(10));
             assert_eq!(*shared::<Model>().0.lock(), 0, "a run handed another object sees none of it");
+        }
+        {
+            // A run handed none, on a thread that holds an object (a workspace's task): that object's.
+            let _held = super::super::profile::within(Arc::clone(&one));
+            let _d = scope_in(None, cutting(10));
+            assert_eq!(*shared::<Model>().0.lock(), 5, "a run handed none takes its thread's object");
         }
         // On another thread at once, handed another object: apart.
         let other = std::thread::spawn(|| {

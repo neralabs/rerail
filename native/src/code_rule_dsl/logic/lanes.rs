@@ -17,17 +17,28 @@
 use rerail_accel::Executor;
 use rerail_accel::exec::{Backend, CpuBackend};
 use rerail_accel::sql::SqlBackend;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
-/// Whether each executor was made: the profile reports only those.
-static MADE: [std::sync::atomic::AtomicBool; 3] = [const { std::sync::atomic::AtomicBool::new(false) }; 3];
+/// The machine's executors, one a binding, each made the first time a run asks for it (decision 0442: the machine's
+/// lanes, shared by every run on it): the profile reports only those made.
+#[derive(Default)]
+struct Lanes {
+    cpu: std::sync::OnceLock<Arc<Executor>>,
+    all: std::sync::OnceLock<Arc<Executor>>,
+    sql: std::sync::OnceLock<Arc<Executor>>,
+}
 
-static CPU: LazyLock<Executor> = LazyLock::new(|| {
-    MADE[0].store(true, std::sync::atomic::Ordering::Relaxed);
-    // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
-    super::costs::start();
-    Executor::with(cpu_lanes())
-});
+fn lanes() -> Arc<Lanes> {
+    super::profile::machine::<Lanes>()
+}
+
+fn cpu() -> Arc<Executor> {
+    Arc::clone(lanes().cpu.get_or_init(|| {
+        // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
+        super::costs::start();
+        Arc::new(Executor::with(cpu_lanes()))
+    }))
+}
 
 /// The CPU binding's lanes: the cores, SQL and, where the CPU has one, its matrix unit (`sme::backend` asks the CPU
 /// itself). No device lane is asked for: asking compiles the GPU's kernels and builds the Neural Engine's lane (11 ms
@@ -39,49 +50,42 @@ fn cpu_lanes() -> Vec<Arc<dyn Backend>> {
     lanes.extend(rerail_accel::sme::backend());
     lanes
 }
-static ALL: LazyLock<Executor> = LazyLock::new(|| {
-    MADE[1].store(true, std::sync::atomic::Ordering::Relaxed);
-    // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
-    super::costs::start();
-    // Every submission the executor makes is checked against the engine's launch budget (decision 0100 §2).
-    if let Some(dev) = crate::code_rule_dsl::logic::device::solver() {
-        dev.install_launch_guard();
-    }
-    Executor::new()
-});
 
-static SQL: LazyLock<Executor> = LazyLock::new(|| {
-    MADE[2].store(true, std::sync::atomic::Ordering::Relaxed);
-    Executor::sql_only()
-});
+fn all() -> Arc<Executor> {
+    Arc::clone(lanes().all.get_or_init(|| {
+        // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
+        super::costs::start();
+        // Every submission the executor makes is checked against the engine's launch budget (decision 0100 §2).
+        if let Some(dev) = crate::code_rule_dsl::logic::device::solver() {
+            dev.install_launch_guard();
+        }
+        Arc::new(Executor::new())
+    }))
+}
 
 /// Every rule job submitted in SQL mode must have a SQL form.
-pub fn sql_executor() -> &'static Executor { &SQL }
+pub fn sql_executor() -> Arc<Executor> {
+    Arc::clone(lanes().sql.get_or_init(|| Arc::new(Executor::sql_only())))
+}
 
 /// The executor for this thread's run.
-pub fn executor() -> &'static Executor {
-    if super::plan::placement::device() { &ALL } else { &CPU }
+pub fn executor() -> Arc<Executor> {
+    executor_for(super::plan::placement::device())
 }
 
 /// The executor of a binding: every lane under the device binding (`device`), the cores' (and SME's) otherwise. For
 /// a job on another thread than the run's (whose binding is the run's thread's, [`executor`]).
-pub fn executor_for(device: bool) -> &'static Executor {
-    if device { &ALL } else { &CPU }
+pub fn executor_for(device: bool) -> Arc<Executor> {
+    if device { all() } else { cpu() }
 }
 
 /// Each executor made so far, by binding, and its scoreboard: for the profile.
 pub fn scores() -> Vec<(&'static str, rerail_accel::score::Score)> {
-    let mut out = Vec::new();
-    if MADE[0].load(std::sync::atomic::Ordering::Relaxed) {
-        out.push(("cpu binding", CPU.score()));
-    }
-    if MADE[1].load(std::sync::atomic::Ordering::Relaxed) {
-        out.push(("metal binding", ALL.score()));
-    }
-    if MADE[2].load(std::sync::atomic::Ordering::Relaxed) {
-        out.push(("sql binding", SQL.score()));
-    }
-    out
+    let lanes = lanes();
+    [("cpu binding", &lanes.cpu), ("metal binding", &lanes.all), ("sql binding", &lanes.sql)]
+        .into_iter()
+        .filter_map(|(name, made)| Some((name, made.get()?.score())))
+        .collect()
 }
 
 /// Device waves (decision 0095 §5, 0098 §6): the launches of strata that do not read each other, run as one batch.
@@ -465,7 +469,7 @@ pub mod prof {
 
     /// Runs `batch` on this thread's executor, its report added to `form`'s.
     pub fn run(form: &'static str, batch: Batch) -> Result<(Vec<Done>, Report), String> {
-        run_on(super::executor(), form, batch)
+        run_on(&super::executor(), form, batch)
     }
 
     /// [`run`] on `ex` (a job whose binding is not this thread's: [`executor_for`](super::executor_for)).

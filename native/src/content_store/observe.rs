@@ -2731,25 +2731,26 @@ mod tests {
     }
 }
 
-/// Whether the observer asks the file system's journal (decision 0105). On unless `RERAIL_JOURNAL=off`, or turned off
-/// by `set_journal`: the engine's tests do (each run of a test waits for its cookie's event, up to `journal`'s `WAIT`, and a test
-/// makes many runs), and the journal's own tests here keep it on.
-static JOURNAL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
-
+/// Whether the observer asks the file system's journal (decision 0105): on unless `RERAIL_JOURNAL=off` (a run's
+/// setting). A test build may turn it off or on for its process (`set_journal`): the engine's tests do (each run of a
+/// test waits for its cookie's event, up to `journal`'s `WAIT`, and a test makes many runs), and the journal's own
+/// tests here keep it on.
 fn journal_on() -> bool {
-    use std::sync::atomic::Ordering;
-    match JOURNAL.load(Ordering::Relaxed) {
-        1 => true,
-        2 => false,
-        _ => {
-            let on = !std::env::var("RERAIL_JOURNAL").is_ok_and(|v| v == "off");
-            JOURNAL.store(if on { 1 } else { 2 }, Ordering::Relaxed);
-            on
-        }
+    #[cfg(any(test, feature = "test-hooks"))]
+    match JOURNAL.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => return true,
+        2 => return false,
+        _ => {}
     }
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| !std::env::var("RERAIL_JOURNAL").is_ok_and(|v| v == "off"))
 }
 
-/// Turns the observer's use of the journal on or off for the process, whatever `RERAIL_JOURNAL` says.
+/// A test build's choice of the journal (`set_journal`): 0 none (the setting's), 1 on, 2 off.
+#[cfg(any(test, feature = "test-hooks"))]
+static JOURNAL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Turns the observer's use of the journal on or off for a test build's process, whatever `RERAIL_JOURNAL` says.
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn set_journal(on: bool) {
     JOURNAL.store(if on { 1 } else { 2 }, std::sync::atomic::Ordering::Relaxed);
 }

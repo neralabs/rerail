@@ -54,11 +54,14 @@ pub struct Facts {
     pub block: Block,
     /// Held while an index is added to one of its relations (`Relation::try_reserve_index`, decision 0325 step 5).
     pub ix: Mutex<()>,
+    /// The count of bytes given back of the run that leased it (`given_back`): a relation's last holder may drop it
+    /// on any thread.
+    given: Arc<GivenBack>,
 }
 
 impl Facts {
     fn new(block: Block) -> Facts {
-        Facts { block, ix: Mutex::new(()) }
+        Facts { block, ix: Mutex::new(()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>() }
     }
 }
 
@@ -82,16 +85,21 @@ pub enum Life {
     Device,
 }
 
-/// The blocks new relations go in outside a chunk, while they have room: one a `Life`.
-static OPEN: [Mutex<Option<Arc<Facts>>>; 4] = [Mutex::new(None), Mutex::new(None), Mutex::new(None), Mutex::new(None)];
+/// The blocks a run's new relations go in outside a chunk, while they have room: one a `Life` (decision 0442: the
+/// run's, so no two runs' relations share a block).
+#[derive(Default)]
+struct Open([Mutex<Option<Arc<Facts>>>; 4]);
 
-/// Every block leased, by `Life`, while it lives: what a profile reads (`held`).
-static LIVE: Mutex<[Vec<std::sync::Weak<Facts>>; 3]> = Mutex::new([Vec::new(), Vec::new(), Vec::new()]);
+/// Every block leased on this machine, by `Life`, while it lives: what a profile reads (`held`; decision 0442: the
+/// machine's, as the memory it counts is).
+#[derive(Default)]
+struct Live(Mutex<[Vec<std::sync::Weak<Facts>>; 3]>);
 
 /// Per `Life`, the blocks held now, their bytes written and their bytes reserved: a profile's account of the rows
 /// outside the heap.
 pub fn held() -> [(usize, usize, usize); 3] {
-    let live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    let live_blocks = crate::code_rule_dsl::logic::profile::machine::<Live>();
+    let live = live_blocks.0.lock().unwrap_or_else(|e| e.into_inner());
     std::array::from_fn(|l| {
         live[l].iter().filter_map(std::sync::Weak::upgrade).fold((0, 0, 0), |(n, u, r), f| (n + 1, u + f.block.used(), r + f.block.reserved()))
     })
@@ -230,12 +238,13 @@ pub struct Held {
     cols: Arc<[ColRead]>,
 }
 
-/// The bytes of dead relations' chunks given back to the OS so far (`Held`'s drop), for a profile.
-static GIVEN_BACK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// The bytes of a run's dead relations' chunks given back to the OS so far (`Held`'s drop), for a profile: the run's.
+#[derive(Default)]
+struct GivenBack(std::sync::atomic::AtomicUsize);
 
-/// The bytes of dead relations' chunks given back to the OS so far.
+/// The bytes of the run's dead relations' chunks given back to the OS so far.
 pub fn given_back() -> usize {
-    GIVEN_BACK.load(std::sync::atomic::Ordering::Relaxed)
+    crate::code_rule_dsl::logic::profile::local::<GivenBack>().0.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Drop for Held {
@@ -245,7 +254,7 @@ impl Drop for Held {
         // it does, so a chunk's dead relations otherwise kept their pages resident; about 500 MB of a 300-file cold
         // run's footprint, Q76).
         let given = unsafe { (*self.rel).release(&self.facts.block) };
-        GIVEN_BACK.fetch_add(given, std::sync::atomic::Ordering::Relaxed);
+        self.facts.given.0.fetch_add(given, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -283,7 +292,8 @@ impl Part {
         // too, so its indexes lie with it.
         let alone = life == Life::Device || extra > 0;
         let chunk = CHUNK.with(|c| c.borrow().clone());
-        let mut open = chunk.as_ref().map_or(&OPEN[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
+        let (runs, live_blocks) = (crate::code_rule_dsl::logic::profile::local::<Open>(), crate::code_rule_dsl::logic::profile::machine::<Live>());
+        let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
             let facts = match &*open {
                 _ if alone => {
@@ -292,7 +302,7 @@ impl Part {
                         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
                     }
                     if life != Life::Device {
-                        let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut live = live_blocks.0.lock().unwrap_or_else(|e| e.into_inner());
                         live[life as usize].retain(|w| w.strong_count() > 0);
                         live[life as usize].push(Arc::downgrade(&f));
                     }
@@ -304,7 +314,7 @@ impl Part {
                     if let Some(c) = &chunk {
                         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
                     }
-                    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut live = live_blocks.0.lock().unwrap_or_else(|e| e.into_inner());
                     live[life as usize].retain(|w| w.strong_count() > 0);
                     live[life as usize].push(Arc::downgrade(&f));
                     *open = Some(f.clone());

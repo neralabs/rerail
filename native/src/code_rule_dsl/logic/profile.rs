@@ -1237,14 +1237,40 @@ pub fn here() -> Option<String> {
 /// open (a pool thread that took the item), under `name` in the span open where `carried` was called; on a thread
 /// with one open (the caller's), as it is. Rayon's work taken by another thread is under no span of that thread's.
 pub fn carried<A, R>(name: &'static str, f: impl Fn(A) -> R + Sync + Send) -> impl Fn(A) -> R + Sync + Send {
-    let under = here();
-    // The run under way here, for an item a pool thread takes: its records are the run's (decision 0442).
-    let run = run_own();
-    let on = on();
+    let carry = carry();
     move |a| {
-        let _run = InRun::enter(&run, on);
-        let _span = (under.is_some() && STACK.with(|s| s.lock().opens.is_empty())).then(|| span_at(under.as_deref(), || name.to_owned()));
+        let _in = carry.enter(name);
         f(a)
+    }
+}
+
+/// What `carried` carries, for a parallel loop whose items `carried` cannot wrap (`map_init`'s, given the item's
+/// state too): the run under way here and the span open, entered by each item (`Carry::enter`).
+pub struct Carry {
+    under: Option<String>,
+    run: Option<std::sync::Arc<dyn RunOwn>>,
+    on: bool,
+}
+
+/// The run under way here, for the items a pool thread takes: their records are the run's (decision 0442).
+pub fn carry() -> Carry {
+    Carry { under: here(), run: run_own(), on: on() }
+}
+
+impl Carry {
+    /// An item on this thread in the carried run, under `name` in the carried span (as `carried`'s), until dropped.
+    pub fn enter(&self, name: &'static str) -> impl Drop {
+        // The span closes first, inside the run, as two locals would.
+        struct In(Option<InRun>, Option<Span>);
+        impl Drop for In {
+            fn drop(&mut self) {
+                self.1.take();
+                self.0.take();
+            }
+        }
+        let run = InRun::enter(&self.run, self.on);
+        let span = (self.under.is_some() && STACK.with(|s| s.lock().opens.is_empty())).then(|| span_at(self.under.as_deref(), || name.to_owned()));
+        In(Some(run), span)
     }
 }
 
@@ -1444,8 +1470,10 @@ pub fn sql(text: String, ns: u64, vm: u64, scan: u64, sort: u64, autoindex: u64)
     t.autoindex += autoindex;
 }
 
-/// Waves under way in this process (`waves`): SQL from a wave's thread meanwhile is a hazard.
-static WAVES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Waves under way on this machine (`waves`): SQL from a wave's thread meanwhile is a hazard. Read only by a thread
+/// with no run's context (decision 0442: the machine's, as every run on it counts in it).
+#[derive(Default)]
+struct WavesUnderWay(std::sync::atomic::AtomicUsize);
 
 thread_local! {
     /// This thread works behind the run (the store's writer): what it sends to SQLite no wave waits for.
@@ -1462,17 +1490,19 @@ pub fn read_in_waves<T>(f: impl FnOnce() -> T) -> T {
 /// Waves are under way until dropped: from a run's first wave (its first chunk) to its last (the cross-file part's
 /// last stratum). SQL before and after is the run's beginning and end, where it may be; inside, it is a hazard.
 /// With the stage this thread's run was at before (`STAGE`).
-pub struct Waves(bool, u8);
+/// The count it added to, so its drop takes it off there on any thread.
+pub struct Waves(Option<std::sync::Arc<WavesUnderWay>>, u8);
 
 pub fn waves() -> Waves {
-    WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    Waves(true, STAGE.with(|s| s.replace(INSIDE)))
+    let count = machine::<WavesUnderWay>();
+    count.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Waves(Some(count), STAGE.with(|s| s.replace(INSIDE)))
 }
 
 /// Where this thread's run is (decision 0192), carried to its jobs (`run_state`): no run (`0`), a run before its
 /// first wave (`BEFORE`), or inside the waves (`INSIDE`). Runs on other threads may be in their waves meanwhile (a
 /// typing run beside phase 1): a run before its own may still read, and a thread of a run in its waves may not.
-/// A thread with no run's context (a parallel loop's item) goes by the process's count (`WAVES`).
+/// A thread with no run's context (a parallel loop's item) goes by the machine's count (`WavesUnderWay`).
 const BEFORE: u8 = 1;
 const INSIDE: u8 = 2;
 thread_local! {
@@ -1504,7 +1534,7 @@ fn waves_here() -> bool {
     match STAGE.with(std::cell::Cell::get) {
         BEFORE => false,
         INSIDE => true,
-        _ => WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0,
+        _ => machine::<WavesUnderWay>().0.load(std::sync::atomic::Ordering::Relaxed) > 0,
     }
 }
 
@@ -1770,8 +1800,8 @@ pub fn strict_on_every_connection() {
 
 impl Drop for Waves {
     fn drop(&mut self) {
-        if self.0 {
-            WAVES.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        if let Some(count) = self.0.take() {
+            count.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
             STAGE.with(|s| s.set(self.1));
         }
     }

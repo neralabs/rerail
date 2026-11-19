@@ -36,7 +36,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The bytes all captures may take.
 const BUDGET: u64 = 2 << 30;
-static WRITTEN: AtomicU64 = AtomicU64::new(0);
+
+/// What a run's captures have written, and the atoms stored (decision 0442: the run's).
+#[derive(Default)]
+struct Captured {
+    written: AtomicU64,
+    stored: std::sync::Mutex<usize>,
+}
+
+fn captures() -> Arc<Captured> {
+    rerail_prof::code_rule_dsl::logic::profile::local::<Captured>()
+}
 
 /// A stratum being captured: where, and its relations (the run's table, the capture's, the column types, and
 /// whether it started empty).
@@ -48,7 +58,7 @@ pub(in crate::code_rule_dsl) struct Capture {
 /// Where stratum `name`, of planned work `work`, is captured, when the lab is on and wants it.
 pub(in crate::code_rule_dsl) fn wanted(name: &str, work: f64) -> Option<PathBuf> {
     let dir = PathBuf::from(std::env::var_os("RERAIL_RELATIONAL_LAB")?);
-    if WRITTEN.load(Ordering::Relaxed) >= BUDGET {
+    if captures().written.load(Ordering::Relaxed) >= BUDGET {
         return None;
     }
     if let Ok(only) = std::env::var("RERAIL_RELATIONAL_LAB_ONLY") {
@@ -225,14 +235,14 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
     for (k, v) in [("name", spec.name.as_str()), ("stratum", name), ("spec", &captured.to_text())] {
         out.execute("INSERT INTO meta VALUES (?1, ?2)", [k, v]).map_err(|e| e.to_string())?;
     }
-    WRITTEN.fetch_add(bytes, Ordering::Relaxed);
+    captures().written.fetch_add(bytes, Ordering::Relaxed);
     Ok(Capture { path: path.to_owned(), rels })
 }
 
 /// Appends the atoms the run gave out since the last capture to the directory's `atoms.sqlite` (id, text).
 fn atoms(conn: &Connection, dir: &Path) -> Result<(), String> {
-    static STORED: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
-    let mut stored = STORED.lock().unwrap();
+    let held = captures();
+    let mut stored = held.stored.lock().unwrap();
     let arena = crate::content_store::atoms::Atoms::for_connection(conn);
     let n = arena.len();
     let out = Connection::open(dir.join("atoms.sqlite")).map_err(|e| e.to_string())?;

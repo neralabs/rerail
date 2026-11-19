@@ -217,7 +217,7 @@ fn matched(
         let program = MatcherWave { wave: Arc::clone(wave), tapes: docs, active, gpu: cfg!(target_os = "macos") && metal };
         let kernel = rerail_accel::Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(program)));
         let ex = crate::code_rule_dsl::logic::lanes::executor_for(metal);
-        let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run_on(ex, "ast matcher wave", rerail_accel::Batch(vec![rerail_accel::Launch::new(kernel)])).map_err(StoreError::Invalid)?;
+        let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run_on(&ex, "ast matcher wave", rerail_accel::Batch(vec![rerail_accel::Launch::new(kernel)])).map_err(StoreError::Invalid)?;
         let done = done.remove(0);
         let rerail_accel::kernel::Output::Program(r) = done.out else {
             return Err(StoreError::Invalid("ast matcher wave: not a program's result".into()));

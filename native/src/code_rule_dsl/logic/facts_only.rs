@@ -210,9 +210,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/front/name.rs", "TABLE"),
     // The relations' numbers (decision 0209 step 1, `table::rel_id`): an interner as `TABLE`, one number per name.
     ("code_rule_dsl/logic/plan/table.rs", "NAMES"),
-    ("code_rule_dsl/logic/costs.rs", "FITTED"),
-    ("code_rule_dsl/logic/costs.rs", "WRITER"),
-    ("code_rule_dsl/logic/costs.rs", "MODEL_STATE"),
     // Decision 0203: the batch predictor a crate above registers (`joins::set_pricer`), the wider searches queued for
     // the idle `join-search` upkeep job, and that job's one registration.
     ("code_rule_dsl/logic/plan/joins.rs", "PRICER"),
@@ -224,12 +221,8 @@ const STATE: &[(&str, &str)] = &[
     // The gate of the RERAIL_* switches (`corpus::switches`): its readers, writer and waiters, no value kept.
     ("code_rule_dsl/logic/plan/corpus/switches.rs", "STATE"),
     // The SQL executor's plan model, fitted from `sql_plan_observations`, and the observations queued for writing.
-    ("code_rule_dsl/logic/costs/sql_plans.rs", "MODEL"),
-    ("code_rule_dsl/logic/costs/sql_plans.rs", "QUEUE"),
     // The join steps submitted at their lines' ends, queued for the cost statistics' writer (decision 0354).
-    ("code_rule_dsl/logic/costs/join_steps.rs", "QUEUE"),
     // The SQL lane's executor, and the work a thread's device wave runs when flushed (`lanes::wave`).
-    ("code_rule_dsl/logic/lanes.rs", "SQL"),
     ("code_rule_dsl/logic/lanes.rs", "DEFERRED"),
     // The device's wave on this thread (decision 0113 §3): its open command buffer, the waves flushed, the strata
     // waiting for theirs; and the rule being compiled's arena-text slots. State of the run, not a result kept.
@@ -237,8 +230,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix/device.rs", "FLUSHED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "ARENA"),
-    ("code_rule_dsl/logic/lanes.rs", "ALL"),
-    ("code_rule_dsl/logic/lanes.rs", "CPU"),
     ("code_rule_dsl/logic/lanes.rs", "BATCHES"),
     ("code_rule_dsl/logic/lanes.rs", "FORMS"),
     ("code_rule_dsl/logic/lanes.rs", "DONE"),

@@ -2685,8 +2685,9 @@ impl Model {
                         return Ok(got);
                     };
                     plan_cache(5);
-                    static SHOWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-                    if std::env::var_os("RERAIL_PLAN_CACHE_WHY").is_some() && nodes >= 1000.0 && SHOWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 12 {
+                    #[derive(Default)]
+                    struct CacheMissesShown(std::sync::atomic::AtomicU64);
+                    if std::env::var_os("RERAIL_PLAN_CACHE_WHY").is_some() && nodes >= 1000.0 && super::profile::local::<CacheMissesShown>().0.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 12 {
                         eprintln!("replanned {} :- {} literals, first {first:?}: {why}: nodes {nodes}, work {} (kept per node {per_node} -> {}), sizes {:?}, kept sizes {:?}", b.show_head(), b.len(), got.0.1, per_node * nodes, sizes, previous.as_ref().map(|p| p.sizes.clone()));
                     }
                     super::profile::decision("plan cache (decision 0038)", || format!("replanned: {why}"))
@@ -3060,8 +3061,9 @@ impl Model {
             };
             if let Some(why) = why {
                 super::profile::decision("live replans searched (decision 0038)", || format!("searched again: {why}"));
-                static SHOWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-                if std::env::var_os("RERAIL_PLAN_CACHE_WHY").is_some() && SHOWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                #[derive(Default)]
+                struct ReplansShown(std::sync::atomic::AtomicU64);
+                if std::env::var_os("RERAIL_PLAN_CACHE_WHY").is_some() && super::profile::local::<ReplansShown>().0.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
                     let work = repriced.as_ref().map(|(p, _)| p.1).unwrap_or(-1.0);
                     eprintln!("live searched {} :- {} literals, first {first:?}: {why}: work {work} (searched {then}, a search {}), sizes {sizes:?}, kept sizes {:?}", b.show_head(), b.len(), search_rows(b, first), priced.sizes);
                 }

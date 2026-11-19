@@ -538,7 +538,7 @@ mod executor_tests {
         let before = rerail_accel::lanes::device_lanes_asked();
         let ex = rerail_facts::code_rule_dsl::facts::core::executor_for(false);
         assert_eq!(rerail_accel::lanes::device_lanes_asked(), before, "the lookup asked for a device lane");
-        assert!(std::ptr::eq(ex, crate::code_rule_dsl::logic::lanes::executor_for(false)), "not the run's executor");
+        assert!(std::sync::Arc::ptr_eq(&ex, &crate::code_rule_dsl::logic::lanes::executor_for(false)), "not the run's executor");
     }
 }
 

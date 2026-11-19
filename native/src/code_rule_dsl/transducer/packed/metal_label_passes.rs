@@ -1465,11 +1465,12 @@ fn mark(at: &str) {
             super::super::metal_backend::reserved_mb(),
             tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20
         );
-        static SEEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        #[derive(Default)]
+        struct HoldSeen(std::sync::atomic::AtomicUsize);
         let wanted = std::env::var("RERAIL_HOLD_AT").ok();
         let nth = wanted.as_deref().and_then(|wanted| wanted.split_once('#')).map_or(Some(1), |(_, n)| n.parse().ok());
         let here = wanted.as_deref().is_some_and(|wanted| wanted.split('#').next() == Some(at))
-            && Some(SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1) == nth;
+            && Some(rerail_prof::code_rule_dsl::logic::profile::local::<HoldSeen>().0.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1) == nth;
         if let Some(path) = std::env::var_os("RERAIL_HOLD").filter(|_| here) {
             eprintln!("FLUSH holding, pid {}", std::process::id());
             while !std::path::Path::new(&path).exists() {

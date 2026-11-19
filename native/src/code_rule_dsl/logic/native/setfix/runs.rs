@@ -1373,14 +1373,23 @@ pub mod presorted {
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
     /// [derived input orders, component orders] × [runs, rows, runs wholly in order, rows in stretches of 64 or more
     /// in order, stretches of 64 or more].
-    static COUNTS: [[AtomicU64; 7]; 2] = [const { [const { AtomicU64::new(0) }; 7] }; 2];
-    /// Rows a run took in place, known sorted (decision 0180), into `COUNTS[_][6]`, when measuring.
+    /// And [other sorts' sites (`FRESH`, `SCAN`, `REORDER`)] × [sorts, rows, sorts wholly in order, rows in stretches
+    /// of 64 or more in order, rows taken as known sorted]. The run's (decision 0442).
+    #[derive(Default)]
+    struct Counts {
+        orders: [[AtomicU64; 7]; 2],
+        sites: [[AtomicU64; 5]; 3],
+    }
+    fn counts() -> std::sync::Arc<Counts> {
+        rerail_prof::code_rule_dsl::logic::profile::local::<Counts>()
+    }
+    /// Rows a run took in place, known sorted (decision 0180), into `orders[_][6]`, when measuring.
     pub(super) fn known(rows: u64, printed: bool) {
         if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some()) {
-            COUNTS[usize::from(!printed)][6].fetch_add(rows, Relaxed);
+            counts().orders[usize::from(!printed)][6].fetch_add(rows, Relaxed);
         }
     }
-    /// A run's build time (ns), into `COUNTS[_][5]`, when measuring.
+    /// A run's build time (ns), into `orders[_][5]`, when measuring.
     pub(super) struct Timed(Option<(std::time::Instant, bool)>);
     impl Timed {
         pub(super) fn start(printed: bool) -> Timed {
@@ -1390,7 +1399,7 @@ pub mod presorted {
     impl Drop for Timed {
         fn drop(&mut self) {
             if let Some((t, printed)) = self.0 {
-                COUNTS[usize::from(!printed)][5].fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
+                counts().orders[usize::from(!printed)][5].fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
             }
         }
     }
@@ -1399,7 +1408,8 @@ pub mod presorted {
         if !rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_SPIKE_PRESORTED").is_ok_and(|v| v != "time")) || hi <= lo {
             return;
         }
-        let c = &COUNTS[usize::from(!printed)];
+        let all = counts();
+        let c = &all.orders[usize::from(!printed)];
         let (mut start, mut long, mut stretches, mut whole) = (lo, 0u64, 0u64, true);
         let mut close = |start: u32, end: u32| if end - start >= 64 { long += u64::from(end - start); stretches += 1; };
         for id in lo + 1..hi {
@@ -1420,7 +1430,6 @@ pub mod presorted {
     pub const FRESH: usize = 0;
     pub const SCAN: usize = 1;
     pub const REORDER: usize = 2;
-    static SITES: [[AtomicU64; 5]; 3] = [const { [const { AtomicU64::new(0) }; 5] }; 3];
     fn counting() -> bool {
         rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_SPIKE_PRESORTED").is_ok_and(|v| v != "time"))
     }
@@ -1438,21 +1447,23 @@ pub mod presorted {
             }
         }
         if n - start >= 64 { long += (n - start) as u64; }
+        let all = counts();
         for (i, v) in [1, n as u64, u64::from(whole), long].into_iter().enumerate() {
-            SITES[site][i].fetch_add(v, Relaxed);
+            all.sites[site][i].fetch_add(v, Relaxed);
         }
     }
     /// Rows a sort at `site` took as known sorted, not sorted.
     pub fn site_known(site: usize, rows: u64) {
         if counting() {
-            SITES[site][4].fetch_add(rows, Relaxed);
+            counts().sites[site][4].fetch_add(rows, Relaxed);
         }
     }
     pub fn report() -> String {
-        let row = |i: usize| COUNTS[i].iter().map(|a| a.load(Relaxed)).collect::<Vec<_>>();
+        let all = counts();
+        let row = |i: usize| all.orders[i].iter().map(|a| a.load(Relaxed)).collect::<Vec<_>>();
         let (d, o) = (row(0), row(1));
         let sites = ["wave batches", "scans for the next probe", "orders sorted again"].iter().enumerate().map(|(i, name)| {
-            let v: Vec<u64> = SITES[i].iter().map(|a| a.load(Relaxed)).collect();
+            let v: Vec<u64> = all.sites[i].iter().map(|a| a.load(Relaxed)).collect();
             format!("; {name}: {} sorts ({} wholly in order), {} rows, {} in order in stretches of 64+ ({:.0}%), {} known sorted", v[0], v[2], v[1], v[3], v[3] as f64 * 100.0 / v[1].max(1) as f64, v[4])
         }).collect::<String>();
         let f = |v: &[u64]| format!("{} runs ({} wholly in order), {} rows, {} in order in {} stretches of 64+ ({:.0}%); built in {:.1} ms; {} rows taken in place, known sorted", v[0], v[2], v[1], v[3], v[4], v[3] as f64 * 100.0 / v[1].max(1) as f64, v[5] as f64 / 1e6, v[6]);

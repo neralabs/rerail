@@ -1958,10 +1958,20 @@ pub mod reads {
         "kind", "field", "flags", "named", "span", "points", "parent", "children", "prev", "size", "classes",
         "docs restored", "nodes restored", "facts docs", "facts nodes",
     ];
-    static COUNTS: [AtomicU64; PARTS.len()] = [const { AtomicU64::new(0) }; PARTS.len()];
+    /// A run's reads (decision 0442: the run's): each part's, each pattern's, and with `E17_SITES` each site's.
+    #[derive(Default)]
+    struct Reads {
+        counts: [AtomicU64; PARTS.len()],
+        patterns: [[AtomicU64; CLASSES.len()]; PATTERN_PARTS.len()],
+        sites: std::sync::Mutex<Option<std::collections::HashMap<Site, [u64; 4]>>>,
+    }
+
+    fn reads() -> std::sync::Arc<Reads> {
+        rerail_prof::code_rule_dsl::logic::profile::local::<Reads>()
+    }
 
     pub fn hit(part: usize, n: u64) {
-        COUNTS[part].fetch_add(n, Relaxed);
+        reads().counts[part].fetch_add(n, Relaxed);
     }
 
     pub const fn part(name: &str) -> usize {
@@ -1994,8 +2004,6 @@ pub mod reads {
         "tape span", "tape parent", "tape size", "facts start", "facts end", "facts parent", "facts subtree_end",
     ];
     pub const CLASSES: [&str; 5] = ["same", "next", "near", "far", "bulk"];
-    static PATTERNS: [[AtomicU64; CLASSES.len()]; PATTERN_PARTS.len()] =
-        [const { [const { AtomicU64::new(0) }; CLASSES.len()] }; PATTERN_PARTS.len()];
     thread_local! {
         static LAST: [std::cell::Cell<u32>; PATTERN_PARTS.len()] = const { [const { std::cell::Cell::new(u32::MAX) }; PATTERN_PARTS.len()] };
         /// Builders that decode (facts from a tape) are not readers: their reads are not counted.
@@ -2012,7 +2020,6 @@ pub mod reads {
 
     /// With `E17_SITES` set, each read is also counted by its caller's source location (slow: a lock a read).
     type Site = (usize, &'static std::panic::Location<'static>);
-    static SITES: std::sync::Mutex<Option<std::collections::HashMap<Site, [u64; 4]>>> = std::sync::Mutex::new(None);
 
     #[inline]
     #[track_caller]
@@ -2030,17 +2037,18 @@ pub mod reads {
         } else {
             3
         };
-        PATTERNS[part][class].fetch_add(1, Relaxed);
+        let reads = reads();
+        reads.patterns[part][class].fetch_add(1, Relaxed);
         if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("E17_SITES").is_some()) {
             let site = std::panic::Location::caller();
-            SITES.lock().expect("the sites").get_or_insert_default().entry((part, site)).or_default()[class] += 1;
+            reads.sites.lock().expect("the sites").get_or_insert_default().entry((part, site)).or_default()[class] += 1;
         }
     }
 
     #[inline]
     pub fn bulk(part: usize, n: usize) {
         if PAUSED.with(|p| p.get()) == 0 {
-            PATTERNS[part][4].fetch_add(n as u64, Relaxed);
+            reads().patterns[part][4].fetch_add(n as u64, Relaxed);
         }
     }
 
@@ -2057,23 +2065,24 @@ pub mod reads {
     }
 
     pub fn report() {
-        let nodes = COUNTS[part("nodes restored")].load(Relaxed).max(1) as f64;
+        let reads = reads();
+        let nodes = reads.counts[part("nodes restored")].load(Relaxed).max(1) as f64;
         eprintln!("tape reads (E7):");
-        for (name, count) in PARTS.iter().zip(&COUNTS) {
+        for (name, count) in PARTS.iter().zip(&reads.counts) {
             let count = count.load(Relaxed);
             eprintln!("  {name:<16} {count:>14} {:>10.3} per restored node", count as f64 / nodes);
         }
-        let facts = COUNTS[part("facts nodes")].load(Relaxed).max(1) as f64;
+        let facts = reads.counts[part("facts nodes")].load(Relaxed).max(1) as f64;
         eprintln!("read patterns (E17), per facts node ({} facts nodes):", facts as u64);
         eprintln!("  {:<18} {}", "", CLASSES.iter().map(|c| format!("{c:>12}")).collect::<String>());
-        for (name, row) in PATTERN_PARTS.iter().zip(&PATTERNS) {
+        for (name, row) in PATTERN_PARTS.iter().zip(&reads.patterns) {
             eprintln!("  {name:<18} {}", row.iter().map(|c| format!("{:>12.4}", c.load(Relaxed) as f64 / facts)).collect::<String>());
         }
         eprintln!("read patterns (E17), counts:");
-        for (name, row) in PATTERN_PARTS.iter().zip(&PATTERNS) {
+        for (name, row) in PATTERN_PARTS.iter().zip(&reads.patterns) {
             eprintln!("  {name:<18} {}", row.iter().map(|c| format!("{:>12}", c.load(Relaxed))).collect::<String>());
         }
-        if let Some(sites) = SITES.lock().expect("the sites").take() {
+        if let Some(sites) = reads.sites.lock().expect("the sites").take() {
             let mut sites: Vec<_> = sites.into_iter().collect();
             sites.sort_by_key(|(_, c)| std::cmp::Reverse(c.iter().sum::<u64>()));
             eprintln!("read patterns (E17), top sites (same, next, near, far):");

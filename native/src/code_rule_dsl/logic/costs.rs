@@ -113,13 +113,39 @@ fn read_program_rates(db: &rusqlite::Connection) -> rusqlite::Result<Vec<(String
     Ok(rows.filter_map(Result::ok).map(|(program, steps, size, evaluations)| (program, steps, size, evaluations as u64)).collect())
 }
 
-/// The writer's store, once opened.
-static WRITER: Mutex<Option<rusqlite::Connection>> = Mutex::new(None);
+/// The learned cost model's state on this machine (decision 0442: the machine's, the user's choice): its store's
+/// writer, the training's state, the read of the stored statistics and the start of its threads.
+#[derive(Default)]
+struct Costs {
+    /// The writer's store, once opened.
+    writer: Mutex<Option<rusqlite::Connection>>,
+    /// Samples written since the last training began.
+    written: std::sync::atomic::AtomicUsize,
+    /// A training is running.
+    training: std::sync::atomic::AtomicBool,
+    /// When the last training began.
+    trained_at: Mutex<Option<std::time::Instant>>,
+    /// The model's state, for the profile.
+    model_state: Mutex<String>,
+    /// The samples read and the rates fitted, once the read has run.
+    fitted: Mutex<Option<(usize, usize)>>,
+    /// Whether the stored statistics have been read (`start`'s thread): what `ready` waits for.
+    read_done: (Mutex<bool>, std::sync::Condvar),
+    /// `start` ran: before it, there is nothing to wait for.
+    started_once: std::sync::atomic::AtomicBool,
+    started: OnceLock<()>,
+    begun: OnceLock<()>,
+}
+
+fn costs() -> std::sync::Arc<Costs> {
+    super::profile::machine::<Costs>()
+}
 
 /// Writes the samples the executor kept since the last write: one transaction.
 fn write() {
     let Some(path) = path() else { return };
-    let mut w = WRITER.lock().unwrap_or_else(|p| p.into_inner());
+    let st_ = costs();
+    let mut w = st_.writer.lock().unwrap_or_else(|p| p.into_inner());
     let (samples, dropped) = rerail_accel::score::take_samples();
     let plans = sql_plans::take();
     let forms = rerail_accel::forms::drain();
@@ -220,7 +246,7 @@ fn write() {
     })();
     match r {
         Ok(ids) => {
-            WRITTEN.fetch_add(samples.len(), std::sync::atomic::Ordering::Relaxed);
+            costs().written.fetch_add(samples.len(), std::sync::atomic::Ordering::Relaxed);
             if !ids.is_empty() {
                 sql_plans::learn(ids, &plans);
             }
@@ -342,7 +368,7 @@ fn read() {
             #[cfg(not(target_os = "macos"))]
             let _ = saved;
             let fitted = rerail_accel::price::learn_from(&samples);
-            *FITTED.lock().unwrap_or_else(|p| p.into_inner()) = Some((samples.len(), fitted.len()));
+            *costs().fitted.lock().unwrap_or_else(|p| p.into_inner()) = Some((samples.len(), fitted.len()));
             #[cfg(target_os = "macos")]
             {
                 // Without a saved model, one is trained at once (placement wants one). Else the saved model is put in
@@ -351,31 +377,23 @@ fn read() {
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
                 let due = saved.is_none();
                 if let Some((since, at)) = saved {
-                    WRITTEN.store(since as usize, std::sync::atomic::Ordering::Relaxed);
+                    costs().written.store(since as usize, std::sync::atomic::Ordering::Relaxed);
                     let age = std::time::Duration::from_secs_f64((now - at).max(0.0));
-                    *TRAINED_AT.lock().unwrap_or_else(|p| p.into_inner()) = std::time::Instant::now().checked_sub(age).or_else(|| Some(std::time::Instant::now()));
+                    *costs().trained_at.lock().unwrap_or_else(|p| p.into_inner()) = std::time::Instant::now().checked_sub(age).or_else(|| Some(std::time::Instant::now()));
                 }
                 train(path, samples, true, due);
             }
         }
         Err(e) => {
             eprintln!("rerail: cost statistics not read from {}: {e}", path.display());
-            *FITTED.lock().unwrap_or_else(|p| p.into_inner()) = Some((0, 0));
+            *costs().fitted.lock().unwrap_or_else(|p| p.into_inner()) = Some((0, 0));
         }
     }
 }
 
-/// Samples written since the last training began.
-static WRITTEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-/// A training is running.
-static TRAINING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// When the last training began.
-static TRAINED_AT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
-/// The model's state, for the profile.
-static MODEL_STATE: Mutex<String> = Mutex::new(String::new());
 
 fn model_state(s: String) {
-    *MODEL_STATE.lock().unwrap_or_else(|p| p.into_inner()) = s;
+    *costs().model_state.lock().unwrap_or_else(|p| p.into_inner()) = s;
 }
 
 /// Puts this machine's saved model in place, if there is one that reads, its kernels compiled first (the training
@@ -409,12 +427,12 @@ fn load_saved(path: &PathBuf, fit: bool) {
 /// Without `fit`, only the saved model is put in place: no training is due.
 fn train(path: PathBuf, samples: Vec<rerail_accel::score::Sample>, saved: bool, fit: bool) {
     use std::sync::atomic::Ordering;
-    if TRAINING.swap(true, Ordering::AcqRel) {
+    if costs().training.swap(true, Ordering::AcqRel) {
         return;
     }
     if fit {
-        WRITTEN.store(0, Ordering::Relaxed);
-        *TRAINED_AT.lock().unwrap_or_else(|p| p.into_inner()) = Some(std::time::Instant::now());
+        costs().written.store(0, Ordering::Relaxed);
+        *costs().trained_at.lock().unwrap_or_else(|p| p.into_inner()) = Some(std::time::Instant::now());
     }
     let spawned = rerail_accel::exec::service("rerail-cost-model", None, move || {
         crate::code_rule_dsl::logic::profile::behind_the_run();
@@ -423,14 +441,14 @@ fn train(path: PathBuf, samples: Vec<rerail_accel::score::Sample>, saved: bool, 
             load_saved(&path, fit);
         }
         if !fit {
-            TRAINING.store(false, Ordering::Release);
+            costs().training.store(false, Ordering::Release);
             return;
         }
         self::fit(&path, &samples, false, &|| false);
-        TRAINING.store(false, Ordering::Release);
+        costs().training.store(false, Ordering::Release);
     });
     if spawned.is_err() {
-        TRAINING.store(false, Ordering::Release);
+        costs().training.store(false, Ordering::Release);
     }
 }
 
@@ -500,8 +518,9 @@ impl rerail_accel::upkeep::Job for Retrain {
         // Upkeep is behind the run: its SQL is on its own connections, never a wave's (decision 0104).
         crate::code_rule_dsl::logic::profile::behind_the_run();
         use std::sync::atomic::Ordering;
-        let since = TRAINED_AT.lock().unwrap_or_else(|p| p.into_inner()).is_none_or(|t| t.elapsed() >= RETRAIN_EVERY);
-        if WRITTEN.load(Ordering::Relaxed) >= RETRAIN_AFTER && !TRAINING.load(Ordering::Acquire) && since && path().is_some() {
+        let st_ = costs();
+        let since = st_.trained_at.lock().unwrap_or_else(|p| p.into_inner()).is_none_or(|t| t.elapsed() >= RETRAIN_EVERY);
+        if costs().written.load(Ordering::Relaxed) >= RETRAIN_AFTER && !costs().training.load(Ordering::Acquire) && since && path().is_some() {
             rerail_accel::upkeep::Due::Idle { starve: std::time::Duration::from_secs(3600) }
         } else {
             rerail_accel::upkeep::Due::No
@@ -520,23 +539,24 @@ impl rerail_accel::upkeep::Job for Retrain {
         crate::code_rule_dsl::logic::profile::behind_the_run();
         use std::sync::atomic::Ordering;
         let Some(path) = path() else { return Ok(rerail_accel::upkeep::Step::Done) };
-        if TRAINING.swap(true, Ordering::AcqRel) {
+        if costs().training.swap(true, Ordering::AcqRel) {
             return Ok(rerail_accel::upkeep::Step::Done);
         }
-        let written = WRITTEN.swap(0, Ordering::Relaxed);
-        let trained_at = TRAINED_AT.lock().unwrap_or_else(|p| p.into_inner()).replace(std::time::Instant::now());
+        let written = costs().written.swap(0, Ordering::Relaxed);
+        let st_ = costs();
+        let trained_at = st_.trained_at.lock().unwrap_or_else(|p| p.into_inner()).replace(std::time::Instant::now());
         let r = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).and_then(|db| read_samples(&db, READ, READ_PER_FORM));
         let out = match r {
             // Stopped by a run that began: still due, as before it, for after the run.
             Ok(samples) if fit(&path, &samples, true, &slice.stopper()) => {
-                WRITTEN.fetch_add(written, Ordering::Relaxed);
-                *TRAINED_AT.lock().unwrap_or_else(|p| p.into_inner()) = trained_at;
+                costs().written.fetch_add(written, Ordering::Relaxed);
+                *costs().trained_at.lock().unwrap_or_else(|p| p.into_inner()) = trained_at;
                 Ok(rerail_accel::upkeep::Step::More)
             }
             Ok(_) => Ok(rerail_accel::upkeep::Step::Done),
             Err(e) => Err(format!("{}: {e}", path.display())),
         };
-        TRAINING.store(false, Ordering::Release);
+        costs().training.store(false, Ordering::Release);
         out
     }
 }
@@ -561,13 +581,6 @@ fn save(path: &PathBuf, model: Option<&rerail_accel::cost_model::CostModel>, com
     Ok(())
 }
 
-/// The samples read and the rates fitted, once the read has run.
-static FITTED: Mutex<Option<(usize, usize)>> = Mutex::new(None);
-
-/// Whether the stored statistics have been read (`start`'s thread): what `ready` waits for.
-static READ_DONE: (Mutex<bool>, std::sync::Condvar) = (Mutex::new(false), std::sync::Condvar::new());
-/// `start` ran: before it, there is nothing to wait for.
-static STARTED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Starts the statistics, once: the executor keeps its samples and a thread writes them. The stored ones are read,
 /// and the prices fitted, when the run first has work to price ([`begin_read`], beside it) or an executor is made
@@ -575,12 +588,11 @@ static STARTED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 /// 40 ms of CPU and the machine's name a Metal device, 11 ms of the main thread, in every process (decision 0285).
 /// Without a store (`RERAIL_COSTS=off`) there is nothing to read.
 pub fn start() {
-    static STARTED: OnceLock<()> = OnceLock::new();
-    STARTED.get_or_init(|| {
+    costs().started.get_or_init(|| {
         if path().is_none() {
             return;
         }
-        STARTED_ONCE.store(true, std::sync::atomic::Ordering::Release);
+        costs().started_once.store(true, std::sync::atomic::Ordering::Release);
         sql_plans::enable();
         rerail_accel::score::keep_samples(true);
         // The first price asked waits for the read, which it begins if the run did not (`ready`).
@@ -604,14 +616,13 @@ pub fn start() {
 /// has work the prices are for (a chunk to evaluate, a stratum to run), so the read runs beside that work. The
 /// upkeep of their store and the model's retraining begin with it, for the process's life (decision 0190).
 pub fn begin_read() {
-    static BEGUN: OnceLock<()> = OnceLock::new();
-    if !STARTED_ONCE.load(std::sync::atomic::Ordering::Acquire) {
+    if !costs().started_once.load(std::sync::atomic::Ordering::Acquire) {
         return;
     }
-    BEGUN.get_or_init(|| {
+    costs().begun.get_or_init(|| {
         let done = || {
-            *READ_DONE.0.lock().unwrap_or_else(|p| p.into_inner()) = true;
-            READ_DONE.1.notify_all();
+            *costs().read_done.0.lock().unwrap_or_else(|p| p.into_inner()) = true;
+            costs().read_done.1.notify_all();
         };
         let spawned = rerail_accel::exec::service("rerail-costs read", None, move || {
             crate::code_rule_dsl::logic::profile::behind_the_run();
@@ -638,16 +649,17 @@ pub fn begin_read() {
 /// `true` once they are read, or when there is nothing to read; `false` on the read's own thread, which may ask the
 /// model it is putting in place (its warming, its training) and never waits for itself.
 pub fn ready() -> bool {
-    if !STARTED_ONCE.load(std::sync::atomic::Ordering::Acquire) {
+    if !costs().started_once.load(std::sync::atomic::Ordering::Acquire) {
         return true;
     }
     if READING.with(std::cell::Cell::get) {
         return false;
     }
     begin_read();
-    let mut done = READ_DONE.0.lock().unwrap_or_else(|p| p.into_inner());
+    let st_ = costs();
+    let mut done = st_.read_done.0.lock().unwrap_or_else(|p| p.into_inner());
     while !*done {
-        done = READ_DONE.1.wait(done).unwrap_or_else(|p| p.into_inner());
+        done = costs().read_done.1.wait(done).unwrap_or_else(|p| p.into_inner());
     }
     true
 }
@@ -677,15 +689,16 @@ pub fn upkeep_jobs() -> Vec<rerail_accel::upkeep::Registered> {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
         match saved {
             Some((since, at)) => {
-                WRITTEN.fetch_max(since as usize, Ordering::Relaxed);
+                costs().written.fetch_max(since as usize, Ordering::Relaxed);
                 let age = std::time::Duration::from_secs_f64((now - at).max(0.0));
-                let mut t = TRAINED_AT.lock().unwrap_or_else(|p| p.into_inner());
+                let st_ = costs();
+                let mut t = st_.trained_at.lock().unwrap_or_else(|p| p.into_inner());
                 if t.is_none() {
                     *t = std::time::Instant::now().checked_sub(age).or_else(|| Some(std::time::Instant::now()));
                 }
             }
             None if path.exists() => {
-                WRITTEN.fetch_max(RETRAIN_AFTER, Ordering::Relaxed);
+                costs().written.fetch_max(RETRAIN_AFTER, Ordering::Relaxed);
             }
             None => {}
         }
@@ -718,13 +731,14 @@ pub fn flush() {
 
 /// For the profile: the samples read, the rates fitted and the rates in place.
 pub fn summary() -> String {
-    let fitted = *FITTED.lock().unwrap_or_else(|p| p.into_inner());
+    let fitted = *costs().fitted.lock().unwrap_or_else(|p| p.into_inner());
     let mut s = match (path(), fitted) {
         (None, _) => "off (RERAIL_COSTS=off, or a test)\n".to_owned(),
         (Some(p), None) => format!("{}: not read yet\n", p.display()),
         (Some(p), Some((n, k))) => format!("{}: {n} samples read, {k} rates fitted\n", p.display()),
     };
-    let state = MODEL_STATE.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    let st_ = costs();
+    let state = st_.model_state.lock().unwrap_or_else(|p| p.into_inner()).clone();
     if !state.is_empty() {
         s.push_str(&format!("  model: {}\n", state.replace('\n', "\n  ")));
     }
@@ -836,10 +850,10 @@ pub mod tests {
         let samples = super::read_samples(&db, super::READ, super::READ_PER_FORM).unwrap();
         let t = std::time::Instant::now();
         super::train(path.clone(), samples, false, true);
-        while super::TRAINING.load(Ordering::Acquire) {
+        while super::costs().training.load(Ordering::Acquire) {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        let state = super::MODEL_STATE.lock().unwrap().clone();
+        let state = super::costs().model_state.lock().unwrap().clone();
         eprintln!("trained in {:.1} s: {state}", t.elapsed().as_secs_f64());
         let installed = rerail_accel::cost_model::current().expect("the model in place");
         let (trained_on, bytes): (i64, Vec<u8>) = db.query_row("SELECT trained_on, model FROM models WHERE machine = ?1", [super::machine()], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
@@ -870,7 +884,7 @@ pub mod tests {
         let (c, t) = (rerail_accel::exec::process_cpu(), std::time::Instant::now());
         rerail_accel::upkeep::lower_this_thread();
         assert_eq!(job.step(&Slice::for_test(std::time::Duration::from_millis(200), 64 << 20, &stop)), Ok(Step::Done));
-        eprintln!("trained at upkeep's priority in {:.2} s wall {:.2} s CPU: {}", t.elapsed().as_secs_f64(), rerail_accel::exec::process_cpu() - c, super::MODEL_STATE.lock().unwrap().lines().next().unwrap_or(""));
+        eprintln!("trained at upkeep's priority in {:.2} s wall {:.2} s CPU: {}", t.elapsed().as_secs_f64(), rerail_accel::exec::process_cpu() - c, super::costs().model_state.lock().unwrap().lines().next().unwrap_or(""));
         assert_eq!(job.due(), Due::No, "trained: not due");
         let saved: i64 = super::open(&path).unwrap().query_row("SELECT count(*) FROM models", [], |r| r.get(0)).unwrap();
         assert_eq!(saved as usize, rerail_accel::cost_model::current().is_some() as usize, "saved when it won");
@@ -974,8 +988,8 @@ pub mod tests {
         }
         super::start();
         std::thread::sleep(std::time::Duration::from_millis(200));
-        assert!(super::FITTED.lock().unwrap().is_none(), "read with no work to price");
+        assert!(super::costs().fitted.lock().unwrap().is_none(), "read with no work to price");
         super::ready();
-        assert_eq!(*super::FITTED.lock().unwrap(), Some((0, 0)), "read once an executor waits");
+        assert_eq!(*super::costs().fitted.lock().unwrap(), Some((0, 0)), "read once an executor waits");
     }
 }

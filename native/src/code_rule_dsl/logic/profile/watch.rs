@@ -104,9 +104,9 @@ pub fn watch() {
             libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
             set
         };
-        use std::sync::atomic::{AtomicU32, Ordering};
-        static SNAPSHOTS: AtomicU32 = AtomicU32::new(0);
         let _ = rerail_accel::exec::service("rerail-watch", None, move || {
+            // The snapshots this watcher has dumped: its thread's alone.
+            let mut snapshots = 0u32;
             loop {
                 let mut sig = 0;
                 // SAFETY: waits for one of the blocked signals in `set`.
@@ -116,7 +116,10 @@ pub fn watch() {
                 let stop = sig != libc::SIGUSR1;
                 match destination() {
                     Some(dir) => {
-                        let dir = if stop { dir.join("interrupted") } else { dir.join(format!("snapshot-{}", SNAPSHOTS.fetch_add(1, Ordering::Relaxed) + 1)) };
+                        let dir = if stop { dir.join("interrupted") } else { {
+                            snapshots += 1;
+                            dir.join(format!("snapshot-{snapshots}"))
+                        } };
                         match dump(&dir, &format!("signal {sig}"), started) {
                             Ok(()) => eprintln!("rerail-engine: signal {sig}: dumped the run into {}", dir.display()),
                             Err(e) => eprintln!("rerail-engine: signal {sig}: the dump failed: {e}"),

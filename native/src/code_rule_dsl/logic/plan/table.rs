@@ -503,12 +503,12 @@ pub fn heavy_batch(reqs: Vec<HeavyReq>) -> Vec<Option<Vec<HeavyCol>>> {
             }
         }
         if let Some(mut made) = heavy_of_device(&cols) {
-            BATCHES[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            rerail_prof::code_rule_dsl::logic::profile::local::<Batches>().0[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let mut made = made.drain(..);
             return reqs.iter().map(|(src, _, cs)| src.as_ref().map(|_| cs.iter().map(|_| made.next().expect("one a column")).collect())).collect();
         }
     }
-    BATCHES[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    rerail_prof::code_rule_dsl::logic::profile::local::<Batches>().0[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     reqs.into_par_iter()
         .map(|(src, _, cols)| {
             let src = src?;
@@ -527,10 +527,11 @@ pub fn heavy_batch(reqs: Vec<HeavyReq>) -> Vec<Option<Vec<HeavyCol>>> {
 pub type HeavyReq = (Option<std::sync::Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>, Option<std::sync::Arc<crate::code_rule_dsl::logic::native::component::InRel>>, Vec<usize>);
 
 /// The batches made, on the CPU and on the GPU.
-static BATCHES: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+#[derive(Default)]
+struct Batches([std::sync::atomic::AtomicU64; 2]);
 
 pub fn batches() -> [u64; 2] {
-    BATCHES.each_ref().map(|b| b.load(std::sync::atomic::Ordering::Relaxed))
+    rerail_prof::code_rule_dsl::logic::profile::local::<Batches>().0.each_ref().map(|b| b.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// Whether a round of `rows` rows (each column's rows, summed) is made on the GPU: `RERAIL_STATS_GPU` on or off,
@@ -548,7 +549,7 @@ fn gpu_pays(rows: usize) -> bool {
 /// The columns read in place are counted (`in_place`).
 pub fn heavy_of_device(cols: &[crate::code_rule_dsl::logic::device::StatColumn<'_>]) -> Option<Vec<HeavyCol>> {
     let (made, read) = crate::code_rule_dsl::logic::device::solver()?.column_stats(cols, KEPT).ok()?;
-    IN_PLACE.fetch_add(read as u64, std::sync::atomic::Ordering::Relaxed);
+    rerail_prof::code_rule_dsl::logic::profile::local::<InPlace>().0.fetch_add(read as u64, std::sync::atomic::Ordering::Relaxed);
     Some(made.into_iter().map(|m| {
         let mut top: Vec<(i64, f64)> = m.top.iter().map(|&(v, n)| (v, n as f64)).collect();
         top.sort_unstable_by_key(|t| t.0);
@@ -559,10 +560,11 @@ pub fn heavy_of_device(cols: &[crate::code_rule_dsl::logic::device::StatColumn<'
 }
 
 /// Columns the device read in place (`heavy_of_device`).
-static IN_PLACE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[derive(Default)]
+struct InPlace(std::sync::atomic::AtomicU64);
 
 pub fn read_in_place() -> u64 {
-    IN_PLACE.load(std::sync::atomic::Ordering::Relaxed)
+    rerail_prof::code_rule_dsl::logic::profile::local::<InPlace>().0.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Columns' heavy values made on the device, from host values (`heavy_of_device`).
