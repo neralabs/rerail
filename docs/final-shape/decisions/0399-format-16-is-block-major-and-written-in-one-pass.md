@@ -365,7 +365,28 @@ fold's taking back is removed. Not yet measured: the run's cost a node against f
 R17's second half, tier 2 writing its tape on the device, waits on tier 2 on Metal, its own track: the user put
 steps 5 and 6 first (2026-11-18).
 
-Next: step 6 (step 5 was measured and not taken, §5).
+**Step 6: what there is, and the plan (2026-11-18).** The writer makes the presence (§4, R10), and every engine
+producer drops it where it takes the tape (`f.tape`): the lean parsers' finish, `.rr`'s, the walk's (`TreeOps`),
+simdjson's, and the conversion from format 15 (`TapeImage::to`). What leaves files out today is the store's
+positional search index (`search_index.rs`): each node's kind as an FTS token, in preorder, built by a maintenance
+backlog that decodes stored tapes again. The warm path (`workspace/persisted.rs`) skips a clause in a file when
+the index has none of its anchor's root kinds. On the cold path a clause's roots are `nodes_of_kinds` or the anchor
+index's kind postings, each built over every node of the tape.
+
+The plan, in three parts:
+1. **The image holds its presence.** `TapeImage` keeps the writer's `Presence` beside its format 16 tape, with each
+   block's (the writer asked for blocks: a few words per 1,024 nodes), from every producer. A format 15 image, or
+   one read from the store, has none until part 3.
+2. **The planner leaves out what an anchor cannot touch.** A clause none of whose root kinds the document has
+   matches nothing there: no roots are looked for, and no anchor index or posting is built for it. A walk for a
+   clause's roots (`nodes_of_kinds`, the postings) passes over the blocks that hold none of them. On the device,
+   the label kernels' scans start only in the blocks that hold an anchor's kinds.
+3. **The store keeps it**, as a derived fact in a block, written once where it is computed (0353): on 0402's kept
+   facts (packed columns in a chain of mapped files, SQLite holding pointers only), which are on
+   `final-rerail-shape-rr-align` and not yet here. Then the warm path reads it in place of the FTS index's kinds
+   for format 16 tapes, and fields too.
+
+Next: step 6, part 1.
 
 ## Requirements, each with its test
 

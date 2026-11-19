@@ -2257,8 +2257,11 @@ holds the design, its requirements (R1–R12) and its steps.
   format 15 (`Sink::again`).
 - **Done** (2026-11-18, step 3, JSON): simdjson's kernels give their walk's events to the ops, switched by the sink at
   run time (one compile).
-- **Next**: step 4 (the ops in CLIF, three backends; tier 2's words call them, JSON's tier 2 among them; the GPU
-  writer); SQL commits at its statements once `claim` decides a program's held tokens as they come; C, C++, Go,
+- **Done** (2026-11-18, step 4): the ops in CLIF on three backends (Rust, JIT, MSL), the host's writer is the ops
+  (R13–R16), and tier 2 writes format 16 by them as it parses on the CPU (R17, 438506218). Tier 2 writing on the
+  device waits on tier 2 on Metal, its own track (the user: steps 5 and 6 first).
+- **Measured, not taken** (2026-11-18, step 5, 2552b14d8): node-range LZ4 for 16z is 16–32% over HC 9; HC 9 stays.
+- **Next**: step 6 (the store keeps the presence; the planner leaves out documents and blocks); SQL commits at its statements once `claim` decides a program's held tokens as they come; C, C++, Go,
   Kotlin, Scala and Swift take a `Sink` when their tables come; simdjson's index writer (a CPU no
   kernel runs on) on the ops.
 
