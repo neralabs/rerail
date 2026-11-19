@@ -1458,6 +1458,7 @@ fn micro_walks_are_the_interpreters_label_outputs() {
 /// Whether a walk's first move, reached from its start through saves, forks and jumps only, is `after` with a tail
 /// that marks the start alone (tests, a `load` and its tests, a capture, the emit): the shape the device answers once
 /// for a parent's children (`metal_label_passes.metal`'s `sibling_pass`, work queue Q182).
+#[cfg(target_os = "macos")]
 fn sibling_shape(words: &[u32]) -> bool {
     let (mut pc, mut seen) = (0, 0);
     while pc < words.len() && seen <= words.len() {
