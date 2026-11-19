@@ -1,8 +1,8 @@
 import { subscribe, unsubscribe } from "node:diagnostics_channel";
 import { once } from "node:events";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { request, ServerResponse } from "node:http";
-import { connect } from "node:net";
+import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
@@ -18,19 +18,48 @@ const SESSION = "gone";
 const STEER = "Rerail found 1 problem in your last edit: a.py calls eval.";
 const OTHER = "other";
 const OTHER_STEER = "Rerail found 1 problem in your last edit: b.py calls eval.";
+const SECOND_STEER = "Rerail found 1 problem in your last edit: c.py calls eval.";
+const NEWER_STEER = "Rerail found 1 problem in your last edit: d.py calls eval.";
+// Bigger than a connection holds unread (a Windows named pipe takes 64 KB, a Linux Unix socket about 200 KB), so a
+// client that has stopped reading never lets its answer's write complete.
+const BIG_STEER = `Rerail found many problems in your last edit: big.py calls eval.\n${"- big.py calls eval [python.eval]\n".repeat(24_000)}`;
 
 // A hook asks the daemon with a time limit of its own: past it, the hook stops waiting and closes its connection, while
 // the daemon still runs the event and answers it. A steer such an answer takes reaches no agent.
 describe("engine service answers a hook no longer waits for", () => {
   it("keeps a steer for the session's next hook when the hook whose answer took it gave up while its turn's end waited", async () => {
     const service = await checkingService();
+    const responses = serverResponses(1);
     const stop = hook(service.socketPath, turnEnd("stop-1", service.root));
-    // The turn's end waits for the session's edit checks; the hook gives up meanwhile, and then the check finds something.
+    // The turn's end waits for the session's edit checks; the hook gives up meanwhile, the service reads its close, and
+    // then the check finds something.
     await service.checking;
+    const [response] = await responses;
+    const closed = new Promise<void>(done => response?.once("close", () => done()));
     await stop.giveUp();
+    await closed;
     service.finishCheck();
     await service.steered;
     expect(contents(await ingestEngineEvent(service.engine, prompt("prompt-2")))).toEqual([STEER]);
+    expect(await ingestEngineEvent(service.engine, prompt("prompt-3"))).toEqual([]);
+    // Recorded once, by the answer that never reached its hook.
+    expect(await service.deliveriesOf(STEER)).toBe(1);
+  }, 20_000);
+
+  it("keeps a steer for the session's next hook when the daemon writes the answer before it has read the hook's close", async () => {
+    const service = await checkingService();
+    const responses = serverResponses(2);
+    const stop = hook(service.socketPath, turnEnd("stop-1", service.root));
+    await service.checking;
+    // The session's next hook asks meanwhile and waits behind the turn's end, as a hook does on a busy daemon.
+    const next = ingestEngineEvent(service.engine, prompt("prompt-2"));
+    const [answer, queued] = await responses;
+    await vi.waitFor(() => expect(queued?.req.readableEnded).toBe(true), { timeout: 5_000, interval: 10 });
+    await new Promise<void>(done => setImmediate(done));
+    // The hook goes as its answer is written, before the daemon can read its close: the write is refused.
+    goneAtItsAnswer(answer, stop.destroy);
+    service.finishCheck();
+    expect(contents(await next)).toEqual([STEER]);
     expect(await ingestEngineEvent(service.engine, prompt("prompt-3"))).toEqual([]);
   }, 20_000);
 
@@ -41,6 +70,58 @@ describe("engine service answers a hook no longer waits for", () => {
     service.finishCheck();
     expect(contents(await stop.answer)).toEqual([STEER]);
     expect(await ingestEngineEvent(service.engine, prompt("prompt-2"))).toEqual([]);
+  }, 20_000);
+
+  it("answers the session's next hook while a hook that has stopped reading holds its answer, which it then reads whole", async () => {
+    const service = await checkingService();
+    await service.steer(SESSION, BIG_STEER);
+    const stuck = await stuckHook(service.socketPath, prompt("prompt-1"));
+    // Answered while the stuck hook reads nothing of its own answer.
+    expect(await ingestEngineEvent(service.engine, prompt("prompt-2"))).toEqual([]);
+    const received = await stuck.readAll();
+    expect(received.split(BIG_STEER.slice(0, 64)).length - 1).toBe(1);
+    expect(await ingestEngineEvent(service.engine, prompt("prompt-3"))).toEqual([]);
+  }, 20_000);
+
+  it("gives the steers of an answer a hook stopped reading to the session's next hook once that hook gives up, before newer ones", async () => {
+    const service = await checkingService();
+    await service.steer(SESSION, BIG_STEER);
+    await service.steer(SESSION, SECOND_STEER);
+    const stuck = await stuckHook(service.socketPath, prompt("prompt-1"));
+    expect(await ingestEngineEvent(service.engine, prompt("prompt-2"))).toEqual([]);
+    await service.steer(SESSION, NEWER_STEER);
+    await stuck.giveUp();
+    expect(leads(await ingestEngineEvent(service.engine, prompt("prompt-3")))).toEqual(leads([BIG_STEER, SECOND_STEER, NEWER_STEER]));
+    expect(await ingestEngineEvent(service.engine, prompt("prompt-4"))).toEqual([]);
+  }, 20_000);
+
+  it("keeps no steer of a session's earlier opening when the hook that stopped reading its answer gives up after the session opened again", async () => {
+    let clock = 1_000;
+    const service = await checkingService({ now: () => clock, idleSessionMs: 1_000 });
+    await service.steer(SESSION, BIG_STEER);
+    const stuck = await stuckHook(service.socketPath, prompt("prompt-1"));
+    // The session goes quiet and closes, and its next hook opens it again, while the stuck hook still holds its answer.
+    clock += 60_000;
+    await service.closeIdleSessions();
+    expect(await ingestEngineEvent(service.engine, prompt("prompt-2", SESSION, service.root))).toEqual([]);
+    await stuck.giveUp();
+    expect(await ingestEngineEvent(service.engine, prompt("prompt-3", SESSION, service.root))).toEqual([]);
+  }, 20_000);
+
+  it("keeps the steer a session owed when it opened again for its next hook when the hook whose answer took it gave up", async () => {
+    let clock = 1_000;
+    const service = await checkingService({ now: () => clock, idleSessionMs: 1_000 });
+    await service.steer(SESSION, STEER);
+    // Quiet past the limit for a session that owes a steer: it closes, and its ledger keeps the steer owed.
+    clock += 2 * 24 * 60 * 60_000;
+    await service.closeIdleSessions();
+    const responses = serverResponses(1);
+    const gone = hook(service.socketPath, prompt("prompt-2", SESSION, service.root));
+    goneAtItsAnswer((await responses)[0], gone.destroy);
+    await gone.closed;
+    expect(contents(await ingestEngineEvent(service.engine, prompt("prompt-3")))).toEqual([STEER]);
+    expect(await ingestEngineEvent(service.engine, prompt("prompt-4"))).toEqual([]);
+    expect(await service.deliveriesOf(STEER)).toBe(1);
   }, 20_000);
 
   it("tells a steer once when its answer waits on its connection behind another session's answer", async () => {
@@ -60,6 +141,18 @@ describe("engine service answers a hook no longer waits for", () => {
     expect(await ingestEngineEvent(service.engine, prompt("other-2", OTHER))).toEqual([]);
   }, 20_000);
 
+  it("leaves no listener of its own on a connection for each answer it writes there", async () => {
+    const service = await checkingService();
+    const listeners = async (count: number): Promise<number> => {
+      const responses = serverResponses(count);
+      await pipelined(service.socketPath, Array.from({ length: count }, (_, index) => prompt(`kept-${count}-${index}`)), false);
+      const answers = await responses;
+      await vi.waitFor(() => expect(answers.every(answer => answer.writableFinished)).toBe(true), { timeout: 5_000, interval: 10 });
+      return answers[0]?.req.socket.listenerCount("close") ?? -1;
+    };
+    expect(await listeners(12)).toBe(await listeners(1));
+  }, 20_000);
+
   it("answers a session's end once the service has let go of the session, as before", async () => {
     const service = await checkingService({ idleRuntimeMs: 0 });
     const responses = serverResponses(1);
@@ -77,8 +170,10 @@ function turnEnd(eventId: string, cwd: string): AdapterEvent {
   return { kind: "turn-end", eventId, sessionId: SESSION, session: { host: "claude-code", sessionId: SESSION, cwd }, text: "" };
 }
 
-function prompt(eventId: string, sessionId = SESSION): AdapterEvent {
-  return { kind: "user-prompt", eventId, sessionId, text: "next" };
+/** A prompt of `sessionId`; with `cwd`, it says where the session runs, which a session the service does not hold needs. */
+function prompt(eventId: string, sessionId = SESSION, cwd?: string): AdapterEvent {
+  const session = cwd === undefined ? {} : { session: { host: "claude-code" as const, sessionId, cwd } };
+  return { kind: "user-prompt", eventId, sessionId, text: "next", ...session };
 }
 
 /** The responses of the next `count` requests a server in this process reads the headers of. */
@@ -101,10 +196,24 @@ function serverResponses(count: number): Promise<ServerResponse[]> {
 }
 
 /**
- * Sends `events` on one connection, one request after another without waiting for answers, once connected; `received`
- * resolves with all the connection read once the server closes it.
+ * Has `leave` run as the server writes `response`, in the same turn and before the write: the daemon writes the answer
+ * before it can read that its client has gone.
  */
-async function pipelined(socketPath: string, events: AdapterEvent[]): Promise<{ received: Promise<string> }> {
+function goneAtItsAnswer(response: ServerResponse | undefined, leave: () => void): void {
+  if (response === undefined) throw new Error("the server read no request");
+  const end = response.end.bind(response);
+  response.end = ((...args: Parameters<typeof end>) => {
+    leave();
+    return end(...args);
+  }) as typeof response.end;
+}
+
+/**
+ * Sends `events` on one connection, one request after another without waiting for answers, once connected; `received`
+ * resolves with all the connection read once the server closes it, which the last request asks for unless `closes` is
+ * false.
+ */
+async function pipelined(socketPath: string, events: AdapterEvent[], closes = true): Promise<{ received: Promise<string> }> {
   const socket = connect(socketPath);
   socket.on("error", () => undefined);
   onTestFinished(() => {
@@ -116,18 +225,65 @@ async function pipelined(socketPath: string, events: AdapterEvent[]): Promise<{ 
   const closed = new Promise<string>(done => socket.once("close", () => done(received)));
   socket.write(events.map((event, index) => {
     const body = JSON.stringify({ event });
-    const last = index === events.length - 1 ? "connection: close\r\n" : "";
+    const last = closes && index === events.length - 1 ? "connection: close\r\n" : "";
     return `POST /events HTTP/1.1\r\nHost: localhost\r\n${last}content-type: application/json\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
   }).join(""));
   return { received: closed };
+}
+
+/**
+ * A hook alive that has stopped reading: it sends `event` and reads nothing of the answer, which the server has started
+ * to write when this resolves. `readAll` reads it whole at last; `giveUp` closes the connection, once the server has seen
+ * it close.
+ */
+async function stuckHook(socketPath: string, event: AdapterEvent): Promise<{ readAll: () => Promise<string>; giveUp: () => Promise<void> }> {
+  const responses = serverResponses(1);
+  const socket: Socket = connect(socketPath);
+  socket.on("error", () => undefined);
+  onTestFinished(() => {
+    socket.destroy();
+  });
+  await once(socket, "connect");
+  // Paused before anything arrives: it reads only what its own buffer takes, and then nothing.
+  socket.pause();
+  const body = JSON.stringify({ event });
+  socket.write(`POST /events HTTP/1.1\r\nHost: localhost\r\nconnection: close\r\ncontent-type: application/json\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+  const [response] = await responses;
+  if (response === undefined) throw new Error("the server read no request");
+  await vi.waitFor(() => expect(response.writableEnded).toBe(true), { timeout: 10_000, interval: 10 });
+  expect(response.writableFinished).toBe(false);
+  return {
+    readAll: async () => {
+      let received = "";
+      socket.on("data", (chunk: Buffer) => (received += chunk.toString("utf8")));
+      socket.resume();
+      await once(socket, "close");
+      return received;
+    },
+    giveUp: async () => {
+      const closed = new Promise<void>(done => response.once("close", () => done()));
+      socket.destroy();
+      await closed;
+    },
+  };
 }
 
 function contents(deliveries: readonly AdapterDelivery[]): string[] {
   return deliveries.map(delivery => delivery.content);
 }
 
-/** A hook's request for `event`, sent whole; `giveUp` closes its connection, as the hook does past its own limit. */
-function hook(socketPath: string, event: AdapterEvent): { answer: Promise<readonly AdapterDelivery[]>; giveUp: () => Promise<void> } {
+/** The first line of each steer, which tells them apart: a failure then prints no steer of many lines whole. */
+function leads(steers: readonly (AdapterDelivery | string)[]): string[] {
+  return steers.map(steer => (typeof steer === "string" ? steer : steer.content).split("\n")[0] ?? "");
+}
+
+/**
+ * A hook's request for `event`, sent whole; `giveUp` closes its connection, as the hook does past its own limit, and
+ * resolves once it has; `destroy` closes it in the same turn, and `closed` resolves once it has.
+ */
+function hook(socketPath: string, event: AdapterEvent): {
+  answer: Promise<readonly AdapterDelivery[]>; giveUp: () => Promise<void>; destroy: () => void; closed: Promise<void>;
+} {
   const body = JSON.stringify({ event });
   const outgoing = request({ socketPath, method: "POST", path: "/events", agent: false, headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) } });
   // Its own close, not `once`, which rejects on the error a destroyed request emits.
@@ -147,6 +303,8 @@ function hook(socketPath: string, event: AdapterEvent): { answer: Promise<readon
   });
   return {
     answer,
+    closed,
+    destroy: () => outgoing.destroy(),
     giveUp: async () => {
       outgoing.destroy();
       await closed;
@@ -154,14 +312,33 @@ function hook(socketPath: string, event: AdapterEvent): { answer: Promise<readon
   };
 }
 
+/** How many delivery entries of `content` the session ledgers under `storageRoot` hold. */
+async function deliveryEntries(storageRoot: string, content: string): Promise<number> {
+  const names = await readdir(storageRoot, { recursive: true });
+  let count = 0;
+  for (const name of names.filter(entry => entry.endsWith("events.jsonl"))) {
+    const lines = (await readFile(join(storageRoot, name), "utf8")).split("\n");
+    count += lines.filter(line => line.includes('"type":"delivery"') && line.includes(JSON.stringify(content).slice(1, -1))).length;
+  }
+  return count;
+}
+
+interface ServiceOptions {
+  /** 0 closes a runtime as its last session ends. */
+  idleRuntimeMs?: number;
+  idleSessionMs?: number;
+  now?: () => number;
+  /** A folder an earlier service of the test ran in: this one runs over its records, as a daemon started again does. */
+  root?: string;
+}
+
 /**
  * An engine service in a folder of its own with the Claude Code session `gone` started and its evaluator open. The
  * session's edit checks hold until `finishCheck`, and the first that ends then steers `STEER`: `checking` resolves
  * once a boundary waits for them, `steered` once the steer is asked for. `start` starts another session there, and
- * `steer` asks for a steer in a session as its evaluator would. `options.idleRuntimeMs` 0 closes a runtime as its last
- * session ends.
+ * `steer` asks for a steer in a session as its evaluator would.
  */
-async function checkingService(options: { idleRuntimeMs?: number } = {}): Promise<{
+async function checkingService(options: ServiceOptions = {}): Promise<{
   root: string;
   socketPath: string;
   engine: { socketPath: string };
@@ -171,11 +348,15 @@ async function checkingService(options: { idleRuntimeMs?: number } = {}): Promis
   start: (sessionId: string) => Promise<void>;
   steer: (sessionId: string, content: string) => Promise<void>;
   openRuntimes: () => number;
+  closeIdleSessions: () => Promise<void>;
+  deliveriesOf: (content: string) => Promise<number>;
+  close: () => Promise<void>;
 }> {
-  const root = await mkdtemp(join(tmpdir(), "rerail-unheard-"));
+  const { root: earlier, ...serviceOptions } = options;
+  const root = earlier ?? await mkdtemp(join(tmpdir(), "rerail-unheard-"));
   const socketPath = testEngineEndpoint(root);
   const databasePath = join(root, "rerail.sqlite");
-  startTestRepository(root, databasePath);
+  if (earlier === undefined) startTestRepository(root, databasePath);
   const opens = new Map<string, PromiseWithResolvers<void>>();
   const openOf = (sessionId: string): PromiseWithResolvers<void> => {
     const open = opens.get(sessionId) ?? Promise.withResolvers<void>();
@@ -192,7 +373,7 @@ async function checkingService(options: { idleRuntimeMs?: number } = {}): Promis
     storageRoot: join(root, "state"),
     databasePath,
     embedder: testEmbedder,
-    ...options,
+    ...serviceOptions,
     createAuditor: ({ steerDelivery }) => ({
       openWorkspace: async sessionId => {
         delivery = steerDelivery;
@@ -211,9 +392,15 @@ async function checkingService(options: { idleRuntimeMs?: number } = {}): Promis
       close: async () => undefined,
     }),
   });
-  onTestFinished(async () => {
+  let open = true;
+  const close = async (): Promise<void> => {
+    if (!open) return;
+    open = false;
     check.resolve();
     await service.close();
+  };
+  onTestFinished(async () => {
+    await close();
     await removeFolder(root);
   });
   const start = async (sessionId: string): Promise<void> => {
@@ -222,10 +409,13 @@ async function checkingService(options: { idleRuntimeMs?: number } = {}): Promis
     await openOf(sessionId).promise;
     await new Promise<void>(done => setImmediate(done));
   };
-  await start(SESSION);
+  if (earlier === undefined) await start(SESSION);
   return {
     root, socketPath, engine: { socketPath }, checking: checking.promise, steered: steered.promise, finishCheck: () => check.resolve(), start,
     openRuntimes: () => service.openRuntimes(),
+    closeIdleSessions: () => service.closeIdleSessions(),
+    deliveriesOf: content => deliveryEntries(join(root, "state"), content),
+    close,
     steer: async (sessionId, content) => {
       if (delivery === undefined) throw new Error("no evaluator has opened");
       await delivery.requestSteer(sessionId, "steer", content, { revision: 0, scope: [], background: true });

@@ -367,11 +367,21 @@ function resolveRuntimeRoute(
 }
 
 /**
- * Writes an event's answer and resolves with whether it reached a client that still waited for it (`answered`). The
- * service writes it in the session's lane, so what the answer did not deliver is the session's again before its next
- * event runs.
+ * Writes an event's answer and says whether it reaches a client that still waits for it (`answered`). The service
+ * writes it in the session's lane, so what an answer its write already showed undelivered took is the session's again
+ * before its next event runs.
  */
-type EngineAnswer = (deliveries: readonly AdapterDelivery[]) => Promise<boolean>;
+type EngineAnswer = (deliveries: readonly AdapterDelivery[]) => AnswerFate;
+
+/**
+ * What became of an answer: `refused` when the write itself showed it reached no client that still waited (its
+ * connection closed or ended before it, or the write failed); else `heard` resolves once the connection shows it:
+ * true once the answer was all handed to it, false when it closed first.
+ */
+interface AnswerFate {
+  readonly refused: boolean;
+  readonly heard: Promise<boolean>;
+}
 
 async function routeEngineEvent(
   event: AdapterEvent,
@@ -390,7 +400,7 @@ async function routeEngineEvent(
     if (event.kind !== "session-end") noteSessionUse(state, sessionId, runtimeKey, (options.now ?? Date.now)());
     const deliveries = await runtime.ingest(event);
     // A hook past its own limit has closed its connection: the steers its answer took go to the session's next answer.
-    if (answer !== undefined && !(await answer(deliveries))) await runtime.returnUndelivered(sessionId, deliveries);
+    if (answer !== undefined) await keepUnheard(answer(deliveries), () => runtime.returnUndelivered(sessionId, deliveries));
     return deliveries;
   });
   track(state, execution);
@@ -399,6 +409,17 @@ async function routeEngineEvent(
   } finally {
     if (event.kind === "session-end") afterSessionEnd(state, sessionId, runtimeKey);
   }
+}
+
+/**
+ * Gives the session back what an answer took once no client heard it (`giveBack`): before the session's next event when
+ * the write showed it, else once the connection shows it, for whichever of the session's answers comes next. The lane
+ * never waits on the write itself, which a client alive that has stopped reading never lets complete once the answer
+ * is bigger than its connection holds. A service's close waits for every connection to close, so it has each verdict.
+ */
+async function keepUnheard(fate: AnswerFate, giveBack: () => Promise<void>): Promise<void> {
+  if (fate.refused) return await giveBack();
+  void fate.heard.then(async heard => (heard ? undefined : await giveBack()));
 }
 
 /**
@@ -1003,13 +1024,12 @@ async function answerEngineEvent(
   response: ServerResponse,
 ): Promise<void> {
   const { event, configuration, options, routing } = routed;
-  const answer: EngineAnswer = async deliveries =>
-    await answered(response, encodeRerailEventResult({ eventId: event.eventId, deliveries: [...deliveries] }));
+  const answer: EngineAnswer = deliveries => answered(response, encodeRerailEventResult({ eventId: event.eventId, deliveries: [...deliveries] }));
   if (event.kind !== "session-end") {
     await routeEngineEvent(event, configuration, options, routing, answer);
     return;
   }
-  await answer(await routeEngineEvent(event, configuration, options, routing));
+  answer(await routeEngineEvent(event, configuration, options, routing));
 }
 
 /** Answers the challenge a hook sends to learn the engine holds the daemon's token (`ENGINE_PROOF_PATH`); false for any other request. */
@@ -1176,29 +1196,28 @@ function endAbandonedSessions(databasePath: string, idleMs: number, now: () => n
 }
 
 /**
- * Writes `body` as the answer and resolves with whether it reached a client that still waited for it: false when the
- * connection had already closed or ended (a hook past its own limit closes it), or when the write failed or the
- * connection closed before the answer was all handed to it; true once it was, with no error on the connection. Decided
- * by what the connection did, never by a time limit, and it resolves once the answer's close comes, which follows its
- * finish or the connection's close. An answer queued behind an earlier one on its connection is written, and judged, on
- * the socket it is handed once that one is written.
+ * Writes `body` as the answer and says whether it reaches a client that still waits for it, decided by what the
+ * connection does, never by a time limit. Refused when the connection had already closed or ended (a hook past its own
+ * limit closes it), or the write failed at once (EPIPE: the daemon wrote before it read the hook's close). Else heard
+ * once the answer is all handed to the connection (`finish`), and not when the connection closes first. An answer queued
+ * behind an earlier one on its connection is written on it once that one is.
  */
-async function answered(response: ServerResponse, body: string): Promise<boolean> {
-  // Its close already came: the client went before the event ended.
-  if (response.destroyed) {
-    response.end(body);
-    return false;
-  }
-  let connection: Socket | null = response.socket;
-  response.once("socket", (socket: Socket) => (connection = socket));
-  const live = connection === null || connection.writable;
-  let finished = false;
-  const closed = new Promise<void>(done => response.once("close", () => done()));
-  response.once("finish", () => (finished = true));
+function answered(response: ServerResponse, body: string): AnswerFate {
+  const connection = response.req.socket;
+  // Closed or ended before the write: a hook past its own limit closed it.
+  const gone = !connection.writable;
+  const heard = new Promise<boolean>(done => {
+    const onClose = (): void => done(false);
+    connection.once("close", onClose);
+    response.once("finish", () => {
+      // A connection carries many answers: each leaves nothing on it once written.
+      connection.off("close", onClose);
+      done(true);
+    });
+  });
   response.end(body);
-  await closed;
-  // A write the closed connection refused (EPIPE) emits no finish and leaves its error on the connection.
-  return live && finished && connection !== null && connection.errored === null;
+  // A write the closed connection refused leaves its error on the connection in this turn, and no finish follows.
+  return { refused: gone || connection.errored !== null, heard };
 }
 
 export async function ingestEngineEvent(
