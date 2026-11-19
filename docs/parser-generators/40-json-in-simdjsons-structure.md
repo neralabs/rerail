@@ -325,6 +325,20 @@ end" is `Next > nstarts` and the `AtEnd` flag is gone from the state. A token te
 place of a flag loaded from the frame, its branch, and the count's compare. `SWITCH`, `MARK` and
 `ACCEPT` read the end the same way. A value's `TOKEN` before its switch: 13 instructions to 11.
 
+## Step 6, done: `ctx` in a register of its own; a leaf's start not read back
+
+| simdjson | Before | Now |
+|---|---|---|
+| `this` (the parser and its tape) in a register through `walk_document` | `ctx` one value through the function, which the allocator split around the cold calls: 486 reloads of it from the stack | Cranelift's pinned register (x21), as the clusters' already: set where the function is entered, the host's given back where it leaves, read at each use (`pin_one`). Stack loads in the function: 665 to 276 |
+| `tape.append(value, type)` | a leaf's tail read the start back from the row it had just written | the start passed on (`close_cells`'s `start`) |
+
+A leaf's other stores are the engine's tape: a row (kind, start, end) and the offset, size and
+tail columns, against simdjson's one 8-byte word a scalar. That is the output's format, not a
+step of the parse.
+
+Counts, as information (load about 60): the 17 files' whole parse 40.4M (step 4: 44.5M),
+`[1,1,…]` 174.5M (190.7M), short strings 45.4M (51.1M). Against simdjson's: 4.1×, 3.2×, 4.9×.
+
 ## Order
 
 1. Done: step 1, above.

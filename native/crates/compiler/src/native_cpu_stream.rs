@@ -2579,11 +2579,15 @@ impl Table<'_> {
 
     /// Node `at` closed: its size, and its tail from its last descendant (`last`, a row) to
     /// `end`; a tail that does not fit 2 bytes (or wraps: an end before its last descendant's
-    /// start) flagged.
-    fn close_cells(&self, f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, at: Value, size: Value, last: Value, end: Value) {
+    /// start) flagged. `start`: the node's start where the caller has it (a leaf just written, `at` == `last`),
+    /// not read back from its row.
+    fn close_cells(&self, f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, at: Value, size: Value, last: Value, end: Value, start: Option<Value>) {
         let rows = (e.ctx)(f, ROWS);
         let from = if self.w.from_start { at } else { last };
-        let s = crate::native_cpu_tape::start(f, rows, from);
+        let s = match start {
+            Some(s) => s,
+            None => crate::native_cpu_tape::start(f, rows, from),
+        };
         let tail = f.ins().isub(end, s);
         let tail = f.ins().band_imm(tail, 0xffff_ffff);
         let (size_c, tail_c) = ((e.ctx)(f, SIZE_C), (e.ctx)(f, TAIL_C));
@@ -2591,7 +2595,10 @@ impl Table<'_> {
         crate::native_cpu_tape::put(f, tail_c, at, tail, self.w.tail);
         let mut odd = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, tail, if self.w.tail == 2 { 0xffff } else { 0x7fff_ffff });
         if self.w.from_start {
-            let ls = crate::native_cpu_tape::start(f, rows, last);
+            let ls = match start {
+                Some(s) => s,
+                None => crate::native_cpu_tape::start(f, rows, last),
+            };
             let early = f.ins().icmp(IntCC::UnsignedLessThan, end, ls);
             odd = f.ins().bor(odd, early);
         }
@@ -2663,7 +2670,7 @@ fn leaf_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
     let n1 = f.ins().iadd_imm(nodes, 1);
     t.push_off(f, e, nodes, start, n1);
     let one = f.ins().iconst(types::I64, 1);
-    t.close_cells(f, e, nodes, one, nodes, end);
+    t.close_cells(f, e, nodes, one, nodes, end, Some(start));
     if t.inner {
         let head = (e.ctx)(f, HEAD);
         slot_put(f, head, nodes, zero);
@@ -2730,7 +2737,7 @@ fn close_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, this: 
     let kept = f.ins().isub(nodes, pending);
     let size = f.ins().isub(kept, at);
     let last = f.ins().iadd_imm(kept, -1);
-    t.close_cells(f, e, at, size, last, end);
+    t.close_cells(f, e, at, size, last, end, None);
     let top = f.ins().icmp_imm(IntCC::Equal, open, 1);
     let (commit, done) = (f.create_block(), f.create_block());
     f.ins().brif(top, commit, &[], done, &[]);
@@ -2922,7 +2929,7 @@ fn fold_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
     t.retag(f, rows, a, kind);
     end_c.put_row(f, ra, end);
     let one = f.ins().iconst(types::I64, 1);
-    t.close_cells(f, e, a, one, a, end);
+    t.close_cells(f, e, a, one, a, end, None);
     (e.set)(f, Mem::Nodes, b);
     t.cut_to(f, e, b);
     if wrapping {
@@ -2959,7 +2966,7 @@ fn merge_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: 
     t.retag(f, rows, leaf, kind);
     end_c.put_row(f, leaf_row, end);
     let one = f.ins().iconst(types::I64, 1);
-    t.close_cells(f, e, leaf, one, leaf, end);
+    t.close_cells(f, e, leaf, one, leaf, end, None);
     (e.set)(f, Mem::Nodes, kept);
     (e.set)(f, Mem::Pending, zero);
     // The extras taken back: where there were any, the last block's base again.
@@ -4031,7 +4038,12 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     // argument's register (a call passes no `ctx`), which the allocator keeps in one
     // callee-saved register through the function, as rustc keeps the lean parser's `self`.
     let pinned_ctx = clustered && cut.calls && !native.rules.is_empty();
-    if pinned_ctx {
+    // One function (`Cut::one`): `ctx` in the pinned register too, set where it is entered and
+    // the host's given back where it leaves, and read from it at each use. As one value
+    // through the function, the allocator split it around the cold calls and reloaded it from
+    // the stack at each use (486 loads over JSON's, page 40).
+    let pin_one = !clustered;
+    if pinned_ctx || pin_one {
         flags.push(("enable_pinned_reg", "true"));
     }
     // The passed fields come back with a function's result: more results than registers go
@@ -4332,6 +4344,11 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         f.switch_to_block(entry);
         // `ctx`: read from its register where the function is entered, else its first argument.
         let ctx = if pinned_ctx { f.ins().get_pinned_reg(types::I64) } else { f.block_params(entry)[0] };
+        let host = pin_one.then(|| {
+            let host = f.ins().get_pinned_reg(types::I64);
+            f.ins().set_pinned_reg(ctx);
+            host
+        });
         let first_param = usize::from(!pinned_ctx);
         // `can_move`: a pure value to the optimizer, removed where unused (`Cut::speed`).
         let ro = MemFlags::trusted().with_readonly().with_can_move();
@@ -4369,7 +4386,8 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         let slot = (!clustered).then(|| f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * Mem::COUNT, 3)));
         // The state's address: `ctx`, every cluster's first argument, as the lean parser's
         // `&mut self` (one register the allocator keeps, no move a block).
-        let pinned = |_: &mut FunctionBuilder<'_>| -> Value { ctx };
+        // In one function, read from the pinned register at each use (`pin_one`).
+        let pinned = |f: &mut FunctionBuilder<'_>| -> Value { if pin_one { f.ins().get_pinned_reg(types::I64) } else { ctx } };
         // The state's fields the cut holds in registers (`Cut::held`): SSA variables within the
         // function, loaded where it is entered and stored where it calls another cluster.
         let vars: Vec<Option<cranelift_frontend::Variable>> = (0..Mem::COUNT).map(|k| cut.held.contains(&k).then(|| f.declare_var(types::I64))).collect();
@@ -4393,7 +4411,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         };
         // At the stream's end: `Next` past the count (the end's token sets it one past).
         let ended_now = |f: &mut FunctionBuilder<'_>, next: Value| -> Value {
-            let b = if clustered { pinned(f) } else { ctx };
+            let b = pinned(f);
             let n = f.ins().load(types::I64, MemFlags::trusted(), b, NSTARTS);
             f.ins().icmp(IntCC::UnsignedGreaterThan, next, n)
         };
@@ -4629,7 +4647,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     if cut.reload && (all || reads.contains(&at)) {
                         // Not read-only: Cranelift would merge it with the entry's load (one
                         // value again, live everywhere).
-                        let b = if clustered { pinned(f) } else { ctx };
+                        let b = pinned(f);
                         f.ins().load(types::I64, MemFlags::trusted(), b, at)
                     } else {
                         old
@@ -4665,7 +4683,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     HEAD if wrapping => wc(head_c),
                     LINK if wrapping => wc(link_c),
                     _ => {
-                        let c = if clustered { pinned(f) } else { ctx };
+                        let c = pinned(f);
                         f.ins().load(types::I64, MemFlags::trusted(), c, at)
                     }
                 }
@@ -4840,7 +4858,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     let roff = if table.fetch.is_some() {
                         f.ins().ishl_imm(next, 2)
                     } else {
-                        let rb = if clustered { pinned(&mut f) } else { ctx };
+                        let rb = pinned(&mut f);
                         let stride = f.ins().load(types::I64, MemFlags::trusted().with_readonly().with_can_move(), rb, RECORD_STRIDE);
                         f.ins().imul(next, stride)
                     };
@@ -5513,7 +5531,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         f.switch_to_block(short);
                         // The tokens' ends before it (decision 0428): from the records.
                         let ended = (c.back != 0).then(|| {
-                            let rb = if clustered { pinned(&mut f) } else { ctx };
+                            let rb = pinned(&mut f);
                             let stride = f.ins().load(types::I64, MemFlags::trusted().with_readonly().with_can_move(), rb, RECORD_STRIDE);
                             let next = mget(&mut f, Mem::Next);
                             ended_word(&mut f, lasts_p, stride, next, start, c.back)
@@ -6003,7 +6021,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     let nodes = mget(&mut f, Mem::Nodes);
                     let size = f.ins().isub(nodes, root);
                     let last = f.ins().iadd_imm(nodes, -1);
-                    table.close_cells(&mut f, &env, root, size, last, len);
+                    table.close_cells(&mut f, &env, root, size, last, len, None);
                     if !native.readings.provisional.is_empty() {
                         // No node left holds a provisional field (a dropped record aside): a loop
                         // over the table, a step a record.
@@ -6200,6 +6218,9 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         if let Some((w, fl)) = entry_kept {
             mset(&mut f, Mem::Word, w);
             mset(&mut f, Mem::Flags, fl);
+        }
+        if let Some(host) = host {
+            f.ins().set_pinned_reg(host);
         }
         f.ins().return_(&r);
         f.seal_all_blocks();
