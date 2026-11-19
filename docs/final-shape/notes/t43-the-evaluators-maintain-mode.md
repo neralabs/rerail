@@ -190,6 +190,12 @@ build, `RERAIL_DEVICE=cpu`, on a farm host (M3 and M1 Max, otherwise idle):
 `maintain-report.py` makes the table. Its baseline is the forms' runs of 2026-11-17 (`tmp/o125/logs`, the same
 harness, `dump.sh`): `qd` (DRed forms) and `kd` (counting).
 
+**Correction (2026-11-19, step 18):** the forms' runs of steps 05-08 all panicked ("index out of bounds",
+setfix.rs:4000, "host stream strata: a job panicked") and wrote no findings. Their figures below are the cost of a
+crashed run. The baseline's fractions are of step 00's cold run (289 G); this note's are of each step's own cold run.
+Steps 01-04 of the forms are correct (their findings equal this branch's cold runs) and are the only valid
+comparison.
+
 Instructions retired, as a fraction of the same series' cold run:
 
 | Step | qd (forms, DRed) | kd (counting) | kept, now |
@@ -692,4 +698,44 @@ O125 step 05, kept, on the M1 Max: 103 of 105 inputs are read this way. The load
 the 14 changed documents (of 77) hold most of the rows. Kept instructions at 01-05 are 174, 157, 211, 145 and
 321 G, against step 16's 181, 163, 217, 152 and 323 G. `RERAIL_LOAD_TRACE` prints each input's granules, rows
 decoded and rows kept.
+
+## Step 18: the forms' baseline checked, and why a cold run costs more
+
+**The forms were not faster.** The forms' runs of 2026-11-17 (`tmp/o125/logs`) panicked at steps 05-08, qd and
+kd alike, and wrote no findings: their 05-08 figures (qd 05: 171.5 G, "0.59") are the cost of a crashed run. Their
+fractions were of step 00's cold run (289 G), not each step's own. Steps 01-04 are correct: their findings equal
+this branch's cold runs, all 8,796-8,802. Those four are the only like-for-like comparison, in absolute
+instructions:
+
+| Step | Forms, DRed (qd) | Forms, counting (kd) | Maintain mode now |
+|---|---|---|---|
+| 01 | 184.3 G | 184.3 G | 173.9 G |
+| 02 | 168.4 G | 168.4 G | 157.0 G |
+| 03 | 214.7 G | 214.8 G | 211.5 G |
+| 04 | 157.7 G | 157.7 G | 145.0 G |
+
+The mode is 2-8% below the forms at each step, while the cold run under it costs 14% more than the forms' engine's
+(below). Steps 05-08 have no forms figure: the forms did not finish them. Against cold, the mode's 05 is 0.87 (39
+strata past θ, derived again at a derive's cost; with the threshold off it costs 1.5 times as much, step 15).
+
+**Why cold rose.** The engine last built here on 2026-11-17 (12:29, before stages 2-6; its libraries and programs
+from b5402793b, given by `RERAIL_SOURCE_ROOT`) and this branch's, on the M1 Max, cold O125 step 00, the same
+10,475 findings: 306.7 G against 350.5 G (+14%). Profiled (which costs the old engine 54 G and this one 15 G), the
+CPU that moved:
+
+| Kind | Old | Now |
+|---|---|---|
+| an input's frames (job) | (in "other: cross") | 2.88 s |
+| export to cross: base rows for the memo | 1.10 s | 2.23 s |
+| export to cross: memo remember | 1.13 s | 1.69 s |
+| local, its own | 0.06 s | 1.33 s |
+| measuring sources | 0.40 s | 1.15 s |
+| guests | 0.92 s | 1.57 s |
+| other: cross | 3.33 s | 1.96 s |
+
+Most of it is a cold run writing what later runs read: the memo's base rows and entries (now in segments), the
+inputs' frames, and the kept facts written beside them (0401 step 6, never read: 0364's open items). The memo's
+base rows now include `ast_depth`, R6's measure key (step 10), which is this work's share; it is not measured
+apart. By the recorded runs, cold went from 307 G (2026-11-17) to 323 G at step 1 (stages 2-6, 2026-11-18) and to
+about 361 G after the hub's merge (step 12): most of the rise came with the merge.
 

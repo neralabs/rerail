@@ -439,12 +439,11 @@ does not meet yet is ignored with its requirement and the step that meets it, an
 
 The goal they serve (the user, 2026-11-17): far fewer facts, cheaper fact pages and metadata, less work to remove
 outdated rows. It is measured, not tested: on the O125 replay, facts held, kept bytes and instructions per edit
-against the forms' figures (t43, "Measurements").
+against the forms' figures (t43, "Measurements"). The forms' figures hold for steps 01-04 only: their runs of 05-08 panicked (t43
+step 18).
 
 ## Open
 
-- **Instructions.** Every real-data figure is rows, candidates, probes and rewrites. Instructions come when the
-  evaluator's mode runs it. The only instruction figures for levels are the spike's.
 - **The static check in the engine** is `plan/wellfounded.rs` (2026-11-18, t43 step 7): `wf.py` ported, an analysis
   of the whole program's version that a part's run asks by component. It reads `nearest` as the engine lowers it
   (`rr_nearest_<set>`). Still worth teaching it string length (`@pkg_up`-style chains) and the tree helpers it
