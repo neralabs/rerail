@@ -1191,7 +1191,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (readFailure !== undefined) {
       this.#readFailures.set(path, readFailure);
       this.#finishAudit(stored.auditId, "failed", [], [readFailure]);
-      if (this.#pending.size === 0) await this.#publishReady();
+      await this.#publishReady();
       return;
     }
     if (prepared === undefined) throw new Error("Policy workspace could not be initialized");
@@ -1304,15 +1304,14 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /**
    * A steer queued for a source this evaluation reported again speaks for its older facts. The runtime drops each such
    * steer whole, so the other sources it spoke for are steered again with the findings they last reported. Then what is
-   * ready is published, once nothing is pending: with nothing reported again, that is decided without a wait, so an
-   * edit queued meanwhile cannot put the publishing off.
+   * ready is published (`#publishReady`).
    */
   async #steerAgainThenPublish(stored: StoredEdit, reported: ReadonlyMap<string, CodeRuleViolation[]>): Promise<void> {
     if (reported.size > 0 && this.#sessionId !== undefined) {
       const revised = [...reported.keys()].map(source => this.#presentPath(source));
       await this.#steerAgain(this.#steerDelivery.revised?.(this.#sessionId, stored.revision, revised) ?? []);
     }
-    if (this.#pending.size === 0) await this.#publishReady();
+    await this.#publishReady();
   }
 
   /**
@@ -1338,7 +1337,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   async #recordPendingEvaluationError(path: string, stored: StoredEdit, error: unknown): Promise<void> {
     if (this.#closing) return;
     const problem = failure("worker", "adapter-error", errorMessage(error), path, "evaluate");
-    if (this.#pending.size === 0) await this.#publishReady();
+    await this.#publishReady();
     this.#readFailures.set(path, problem);
     this.#finishAudit(stored.auditId, "failed", [], [problem]);
   }
@@ -2040,9 +2039,15 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#workspaceEvaluations.set(workspace, evaluation);
     return evaluation;
   }
+  /**
+   * Publishes the findings of each revision whose edits have all been checked, as soon as the last of them is recorded:
+   * a tool call's edits go out together, and an edit of another call or a walk still queued holds back none of them.
+   * Held until the queue emptied, a recorded finding missed every boundary the session reached meanwhile.
+   */
   async #publishReady(): Promise<void> {
-    const ready = [...this.#readyViolations.entries()];
-    this.#readyViolations.clear();
+    const queued = new Set([...this.#pending.values()].map(stored => stored.revision));
+    const ready = [...this.#readyViolations.entries()].filter(([revision]) => !queued.has(revision));
+    for (const [revision] of ready) this.#readyViolations.delete(revision);
     for (const [revision, byPath] of ready) {
       const current = [...byPath].filter(([path]) => this.#versions.get(path) === revision);
       if (current.length === 0) continue;

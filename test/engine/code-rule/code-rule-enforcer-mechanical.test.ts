@@ -575,6 +575,63 @@ describe("mechanical code rule regressions", () => {
     } finally { await enforcer.close(); }
   });
 
+  describe("a steer is asked for as its audit is recorded", () => {
+    /** An enforcer whose audit records and steer requests go, in the order they happen, to `order`. */
+    async function ordered() {
+      const order: string[] = [];
+      const { recorder, audits } = recordingAudits();
+      const made = await fixture({
+        audits: {
+          ...recorder,
+          finish(auditId, result) {
+            recorder.finish(auditId, result);
+            order.push(`recorded ${audits.get(auditId)!.paths.join(",")}`);
+          },
+        },
+      });
+      made.requestSteer.mockImplementation(async (_sessionId, _delivery, _content, metadata) => {
+        order.push(`steered ${metadata?.scope?.join(",") ?? ""}`);
+        return undefined;
+      });
+      return { ...made, order };
+    }
+
+    it("while another tool call's edit still waits for its check", async () => {
+      const { root, enforcer, order } = await ordered();
+      try {
+        await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
+        await writeFile(join(root, "api", "b.py"), "NEEDLE\n");
+        await enforcer.openWorkspace("recorded-then-steered");
+        // Both are queued before the evaluator takes the first, so the second waits behind the first's check.
+        await Promise.all(["a", "b"].map((name, index) => enforcer.auditGeneratedEdits("recorded-then-steered", {
+          revision: index + 1,
+          checkpoints: ["edit"],
+          edits: [{ path: `api/${name}.py`, language: "python", generatedText: "NEEDLE\n" }],
+        })));
+        await settled(enforcer);
+
+        expect(order).toEqual(["recorded api/a.py", "steered api/a.py", "recorded api/b.py", "steered api/b.py"]);
+      } finally { await enforcer.close(); }
+    });
+
+    it("once for a tool call's edits, after the last of them is recorded", async () => {
+      const { root, enforcer, order } = await ordered();
+      try {
+        await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
+        await writeFile(join(root, "api", "b.py"), "NEEDLE\n");
+        await enforcer.openWorkspace("one-call-two-files");
+        await enforcer.auditGeneratedEdits("one-call-two-files", {
+          revision: 1,
+          checkpoints: ["edit"],
+          edits: ["a", "b"].map(name => ({ path: `api/${name}.py`, language: "python" as const, generatedText: "NEEDLE\n" })),
+        });
+        await settled(enforcer);
+
+        expect(order).toEqual(["recorded api/a.py", "recorded api/b.py", "steered api/a.py,api/b.py"]);
+      } finally { await enforcer.close(); }
+    });
+  });
+
   it("credits a steer to the distinct rules whose steer and block violations it rendered", async () => {
     const { root, enforcer, requestSteer } = await fixture({
       codeRules: [
