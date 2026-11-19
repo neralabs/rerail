@@ -15,8 +15,8 @@ pub fn max() -> usize {
 }
 
 /// Makes the one pool, sized to `max`: called before anything uses it (the engine's `main`; Node's registration of
-/// the addon, `lib.rs`, never its constructor). On the process's main thread it is called with `this_thread`, so that
-/// thread is one of the pool's (its own work and its waits are the pool's). A pool already made is left as it is.
+/// the addon, `lib.rs`). The CLI registers its main thread. Node uses dedicated workers because its loading thread
+/// can wait for a background call. A pool already made is left as it is.
 pub fn configure(this_thread: bool) {
     rerail_accel::exec::configure(this_thread);
 }
