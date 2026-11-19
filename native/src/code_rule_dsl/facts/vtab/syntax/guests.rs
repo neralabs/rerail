@@ -81,8 +81,8 @@ impl GuestRows {
         if at >= host.len() {
             return;
         }
-        for local in 0..p.len() {
-            let [a, b] = g.place.bounds(p.span(local));
+        for ((_, span), (_, _, n)) in p.spans().zip(p.node_ids()) {
+            let [a, b] = g.place.bounds(span);
             let mut over = at;
             while let Some(c) = host.children(over).find(|&c| {
                 let [x, y] = host.span(c);
@@ -90,15 +90,13 @@ impl GuestRows {
             }) {
                 over = c;
             }
-            self.host_node.push([p.global(local), host.global(over)]);
+            self.host_node.push([n, host.global(over)]);
         }
     }
 
     pub(super) fn relations(&self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
         let rel = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
-            let mut r = Relation::new(columns);
-            rows.for_each(|row| r.push(&row));
-            r
+            Relation::from_rows(columns, rows)
         };
         vec![
             ("guest", rel(&["g", "host", "at", "grammar"], &mut self.guest.iter().map(|&[g, h, a, s]| vec![g, h, a, atom(s)]))),

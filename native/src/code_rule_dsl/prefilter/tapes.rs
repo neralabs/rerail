@@ -61,18 +61,18 @@ impl StoreTapes {
         // SAFETY: the owning connection is live while its modules are; the borrowed handle is not
         // closed when this `Connection` drops.
         let db = unsafe { Connection::from_handle(self.database)? };
-        let (grammar_id, codec, frame, seg, seg_at, seg_len) = db.query_row(
-            "SELECT grammar_id,codec_id,frame,seg,seg_at,seg_len FROM tape_objects WHERE tape_id=?1",
+        let (grammar_id, raw_length, seg, seg_at, seg_len) = db.query_row(
+            "SELECT grammar_id,raw_length,seg,seg_at,seg_len FROM tape_objects WHERE tape_id=?1",
             [fid],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?)),
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)),
         )?;
         if self.maps.is_none() {
             let path = db.path().ok_or_else(|| invalid("a tape store without a file"))?;
             self.maps = Some(crate::content_store::ObjectMaps::new(std::path::Path::new(path)));
         }
-        let frame = self.maps.as_mut().expect("the maps").frame(codec, frame, seg, seg_at, seg_len).map_err(|error| invalid(format!("tape frame: {error}")))?;
+        let frame = self.maps.as_mut().expect("the maps").frame(seg, seg_at, seg_len);
         let frame = frame.ok_or_else(|| invalid("a tape whose segment is not there"))?;
-        let bytes = frame.bytes(0).map_err(|error| invalid(format!("tape frame: {error}")))?;
+        let bytes = frame.bytes(usize::try_from(raw_length).unwrap_or(usize::MAX)).map_err(|error| invalid(format!("a tape's bytes: {error}")))?;
         let grammar = match self.grammars.get(&grammar_id) {
             Some(grammar) => Arc::clone(grammar),
             None => {

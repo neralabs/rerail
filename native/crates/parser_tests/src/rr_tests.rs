@@ -262,6 +262,9 @@ const CASES: &[(&str, &str)] = &[
     (".mode 1.5\nr(x) :- s(x, y), y > 0.10, x = -2.5 * y, z = - 3.25.", "13"),
     (".scope 1.2.3\n.mode 1.2.3.4\nr(x) :- x = 1.2.", "13"),
     ("r(x) :- x = 1.05, y = 007.5, z = 12345678901234567890.5, (a - 1.5) * 2.0 > b, c = -0.5.", "13"),
+    // The same, without what goes to the engine from step 22 on (`TO_THE_ENGINE`).
+    (".scope 1.2\n.mode 1.2\nr(x) :- x = 1.2.", "13"),
+    ("r(x) :- x = 1.05, y = 007.5, z = 123456789012345678, (a - 1.5) * 2.0 > b, c = -0.5.", "13"),
     (".policy {\"a\": 1.5, \"b\": -0.25, \"c\": [1.0]}", "13"),
     (".lattice l<b> { A -> 1.5 * x }\n.functor f(x: number): t 2.5\nr(x) :- count : { s(_) } > 1.5, max v : { t(v) } < -2.25.", "13"),
     ("r(x) :- x = 1..5.", "never"),
@@ -312,12 +315,12 @@ fn engine(src: &str) -> (Vec<Named>, bool) {
 
 /// A step's nodes by names: its ids back to the names they were made from.
 fn named(c: &Compiled, nodes: &[IdNode]) -> Vec<Named> {
-    let names: std::collections::HashMap<u16, String> = c.ids.0.borrow().iter().map(|(n, &i)| (i, n.clone())).collect();
+    let (kinds, fields) = c.ids.names();
     nodes
         .iter()
         .map(|n| {
-            let field = if n.1 == 0 { String::new() } else { names[&n.1].trim_start_matches("field ").to_owned() };
-            (names[&n.0].clone(), field, n.3, n.4, n.5)
+            let field = if n.1 == 0 { String::new() } else { fields[&n.1].clone() };
+            (kinds[&n.0].clone(), field, n.3, n.4, n.5)
         })
         .collect()
 }
@@ -394,18 +397,39 @@ fn rr_steps_parse_as_the_reference_and_the_engine() {
     assert!(differ.is_empty(), "{} steps differ:\n{}", differ.len(), differ.join("\n"));
 }
 
-/// Each case parses from the step that names it on, and the engine's tree has no `ERROR`.
+/// Cases a step sends to the engine from its step on, and the escape that sends it: a float's
+/// second `.` (`1.2.3`, a chain no file has: no float's `.` waits on the one before it) and a
+/// number of 19 digits or more, its fraction or leading zeros aside (the engine checks its i64).
+/// The engine's tape is the file's either way (docs/parser-generators/39, "A float's dot read
+/// as simdjson reads one" and "A number's 19 digits checked at its token").
+const TO_THE_ENGINE: &[(&str, &str, &str)] = &[
+    (".scope 1.2.3\n.mode 1.2.3.4\nr(x) :- x = 1.2.", "22", "escape: a float's `.` after a fraction"),
+    ("r(x) :- x = 1.05, y = 007.5, z = 12345678901234567890.5, (a - 1.5) * 2.0 > b, c = -0.5.", "22", "escape: a number of 19 digits or more"),
+];
+
+/// Each case parses from the step that names it on, and the engine's tree has no `ERROR`; a
+/// case sent to the engine (`TO_THE_ENGINE`) is refused from its step on by its escape alone.
 #[test]
 fn rr_cases_parse_from_their_steps() {
     let mut missing = Vec::new();
     for (name, source) in steps_in(DIR) {
         let c = rerail_compiler::ladder::compile_step(&name, &source);
         for &(doc, from) in CASES {
-            if name.as_str() >= from && rerail_compiler::ladder::reference(&c, doc.as_bytes()).is_none() {
-                missing.push(format!("{name}: {doc:?}: {}", rerail_compiler::ladder::refusal(&c, doc.as_bytes())));
+            let engine = TO_THE_ENGINE.iter().find(|e| e.0 == doc && name.as_str() >= e.1);
+            let parsed = rerail_compiler::ladder::reference(&c, doc.as_bytes()).is_some();
+            match engine {
+                Some(&(_, _, why)) => {
+                    let refusal = rerail_compiler::ladder::refusal(&c, doc.as_bytes());
+                    if parsed || !refusal.starts_with(why) {
+                        missing.push(format!("{name}: {doc:?}: not sent to the engine by {why:?}: {}", if parsed { "parsed" } else { &refusal }));
+                    }
+                }
+                None if name.as_str() >= from && !parsed => missing.push(format!("{name}: {doc:?}: {}", rerail_compiler::ladder::refusal(&c, doc.as_bytes()))),
+                None => {}
             }
         }
     }
+    assert!(TO_THE_ENGINE.iter().all(|e| CASES.iter().any(|c| c.0 == e.0)), "a case sent to the engine that is no case");
     assert!(missing.is_empty(), "cases a step refuses:\n{}", missing.join("\n"));
 }
 

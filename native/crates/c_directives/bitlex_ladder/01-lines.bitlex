@@ -1,0 +1,152 @@
+# C's and C++'s directives, step 1: each directive's kind and its bytes (decision 0327, mode (a)).
+#
+#   #  define  X  1   /* a comment */
+#   ^^^^^^^^^^^^^^^^ the directive: from its `#` to its line's last token's end
+#
+# The reference is the lean scan (`rerail_c_pp::directives`): a directive is a logical line (its
+# `\`-newlines spliced) whose first token is `#`, a comment before it a blank. Its kind is the
+# word after the `#` (`null` for none, `line_marker` for a number, `unknown` for anything else).
+# Every directive is recorded, in every group: no configuration is read here.
+#
+# What the step does not read goes to the lean scan, so no row is wrong: a carriage return, a
+# trigraph, a digraph `%:`, a raw string, a `'` after a digit (a digit separator), a string or a
+# character constant open at a line's end, a splice inside a word or a comment's opener, and a
+# block comment open at the file's end.
+
+lexer c_directives
+
+class dquote    = '"'
+class squote    = '\''
+class backslash = '\\'
+class lf        = '\n'
+class cr        = '\r'
+class blankc    = ' ' '\t' 0x0b 0x0c
+class slash     = '/'
+class star      = '*'
+class hash      = '#'
+class qmark     = '?'
+# The trigraphs' third bytes: a configuration may read `??=` as `#`.
+class tri       = '=' '/' '\'' '(' ')' '!' '<' '>' '-'
+class percent   = '%'
+class colon     = ':'
+class c_r       = 'R'
+class bom1      = 0xef
+class bom2      = 0xbb
+class bom3      = 0xbf
+class digit     = '0'..'9'
+class idstart   = 'a'..'z' 'A'..'Z' '_' '$' 0x80..0xff
+class wordc     = 'a'..'z' 'A'..'Z' '0'..'9' '_' '$' 0x80..0xff
+
+mask last_byte  = ~next(~empty)
+mask first_byte = ~prev(~empty)
+
+# --- What the step hands over ------------------------------------------------------------------
+
+escape "a carriage return" when cr
+escape "a trigraph" when qmark & next(qmark) & next(tri, 2)
+escape "a digraph `%:`" when percent & next(colon)
+
+# --- Splices and regions -----------------------------------------------------------------------
+
+# A `\` right before a line break splices the two lines (phase 2): neither byte is in a token.
+mask splice_bs  = backslash & next(lf)
+mask splice_lf  = lf & prev(backslash)
+mask splice     = splice_bs | splice_lf
+# A line's end: a line break no `\` splices.
+mask nl         = lf & ~splice_lf
+escape "a splice inside a word" when splice_bs & prev(wordc) & next(wordc, 2)
+escape "a splice inside a comment's opener" when slash & next(backslash) & next(lf, 2)
+
+mask escaped    = escaped(backslash)
+mask q          = dquote & ~escaped
+mask sq         = squote & ~escaped
+mask line_open  = slash & next(slash)
+mask block_open = slash & next(star)
+# `*/`'s `/`, but not the `/` of `/*/`.
+mask block_end  = slash & prev(star) & ~prev(block_open, 2)
+# The regions, left to right: strings, character constants and comments hide each other's
+# openers. A line comment's line break ends its line; a spliced one does not end the comment.
+regions hidden {
+  str   = q .. q | nl
+  chr   = sq .. sq | nl
+  line  = line_open .. nl outside
+  block = block_open .. block_end
+}
+# A string or a character constant a line break closes (`don't`): the lean scan ends its token
+# before the break.
+escape "a string or a character constant open at a line's end" when nl & prev(f_str | f_chr)
+escape "a block comment open at the end of the file" when f_block & last_byte
+escape "a string open at the end of the file" when (f_str | f_chr) & last_byte
+
+mask region     = hidden | o_str | o_chr | o_line | o_block
+mask code       = ~region
+escape "a raw string" when o_str & prev(c_r)
+escape "a digit separator" when o_chr & prev(digit)
+
+# A comment's bytes, its `*/` too: a blank, as the lexer reads it.
+mask comment    = f_line | f_block | (block_end & prev(f_block))
+# A UTF-8 byte order mark at the file's start, which the lean scan skips: a blank.
+mask bom        = first_byte & bom1 & next(bom2) & next(bom3, 2)
+mask bom_bytes  = bom | prev(bom) | prev(bom, 2)
+mask blank      = (code & blankc) | comment | splice | bom_bytes
+
+# --- Directives --------------------------------------------------------------------------------
+
+# A line's first byte: the file's first, or the byte after a line break, one inside a block
+# comment too (clang's start of a line).
+mask line_first = first_byte | prev(nl)
+# The blanks a line starts with.
+mask lead       = fill(line_first & blank, ~blank)
+mask dir_hash   = code & hash & (line_first | prev(lead))
+# A directive's line: from its `#` to its line break, a line break in a block comment aside.
+mask eol        = nl & ~f_block
+mask dir_line   = fill(dir_hash, eol)
+
+mask d_code     = dir_line & code & ~blank & ~nl
+mask d_word     = d_code & wordc
+
+# --- Tokens ------------------------------------------------------------------------------------
+
+# A run is a directive line's (`d_word`), not the class's: Metal takes a token's last from its
+# run's mask over the whole file, where the code between directives has words too.
+
+pairs two_start = "##"
+# A string's bytes, its quotes too, and a character constant's: a directive line's runs, for
+# the same reason. Two strings in a row (`"a" "b"` without the blank) are one run, one token.
+mask s_bytes    = (f_str | (q & prev(f_str))) & dir_line
+mask c_bytes    = (f_chr | (sq & prev(f_chr))) & dir_line
+token string     = start q & o_str & dir_line run s_bytes
+token char_lit   = start sq & o_chr & dir_line run c_bytes
+token hash       = start dir_hash pair two_start
+token identifier = start d_word & idstart & ~prev(d_word) run d_word
+token number     = start d_word & digit & ~prev(d_word) run d_word
+mask d_punct    = d_code & ~d_word & ~dir_hash & ~o_str & ~o_chr
+token punct      = start d_punct & ~prev(two_start & d_punct) pair two_start
+keywords identifier { } soft { "define" "undef" "include" "include_next" "import" "embed" "if" "ifdef" "ifndef" "elif" "elifdef" "elifndef" "else" "endif" "line" "error" "warning" "pragma" "ident" "sccs" "assert" "unassert" }
+
+skip ~dir_line | blank | nl
+
+# A directive's end: its line's break, or the file's end. Hidden: a line break after the last
+# directive gives the file's end a second.
+mask dir_end     = eol & prev(dir_line)
+mark eol_mark = dir_end, end
+hidden eol_mark
+
+# --- The tree ----------------------------------------------------------------------------------
+
+tree c_directives {
+  node directives whole = directive*
+  # A directive's node is `unknown` until its word names it.
+  node unknown = hash (retag null eol_mark
+                      | named (any)* eol_mark)
+  choice named = retag define 'define' | retag undef 'undef' | retag include 'include'
+               | retag include_next 'include_next' | retag import 'import' | retag embed 'embed'
+               | retag if 'if' | retag ifdef 'ifdef' | retag ifndef 'ifndef' | retag elif 'elif'
+               | retag elifdef 'elifdef' | retag elifndef 'elifndef' | retag else 'else'
+               | retag endif 'endif' | retag line 'line' | retag error 'error'
+               | retag warning 'warning' | retag pragma 'pragma' | retag ident 'ident'
+               | retag sccs 'sccs' | retag assert 'assert' | retag unassert 'unassert'
+               | retag line_marker number
+               | identifier | punct | hash | string | char_lit
+  choice directive = unknown
+}

@@ -1,0 +1,21 @@
+#!/bin/zsh
+# c-profile [LANG] [CLANG ARGS...]: a compiler profile for C's configurations (decision 0327,
+# docs/rule-syntax/lib/c/compile-commands.rr), on stdout: clang's predefined macros (`clang -dM -E`)
+# as `#define` lines, then its search path (`clang -E -v`) as `dir system PATH` and
+# `dir framework PATH` lines. LANG is clang's `-x` (c, c++, objective-c, objective-c++; c by default).
+# Name the file in the run's settings: `c.profile.c = c-profile.txt`.
+#
+# `__DATE__` and `__TIME__` are fixed by the configuration (`c_fixed`), not here; SOURCE_DATE_EPOCH
+# makes clang's own values the epoch's, so a profile is the same on every run.
+set -eu
+lang=${1:-c}
+(( $# )) && shift
+SOURCE_DATE_EPOCH=0 clang -x $lang "$@" -dM -E - </dev/null | LC_ALL=C sort
+SOURCE_DATE_EPOCH=0 clang -x $lang "$@" -E -v - </dev/null 2>&1 >/dev/null | awk '
+  /^#include <\.\.\.> search starts here/ { on = 1; next }
+  /^End of search list/ { on = 0 }
+  on {
+    sub(/^ +/, "")
+    if (sub(/ \(framework directory\)$/, "")) print "dir framework " $0
+    else print "dir system " $0
+  }'

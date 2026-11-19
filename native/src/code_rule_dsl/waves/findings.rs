@@ -325,34 +325,50 @@ pub(in crate::code_rule_dsl) fn captured(
     names: &[String],
     work: usize,
 ) -> Result<Option<Vec<Capture>>, String> {
+    captured_counted(grammar, root, node, names, work).0
+}
+
+/// [`captured`], and the steps W's matcher took (its utility steps: `work` less what was left), which price W's
+/// matcher against the transducer (decision 0334).
+pub(in crate::code_rule_dsl) fn captured_counted(
+    grammar: &GrammarMatcher,
+    root: &AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+    node: u32,
+    names: &[String],
+    work: usize,
+) -> (Result<Option<Vec<Capture>>, String>, usize) {
     begin_clause(grammar, work);
     let mut found = grammar.match_rule(node_at(root, node));
     let transformed = match (&grammar.transform, &mut found) {
         (Some(transform), Some(found)) => transform.apply(found.get_env_mut()).is_ok(),
         _ => true,
     };
-    let (_, exceeded) = end_clause();
-    if let Some(limit) = exceeded {
-        return Err(format!("{limit:?}"));
-    }
-    if !transformed {
-        return Err("Work".to_owned());
-    }
-    let Some(found) = found else { return Ok(None) };
-    let env = found.get_env();
-    Ok(names
-        .iter()
-        .map(|name| {
-            if let Some(text) = env.get_transformed(name) {
-                return Some(Capture::Text(String::from_utf8_lossy(text).into_owned()));
-            }
-            let nodes: Vec<u32> = match env.get_match(name) {
-                Some(node) => vec![node.node_id() as u32],
-                None => env.get_multiple_matches(name).iter().map(|node| node.node_id() as u32).collect(),
-            };
-            (!nodes.is_empty()).then_some(Capture::Nodes(nodes))
-        })
-        .collect())
+    let (left, exceeded) = end_clause();
+    let used = work.saturating_sub(left);
+    let result = (move || {
+        if let Some(limit) = exceeded {
+            return Err(format!("{limit:?}"));
+        }
+        if !transformed {
+            return Err("Work".to_owned());
+        }
+        let Some(found) = found else { return Ok(None) };
+        let env = found.get_env();
+        Ok(names
+            .iter()
+            .map(|name| {
+                if let Some(text) = env.get_transformed(name) {
+                    return Some(Capture::Text(String::from_utf8_lossy(text).into_owned()));
+                }
+                let nodes: Vec<u32> = match env.get_match(name) {
+                    Some(node) => vec![node.node_id() as u32],
+                    None => env.get_multiple_matches(name).iter().map(|node| node.node_id() as u32).collect(),
+                };
+                (!nodes.is_empty()).then_some(Capture::Nodes(nodes))
+            })
+            .collect())
+    })();
+    (result, used)
 }
 
 /// What a name of an `ast` atom binds at a match (`captured`): nodes (a multi-capture's every node), or the text a
@@ -626,7 +642,7 @@ impl Layer {
             }
             let starts = lines.starts();
             for (l, &s) in starts.iter().enumerate() {
-                let e = starts.get(l + 1).copied().unwrap_or(source.len() + 1);
+                let e = starts.get(l + 1).map_or(source.len() + 1, |&e| e as usize);
                 insert("line_span", &[d, l as i64, s as i64, e as i64])?;
             }
             if around {

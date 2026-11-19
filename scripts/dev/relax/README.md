@@ -161,6 +161,20 @@ script still gets the full receipt; only the key narrows.
 Tests: `a_scripts_key_holds_the_receipts_identity_not_its_path` (unitgraph.rs) and
 `a_receipt_identity_is_of_the_reached_packages_as_sets` (native.rs).
 
+### 6. A cast is first a coercion when its source referent is open (E0283)
+
+Relax rejected `&[][..] as &[String]` (a test in `plan/corpus.rs`) with E0283, `[_; 0]:
+Index<RangeFull>`, which rustc accepts. So no `rerail-logic` test ran under Relax. The operand is
+`&[?T]`. Relax deferred a `&A as &B` cast only when `A` was a bare inference variable, and
+otherwise tried a deref coercion. Neither applied to `[?T]`, so nothing tied `?T` to `String`.
+rustc's cast check coerces the operand to the cast type first (`try_coercion_cast`). The fork now
+does that, in a snapshot, when the source referent holds an open variable. A failed coercion is
+rolled back, for the cast check to report.
+
+Relax's `compiler/tests/cast_open_slice_referent.rs` covers it. The 46 of Relax's test files that
+cast to a reference, pointer or smart pointer, and that rustc compiles, print the same `| ` lines
+as `rustc --test` (`t2.rs`, which spins on purpose, was left out).
+
 ## Sharing between worktrees
 
 Relax keys a run's stores by the workspace's absolute paths. Under `RELAX_SHARE=rerail` every

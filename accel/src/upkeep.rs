@@ -224,7 +224,7 @@ fn record_finish(file: &std::path::Path, name: &str) {
 
 /// A maintenance job. `due` is called at every poll and must be cheap; `step` does a bounded part of the work.
 pub trait Job: Send {
-    /// Its name, unique among the jobs registered (an instance's, e.g. `sqlite content-v5.sqlite`). The kind is
+    /// Its name, unique among the jobs registered (an instance's, e.g. `sqlite content-v7.sqlite`). The kind is
     /// the part before the first space: what `RERAIL_UPKEEP_JOBS` names.
     fn name(&self) -> String;
     fn due(&mut self) -> Due;
@@ -639,6 +639,23 @@ pub fn register_for_process(job: Box<dyn Job>) {
     std::mem::forget(register(job));
 }
 
+/// Takes out every job over `file` (a store closed and about to be deleted while the process goes on: a test's own),
+/// a step under way waited for. A job's connection to the file closes with it: kept, it held the deleted file open
+/// until the job's next poll, and the process's jobs grew by one a store.
+pub fn forget_file(file: &std::path::Path) {
+    let canonical = std::fs::canonicalize(file).ok();
+    let over = |f: Option<std::path::PathBuf>| f.is_some_and(|f| f == file || canonical.as_ref().is_some_and(|c| std::fs::canonicalize(&f).is_ok_and(|g| g == *c)));
+    let _stepping = STEPPING.lock().unwrap_or_else(|p| p.into_inner());
+    let gone: Vec<Entry> = {
+        let mut jobs = JOBS.lock().unwrap_or_else(|p| p.into_inner());
+        let (gone, kept) = std::mem::take(&mut *jobs).into_iter().partition(|e| over(e.job.file()));
+        *jobs = kept;
+        gone
+    };
+    // Dropped outside the registry's lock: a job's drop closes its connections.
+    drop(gone);
+}
+
 /// Starts the scheduler's thread, once (when the settings have it on).
 pub fn start() {
     SCHEDULER.get_or_init(|| {
@@ -922,11 +939,27 @@ mod tests {
         }
     }
 
+    /// A store forgotten (`forget_file`) takes its jobs out, the process's own among them; another file's stay.
+    #[test]
+    fn a_forgotten_files_jobs_are_taken_out() {
+        let dir = std::env::temp_dir();
+        let (a, b) = (dir.join("rerail-upkeep-forget-a.sqlite"), dir.join("rerail-upkeep-forget-b.sqlite"));
+        let job = |name: &'static str, file: &std::path::Path| Box::new(OverFile(Counter { name, left: 0, due: Due::No, qos: Qos::Background }, file.to_path_buf()));
+        register_for_process(job("test-forget a", &a));
+        register_for_process(job("test-forget b", &b));
+        let names = || report().into_iter().map(|r| r.name).filter(|n| n.starts_with("test-forget")).collect::<Vec<_>>();
+        assert_eq!(names().len(), 2);
+        forget_file(&a);
+        assert_eq!(names(), ["test-forget b"]);
+        forget_file(&b);
+        assert!(names().is_empty());
+    }
+
     #[test]
     fn settings_parse_and_name_kinds() {
         let s = Settings { only: Some(vec!["sqlite".into()]), without: vec!["collect".into()], ..Default::default() };
-        assert!(s.runs("sqlite content-v5.sqlite"));
-        assert!(!s.runs("collect content-v5.sqlite"));
+        assert!(s.runs("sqlite content-v7.sqlite"));
+        assert!(!s.runs("collect content-v7.sqlite"));
         assert!(!s.runs("cost-model"));
         let all = Settings::default();
         assert!(all.runs("cost-model") && all.cpu > 0.0 && all.memory > 0);

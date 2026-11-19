@@ -140,14 +140,14 @@ pub struct Records {
     /// The prefix (`prefix B …`, decision 0335): where the file starts with these bytes, the
     /// stream, and the loop, start after them. Empty: no prefix.
     pub prefix: Vec<u8>,
-    /// The skip's mask (decision 0400), an output: where set, a token's last byte is the byte
+    /// The skip's mask (decision 0452), an output: where set, a token's last byte is the byte
     /// before the next token's start (the file's end) less the run of this mask's bytes before
     /// it (`gap_last`), as the lasts extract's, proved. The CPU's tier 1 then makes no lasts; its
     /// record pass makes them.
     pub gap: Option<u16>,
 }
 
-/// A token's last byte (decision 0400, `Records::gap`): the byte before `next` (the next
+/// A token's last byte (decision 0452, `Records::gap`): the byte before `next` (the next
 /// token's start, or the file's length), less the run of `gap`'s bits before it, found a word
 /// at a time (the leading zeros of the word's bits not in the run).
 pub fn gap_last(gap: &[u64], start: usize, next: usize) -> usize {
@@ -306,6 +306,10 @@ pub struct Reader {
     /// records the parts'), or by tier 2's token fetch (`Split::Tier2`, tier 1's record the
     /// whole region, as a reader without parts gives it).
     pub split: Split,
+    /// Its region read in parts holds no mask mark's bit and no retag's, from the byte after its
+    /// opener through its closer (proved, `bitlex_masks`): its tokens' codes are their kind and
+    /// word alone (`native_cpu_block::plain_code`), whatever marks the grammar has.
+    pub quiet: bool,
 }
 
 /// Where a region read in parts is split into its tokens (`Reader::split`, decision 0323).
@@ -351,12 +355,37 @@ impl Reader {
     }
 }
 
+impl Reader {
+    /// Every kind and marks it gives a token (`retag`, and its arms' own, `ReadArm::retag`).
+    pub fn tags(&self) -> impl Iterator<Item = (u8, u32)> + '_ {
+        self.retag.into_iter().chain(self.arms.iter().filter_map(|a| a.retag))
+    }
+
+    /// The kind and marks it gives every token it reads, where they are one: its `retag`, with
+    /// no arm of a kind of its own.
+    pub fn tag(&self) -> Option<(u8, u32)> {
+        self.retag.filter(|&t| self.arms.iter().all(|a| a.retag.is_none_or(|x| x == t)))
+    }
+}
+
 /// A part of a region read in parts (`Reader::parts`): at a bit of output `start`, `bytes`
-/// bytes, as a lexer reads an escape in a string.
+/// bytes, as a lexer reads an escape in a string; or, with `last`, through the first bit of that
+/// output at or after its start (`bytes` 0), as a lexer reads the name after Kotlin's `$`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ReadPart {
     pub start: u16,
     pub bytes: u8,
+    pub last: Option<u16>,
+}
+
+impl ReadPart {
+    /// Its last byte, where it starts at `e`; `None` where its `last` never comes.
+    pub fn last_at(&self, e: usize, outputs: &[Vec<u64>]) -> Option<usize> {
+        match self.last {
+            Some(o) => first_bit(outputs, o, e),
+            None => Some(e + usize::from(self.bytes) - 1),
+        }
+    }
 }
 
 /// A reader's kind and marks as a mask says them (`Reader::retag`), where no reader runs: at a
@@ -376,7 +405,14 @@ pub struct ReadArm {
     pub opener: u16,
     pub closer: u16,
     pub off: i8,
+    /// A region read in parts whose closers differ in length (Kotlin's `"` and a template's
+    /// `${`): the output whose first bit at or after the closer is its last; `None`, `off`.
+    pub last: Option<u16>,
     pub none: ReadNone,
+    /// Where the reader reads the regions of several kinds (Kotlin's line and block comments,
+    /// both at `/`): this region's kind and marks, as `Reader::retag` says them for the reader's
+    /// own (`None`: the reader's).
+    pub retag: Option<(u8, u32)>,
 }
 
 /// A reader's region with no closer after its opener (`ReadArm::none`).
@@ -413,18 +449,23 @@ pub fn read_parts(reader: &Reader, s: usize, outputs: &[Vec<u64>]) -> Result<Vec
     let mut at = s + 1;
     loop {
         let c = first_bit(outputs, a.closer, at).ok_or(())?;
-        let part = reader.parts.iter().filter_map(|p| first_bit(outputs, p.start, at).filter(|&e| e < c).map(|e| (e, p.bytes))).min();
-        let to = part.map_or(c, |(e, _)| e);
+        let part = reader.parts.iter().filter_map(|p| first_bit(outputs, p.start, at).filter(|&e| e < c).map(|e| (e, p.bytes, p))).min_by_key(|&(e, n, p)| (e, n, p.start));
+        let to = part.map_or(c, |(e, ..)| e);
         if to > at {
             out.push((at, to - 1));
         }
         match part {
-            Some((e, n)) => {
-                out.push((e, e + usize::from(n) - 1));
-                at = e + usize::from(n);
+            Some((e, _, p)) => {
+                let l = p.last_at(e, outputs).ok_or(())?;
+                out.push((e, l));
+                at = l + 1;
             }
             None => {
-                out.push((c, c.wrapping_add_signed(isize::from(a.off))));
+                let l = match a.last {
+                    Some(o) => first_bit(outputs, o, c).ok_or(())?,
+                    None => c.wrapping_add_signed(isize::from(a.off)),
+                };
+                out.push((c, l));
                 return Ok(out);
             }
         }

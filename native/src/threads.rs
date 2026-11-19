@@ -19,6 +19,8 @@ pub fn max() -> usize {
 /// thread is one of the pool's (its own work and its waits are the pool's). A pool already made is left as it is.
 pub fn configure(this_thread: bool) {
     rerail_accel::exec::configure(this_thread);
+    // Every job of the pool keeps its device wave apart from its thread's (decision 0386).
+    crate::code_rule_dsl::logic::lanes::wave::install_job_scope();
 }
 
 /// Whether this is the process's main thread.

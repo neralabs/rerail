@@ -278,7 +278,7 @@ fn decode_stored_tape(
             loaded
         }
     };
-    let source = String::from_utf8(unindexed.source).ok()?;
+    let source = std::str::from_utf8(&unindexed.source).ok()?.to_owned();
     let image = tape::TapeImage::from_bytes(&unindexed.image, &grammar).ok()?;
     let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
     let image = tape::FileImage::single(image, &source);

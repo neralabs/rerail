@@ -5,8 +5,7 @@
 mod blade {
     pub mod forte {
         pub mod tree {
-            #[cfg(any(test, feature = "test-hooks"))]
-            #[allow(unused_imports)]
+            #[cfg(test)]
             pub use rerail_lang_php::code_rule_dsl::blade::forte::tree::*;
             #[cfg(test)]
                         pub mod tests;
@@ -81,8 +80,7 @@ mod calls {
         use crate::code_rule_dsl::language::adapter::pack as language_pack;
     }
     pub use rerail_lang_php::code_rule_dsl::calls::php;
-    #[cfg(any(test, feature = "test-hooks"))]
-    #[allow(unused_imports)]
+    #[cfg(test)]
     pub use rerail_lang_python::code_rule_dsl::calls::python;
     pub mod rust {
         pub use rerail_lang_rust::code_rule_dsl::calls::rust::*;
@@ -113,8 +111,7 @@ mod calls {
     }
     pub mod summary {
         pub use rerail_w::code_rule_dsl::calls::summary::*;
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_lang_python::code_rule_dsl::calls::summary::python;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::tree::Tree;
@@ -857,8 +854,7 @@ mod eval {
         use std::collections::{BTreeMap, BTreeSet};
     }
     pub mod evidence {
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_w::code_rule_dsl::eval::evidence::*;
         #[cfg(test)]
                 pub mod tests;
@@ -994,8 +990,7 @@ mod facts {
                 use std::collections::{BTreeMap, HashSet};
             }
             pub mod import_screen {
-                #[cfg(any(test, feature = "test-hooks"))]
-                #[allow(unused_imports)]
+                #[cfg(test)]
                 pub use rerail_lang_python::code_rule_dsl::facts::producers::python::import_screen::*;
                 #[cfg(test)]
                 #[path = "tests.rs"]
@@ -1009,8 +1004,7 @@ mod facts {
             }
             pub mod families {
                 pub mod candidates {
-                    #[cfg(any(test, feature = "test-hooks"))]
-                    #[allow(unused_imports)]
+                    #[cfg(test)]
                     pub use rerail_lang_python::code_rule_dsl::facts::producers::python::families::candidates::*;
                     #[cfg(test)]
                     #[path = "tests.rs"]
@@ -1020,8 +1014,7 @@ mod facts {
                     #[allow(unused_imports)]
                     use std::collections::BTreeSet;
                 }
-                #[cfg(any(test, feature = "test-hooks"))]
-                #[allow(unused_imports)]
+                #[cfg(test)]
                 pub use rerail_lang_python::code_rule_dsl::facts::producers::python::families::*;
                 #[cfg(test)]
                 #[path = "tests.rs"]
@@ -1032,8 +1025,7 @@ mod facts {
                 use crate::code_rule_dsl::language::KindCatalog;
             }
             pub mod call_batch {
-                #[cfg(any(test, feature = "test-hooks"))]
-                #[allow(unused_imports)]
+                #[cfg(test)]
                 pub use rerail_lang_python::code_rule_dsl::facts::producers::python::call_batch::*;
                 #[cfg(test)]
                 #[path = "tests.rs"]
@@ -1099,8 +1091,7 @@ mod facts {
                 use std::{ collections::{BTreeMap, BTreeSet}, sync::Arc, };
             }
             pub mod python_parts {
-                #[cfg(any(test, feature = "test-hooks"))]
-                #[allow(unused_imports)]
+                #[cfg(test)]
                 pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::python_parts::*;
                 #[cfg(test)]
                 #[path = "tests.rs"]
@@ -1293,7 +1284,12 @@ mod language {
         pub mod java;
         // Go's, C's and C++'s families: syntax only so far, their tapes from the lean parsers.
         pub mod c;
+        pub mod c_pp;
         pub mod go;
+        // Kotlin's, Swift's and Scala's families: syntax only so far, their tapes from the lean parsers.
+        pub mod kotlin;
+        pub mod scala;
+        pub mod swift;
         // HTML's, CSS's and Markdown's families: syntax only so far, read by tree-sitter.
         pub mod css;
         pub mod html;
@@ -1547,8 +1543,7 @@ mod literal {
     }
     pub use rerail_lang_php::code_rule_dsl::literal::printf;
     pub use rerail_lang_python::code_rule_dsl::literal::python_fstring;
-    #[cfg(any(test, feature = "test-hooks"))]
-    #[allow(unused_imports)]
+    #[cfg(test)]
     pub use rerail_lang_python::code_rule_dsl::literal::python_string;
     pub use rerail_lang_rust::code_rule_dsl::literal::rust_format;
     pub use rerail_lang_php::code_rule_dsl::literal::scanf;
@@ -1600,8 +1595,7 @@ pub(crate) mod logic {
     }
     // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
     pub mod liveness {
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_logic::code_rule_dsl::logic::liveness::*;
         #[cfg(test)]
         pub mod tests;
@@ -1657,8 +1651,7 @@ pub(crate) mod logic {
         pub use rerail_logic::code_rule_dsl::logic::native::*;
         #[cfg_attr(test, path = "reach")]
         pub mod reach {
-            #[cfg(any(test, feature = "test-hooks"))]
-            #[allow(unused_imports)]
+            #[cfg(test)]
             pub use rerail_logic::code_rule_dsl::logic::native::reach::*;
             #[cfg(test)]
             pub mod tests;
@@ -1746,8 +1739,7 @@ pub(crate) mod logic {
         pub use rerail_logic::code_rule_dsl::logic::plan::*;
         // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
         pub mod compose {
-            #[cfg(any(test, feature = "test-hooks"))]
-            #[allow(unused_imports)]
+            #[cfg(test)]
             pub use rerail_logic::code_rule_dsl::logic::plan::compose::*;
             #[cfg(test)]
             pub mod engine_tests;
@@ -1782,8 +1774,7 @@ pub(crate) mod logic {
             }
             // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
             pub mod prepared {
-                #[cfg(any(test, feature = "test-hooks"))]
-                #[allow(unused_imports)]
+                #[cfg(test)]
                 pub use rerail_logic::code_rule_dsl::logic::plan::corpus::prepared::*;
                 #[cfg(test)]
                 pub mod tests;
@@ -1792,8 +1783,7 @@ pub(crate) mod logic {
             }
             // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
             pub mod reuse {
-                #[cfg(any(test, feature = "test-hooks"))]
-                #[allow(unused_imports)]
+                #[cfg(test)]
                 pub use rerail_logic::code_rule_dsl::logic::plan::corpus::reuse::*;
                 #[cfg(test)]
                 pub mod tests;
@@ -2012,8 +2002,7 @@ mod sql_executor {
                 pub mod tests;
     }
     pub mod work_graph {
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_sessions::code_rule_dsl::sql_executor::work_graph::*;
         #[cfg(test)]
                 pub mod tests;
@@ -2030,8 +2019,7 @@ mod sql_executor {
     }
     pub mod temporal {
         pub mod cold_loop {
-            #[cfg(any(test, feature = "test-hooks"))]
-            #[allow(unused_imports)]
+            #[cfg(test)]
             pub use rerail_sessions::code_rule_dsl::sql_executor::temporal::cold_loop::*;
             #[cfg(test)]
                         pub mod tests;
@@ -2068,7 +2056,7 @@ mod sql_executor {
     // Only in builds that have them in rerail-sessions (its own `cfg`): its tests, `test-hooks`, `headless`.
     #[cfg(any(test, feature = "test-hooks", feature = "headless"))]
     pub mod component_loop {
-        #[allow(unused_imports)]
+        #[cfg(any(test, feature = "headless"))]
         pub use rerail_sessions::code_rule_dsl::sql_executor::component_loop::*;
         #[cfg(test)]
                 pub mod tests;
@@ -2432,8 +2420,7 @@ mod matcher {
     }
     pub mod analysis {
         pub mod required_text {
-            #[cfg(any(test, feature = "test-hooks"))]
-            #[allow(unused_imports)]
+            #[cfg(test)]
             pub use rerail_w::code_rule_dsl::matcher::analysis::required_text::*;
             #[cfg(test)]
                         pub mod tests;
@@ -2493,14 +2480,11 @@ mod matcher {
     #[cfg_attr(test, path = "arguments")]
     pub mod arguments {
         pub use rerail_w::code_rule_dsl::matcher::arguments::*;
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_lang_php::code_rule_dsl::matcher::arguments::lang_php;
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_lang_python::code_rule_dsl::matcher::arguments::lang_python;
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_lang_rust::code_rule_dsl::matcher::arguments::rust;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::tree::Tree;
@@ -3051,14 +3035,12 @@ pub use rerail_lang::code_rule_dsl::module_path;
 pub use rerail_w::code_rule_dsl::origin;
 pub use rerail_lang_ecma::code_rule_dsl::package_manifest;
 // P's phase clocks; read by profiling once stages are named (05 Phase 11 row 2).
-#[cfg(any(test, feature = "test-hooks"))]
-#[allow(unused_imports)]
+#[cfg(test)]
 pub use rerail_prof::code_rule_dsl::phase_clock;
 pub use rerail_lang_php::code_rule_dsl::php_literal;
 #[cfg_attr(test, path = "php_view")]
 mod php_view {
-    #[cfg(any(test, feature = "test-hooks"))]
-    #[allow(unused_imports)]
+    #[cfg(test)]
     pub use rerail_lang_php::code_rule_dsl::php_view::*;
     #[cfg(test)]
     pub mod tests;
@@ -3131,13 +3113,11 @@ pub use rerail_prof::code_rule_dsl::prof;
 #[cfg(feature="code-rule-profile")]
 pub use rerail_w::code_rule_dsl::profile;
 // The same SQL diagnostics serve standalone execution and the workspace profiler.
-#[cfg(any(test, feature = "test-hooks"))]
-#[allow(unused_imports)]
+#[cfg(test)]
 pub use rerail_facts::code_rule_dsl::sql_profile;
 #[cfg_attr(test, path = "sql_admission")]
 pub mod sql_admission {
-    #[cfg(any(test, feature = "test-hooks"))]
-    #[allow(unused_imports)]
+    #[cfg(test)]
     pub use rerail_facts::code_rule_dsl::sql_admission::*;
     #[cfg(test)]
     pub mod tests;
@@ -3197,8 +3177,7 @@ mod residency {
             }
             pub mod producer {
                 pub mod layout {
-                    #[cfg(any(test, feature = "test-hooks"))]
-                    #[allow(unused_imports)]
+                    #[cfg(test)]
                     pub use rerail_w::code_rule_dsl::residency::admission::relational::producer::layout::*;
                     #[cfg(test)]
                     #[path = "tests.rs"]
@@ -3211,8 +3190,7 @@ mod residency {
                 pub use rerail_w::code_rule_dsl::residency::admission::relational::producer::*;
             }
             pub mod pool {
-                #[cfg(any(test, feature = "test-hooks"))]
-                #[allow(unused_imports)]
+                #[cfg(test)]
                 pub use rerail_w::code_rule_dsl::residency::admission::relational::pool::*;
                 #[cfg(test)]
                 #[path = "tests.rs"]
@@ -3223,8 +3201,7 @@ mod residency {
                 use std::{ cell::{Cell, RefCell}, ops::Deref, rc::Rc, sync::{Arc, atomic::AtomicUsize}, };
             }
             pub mod admission {
-                #[cfg(any(test, feature = "test-hooks"))]
-                #[allow(unused_imports)]
+                #[cfg(test)]
                 pub use rerail_w::code_rule_dsl::residency::admission::relational::admission::*;
                 #[cfg(test)]
                                 pub mod tests;
@@ -3236,8 +3213,7 @@ mod residency {
             pub use rerail_w::code_rule_dsl::residency::admission::relational::*;
             #[cfg_attr(test, path = "batch")]
             pub mod batch {
-                #[cfg(any(test, feature = "test-hooks"))]
-                #[allow(unused_imports)]
+                #[cfg(test)]
                 pub use rerail_w::code_rule_dsl::residency::admission::relational::batch::*;
                 #[cfg(test)]
                 pub mod tests;
@@ -3252,8 +3228,7 @@ mod residency {
             }
             #[cfg_attr(test, path = "inputs")]
             pub mod inputs {
-                #[cfg(any(test, feature = "test-hooks"))]
-                #[allow(unused_imports)]
+                #[cfg(test)]
                 pub use rerail_w::code_rule_dsl::residency::admission::relational::inputs::*;
                 #[cfg(test)]
                 pub mod tests;
@@ -3323,8 +3298,7 @@ mod scope {
     pub use rerail_w::code_rule_dsl::scope::*;
     pub use rerail_lang_ecma::code_rule_dsl::scope::ecma;
     pub mod php {
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_lang_php::code_rule_dsl::scope::php::*;
         #[cfg(test)]
                 pub mod flow_tests;
@@ -3387,8 +3361,7 @@ mod scope {
         use ast_grep_core::{Doc, Node};
     }
     pub mod sql {
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_lang_sql::code_rule_dsl::scope::sql::*;
         #[cfg(test)]
                 pub mod tests;
@@ -3406,11 +3379,9 @@ mod scope {
     #[cfg_attr(test, path = "usage")]
     pub mod usage {
         pub use rerail_w::code_rule_dsl::scope::usage::*;
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_lang_python::code_rule_dsl::scope::usage::lang_python;
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_lang_rust::code_rule_dsl::scope::usage::lang_rust;
         pub mod rust {
             #[cfg(test)]
@@ -3632,8 +3603,7 @@ mod suppress {
 #[cfg_attr(test, path = "tape")]
 mod tape {
     pub mod resident {
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_lang::code_rule_dsl::tape::resident::*;
         #[cfg(test)]
         #[path = "tests.rs"]
@@ -3696,16 +3666,6 @@ pub mod tree {
     use std::ops::Range;
 }
 
-/// The language tag a stored tape image names (`tape::stored_tape_tag`): the store picks a
-/// frame's dictionary by it.
-pub(crate) fn stored_tape_tag(bytes: &[u8]) -> Option<u8> {
-    tape::stored_tape_tag(bytes)
-}
-
-/// The language tag of the dialect a file at `path` is parsed as.
-pub(crate) fn path_tape_tag(path: &str) -> Option<u8> {
-    language::tape_tag(language::dialect_by_label(language::label_of_path(path)?)?)
-}
 pub use rerail_facts::code_rule_dsl::text;
 #[cfg(test)]
 mod test_support;
@@ -3716,8 +3676,7 @@ mod transducer {
     #[cfg_attr(test, path = "packed")]
     pub mod packed {
         pub mod set_mode {
-            #[cfg(any(test, feature = "test-hooks"))]
-            #[allow(unused_imports)]
+            #[cfg(test)]
             pub use rerail_transducer::code_rule_dsl::transducer::packed::set_mode::*;
             #[cfg(test)]
             #[path = "tests.rs"]
@@ -3763,8 +3722,7 @@ mod transducer {
         // `.`: no directory `capture_run/` exists to resolve `..` through.
         #[cfg_attr(test, path = ".")]
         pub mod capture_run {
-            #[cfg(any(test, feature = "test-hooks"))]
-            #[allow(unused_imports)]
+            #[cfg(test)]
             pub use rerail_transducer::code_rule_dsl::transducer::packed::capture_run::*;
             #[cfg(test)]
             #[path = "capture_run_stream_tests.rs"]
@@ -3784,8 +3742,7 @@ mod transducer {
             use std::collections::HashMap;
         }
         pub mod native_cpu {
-            #[cfg(any(test, feature = "test-hooks"))]
-            #[allow(unused_imports)]
+            #[cfg(test)]
             pub use rerail_transducer::code_rule_dsl::transducer::packed::native_cpu::*;
             #[cfg(test)]
                         pub mod tests;
@@ -3859,11 +3816,9 @@ mod transducer {
         // Metal's semantic fixtures parse documents: they run where the languages are registered.
         #[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
         pub mod metal_semantic_conformance;
-        #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
-        #[allow(unused_imports)]
+        #[cfg(all(test, target_os = "macos"))]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_rows;
-        #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
-        #[allow(unused_imports)]
+        #[cfg(all(test, target_os = "macos"))]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_sort;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::tape::TapeDoc;
@@ -4026,8 +3981,7 @@ mod value {
         use ast_grep_core::{Doc, Node};
     }
     pub mod key {
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_lang_ecma::code_rule_dsl::value::key::*;
         #[cfg(test)]
         #[path = "tests.rs"]
@@ -4078,8 +4032,7 @@ mod value {
     }
     pub use rerail_lang_php::code_rule_dsl::value::php_structure;
     pub mod python {
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_lang_python::code_rule_dsl::value::python::*;
         #[cfg(test)]
                 pub mod tests;
@@ -4096,8 +4049,7 @@ mod value {
     }
     pub use rerail_lang_python::code_rule_dsl::value::python_ast;
     pub mod rust {
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_lang_rust::code_rule_dsl::value::rust::*;
         #[cfg(test)]
         #[path = "tests.rs"]
@@ -4120,8 +4072,7 @@ mod value {
         use std::cell::Cell;
     }
     pub mod sql {
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_lang_sql::code_rule_dsl::value::sql::*;
         #[cfg(test)]
                 pub mod tests;
@@ -4216,8 +4167,7 @@ pub mod violations {
 }
 pub mod vue {
     pub mod view {
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_lang_ecma::code_rule_dsl::vue::view::*;
         #[cfg(test)]
                 pub mod tests;
@@ -4252,8 +4202,7 @@ mod waves;
 #[cfg_attr(test, path = "workspace")]
 pub(crate) mod workspace {
     pub mod results {
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(unused_imports)]
+        #[cfg(test)]
         pub use rerail_w::code_rule_dsl::workspace::results::*;
         #[cfg(test)]
                 pub mod tests;
@@ -4668,7 +4617,7 @@ pub(crate) use rule_api::CodeRuleDslEditor;
 pub(crate) fn install_languages() {
     use language::Family;
     use language::adapter::pack::{Pack, pack, register};
-    use language::adapter::{blade::Blade, c::C, css::Css, csharp::Csharp, go::Go, ecma::Ecma, format::Format, html::Html, java::Java, json::Json, markdown::Markdown, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
+    use language::adapter::{blade::Blade, c::C, css::Css, csharp::Csharp, go::Go, ecma::Ecma, format::Format, html::Html, java::Java, json::Json, markdown::Markdown, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue, kotlin::Kotlin, scala::Scala, swift::Swift};
     register(Family::Python, &Pack::<Python>::NEW);
     language::register_base(Family::Python, &Pack::<Python>::NEW);
     register(Family::Ecma, &Pack::<Ecma>::NEW);
@@ -4697,6 +4646,14 @@ pub(crate) fn install_languages() {
     language::register_base(Family::Go, &Pack::<Go>::NEW);
     register(Family::C, &Pack::<C>::NEW);
     language::register_base(Family::C, &Pack::<C>::NEW);
+    register(Family::Kotlin, &Pack::<Kotlin>::NEW);
+    language::register_base(Family::Kotlin, &Pack::<Kotlin>::NEW);
+    register(Family::Swift, &Pack::<Swift>::NEW);
+    language::register_base(Family::Swift, &Pack::<Swift>::NEW);
+    register(Family::Scala, &Pack::<Scala>::NEW);
+    language::register_base(Family::Scala, &Pack::<Scala>::NEW);
+    // Answers inside the fixpoint (`answers`): C's directives by file (0327 mode (a)).
+    language::install_answerers(vec![&language::adapter::c_pp::Directives, &language::adapter::c_pp::Units, &language::adapter::c_pp::CompileCommands]);
     register(Family::Html, &Pack::<Html>::NEW);
     language::register_base(Family::Html, &Pack::<Html>::NEW);
     register(Family::Css, &Pack::<Css>::NEW);
@@ -4788,6 +4745,8 @@ pub(crate) fn install_languages() {
     compile::resolve::install_flow_resolves(compile::resolve::php::compile_php_resolves);
     // The containment relations' `nearest` solve (the file-local FIX's).
     facts::nearest::install_nearest(typing::file_local::nearest);
+    // What a block of relations asks about the device: the run's binding's (decision 0342, Q58).
+    facts::rows::install_block_device(logic::plan::placement::block_device);
     // `core.rr`'s names, as the rule language reads them.
     facts::core::install_core_names(logic::rr::core_shape);
     // What the evaluator keeps per connection, dropped with it.
@@ -4890,6 +4849,17 @@ pub(crate) fn install_languages() {
             // The lean C# parser (`tape::csharp_lean`, decision 0196); a file it refuses goes to
             // tree-sitter-c-sharp.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::CSharp, name: "lean C# parser", rank: 0, runs: true, parser: &tape::csharp_lean::Lean });
+        }
+        // The lean Kotlin, Swift and Scala parsers (`tape::kotlin_lean`, `swift_lean`, `scala_lean`,
+        // decisions 0305 and 0326); a file one refuses goes to its tree-sitter grammar.
+        if cfg!(feature = "lang-kotlin") {
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Kotlin, name: "lean Kotlin parser", rank: 0, runs: true, parser: &tape::kotlin_lean::Lean });
+        }
+        if cfg!(feature = "lang-swift") {
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Swift, name: "lean Swift parser", rank: 0, runs: true, parser: &tape::swift_lean::Lean });
+        }
+        if cfg!(feature = "lang-scala") {
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Scala, name: "lean Scala parser", rank: 0, runs: true, parser: &tape::scala_lean::Lean });
         }
         if cfg!(feature = "lang-php") {
             // The lean PHP parser (`tape::php_lean`, decision 0198); a file it refuses goes to

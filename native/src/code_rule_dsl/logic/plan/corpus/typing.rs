@@ -149,21 +149,26 @@ pub(crate) fn outputs(
         let atoms = store.intern_atoms(&all).map_err(|e| Error::Plan(e.to_string()))?;
         let atom: BTreeMap<&str, u32> = all.iter().copied().zip(atoms).collect();
         // One transaction for the rows: `x` is on disk, and a statement on its own commits (and syncs) by itself.
-        crate::code_rule_dsl::facts::vtab::setup_now(db)?;
-        let tx = db.is_autocommit().then(|| db.unchecked_transaction()).transpose()?;
-        db.execute_batch("DROP TABLE IF EXISTS x.node_type; CREATE TABLE x.node_type(n INTEGER PRIMARY KEY, tid INTEGER)")?;
-        let mut ins = db.prepare("INSERT INTO x.node_type VALUES (?1, ?2)")?;
-        for (n, names) in &per {
-            let members: Vec<u32> = names.iter().map(|s| terms.named(atom[s.as_str()], &[])).collect();
-            let t = terms.union(&members, false);
-            ins.execute([*n, i64::from(t)])?;
-        }
-        drop(ins);
-        db.execute_batch("DROP TABLE IF EXISTS x.type_term; DROP TABLE IF EXISTS x.type_arg")?;
-        terms.write(db, "x")?;
-        if let Some(tx) = tx {
-            tx.commit()?;
-        }
+        // Written once the run's waves are done, into its output database, not the store: work after the run, as
+        // its cost samples are (`profile::behind`), which the strict mode lets through.
+        crate::code_rule_dsl::logic::profile::behind(|| -> Result<()> {
+            crate::code_rule_dsl::facts::vtab::setup_now(db)?;
+            let tx = db.is_autocommit().then(|| db.unchecked_transaction()).transpose()?;
+            db.execute_batch("DROP TABLE IF EXISTS x.node_type; CREATE TABLE x.node_type(n INTEGER PRIMARY KEY, tid INTEGER)")?;
+            let mut ins = db.prepare("INSERT INTO x.node_type VALUES (?1, ?2)")?;
+            for (n, names) in &per {
+                let members: Vec<u32> = names.iter().map(|s| terms.named(atom[s.as_str()], &[])).collect();
+                let t = terms.union(&members, false);
+                ins.execute([*n, i64::from(t)])?;
+            }
+            drop(ins);
+            db.execute_batch("DROP TABLE IF EXISTS x.type_term; DROP TABLE IF EXISTS x.type_arg")?;
+            terms.write(db, "x")?;
+            if let Some(tx) = tx {
+                tx.commit()?;
+            }
+            Ok(())
+        })?;
         report.typed_nodes = per.len();
         report.terms = terms.len();
     }

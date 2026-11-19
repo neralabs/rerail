@@ -425,7 +425,8 @@ fn artifact_entry(text: &ReadResult<String>, digest: &ReadResult<String>) -> Str
     format!("{}:{}", of_result(text), digest.as_ref().map_or_else(|f| f.kind.to_owned(), Clone::clone))
 }
 
-pub(super) fn populate(program: &mut front::Program, root: &Path) -> Result<()> {
+/// `program` is the program's header (`Version::header`): what it reads of the rules is `shape`'s.
+pub(super) fn populate(program: &mut front::Program, shape: &super::shape::Shape, root: &Path) -> Result<()> {
     let declared = artifacts(&program.settings)?;
     let base = BASE.get().map(String::as_str);
     let mut consulted = Vec::new();
@@ -452,10 +453,10 @@ pub(super) fn populate(program: &mut front::Program, root: &Path) -> Result<()> 
         &mut consulted,
     )?;
     consulted.extend(seen.into_inner());
-    git_revisions(program, root, base, &mut consulted);
+    git_revisions(program, shape, root, base, &mut consulted);
     CONSULTED.lock().unwrap_or_else(|e| e.into_inner()).extend(consulted);
     if REQUIRE_FACTS.load(std::sync::atomic::Ordering::Relaxed) {
-        required(program)?;
+        required_by(program, shape)?;
     }
     Ok(())
 }
@@ -463,13 +464,8 @@ pub(super) fn populate(program: &mut front::Program, root: &Path) -> Result<()> 
 /// `git_rev`'s rows, for a program with a rule that reads it: HEAD, and the merge base with `--base`. Without a
 /// repository, or a base that does not resolve, an `input_error("git_rev", …)` row, and the readers under `!` are
 /// withheld.
-fn git_revisions(program: &mut front::Program, root: &Path, base: Option<&str>, consulted: &mut Vec<(String, String, String)>) {
-    let reads = program.rules.iter().any(|r| r.body.iter().any(|l| match l {
-        front::Literal::Atom(a) => a.rel == "git_rev",
-        front::Literal::Agg { atom, .. } => atom.rel == "git_rev",
-        _ => false,
-    }));
-    if !reads {
+fn git_revisions(program: &mut front::Program, shape: &super::shape::Shape, root: &Path, base: Option<&str>, consulted: &mut Vec<(String, String, String)>) {
+    if !shape.read.contains("git_rev") {
         return;
     }
     program.inputs.retain(|n| n != "git_rev");
@@ -527,8 +523,14 @@ fn listing(root: &Path, dir: &str) -> String {
 
 /// `--require-facts`: the artifact errors that fail a CI run. A `failed` artifact is the policy's to report when one
 /// of its rules reads `input_error` (RUN-FACTS.md section 5); the other kinds always fail.
+#[cfg(test)]
 fn required(program: &front::Program) -> Result<()> {
-    let reports = program.rules.iter().any(|r| r.body.iter().filter_map(front::Literal::atom).any(|a| !a.neg && a.rel == "input_error"));
+    required_by(program, &super::shape::Shape::of_tree(program))
+}
+
+/// `required` of a program by its header and its rules' shape.
+fn required_by(program: &front::Program, shape: &super::shape::Shape) -> Result<()> {
+    let reports = shape.positive.contains("input_error");
     let failing: Vec<String> = program.facts.get("input_error").into_iter().flatten()
         .filter_map(|row| match row.as_slice() {
             [Value::Str(path), Value::Str(kind), Value::Str(detail)] if path.starts_with("artifact:") && !(reports && kind == "failed") =>

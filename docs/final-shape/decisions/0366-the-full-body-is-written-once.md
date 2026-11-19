@@ -70,7 +70,7 @@ leaving it, as simdjson's.
 - **The ladder's tier 2 jump tables.** The ladder counted `br_table`s in the CLIF text, taken
   before `switch_trees` (0322) turns a small one into compares. It now counts the tables left
   as compiled (`CompiledStream::tables`).
-- **The ladder's tier 1 branches.** 0353's toggle has a cold branch for escaped quotes
+- **The ladder's tier 1 branches.** 0381's toggle has a cold branch for escaped quotes
   (`toggle`), which the ladder's count did not include. `PassShape::rare_branches` counts them:
   the toggles' cold blocks in the round's function as built. `forward` builds the pass again
   until no region's call costs the hot loop, so the list is cleared each round.

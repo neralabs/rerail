@@ -50,10 +50,10 @@ the file, so the new store starts empty.
 store missing any object (new, or lacking an index this build added) takes the exclusive lock and
 applies the DDL; a new store also gets `auto_vacuum=INCREMENTAL`.
 
-`PRAGMA user_version` is the compatibility floor, `SCHEMA_VERSION` (5). A build refuses a store
+`PRAGMA user_version` is the compatibility floor, `SCHEMA_VERSION` (7). A build refuses a store
 whose floor is newer than its own. Additive changes such as indexes never raise it.
 
-The renamed file is `STORE_FILE_NAME`, now `content-v5.sqlite`. The old file is neither migrated nor
+The renamed file is `STORE_FILE_NAME`, now `content-v7.sqlite`. The old file is neither migrated nor
 deleted.
 
 Tests: `newer_compatibility_floor_is_refused`,
@@ -135,9 +135,10 @@ signed 64-bit lanes, each eight digest bytes read with `i64::from_be_bytes`. SHA
 
 ## Objects
 
-Each source and tape is stored once. A scan's sources and tapes are kept uncompressed in segment files beside the
-store (`content-v5.sqlite.objects/`), read in place; the row points at its range and holds no bytes. Other writes keep
-an independent compressed frame in the row, checked on every read.
+Each source and tape is stored once, uncompressed, in segment files beside the store (`content-v7.sqlite.objects/`),
+and read in place; the row points at its range and holds no bytes. A scan gathers its files into a few large
+segments; any other write (a publication, a snapshot, a single put) writes one segment of its own objects before its
+transaction, which numbers it and inserts the rows. Each read checks the range's length against the row.
 
 - **`source_objects`:** each source under its SHA-256.
 - **`tape_objects`:** one syntax tape per source and grammar.
@@ -376,7 +377,7 @@ decode gets an incomplete set, leaving the backlog.
 `publish_overlay_files` publishes 1 to `MAX_PUBLICATION_BATCH` (64) files of one workspace, doing
 all it can outside the write lock.
 
-Hashing, lookups and compression run without the lock. An object pass and a relationship pass then
+Hashing, lookups and writing the objects' segment run without the lock. An object pass and a relationship pass then
 write under it.
 
 Publication alone does not make results reusable: a repository index restores only under a
@@ -485,10 +486,10 @@ caller.
 
 Each process bounds its caches and connections; `release_memory()` frees them.
 
-- **Read cache:** up to 32 MiB of decompressed sources and tapes, 30-second sliding lifetime.
 - **`LocalResultCache`:** up to 32 MiB of decoded results.
 - **Connections:** 1 MiB SQLite page cache each.
-- **`release_memory()`** clears both caches and closes idle connections.
+- **`release_memory()`** clears the result cache and closes idle connections. Sources and tapes need no cache: they
+  are read where they lie in their segments.
 
 <details>
 <summary>How the read cache maps memory</summary>

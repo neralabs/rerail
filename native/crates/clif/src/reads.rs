@@ -10,7 +10,7 @@
 //! Every load here reads the tape or its view, which no code writes while it is read (`readonly`).
 //! Format 16's arrays have 8 bytes of room past their last value, so a value is one word's load.
 
-use crate::view::{F15_STRIDE_SHIFT, F15_TAIL_FROM_START, F16_BLOCK, F16_K, F16_PART, F16_SUB, at};
+use crate::view::{F15_STRIDE_SHIFT, F15_TAIL_FROM_START, F16_BLOCK, F16_K, F16_PART, F16_SUB, F16Z_BLOCK, F16Z_FORMAT, F16Z_PIECES, at, z};
 use cranelift_codegen::ir::{
     self, AbiParam, Function, InstBuilder, MemFlags, Signature, UserFuncName, Value,
     condcodes::IntCC,
@@ -33,6 +33,14 @@ pub enum Family {
     /// `Relation`, or its `Rows`), every load an offset from it through the block's self-relative references, and
     /// aligned (the block's own words: the Rust backend checks none against a length).
     Relation,
+    /// A view's (`view_*`, decision 0353 step 4): a document's entry (`view_reads::ViewDoc`, in its batch's block,
+    /// a load of it aligned as a relation's), the tape's base and its view, its lines' base. A view read calls the
+    /// numbering's reads with the descriptor its entry refers to, the tape's with the tape's base and view, the
+    /// lines' with their base.
+    View,
+    /// A document's lines' (`lines_*`, decision 0353 step 4d): the base of its `LineTable`'s words (`[n, starts[n],
+    /// ends[n]]`, u32s, in a slab's room beside its tape), every load aligned, an offset from it.
+    Lines,
 }
 
 impl Family {
@@ -40,7 +48,8 @@ impl Family {
     pub fn pointers(self) -> usize {
         match self {
             Family::Tape => 2,
-            Family::Relation => 1,
+            Family::Relation | Family::Lines => 1,
+            Family::View => 4,
         }
     }
 }
@@ -61,6 +70,8 @@ pub const READS: &[Read] = &[
     Read { family: Family::Tape, name: "tape_f16_side", params: &[I32, I32], ret: I64, hot: false, body: f16_side },
     Read { family: Family::Tape, name: "tape_size", params: &[I32], ret: I32, hot: true, body: size },
     Read { family: Family::Tape, name: "tape_number", params: &[I32], ret: I32, hot: true, body: number },
+    Read { family: Family::Tape, name: "tape_start_stated", params: &[I32], ret: I32, hot: true, body: start_stated },
+    Read { family: Family::Tape, name: "tape_end_stated", params: &[I32], ret: I32, hot: true, body: end_stated },
     Read { family: Family::Tape, name: "tape_start", params: &[I32], ret: I32, hot: true, body: start },
     Read { family: Family::Tape, name: "tape_end", params: &[I32], ret: I32, hot: true, body: end },
     Read { family: Family::Tape, name: "tape_parent", params: &[I32], ret: I32, hot: false, body: parent },
@@ -76,16 +87,44 @@ pub const READS: &[Read] = &[
     Read { family: Family::Tape, name: "tape_line_select", params: &[I32, I32], ret: I32, hot: false, body: line_select },
     Read { family: Family::Tape, name: "tape_line", params: &[I32], ret: I32, hot: true, body: line },
     Read { family: Family::Tape, name: "tape_line_start", params: &[I32], ret: I32, hot: true, body: line_start },
+    Read { family: Family::Tape, name: "tape_has_kind", params: &[I32, I32], ret: I32, hot: true, body: has_kind },
     Read { family: Family::Relation, name: "rows_col", params: &[I32], ret: I64, hot: true, body: crate::relation::rows_col },
     Read { family: Family::Relation, name: "col_at", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::col_at },
     Read { family: Family::Relation, name: "col_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::col_get },
     Read { family: Family::Relation, name: "rows_at", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rows_at },
     Read { family: Family::Relation, name: "rows_width", params: &[I32], ret: I32, hot: true, body: crate::relation::rows_width },
     Read { family: Family::Relation, name: "rows_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rows_get },
+    Read { family: Family::Relation, name: "rows_put", params: &[I32, I32, I64], ret: I32, hot: true, body: crate::relation::rows_put },
     Read { family: Family::Relation, name: "rel_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rel_get },
     Read { family: Family::Relation, name: "rel_dead", params: &[I32], ret: I32, hot: true, body: crate::relation::rel_dead },
     Read { family: Family::Relation, name: "rel_group", params: &[I32, I64], ret: I64, hot: true, body: crate::relation::rel_group },
     Read { family: Family::Relation, name: "rel_group_row", params: &[I32, I32], ret: I32, hot: true, body: crate::relation::rel_group_row },
+    Read { family: Family::Relation, name: "rel_key_mix", params: &[I64, I64], ret: I64, hot: true, body: crate::relation::rel_key_mix },
+    // A projection's numbering's (decision 0353 step 2): the descriptor is an `ids::Numbering`.
+    Read { family: Family::Relation, name: "num_is", params: &[I32, I32], ret: I32, hot: true, body: crate::id_reads::is },
+    Read { family: Family::Relation, name: "num_rank", params: &[I32, I32], ret: I32, hot: true, body: crate::id_reads::rank },
+    Read { family: Family::Relation, name: "num_select", params: &[I32, I32], ret: I32, hot: true, body: crate::id_reads::select },
+    Read { family: Family::Relation, name: "num_granule", params: &[I32, I32], ret: I64, hot: false, body: crate::id_reads::granule },
+    Read { family: Family::Relation, name: "num_low_of", params: &[I32, I32], ret: I32, hot: true, body: crate::id_reads::low_of },
+    Read { family: Family::Relation, name: "num_number_in", params: &[I32, I32, I32, I32], ret: I32, hot: false, body: crate::id_reads::number_in },
+    Read { family: Family::Relation, name: "num_number_of", params: &[I32], ret: I64, hot: true, body: crate::id_reads::number_of },
+    Read { family: Family::Relation, name: "num_order_of", params: &[I32], ret: I32, hot: true, body: crate::id_reads::order_of },
+    Read { family: Family::Relation, name: "num_number_of_order", params: &[I32], ret: I32, hot: true, body: crate::id_reads::number_of_order },
+    // A view's rows (decision 0353 step 4c): row `l` of the document's rows, column `col`.
+    Read { family: Family::Lines, name: "lines_line", params: &[I32], ret: I32, hot: true, body: crate::view_reads::lines_line },
+    Read { family: Family::View, name: "view_node", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::node },
+    Read { family: Family::View, name: "view_child", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::child },
+    Read { family: Family::View, name: "view_field", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::field },
+    Read { family: Family::View, name: "view_core", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::core },
+    Read { family: Family::View, name: "view_line", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::line },
+    // core.rr's lines' (`core_rr::Lines`' words, in the batch's block): a relation's family, its base the entry's run.
+    Read { family: Family::Relation, name: "loc_line", params: &[I32], ret: I32, hot: true, body: crate::view_reads::lines_line },
+    Read { family: Family::View, name: "view_loc_line", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::loc_line },
+    Read { family: Family::View, name: "view_loc_end", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::loc_end },
+    Read { family: Family::View, name: "view_loc_col", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::loc_col },
+    Read { family: Family::View, name: "view_loc_docof", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::loc_docof },
+    // A 16z tape's block in the reader's slot (decision 0353 step 4b): last, so no other read's number moves.
+    Read { family: Family::Tape, name: "tape_z_block", params: &[I32], ret: I64, hot: false, body: z_block },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
@@ -121,12 +160,31 @@ pub trait Callee {
 /// The read's body as a function named `name`, its calls of other reads through `callee`: for a tape of
 /// either format, as its view says (the JIT's, which runs one program over documents of both).
 pub fn build(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &mut dyn Callee) -> Function {
-    build_for(read, call_conv, name, callee, None)
+    build_formats(read, call_conv, name, callee, None, true)
 }
 
 /// The read's body for tapes of `format` alone (15 or 16; `None` either, as its view says): the other's code
 /// is not built, so a reader of one format (the tape crate's `F16`, `F15`) tests none.
 pub fn build_for(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &mut dyn Callee, format: Option<u32>) -> Function {
+    build_formats(read, call_conv, name, callee, format, false)
+}
+
+/// `build_for`, and with `z` a 16z tape too (decision 0353 step 4b) where the body reads either format: its block
+/// decoded into the reader's slot (`tape_z_block`) and read as format 16. The JIT's reads read 16z; the tape crate's
+/// Rust reads a block at a time itself (`F16Z`), and the kernels' reads do not yet.
+pub fn build_formats(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &mut dyn Callee, format: Option<u32>, z: bool) -> Function {
+    build_split(read, call_conv, name, callee, format, z, false).0
+}
+
+/// A 16z body's id in a source that calls it apart (`build_split`): past every read's.
+const Z_APART: u32 = 1 << 16;
+
+/// `build_formats`, and with `split` a 16z tape's body called apart (`<read>_z`, the read built for
+/// `F16Z_FORMAT`), not inlined: with whether the read called it. The kernels' source (decision 0353 step 4b): a
+/// read inlined where a kernel reads carries format 15's and 16's bodies and the call, and the kernel one 16z body
+/// of each read, which its tape format folds away (inlined, every read's 16z body at every call site made a label
+/// kernel's compile 18 s at format 15 and 33 s at 16z, against 1.8 s without).
+fn build_split(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &mut dyn Callee, format: Option<u32>, z: bool, split: bool) -> (Function, bool) {
     let mut func = Function::with_name_signature(name, signature(read, call_conv));
     let mut context = FunctionBuilderContext::new();
     let mut f = FunctionBuilder::new(&mut func, &mut context);
@@ -135,12 +193,18 @@ pub fn build_for(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &
     f.switch_to_block(entry);
     let params = f.block_params(entry).to_vec();
     let pointers = read.family.pointers();
-    let mut b = B { f, tape: params[0], view: (pointers > 1).then(|| params[1]), args: params[pointers..].to_vec(), call_conv, callee, format };
+    let (view, doc_tape, lines) = match read.family {
+        Family::Tape => (Some(params[1]), None, None),
+        Family::Relation | Family::Lines => (None, None, None),
+        Family::View => (None, Some((params[1], params[2])), Some(params[3])),
+    };
+    let mut b = B { f, tape: params[0], view, doc_tape, lines, args: params[pointers..].to_vec(), call_conv, callee, format, z, slot: None, name: read.name, split, apart: false };
     let value = (read.body)(&mut b);
+    let apart = b.apart;
     b.f.ins().return_(&[value]);
     b.f.seal_all_blocks();
     b.f.finalize();
-    func
+    (func, apart)
 }
 
 /// The reads as Rust (decision 0310's Rust backend): a module a format (`f16`, `f15`), each read built for
@@ -158,7 +222,7 @@ pub fn rust_source() -> Result<String, String> {
         let reads: Vec<(u32, &Read)> = READS
             .iter()
             .enumerate()
-            .filter(|(_, read)| read.family == Family::Tape && (format == 16 || !F16_ONLY.contains(&read.name)))
+            .filter(|(_, read)| read.family == Family::Tape && read.name != "tape_z_block" && (format == 16 || !F16_ONLY.contains(&read.name)))
             .map(|(k, read)| (k as u32, read))
             .collect();
         let funcs: Vec<(u32, Function, bool)> =
@@ -184,17 +248,64 @@ pub fn rust_source() -> Result<String, String> {
 /// holds documents of both), `clif_` before its name, for `metal_tape.metal`'s readers to call. Made again by
 /// `the_kernels_reads_are_these`.
 pub fn msl_source() -> Result<String, String> {
-    let funcs: Vec<(u32, Function, &str)> =
-        READS
-            .iter()
-            .enumerate()
-            .filter(|(_, read)| read.family == Family::Tape)
-            .map(|(k, read)| (k as u32, build(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex), read.name))
-            .collect();
+    tape_msl(false)
+}
+
+/// The reads as MSL that read a 16z tape too (decision 0353 step 4b): a block decoded into the cache the view names
+/// (`view::cache`) where a read falls, the same functions as `msl_source`'s, for the kernels that read a 16z batch's
+/// views in place to include in its stead. Made again by `the_16z_kernels_reads_are_these`.
+pub fn msl_z_source() -> Result<String, String> {
+    tape_msl(true)
+}
+
+fn tape_msl(z: bool) -> Result<String, String> {
+    let built: Vec<(u32, Function, bool)> = READS
+        .iter()
+        .enumerate()
+        .filter(|(_, read)| read.family == Family::Tape && (z || read.name != "tape_z_block"))
+        .map(|(k, read)| {
+            let (f, apart) = build_split(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex, None, z, z);
+            (k as u32, f, apart)
+        })
+        .collect();
+    // Each read's 16z body that a read calls apart: the read built for 16z alone.
+    let apart: Vec<(u32, Function, String)> = built
+        .iter()
+        .filter(|(.., apart)| *apart)
+        .map(|&(k, ..)| {
+            let read = &READS[k as usize];
+            let (f, _) = build_split(read, CallConv::SystemV, UserFuncName::user(0, Z_APART + k), &mut ByIndex, Some(F16Z_FORMAT), true, false);
+            (Z_APART + k, f, format!("{}_z", read.name))
+        })
+        .collect();
+    let funcs: Vec<(u32, Function, &str)> = apart
+        .into_iter()
+        .map(|(k, f, n)| (k, f, &*Box::leak(n.into_boxed_str())))
+        .chain(built.into_iter().map(|(k, f, _)| (k, f, READS[k as usize].name)))
+        .collect();
     let body = crate::msl::translate_reads(&funcs, "clif_", Family::Tape)?;
+    let (function, test) = if z { ("msl_z_source", "the_16z_kernels_reads_are_these") } else { ("msl_source", "the_kernels_reads_are_these") };
     Ok(format!(
-        "// Generated by rerail_clif::reads::msl_source from the tape's reads in CLIF (decision 0310). Do not edit:\n\
-         // `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_kernels_reads_are_these` writes it again.\n{body}"
+        "// Generated by rerail_clif::reads::{function} from the tape's reads in CLIF (decision 0310). Do not edit:\n\
+         // `RERAIL_WRITE_READS=1 cargo test -p rerail-clif {test}` writes it again.\n{body}"
+    ))
+}
+
+/// The views' reads as MSL (decision 0353 step 4c), after their entry's declaration (`view_reads::msl`):
+/// `view_reads.metal`, which a kernel includes after the tape's and the numbering's reads (whose functions they
+/// call), made again by `the_view_kernels_reads_are_these`.
+pub fn view_msl_source() -> Result<String, String> {
+    let funcs: Vec<(u32, Function, &str)> = READS
+        .iter()
+        .enumerate()
+        .filter(|(_, read)| matches!(read.family, Family::View | Family::Lines) || read.name == "loc_line")
+        .map(|(k, read)| (k as u32, build_for(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex, None), read.name))
+        .collect();
+    let body = crate::msl::translate_reads(&funcs, "clif_", Family::View)?;
+    Ok(format!(
+        "// Generated by rerail_clif::reads::view_msl_source from the views' reads in CLIF (decision 0353 step 4c). Do\n\
+         // not edit: `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these` writes it again.\n{}{body}",
+        crate::view_reads::msl()
     ))
 }
 
@@ -203,19 +314,34 @@ pub fn msl_source() -> Result<String, String> {
 struct ByIndex;
 impl Callee for ByIndex {
     fn func_ref(&mut self, name: &str, signature: &Signature, func: &mut Function) -> ir::FuncRef {
-        let index = READS.iter().position(|read| read.name == name).expect("a read") as u32;
+        // A read's 16z body called apart (`build_split`): its read's place past `Z_APART`.
+        let index = match READS.iter().position(|read| read.name == name) {
+            Some(k) => k as u32,
+            None => Z_APART + READS.iter().position(|read| name.strip_suffix("_z") == Some(read.name)).expect("a read") as u32,
+        };
         let name = func.declare_imported_user_function(ir::UserExternalName::new(0, index));
         let signature = func.import_signature(signature.clone());
         func.import_function(ir::ExtFuncData { name: ir::ExternalName::User(name), signature, colocated: true })
     }
 }
 
+/// Whether a read of the relation's family is a projection's numbering's (`id_reads`), which the facts crate holds.
+fn numbering(read: &Read) -> bool {
+    read.name.starts_with("num_")
+}
+
 /// The relation's reads (decision 0325), each built and named by its place in `READS`, with whether it is hot.
 fn relation_funcs() -> Vec<(u32, Function, &'static Read)> {
+    // `loc_line` is the view reads' (`view_msl_source`): over core.rr's lines, not a relation.
+    family_funcs(|read| !numbering(read) && read.name != "loc_line")
+}
+
+/// The reads of the relation's family that `keep` keeps, each built and named by its place in `READS`.
+fn family_funcs(keep: impl Fn(&Read) -> bool) -> Vec<(u32, Function, &'static Read)> {
     READS
         .iter()
         .enumerate()
-        .filter(|(_, read)| read.family == Family::Relation)
+        .filter(|(_, read)| read.family == Family::Relation && keep(read))
         .map(|(k, read)| (k as u32, build(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex), read))
         .collect()
 }
@@ -223,7 +349,8 @@ fn relation_funcs() -> Vec<(u32, Function, &'static Read)> {
 /// A relation's reads as Rust (decision 0325): `rerail_blocks`' `generated_reads.rs`, which its `Rows` and
 /// `Relation` read through, made again by `the_blocks_reads_are_these`.
 pub fn relation_rust_source() -> Result<String, String> {
-    let funcs = relation_funcs();
+    // `rows_put` is the device's writer (decision 0403): the host writes rows through `Rows::put`, which checks them.
+    let funcs: Vec<_> = relation_funcs().into_iter().filter(|(_, _, read)| read.name != "rows_put").collect();
     let entries: Vec<(u32, &str)> = funcs.iter().map(|(k, _, read)| (*k, read.name)).collect();
     let funcs: Vec<(u32, Function, bool)> = funcs.into_iter().map(|(k, f, read)| (k, f, read.hot)).collect();
     let body = crate::rust::translate_reads(&funcs, &entries, Family::Relation)?;
@@ -249,6 +376,40 @@ pub fn relation_msl_source() -> Result<String, String> {
     ))
 }
 
+/// A projection's numbering's reads as Rust (decision 0353 step 2): the facts crate's `id_reads.rs`, which its
+/// `Ranks` and `granules::Table` read through, made again by `the_facts_id_reads_are_these`.
+pub fn ids_rust_source() -> Result<String, String> {
+    let funcs = family_funcs(numbering);
+    let entries: Vec<(u32, &str)> = funcs.iter().map(|(k, _, read)| (*k, read.name)).collect();
+    let funcs: Vec<(u32, Function, bool)> = funcs.into_iter().map(|(k, f, read)| (k, f, read.hot)).collect();
+    let body = crate::rust::translate_reads(&funcs, &entries, Family::Relation)?;
+    let mut out = String::from(
+        "// Generated by rerail_clif::reads::ids_rust_source from a projection's numbering's reads in CLIF (decision 0353
+         // step 2). Do not edit: `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_reads_are_these` writes it
+         // again.
+         #![allow(dead_code, unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_parens, clippy::all)]
+
+",
+    );
+    out.push_str(&body);
+    let h = crate::rust::fingerprint(&out);
+    out.push_str(&format!("\n/// This source's fingerprint (`rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"));
+    Ok(out)
+}
+
+/// A projection's numbering's reads as MSL, after its descriptor's declaration (`ids::msl`): `id_reads.metal`, which
+/// a kernel that reads node ids in place includes, made again by `the_facts_id_kernels_reads_are_these`.
+pub fn ids_msl_source() -> Result<String, String> {
+    let funcs: Vec<(u32, Function, &str)> = family_funcs(numbering).into_iter().map(|(k, f, read)| (k, f, read.name)).collect();
+    let body = crate::msl::translate_reads(&funcs, "clif_", Family::Relation)?;
+    Ok(format!(
+        "// Generated by rerail_clif::reads::ids_msl_source from a projection's numbering's reads in CLIF (decision 0353\n\
+         // step 2). Do not edit: `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_kernels_reads_are_these`\n\
+         // writes it again.\n{}{body}",
+        crate::ids::msl()
+    ))
+}
+
 /// A body being built: the builder, the tape's base and view, the read's own parameters.
 pub struct B<'a, 'c> {
     pub(crate) f: FunctionBuilder<'a>,
@@ -256,11 +417,34 @@ pub struct B<'a, 'c> {
     pub(crate) tape: Value,
     /// The tape's view (the tape's family alone).
     view: Option<Value>,
+    /// A view read's tape: its base and its view (the view's family alone).
+    doc_tape: Option<(Value, Value)>,
+    /// A view read's lines' base (the view's family alone).
+    lines: Option<Value>,
     args: Vec<Value>,
     call_conv: CallConv,
     callee: &'c mut dyn Callee,
     /// The one format the body reads (`build_for`), or `None` for either.
     format: Option<u32>,
+    /// Whether a 16z tape is read too (`build_formats`).
+    z: bool,
+    /// The 16z block being read (`in_block`): its cache entry is the tape, which the cache's writers write.
+    slot: Option<Slot>,
+    /// The read being built.
+    name: &'static str,
+    /// Whether a 16z tape's body is called apart (`build_split`), and whether it was.
+    split: bool,
+    apart: bool,
+}
+
+/// A 16z block read in its cache entry (`B::in_block`): the reader's tape and view, the block's first node, and the
+/// entry's mask (its size less one), which every load of it is masked by.
+#[derive(Clone, Copy)]
+struct Slot {
+    tape: Value,
+    view: Value,
+    base: Value,
+    mask: Value,
 }
 
 /// A load of the tape's bytes.
@@ -284,41 +468,62 @@ impl B<'_, '_> {
     pub(crate) fn c64(&mut self, value: i64) -> Value {
         self.f.ins().iconst(I64, value)
     }
+    /// A load of the tape's bytes: or of a 16z block's cache entry, which the cache's writers write.
+    fn mem(&self) -> MemFlags {
+        if self.slot.is_some() { MemFlags::new().with_notrap() } else { memory() }
+    }
+    /// A load of the view's fields: or of a 16z block's view in its entry, a load of the tape's (the entry is
+    /// reached from the tape's base, not the view's).
+    fn fields(&self) -> MemFlags {
+        if self.slot.is_some() { MemFlags::new().with_notrap() } else { fields() }
+    }
     /// The view's u32 at byte `offset`.
     fn view(&mut self, offset: i32) -> Value {
         let view = self.view.expect("a read of the tape's family");
-        self.f.ins().load(I32, fields(), view, offset)
+        let flags = self.fields();
+        self.f.ins().load(I32, flags, view, offset)
     }
     /// The view's `k`-th u32 of the array at byte `offset`.
     fn view_at(&mut self, offset: i32, k: Value) -> Value {
         let k = self.f.ins().uextend(I64, k);
         let k = self.f.ins().ishl_imm(k, 2);
         let p = self.f.ins().iadd(self.view.expect("a read of the tape's family"), k);
-        self.f.ins().load(I32, fields(), p, offset)
+        let flags = self.fields();
+        self.f.ins().load(I32, flags, p, offset)
     }
-    /// The tape's address `base + offset` (both u32s).
+    /// The tape's address `base + offset` (both u32s): in a 16z block's entry, masked to the entry, so a read of
+    /// one being written again reads nothing outside the cache.
     fn address(&mut self, base: Value, offset: Value) -> Value {
         let base = self.f.ins().uextend(I64, base);
         let offset = self.f.ins().uextend(I64, offset);
+        if let Some(slot) = self.slot {
+            let at = self.f.ins().iadd(base, offset);
+            let at = self.f.ins().band(at, slot.mask);
+            return self.f.ins().iadd(self.tape, at);
+        }
         let p = self.f.ins().iadd(self.tape, base);
         self.f.ins().iadd(p, offset)
     }
     fn u8(&mut self, base: Value, offset: Value) -> Value {
         let p = self.address(base, offset);
-        self.f.ins().uload8(I32, memory(), p, 0)
+        let flags = self.mem();
+        self.f.ins().uload8(I32, flags, p, 0)
     }
     fn u16(&mut self, base: Value, offset: Value) -> Value {
         let p = self.address(base, offset);
-        self.f.ins().uload16(I32, memory(), p, 0)
+        let flags = self.mem();
+        self.f.ins().uload16(I32, flags, p, 0)
     }
     fn u32(&mut self, base: Value, offset: Value) -> Value {
         let p = self.address(base, offset);
-        self.f.ins().load(I32, memory(), p, 0)
+        let flags = self.mem();
+        self.f.ins().load(I32, flags, p, 0)
     }
     /// Eight bytes, little-endian, at any alignment.
     fn word(&mut self, base: Value, offset: Value) -> Value {
         let p = self.address(base, offset);
-        self.f.ins().load(I64, memory(), p, 0)
+        let flags = self.mem();
+        self.f.ins().load(I64, flags, p, 0)
     }
     /// The low `w` bytes' mask (all ones at 8 or more).
     fn mask(&mut self, w: Value) -> Value {
@@ -342,16 +547,197 @@ impl B<'_, '_> {
     }
     /// `sixteen`'s value for a format 16 tape, else `fifteen`'s: the view's format tested, unless the body is
     /// built for one (`build_for`).
-    fn by_format(&mut self, ty: ir::Type, sixteen: impl FnOnce(&mut Self) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
+    /// `sixteen` takes the node (its read's first argument): of a 16z tape, its place in its block, the block
+    /// decoded into the reader's slot and read as format 16 (`in_block`).
+    fn by_format(&mut self, ty: ir::Type, sixteen: impl Fn(&mut Self, Value) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
+        let sixteen = &sixteen;
+        self.by_formats(
+            ty,
+            |b| {
+                let i = b.arg(0);
+                sixteen(b, i)
+            },
+            |b| b.in_block(0, sixteen),
+            fifteen,
+        )
+    }
+    /// `by_format` for a read of the tape's whole, not of a node (its newline index): a 16z tape holds it raw, where
+    /// its view names it, so a 16z tape's body is format 16's, read in place of the stored bytes (decision 0434).
+    fn by_format_whole(&mut self, ty: ir::Type, sixteen: impl Fn(&mut Self) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
+        let sixteen = &sixteen;
+        self.by_formats(ty, |b| sixteen(b), |b| sixteen(b), fifteen)
+    }
+    /// `by_format` with a 16z tape's body of its own (`zed`).
+    fn by_formats(&mut self, ty: ir::Type, sixteen: impl FnOnce(&mut Self) -> Value, zed: impl FnOnce(&mut Self) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
         match self.format {
             Some(16) => sixteen(self),
+            Some(F16Z_FORMAT) => zed(self),
             Some(_) => fifteen(self),
             None => {
                 let format = self.view(at::FORMAT);
                 let f16 = self.f.ins().icmp_imm(IntCC::Equal, format, 16);
-                self.either(ty, f16, sixteen, fifteen)
+                if !self.z {
+                    return self.either(ty, f16, sixteen, fifteen);
+                }
+                self.either(ty, f16, sixteen, |b| {
+                    let z = b.f.ins().icmp_imm(IntCC::Equal, format, i64::from(F16Z_FORMAT));
+                    if b.split {
+                        return b.either(ty, z, B::zed_apart, fifteen);
+                    }
+                    b.either(ty, z, zed, fifteen)
+                })
             }
         }
+    }
+    /// This read's 16z body, called apart (`build_split`) with the read's own arguments.
+    fn zed_apart(&mut self) -> Value {
+        self.apart = true;
+        let read = read(self.name).expect("a read");
+        let signature = signature(read, self.call_conv);
+        let callee = self.callee.func_ref(&format!("{}_z", self.name), &signature, self.f.func);
+        let mut all = vec![self.tape];
+        all.extend(self.view);
+        all.extend_from_slice(&self.args.clone());
+        let call = self.f.ins().call(callee, &all);
+        self.f.inst_results(call)[0]
+    }
+    /// A format 16 read's `body` of its argument `k`'s node, of a tape of format 16 or, read too (`z`), 16z.
+    fn sixteen_or_z(&mut self, ty: ir::Type, k: usize, body: impl Fn(&mut Self, Value) -> Value) -> Value {
+        if self.format == Some(F16Z_FORMAT) {
+            return self.in_block(k, body);
+        }
+        if self.format.is_some() || !self.z {
+            let i = self.arg(k);
+            return body(self, i);
+        }
+        let format = self.view(at::FORMAT);
+        let z = self.f.ins().icmp_imm(IntCC::Equal, format, i64::from(F16Z_FORMAT));
+        let body = &body;
+        if self.split {
+            return self.either(ty, z, B::zed_apart, |b| {
+                let i = b.arg(k);
+                body(b, i)
+            });
+        }
+        self.either(ty, z, |b| b.in_block(k, body), |b| {
+            let i = b.arg(k);
+            body(b, i)
+        })
+    }
+    /// A 16z tape's `body` of its argument `k`'s node: its block in the cache (`tape_z_block`), read as format 16
+    /// with the node's place in it. Where threads share the cache (the view's `columns[4]`), the entry's completion
+    /// is read again after the body, and the body read again if another thread wrote the entry meanwhile.
+    fn in_block(&mut self, k: usize, body: impl Fn(&mut Self, Value) -> Value) -> Value {
+        use crate::view::cache as c;
+        let i = self.arg(k);
+        let block = self.f.ins().ushr_imm(i, i64::from(F16Z_BLOCK.trailing_zeros()));
+        let first = self.f.ins().ishl_imm(block, i64::from(F16Z_BLOCK.trailing_zeros()));
+        let local = self.f.ins().band_imm(i, i64::from(F16Z_BLOCK - 1));
+        let size = self.column(3);
+        let size = self.f.ins().uextend(I64, size);
+        let mask = self.f.ins().iadd_imm(size, -1);
+        let shared = self.column(4);
+        let (head, check, read, again, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block());
+        self.f.append_block_param(head, I32);
+        // `read` reads an entry: the one found, or the dead entry; and whether to check it again after the body.
+        self.f.append_block_param(read, I64);
+        self.f.append_block_param(read, I32);
+        let zero = self.c32(0);
+        self.f.ins().jump(head, &[zero.into()]);
+        self.f.switch_to_block(head);
+        let tries = self.f.block_params(head)[0];
+        let entry = self.call("tape_z_block", &[block]);
+        let ready = self.entry_word(entry, c::READY);
+        let before = self.f.ins().atomic_load(I32, MemFlags::trusted(), ready);
+        let no = self.c32(0);
+        self.f.ins().brif(shared, check, &[], read, &[entry.into(), no.into()]);
+        // Shared: the entry complete, of this block (another thread may have taken it since it was found).
+        self.f.switch_to_block(check);
+        self.f.ins().fence();
+        let lo = self.view(at::SIDE + 8);
+        let hi = self.view(at::SIDE + 12);
+        let id = wide(self, lo, hi);
+        let id = self.f.ins().ishl_imm(id, 22);
+        let block64 = self.f.ins().uextend(I64, block);
+        let key = self.f.ins().bor(id, block64);
+        let held = self.f.ins().load(I64, MemFlags::new().with_notrap(), entry, c::KEY);
+        let ours = self.f.ins().icmp(IntCC::Equal, held, key);
+        let writing = self.f.ins().band_imm(before, i64::from(c::WRITING));
+        let complete = self.f.ins().icmp_imm(IntCC::Equal, writing, 0);
+        let some = self.f.ins().icmp_imm(IntCC::NotEqual, before, 0);
+        let ok = self.f.ins().band(ours, complete);
+        let ok = self.f.ins().band(ok, some);
+        // Tries spent: the dead entry is read, a failure counted (another thread holds the block). Never the entry
+        // as it is, which may hold two blocks' bytes: a kernel that went on with such a value (an index, a span)
+        // would reach anywhere before its run is refused (decision 0403); the dead entry's reads are its zeros.
+        let (gave_up, give_up) = (self.f.create_block(), self.f.create_block());
+        let yes = self.c32(1);
+        self.f.ins().brif(ok, read, &[entry.into(), yes.into()], gave_up, &[]);
+        self.f.switch_to_block(gave_up);
+        let spent = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, tries, i64::from(c::TRIES));
+        self.f.ins().brif(spent, give_up, &[], again, &[]);
+        self.f.switch_to_block(give_up);
+        self.count_failed();
+        let dead = self.dead_entry();
+        let no = self.c32(0);
+        self.f.ins().jump(read, &[dead.into(), no.into()]);
+        self.f.switch_to_block(read);
+        let (entry, rechecking) = (self.f.block_params(read)[0], self.f.block_params(read)[1]);
+        let tape = self.f.ins().iadd_imm(entry, i64::from(z::SLOT_BYTES));
+        let view = self.f.ins().iadd_imm(entry, i64::from(z::SLOT_VIEW));
+        let slot = Slot { tape: self.tape, view: self.view.expect("a read of the tape's family"), base: first, mask };
+        let held = (std::mem::replace(&mut self.tape, tape), self.view.replace(view), self.format.replace(16), self.slot.replace(slot));
+        let value = body(self, local);
+        (self.tape, self.view, self.format, self.slot) = (held.0, held.1, held.2, held.3);
+        let ty = self.f.func.dfg.value_type(value);
+        self.f.append_block_param(done, ty);
+        // Read again, a bounded number of times, if a writer took the entry while the body read it.
+        let recheck = self.f.create_block();
+        self.f.ins().brif(rechecking, recheck, &[], done, &[value.into()]);
+        self.f.switch_to_block(recheck);
+        self.f.ins().fence();
+        let ready = self.entry_word(entry, c::READY);
+        let after = self.f.ins().atomic_load(I32, MemFlags::trusted(), ready);
+        let same = self.f.ins().icmp(IntCC::Equal, before, after);
+        let (changed, kept) = (self.f.create_block(), self.f.create_block());
+        self.f.ins().brif(same, done, &[value.into()], changed, &[]);
+        self.f.switch_to_block(changed);
+        let spent = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, tries, i64::from(c::TRIES));
+        self.f.ins().brif(spent, kept, &[], again, &[]);
+        // Tries spent: the dead entry read instead (above), a failure counted.
+        self.f.switch_to_block(kept);
+        self.count_failed();
+        let dead = self.dead_entry();
+        let no = self.c32(0);
+        self.f.ins().jump(read, &[dead.into(), no.into()]);
+        self.f.switch_to_block(again);
+        let tries = self.f.ins().iadd_imm(tries, 1);
+        self.f.ins().jump(head, &[tries.into()]);
+        self.f.switch_to_block(done);
+        self.f.block_params(done)[0]
+    }
+    /// The dead entry of the cache the view names: what a read with no entry of its own reads (its zeros).
+    fn dead_entry(&mut self) -> Value {
+        let lo = self.view(at::SIDE);
+        let hi = self.view(at::SIDE + 4);
+        let rel = wide(self, lo, hi);
+        let cache = self.f.ins().iadd(self.tape, rel);
+        let dead = cache_load(self, cache, crate::view::cache::DEAD);
+        let dead = self.f.ins().uextend(I64, dead);
+        self.f.ins().iadd(cache, dead)
+    }
+    /// One failure more in the cache the view names (`view::cache::FAILED`).
+    fn count_failed(&mut self) {
+        let lo = self.view(at::SIDE);
+        let hi = self.view(at::SIDE + 4);
+        let rel = wide(self, lo, hi);
+        let cache = self.f.ins().iadd(self.tape, rel);
+        let one = self.c32(1);
+        cache_add(self, cache, crate::view::cache::FAILED, one);
+    }
+    /// The address of an entry's (or the cache's) word at `offset`.
+    fn entry_word(&mut self, entry: Value, offset: i32) -> Value {
+        self.f.ins().iadd_imm(entry, i64::from(offset))
     }
     /// `then` where `cond`, else `otherwise`: a value of type `ty`.
     pub(crate) fn either(&mut self, ty: ir::Type, cond: Value, then: impl FnOnce(&mut Self) -> Value, otherwise: impl FnOnce(&mut Self) -> Value) -> Value {
@@ -369,6 +755,18 @@ impl B<'_, '_> {
     }
     /// The read `name` called with `args` after the tape and view.
     pub(crate) fn call(&mut self, name: &str, args: &[Value]) -> Value {
+        // A read of a 16z block calls the tape's read at the node's place in the tape, with the reader's pointers:
+        // the callee finds the block itself.
+        if let Some(slot) = self.slot.take() {
+            let node = usize::from(name == "tape_f16_side");
+            let mut args = args.to_vec();
+            args[node] = self.f.ins().iadd(args[node], slot.base);
+            let held = (std::mem::replace(&mut self.tape, slot.tape), self.view.replace(slot.view), self.format.take());
+            let value = self.call(name, &args);
+            (self.tape, self.view, self.format) = (held.0, held.1, held.2);
+            self.slot = Some(slot);
+            return value;
+        }
         let read = read(name).expect("a read");
         let signature = signature(read, self.call_conv);
         let callee = self.callee.func_ref(name, &signature, self.f.func);
@@ -378,11 +776,60 @@ impl B<'_, '_> {
         let call = self.f.ins().call(callee, &all);
         self.f.inst_results(call)[0]
     }
-    /// Format 16's checkpoint `c`: the start of node `c * K`.
+    /// The tape's read `name` called by a view read, with its tape's base and view.
+    pub(crate) fn call_tape(&mut self, name: &str, args: &[Value]) -> Value {
+        let (base, view) = self.doc_tape.expect("a view read");
+        let tape = std::mem::replace(&mut self.tape, base);
+        let held = self.view.replace(view);
+        let value = self.call(name, args);
+        self.tape = tape;
+        self.view = held;
+        value
+    }
+    /// The lines' read `name` called by a view read, with its lines' base.
+    pub(crate) fn call_lines(&mut self, name: &str, args: &[Value]) -> Value {
+        let base = self.lines.expect("a view read");
+        let tape = std::mem::replace(&mut self.tape, base);
+        let held = self.view.take();
+        let value = self.call(name, args);
+        self.tape = tape;
+        self.view = held;
+        value
+    }
+    /// Format 16's column `r` (0 codes, 1 slots, 2 gaps, 3 lengths, 4 checkpoints) in block `b`: where it
+    /// starts. Blocks are `F16_PART` nodes at the view's stride from block 0's start, each its columns end to
+    /// end at its rows (the last block's are fewer: `nodes - b * F16_PART`), column `r` at `rows *
+    /// columns[r]` (decision 0434).
+    fn block_column(&mut self, r: i32, b: Value) -> Value {
+        let blocks = self.column(0);
+        let stride = self.view(at::STRIDE);
+        let base = self.f.ins().imul(b, stride);
+        let base = self.f.ins().iadd(base, blocks);
+        if r == 0 {
+            return base;
+        }
+        let nodes = self.view(at::NODES);
+        let first = self.f.ins().ishl_imm(b, i64::from(F16_PART.trailing_zeros()));
+        let left = self.f.ins().isub(nodes, first);
+        let part = self.c32(i64::from(F16_PART));
+        let rows = self.f.ins().umin(left, part);
+        let before = self.column(r);
+        let at = self.f.ins().imul(rows, before);
+        self.f.ins().iadd(base, at)
+    }
+    /// Node `i`'s block and its row there.
+    fn block_of(&mut self, i: Value) -> (Value, Value) {
+        let b = self.f.ins().ushr_imm(i, i64::from(F16_PART.trailing_zeros()));
+        let j = self.f.ins().band_imm(i, i64::from(F16_PART - 1));
+        (b, j)
+    }
+    /// Format 16's checkpoint `c`: the start of node `c * K`, in the checkpoints of its node's block.
     fn checkpoint(&mut self, c: Value) -> Value {
         let cw = self.width(3);
-        let checkpoints = self.column(4);
-        let at = self.f.ins().imul(c, cw);
+        let b = self.f.ins().ushr_imm(c, i64::from((F16_PART / F16_K).trailing_zeros()));
+        let checkpoints = self.block_column(4, b);
+        let row = self.f.ins().band_imm(c, i64::from(F16_PART / F16_K - 1));
+        let at = self.f.ins().imul(row, cw);
         let word = self.word(checkpoints, at);
         let mask = self.mask(cw);
         self.f.ins().band(word, mask)
@@ -407,8 +854,9 @@ impl B<'_, '_> {
     /// ones) its side list's.
     fn get(&mut self, a: u32, i: Value) -> Value {
         let w = self.width(a);
-        let array = self.column(1 + a as i32);
-        let at = self.f.ins().imul(i, w);
+        let (b, j) = self.block_of(i);
+        let array = self.block_column(1 + a as i32, b);
+        let at = self.f.ins().imul(j, w);
         let word = self.word(array, at);
         let mask = self.mask(w);
         let value = self.f.ins().band(word, mask);
@@ -427,12 +875,20 @@ impl B<'_, '_> {
 
 /// A node's value in side list `k` (0 codes' low parts, 1 slots, 2 gaps, 3 lengths), the node listed.
 fn f16_side(b: &mut B<'_, '_>) -> Value {
-    let (k, i) = (b.arg(0), b.arg(1));
+    let k = b.arg(0);
+    b.sixteen_or_z(I64, 1, |b, i| f16_side_of(b, k, i))
+}
+
+fn f16_side_of(b: &mut B<'_, '_>, k: Value, i: Value) -> Value {
     let side = b.view_at(at::SIDE, k);
     let parts = b.view_at(at::PARTS, k);
     let p = b.f.ins().ushr_imm(i, i64::from(F16_PART.trailing_zeros()));
     let p4 = b.f.ins().imul_imm(p, 4);
     let start = b.u32(parts, p4);
+    // The part's end (the next one's start, the last the list's length: both checked where the tape is placed):
+    // every offset into the part is held to it, whatever its bytes state (decision 0403).
+    let next4 = b.f.ins().iadd_imm(p4, 4);
+    let limit = b.u32(parts, next4);
     let nodes = b.view(at::NODES);
     let blocks = b.f.ins().iadd_imm(nodes, i64::from(F16_BLOCK - 1));
     let blocks = b.f.ins().ushr_imm(blocks, i64::from(F16_BLOCK.trailing_zeros()));
@@ -449,10 +905,12 @@ fn f16_side(b: &mut B<'_, '_>) -> Value {
     let before = b.f.ins().select(first_block, zero, before);
     let before = b.f.ins().imul_imm(before, 2);
     let before = b.f.ins().iadd(start, before);
+    let before = b.f.ins().umin(before, limit);
     let lo = b.u16(side, before);
     let lo = b.f.ins().select(first_block, zero, lo);
     let own = b.f.ins().imul_imm(j, 2);
     let own = b.f.ins().iadd(start, own);
+    let own = b.f.ins().umin(own, limit);
     let hi = b.u16(side, own);
     let offsets = b.f.ins().imul_imm(nsub, 2);
     let offsets = b.f.ins().iadd(start, offsets);
@@ -471,6 +929,7 @@ fn f16_side(b: &mut B<'_, '_>) -> Value {
     let sum = b.f.ins().iadd(lo, hi);
     let middle = b.f.ins().ushr_imm(sum, 1);
     let at = b.f.ins().iadd(offsets, middle);
+    let at = b.f.ins().umin(at, limit);
     let byte = b.u8(side, at);
     let below = b.f.ins().icmp(IntCC::UnsignedLessThan, byte, low);
     let next = b.f.ins().iadd_imm(middle, 1);
@@ -488,10 +947,12 @@ fn f16_side(b: &mut B<'_, '_>) -> Value {
     let last = b.f.ins().iadd_imm(nsub, -1);
     let last = b.f.ins().imul_imm(last, 2);
     let last = b.f.ins().iadd(start, last);
+    let last = b.f.ins().umin(last, limit);
     let count = b.u16(side, last);
     let values = b.f.ins().iadd(offsets, count);
     let at = b.f.ins().imul(found, vw);
     let at = b.f.ins().iadd(values, at);
+    let at = b.f.ins().umin(at, limit);
     let word = b.word(side, at);
     let mask = b.mask(vw);
     b.f.ins().band(word, mask)
@@ -502,13 +963,15 @@ fn size(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
     b.by_format(
         I32,
-        |b| {
+        |b, i| {
             let v = b.get(0, i);
             let leaf = b.f.ins().band_imm(v, 1);
             let leaf = b.f.ins().icmp_imm(IntCC::NotEqual, leaf, 0);
             let inner = b.f.ins().ushr_imm(v, 1);
             let inner = b.f.ins().ireduce(I32, inner);
             let one = b.c32(1);
+            // At least 1 (a subtree holds its root), whatever the slot holds: every hop by sizes moves on (0403).
+            let inner = b.f.ins().umax(inner, one);
             b.f.ins().select(leaf, one, inner)
         },
         |b| {
@@ -526,9 +989,10 @@ fn number(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
     b.by_format(
         I32,
-        |b| {
-            let codes = b.column(0);
-            let byte = b.u8(codes, i);
+        |b, i| {
+            let (block, j) = b.block_of(i);
+            let codes = b.block_column(0, block);
+            let byte = b.u8(codes, j);
             let cut = b.view(at::CUT);
             let below = b.f.ins().icmp(IntCC::UnsignedLessThan, byte, cut);
             b.either(
@@ -557,10 +1021,32 @@ fn number(b: &mut B<'_, '_>) -> Value {
 
 /// The node's start (a document-local byte).
 fn start(b: &mut B<'_, '_>) -> Value {
+    // Held to the source (the view's `source_len`, the source its reader reads): a span from the tape reads no
+    // byte past it, whatever the tape's gaps hold (decision 0403).
+    let i = b.arg(0);
+    let start = b.call("tape_start_stated", &[i]);
+    let source = b.view(at::SOURCE_LEN);
+    b.f.ins().umin(start, source)
+}
+
+/// The node's end, held between its start and the source's end (decision 0403): a reader's span is never
+/// reversed and never past the source.
+fn end(b: &mut B<'_, '_>) -> Value {
+    let i = b.arg(0);
+    let start = b.call("tape_start", &[i]);
+    let end = b.call("tape_end_stated", &[i]);
+    let end = b.f.ins().umax(end, start);
+    let source = b.view(at::SOURCE_LEN);
+    b.f.ins().umin(end, source)
+}
+
+/// The node's start as the tape states it: what a check of the tape reads (`validated::visit`), and the CPU's
+/// scans, whose slices of the source are checked. No kernel reads it: theirs is `tape_start`.
+fn start_stated(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
     b.by_format(
         I32,
-        |b| {
+        |b, i| {
             // Its checkpoint, then the gaps of the nodes after it, to the node's own.
             let c = b.f.ins().ushr_imm(i, i64::from(F16_K.trailing_zeros()));
             let from = b.checkpoint(c);
@@ -579,8 +1065,9 @@ fn start(b: &mut B<'_, '_>) -> Value {
             let byte = b.f.ins().icmp_imm(IntCC::Equal, gw, 1);
             b.f.ins().brif(byte, folded, &[], each, &[]);
             b.f.switch_to_block(folded);
-            let array = b.column(2);
-            let x = b.word(array, first);
+            let (block, row) = b.block_of(first);
+            let array = b.block_column(2, block);
+            let x = b.word(array, row);
             let all = b.c64(-1);
             let keep = b.f.ins().irsub_imm(r, i64::from(F16_K) - 1);
             let shift = b.f.ins().imul_imm(keep, 8);
@@ -644,12 +1131,13 @@ fn start(b: &mut B<'_, '_>) -> Value {
 }
 
 /// The node's end (a document-local byte).
-fn end(b: &mut B<'_, '_>) -> Value {
+/// The node's end as the tape states it (`start_stated`'s readers').
+fn end_stated(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
     b.by_format(
         I32,
-        |b| {
-            let start = b.call("tape_start", &[i]);
+        |b, i| {
+            let start = b.call("tape_start_stated", &[i]);
             let length = b.get(2, i);
             let length = b.f.ins().ireduce(I32, length);
             b.f.ins().iadd(start, length)
@@ -663,7 +1151,7 @@ fn end(b: &mut B<'_, '_>) -> Value {
             let last = b.f.ins().iadd(i, size);
             let last = b.f.ins().iadd_imm(last, -1);
             let from = b.f.ins().select(own, i, last);
-            let from = b.call("tape_start", &[from]);
+            let from = b.call("tape_start_stated", &[from]);
             let tail = b.column(4);
             let width = b.width(2);
             let cell = b.cell(tail, width, i);
@@ -684,12 +1172,13 @@ fn parent(b: &mut B<'_, '_>) -> Value {
         root,
         |b| b.c32(NONE),
         |b| {
-            b.by_format(I32, |b| parent16(b, i), |b| parent15(b, i))
+            // A 16z tape's walk reads each slot in its block (`tape_slot`), back over blocks' starts.
+            b.by_formats(I32, |b| parent16(b, i, false), |b| parent16(b, i, true), |b| parent15(b, i))
         },
     )
 }
 
-fn parent16(b: &mut B<'_, '_>, i: Value) -> Value {
+fn parent16(b: &mut B<'_, '_>, i: Value, z: bool) -> Value {
     let (head, body, sibling, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.append_block_param(head, I32);
     b.f.append_block_param(done, I32);
@@ -700,12 +1189,18 @@ fn parent16(b: &mut B<'_, '_>, i: Value) -> Value {
     b.f.ins().brif(j, body, &[], done, &[none.into()]);
     b.f.switch_to_block(body);
     let before = b.f.ins().iadd_imm(j, -1);
-    let v = b.get(0, before);
+    let v = if z { b.call("tape_slot", &[before]) } else { b.get(0, before) };
     let leaf = b.f.ins().band_imm(v, 1);
     b.f.ins().brif(leaf, sibling, &[], done, &[before.into()]);
     b.f.switch_to_block(sibling);
     let step = b.f.ins().ushr_imm(v, 2);
     let step = b.f.ins().ireduce(I32, step);
+    // A step of 1 to `j` back: else the slot is no tape's, and the walk ends (each step moves back, decision 0403).
+    let less = b.f.ins().iadd_imm(step, -1);
+    let moves = b.f.ins().icmp(IntCC::UnsignedLessThan, less, j);
+    let stepped = b.f.create_block();
+    b.f.ins().brif(moves, stepped, &[], done, &[none.into()]);
+    b.f.switch_to_block(stepped);
     let back = b.f.ins().isub(j, step);
     let to_parent = b.f.ins().band_imm(v, 2);
     let next = b.f.create_block();
@@ -734,7 +1229,7 @@ fn parent15(b: &mut B<'_, '_>, i: Value) -> Value {
     b.f.switch_to_block(body);
     let before = b.f.ins().iadd_imm(j, -1);
     let size = b.call("tape_size", &[before]);
-    let end = b.f.ins().iadd(before, size);
+    let end = hop(b, before, size);
     let holds = b.f.ins().icmp(IntCC::UnsignedGreaterThan, end, i);
     let next = b.f.create_block();
     b.f.ins().brif(holds, done, &[before.into()], next, &[]);
@@ -743,7 +1238,7 @@ fn parent15(b: &mut B<'_, '_>, i: Value) -> Value {
     b.f.ins().jump(head, &[before.into(), k.into()]);
     // A descent from the root: at each level, the child whose subtree holds the node.
     b.f.switch_to_block(descend);
-    let (level, scan, hop, found) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    let (level, scan, hop_to, found) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.append_block_param(level, I32);
     b.f.append_block_param(scan, I32);
     b.f.append_block_param(scan, I32);
@@ -756,10 +1251,10 @@ fn parent15(b: &mut B<'_, '_>, i: Value) -> Value {
     b.f.switch_to_block(scan);
     let (at, c) = (b.f.block_params(scan)[0], b.f.block_params(scan)[1]);
     let size = b.call("tape_size", &[c]);
-    let after = b.f.ins().iadd(c, size);
+    let after = hop(b, c, size);
     let past = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, after, i);
-    b.f.ins().brif(past, hop, &[], found, &[]);
-    b.f.switch_to_block(hop);
+    b.f.ins().brif(past, hop_to, &[], found, &[]);
+    b.f.switch_to_block(hop_to);
     b.f.ins().jump(scan, &[at.into(), after.into()]);
     b.f.switch_to_block(found);
     let is = b.f.ins().icmp(IntCC::Equal, c, i);
@@ -773,13 +1268,13 @@ fn length(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
     b.by_format(
         I32,
-        |b| {
+        |b, i| {
             let length = b.get(2, i);
             b.f.ins().ireduce(I32, length)
         },
         |b| {
-            let end = b.call("tape_end", &[i]);
-            let start = b.call("tape_start", &[i]);
+            let end = b.call("tape_end_stated", &[i]);
+            let start = b.call("tape_start_stated", &[i]);
             b.f.ins().isub(end, start)
         },
     )
@@ -791,7 +1286,7 @@ fn start_next(b: &mut B<'_, '_>) -> Value {
     let (i, prev) = (b.arg(0), b.arg(1));
     b.by_format(
         I32,
-        |b| {
+        |b, i| {
             let r = b.f.ins().band_imm(i, i64::from(F16_K - 1));
             b.either(
                 I32,
@@ -815,15 +1310,825 @@ fn start_next(b: &mut B<'_, '_>) -> Value {
 /// Format 16's slot of the node: an inner node's subtree size, shifted up by one; a leaf's step back to its previous
 /// sibling or (bit 1) its parent, shifted up by two, with bit 0 set.
 fn slot(b: &mut B<'_, '_>) -> Value {
-    let i = b.arg(0);
-    b.get(0, i)
+    b.sixteen_or_z(I64, 0, |b, i| b.get(0, i))
+}
+
+/// A 16z tape's block `block` (decision 0353 step 4b): the address of the cache entry that holds it decoded, found
+/// in the cache the view names (`view::cache`) or decoded into its head; the dead entry where the cache had no room.
+fn z_block(b: &mut B<'_, '_>) -> Value {
+    let block = b.arg(0);
+    let lo = b.view(at::SIDE);
+    let hi = b.view(at::SIDE + 4);
+    let rel = wide(b, lo, hi);
+    let cache = b.f.ins().iadd(b.tape, rel);
+    let lo = b.view(at::SIDE + 8);
+    let hi = b.view(at::SIDE + 12);
+    let id = wide(b, lo, hi);
+    let id = b.f.ins().ishl_imm(id, 22);
+    let block64 = b.f.ins().uextend(I64, block);
+    let key = b.f.ins().bor(id, block64);
+    let size = b.column(3);
+    let size = b.f.ins().uextend(I64, size);
+    // A block past the tape's last (a node read that is no node of it): the dead entry, a failure counted, so the
+    // read stays in the cache and its run is refused (decision 0403). The block index is read only below its end.
+    let nodes = b.view(at::NODES);
+    let blocks = b.f.ins().iadd_imm(nodes, i64::from(F16Z_BLOCK - 1));
+    let blocks = b.f.ins().ushr_imm(blocks, i64::from(F16Z_BLOCK.trailing_zeros()));
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, block, blocks);
+    let (look, outside, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(done, I64);
+    b.f.ins().brif(inside, look, &[], outside, &[]);
+    b.f.switch_to_block(outside);
+    cache_count(b, cache, crate::view::cache::FAILED);
+    let dead = cache_load(b, cache, crate::view::cache::DEAD);
+    let dead = b.f.ins().uextend(I64, dead);
+    let dead = b.f.ins().iadd(cache, dead);
+    b.f.ins().jump(done, &[dead.into()]);
+    b.f.switch_to_block(look);
+    let entry = cache_get(b, cache, key, &|b, entry| z_decode(b, block, entry, size));
+    b.f.ins().jump(done, &[entry.into()]);
+    b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
+}
+
+/// The u64 of two u32s, `lo` first.
+fn wide(b: &mut B<'_, '_>, lo: Value, hi: Value) -> Value {
+    let lo = b.f.ins().uextend(I64, lo);
+    let hi = b.f.ins().uextend(I64, hi);
+    let hi = b.f.ins().ishl_imm(hi, 32);
+    b.f.ins().bor(lo, hi)
+}
+
+/// A cache's u32 at `p + offset`, read or written by any thread.
+fn cache_load(b: &mut B<'_, '_>, p: Value, offset: i32) -> Value {
+    let p = b.f.ins().iadd_imm(p, i64::from(offset));
+    b.f.ins().atomic_load(I32, MemFlags::trusted(), p)
+}
+fn cache_store(b: &mut B<'_, '_>, p: Value, offset: i32, value: Value) {
+    let p = b.f.ins().iadd_imm(p, i64::from(offset));
+    b.f.ins().atomic_store(MemFlags::trusted(), value, p);
+}
+fn cache_add(b: &mut B<'_, '_>, p: Value, offset: i32, value: Value) -> Value {
+    let p = b.f.ins().iadd_imm(p, i64::from(offset));
+    b.f.ins().atomic_rmw(I32, MemFlags::trusted(), ir::AtomicRmwOp::Add, p, value)
+}
+/// The statistics mode's count at `at` (`view::cache::STATS`), added to where the cache keeps them.
+fn cache_stat(b: &mut B<'_, '_>, cache: Value, at: i32) {
+    let on = cache_load(b, cache, crate::view::cache::STATS);
+    let (count, after) = (b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(on, count, &[], after, &[]);
+    b.f.switch_to_block(count);
+    cache_count(b, cache, at);
+    b.f.ins().jump(after, &[]);
+    b.f.switch_to_block(after);
+}
+
+fn cache_count(b: &mut B<'_, '_>, cache: Value, offset: i32) {
+    let one = b.c32(1);
+    cache_add(b, cache, offset, one);
+}
+
+/// The entry of `key` in the rolling cache at `cache` (`view::cache`): looked up in its live generations, head
+/// first, a hit in the oldest copied into the head, an entry another thread writes waited for (`SPIN` times at most);
+/// on a miss, an entry of the head claimed, indexed, `fill`ed (its payload: `fill` gives whether it fits) and
+/// completed. A full head turns the spare into the head. After `TRIES` tries without room, a failure counted and the
+/// dead entry given.
+fn cache_get(b: &mut B<'_, '_>, cache: Value, key: Value, fill: &dyn Fn(&mut B<'_, '_>, Value) -> Value) -> Value {
+    use crate::view::cache as c;
+    let gens = cache_load(b, cache, c::GENS);
+    let shift = cache_load(b, cache, c::SHIFT);
+    let shift64 = b.f.ins().uextend(I64, shift);
+    let slots = cache_load(b, cache, c::SLOTS);
+    let stride = cache_load(b, cache, c::GEN_STRIDE);
+    let first = cache_load(b, cache, c::FIRST_ENTRY);
+    let entries = cache_load(b, cache, c::ENTRIES);
+    // The key's slot: its high bits of a multiplicative hash.
+    let h = b.f.ins().imul_imm(key, 0x9E37_79B9_7F4A_7C15_u64 as i64);
+    let h = b.f.ins().ushr_imm(h, 32);
+    let h = b.f.ins().ireduce(I32, h);
+    // Its tag in a slot (`view::cache::TAG_SHIFT`): 16 bits of a second hash, never 0, so a pending slot (no entry
+    // yet) is not empty.
+    let t = b.f.ins().imul_imm(key, 0xC2B2_AE3D_27D4_EB4F_u64 as i64);
+    let t = b.f.ins().ushr_imm(t, 48);
+    let t = b.f.ins().ireduce(I32, t);
+    let t = b.f.ins().bor_imm(t, 1);
+    let tag = b.f.ins().ishl_imm(t, i64::from(c::TAG_SHIFT));
+    let slot_mask = b.f.ins().iadd_imm(slots, -1);
+    let done = b.f.create_block();
+    b.f.append_block_param(done, I64);
+    // The generation of epoch `e`: its address.
+    let gen_of = |b: &mut B<'_, '_>, e: Value| {
+        let g = b.f.ins().urem(e, gens);
+        let at = b.f.ins().imul(g, stride);
+        let at = b.f.ins().uextend(I64, at);
+        let at = b.f.ins().iadd_imm(at, c::HEAD as i64);
+        b.f.ins().iadd(cache, at)
+    };
+    let entry_of = |b: &mut B<'_, '_>, generation: Value, n: Value| {
+        let n = b.f.ins().uextend(I64, n);
+        let at = b.f.ins().ishl(n, shift64);
+        let first = b.f.ins().uextend(I64, first);
+        let at = b.f.ins().iadd(at, first);
+        b.f.ins().iadd(generation, at)
+    };
+    // Tries: each reads the epoch and looks in the live generations.
+    let (try_, look, gen_ok, probe, probe_on, next_gen, found, miss) =
+        (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(try_, I32);
+    let zero = b.c32(0);
+    b.f.ins().jump(try_, &[zero.into()]);
+    b.f.switch_to_block(try_);
+    let tries = b.f.block_params(try_)[0];
+    let epoch = cache_load(b, cache, c::EPOCH);
+    let live = b.f.ins().iadd_imm(gens, -1);
+    b.f.append_block_param(look, I32);
+    b.f.ins().jump(look, &[zero.into()]);
+    // Generation `k` back from the head.
+    b.f.switch_to_block(look);
+    let k = b.f.block_params(look)[0];
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, k, live);
+    let check = b.f.create_block();
+    b.f.ins().brif(more, check, &[], miss, &[]);
+    b.f.switch_to_block(check);
+    let want = b.f.ins().isub(epoch, k);
+    let generation = gen_of(b, want);
+    let stamp = cache_load(b, generation, c::STAMP);
+    let held = b.f.ins().icmp(IntCC::Equal, stamp, want);
+    b.f.ins().brif(held, gen_ok, &[], next_gen, &[]);
+    b.f.switch_to_block(gen_ok);
+    b.f.append_block_param(probe, I32);
+    b.f.ins().jump(probe, &[zero.into()]);
+    b.f.switch_to_block(probe);
+    let p = b.f.block_params(probe)[0];
+    let in_range = b.f.ins().icmp_imm(IntCC::UnsignedLessThan, p, i64::from(c::PROBES));
+    let read_slot = b.f.create_block();
+    b.f.ins().brif(in_range, read_slot, &[], next_gen, &[]);
+    b.f.switch_to_block(read_slot);
+    let j = b.f.ins().iadd(h, p);
+    let j = b.f.ins().band(j, slot_mask);
+    let j4 = b.f.ins().imul_imm(j, 4);
+    let j4 = b.f.ins().uextend(I64, j4);
+    let at = b.f.ins().iadd(generation, j4);
+    let x = cache_load(b, at, c::INDEX);
+    let empty = b.f.ins().icmp_imm(IntCC::Equal, x, 0);
+    let (tagged, numbered, candidate, pending_slot) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(empty, next_gen, &[], tagged, &[]);
+    // Another key's tag: on. Ours: its entry, or (pending: its writer has not taken one yet) waited for.
+    b.f.switch_to_block(tagged);
+    let its = b.f.ins().band_imm(x, !i64::from(c::NUMBER));
+    let ours = b.f.ins().icmp(IntCC::Equal, its, tag);
+    b.f.ins().brif(ours, numbered, &[], probe_on, &[]);
+    b.f.switch_to_block(numbered);
+    let number = b.f.ins().band_imm(x, i64::from(c::NUMBER));
+    let none_yet = b.f.ins().icmp_imm(IntCC::Equal, number, 0);
+    b.f.ins().brif(none_yet, pending_slot, &[], candidate, &[]);
+    b.f.switch_to_block(pending_slot);
+    let (slot_wait, slot_waiting, slot_out) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(slot_wait, I32);
+    b.f.ins().jump(slot_wait, &[zero.into()]);
+    b.f.switch_to_block(slot_wait);
+    let spin = b.f.block_params(slot_wait)[0];
+    let left = b.f.ins().icmp_imm(IntCC::UnsignedLessThan, spin, i64::from(c::SPIN));
+    b.f.ins().brif(left, slot_waiting, &[], slot_out, &[]);
+    b.f.switch_to_block(slot_waiting);
+    b.f.ins().fence();
+    let y = cache_load(b, at, c::INDEX);
+    let moved = b.f.ins().icmp(IntCC::NotEqual, y, x);
+    let spin = b.f.ins().iadd_imm(spin, 1);
+    b.f.ins().brif(moved, read_slot, &[], slot_wait, &[spin.into()]);
+    b.f.switch_to_block(slot_out);
+    cache_stat(b, cache, c::DUPLICATES);
+    b.f.ins().jump(miss, &[]);
+    b.f.switch_to_block(candidate);
+    let n = b.f.ins().iadd_imm(number, -1);
+    let e = entry_of(b, generation, n);
+    let k64 = b.f.ins().iadd_imm(e, i64::from(c::KEY));
+    let has = b.f.ins().load(I64, MemFlags::new().with_notrap(), k64, 0);
+    let same = b.f.ins().icmp(IntCC::Equal, has, key);
+    let ready = cache_load(b, e, c::READY);
+    let complete = b.f.ins().icmp(IntCC::Equal, ready, stamp);
+    let hit = b.f.ins().band(same, complete);
+    b.f.append_block_param(found, I64);
+    b.f.append_block_param(found, I32);
+    b.f.append_block_param(found, I32);
+    let (counted_hit, not_complete) = (b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(hit, counted_hit, &[], not_complete, &[]);
+    b.f.switch_to_block(counted_hit);
+    cache_stat(b, cache, c::HITS);
+    b.f.ins().jump(found, &[e.into(), k.into(), stamp.into()]);
+    // Its block being written by another thread (claimed first, indexed before it is decoded): waited for, a
+    // bounded number of times, else decoded here too (a duplicate).
+    b.f.switch_to_block(not_complete);
+    let writing = b.f.ins().bor_imm(stamp, i64::from(c::WRITING));
+    let pending = b.f.ins().icmp(IntCC::Equal, ready, writing);
+    let pending = b.f.ins().band(same, pending);
+    let (wait, waiting, waited, run_out) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(wait, I32);
+    b.f.ins().brif(pending, wait, &[zero.into()], probe_on, &[]);
+    b.f.switch_to_block(wait);
+    let spin = b.f.block_params(wait)[0];
+    let left = b.f.ins().icmp_imm(IntCC::UnsignedLessThan, spin, i64::from(c::SPIN));
+    b.f.ins().brif(left, waiting, &[], run_out, &[]);
+    b.f.switch_to_block(waiting);
+    b.f.ins().fence();
+    let now = cache_load(b, e, c::READY);
+    let done_now = b.f.ins().icmp(IntCC::Equal, now, stamp);
+    let still = b.f.ins().icmp(IntCC::Equal, now, writing);
+    let spin = b.f.ins().iadd_imm(spin, 1);
+    let again = b.f.create_block();
+    b.f.ins().brif(done_now, waited, &[], again, &[]);
+    b.f.switch_to_block(again);
+    b.f.ins().brif(still, wait, &[spin.into()], probe_on, &[]);
+    b.f.switch_to_block(waited);
+    cache_stat(b, cache, c::WAITED);
+    b.f.ins().jump(found, &[e.into(), k.into(), stamp.into()]);
+    b.f.switch_to_block(run_out);
+    cache_stat(b, cache, c::DUPLICATES);
+    b.f.ins().jump(miss, &[]);
+    b.f.switch_to_block(probe_on);
+    let p = b.f.ins().iadd_imm(p, 1);
+    b.f.ins().jump(probe, &[p.into()]);
+    b.f.switch_to_block(next_gen);
+    let k = b.f.ins().iadd_imm(k, 1);
+    b.f.ins().jump(look, &[k.into()]);
+    // A hit: from the oldest live generation (of two or more), copied into the head.
+    b.f.switch_to_block(found);
+    let (e, k, stamp) = (b.f.block_params(found)[0], b.f.block_params(found)[1], b.f.block_params(found)[2]);
+    let oldest = b.f.ins().iadd_imm(live, -1);
+    let is_oldest = b.f.ins().icmp(IntCC::Equal, k, oldest);
+    let some_frozen = b.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, live, 1);
+    let promote = b.f.ins().band(is_oldest, some_frozen);
+    let copy = b.f.create_block();
+    b.f.ins().brif(promote, copy, &[], done, &[e.into()]);
+    b.f.switch_to_block(copy);
+    let copied = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, &|b, to| {
+        // The payload, a word at a time, and the source's completion read again after it.
+        let one = b.c64(1);
+        let size = b.f.ins().ishl(one, shift64);
+        let words = b.f.ins().iadd_imm(size, -i64::from(c::PAYLOAD));
+        let (head, step, after) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+        b.f.append_block_param(head, I64);
+        let at = b.f.ins().iconst(I64, i64::from(c::PAYLOAD));
+        let end = b.f.ins().iadd_imm(words, i64::from(c::PAYLOAD));
+        b.f.ins().jump(head, &[at.into()]);
+        b.f.switch_to_block(head);
+        let at = b.f.block_params(head)[0];
+        let more = b.f.ins().icmp(IntCC::UnsignedLessThan, at, end);
+        b.f.ins().brif(more, step, &[], after, &[]);
+        b.f.switch_to_block(step);
+        let from = b.f.ins().iadd(e, at);
+        let word = b.f.ins().load(I64, MemFlags::new().with_notrap(), from, 0);
+        let into = b.f.ins().iadd(to, at);
+        b.f.ins().store(MemFlags::new().with_notrap(), word, into, 0);
+        let at = b.f.ins().iadd_imm(at, 8);
+        b.f.ins().jump(head, &[at.into()]);
+        b.f.switch_to_block(after);
+        b.f.ins().fence();
+        let still = cache_load(b, e, c::READY);
+        b.f.ins().icmp(IntCC::Equal, still, stamp)
+    });
+    let took = b.f.ins().icmp_imm(IntCC::NotEqual, copied, 0);
+    let counted = b.f.create_block();
+    b.f.ins().brif(took, counted, &[], done, &[e.into()]);
+    b.f.switch_to_block(counted);
+    cache_count(b, cache, c::PROMOTED);
+    b.f.ins().jump(done, &[copied.into()]);
+    // A miss: an entry of the head taken and filled, else (the head full) the spare turned and tried again.
+    b.f.switch_to_block(miss);
+    let taken = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, fill);
+    let got = b.f.ins().icmp_imm(IntCC::NotEqual, taken, 0);
+    let (hit_miss, retry, fail) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(got, hit_miss, &[], retry, &[]);
+    b.f.switch_to_block(hit_miss);
+    cache_count(b, cache, c::MISSES);
+    b.f.ins().jump(done, &[taken.into()]);
+    b.f.switch_to_block(retry);
+    let tries = b.f.ins().iadd_imm(tries, 1);
+    let left = b.f.ins().icmp_imm(IntCC::UnsignedLessThan, tries, i64::from(c::TRIES));
+    b.f.ins().brif(left, try_, &[tries.into()], fail, &[]);
+    b.f.switch_to_block(fail);
+    cache_count(b, cache, c::FAILED);
+    let dead = cache_load(b, cache, c::DEAD);
+    let dead = b.f.ins().uextend(I64, dead);
+    let dead = b.f.ins().iadd(cache, dead);
+    b.f.ins().jump(done, &[dead.into()]);
+    b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
+}
+
+/// An entry of the head at `epoch` taken for `key`, `fill`ed (it gives whether the payload fits), completed and
+/// indexed: its address, or 0 where there was none (the head full: the spare turned into the head if it was cleared,
+/// by the thread whose compare-and-swap of the epoch won, which clears the next spare; or the payload too large).
+#[allow(clippy::too_many_arguments)]
+fn cache_take(
+    b: &mut B<'_, '_>,
+    cache: Value,
+    epoch: Value,
+    key: Value,
+    tag: Value,
+    gen_of: &dyn Fn(&mut B<'_, '_>, Value) -> Value,
+    entry_of: &dyn Fn(&mut B<'_, '_>, Value, Value) -> Value,
+    entries: Value,
+    h: Value,
+    slot_mask: Value,
+    fill: &dyn Fn(&mut B<'_, '_>, Value) -> Value,
+) -> Value {
+    use crate::view::cache as c;
+    let rw = MemFlags::new().with_notrap();
+    let done = b.f.create_block();
+    b.f.append_block_param(done, I64);
+    let none = b.c64(0);
+    let zero = b.c32(0);
+    let head = gen_of(b, epoch);
+    let stamp = cache_load(b, head, c::STAMP);
+    let current = b.f.ins().icmp(IntCC::Equal, stamp, epoch);
+    let (take, full) = (b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(current, take, &[], done, &[none.into()]);
+    // Its slot in the head's index claimed first, pending (its tag, no entry yet), so a thread that misses the same
+    // block at once finds it and waits rather than taking an entry too. A slot of the same block already: none
+    // (the lookup, tried again, finds it). No slot free in its probes: the head full.
+    b.f.switch_to_block(take);
+    let (probe, place, check, theirs, mine_already, next, slotted) =
+        (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(probe, I32);
+    b.f.ins().jump(probe, &[zero.into()]);
+    b.f.switch_to_block(probe);
+    let p = b.f.block_params(probe)[0];
+    let in_range = b.f.ins().icmp_imm(IntCC::UnsignedLessThan, p, i64::from(c::PROBES));
+    b.f.ins().brif(in_range, place, &[], full, &[]);
+    b.f.switch_to_block(place);
+    let j = b.f.ins().iadd(h, p);
+    let j = b.f.ins().band(j, slot_mask);
+    let j4 = b.f.ins().imul_imm(j, 4);
+    let j4 = b.f.ins().uextend(I64, j4);
+    let slot = b.f.ins().iadd(head, j4);
+    let slot = b.f.ins().iadd_imm(slot, i64::from(c::INDEX));
+    let was = b.f.ins().atomic_cas(MemFlags::trusted(), slot, zero, tag);
+    let won = b.f.ins().icmp_imm(IntCC::Equal, was, 0);
+    b.f.ins().brif(won, slotted, &[], check, &[]);
+    // Taken: by this block (its tag, pending or its entry's key ours), or another's.
+    b.f.switch_to_block(check);
+    let its = b.f.ins().band_imm(was, !i64::from(c::NUMBER));
+    let same_tag = b.f.ins().icmp(IntCC::Equal, its, tag);
+    b.f.ins().brif(same_tag, theirs, &[], next, &[]);
+    b.f.switch_to_block(theirs);
+    let number = b.f.ins().band_imm(was, i64::from(c::NUMBER));
+    let none_yet = b.f.ins().icmp_imm(IntCC::Equal, number, 0);
+    let keyed = b.f.create_block();
+    b.f.ins().brif(none_yet, mine_already, &[], keyed, &[]);
+    b.f.switch_to_block(keyed);
+    let other = b.f.ins().iadd_imm(number, -1);
+    let other = entry_of(b, head, other);
+    let held = b.f.ins().load(I64, rw, other, c::KEY);
+    let same = b.f.ins().icmp(IntCC::Equal, held, key);
+    b.f.ins().brif(same, mine_already, &[], next, &[]);
+    b.f.switch_to_block(mine_already);
+    b.f.ins().jump(done, &[none.into()]);
+    b.f.switch_to_block(next);
+    let p = b.f.ins().iadd_imm(p, 1);
+    b.f.ins().jump(probe, &[p.into()]);
+    // The slot this thread's: an entry taken for it, else (the head full) the slot given back.
+    b.f.switch_to_block(slotted);
+    let (entry, claim, release, write) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.ins().jump(entry, &[]);
+    b.f.switch_to_block(entry);
+    let one = b.c32(1);
+    let n = cache_add(b, head, c::USED, one);
+    let room = b.f.ins().icmp(IntCC::UnsignedLessThan, n, entries);
+    b.f.ins().brif(room, claim, &[], release, &[]);
+    b.f.switch_to_block(release);
+    b.f.ins().atomic_store(MemFlags::trusted(), zero, slot);
+    b.f.ins().jump(full, &[]);
+    // The entry claimed: its completion marked as being written in this epoch, unless a writer of an older epoch
+    // (its generation turned under it) still writes it, which takes the next entry. So no two write one entry.
+    b.f.switch_to_block(claim);
+    let e = entry_of(b, head, n);
+    let was = cache_load(b, e, c::READY);
+    let busy = b.f.ins().band_imm(was, i64::from(c::WRITING));
+    let writing = b.f.ins().bor_imm(epoch, i64::from(c::WRITING));
+    let at = b.f.ins().iadd_imm(e, i64::from(c::READY));
+    let seen = b.f.ins().atomic_cas(MemFlags::trusted(), at, was, writing);
+    let claimed = b.f.ins().icmp(IntCC::Equal, seen, was);
+    let free = b.f.ins().icmp_imm(IntCC::Equal, busy, 0);
+    let ours = b.f.ins().band(claimed, free);
+    b.f.ins().brif(ours, write, &[], entry, &[]);
+    // Its key (a fence after the claim), then (a fence after the key) its number in the slot, so a waiter finds it
+    // being written; then its payload and (a fence after it) its completion.
+    b.f.switch_to_block(write);
+    b.f.ins().fence();
+    b.f.ins().store(rw, key, e, c::KEY);
+    b.f.ins().fence();
+    let number = b.f.ins().iadd_imm(n, 1);
+    let numbered = b.f.ins().bor(tag, number);
+    b.f.ins().atomic_store(MemFlags::trusted(), numbered, slot);
+    let fits = fill(b, e);
+    let (complete, unfit) = (b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(fits, complete, &[], unfit, &[]);
+    // Too large for an entry: the entry given back.
+    b.f.switch_to_block(unfit);
+    cache_store(b, e, c::READY, zero);
+    b.f.ins().jump(done, &[none.into()]);
+    b.f.switch_to_block(complete);
+    b.f.ins().fence();
+    cache_store(b, e, c::READY, epoch);
+    b.f.ins().jump(done, &[e.into()]);
+    // The head full: the spare (cleared ahead, stamped `epoch + 1`) turned into the head.
+    b.f.switch_to_block(full);
+    let next_epoch = b.f.ins().iadd_imm(epoch, 1);
+    let spare = gen_of(b, next_epoch);
+    let ready = cache_load(b, spare, c::STAMP);
+    let cleared = b.f.ins().icmp(IntCC::Equal, ready, next_epoch);
+    let (turn, won) = (b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(cleared, turn, &[], done, &[none.into()]);
+    b.f.switch_to_block(turn);
+    let at = b.f.ins().iadd_imm(cache, i64::from(c::EPOCH));
+    let was = b.f.ins().atomic_cas(MemFlags::trusted(), at, epoch, next_epoch);
+    let turned = b.f.ins().icmp(IntCC::Equal, was, epoch);
+    b.f.ins().brif(turned, won, &[], done, &[none.into()]);
+    // The next spare: the oldest live generation of `epoch`, unstamped, its index and count cleared, stamped.
+    b.f.switch_to_block(won);
+    cache_count(b, cache, c::ROTATED);
+    let spare_epoch = b.f.ins().iadd_imm(epoch, 2);
+    let generation = gen_of(b, spare_epoch);
+    cache_store(b, generation, c::STAMP, zero);
+    b.f.ins().fence();
+    let slots = b.f.ins().iadd_imm(slot_mask, 1);
+    let (clear, step, cleared_all) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(clear, I32);
+    b.f.ins().jump(clear, &[zero.into()]);
+    b.f.switch_to_block(clear);
+    let j = b.f.block_params(clear)[0];
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, j, slots);
+    b.f.ins().brif(more, step, &[], cleared_all, &[]);
+    b.f.switch_to_block(step);
+    let j4 = b.f.ins().imul_imm(j, 4);
+    let j4 = b.f.ins().uextend(I64, j4);
+    let at = b.f.ins().iadd(generation, j4);
+    cache_store(b, at, c::INDEX, zero);
+    let j = b.f.ins().iadd_imm(j, 1);
+    b.f.ins().jump(clear, &[j.into()]);
+    b.f.switch_to_block(cleared_all);
+    cache_store(b, generation, c::USED, zero);
+    b.f.ins().fence();
+    cache_store(b, generation, c::STAMP, spare_epoch);
+    b.f.ins().jump(done, &[none.into()]);
+    b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
+}
+
+/// Block `block` of the reader's 16z tape decoded into the cache entry `slot` (`size` bytes), as a format 16 tape
+/// of one block (decision 0434 §3's stored form read through 0353 step 4b's cache): each of its `F16Z_PIECES`
+/// pieces (codes, slots, gaps, lengths) decoded where its view places it, the array's column then its side list's
+/// part (an LZ4 piece by `z_lz4`, a raw one copied, a repeat as the piece it names), its checkpoints copied, each
+/// side list's one part's starts after them, and its view. Column `q` lies at `nb * C[q]` (`nb` its nodes), `C[q]`
+/// the least that clears the piece before and 16 bytes of room: the view's `columns` hold `C`, as a block-major
+/// tape's hold the bytes a row has before each column. Whether it fits the entry (1), else 0 and nothing written.
+///
+/// The tape's view names its piece index (`columns[0]`: the pieces' starts in the payload, then their lengths,
+/// then their kinds, a byte each), its side lists' part starts (`columns[1]`), its checkpoints (`columns[2]`) and
+/// its payload (`stride`).
+fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value, size: Value) -> Value {
+    let rw = MemFlags::new().with_notrap();
+    let nodes = b.view(at::NODES);
+    let first = b.f.ins().ishl_imm(block, i64::from(F16Z_BLOCK.trailing_zeros()));
+    let left = b.f.ins().isub(nodes, first);
+    let most = b.c32(i64::from(F16Z_BLOCK));
+    let nb = b.f.ins().umin(left, most);
+    let blocks = b.f.ins().iadd_imm(nodes, i64::from(F16Z_BLOCK - 1));
+    let blocks = b.f.ins().ushr_imm(blocks, i64::from(F16Z_BLOCK.trailing_zeros()));
+    // Each side list's part of the block: from its start to the next's (list `q`'s starts at `4 * q * (blocks + 1)`).
+    let parts = b.column(1);
+    let count = b.f.ins().iadd_imm(blocks, 1);
+    let side: Vec<Value> = (0..4)
+        .map(|q| {
+            let row = b.f.ins().imul_imm(count, q);
+            let row = b.f.ins().iadd(row, block);
+            let at = b.f.ins().imul_imm(row, 4);
+            let from = b.u32(parts, at);
+            let next = b.f.ins().iadd_imm(at, 4);
+            let to = b.u32(parts, next);
+            // Held to its list's order (checked where the tape is read in, decision 0403): never past it.
+            let to = b.f.ins().umax(to, from);
+            b.f.ins().isub(to, from)
+        })
+        .collect();
+    // The columns' places: column `q` holds `nb * w[q]` bytes, its side part after it, then 16 bytes of room.
+    let w = [b.c32(1), b.width(0), b.width(1), b.width(2)];
+    let cw = b.width(3);
+    let nb1 = b.f.ins().iadd_imm(nb, -1);
+    let mut c = vec![b.c32(0)];
+    let mut ends = Vec::new();
+    for q in 0..4 {
+        let at = b.f.ins().imul(nb, c[q]);
+        let bytes = b.f.ins().imul(nb, w[q]);
+        let end = b.f.ins().iadd(at, bytes);
+        ends.push(end);
+        let end = b.f.ins().iadd(end, side[q]);
+        let end = b.f.ins().iadd_imm(end, 16);
+        let up = b.f.ins().iadd(end, nb1);
+        c.push(b.f.ins().udiv(up, nb));
+    }
+    let ckpt_at = b.f.ins().imul(nb, c[4]);
+    let ckpts = b.f.ins().iadd_imm(nb, i64::from(F16_K) - 1);
+    let ckpts = b.f.ins().ushr_imm(ckpts, i64::from(F16_K.trailing_zeros()));
+    let ckpt_len = b.f.ins().imul(ckpts, cw);
+    let parts_at = b.f.ins().iadd(ckpt_at, ckpt_len);
+    let parts_at = b.f.ins().iadd_imm(parts_at, 16 + 7);
+    let parts_at = b.f.ins().band_imm(parts_at, !7);
+    let end = b.f.ins().iadd_imm(parts_at, 32 + 8);
+    let need = b.f.ins().uextend(I64, end);
+    let need = b.f.ins().iadd_imm(need, i64::from(z::SLOT_BYTES) + z::SLACK as i64);
+    let fits = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, need, size);
+    let (decode, fitted) = (b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(fitted, I32);
+    let no = b.c32(0);
+    b.f.ins().brif(fits, decode, &[], fitted, &[no.into()]);
+    b.f.switch_to_block(decode);
+    let dst = b.f.ins().iadd_imm(slot, i64::from(z::SLOT_BYTES));
+    // The block's view: its nodes, format 16's, its columns' places, its side parts, the tape's widths and choices.
+    let view = b.f.ins().iadd_imm(slot, i64::from(z::SLOT_VIEW));
+    let sixteen = b.c32(16);
+    let zero = b.c32(0);
+    let widths = b.view(at::WIDTHS);
+    let (cut, per) = (b.view(at::CUT), b.view(at::PER));
+    let source = b.view(at::SOURCE_LEN);
+    for (value, offset) in [(nb, at::NODES), (sixteen, at::FORMAT), (widths, at::WIDTHS), (cut, at::CUT), (per, at::PER), (source, at::SOURCE_LEN), (zero, at::STRIDE)] {
+        b.f.ins().store(rw, value, view, offset);
+    }
+    for (k, &value) in c[..5].iter().enumerate() {
+        b.f.ins().store(rw, value, view, at::COLUMNS + 4 * k as i32);
+    }
+    let parts_end = b.f.ins().uextend(I64, parts_at);
+    let parts_end = b.f.ins().iadd(dst, parts_end);
+    for q in 0..4 {
+        b.f.ins().store(rw, ends[q], view, at::SIDE + 4 * q as i32);
+        let part = b.f.ins().iadd_imm(parts_at, 8 * q as i64);
+        b.f.ins().store(rw, part, view, at::PARTS + 4 * q as i32);
+        b.f.ins().store(rw, zero, parts_end, 8 * q as i32);
+        b.f.ins().store(rw, side[q], parts_end, 8 * q as i32 + 4);
+    }
+    // Its checkpoints, raw where the tape stores them (`Z / K` a block, `cw` bytes each).
+    let ckpt = b.column(2);
+    let from = b.f.ins().imul_imm(block, i64::from(F16Z_BLOCK / F16_K));
+    let from = b.f.ins().imul(from, cw);
+    let src = b.address(ckpt, from);
+    let ckpt_at64 = b.f.ins().uextend(I64, ckpt_at);
+    let to = b.f.ins().iadd(dst, ckpt_at64);
+    let len = b.f.ins().uextend(I64, ckpt_len);
+    z_copy_exact(b, src, to, len);
+    // Its pieces, one a turn: the piece index's start, length and kind (a repeat's, the piece it names).
+    let pieces = b.f.ins().imul_imm(blocks, i64::from(F16Z_PIECES));
+    let starts = b.column(0);
+    let lens = b.f.ins().imul_imm(pieces, 4);
+    let lens = b.f.ins().iadd(starts, lens);
+    let kinds = b.f.ins().imul_imm(pieces, 4);
+    let kinds = b.f.ins().iadd(lens, kinds);
+    let payload = b.view(at::STRIDE);
+    let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I32);
+    b.f.ins().jump(head, &[zero.into()]);
+    b.f.switch_to_block(head);
+    let q = b.f.block_params(head)[0];
+    let more = b.f.ins().icmp_imm(IntCC::UnsignedLessThan, q, i64::from(F16Z_PIECES));
+    b.f.ins().brif(more, body, &[], done, &[]);
+    b.f.switch_to_block(body);
+    let j = b.f.ins().imul_imm(block, i64::from(F16Z_PIECES));
+    let j = b.f.ins().iadd(j, q);
+    let kind = b.u8(kinds, j);
+    let j4 = b.f.ins().imul_imm(j, 4);
+    let start = b.u32(starts, j4);
+    let named = b.u32(payload, start);
+    // A repeat names a piece of the tape that is none (checked where the tape is read in): else itself, read raw.
+    let repeat = b.f.ins().icmp_imm(IntCC::Equal, kind, i64::from(z::REPEAT));
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, named, pieces);
+    let repeat = b.f.ins().band(repeat, inside);
+    let k = b.f.ins().select(repeat, named, j);
+    let kind = b.u8(kinds, k);
+    let k4 = b.f.ins().imul_imm(k, 4);
+    let start = b.u32(starts, k4);
+    let len = b.u32(lens, k4);
+    let src = b.address(payload, start);
+    let len = b.f.ins().uextend(I64, len);
+    let src_end = b.f.ins().iadd(src, len);
+    // Where it decodes: its column (`nb * C[q]`, from the view just written) to its side part's end.
+    let qw = b.f.ins().uextend(I64, q);
+    let qw = b.f.ins().ishl_imm(qw, 2);
+    let col = b.f.ins().iadd(view, qw);
+    let cq = b.f.ins().load(I32, rw, col, at::COLUMNS);
+    let side_at = b.f.ins().load(I32, rw, col, at::SIDE);
+    let at_q = b.f.ins().imul(nb, cq);
+    let pq = b.f.ins().iadd(parts_end, qw);
+    let pq = b.f.ins().iadd(pq, qw);
+    let side_len = b.f.ins().load(I32, rw, pq, 4);
+    let end_q = b.f.ins().iadd(side_at, side_len);
+    let at64 = b.f.ins().uextend(I64, at_q);
+    let to = b.f.ins().iadd(dst, at64);
+    let end64 = b.f.ins().uextend(I64, end_q);
+    let to_end = b.f.ins().iadd(dst, end64);
+    let lz4 = b.f.ins().icmp_imm(IntCC::Equal, kind, i64::from(z::LZ4));
+    let (packed, raw, next) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(lz4, packed, &[], raw, &[]);
+    b.f.switch_to_block(packed);
+    z_lz4(b, src, src_end, to, to_end);
+    b.f.ins().jump(next, &[]);
+    b.f.switch_to_block(raw);
+    let want = b.f.ins().isub(to_end, to);
+    let n = b.f.ins().umin(len, want);
+    z_copy_exact(b, src, to, n);
+    b.f.ins().jump(next, &[]);
+    b.f.switch_to_block(next);
+    let q = b.f.ins().iadd_imm(q, 1);
+    b.f.ins().jump(head, &[q.into()]);
+    b.f.switch_to_block(done);
+    let yes = b.c32(1);
+    b.f.ins().jump(fitted, &[yes.into()]);
+    b.f.switch_to_block(fitted);
+    b.f.block_params(fitted)[0]
+}
+
+/// LZ4's block format decoded from `src..src_end` to `dst..dst_end` (decision 0353 step 4b), in words: a
+/// sequence's literals 8 bytes a copy, then 4, 2 and 1; a match 8 bytes a copy, an offset under 8 widened first as
+/// LZ4's reference decoder widens it (its copies may run 8 bytes past `dst_end`, into the slot's room). A length's
+/// extension bytes are read one a step, each 255 bytes of the length. A sequence that would write past `dst_end`
+/// or read before `dst` (a corrupt block) ends the decode.
+fn z_lz4(b: &mut B<'_, '_>, src: Value, src_end: Value, dst: Value, dst_end: Value) {
+    let rw = MemFlags::new().with_notrap();
+    let tape = memory();
+    let (head, token, literals, after, matched, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I64);
+    b.f.append_block_param(head, I64);
+    b.f.ins().jump(head, &[src.into(), dst.into()]);
+    b.f.switch_to_block(head);
+    let (s, d) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, s, src_end);
+    b.f.ins().brif(more, token, &[], done, &[]);
+    b.f.switch_to_block(token);
+    let t = b.f.ins().uload8(I32, tape, s, 0);
+    let s = b.f.ins().iadd_imm(s, 1);
+    let lit = b.f.ins().ushr_imm(t, 4);
+    let (lit, s) = z_length(b, lit, s, src_end);
+    let lit = b.f.ins().uextend(I64, lit);
+    let d_lit = b.f.ins().iadd(d, lit);
+    // The literals within the destination and the source both: a length the block states past its own bytes
+    // reads nothing after them (decision 0403).
+    let fits = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, d_lit, dst_end);
+    let s_lit = b.f.ins().iadd(s, lit);
+    let held = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, s_lit, src_end);
+    let fits = b.f.ins().band(fits, held);
+    b.f.ins().brif(fits, literals, &[], done, &[]);
+    b.f.switch_to_block(literals);
+    z_copy_exact(b, s, d, lit);
+    let s = b.f.ins().iadd(s, lit);
+    // A match's two offset bytes within the source, else the block's last literals ended it.
+    let s2 = b.f.ins().iadd_imm(s, 2);
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, s2, src_end);
+    b.f.ins().brif(more, after, &[], done, &[]);
+    // The match: its offset back, its length (4 more than its own).
+    b.f.switch_to_block(after);
+    let off = b.f.ins().uload16(I32, tape, s, 0);
+    let off = b.f.ins().uextend(I64, off);
+    let s = b.f.ins().iadd_imm(s, 2);
+    let m = b.f.ins().band_imm(t, 15);
+    let (m, s) = z_length(b, m, s, src_end);
+    let m = b.f.ins().iadd_imm(m, 4);
+    let m = b.f.ins().uextend(I64, m);
+    let back = b.f.ins().isub(d_lit, dst);
+    let some = b.f.ins().icmp_imm(IntCC::NotEqual, off, 0);
+    let within = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, off, back);
+    let d_end = b.f.ins().iadd(d_lit, m);
+    let fits = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, d_end, dst_end);
+    let ok = b.f.ins().band(some, within);
+    let ok = b.f.ins().band(ok, fits);
+    b.f.ins().brif(ok, matched, &[], done, &[]);
+    b.f.switch_to_block(matched);
+    let from = b.f.ins().isub(d_lit, off);
+    // An offset under 8: its first 8 bytes a byte at a time and a word, and the source moved on to a multiple of
+    // the offset at least 8 back (LZ4's `inc32table` and `dec64table`, a nibble each).
+    let (near, far, copy) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(copy, I64);
+    let small = b.f.ins().icmp_imm(IntCC::UnsignedLessThan, off, 8);
+    b.f.ins().brif(small, near, &[], far, &[]);
+    b.f.switch_to_block(near);
+    for j in 0..4 {
+        let byte = b.f.ins().uload8(I32, rw, from, j);
+        b.f.ins().istore8(rw, byte, d_lit, j);
+    }
+    let shift = b.f.ins().ishl_imm(off, 2);
+    let inc = b.c64(0x4440_1210);
+    let inc = b.f.ins().ushr(inc, shift);
+    let inc = b.f.ins().band_imm(inc, 15);
+    let at = b.f.ins().iadd(from, inc);
+    let word = b.f.ins().load(I32, rw, at, 0);
+    b.f.ins().store(rw, word, d_lit, 4);
+    let dec = b.c64(0x7650_3444);
+    let dec = b.f.ins().ushr(dec, shift);
+    let dec = b.f.ins().band_imm(dec, 15);
+    let at = b.f.ins().iadd_imm(at, 4);
+    let at = b.f.ins().isub(at, dec);
+    b.f.ins().jump(copy, &[at.into()]);
+    b.f.switch_to_block(far);
+    let word = b.f.ins().load(I64, rw, from, 0);
+    b.f.ins().store(rw, word, d_lit, 0);
+    let at = b.f.ins().iadd_imm(from, 8);
+    b.f.ins().jump(copy, &[at.into()]);
+    // The rest 8 bytes a copy, at least 8 back.
+    b.f.switch_to_block(copy);
+    let from = b.f.block_params(copy)[0];
+    let (wild, step) = (b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(wild, I64);
+    b.f.append_block_param(wild, I64);
+    let to = b.f.ins().iadd_imm(d_lit, 8);
+    b.f.ins().jump(wild, &[to.into(), from.into()]);
+    b.f.switch_to_block(wild);
+    let (to, from) = (b.f.block_params(wild)[0], b.f.block_params(wild)[1]);
+    let left = b.f.ins().icmp(IntCC::UnsignedLessThan, to, d_end);
+    b.f.ins().brif(left, step, &[], head, &[s.into(), d_end.into()]);
+    b.f.switch_to_block(step);
+    let word = b.f.ins().load(I64, rw, from, 0);
+    b.f.ins().store(rw, word, to, 0);
+    let to = b.f.ins().iadd_imm(to, 8);
+    let from = b.f.ins().iadd_imm(from, 8);
+    b.f.ins().jump(wild, &[to.into(), from.into()]);
+    b.f.switch_to_block(done);
+}
+
+/// An LZ4 length of `nibble` (a u32): 15 is followed by bytes added to it, the last under 255. Returns the length and
+/// the source past it.
+fn z_length(b: &mut B<'_, '_>, nibble: Value, s: Value, src_end: Value) -> (Value, Value) {
+    let (head, step, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(head, I64);
+    b.f.append_block_param(done, I32);
+    b.f.append_block_param(done, I64);
+    let long = b.f.ins().icmp_imm(IntCC::Equal, nibble, 15);
+    b.f.ins().brif(long, head, &[nibble.into(), s.into()], done, &[nibble.into(), s.into()]);
+    b.f.switch_to_block(head);
+    let (n, s) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+    let some = b.f.ins().icmp(IntCC::UnsignedLessThan, s, src_end);
+    b.f.ins().brif(some, step, &[], done, &[n.into(), s.into()]);
+    b.f.switch_to_block(step);
+    let byte = b.f.ins().uload8(I32, memory(), s, 0);
+    let n = b.f.ins().iadd(n, byte);
+    let s = b.f.ins().iadd_imm(s, 1);
+    let again = b.f.ins().icmp_imm(IntCC::Equal, byte, 255);
+    b.f.ins().brif(again, head, &[n.into(), s.into()], done, &[n.into(), s.into()]);
+    b.f.switch_to_block(done);
+    (b.f.block_params(done)[0], b.f.block_params(done)[1])
+}
+
+/// `n` bytes from `s` to `d`: 8 a copy, then 4, 2 and 1, so no load passes `s + n` (the last block's literals end
+/// the tape).
+fn z_copy_exact(b: &mut B<'_, '_>, s: Value, d: Value, n: Value) {
+    let rw = MemFlags::new().with_notrap();
+    let (head, step, tail) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I64);
+    let whole = b.f.ins().band_imm(n, !7);
+    let zero = b.c64(0);
+    b.f.ins().jump(head, &[zero.into()]);
+    b.f.switch_to_block(head);
+    let k = b.f.block_params(head)[0];
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, k, whole);
+    b.f.ins().brif(more, step, &[], tail, &[]);
+    b.f.switch_to_block(step);
+    let from = b.f.ins().iadd(s, k);
+    let word = b.f.ins().load(I64, memory(), from, 0);
+    let to = b.f.ins().iadd(d, k);
+    b.f.ins().store(rw, word, to, 0);
+    let k = b.f.ins().iadd_imm(k, 8);
+    b.f.ins().jump(head, &[k.into()]);
+    b.f.switch_to_block(tail);
+    let mut k = whole;
+    for (bit, ty) in [(4, I32), (2, ir::types::I16), (1, ir::types::I8)] {
+        let (copy, next) = (b.f.create_block(), b.f.create_block());
+        let has = b.f.ins().band_imm(n, bit);
+        b.f.ins().brif(has, copy, &[], next, &[]);
+        b.f.switch_to_block(copy);
+        let from = b.f.ins().iadd(s, k);
+        let to = b.f.ins().iadd(d, k);
+        let value = b.f.ins().load(ty, memory(), from, 0);
+        b.f.ins().store(rw, value, to, 0);
+        b.f.ins().jump(next, &[]);
+        b.f.switch_to_block(next);
+        let step = b.f.ins().band_imm(n, bit);
+        k = b.f.ins().iadd(k, step);
+    }
 }
 
 /// One past the node's subtree.
 fn end_of(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
     let size = b.call("tape_size", &[i]);
-    b.f.ins().iadd(i, size)
+    hop(b, i, size)
+}
+
+/// `c + size`, past `c` however `size` wraps, and no further than the tape's nodes: a walk by sizes ends whatever
+/// the tape holds, and every node it gives is one of the tape's (decision 0403).
+fn hop(b: &mut B<'_, '_>, c: Value, size: Value) -> Value {
+    let to = b.f.ins().iadd(c, size);
+    let past = b.f.ins().iadd_imm(c, 1);
+    let to = b.f.ins().umax(to, past);
+    let nodes = b.view(at::NODES);
+    b.f.ins().umin(to, nodes)
 }
 
 /// The node after the node's subtree while it is before `end` (its parent's subtree's end), else `NONE`.
@@ -878,7 +2183,7 @@ fn child_count(b: &mut B<'_, '_>) -> Value {
     b.f.ins().brif(more, body, &[], done, &[n.into()]);
     b.f.switch_to_block(body);
     let size = b.call("tape_size", &[c]);
-    let c = b.f.ins().iadd(c, size);
+    let c = hop(b, c, size);
     let n = b.f.ins().iadd_imm(n, 1);
     b.f.ins().jump(head, &[c.into(), n.into()]);
     b.f.switch_to_block(done);
@@ -890,7 +2195,7 @@ fn child(b: &mut B<'_, '_>) -> Value {
     let (i, k) = (b.arg(0), b.arg(1));
     let end = b.call("tape_end_of", &[i]);
     let first = b.f.ins().iadd_imm(i, 1);
-    let (head, body, hop, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    let (head, body, hop_to, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.append_block_param(head, I32);
     b.f.append_block_param(head, I32);
     b.f.append_block_param(done, I32);
@@ -901,10 +2206,10 @@ fn child(b: &mut B<'_, '_>) -> Value {
     let none = b.c32(NONE);
     b.f.ins().brif(more, body, &[], done, &[none.into()]);
     b.f.switch_to_block(body);
-    b.f.ins().brif(k, hop, &[], done, &[c.into()]);
-    b.f.switch_to_block(hop);
+    b.f.ins().brif(k, hop_to, &[], done, &[c.into()]);
+    b.f.switch_to_block(hop_to);
     let size = b.call("tape_size", &[c]);
-    let c = b.f.ins().iadd(c, size);
+    let c = hop(b, c, size);
     let k = b.f.ins().iadd_imm(k, -1);
     b.f.ins().jump(head, &[c.into(), k.into()]);
     b.f.switch_to_block(done);
@@ -1027,7 +2332,7 @@ fn line_select(b: &mut B<'_, '_>) -> Value {
 /// bucket, then a search of the bucket's low parts); format 15's line starts searched.
 fn line(b: &mut B<'_, '_>) -> Value {
     let x = b.arg(0);
-    b.by_format(
+    b.by_format_whole(
         I32,
         |b| {
             let m = lines_field(b, 0);
@@ -1114,11 +2419,58 @@ fn line(b: &mut B<'_, '_>) -> Value {
     )
 }
 
+/// Whether the tape's block `block` (its nodes `F16_PART * block ..`; `NONE`: the whole document) has a node of kind
+/// `kind`, by its presence (the view's `presence`, decision 0434 §4, step 6): 1 where the tape has none to tell by
+/// (format 15, or one stored without it), and the document's answer where its blocks' presences are not held. The
+/// host's planners and the kernels ask this one read.
+fn has_kind(b: &mut B<'_, '_>) -> Value {
+    let (block, kind) = (b.arg(0), b.arg(1));
+    let at = b.view(at::PRESENCE);
+    let none = b.f.ins().icmp_imm(IntCC::Equal, at, 0);
+    b.either(
+        I32,
+        none,
+        |b| b.c32(1),
+        |b| {
+            let zero = b.c32(0);
+            let kinds = b.u32(at, zero);
+            let word = b.f.ins().ushr_imm(kind, 6);
+            let outside = b.f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, word, kinds);
+            b.either(
+                I32,
+                outside,
+                |b| b.c32(0),
+                |b| {
+                    let four = b.c32(4);
+                    let fields = b.u32(at, four);
+                    let eight = b.c32(8);
+                    let count = b.u32(at, eight);
+                    // The block's presence follows the document's; `NONE` + 1 is the document's (0).
+                    let next = b.f.ins().iadd_imm(block, 1);
+                    let held = b.f.ins().icmp(IntCC::UnsignedLessThan, next, count);
+                    let index = b.f.ins().select(held, next, zero);
+                    let words = b.f.ins().iadd(kinds, fields);
+                    let k = b.f.ins().imul(index, words);
+                    let k = b.f.ins().iadd(k, word);
+                    let k = b.f.ins().ishl_imm(k, 3);
+                    let k = b.f.ins().iadd_imm(k, 16);
+                    let w = b.word(at, k);
+                    let shift = b.f.ins().band_imm(kind, 63);
+                    let shift = b.f.ins().uextend(I64, shift);
+                    let bit = b.f.ins().ushr(w, shift);
+                    let bit = b.f.ins().band_imm(bit, 1);
+                    b.f.ins().ireduce(I32, bit)
+                },
+            )
+        },
+    )
+}
+
 /// Line `k`'s first byte: 0 for the first; else one past newline `k - 1` (format 16: its bucket, from its one's
 /// position, and its low part); format 15's line start.
 fn line_start(b: &mut B<'_, '_>) -> Value {
     let k = b.arg(0);
-    b.by_format(
+    b.by_format_whole(
         I32,
         |b| {
             let first = b.f.ins().icmp_imm(IntCC::Equal, k, 0);
@@ -1150,6 +2502,30 @@ fn line_start(b: &mut B<'_, '_>) -> Value {
 
 #[cfg(test)]
 mod tests {
+    /// The facts crate's numbering reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_facts_id_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/facts/vtab/syntax/id_reads.rs");
+        let source = super::ids_rust_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_reads_are_these");
+    }
+
+    /// The numbering's kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_facts_id_kernels_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/facts/vtab/syntax/id_reads.metal");
+        let source = super::ids_msl_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_kernels_reads_are_these");
+    }
+
     /// The blocks crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_blocks_reads_are_these() {
@@ -1196,5 +2572,29 @@ mod tests {
         }
         let held = std::fs::read_to_string(path).unwrap_or_default();
         assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_reads_are_these");
+    }
+
+    /// The views' kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_view_kernels_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/facts/vtab/syntax/view_reads.metal");
+        let source = super::view_msl_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these");
+    }
+
+    /// The 16z kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_16z_kernels_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/transducer/packed/metal_tape_reads_z.metal");
+        let source = super::msl_z_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_16z_kernels_reads_are_these");
     }
 }

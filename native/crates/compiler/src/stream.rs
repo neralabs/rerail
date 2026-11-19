@@ -13,7 +13,7 @@ pub use crate::stream_ir::{ByteSwitch, DEAD, GONE, KEEP, REFUSE, REMEMBERED, Rea
 
 /// Whether a word is one of tier 2's.
 pub fn is_stream(opcode: u8) -> bool {
-    (TOKEN..=CHECK).contains(&opcode)
+    (TOKEN..=SETTLE).contains(&opcode)
 }
 
 /// The operand rules of tier 2's words, and of the words a tier-2 program may hold besides
@@ -69,6 +69,7 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         FLAG => mode <= 2 && operand < 16,
         COUNT => mode <= 1 && usize::from(operand) < program.counts.len(),
         CHECK => mode == 0 && usize::from(operand) < program.local_checks.len(),
+        SETTLE => mode == 0 && usize::from(operand) < masks,
         CLOSE => mode <= 1 && operand == 0,
         // `m`: the flag the call runs with (`push_flag`), of 16.
         PUSH => mode <= 32 && usize::from(operand) < words,
@@ -330,6 +331,8 @@ pub fn image(nodes: &[Node], extras: &[u16], tag: u8, src: &[u8]) -> Vec<u8> {
 pub struct Refused {
     pub pc: usize,
     pub why: &'static str,
+    /// The first byte of the token it refused at, where the refuser knows it (the interpreter).
+    pub at: Option<u32>,
 }
 
 /// The interpreter of a tier-2 program over tier 1's run of `bytes`: a token is tier 1's
@@ -351,6 +354,11 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
     let starts: &[u32] = words.iter().map(|&w| split(w)).find(|&(o, _, _)| o == TOKEN).map_or(&none, |(_, _, x)| &tier1.positions[usize::from(x)]);
     let records = program.block_programs.first().and_then(|b| b.records.as_ref());
     let lasts: &[u32] = records.map_or(&none, |r| &tier1.positions[usize::from(r.lasts)]);
+    // Each kind's least byte: a switch on the first byte is one on the record's kind.
+    let kind_reps: Option<Vec<u8>> = records.map(|r| {
+        let n = r.kinds.iter().copied().max().map_or(0, |m| usize::from(m) + 1);
+        (0..n).map(|k| r.kinds.iter().position(|&x| usize::from(x) == k).unwrap_or(0) as u8).collect()
+    });
     let mut pc = 0usize;
     // The token's record: its start, its end (one past its last byte) and its code. `end` is
     // `start` until its bytes are taken (`SPAN`).
@@ -395,7 +403,12 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
     let mut flags: u16 = 0;
     // The counts of tokens (`COUNT`).
     let mut counts: Vec<u32> = vec![0; program.counts.len()];
-    let refuse = |pc: usize, why: &'static str| Err(Refused { pc, why });
+    // A refusal at the token being read.
+    macro_rules! refuse {
+        ($pc:expr, $why:expr) => {
+            Err(Refused { pc: $pc, why: $why, at: Some(start) })
+        };
+    }
     loop {
         seen(pc);
         let (opcode, mode, operand) = split(words[pc]);
@@ -404,7 +417,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             TOKEN if !need => {}
             TOKEN => {
                 if at_end {
-                    return refuse(pc - 1, "a token past the stream's end");
+                    return refuse!(pc - 1, "a token past the stream's end");
                 }
                 need = false;
                 loop {
@@ -427,7 +440,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                         let opens = rd.arms.first().is_some_and(|a| tier1.outputs.get(usize::from(a.opener)).and_then(|w| w.get(start as usize / 64)).is_some_and(|w| w >> (start % 64) & 1 == 1));
                         if opens && rec_end > start + 1 {
                             let Ok(tokens) = crate::records::read_parts(rd, start as usize, &tier1.outputs) else {
-                                return refuse(pc - 1, "a region with no closer");
+                                return refuse!(pc - 1, "a region with no closer");
                             };
                             let (s, l): (Vec<u32>, Vec<u32>) = tokens.iter().map(|&(a, b)| (a as u32, b as u32)).unzip();
                             let (codes, _) = crate::records::pass(r, table, bytes, &s, &l, &tier1.outputs);
@@ -438,8 +451,8 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     }
                     // An extra (`TOKEN_EXTRAS`): its bytes taken and its leaf deferred, as
                     // `SPAN m=1; LEAF m=1 #K`; then the next token.
-                    let extra = if mode & TOKEN_EXTRAS == 0 { None } else { program.extras.iter().find(|&&(b, _)| code >> (crate::records::MARK_SHIFT + u32::from(b)) & 1 == 1) };
-                    let Some(&(_, kind)) = extra else { break };
+                    let extra = if mode & TOKEN_EXTRAS == 0 { None } else { extra_kind(&program.extras, code) };
+                    let Some(kind) = extra else { break };
                     end = rec_end;
                     if pending == 0 {
                         keep = last_end;
@@ -453,10 +466,10 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 live = if m == 0 || at_end || mask_bit(u16::from(m - 1), start) { u32::MAX } else { 0 };
                 // A token mark that refuses (`TokenMark::refuses`): at a token its bit names,
                 // its tokens following, the file is refused.
-                let extra_bit = u32::from(program.extras.first().map_or(0, |e| e.0));
+                let extra_bit = program.extras.first().map(|e| u32::from(e.0));
                 let refused = !at_end && program.token_marks.iter().any(|t| t.refuses && code >> (crate::records::MARK_SHIFT + u32::from(t.order)) & 1 == 1 && token_mark_holds(t, &tier1.codes, next, extra_bit));
                 if refused {
-                    return refuse(pc - 1, "a token mark that refuses");
+                    return refuse!(pc - 1, "a token mark that refuses");
                 }
             }
             SPAN => {
@@ -464,7 +477,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 // which must be its record's.
                 let e = if mode == 0 { start + u32::from(operand) } else { rec_end };
                 if e != rec_end {
-                    return refuse(pc - 1, "a token's length not its record's");
+                    return refuse!(pc - 1, "a token's length not its record's");
                 }
                 end = e;
                 need = true;
@@ -478,14 +491,21 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     // A word the switch names: its target. Else zeros past the file, as every
                     // executor reads them.
                     let word = crate::records::word_of(code).checked_sub(1).and_then(|w| s.word(w as u16));
+                    // On the first byte with records: on the record's kind, its least byte's
+                    // target, as the compiled switch's jump table (a reader moved to a byte of
+                    // its own is met there, not at its first byte).
+                    let byte = match kind_reps.as_ref() {
+                        Some(reps) if s.offset == 0 => reps.get((code & 0xff) as usize).copied().unwrap_or(0),
+                        _ => bytes.get(at).copied().unwrap_or(0),
+                    };
                     match word {
                         Some(t) if s.offset == 0 => t,
                         _ if at >= rec_end as usize => REFUSE,
-                        _ => s.targets[usize::from(bytes.get(at).copied().unwrap_or(0))],
+                        _ => s.targets[usize::from(byte)],
                     }
                 };
                 if t == REFUSE {
-                    return refuse(pc - 1, "no state takes the token");
+                    return refuse!(pc - 1, "no state takes the token");
                 }
                 pc = usize::from(t);
             }
@@ -496,7 +516,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     (_, true) => {}
                     // A test: the next word is the keyword's way; a token that is not the word skips it.
                     (1, false) => pc += 1,
-                    _ => return refuse(pc - 1, "not the keyword"),
+                    _ => return refuse!(pc - 1, "not the keyword"),
                 }
             }
             MARK => {
@@ -516,7 +536,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     mask_bit(operand, start) && word_ok()
                 };
                 // A token mark (`Words::token_marks`): its tokens follow too.
-                let here = here && (at_end || program.token_marks.iter().find(|m| u32::from(m.order) == k).is_none_or(|m| token_mark_holds(m, &tier1.codes, next, u32::from(program.extras.first().map_or(0, |e| e.0)))));
+                let here = here && (at_end || program.token_marks.iter().find(|m| u32::from(m.order) == k).is_none_or(|m| token_mark_holds(m, &tier1.codes, next, program.extras.first().map(|e| u32::from(e.0)))));
                 if live >> k & 1 == 1 && here {
                     // Taken: it and the marks before it are done at this token. Kept: its arm
                     // calls the level that takes it.
@@ -532,15 +552,23 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     pc += 1;
                 }
             }
+            SETTLE => {
+                let first = nodes.len() - pending;
+                let settled = (first..nodes.len()).take_while(|&i| !mask_bit(operand, nodes[i].start)).count();
+                if settled > 0 {
+                    keep = nodes[first + settled - 1].end;
+                    pending -= settled;
+                }
+            }
             RETAG if mode == 1 => {
-                let Some(k) = kind_of(operand, word) else { return refuse(pc - 1, "a word's kind, and no word") };
+                let Some(k) = kind_of(operand, word) else { return refuse!(pc - 1, "a word's kind, and no word") };
                 nodes[moved].kind = k;
             }
             RETAG if mode == 3 => {
                 // The node made last at this level and the nodes inside it, the records from its
                 // base to the pending extras, each base's chain of wraps first (outermost first,
                 // as `ACCEPT` places them): read, a kind each.
-                let Some(Some((r, base))) = lasts_made.last().copied() else { return refuse(pc - 1, "a reread with no node before it") };
+                let Some(Some((r, base))) = lasts_made.last().copied() else { return refuse!(pc - 1, "a reread with no node before it") };
                 let reading = &program.readings.maps[usize::from(operand)];
                 let end = nodes.len() - pending;
                 let mut i = base;
@@ -565,7 +593,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                             Some(w) if n == r => Some(w),
                             _ => reading.kinds.iter().find(|x| x.0 == nodes[n].kind).map(|x| x.1),
                         };
-                        let Some(to) = way else { return refuse(pc - 1, "a node the reading does not name") };
+                        let Some(to) = way else { return refuse!(pc - 1, "a node the reading does not name") };
                         if n != r
                             && let Some(&(_, g)) = reading.fields.iter().find(|x| x.0 == nodes[n].field)
                         {
@@ -583,7 +611,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                                 dead = true;
                             }
                             k => {
-                                let Some(k) = kind_of(k, word) else { return refuse(pc - 1, "a word's kind, and no word") };
+                                let Some(k) = kind_of(k, word) else { return refuse!(pc - 1, "a word's kind, and no word") };
                                 nodes[n].kind = k;
                             }
                         }
@@ -599,23 +627,23 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             NODE_FIELD if mode == 3 => {
                 // A wrap's frame base is the first record of the node it moved: that node, unless
                 // it is a wrap too (then an older wrap is linked before this one).
-                let Some(Some((r, base))) = lasts_made.last().copied() else { return refuse(pc - 1, "a relabel with no node before it") };
+                let Some(Some((r, base))) = lasts_made.last().copied() else { return refuse!(pc - 1, "a relabel with no node before it") };
                 if !wraps.contains(&r) || link.contains_key(&r) {
-                    return refuse(pc - 1, "an inner field on a node that is no wrap of a plain node");
+                    return refuse!(pc - 1, "an inner field on a node that is no wrap of a plain node");
                 }
                 nodes[base].field = operand;
             }
             // A call's field where it returns: on the node it made, where that has none.
             NODE_FIELD if mode == 4 => {
-                let Some(Some((r, _))) = lasts_made.last().copied() else { return refuse(pc - 1, "a call's field with no node before it") };
+                let Some(Some((r, _))) = lasts_made.last().copied() else { return refuse!(pc - 1, "a call's field with no node before it") };
                 if nodes[r].field == 0 {
                     nodes[r].field = operand;
                 }
             }
             RETAG | NODE_FIELD if mode == 2 => {
-                let Some(Some((r, _))) = lasts_made.last().copied() else { return refuse(pc - 1, "a relabel with no node before it") };
+                let Some(Some((r, _))) = lasts_made.last().copied() else { return refuse!(pc - 1, "a relabel with no node before it") };
                 if opcode == RETAG {
-                    let Some(k) = kind_of(operand, word) else { return refuse(pc - 1, "a word's kind, and no word") };
+                    let Some(k) = kind_of(operand, word) else { return refuse!(pc - 1, "a word's kind, and no word") };
                     nodes[r].kind = k;
                     if k == DEAD {
                         // `drop`: the node goes (a token the grammar implies), left out at
@@ -630,11 +658,11 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
             }
             RETAG => {
-                let Some(&at) = open.last() else { return refuse(pc - 1, "a retag with no open node") };
+                let Some(&at) = open.last() else { return refuse!(pc - 1, "a retag with no open node") };
                 nodes[at].kind = operand;
             }
             WRAP => {
-                let Some(Some((r, base))) = lasts_made.last().copied() else { return refuse(pc - 1, "a wrap with no node before it") };
+                let Some(Some((r, base))) = lasts_made.last().copied() else { return refuse!(pc - 1, "a wrap with no node before it") };
                 let w = nodes.len();
                 let (field, start) = (nodes[r].field, nodes[r].start);
                 nodes[r].field = 0;
@@ -651,9 +679,9 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             }
             MERGE if mode == 1 => {
                 // The innermost open node holds two leaves and nothing else, no extra pending.
-                let Some(&o) = open.last() else { return refuse(pc - 1, "a fold with no open node") };
+                let Some(&o) = open.last() else { return refuse!(pc - 1, "a fold with no open node") };
                 if nodes.len() != o + 3 || pending != 0 || nodes[o + 1].size != 1 || nodes[o + 2].size != 1 {
-                    return refuse(pc - 1, "a fold of no two leaves");
+                    return refuse!(pc - 1, "a fold of no two leaves");
                 }
                 let second = nodes.pop().expect("two leaves");
                 nodes[o + 1].kind = operand;
@@ -667,7 +695,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 let n = nodes.len();
                 let leaf = n.checked_sub(pending + 1);
                 if leaf.is_none_or(|l| nodes[l].size != 1 || open.last().is_some_and(|&o| o >= l)) {
-                    return refuse(pc - 1, "a merge with no leaf before it");
+                    return refuse!(pc - 1, "a merge with no leaf before it");
                 }
                 nodes.truncate(n - pending);
                 pending = 0;
@@ -683,7 +711,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 nodes.push(Node { kind: operand, field: 0, supers: vec![], start, end: 0, size: 0 });
             }
             CLOSE => {
-                let Some(at) = open.pop() else { return refuse(pc - 1, "a close with no open node") };
+                let Some(at) = open.pop() else { return refuse!(pc - 1, "a close with no open node") };
                 let base = bases.pop().expect("a frame per open node");
                 lasts_made.pop();
                 if let Some(l) = lasts_made.last_mut() {
@@ -703,7 +731,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     let w = crate::records::word_of(code).checked_sub(1);
                     match w.and_then(|w| program.word_kinds.binary_search_by_key(&(w as u16), |&(s, _)| s).ok()) {
                         Some(i) => program.word_kinds[i].1,
-                        None => return refuse(pc - 1, "a keyword's leaf at a token of no keyword"),
+                        None => return refuse!(pc - 1, "a keyword's leaf at a token of no keyword"),
                     }
                 };
                 if mode == 1 && pending == 0 {
@@ -733,14 +761,14 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 let w = crate::records::word_of(code).checked_sub(1);
                 match w.and_then(|w| program.word_kinds.binary_search_by_key(&(w as u16), |&(s, _)| s).ok()) {
                     Some(i) => word = program.word_kinds[i].1,
-                    None => return refuse(pc - 1, "a keyword's word at a token of no keyword"),
+                    None => return refuse!(pc - 1, "a keyword's word at a token of no keyword"),
                 }
             }
             REMEMBER => word = operand,
             COUNT if mode == 0 => {
                 counts[usize::from(operand)] += 1;
                 if counts[usize::from(operand)] > u32::from(program.counts[usize::from(operand)]) {
-                    return refuse(pc - 1, "a count past its most");
+                    return refuse!(pc - 1, "a count past its most");
                 }
             }
             COUNT => counts[usize::from(operand)] = counts[usize::from(operand)].saturating_sub(1),
@@ -752,7 +780,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 let before = &lasts[..next.saturating_sub(1).min(lasts.len())];
                 let ended = |j: usize| before.binary_search(&(j as u32)).is_ok();
                 if crate::program::token_value(c, bytes, start as usize, end, &ended) {
-                    return refuse(pc - 1, "a token's check holds");
+                    return refuse!(pc - 1, "a token's check holds");
                 }
             }
             CHECK => {
@@ -768,7 +796,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     }
                     j += w.trailing_zeros();
                     if j < end && local_value(&c.ops, bytes, i64::from(j) + i64::from(c.delay)) {
-                        return refuse(pc - 1, "a local check holds");
+                        return refuse!(pc - 1, "a local check holds");
                     }
                     j += 1;
                 }
@@ -781,19 +809,19 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
             }
             RETURN => {
-                let Some((p, w, fl)) = returns.pop() else { return refuse(pc - 1, "a return with no call") };
+                let Some((p, w, fl)) = returns.pop() else { return refuse!(pc - 1, "a return with no call") };
                 (word, flags) = (w, fl);
                 pc = usize::from(p) + usize::from(mode);
             }
             ACCEPT => {
                 if !at_end || open.len() != 1 || !returns.is_empty() {
-                    return refuse(pc - 1, "the file ends inside a node");
+                    return refuse!(pc - 1, "the file ends inside a node");
                 }
                 let at = open[0];
                 nodes[at].end = bytes.len() as u32;
                 nodes[at].size = (nodes.len() - at) as u32;
                 if nodes.iter().any(|n| n.kind != DEAD && n.field != 0 && program.readings.provisional.contains(&n.field)) {
-                    return refuse(pc - 1, "a provisional field at the file's end");
+                    return refuse!(pc - 1, "a provisional field at the file's end");
                 }
                 if head.is_empty() && !dead {
                     return Ok(nodes);
@@ -836,11 +864,11 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             }
             EMPTY => {
                 if tier1.totals[usize::from(operand)] != 0 {
-                    return refuse(pc - 1, "tier 1 sends the file to tree-sitter");
+                    return refuse!(pc - 1, "tier 1 sends the file to tree-sitter");
                 }
             }
             GOTO => pc = usize::from(operand),
-            _ => return refuse(pc - 1, "the stream program refuses here"),
+            _ => return refuse!(pc - 1, "the stream program refuses here"),
         }
     }
 }
@@ -906,21 +934,36 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
     for (i, m) in program.token_marks.iter().enumerate() {
         let rising = i == 0 || program.token_marks[i - 1].order < m.order;
         let offsets = m.elems.windows(2).all(|w| w[0].offset < w[1].offset) && m.elems.iter().any(|e| e.offset == 0) && m.elems.first().is_some_and(|e| e.offset >= -1);
-        // A `not` or an `end` only after the mark's token; an `end` only last.
-        let after = m.elems.iter().all(|e| (!e.not && !e.end) || e.offset > 0) && m.elems.iter().rev().skip(1).all(|e| !e.end);
+        // A `not` or an `end` only after the mark's token, but for the token before's `not`,
+        // which has an `end` (no token before holds); an `end` only last after the mark's.
+        let after = m.elems.iter().all(|e| (!e.not && !e.end) || e.offset > 0 || (e.offset == -1 && e.not && e.end)) && m.elems.iter().filter(|e| e.offset >= 0).rev().skip(1).all(|e| !e.end);
         let offsets = offsets && after;
         let words = m.elems.iter().flat_map(|e| &e.words).all(|&s| usize::from(s) < program.strings.len());
-        if !rising || !offsets || !words || usize::from(m.order) >= marks || program.extras.is_empty() {
+        // A grammar with no extras has nothing to skip between the mark's tokens.
+        if !rising || !offsets || !words || usize::from(m.order) >= marks {
             return Err(Error::InvalidOperand(i));
         }
     }
     Ok(())
 }
 
+/// The kind of the extra a record's `code` is (`Words::extras`), or `None` for a grammar token:
+/// an extra has the first entry's bit; its kind is the last later entry whose bit it has, or the
+/// first entry's.
+pub fn extra_kind(extras: &[(u8, u16)], code: u32) -> Option<u16> {
+    let has = |b: u8| code >> (crate::records::MARK_SHIFT + u32::from(b)) & 1 == 1;
+    let &(first, kind) = extras.first()?;
+    if !has(first) {
+        return None;
+    }
+    Some(extras[1..].iter().rev().find(|&&(b, _)| has(b)).map_or(kind, |&(_, k)| k))
+}
+
 /// Whether token mark `m` holds at the record before `next` (`Words::token_marks`): each element
-/// at its offset among the records that are no extra (`extra_bit`, the code's bit).
-pub fn token_mark_holds(m: &TokenMark, codes: &[u32], next: usize, extra_bit: u32) -> bool {
-    let is_extra = |c: u32| c >> (crate::records::MARK_SHIFT + extra_bit) & 1 == 1;
+/// at its offset among the records that are no extra (`extra_bit`, the code's bit; none for a
+/// grammar without extras).
+pub fn token_mark_holds(m: &TokenMark, codes: &[u32], next: usize, extra_bit: Option<u32>) -> bool {
+    let is_extra = |c: u32| extra_bit.is_some_and(|b| c >> (crate::records::MARK_SHIFT + b) & 1 == 1);
     let Some(here) = next.checked_sub(1) else { return false };
     m.elems.iter().all(|e| {
         let at = match e.offset {

@@ -84,7 +84,7 @@ impl<'s> State<'s> {
         let now = self.running.fetch_add(1, Ordering::AcqRel) + 1;
         self.peak.fetch_max(now, Ordering::AcqRel);
         IN_JOB.set(IN_JOB.get() + 1);
-        (j.job)();
+        crate::exec::in_job_scope(j.job);
         IN_JOB.set(IN_JOB.get() - 1);
         self.running.fetch_sub(1, Ordering::AcqRel);
         self.board.finish(j.ticket, true);
@@ -181,6 +181,7 @@ impl<'s> Stream<'s, '_> {
 
     /// Waits for `h`: runs it here if no worker claimed it, else helps the pool meanwhile.
     pub fn wait<R>(&self, h: Handle<R>) -> Result<R, String> {
+        crate::exec::assert_no_uncommitted("a stream's wait");
         let st = &self.state;
         let mut nap = 20e-6f64;
         loop {

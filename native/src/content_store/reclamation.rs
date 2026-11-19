@@ -11,7 +11,6 @@ use super::{
 };
 use rusqlite::{Connection, OptionalExtension, Params, TransactionBehavior, params};
 use std::fs;
-use std::time::Instant;
 
 const OBJECT_TAPE: i64 = 1;
 const OBJECT_SOURCE: i64 = 2;
@@ -42,6 +41,16 @@ impl ContentStore {
             )
             .optional()
             .map_err(StoreError::from)
+    }
+
+    /// `source_lease` of many sources, in their order, under one hold of the connection.
+    pub fn source_leases(&self, source_ids: &[SourceId], owner: &str) -> StoreResult<Vec<Option<i64>>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT p.lease_until FROM object_pins p JOIN strings s ON s.string_id=p.owner_string_id \
+             WHERE p.object_kind_id=?1 AND p.object_id=?2 AND s.domain_id=?3 AND s.value=?4",
+        )?;
+        source_ids.iter().map(|id| statement.query_row(params![OBJECT_SOURCE, id.0, STRING_OWNER, owner], |row| row.get(0)).optional().map_err(StoreError::from)).collect()
     }
 
     pub fn pin_tape(&self, tape_id: TapeId, owner: &str, lease_until: i64) -> StoreResult<()> {
@@ -166,10 +175,6 @@ impl ContentStore {
             Ok(()) | Err(StoreError::Busy) => {}
             Err(error) => return Err(error),
         }
-        self.decompressed_cache
-            .lock()
-            .expect("decompressed cache mutex poisoned")
-            .clear();
         self.local_result_cache
             .lock()
             .expect("local result cache mutex poisoned")
@@ -179,10 +184,6 @@ impl ContentStore {
 
     /// One attempt at `collect_held`'s transaction: run again whole if it finds the store busy.
     fn collect_held_once(&self, now: i64, batch: usize) -> StoreResult<CollectionReport> {
-        self.decompressed_cache
-            .lock()
-            .expect("decompressed cache mutex poisoned")
-            .expire(Instant::now());
         let limit = i64::try_from(batch)
             .map_err(|_| StoreError::Invalid("collection batch exceeds i64".to_owned()))?;
         let entry_budget = GIT_TREE_BATCH_ENTRIES as i64;

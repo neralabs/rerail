@@ -428,12 +428,12 @@ fn tree_sitter_json_with(bytes: &[u8], tokens: bool) -> Option<Vec<Named>> {
 
 /// Ids back to names, for comparing with tree-sitter.
 fn named(c: &Compiled, nodes: &[IdNode]) -> Vec<Named> {
-    let names: HashMap<u16, String> = c.ids.0.borrow().iter().map(|(n, &i)| (i, n.clone())).collect();
+    let (kinds, fields) = c.ids.names();
     nodes
         .iter()
         .map(|n| {
-            let field = if n.1 == 0 { String::new() } else { names[&n.1].trim_start_matches("field ").to_owned() };
-            (names[&n.0].clone(), field, n.3, n.4, n.5)
+            let field = if n.1 == 0 { String::new() } else { fields[&n.1].clone() };
+            (kinds[&n.0].clone(), field, n.3, n.4, n.5)
         })
         .collect()
 }

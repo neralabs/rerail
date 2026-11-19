@@ -13,6 +13,13 @@ use std::collections::BTreeMap;
 pub fn encode(m: &Module) -> Result<Vec<u8>, String> {
     let p = m.parts();
     let mut b = Builder::of_program_less_maintenance(&p.prog)?;
+    // A module written as a version (decision 0377) holds its rules there, in their order: its `must, may` rules'
+    // places and its helpers' counts are by that order.
+    if let Some(v) = &p.version {
+        for r in v.rules() {
+            b.copy(v, r);
+        }
+    }
     let mut about = crate::code_rule_dsl::logic::program_image::about_of(&p.prog);
     let s = |t: &str| Value::Str(t.into());
     let n = |k: usize| Value::Int(k as i64);
@@ -68,7 +75,8 @@ pub fn encode(m: &Module) -> Result<Vec<u8>, String> {
 /// The module image `bytes` holds.
 pub fn decode(bytes: &[u8]) -> Result<Module, String> {
     let v = Version::open(bytes)?;
-    let prog = v.program(&Lists::default())?;
+    // Its rules stay in the image, read as the module's version; its program is the header.
+    let prog = v.header(&Lists::default())?;
     let mut rows: BTreeMap<String, Vec<Vec<Cell>>> = BTreeMap::new();
     for f in v.about_facts() {
         let name = v.text(f.name());
@@ -85,7 +93,7 @@ pub fn decode(bytes: &[u8]) -> Result<Module, String> {
         Cell::Str(_) | Cell::Branded(_) => Err("a module image's row: a name where a number is".to_owned()),
     };
     let of = |rel: &str| rows.get(rel).map(Vec::as_slice).unwrap_or(&[]);
-    let mut p = ModuleParts { prog, ..ModuleParts::default() };
+    let mut p = ModuleParts { prog, version: Some(std::sync::Arc::clone(&v)), ..ModuleParts::default() };
     let mut violations: BTreeMap<i64, ViolationParts> = BTreeMap::new();
     for r in of("module_violation") {
         let tag = int(&r[9])?;

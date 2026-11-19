@@ -55,8 +55,8 @@ fn ids(dialect: Dialect) -> &'static Ids {
 /// where the tape cannot be made.
 pub fn encode(dialect: Dialect, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_ecma_lean::Refusal> {
     let ids = ids(dialect);
-    let lacks = |what: &str, i: usize| format!("{dialect:?}'s grammar lacks the lean parser's {what} {i}");
-    let code_of = |&key: &u32| -> Result<Code, String> {
+    let lacks = move |what: &str, i: usize| format!("{dialect:?}'s grammar lacks the lean parser's {what} {i}");
+    let code_of = move |&key: &u32| -> Result<Code, String> {
         let (kind, field, class, extra) = rerail_ecma_lean::unkey(key);
         let kind = ids.kinds[usize::from(kind)].ok_or_else(|| lacks("kind", usize::from(kind)))?;
         let field = ids.fields[usize::from(field)].ok_or_else(|| lacks("field", usize::from(field)))?;
@@ -67,7 +67,7 @@ pub fn encode(dialect: Dialect, grammar: &Grammar, source: &str, budget: &dyn Fn
         }
         Ok(code)
     };
-    rerail_ecma_lean::tape_into(source.as_bytes(), dialect, &mut super::formats::lean(grammar, source, budget, &code_of))
+    rerail_ecma_lean::tape_into(source.as_bytes(), dialect, &mut super::formats::lean(grammar, source, budget, code_of))
 }
 
 /// A dialect's tree parser: the lean parser, standing in for tree-sitter where it reads the file.

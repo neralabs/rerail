@@ -90,7 +90,9 @@ pub enum TokenRule {
     /// string with escapes. Its tokens are the opener's byte and the closer's bytes (this kind),
     /// each part `P` (`N` bytes from a bit of `E` in the region), and each run of the region's
     /// other bytes (`C`). The parts' kinds are tokens of their own (`Inside`, after this one).
-    ReadParts(Region, Parts),
+    /// `read K | L parts …`: regions of one `regions` that one reader reads alike, as Kotlin's
+    /// strings and raw strings are, at one byte; each closer its own region's length.
+    ReadParts(Vec<Region>, Parts),
     /// A token of a region read in parts (`ReadParts`): `last` its last-byte mask. The reader
     /// starts it, not the token loop: no first byte ends it by a rule.
     Inside(Expr),
@@ -100,8 +102,20 @@ pub enum TokenRule {
 /// kind of the bytes between them.
 #[derive(Clone, Debug)]
 pub struct Parts {
-    pub parts: Vec<(String, Expr, u8)>,
+    pub parts: Vec<(String, Expr, PartLen)>,
     pub content: String,
+    /// `closes { K = E bytes N }`: a closer where `E` holds is a token of kind `K`, `N` bytes
+    /// from the closer's first; the others are the reader's kind (Kotlin's string, closed by
+    /// a `"` or by a template's `${`).
+    pub closes: Vec<(String, Expr, u8)>,
+}
+
+/// How far a part of a region read in parts runs (`Parts`): `bytes N`, or `last L`, through the
+/// first byte of `L` at or after its start (an identifier after Kotlin's `$`).
+#[derive(Clone, Debug)]
+pub enum PartLen {
+    Bytes(u8),
+    Last(Expr),
 }
 
 impl Parts {
@@ -112,33 +126,96 @@ impl Parts {
     /// ```text
     /// closer:  c = prev(f) & ~f                    # its first byte; its last N - 1 after
     /// part P:  ps = E & body;   last prev(ps, N - 1)
+    ///          (`last L`: its bytes fill(ps, prev(L)), its last L & those bytes)
     /// content: x = body & ~(each part's bytes);   start x & ~prev(x), last x & ~next(x)
     /// ```
-    pub fn rows(&self, kind: &str, r: &Region, s: &Expr) -> Vec<Stmt> {
+    /// With `closes`: the closers' last bytes, as one mask (`ReadArm::last`); `None`, every
+    /// closer the region's length.
+    pub fn closer_last(&self, rs: &[Region]) -> Option<Expr> {
+        if self.closes.is_empty() && rs.iter().all(|r| r.bytes == rs[0].bytes && r.or.is_none()) {
+            return None;
+        }
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let closer = Self::closer(rs);
+        let mut last: Option<Expr> = None;
+        for (_, e, n) in &self.closes {
+            let c = prev(and(closer.clone(), e.clone()), n - 1);
+            last = Some(or_of(last, c));
+        }
+        for r in rs {
+            let own = self.own(r);
+            last = Some(or_of(last, r.closer_last(own)));
+        }
+        last
+    }
+
+    /// The regions' fill: `f_K`, or each's, `|`ed.
+    fn fill(rs: &[Region]) -> Expr {
+        rs.iter().fold(None, |a, r| Some(or_of(a, Expr::Name(format!("f_{}", r.kind))))).expect("a region")
+    }
+
+    /// The closers' first bytes: the byte after each fill.
+    fn closer(rs: &[Region]) -> Expr {
+        let f = Self::fill(rs);
+        Expr::And(Box::new(prev(f.clone(), 1)), Box::new(Expr::Not(Box::new(f))))
+    }
+
+    /// Region `r`'s closers that are the reader's own kind (no `closes` mask holds).
+    fn own(&self, r: &Region) -> Expr {
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let not = |a: Expr| Expr::Not(Box::new(a));
+        let mut own = Self::closer(std::slice::from_ref(r));
+        for (_, e, _) in &self.closes {
+            own = and(own, not(e.clone()));
+        }
+        own
+    }
+
+    /// The rows of each region (`rs`), in turn: each region's tokens are rows of their own, so
+    /// each row is in its region's mode (`row_modes`), as a reader of one region's are.
+    pub fn rows(&self, kind: &str, rs: &[Region], s: &Expr) -> Vec<Stmt> {
+        rs.iter().flat_map(|r| self.region_rows(kind, r, s)).collect()
+    }
+
+    fn region_rows(&self, kind: &str, r: &Region, s: &Expr) -> Vec<Stmt> {
         let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
         let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
         let not = |a: Expr| Expr::Not(Box::new(a));
-        let prev = |e: Expr, k: u8| match k {
-            0 => e,
-            1 => Expr::Call("prev".into(), vec![Arg::E(e)]),
-            k => Expr::Call("prev".into(), vec![Arg::E(e), Arg::N(u64::from(k))]),
-        };
         let next = |e: Expr| Expr::Call("next".into(), vec![Arg::E(e)]);
         let f = Expr::Name(format!("f_{}", r.kind));
         let body = and(f.clone(), not(s.clone()));
-        let closer = and(prev(f.clone(), 1), not(f));
+        let closer = Self::closer(std::slice::from_ref(r));
         let token = |kind: &str, start: Expr, last: Expr| Stmt::Token { kind: kind.to_owned(), start, through: None, last: Some(last.clone()), rule: Some(TokenRule::Inside(last)) };
-        // The reader's own row is its token's, the opener; the closer is its kind's too.
-        let mut out = vec![token(kind, closer.clone(), prev(closer, r.bytes - 1))];
+        // The reader's own row is its token's, the opener; the closer is its kind's too, but
+        // where a `closes` mask holds: that one's kind's, its bytes.
+        let mut out = vec![];
+        for (k, e, n) in &self.closes {
+            let c = and(closer.clone(), e.clone());
+            out.push(token(k, c.clone(), prev(c, n - 1)));
+        }
+        let own = self.own(r);
+        out.insert(0, token(kind, own.clone(), r.closer_last(own)));
         let mut covered: Option<Expr> = None;
-        for (p, e, n) in &self.parts {
+        let mut cover = |c: Expr| {
+            covered = Some(match covered.take() {
+                Some(x) => or(x, c),
+                None => c,
+            });
+        };
+        for (p, e, len) in &self.parts {
             let ps = and(e.clone(), body.clone());
-            out.push(token(p, ps.clone(), prev(ps.clone(), n - 1)));
-            for k in 0..*n {
-                covered = Some(match covered {
-                    Some(c) => or(c, prev(ps.clone(), k)),
-                    None => prev(ps.clone(), k),
-                });
+            match len {
+                PartLen::Bytes(n) => {
+                    out.push(token(p, ps.clone(), prev(ps.clone(), n - 1)));
+                    for k in 0..*n {
+                        cover(prev(ps.clone(), k));
+                    }
+                }
+                PartLen::Last(l) => {
+                    let bytes = Expr::Call("fill".into(), vec![Arg::E(ps.clone()), Arg::E(prev(l.clone(), 1))]);
+                    out.push(token(p, ps.clone(), and(l.clone(), bytes.clone())));
+                    cover(bytes);
+                }
             }
         }
         let x = match covered {
@@ -147,6 +224,23 @@ impl Parts {
         };
         out.push(token(&self.content, and(x.clone(), not(prev(x.clone(), 1))), and(x.clone(), not(next(x)))));
         out
+    }
+}
+
+/// `prev(e, k)`, `e` itself at 0.
+fn prev(e: Expr, k: u8) -> Expr {
+    match k {
+        0 => e,
+        1 => Expr::Call("prev".into(), vec![Arg::E(e)]),
+        k => Expr::Call("prev".into(), vec![Arg::E(e), Arg::N(u64::from(k))]),
+    }
+}
+
+/// `a | e`, or `e` with no `a`.
+fn or_of(a: Option<Expr>, e: Expr) -> Expr {
+    match a {
+        Some(a) => Expr::Or(Box::new(a), Box::new(e)),
+        None => e,
     }
 }
 
@@ -183,6 +277,8 @@ impl TokenRule {
                     let f = name(format!("f_{}", r.kind));
                     let mut last = if r.outside {
                         and(f.clone(), not(call("next", vec![f])))
+                    } else if r.or.is_some() {
+                        r.closer_last(and(prev(f.clone(), 1), not(f)))
                     } else {
                         and(prev(f.clone(), r.bytes), not(prev(f, r.bytes - 1)))
                     };
@@ -259,6 +355,14 @@ pub struct Region {
     /// `else E bytes M`: an opener with no byte of the closer after it anywhere in the file
     /// opens no region; it is `E`, `M` bytes from the opener's first, hidden after it.
     pub empty: Option<(String, u8)>,
+    /// `or C2 [bytes M]`: a second closer, of `M` bytes (1 to 3). The region runs to the first
+    /// byte of either; one of `C2` is `M` bytes, the others `bytes N` (a raw string's `"""`, or
+    /// its template's `$`).
+    pub or: Option<(Expr, u8)>,
+    /// `after K …`: the region opens only where the last region opened before its opener, of
+    /// the kinds with no `after`, is one of `K …` (a template's tail goes back to the kind of
+    /// string the template is in). Such a kind has no `else` and no `outside`.
+    pub after: Vec<String>,
 }
 
 impl Regions {
@@ -273,6 +377,13 @@ impl Regions {
     /// next H       = prev(f_K) | … | prev(f_K, N)     # `outside`: prev(f_K) & ~C
     ///              | prev(E) | … | prev(E, M - 1)
     /// ```
+    ///
+    /// With `or C2 bytes M`, the closer is `C | C2`, and the bytes past its first are counted
+    /// from it: `c = prev(f_K) & ~f_K`, and `prev(f_K) | prev(c & ~C2) | … | prev(c & ~C2, N
+    /// - 1) | prev(c & C2) | … | prev(c & C2, M - 1)`. A kind with `after A …`
+    /// comes after the kinds with none, which it reads: its openers are where the last of
+    /// their openers before is an `A`, `o_K = O & ~H & prev(fill(o_A | …, o_B | …))`, the `B`s
+    /// the others.
     pub fn body(&self) -> Vec<Stmt> {
         let name = |s: &str| Expr::Name(s.to_string());
         let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
@@ -290,8 +401,34 @@ impl Regions {
             Some(h) => Expr::Or(Box::new(h), Box::new(e)),
             None => e,
         });
+        let plain: Vec<&Region> = self.kinds.iter().filter(|r| r.after.is_empty()).collect();
+        // Where two kinds open a byte the walk opens the first listed that may: each kind's
+        // opener excludes the earlier kinds' taken.
+        let mut earlier: Option<Expr> = None;
+        let any = |rs: Vec<&Region>| rs.iter().fold(None, |a: Option<Expr>, r| {
+            let o = name(&format!("o_{}", r.kind));
+            Some(match a {
+                Some(a) => Expr::Or(Box::new(a), Box::new(o)),
+                None => o,
+            })
+        });
         for r in &self.kinds {
-            let open = and(r.opener.clone(), not(name(&self.hidden)));
+            let mut open = and(r.opener.clone(), not(name(&self.hidden)));
+            if !r.after.is_empty() {
+                let named = any(plain.iter().copied().filter(|k| r.after.contains(&k.kind)).collect()).expect("verified: a kind named");
+                let others = any(plain.iter().copied().filter(|k| !r.after.contains(&k.kind)).collect()).unwrap_or(Expr::Empty);
+                open = and(open, call("prev", vec![Arg::E(call("fill", vec![Arg::E(named), Arg::E(others)]))]));
+            }
+            if let Some(e) = &earlier {
+                open = and(open, not(e.clone()));
+            }
+            let taken = format!("taken_{}", r.kind);
+            out.push(Stmt::Mask(taken.clone(), open));
+            let open = name(&taken);
+            earlier = Some(match earlier.take() {
+                Some(e) => Expr::Or(Box::new(e), Box::new(open.clone())),
+                None => open.clone(),
+            });
             let o = format!("o_{}", r.kind);
             let f = format!("f_{}", r.kind);
             match &r.empty {
@@ -304,9 +441,20 @@ impl Regions {
                 }
                 None => out.push(Stmt::Mask(o.clone(), open)),
             }
-            out.push(Stmt::Mask(f.clone(), call("fill", vec![Arg::E(name(&o)), Arg::E(r.closer.clone())])));
+            out.push(Stmt::Mask(f.clone(), call("fill", vec![Arg::E(name(&o)), Arg::E(r.closers())])));
             if r.outside {
                 or(and(prev(&f, 1), not(r.closer.clone())));
+            } else if let Some((c2, m)) = &r.or {
+                let pk = |e: Expr, k: u8| call("prev", vec![Arg::E(e), Arg::N(u64::from(k))]);
+                let c = and(prev(&f, 1), not(name(&f)));
+                let (l, l2) = (and(c.clone(), not(c2.clone())), and(c, c2.clone()));
+                or(prev(&f, 1));
+                for k in 1..r.bytes {
+                    or(pk(l.clone(), k));
+                }
+                for k in 1..*m {
+                    or(pk(l2.clone(), k));
+                }
             } else {
                 for k in 1..=r.bytes {
                     or(prev(&f, k));
@@ -322,6 +470,25 @@ impl Region {
     /// The name of its `else`'s mask: whether a byte of the closer comes after a byte.
     pub fn later(&self) -> String {
         format!("{}_later", self.kind)
+    }
+
+    /// Its closers: `C`, or `C | C2` with `or C2`.
+    pub fn closers(&self) -> Expr {
+        match &self.or {
+            Some((c2, _)) => Expr::Or(Box::new(self.closer.clone()), Box::new(c2.clone())),
+            None => self.closer.clone(),
+        }
+    }
+
+    /// The last bytes of its closers from their first bytes `c` (a mask at their first
+    /// bytes): `N - 1` bytes on, or `M - 1` where `C2` holds (`or C2 bytes M`).
+    pub fn closer_last(&self, c: Expr) -> Expr {
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let not = |a: Expr| Expr::Not(Box::new(a));
+        match &self.or {
+            Some((c2, m)) => Expr::Or(Box::new(prev(and(c.clone(), not(c2.clone())), self.bytes - 1)), Box::new(prev(and(c, c2.clone()), m - 1))),
+            None => prev(c, self.bytes - 1),
+        }
     }
 }
 
@@ -455,7 +622,6 @@ pub enum Stmt {
     /// are their `last` mask too (`TokenRule::last`), and a CPU ends the token at its start by
     /// the rule (decision 0177), with no last mask.
     Token { kind: String, start: Expr, through: Option<Expr>, last: Option<Expr>, rule: Option<TokenRule> },
-    Munch { kind: String, over: Expr, lits: Vec<(Vec<u8>, Option<String>)> },
     Keywords { kind: String, words: Vec<(Vec<u8>, Option<String>)>, soft: Vec<Vec<u8>>, required: bool },
     Skip(Expr),
     /// `prefix B …`: a file that starts with these bytes (one to eight) is read from after them,
@@ -507,11 +673,22 @@ pub enum Stmt {
     /// `, at KIND when TEST` and `, after KIND when TEST` (`MarkCheck`): a token of the kind
     /// that passes the test (a token escape's, `TokenEscape`) is a bit of the mark at its first
     /// byte (`at`) or at the byte after its last (`after`), as a lexer marks what it reads.
-    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck> },
+    ///
+    /// `, settles`: where the grammar takes it, the extras before its bit (since the grammar token
+    /// before) stay in the nodes its arm closes, and those after it go after them, as
+    /// tree-sitter-kotlin's scanner makes a line break the statement's semicolon: a comment on a
+    /// statement's line is the statement's.
+    ///
+    /// `, ends`: a hidden mark that a level which may end where it holds, and does not take it,
+    /// ends at, for its caller to take: tree-sitter's scanner gives its semicolon wherever one is
+    /// valid, before the token after it, which the level might read on (`a` then `b` on the next
+    /// line is two statements, not an infix call).
+    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool },
     /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
-    /// `before`'s. The mark is at the first element's token.
+    /// `before`'s, or (`after ~E`) none of them, or no token at all. The mark is at the first
+    /// element's token.
     TokenMark { kind: String, before: Vec<TokenElem>, seq: Vec<Vec<TokenElem>> },
     /// `hidden KIND …` (in a tree): marks taken where the grammar can take them and skipped
     /// elsewhere. A mark not hidden, where the grammar can not take it, refuses the file.
@@ -540,11 +717,14 @@ pub enum Stmt {
 
 /// The kind `implied` gives a token (`A as IMPLIED`): it makes no leaf.
 pub const IMPLIED: &str = "\u{0}implied";
+/// An `implied` token written as its kind (`implied R K`), not its text: this before the kind.
+const IMPLIED_KIND: &str = "\u{1}";
 /// The kind `drop` gives the node just made at this level (`relabel _ as GONE`): it goes.
 pub const GONE: &str = "\u{0}gone";
 
-/// Each `implied RULE 'A' …` of a tree's body, applied: its tokens in `RULE`'s own body marked
-/// `A as IMPLIED`. A token not written there is an error.
+/// Each `implied RULE 'A' … K …` of a tree's body, applied: its tokens in `RULE`'s own body
+/// marked `A as IMPLIED`, each written `'A'` or a token kind `K` (a character's content, whose
+/// bytes the character's node spans). A token not written there is an error.
 fn apply_implied(body: &mut [Stmt]) -> Result<(), String> {
     fn mark(g: &mut Gram, tokens: &[String], found: &mut Vec<bool>) {
         match g {
@@ -554,8 +734,14 @@ fn apply_implied(body: &mut [Stmt]) -> Result<(), String> {
                     *g = Gram::As(IMPLIED.into(), Box::new(Gram::Lit(t.clone())));
                 }
             }
+            Gram::Sym(k) => {
+                if let Some(i) = tokens.iter().position(|x| x.strip_prefix(IMPLIED_KIND) == Some(k.as_str())) {
+                    found[i] = true;
+                    *g = Gram::As(IMPLIED.into(), Box::new(Gram::Sym(k.clone())));
+                }
+            }
             // A token given a kind of its own, or merged, is a node's: not implied.
-            Gram::Sym(_) | Gram::As(..) | Gram::Merge(..) | Gram::Balanced { .. } | Gram::Any(_) => {}
+            Gram::As(..) | Gram::Merge(..) | Gram::Balanced { .. } | Gram::Any(_) => {}
             Gram::Seq(gs) | Gram::Alt(gs) => gs.iter_mut().for_each(|g| mark(g, tokens, found)),
             Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) => mark(a, tokens, found),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => mark(body, tokens, found),
@@ -578,7 +764,7 @@ fn apply_implied(body: &mut [Stmt]) -> Result<(), String> {
             return Err(format!("implied {rule}: no such rule"));
         }
         if let Some(i) = found.iter().position(|f| !f) {
-            return Err(format!("implied {rule}: {:?} is not written in it", tokens[i]));
+            return Err(format!("implied {rule}: {:?} is not written in it", tokens[i].trim_start_matches(IMPLIED_KIND)));
         }
     }
     Ok(())
@@ -1153,6 +1339,16 @@ impl P {
             self.want_p("..")?;
             let closer = self.expr()?;
             let bytes = if self.eat_kw("bytes") { self.int()? } else { 1 };
+            let or = if self.eat_kw("or") {
+                let c = self.expr()?;
+                let m = if self.eat_kw("bytes") { self.int()? } else { 1 };
+                if !(1..=3).contains(&m) {
+                    return self.err("a second closer of 1 to 3 bytes");
+                }
+                Some((c, m as u8))
+            } else {
+                None
+            };
             let outside = self.eat_kw("outside");
             let empty = if self.eat_kw("else") {
                 let e = self.ident()?;
@@ -1161,14 +1357,38 @@ impl P {
             } else {
                 None
             };
-            if !(1..=3).contains(&bytes) || (outside && bytes != 1) || empty.as_ref().is_some_and(|e| !(1..=3).contains(&e.1)) {
-                return self.err("a closer of 1 to 3 bytes (`outside`: 1), an `else` of 1 to 3");
+            let mut after = Vec::new();
+            if self.eat_kw("after") {
+                while matches!(self.peek(), Some(Tok::Ident(_))) {
+                    after.push(self.ident()?);
+                }
+                if after.is_empty() || outside || empty.is_some() {
+                    return self.err("`after` and the kinds it names, on a kind with no `outside` or `else`");
+                }
             }
-            kinds.push(Region { kind, opener, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)) });
+            if !(1..=3).contains(&bytes) || (outside && bytes != 1) || (outside && or.is_some()) || empty.as_ref().is_some_and(|e| !(1..=3).contains(&e.1)) {
+                return self.err("a closer of 1 to 3 bytes (`outside`: 1, and no `or`), an `else` of 1 to 3");
+            }
+            kinds.push(Region { kind, opener, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after });
             self.nls();
         }
         if kinds.is_empty() {
             return self.err("a region");
+        }
+        // `after` names kinds of these regions with no `after` of their own; at most 15 kinds.
+        for r in &kinds {
+            for a in &r.after {
+                if !kinds.iter().any(|k| k.kind == *a && k.after.is_empty()) {
+                    return Err(format!("region {}: `after {a}`, not a kind of these regions with no `after`", r.kind));
+                }
+            }
+        }
+        // The kinds with `after` come last: they read the openers the plain kinds took.
+        if let Some(w) = kinds.windows(2).find(|w| !w[0].after.is_empty() && w[1].after.is_empty()) {
+            return Err(format!("region {}: a kind with no `after` after {}, which has one; the kinds with `after` come last", w[1].kind, w[0].kind));
+        }
+        if kinds.len() > 15 && kinds.iter().any(|r| !r.after.is_empty()) {
+            return Err("regions with `after`: at most 15 kinds".into());
         }
         Ok(Regions { hidden, kinds })
     }
@@ -1215,6 +1435,76 @@ impl P {
         self.pair_sets.push((name_of.clone(), pairs));
         Ok(Stmt::Mask(name_of, mask))
     }
+    /// `munch K over O { "L" [-> KIND] … }`: operator tokens by longest match over each run of
+    /// `O` (03-bitlex.md §3.3), as masks and tokens. At each byte the longest literal that
+    /// starts there (1 to 3 bytes, all of them in `O`); a byte starts a token unless the token
+    /// one or two bytes before covers it, a fixed point taken four times from "every byte". A
+    /// run that has not settled by then (a chain of candidates such as `=====`) is an error, as
+    /// is a byte of `O` no literal starts. A token's kind is its alias, else its literal.
+    fn munch(&mut self, kind: &str, over: Expr, lits: &[(Vec<u8>, Option<String>)]) -> R<Stmt> {
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
+        let not = |a: Expr| Expr::Not(Box::new(a));
+        let shift = |f: &str, e: Expr, k: usize| match k {
+            0 => e,
+            1 => Expr::Call(f.into(), vec![Arg::E(e)]),
+            k => Expr::Call(f.into(), vec![Arg::E(e), Arg::N(k as u64)]),
+        };
+        let any = |v: Vec<Expr>| v.into_iter().reduce(|a, b| or(a, b));
+        let n = |x: &str| Expr::Name(format!("munch_{kind}_{x}"));
+        if lits.iter().any(|(l, _)| l.is_empty() || l.len() > 3) {
+            return self.err("munch: literals of 1 to 3 bytes");
+        }
+        let class = |b: u8| format!("pair_byte_{b:02x}");
+        for &b in lits.iter().flat_map(|(l, _)| l) {
+            if !self.classed.contains(&b) {
+                self.classed.push(b);
+                self.before.push(Stmt::Class(class(b), vec![(u32::from(b), u32::from(b))]));
+            }
+        }
+        let mut out = vec![Stmt::Mask(format!("munch_{kind}_over"), over)];
+        // Each literal where it starts, and the bytes the longest of each length starts at.
+        let mut by_len: [Vec<Expr>; 3] = Default::default();
+        for (j, (l, _)) in lits.iter().enumerate() {
+            let at = l.iter().enumerate().map(|(k, &b)| and(shift("next", Expr::Name(class(b)), k), shift("next", n("over"), k))).reduce(|a, b| and(a, b)).expect("a byte");
+            out.push(Stmt::Mask(format!("munch_{kind}_at{j}"), at));
+            by_len[l.len() - 1].push(n(&format!("at{j}")));
+        }
+        let zero = || Expr::Name("empty".into());
+        let [one, two, three] = by_len.map(|v| any(v).unwrap_or_else(zero));
+        out.push(Stmt::Mask(format!("munch_{kind}_l3"), three));
+        out.push(Stmt::Mask(format!("munch_{kind}_l2"), and(two, not(n("l3")))));
+        out.push(Stmt::Mask(format!("munch_{kind}_l1"), and(one, not(or(n("l2"), n("l3"))))));
+        // The fixed point: a byte starts a token unless one started a byte or two before covers it.
+        out.push(Stmt::Mask(format!("munch_{kind}_win0"), n("over")));
+        for k in 1..=4 {
+            let w = n(&format!("win{}", k - 1));
+            let covered = or(shift("prev", and(w.clone(), or(n("l2"), n("l3"))), 1), shift("prev", and(w, n("l3")), 2));
+            out.push(Stmt::Mask(format!("munch_{kind}_win{k}"), and(n("over"), not(covered))));
+        }
+        out.push(Stmt::Error(format!("munch {kind}: a chain of operators longer than its bound"), Expr::Xor(Box::new(n("win3")), Box::new(n("win4")))));
+        out.push(Stmt::Error(format!("munch {kind}: a byte no operator starts"), and(n("win3"), not(or(n("l1"), or(n("l2"), n("l3")))))));
+        let last = or(or(and(n("win3"), n("l1")), shift("prev", and(n("win3"), n("l2")), 1)), shift("prev", and(n("win3"), n("l3")), 2));
+        out.push(Stmt::Mask(format!("munch_{kind}_last"), last));
+        // A token a kind: the bytes where the longest literal is one of the kind's.
+        let mut kinds: Vec<(String, Vec<Expr>)> = Vec::new();
+        for (j, (l, alias)) in lits.iter().enumerate() {
+            let k = alias.clone().unwrap_or_else(|| String::from_utf8_lossy(l).into_owned());
+            let longest = and(n(&format!("at{j}")), n(&format!("l{}", l.len())));
+            match kinds.iter_mut().find(|(x, _)| *x == k) {
+                Some((_, v)) => v.push(longest),
+                None => kinds.push((k, vec![longest])),
+            }
+        }
+        for (k, v) in kinds {
+            let start = and(n("win3"), any(v).expect("a literal"));
+            out.push(Stmt::Token { kind: k, start, through: None, last: Some(n("last")), rule: None });
+        }
+        let last = out.pop().expect("a token");
+        self.before.extend(out);
+        Ok(last)
+    }
+
     /// A token test: `count(E) at least N` or `run(E) at least N` (`TokenTest`).
     fn token_test(&mut self) -> R<(TokenTest, Expr, u32)> {
         let test = if self.eat_kw("count") {
@@ -1456,12 +1746,16 @@ impl P {
             "implied" => {
                 let rule = self.ident()?;
                 let mut tokens = vec![];
-                while let Some(Tok::Str(s)) = self.peek() {
-                    tokens.push(String::from_utf8_lossy(s).into_owned());
+                loop {
+                    match self.peek() {
+                        Some(Tok::Str(s)) => tokens.push(String::from_utf8_lossy(s).into_owned()),
+                        Some(Tok::Ident(k)) => tokens.push(format!("{IMPLIED_KIND}{k}")),
+                        _ => break,
+                    }
                     self.i += 1;
                 }
                 if tokens.is_empty() {
-                    return self.err("implied RULE 'A' …");
+                    return self.err("implied RULE 'A' … K …");
                 }
                 Stmt::Implied { rule, tokens }
             }
@@ -1592,11 +1886,12 @@ impl P {
                     if seq.is_empty() {
                         return self.err("a token after `tokens`");
                     }
-                    // The mark's token, and the one before, are tokens of the choices: no `~`, no
-                    // `end`; an `end` only in the last element.
+                    // The mark's token is a token of the choices: no `~`, no `end`; an `end` only in
+                    // the last element. The one before (`after`) has no `end`; a `~` there holds
+                    // where no token comes before too (the file's first).
                     let special = |c: &[TokenElem]| c.iter().any(|x| matches!(x, TokenElem::Not(_) | TokenElem::End));
                     let ends = |c: &[TokenElem]| c.contains(&TokenElem::End);
-                    if special(&seq[0]) || special(&before) || seq[..seq.len() - 1].iter().any(|c| ends(c)) {
+                    if special(&seq[0]) || ends(&before) || seq[..seq.len() - 1].iter().any(|c| ends(c)) {
                         return self.err("a mark's token of kinds and words, and `end` only last");
                     }
                     let s = Stmt::TokenMark { kind, before, seq };
@@ -1614,10 +1909,14 @@ impl P {
                         }
                     }
                 }
-                let (mut end, mut unplaced, mut checks) = (false, None, vec![]);
+                let (mut end, mut unplaced, mut checks, mut settles, mut ends) = (false, None, vec![], false, false);
                 while self.eat_p(",") {
                     self.nls();
-                    if self.eat_kw("else") {
+                    if self.eat_kw("settles") {
+                        settles = true;
+                    } else if self.eat_kw("ends") {
+                        ends = true;
+                    } else if self.eat_kw("else") {
                         self.want_kw("escape")?;
                         unplaced = Some(String::from_utf8_lossy(&self.string()?).into_owned());
                     } else if self.is_kw("at") || self.is_kw("after") {
@@ -1634,7 +1933,7 @@ impl P {
                         end = true;
                     }
                 }
-                Stmt::Mark { kind, at, end, unless, unplaced, checks }
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends }
             }
             "token" => {
                 let kind = self.kind()?;
@@ -1669,10 +1968,7 @@ impl P {
                         }
                     }
                     if self.eat_kw("parts") {
-                        let [r] = regions.as_slice() else {
-                            return self.err("one region read in parts");
-                        };
-                        if r.outside || r.empty.is_some() {
+                        if regions.iter().any(|r| r.outside || r.empty.is_some()) {
                             return self.err("a region read in parts with its closer its own, no `else`");
                         }
                         self.want_p("{")?;
@@ -1685,18 +1981,44 @@ impl P {
                             let p = self.kind()?;
                             self.want_p("=")?;
                             let e = self.expr()?;
-                            self.want_kw("bytes")?;
-                            let n = u8::try_from(self.int()?).map_err(|_| "a part of at most 255 bytes".to_owned())?;
-                            if n == 0 {
-                                return self.err("a part of one byte or more");
-                            }
-                            parts.push((p, e, n));
+                            let len = if self.eat_kw("last") {
+                                PartLen::Last(self.expr()?)
+                            } else {
+                                self.want_kw("bytes")?;
+                                let n = u8::try_from(self.int()?).map_err(|_| "a part of at most 255 bytes".to_owned())?;
+                                if n == 0 {
+                                    return self.err("a part of one byte or more");
+                                }
+                                PartLen::Bytes(n)
+                            };
+                            parts.push((p, e, len));
                             self.nls();
                             let _ = self.eat_p(",");
                         }
                         self.want_kw("else")?;
                         let content = self.kind()?;
-                        Some(TokenRule::ReadParts(r.clone(), Parts { parts, content }))
+                        let mut closes = vec![];
+                        if self.eat_kw("closes") {
+                            self.want_p("{")?;
+                            loop {
+                                self.nls();
+                                if self.eat_p("}") {
+                                    break;
+                                }
+                                let k = self.kind()?;
+                                self.want_p("=")?;
+                                let e = self.expr()?;
+                                self.want_kw("bytes")?;
+                                let n = u8::try_from(self.int()?).map_err(|_| "a closer of at most 255 bytes".to_owned())?;
+                                if n == 0 {
+                                    return self.err("a closer of one byte or more");
+                                }
+                                closes.push((k, e, n));
+                                self.nls();
+                                let _ = self.eat_p(",");
+                            }
+                        }
+                        Some(TokenRule::ReadParts(regions, Parts { parts, content, closes }))
                     } else {
                         Some(TokenRule::Read(regions))
                     }
@@ -1707,8 +2029,20 @@ impl P {
                     last = Some(r.last(&start));
                 }
                 // A region read in parts: its other rows after it (`Parts::rows`).
-                if let Some(TokenRule::ReadParts(r, parts)) = &rule {
-                    self.after.extend(parts.rows(&kind, r, &start));
+                if let Some(TokenRule::ReadParts(rs, parts)) = &rule {
+                    // Several regions: the opener a row in each's mode too, at its own openers
+                    // (`start & o_K`), all of the one reader (`ReadParts`).
+                    if rs.len() > 1 {
+                        let at = |r: &Region| Expr::And(Box::new(start.clone()), Box::new(Expr::Name(format!("o_{}", r.kind))));
+                        for r in &rs[1..] {
+                            let s = at(r);
+                            self.after.push(Stmt::Token { kind: kind.clone(), start: s.clone(), through: None, last: Some(s), rule: rule.clone() });
+                        }
+                        self.after.extend(parts.rows(&kind, rs, &start));
+                        let s = at(&rs[0]);
+                        return Ok(Stmt::Token { kind, start: s.clone(), through: None, last: Some(s), rule });
+                    }
+                    self.after.extend(parts.rows(&kind, rs, &start));
                 }
                 Stmt::Token { kind, start, through, last, rule }
             }
@@ -1716,7 +2050,8 @@ impl P {
                 let kind = self.ident()?;
                 self.want_kw("over")?;
                 let over = self.expr()?;
-                Stmt::Munch { kind, over, lits: self.words()? }
+                let lits = self.words()?;
+                self.munch(&kind, over, &lits)?
             }
             "keywords" => {
                 let kind = self.ident()?;

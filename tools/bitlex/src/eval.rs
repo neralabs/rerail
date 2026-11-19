@@ -114,7 +114,6 @@ pub struct Ev<'a> {
     rounds: Vec<(String, usize)>,
     prefix: String,
     toks: Vec<TokDef>,
-    munch: Vec<(String, Mask, Vec<(Vec<u8>, Option<String>)>)>,
     keywords: Vec<(String, Vec<(Vec<u8>, Option<String>)>, Vec<Vec<u8>>, bool)>,
     skip: Mask,
     /// Each `mark`, in the order declared: its kind, its bits, and whether the end has it.
@@ -194,7 +193,6 @@ impl<'a> Ev<'a> {
             rounds: vec![],
             prefix: String::new(),
             toks: vec![],
-            munch: vec![],
             keywords: vec![],
             skip: Mask::zeros(n),
             marks: vec![],
@@ -397,10 +395,6 @@ impl<'a> Ev<'a> {
                 };
                 self.toks.push(TokDef { kind: kind.clone(), start, through, last });
             }
-            Stmt::Munch { kind, over, lits } => {
-                let over = self.mask(over)?;
-                self.munch.push((kind.clone(), over, lits.clone()));
-            }
             Stmt::Keywords { kind, words, soft, required } => {
                 self.keywords.push((kind.clone(), words.clone(), soft.clone(), *required));
             }
@@ -442,7 +436,7 @@ impl<'a> Ev<'a> {
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
             // Applied by the parser (`A as IMPLIED` in the rule's body).
             Stmt::Implied { .. } => {}
-            Stmt::Mark { kind, at, end, unless, unplaced, checks } => {
+            Stmt::Mark { kind, at, end, unless, unplaced, checks, .. } => {
                 let m = self.mask(at)?;
                 for c in checks {
                     let x = self.mask(&c.expr)?;
@@ -1096,7 +1090,6 @@ impl<'a> Ev<'a> {
     fn finish(&mut self) -> R<Vec<Token>> {
         let n = self.n;
         let mut kind_at: Vec<u32> = vec![0; n]; // 1 + index into kinds
-        let mut len_at: Vec<u32> = vec![0; n]; // fixed length (munch), or 0
         let mut kinds: Vec<String> = vec![];
         let mut throughs: Vec<Option<Mask>> = vec![];
         let mut lasts: Vec<Option<Mask>> = vec![];
@@ -1113,36 +1106,6 @@ impl<'a> Ev<'a> {
                 kind_at[i] = k;
             }
         }
-        for (_, over, lits) in &self.munch {
-            let mut runs = vec![];
-            over.runs(|a, b| runs.push((a, b)));
-            for (a, b) in runs {
-                let mut i = a;
-                while i < b {
-                    let best = lits.iter().filter(|(l, _)| self.src[i..b].starts_with(l)).max_by_key(|(l, _)| l.len());
-                    let Some((l, alias)) = best else {
-                        self.errors.push(format!("munch: no operator at byte {i}"));
-                        break;
-                    };
-                    let kind = alias.clone().unwrap_or_else(|| String::from_utf8_lossy(l).into_owned());
-                    let k = match kinds.iter().position(|x| *x == kind) {
-                        Some(p) => p as u32 + 1,
-                        None => {
-                            kinds.push(kind.clone());
-                            throughs.push(None);
-                            lasts.push(None);
-                            kinds.len() as u32
-                        }
-                    };
-                    if kind_at[i] != 0 && overlap.is_none() {
-                        overlap = Some(format!("tokens {} and {kind} both start at byte {i}", kinds[kind_at[i] as usize - 1]));
-                    }
-                    kind_at[i] = k;
-                    len_at[i] = l.len() as u32;
-                    i += l.len();
-                }
-            }
-        }
         if let Some(o) = overlap {
             self.errors.push(o);
         }
@@ -1154,9 +1117,7 @@ impl<'a> Ev<'a> {
             }
             let k = kind_at[i] as usize - 1;
             let mut end = i + 1;
-            if len_at[i] > 0 {
-                end = i + len_at[i] as usize;
-            } else if let Some(t) = &throughs[k] {
+            if let Some(t) = &throughs[k] {
                 while end < n && t.get(end) && kind_at[end] == 0 {
                     end += 1
                 }
@@ -1208,6 +1169,9 @@ impl<'a> Ev<'a> {
                 }
             }
         }
+        // Each token's kind as its rule made it, before a keyword names it: a token mark's kind
+        // holds at either, as the compiler's code keeps the rule's kind with the keyword's word.
+        let lexed: Vec<String> = toks.iter().map(|t| t.kind.clone()).collect();
         for (kind, words, soft, required) in &self.keywords {
             for t in toks.iter_mut().filter(|t| &t.kind == kind) {
                 let text = &self.src[t.start..t.end];
@@ -1236,14 +1200,15 @@ impl<'a> Ev<'a> {
         let grammar: Vec<usize> = (0..toks.len()).filter(|&i| !extra.contains(&toks[i].kind)).collect();
         let mut before: Vec<Vec<bool>> = vec![vec![false; self.marks.len()]; toks.len()];
         // A token mark: at each grammar token that begins its run, after its token before.
-        // A choice at a token: its kind, or its text as a word (its kind's spelling, a
-        // keyword's, or its soft word). `~`: none of its choices, and never the file's end.
-        let one = |t: &Token, c: &TokenElem| match c {
-            TokenElem::Kind(k) => &t.kind == k,
-            TokenElem::Word(w) => t.kind.as_bytes() == w.as_slice() || t.soft.as_deref().is_some_and(|s| s.as_bytes() == w.as_slice()),
+        // A choice at a token: its kind (or the rule's, a keyword's token: `lexed`), or its text
+        // as a word (its kind's spelling, a keyword's, or its soft word). `~`: none of its
+        // choices, and never the file's end.
+        let one = |i: usize, c: &TokenElem| match c {
+            TokenElem::Kind(k) => &toks[i].kind == k || &lexed[i] == k,
+            TokenElem::Word(w) => toks[i].kind.as_bytes() == w.as_slice() || toks[i].soft.as_deref().is_some_and(|s| s.as_bytes() == w.as_slice()),
             TokenElem::Not(_) | TokenElem::End => false,
         };
-        let is = |t: Option<&Token>, e: &[TokenElem]| match (e, t) {
+        let is = |t: Option<usize>, e: &[TokenElem]| match (e, t) {
             ([TokenElem::Not(inner)], Some(t)) => !inner.iter().any(|c| one(t, c)),
             ([TokenElem::Not(_)], None) => false,
             (_, None) => e.contains(&TokenElem::End),
@@ -1251,9 +1216,10 @@ impl<'a> Ev<'a> {
         };
         for (&k, (pre, seq)) in &self.token_marks {
             for g in 0..grammar.len() {
-                let at = |i: usize| grammar.get(g + i).map(|&x| &toks[x]);
+                let at = |i: usize| grammar.get(g + i).copied();
                 let run = seq.iter().enumerate().all(|(i, e)| is(at(i), e));
-                let after = pre.is_empty() || (g > 0 && is(Some(&toks[grammar[g - 1]]), pre));
+                // `after ~E`: none of `E`'s before, or no token before (the file's first).
+                let after = pre.is_empty() || (g > 0 && is(Some(grammar[g - 1]), pre)) || (g == 0 && matches!(pre.as_slice(), [TokenElem::Not(_)]));
                 if run && after {
                     before[grammar[g]][k] = true;
                 }
@@ -1266,7 +1232,7 @@ impl<'a> Ev<'a> {
             for i in bits {
                 let g = grammar.partition_point(|&t| toks[t].start < i);
                 // `unless after`: none where the grammar token before is one of its words.
-                if g > 0 && !unless.is_empty() && is(Some(&toks[grammar[g - 1]]), &unless) {
+                if g > 0 && !unless.is_empty() && is(Some(grammar[g - 1]), &unless) {
                     continue;
                 }
                 match grammar.get(g) {
@@ -1471,5 +1437,52 @@ mask comment = line | (slash & next(open))
         let prog = crate::syntax::parse(&ahead).expect("parses");
         let e = Ev::run(&prog, b"\"a\"", &HashMap::new()).err().expect("refused");
         assert!(e.contains("`next` of a value a carry reaches"), "{e}");
+    }
+
+    /// `munch`'s masks give the tokens a sequential longest match gives, and a chain longer than
+    /// the bound is an error, never a wrong split.
+    #[test]
+    fn munch_is_the_longest_match_left_to_right() {
+        const OPS: &[&str] = &["<<=", ">>=", "...", "->", "<<", ">>", "<=", ">=", "--", "++", "-=", "<", ">", "=", "-", "+", "."];
+        let lits: String = OPS.iter().map(|o| format!(" \"{o}\"")).collect();
+        let text = format!("lexer m\nclass opc = '<' '>' '=' '-' '+' '.'\nclass sp = ' '\nmunch op over opc {{{lits} }}\nskip sp\n");
+        let prog = crate::syntax::parse(&text).expect("parses");
+        let tables = HashMap::new();
+        let longest = |src: &[u8]| {
+            let mut out = Vec::new();
+            let mut i = 0;
+            while i < src.len() {
+                if src[i] == b' ' {
+                    i += 1;
+                    continue;
+                }
+                let l = OPS.iter().filter(|o| src[i..].starts_with(o.as_bytes())).map(|o| o.len()).max().expect("an operator");
+                out.push((i, i + l));
+                i += l;
+            }
+            out
+        };
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let (mut chains, mut read) = (0, 0);
+        for len in 0..400 {
+            let src: Vec<u8> = (0..len % 24)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    b"<>=-+. "[(seed % 7) as usize]
+                })
+                .collect();
+            let out = Ev::run(&prog, &src, &tables).unwrap_or_else(|e| panic!("{e}"));
+            if out.errors.iter().any(|e| e.contains("chain of operators")) {
+                chains += 1;
+                continue;
+            }
+            assert!(out.errors.is_empty(), "{:?}: {:?}", String::from_utf8_lossy(&src), out.errors);
+            let got: Vec<(usize, usize)> = out.tokens.iter().map(|t| (t.start, t.end)).collect();
+            assert_eq!(got, longest(&src), "{:?}", String::from_utf8_lossy(&src));
+            read += 1;
+        }
+        assert!(read > 200 && chains > 0, "{read} read, {chains} chains refused");
     }
 }

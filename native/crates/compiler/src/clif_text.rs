@@ -10,7 +10,7 @@ pub fn hot_loop(clif: &str) -> Vec<(String, Vec<String>)> {
     for line in clif.lines() {
         let t = line.trim();
         if t.starts_with("block") && t.ends_with(':') {
-            // `block12(v1: i64):`, `block12 cold:`.
+            // `block7(v1: i64):`, `block9 cold:`: the name alone.
             let name = t.split(['(', ':', ' ']).next().unwrap_or("").to_owned();
             blocks.push((name, Vec::new()));
         } else if let Some((_, lines)) = blocks.last_mut()
@@ -32,7 +32,9 @@ pub fn hot_loop(clif: &str) -> Vec<(String, Vec<String>)> {
     }
     let (mut seen, mut work, mut out) = (vec!["block2".to_owned()], vec!["block2".to_owned()], Vec::new());
     while let Some(name) = work.pop() {
-        let (_, lines) = blocks.iter().find(|(n, _)| *n == name).expect("a block of the function");
+        let Some((_, lines)) = blocks.iter().find(|(n, _)| *n == name) else {
+            panic!("{name} is not a block of the function (its blocks: {:?})", blocks.iter().map(|b| &b.0).take(12).collect::<Vec<_>>());
+        };
         for next in successors(lines) {
             if next != "block4" && !seen.contains(&next) {
                 seen.push(next.clone());
@@ -40,6 +42,27 @@ pub fn hot_loop(clif: &str) -> Vec<(String, Vec<String>)> {
             }
         }
         out.push((name, lines.clone()));
+    }
+    out
+}
+
+/// The functions `clif`'s calls call, a user name's index each (`u0:N`), one a call line: each
+/// function's `fnK = … u0:N …` declarations name its `fnK`.
+pub fn callees(clif: &str) -> Vec<u32> {
+    let mut names: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let mut out = Vec::new();
+    for line in clif.lines().map(str::trim) {
+        if line.starts_with("function ") {
+            names.clear();
+        } else if let Some((name, decl)) = line.split_once(" = ").filter(|(n, d)| n.starts_with("fn") && d.contains(" u0:")) {
+            if let Some(n) = decl.split(" u0:").nth(1).and_then(|r| r.split_whitespace().next()).and_then(|n| n.parse().ok()) {
+                names.insert(name.to_owned(), n);
+            }
+        } else if let Some(rest) = line.split("call ").nth(1).filter(|_| line.starts_with("call ") || line.contains(" call ")) {
+            if let Some(&n) = names.get(rest.split('(').next().unwrap_or_default()) {
+                out.push(n);
+            }
+        }
     }
     out
 }

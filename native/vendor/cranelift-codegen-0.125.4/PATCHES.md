@@ -19,11 +19,11 @@ Four crates change; each is crates.io's 0.125.4 with the branch's diff for it:
     encoding and printing; a multiplicand that is a vector's low lane (`extractlane` of an
     `i64x2`, lane 0) is read in place, with no move out and back (0346);
   - the x64 lowering, `pclmulqdq` when `has_pclmulqdq` is set;
-  - aarch64's constants (0353): a 128-bit constant repeating a 64-bit value that no `movi`
+  - aarch64's constants (0381): a 128-bit constant repeating a 64-bit value that no `movi`
     makes, and that doesn't repeat a 32-bit one, is loaded from the constant pool (one `ldr q`),
     not built in a general register and duplicated (up to five instructions: a bitmask's
     weights); `clmul` by all ones takes them from a `movi`;
-  - aarch64's `cmtst` (0353): `VecALUOp::Cmtst` (CMEQ's register encoding with U = 0), its
+  - aarch64's `cmtst` (0381): `VecALUOp::Cmtst` (CMEQ's register encoding with U = 0), its
     printing and an encoding test; `icmp ne (band x m), 0` on an integer vector lowers to it, as
     NEON's `vtst` (one instruction, where it was `and`, `cmeq #0` and a `not` or a complement);
   - `links = "cranelift_codegen"` and `cargo:clmul=1` in `build.rs`, so a dependent's build

@@ -29,15 +29,98 @@ pub struct Entry {
     pub classes: Vec<u16>,
 }
 
-/// The codes a tape's numbers name, by number.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// The codes a tape's numbers name, by number, and the table's index of them by kind and by class (made once,
+/// with the table, on first use): a kind's codes without a scan of the table, which on format 16 is the language's
+/// every code (`f16::Lang`), not the document's few.
+#[derive(Clone, Debug, Default)]
 pub struct CodeTable {
     entries: Vec<Entry>,
+    index: std::sync::OnceLock<CodeIndex>,
+}
+
+impl PartialEq for CodeTable {
+    fn eq(&self, other: &Self) -> bool {
+        self.entries == other.entries
+    }
+}
+impl Eq for CodeTable {}
+
+/// A table's codes by kind (those with no `CODE_ERROR`), by class, and those with `CODE_ERROR` and with
+/// `CODE_MISSING`, each as the set a kind test reads: made once per table, so a test of a document borrows it
+/// (on format 16 every document of a language shares the table).
+#[derive(Clone, Debug, Default)]
+struct CodeIndex {
+    /// By kind (a u16 symbol, so a vector).
+    kinds: Vec<CodeSet>,
+    classes: Vec<CodeSet>,
+    errors: CodeSet,
+    missing: CodeSet,
+    /// `errors` and `missing`.
+    faults: CodeSet,
+    empty: CodeSet,
 }
 
 impl CodeTable {
     pub fn new(entries: Vec<Entry>) -> Self {
-        CodeTable { entries }
+        CodeTable { entries, index: std::sync::OnceLock::new() }
+    }
+    fn index(&self) -> &CodeIndex {
+        self.index.get_or_init(|| {
+            let mut kinds: Vec<Vec<u32>> = Vec::new();
+            let mut classes: Vec<Vec<u32>> = Vec::new();
+            let slot = |v: &mut Vec<Vec<u32>>, k: u16, n: u32| {
+                if v.len() <= k as usize {
+                    v.resize_with(k as usize + 1, Vec::new);
+                }
+                v[k as usize].push(n);
+            };
+            let (mut errors, mut missing) = (Vec::new(), Vec::new());
+            for (n, e) in self.entries.iter().enumerate() {
+                let n = n as u32;
+                if e.flags & crate::CODE_MISSING != 0 {
+                    missing.push(n);
+                }
+                if e.flags & crate::CODE_ERROR != 0 {
+                    errors.push(n);
+                } else {
+                    slot(&mut kinds, e.kind, n);
+                }
+                for &c in &e.classes {
+                    slot(&mut classes, c, n);
+                }
+            }
+            let faults = CodeSet::of_numbers(errors.iter().chain(&missing).copied());
+            CodeIndex {
+                kinds: kinds.into_iter().map(CodeSet::of_numbers).collect(),
+                classes: classes.into_iter().map(CodeSet::of_numbers).collect(),
+                errors: CodeSet::of_numbers(errors),
+                missing: CodeSet::of_numbers(missing),
+                faults,
+                empty: CodeSet::default(),
+            }
+        })
+    }
+    /// The codes of kind `kind` with no `CODE_ERROR`.
+    pub fn of_kind(&self, kind: u16) -> &CodeSet {
+        let x = self.index();
+        x.kinds.get(kind as usize).unwrap_or(&x.empty)
+    }
+    /// The codes whose classes hold `class`.
+    pub fn of_class(&self, class: u16) -> &CodeSet {
+        let x = self.index();
+        x.classes.get(class as usize).unwrap_or(&x.empty)
+    }
+    /// The codes with `CODE_ERROR`.
+    pub fn errors(&self) -> &CodeSet {
+        &self.index().errors
+    }
+    /// The codes with `CODE_MISSING`.
+    pub fn missing(&self) -> &CodeSet {
+        &self.index().missing
+    }
+    /// The codes with `CODE_ERROR` or `CODE_MISSING`.
+    pub fn faults(&self) -> &CodeSet {
+        &self.index().faults
     }
     #[inline]
     pub fn len(&self) -> usize {
@@ -57,26 +140,74 @@ impl CodeTable {
     }
     /// The codes for which `member` holds, as a set by number.
     pub fn set(&self, member: impl Fn(&Entry) -> bool) -> CodeSet {
-        CodeSet { member: self.entries.iter().map(member).collect() }
+        CodeSet { repr: Members::Dense(self.entries.iter().map(member).collect()) }
     }
 }
 
-/// A set of codes of one table, by number: what a kind test reads.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// A set of codes of one table, by number: what a kind test reads. Either a flag per code of the table (a set
+/// made by a test of every entry), or the few numbers it holds (a kind's or a class's, from the table's index).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodeSet {
-    member: Vec<bool>,
+    repr: Members,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Members {
+    Dense(Vec<bool>),
+    Few(Box<[u32]>),
+}
+
+impl Default for CodeSet {
+    fn default() -> Self {
+        CodeSet { repr: Members::Few(Box::default()) }
+    }
 }
 
 impl CodeSet {
+    /// The set of `numbers` (any order, repeats allowed).
+    pub fn of_numbers(numbers: impl IntoIterator<Item = u32>) -> CodeSet {
+        let mut v: Vec<u32> = numbers.into_iter().collect();
+        v.sort_unstable();
+        v.dedup();
+        CodeSet { repr: Members::Few(v.into_boxed_slice()) }
+    }
     #[inline(always)]
     pub fn contains(&self, number: u32) -> bool {
-        self.member.get(number as usize).copied().unwrap_or(false)
+        match &self.repr {
+            Members::Dense(member) => member.get(number as usize).copied().unwrap_or(false),
+            Members::Few(few) if few.len() <= 8 => few.contains(&number),
+            Members::Few(few) => few.binary_search(&number).is_ok(),
+        }
     }
-    pub fn by_number(&self) -> &[bool] {
-        &self.member
+    /// The numbers of a set made from numbers, ascending; a set of a flag per code has none to give.
+    pub fn numbers(&self) -> Option<&[u32]> {
+        match &self.repr {
+            Members::Dense(_) => None,
+            Members::Few(few) => Some(few),
+        }
+    }
+    /// Marks in `out` each number of the set below `cut` (at most 256), clearing the rest: a set of a few numbers
+    /// costs its members, not a test of every number below the cut.
+    pub fn mark_below(&self, cut: usize, out: &mut [bool; 256]) {
+        let cut = cut.min(256);
+        *out = [false; 256];
+        match &self.repr {
+            Members::Dense(member) => out[..cut.min(member.len())].copy_from_slice(&member[..cut.min(member.len())]),
+            Members::Few(few) => few.iter().take_while(|&&n| (n as usize) < cut).for_each(|&n| out[n as usize] = true),
+        }
+    }
+    /// Whether the set holds a number `from` or past it.
+    pub fn any_from(&self, from: usize) -> bool {
+        match &self.repr {
+            Members::Dense(member) => member.iter().skip(from).any(|&m| m),
+            Members::Few(few) => few.last().is_some_and(|&n| n as usize >= from),
+        }
     }
     pub fn is_empty(&self) -> bool {
-        !self.member.iter().any(|&m| m)
+        match &self.repr {
+            Members::Dense(member) => !member.iter().any(|&m| m),
+            Members::Few(few) => few.is_empty(),
+        }
     }
 }
 
@@ -84,6 +215,12 @@ impl CodeSet {
 pub trait Tape {
     /// The nodes.
     fn len(&self) -> usize;
+    /// Whether block `block` (nodes `f16::Z * block ..`; `u32::MAX`: the document) may have a node of kind `kind`,
+    /// by the tape's presence in its home (`tape_has_kind`, decision 0434 §4, step 6): true for a tape that has none.
+    fn has_kind(&self, block: u32, kind: u16) -> bool {
+        let _ = (block, kind);
+        true
+    }
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -106,6 +243,12 @@ pub trait Tape {
     }
     /// `i`'s parent.
     fn parent(&self, i: usize) -> Option<usize>;
+    /// `i`'s parent, where the caller knows an ancestor of it, `a` (whose subtree holds `i`): a format whose parent
+    /// read is a search may start it there. Its parent read by default.
+    #[inline(always)]
+    fn parent_within(&self, i: usize, _a: usize) -> Option<usize> {
+        self.parent(i)
+    }
     fn start(&self, i: usize) -> u64;
     fn end(&self, i: usize) -> u64;
     /// A cursor's step in preorder: `i`'s start, given the start of the node before it (unused for the first). A
@@ -118,6 +261,15 @@ pub trait Tape {
     #[inline(always)]
     fn end_with_start(&self, i: usize, _start: u64) -> u64 {
         self.end(i)
+    }
+    /// `match_groups` over the blocks `block` admits alone (block `b`: nodes `f16::Z * b ..`), as a planner tells
+    /// them from the tape's presence (`has_kind`): a format 16 or 16z tape reads no codes of a block left out.
+    fn match_groups_in(&self, set: &CodeSet, block: &dyn Fn(u32) -> bool, mut f: impl FnMut(usize, u64)) {
+        self.match_groups(set, |base, m| {
+            if block((base / crate::f16::Z) as u32) {
+                f(base, m);
+            }
+        });
     }
     /// The codes 64 nodes at a time: `f(base, m)`, bit j of `m` set when node `base + j` is in `set`.
     fn match_groups(&self, set: &CodeSet, mut f: impl FnMut(usize, u64)) {
@@ -193,6 +345,8 @@ pub struct F15Columns<'a> {
     pub tail: &'a [u8],
     pub widths: [u8; 3],
     pub from_start: bool,
+    /// The source's length (its header's, or its image's): a view's spans are held to it (decision 0403).
+    pub source_len: u64,
 }
 
 /// Format 15, read where its columns lie, through the tape's reads (decision 0310's Rust backend,
@@ -259,6 +413,35 @@ impl Tape for F15<'_> {
         let p = reads::tape_parent(self.bytes, &self.view, i as u32);
         (p != u32::MAX).then_some(p as usize)
     }
+    /// The node before when it holds `i` (a first child), else a descent from `a` over the siblings' subtree ends:
+    /// as long as the path's siblings below `a`, not the root's. From the root, a child of a module's top level
+    /// hopped every statement before it.
+    fn parent_within(&self, i: usize, a: usize) -> Option<usize> {
+        if i == 0 {
+            return None;
+        }
+        if self.subtree_end(i - 1) > i {
+            return Some(i - 1);
+        }
+        if a >= i || self.subtree_end(a) <= i {
+            return self.parent(i);
+        }
+        let mut p = a;
+        loop {
+            let mut c = p + 1;
+            loop {
+                let end = self.subtree_end(c);
+                if end > i {
+                    break;
+                }
+                c = end;
+            }
+            if c == i {
+                return Some(p);
+            }
+            p = c;
+        }
+    }
     #[inline(always)]
     fn start(&self, i: usize) -> u64 {
         u64::from(reads::tape_start(self.bytes, &self.view, i as u32))
@@ -266,6 +449,13 @@ impl Tape for F15<'_> {
     #[inline(always)]
     fn end(&self, i: usize) -> u64 {
         u64::from(reads::tape_end(self.bytes, &self.view, i as u32))
+    }
+    /// A scan's span is the tape's as stated (decision 0403: what its check reads; its slices are checked).
+    fn start_next(&self, i: usize, _prev_start: u64) -> u64 {
+        u64::from(reads::tape_start_stated(self.bytes, &self.view, i as u32))
+    }
+    fn end_with_start(&self, i: usize, _start: u64) -> u64 {
+        u64::from(reads::tape_end_stated(self.bytes, &self.view, i as u32))
     }
 }
 
@@ -291,6 +481,7 @@ impl F15Columns<'_> {
         let widths = u32::from(self.widths[0]) | u32::from(self.widths[1]) << 4 | u32::from(self.widths[2]) << 8 | u32::from(self.from_start) << 12;
         Ok(rerail_clif::view::TapeView {
             nodes: u32::try_from(self.code.len() / 2).map_err(|_| "a tape past 4 G nodes".to_owned())?,
+            source_len: u32::try_from(self.source_len).map_err(|_| "a source past 4 GiB".to_owned())?,
             format: 15,
             widths,
             columns: [at(self.code)?, at(self.size)?, at(self.base)?, at(self.off)?, at(self.tail)?],
@@ -347,7 +538,8 @@ pub fn f15_columns(bytes: &[u8]) -> Result<(F15Columns<'_>, CodeTable), String> 
             Ok(Entry { kind: kf & ((1 << crate::KIND_BITS) - 1), field: kf >> crate::KIND_BITS, flags, alias, classes })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    Ok((F15Columns { code, size, base, off, tail, widths, from_start }, CodeTable::new(entries)))
+    let source_len = u64_at(header::SOURCE_LEN)? as u64;
+    Ok((F15Columns { code, size, base, off, tail, widths, from_start, source_len }, CodeTable::new(entries)))
 }
 
 // ---- bulk answers ------------------------------------------------------------------------------------------
@@ -445,6 +637,10 @@ impl Tape for AnyTape<'_> {
         with_tape!(self, |t| t.parent(i))
     }
     #[inline]
+    fn parent_within(&self, i: usize, a: usize) -> Option<usize> {
+        with_tape!(self, |t| t.parent_within(i, a))
+    }
+    #[inline]
     fn start(&self, i: usize) -> u64 {
         with_tape!(self, |t| t.start(i))
     }
@@ -462,6 +658,12 @@ impl Tape for AnyTape<'_> {
     }
     fn match_groups(&self, set: &CodeSet, f: impl FnMut(usize, u64)) {
         with_tape!(self, |t| t.match_groups(set, f))
+    }
+    fn match_groups_in(&self, set: &CodeSet, block: &dyn Fn(u32) -> bool, f: impl FnMut(usize, u64)) {
+        with_tape!(self, |t| t.match_groups_in(set, block, f))
+    }
+    fn has_kind(&self, block: u32, kind: u16) -> bool {
+        with_tape!(self, |t| t.has_kind(block, kind))
     }
     fn path(&self, i: usize, out: &mut Vec<usize>) {
         with_tape!(self, |t| t.path(i, out))

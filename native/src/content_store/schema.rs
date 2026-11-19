@@ -23,15 +23,18 @@ use std::sync::LazyLock;
 // run against it. It is safe to delete by hand once no older binary runs; the CHANGELOG entry of
 // each floor raise names the file (with its -wal and -shm). STORE_FILE_FLOOR pins the pairing, so
 // raising SCHEMA_VERSION alone does not compile.
-pub(super) const SCHEMA_VERSION: i64 = 5;
+pub(super) const SCHEMA_VERSION: i64 = 7;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
-pub const STORE_FILE_NAME: &str = "content-v5.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at. 5: a frame's row points at its bytes in a segment beside the store
+pub const STORE_FILE_NAME: &str = "content-v7.sqlite";
+/// The floor `STORE_FILE_NAME` was introduced at. 7: every source and tape is in a segment, as it is, and no row holds
+/// an object's bytes (decision 0295 step 5, 2026-11-19), which an older binary would read as an empty or corrupt
+/// frame; 6: the atoms are blocks in files beside the store (decision 0401:
+/// `atom_blocks`), which an older binary would read as a store with no atoms; 5: a frame's row points at its bytes in a segment beside the store
 /// (decision 0295 §4: `frames.seg`), which an older binary would read as an empty frame; 4: a corpus manifest's lane is a column of it
 /// (`corpus_manifests.lane`), not a table of its own (decision 0104); 3 was atoms stored as segments
 /// of the arena (decision 0049); 2 the prefilter vocabulary keyed by atom.
-const STORE_FILE_FLOOR: i64 = 5;
+const STORE_FILE_FLOOR: i64 = 7;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
     "raising the floor requires a new STORE_FILE_NAME"
@@ -94,9 +97,9 @@ CREATE TABLE IF NOT EXISTS tape_objects (
     seg_len INTEGER NOT NULL DEFAULT 0,
     UNIQUE (source_id, grammar_id, grammar_version, tape_format_version)
 ) STRICT;
--- The segments sources and tapes are in (decision 0295 step 5: `<store>.objects/<seg>.seg`, mapped, uncompressed): a
--- row of codec 0 names its range (`seg`, `seg_at`, `seg_len`) and holds no frame; `seg` 0 is a row whose bytes are its
--- `frame` (zstd), and -1 one whose segment went missing (absent until stored again).
+-- The segments sources and tapes are in (decision 0295 step 5: `<store>.objects/<seg>.seg`, mapped, uncompressed): every
+-- row is of codec 0, names its range (`seg`, `seg_at`, `seg_len`) and holds no frame (floor 7: `frame` is always
+-- empty); `seg` -1 is a row whose segment went missing (absent until stored again).
 CREATE TABLE IF NOT EXISTS object_segments(seg INTEGER PRIMARY KEY);
 CREATE INDEX IF NOT EXISTS tape_objects_by_hash ON tape_objects(canonical_hash_id);
 -- The documents a file derives from its own (an embedded program, a generated one), keyed by the
@@ -448,16 +451,30 @@ CREATE TABLE IF NOT EXISTS corpus_swept (
 ) STRICT;
 INSERT OR IGNORE INTO corpus_swept(singleton, done) VALUES (1, 0);
 
--- The single interner (atoms.rs, decision 0049): dense, append-only; atom 0 is the empty string.
--- Each row is a run of consecutive atoms from `first`: their end offsets (u32, little-endian,
--- relative to the row's bytes) and their bytes. SQL reads atoms through the `atoms` virtual table
--- over the process's arena; a row that names an atom commits with or after its segment.
-CREATE TABLE IF NOT EXISTS atom_segment (
-    first INTEGER PRIMARY KEY CHECK(first >= 0),
-    ends BLOB NOT NULL,
-    bytes BLOB NOT NULL
+-- The single interner (atoms.rs, decisions 0049, 0401): dense, append-only; atom 0 is the empty string, and no
+-- block's. The atoms are a chain of blocks in `<store>.atoms/`, mapped by every process: each row is a block, its
+-- file's name there, its first id, the end the last commit reached in it, and the tag the block holds too (a block
+-- not the row's is refused: a store copied without its folder). SQL reads atoms through the `atoms`
+-- virtual table; a row that names an atom commits with or after the commit that reached it.
+CREATE TABLE IF NOT EXISTS atom_blocks (
+    seq INTEGER PRIMARY KEY CHECK(seq >= 1),
+    name TEXT NOT NULL UNIQUE,
+    first INTEGER NOT NULL UNIQUE CHECK(first >= 1),
+    upto INTEGER NOT NULL CHECK(upto >= first),
+    tag INTEGER NOT NULL
 ) STRICT;
-INSERT OR IGNORE INTO atom_segment(first,ends,bytes) VALUES (0,x'00000000',x'');
+
+-- A space's kept facts (decisions 0401, 0402 K4-K5): a chain of frozen files in `<store>.facts/<space>/`,
+-- oldest first, each with its maker's tag (a file not its row's is refused). A run's write appends a
+-- row; a merge replaces the newest rows with one. Metadata only: the rows are in the files. Additive:
+-- an older binary reads the frames.
+CREATE TABLE IF NOT EXISTS facts_chain (
+    space BLOB NOT NULL CHECK(length(space) = 32),
+    seq INTEGER NOT NULL CHECK(seq >= 1),
+    name TEXT NOT NULL,
+    tag INTEGER NOT NULL,
+    PRIMARY KEY(space, seq)
+) STRICT;
 
 -- The derivation graph (derivation.rs): fact names (atoms) bound to digests, and each
 -- derivation's inputs with the digest it read. A derivation's output is a name too, so an
@@ -761,6 +778,9 @@ CREATE TABLE IF NOT EXISTS memo_entries(space BLOB NOT NULL, part INTEGER NOT NU
 CREATE INDEX IF NOT EXISTS memo_entries_by_path ON memo_entries(space, path, pack, at);
 -- The segments (and packs before) the entries are in.
 CREATE TABLE IF NOT EXISTS memo_packs(pack INTEGER PRIMARY KEY);
+-- Each guest's key (decision 0391): one row per identity (a SHA-256 of its range and parts), its key unique, its host
+-- file (a value's first asker).
+CREATE TABLE IF NOT EXISTS guest_keys(identity BLOB PRIMARY KEY, key INTEGER NOT NULL UNIQUE, path TEXT NOT NULL) WITHOUT ROWID;
 "#;
 
 impl ContentStore {

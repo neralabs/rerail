@@ -32,6 +32,7 @@ use std::path::Path;
 use super::super::Result;
 use super::{Report, Typing};
 use crate::code_rule_dsl::logic::front::{Literal, Program, Value};
+use crate::code_rule_dsl::logic::program_image::Version;
 use crate::code_rule_dsl::typing::file_local::{constant_relations, option_input};
 
 /// The option that marks a run as the constants' own (it folds nothing).
@@ -40,6 +41,8 @@ pub(super) const OWN: &str = "constants_run";
 /// The relations made from no document that a rule outside them reads, or that the program outputs: from facts,
 /// settings and file-system reads, through other such relations and negations of them. Those the split already
 /// treats as constants (`constant_relations`: no request among them) are left to it.
+// The tree's edit, kept as a debug build's check of the version's (`run_typed`'s `Beside`).
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
 pub(super) fn foldable(prog: &Program) -> BTreeSet<String> {
     // Each relation's rules, and the inputs, looked up (a scan of every rule per relation and round was 0.23 s of an
     // edit's start-up on the Python pack's main program).
@@ -48,7 +51,10 @@ pub(super) fn foldable(prog: &Program) -> BTreeSet<String> {
         heads.entry(r.head.rel.as_str()).or_default().push(r);
     }
     let inputs: std::collections::HashSet<&str> = prog.inputs.iter().map(String::as_str).collect();
-    let world = |rel: &str| crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel);
+    let world = |rel: &str| crate::code_rule_dsl::logic::rr::FILE_SYSTEM.iter().any(|(r, _)| *r == rel);
+    // A language's answer (`language::Answerer`) is a constant where its request is: its request is a rule's (one
+    // the program has, or the lowering's for its readers), and a unit's request is keyed by a document's path.
+    let request_of = |rel: &str| crate::code_rule_dsl::logic::rr::WORLD.iter().find(|(r, _)| *r == rel && !world(r)).map(|(_, q)| *q);
     let given = |rel: &str| !heads.contains_key(rel) && (option_input(rel) || world(rel) || (prog.facts.contains_key(rel) && !inputs.contains(rel)));
     let mut fold: std::collections::HashSet<&str> =
         heads.keys().copied().filter(|r| !prog.natives.contains_key(*r) && !prog.lattice.contains_key(*r) && !inputs.contains(r)).collect();
@@ -59,7 +65,7 @@ pub(super) fn foldable(prog: &Program) -> BTreeSet<String> {
             .filter(|rel| {
                 !heads[rel].iter().all(|r| {
                     r.body.iter().all(|l| match l {
-                        Literal::Atom(a) | Literal::Agg { atom: a, .. } => fold.contains(a.rel.as_str()) || given(&a.rel),
+                        Literal::Atom(a) | Literal::Agg { atom: a, .. } => fold.contains(a.rel.as_str()) || given(&a.rel) || request_of(&a.rel).is_some_and(|q| fold.contains(q) || given(q)),
                         Literal::Cmp { .. } => true,
                         _ => false,
                     })
@@ -88,6 +94,79 @@ pub(super) fn foldable(prog: &Program) -> BTreeSet<String> {
     fold.into_iter().filter(|r| read_outside.contains(r.as_str())).collect()
 }
 
+/// `foldable` of the program's version, `head` its header (`Version::header`).
+pub(super) fn foldable_of(v: &std::sync::Arc<Version>, head: &Program) -> Result<BTreeSet<String>> {
+    use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef};
+    let inputs: std::collections::HashSet<&str> = head.inputs.iter().map(String::as_str).collect();
+    let world = |rel: &str| crate::code_rule_dsl::logic::rr::FILE_SYSTEM.iter().any(|(r, _)| *r == rel);
+    // A language's answer is a constant where its request is (as `foldable`'s, 0327 mode (b)); not in the split's
+    // constants (`constant_relations` reads no requests).
+    let request_of = |rel: &str| crate::code_rule_dsl::logic::rr::WORLD.iter().find(|(r, _)| *r == rel && !world(r)).map(|(_, q)| *q);
+    let mut heads: std::collections::HashMap<&str, Vec<RuleRef<'_>>> = std::collections::HashMap::new();
+    for r in v.rules() {
+        heads.entry(v.rel_name(r.head().rel())).or_default().push(r);
+    }
+    let candidates: std::collections::HashSet<&str> = heads.keys().copied().filter(|r| !head.natives.contains_key(*r) && !head.lattice.contains_key(*r) && !inputs.contains(r)).collect();
+    // The greatest fixpoint of the candidates whose every rule reads only those left, relations `given` holds, and
+    // comparisons.
+    let fixpoint = |given: &dyn Fn(&str) -> bool, requests: bool| -> BTreeSet<String> {
+        let mut fold = candidates.clone();
+        let reads = |fold: &std::collections::HashSet<&str>, rel: &str| fold.contains(rel) || given(rel) || (requests && request_of(rel).is_some_and(|q| fold.contains(q) || given(q)));
+        loop {
+            let out: Vec<&str> = fold
+                .iter()
+                .copied()
+                .filter(|rel| {
+                    !heads[rel].iter().all(|r| {
+                        r.body().all(|l| match l.view() {
+                            Lit::Atom(a) => reads(&fold, v.rel_name(a.rel())),
+                            Lit::Agg { atom, .. } => reads(&fold, v.rel_name(atom.rel())),
+                            Lit::Cmp { .. } => true,
+                            _ => false,
+                        })
+                    })
+                })
+                .collect();
+            if out.is_empty() {
+                return fold.into_iter().map(str::to_owned).collect();
+            }
+            for rel in out {
+                fold.remove(rel);
+            }
+        }
+    };
+    let fact = |rel: &str| !heads.contains_key(rel) && head.facts.contains_key(rel) && !inputs.contains(rel);
+    let mut fold = fixpoint(&|rel| !heads.contains_key(rel) && (option_input(rel) || world(rel) || fact(rel)), true);
+    // Only those that read the world: the split's constants (`file_local::constant_relations`: facts, the run's
+    // options and phases' exports, no request) are derived in both parts already.
+    let constant = fixpoint(&|rel| option_input(rel) || (super::phases::is_phased(rel) && inputs.contains(rel)) || fact(rel), false);
+    fold.retain(|r| !constant.contains(r));
+    let shape = super::shape::Shape::of(v);
+    let read_outside: BTreeSet<&str> =
+        shape.reads_of.iter().filter(|(h, _)| !fold.contains(h.as_str())).flat_map(|(_, reads)| reads.iter().map(String::as_str)).chain(head.outputs.iter().map(String::as_str)).collect();
+    Ok(fold.into_iter().filter(|r| read_outside.contains(r.as_str())).collect())
+}
+
+/// `as_outputs` on the version: its outputs a copy of each wanted relation, made by a rule of its own.
+pub(super) fn as_outputs_of(v: &std::sync::Arc<Version>, head: &mut Program, wanted: &[String]) -> Result<std::sync::Arc<Version>> {
+    use crate::code_rule_dsl::logic::program_image::{Builder, build::T};
+    let mut b = Builder::on(v);
+    let mut outputs = Vec::new();
+    for rel in wanted {
+        let Some(cols) = head.decls.get(rel.as_str()).cloned() else { continue };
+        let names: Vec<String> = (0..cols.len()).map(|i| format!("c{i}")).collect();
+        let args: Vec<T<'_>> = names.iter().map(|n| T::Var(n.as_str())).collect();
+        let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+        b.declare(&copy(rel), &pairs);
+        head.decls.insert(copy(rel).into(), cols);
+        b.rule().head(copy(rel).as_str(), &args).atom(rel.as_str(), &args).finish().map_err(super::super::Error::Plan)?;
+        outputs.push(copy(rel));
+    }
+    b.set_outputs(&outputs);
+    head.outputs = outputs;
+    b.finish().map(|(v, _)| v).map_err(super::super::Error::Plan)
+}
+
 /// The relation the constants' run writes `rel` as.
 fn copy(rel: &str) -> String {
     format!("rr_const_{rel}")
@@ -95,6 +174,8 @@ fn copy(rel: &str) -> String {
 
 /// The constants' run's program: its outputs are a copy of each wanted relation, made by a rule of its own. The copy
 /// reads the relation as any rule outside the requests' cone does, so the cone hands it on wherever it is made.
+// The tree's edit, kept as a debug build's check of the version's (`run_typed`'s `Beside`).
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
 pub(super) fn as_outputs(prog: &mut Program, wanted: &[String]) {
     use crate::code_rule_dsl::logic::front::{Atom, Rule, Term};
     prog.outputs.clear();
@@ -112,6 +193,7 @@ pub(super) fn as_outputs(prog: &mut Program, wanted: &[String]) {
 /// their rules (and those of the relations only they read) dropped. The run's consulted reads, for the record.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn fold(
+    v: &mut std::sync::Arc<Version>,
     prog: &mut Program,
     programs: &[&str],
     read: Option<&Program>,
@@ -123,11 +205,11 @@ pub(super) fn fold(
     chunk_nodes: usize,
     typing: &Typing,
     options: &serde_json::Value,
-) -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>)> {
+) -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>, BTreeSet<String>)> {
     if options.get(OWN).is_some() {
         return Ok(Default::default());
     }
-    let wanted = foldable(prog);
+    let wanted = foldable_of(v, prog)?;
     if wanted.is_empty() {
         return Ok(Default::default());
     }
@@ -167,11 +249,17 @@ pub(super) fn fold(
         }
         prog.facts.insert(rel.clone(), rows);
     }
-    prog.rules.retain(|r| !wanted.contains(r.head.rel.as_str()));
+    // The version: the rows as facts, the relations' rules dropped (`prog` is its header).
+    let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(v);
+    for rel in &wanted {
+        b.set_facts(rel, &prog.facts[rel]);
+    }
+    b.retain(|r| !wanted.contains(v.rel_name(r.head().rel())));
+    *v = b.finish().map(|(v, _)| v).map_err(super::super::Error::Plan)?;
     crate::code_rule_dsl::logic::profile::decision("the run's constants (decision 0094 §6)", || {
         format!("{} relations made from no document, {} and given as facts: {}", wanted.len(), if reused { "kept from an earlier run (what they read is as it was)" } else { "derived first" }, wanted.iter().cloned().collect::<Vec<_>>().join(", "))
     });
-    Ok((consulted, plans))
+    Ok((consulted, plans, wanted))
 }
 
 /// The constants' outputs (one base image of the wanted relations' copies, `output::base_of`) and what their run

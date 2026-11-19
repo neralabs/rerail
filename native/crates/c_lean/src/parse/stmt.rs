@@ -72,10 +72,10 @@ impl<'a> P<'a> {
             T::Name => {}
             _ => return self.expression_statement(s, top),
         }
-        if self.cpp {
-            if let Some(n) = self.cpp_statement(s)? {
-                return Ok(n);
-            }
+        if self.cpp
+            && let Some(n) = self.cpp_statement(s)?
+        {
+            return Ok(n);
         }
         match t.word {
             w::IF => self.if_statement(s),

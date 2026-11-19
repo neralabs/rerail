@@ -98,12 +98,14 @@ fn classes_pack_into_shared_products() {
     assert!(compiled.rows.contains("= eq 0x22"), "{}", compiled.rows);
 }
 
-/// What the compiler does not handle yet is refused by name, not guessed.
+/// What the compiler does not handle yet is refused by name, not guessed: `line_has`, which the
+/// evaluator has and the masks do not (`text`, the operation this test named first, is compiled
+/// since 0332's Kotlin step 2).
 #[test]
 fn unsupported_operations_are_refused() {
-    let stmts = ::bitlex::syntax::parse("class a = 'a'\nmask b = text(\"ab\") & a\n").expect("parses");
+    let stmts = ::bitlex::syntax::parse("class a = 'a'\nmask b = line_has(a, a) & a\n").expect("parses");
     let error = bitlex_compile::compile(&stmts, &["b"], None).expect_err("refused");
-    assert!(error.contains("text"), "{error}");
+    assert!(error.contains("line_has"), "{error}");
 }
 
 /// Errors and escapes are the fallback output: on every input and every executor its bits equal
@@ -415,7 +417,7 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
             }
             let at = format!("{executor}, {n} bytes: {:?}", String::from_utf8_lossy(&bytes));
             assert_eq!(cut(got[starts].clone(), n), want_starts, "starts, {at}");
-            // The CPU makes no lasts mask where its record pass makes the lasts (decision 0400).
+            // The CPU makes no lasts mask where its record pass makes the lasts (decision 0452).
             if !(executor == "cranelift" && lasts_made) {
                 assert_eq!(cut(got[lasts].clone(), n), want_lasts, "lasts, {at}");
             }
@@ -815,7 +817,7 @@ fn json_loop_keeps_values_in_registers() {
 /// toggle, the classes one lookup, the multiply), not raised then. 704 and 10 with 0346: the
 /// toggle's multiply of the raw quotes adds the rounds of the escaped ones (+7), and the string's
 /// two chains in words of their own, as simdjson's (-2), hold two more registers across the loop,
-/// and Cranelift spills two values elsewhere. 667 and 4 with 0353: a class one `cmtst` (24
+/// and Cranelift spills two values elsewhere. 667 and 4 with 0381: a class one `cmtst` (24
 /// fewer), the escaped quotes' rounds behind a branch (5), no complement of a complement (5),
 /// the bitmask's weights one load, the constants made at the body's head, and a total read
 /// back from its row at the step's end, not held through the body. 673 and 7 with 0383: the
@@ -1003,12 +1005,24 @@ fn only_the_compiler_reads_tier2s_states() {
                 continue;
             }
             let text = std::fs::read_to_string(&path).expect("reads a source file");
-            // `.arms` is the table's only in code that reaches `grammar` (its rows are
-            // `grammar::ArmRow`s): a token reader's arms (`records::ReadArm`), a pass shape's
-            // count and the like are other things of that name.
+            // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`, `readers[i].arms`,
+            // and `self.arms` in `Reader`'s own methods) and tier 1's counts of arms read in place
+            // (`shape.arms`, `cols.arms`, `c.arms`) are not the table's: a `.arms` is the table's
+            // unless its receiver is one of those. The table's own `self.arms` is in `grammar.rs`.
+            let other_arms = |line: &str| {
+                line.match_indices(".arms").all(|(at, _)| {
+                    let before = &line[..at];
+                    let receiver = before.rsplit(|c: char| !(c.is_alphanumeric() || c == '_')).next().unwrap_or_default();
+                    // `readers[…].arms`: the indexed list before the `.arms` is the readers'.
+                    let indexed = before.ends_with(']') && before.rfind("readers[").is_some_and(|k| !before[k..].contains(".arms"));
+                    ["rd", "reader", "shape", "cols", "c", "self"].contains(&receiver) || indexed
+                })
+            };
+            // And `.arms` is the table's only in code that reaches `grammar` (its rows are
+            // `grammar::ArmRow`s); a comment reads nothing.
             let code = |line: &str| !line.trim_start().starts_with("//");
-            let reaches_grammar = text.lines().filter(|l| code(l)).any(|l| l.contains("grammar::") || l.contains("grammar::{"));
-            let table_line = |line: &str| code(line) && needles.iter().enumerate().any(|(k, n)| line.contains(n) && (k > 0 || reaches_grammar));
+            let reaches_grammar = text.lines().filter(|l| code(l)).any(|l| l.contains("grammar::"));
+            let table_line = |line: &str| code(line) && (needles[1..].iter().any(|n| line.contains(n)) || (reaches_grammar && line.contains(".arms") && !other_arms(line)));
             if text.lines().any(table_line) {
                 readers.push(path.display().to_string());
             }
@@ -1237,20 +1251,15 @@ fn json_compiled_path_equals_the_interpreters() {
     let tier2 = native_cpu_stream::compile(&native).expect("tier 2 compiles");
     // JSON has no wraps and no chained returns: it pays for neither (no wrap columns). Its loop
     // heads are the stream's. The table is written as it goes (each row's parent and extra flag
-    // with the row), and JSON defers no leaf: no call, no pass at its end. A token's end is its
-    // record's (`records`): no search.
+    // with the row), and JSON defers no leaf: no pass over the table, at its end or before. A
+    // token's end is its record's (`records`): no search. Its calls are the tape's rare steps
+    // (decision 0140: a block's base, a commit of codes, the image's end), none a table pass.
     assert!(!tier2.wraps);
     assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
-    // Its calls are the tape's (8a1762be0: tier 2 writes the tape): a block's offsets, a commit,
-    // a code taken back, the image's end, each rare (`TableFns`), the module's ids 1 to 4. A pass
-    // over the table (a wrap's `shift`, a drop's) would be declared before them, and the tape's
-    // ids past 4. One function past them is the number's check (decision 0398), outlined as
-    // every check is: rare code, out of the arm's.
-    let callees: Vec<u32> = tier2.clif.lines().filter_map(|l| l.trim().split_once(" = colocated u0:")).filter(|(k, _)| k.starts_with("fn")).filter_map(|(_, rest)| rest.split_whitespace().next()?.parse().ok()).collect();
-    let mut past: Vec<u32> = callees.iter().copied().filter(|id| !(1..=4).contains(id)).collect();
-    past.sort_unstable();
-    past.dedup();
-    assert!(past.len() <= p.local_checks.len(), "no pass over the table: {callees:?}");
+    // Its calls are the tape's rare steps and the outlined checks (a number's, decision 0398, rare code
+    // out of the arm's): every one an outlined function's, none a pass over the table.
+    assert_eq!(tier2.table_passes, 0, "no pass over the table");
+    assert!(tier2.own_calls > 0 && rerail_compiler::clif_text::callees(&tier2.clif).len() == tier2.own_calls, "every call an outlined function's: {}", tier2.own_calls);
     let files = json_tier2_files();
     let made =
         rerail_compiler::block_native::BlockNative::lower(&p.block_programs[0]).cpu_unstored();

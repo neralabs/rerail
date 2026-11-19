@@ -556,9 +556,8 @@ pub fn evaluate_file(
 ) -> Result<Metrics> {
     let mut metrics = Metrics {
         files: 1,
-        avoided_tape_decompressions: usize::from(file.selector_skipped),
-        tape_cache_hits: usize::from(file.tape_cache_hit),
-        tape_decompressions: usize::from(file.tape_decompressed),
+        avoided_tape_reads: usize::from(file.selector_skipped),
+        tapes_from_store: usize::from(file.tape_from_store),
         restored_local_results: file.restored_local_results,
         ..Metrics::default()
     };
@@ -1022,6 +1021,28 @@ fn clause_matchers(code_rule: &CompiledCodeRule, clause: usize) -> &[GrammarMatc
 /// which clauses run around them; its anchor index selects the roots; its scope tables join the
 /// file's, which hold every document's. Marks in `settled` the slots that ran to an answer.
 #[allow(clippy::too_many_arguments)]
+/// Whether the document may hold a root of `grammar`'s clause, by its presence (decision 0434 §4): a clause none of
+/// whose root kinds the document has matches nothing in it, and no anchor index is built for it.
+fn admits_presence(doc: &tape::TapeDoc, grammar: &GrammarMatcher) -> bool {
+    let admits = grammar.anchors.root_kinds().is_none_or(|kinds| kinds.iter().any(|&kind| doc.may_have_kind(kind)));
+    #[cfg(any(test, feature = "test-hooks"))]
+    if !admits {
+        PRESENCE_RULED_OUT.set(PRESENCE_RULED_OUT.get() + 1);
+    }
+    admits
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    static PRESENCE_RULED_OUT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The (clause, document) pairs this thread's presence tests ruled out, and the count restarted.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn take_presence_ruled_out() -> usize {
+    PRESENCE_RULED_OUT.replace(0)
+}
+
 fn evaluate_document(
     file: &mut FileState,
     code_rules: &[Arc<CompiledCodeRule>],
@@ -1063,6 +1084,7 @@ fn evaluate_document(
                 &errors
             };
             !file.failures.contains_key(&file.candidates.ast[slot])
+                && admits_presence(&doc, grammar)
                 && grammar.admits_source(text, read, &mut searched)
                 && gates.admit(grammar)
         })
@@ -1086,30 +1108,34 @@ fn evaluate_document(
     let plans = p_plans.iter().map(Arc::as_ref).collect::<Vec<_>>();
     #[cfg(feature = "code-rule-profile")]
     let index_timer = profile::PhaseTimer::start(profile::Phase::Index);
+    // A document where no clause runs (each ruled out by its presence or its text) builds no index: nothing selects.
+    let any_runs = runs.iter().any(|&runs| runs);
     #[cfg(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")))]
-    let index = FileAnchorIndex::build(&root, &plans, max_nodes, matcher_budget_exhausted);
+    let index = any_runs.then(|| FileAnchorIndex::build(&root, &plans, max_nodes, matcher_budget_exhausted));
     // The corpus holds each file's primary document under its path; a document it does not
     // hold (an embedded program, whose digest differs) selects no roots and is walked whole.
     #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
-    let index = crate::code_rule_dsl::matcher::p_anchors::sql::FileAnchorIndex::build_at(
+    let index = any_runs.then(|| crate::code_rule_dsl::matcher::p_anchors::sql::FileAnchorIndex::build_at(
         &root,
         &plans,
         max_nodes,
         matcher_budget_exhausted,
         &file.input.path,
-    );
-    metrics.visited_nodes += index.visited_nodes();
+    ));
+    metrics.visited_nodes += index.as_ref().map_or(0, |index| index.visited_nodes());
     #[cfg(feature = "code-rule-profile")]
     drop(index_timer);
     #[cfg(feature = "code-rule-profile")]
-    profile::record_index(index.len(), index.estimated_bytes(), index.complete());
+    if let Some(index) = &index {
+        profile::record_index(index.len(), index.estimated_bytes(), index.complete());
+    }
     // A clause's anchor selection is its own work: it runs under the clause's allowance.
     #[cfg(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")))]
     let select = |position: usize| -> Option<Arc<[u32]>> {
         if !runs[position] {
             return Some(Arc::from([]));
         }
-        select_roots(&index, &slots[position].1.anchors)
+        select_roots(index.as_ref().expect("a clause runs"), &slots[position].1.anchors)
     };
     #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
     let select = |position: usize| -> Option<Arc<[u32]>> {
@@ -1118,6 +1144,7 @@ fn evaluate_document(
         }
         #[cfg(feature = "code-rule-profile")]
         let _selection_timer = profile::PhaseTimer::start(profile::Phase::Selection);
+        let index = index.as_ref().expect("a clause runs");
         let roots = index.selected(&crate::code_rule_dsl::matcher::p_anchors::plan_for(slots[position].1));
         #[cfg(feature = "code-rule-profile")]
         profile::record_selection(

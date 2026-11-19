@@ -79,6 +79,9 @@ pub fn token_mark_rows(out: &mut String, marks: &[crate::program::TokenMark]) {
             for s in &e.words {
                 let _ = write!(out, " s{s}");
             }
+            for s in &e.except {
+                let _ = write!(out, " x{s}");
+            }
             if e.not {
                 out.push_str(" not");
             }

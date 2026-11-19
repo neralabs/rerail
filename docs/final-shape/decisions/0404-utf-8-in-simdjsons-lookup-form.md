@@ -1,12 +1,12 @@
 # 0404: UTF-8 in simdjson's lookup form
 
-Status: decided (the user, 2026-11-18: "go ahead with this", the three gaps of 0402 to
-simdjson's check). Follows 0402 and 0403.
+Status: decided (the user, 2026-11-18: "go ahead with this", the three gaps of 0454 to
+simdjson's check). Follows 0454 and 0455.
 
 ## Intro
 
-**The problem.** After 0402, the UTF-8 check's steady chunk was 29 instructions, against about
-17 for simdjson's `lookup4` algorithm. 0402 had found three gaps:
+**The problem.** After 0454, the UTF-8 check's steady chunk was 29 instructions, against about
+17 for simdjson's `lookup4` algorithm. 0454 had found three gaps:
 
 - **The two-byte rules.** simdjson's one lookup holds all of them. Ours held four. "A
   continuation is needed after a lead byte" and "the bytes that never start a sequence" were
@@ -41,12 +41,12 @@ The rules, in simdjson's names:
 The plain form said where a continuation is needed, from the lead bytes 1, 2 and 3 back, and
 XORed that with the continuations. The two forms refuse the same files (the test below).
 
-**The pairs are general** (`native_cpu_pairs`, after 0402):
+**The pairs are general** (`native_cpu_pairs`, after 0454):
 
 - **Every rule a bit of two new tables.** `P` holds the byte before's classes and `Q` this
   byte's, eight rules at most. All the rules of the program share the two tables, so their
   lookups are made once a chunk.
-- **Rules of one OR tree are one pair**, as in 0402. The six here are one pair; `TWO_CONTS`,
+- **Rules of one OR tree are one pair**, as in 0454. The six here are one pair; `TWO_CONTS`,
   under the XOR, is a pair of its own on the same tables.
 - **A rule is also `and_not(C, prev(L, 1))`**: the byte before not in `L`. Its byte-before set
   is the complement of `L`, which holds 0x00. So it holds at the stream's first byte, where the
@@ -57,7 +57,7 @@ is a set of high nibbles, so `Q`'s low half is all ones, and its lookup is one `
 high nibbles, as simdjson's `byte_2_high`.
 
 **Lags 2 and 3 are simdjson's tests**, `prev2 ≥ 0xe0` and `prev3 ≥ 0xf0`: classes of one range
-each, read with `ext`s of the chunk before (0403).
+each, read with `ext`s of the chunk before (0455).
 
 ## Requirements, a test each
 
@@ -78,9 +78,9 @@ each, read with `ext`s of the chunk before (0403).
 
 | | Hot loop | Stack accesses | UTF-8 stretch | Steady chunk |
 |---|---:|---:|---:|---:|
-| `14-json` after 0402 | 574 | 1 | 153 | 29 |
-| `14-json` now (0403, 0404) | **549** | **1** | **128** | **25** |
-| `15-jsonc` after 0402 | 784 | 11 | | |
+| `14-json` after 0454 | 574 | 1 | 153 | 29 |
+| `14-json` now (0455, 0404) | **549** | **1** | **128** | **25** |
+| `15-jsonc` after 0454 | 784 | 11 | | |
 | `15-jsonc` now | **735** | **8** | | |
 | simdjson | | | 72 | about 17 |
 
@@ -92,4 +92,4 @@ each, read with `ext`s of the chunk before (0403).
   lag 2 and 3 tests then share.
 - **Rules as lanes.** A rule's AND is tested (`cmtst`) to a 0 or 1 lane. simdjson keeps the
   ANDed bytes, and any nonzero byte is the error.
-- **The carry** of the previous block's last chunk (0403).
+- **The carry** of the previous block's last chunk (0455).

@@ -60,6 +60,7 @@ fn a_store_created_again_at_its_path_gives_a_run_its_symbols() {
         let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
     }
     Connection::open(&elsewhere).unwrap().execute("VACUUM INTO ?1", [path.to_str().unwrap()]).unwrap();
+    crate::content_store::atoms::copy_blocks(&elsewhere, &path).unwrap();
     assert_eq!(run(&["SELECT CAST(sym_atom('first') AS TEXT)", "SELECT sym_text(1)"]), ["2", "second"]);
 }
 
@@ -75,6 +76,7 @@ fn a_fresh_arena_reads_the_stores_atoms() {
     }
     // A copy at a path this process never opened: its arena starts empty.
     Connection::open(&elsewhere).unwrap().execute("VACUUM INTO ?1", [path.to_str().unwrap()]).unwrap();
+    crate::content_store::atoms::copy_blocks(&elsewhere, &path).unwrap();
     let db = Connection::open(&path).unwrap();
     super::register_symbols(&db).unwrap();
     let text: String = db.query_row("SELECT sym_text(2) || ',' || sym_text(sym_cat(1, 2))", [], |r| r.get(0)).unwrap();

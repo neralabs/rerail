@@ -85,13 +85,14 @@ const BUILTINS: [(&str, &[Kind], &str); 7] = [
 /// The functors `plan::sql_term` computes by an arm of its own (beyond `strings::functions`' registry), each with its
 /// arguments' kinds. `doc`, `in` and `place*` read nodes and atoms, which these facts have none of; they are probed
 /// by the comparisons that use them where they are written (`@doc(x) = @doc(y)`).
-const SQL_FUNCTORS: [(&str, &[Kind]); 9] = [
+const SQL_FUNCTORS: [(&str, &[Kind]); 10] = [
     ("dot", &[Kind::Text, Kind::Text]),
     ("concat", &[Kind::Text, Kind::Text]),
     ("replace_all", &[Kind::Text, Kind::Text, Kind::Text]),
     ("json_str", &[Kind::Text]),
     ("nfkc", &[Kind::Text]),
     ("py_repr", &[Kind::Text]),
+    ("shell_unquote", &[Kind::Text]),
     ("ed25519_ok", &[Kind::Text, Kind::Text, Kind::Text]),
     ("rx_replace", &[Kind::Text, Kind::Text, Kind::Text]),
     ("rx_group", &[Kind::Text, Kind::Text, Kind::Text]),
@@ -192,7 +193,7 @@ fn probes() -> Vec<Probe> {
     // without anyone writing its probe.
     let probed: BTreeSet<String> = out.iter().flat_map(|p| p.ops.iter().cloned()).collect();
     let decls = functor_decls();
-    let tree = ["doc", "in", "place", "place_path", "place_line", "flat_bin", "id", "line", "depth", "within", "tree_digest"];
+    let tree = ["doc", "in", "place", "place_path", "place_line", "id", "line", "depth", "within", "tree_digest"];
     for op in census().0.keys() {
         let Some((name, arity)) = op.strip_prefix("arity ").and_then(|r| r.split_once(' ')) else { continue };
         let Ok(arity) = arity.parse::<usize>() else { continue };
@@ -229,6 +230,8 @@ fn probes() -> Vec<Probe> {
     out.push(probe("lattice relation (shortest)", &["lattice"], "a: number, d: min<>| widen 8", "{HEAD}(x, 0) :- n(x), x = 1.\n{HEAD}(y, d + 1) :- {HEAD}(x, d), e(x, y)."));
     // A lattice relation holds one row a key: a key's rows fold by its join, and its readers see the folded value only.
     out.push(probe("lattice relation (flat: a key's values differ)", &["lattice"], "a: symbol, v: flat<>", "{HEAD}(a, x) :- p(a, x)."));
+    // A flat lattice's `top` written by a head (`cv(n, top) :- …`): the integer SQL writes for it.
+    out.push(probe("lattice relation (flat: a head of top)", &["lattice"], "a: symbol, v: flat<>", "{HEAD}(a, top) :- s(a).\n{HEAD}(a, 1) :- s(a), a = \"alpha\"."));
     out.push(probe("lattice relation (max over a key)", &["lattice"], "a: symbol, v: max<>| widen 8", "{HEAD}(a, x) :- p(a, x)."));
     out.push(probe("lattice relation (shortlex_min over symbols)", &["lattice"], "a: number, r: shortlex_min<>| widen 8",
         "{HEAD}(x, \"\") :- n(x), x = 1.\n{HEAD}(y, r) :- {HEAD}(x, r0), e(x, y), r = cat(r0, \"z\")."));

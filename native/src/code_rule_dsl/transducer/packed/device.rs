@@ -3,7 +3,8 @@
 //! on macOS that is Metal (`rerail-device-metal`, `code_rule_dsl::device_metal`). Nothing here names a device.
 //!
 //! The backends stay data (`ExecutionBackend`, `Backend::MetalInterpreter`, `RanOn`): a backend with no device to
-//! run it is refused (`Error::UnsupportedBackend`), or falls back to the CPU where it did before the split.
+//! run it is refused (`Error::UnsupportedBackend`, decision 0382). The product's own choice of backend, where no device
+//! is registered, is the CPU's (`execute_production_corpus`): no device is not an error.
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
@@ -19,10 +20,21 @@ pub enum Engine {
     Jit,
 }
 
+/// Where a wave's clause root programs start on the device.
+#[derive(Clone, Copy)]
+pub enum ClauseRoots<'r> {
+    /// Per clause, per tape, the listed nodes (document-local, ascending).
+    Listed(&'r [Vec<Vec<u32>>]),
+    /// Per clause, per tape, whether the clause runs there: its roots are then its domain's nodes, a rule the device
+    /// reads at each node's code (decision 0293 §10: the host lists none).
+    Rule(&'r [Vec<bool>]),
+}
+
 /// What the transducer runs on a device.
 pub trait MatcherDevice: Send + Sync {
     /// The batch's programs on `engine`, from `anchors` (per file, per program), at most `result_limits` results each.
-    fn execute_packed(&self, engine: Engine, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>) -> Result<PackedExecution, Error>;
+    /// The batch with each task held to `budget` (decision 0334).
+    fn execute_packed(&self, engine: Engine, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>, budget: super::Budget) -> Result<PackedExecution, Error>;
     /// The batch's outcomes on `backend` (one of the device's: `MetalInterpreter` or `MetalJit`).
     fn execute_outcomes(&self, backend: ExecutionBackend, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>]) -> Result<BatchOutcome, Error>;
     /// The production programs compiled, so the first batch need not wait for them.
@@ -35,18 +47,23 @@ pub trait MatcherDevice: Send + Sync {
     fn compile_background(&self, programs: &[Program]) -> Result<(), Error>;
     /// A matcher's roots over the batch, every pass in one command buffer, pattern leaves included.
     fn matcher_roots(&self, matcher: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error>;
-    /// Each clause's matches of the batch from `roots` (per clause, per tape), every pass and root in one command
-    /// buffer.
-    fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: &[Vec<Vec<u32>>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error>;
+    /// Each clause's matches of the batch from `roots`, every pass and root in one command buffer.
+    fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: ClauseRoots<'_>) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error>;
     /// Every clause's labels over the batch, as views of its tapes the root programs read, with `roots`' records.
     fn wave_labelled(&self, wave: &LoweredWave, tapes: &[TapeDoc], active: &[Vec<bool>], roots: Option<&RootJobs<'_>>) -> Result<(Vec<TapeDoc>, Outcome), Error>;
+    /// The sources of the wave's generated kernels (its patterns') for a batch of `format`, in the plan's order.
+    fn wave_pattern_sources(&self, wave: &LoweredWave, format: u32) -> Result<Vec<String>, Error>;
+    /// Whether the kernels of `sources` are at hand without a compile (decision 0395); each missing one is
+    /// recorded, and compiled as the mode says.
+    fn patterns_ready(&self, sources: &[String], format: u32) -> bool;
     /// Starts compiling the label passes' pipelines.
     fn warm_labels(&self);
     /// Drops the label passes' pipelines (their memory) once the documents they ran over are gone.
     fn drop_label_pipelines(&self);
-    /// Span prefilters' ends (`regex_block`): bit `i` of a file's words, a match can end after its byte `i`. None:
-    /// the device could not run them (the cores do).
-    fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[super::block::BatchFile<'_>]) -> Option<Vec<Vec<u64>>>;
+    /// Span prefilters' ends (`regex_block`): bit `i` of a file's words, a match can end after its byte `i`.
+    /// `Ok(None)`: a program form the device lacks, recorded in 0202's `metal-form` list (the cores run them). Any
+    /// other failure is the run's error (decision 0382: no fallback on an error).
+    fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[super::block::BatchFile<'_>]) -> Result<Option<Vec<Vec<u64>>>, Error>;
     /// This thread's program invocations and host events since the last reset (tests count them).
     fn execution_metrics(&self) -> (usize, usize);
     /// Resets this thread's `execution_metrics`.
@@ -101,4 +118,10 @@ pub struct Outcome {
     pub records: RootsFound,
     /// The command buffers' seconds on the GPU (`GPUStartTime` to `GPUEndTime`), summed.
     pub device: f64,
+    /// How many times the run went again with twice the step budget after a task ran over it (decision 0334).
+    pub replanned: usize,
+    /// The (label, file) whose pass went to W's matcher (decision 0334): over its budget where W is predicted
+    /// cheaper, or at the ceiling. Its label there is as far as it got; the clause that owns it, and every clause that
+    /// reads it, are W's on that file. A label past the plan's (`labels + c`) is clause `c`'s roots.
+    pub unfinished: Vec<(u32, usize)>,
 }

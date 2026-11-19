@@ -3,8 +3,9 @@
 //!
 //! - **Stage 1** (`Blocks::of`) reads the whole text once, a 64-byte block a step, and keeps a mask a
 //!   class, one bit a byte: a name's bytes (`$` among them), blanks (`\r` among them: a line end
-//!   is `\n`, which ends a preprocessor directive), line ends, and the bytes that may end a
-//!   string's, a block comment's or a preprocessor argument's run. The classes come
+//!   is `\n`, which ends a preprocessor directive), line ends. A string's, a
+//!   block comment's or a directive argument's stops are made where one starts
+//!   (`rerail_simd8::micro`), not kept for every block. The classes come
 //!   from simdjson's nibble tables (`LO`, `HI`), the rest from compares, written once over
 //!   `rerail_simd8`'s operations and compiled for each backend (NEON, AVX2, SSE, the fallback).
 //! - **Stage 2** is the lexer: a run's end, or the next byte of a class, is the lowest bit of a
@@ -19,10 +20,7 @@ use rerail_simd8::Simd8x64;
 const WORD: usize = 0; // [A-Za-z0-9_$]
 const BLANK: usize = 1; // ' ', '\t', '\v', '\f', '\r'
 const EOL: usize = 2; // '\n'
-const STOP: usize = 3; // an interpreted string's: '"', '\\', '\n'
-const STAR: usize = 4; // a block comment's: '*', '/'
-const ARG: usize = 5; // a preprocessor argument's: '/', '\\', '\n'
-const MASKS: usize = 6;
+const MASKS: usize = 3;
 
 // The nibble tables' bits: each is the product of a set of high nibbles and a set of low ones.
 const C_AO: u8 = 1; // high 4 or 6, low 1..=15: A-O, a-o
@@ -107,10 +105,7 @@ unsafe fn masks<S: Simd8x64>(b: &[u8; 64]) -> (Masks, u64) {
         let eol = S::to_bitmask(S::test(c, S::splat(C_EOL)));
         let word = S::to_bitmask(S::or(S::test(c, S::splat(C_WORD)), is(b'$')));
         let blank = S::to_bitmask(S::test(c, S::splat(C_BLANK)));
-        let stop = eol | S::to_bitmask(S::or(is(b'"'), is(b'\\')));
-        let star = S::to_bitmask(S::or(is(b'*'), is(b'/')));
-        let arg = eol | S::to_bitmask(S::or(is(b'/'), is(b'\\')));
-        ([word, blank, eol, stop, star, arg], S::to_bitmask(is(0)))
+        ([word, blank, eol], S::to_bitmask(is(0)))
     }
 }
 
@@ -139,8 +134,8 @@ unsafe fn stage1<S: Simd8x64>(src: &[u8]) -> (Vec<Masks>, Option<usize>) {
         }
         m[WORD] &= !past;
         m[BLANK] &= !past;
-        for k in EOL..MASKS {
-            m[k] |= past;
+        for mk in &mut m[EOL..MASKS] {
+            *mk |= past;
         }
         out.push(m);
     }
@@ -152,17 +147,16 @@ rerail_simd8::dispatch! {
 }
 
 /// The text's masks (stage 1), for the lexer's scans (stage 2).
-pub struct Blocks<'s> {
-    src: &'s [u8],
-    m: Vec<Masks>,
+pub struct Blocks {
+    pub m: rerail_simd8::blocks::Masks<MASKS>,
     nul: Option<usize>,
 }
 
-impl<'s> Blocks<'s> {
+impl Blocks {
     /// Stage 1 over `src`, on the best backend the CPU runs.
-    pub fn of(src: &'s [u8]) -> Self {
+    pub fn of(src: &[u8]) -> Self {
         let (m, nul) = stage1_best(src);
-        Blocks { src, m, nul }
+        Blocks { m: rerail_simd8::blocks::Masks::new(src.len(), m), nul }
     }
 
     /// The text's first NUL, if it holds one (a syntax error in every token and between them).
@@ -173,28 +167,33 @@ impl<'s> Blocks<'s> {
     /// The first byte from `at` on whose bit in mask `k` is `set`.
     #[inline(always)]
     fn next(&self, at: usize, k: usize, set: bool) -> usize {
-        if at >= self.src.len() {
-            return self.src.len();
-        }
-        let flip = if set { 0 } else { !0 };
-        let mut b = at / 64;
-        let mut m = (self.m[b][k] ^ flip) & (!0u64 << (at % 64));
-        loop {
-            if m != 0 {
-                return (b * 64 + m.trailing_zeros() as usize).min(self.src.len());
-            }
-            b += 1;
-            if b >= self.m.len() {
-                return self.src.len();
-            }
-            m = self.m[b][k] ^ flip;
-        }
+        self.m.next(at, k, set)
+    }
+
+    /// The first token start at `at` or after (no blank or line end, no word byte after a word
+    /// byte), by `cur`, a walk over the blocks' start masks.
+    #[inline(always)]
+    pub fn next_start(&self, cur: &mut rerail_simd8::blocks::Cursor, at: usize) -> usize {
+        self.m.next_start(cur, at, WORD, [BLANK, EOL])
+    }
+
+    /// The gap of blanks and line ends from `at`, if it ends in `at`'s block: the next token's start
+    /// and the gap's line ends, as bits of the block.
+    #[inline(always)]
+    pub fn gap(&self, at: usize) -> Option<(usize, u64)> {
+        self.m.run_in_block(at, BLANK, EOL)
+    }
+
+    /// The first `\n` in `at..end`, if one is there (a gap's line end).
+    #[inline(always)]
+    pub fn eol_in(&self, at: usize, end: usize) -> Option<usize> {
+        self.m.first_in(at, end, EOL)
     }
 
     /// The end of a run of `[A-Za-z0-9_]` from `at`.
     #[inline]
     pub fn word_end(&self, at: usize) -> usize {
-        self.next(at, WORD, false)
+        self.m.run_end(at, WORD)
     }
 
     /// The end of a run of blanks (`' '`, `'\t'`, `'\v'`, `'\f'`, `'\r'`) from `at`.
@@ -209,23 +208,8 @@ impl<'s> Blocks<'s> {
         self.next(at, EOL, true)
     }
 
-    /// The first `"`, `\` or `\n` from `at`: where an interpreted string's text may end.
-    #[inline]
-    pub fn string_stop(&self, at: usize) -> usize {
-        self.next(at, STOP, true)
-    }
 
-    /// The first `*` or `/` from `at`: where a block comment may end.
-    #[inline]
-    pub fn star(&self, at: usize) -> usize {
-        self.next(at, STAR, true)
-    }
 
-    /// The first `/`, `\` or `\n` from `at`: where a preprocessor argument's run may end.
-    #[inline]
-    pub fn arg_stop(&self, at: usize) -> usize {
-        self.next(at, ARG, true)
-    }
 }
 
 #[cfg(test)]
@@ -248,9 +232,6 @@ mod tests {
                 o[WORD] |= bit(c.is_ascii_alphanumeric() || c == b'_' || c == b'$');
                 o[BLANK] |= bit(matches!(c, b' ' | b'\t' | 0x0b | 0x0c | b'\r'));
                 o[EOL] |= bit(c == b'\n');
-                o[STOP] |= bit(matches!(c, b'"' | b'\\' | b'\n'));
-                o[STAR] |= bit(matches!(c, b'*' | b'/'));
-                o[ARG] |= bit(matches!(c, b'/' | b'\\' | b'\n'));
             }
         }
         (out, src.iter().position(|&c| c == 0))
@@ -267,7 +248,7 @@ mod tests {
                         x ^= x << 13;
                         x ^= x >> 7;
                         x ^= x << 17;
-                        if x % 3 == 0 { (x >> 16) as u8 } else { alphabet[(x >> 8) as usize % alphabet.len()] }
+                        if x.is_multiple_of(3) { (x >> 16) as u8 } else { alphabet[(x >> 8) as usize % alphabet.len()] }
                     })
                     .collect();
                 let want = scalar(&src);
@@ -292,10 +273,6 @@ mod tests {
         let long = [b'a'; 200];
         assert_eq!(Blocks::of(&long).word_end(3), 200);
         assert_eq!(Blocks::of(b"// x\r\n").eol(0), 5);
-        assert_eq!(Blocks::of(b"ab\nc\"").string_stop(0), 2);
-        assert_eq!(Blocks::of(b"ab c/d").arg_stop(0), 4);
-        assert_eq!(Blocks::of(b"ab\\c\"").string_stop(0), 2);
-        assert_eq!(Blocks::of(b"/* a */").star(2), 5);
         assert_eq!(Blocks::of(b"ab").first_nul(), None);
         assert_eq!(Blocks::of(&[[b'a'; 70].as_slice(), b"\0b\0"].concat()).first_nul(), Some(70));
     }

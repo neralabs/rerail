@@ -48,7 +48,7 @@ pub struct RuleRef<'v> {
 }
 
 impl<'v> RuleRef<'v> {
-    pub(crate) fn new(im: &'v Image, k: u32, id: RuleId) -> RuleRef<'v> {
+    pub fn new(im: &'v Image, k: u32, id: RuleId) -> RuleRef<'v> {
         RuleRef { im, k, id }
     }
     pub fn id(self) -> RuleId {
@@ -62,17 +62,17 @@ impl<'v> RuleRef<'v> {
     pub fn source(self) -> Option<RuleId> {
         self.im.source(self.k)
     }
-    pub(crate) fn image(self) -> &'v Image {
+    pub fn image(self) -> &'v Image {
         self.im
     }
-    pub(crate) fn local(self) -> u32 {
+    pub fn local(self) -> u32 {
         self.k
     }
     fn at(self) -> u32 {
         self.im.rule_node(self.k)
     }
     /// The rule's nodes: its first and one past its last.
-    pub(crate) fn nodes(self) -> std::ops::Range<u32> {
+    pub fn nodes(self) -> std::ops::Range<u32> {
         let at = self.at();
         at..at + self.im.node(at).1
     }
@@ -110,7 +110,7 @@ pub struct AtomRef<'v> {
 }
 
 impl<'v> AtomRef<'v> {
-    pub(crate) fn new(im: &'v Image, at: u32) -> AtomRef<'v> {
+    pub fn new(im: &'v Image, at: u32) -> AtomRef<'v> {
         AtomRef { im, at }
     }
     pub fn rel(self) -> RelId {
@@ -144,7 +144,7 @@ pub enum TermRef<'v> {
     Str(AtomId),
     Call(AtomId, Terms<'v>),
     /// A branded atom (decision 0270); at run time its value, `atom`.
-    Branded(crate::code_rule_dsl::logic::front::Branded),
+    Branded(crate::code_rule_dsl::logic::front::ast::Branded),
 }
 
 impl TermRef<'_> {
@@ -153,7 +153,7 @@ impl TermRef<'_> {
     }
 }
 
-pub(crate) fn term(im: &Image, at: u32) -> TermRef<'_> {
+pub fn term(im: &Image, at: u32) -> TermRef<'_> {
     let (k, size, val) = im.node(at);
     match k & kind::MASK {
         kind::VAR => TermRef::Var(Slot(val)),

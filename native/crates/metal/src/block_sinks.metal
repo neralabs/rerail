@@ -54,7 +54,7 @@ inline bool count_sink(M v, uint gl, uint g, uint l, uint groups, uint len, uint
   for (uint back = 1u; back <= g; back++) {
     uint st = 0u;
     for (uint spin = 0u; spin <= spins && (st >> 30u) == 0u; spin++) {
-      st = simd_broadcast(atomic_load_explicit(&state[g - back], memory_order_relaxed), ushort(0));
+      st = simd_broadcast(poll(&state[g - back]), ushort(0));
     }
     if ((st >> 30u) == 0u) return false;
     prefix += st & CARRY_VALUE;

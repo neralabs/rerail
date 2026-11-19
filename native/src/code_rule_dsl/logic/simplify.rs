@@ -65,6 +65,8 @@ pub struct Report {
     pub(in crate::code_rule_dsl) keyed: usize,
     /// Relations nothing kept reads, dropped.
     pub(in crate::code_rule_dsl) unread: Vec<String>,
+    /// Request rules another of their relation's subsumes, dropped (`front::subsume_requests`).
+    pub(in crate::code_rule_dsl) subsumed: usize,
     /// Parts of bodies that meet the rest only at a document, made relations of documents (`exists_k`).
     pub(in crate::code_rule_dsl) existentials: Vec<String>,
     /// Span comparisons of two nodes of one document, made `span_within(inner, outer)` (decision 0050).
@@ -139,6 +141,9 @@ pub fn simplify(prog: &mut Program) -> Report {
     }
     report.existentials = project_existentials(prog);
     report.climbs = climbs_as_axes(prog);
+    // A request rule another of its relation subsumes (decision 0291's whole request beside its narrowed one), before
+    // relations merge: a request and its widened copy are compared with what is left.
+    report.subsumed = super::front::subsume_requests(prog);
     if merge(prog, &mut report) {
         // A merge can leave a literal twice (`!m1($n), !m2($n)` became `!m1($n), !m1($n)`).
         report.implied += prog.rules.iter_mut().map(drop_implied).sum::<usize>();
@@ -445,8 +450,11 @@ fn decided_fact_tests(prog: &mut Program) -> usize {
         decided.push(holds.then_some(drop));
     }
     let mut n = 0;
+    let derived: BTreeSet<String> = derived.into_iter().map(str::to_owned).collect();
+    let carry = prog.carry();
     let rules = std::mem::take(&mut prog.rules);
-    for (mut rule, d) in rules.into_iter().zip(decided) {
+    let mut kept = Vec::with_capacity(rules.len());
+    for (i, (mut rule, d)) in rules.into_iter().zip(decided).enumerate() {
         match d {
             None => n += 1,
             Some(drop) => {
@@ -454,9 +462,34 @@ fn decided_fact_tests(prog: &mut Program) -> usize {
                 for i in drop.into_iter().rev() {
                     rule.body.remove(i);
                 }
-                prog.rules.push(rule);
+                kept.push((rule, vec![i]));
             }
         }
+    }
+    prog.set_rules_carried(&carry, kept);
+    // A relation whose every rule went is empty (it had rules, so nothing outside fills it): a positive read of it
+    // cannot hold, and its rule goes; a negated one holds, and is dropped. To a fixpoint, as each emptied relation may
+    // empty its readers (a file scope decided by the run's options, `spq_…_file36`, read by a guest's copies: left,
+    // they read an empty relation, which the split takes for cross-file).
+    let mut emptied: BTreeSet<String> = derived.into_iter().filter(|r| !prog.rules.iter().any(|x| x.head.rel == r.as_str()) && !prog.facts.get(r.as_str()).is_some_and(|f| !f.is_empty()) && !fixed(prog, r) && !kept_by_engine(prog, r)).collect();
+    while !emptied.is_empty() {
+        let carry = prog.carry();
+        let rules = std::mem::take(&mut prog.rules);
+        let mut kept = Vec::with_capacity(rules.len());
+        let before: BTreeSet<String> = rules.iter().map(|r| r.head.rel.to_string()).collect();
+        for (i, mut rule) in rules.into_iter().enumerate() {
+            let reads = |l: &Literal, neg: bool| matches!(l, Literal::Atom(a) if a.neg == neg && emptied.contains(a.rel.as_str()));
+            if rule.body.iter().any(|l| reads(l, false)) {
+                n += 1;
+                continue;
+            }
+            let k = rule.body.len();
+            rule.body.retain(|l| !reads(l, true));
+            n += k - rule.body.len();
+            kept.push((rule, vec![i]));
+        }
+        prog.set_rules_carried(&carry, kept);
+        emptied = before.into_iter().filter(|r| !prog.rules.iter().any(|x| x.head.rel == r.as_str()) && !prog.facts.get(r.as_str()).is_some_and(|f| !f.is_empty()) && !fixed(prog, r) && !kept_by_engine(prog, r)).collect();
     }
     n
 }
@@ -475,9 +508,10 @@ fn ground_rules(prog: &mut Program) -> usize {
     };
     let mut replaced = 0;
     let mut kept = Vec::with_capacity(prog.rules.len());
-    for rule in std::mem::take(&mut prog.rules) {
+    let carry = prog.carry();
+    for (at, rule) in std::mem::take(&mut prog.rules).into_iter().enumerate() {
         if rule.body.is_empty() || prog.lattice.contains_key(rule.head.rel.as_str()) {
-            kept.push(rule);
+            kept.push((rule, vec![at]));
             continue;
         }
         // The body's bindings, or None when it is not equations of constants alone; Some(None) when two disagree.
@@ -500,7 +534,7 @@ fn ground_rules(prog: &mut Program) -> usize {
             true
         });
         if !all_equations {
-            kept.push(rule);
+            kept.push((rule, vec![at]));
             continue;
         }
         let value = |t: &Term| -> Option<Value> {
@@ -531,10 +565,10 @@ fn ground_rules(prog: &mut Program) -> usize {
                 }
                 replaced += 1;
             }
-            None => kept.push(rule),
+            None => kept.push((rule, vec![at])),
         }
     }
-    prog.rules = kept;
+    prog.set_rules_carried(&carry, kept);
     replaced
 }
 
@@ -845,7 +879,7 @@ fn kept(prog: &Program, rel: &str) -> bool {
 /// An attribute's request (decision 0174): read by name, so neither inlined nor merged into another relation. The
 /// fact layer answers `value` only where `rr_value_req` is derived (`syntax::VALUE_REQ`); inlined into its one
 /// reader, a request over one node (`rr_value_req($n) :- node(_, $n, "number", _, _)`) left `value` empty.
-fn request(rel: &str) -> bool {
+pub(in crate::code_rule_dsl) fn request(rel: &str) -> bool {
     super::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.req == rel)
 }
 
@@ -894,6 +928,7 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
         return Vec::new();
     }
     // A candidate's body may read another: inline readers in turn until none reads one (each pass removes a level).
+    let inlined = prog.inlined_readers(bodies.keys());
     let mut rules = prog.rules.clone();
     let mut fresh = 0usize;
     for _ in 0..8 {
@@ -943,6 +978,7 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
     }
     rules.retain(|r| !bodies.contains_key(r.head.rel.as_str()));
     prog.rules = rules;
+    prog.replace_readers(&inlined);
     for rel in bodies.keys() {
         prog.decls.remove(rel.as_str());
     }
@@ -1107,11 +1143,12 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
     }
     let mut fresh = 0usize;
     let mut out = Vec::with_capacity(prog.rules.len());
-    let mut work: Vec<Rule> = prog.rules.iter().filter(|r| !bodies.contains_key(r.head.rel.as_str())).cloned().collect();
+    // Each rule with its place among the program's, so the request record follows its copies (`Program::set_rules_from`).
+    let mut work: Vec<(Rule, usize)> = prog.rules.iter().enumerate().filter(|(_, r)| !bodies.contains_key(r.head.rel.as_str())).map(|(i, r)| (r.clone(), i)).collect();
     work.reverse();
-    while let Some(rule) = work.pop() {
+    while let Some((rule, from)) = work.pop() {
         let Some(at) = rule.body.iter().position(|l| matches!(l, Literal::Atom(a) if !a.neg && bodies.contains_key(a.rel.as_str()))) else {
-            out.push(rule);
+            out.push((rule, vec![from]));
             continue;
         };
         let Literal::Atom(read) = rule.body[at].clone() else { unreachable!("a read") };
@@ -1146,10 +1183,12 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
             }
             let mut c = rule.clone();
             c.body.splice(at..=at, body);
-            work.push(c);
+            work.push((c, from));
         }
     }
-    prog.rules = out;
+    let inlined = prog.inlined_readers(bodies.keys());
+    prog.set_rules_from(out);
+    prog.replace_readers(&inlined);
     for rel in bodies.keys() {
         prog.decls.remove(rel.as_str());
     }
@@ -1369,6 +1408,8 @@ fn drop_unread(prog: &mut Program) -> Vec<String> {
     }
     let unread: Vec<String> = reads.keys().filter(|r| !live.contains(**r)).map(|r| (*r).to_owned()).collect::<BTreeSet<_>>().into_iter().collect();
     prog.rules.retain(|r| !unread.iter().any(|x| x == &r.head.rel));
+    // A request relation dropped has no rules, so no entry in the request record (decision 0331: an entry a rule).
+    prog.asked_by.retain(|req, _| !unread.contains(req));
     unread
 }
 
@@ -1678,6 +1719,11 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
         .collect();
     let fixed = |r: &str| fixed_set.contains(r) || prog.natives.contains_key(r) || prog.lattice.contains_key(r) || prog.qualifiers.contains_key(r) || request(r);
     debug_assert!(prog.rules.iter().map(|r| r.head.rel.as_str()).all(|r| fixed(r) == self::fixed(prog, r)));
+    // A request (decision 0174), read by name by its answer and never merged into another (0291), joins only a class
+    // with its own widened copy (`rr_wide_<attr>_<req>`), and names it (below): a copy whose rules gated `prune` left
+    // as the request's own is the request.
+    let copy_of = |copy: &str, of: &str| super::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| copy == format!("rr_wide_{}_{of}", a.rel));
+    let copied_request = |r: &str| request(r) && !(fixed_set.contains(r) || prog.natives.contains_key(r) || prog.lattice.contains_key(r) || prog.qualifiers.contains_key(r)) && rules_of.keys().any(|c| copy_of(c, r));
     // A relation nothing reads (`unread`) is read by name if at all (`env`'s settings, `unconverged`, a guest
     // policy, a library's `function_kind` passed to `nearest`): it joins only a class with a widened copy of itself
     // (below), and keeps its name there (`merge`).
@@ -1688,7 +1734,7 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
         .chain(prog.facts.iter().filter(|(_, f)| !f.is_empty()).map(|(r, _)| r.as_str()))
         .collect::<BTreeSet<&str>>()
         .into_iter()
-        .filter(|r| !fixed(r))
+        .filter(|r| !fixed(r) || copied_request(r))
         .collect();
     // The candidates by number, in `cands`' order; every other relation a rule names numbered after them, each a
     // label of its own in every round.
@@ -1875,11 +1921,22 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
     // name keeps its name.
     groups
         .into_values()
-        .filter_map(|g| {
-            let (mut kept, unread): (Vec<String>, Vec<String>) = g.into_iter().partition(|r| read.contains(r.as_str()));
-            let copies = |u: &str| {
-                super::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| kept.iter().any(|k| *k == format!("rr_wide_{}_{u}", a.rel)))
+        .flat_map(|g| {
+            // A request's class is the request and its copies alone; the rest of the class stays a class without it.
+            let (with_request, g): (Vec<String>, Vec<String>) = match g.iter().find(|r| request(r)).cloned() {
+                Some(req) => g.into_iter().partition(|r| *r == req || copy_of(r, &req)),
+                None => (Vec::new(), g),
             };
+            [(with_request.len() > 1).then_some(with_request), (!g.is_empty()).then_some(g)].into_iter().flatten()
+        })
+        .filter_map(|g| {
+            if g.iter().any(|r| request(r)) {
+                let mut g = g;
+                g.sort();
+                return Some(g);
+            }
+            let (mut kept, unread): (Vec<String>, Vec<String>) = g.into_iter().partition(|r| read.contains(r.as_str()));
+            let copies = |u: &str| kept.iter().any(|k| copy_of(k, u));
             let own = unread.into_iter().find(|u| copies(u));
             kept.extend(own);
             kept.sort();
@@ -2090,8 +2147,9 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
         let spaces: BTreeSet<Option<&str>> = g.iter().map(|r| namespace(r).map(|(p, _)| p)).collect();
         let is_output = |r: &str| prog.outputs.iter().any(|o| o == r);
         let unread = g.iter().find(|r| !read.contains(r.as_str()));
-        // A relation nothing reads is read by name if at all: it names its class (`congruence` gives it one).
-        let to = if let Some(u) = unread { u.clone() } else { match (suffixes.iter().next(), suffixes.len(), spaces.len()) {
+        // A relation nothing reads is read by name if at all: it names its class (`congruence` gives it one), as a
+        // request does (the class of its own widened copies).
+        let to = if let Some(u) = unread.or_else(|| g.iter().find(|r| request(r))) { u.clone() } else { match (suffixes.iter().next(), suffixes.len(), spaces.len()) {
             (Some(Some(s)), 1, n) if n > 1 => {
                 let mut name = format!("s_{s}");
                 let mut k = 1;
@@ -2136,6 +2194,28 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
         let args: Vec<Term> = (0..width).map(|i| Term::Var(format!("c{i}").into())).collect();
         copies.push(Rule { head: Atom { rel: from.clone().into(), args: args.clone().into(), neg: false, gated: false }, body: [Literal::Atom(Atom { rel: to.clone().into(), args: args.into(), neg: false, gated: false })].into() });
     }
+    // A request's copy merged into it (`congruence`): the copy's rules are the request's, so each of the request's
+    // serves the readers of the copy's equal rule too (decision 0331), before the copy's rules and record go.
+    let label = |r: &str| crate::code_rule_dsl::logic::front::Name::new(rename.get(r).map_or(r, String::as_str));
+    for (from, to) in &rename {
+        let (Some(copy), true) = (prog.asked_by.get(from.as_str()), prog.asked_by.contains_key(to.as_str())) else { continue };
+        let canon = |rel: &str| prog.rules.iter().filter(|r| r.head.rel == rel).map(|r| canonical_rule(r, &label)).collect::<Vec<String>>();
+        let (theirs, ours) = (canon(from), canon(to));
+        if theirs.len() != copy.len() {
+            continue;
+        }
+        let mut add = vec![BTreeSet::new(); ours.len()];
+        for (t, by) in theirs.iter().zip(copy) {
+            if let Some(j) = ours.iter().position(|o| o == t) {
+                add[j].extend(by.iter().cloned());
+            }
+        }
+        if let Some(by) = prog.asked_by.get_mut(to.as_str()) {
+            for (b, a) in by.iter_mut().zip(add) {
+                b.extend(a);
+            }
+        }
+    }
     prog.rules.retain(|r| !rename.contains_key(r.head.rel.as_str()) || firsts.contains(r.head.rel.as_str()));
     let to = |rel: &mut crate::code_rule_dsl::logic::front::Name| {
         if let Some(t) = rename.get(rel.as_str()) {
@@ -2153,6 +2233,9 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
     for native in prog.natives.values_mut() {
         native.rename_reads(|rel| rename.get(rel).cloned().unwrap_or_else(|| rel.to_owned()));
     }
+    prog.rename_readers(|b| rename.get(b).cloned());
+    // A request's copy merged into it (`congruence`) leaves its record with its rules.
+    prog.asked_by.retain(|req, _| !rename.contains_key(req.as_str()));
     prog.rules.extend(copies);
     for (from, t) in &rename {
         let output = prog.outputs.iter().any(|o| o == from);
@@ -2162,6 +2245,13 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
         }
         if let Some(rows) = prog.facts.remove(from) {
             prog.facts.entry(t.clone()).or_insert(rows);
+        }
+        // A request rule's gate (`Program::asked_by`) goes with its rules: kept where the class keeps this member's
+        // (its first, under a new name), else dropped with them.
+        if let Some(by) = prog.asked_by.remove(from.as_str())
+            && firsts.contains(from.as_str())
+        {
+            prog.asked_by.entry(t.clone()).or_insert(by);
         }
         report.merged.push((t.clone(), from.clone()));
     }
@@ -2304,6 +2394,37 @@ pub mod tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].contains("!m1($n), doc($d, $p, _)") && !out[0].contains("m2") && out[0].matches("doc(").count() == 1, "{}", out[0]);
         assert!(!prog.decls.contains_key("b2") && !prog.decls.contains_key("m2"));
+    }
+
+    /// A relation whose every rule a fact test decides away is empty: a rule reading it goes, a negated read of it is
+    /// dropped, to a fixpoint (a file scope the run's options rule out, read by a guest's copies).
+    #[test]
+    fn a_relation_its_fact_tests_empty_takes_its_readers() {
+        let mut prog = crate::code_rule_dsl::logic::rr::parse(
+            r#"
+            .decl opt(k: symbol)
+            opt("a").
+            .decl base(n: number)
+            .input base
+            .decl scope(n: number)
+            scope(n) :- base(n), opt("b").
+            .decl reads(n: number)
+            reads(n) :- base(n), scope(n).
+            .decl again(n: number)
+            again(n) :- reads(n).
+            .decl apart(n: number)
+            apart(n) :- base(n), !scope(n).
+            .decl out(n: number)
+            .output out
+            out(n) :- again(n).
+            out(n) :- apart(n).
+            "#,
+        )
+        .unwrap();
+        simplify(&mut prog);
+        let heads: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
+        assert!(!heads.contains("scope") && !heads.contains("reads") && !heads.contains("again"), "{heads:?}");
+        assert!(prog.rules.iter().any(|r| r.to_string().contains("base(") && !r.to_string().contains("scope")), "{:?}", prog.rules.iter().map(ToString::to_string).collect::<Vec<_>>());
     }
 
     /// A relation nothing reads keeps its name, though it equals a read one: the engine may read it by name (`env`'s

@@ -3159,6 +3159,7 @@ dependencies = [
  "rayon",
  "rerail-blocks",
  "rerail-forest",
+ "rustc-hash",
  "sha2 0.10.9",
 ]
 
@@ -3173,12 +3174,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-c-directives"
+version = "0.1.0"
+dependencies = [
+ "bitlex",
+ "rerail-c-directives",
+ "rerail-c-lean",
+ "rerail-c-pp",
+ "rerail-compiler",
+ "rerail-metal",
+ "rerail-pp-aot",
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-c-lean"
 version = "0.1.0"
 dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
+]
+
+[[package]]
+name = "rerail-c-pp"
+version = "0.1.0"
+dependencies = [
+ "rerail-c-lean",
+ "rerail-simd8",
 ]
 
 [[package]]
@@ -3353,7 +3377,9 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-c-directives",
  "rerail-c-lean",
+ "rerail-c-pp",
  "rerail-clif",
  "rerail-compiler",
  "rerail-csharp-lean",
@@ -3364,6 +3390,7 @@ dependencies = [
  "rerail-go-lean",
  "rerail-html-lean",
  "rerail-java-lean",
+ "rerail-kotlin-lean",
  "rerail-lang",
  "rerail-lang-ecma",
  "rerail-lang-json",
@@ -3383,10 +3410,12 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-rust-lean",
+ "rerail-scala-lean",
  "rerail-sessions",
  "rerail-simdjson",
  "rerail-sql-lean",
  "rerail-store",
+ "rerail-swift-lean",
  "rerail-tape-format",
  "rerail-transducer",
  "rerail-vue-lean",
@@ -3455,6 +3484,7 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-blocks",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
@@ -3542,6 +3572,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-kotlin-parser"
+version = "0.1.0"
+dependencies = [
+ "bitlex",
+ "rerail-compiler",
+ "rerail-kotlin-lean",
+ "rerail-kotlin-parser",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-lang"
 version = "0.1.0"
 dependencies = [
@@ -3591,17 +3632,21 @@ dependencies = [
  "rerail-go-lean",
  "rerail-html-lean",
  "rerail-java-lean",
+ "rerail-kotlin-lean",
  "rerail-lang",
  "rerail-markdown-inline-lean",
  "rerail-markdown-lean",
+ "rerail-metal",
  "rerail-php-lean",
  "rerail-prof",
  "rerail-python-lean",
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-rust-lean",
+ "rerail-scala-lean",
  "rerail-sql-lean",
  "rerail-store",
+ "rerail-swift-lean",
  "rerail-tape-format",
  "rerail-vue-lean",
  "ruff_python_ast",
@@ -4096,6 +4141,7 @@ dependencies = [
  "rerail-lang",
  "rerail-logic",
  "rerail-prof",
+ "rerail-program-image",
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",
@@ -4179,6 +4225,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-pp-aot"
+version = "0.1.0"
+dependencies = [
+ "rerail-compiler",
+]
+
+[[package]]
 name = "rerail-prof"
 version = "0.1.0"
 dependencies = [
@@ -4241,6 +4294,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-program-image"
+version = "0.1.0"
+dependencies = [
+ "foldhash",
+ "rerail-prof",
+ "rerail-program-image",
+ "rerail-rr-syntax",
+ "rustc-hash",
+ "serde_json",
+ "sha2 0.11.1",
+]
+
+[[package]]
 name = "rerail-python-lean"
 version = "0.1.0"
 dependencies = [
@@ -4292,6 +4358,7 @@ dependencies = [
  "rerail-facts",
  "rerail-lang",
  "rerail-prof",
+ "rerail-program-image",
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",
@@ -4564,7 +4631,9 @@ version = "0.1.0"
 dependencies = [
  "lz4-sys",
  "memchr",
+ "metal",
  "rerail-clif",
+ "rerail-simd8",
  "sha2 0.10.9",
 ]
 

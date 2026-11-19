@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// columns, grammar column, tape column).
 /// `string_annotation(s)` is one: Ruff's strings that are type definitions, nested ones too, whose nodes are in an
 /// annotation's document (not shown, `guests::key`).
-const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] = [
+pub(super) const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] = [
     ("guest", &[0], Some(3), None),
     ("string_annotation", &[0], None, None),
     ("parsed", &[2], Some(1), None),
@@ -45,7 +45,7 @@ const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] = [
 ];
 
 /// Views of base relations the lowering writes as rules.
-const VIEWS: [&str; 3] = ["kind", "docof", "precedes"];
+pub(super) const VIEWS: [&str; 3] = ["kind", "docof", "precedes"];
 
 /// The grammar a guest's kinds are named in: a dialect label (`annotation` is Python's expression).
 pub(super) fn dialect_label(grammar: &str) -> &str {
@@ -65,15 +65,15 @@ pub(super) fn bound(prog: &Program) -> u32 {
 /// a guest's node, not only maybe one (O110). A variable read from a derived column that host rows fill too is
 /// scoped (no bound on it) but not definite: it is specialized to a guest grammar only in a clone of its rule.
 /// For a derived relation's column, `definite` says every rule fills it with a definite variable.
-#[derive(Clone, Default, PartialEq)]
-struct Fact {
-    scoped: bool,
-    grammar: Option<String>,
-    definite: bool,
+#[derive(Clone, Default, PartialEq, Debug)]
+pub(super) struct Fact {
+    pub(super) scoped: bool,
+    pub(super) grammar: Option<String>,
+    pub(super) definite: bool,
 }
 
 impl Fact {
-    fn join(&mut self, other: &Fact) -> bool {
+    pub(super) fn join(&mut self, other: &Fact) -> bool {
         let mut changed = (other.scoped && !self.scoped) || (other.definite && !self.definite);
         self.scoped |= other.scoped;
         self.definite |= other.definite;
@@ -143,7 +143,8 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         let mut edits: Vec<(usize, usize, Edit)> = Vec::new();
         // The relations rules derive: a relation of stated facts alone is a kind set when a kind is read through it.
         let ruled = &delta.heads;
-        let mut copies: Vec<(crate::code_rule_dsl::logic::front::Rule, BTreeMap<String, Fact>)> = Vec::new();
+        // Each copy with the rule it was made from (the request record follows it, `Program::push_rule_from`).
+        let mut copies: Vec<(crate::code_rule_dsl::logic::front::Rule, BTreeMap<String, Fact>, usize)> = Vec::new();
         let mut decls: Vec<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::List<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)>)> = Vec::new();
         // The axes over a guest grammar's kind set made this round: inputs the transducer makes, as the run's are.
         let mut axes: Vec<String> = Vec::new();
@@ -180,7 +181,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             if !maybe.is_empty() && split.insert(i) {
                 let mut seed = seeds[i].clone();
                 seed.extend(maybe);
-                copies.push((rule.clone(), seed));
+                copies.push((rule.clone(), seed, i));
                 changed = true;
             }
             let grammar_of = |v: &str| facts.get(v).filter(|f| f.scoped && f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty());
@@ -306,7 +307,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                                 seed.insert(v.to_string(), Fact { scoped: true, grammar: Some(g.clone()), definite: true });
                             }
                         }
-                        copies.push((copy, seed));
+                        copies.push((copy, seed, j));
                     }
                     if let Some(d) = prog.decls.get(orig.as_str()) {
                         decls.push((name.clone().into(), d.clone()));
@@ -339,8 +340,8 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             }
         }
         let first_copy = prog.rules.len();
-        for (rule, seed) in copies {
-            prog.rules.push(rule);
+        for (rule, seed, from) in copies {
+            prog.push_rule_from(rule, from);
             seeds.push(seed);
         }
         touched = edited.into_iter().chain(first_copy..prog.rules.len()).collect();
@@ -462,8 +463,13 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                     vars.push((v.to_string(), decl.get(c).map_or_else(|| "int".to_owned(), |(_, ty)| ty.to_string())));
                 }
             }
-            let name = format!("rr_shown_agg{}", helpers.len());
-            let head = Atom { rel: name.into(), args: vars.iter().map(|(v, _)| Term::Var(v.clone().into())).collect(), neg: false, gated: false };
+            // Named by what it holds (`hide::helper_names`), not by its place among the program's helpers.
+            let pairs: Vec<(String, i64)> = cols.iter().filter_map(|&c| match inner.args.get(c) {
+                Some(Term::Var(v)) => Some((v.to_string(), bound_of(Some(c) == doc_col))),
+                _ => None,
+            }).collect();
+            let key = super::preparation::hide::helper_key(&inner.rel, &inner.args.iter().map(|t| t.to_string()).collect::<Vec<_>>(), &pairs, &vars);
+            let head = Atom { rel: key.as_str().into(), args: vars.iter().map(|(v, _)| Term::Var(v.clone().into())).collect(), neg: false, gated: false };
             // The aggregate's own wildcards stay wildcards: its named variables are correlated.
             let args = head.args.iter().map(|t| match t {
                 Term::Var(v) if v.starts_with("rr_shown_agg_c") => Term::Wild,
@@ -473,6 +479,22 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             helpers.push((head, vars, std::iter::once(Literal::Atom(inner)).chain(bounds).collect()));
         }
     }
+    // Each helper named by its text's rank (`hide::helper_names`): two of one text are one helper.
+    let names = super::preparation::hide::helper_names(helpers.iter().map(|(h, ..)| h.rel.to_string()));
+    for rule in prog.rules.iter_mut() {
+        for l in &mut rule.body {
+            if let Literal::Agg { atom, .. } = l
+                && let Some(n) = names.get(atom.rel.as_str())
+            {
+                atom.rel = n.as_str().into();
+            }
+        }
+    }
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let helpers: Vec<_> = helpers.into_iter().filter_map(|(mut head, vars, body)| {
+        head.rel = names[head.rel.as_str()].as_str().into();
+        seen.insert(head.rel.to_string()).then_some((head, vars, body))
+    }).collect();
     for (head, vars, body) in helpers {
         prog.decls.insert(head.rel.clone(), vars.iter().map(|(c, t)| (c.into(), t.into())).collect());
         prog.rules.push(crate::code_rule_dsl::logic::front::Rule { head, body: body.into() });
@@ -513,6 +535,8 @@ fn asking(prog: &Program) -> BTreeSet<String> {
 /// qualified kind of `label` is written plainly; a clone (O110) is then its rule again, dropped as a repeat by
 /// `merge_and_drop_repeats`. With guests not shown (`bound`, `.guests off`) nothing is folded. Gives the copies folded.
 /// `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
+// The tree's edit, kept as a debug build's check of the version's (`run_typed`'s `Beside`).
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
 pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
     use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
     if bound != ANNOTATION_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|v| v == "on") {
@@ -554,6 +578,7 @@ pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
         return 0;
     }
     prog.rules.retain(|r| !folded.contains_key(r.head.rel.as_str()));
+    prog.rename_readers(|b| folded.get(b).cloned());
     // An original holds its copies' rows: its rules' bounds take the annotations in (`ANNOTATION_KEYS` to
     // `HIDDEN_KEYS`), as its copies' seeded columns did. A rule that does not reach an annotation keeps the bound.
     let originals: BTreeSet<&str> = folded.values().map(String::as_str).collect();
@@ -989,6 +1014,28 @@ pub fn qualified(s: &str) -> Option<(&str, &str)> {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+
+    /// The version's hide is the tree's on a guest's kind tested against a host relation's rows, read negated too:
+    /// the port copied only a positive read (`!def_or_class(k)` kept the host's rows, so no guest kind was one), and
+    /// the combine's check stopped on the 317 rules of ep2.
+    #[test]
+    fn a_negated_read_of_a_kinds_rows_is_copied_for_the_guest_as_the_tree_copies_it() {
+        let text = concat!(
+            ".decl parsed(s: node, g: symbol, r: node)\n.input parsed\n",
+            ".decl def_or_class(k: symbol)\ndef_or_class(\"class_definition\").\n",
+            ".decl out(n: node)\n.output out\nout(r) :- parsed(_, \"python\", r), kind(r, k), !def_or_class(k).\n",
+        );
+        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).unwrap();
+        hide(&mut tree, 1 << 30);
+        let out = tree.rules.iter().find(|r| r.head.rel == "out").unwrap().to_string();
+        assert!(out.contains("!rr_in_python_rows_def_or_class("), "{out}");
+        let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("hide", v);
+        p.program(&mut super::super::preparation::hide::Hide::new(1 << 30));
+        let (v, _) = p.finish().unwrap();
+        let (tv, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).unwrap();
+        assert!(crate::code_rule_dsl::logic::program_image::same_program(&tv, &v), "{}", crate::code_rule_dsl::logic::program_image::differences(&tv, &v));
+    }
 
     /// A relation read with guest variables in two columns its rules bind apart is copied once, with both seeded:
     /// copying the copy lost the first seed, so its reader read it at that column again, and schema-architecture's

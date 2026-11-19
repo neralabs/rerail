@@ -75,3 +75,6 @@ read. Emitting the reads into the JIT by hand would make a third copy of every r
 - **Found on the way:** the step 1 CLIF `tape_start` and the Metal hand port added a checkpoint's gaps one at a
   time, a per-byte loop at the usual one-byte gap width. The read now folds them in one word, as the tape crate's
   hand-written reader did, in all three backends.
+- **A third family** (0353 step 2): a projection's numbering (`rerail_clif::ids`, `id_reads`): node ids, order keys,
+  rank and select, over a descriptor in the projection's block. Its Rust is the facts crate's `id_reads.rs`, its MSL
+  `id_reads.metal`; the MSL translator gained `ctz` and `popcnt`.

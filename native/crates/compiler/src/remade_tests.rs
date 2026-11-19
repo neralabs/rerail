@@ -117,7 +117,7 @@ fn a_word_made_value_reads_made_operands() {
     }
     let native = crate::block_native::BlockNative::lower(&p);
     let compiled = native_cpu_block::compile(&native).expect("compiles");
-    // The outputs the record pass makes instead (the lasts, decision 0400) are not tier 1's.
+    // The outputs the record pass makes instead (the lasts, decision 0452) are not tier 1's.
     let made = native.cpu_unstored();
     let unit = br#"{"a": [1, -2.5e3, "x\u00e9y", true, null], "b": {"c": "\\\"d"}} "#;
     for len in [64usize, 65, 128, 181, 200, 300] {
