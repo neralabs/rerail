@@ -427,6 +427,21 @@ async function relink(path: string, target: string): Promise<void> {
   linkFolder(target, path);
 }
 
+/**
+ * Has every lstat of the link `path` give the mode, device and file id of `kept`, the lstat of the link it replaced, as
+ * when the file system gives a new link the freed file id of the old one (ext4 often does; NTFS never gives one again).
+ */
+function sameFileId(path: string, kept: Stats): void {
+  const actual = vi.mocked(lstatSync).getMockImplementation()!;
+  vi.mocked(lstatSync).mockImplementation(((target: PathLike, options?: StatSyncOptions) => {
+    const stats = actual(target, options);
+    return stats instanceof Stats && resolve(String(target)) === path ? Object.assign(stats, { mode: kept.mode, dev: kept.dev, ino: kept.ino }) : stats;
+  }) as typeof lstatSync);
+  cleanups.push(async () => {
+    vi.mocked(lstatSync).mockImplementation(actual);
+  });
+}
+
 describe("a kept answer is placed again once Git's answer can move, whatever file times say", () => {
   it("a main checkout reached through a link, once the link's folder is renamed and the link pointed at the new name", async () => {
     const root = await temporaryRoot();
@@ -1250,6 +1265,83 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expectGitsRegistries(inner);
     expect(gitsRegistry(inner)).toHaveLength(1);
   });
+
+  it("lists as Git does once the .git link of the repository above such a checkout is pointed at another repository's Git folder, the link's file id kept", async () => {
+    const root = await temporaryRoot();
+    const outer = await gitFolderLinked(join(root, "outer"), join(root, "outer.git"));
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    await gitFolderLinked(join(root, "other"), join(root, "other.git"));
+    const inner = join(outer, "a", "inner");
+    mkdirSync(inner, { recursive: true });
+    expect(registryPlacements(inner)).toBe(1);
+
+    // Unlinked and linked again at once, as a person or a tool points the link elsewhere; Rerail's lstat of the new link
+    // gives the old link's mode, device and file id, whether or not the file system gave that id out again.
+    const link = join(outer, ".git");
+    const old = lstatSync(link);
+    await relink(link, join(root, "other.git"));
+    sameFileId(link, old);
+    expectGitsRegistries(inner);
+    expect(gitsRegistry(inner)).toHaveLength(1);
+  });
+
+  it("lists the folder between's list once the empty folder a .git link in a folder between such a checkout and the repository above names is made a repository in place", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    const middle = join(outer, "middle");
+    const inner = join(middle, "inner");
+    mkdirSync(inner, { recursive: true });
+    // A .git link to an empty folder, which Git passes over as it searches up, and `git init` fills through the link.
+    mkdirSync(join(root, "middle.git"));
+    linkFolder(join(root, "middle.git"), join(middle, ".git"));
+    expect(gitsAnswer(inner).workspaceRoot).toBe(outer);
+    expect(registryPlacements(inner)).toBe(1);
+
+    git(middle, "init", "--quiet");
+    git(middle, "commit", "--quiet", "--allow-empty", "-m", "seed");
+    expectGitsRegistries(inner);
+    expect(gitsRegistry(inner)).toEqual(gitsRegistry(middle));
+  });
+
+  it("lists the folder between's list once a Git folder is made where a .git link in a folder between such a checkout and the repository above ends, through a second link", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    const middle = join(outer, "middle");
+    const inner = join(middle, "inner");
+    mkdirSync(inner, { recursive: true });
+    // A .git link to a link to a folder that is not there: Git passes over it as it searches up.
+    linkFolder(join(root, "middle.git"), join(root, "hop"));
+    linkFolder(join(root, "hop"), join(middle, ".git"));
+    expect(gitsAnswer(inner).workspaceRoot).toBe(outer);
+    expect(registryPlacements(inner)).toBe(1);
+
+    // Neither link moves: a Git folder is made where the second one ends.
+    await rename(join(repository(join(root, "made")), ".git"), join(root, "middle.git"));
+    expectGitsRegistries(inner);
+    expect(gitsAnswer(inner).workspaceRoot).toBe(middle);
+  });
+
+  // About 45 Git processes, `git gc` among them, as in the case of a repository above whose .git is a folder.
+  it("keeps Git's acceptance of such a checkout with no Git process while a person works in the repository above, whose .git is a link", async () => {
+    const root = await temporaryRoot();
+    const outer = await gitFolderLinked(join(root, "outer"), join(root, "outer.git"));
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    git(outer, "branch", "other");
+    const first = execFileSync("git", ["-C", outer, "symbolic-ref", "--short", "HEAD"], { encoding: "utf8" }).trim();
+    const second = repository(join(root, "second"));
+    const inner = join(outer, "a", "inner");
+    mkdirSync(inner, { recursive: true });
+    expect(registryPlacements(inner)).toBe(1);
+
+    const started = vi.mocked(runGit).mock.calls.length;
+    for (const [work, act] of personsWork(outer, first, second)) {
+      act();
+      expect(worktreeRegistry(inner)?.worktrees, work).toEqual(gitsRegistry(inner));
+    }
+    expect(gitProcessesSince(started)).toEqual([]);
+  }, 90_000);
 
   it("lists as Git does once the .git file of the folder Git places such a checkout in is rewritten in place to name another repository", async () => {
     const root = await temporaryRoot();

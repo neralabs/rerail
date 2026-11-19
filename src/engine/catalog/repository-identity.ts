@@ -153,7 +153,8 @@ function searchedUp(requested: string): Searched[] {
 
 /**
  * What `folder` holds where Git's search looks ({@link GIT_MARKERS}): the `.git` entry as {@link searchedEntryFacts}
- * reads it and the `HEAD` as an lstat gives it; two lstats, a third in a `.git` folder, and no Git process.
+ * reads it and the `HEAD` as an lstat gives it; two lstats, a third in a `.git` folder, a readlink and a stat more
+ * through a `.git` link, and no Git process.
  */
 function searchedIn(folder: string): string {
   return `${searchedEntryFacts(join(folder, ".git"))} ${entryFacts(join(folder, "HEAD"))}`;
