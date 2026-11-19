@@ -55,6 +55,9 @@ Without an object request, the parent relation can be empty even for a commit wi
 
 ### Standalone command results
 
+`rerail-engine logic` exports every row of each declared output. A literal fact remains present even when the selected tree contains no documents.
+A relation can contain both literal facts and rows derived from a file in the selected tree.
+
 `rerail-engine run-policies` writes one JSON report to stdout. Its `runs` array follows the policy argument order.
 A policy that fails has a run entry with its `path` and `error`. The other policies still contribute their findings to `diagnostics`.
 A failed batch exits with status 1. A working-tree batch stages all its policies under one directory scope.

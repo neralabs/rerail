@@ -2,7 +2,15 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-At `65e24db1d`, six of the 28 follow-up findings have verified repairs. The Windows checks for cases 21 and 22 also passed.
+Eleven of the 28 follow-up findings have verified repairs. Seventeen remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+
+## Declared outputs with constant rows
+
+Case 100 affected programs whose declared outputs contained only facts after constant folding. A revision scan exported an empty CSV for a single literal fact.
+Adding a document-dependent output to the same program made the missing rows appear.
+After the repair, the standalone `logic` and `csv` commands exported the literal fact and both rows of a relation that also read a Git blob.
+Over an empty tree, both relations still exported their literal facts.
+[Standalone regression](../../../../native/tests/git_revision_cli.rs)
 
 ## Native source reads
 

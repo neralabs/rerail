@@ -8384,7 +8384,9 @@ fn run_observed(
     // files are as they were, and their row counts. And that program's key, to record what this run writes.
     let mut unchanged_outputs: HashMap<String, usize> = HashMap::new();
     let mut written_key: Option<[u8; 32]> = None;
-    if run_placed.v.rules().next().is_some() {
+    // Constant folding can leave an exported relation with facts and no rule heads.
+    // The cross-file part still has to publish those rows, including for an empty corpus.
+    if run_placed.v.rules().next().is_some() || run_f.outputs().any(|rel| run_f.facts(rel).is_some()) {
         // RERAIL_DUMP_CROSS=<file>: the cross-file part's rules, one per line (a debugging aid).
         if let Ok(path) = std::env::var("RERAIL_DUMP_CROSS") {
             let _ = std::fs::write(path, run_placed.v.rules().map(|r| format!("{}\n", run_placed.v.show_rule(r))).collect::<String>());

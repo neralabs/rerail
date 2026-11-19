@@ -123,6 +123,45 @@ fn json(output: Output, code: i32) -> serde_json::Value {
 }
 
 #[test]
+fn revision_outputs_include_literal_and_folded_facts_even_without_documents() {
+    let f = Checkout::new();
+    let out = f.area.path().join("export");
+    let program = f.area.path().join("export.rr");
+    let literal = ".language python\n.decl literal(value: symbol)\nliteral(\"from-fact\").\n.output literal\n";
+    let marker = r#".decl marker(value: symbol)
+marker("from-fact").
+marker(s) :- file_line("marker", _, s).
+.output marker
+"#;
+    let joined = r#".decl per_document(value: symbol)
+per_document(s) :- marker(s), kind(_, "identifier").
+.output per_document
+"#;
+    fs::write(f.repo.join("marker"), "from-blob\n").unwrap();
+    f.git(&["add", "marker"]);
+    f.git(&["commit", "-qm", "marker"]);
+    let check = |source: &str, expected: &[(&str, &[&str])]| {
+        fs::write(&program, source).unwrap();
+        let run = f.run("logic", &[&program, &f.repo, &out], Some("exports"));
+        assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+        assert!(f.run("csv", &[&out], None).status.success());
+        for &(relation, expected) in expected {
+            let text = fs::read_to_string(out.join(format!("{relation}.csv"))).unwrap();
+            let mut rows = text.lines().collect::<Vec<_>>();
+            rows.sort_unstable();
+            assert_eq!(rows, expected, "{relation} in {source}");
+        }
+    };
+    let mixed = [literal, marker].concat();
+    check(literal, &[("literal", &["from-fact"])]);
+    check(&mixed, &[("marker", &["from-blob", "from-fact"])]);
+    check(&[&mixed, joined].concat(), &[("per_document", &["from-blob", "from-fact"])]);
+    f.git(&["rm", "-q", "--", "a.py", "sub/b.py", "marker"]);
+    f.git(&["commit", "-qm", "empty tree"]);
+    check(&mixed, &[("literal", &["from-fact"]), ("marker", &["from-fact"])]);
+}
+
+#[test]
 fn nested_rule_evaluations_preserve_existing_output_files() {
     let f = Checkout::new();
     let out = f.area.path().join("output");
