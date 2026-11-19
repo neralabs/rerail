@@ -271,10 +271,19 @@ export class SqliteSessionStore {
    * carries its repository in its attribution.
    */
   readonly #sessionRepositories = new Map<string, string | null>();
+  readonly #onRowPutBack: ((sessionId: string) => void) | undefined;
 
-  constructor(path: string, { repositoryId }: { repositoryId?: string | undefined } = {}) {
+  /**
+   * `onRowPutBack` is told the session's id each time a write finds the session's row gone and writes it again
+   * (`append`), so the process that holds the session can write again what it recorded at the open beside the row.
+   */
+  constructor(path: string, { repositoryId, onRowPutBack }: {
+    repositoryId?: string | undefined;
+    onRowPutBack?: ((sessionId: string) => void) | undefined;
+  } = {}) {
     this.path = path;
     this.#repositoryId = repositoryId ?? null;
+    this.#onRowPutBack = onRowPutBack;
     this.#database = openRerailDatabase(path);
   }
 
@@ -429,6 +438,7 @@ export class SqliteSessionStore {
         endedAt: attribution?.endedAt ?? null,
       }).onConflictDoNothing().run();
       this.#database.insert(events).values(row).onConflictDoNothing().run();
+      this.#onRowPutBack?.(event.sessionId);
     }
     return eventId;
   }
