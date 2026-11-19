@@ -103,28 +103,34 @@ function declaredConfig(value: unknown, at: string): RuleConfig | undefined {
   return value as RuleConfig;
 }
 
+/** A repository pack's `path`: a folder inside the repository. */
+function repositoryPackPath(path: unknown, at: string): string {
+  if (typeof path !== "string") throw new PacksFileError(`${at}.path is not a string`);
+  const problem = pathProblem(path);
+  if (problem !== undefined) throw new PacksFileError(`${at}.path ${JSON.stringify(path)} ${problem}`);
+  return path;
+}
+
+/** A published pack's `id` and `version`: a pack id or package name, at one exact version. */
+function publishedPackName(id: unknown, version: unknown, at: string): { packageName: string; id: string; version: string } {
+  if (typeof id !== "string") throw new PacksFileError(`${at}.id is not a string`);
+  const packageName = rulePackPackageOf(id);
+  if (packageName === undefined) throw new PacksFileError(`${at}.id ${JSON.stringify(id)} is neither a pack id (complexity) nor a rule pack's package name (@acme/rerail-pack-sql)`);
+  // One exact version: npm resolves it to the same content forever, unlike a range or a dist-tag.
+  if (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(version) || semver.valid(version) !== version) {
+    throw new PacksFileError(`${at}.version must be one exact version, such as 1.4.0, not ${JSON.stringify(version)}: a range or a tag runs other content as new versions publish`);
+  }
+  return { packageName, id: packIdOfPackage(packageName)!, version };
+}
+
 function declaredPack(entry: Readonly<Record<string, unknown>>, at: string): DeclaredPack {
   const { folders: listed, config: set, ...rest } = entry;
   const folders = declaredFolders(listed, at);
   const config = declaredConfig(set, at);
   const where = { ...(folders === undefined ? {} : { folders }), ...(config === undefined ? {} : { config }) };
   const keys = Object.keys(rest).sort().join(",");
-  if (keys === "path") {
-    if (typeof rest.path !== "string") throw new PacksFileError(`${at}.path is not a string`);
-    const problem = pathProblem(rest.path);
-    if (problem !== undefined) throw new PacksFileError(`${at}.path ${JSON.stringify(rest.path)} ${problem}`);
-    return { kind: "repository", path: rest.path, ...where };
-  }
-  if (keys === "id,version") {
-    if (typeof rest.id !== "string") throw new PacksFileError(`${at}.id is not a string`);
-    const packageName = rulePackPackageOf(rest.id);
-    if (packageName === undefined) throw new PacksFileError(`${at}.id ${JSON.stringify(rest.id)} is neither a pack id (complexity) nor a rule pack's package name (@acme/rerail-pack-sql)`);
-    // One exact version: npm resolves it to the same content forever, unlike a range or a dist-tag.
-    if (typeof rest.version !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(rest.version) || semver.valid(rest.version) !== rest.version) {
-      throw new PacksFileError(`${at}.version must be one exact version, such as 1.4.0, not ${JSON.stringify(rest.version)}: a range or a tag runs other content as new versions publish`);
-    }
-    return { kind: "published", packageName, id: packIdOfPackage(packageName)!, version: rest.version, ...where };
-  }
+  if (keys === "path") return { kind: "repository", path: repositoryPackPath(rest.path, at), ...where };
+  if (keys === "id,version") return { kind: "published", ...publishedPackName(rest.id, rest.version, at), ...where };
   throw new PacksFileError(`${at} must have "id" and "version" for a published pack, or "path" for a pack in the repository, and optionally "folders" and "config", not ${keys === "" ? "no keys" : keys.split(",").map(key => JSON.stringify(key)).join(", ")}`);
 }
 

@@ -33,11 +33,7 @@ export function declaredPackRuleConfigs(catalog: RuleCatalog, pack: DeclaredPack
   const configs = new Map<string, Record<string, CodeRuleDslValue>>();
   for (const [option, value] of Object.entries(pack.config)) {
     const declaring = rules.filter(rule => rule.declared.has(option));
-    if (declaring.length === 0) {
-      const known = [...new Set(rules.flatMap(rule => [...rule.declared]))].sort();
-      const declared = known.length === 0 ? "its rules declare no option" : `its rules declare ${known.join(", ")}`;
-      throw new PacksFileError(`${label} sets config.${option} for ${name}, which no rule of that pack declares (${declared})`);
-    }
+    if (declaring.length === 0) throw undeclaredOption(rules, option, name, label);
     for (const rule of declaring) {
       const outcome = configureBundledCodeRule(catalog, rule.id, { [option]: value });
       if (!outcome.ok) throw new PacksFileError(`${label} sets config.${option} for ${name} to ${JSON.stringify(value)}, which ${rule.id} does not allow: ${outcome.reason}`);
@@ -53,4 +49,11 @@ export function declaredPackRuleConfigs(catalog: RuleCatalog, pack: DeclaredPack
     }
     return { ruleId, config };
   });
+}
+
+/** The error for `option`, which none of `rules` declares: it names the options they do declare. */
+function undeclaredOption(rules: ReadonlyArray<{ declared: ReadonlySet<string> }>, option: string, name: string, label: string): PacksFileError {
+  const known = [...new Set(rules.flatMap(rule => [...rule.declared]))].sort();
+  const declared = known.length === 0 ? "its rules declare no option" : `its rules declare ${known.join(", ")}`;
+  return new PacksFileError(`${label} sets config.${option} for ${name}, which no rule of that pack declares (${declared})`);
 }

@@ -191,19 +191,21 @@ function checkPackFoldersAtCommit(root: string, commit: string, label: string, p
   }
 }
 
-/**
- * The catalog of the packs `declared` lists, for a scan of the checkout at `root`: its repository packs read from the
- * working tree, or from `declared.commit`; its published packs installed under `scratch`. Every listed pack must
- * load, at the version listed: one that does not fails the scan, naming it and why. So does a `config` its rules do
- * not declare or allow (`declaredPackRuleConfigs`).
- */
-export async function declaredScanPacks(
-  root: string, declared: DeclaredPacks, scratch: string, storeOf: (home: string) => PackStore = npmPackStore,
-): Promise<DeclaredScanPacks> {
+/** Checks every folder the declared packs name: in the working tree, or at `declared.commit`. */
+function checkDeclaredFolders(root: string, declared: DeclaredPacks): void {
   for (const pack of declared.packs) {
     if (declared.commit === undefined) checkPackFolders(root, pack);
     else checkPackFoldersAtCommit(root, declared.commit, declared.label, pack);
   }
+}
+
+/**
+ * The folder each declared pack is read from: a published pack installed under `scratch`; a repository pack in the
+ * working tree, or written under `scratch` from `declared.commit`.
+ */
+async function declaredPackDirectories(
+  root: string, declared: DeclaredPacks, scratch: string, storeOf: (home: string) => PackStore,
+): Promise<DeclaredPackDirectory[]> {
   const published = await installPublished(declared.packs.filter((pack): pack is PublishedPack => pack.kind === "published"), scratch, declared.label, storeOf);
   const directories: DeclaredPackDirectory[] = [];
   for (const [index, pack] of declared.packs.entries()) {
@@ -217,23 +219,44 @@ export async function declaredScanPacks(
       : await repositoryPackAtCommit(root, declared.commit, declared.label, pack, join(scratch, "repository-packs", String(index)));
     directories.push({ pack, directory, checkoutPath });
   }
-  const catalog = declaredPackCatalog(directories, { coreVersion: activeCoreVersion(), compile: true });
+  return directories;
+}
+
+/**
+ * Each declared pack as `catalog` loaded it, beside its declaration. Throws, naming `label` and each pack, when one did
+ * not load or npm installed another version than the one listed.
+ */
+function loadedDeclaredPacks(catalog: RuleCatalog, directories: readonly DeclaredPackDirectory[], label: string): Array<{ pack: DeclaredPack; loaded: ScanPack }> {
   const problems: string[] = [];
-  const packs: ScanPack[] = [];
-  const attachments: ScanPackAttachment[] = [];
-  const loaded: Array<{ pack: DeclaredPack; id: string }> = [];
+  const loaded: Array<{ pack: DeclaredPack; loaded: ScanPack }> = [];
   for (const entry of directories) {
     const found = loadedPack(catalog, entry);
     const skipped = catalog.skipped.find(left => left.path === entry.directory);
     if (found === undefined) problems.push(`${declaredPackLabel(entry.pack)}: ${skipped?.reason ?? "it did not load"}`);
     else if (entry.pack.kind === "published" && found.version !== entry.pack.version) problems.push(`${declaredPackLabel(entry.pack)}: npm installed ${found.version ?? "no version"}`);
-    else {
-      packs.push(found);
-      loaded.push({ pack: entry.pack, id: found.id });
-      for (const folder of packAttachmentFolders(entry.pack)) attachments.push({ packId: found.id, folder });
-    }
+    else loaded.push({ pack: entry.pack, loaded: found });
   }
-  if (problems.length > 0) throw new Error(`${declared.label} lists packs that do not run: ${problems.join("; ")}`);
-  const ruleConfigs = loaded.flatMap(({ pack, id }) => declaredPackRuleConfigs(catalog, pack, id, declared.label));
-  return { catalog, packs, attachments, ruleConfigs };
+  if (problems.length > 0) throw new Error(`${label} lists packs that do not run: ${problems.join("; ")}`);
+  return loaded;
+}
+
+/**
+ * The catalog of the packs `declared` lists, for a scan of the checkout at `root`: its repository packs read from the
+ * working tree, or from `declared.commit`; its published packs installed under `scratch`. Every listed pack must
+ * load, at the version listed: one that does not fails the scan, naming it and why. So does a `config` its rules do
+ * not declare or allow (`declaredPackRuleConfigs`).
+ */
+export async function declaredScanPacks(
+  root: string, declared: DeclaredPacks, scratch: string, storeOf: (home: string) => PackStore = npmPackStore,
+): Promise<DeclaredScanPacks> {
+  checkDeclaredFolders(root, declared);
+  const directories = await declaredPackDirectories(root, declared, scratch, storeOf);
+  const catalog = declaredPackCatalog(directories, { coreVersion: activeCoreVersion(), compile: true });
+  const loaded = loadedDeclaredPacks(catalog, directories, declared.label);
+  return {
+    catalog,
+    packs: loaded.map(({ loaded: pack }) => pack),
+    attachments: loaded.flatMap(({ pack, loaded: { id } }) => packAttachmentFolders(pack).map(folder => ({ packId: id, folder }))),
+    ruleConfigs: loaded.flatMap(({ pack, loaded: { id } }) => declaredPackRuleConfigs(catalog, pack, id, declared.label)),
+  };
 }
