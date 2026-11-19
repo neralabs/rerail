@@ -183,6 +183,8 @@ After scope deletion, a new acquisition must retain the same plans as a fresh vi
 Each store that consumes a compiled policy needs its input record and the graph of its includes.
 When the process already holds a validated local policy, it checks the destination store's recorded inputs and compiled program.
 Matching inputs and an available program let it reuse the policy in memory. If collection removed either entry, it records the policy again.
+Repeated inspection in one catalog checks the files again. A fresh catalog also checks the store, even when another catalog loaded the same program.
+The inspection profile measures file checks, store access, read-record checks, image availability and program decoding separately.
 The process can reuse a checked graph from another store. It must save that graph in the selected image store.
 On restart, the engine checks the recorded file digests and missing include candidates before it reuses a graph.
 A scan can execute a policy inspected for another store. It retains the program there while the inspected inputs still match.

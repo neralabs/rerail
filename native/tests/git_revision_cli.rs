@@ -312,6 +312,54 @@ view(v) :- git_root_view(_, v).
     assert_eq!(read(&moved, true), [path(&moved), String::new(), r, v]);
 }
 
+#[cfg(not(feature = "headless"))]
+#[test]
+fn fresh_and_reused_catalogs_inspect_the_same_policy_and_include_graph() {
+    use rerail_engine::LoadedRrPolicies;
+    use std::time::Instant;
+
+    let area = tempfile::tempdir().unwrap();
+    let policy = area.path().join("words.rr");
+    fs::write(&policy, "#include \"git.rr\"\n.policy \"words\" revision 1\n.violation Seen(at: span) \"commit\"\nSeen(@place(\"git\", 1)) :- git_root_repo(_).\n").unwrap();
+    let path = policy.to_str().unwrap();
+    let store = area.path().join("store.sqlite");
+    let open = || LoadedRrPolicies::new(Some(store.to_str().unwrap().to_owned()));
+    let catalog = open();
+    let expected = catalog.load(path.to_owned(), None).unwrap();
+    let count = if rerail_prof::on() { 50 } else { 2 };
+    for fresh in [false, true] {
+        let inspect = || if fresh { open().load(path.to_owned(), None) } else { catalog.load(path.to_owned(), None) };
+        assert_eq!(inspect().unwrap(), expected);
+        let before = rerail_prof::stages().clone();
+        let mut elapsed = Vec::new();
+        for _ in 0..count {
+            let start = Instant::now();
+            let actual = inspect().unwrap();
+            elapsed.push(start.elapsed());
+            assert_eq!(actual, expected);
+        }
+        if rerail_prof::on() {
+            elapsed.sort_unstable();
+            eprintln!("fresh={fresh} median wall time {:?} ({count} inspections)", elapsed[count / 2]);
+            let after = rerail_prof::stages().clone();
+            let calls = |key: &str| after.get(key).map_or(0, |s| s.1) - before.get(key).map_or(0, |s| s.1);
+            for (key, (total, _)) in &after {
+                if key.starts_with("rr.inspect.") || key == "rr.stored_program_decode" {
+                    let cpu = *total - before.get(key).map(|s| s.0).unwrap_or_default();
+                    eprintln!("{key} {:?} CPU per inspection, {} calls", cpu / count as u32, calls(key));
+                }
+            }
+            assert_eq!(calls("rr.program_reused"), count);
+            assert_eq!(calls("rr.inspect.inputs"), count);
+            assert_eq!(calls("rr.inspect.store"), if fresh { count } else { 0 });
+            if std::env::var_os("RERAIL_PROGRAM_IMAGE").is_none() {
+                assert_eq!(calls("rr.stored_program_decode"), 0);
+            }
+        }
+    }
+    rerail_accel::upkeep::retire_files_under(&area.path().canonicalize().unwrap());
+}
+
 #[test]
 fn the_documented_head_queries_preserve_the_worktree_in_answers_and_errors() {
     let f = Checkout::new();

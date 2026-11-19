@@ -2,7 +2,17 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Fifteen of the 28 follow-up findings have verified repairs. Thirteen remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+Sixteen of the 28 follow-up findings have verified results. Twelve remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+
+## Cost of inspecting a policy in a fresh catalog
+
+Case 53 compared 50 warm calls to `LoadedRrPolicies.load` in each mode. Every call returned the same policy metadata and include graph.
+On an M3, median wall time was 0.243 ms in one catalog and 3.434 ms with a fresh catalog per call.
+A fresh catalog spent 1.508 ms of CPU per call opening the reading store and 0.956 ms reading its recorded include graph.
+It spent 0.053 ms checking inputs, 0.043 ms taking the collection lease, 0.003 ms settling queued writes and 0.038 ms checking image availability.
+The existing catalog spent 0.031 ms checking inputs. All 100 calls reused the process's program. Both modes decoded zero compiled programs.
+These measurements retain the store and collection checks. They explain the cost for a local policy with `git.rr` and the default image format.
+Run the regression with `RERAIL_PROF=1` to print the timings and check the call counts. [Catalog regression](../../../../native/tests/git_revision_cli.rs)
 
 ## Repository and worktree locations
 

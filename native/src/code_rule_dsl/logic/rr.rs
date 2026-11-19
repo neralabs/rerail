@@ -1252,7 +1252,7 @@ pub fn read_file_after(path: &Path, inspected: Option<&[LibraryFile]>) -> Result
     let library = library_root();
     let entry = (key.clone(), library.clone());
     let cached = cache.lock().expect("the program cache").get(&entry)
-        .filter(|(files, _)| LibraryFile::inputs_match(files)).cloned();
+        .filter(|(files, _)| crate::code_rule_dsl::prof::time("rr.inspect.inputs", || LibraryFile::inputs_match(files))).cloned();
     if let Some((files, program)) = cached {
         if inspected != Some(files.as_slice()) {
             retain_current_read(&key, &library, &files, &program);
@@ -1350,8 +1350,8 @@ fn retain_current_read(path: &Path, library: &Path, files: &[LibraryFile], progr
     use super::plan::corpus::combined;
     let Some(sha) = files.iter().find(|file| file.path == path).and_then(|file| file.sha256) else { return };
     let Some((key, Some(store))) = rule_file_store(path, library, &sha) else { return };
-    let Ok(_held) = store.hold_collection() else { return };
-    store.settle(&combined::queued(&key));
+    let Ok(_held) = crate::code_rule_dsl::prof::time("rr.inspect.collection_lease", || store.hold_collection()) else { return };
+    crate::code_rule_dsl::prof::time("rr.inspect.settle", || store.settle(&combined::queued(&key)));
     if !combined::retains_read(&store, &key, files).unwrap_or(false) {
         combined::record(&store, "a rule file's program", &key, files, program, &[]);
     }
@@ -1361,7 +1361,7 @@ fn retain_current_read(path: &Path, library: &Path, files: &[LibraryFile], progr
 fn rule_file_store(path: &Path, library: &Path, sha: &[u8; 32]) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>)> {
     use super::plan::corpus::{combined, phases};
     if !cfg!(feature = "tape-cache") || super::plan::corpus::phase0::active() { return None; }
-    Some((combined::rule_file_key(path, library, sha), phases::reading_store()))
+    Some((combined::rule_file_key(path, library, sha), crate::code_rule_dsl::prof::time("rr.inspect.store", phases::reading_store)))
 }
 
 /// The entry of the rule file at `path` and the program whose recorded inputs still hold.

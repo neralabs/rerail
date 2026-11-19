@@ -132,9 +132,10 @@ pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32]
 
 /// A process hit already checked these inputs. Match them against this store's entry and verify its program is available.
 pub(in crate::code_rule_dsl) fn retains_read(store: &ContentStore, key: &[u8; 32], files: &[LibraryFile]) -> StoreResult<bool> {
-    let Some((digest, read)) = read_record(store, key)? else { return Ok(false) };
+    use crate::code_rule_dsl::prof;
+    let Some((digest, read)) = prof::time("rr.inspect.read_record", || read_record(store, key))? else { return Ok(false) };
     if read != files { return Ok(false); }
-    program_text::available(store, &digest)
+    prof::time("rr.inspect.image_available", || program_text::available(store, &digest))
 }
 
 fn read_record(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<([u8; 32], Vec<LibraryFile>)>> {

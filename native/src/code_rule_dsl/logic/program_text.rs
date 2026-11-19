@@ -307,6 +307,7 @@ pub enum Stored {
 
 /// The program `stored` holds, its lists taken from the run's `lists`.
 pub fn read_stored(stored: &Stored, lists: &crate::code_rule_dsl::logic::front::Lists) -> Result<Program, String> {
+    let _stage = crate::code_rule_dsl::prof::Stage::start("rr.stored_program_decode");
     match stored {
         Stored::Image(bytes) => crate::code_rule_dsl::logic::program_image::decode(bytes, lists),
         Stored::Text(text) => read_in(text, lists),
