@@ -924,7 +924,8 @@ pub fn source_language(path: &Path) -> Option<Option<String>> {
     let v = view(path)?;
     let (_, inventory) = v.saved_inventory()?;
     let full = v.prefix.join(path.strip_prefix(&v.root).ok()?);
-    Some(inventory.languages.get(full.to_str()?).cloned())
+    let key = gix::path::to_unix_separators_on_windows(gix::path::into_bstr(full).ok()?);
+    Some(inventory.languages.get(key.to_str().ok()?).cloned())
 }
 
 /// The trees already read during this invocation, before or after source selection.

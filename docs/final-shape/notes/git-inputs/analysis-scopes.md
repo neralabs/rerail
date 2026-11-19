@@ -304,6 +304,7 @@ context-sensitive rules. An unchanged file retains its cache key across
 revisions. A changed file requests new content, and changes to the imports or
 configuration invalidate their dependents.
 Each language key describes the registry entries that match the file name.
+On Windows, the parser looks up the selected grammar using the same slash-separated path that the Git inventory emitted.
 The cached result selects the grammar from these entries. Files with the
 same entries can use the same classification. A file without a match uses
 the empty set of entries. An unrelated registry entry leaves the key intact.

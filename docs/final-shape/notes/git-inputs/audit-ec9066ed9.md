@@ -44,6 +44,11 @@ The relation uses the cached Git message and a Datalog cache key for the trailer
 
 ## Windows test execution and store lifetime
 
+At `04c9522c69`, the rebuilt addon passed both the NTFS rewrite and the Git for Windows selector comparison again.
+The full standalone CLI suite exposed a missing finding for `sub/b.py`. The inventory counted two Python files, but the parser produced nodes for only one.
+On Windows, a native path join used a backslash for a grammar lookup. The Git inventory had stored the same path with a slash.
+Using Git's path spelling for this lookup restored the second finding. All 11 standalone Git revision tests passed on NTFS, including trailer parsing and scope collection.
+
 The Windows 11 ARM64 guest in Parallels built the native store tests and the Node addon with test hooks.
 Four NTFS tests passed for tree eviction, symlink retargeting, cross-process leases and reclamation after a process exits.
 The tree cache retained 1,964 bytes after each oversized directory read. The Windows process check distinguished a live child from the same child after termination.
