@@ -362,8 +362,10 @@ fn seeded_and_copied_labels_find_ws_roots() {
         assert_eq!(program.roots(&tape).unwrap(), expected, "{clause}");
         let census = program.census();
         let patterns = census.iter().filter(|(kind, _)| *kind == "pattern").count();
-        // A neighbor's set is a formula a pass's anchor reads (0425), not a targets label of its own (0424's seed).
-        assert!(!census.iter().any(|(kind, _)| *kind == "targets"), "{clause}: no seed label");
+        // A neighbor's set is a formula a pass's anchor reads (0425), not a targets label of its own (0424's seed). A
+        // reach (`inside … stopBy end`) is a targets label: the nodes below a match, which `in-function` copies.
+        let targets = census.iter().filter(|(kind, _)| *kind == "targets").count();
+        assert_eq!(targets, usize::from(clause == "in-function"), "{clause}: no seed label");
         let within = program.labels.defs.iter().any(|label| matches!(label, Label::Roots(_, super::compile_matcher::Domain::Within(..))));
         match clause {
             "named" => assert_eq!(patterns, 0, "named: `$X` is a node test, not a pattern pass"),
