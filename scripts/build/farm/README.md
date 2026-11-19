@@ -53,6 +53,8 @@ instead, and only that run's output is shown.
 | `test-mirror` | a test of the mirror against an agent run here: a file the checkout deleted goes from the host's copy |
 | `test-mac-compiles HOST` | a test of this Mac's compiles on HOST: a small crate's library compiles (proc-macros, `OUT_DIR`, bundled C) go there through the farm, and each output must be this Mac's bytes |
 | `status` | what the farm can use now: each host probed, and why one is not usable |
+| `dashboard` | a live page of every host and this Mac: CPU (farm, fleet, the machine's own, idle), GPU, memory, disk, jobs, reachability, round trip, traffic ("Dashboard") |
+| `sampler` | the dashboard's end on each machine: one JSON line of its state every 3 seconds |
 | `free-local` | this Mac's disk floor: Rerail's least recently built builds go under `local_min_free_gb` |
 | `host-privacy` | keeps the farm's files on the hosts out of Time Machine, and (`--spotlight`, with sudo) Spotlight |
 | `setup` | installs all of it here, the machine's cargo configuration, a configuration to fill in, and the toolchain on each host |
@@ -460,6 +462,35 @@ hosts had a floor already (their agent's `free`); this Mac has one since farm 35
 
 `scripts/build/farm/free-local --dry-run --floor GB` shows what it would remove at a floor.
 `status` prints this Mac's free disk and the floor.
+
+## Dashboard
+
+```
+scripts/build/farm/dashboard [--port 8740] [--open]      # then http://127.0.0.1:8740/
+```
+
+A live page of each enabled host and this Mac, with five minutes of history:
+
+- CPU, split by who uses it: the farm (the trees under its agents: test commands, Relax
+  sessions, the mirror; on a Linux host also the Mac-compile container; on this Mac, Rerail's
+  builds), the fleet's jobs (their containers), the machine's own load, and idle. The split
+  divides the machine's measured ticks; it never adds to them.
+- GPU busy % and memory (ioreg's statistics on a Mac, `nvidia-smi` on a Linux host).
+- Memory available, used and the farm's resident share; disk free, and on a Mac what an
+  important write can have (what macOS purges for it); a disk under 50 GB free shows red.
+- The farm's jobs on each machine (command, checkout, cores, memory), compiles, the fleet's jobs,
+  and whether someone is at it (a Mac's input idle time).
+- Reachability: the dashboard's own connection (and why it failed), and the farm's last health
+  probe (usable or why not, its round trip and the link's measured MB/s); the round trip now,
+  one line each way every 2 seconds over the open connection; the network traffic.
+
+Its cost: one `sampler` per machine, sent over one ssh connection when the dashboard starts and
+ended with it (on its input's end). It sleeps between samples and reads counters the system keeps
+(`/proc` on Linux; on a Mac the processor ticks and libproc, not `ps`, which cost 60 ms of CPU a
+sample); `ioreg` or `nvidia-smi` every 6 seconds, docker every 15. Each line reports what the
+sampler used, shown under each card: 0.3 to 2% of one core (2026-11-19). The dashboard adds no
+health probe: it reads the farm's records. The page and its data stay on 127.0.0.1; the hosts'
+names come from the configuration at run time.
 
 ## No benchmark leases
 

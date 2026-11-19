@@ -83,6 +83,7 @@ the file there are no hosts, and every command below runs here instead.
 
 ```
 scripts/build/farm/status                          # which hosts are usable now, and why not
+scripts/build/farm/dashboard --open                # a live page: each host's CPU, GPU, memory, disk, jobs, links
 scripts/build/farm/diagnose [DIR | --all]          # why a checkout's builds miss the shared cache
 scripts/dev/test-remote -- cargo nextest run --lib --profile gate
 scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'
