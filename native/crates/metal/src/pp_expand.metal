@@ -1061,10 +1061,13 @@ inline void px_call(Ux u, Ar a, uint l, uint lane) {
         if (i < n) {
             uint it = u.items[d.ifirst + i];
             uint kind = ref_kind(u, d.body + i);
-            if (va && kind == K_IDENTIFIER && u.keys[d.body + i] == u.va_opt) px_refuse(a.ctl, X_VA_OPT);
+            bool vo = va && kind == K_IDENTIFIER && u.keys[d.body + i] == u.va_opt;
+            if (vo && i > 0u && ref_kind(u, d.body + i - 1u) == K_HASH) px_refuse(a.ctl, X_VA_OPT);
             q = it & 0xffffu;
             if (i > 0u && ref_kind(u, d.body + i - 1u) == K_HASH) q = NO_PARAM;
             if ((i > 0u && (u.items[d.ifirst + i - 1u] & I_PASTE) != 0u) || (i + 1u < n && (u.items[d.ifirst + i + 1u] & I_PASTE) != 0u)) q = NO_PARAM;
+            // `__VA_OPT__` asks whether the variadic argument, expanded, has tokens.
+            if (vo && np > 0u) q = np - 1u;
         }
         bool make = false;
         if (q != NO_PARAM && q < np && a.args[ab + q].hi > a.args[ab + q].lo) {
@@ -1120,6 +1123,11 @@ inline void px_call(Ux u, Ar a, uint l, uint lane) {
 constant uint R_LIT = 0u, R_HASH = 1u, R_GONE = 2u, R_RAW = 3u, R_EXP = 4u, R_PASTE = 5u;
 struct Role { uint role, count, q; };
 
+// A body's `__VA_OPT__`s (4 at most): each one's item, its `(` and its `)` (its content between),
+// and whether the variadic argument, expanded, has tokens.
+constant uint MAX_VA_OPT = 4u;
+struct Vo { uint n; uint s[MAX_VA_OPT], o[MAX_VA_OPT], c[MAX_VA_OPT]; bool present; };
+
 inline bool px_arg_empty(Ar a, device PxList& L, uint q) { return a.args[L.args + q].hi <= a.args[L.args + q].lo; }
 
 // GNU's `, ## __VA_ARGS__` at item `i` (the variadic parameter): a literal comma, `##`, then it.
@@ -1130,9 +1138,15 @@ inline bool px_gnu_comma(Ux u, PpDef d, device PxList& L, uint i) {
     return (u.items[d.ifirst + i - 2u] & 0xffffu) == NO_PARAM && ref_is(u, d.body + i - 2u, ',');
 }
 
-inline Role px_role(Ux u, Ar a, PpDef d, device PxList& L, uint i) {
+inline Role px_role(Ux u, Ar a, PpDef d, device PxList& L, uint i, Vo vo) {
     uint n = d.n_body, it = u.items[d.ifirst + i], q = it & 0xffffu;
     Role r; r.role = R_LIT; r.count = 1u; r.q = q;
+    // `__VA_OPT__`: its content where the variadic argument has tokens, else a placemarker; its
+    // name and parentheses write nothing.
+    for (uint k = 0u; k < vo.n; k++) {
+        if (i == vo.s[k]) { r.role = vo.present ? R_GONE : R_RAW; r.count = vo.present ? 0u : 1u; r.q = NO_PARAM; return r; }
+        if (i == vo.o[k] || i == vo.c[k] || (i > vo.o[k] && i < vo.c[k] && !vo.present)) { r.role = R_GONE; r.count = 0u; return r; }
+    }
     bool fn = (d.flags & D_FNLIKE) != 0u;
     if ((it & I_PASTE) != 0u) {
         // `##`: an operator, gone in GNU's comma (`, ## __VA_ARGS__`).
@@ -1240,6 +1254,48 @@ inline uint px_paste(Ux u, Ar a, uint l, uint lf, uint r, uint rf, thread uint& 
     return SCRATCH | id;
 }
 
+// The body's `__VA_OPT__`s (`va_opt_content`): each one's `(` (the next item, else none and no
+// content) and its `)` (the first back at the depth before, by a carried SIMD depth scan and a
+// ballot; none: the body's end), all lanes together.
+inline Vo px_va_opts(Ux u, Ar a, PpDef d, device PxList& L, uint lane) {
+    Vo vo;
+    vo.n = 0u; vo.present = false;
+    if ((d.flags & D_VARIADIC) == 0u || L.nargs == 0u) return vo;
+    uint n = d.n_body;
+    for (uint c0 = 0u; c0 < n; c0 += 32u) {
+        uint i = c0 + lane;
+        bool is = i < n && ref_kind(u, d.body + i) == K_IDENTIFIER && u.keys[d.body + i] == u.va_opt;
+        ulong todo = px_ballot(is);
+        for (uint guard = 0u; guard < 32u && todo != 0u; guard++) {
+            uint who = uint(ctz(todo));
+            todo &= todo - 1u;
+            uint s = c0 + who;
+            if (vo.n == MAX_VA_OPT) { if (lane == 0u) px_refuse(a.ctl, X_VA_OPT); return vo; }
+            uint o = s, c = s;
+            if (s + 1u < n && ref_is(u, d.body + s + 1u, '(')) {
+                o = s + 1u;
+                c = n;
+                uint depth = 0u;
+                for (uint k0 = o + 1u; k0 < n && c == n; k0 += 32u) {
+                    uint k = k0 + lane;
+                    uint dl = k < n ? paren_delta(u, d.body + k) : 0u;
+                    uint after = depth + simd_prefix_inclusive_sum(dl);
+                    ulong h = px_ballot(k < n && dl == 0xffffffffu && after == 0xffffffffu);
+                    if (h != 0u) c = k0 + uint(ctz(h));
+                    depth += simd_sum(dl);
+                }
+            }
+            vo.s[vo.n] = s; vo.o[vo.n] = o; vo.c[vo.n] = c;
+            vo.n++;
+        }
+    }
+    if (vo.n > 0u) {
+        uint id = atomic_load_explicit(&a.args[L.args + L.nargs - 1u].list, memory_order_relaxed);
+        vo.present = id >= 2u && a.lists[id - 2u].size > 0u;
+    }
+    return vo;
+}
+
 // SUBST `l`: its body's items (`px_role`), at offsets by a SIMD scan of their counts (one atomic
 // add for all): a parameter used expanded its argument's flattened tokens (their paint kept, the
 // first taking the parameter's space), one beside `##` its raw tokens (an empty one a
@@ -1251,11 +1307,12 @@ inline void px_subst(Ux u, Ar a, uint l, uint lane) {
     device PxList& L = a.lists[l];
     PpDef d = u.defs[L.def];
     uint n = d.n_body, total = 0u;
+    Vo vo = px_va_opts(u, a, d, L, lane);
     bool pastes = false;
     for (uint c0 = 0u; c0 < n; c0 += 32u) {
         uint i = c0 + lane, v = 0u;
         if (i < n) {
-            Role r = px_role(u, a, d, L, i);
+            Role r = px_role(u, a, d, L, i, vo);
             v = r.count;
             pastes = pastes || r.role == R_PASTE;
         }
@@ -1271,14 +1328,26 @@ inline void px_subst(Ux u, Ar a, uint l, uint lane) {
         n = 0u;
     }
     uint at = base;
+    uint vo_off[MAX_VA_OPT], vo_sp[MAX_VA_OPT], vo_end[MAX_VA_OPT];
+    for (uint k = 0u; k < MAX_VA_OPT; k++) { vo_off[k] = 0u; vo_sp[k] = 0u; vo_end[k] = base + total; }
     for (uint c0 = 0u; c0 < n; c0 += 32u) {
         uint i = c0 + lane, sp = 0u;
         Role r; r.role = R_GONE; r.count = 0u; r.q = NO_PARAM;
         if (i < n) {
-            r = px_role(u, a, d, L, i);
+            r = px_role(u, a, d, L, i, vo);
             sp = (u.items[d.ifirst + i] & I_SPACE) != 0u ? T_SPACE : 0u;
         }
         uint off = at + simd_prefix_exclusive_sum(r.count);
+        // A present `__VA_OPT__`'s content: its first token takes `__VA_OPT__`'s space (where the
+        // content wrote any: its `)` is placed past it).
+        for (uint k = 0u; k < vo.n; k++) {
+            if (!vo.present) break;
+            uint so = vo.s[k] - c0, co = vo.c[k] - c0;
+            uint s_off = so < 32u ? simd_shuffle(off, ushort(so)) : 0u, s_sp = so < 32u ? simd_shuffle(sp, ushort(so)) : 0u;
+            uint c_off = co < 32u ? simd_shuffle(off, ushort(co)) : 0u;
+            if (so < 32u) { vo_off[k] = s_off; vo_sp[k] = s_sp; }
+            if (co < 32u) vo_end[k] = c_off;
+        }
         if (i < n && (r.role == R_LIT || r.role == R_PASTE)) {
             a.tok[off] = d.body + i;
             a.tflag[off] = sp | (r.role == R_PASTE ? T_PASTE : 0u);
@@ -1303,7 +1372,8 @@ inline void px_subst(Ux u, Ar a, uint l, uint lane) {
             uint who = uint(ctz(todo));
             todo &= todo - 1u;
             uint dst = simd_shuffle(off, ushort(who)), spw = simd_shuffle(sp, ushort(who)), qw = simd_shuffle(r.q, ushort(who));
-            uint lo = a.args[L.args + qw].lo, len = a.args[L.args + qw].hi - lo;
+            // An absent `__VA_OPT__` is a placemarker (no parameter).
+            uint lo = qw < L.nargs ? a.args[L.args + qw].lo : 0u, len = qw < L.nargs ? a.args[L.args + qw].hi - lo : 0u;
             for (uint j = lane; j < len; j += 32u) {
                 a.tok[dst + j] = par_ref(u, a, L.parent, lo + j);
                 a.tflag[dst + j] = par_flags(u, a, L.parent, lo + j) & ~(T_PASTE | T_DROP);
@@ -1330,6 +1400,11 @@ inline void px_subst(Ux u, Ar a, uint l, uint lane) {
             }
         }
         at += simd_sum(r.count);
+    }
+    px_fence();
+    simdgroup_barrier(mem_flags::mem_device);
+    if (lane == 0u && vo.present) {
+        for (uint k = 0u; k < vo.n; k++) if (vo_end[k] > vo_off[k]) a.tflag[vo_off[k]] = (a.tflag[vo_off[k]] & ~T_SPACE) | vo_sp[k];
     }
     px_fence();
     simdgroup_barrier(mem_flags::mem_device);

@@ -304,3 +304,10 @@ outermost call becomes the queue's first items.
   row (`X_PASTE`) and a paste across a line splice (`X_RELEX`) are refused, as are spellings the
   relexer refuses. 8 shapes in C and C++ give the serial pass's tokens
   (`pasting_is_the_serial_passes`).
+- **R6, its fourth part: `__VA_OPT__`.** SUBST finds each one's extent (its `(`, and its `)` by a
+  carried SIMD depth scan over the items and a ballot; 4 a body at most, past it `X_VA_OPT`).
+  Where the variadic argument, expanded, has tokens (CALL makes its list whenever the body has
+  `__VA_OPT__`), the content's items write as any others and its first token takes
+  `__VA_OPT__`'s space; where it has none, `__VA_OPT__(…)` is one placemarker. `#__VA_OPT__` is
+  refused (`X_VA_OPT`). 4 shapes in C and C++ give the serial pass's tokens
+  (`va_opt_is_the_serial_passes`).

@@ -515,3 +515,19 @@ fn pasting_is_the_serial_passes() {
     let (tokens, launches) = shapes_agree(shapes);
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
 }
+
+/// R6 of decision 0448, its fourth part: `__VA_OPT__` (C++20, C23): its content where the variadic
+/// argument, expanded, has tokens (an argument that expands to nothing has none), else a
+/// placemarker (so `##` beside it pastes with nothing); its content's parameters and pastes, and
+/// its space given to its content's first token.
+#[test]
+fn va_opt_is_the_serial_passes() {
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define F(a, ...) f(a __VA_OPT__(,) __VA_ARGS__)\nF(1) F(1, 2) F(1, 2, 3) F(1,)\n")],
+        &[("main.c", "#define E\n#define G(...) [__VA_OPT__(x __VA_ARGS__ y)]\nG() G(E) G(a) G( a , b )\n")],
+        &[("main.c", "#define H(x, ...) x ## __VA_OPT__(_v)\n#define K(x, ...) __VA_OPT__(x ## x)\nH(a) H(a, 1) K(b) K(b, 1)\n")],
+        &[("main.c", "#define S(...) __VA_OPT__((__VA_ARGS__)) end\nS() S(()) S(a, (b))\n")],
+    ];
+    let (tokens, launches) = shapes_agree(shapes);
+    eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
+}
