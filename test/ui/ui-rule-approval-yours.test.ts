@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { awaitingApproval, awaitingYourApproval } from "../../ui/derive.js";
 
 const subject = (kind: string) => ({ kind, id: "x", digest: "sha256:0" });
-const rule = (origin: string, approval: { approved: boolean; subject: { kind: string } } | null) => ({ origin, approval });
+const rule = (origin: string, approval: { approved: boolean; subject: { kind: string } } | null, copiedFromRuleId: string | null = null) =>
+  ({ origin, approval, copiedFromRuleId });
 
 describe("rules waiting for your approval", () => {
   it("are rules created by you that are not approved yet", () => {
@@ -23,5 +24,9 @@ describe("rules waiting for your approval", () => {
     expect(awaitingYourApproval(thirdParty)).toBe(false);
     expect(awaitingApproval(worktree)).toBe(true);
     expect(awaitingApproval(thirdParty)).toBe(true);
+  });
+
+  it("leave out your edited copy of a rule Rerail ships, whose approval turns the original off", () => {
+    expect(awaitingYourApproval(rule("user", { approved: false, subject: subject("rule") }, "typescript-eslint-no-explicit-any"))).toBe(false);
   });
 });

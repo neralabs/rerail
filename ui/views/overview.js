@@ -134,12 +134,14 @@ function renderApprovals(root) {
       : { kind: "rule", label: titleOf(stored), act: "detail", target: stored.rule.id });
   }
   const list = [...items.values()], n = list.length;
+  const copies = data.loaded && rulesArray().some(stored => awaitingApproval(stored) && stored.copiedFromRuleId);
   const packs = list.filter(item => item.kind === "pack").length, rules = n - packs;
   const what = [rules && `${fmt(rules)} ${plural(rules, "rule")}`, packs && `${fmt(packs)} ${plural(packs, "pack")}`].filter(Boolean).join(" and ");
-  setContent(root, JSON.stringify(list), () => (n === 0 ? null : h("div.welcome.warn", { role: "status" }, pendingIcon(), h("div", null,
+  setContent(root, JSON.stringify([list, copies]), () => (n === 0 ? null : h("div.welcome.warn", { role: "status" }, pendingIcon(), h("div", null,
     h("b", null, `${what} ${n === 1 ? "waits" : "wait"} for approval, so ${n === 1 ? "it runs" : "they run"} in Log and steer${n === 1 ? "s" : ""} no one.`),
     h("p", null, `Rerail did not write ${n === 1 ? "it" : "them"}. Read what each tells the coding agent, then approve it on its page, or ask your coding agent: `,
       h("span.mono", null, "/rerail-create approve the rules"), "."),
+    copies ? h("p", null, `Approving an edited copy of a rule Rerail ships turns the original off in ${repoName() || "this repo"}.`) : null,
     h("p.acts", null, list.map(item => h("button.btn.sm", { "data-act": item.act, "data-i": item.target }, item.label)))))));
 }
 

@@ -127,13 +127,15 @@ function renderApproval(stored) {
   const waiting = awaitingApproval(stored), subject = stored.approval?.subject;
   const pack = subject?.kind === "pack" ? data.packs.find(x => x.approval?.subject.id === subject.id) : undefined;
   const yours = awaitingYourApproval(stored), caught = yours ? allFires(stored.rule.id) : 0;
-  setContent(p.approval, JSON.stringify([waiting, subject, pack?.name, yours, caught]), () => (!waiting ? null
+  setContent(p.approval, JSON.stringify([waiting, subject, pack?.name, yours, caught, stored.copiedFromRuleId]), () => (!waiting ? null
     : yours ? yourRuleNotice(subject, caught)
     : h("div.welcome.warn", { role: "status" }, pendingIcon(), h("div", null,
       h("b", null, subject.kind === "pack" ? `Its pack, ${pack?.name ?? subject.id}, waits for approval.` : "This rule waits for approval."),
       h("p", null, subject.kind === "pack"
         ? "Rerail did not publish it, so every rule in it runs in Log, steering no one, until a person approves what this version ships."
         : "Rerail did not write it, so it runs in Log, steering no one, until a person approves what it says. An edit waits again."),
+      stored.copiedFromRuleId ? h("p", null, h("b", null, "This is an edited copy"),
+        ` of “${data.rules.get(stored.copiedFromRuleId) ? titleOf(data.rules.get(stored.copiedFromRuleId)) : stored.copiedFromRuleId}”, a rule Rerail ships. Approving it turns the original off in ${repoName() || "this repo"}.`) : null,
       h("p", null, "Read what it tells the coding agent first, or ask your coding agent to audit it: ", h("span.mono", null, "/rerail-create approve the rules"), "."),
       h("p.acts", null, h("button.btn.sm.solid", { "data-act": "approve", "data-i": subject.id, "data-kind": subject.kind, "data-digest": subject.digest }, "Approve"))))));
 }
