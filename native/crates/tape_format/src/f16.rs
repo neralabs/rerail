@@ -1896,7 +1896,7 @@ DEFINE_KERNEL2(tests, t_reads,
             .unwrap();
         q.flush().await_().unwrap();
         let got: Vec<u32> = read(&out, n * DEVICE_READS);
-        eprintln!("{}: {what}: {n} nodes read in {:.2} s", rerail_gpu::device::BACKEND, started.elapsed().as_secs_f64());
+        eprintln!("{}: {what}: {n} nodes read in {:.2} s", rerail_gpu::device::backend(), started.elapsed().as_secs_f64());
         const NAMES: [&str; 10] = ["size", "end of subtree", "code", "start", "end", "parent", "next", "next in parent", "first child", "child count"];
         for i in 0..n {
             let (g, w) = (&got[i * DEVICE_READS..][..DEVICE_READS], &want[i * DEVICE_READS..][..DEVICE_READS]);
@@ -1905,7 +1905,7 @@ DEFINE_KERNEL2(tests, t_reads,
                     continue;
                 }
                 let name = NAMES.get(k).map_or_else(|| format!("child {}", k - 10), |s| s.to_string());
-                assert_eq!(g[k], w[k], "{}: {what}: node {i}: {name}", rerail_gpu::device::BACKEND);
+                assert_eq!(g[k], w[k], "{}: {what}: node {i}: {name}", rerail_gpu::device::backend());
             }
         }
     }
@@ -1926,8 +1926,8 @@ DEFINE_KERNEL2(tests, t_reads,
             let text: &'static str = Box::leak(DEVICE_KERNEL.replace("READS_HEADER", &format!("<ukl/reads/{header}>")).into_boxed_str());
             let name: &'static str = Box::leak(format!("tape_reads_{header}").into_boxed_str());
             let started = std::time::Instant::now();
-            let p = rerail_gpu::kernels::program(name, text).unwrap_or_else(|e| panic!("{}: {header}: {e}", rerail_gpu::device::BACKEND));
-            eprintln!("{}: {header} compiled in {:.2} s", rerail_gpu::device::BACKEND, started.elapsed().as_secs_f64());
+            let p = rerail_gpu::kernels::program(name, text).unwrap_or_else(|e| panic!("{}: {header}: {e}", rerail_gpu::device::backend()));
+            eprintln!("{}: {header} compiled in {:.2} s", rerail_gpu::device::backend(), started.elapsed().as_secs_f64());
             p
         };
         let (plain_reads, z_reads) = (program("tape.h"), program("tape_z.h"));

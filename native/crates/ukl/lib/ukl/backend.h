@@ -136,6 +136,75 @@ UKL_INLINE uint32_t ukl_sg_min_native(uint32_t v) { return __reduce_min_sync(0xf
 UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v) { return __reduce_max_sync(0xffffffffu, v); }
 #endif
 
+#elif defined(UKL_CPU)
+
+// The CPU (ukl_cpu_shim.h): a threadgroup's threads are coroutines on one host thread, so every barrier and SIMD-group
+// operation is a suspension, and memory is the host's.
+#define UKL_INLINE static inline
+#ifndef UKL_COLD
+#define UKL_COLD static __attribute__((noinline))
+#endif
+#define UKL_METHOD inline
+#define UKL_GLOBAL
+#define UKL_COHERENT volatile
+#define UKL_LOCAL
+#define UKL_PRIVATE
+
+UKL_INLINE uint32_t ukl_popcount32(uint32_t x) { return (uint32_t)__builtin_popcount(x); }
+UKL_INLINE uint32_t ukl_popcount64(uint64_t x) { return (uint32_t)__builtin_popcountll(x); }
+UKL_INLINE uint32_t ukl_clz32(uint32_t x) { return x == 0u ? 32u : (uint32_t)__builtin_clz(x); }
+UKL_INLINE uint32_t ukl_clz64(uint64_t x) { return x == 0u ? 64u : (uint32_t)__builtin_clzll(x); }
+UKL_INLINE uint32_t ukl_ctz32(uint32_t x) { return x == 0u ? 32u : (uint32_t)__builtin_ctz(x); }
+UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return x == 0u ? 64u : (uint32_t)__builtin_ctzll(x); }
+
+// A lane past the group's end, or the group's own (`shuffle_up` below lane `d`, `shuffle_down` past the last lane),
+// reads its own value, as CUDA's do.
+UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane) { return (uint32_t)__ukl_cpu_exchange(v, lane); }
+UKL_INLINE uint32_t ukl_sg_shuffle_up(uint32_t v, uint32_t d)
+{
+    uint32_t l = __ukl_self->lane;
+    return (uint32_t)__ukl_cpu_exchange(v, l >= d ? l - d : l);
+}
+UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d)
+{
+    uint32_t l = __ukl_self->lane;
+    return (uint32_t)__ukl_cpu_exchange(v, l + d < UKL_SIMD_WIDTH ? l + d : l);
+}
+UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m) { return (uint32_t)__ukl_cpu_exchange(v, __ukl_self->lane ^ m); }
+UKL_INLINE uint32_t ukl_sg_ballot(bool b) { return __ukl_cpu_ballot(b); }
+
+UKL_INLINE void ukl_sg_barrier() { __ukl_cpu_wait(__UKL_AT_SG); }
+UKL_INLINE void ukl_tg_barrier() { __ukl_cpu_wait(__UKL_AT_TG); }
+UKL_INLINE void ukl_tg_barrier_device() { __ukl_cpu_wait(__UKL_AT_TG); }
+
+UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
+UKL_INLINE void ukl_atomic_store(UKL_GLOBAL uint32_t* p, uint32_t v) { __atomic_store_n(p, v, __ATOMIC_RELAXED); }
+UKL_INLINE uint32_t ukl_atomic_add(UKL_GLOBAL uint32_t* p, uint32_t v) { return __atomic_fetch_add(p, v, __ATOMIC_RELAXED); }
+UKL_INLINE uint32_t ukl_atomic_sub(UKL_GLOBAL uint32_t* p, uint32_t v) { return __atomic_fetch_sub(p, v, __ATOMIC_RELAXED); }
+UKL_INLINE uint32_t ukl_atomic_or(UKL_GLOBAL uint32_t* p, uint32_t v) { return __atomic_fetch_or(p, v, __ATOMIC_RELAXED); }
+UKL_INLINE uint32_t ukl_atomic_exchange(UKL_GLOBAL uint32_t* p, uint32_t v) { return __atomic_exchange_n(p, v, __ATOMIC_RELAXED); }
+UKL_INLINE uint32_t ukl_atomic_min(UKL_GLOBAL uint32_t* p, uint32_t v)
+{
+    uint32_t x = __atomic_load_n(p, __ATOMIC_RELAXED);
+    while (v < x && !__atomic_compare_exchange_n(p, &x, v, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+    }
+    return x;
+}
+UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v)
+{
+    uint32_t x = __atomic_load_n(p, __ATOMIC_RELAXED);
+    while (v > x && !__atomic_compare_exchange_n(p, &x, v, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+    }
+    return x;
+}
+UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t n)
+{
+    __atomic_compare_exchange_n(p, &e, n, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
+    return e;
+}
+UKL_INLINE void ukl_fence_device() { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
+UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return __atomic_fetch_add(p, v, __ATOMIC_RELAXED); }
+
 #else
 #  error "the UKL library has no intrinsics for this backend (ukl/backend.h)"
 #endif

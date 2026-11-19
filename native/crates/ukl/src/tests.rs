@@ -32,7 +32,7 @@ fn clang(backend: Backend, main: &str) -> Option<String> {
     let f = forest();
     let mut c = Command::new("clang++");
     c.args(["-x", "c++", "-std=gnu++20", "-undef", "-nostdinc", "-E", "-P", "-w"]);
-    c.arg(format!("-I{f}")).arg(format!("-I{f}/mldb/block/ukl")).arg(format!("-I{f}/mldb/builtin/{}/ukl", backend.dir()));
+    c.arg(format!("-I{f}")).arg(format!("-I{f}/mldb/builtin/{}/ukl", backend.dir())).arg(format!("-I{f}/mldb/block/ukl"));
     c.arg(format!("-I{}/lib", env!("CARGO_MANIFEST_DIR")));
     for (n, v) in backend.predefines() {
         c.arg(format!("-D{n}={}", v.unwrap_or_default()));
@@ -62,7 +62,7 @@ fn same_as_clang(backend: Backend, main: &str, min_tokens: usize) {
 #[test]
 fn every_library_header_stands_alone_on_every_backend() {
     let dir = format!("{}/lib", env!("CARGO_MANIFEST_DIR"));
-    for backend in [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }] {
+    for backend in [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }, Backend::Cpu] {
         for (name, _) in LIBRARY {
             // The shim's tokens, at least, and the header's own.
             same_as_clang(backend, &format!("{dir}/{name}"), 300);

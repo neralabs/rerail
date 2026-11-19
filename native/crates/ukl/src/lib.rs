@@ -15,8 +15,8 @@
 //! ```
 //!
 //! The include search mirrors MLDB's build: the caller's directories, then the shims' root (`mldb/...`), the
-//! common UKL headers (`<ukl>`, `<ukl_shim.h>`) and the backend's own (`<ukl_metal_shim.h>`, ...). UKL's
-//! `ukl_shim.h` picks the backend from the predefines (`__METAL_VERSION__`, `__CUDA_ARCH__`).
+//! backend's own shim (`<ukl_metal_shim.h>`, ...) and the common UKL headers (`<ukl>`, `<ukl_shim.h>`). UKL's
+//! `ukl_shim.h` picks the backend from the predefines (`__METAL_VERSION__`, `__CUDA_ARCH__`; none for the CPU).
 //!
 //! **The library** (decision 0400 §5): Rerail's UKL headers, in `lib/ukl/`, carried here too and found as
 //! `<ukl/NAME.h>` by every kernel, hand-written or generated. `ukl/backend.h` holds the intrinsics, one section per
@@ -40,6 +40,7 @@ const HEADERS: &[(&str, &str)] = &[
     ("mldb/block/ukl/ukl_auto_macros.h", include_str!("../../../../forest/src/mldb/block/ukl/ukl_auto_macros.h")),
     ("mldb/builtin/metal/ukl/ukl_metal_shim.h", include_str!("../../../../forest/src/mldb/builtin/metal/ukl/ukl_metal_shim.h")),
     ("mldb/builtin/cuda/ukl/ukl_cuda_shim.h", include_str!("../../../../forest/src/mldb/builtin/cuda/ukl/ukl_cuda_shim.h")),
+    ("mldb/builtin/cpu/ukl/ukl_cpu_shim.h", include_str!("../../../../forest/src/mldb/builtin/cpu/ukl/ukl_cpu_shim.h")),
 ];
 
 /// The library's headers, by the name a kernel includes them by (`#include <ukl/memory.h>`), each after the ones it
@@ -105,6 +106,9 @@ pub enum Backend {
     Metal { version: u32 },
     /// CUDA; `sm` is the compute capability as two or three digits (121: 12.1). The output is CUDA C++ for NVRTC.
     Cuda { sm: u32 },
+    /// The CPU: C++ for the host's compiler, each threadgroup's threads coroutines (`ukl_cpu_shim.h`), for this
+    /// process's architecture and system.
+    Cpu,
 }
 
 impl Backend {
@@ -113,6 +117,7 @@ impl Backend {
         match self {
             Backend::Metal { .. } => "metal",
             Backend::Cuda { .. } => "cuda",
+            Backend::Cpu => "cpu",
         }
     }
 
@@ -132,6 +137,14 @@ impl Backend {
                 d("__CUDACC_RTC__", "1".into()),
                 d("__UKL_CUDA_PREPROCESSING", "1".into()),
             ],
+            // The host compiler's own predefines that the shim tests (its context switch is per architecture and
+            // system), and the backend's choice, which UKL's `ukl_shim.h` takes when no GPU compiler's is set.
+            Backend::Cpu => {
+                let mut v = vec![d("UKL_CPU_BACKEND", "1".into()), d("__UKL_CPU_PREPROCESSING", "1".into())];
+                v.push(d(if cfg!(target_arch = "aarch64") { "__aarch64__" } else { "__x86_64__" }, "1".into()));
+                v.push(d(if cfg!(target_os = "macos") { "__APPLE__" } else { "__linux__" }, "1".into()));
+                v
+            }
         }
     }
 }
@@ -212,13 +225,15 @@ impl Preprocess {
         self
     }
 
-    /// The include search: the caller's directories, then the carried headers' root, UKL's own directory and the
-    /// backend's shim directory.
+    /// The include search: the caller's directories, then the carried headers' root, the backend's shim directory
+    /// and UKL's own directory.
     fn search(&self) -> Vec<(String, DirKind)> {
         let mut d: Vec<(String, DirKind)> = self.dirs.iter().map(|d| (d.clone(), DirKind::Angle)).collect();
         d.push((ROOT.to_string(), DirKind::Angle));
-        d.push((format!("{ROOT}/mldb/block/ukl"), DirKind::Angle));
+        // The backend's shim first: upstream's CPU shim (`block/ukl/ukl_cpu_shim.h`, over MLDB's C++ runtime) has the
+        // name of Rerail's (`builtin/cpu/ukl/`), and is not carried.
         d.push((format!("{ROOT}/mldb/builtin/{}/ukl", self.backend.dir()), DirKind::Angle));
+        d.push((format!("{ROOT}/mldb/block/ukl"), DirKind::Angle));
         d.push((format!("{ROOT}/lib"), DirKind::Angle));
         if matches!(self.backend, Backend::Metal { .. }) {
             d.push((format!("{ROOT}/metal"), DirKind::Angle));

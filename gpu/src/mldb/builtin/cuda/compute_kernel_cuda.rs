@@ -443,8 +443,8 @@ impl CudaComputeFunctionLibrary {
     /// An `args` structure's layout: its reflection kernel run once (`UKL_REFLECT_STRUCT`).
     fn struct_type(&self, ty: &str) -> Result<KernelBaseType, String> {
         let names = self.global(&format!("{ty}__ukl_fields")).map_err(|e| format!("{ty} is an ARGS row's type with no UKL_REFLECT_STRUCT: {e}"))?;
-        let names: Vec<String> = split_top(CStr::from_bytes_until_nul(&names).map_err(|e| e.to_string())?.to_str().unwrap()).into_iter().map(|s| s.to_string()).collect();
-        let n = 2 + 3 * names.len();
+        let names = CStr::from_bytes_until_nul(&names).map_err(|e| e.to_string())?.to_str().map_err(|e| e.to_string())?.to_string();
+        let n = crate::rows::layout_len(&names);
         let out = alloc_uninitialized_array_sync::<u64>(&self.device, n);
         let f = self.function_handle(&format!("{ty}__ukl_layout"))?;
         let a = self.device.current();
@@ -455,28 +455,7 @@ impl CudaComputeFunctionLibrary {
             ck((a.cu_stream_synchronize)(std::ptr::null_mut()), "a layout kernel")?;
         }
         let l = transfer_to_host_sync::<u64>(&out, n);
-        let (width, align) = (l[0], l[1]);
-        let mut fields = Vec::new();
-        for (i, name) in names.into_iter().enumerate() {
-            let (offset, size, code) = (l[2 + 3 * i], l[3 + 3 * i], l[4 + 3 * i]);
-            fields.push(StructField { name, offset, ty: basic_type(code, size).ok_or_else(|| format!("{ty}: field {i} is not a scalar"))? });
-        }
-        // Every byte not padding is a named field's (a field left out of UKL_REFLECT_STRUCT would go unfilled): in
-        // offset order, each field starts at the end of the last rounded up to its own alignment, and the structure
-        // ends at the last field's end rounded up to the structure's.
-        let mut sorted: Vec<&StructField> = fields.iter().collect();
-        sorted.sort_by_key(|f| f.offset);
-        let mut end = 0u64;
-        for f in &sorted {
-            if f.offset != end.next_multiple_of(f.ty.align()) {
-                return Err(format!("{ty}: bytes {end}..{} are no reflected field's; name every field in UKL_REFLECT_STRUCT", f.offset));
-            }
-            end = f.offset + f.ty.width();
-        }
-        if end.next_multiple_of(align) != width {
-            return Err(format!("{ty}: bytes {end}..{width} are no reflected field's; name every field in UKL_REFLECT_STRUCT"));
-        }
-        Ok(KernelBaseType::Struct { name: ty.to_string(), align: Some(align), width: Some(width), fields })
+        crate::rows::struct_type(ty, &names, &l)
     }
 
     /// The kernel `function_name`, with its arguments from its rows (`Name__ukl_params`, `Name__ukl_rows`).
@@ -486,35 +465,7 @@ impl CudaComputeFunctionLibrary {
         let text = CStr::from_bytes_until_nul(&text).map_err(|e| e.to_string())?.to_str().map_err(|e| e.to_string())?.to_string();
         let rows = self.global(&format!("{function_name}__ukl_rows"))?;
         let rows: Vec<u64> = rows.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
-        let fields = split_top(&text);
-        if fields.len() % 4 != 0 || rows.len() != fields.len() / 4 * 3 {
-            return Err(format!("{function_name}: {} row fields and {} layout numbers", fields.len(), rows.len()));
-        }
-        let mut arguments = Vec::new();
-        let mut param_sizes = Vec::new();
-        for (r, row) in fields.chunks(4).enumerate() {
-            let (access, ty, name) = (row[0], row[1], row[2]);
-            let (size, align, code) = (rows[3 * r], rows[3 * r + 1], rows[3 * r + 2]);
-            let index = param_sizes.len() as u64;
-            let atom = || KernelBaseType::Atom { name: ty.to_string(), width: size, align };
-            // A buffer's element: a scalar as Metal reflects one, else opaque memory of its size.
-            let element = || basic_type(code, size).unwrap_or_else(atom);
-            let (disposition, kt, param) = match access {
-                "ROBUFFER" | "CONSTBUFFER" => (GridComputeFunctionArgumentDisposition::Buffer, ComputeKernelType { base_type: element(), dims: 1, access: MemoryRegionAccess::Read }, 8),
-                "RWBUFFER" => (GridComputeFunctionArgumentDisposition::Buffer, ComputeKernelType { base_type: element(), dims: 1, access: MemoryRegionAccess::ReadWrite }, 8),
-                "WOBUFFER" => (GridComputeFunctionArgumentDisposition::Buffer, ComputeKernelType { base_type: element(), dims: 1, access: MemoryRegionAccess::Write }, 8),
-                "ARGS" => (GridComputeFunctionArgumentDisposition::Buffer, ComputeKernelType { base_type: self.struct_type(ty)?, dims: 0, access: MemoryRegionAccess::Read }, size),
-                "LITERAL" | "TUNEABLE" => {
-                    let b = basic_type(code, size).ok_or_else(|| format!("{function_name}: {name} is a literal of a type that is not a scalar"))?;
-                    (GridComputeFunctionArgumentDisposition::Buffer, ComputeKernelType { base_type: b, dims: 0, access: MemoryRegionAccess::Read }, size)
-                }
-                "RWLOCAL" => (GridComputeFunctionArgumentDisposition::Threadgroup, ComputeKernelType { base_type: atom(), dims: 0, access: MemoryRegionAccess::ReadWrite }, 4),
-                // Positions, sizes, lanes and the kernel's own threadgroup storage: no argument.
-                _ => continue,
-            };
-            arguments.push(GridComputeFunctionArgument { name: name.to_string(), compute_function_arg_index: index, ty: kt, disposition });
-            param_sizes.push(param as usize);
-        }
+        let (arguments, param_sizes) = crate::rows::arguments(function_name, &text, &rows, |ty| self.struct_type(ty))?;
         // The shared memory a launch may take beyond the kernel's static storage.
         let a = self.device.current();
         let mut static_smem = 0;
@@ -523,48 +474,6 @@ impl CudaComputeFunctionLibrary {
         ck(unsafe { (a.cu_func_set_attribute)(func, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, dynamic_limit as i32) }, "cuFuncSetAttribute")?;
         Ok(CudaComputeFunction { func, name: function_name.to_string(), arguments, param_sizes, dynamic_limit })
     }
-}
-
-/// The scalar type of a kind and size (`ukl_type_code`), named as the kernel registrations spell it.
-fn basic_type(code: u64, size: u64) -> Option<KernelBaseType> {
-    let name = match (code as u8, size) {
-        (b'f', 4) => "f32",
-        (b'd', 8) => "f64",
-        (b'b', 1) => "bool",
-        (b'i', 1) => "i8",
-        (b'i', 2) => "i16",
-        (b'i', 4) => "i32",
-        (b'i', 8) => "i64",
-        (b'u', 1) => "u8",
-        (b'u', 2) => "u16",
-        (b'u', 4) => "u32",
-        (b'u', 8) => "u64",
-        _ => return None,
-    };
-    Some(KernelBaseType::Basic { ty: BasicType { name, width: size }, simd: vec![1] })
-}
-
-/// A list's items at its top level: split at commas outside quotes, parentheses and brackets, each trimmed.
-fn split_top(s: &str) -> Vec<&str> {
-    let (mut out, mut depth, mut quoted, mut start) = (Vec::new(), 0i32, false, 0);
-    let b = s.as_bytes();
-    let mut i = 0;
-    while i < b.len() {
-        match b[i] {
-            b'\\' if quoted => i += 1,
-            b'"' => quoted = !quoted,
-            b'(' | b'[' | b'<' if !quoted => depth += 1,
-            b')' | b']' | b'>' if !quoted => depth -= 1,
-            b',' if !quoted && depth == 0 => {
-                out.push(s[start..i].trim());
-                start = i + 1;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    out.push(s[start..].trim());
-    out
 }
 
 /// A kernel of a library, with its arguments (`MetalComputeFunction`).
@@ -849,25 +758,25 @@ fn words(bytes: &[u8]) -> Vec<u64> {
     w
 }
 
-impl crate::compute_kernel_grid::GridBindContext for CudaBindContext<'_> {
-    fn set_primitive(&mut self, arg_num: u64, bytes: &[u8]) {
+impl CudaBindContext<'_> {
+    pub fn set_primitive(&mut self, arg_num: u64, bytes: &[u8]) {
         let want = self.function.param_sizes[arg_num as usize];
         assert_eq!(bytes.len(), want, "{}: argument {arg_num} is {want} bytes, given {}", self.function.name, bytes.len());
         self.params[arg_num as usize] = words(bytes);
     }
 
-    fn set_buffer(&mut self, arg_num: u64, buffer: &CudaBuffer) {
+    pub fn set_buffer(&mut self, arg_num: u64, buffer: &CudaBuffer) {
         self.keep.borrow_mut().push(buffer.clone());
         self.params[arg_num as usize] = vec![buffer.device_address()];
     }
 
-    fn set_thread_group_memory(&mut self, arg_num: u64, n_bytes: u64) {
+    pub fn set_thread_group_memory(&mut self, arg_num: u64, n_bytes: u64) {
         let at = self.shared.next_multiple_of(16);
         self.shared = at + n_bytes;
         self.params[arg_num as usize] = vec![at];
     }
 
-    fn launch(&mut self, grid: &[u64], block: &[u64]) -> Result<(), String> {
+    pub fn launch(&mut self, grid: &[u64], block: &[u64]) -> Result<(), String> {
         let f = self.function;
         if let Some(i) = self.params.iter().position(|p| p.is_empty()) {
             let name = f.arguments.iter().find(|a| a.compute_function_arg_index == i as u64).map_or("?", |a| a.name.as_str());
@@ -887,16 +796,5 @@ impl crate::compute_kernel_grid::GridBindContext for CudaBindContext<'_> {
             unsafe { (a.cu_launch_kernel)(f.func, d(grid, 0), d(grid, 1), d(grid, 2), d(block, 0), d(block, 1), d(block, 2), self.shared as u32, self.stream, ptrs.as_mut_ptr(), std::ptr::null_mut()) },
             &format!("launching {}", f.name),
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rows_split_at_their_top_level_commas() {
-        let v = split_top(r#"ARGS, A, args, , ROBUFFER, uint32_t, x, "[a, b]", GID0, uint32_t, id,"#);
-        assert_eq!(v, ["ARGS", "A", "args", "", "ROBUFFER", "uint32_t", "x", "\"[a, b]\"", "GID0", "uint32_t", "id", ""]);
     }
 }

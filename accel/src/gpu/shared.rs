@@ -106,7 +106,8 @@ pub fn get() -> Option<&'static Shared> {
             objc::rc::autoreleasepool(|| {
                 // The forest's (the lowest crate that uses Metal): one device and one queue for the process.
                 let one = rerail_forest::gpu::shared::get()?;
-                let (device, queue): (Device, CommandQueue) = (one.device.clone(), one.queue.clone());
+                // None when the process's kernels run elsewhere (`RERAIL_GPU=cpu`): the engine's lanes stay on the host.
+                let (device, queue): (Device, CommandQueue) = (one.device.metal()?.clone(), one.queue.metal()?.clone());
                 let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as usize;
                 let max_buffer = device.max_buffer_length();
                 Some(Shared { device, queue, page, max_buffer })

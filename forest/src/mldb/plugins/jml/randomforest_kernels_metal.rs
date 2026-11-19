@@ -17,14 +17,13 @@ use std::sync::{Mutex, OnceLock};
 #[cfg(target_os = "macos")]
 pub const SOURCE: &str = include_str!(concat!(env!("OUT_DIR"), "/randomforest_kernels.metal"));
 
-/// The kernels' CUDA source for a device of compute capability `sm`: the UKL source, carried in the binary,
-/// preprocessed in-process through the CUDA shim (`rerail-ukl`), as NVRTC takes it.
-#[cfg(target_os = "linux")]
-pub fn cuda_source(sm: u32) -> Result<String, String> {
+/// The kernels for `backend` (CUDA, the CPU): the UKL source, carried in the binary, preprocessed in-process
+/// through the backend's shim (`rerail-ukl`), as its compiler takes it.
+pub fn ukl_source(backend: rerail_ukl::Backend) -> Result<String, String> {
     const ROOT: &str = "/<forest>";
     const MAIN: &str = "mldb/plugins/jml/randomforest_kernels_ukl.h";
     const COMMON: &str = "mldb/plugins/jml/randomforest_kernels_common.h";
-    rerail_ukl::Preprocess::new(rerail_ukl::Backend::Cuda { sm })
+    rerail_ukl::Preprocess::new(backend)
         .dir(ROOT)
         .file(format!("{ROOT}/{MAIN}"), include_str!("randomforest_kernels_ukl.h"))
         .file(format!("{ROOT}/{COMMON}"), include_str!("randomforest_kernels_common.h"))
@@ -62,9 +61,9 @@ pub fn library() -> Result<&'static ComputeFunctionLibrary, String> {
     LIB.get_or_init(|| {
         let shared = crate::gpu::shared::get().ok_or("no device")?;
         #[cfg(target_os = "macos")]
-        let source = SOURCE.to_string();
+        let source = if shared.device.is_cpu() { ukl_source(shared.device.ukl_backend())? } else { SOURCE.to_string() };
         #[cfg(target_os = "linux")]
-        let source = cuda_source(shared.device.sm)?;
+        let source = ukl_source(shared.device.ukl_backend())?;
         ComputeFunctionLibrary::compile_from_source(&shared.device, &source, "randomforest_kernels_ukl.h")
     })
     .as_ref()
@@ -95,13 +94,15 @@ mod tests {
     #[test]
     fn forest_kernels_compile_and_reflect() {
         if crate::gpu::shared::get().is_none() {
-            eprintln!("no {} device: skipped", crate::device::BACKEND);
+            eprintln!("no {} device: skipped", crate::device::backend());
             return;
         }
         for name in KERNELS {
             let f = function(name).unwrap_or_else(|e| panic!("{e}"));
             #[cfg(target_os = "macos")]
-            assert!(f.compute_pipeline_state.max_total_threads_per_threadgroup() > 0, "{name}");
+            if let Some(f) = f.metal() {
+                assert!(f.compute_pipeline_state.max_total_threads_per_threadgroup() > 0, "{name}");
+            }
             assert!(!f.get_argument_info().is_empty(), "{name}");
         }
         let tf = function("testFeatureKernel").unwrap();

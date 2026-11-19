@@ -830,10 +830,10 @@ mod library_speed {
                 let enc = command.new_compute_command_encoder();
                 enc.set_compute_pipeline_state(&lane.pipes[Pipe::Hist as usize]);
                 for (i, b) in [&cb, &ob, &h].into_iter().enumerate() {
-                    enc.set_buffer(i as u64, Some(b), 0);
+                    enc.set_buffer(i as u64, Some(b.metal().expect("a Metal buffer")), 0);
                 }
                 enc.set_bytes(3, 4, (&width as *const u32).cast());
-                enc.set_buffer(4, Some(&bad), 0);
+                enc.set_buffer(4, Some(bad.metal().expect("a Metal buffer")), 0);
                 enc.dispatch_thread_groups(MTLSize::new(parts as u64, 1, 1), MTLSize::new(TG, 1, 1));
                 enc.end_encoding();
                 command.commit();

@@ -11,15 +11,7 @@ use std::sync::{Mutex, OnceLock};
 
 /// The backend the process's device compiles for.
 fn backend() -> Result<rerail_ukl::Backend, String> {
-    #[cfg(target_os = "macos")]
-    {
-        crate::shared::get().ok_or("no device")?;
-        Ok(rerail_ukl::Backend::Metal { version: 310 })
-    }
-    #[cfg(target_os = "linux")]
-    {
-        Ok(rerail_ukl::Backend::Cuda { sm: crate::shared::get().ok_or("no device")?.device.sm })
-    }
+    Ok(crate::shared::get().ok_or("no device")?.device.ukl_backend())
 }
 
 /// `text`, a UKL source named `name`, preprocessed for the process's device.

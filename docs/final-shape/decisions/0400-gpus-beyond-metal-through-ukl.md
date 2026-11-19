@@ -202,7 +202,7 @@ templates are needed) plus UKL's macros. The shims are:
 | CUDA | NVRTC to PTX, then nvJitLink to cubin per `sm_XX` | `ukl_cuda_shim.h` (upstream's draft, repaired) | first new target |
 | ROCm (HIP) | hipRTC | near-copy of CUDA's | wave64 on CDNA (see below) |
 | OpenCL | `clBuildProgram` (C 1.2 or 2.0), or SPIR-V | upstream had one | in-place reads need OpenCL 2.0 shared virtual memory (SVM) |
-| CPU | the CPU shim (coroutines for barriers) | `ukl_cpu_shim.h` (exists) | a reference for tests, not a product path |
+| CPU | the host's C++ compiler, at run time (`RERAIL_GPU=cpu`) | Rerail's `builtin/cpu/ukl/ukl_cpu_shim.h` (stackful coroutines; upstream's, over MLDB's runtime, is not carried) | for debugging kernels, not a product path (progress, "The CPU backend") |
 | WebGPU | not by macros | — | §3.4 |
 
 ### 3.1 What the macros must grow to cover
@@ -275,6 +275,64 @@ WGSL is not a C dialect. It has no preprocessor, no pointers into arbitrary buff
 subgroups only as an extension. Macros cannot reach it. WebGPU is reached through the IR path instead: a
 CLIF-to-WGSL backend for the generated code, and the library's primitives written for it, with `u64` emulated as
 `vec2<u32>`. It comes after CUDA, ROCm and OpenCL, and is planned separately.
+
+### 3.5 OpenCL: how UKL can reach it (a spike, 2026-11-18)
+
+**The problem.** The library (§5) and the generated reads are C++: 26 templates in five headers (16 in
+`memory.h`, over a load's address type), six reference parameters (`UKL_PRIVATE uint32_t&`), one method (`lz4.h`'s
+`at`), and the reads' functional casts (`uint32_t(x)`: 3,419 in `tape_z.h`, 5,616 over the five files). OpenCL C,
+the language every OpenCL driver compiles from source, has none of these.
+
+**How MLDB did it.** Not through UKL. MLDB's OpenCL kernels (`randomforest_kernels.cl`, upstream's
+`opencl-random-forests` branch) are OpenCL C 1.2:
+
+- a prelude that defines UKL's macros for OpenCL (`ROBUFFER(T)` as `__global const T*`, the barriers, the atomics,
+  `SYNC_CALL` as a plain call);
+- the shared code in a C subset (`randomforest_kernels_common.h`), with no templates;
+- `__kernel` wrappers written by hand;
+- the SIMD-group operations emulated through `__local` memory and atomics;
+- arguments bound by name through `-cl-kernel-arg-info`.
+
+So UKL's macro layer was designed to admit C. Our library has since moved away from it.
+
+**The routes, tried on this Mac** (Apple M5 Max: OpenCL 1.2, OpenCL C 1.2, 32-bit atomics only, no subgroups, no
+SPIR-V):
+
+- **A. The library in a subset that is both OpenCL C and C++.**
+  - The C++ constructs are replaced as follows:
+    - a template becomes overloads, made by a macro per instance, marked overloadable (`UKL_INLINE` adds clang's
+      `__attribute__((overloadable))` on OpenCL; every OpenCL compiler we target is clang-based: Apple's, Intel's
+      NEO, AMD's, Mesa's, pocl);
+    - a reference becomes a pointer;
+    - a method becomes a function;
+    - a functional cast becomes a C cast (one line in `clif/src/ukl.rs`).
+  - Tried: the real generated `tape_z.h` (all of 16z's reads, 200 KB), with its casts rewritten and an OpenCL
+    section of about 40 lines for the library calls it makes. It built in 2.0 s on Apple's OpenCL and ran. A
+    probe of overloads, `noinline`, structs and pointer out-parameters built and ran too. Templates are refused
+    (`unknown type name 'template'`).
+  - The cost: a run-time compile from source, as on Metal and CUDA. No toolchain is needed where it runs.
+  - NVIDIA's OpenCL front end may lack `overloadable`; NVIDIA is CUDA's anyway.
+- **B. The library as is, as C++ for OpenCL, compiled to SPIR-V.** Homebrew's clang 23 compiles C++ for OpenCL
+  to SPIR-V with no other tool (`-cl-std=clc++2021 --target=spirv64`). The same `tape_z.h`, kept as C++, gave a
+  1.1 MB module in 0.6 s. The driver loads it with `clCreateProgramWithIL`, which needs OpenCL 2.1 or
+  `cl_khr_il_program` (Intel NEO, Mesa rusticl, pocl). Apple's OpenCL cannot load it, so it cannot be tested on a
+  Mac. Kernels are generated at run time, so clang would be needed at run time wherever it runs.
+- **C. A lowering of our C++ subset to OpenCL C with the C parser in the tree** (instantiating templates where
+  they are used, references to pointers). It is possible, but it is a compiler to keep for constructs that A
+  removes once.
+
+**What OpenCL lacks either way:**
+
+- **Subgroups.** On a device without them (Apple's 1.2), the SIMD-group operations are emulated. MLDB's way is
+  through `__local` memory, which needs the whole workgroup to reach each barrier. The simpler way is a group of
+  one lane: `UKL_SIMD_WIDTH` 1, every reduction its own value. With `cl_khr_subgroups` (or Intel's), the native
+  ones are used.
+- **64-bit atomics.** The library uses only 32-bit atomics (§5).
+- **Reading in place (0353).**
+  - Without OpenCL 2.0's fine-grained SVM, a block is a buffer made over its own pages (`CL_MEM_USE_HOST_PTR`).
+  - On a device that shares the host's memory (an integrated GPU, Apple's), that is the same bytes.
+  - On a discrete device the driver may stage it, and that would be a copy. So a discrete OpenCL device needs SVM
+    or does not take blocks.
 
 ## 4. The C preprocessor
 
@@ -679,6 +737,72 @@ Progress (2026-11-18):
       They are fixed.
     - `rerail-blocks` did not build on Linux (`mincore`'s dirty bits are macOS's), and so neither did the tape
       crate's tests, which CUDA's gate needs. On Linux one `msync` writes the pages back.
+
+- **The CPU backend: done** (2026-11-18). Every UKL kernel also runs on the host, for debugging: in a debugger,
+  under sanitizers, the same every time.
+  - **The choice is the process's, at run time:** `RERAIL_GPU=cpu` makes `gpu::shared`'s device the CPU, otherwise
+    it is the target's GPU. `gpu::device`'s types (`Device`, `Buffer`, `ComputeQueue`, `ComputeFunction`, ...) are
+    each one of the two, so the forest and the grid runtime run unchanged on either. The engine's own Metal kernels
+    take Metal's device through `Device::metal()`; under `RERAIL_GPU=cpu` there is none, and its lanes stay on the
+    host.
+  - **The shim** (`forest/src/mldb/builtin/cpu/ukl/ukl_cpu_shim.h`) makes a kernel a C++ function. A threadgroup's
+    threads are stackful coroutines on one host thread, each on a stack of its own with a guard page below it. The
+    context switch is about 20 instructions of assembly (aarch64, x86-64). A barrier, and every SIMD-group
+    operation, suspends the thread. The scheduler releases a SIMD group when all its live lanes wait at an
+    operation, and the threadgroup when all its live threads wait at a barrier. A thread that has returned no longer
+    counts, as on a GPU. When no barrier can be passed (for example a SIMD group split between a shuffle and a
+    barrier), the launch fails and says which thread waits where, where a GPU would hang. SIMD groups are 32 lanes,
+    as the library requires. No function needs marking: a barrier is reached in any call, unlike upstream's
+    stackless shim, which needed `SYNC_*` on every function holding one. The shim takes no system header.
+  - **The runtime** (`gpu/src/mldb/builtin/cpu/compute_kernel_cpu.rs`) has the Metal and CUDA runtimes' interface:
+    - `c++ -std=c++20 -O1 -g` (or `RERAIL_CPU_CXX`) compiles the preprocessed text into a shared object, which is
+      loaded. It is kept by the text's hash in the temporary directory, beside its debug information;
+    - buffers are host memory;
+    - a queue's root is a thread that runs what its queues flush, in order;
+    - arguments are read from the rows, as on CUDA. Their parsing is now one module for both (`gpu/src/rows.rs`).
+  - **`rerail-ukl`** has `Backend::Cpu`. Its predefines are the host's architecture and system, and the include
+    search tries the backend's shim directory before UKL's own: upstream's CPU shim has the same file name.
+    `backend.h` has a CPU section, and every library header preprocesses for it as clang does.
+  - **Tests, on the Mac (M5 Max):**
+    - the library's 14 tests (`rerail-gpu`, `RERAIL_GPU=cpu`) pass in 9.5 s (0.37 s on Metal);
+    - two tests of the shim run whatever `RERAIL_GPU` is: a threadgroup with threadgroup memory, a barrier and
+      shuffles gives each thread what a GPU gives it, and a split SIMD group is an error that names its waits;
+    - the generated reads' gate (`the_device_reads_read_every_node_as_the_crate_does`) passes. `tape.h` compiles
+      in 0.3 s and `tape_z.h` in 1.5 s;
+    - all 40 of the forest's tests pass with the trainer on the CPU (254 s; 3 s on Metal).
+    - On Linux x86-64 (the V100 VM), the same: `rerail-gpu`'s 16 tests and `rerail-ukl`'s 7 pass on CUDA, the 16
+      pass on the CPU (15 s; the x86-64 switch and Linux's symbols), and the forest's kernels compile and reflect on
+      both. The device types' CUDA side builds and runs unchanged.
+
+    Two changes were needed in the forest's kernels' environment, none in the kernels themselves. The shim gives
+    the GPU languages' built-in `min`, `max`, `fma` and `sqrt`. It also undefines `UKL_CPU_BACKEND` once the
+    backend is chosen, because the kernels' `#if UKL_CPU_BACKEND` blocks are upstream's runtime's debugging
+    (iostreams, MLDB's printers).
+  - **Found on the way:** two compiles of one text in one process raced on a temporary name. Each compile now has
+    its own.
+
+- **Before step 7: the strata branches to port (a survey, 2026-11-18; nothing in them changed).** Two active
+  branches change the MSL that step 7 ports, and the emitter that step 6 rewrote:
+  - **Native and GPU strata** (142 commits past this branch's base, e5d076eb0). It changes `clif/src/msl.rs`,
+    `reads.rs`, `relation.rs`, `view.rs`, `view_reads.rs` and `rust.rs`. Its generated reads are:
+    - block-major format 16 (0399);
+    - 16z read through a cache (0353 steps 4a and 4b), which removes `decode16z.metal`;
+    - reads proven to stay within the tape's bytes (0403).
+
+    It also changes the label passes (`metal_label_passes.metal`, +211 lines), the relation reads, and the blocks'
+    `atoms.rs` and `kept.rs`.
+  - **oscar** (9 commits past Native and GPU strata). It adds the CLIF tape writer:
+    - `clif/src/writer.rs` (3.2 K lines) and its generated Metal (`writer.metal`, 6.0 K lines);
+    - `f16/ops.rs`, `reference.rs` and `generated_writer.rs`;
+    - more changes to `msl.rs` (+117 lines) and `reads.rs` (+1.4 K lines).
+  - **What porting needs**, at the merge:
+    - their `msl.rs` changes carried into `ukl.rs`, as UKL's types and the library's loads;
+    - their reads and the writer generated again, as `<ukl/reads/*.h>` and a `<ukl/writer.h>`;
+    - their label-pass changes ported with step 7's file;
+    - their tests run on Metal, CUDA and the CPU: 0310 §4's gate, and the writer's own.
+
+    The writer is the first generated code that stores into a tape. The library has its stores (`ukl_st*`), so
+    nothing new is needed in UKL for it.
 
 Steps 1, 2 and E1 are small and settle the bets the rest rests on: the preprocessor, the shim, and in-place
 bandwidth. Step 3 can run beside them.

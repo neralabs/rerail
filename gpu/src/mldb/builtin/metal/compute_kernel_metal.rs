@@ -444,20 +444,20 @@ pub struct MetalBindContext {
     pub encoder: metal::ComputeCommandEncoder,
 }
 
-impl crate::compute_kernel_grid::GridBindContext for MetalBindContext {
-    fn set_primitive(&mut self, arg_num: u64, bytes: &[u8]) {
+impl MetalBindContext {
+    pub fn set_primitive(&mut self, arg_num: u64, bytes: &[u8]) {
         self.encoder.set_bytes(arg_num, bytes.len() as u64, bytes.as_ptr().cast());
     }
 
-    fn set_buffer(&mut self, arg_num: u64, buffer: &metal::BufferRef) {
+    pub fn set_buffer(&mut self, arg_num: u64, buffer: &metal::BufferRef) {
         self.encoder.set_buffer(arg_num, Some(buffer), 0);
     }
 
-    fn set_thread_group_memory(&mut self, arg_num: u64, n_bytes: u64) {
+    pub fn set_thread_group_memory(&mut self, arg_num: u64, n_bytes: u64) {
         self.encoder.set_threadgroup_memory_length(arg_num, n_bytes);
     }
 
-    fn launch(&mut self, grid: &[u64], block: &[u64]) -> Result<(), String> {
+    pub fn launch(&mut self, grid: &[u64], block: &[u64]) -> Result<(), String> {
         let d = |v: &[u64], i: usize| v.get(i).copied().unwrap_or(1);
         let grid_size = metal::MTLSize::new(d(grid, 0), d(grid, 1), d(grid, 2));
         let block_size = metal::MTLSize::new(d(block, 0), d(block, 1), d(block, 2));

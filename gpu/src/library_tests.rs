@@ -2,7 +2,7 @@
 //! reference on random inputs and on edge sizes; each backend form equals the library's reference form. They run on
 //! Metal (macOS) and CUDA (Linux) alike; without a device they pass, saying so.
 
-use crate::device::{ComputeQueue, BACKEND};
+use crate::device::ComputeQueue;
 use crate::kernels::{alloc, buffer_of, launch, program, read, Program};
 use crate::library::{compact_u32, histogram, radix_sort_pairs, scan_exclusive_popcount_u32, scan_exclusive_u32, HashTable, RadixKey, Sorted};
 use crate::Pod;
@@ -23,7 +23,7 @@ fn setup() -> Option<(&'static Program, ComputeQueue)> {
         eprintln!("no device: the UKL library's tests did not run");
         return None;
     };
-    let p = program("library_tests.ukl", TESTS).unwrap_or_else(|e| panic!("{BACKEND}: {e}"));
+    let p = program("library_tests.ukl", TESTS).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
     Some((p, ComputeQueue::new(&shared.queue)))
 }
 
@@ -81,7 +81,7 @@ fn byte_loads_at_every_address() {
                     ((x >> (b % 8)) as u64) & mask(w)
                 };
                 let want = [le(&bytes, i, 1), le(&bytes, i, 2), le(&bytes, i, 4), le(&bytes, i, 8), field(i * w as usize + i % 5), field(i * w as usize)];
-                assert_eq!(&got[i * 6..i * 6 + 6], &want, "{BACKEND}: loads at {i} (n {n}, w {w}): u8 u16 u32 u64 bits packed");
+                assert_eq!(&got[i * 6..i * 6 + 6], &want, "{}: loads at {i} (n {n}, w {w}): u8 u16 u32 u64 bits packed", crate::device::backend());
             }
         }
     }
@@ -106,9 +106,9 @@ fn byte_stores_at_unaligned_addresses() {
             let len = [2, 4, 8][k];
             want_mem[*a..a + len].copy_from_slice(&x.to_le_bytes()[..len]);
         }
-        assert_eq!(&got[i * 3..i * 3 + 3], &vals, "{BACKEND}: thread {i}'s stores, read back");
+        assert_eq!(&got[i * 3..i * 3 + 3], &vals, "{}: thread {i}'s stores, read back", crate::device::backend());
     }
-    assert_eq!(mem, want_mem, "{BACKEND}: the stores' bytes, and no others");
+    assert_eq!(mem, want_mem, "{}: the stores' bytes, and no others", crate::device::backend());
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn bits_within_words() {
             bits(w, i32_ % 64, i32_ * 7 % 65, 64),
             bits(lo as u64, i32_ % 33, i32_ * 5 % 33, 32) & 0xffff_ffff,
         ];
-        assert_eq!(&got[i * 12..i * 12 + 12], &want, "{BACKEND}: word {i} ({w:#x}): popcount clz ctz (32, 64), rank, select, bits");
+        assert_eq!(&got[i * 12..i * 12 + 12], &want, "{}: word {i} ({w:#x}): popcount clz ctz (32, 64), rank, select, bits", crate::device::backend());
     }
 }
 
@@ -162,7 +162,7 @@ fn bitsets_search_and_set() {
         let got: Vec<u32> = read(&out, n as usize);
         for i in 0..n {
             let want = (i..nbits).find(|&b| is_set(b)).unwrap_or(u32::MAX);
-            assert_eq!(got[i as usize], want, "{BACKEND}: next set bit from {i} of {nbits}");
+            assert_eq!(got[i as usize], want, "{}: next set bit from {i} of {nbits}", crate::device::backend());
         }
 
         // Setting: some bits twice; each distinct bit is "new" to exactly one thread.
@@ -177,10 +177,10 @@ fn bitsets_search_and_set() {
         for &b in &sets {
             want[b as usize / 32] |= 1 << (b % 32);
         }
-        assert_eq!(read::<u32>(&empty, nw), want, "{BACKEND}: the set bits");
+        assert_eq!(read::<u32>(&empty, nw), want, "{}: the set bits", crate::device::backend());
         let fresh = read::<u32>(&was, sets.len()).iter().filter(|&&x| x == 0).count();
         let distinct = want.iter().map(|w| w.count_ones() as usize).sum::<usize>();
-        assert_eq!(fresh, distinct, "{BACKEND}: each bit new to one thread");
+        assert_eq!(fresh, distinct, "{}: each bit new to one thread", crate::device::backend());
     }
 }
 
@@ -234,7 +234,7 @@ fn simd_group_operations_and_their_references() {
                 same,
             ];
             let i = g * 32 + lane;
-            assert_eq!(&got[i * 16..i * 16 + 16], &want, "{BACKEND}: group {g}, lane {lane}: sum min max (backend, reference), scans, votes, broadcast, match");
+            assert_eq!(&got[i * 16..i * 16 + 16], &want, "{}: group {g}, lane {lane}: sum min max (backend, reference), scans, votes, broadcast, match", crate::device::backend());
         }
     }
 }
@@ -258,7 +258,7 @@ fn threadgroup_sums_and_scans() {
             let mut run = 0u32;
             for (t, &x) in v.iter().enumerate() {
                 let i = g * lsz as usize + t;
-                assert_eq!(&got[i * 3..i * 3 + 3], &[total, run, total], "{BACKEND}: group of {lsz}, group {g}, thread {t}: sum, exclusive, total");
+                assert_eq!(&got[i * 3..i * 3 + 3], &[total, run, total], "{}: group of {lsz}, group {g}, thread {t}: sum, exclusive, total", crate::device::backend());
                 run = run.wrapping_add(x);
             }
         }
@@ -380,10 +380,10 @@ fn lz4_blocks_decode_as_lz4_does() {
         let at = jobs[j * 4 + 2] as usize;
         match lz4_reference(z, *cap) {
             Some(want) => {
-                assert_eq!(lengths[j] as usize, want.len(), "{BACKEND}: block {j}'s length");
-                assert!(out[at..at + want.len()] == want[..], "{BACKEND}: block {j}'s bytes");
+                assert_eq!(lengths[j] as usize, want.len(), "{}: block {j}'s length", crate::device::backend());
+                assert!(out[at..at + want.len()] == want[..], "{}: block {j}'s bytes", crate::device::backend());
             }
-            None => assert_eq!(lengths[j], u32::MAX, "{BACKEND}: block {j} is malformed"),
+            None => assert_eq!(lengths[j], u32::MAX, "{}: block {j} is malformed", crate::device::backend()),
         }
     }
 }
@@ -403,7 +403,7 @@ fn device_wide_scans_and_compaction() {
         let got: Vec<u32> = read(&out, n as usize + 1);
         let mut run = 0u32;
         for i in 0..=n as usize {
-            assert_eq!(got[i], run, "{BACKEND}: scan of {n}, at {i}");
+            assert_eq!(got[i], run, "{}: scan of {n}, at {i}", crate::device::backend());
             if i < n as usize {
                 run = run.wrapping_add(vals[i]);
             }
@@ -416,7 +416,7 @@ fn device_wide_scans_and_compaction() {
         let got: Vec<u32> = read(&out, n as usize + 1);
         let mut rank = 0u32;
         for i in 0..=n as usize {
-            assert_eq!(got[i], rank, "{BACKEND}: popcount scan of {n}, at {i}");
+            assert_eq!(got[i], rank, "{}: popcount scan of {n}, at {i}", crate::device::backend());
             if i < n as usize {
                 rank += vals[i].count_ones();
             }
@@ -429,8 +429,8 @@ fn device_wide_scans_and_compaction() {
         q.flush().await_().unwrap();
         let want: Vec<u32> = vals.iter().copied().filter(|v| v % 2 == 0).collect();
         let count = read::<u32>(&offsets, n as usize + 1)[n as usize] as usize;
-        assert_eq!(count, want.len(), "{BACKEND}: compaction of {n} kept");
-        assert!(read::<u32>(&kept, count) == want, "{BACKEND}: compaction of {n}'s values, in order");
+        assert_eq!(count, want.len(), "{}: compaction of {n} kept", crate::device::backend());
+        assert!(read::<u32>(&kept, count) == want, "{}: compaction of {n}'s values, in order", crate::device::backend());
     }
 }
 
@@ -466,8 +466,8 @@ fn histograms_by_partition() {
                     }
                 }
             }
-            assert!(read::<u32>(&h, want.len()) == want, "{BACKEND}: histogram of width {width}, {parts} partitions");
-            assert_eq!(read::<u32>(&bad, 1)[0], invalid as u32, "{BACKEND}: a code past the width is flagged");
+            assert!(read::<u32>(&h, want.len()) == want, "{}: histogram of width {width}, {parts} partitions", crate::device::backend());
+            assert_eq!(read::<u32>(&bad, 1)[0], invalid as u32, "{}: a code past the width is flagged", crate::device::backend());
             if invalid {
                 *offsets.last_mut().unwrap() -= 1;
             }
@@ -490,8 +490,8 @@ fn sort_and_check<K: RadixKey + Ord + std::fmt::Debug + Into<u64> + From<u32>>(q
     let low = |k: K| k.into() & mask(bits);
     want.sort_by_key(|&i| low(keys[i as usize]));
     let want_k: Vec<K> = want.iter().map(|&i| keys[i as usize]).collect();
-    assert!(got_v == want, "{BACKEND}: the sort of {n} keys by {bits} bits is stable");
-    assert!(got_k == want_k, "{BACKEND}: the keys go with their values");
+    assert!(got_v == want, "{}: the sort of {n} keys by {bits} bits is stable", crate::device::backend());
+    assert!(got_k == want_k, "{}: the keys go with their values", crate::device::backend());
 }
 
 #[test]
@@ -523,7 +523,7 @@ fn walk(p: &Program, q: &mut ComputeQueue, kernel: &str, nodes: u32, polls: u32)
         let mut launches = 0;
         loop {
             launches += 1;
-            assert!(launches <= 1000, "{BACKEND}: the work queue of {nodes} did not drain");
+            assert!(launches <= 1000, "{}: the work queue of {nodes} did not drain", crate::device::backend());
             launch(q, p.function(kernel).unwrap())
                 .value("args", &TestArgs { n: polls, w: nodes })
                 .buffer("slots", &sb)
@@ -537,10 +537,10 @@ fn walk(p: &Program, q: &mut ComputeQueue, kernel: &str, nodes: u32, polls: u32)
             }
         }
         let control: Vec<u32> = read(&cb, 4);
-        assert_eq!(control[3], 0, "{BACKEND}: the queue of {nodes} overflowed");
+        assert_eq!(control[3], 0, "{}: the queue of {nodes} overflowed", crate::device::backend());
         let visits: Vec<u32> = read(&vb, nodes as usize);
         let wrong = visits.iter().position(|&v| v != 1);
-        assert_eq!(wrong, None, "{BACKEND}: {kernel}: every node visited once ({nodes} nodes, {launches} launches)");
+        assert_eq!(wrong, None, "{}: {kernel}: every node visited once ({nodes} nodes, {launches} launches)", crate::device::backend());
         launches
     }
 }
@@ -575,7 +575,7 @@ fn hash_tables_build_and_probe() {
         table.probe(&q, &qb, queries.len() as u32, &table.first, &fo).unwrap();
         table.probe(&q, &qb, queries.len() as u32, &table.counts, &co).unwrap();
         q.flush().await_().unwrap();
-        assert_eq!(read::<u32>(&table.full, 1)[0], 0, "{BACKEND}: {n} rows fit {capacity} slots");
+        assert_eq!(read::<u32>(&table.full, 1)[0], 0, "{}: {n} rows fit {capacity} slots", crate::device::backend());
         let mut want: std::collections::HashMap<u32, (u32, u32)> = Default::default();
         for (i, &k) in rows.iter().enumerate() {
             want.entry(k).or_insert((i as u32, 0)).1 += 1;
@@ -583,7 +583,7 @@ fn hash_tables_build_and_probe() {
         let (first, counts): (Vec<u32>, Vec<u32>) = (read(&fo, queries.len()), read(&co, queries.len()));
         for (i, k) in queries.iter().enumerate() {
             let (f, c) = want.get(k).copied().unwrap_or((u32::MAX, u32::MAX));
-            assert_eq!((first[i], counts[i]), (f, c), "{BACKEND}: key {k:#x} ({n} rows): first row, count");
+            assert_eq!((first[i], counts[i]), (f, c), "{}: key {k:#x} ({n} rows): first row, count", crate::device::backend());
         }
     }
 
@@ -593,9 +593,9 @@ fn hash_tables_build_and_probe() {
     let rb = buffer_of(&rows).unwrap();
     table.build(&q, &rb, 200).unwrap();
     q.flush().await_().unwrap();
-    assert_eq!(read::<u32>(&table.full, 1)[0], 1, "{BACKEND}: a full table is reported");
+    assert_eq!(read::<u32>(&table.full, 1)[0], 1, "{}: a full table is reported", crate::device::backend());
     let mut keys: Vec<u32> = read(&table.keys, 64);
     keys.sort();
     keys.dedup();
-    assert_eq!(keys.len(), 64, "{BACKEND}: each slot holds a distinct key");
+    assert_eq!(keys.len(), 64, "{}: each slot holds a distinct key", crate::device::backend());
 }
