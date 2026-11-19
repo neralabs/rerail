@@ -503,7 +503,11 @@ impl Snapshot {
         };
         self.view.with_repo(|repo, _, _| {
             let header = repo.find_header(id).map_err(error)?;
-            f(header.size(), &|| Ok(verified_blob(repo, id)?.data.clone()))
+            f(header.size(), &|| {
+                let bytes = verified_blob(repo, id)?.data.clone();
+                self.view.source_errors.lock().unwrap_or_else(|err| err.into_inner()).remove(path);
+                Ok(bytes)
+            })
         })?
     }
 

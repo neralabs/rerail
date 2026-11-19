@@ -431,6 +431,8 @@ Call(n) :- kind(n, "call").
     expect(await evaluate()).toEqual(["plain.py"]);
     expect(source.sourceFailures()).toEqual([expect.objectContaining({ path: "src/nested.py" })]);
     restoreBlob();
+    expect(source.readFile("src/nested.py", 100)?.toString()).toBe("nested()\n");
+    expect(source.sourceFailures()).toEqual([]);
     expect(await evaluate()).toEqual(["plain.py", "src/nested.py"]);
     expect(source.sourceFailures()).toEqual([]);
   });
