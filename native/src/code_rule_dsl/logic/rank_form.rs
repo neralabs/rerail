@@ -23,57 +23,66 @@
 //!
 //! Nothing here names a relation: any rule of the form is made so. `RERAIL_RANK_FORM=off` finds none (a measurement
 //! aid); `.decl H(…) no_rank` keeps `H` as rows.
-use crate::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Native, Rule, Term};
+use crate::code_rule_dsl::logic::front::AggOp;
 use crate::code_rule_dsl::logic::native::rank::Op;
+use crate::code_rule_dsl::logic::plan::body::{VarSet, lit_vars};
+use crate::code_rule_dsl::logic::program_image::{AggRef, Builder, Lit, LitRef, RuleId, RuleRef, Slot, T, TermRef, Version, build::t_of};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The qualifier keeping a relation as rows.
 pub const NO_RANK: &str = "no_rank";
 
-/// The form found in a relation's rule, for a reader that groups by `grouped` (its head's columns the reader binds).
+/// The form found in a relation's one rule `h`, for a reader that groups by its head's columns the reader binds. The
+/// variables are `h`'s slots; the parts are `h`'s literals by position.
 struct Shape {
     /// The group: grouped variables the counted part reads, in head order.
-    group: Vec<String>,
+    group: Vec<Slot>,
     /// The other grouped variables, in head order.
-    asked: Vec<String>,
+    asked: Vec<Slot>,
     /// The counted variables (the reader's `_`), in head order.
-    counted: Vec<String>,
-    kx: String,
-    ky: String,
+    counted: Vec<Slot>,
+    kx: Slot,
+    ky: Slot,
     op: Op,
-    x: Vec<Literal>,
-    y: Vec<Literal>,
+    x: Vec<usize>,
+    y: Vec<usize>,
 }
 
-/// What the form reads of a program besides the rules it rewrites: the version's (`corpus::preparation::rank`).
+/// A rank the form makes of a counted relation's rule `h` (`Shape`): its four relations' names (the asked rows, their
+/// groups, the counted rows and the rank) and, for each of the rank's columns but the count, the place in `h`'s head
+/// of the variable it holds.
+struct Rank {
+    h: RuleId,
+    shape: Shape,
+    names: [String; 4],
+    at: Vec<usize>,
+}
+
+/// What the form reads of a program besides its rules: the version's (`corpus::preparation::rank`).
 pub(crate) trait Of {
     /// `rel`'s columns' types, where it is declared.
     fn types(&self, rel: &str) -> Option<Vec<String>>;
     /// Whether `rel` is held as rows whatever its rule: made natively, a lattice, an input, or `no_rank`.
     fn kept(&self, rel: &str) -> bool;
-    /// `rel`'s rule, where it has exactly one.
-    fn one_rule(&mut self, rel: &str) -> Option<Rule>;
 }
 
-/// What the form made: the new relations' columns, their rules (in order, after the program's) and the ranks'
-/// natives; and how many readers it rewrote.
-#[derive(Default)]
-pub(crate) struct Made {
-    pub decls: Vec<(String, Vec<(String, String)>)>,
-    pub rules: Vec<Rule>,
-    pub natives: Vec<(String, Native)>,
-    pub found: usize,
+/// The form planned over a version (`plan`): each reader's counts it rewrites (the reader, and each literal's place
+/// with its rank), and the ranks.
+pub(crate) struct Plan {
+    readers: BTreeMap<RuleId, Vec<(usize, usize)>>,
+    ranks: Vec<Rank>,
 }
 
-impl Made {
-    fn declared(&self, of: &dyn Of, rel: &str) -> bool {
-        of.types(rel).is_some() || self.decls.iter().any(|(r, _)| r == rel)
+impl Plan {
+    /// How many readers' counts it rewrites.
+    pub(crate) fn found(&self) -> usize {
+        self.readers.values().map(Vec::len).sum()
     }
 }
 
-/// Whether `rule` has a literal the form may read (`plan` decides).
-pub(crate) fn counts(rule: &Rule) -> bool {
-    rule.body.iter().any(|l| matches!(l, Literal::Agg { op: AggOp::Count, over: None, atom, .. } if !atom.neg))
+/// Whether rule `r` has a literal the form may read (`plan` decides).
+pub(crate) fn counts(r: RuleRef<'_>) -> bool {
+    r.body().any(|l| matches!(l.view(), Lit::Agg { op: AggRef::Count, over: None, atom, .. } if !atom.neg()))
 }
 
 /// Whether the form is looked for (`RERAIL_RANK_FORM=off`: not, a measurement aid).
@@ -81,72 +90,84 @@ pub(crate) fn on() -> bool {
     !std::env::var("RERAIL_RANK_FORM").is_ok_and(|v| v == "off")
 }
 
-/// The form over `readers` (each a rule, by the caller's key, in the program's order): each reader it rewrote, and
-/// what it made.
-pub(crate) fn plan<K: Clone>(of: &mut dyn Of, readers: &[(K, Rule)]) -> (Vec<(K, Rule)>, Made) {
-    let mut made = Made::default();
-    let mut placed: BTreeMap<(String, Vec<bool>), Option<(String, Vec<usize>)>> = BTreeMap::new();
-    let mut changed = Vec::new();
-    for (key, rule) in readers {
-        let mut rule = rule.clone();
-        let mut touched = false;
-        for j in 0..rule.body.len() {
-            let Literal::Agg { op: AggOp::Count, over: None, atom, .. } = &rule.body.as_slice()[j] else { continue };
-            if atom.neg || of.kept(atom.rel.as_str()) {
+/// The form over `v`'s readers (the rules with a count, `counts`), in the program's order.
+pub(crate) fn plan(v: &Version, of: &dyn Of) -> Plan {
+    let mut plan = Plan { readers: BTreeMap::new(), ranks: Vec::new() };
+    let mut placed: BTreeMap<(String, Vec<bool>), Option<usize>> = BTreeMap::new();
+    for r in v.rules().filter(|r| counts(*r)) {
+        for (j, l) in r.body().enumerate() {
+            let Lit::Agg { op: AggRef::Count, over: None, atom, .. } = l.view() else { continue };
+            let rel = v.rel_name(atom.rel());
+            if atom.neg() || of.kept(rel) {
                 continue;
             }
-            let (rel, grouped): (String, Vec<bool>) = (atom.rel.to_string(), atom.args.iter().map(|t| !matches!(t, Term::Wild)).collect());
-            let k = (rel.clone(), grouped.clone());
+            let grouped: Vec<bool> = atom.args().map(|t| !matches!(t, TermRef::Wild)).collect();
+            let k = (rel.to_owned(), grouped);
             if !placed.contains_key(&k) {
-                let now = of.one_rule(&rel).and_then(|h| shape(&h, &grouped).map(|s| place(of, &mut made, &h, s)));
-                placed.insert(k.clone(), now);
+                let rank = one_rule(v, rel).and_then(|h| shape(h, &k.1).map(|s| (h, s))).map(|(h, s)| {
+                    let names = ["rr_rankq", "rr_rankg", "rr_rankb", "rr_rank"].map(|stem| fresh(v, &plan.ranks, stem));
+                    let head: Vec<Slot> = h.head().args().filter_map(TermRef::var).collect();
+                    let at = s.group.iter().chain(&s.asked).map(|x| head.iter().position(|y| y == x).expect("a head variable")).collect();
+                    plan.ranks.push(Rank { h: h.id(), shape: s, names, at });
+                    plan.ranks.len() - 1
+                });
+                placed.insert(k.clone(), rank);
             }
-            let Some((rank, at)) = placed[&k].clone() else { continue };
-            let Literal::Agg { var, atom, .. } = &rule.body.as_slice()[j] else { unreachable!("a reader") };
-            let mut taken: BTreeSet<String> = rule.body.iter().flat_map(Literal::vars).collect();
-            taken.extend(rule.head.vars());
-            let n = (0..).map(|k| format!("rr_rankn{k}")).find(|v| !taken.contains(v)).expect("a fresh name");
-            let mut args: Vec<Term> = at.iter().map(|&c| atom.args.as_slice()[c].clone()).collect();
-            args.push(Term::Var(n.clone().into()));
-            let lit = Literal::Agg { var: var.clone(), op: AggOp::Sum, over: Some(n), atom: Atom { rel: rank.into(), args: args.into(), neg: false, gated: false } };
-            let mut body: Vec<Literal> = rule.body.iter().cloned().collect();
-            body[j] = lit;
-            rule.body = body.into();
-            made.found += 1;
-            touched = true;
-        }
-        if touched {
-            changed.push((key.clone(), rule));
+            if let Some(rank) = placed[&k] {
+                plan.readers.entry(r.id()).or_default().push((j, rank));
+            }
         }
     }
-    (changed, made)
+    plan
 }
 
-/// The form in `rule` (the counted relation's one rule) for a reader grouping by `grouped`, if it has it.
-fn shape(rule: &Rule, grouped: &[bool]) -> Option<Shape> {
-    let head: Vec<&str> = rule.head.args.iter().map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None }).collect::<Option<_>>()?;
+/// `rel`'s rule in `v`, where it has exactly one.
+fn one_rule<'v>(v: &'v Version, rel: &str) -> Option<RuleRef<'v>> {
+    let mut heads = v.heads(v.rel(rel)?);
+    let (one, none) = (heads.next()?, heads.next().is_none());
+    none.then_some(one)
+}
+
+/// A name of `stem` that neither `v` declares nor a rank of `ranks` takes.
+fn fresh(v: &Version, ranks: &[Rank], stem: &str) -> String {
+    (0..).map(|k| format!("{stem}{k}")).find(|n| v.decl_of(n).is_none() && !ranks.iter().any(|r| r.names.contains(n))).expect("a fresh name")
+}
+
+/// The form in `h` (the counted relation's one rule) for a reader grouping by `grouped`, if it has it.
+fn shape(h: RuleRef<'_>, grouped: &[bool]) -> Option<Shape> {
+    let head: Vec<Slot> = h.head().args().map(TermRef::var).collect::<Option<_>>()?;
     if head.iter().collect::<BTreeSet<_>>().len() != head.len() || head.len() != grouped.len() {
         return None;
     }
-    let gv: BTreeSet<String> = head.iter().zip(grouped).filter(|(_, g)| **g).map(|(v, _)| v.to_string()).collect();
-    let cv: Vec<String> = head.iter().zip(grouped).filter(|(_, g)| !**g).map(|(v, _)| v.to_string()).collect();
+    let gv = VarSet::of(head.iter().zip(grouped).filter(|(_, g)| **g).map(|(v, _)| *v));
+    let cv: Vec<Slot> = head.iter().zip(grouped).filter(|(_, g)| !**g).map(|(v, _)| *v).collect();
     if cv.is_empty() {
         return None;
     }
-    let body: Vec<&Literal> = rule.body.iter().collect();
-    // Variables a literal's positive atoms bind.
-    let bound = |ls: &[&Literal]| -> BTreeSet<String> { ls.iter().filter_map(|l| if let Literal::Atom(a) = l && !a.neg { Some(a.vars()) } else { None }).flatten().collect() };
+    let body: Vec<LitRef<'_>> = h.body().collect();
+    // Variables the literals' positive atoms bind.
+    let bound = |ls: &[usize]| -> VarSet {
+        let mut out = VarSet::new();
+        for &k in ls {
+            if let Lit::Atom(a) = body[k].view()
+                && !a.neg()
+            {
+                out.extend(&lit_vars(body[k]));
+            }
+        }
+        out
+    };
     for (ci, l) in body.iter().enumerate() {
-        let Literal::Cmp { l: Term::Var(a), op, r: Term::Var(b) } = l else { continue };
-        let Some(op) = Op::parse(op) else { continue };
-        for (ky, kx, op) in [(a.to_string(), b.to_string(), op), (b.to_string(), a.to_string(), op.flipped())] {
-            if gv.contains(&ky) {
+        let Lit::Cmp { l: TermRef::Var(a), op, r: TermRef::Var(b) } = l.view() else { continue };
+        let Some(op) = Op::parse(op.as_str()) else { continue };
+        for (ky, kx, op) in [(a, b, op), (b, a, op.flipped())] {
+            if gv.contains(ky) {
                 continue;
             }
-            let rest: Vec<&Literal> = body.iter().enumerate().filter(|(k, _)| *k != ci).map(|(_, l)| *l).collect();
-            let own: Vec<BTreeSet<String>> = rest.iter().map(|l| l.vars().into_iter().filter(|v| !gv.contains(v)).collect()).collect();
+            let rest: Vec<usize> = (0..body.len()).filter(|k| *k != ci).collect();
+            let own: Vec<VarSet> = rest.iter().map(|&k| lit_vars(body[k]).minus(&gv)).collect();
             // The counted part: the literals reached from the counted variables and ky through their own variables.
-            let mut reach: BTreeSet<String> = cv.iter().cloned().chain([ky.clone()]).collect();
+            let mut reach = VarSet::of(cv.iter().copied().chain([ky]));
             let mut in_y = vec![false; rest.len()];
             let mut grew = true;
             while grew {
@@ -154,86 +175,125 @@ fn shape(rule: &Rule, grouped: &[bool]) -> Option<Shape> {
                 for (k, o) in own.iter().enumerate() {
                     if !in_y[k] && !o.is_disjoint(&reach) {
                         in_y[k] = true;
-                        reach.extend(o.iter().cloned());
+                        reach.extend(o);
                         grew = true;
                     }
                 }
             }
-            if reach.contains(&kx) && !gv.contains(&kx) {
+            if reach.contains(kx) && !gv.contains(kx) {
                 continue;
             }
-            let y: Vec<&Literal> = rest.iter().zip(&in_y).filter(|(_, y)| **y).map(|(l, _)| *l).collect();
-            let x: Vec<&Literal> = rest.iter().zip(&in_y).filter(|(_, y)| !**y).map(|(l, _)| *l).collect();
+            let y: Vec<usize> = rest.iter().zip(&in_y).filter(|(_, y)| **y).map(|(k, _)| *k).collect();
+            let x: Vec<usize> = rest.iter().zip(&in_y).filter(|(_, y)| !**y).map(|(k, _)| *k).collect();
             if y.is_empty() {
                 continue;
             }
-            let y_vars: BTreeSet<String> = y.iter().flat_map(|l| l.vars()).collect();
-            let group: Vec<String> = head.iter().map(|v| v.to_string()).filter(|v| gv.contains(v) && y_vars.contains(v)).collect();
-            let asked: Vec<String> = head.iter().map(|v| v.to_string()).filter(|v| gv.contains(v) && !y_vars.contains(v)).collect();
+            let mut y_vars = VarSet::new();
+            y.iter().for_each(|&k| y_vars.extend(&lit_vars(body[k])));
+            let group: Vec<Slot> = head.iter().copied().filter(|v| gv.contains(*v) && y_vars.contains(*v)).collect();
+            let asked: Vec<Slot> = head.iter().copied().filter(|v| gv.contains(*v) && !y_vars.contains(*v)).collect();
             // The asked part binds every grouped variable and the bound; the counted part, with the group, binds
             // the counted variables and the key.
             let (bx, by) = (bound(&x), bound(&y));
-            if !gv.iter().chain([&kx]).all(|v| bx.contains(v)) || !cv.iter().chain([&ky]).all(|v| by.contains(v) || group.contains(v)) {
+            if !gv.iter().chain([kx]).all(|v| bx.contains(v)) || !cv.iter().copied().chain([ky]).all(|v| by.contains(v) || group.contains(&v)) {
                 continue;
             }
-            return Some(Shape { group, asked, counted: cv, kx, ky, op, x: x.into_iter().cloned().collect(), y: y.into_iter().cloned().collect() });
+            return Some(Shape { group, asked, counted: cv, kx, ky, op, x, y });
         }
     }
     None
 }
 
-/// The relations of `s` made, and the rank's: its name, and for each of its columns but the count, the place in the
-/// counted relation's head of the variable it holds.
-fn place(of: &dyn Of, made: &mut Made, rule: &Rule, s: Shape) -> (String, Vec<usize>) {
-    let fresh = |made: &Made, stem: &str| (0..).map(|k| format!("{stem}{k}")).find(|n| !made.declared(of, n)).expect("a fresh name");
-    // A variable's type: its column's in the head, else in an atom of the body; a key is a number otherwise.
-    let type_of = |v: &str| -> String {
-        let atoms = std::iter::once(&rule.head).chain(rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None }));
-        for a in atoms {
-            if let Some(cols) = of.types(a.rel.as_str())
-                && let Some(c) = a.args.iter().position(|t| matches!(t, Term::Var(w) if w == v))
-                && let Some(t) = cols.get(c)
-            {
-                return t.clone();
+/// Writes `plan` on `b`, a derivation of `v`: each rank's relations declared, `v`'s rules (each reader's counts read
+/// as a sum over its rank, `n = sum m : rr_rank(…, m)`: 0 where no row is asked), then the ranks' rules, in order.
+/// The ranks' natives, by relation: `(rank, asked rows, counted rows, group's width, op)`.
+pub(crate) fn write(v: &Version, of: &dyn Of, plan: &Plan, b: &mut Builder<'_>) -> Result<Vec<(String, String, String, usize, &'static str)>, String> {
+    for rank in &plan.ranks {
+        let h = v.rule(rank.h).expect("the counted rule");
+        let s = &rank.shape;
+        // A variable's type: its column's in the head, else in an atom of the body; a key is a number otherwise.
+        let type_of = |x: Slot| -> String {
+            let atoms = std::iter::once(h.head()).chain(h.body().filter_map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }));
+            for a in atoms {
+                if let Some(cols) = of.types(v.rel_name(a.rel()))
+                    && let Some(c) = a.args().position(|t| t.var() == Some(x))
+                    && let Some(t) = cols.get(c)
+                {
+                    return t.clone();
+                }
+            }
+            "int".to_owned()
+        };
+        let decl = |b: &mut Builder<'_>, rel: &str, vars: &[Slot], last: Option<(&str, String)>| {
+            let mut cols: Vec<(String, String)> = vars.iter().enumerate().map(|(i, x)| (format!("c{i}"), type_of(*x))).collect();
+            cols.extend(last.map(|(n, t)| (n.to_owned(), t)));
+            let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+            b.declare(rel, &cols);
+        };
+        let [q, g, bn, r] = &rank.names;
+        let asked: Vec<Slot> = s.group.iter().chain(&s.asked).copied().collect();
+        let counted: Vec<Slot> = s.group.iter().chain(&s.counted).copied().collect();
+        decl(b, q, &asked, Some(("k", type_of(s.kx))));
+        decl(b, g, &s.group, None);
+        decl(b, bn, &counted, Some(("k", type_of(s.ky))));
+        decl(b, r, &asked, Some(("n", "int".to_owned())));
+    }
+    for r in v.rules() {
+        let Some(counts) = plan.readers.get(&r.id()) else {
+            b.keep(v, r);
+            continue;
+        };
+        // The sum's variable: a name the reader does not use.
+        let taken: BTreeSet<&str> = r.vars().map(|a| v.text(a)).collect();
+        let n = (0..).map(|k| format!("rr_rankn{k}")).find(|x| !taken.contains(x.as_str())).expect("a fresh name");
+        let mut rb = b.rule().head_from(v, r, r.head());
+        for (j, l) in r.body().enumerate() {
+            match counts.iter().find(|(k, _)| *k == j) {
+                Some(&(_, rank)) => {
+                    let Lit::Agg { var, atom, .. } = l.view() else { unreachable!("a reader's count") };
+                    let rank = &plan.ranks[rank];
+                    let args: Vec<TermRef<'_>> = atom.args().collect();
+                    let mut terms: Vec<T<'_>> = rank.at.iter().map(|&c| t_of(v, r, args[c])).collect();
+                    terms.push(T::Var(&n));
+                    rb = rb.agg(T::VarAtom(r.var(var)), &AggOp::Sum, Some(T::Var(&n)), rank.names[3].as_str(), &terms);
+                }
+                None => rb = rb.lit(v, r, l),
             }
         }
-        "int".to_owned()
-    };
-    let var = |v: &str| Term::Var(v.to_owned().into());
-    let atom = |rel: &str, args: Vec<Term>| Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false };
-    let decl = |made: &mut Made, rel: &str, vars: &[String], last: Option<(&str, String)>| {
-        let mut cols: Vec<(String, String)> = vars.iter().enumerate().map(|(i, v)| (format!("c{i}"), type_of(v))).collect();
-        cols.extend(last.map(|(n, t)| (n.to_owned(), t)));
-        made.decls.push((rel.to_owned(), cols));
-    };
-    let q = fresh(made, "rr_rankq");
-    let asked_cols: Vec<String> = s.group.iter().chain(&s.asked).cloned().collect();
-    let q_args: Vec<Term> = asked_cols.iter().map(|v| var(v)).chain([var(&s.kx)]).collect();
-    decl(made, &q, &asked_cols, Some(("k", type_of(&s.kx))));
-    made.rules.push(Rule { head: atom(&q, q_args.clone()), body: s.x.clone().into() });
-    let g = fresh(made, "rr_rankg");
-    decl(made, &g, &s.group, None);
-    let g_args: Vec<Term> = s.group.iter().map(|v| var(v)).collect();
-    made.rules.push(Rule { head: atom(&g, g_args.clone()), body: vec![Literal::Atom(atom(&q, q_args.clone()))].into() });
-    let b = fresh(made, "rr_rankb");
-    let counted_cols: Vec<String> = s.group.iter().chain(&s.counted).cloned().collect();
-    decl(made, &b, &counted_cols, Some(("k", type_of(&s.ky))));
-    let mut b_body = vec![Literal::Atom(atom(&g, g_args))];
-    b_body.extend(s.y.iter().cloned());
-    made.rules.push(Rule { head: atom(&b, counted_cols.iter().map(|v| var(v)).chain([var(&s.ky)]).collect()), body: b_body.into() });
-    let r = fresh(made, "rr_rank");
-    decl(made, &r, &asked_cols, Some(("n", "int".to_owned())));
-    // Its one rule orders it after both relations it reads, and joins them on the group as `H` did: the split
-    // (`file_local`) finds it local where its groups are one document's. The rows are made natively (as a reach's,
-    // decision 0119).
-    let b_read: Vec<Term> = s.group.iter().map(|v| var(v)).chain(std::iter::repeat_n(Term::Wild, s.counted.len() + 1)).collect();
-    made.rules.push(Rule {
-        head: atom(&r, asked_cols.iter().map(|v| var(v)).chain([Term::Int(0)]).collect()),
-        body: vec![Literal::Atom(atom(&q, q_args)), Literal::Atom(atom(&b, b_read))].into(),
-    });
-    made.natives.push((r.clone(), Native::Rank { query: q, counted: b, group: s.group.len(), op: s.op.text().to_owned() }));
-    let head: Vec<String> = rule.head.args.iter().map(|t| if let Term::Var(v) = t { v.to_string() } else { String::new() }).collect();
-    let at = asked_cols.iter().map(|v| head.iter().position(|h| h == v).expect("a head variable")).collect();
-    (r, at)
+        rb.finish()?;
+    }
+    let mut natives = Vec::new();
+    for rank in &plan.ranks {
+        let h = v.rule(rank.h).expect("the counted rule");
+        let s = &rank.shape;
+        let body: Vec<LitRef<'_>> = h.body().collect();
+        let var = |x: &Slot| T::VarAtom(h.var(*x));
+        let [q, g, bn, r] = &rank.names;
+        let asked: Vec<T<'_>> = s.group.iter().chain(&s.asked).map(var).collect();
+        let q_args: Vec<T<'_>> = asked.iter().cloned().chain([var(&s.kx)]).collect();
+        let g_args: Vec<T<'_>> = s.group.iter().map(var).collect();
+        // rr_rankq(G…, X…, kx) :- X.
+        let mut rb = b.rule().head(q.as_str(), &q_args);
+        for &k in &s.x {
+            rb = rb.lit(v, h, body[k]);
+        }
+        rb.finish()?;
+        // rr_rankg(G…) :- rr_rankq(G…, _…, _).
+        b.rule().head(g.as_str(), &g_args).atom(q.as_str(), &q_args).finish()?;
+        // rr_rankb(G…, C…, ky) :- rr_rankg(G…), Y.
+        let b_args: Vec<T<'_>> = s.group.iter().chain(&s.counted).map(var).chain([var(&s.ky)]).collect();
+        let mut rb = b.rule().head(bn.as_str(), &b_args).atom(g.as_str(), &g_args);
+        for &k in &s.y {
+            rb = rb.lit(v, h, body[k]);
+        }
+        rb.finish()?;
+        // Its one rule orders it after both relations it reads, and joins them on the group as `H` did: the split
+        // (`file_local`) finds it local where its groups are one document's. The rows are made natively (as a
+        // reach's, decision 0119).
+        let b_read: Vec<T<'_>> = g_args.iter().cloned().chain(std::iter::repeat_n(T::Wild, s.counted.len() + 1)).collect();
+        let r_args: Vec<T<'_>> = asked.into_iter().chain([T::Int(0)]).collect();
+        b.rule().head(r.as_str(), &r_args).atom(q.as_str(), &q_args).atom(bn.as_str(), &b_read).finish()?;
+        natives.push((r.clone(), q.clone(), bn.clone(), s.group.len(), s.op.text()));
+    }
+    Ok(natives)
 }
-

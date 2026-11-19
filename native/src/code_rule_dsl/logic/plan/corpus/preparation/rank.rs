@@ -1,13 +1,12 @@
 //! A count below a bound made by rank (decision 0361 step 7), on the version (decision 0281's path): its plan made by
-//! `rank_form::plan` over the version's readers and the counted relations' rules, each read as a tree rule, and
-//! written into the version.
+//! `rank_form::plan` over the version's readers and the counted relations' rules, read in the image, and written
+//! into a derivation of the version (`rank_form::write`).
 
 use super::demand::{about_p, edit_native_rows, is_input, qualified};
-use crate::code_rule_dsl::logic::front::{Native, Rule};
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
-use crate::code_rule_dsl::logic::program_image::{About, Cell, RuleId, Tree, Version};
+use crate::code_rule_dsl::logic::program_image::{About, Cell, Version};
 use crate::code_rule_dsl::logic::rank_form::{self, NO_RANK};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -18,13 +17,12 @@ pub struct RankForm {
 }
 
 /// The version as the form reads it.
-struct VersionOf<'v, 't> {
+struct VersionOf<'v> {
     v: &'v Version,
     about: &'v About,
-    tree: &'t mut Tree<'v>,
 }
 
-impl rank_form::Of for VersionOf<'_, '_> {
+impl rank_form::Of for VersionOf<'_> {
     fn types(&self, rel: &str) -> Option<Vec<String>> {
         self.v.decl_of(rel).map(|d| d.cols().map(|(_, t)| self.v.text(t).to_owned()).collect())
     }
@@ -35,63 +33,29 @@ impl rank_form::Of for VersionOf<'_, '_> {
             || is_input(v, rel)
             || qualified(v, about, rel, NO_RANK)
     }
-    fn one_rule(&mut self, rel: &str) -> Option<Rule> {
-        let id = self.v.rel(rel)?;
-        let mut heads = self.v.heads(id);
-        let (one, none) = (heads.next()?, heads.next().is_none());
-        none.then(|| self.tree.rule(one))
-    }
 }
 
 impl ProgramPass for RankForm {
     const NAME: &'static str = "counts below a bound";
-    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
+    fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
         if !rank_form::on() {
             return Ok(());
         }
-        let v = cx.v();
-        let about = About::of(v);
-        let lists = Default::default();
-        let mut tree = Tree::new(v, &lists);
-        // The readers: the rules with a count, read as the tree's.
-        let readers: Vec<(RuleId, Rule)> = v
-            .rules()
-            .filter(|r| r.body().any(|l| matches!(l.view(), crate::code_rule_dsl::logic::program_image::Lit::Agg { .. })))
-            .map(|r| (r.id(), tree.rule(r)))
-            .filter(|(_, r)| rank_form::counts(r))
-            .collect();
-        if readers.is_empty() {
-            return Ok(());
-        }
-        let (changed, made) = rank_form::plan(&mut VersionOf { v, about: &about, tree: &mut tree }, &readers);
-        self.found += made.found;
-        if made.found == 0 {
-            return Ok(());
-        }
-        let changed: HashMap<RuleId, Rule> = changed.into_iter().collect();
         let input = w.input().clone();
+        let v: &Version = &input;
+        let about = About::of(v);
+        let of = VersionOf { v, about: &about };
+        let plan = rank_form::plan(v, &of);
+        let found = plan.found();
+        self.found += found;
+        if found == 0 {
+            return Ok(());
+        }
         let b = w.derive()?;
-        for (rel, cols) in &made.decls {
-            let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-            b.declare(rel, &cols);
-        }
-        for r in input.rules() {
-            match changed.get(&r.id()) {
-                Some(rule) => {
-                    b.add(rule)?;
-                }
-                None => {
-                    b.keep(&input, r);
-                }
-            }
-        }
-        for rule in &made.rules {
-            b.add(rule)?;
-        }
+        let made = rank_form::write(v, &of, &plan, b)?;
         let p = about_p(b);
         let mut rows = Vec::new();
-        for (rel, native) in &made.natives {
-            let Native::Rank { query, counted, group, op } = native else { unreachable!("the form makes ranks") };
+        for (rel, query, counted, group, op) in &made {
             rows.push(vec![p, Cell::Str(b.atom(rel)), Cell::Str(b.atom(query)), Cell::Str(b.atom(counted)), Cell::Int(*group as i64), Cell::Str(b.atom(op))]);
         }
         edit_native_rows(b, "native_rank", &HashSet::new(), rows);
@@ -103,6 +67,7 @@ impl ProgramPass for RankForm {
 mod tests {
     //! The rank form is found by the rules' form alone, whatever their relations are called.
     use super::*;
+    use crate::code_rule_dsl::logic::front::Native;
     use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
     /// The reader's rules after the form, as text.
     fn reader(v: &Version, head: &str) -> String {
