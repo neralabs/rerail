@@ -122,11 +122,30 @@ pub static DEFERRED_WALKS: [std::sync::atomic::AtomicU64; 2] = [const { std::syn
 /// (whose document is in the high 32 bits, from 0x6000… on).
 const DEFERRED: i64 = 1 << 40;
 
+/// A database's shared symbols: its interner, behind the lock that `sym_atom`, `sym_cat` and `cat_symbols`
+/// write under, with its atom arena beside the lock. The arena is the interner's own and never changes, so a
+/// loader's cursor (`Interner::for_loading`, at every component's open) reads it without the lock: it waited there
+/// behind the SQL functions' writes, 2,004 of 2,204 samples parked (Q203 item 3, ab71).
+pub struct Symbols { atoms: Arc<crate::content_store::atoms::Atoms>, cursor: RwLock<Interner> }
+
+impl Symbols {
+    fn new(atoms: Arc<crate::content_store::atoms::Atoms>) -> Symbols {
+        Symbols { atoms: Arc::clone(&atoms), cursor: RwLock::new(Interner { atoms, buf: String::new(), failed: None, deferred: None }) }
+    }
+    /// The atom arena the symbols are in, read without the lock.
+    pub fn atoms(&self) -> &Arc<crate::content_store::atoms::Atoms> { &self.atoms }
+}
+
+impl std::ops::Deref for Symbols {
+    type Target = RwLock<Interner>;
+    fn deref(&self) -> &RwLock<Interner> { &self.cursor }
+}
+
 impl Interner {
     /// A loader's scratch cursor over the same atom arena. Loading SQL may call sym_text/sym_atom,
-    /// so it must not hold the registered cursor's lock across SQLite execution.
-    fn for_loading(shared: &RwLock<Self>) -> Self {
-        Self { atoms: Arc::clone(&shared.read().unwrap().atoms), buf: String::new(), failed: None, deferred: None }
+    /// so it must not hold the registered cursor's lock across SQLite execution; nor does it take it.
+    fn for_loading(shared: &Symbols) -> Self {
+        Self { atoms: Arc::clone(shared.atoms()), buf: String::new(), failed: None, deferred: None }
     }
     /// The text `v` stands for if it is a text this morsel deferred.
     fn deferred_text(&self, v: i64) -> Option<&str> {
@@ -189,9 +208,9 @@ impl Interner {
 /// store's atoms again. They hold no file open: the store's last handle closes them (`ContentStore`'s drop).
 /// `RERAIL_LEVELS_ON_CYCLES`: a leveled component keeps levels only on its relations on a cycle (`open`).
 static LEVELS_ON_CYCLES: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_LEVELS_ON_CYCLES").is_some());
-static SYMS: LazyLock<Mutex<HashMap<String, Arc<RwLock<Interner>>>>> = LazyLock::new(Default::default);
+static SYMS: LazyLock<Mutex<HashMap<String, Arc<Symbols>>>> = LazyLock::new(Default::default);
 /// The symbols of `conn`'s database: the process's arena of it.
-pub fn symbols(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
+pub fn symbols(conn: impl Scoped) -> Result<Arc<Symbols>> {
     let conn = conn.db();
     // A connection's symbols are found once (by its path) and kept for it until it closes (`forget_scope`).
     let at = conn.at();
@@ -225,24 +244,23 @@ fn conn_path(conn: impl Scoped) -> Arc<str> {
 pub fn prime(conn: &Connection) -> Result<Arc<crate::content_store::atoms::Atoms>> {
     conn_path(conn);
     let syms = symbols(conn)?;
-    let arena = Arc::clone(&syms.read().unwrap().atoms);
-    Ok(arena)
+    Ok(Arc::clone(syms.atoms()))
 }
 static SCOPE_PATHS: std::sync::LazyLock<ByScope<HashMap<usize, Arc<str>>>> = std::sync::LazyLock::new(Default::default);
 /// Each live connection's symbols (`symbols`), by its scope.
-static SCOPE_SYMS: std::sync::LazyLock<ByScope<HashMap<usize, Arc<RwLock<Interner>>>>> = std::sync::LazyLock::new(Default::default);
-fn symbols_by_path(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
+static SCOPE_SYMS: std::sync::LazyLock<ByScope<HashMap<usize, Arc<Symbols>>>> = std::sync::LazyLock::new(Default::default);
+fn symbols_by_path(conn: impl Scoped) -> Result<Arc<Symbols>> {
     let conn = conn.db();
     let key = conn_path(conn).to_string();
     let mut syms = SYMS.lock().unwrap();
     let atoms = crate::content_store::atoms::Atoms::for_connection(conn.sql()?);
     // A store created again at the same path has new atoms (`Atoms::for_database`, checked by `Atoms::attach`).
-    if let Some(s) = syms.get(&key) && Arc::ptr_eq(&s.read().unwrap().atoms, &atoms) {
+    if let Some(s) = syms.get(&key) && Arc::ptr_eq(s.atoms(), &atoms) {
         return Ok(Arc::clone(s));
     }
     // An arena made after the store was written holds none of its atoms yet: the run's SQL and joins read them.
     atoms.read_stored().map_err(|e| err(e.to_string()))?;
-    let s = Arc::new(RwLock::new(Interner { atoms, buf: String::new(), failed: None, deferred: None }));
+    let s = Arc::new(Symbols::new(atoms));
     syms.insert(key, Arc::clone(&s));
     Ok(s)
 }
@@ -1283,7 +1301,7 @@ enum Body { Sql(String), Join(JoinRule), Unplanned }
 /// driver; none, no limit.
 struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule>, wkey: Option<Arc<JoinSpec>>, budget: std::cell::Cell<Option<u64>> }
 
-pub struct Store { pub rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
+pub struct Store { pub rels: Vec<Rel>, syms: Arc<Symbols> }
 /// `seeded`: the seed joins have run (in the first wave). `write`: at the fixpoint, insert the new rows into the
 /// relations' tables (else they stay native, in `DERIVED`, until `set_fixpoint_materialize`).
 /// `requests`: relations whose new rows the caller answers (`pending`, `add`), each with the rows answered so far.
@@ -8808,6 +8826,23 @@ pub mod scope_tests {
         drop(conn);
         assert!(!SCOPE_PATHS.lock(at).contains_key(&at), "the closed connection's path is kept by its address");
         assert!(!SCOPE_SYMS.lock(at).contains_key(&at), "the closed connection's symbols are kept by its address");
+    }
+
+    /// A loader's cursor (`Interner::for_loading`, at every component's open) takes no lock: while a writer
+    /// (`sym_atom`, `sym_cat`) holds the symbols, one is made at once, over the same arena, and interns into it.
+    /// It read the arena under the lock, and waited there (Q203 item 3: 2,004 samples of 2,204 parked).
+    #[test]
+    fn a_loaders_cursor_is_made_while_the_symbols_are_written() {
+        let path = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&path).unwrap());
+        let conn = Connection::open(&path).unwrap();
+        let shared = symbols(&conn).unwrap();
+        let mut writing = shared.write().unwrap();
+        let mut cursor = Interner::for_loading(&shared);
+        assert!(Arc::ptr_eq(cursor.atoms(), writing.atoms()));
+        let id = cursor.id("a loader's text");
+        assert_eq!(writing.get("a loader's text"), Some(id));
+        writing.check().unwrap();
     }
 }
 
