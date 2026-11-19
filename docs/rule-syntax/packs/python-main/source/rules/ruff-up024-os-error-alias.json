@@ -1,0 +1,241 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up024-os-error-alias",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use the builtin OSError instead of its legacy aliases such as IOError, EnvironmentError, WindowsError and socket.error; since Python 3.3 they are all the same class.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "handler-type": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "except_clause",
+                  "field": "value"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "as_pattern",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "except_clause",
+                    "field": "value"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "handler-type"
+                }
+              }
+            ]
+          },
+          "atom-site": {
+            "any": [
+              {
+                "matches": "handler-type"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "raise_statement"
+                },
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "raise_statement",
+                    "field": "cause"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "call",
+                  "field": "function"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "atom-site"
+                }
+              }
+            ]
+          },
+          "os-error-alias": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "global": [
+                "EnvironmentError",
+                "IOError",
+                "WindowsError"
+              ],
+              "import": [
+                "builtins.EnvironmentError",
+                "builtins.IOError",
+                "builtins.WindowsError",
+                "mmap.error",
+                "resource.error",
+                "select.error",
+                "socket.error",
+                "os.error"
+              ]
+            }
+          },
+          "element": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "tuple",
+                  "matches": "handler-type"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "element"
+                }
+              }
+            ]
+          },
+          "alias-site": {
+            "matches": "os-error-alias",
+            "all": [
+              {
+                "matches": "atom-site"
+              }
+            ]
+          },
+          "alias-in-annotation": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "alias-site",
+                    "capture": "ALIAS"
+                  },
+                  {
+                    "matches": "alias-in-annotation"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "os-error-alias",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "matches": "alias-site",
+                "pattern": "$ALIAS"
+              },
+              {
+                "matches": "alias-in-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.ALIAS",
+        "code": "UP024",
+        "message": "Replace `$ALIAS` with the builtin `OSError`; since Python 3.3 it is the same class. Leave it only if `OSError` is rebound to something else in this scope.",
+        "each": "ALIAS",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP024"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "os-error-alias-in-tuple",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "tuple",
+            "matches": "handler-type",
+            "has": {
+              "stopBy": "end",
+              "matches": "os-error-alias",
+              "all": [
+                {
+                  "matches": "element"
+                }
+              ]
+            },
+            "not": {
+              "inside": {
+                "stopBy": {
+                  "kind": "except_clause"
+                },
+                "kind": "except_clause",
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^,$"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP024",
+        "message": "Replace the OSError aliases in this except tuple (IOError, socket.error, ...) with one builtin `OSError`, keeping the other exceptions; don't add it twice if it is already listed.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP024"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

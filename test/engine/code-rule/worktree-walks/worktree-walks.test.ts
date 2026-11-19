@@ -356,6 +356,10 @@ describe("WorktreeWalks", () => {
     const third = await opened(worktrees[2]!, checkouts, walks);
     await third.bridge.checkpoint("turn");
     hold.release();
+    // The walk the other two share has taken `w4` for them before the first session's turn asks for another: a walk that
+    // began while they were still taking it would find `w4` new to them still, and list it for them again.
+    await second.bridge.settleWorktreeWalk();
+    await third.bridge.settleWorktreeWalk();
     await turn(first, second, third);
     // `w4` is new to each session: listed once for the first session's walk and once for the walk the other two share.
     expect(listings.get(worktrees[3]!)).toBe(2);

@@ -1,0 +1,254 @@
+# data-layer-serverplan-state-tripwires bytes 908759
+  define: keys=['options', 'language', 'utils'] utils=13 bytes=20040
+  queue-auth-definitions: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=2534
+     input roots={'function_definition': 1}
+     input feats={'regex': 8, 'matches': 2, 'inside:end': 1, 'has:neighbor': 5, 'field': 5, 'not': 1, 'pattern': 8, 'inside:rule': 1}
+  queue-auth-calls: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=3190
+     input roots={'call': 1}
+     input feats={'regex': 9, 'matches': 2, 'inside:end': 1, 'has:neighbor': 6, 'field': 6, 'not': 1, 'pattern': 8, 'inside:rule': 1}
+  terminal-hydration-definitions: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=2058
+     input roots={'function_definition': 1}
+     input feats={'regex': 7, 'matches': 2, 'inside:end': 1, 'has:neighbor': 5, 'field': 5, 'pattern': 8, 'inside:rule': 1}
+  large-column-reentry: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=3242
+     input roots={'call': 1}
+     input feats={'regex': 14, 'matches': 2, 'inside:end': 2, 'has:neighbor': 10, 'field': 8, 'inside:neighbor': 1, 'pattern': 8, 'inside:rule': 1}
+  large-column-hydration: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=3397
+     input roots={'call': 1}
+     input feats={'regex': 15, 'matches': 2, 'inside:end': 2, 'has:neighbor': 14, 'field': 11, 'inside:neighbor': 1, 'pattern': 8, 'inside:rule': 1}
+  direct-planning-io: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=4387
+     input roots={'call': 1}
+     input feats={'regex': 15, 'matches': 2, 'inside:end': 3, 'has:neighbor': 11, 'field': 9, 'inside:neighbor': 1, 'not': 1, 'pattern': 8, 'inside:rule': 1}
+  query-planning-io: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=3676
+     input roots={'call': 1}
+     input feats={'regex': 16, 'matches': 4, 'inside:end': 3, 'has:neighbor': 15, 'field': 13, 'inside:neighbor': 1, 'not': 2, 'pattern': 8, 'inside:rule': 1}
+  preprocess-io: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=12102
+     input roots={'call': 1}
+     input feats={'regex': 37, 'matches': 28, 'inside:end': 2, 'has:neighbor': 86, 'field': 86, 'not': 1, 'pattern': 8, 'inside:rule': 1}
+  provider-io: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=12125
+     input roots={'call': 1}
+     input feats={'regex': 38, 'matches': 28, 'inside:end': 2, 'has:neighbor': 86, 'field': 86, 'not': 1, 'pattern': 8, 'inside:rule': 1}
+  nested-plan-execution: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=3176
+     input roots={'call': 1}
+     input feats={'regex': 14, 'matches': 2, 'inside:end': 2, 'has:neighbor': 10, 'field': 8, 'inside:neighbor': 1, 'pattern': 8, 'inside:rule': 1}
+  executor-plan-execution: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=4093
+     input roots={'call': 1}
+     input feats={'regex': 17, 'matches': 6, 'inside:end': 2, 'has:neighbor': 20, 'field': 18, 'inside:neighbor': 1, 'not': 1, 'pattern': 8, 'inside:rule': 1}
+  queue-udf-symbols: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=2057
+     input roots={'concatenated_string': 1, 'string': 1}
+     input feats={'regex': 8, 'matches': 2, 'inside:end': 1, 'not': 1, 'pattern': 8, 'inside:rule': 1, 'has:neighbor': 4, 'field': 4}
+  materialized-pipeline: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=2902
+     input roots={'attribute': 1}
+     input feats={'regex': 13, 'matches': 2, 'inside:end': 2, 'has:neighbor': 9, 'field': 7, 'inside:neighbor': 1, 'pattern': 8, 'inside:rule': 1}
+  context-authority: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=3779
+     input roots={'attribute': 1}
+     input feats={'regex': 19, 'matches': 2, 'inside:end': 3, 'has:neighbor': 14, 'field': 11, 'inside:neighbor': 1, 'not': 2, 'has:end': 1, 'pattern': 8, 'inside:rule': 1}
+  resolved-ref-access: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=3394
+     input roots={'call': 1}
+     input feats={'regex': 16, 'matches': 2, 'inside:end': 2, 'has:neighbor': 12, 'field': 10, 'not': 1, 'inside:neighbor': 1, 'pattern': 8, 'inside:rule': 1}
+  production-ir-class: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=2691
+     input roots={'class_definition': 1}
+     input feats={'regex': 12, 'matches': 2, 'inside:end': 1, 'has:neighbor': 9, 'not': 2, 'field': 8, 'has:end': 1, 'pattern': 8, 'inside:rule': 1}
+  production-ir-construction: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=2405
+     input roots={'call': 1}
+     input feats={'regex': 11, 'matches': 2, 'inside:end': 1, 'has:neighbor': 6, 'not': 3, 'field': 6, 'pattern': 8, 'inside:rule': 1}
+  compiled-ir-value: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=2910
+     input roots={'call': 1}
+     input feats={'regex': 12, 'matches': 2, 'inside:end': 1, 'has:neighbor': 12, 'field': 11, 'not': 2, 'pattern': 9, 'inside:rule': 1}
+  test-only-acknowledgement: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=2173
+     input roots={'call': 1}
+     input feats={'regex': 8, 'matches': 2, 'inside:end': 1, 'not': 1, 'has:neighbor': 7, 'field': 6, 'pattern': 8, 'inside:rule': 1}
+  executor-ir-dispatch: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=3037
+     input roots={'call': 1}
+     input feats={'regex': 14, 'matches': 2, 'inside:end': 1, 'has:neighbor': 8, 'field': 7, 'not': 4, 'pattern': 10, 'has:end': 1, 'nthChild': 1, 'inside:rule': 1}
+  step-aware-eager-helper: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=3942
+     input roots={'call': 1}
+     input feats={'regex': 12, 'matches': 2, 'inside:end': 1, 'has:neighbor': 9, 'field': 9, 'inside:rule': 2, 'has:end': 1, 'not': 1, 'pattern': 8}
+  graph-id-config: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=3616
+     input roots={'assignment': 1}
+     input feats={'regex': 19, 'matches': 2, 'inside:end': 1, 'has:neighbor': 12, 'pattern': 9, 'field': 10, 'has:end': 2, 'not': 1, 'inside:rule': 2, 'inside:neighbor': 1}
+  legacy-preop: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=2458
+     input roots={'call': 1}
+     input feats={'regex': 10, 'matches': 2, 'inside:end': 1, 'has:neighbor': 9, 'field': 8, 'not': 1, 'pattern': 8, 'inside:rule': 1}
+  serverplan-ddl: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=3514
+     input roots={'call': 1}
+     input feats={'regex': 17, 'matches': 2, 'inside:end': 1, 'has:neighbor': 14, 'field': 13, 'not': 2, 'has:end': 1, 'nthChild': 1, 'pattern': 8, 'inside:rule': 1}
+  mcp-default-graph: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=2414
+     input roots={'call': 1}
+     input feats={'regex': 9, 'matches': 2, 'inside:end': 1, 'has:neighbor': 7, 'field': 7, 'inside:rule': 2, 'pattern': 8}
+  private-lazy-ref: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=3209
+     input roots={'call': 1}
+     input feats={'regex': 12, 'matches': 2, 'inside:end': 1, 'has:neighbor': 11, 'field': 10, 'nthChild': 1, 'not': 1, 'pattern': 8, 'inside:rule': 1}
+  graph-terminal-chain: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=2277
+     input roots={'call': 1}
+     input feats={'regex': 7, 'matches': 3, 'inside:end': 1, 'has:neighbor': 7, 'field': 7, 'pattern': 8, 'inside:rule': 1}
+  lazy-callback-terminal: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=6204
+     input roots={'call': 1}
+     input feats={'regex': 21, 'matches': 2, 'inside:end': 1, 'has:neighbor': 24, 'field': 22, 'not': 3, 'nthChild': 1, 'has:end': 2, 'pattern': 8, 'inside:rule': 1}
+  state-signatures-1: relational inputs=1 stages=18 recursive=2 reach=1 syntax=True refs=False bytes=21914
+     input roots={'util:state-signature-source': 1}
+     input feats={'matches': 4, 'inside:end': 2, 'regex': 6}
+  state-flow-1: relational inputs=5 stages=25 recursive=6 reach=1 syntax=True refs=False bytes=92475
+     input roots={'concatenated_string': 3, 'string': 3, 'module': 2}
+     input feats={'regex': 38, 'matches': 30, 'inside:end': 15, 'pattern': 3, 'not': 5, 'has:end': 3}
+  state-projection-recovery-2: relational inputs=4 stages=7 recursive=0 reach=1 syntax=True refs=False bytes=21790
+     input roots={'util:state-projection-source': 4}
+     input feats={'regex': 24, 'matches': 16, 'inside:end': 8, 'pattern': 3, 'not': 5, 'has:end': 3}
+  state-flow-project-1: relational inputs=5 stages=27 recursive=5 reach=1 syntax=True refs=False bytes=44584
+     input roots={'concatenated_string': 3, 'string': 3, 'module': 2}
+     input feats={'regex': 46, 'matches': 30, 'inside:end': 15, 'pattern': 3, 'not': 5, 'has:end': 3}
+# data-layer-serverplan-steps bytes 1217643
+  define: keys=['options', 'language', 'utils'] utils=2 bytes=1721
+  compile-object-manipulation: forbid roots={'call'} feats={'regex': 16, 'has:neighbor': 15, 'field': 13, 'inside:rule': 1, 'pattern': 5, 'inside:neighbor': 5} bytes=3100
+  cannot-batch: forbid roots={'function_definition'} feats={'regex': 15, 'has:neighbor': 16, 'field': 13, 'pattern': 5, 'inside:neighbor': 6, 'not': 1, 'has:end': 1} bytes=2873
+  runtime-state: forbid roots={'attribute'} feats={'regex': 12, 'has:neighbor': 10, 'field': 9, 'inside:neighbor': 1, 'pattern': 3, 'inside:end': 1, 'not': 1} bytes=1850
+  side-effect-tags: forbid roots={'function_definition'} feats={'regex': 15, 'has:neighbor': 14, 'field': 12, 'pattern': 5, 'inside:neighbor': 5, 'has:end': 1, 'not': 1, 'compare': 1} bytes=2841
+  misc-runtime-member: forbid roots={'attribute'} feats={'regex': 7, 'has:neighbor': 2, 'field': 2} bytes=778
+  misc-runtime-definition: forbid roots={'assignment'} feats={'regex': 6, 'not': 1, 'has:neighbor': 2, 'pattern': 1, 'field': 2} bytes=734
+  runtime-builder-string-name: forbid roots={'call'} feats={'regex': 14, 'has:neighbor': 26, 'field': 19, 'pattern': 7, 'nthChild': 4, 'not': 6} bytes=3654
+  closed-migration-refs: forbid roots={'call'} feats={'regex': 9, 'has:neighbor': 13, 'field': 9, 'inside:end': 1, 'not': 2, 'pattern': 1} bytes=1706
+  closed-migration-with-refs: forbid roots={'call'} feats={'regex': 8, 'has:neighbor': 9, 'field': 6, 'inside:end': 1, 'pattern': 1} bytes=1397
+  closed-migration-postop: forbid roots={'call'} feats={'regex': 10, 'has:neighbor': 11, 'field': 8, 'inside:end': 1, 'pattern': 1, 'not': 1} bytes=1696
+  terminal-projection-dispatch: forbid roots={'comparison_operator'} feats={'regex': 8, 'has:neighbor': 2, 'inside:end': 1, 'field': 1} bytes=963
+  empty-result-assertion: forbid roots={'call'} feats={'regex': 6, 'has:neighbor': 3, 'field': 2, 'not': 1, 'pattern': 1} bytes=794
+  source-ref-ingress: forbid roots={'call'} feats={'regex': 20, 'has:neighbor': 30, 'field': 25, 'pattern': 5} bytes=3881
+  parse-error: forbid roots={'module'} feats={'regex': 4} bytes=432
+  step-contracts-1: relational inputs=2 stages=31 recursive=3 reach=0 syntax=False refs=False bytes=104222
+     input roots={'raise_statement': 1, 'assignment': 1, 'expression_statement': 1, 'class_definition': 1, 'elif_clause': 1, 'decorated_definition': 1, 'argument_list': 1, 'return_statement': 1, 'call': 1, 'if_statement': 1, 'module': 2, 'function_definition': 1}
+     input feats={'regex': 145, 'inside:neighbor': 82, 'inside:end': 45, 'has:neighbor': 155, 'field': 164, 'has:end': 3, 'inside:rule': 1, 'pattern': 27}
+  step-contracts-2: relational inputs=2 stages=24 recursive=2 reach=0 syntax=False refs=False bytes=41130
+     input roots={'attribute': 1, 'assignment': 1, 'expression_statement': 1, 'class_definition': 1, 'decorated_definition': 1, 'argument_list': 1, 'call': 1, 'module': 2, 'function_definition': 1}
+     input feats={'regex': 74, 'inside:neighbor': 40, 'inside:end': 57, 'has:neighbor': 84, 'field': 90, 'inside:rule': 1, 'pattern': 29}
+  step-contracts-3: relational inputs=2 stages=18 recursive=3 reach=0 syntax=False refs=False bytes=21215
+     input roots={'decorated_definition': 1, 'argument_list': 1, 'call': 1, 'expression_statement': 1, 'class_definition': 1, 'module': 2, 'function_definition': 1}
+     input feats={'regex': 23, 'inside:neighbor': 19, 'inside:end': 6, 'has:neighbor': 37, 'field': 28, 'inside:rule': 1, 'pattern': 25}
+  step-contracts-4: relational inputs=2 stages=20 recursive=4 reach=0 syntax=False refs=False bytes=46886
+     input roots={'decorated_definition': 1, 'argument_list': 1, 'call': 1, 'assignment': 1, 'expression_statement': 1, 'class_definition': 1, 'module': 2, 'function_definition': 1}
+     input feats={'regex': 55, 'inside:neighbor': 22, 'has:neighbor': 45, 'field': 45, 'inside:end': 9, 'inside:rule': 1, 'pattern': 23}
+  step-contracts-5: relational inputs=2 stages=16 recursive=3 reach=0 syntax=False refs=False bytes=38448
+     input roots={'raise_statement': 1, 'expression_statement': 1, 'class_definition': 1, 'decorated_definition': 1, 'argument_list': 1, 'call': 1, 'return_statement': 1, 'module': 2, 'function_definition': 1}
+     input feats={'regex': 79, 'inside:neighbor': 49, 'has:neighbor': 92, 'field': 92, 'inside:end': 12, 'has:end': 3, 'inside:rule': 1, 'pattern': 21}
+  step-contracts-6: relational inputs=2 stages=16 recursive=3 reach=0 syntax=False refs=False bytes=31446
+     input roots={'decorated_definition': 1, 'argument_list': 1, 'call': 1, 'assignment': 1, 'expression_statement': 1, 'class_definition': 1, 'module': 2, 'function_definition': 1}
+     input feats={'matches': 8, 'inside:end': 4, 'regex': 62, 'inside:neighbor': 52, 'has:neighbor': 63, 'field': 63, 'inside:rule': 1, 'pattern': 23}
+  runtime-reference-summaries: relational inputs=10 stages=7 recursive=2 reach=0 syntax=False refs=False bytes=29539
+     input roots={'function_definition': 1, 'call': 3, 'set': 2, 'tuple': 2, 'list': 2, 'dictionary': 2, 'identifier': 2, 'parenthesized_expression': 2, 'expression_list': 2, 'keyword_argument': 2, 'pair': 1, 'dictionary_splat': 1, 'return_statement': 1, 'assignment': 1}
+     input feats={'regex': 73, 'has:neighbor': 20, 'pattern': 28, 'field': 16, 'not': 3, 'matches': 2, 'inside:neighbor': 11, 'inside:rule': 1}
+# data-layer-serverplan-quality bytes 901241
+  define: keys=['options', 'language', 'utils'] utils=1 bytes=20407
+  quality-contracts-1: relational inputs=7 stages=54 recursive=4 reach=1 syntax=True refs=False bytes=407241
+     input roots={'module': 2, 'concatenated_string': 3, 'string': 3, 'import_from_statement': 1, 'import_statement': 1}
+     input feats={'regex': 94, 'not': 20, 'inside:neighbor': 4, 'has:end': 4, 'pattern': 9, 'parse': 2, 'has:neighbor': 8, 'field': 8, 'inside:end': 1}
+  quality-contracts-2: relational inputs=1 stages=12 recursive=0 reach=0 syntax=True refs=False bytes=28858
+     input roots={'module': 1}
+     input feats={'regex': 11, 'not': 2, 'matches': 2, 'inside:end': 1}
+  quality-contracts-3: relational inputs=1 stages=8 recursive=0 reach=0 syntax=True refs=False bytes=27286
+     input roots={'module': 1}
+     input feats={'regex': 8, 'matches': 2, 'inside:end': 1}
+  strategy-file-size: forbid roots=set() feats={} bytes=1048
+  quality-local-taxonomy: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=11201
+     input roots={'function_definition': 1}
+     input feats={'regex': 50, 'not': 8, 'pattern': 10, 'has:neighbor': 55, 'field': 53, 'count': 2, 'has:end': 29, 'compare': 4, 'parse': 1}
+  quality-project-taxonomy: relational inputs=1 stages=0 recursive=0 reach=0 syntax=False refs=False bytes=10350
+     input roots={'function_definition': 1}
+     input feats={'regex': 47, 'pattern': 10, 'has:neighbor': 55, 'field': 53, 'count': 2, 'has:end': 29, 'compare': 4, 'parse': 1, 'not': 7}
+  quality-conditional-1: relational inputs=20 stages=32 recursive=5 reach=1 syntax=False refs=False bytes=74536
+     input roots={'identifier': 8, 'concatenated_string': 3, 'string': 3, 'call': 1, 'attribute': 1, 'type': 1, 'parameters': 1, 'typed_parameter': 1, 'typed_default_parameter': 1, 'generic_type': 1, 'type_parameter': 1, 'float': 1, 'none': 1, 'integer': 1, 'true': 1, 'false': 1, 'set': 1, 'tuple': 1, 'pattern_list': 1, 'pair': 1, 'tuple_pattern': 1, 'list': 1, 'dictionary': 1, 'list_pattern': 1, 'util:quality-conditional-1-selectio': 1, 'block': 1, 'case_clause': 1, 'assignment': 1, 'augmented_assignment': 1, 'expression_statement': 1, 'class_definition': 1, 'match_statement': 1, 'for_statement': 1, 'elif_clause': 1, 'decorated_definition': 1, 'argument_list': 1, 'keyword_argument': 1, 'return_statement': 1, 'else_clause': 1, 'if_statement': 1, 'module': 1, 'function_definition': 1}
+     input feats={'regex': 13, 'not': 23, 'matches': 20}
+# data-layer-internal-dead-code bytes 76658
+  define: keys=['options', 'language', 'utils'] utils=2 bytes=1203
+  unreachable-internal-symbols: relational inputs=13 stages=25 recursive=6 reach=0 syntax=False refs=True bytes=29572
+     input roots={'function_definition': 1, 'class_definition': 1, 'decorator': 1, 'util:b5-common-1': 1, 'identifier': 4, 'import_from_statement': 1, 'import_statement': 1, 'generic_type': 1, 'attribute': 1, 'subscript': 1, 'assignment': 1, 'concatenated_string': 1, 'string': 1, 'module': 2}
+     input feats={'not': 19, 'inside:end': 23, 'pattern': 54, 'has:neighbor': 19, 'field': 21, 'inside:rule': 3, 'inside:neighbor': 18, 'matches': 4, 'precedes:end': 2, 'regex': 2, 'binds': 1}
+# data-layer-public-api-triples bytes 65471
+  define: keys=['options', 'language', 'utils'] utils=3 bytes=1663
+  exported-families: relational inputs=11 stages=22 recursive=3 reach=0 syntax=False refs=False bytes=27528
+     input roots={'function_definition': 1, 'class_definition': 1, 'decorator': 1, 'util:b5-common-1': 1, 'identifier': 3, 'import_from_statement': 1, 'import_statement': 1, 'generic_type': 1, 'attribute': 1, 'subscript': 1, 'assignment': 1, 'concatenated_string': 1, 'string': 1, 'call': 1}
+     input feats={'not': 9, 'inside:end': 10, 'pattern': 40, 'has:neighbor': 20, 'field': 18, 'inside:rule': 2, 'inside:neighbor': 12, 'matches': 6, 'precedes:end': 2, 'regex': 4}
+# data-layer-async-sync-delegation bytes 885127
+  define: keys=['options', 'language', 'utils'] utils=174 bytes=128573
+  sync-delegation: forbid roots={'util:b5-common-1'} feats={'matches': 1, 'has:neighbor': 3, 'regex': 3, 'field': 3, 'has:rule': 1, 'pattern': 2, 'compare': 1, 'inside:end': 1} bytes=1393
+  no-await: forbid roots={'util:b5-common-1'} feats={'matches': 1, 'not': 1, 'has:neighbor': 3, 'regex': 3, 'field': 3, 'has:rule': 1, 'pattern': 2, 'compare': 1, 'inside:end': 1} bytes=1399
+  mixed-name: forbid roots={'function_definition'} feats={'has:neighbor': 1, 'regex': 4, 'field': 1, 'inside:end': 1} bytes=1018
+  escape-hatch: budget {"query": {"evidence": {"as": "row", "query": {"ast": {"language": "python", "syntax": "valid", "rule": {"all": [{"all": [{"kind": "call"}, {"pattern": "$ESCAPE"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:asyncio\\.to_thread|run_in_executor|to_thread|tracked_run_in_executor|t
+  wrapper-shape: forbid roots={'util:b5-common-46', 'util:b5-common-55', 'function_definition'} feats={'pattern': 24, 'has:neighbor': 21, 'regex': 5, 'field': 17, 'inside:rule': 4, 'compare': 9, 'matches': 22, 'not': 1, 'inside:end': 1} bytes=6286
+  legacy_sync-missing-lazy: forbid roots={'util:b5-common-133', 'function_definition'} feats={'pattern': 7, 'has:neighbor': 6, 'field': 4, 'inside:neighbor': 7, 'regex': 6, 'not': 2, 'inside:rule': 3, 'has:end': 2, 'compare': 2, 'matches': 3, 'inside:end': 1} bytes=3393
+  legacy_sync-missing-pair: forbid roots={'util:b5-common-133', 'function_definition'} feats={'pattern': 6, 'has:neighbor': 6, 'field': 4, 'inside:neighbor': 10, 'regex': 4, 'not': 2, 'inside:rule': 2, 'matches': 4, 'inside:end': 2, 'has:end': 1, 'compare': 1} bytes=3319
+  legacy_async-missing-lazy: forbid roots={'util:b5-common-146', 'function_definition'} feats={'pattern': 7, 'has:neighbor': 6, 'field': 4, 'inside:neighbor': 7, 'regex': 6, 'not': 2, 'inside:rule': 3, 'has:end': 2, 'compare': 2, 'matches': 3, 'inside:end': 1} bytes=3392
+  legacy_async-missing-pair: forbid roots={'util:b5-common-146', 'function_definition'} feats={'pattern': 6, 'has:neighbor': 6, 'field': 4, 'inside:neighbor': 10, 'regex': 4, 'not': 2, 'inside:rule': 2, 'matches': 4, 'inside:end': 2, 'has:end': 1, 'compare': 1} bytes=3318
+  legacy_module_sync-missing-lazy: forbid roots={'util:b5-common-152', 'function_definition'} feats={'pattern': 7, 'has:neighbor': 6, 'field': 4, 'inside:neighbor': 7, 'regex': 6, 'not': 2, 'inside:rule': 3, 'has:end': 2, 'compare': 2, 'matches': 3, 'inside:end': 1} bytes=3421
+  legacy_module_sync-missing-pair: forbid roots={'util:b5-common-152', 'function_definition'} feats={'pattern': 6, 'has:neighbor': 6, 'field': 4, 'inside:neighbor': 10, 'regex': 4, 'not': 2, 'inside:rule': 2, 'matches': 4, 'inside:end': 2, 'has:end': 1, 'compare': 1} bytes=3347
+  legacy_module_async-missing-lazy: forbid roots={'util:b5-common-158', 'function_definition'} feats={'pattern': 7, 'has:neighbor': 6, 'field': 4, 'inside:neighbor': 7, 'regex': 6, 'not': 2, 'inside:rule': 3, 'has:end': 2, 'compare': 2, 'matches': 3, 'inside:end': 1} bytes=3420
+  legacy_module_async-missing-pair: forbid roots={'util:b5-common-158', 'function_definition'} feats={'pattern': 6, 'has:neighbor': 6, 'field': 4, 'inside:neighbor': 10, 'regex': 4, 'not': 2, 'inside:rule': 2, 'matches': 4, 'inside:end': 2, 'has:end': 1, 'compare': 1} bytes=3346
+# data-layer-sync-async-signatures bytes 34292
+  define: keys=['options', 'language', 'utils'] utils=6 bytes=6202
+  transaction-connection: forbid roots={'function_definition'} feats={'pattern': 4, 'has:neighbor': 9, 'field': 7, 'matches': 10, 'not': 4, 'regex': 3, 'follows:end': 2, 'inside:end': 2, 'has:end': 1, 'compare': 1} bytes=2026
+# data-layer-grammar-callable-constructors bytes 122526
+  define: keys=['options', 'language', 'utils'] utils=4 bytes=3179
+  namespace-render: forbid roots={'call'} feats={'has:neighbor': 5, 'regex': 3, 'field': 4} bytes=794
+  dynamic-render: forbid roots={'assignment'} feats={'has:neighbor': 2, 'regex': 1, 'field': 2} bytes=460
+  callable-param: forbid roots={'typed_parameter', 'identifier', 'default_parameter', 'typed_default_parameter'} feats={'pattern': 4, 'has:neighbor': 9, 'field': 7, 'matches': 1, 'inside:rule': 2, 'regex': 6} bytes=1613
+  callable-field: forbid roots={'function_definition'} feats={'has:neighbor': 15, 'regex': 7, 'field': 12, 'inside:rule': 1, 'pattern': 6, 'matches': 1, 'has:end': 1} bytes=2121
+  called-field: forbid roots={'function_definition'} feats={'has:neighbor': 22, 'regex': 13, 'field': 20, 'inside:rule': 1, 'pattern': 7, 'has:end': 3} bytes=3061
+  untyped-called-field: forbid roots={'function_definition'} feats={'has:neighbor': 35, 'regex': 18, 'field': 28, 'inside:rule': 2, 'pattern': 13, 'has:end': 3, 'not': 2} bytes=4666
+  any-called-field: forbid roots={'function_definition'} feats={'has:neighbor': 33, 'regex': 19, 'field': 27, 'inside:rule': 2, 'pattern': 10, 'has:end': 3} bytes=4433
+  constructor-arg: budget {"query": {"evidence": {"as": "row", "query": {"ast": {"language": "python", "syntax": "valid", "rule": {"any": [{"all": [{"kind": "class_definition"}, {"pattern": "$ROW"}, {"has": {"pattern": "$SEED", "stopBy": "neighbor", "field": "name"}}, {"has": {"has": {"any": [{"all": [{"all": [{"kind": "func
+# data-layer-transaction-patterns bytes 289565
+  define: keys=['options', 'language', 'utils'] utils=20 bytes=14982
+  category-1: forbid roots={'util:connection-function'} feats={'matches': 1, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=961
+  category-2: forbid roots={'util:connection-function'} feats={'matches': 2, 'not': 1, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1017
+  category-3: forbid roots={'util:connection-function'} feats={'matches': 2, 'not': 1, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1014
+  category-4: forbid roots={'util:connection-function'} feats={'matches': 2, 'not': 1, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1017
+  category-5: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 2, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1081
+  internal-5: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 1, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1038
+  category-6: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 2, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1063
+  internal-6: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 1, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1032
+  category-7: forbid roots={'util:connection-function'} feats={'matches': 2, 'not': 1, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1020
+  category-8: forbid roots={'util:connection-function'} feats={'matches': 2, 'not': 1, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1017
+  category-9: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 2, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1069
+  internal-9: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 1, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1034
+  category-10: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 2, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1065
+  internal-10: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 1, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1034
+  category-11: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 2, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1065
+  internal-11: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 1, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1034
+  category-12: forbid roots={'util:connection-function'} feats={'matches': 2, 'not': 1, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1022
+  category-13: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 2, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1059
+  internal-13: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 1, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1032
+  category-14: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 2, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1025
+  internal-14: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 1, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1036
+  category-15: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 2, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1016
+  internal-15: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 1, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1033
+  category-16: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 2, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1055
+  internal-16: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 1, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:rule': 1, 'inside:end': 1} bytes=1046
+  category-17: forbid roots={'util:connection-function'} feats={'matches': 2, 'has:neighbor': 1, 'regex': 3, 'field': 1, 'inside:end': 1} bytes=800
+  category-18: forbid roots={'util:connection-function'} feats={'matches': 2, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'not': 1, 'inside:end': 1} bytes=907
+  category-19: forbid roots={'util:connection-function'} feats={'matches': 3, 'has:neighbor': 3, 'regex': 5, 'field': 3, 'not': 3, 'inside:end': 1} bytes=1070
+  internal-19: forbid roots={'util:connection-function'} feats={'matches': 3, 'has:neighbor': 3, 'regex': 5, 'field': 3, 'not': 2, 'inside:end': 1} bytes=1039
+  category-20: forbid roots={'util:connection-function'} feats={'matches': 3, 'has:neighbor': 4, 'regex': 6, 'field': 4, 'not': 4, 'inside:end': 1} bytes=1169
+  internal-20: forbid roots={'util:connection-function'} feats={'matches': 3, 'has:neighbor': 4, 'regex': 6, 'field': 4, 'not': 3, 'inside:end': 1} bytes=1142
+  category-21: forbid roots={'util:connection-function'} feats={'matches': 2, 'has:neighbor': 5, 'regex': 7, 'field': 5, 'not': 4, 'inside:end': 1} bytes=1212
+  category-22: forbid roots={'util:connection-function'} feats={'matches': 2, 'has:neighbor': 6, 'regex': 8, 'field': 6, 'not': 5, 'inside:end': 1} bytes=1311
+  category-23: forbid roots={'util:connection-function'} feats={'matches': 2, 'not': 6, 'has:neighbor': 6, 'regex': 8, 'field': 6, 'inside:end': 1} bytes=1322
+  category-24: forbid roots={'util:connection-function'} feats={'matches': 2, 'has:neighbor': 1, 'regex': 3, 'field': 1, 'inside:end': 1} bytes=775
+  category-25: forbid roots={'util:connection-function'} feats={'matches': 2, 'not': 1, 'has:neighbor': 1, 'regex': 3, 'field': 1, 'inside:end': 1} bytes=824
+  category-26: forbid roots={'util:connection-function'} feats={'matches': 2, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'not': 1, 'inside:end': 1} bytes=888
+  category-27: forbid roots={'util:connection-function'} feats={'matches': 2, 'not': 2, 'has:neighbor': 2, 'regex': 4, 'field': 2, 'inside:end': 1} bytes=920
+  category-28: forbid roots={'util:connection-function'} feats={'matches': 2, 'has:neighbor': 3, 'regex': 5, 'field': 3, 'not': 2, 'inside:end': 1} bytes=1005
+  category-29: forbid roots={'util:connection-function'} feats={'matches': 2, 'has:neighbor': 4, 'regex': 6, 'field': 4, 'not': 3, 'inside:end': 1} bytes=1130
+  category-30: forbid roots={'util:connection-function'} feats={'matches': 3, 'has:neighbor': 5, 'regex': 7, 'field': 5, 'not': 5, 'inside:end': 1} bytes=1356
+  internal-30: forbid roots={'util:connection-function'} feats={'matches': 3, 'has:neighbor': 5, 'regex': 7, 'field': 5, 'not': 4, 'inside:end': 1} bytes=1325
+  category-31: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 6, 'has:neighbor': 5, 'regex': 7, 'field': 5, 'inside:end': 1} bytes=1397
+  internal-31: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 5, 'has:neighbor': 5, 'regex': 7, 'field': 5, 'inside:end': 1} bytes=1366
+  category-32: forbid roots={'util:connection-function'} feats={'matches': 3, 'has:neighbor': 6, 'regex': 8, 'field': 6, 'not': 6, 'inside:end': 1} bytes=1510
+  internal-32: forbid roots={'util:connection-function'} feats={'matches': 3, 'has:neighbor': 6, 'regex': 8, 'field': 6, 'not': 5, 'inside:end': 1} bytes=1479
+  category-33: forbid roots={'util:connection-function'} feats={'matches': 2, 'not': 6, 'has:neighbor': 6, 'regex': 8, 'field': 6, 'inside:end': 1} bytes=1545
+  category-34: forbid roots={'util:connection-function'} feats={'matches': 3, 'has:neighbor': 7, 'regex': 9, 'field': 7, 'not': 7, 'inside:end': 1} bytes=1661
+  internal-34: forbid roots={'util:connection-function'} feats={'matches': 3, 'has:neighbor': 7, 'regex': 9, 'field': 7, 'not': 6, 'inside:end': 1} bytes=1626
+  category-35: forbid roots={'util:connection-function'} feats={'matches': 3, 'has:neighbor': 8, 'regex': 10, 'field': 8, 'not': 8, 'inside:end': 1} bytes=1756
+  internal-35: forbid roots={'util:connection-function'} feats={'matches': 3, 'has:neighbor': 8, 'regex': 10, 'field': 8, 'not': 7, 'inside:end': 1} bytes=1729
+  category-36: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 9, 'has:neighbor': 8, 'regex': 10, 'field': 8, 'inside:end': 1} bytes=1782
+  internal-36: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 8, 'has:neighbor': 8, 'regex': 10, 'field': 8, 'inside:end': 1} bytes=1755
+  category-37: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 9, 'has:neighbor': 8, 'regex': 10, 'field': 8, 'inside:end': 1} bytes=1859
+  internal-37: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 8, 'has:neighbor': 8, 'regex': 10, 'field': 8, 'inside:end': 1} bytes=1816
+  category-38: forbid roots={'util:connection-function'} feats={'matches': 2, 'not': 8, 'has:neighbor': 8, 'regex': 10, 'field': 8, 'inside:end': 1} bytes=1857
+  category-39: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 9, 'has:neighbor': 8, 'regex': 10, 'field': 8, 'inside:end': 1} bytes=1851
+  internal-39: forbid roots={'util:connection-function'} feats={'matches': 3, 'not': 8, 'has:neighbor': 8, 'regex': 10, 'field': 8, 'inside:end': 1} bytes=1862

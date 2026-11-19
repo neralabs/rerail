@@ -1,0 +1,13 @@
+.policy "eslint-no-debugger" revision 4
+.description "Remove debugger statements; they pause execution whenever developer tools are open."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// ESLint's no-debugger: every `debugger;` statement.   debugger;  → Unexpected 'debugger' statement.
+// No options and no fix (ESLint dropped its fix: deleting the statement can change control flow).
+.violation no_debugger(at: node) code "no-debugger" "Unexpected 'debugger' statement."
+    suppress eslint "no-debugger"
+    suppress oxlint "no-debugger"
+    suppress biome "lint/suspicious/noDebugger"
+no_debugger(n) :- kind(n, "debugger_statement").
