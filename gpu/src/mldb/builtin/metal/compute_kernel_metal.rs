@@ -104,6 +104,9 @@ fn get_kernel_type_from_data_type(data_type: MTLDataType) -> Result<KernelBaseTy
         ULong2 => basic("u64", 8, &[2]),
         ULong3 => basic("u64", 8, &[3]),
         ULong4 => basic("u64", 8, &[4]),
+        // A device pointer a structure holds (a directory's tape): its address, which the host writes
+        // (`Buffer::device_address`), as the CUDA and CPU shims' rows give it.
+        Pointer => basic("u64", 8, &[1]),
         other => return Err(format!("getKernelTypeFromDataType: unknown type {other:?}")),
     })
 }
@@ -426,6 +429,19 @@ pub fn alloc_uninitialized_array_sync<T>(device: &DeviceRef, length: usize) -> m
     pooled(|| device.new_buffer((length * std::mem::size_of::<T>()).max(16) as u64, metal::MTLResourceOptions::StorageModeShared))
 }
 
+/// A buffer over `len` bytes of the host's memory at `ptr`, read in place (decision 0353): a no-copy buffer, whose
+/// address and length Metal requires page-aligned.
+///
+/// # Safety
+/// The memory outlives the buffer and its clones, and every use of them by queued work.
+pub unsafe fn wrap_host_memory(device: &DeviceRef, ptr: *mut u8, len: usize) -> Result<metal::Buffer, String> {
+    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as usize;
+    if (ptr as usize) % page != 0 || len % page != 0 || len == 0 {
+        return Err(format!("Metal: a no-copy buffer at {ptr:p} ({len} bytes) is not page-aligned"));
+    }
+    Ok(pooled(|| device.new_buffer_with_bytes_no_copy(ptr.cast(), len as u64, metal::MTLResourceOptions::StorageModeShared, None)))
+}
+
 /// `transferToDeviceImmutable`/`manageMemoryRegionSync`: device memory holding `data`.
 pub fn transfer_to_device_immutable<T: crate::Pod>(device: &DeviceRef, data: &[T]) -> metal::Buffer {
     let b = alloc_uninitialized_array_sync::<T>(device, data.len());
@@ -462,6 +478,17 @@ impl MetalBindContext {
         let grid_size = metal::MTLSize::new(d(grid, 0), d(grid, 1), d(grid, 2));
         let block_size = metal::MTLSize::new(d(block, 0), d(block, 1), d(block, 2));
         self.encoder.dispatch_thread_groups(grid_size, block_size);
+        Ok(())
+    }
+
+    pub fn use_buffer(&mut self, buffer: &metal::BufferRef) {
+        self.encoder.use_resource(buffer, metal::MTLResourceUsage::Read | metal::MTLResourceUsage::Write);
+    }
+
+    /// Metal's indirect dispatch: its counts are read when it runs (`max_groups` is the other backends').
+    pub fn launch_indirect(&mut self, groups: &metal::BufferRef, offset: u64, _max_groups: &[u64], block: &[u64]) -> Result<(), String> {
+        let d = |v: &[u64], i: usize| v.get(i).copied().unwrap_or(1);
+        self.encoder.dispatch_thread_groups_indirect(groups, offset, metal::MTLSize::new(d(block, 0), d(block, 1), d(block, 2)));
         Ok(())
     }
 }

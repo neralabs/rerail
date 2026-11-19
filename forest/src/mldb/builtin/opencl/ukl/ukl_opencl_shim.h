@@ -229,9 +229,10 @@ static inline uint32_t ukl_simdgroup_broadcast_first(uint32_t val, uint16_t simd
 #define PASS_INNER_ARG_GID0(Type, Name) ((Type)get_global_id(0))
 #define PASS_INNER_ARG_GID1(Type, Name) ((Type)get_global_id(1))
 #define PASS_INNER_ARG_GID2(Type, Name) ((Type)get_global_id(2))
-#define PASS_INNER_ARG_GSZ0(Type, Name) ((Type)get_global_size(0))
-#define PASS_INNER_ARG_GSZ1(Type, Name) ((Type)get_global_size(1))
-#define PASS_INNER_ARG_GSZ2(Type, Name) ((Type)get_global_size(2))
+// The grid's size: the launch's, or under an indirect launch the groups its counts give (`__ukl_groups`).
+#define PASS_INNER_ARG_GSZ0(Type, Name) ((Type)(__ukl_groups ? __ukl_groups[__ukl_groups_at] * get_local_size(0) : get_global_size(0)))
+#define PASS_INNER_ARG_GSZ1(Type, Name) ((Type)(__ukl_groups ? __ukl_groups[__ukl_groups_at + 1u] * get_local_size(1) : get_global_size(1)))
+#define PASS_INNER_ARG_GSZ2(Type, Name) ((Type)(__ukl_groups ? __ukl_groups[__ukl_groups_at + 2u] * get_local_size(2) : get_global_size(2)))
 #define PASS_INNER_ARG_LID0(Type, Name) ((Type)get_local_id(0))
 #define PASS_INNER_ARG_LID1(Type, Name) ((Type)get_local_id(1))
 #define PASS_INNER_ARG_LID2(Type, Name) ((Type)get_local_id(2))
@@ -275,6 +276,10 @@ static inline uint32_t ukl_simdgroup_broadcast_first(uint32_t val, uint16_t simd
 #define GEN_OUTER_PARAMETER_LANE(Type, Name)
 #define GEN_OUTER_PARAMETER_NLANES(Type, Name)
 #define GEN_OUTER_PARAMETER_SHARED(Type, Name)
+// An indirect launch's group counts (null for a direct launch) and the word they start at, parameters after the
+// rows' that no row names (decision 0440 step B). OpenCL 1.2 has no indirect launch: the host launches the caller's
+// bound of groups, and the groups past the counts return first, so a kernel sees the grid the counts give.
+#define GEN_OUTER_PARAMETER_GROUPS(Type, Name) __global const Type * Name, uint Name##_at
 #define GEN_SHARED_DECL_SHARED(Type, Name, Bounds) __local Type Name[Bounds];
 
 #define GEN_OUTER_PARAMETER2(Access, Type, Name, Bounds) CALL2_A(GEN_OUTER_PARAMETER_, Access, Type, Name)
@@ -336,8 +341,11 @@ static inline uint __ukl_cl_text(__global ulong * out, uint at, __constant char 
         __ukl_cl_text(__ukl_out, __ukl_k, __ukl_text); \
     } \
     static void Name ## _inner( __UKL_FOREACH_QUAD(GEN_INNER_PARAMETER2, __VA_ARGS__) __UKL_PARAMS ); \
-    __kernel void Name ( __UKL_FOREACH_QUAD(GEN_OUTER_PARAMETER2, __VA_ARGS__) ) \
+    __kernel void Name ( __UKL_FOREACH_QUAD(GEN_OUTER_PARAMETER2, __VA_ARGS__, GROUPS, uint, __ukl_groups, ) ) \
     { \
+        if (__ukl_groups && (get_group_id(0) >= __ukl_groups[__ukl_groups_at] || get_group_id(1) >= __ukl_groups[__ukl_groups_at + 1u] \
+                             || get_group_id(2) >= __ukl_groups[__ukl_groups_at + 2u])) \
+            return; \
         __UKL_SG_DECL \
         __UKL_FOREACH_QUAD_NOSEP(GEN_SHARED_DECL2, __VA_ARGS__) \
         Name ## _inner ( __UKL_FOREACH_QUAD(PASS_INNER_ARG2, __VA_ARGS__) __UKL_ARGS ); \

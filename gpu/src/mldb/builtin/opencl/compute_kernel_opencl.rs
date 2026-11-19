@@ -284,7 +284,8 @@ impl ClDevice {
 struct Allocation {
     ptr: *mut u8,
     len: u64,
-    layout: std::alloc::Layout,
+    /// `None`: memory wrapped in place (`wrap_host_memory`), its owner's.
+    layout: Option<std::alloc::Layout>,
     mem: Ptr,
 }
 
@@ -297,7 +298,9 @@ impl Drop for Allocation {
         if let Ok(a) = api() {
             unsafe { (a.release_mem_object)(self.mem) };
         }
-        unsafe { std::alloc::dealloc(self.ptr, self.layout) };
+        if let Some(layout) = self.layout {
+            unsafe { std::alloc::dealloc(self.ptr, layout) };
+        }
     }
 }
 
@@ -338,7 +341,25 @@ pub fn alloc_uninitialized_array_sync<T>(device: &ClDevice, length: usize) -> Cl
         unsafe { std::alloc::dealloc(ptr, layout) };
         panic!("OpenCL: clCreateBuffer of {len} bytes failed ({e})");
     }
-    ClBuffer(Arc::new(Allocation { ptr, len: len as u64, layout, mem }))
+    ClBuffer(Arc::new(Allocation { ptr, len: len as u64, layout: Some(layout), mem }))
+}
+
+/// A buffer over `len` bytes of the host's memory at `ptr`, read in place (decision 0353; the device reads host
+/// pages in place, `ClDevice::open`). Drivers use host memory in place only where it is page-aligned and a whole
+/// number of cache lines (`alloc_uninitialized_array_sync`): other memory is refused.
+///
+/// # Safety
+/// The memory outlives the buffer and its clones, and every use of them by queued work.
+pub unsafe fn wrap_host_memory(device: &ClDevice, ptr: *mut u8, len: usize) -> Result<ClBuffer, String> {
+    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as usize;
+    if (ptr as usize) % page != 0 || len % 64 != 0 || len == 0 {
+        return Err(format!("OpenCL: host memory at {ptr:p} ({len} bytes) is not page-aligned and a whole number of cache lines: a driver would copy it"));
+    }
+    let a = api()?;
+    let mut e = 0;
+    let mem = unsafe { (a.create_buffer)(device.0.context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, len, ptr.cast(), &mut e) };
+    check("clCreateBuffer", e)?;
+    Ok(ClBuffer(Arc::new(Allocation { ptr, len: len as u64, layout: None, mem })))
 }
 
 /// `transferToDeviceImmutable`: memory holding `data`.
@@ -680,7 +701,12 @@ impl ClComputeQueue {
     }
 
     pub fn new_bind_context<'a>(&'a self, function: &'a ClComputeFunction) -> ClBindContext<'a> {
-        ClBindContext { queue: self, function, params: vec![None; function.param_sizes.len()] }
+        // The rows' parameters, then the indirect launch's counts and their first word (`GEN_OUTER_PARAMETER_GROUPS`:
+        // none, a direct launch).
+        let mut params = vec![None; function.param_sizes.len() + 2];
+        let n = function.param_sizes.len();
+        (params[n], params[n + 1]) = (Some(Param::Null), Some(Param::Bytes(0u32.to_ne_bytes().to_vec())));
+        ClBindContext { queue: self, function, params }
     }
 
     fn push(&self, op: impl FnOnce(&mut Enqueue) -> Result<(), String> + Send + 'static) {
@@ -831,6 +857,8 @@ enum Param {
     Bytes(Vec<u8>),
     Buffer(ClBuffer),
     Local(usize),
+    /// A null buffer: a direct launch's counts (`GEN_OUTER_PARAMETER_GROUPS`).
+    Null,
 }
 
 impl ClBindContext<'_> {
@@ -847,6 +875,19 @@ impl ClBindContext<'_> {
     pub fn set_thread_group_memory(&mut self, arg_num: u64, n_bytes: u64) {
         assert!(self.function.local[arg_num as usize], "{}: argument {arg_num} is no threadgroup memory", self.function.name);
         self.params[arg_num as usize] = Some(Param::Local((n_bytes as usize).max(16)));
+    }
+
+    pub fn use_buffer(&mut self, buffer: &ClBuffer) {
+        self.queue.keep(buffer.clone());
+    }
+
+    /// OpenCL 1.2 has no indirect launch: `max_groups` are launched, and those past the counts return first (the
+    /// shim's `__ukl_groups`), so the kernel runs on the grid the counts give, with no host read of them.
+    pub fn launch_indirect(&mut self, groups: &ClBuffer, offset: u64, max_groups: &[u64], block: &[u64]) -> Result<(), String> {
+        let n = self.function.param_sizes.len();
+        self.params[n] = Some(Param::Buffer(groups.clone()));
+        self.params[n + 1] = Some(Param::Bytes(((offset / 4) as u32).to_ne_bytes().to_vec()));
+        self.launch(max_groups, block)
     }
 
     pub fn launch(&mut self, grid: &[u64], block: &[u64]) -> Result<(), String> {
@@ -879,6 +920,7 @@ impl ClBindContext<'_> {
                     Param::Bytes(b) => unsafe { (c.a.set_kernel_arg)(k.0, i as u32, b.len(), b.as_ptr().cast()) },
                     Param::Buffer(b) => unsafe { (c.a.set_kernel_arg)(k.0, i as u32, std::mem::size_of::<Ptr>(), (&b.0.mem as *const Ptr).cast()) },
                     Param::Local(n) => unsafe { (c.a.set_kernel_arg)(k.0, i as u32, *n, std::ptr::null()) },
+                    Param::Null => unsafe { (c.a.set_kernel_arg)(k.0, i as u32, std::mem::size_of::<Ptr>(), (&std::ptr::null_mut::<c_void>() as *const Ptr).cast()) },
                 };
                 check(&format!("{name}: setting argument {i}"), e)?;
             }

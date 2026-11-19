@@ -936,6 +936,26 @@ listings) kept the number. The writer (`<ukl/writer.h>`) waits for oscar, which 
   under parallel runs and were fixed in the merge (the merge commit says how): the writer's tail outgrew its room
   (0426 R4), and two tests read process-wide counts that the tests beside them move.
 
+**B: the device layer's part (2026-11-19).** The engine's Metal uses five things the device layer lacked. Each is a
+primitive of it now, on every backend, with a test (`gpu/src/device_tests.rs`) that passes on Metal, the CPU and
+Apple's OpenCL, and on a GB10's CUDA and its CPU (aarch64 Linux):
+- **Host memory in place** (`wrap_host_memory`; the engine's seven no-copy wraps): Metal's no-copy buffer and
+  OpenCL's `CL_MEM_USE_HOST_PTR`, each over page-aligned memory only; on CUDA the host pointer itself when the
+  device reads pageable memory through the host's page tables (the GB10), else the pages registered and their
+  device address. The CPU's buffer is the memory. Memory a backend cannot take is an error, never a copy (0353).
+- **Device addresses** (`Buffer::device_address`; the view directories' tape pointers) and **residency**
+  (`uses`: Metal's `useResource`; elsewhere the buffer is kept to the launch's end). OpenCL 1.2 has no pointer
+  in a buffer: `None` there, until SVM. Metal's reflection now takes a structure's pointer field as its address.
+- **Indirect launch** (`run_indirect`; seven sites): Metal's indirect dispatch; on the CPU the counts are read
+  when the launch runs. CUDA and OpenCL have none: the shims give each kernel a hidden last parameter, the
+  counts' address (null in a direct launch). The host launches the caller's bound of groups, the groups past the
+  counts return first, and `GSZ` reads the counts' grid, so the kernel sees what Metal gives it. No host read of
+  the counts, no stall in the queue.
+- **Specialization** (`program_with`; the label passes' function constant): a define a value, each value a
+  program compiled once. A define is portable where a function constant is Metal's alone.
+Next in B: the process's device, buffer pool and blocks on `rerail-gpu`'s types (`rerail_blocks`'s `Backing`,
+`accel::gpu::shared`), and the kernel store.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

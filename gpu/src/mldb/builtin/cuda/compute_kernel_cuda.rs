@@ -38,6 +38,8 @@ struct Api {
     cu_ctx_set_current: unsafe extern "C" fn(Ptr) -> CUresult,
     cu_mem_host_alloc: unsafe extern "C" fn(*mut Ptr, usize, u32) -> CUresult,
     cu_mem_host_get_device_pointer: unsafe extern "C" fn(*mut DevPtr, Ptr, u32) -> CUresult,
+    cu_mem_host_register: unsafe extern "C" fn(Ptr, usize, u32) -> CUresult,
+    cu_mem_host_unregister: unsafe extern "C" fn(Ptr) -> CUresult,
     cu_module_load_data: unsafe extern "C" fn(*mut Ptr, *const c_void) -> CUresult,
     cu_module_get_function: unsafe extern "C" fn(*mut Ptr, Ptr, *const c_char) -> CUresult,
     cu_module_get_global: unsafe extern "C" fn(*mut DevPtr, *mut usize, Ptr, *const c_char) -> CUresult,
@@ -78,6 +80,9 @@ const CU_ERROR_NOT_READY: CUresult = 600;
 const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR: i32 = 75;
 const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR: i32 = 76;
 const CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN: i32 = 97;
+const CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES: i32 = 100;
+const CU_MEMHOSTREGISTER_PORTABLE: u32 = 0x01;
+const CU_MEMHOSTREGISTER_DEVICEMAP: u32 = 0x02;
 const CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES: i32 = 1;
 const CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES: i32 = 8;
 
@@ -124,6 +129,8 @@ fn api() -> Result<&'static Api, String> {
             cu_ctx_set_current: sym!(cuda, "cuCtxSetCurrent"),
             cu_mem_host_alloc: sym!(cuda, "cuMemHostAlloc"),
             cu_mem_host_get_device_pointer: sym!(cuda, "cuMemHostGetDevicePointer_v2"),
+            cu_mem_host_register: sym!(cuda, "cuMemHostRegister_v2" | "cuMemHostRegister"),
+            cu_mem_host_unregister: sym!(cuda, "cuMemHostUnregister"),
             cu_module_load_data: sym!(cuda, "cuModuleLoadData"),
             cu_module_get_function: sym!(cuda, "cuModuleGetFunction"),
             cu_module_get_global: sym!(cuda, "cuModuleGetGlobal_v2"),
@@ -184,6 +191,9 @@ pub struct CudaDevice {
     pub sm: u32,
     /// The shared memory a block may opt in to (static and dynamic together).
     pub max_shared_per_block: u32,
+    /// Whether the device reads the host's pageable memory through the host's page tables (a GB10's ATS): then
+    /// memory wrapped in place (`wrap_host_memory`) is read at the host's address, nothing registered.
+    pub pageable: bool,
 }
 
 unsafe impl Send for CudaDevice {}
@@ -223,9 +233,10 @@ impl CudaDevice {
             };
             let sm = (attr(CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR)? * 10 + attr(CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR)?) as u32;
             let max_shared_per_block = attr(CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN)? as u32;
+            let pageable = attr(CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES).unwrap_or(0) != 0;
             let mut ctx = std::ptr::null_mut();
             ck((a.cu_device_primary_ctx_retain)(&mut ctx, dev), "cuDevicePrimaryCtxRetain")?;
-            Ok(CudaDevice { ctx, sm, max_shared_per_block })
+            Ok(CudaDevice { ctx, sm, max_shared_per_block, pageable })
         }
     }
 
@@ -255,8 +266,10 @@ struct Allocation {
     dev: DevPtr,
     /// The bytes asked for (at least 16, as on Metal), what `length` says.
     len: u64,
-    /// The block's size class: the bytes it holds.
+    /// The block's size class: the bytes it holds. 0: memory wrapped in place (`wrap_host_memory`), its owner's.
     class: u64,
+    /// Wrapped memory registered with the driver (`cuMemHostRegister`), unregistered when the buffer goes.
+    registered: bool,
 }
 
 unsafe impl Send for Allocation {}
@@ -267,6 +280,14 @@ impl Drop for Allocation {
     /// stream held on a host-signalled event (an armed prediction) would then wait for the very host thread that is
     /// freeing. The pool keeps a process's peak of each class (0440 E1: the pool's slabs are `cuMemHostAlloc`'s).
     fn drop(&mut self) {
+        if self.class == 0 {
+            if self.registered
+                && let Ok(a) = api()
+            {
+                unsafe { (a.cu_mem_host_unregister)(self.host.cast()) };
+            }
+            return;
+        }
         POOL.lock().unwrap().entry(self.class).or_default().push(Block { host: self.host, dev: self.dev });
     }
 }
@@ -351,7 +372,28 @@ pub fn alloc_uninitialized_array_sync<T>(device: &CudaDevice, length: usize) -> 
         must(unsafe { (a.cu_mem_host_get_device_pointer)(&mut dev, host, 0) }, "cuMemHostGetDevicePointer");
         Block { host: host.cast(), dev }
     });
-    CudaBuffer(Arc::new(Allocation { host, dev, len, class }))
+    CudaBuffer(Arc::new(Allocation { host, dev, len, class, registered: false }))
+}
+
+/// A buffer over `len` bytes of the host's memory at `ptr`, read in place (decision 0353): at the host's address
+/// where the device reads pageable memory (`CudaDevice::pageable`), else registered with the driver and mapped.
+///
+/// # Safety
+/// The memory outlives the buffer and its clones, and every use of them by queued work.
+pub unsafe fn wrap_host_memory(device: &CudaDevice, ptr: *mut u8, len: usize) -> Result<CudaBuffer, String> {
+    if device.pageable {
+        return Ok(CudaBuffer(Arc::new(Allocation { host: ptr, dev: ptr as DevPtr, len: len as u64, class: 0, registered: false })));
+    }
+    let a = device.current();
+    unsafe {
+        ck((a.cu_mem_host_register)(ptr.cast(), len, CU_MEMHOSTREGISTER_PORTABLE | CU_MEMHOSTREGISTER_DEVICEMAP), "cuMemHostRegister")?;
+        let mut dev = 0;
+        if let Err(e) = ck((a.cu_mem_host_get_device_pointer)(&mut dev, ptr.cast(), 0), "cuMemHostGetDevicePointer") {
+            (a.cu_mem_host_unregister)(ptr.cast());
+            return Err(e);
+        }
+        Ok(CudaBuffer(Arc::new(Allocation { host: ptr, dev, len: len as u64, class: 0, registered: true })))
+    }
 }
 
 /// `transferToDeviceImmutable`: memory holding `data`.
@@ -571,7 +613,10 @@ impl CudaComputeQueue {
 
     /// `newBindContext`: one launch of `function`, on the queue's stream.
     pub fn new_bind_context<'a>(&'a self, function: &'a CudaComputeFunction) -> CudaBindContext<'a> {
-        CudaBindContext { device: self.device, stream: self.stream, function, params: vec![Vec::new(); function.param_sizes.len()], shared: 0, keep: &self.keep }
+        // The rows' parameters, then the indirect launch's counts (`GEN_OUTER_PARAMETER_GROUPS`: none, a direct launch).
+        let mut params = vec![Vec::new(); function.param_sizes.len() + 1];
+        params[function.param_sizes.len()] = vec![0];
+        CudaBindContext { device: self.device, stream: self.stream, function, params, shared: 0, keep: &self.keep }
     }
 
     /// `enqueueCopyFromHost`: the bytes are staged now, and copied into `dst` at `dst_offset` in queue order.
@@ -796,5 +841,20 @@ impl CudaBindContext<'_> {
             unsafe { (a.cu_launch_kernel)(f.func, d(grid, 0), d(grid, 1), d(grid, 2), d(block, 0), d(block, 1), d(block, 2), self.shared as u32, self.stream, ptrs.as_mut_ptr(), std::ptr::null_mut()) },
             &format!("launching {}", f.name),
         )
+    }
+
+    pub fn use_buffer(&mut self, buffer: &CudaBuffer) {
+        self.keep.borrow_mut().push(buffer.clone());
+    }
+
+    /// CUDA has no indirect launch: `max_groups` are launched, and those past the counts return first (the shim's
+    /// `__ukl_groups`), so the kernel runs on the grid the counts give, with no host read of them.
+    pub fn launch_indirect(&mut self, groups: &CudaBuffer, offset: u64, max_groups: &[u64], block: &[u64]) -> Result<(), String> {
+        let hidden = self.function.param_sizes.len();
+        self.keep.borrow_mut().push(groups.clone());
+        self.params[hidden] = vec![groups.device_address() + offset];
+        let r = self.launch(max_groups, block);
+        self.params[hidden] = vec![0];
+        r
     }
 }

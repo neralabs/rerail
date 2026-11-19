@@ -27,6 +27,8 @@ pub mod kernels;
 pub mod library;
 mod rows;
 #[cfg(test)]
+mod device_tests;
+#[cfg(test)]
 mod library_tests;
 
 /// A plain value a buffer can be viewed as: any bit pattern is a value, no padding read as data, no pointers.

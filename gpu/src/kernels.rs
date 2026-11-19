@@ -12,28 +12,45 @@ use std::sync::{Mutex, OnceLock};
 
 /// `text`, a UKL source named `name`, preprocessed for the process's device.
 pub fn preprocess(name: &str, text: &str) -> Result<String, String> {
+    preprocess_with(name, text, &[])
+}
+
+/// `text` preprocessed for the process's device with `defines` (a specialization: `program_with`).
+pub fn preprocess_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<String, String> {
     let path = format!("/<kernels>/{name}");
-    crate::shared::get().ok_or("no device")?.device.preprocess().file(&path, text).run(&path).map_err(|e| e.to_string())
+    let mut p = crate::shared::get().ok_or("no device")?.device.preprocess().file(&path, text);
+    for (n, v) in defines {
+        p = p.define(n, Some(v));
+    }
+    p.run(&path).map_err(|e| e.to_string())
 }
 
 /// A compiled program: its library, and its functions as they are asked for.
 pub struct Program {
-    name: &'static str,
+    name: String,
     library: ComputeFunctionLibrary,
     functions: Mutex<HashMap<String, &'static ComputeFunction>>,
 }
 
 /// The program `text`, compiled the first time `name` is asked for. A failure is the same failure every time.
 pub fn program(name: &'static str, text: &'static str) -> Result<&'static Program, String> {
-    static PROGRAMS: OnceLock<Mutex<HashMap<&'static str, Result<&'static Program, String>>>> = OnceLock::new();
+    program_with(name, text, &[])
+}
+
+/// The program `text` specialized by `defines` (decision 0440 step B): each value a program of its own, compiled the
+/// first time it is asked for, as Metal's function constants make a pipeline a value (the label passes' tape format).
+/// A define is portable where a function constant is Metal's alone, and the compiler folds it the same way.
+pub fn program_with(name: &'static str, text: &'static str, defines: &[(&str, &str)]) -> Result<&'static Program, String> {
+    static PROGRAMS: OnceLock<Mutex<HashMap<String, Result<&'static Program, String>>>> = OnceLock::new();
+    let key: String = std::iter::once(name.to_string()).chain(defines.iter().map(|(n, v)| format!(" -D{n}={v}"))).collect();
     let mut programs = PROGRAMS.get_or_init(Default::default).lock().unwrap();
     programs
-        .entry(name)
+        .entry(key.clone())
         .or_insert_with(|| {
             let shared = crate::shared::get().ok_or("no device")?;
-            let source = preprocess(name, text)?;
+            let source = preprocess_with(name, text, defines)?;
             let library = ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?;
-            Ok(&*Box::leak(Box::new(Program { name, library, functions: Default::default() })))
+            Ok(&*Box::leak(Box::new(Program { name: key, library, functions: Default::default() })))
         })
         .clone()
 }
@@ -101,12 +118,27 @@ impl<B: GridBindContext> Launch<'_, B> {
         self
     }
 
+    /// A buffer the kernel reaches through an address another buffer holds (`Buffer::device_address`).
+    pub fn uses(mut self, buffer: &BufferRef) -> Self {
+        self.ctx.use_buffer(buffer);
+        self
+    }
+
     /// Launched: `grid` threadgroups of `block` threads.
     pub fn run(mut self, grid: &[u64], block: &[u64]) -> Result<(), String> {
         if let Some(e) = self.error.take() {
             return Err(e);
         }
         self.ctx.launch(grid, block)
+    }
+
+    /// Launched indirectly: as many threadgroups as the three u32s at byte `offset` of `groups` say when it runs,
+    /// at most `max_groups` (`GridBindContext::launch_indirect`).
+    pub fn run_indirect(mut self, groups: &BufferRef, offset: u64, max_groups: &[u64], block: &[u64]) -> Result<(), String> {
+        if let Some(e) = self.error.take() {
+            return Err(e);
+        }
+        self.ctx.launch_indirect(groups, offset, max_groups, block)
     }
 }
 

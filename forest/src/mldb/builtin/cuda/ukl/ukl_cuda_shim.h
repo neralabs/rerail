@@ -223,9 +223,10 @@ static __device__ __forceinline__ uint32_t ukl_simdgroup_broadcast_first(uint32_
 #define PASS_INNER_ARG_GID0(Type, Name) (blockIdx.x * blockDim.x + threadIdx.x)
 #define PASS_INNER_ARG_GID1(Type, Name) (blockIdx.y * blockDim.y + threadIdx.y)
 #define PASS_INNER_ARG_GID2(Type, Name) (blockIdx.z * blockDim.z + threadIdx.z)
-#define PASS_INNER_ARG_GSZ0(Type, Name) (blockDim.x * gridDim.x)
-#define PASS_INNER_ARG_GSZ1(Type, Name) (blockDim.y * gridDim.y)
-#define PASS_INNER_ARG_GSZ2(Type, Name) (blockDim.z * gridDim.z)
+// The grid's size: the launch's, or under an indirect launch the groups its counts give (`__ukl_groups`).
+#define PASS_INNER_ARG_GSZ0(Type, Name) (blockDim.x * (__ukl_groups ? __ukl_groups[0] : gridDim.x))
+#define PASS_INNER_ARG_GSZ1(Type, Name) (blockDim.y * (__ukl_groups ? __ukl_groups[1] : gridDim.y))
+#define PASS_INNER_ARG_GSZ2(Type, Name) (blockDim.z * (__ukl_groups ? __ukl_groups[2] : gridDim.z))
 #define PASS_INNER_ARG_LID0(Type, Name) (threadIdx.x)
 #define PASS_INNER_ARG_LID1(Type, Name) (threadIdx.y)
 #define PASS_INNER_ARG_LID2(Type, Name) (threadIdx.z)
@@ -274,6 +275,10 @@ static __device__ __forceinline__ uint32_t ukl_simdgroup_broadcast_first(uint32_
 
 #define GEN_OUTER_PARAMETER_SHARED(Type, Name)
 #define GEN_SHARED_DECL_SHARED(Type, Name, Bounds) __shared__ Type Name[Bounds];
+// An indirect launch's group counts (0 for a direct launch), a parameter after the rows' that no row names
+// (decision 0440 step B). CUDA has no indirect launch: the host launches the caller's bound of groups, and the
+// groups past the counts return before the kernel runs, so a kernel sees the grid Metal's indirect dispatch gives.
+#define GEN_OUTER_PARAMETER_GROUPS(Type, Name) const Type * __restrict__ Name
 
 #define GEN_OUTER_PARAMETER2(Access, Type, Name, Bounds) CALL2_A(GEN_OUTER_PARAMETER_, Access, Type, Name)
 
@@ -316,8 +321,10 @@ template<> struct ukl_type_code<long long> { static constexpr unsigned long long
     extern "C" __device__ const unsigned long long Name ## __ukl_rows[] = \
         { __UKL_FOREACH_QUAD(GEN_ROW_LAYOUT2, __VA_ARGS__) }; \
     __device__ __forceinline__ void Name ## _inner( __UKL_FOREACH_QUAD(GEN_INNER_PARAMETER2, __VA_ARGS__) ); \
-    extern "C" __global__ void Name ( __UKL_FOREACH_QUAD(GEN_OUTER_PARAMETER2, __VA_ARGS__) ) \
+    extern "C" __global__ void Name ( __UKL_FOREACH_QUAD(GEN_OUTER_PARAMETER2, __VA_ARGS__, GROUPS, uint32_t, __ukl_groups, ) ) \
     { \
+        if (__ukl_groups && (blockIdx.x >= __ukl_groups[0] || blockIdx.y >= __ukl_groups[1] || blockIdx.z >= __ukl_groups[2])) \
+            return; \
         extern __shared__ __align__(16) unsigned char __ukl_shared[]; \
         __UKL_FOREACH_QUAD_NOSEP(GEN_SHARED_DECL2, __VA_ARGS__) \
             Name ## _inner ( __UKL_FOREACH_QUAD(PASS_INNER_ARG2, __VA_ARGS__)); \

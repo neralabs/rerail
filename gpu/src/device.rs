@@ -20,9 +20,13 @@ use crate::compute_kernel_opencl as cl;
 #[cfg(target_os = "macos")]
 mod native {
     pub use crate::compute_kernel_metal::{
-        alloc_uninitialized_array_sync, gpu_seconds_awaited, transfer_to_device_immutable, transfer_to_host_sync, MetalComputeEvent as Event, MetalComputeFunction as Function,
-        MetalComputeFunctionLibrary as Library, MetalComputeQueue as Queue,
+        alloc_uninitialized_array_sync, gpu_seconds_awaited, transfer_to_device_immutable, transfer_to_host_sync, wrap_host_memory, MetalComputeEvent as Event,
+        MetalComputeFunction as Function, MetalComputeFunctionLibrary as Library, MetalComputeQueue as Queue,
     };
+    /// The kernels' address of a buffer's first byte.
+    pub fn device_address(b: &Buffer) -> Option<u64> {
+        Some(b.gpu_address())
+    }
     pub type Device = metal::Device;
     pub type Buffer = metal::Buffer;
     pub type QueueRoot = metal::CommandQueue;
@@ -33,10 +37,14 @@ mod native {
 #[cfg(target_os = "linux")]
 mod native {
     pub use crate::compute_kernel_cuda::{
-        alloc_uninitialized_array_sync, gpu_seconds_awaited, transfer_to_device_immutable, transfer_to_host_sync, CudaBuffer as Buffer, CudaComputeEvent as Event,
-        CudaComputeFunction as Function, CudaComputeFunctionLibrary as Library, CudaComputeQueue as Queue, CudaDevice as Device, CudaQueueRoot as QueueRoot,
-        CudaSharedEvent as SharedEvent,
+        alloc_uninitialized_array_sync, gpu_seconds_awaited, transfer_to_device_immutable, transfer_to_host_sync, wrap_host_memory, CudaBuffer as Buffer,
+        CudaComputeEvent as Event, CudaComputeFunction as Function, CudaComputeFunctionLibrary as Library, CudaComputeQueue as Queue, CudaDevice as Device,
+        CudaQueueRoot as QueueRoot, CudaSharedEvent as SharedEvent,
     };
+    /// The kernels' address of a buffer's first byte.
+    pub fn device_address(b: &Buffer) -> Option<u64> {
+        Some(b.device_address())
+    }
     pub const NAME: &str = "CUDA";
 }
 
@@ -203,6 +211,17 @@ impl Buffer {
             Buffer::Native(b) => b.length(),
             Buffer::Cpu(b) => b.length(),
             Buffer::OpenCl(b) => b.length(),
+        }
+    }
+
+    /// The kernels' address of the buffer's first byte, for a pointer that a buffer holds (a directory of tapes, a
+    /// view's rows): Metal's GPU address, CUDA's device pointer, the host's on the CPU. `None` on OpenCL 1.2, whose
+    /// kernels follow no pointer a buffer holds (that is SVM's, not written).
+    pub fn device_address(&self) -> Option<u64> {
+        match self {
+            Buffer::Native(b) => native::device_address(b),
+            Buffer::Cpu(b) => Some(b.device_address()),
+            Buffer::OpenCl(_) => None,
         }
     }
 
@@ -467,6 +486,27 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
             BindContext::OpenCl(c) => c.launch(grid, block),
         }
     }
+
+    fn use_buffer(&mut self, buffer: &BufferRef) {
+        match (self, buffer) {
+            (BindContext::Native(c), Buffer::Native(b)) => c.use_buffer(b),
+            (BindContext::Cpu(c), Buffer::Cpu(b)) => c.use_buffer(b),
+            (BindContext::OpenCl(c), Buffer::OpenCl(b)) => c.use_buffer(b),
+            _ => other(),
+        }
+    }
+
+    fn launch_indirect(&mut self, groups: &BufferRef, offset: u64, max_groups: &[u64], block: &[u64]) -> Result<(), String> {
+        if offset % 4 != 0 || offset + 12 > groups.length() {
+            return Err(format!("an indirect launch's counts at byte {offset} of a {}-byte buffer", groups.length()));
+        }
+        match (self, groups) {
+            (BindContext::Native(c), Buffer::Native(b)) => c.launch_indirect(b, offset, max_groups, block),
+            (BindContext::Cpu(c), Buffer::Cpu(b)) => c.launch_indirect(b, offset, max_groups, block),
+            (BindContext::OpenCl(c), Buffer::OpenCl(b)) => c.launch_indirect(b, offset, max_groups, block),
+            _ => other(),
+        }
+    }
 }
 
 /// `allocUninitializedArraySync`: memory for `length` elements (at least 16 bytes).
@@ -475,6 +515,22 @@ pub fn alloc_uninitialized_array_sync<T>(device: &Device, length: usize) -> Buff
         Device::Native(d) => Buffer::Native(native::alloc_uninitialized_array_sync::<T>(d, length)),
         Device::Cpu(d) => Buffer::Cpu(cpu::alloc_uninitialized_array_sync::<T>(d, length)),
         Device::OpenCl(d) => Buffer::OpenCl(cl::alloc_uninitialized_array_sync::<T>(d, length)),
+    }
+}
+
+/// A buffer over `len` bytes of the host's memory at `ptr` that the kernels read and write in place, no copy made
+/// (decision 0353): a block's pages, a tape where it lies. Each backend states what memory it takes (Metal and
+/// OpenCL: page-aligned); other memory is an error, never a copy.
+///
+/// # Safety
+/// The memory outlives the buffer and its clones, and every use of them by queued work.
+pub unsafe fn wrap_host_memory(device: &Device, ptr: *mut u8, len: usize) -> Result<Buffer, String> {
+    unsafe {
+        Ok(match device {
+            Device::Native(d) => Buffer::Native(native::wrap_host_memory(d, ptr, len)?),
+            Device::Cpu(d) => Buffer::Cpu(cpu::wrap_host_memory(d, ptr, len)?),
+            Device::OpenCl(d) => Buffer::OpenCl(cl::wrap_host_memory(d, ptr, len)?),
+        })
     }
 }
 

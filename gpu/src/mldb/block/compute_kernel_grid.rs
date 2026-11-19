@@ -440,6 +440,16 @@ pub trait GridBindContext {
     fn set_buffer(&mut self, arg_num: u64, buffer: &BufferRef);
     fn set_thread_group_memory(&mut self, arg_num: u64, n_bytes: u64);
     fn launch(&mut self, grid: &[u64], block: &[u64]) -> Result<(), String>;
+    /// Lets the kernel read and write `buffer` through an address another buffer holds (`Buffer::device_address`):
+    /// Metal's `useResource`; elsewhere the buffer is kept until the launch completes.
+    fn use_buffer(&mut self, _buffer: &BufferRef) {}
+    /// A launch of as many threadgroups of `block` threads as the three u32s at byte `offset` of `groups` say when
+    /// the launch runs (work before it may write them), at most `max_groups` (decision 0440 step B): Metal's
+    /// indirect dispatch; on the CPU the counts are read when the launch runs; CUDA and OpenCL launch `max_groups`
+    /// and the groups past the counts return at once. Counts past `max_groups` are an error the caller must not make.
+    fn launch_indirect(&mut self, _groups: &BufferRef, _offset: u64, _max_groups: &[u64], _block: &[u64]) -> Result<(), String> {
+        Err("an indirect launch is not made here".into())
+    }
 }
 
 /// Writes a scalar into its field's bytes, as the field's type is.

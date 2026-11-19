@@ -91,7 +91,8 @@ impl CpuDevice {
 struct Allocation {
     ptr: *mut u8,
     len: u64,
-    layout: std::alloc::Layout,
+    /// `None`: memory wrapped in place (`wrap_host_memory`), its owner's.
+    layout: Option<std::alloc::Layout>,
 }
 
 unsafe impl Send for Allocation {}
@@ -99,8 +100,10 @@ unsafe impl Sync for Allocation {}
 
 impl Drop for Allocation {
     fn drop(&mut self) {
-        // SAFETY: allocated with this layout.
-        unsafe { std::alloc::dealloc(self.ptr, self.layout) };
+        if let Some(layout) = self.layout {
+            // SAFETY: allocated with this layout.
+            unsafe { std::alloc::dealloc(self.ptr, layout) };
+        }
     }
 }
 
@@ -165,7 +168,15 @@ pub fn alloc_uninitialized_array_sync<T>(_device: &CpuDevice, length: usize) -> 
     // SAFETY: a non-zero size.
     let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
     assert!(!ptr.is_null(), "out of memory for a {len}-byte buffer");
-    CpuBuffer(Arc::new(Allocation { ptr, len: len as u64, layout }))
+    CpuBuffer(Arc::new(Allocation { ptr, len: len as u64, layout: Some(layout) }))
+}
+
+/// A buffer over `len` bytes of the host's memory at `ptr`, read in place (decision 0353).
+///
+/// # Safety
+/// The memory outlives the buffer and its clones, and every use of them by queued work.
+pub unsafe fn wrap_host_memory(_device: &CpuDevice, ptr: *mut u8, len: usize) -> Result<CpuBuffer, String> {
+    Ok(CpuBuffer(Arc::new(Allocation { ptr, len: len as u64, layout: None })))
 }
 
 /// `transferToDeviceImmutable`: memory holding `data`.
@@ -492,6 +503,13 @@ impl CpuComputeEvent {
     }
 }
 
+/// A launch's threadgroups: given, or three u32s at a host address read when it runs (an indirect launch).
+#[derive(Clone, Copy)]
+enum Grid {
+    Fixed([u32; 3]),
+    Indirect(usize),
+}
+
 /// The bind context of one launch: each parameter's bytes, the threadgroup memory its rows take, and the buffers it
 /// binds (kept until it has run).
 pub struct CpuBindContext<'a> {
@@ -527,14 +545,29 @@ impl CpuBindContext<'_> {
     }
 
     pub fn launch(&mut self, grid: &[u64], block: &[u64]) -> Result<(), String> {
+        let d = |v: &[u64], i: usize| v.get(i).copied().unwrap_or(1) as u32;
+        self.launch_of(Grid::Fixed([d(grid, 0), d(grid, 1), d(grid, 2)]), block)
+    }
+
+    pub fn use_buffer(&mut self, buffer: &CpuBuffer) {
+        self.keep.push(buffer.clone());
+    }
+
+    /// The counts are read when the launch runs, after the work before it (the root runs a queue's work in order).
+    pub fn launch_indirect(&mut self, groups: &CpuBuffer, offset: u64, _max_groups: &[u64], block: &[u64]) -> Result<(), String> {
+        self.keep.push(groups.clone());
+        self.launch_of(Grid::Indirect(groups.contents() as usize + offset as usize), block)
+    }
+
+    fn launch_of(&mut self, grid: Grid, block: &[u64]) -> Result<(), String> {
         let f = self.function;
         if let Some(i) = self.params.iter().position(|p| p.is_empty()) {
             let name = f.arguments.iter().find(|a| a.compute_function_arg_index == i as u64).map_or("?", |a| a.name.as_str());
             return Err(format!("{}: argument {name} was not bound", f.name));
         }
         let d = |v: &[u64], i: usize| v.get(i).copied().unwrap_or(1) as u32;
-        let (grid, block) = ([d(grid, 0), d(grid, 1), d(grid, 2)], [d(block, 0), d(block, 1), d(block, 2)]);
-        if grid.contains(&0) || block.contains(&0) {
+        let block = [d(block, 0), d(block, 1), d(block, 2)];
+        if matches!(grid, Grid::Fixed(g) if g.contains(&0)) || block.contains(&0) {
             return Ok(());
         }
         let threads = block.iter().map(|&b| b as usize).product::<usize>();
@@ -544,6 +577,14 @@ impl CpuBindContext<'_> {
         let keep = std::mem::take(&mut self.keep);
         self.queue.push(move |w| {
             let _keep = keep;
+            let grid = match grid {
+                Grid::Fixed(g) => g,
+                // SAFETY: three u32s of a buffer this launch keeps, written (if at all) by the work before it.
+                Grid::Indirect(at) => unsafe { std::ptr::read_volatile(at as *const [u32; 3]) },
+            };
+            if grid.contains(&0) {
+                return Ok(());
+            }
             let mut local = vec![0u128; (shared as usize).div_ceil(16).max(1)];
             let (stacks, stride) = w.stacks(threads);
             let mut error = vec![0 as c_char; 1024];
