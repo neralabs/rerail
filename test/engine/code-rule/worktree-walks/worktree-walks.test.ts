@@ -833,6 +833,21 @@ describe("a session's close and the watches of the other worktrees", () => {
   });
 });
 
+describe("a session's close and the watch of where Git registers the worktrees", () => {
+  it("keeps watching where Git registers the worktrees while any session of the repository is open", async () => {
+    const { main, worktrees, checkouts } = await repository();
+    const watch = new StampTreeWatch();
+    const walks = noticedWalks(watch);
+    const registry = join(main, ".git", "worktrees");
+    const first = await session(worktrees[0]!, checkouts, walks, { registry });
+    const second = await session(worktrees[1]!, checkouts, walks, { registry });
+    await first.bridge.close();
+    expect(watch.unwatched).not.toContain(registry);
+    await second.bridge.close();
+    expect(watch.unwatched).toContain(registry);
+  });
+});
+
 describe("what a walk looks at in a watched worktree that no notice tells of", () => {
   it("reads a worktree whose folder was put in place of another though no notice came", async () => {
     const { main, worktrees, checkouts } = await repository();
