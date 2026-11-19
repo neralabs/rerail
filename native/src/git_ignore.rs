@@ -788,13 +788,14 @@ mod tests {
         assert_eq!(answers(&mut ignore), (true, false), "the index's blob");
         let other = root.join("other-gitignore");
         std::fs::write(&other, "y.py\n").unwrap();
+        // Named relative to the root: Git for Windows reads no `\\?\` path as a file argument.
         let output = std::process::Command::new("git")
             .arg("-C")
             .arg(&root)
-            .args(["hash-object", "-w"])
-            .arg(&other)
+            .args(["hash-object", "-w", "other-gitignore"])
             .output()
             .unwrap();
+        assert!(output.status.success(), "git hash-object failed");
         let blob = String::from_utf8_lossy(&output.stdout).trim().to_owned();
         std::fs::remove_file(&other).unwrap();
         let info = format!("100644,{blob},docs/.gitignore");
