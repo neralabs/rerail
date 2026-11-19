@@ -31,7 +31,7 @@ import { CheckoutCatalogs, startingCheckout } from "../../../../src/engine/code-
 import { gitText, runGit } from "../../../../src/engine/git.js";
 import { pathsOwnedByCurrentUser } from "../../../../src/engine/native/native.js";
 import { setUpTestRepository } from "../../../support/repository-rules.js";
-import { linkFolder } from "../../../support/platform/links.js";
+import { linkFolder, symlinkOrSkip } from "../../../support/platform/links.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 vi.mock("../../../../src/engine/git.js", async importOriginal => {
@@ -1482,6 +1482,47 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     git(seed, "submodule", "add", "--quiet", await gitFolderLinked(join(root, "source"), join(root, "source.git")), "sub");
 
     expectGitsRegistries(join(root, "one"), join(root, "work"), join(seed, "sub"), join(seed, "src"), join(root, "source"));
+  });
+});
+
+// On Linux and macOS every link the cases above make is a symbolic link; on Windows they are junctions.
+describe.skipIf(process.platform !== "win32")("a .git symbolic link on Windows, where the machine makes one, is read through as a junction is", () => {
+  it("lists as Git does once the .git symbolic link of the repository above a checkout is pointed at another repository's Git folder, the link's file id kept", async context => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    await rename(join(outer, ".git"), join(root, "outer.git"));
+    symlinkOrSkip(context, join(root, "outer.git"), join(outer, ".git"), "dir");
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    await rename(join(repository(join(root, "other")), ".git"), join(root, "other.git"));
+    const inner = join(outer, "a", "inner");
+    mkdirSync(inner, { recursive: true });
+    expect(registryPlacements(inner)).toBe(1);
+
+    const link = join(outer, ".git");
+    const old = lstatSync(link);
+    await unlink(link);
+    symlinkSync(join(root, "other.git"), link, "dir");
+    sameFileId(link, old);
+    expectGitsRegistries(inner);
+    expect(gitsRegistry(inner)).toHaveLength(1);
+  });
+
+  it("lists the folder between's list once the empty folder a .git symbolic link in a folder between a checkout and the repository above names is made a repository in place", async context => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    const middle = join(outer, "middle");
+    const inner = join(middle, "inner");
+    mkdirSync(inner, { recursive: true });
+    mkdirSync(join(root, "middle.git"));
+    symlinkOrSkip(context, join(root, "middle.git"), join(middle, ".git"), "dir");
+    expect(gitsAnswer(inner).workspaceRoot).toBe(outer);
+    expect(registryPlacements(inner)).toBe(1);
+
+    git(middle, "init", "--quiet");
+    git(middle, "commit", "--quiet", "--allow-empty", "-m", "seed");
+    expectGitsRegistries(inner);
+    expect(gitsRegistry(inner)).toEqual(gitsRegistry(middle));
   });
 });
 
