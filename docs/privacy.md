@@ -157,10 +157,11 @@ Secret-like file names match `SENSITIVE_FILE_NAMES` in `src/engine/path-boundary
 ### Permissions
 
 Rerail's files are private to your user: directories `0700`, files `0600`. Windows has no such modes: a Rerail home
-Rerail makes outside your profile folder, and a checkout's `.rerail\sessions` there whoever made it, get an access list
-that only you, SYSTEM and Administrators are on. A `.rerail\sessions` that Git, you or Rerail 0.1.4 made gets it when
-the daemon first opens a session there, and the records already in it take it too; what a session writes in its own
-folder is private from its first byte. Elsewhere, such a folder loses the group's and others' read then (`2775` becomes
+Rerail makes outside your profile folder, and a checkout's `.rerail\sessions` it makes there, get an access list that
+only you, SYSTEM and Administrators are on. A `.rerail\sessions` that Git, you or Rerail 0.1.4 made gets one when the
+daemon first opens a session there under which each record is its maker's alone, those already in it included: an
+account you share the checkout with still records its own sessions there, but lists nothing in it and reads no one
+else's records. What a session writes in its own folder is private from its first byte. Elsewhere, such a folder loses the group's and others' read then (`2775` becomes
 `2731`): no other account lists it, and one you share it with still records its own sessions there.
 
 <details>

@@ -669,12 +669,19 @@ preimages and held steers.
 - A Rerail home or `.rerail\sessions` folder Rerail makes outside the profile gets the ACL when it is made, and a home
   an earlier release made gets it at the next daemon launch. A `.rerail\sessions` Rerail did not make (Git makes one
   for a repository that commits a file in it; a person, or Rerail 0.1.4, may have made it) gets it when the daemon
-  first opens a session there: the daemon reads the folder's ACL with `icacls` once per folder in its life and sets it
-  when the folder still inherits its parent's, and every record already in it inherits the new one. Windows takes
+  first opens a session there: the daemon reads the folder's ACL with `icacls` once per folder in its life and, when
+  the folder still inherits its parent's, gives it one under which what each account makes there is that account's
+  alone. The person may list the folder; each account its parent's ACL let add a folder there may still add one, pass
+  through it and read its attributes and ACL, never list it; each file and folder in it, the records already there
+  included, grants its maker (CREATOR OWNER), SYSTEM and Administrators alone. Before that, each agent host's lock and
+  held-steer folder there (`<host>-locks`, `<host>-pending`) lets those accounts add files, and one made later gets
+  the same entry from whoever makes it, so an account sharing the checkout keeps recording. Windows takes
   about 0.1 to 0.2 ms per file or folder already there to pass the ACL on, and no session waits for that: a session
   waits only for the read, and one that opens while the ACL is passed on first gives its own folder the same ACL, one
-  more `icacls`, so what it writes in its own folder is private from its first byte. An entry someone set on that folder itself for
-  another account stays.
+  more `icacls`, so what it writes in its own folder is private from its first byte. An entry someone set on that
+  folder itself for another account stays. A lock or held-steer folder another account made before the first repair
+  stays its maker's, whose ACL only that account may change: the daemon log names it, and the repairing account's hooks
+  of that agent host cannot lock there.
   `rerail remote add` gives the `remote-tokens` folder the ACL before it writes a token there, so a remote's token is
   private before any daemon launch. A failure is reported on stderr, a daemon's log, with `icacls`'s reason, and never
   fails the caller.

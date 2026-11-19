@@ -648,7 +648,8 @@ code runs. No Nera-held signature is verified ([distribution-model.md](distribut
 ### T8: Repo-planted `.rerail/` redirects or exposes ledgers
 
 A repository could commit a `.rerail/` folder to redirect or expose session ledgers. Rerail refuses symlinks there,
-keeps its own `.gitignore`, and on Windows gives the records folder the owner-only ACL whoever made it.
+keeps its own `.gitignore`, and on Windows gives a records folder it did not make an ACL under which each record is its
+maker's alone.
 
 <details>
 <summary>Mitigations and what remains</summary>
@@ -661,8 +662,10 @@ keeps its own `.gitignore`, and on Windows gives the records folder the owner-on
 - `ignoreInGit` rewrites `.gitignore` whenever it is not Rerail's own `*` file, so a planted `!*` cannot expose ledgers
   to `git add -A`.
 - A `.rerail/sessions` the repository's own commit makes, which on Windows outside the profile folder takes its
-  parent's ACL, is given the owner-only ACL when the daemon first opens a session there, and that session's own folder
-  has it before the session writes (`makeLedgerFolder` with `repair`). Elsewhere it loses the group's and others'
+  parent's ACL, is given one of its own when the daemon first opens a session there: each file and folder in it, those
+  already there included, grants its maker, SYSTEM and Administrators alone, and an account that could add a folder
+  there may still add one, never list it. That session's own folder is private before the session writes
+  (`makeLedgerFolder` with `repair`). Elsewhere it loses the group's and others'
   read (`2775` becomes `2731`): no other account lists it, and one that shares it still makes its own `0700` session
   folder there. On Windows, one
   whose ACL Rerail cannot read or change is named in the daemon log.
@@ -719,8 +722,9 @@ capability.
 ### T10: Files and directories not kept private
 
 On Unix, Rerail creates its files private and tightens existing ones. On Windows, which ignores modes, a Rerail home or
-`.rerail\sessions` folder outside the profile folder gets an ACL for the person, SYSTEM and Administrators alone, the
-records folder whoever made it ([B6](#b6-data-at-rest)).
+`.rerail\sessions` folder Rerail makes outside the profile folder gets an ACL for the person, SYSTEM and Administrators
+alone, and a records folder another program made one under which each record is its maker's alone
+([B6](#b6-data-at-rest)).
 
 <details>
 <summary>Mitigations and what remains</summary>
