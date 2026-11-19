@@ -634,6 +634,7 @@ export const operations: readonly Operation[] = [
       sessions: z.array(sessionSummarySchema.extend({
         violationCount: z.number().int().nonnegative().describe("Violations in the session's history, as `violations_list` with its `sessionId` counts them."),
         steeredViolations: z.number().int().nonnegative().describe("Of violationCount, those no audit recorded in Log mode (steered, or blocked)."),
+        declinedViolations: z.number().int().nonnegative().describe("Of steeredViolations, those of a steer the coding agent declined, as `sessions_get` counts them in `declined`."),
         lastEventAt: z.number().int().nullable().describe("Epoch milliseconds the session's newest event was observed; null when it has none."),
       })),
       total: z.number().int().nonnegative(),
@@ -659,11 +660,20 @@ export const operations: readonly Operation[] = [
         ignoredEdits: z.number().int().nonnegative().describe("Tool edits of files no rule checked because Git ignores them (`ignored-edit` events name each file and the ignore file, line and pattern)."),
         ignoreRuleChanges: z.number().int().nonnegative().describe("Changes to Git's ignore rules seen during the session that can make them ignore more: a pattern added, a negation (`!pattern`) removed, or, in a file with a negation, its patterns reordered or repeated. Each `ignore-rules-changed` event names the file and those patterns; comments, blank lines and duplicates in a file without a negation are not changes."),
       }).describe("Over the whole transcript, however much of it a reader has loaded."),
+      declined: z.object({
+        violations: z.number().int().nonnegative().describe("Steered violations of a declined steer: its audit's violations of the rule, each counted once."),
+        notes: z.array(z.object({
+          ruleId: z.string(),
+          reason: z.string().describe("The one line the coding agent gave the person for not following the steer."),
+          recordedAt: z.number().int(),
+          auditId: z.string().nullable().describe("The audit whose steer it declined: the latest in the session to steer the rule's violations and start at or before the note; null when none did."),
+        })).describe("Oldest first."),
+      }).describe("Steers the coding agent declined, from the notes it recorded with `rerail feedback`. A steer with no note is not known to be followed: an agent can decline without recording why."),
     }),
     handler: (stores, input, caller) => {
       const response = sessionResponse(stores, caller, input.sessionId);
       if (response === null) throw sessionNotFound(input.sessionId);
-      return { ...response, gaps: stores.reader.gaps(input.sessionId) };
+      return { ...response, gaps: stores.reader.gaps(input.sessionId), declined: stores.reader.declines(input.sessionId) };
     },
   }),
   defineOperation({
