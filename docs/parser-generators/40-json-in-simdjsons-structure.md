@@ -339,6 +339,38 @@ step of the parse.
 Counts, as information (load about 60): the 17 files' whole parse 40.4M (step 4: 44.5M),
 `[1,1,…]` 174.5M (190.7M), short strings 45.4M (51.1M). Against simdjson's: 4.1×, 3.2×, 4.9×.
 
+## `walk_document` next to tier 2's words
+
+From the dump (`json_tier2_by_word` with `RERAIL_DUMP_TIER2`: each word, each switch's targets
+by byte). Word ids: 12 `{`, 15 `}`, 16 `[`, 17 `]`, 13 `:`, 14 `,`, 9 to 11 the atoms.
+
+| simdjson | Tier 2 | Same shape? |
+|---|---|---|
+| root `switch (*value)`: `{`, `[`, else `visit_root_primitive` | 1–2: `"`, digit or `-`, atoms, `{`, `[` | yes |
+| `object_begin`: `*key != '"'` | 32–33: `"` to the key, `}` (the empty object) | yes; the empty case in the switch, not a `peek` |
+| `object_field`: `*advance() != ':'`, a value switch | 87–88: `:`; 114–115: the value switch | yes, since step 7 |
+| `object_continue`: `,` or `}` | 150–151 | yes, since step 7 |
+| `array_begin`, `array_value`: a value switch | 46–47 (a value or `]`), 97–98 (after `,`) | yes |
+| `array_continue`: `,` or `]` | 94–95 | yes, since step 7 |
+| `scope_end`: `is_array[depth]` picks the continue state | `PUSH` of the place to go back to (43, 94 or 150), `RETURN` there | yes: a stack of where to continue |
+| `parse_string`: one call reads the string | each part (content, an escape, the closing `"`) goes back through `TOKEN`, a `SWITCH` and an edge, then a `GOTO` | **no** |
+| `parse_string`'s loop only where a string is read | every `TOKEN` holds the part scanner (where a part is pending), at the continue states too | **no** |
+
+## Step 7, done: a continue state takes its punctuation by byte, straight to its target
+
+Before, at `array_continue` the bytes `t`, `f`, `n` and the digits went by word with `,` and
+`]` (one record kind). Their edge made the record, tested the atoms, found the switch names no
+atom, and refused. And `,` and `]` were taken by byte, their code loaded by the byte, then
+switched on again by word. Now:
+- a byte only a named word can take (its kind's own target a refusal) is refused at the byte
+  where no named word begins with it, and the atom tests run only for words the switch names;
+- a one-byte token whose byte is its word (`{`, `,`) gets its word's code as a constant and goes
+  straight to the word's target.
+
+So `array_continue` is the byte, `]` or `,`, and the target, as simdjson's
+`switch (*advance())`. The trees test gained documents that fail at the continue states
+(`[1 true]`, `{"a":1,}`, `{"a":[1}`, …). Taking the kind's target in place of the word's fails it.
+
 ## Order
 
 1. Done: step 1, above.

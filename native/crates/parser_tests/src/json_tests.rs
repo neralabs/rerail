@@ -106,6 +106,20 @@ fn simdjson_forms_trees_are_14_jsons() {
         br#"{"k":false,"t":true}"#.to_vec(),
         br#"[null ,true	]"#.to_vec(),
         br#"["\u0041true", "null\n", "fals"]"#.to_vec(),
+        // A continue state takes only its punctuation (`,` and `]`, or `,` and `}`), each
+        // straight to its target; every other token there is refused at once.
+        br#"[1 true]"#.to_vec(),
+        br#"[1 "x"]"#.to_vec(),
+        br#"[1 {}]"#.to_vec(),
+        br#"[1,]"#.to_vec(),
+        br#"[1:2]"#.to_vec(),
+        br#"{"a":1 true}"#.to_vec(),
+        br#"{"a":1,}"#.to_vec(),
+        br#"{"a":1]"#.to_vec(),
+        br#"{"a",1}"#.to_vec(),
+        br#"{"a":[1}"#.to_vec(),
+        br#"[[],{},[1,{"b":[]}]]"#.to_vec(),
+        br#"[] x"#.to_vec(),
     ];
     for pad in [0usize, 1, 61, 62, 63, 64, 65, 127] {
         for n in [0usize, 1, 62, 63, 64, 130] {
@@ -408,52 +422,43 @@ fn json_bench() {
     }
 }
 
-/// Where JSON's tier 2 instructions go: each word's Cranelift instructions (`word_insts`) times
-/// how often the files run it (the interpreter's steps, `native_cpu_clusters::traffic`), by the
-/// word's operation, per token. As `rr_parser`'s for `.rr`. `RERAIL_JSON_CORPUS`, `RERAIL_FORM`.
+/// JSON's tier 2 as written, for reading it next to simdjson's stage 2: each word's operation,
+/// a switch's targets by byte (runs of bytes to one target), and the code (CLIF, machine code,
+/// each word's byte ranges in it). Into `RERAIL_DUMP_TIER2`; `RERAIL_FORM`.
 #[test]
-#[ignore = "a measurement: run by name with RERAIL_JSON_CORPUS and --nocapture"]
+#[ignore = "a dump: run by name with RERAIL_DUMP_TIER2"]
 fn json_tier2_by_word() {
     let name = std::env::var("RERAIL_FORM").unwrap_or_else(|_| "14-json".to_owned());
     let c = if name == "simdjson" { simdjson_form() } else { form(&name) };
-    let paths = files_in("RERAIL_JSON_CORPUS");
-    let files: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).expect("reads")).collect();
-    let all: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
     let native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
-    let traffic = rerail_compiler::native_cpu_clusters::traffic(&c.program, &all);
-    let mut runs = vec![0u64; native.structural.len()];
-    for (&(_, b), &w) in &traffic {
-        runs[b as usize] += w;
+    let dir = std::env::var("RERAIL_DUMP_TIER2").expect("RERAIL_DUMP_TIER2");
+    std::fs::write(format!("{dir}/{name}.clif"), &c.parser.tier2.clif).expect("writes");
+    std::fs::write(format!("{dir}/{name}.s"), &c.parser.tier2.disassembly).expect("writes");
+    std::fs::write(format!("{dir}/{name}.bin"), &c.parser.tier2.code_bytes).expect("writes");
+    let ranges: String = c.parser.tier2.word_ranges.iter().map(|&(pc, a, b)| format!("{pc}\t{a}\t{b}\n")).collect();
+    std::fs::write(format!("{dir}/{name}.ranges"), ranges).expect("writes");
+    let show = |b: u8| if b.is_ascii_graphic() { format!("{}", b as char) } else { format!("{b:#04x}") };
+    let mut words = String::new();
+    for (pc, w) in native.structural.iter().enumerate() {
+        words += &format!("{pc}\t{:?}\n", w.operation);
+        if let rerail_compiler::native_ir::StructuralOperation::Switch { table } = w.operation {
+            let s = &native.switches[usize::from(table)];
+            let mut b = 0usize;
+            while b < 256 {
+                let t = s.targets[b];
+                let mut e = b;
+                while e + 1 < 256 && s.targets[e + 1] == t {
+                    e += 1;
+                }
+                if t != rerail_compiler::stream::REFUSE {
+                    words += &format!("\t\t{}..{} -> {t}\n", show(b as u8), show(e as u8));
+                }
+                b = e + 1;
+            }
+            words += &format!("\t\tend -> {}{}\n", s.end, if s.words.is_empty() { String::new() } else { format!(", words {:?}", s.words) });
+        }
     }
-    let insts = &c.parser.tier2.word_insts;
-    let tokens: u64 = (0..runs.len()).filter(|&pc| matches!(native.structural[pc].operation, rerail_compiler::native_ir::StructuralOperation::Token { .. })).map(|pc| runs[pc]).sum();
-    let mut by: std::collections::BTreeMap<String, (u64, u64)> = Default::default();
-    for pc in 0..runs.len() {
-        let op = format!("{:?}", native.structural[pc].operation);
-        let e = by.entry(op.split([' ', '{', '(']).next().unwrap_or("").to_owned()).or_default();
-        e.0 += runs[pc];
-        e.1 += runs[pc] * u64::from(insts.get(pc).copied().unwrap_or(0));
-    }
-    let mut v: Vec<_> = by.into_iter().collect();
-    v.sort_by(|a, b| b.1.1.cmp(&a.1.1));
-    let total: u64 = v.iter().map(|x| x.1.1).sum();
-    if let Ok(dir) = std::env::var("RERAIL_DUMP_TIER2") {
-        // Its CLIF (each instruction's source location its word's place + 1), and each word's
-        // operation and runs, for reading a word's code.
-        std::fs::write(format!("{dir}/{name}.clif"), &c.parser.tier2.clif).expect("writes");
-        std::fs::write(format!("{dir}/{name}.s"), &c.parser.tier2.disassembly).expect("writes");
-        // The machine code, and each word's byte ranges in it (`word_ranges`), for reading a
-        // word's instructions.
-        std::fs::write(format!("{dir}/{name}.bin"), &c.parser.tier2.code_bytes).expect("writes");
-        let ranges: String = c.parser.tier2.word_ranges.iter().map(|&(pc, a, b)| format!("{pc}\t{a}\t{b}\n")).collect();
-        std::fs::write(format!("{dir}/{name}.ranges"), ranges).expect("writes");
-        let words: String = (0..runs.len()).map(|pc| format!("{pc}\t{}\t{}\t{:?}\n", runs[pc], insts.get(pc).copied().unwrap_or(0), native.structural[pc].operation)).collect();
-        std::fs::write(format!("{dir}/{name}.words"), words).expect("writes");
-    }
-    eprintln!("{name}: tier 2's IR instructions run, {:.0} a token ({tokens} tokens), by word:", total as f64 / tokens.max(1) as f64);
-    for (k, (n, i)) in &v {
-        eprintln!("  {k:>12}: {:5.2} words a token, {:6.1} instructions each, {:6.1} a token", *n as f64 / tokens.max(1) as f64, *i as f64 / (*n).max(1) as f64, *i as f64 / tokens.max(1) as f64);
-    }
+    std::fs::write(format!("{dir}/{name}.words"), words).expect("writes");
 }
 
 /// Cranelift's optimizer on JSON (doc 28): step 14 compiled four ways (optimizer off, on tier

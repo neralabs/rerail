@@ -5071,15 +5071,27 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         let start = mget(&mut f, Mem::Start);
                         let addr = f.ins().iadd(bytes, start);
                         let b = f.ins().uload8(types::I64, flags, addr, 0);
-                        let mut keys: Vec<(u16, u8, u8, bool)> = Vec::new();
+                        // The key's last: a one-byte token that is a word, its byte its word (`{`,
+                        // `,`): the word's code and target, taken at once, as simdjson's `case ','`.
+                        let mut keys: Vec<(u16, u8, u8, bool, Option<(u16, u32)>)> = Vec::new();
                         let mut edge_of = vec![REFUSE; 256];
+                        // A byte only a word the switch names can take (its kind's own target a
+                        // refusal): refused at once where no such word begins with it, as
+                        // simdjson's `array_continue` takes `,` and `]` and refuses the rest.
+                        let named_from = |x: usize| s.words.iter().any(|&(y, _)| ft.words.get(usize::from(y)).is_some_and(|(w, _)| w.first() == Some(&(x as u8))));
                         for x in 0..256usize {
                             let k = ft.kinds[x];
                             let t = byk.targets[usize::from(k)];
-                            if t == REFUSE {
+                            if t == REFUSE || (plain_of(t) == Some(REFUSE) && !named_from(x)) {
                                 continue;
                             }
-                            let key = (t, ft.ends[x], k, ft.worded[x]);
+                            let one = ft.rules.get(usize::from(ft.ends[x])).is_none_or(|r| one_byte(ft, r));
+                            let direct = plain_of(t).filter(|_| one && ft.worded[x]).and_then(|plain| {
+                                let y = ft.words.iter().position(|(w, _)| w.as_slice() == [x as u8])?;
+                                let to = s.words.iter().find(|&&(w, _)| usize::from(w) == y).map_or(plain, |&(_, to)| to);
+                                Some((to, ft.codes1[x]))
+                            });
+                            let key = (t, ft.ends[x], k, ft.worded[x], direct);
                             let i = keys.iter().position(|&y| y == key).unwrap_or_else(|| {
                                 keys.push(key);
                                 keys.len() - 1
@@ -5097,7 +5109,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         f.ins().jump(refuse, &[BlockArg::from(at)]);
                         let bw = crate::native_cpu_bytes::Bytewise::of(native.block_programs.first().expect("a block program"));
                         let split_bw = table.split.map(|(sp, block)| (sp, crate::native_cpu_bytes::Bytewise::of(block)));
-                        for (&(t, rule, k, worded), &edge) in keys.iter().zip(&edges) {
+                        for (&(t, rule, k, worded, direct), &edge) in keys.iter().zip(&edges) {
                             f.switch_to_block(edge);
                             let start = mget(&mut f, Mem::Start);
                             // A run whose bytes begin words, its output a byte class: each word
@@ -5106,12 +5118,14 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             // another token, the rule's run and the word table below.
                             let class = ft.run_class.get(usize::from(rule)).and_then(Option::as_ref).filter(|_| worded);
                             if let Some(class) = class {
-                                let bytes_at: Vec<u8> = (0..256usize).filter(|&x| edge_of[x] != REFUSE && keys[usize::from(edge_of[x])] == (t, rule, k, worded)).map(|x| x as u8).collect();
+                                let bytes_at: Vec<u8> = (0..256usize).filter(|&x| edge_of[x] != REFUSE && keys[usize::from(edge_of[x])] == (t, rule, k, worded, direct)).map(|x| x as u8).collect();
                                 let cands: Vec<(usize, &(Vec<u8>, u32))> = ft
                                     .words
                                     .iter()
                                     .enumerate()
                                     .filter(|(_, (w, _))| (1..=8).contains(&w.len()) && bytes_at.contains(&w[0]) && w.iter().all(|&b| class[usize::from(b)] == 1))
+                                    // Where the kind's own target refuses, the words the switch names.
+                                    .filter(|&(x, _)| plain_of(t) != Some(REFUSE) || s.words.iter().any(|&(y, _)| usize::from(y) == x))
                                     .collect();
                                 if !cands.is_empty() {
                                     let at = f.ins().iadd(bytes, start);
@@ -5154,6 +5168,14 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             let at = f.ins().iconst(types::I64, pc as i64 + 1);
                             f.ins().jump(refuse, &[BlockArg::from(at)]);
                             f.switch_to_block(ok);
+                            if let Some((to, code)) = direct {
+                                let l1 = f.ins().iadd_imm(l, 1);
+                                mset(&mut f, Mem::Limit, l1);
+                                let c = f.ins().iconst(types::I64, i64::from(code));
+                                mset(&mut f, Mem::Taken, c);
+                                f.ins().jump(if to == REFUSE { no_e } else { word(to) }, &[]);
+                                continue;
+                            }
                             let one_b = ft.rules.get(usize::from(rule)).is_none_or(|r| one_byte(ft, r));
                             // Its code: the kind, where no word begins with its bytes; the
                             // one-byte token's, by its byte; else the record pass's.
