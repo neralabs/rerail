@@ -342,6 +342,11 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // made (`rust_source_16`), and writes the JIT's format 16 run's bytes, 16 and 16z: the ops' calls
     // are `native_cpu_tape::pass`'s, with no rows passed again.
     let (widths16, tag16) = jit.parser.sixteen().expect("a format 16 tier 2").widths_tag();
+    // The JIT's run in the simdjson form passes each node to the ops at its word (`direct`), as the Rust: no working
+    // row, so no step on the rows is called.
+    let s16 = jit.parser.sixteen().expect("a format 16 tier 2");
+    assert!(s16.direct && s16.row_calls == 0, "the JIT's format 16 run: direct {}, {} calls of a step on the rows", s16.direct, s16.row_calls);
+    assert_eq!(s16.tape(1000).held(), [0, 0], "the direct run's tape: no format 15 buffer, no working row");
     let src16 = rerail_compiler::rust_stream::rust_source_16(&native, widths16, tag16).expect("tier 2 writing format 16, as Rust");
     let made16 = src16.matches("s.open16(").count() + src16.matches("s.leaf16(").count();
     // No working row: the rule touches neither rows nor supertype records, only the stack of open
@@ -372,12 +377,19 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     for (k, f) in inputs.iter().enumerate() {
         let Ok(image) = jit.parser.image(f) else { continue };
         let (_, table) = rerail_tape_format::tape::f15_columns(&image).expect("a format 15 tape");
-        let lang = rerail_tape_format::f16::Lang::new(table, [1, 1, 1], 1).expect("a language");
+        let lang = rerail_tape_format::f16::Lang::new(table.clone(), [1, 1, 1], 1).expect("a language");
         let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
+        // The reference: format 15's tape written in format 16 by the writer (`f16::write_from_with_presence`), apart
+        // from either run's passes; both runs pass each node at its word (`rust_stream::direct_keys`).
+        let (columns, _) = rerail_tape_format::tape::f15_columns(&image).expect("a format 15 tape");
+        let t = rerail_tape_format::tape::F15::new(&image, columns, &table).expect("reads");
+        let number = rerail_tape_format::f16::numbers(&lang, &table).expect("numbers");
         for z in [false, true] {
+            let reference = rerail_tape_format::f16::write_from_with_presence(&lang, &t, &number, f, tag16, z).expect("the writer's tape").tape;
             let want = jit.parser.image16(f, &lang, &numbers, z).map(|w| bytes_of(&w));
             let got = aot.parser.image16(f, &lang, &numbers, z).map(|w| bytes_of(&w));
             assert!(want.is_ok(), "file {k}: the JIT's format 16 run: {want:?}");
+            assert!(want.as_ref().ok() == Some(&reference.extent().to_vec()), "file {k} (16z {z}): the JIT's format 16 home is not the writer's of its format 15 tape");
             if got != want {
                 let (g, w) = (got.clone().unwrap_or_default(), want.clone().unwrap_or_default());
                 let first = (0..g.len().min(w.len())).find(|&i| g[i] != w[i]);

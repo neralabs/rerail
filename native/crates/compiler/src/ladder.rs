@@ -467,13 +467,21 @@ pub struct Compiled {
 }
 
 pub fn compile_step(name: &str, source: &str) -> Compiled {
+    compile_step_as(name, source, false)
+}
+
+/// A step compiled as a rules grammar's parser is (`kotlin_parser::compile_text`'s way, `rules`): tier 2 shaped by its
+/// rules (`Shape::Rules`), tier 1's blocks padded for the bytes before (`native_cpu_block::BACK`), the clusters by rule;
+/// else as `compile_step`.
+pub fn compile_step_as(name: &str, source: &str, rules: bool) -> Compiled {
     let stmts = parse(source).unwrap_or_else(|e| panic!("{name}: parses: {e}"));
     let ids = Ids::default();
     let compiled = {
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
         let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
-        crate::bitlex_masks::compile(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
+        let shape = if rules { crate::bitlex_masks::Shape::Rules } else { crate::bitlex_masks::Shape::Auto };
+        crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
     };
     let text = compiled.text();
     // `RERAIL_LADDER_DUMP`: the program as text, for a step whose name holds it.
@@ -481,8 +489,16 @@ pub fn compile_step(name: &str, source: &str) -> Compiled {
         eprintln!("{name}:\n{}\n{text}", compiled.machine);
     }
     let program = crate::rir_asm::assemble(&text).unwrap_or_else(|e| panic!("{name}: assembles: {e}\n{text}"));
-    let native = crate::native_ir::lower(&program, 0, 0).unwrap_or_else(|e| panic!("{name}: lowers: {e:?}"));
-    let parser = crate::native_cpu_stream::Parser::new(&native).unwrap_or_else(|e| panic!("{name}: Cranelift refuses: {e:?}"));
+    let mut native = crate::native_ir::lower(&program, 0, 0).unwrap_or_else(|e| panic!("{name}: lowers: {e:?}"));
+    let parser = if rules {
+        for b in &mut native.block_programs {
+            b.pad = crate::native_cpu_block::BACK as u16;
+        }
+        crate::native_cpu_stream::Parser::with_cut(&native, &crate::native_cpu_clusters::by_rules(&native))
+    } else {
+        crate::native_cpu_stream::Parser::new(&native)
+    };
+    let parser = parser.unwrap_or_else(|e| panic!("{name}: Cranelift refuses: {e:?}"));
     Compiled { stmts, ids, program, native, parser }
 }
 

@@ -593,6 +593,146 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 32, done: the commit point moved back by an edit, shown to be unobservable in format 16
+
+Step 28 left one mutation uncovered: an edit before the commit point not moving it back (`uncode`:
+`Mem::Coded` in the JIT, `self.coded` in the Rust). Two probe grammars were added to reach it:
+- `WRAPPED_TWICE`: a `!` wraps the top level's node made, and wraps the wrapper again
+  (`(vrai)!!`, `((vrai)!!)!!;vrai!`, 2,000 lists wrapped twice);
+- `FOLDED_CHAIN`: the root's two leaves folded, then each next leaf folded into the first
+  (`vrai fausse vrai`, 2,000 more).
+
+The mutant, in both backends at once, writes every one of their tapes as before. This is why, for
+every grammar:
+- a format 16 run commits only where a node at the top level closes (and at `ACCEPT`), and its
+  commit point is that node's start, since a wrap may still move it;
+- a wrap reaches the node made last, at or past the commit point, so it never moves the point;
+- a fold needs the open node to hold two leaves and nothing else: at the top level, no node there
+  has closed, so nothing was committed;
+- what is left reaching before the commit point is a retag (of the root). Where the mutant passed
+  the node, the retag goes to `w_retag`, and the tape is the same.
+
+So the move back is kept, a guard, and the mutation is equivalent.
+
+The test now also asserts what would have shown a failure both runs share: where the JIT writes
+format 15, its format 16 run writes too. A document both refuse with `fail::PASSED` was otherwise
+just not counted.
+
+| | steps | format 16 homes, the JIT's | of 3,000 nodes or more |
+|---|---:|---:|---:|
+| the probes | 3 | 660 | 8 |
+
+The double wrap found a fault on the way, in step 31's work: the Rust's `blocks`, called from a
+wrap's shift, wrote format 15's block bases in a format 16 run.
+
+## Step 31, done: a format 16 run holds none of format 15's buffers
+
+Step 28 left the host reserving, for a format 16 run, format 15's image, its size, offset and tail
+columns, its block bases and its code tables, and the rows for a run that needs none. Both
+backends' code also still wrote the offsets, bases and tails in a format 16 run, which nothing read:
+the writer makes its own blocks, and the pass reads only the sizes.
+- `Tape::sized` reserves format 15's buffers only for a format 15 run. The rows, their sizes and
+  the supertypes are reserved only where nodes are passed from rows (not `direct`, step 30). The
+  stack of open nodes stays: the Rust's format 16 run keeps its own there.
+- The room checks read the tape's room (`Tape::room`), not a buffer's capacity.
+- The JIT's `push_off`, `blocks` and `cut_to` write nothing in a format 16 run, and `close_cells`
+  writes only the size. `shift_rows`, `drop_rows` and `wrap_word` move or recompute no tails. The
+  Rust's are the same, under `SIXTEEN`.
+- A format 16 tape takes no code-id table from the thread, and gives none back.
+
+**The check:** `Tape::held` gives the bytes a tape holds of format 15's buffers, and of rows. For
+each ladder step the format 16 tape holds none of the first, and none of the second exactly where
+the run is direct. An empty buffer's pointer is in the unmapped first 4 GB, so any read or write
+of one faults. The mutation (the JIT's `push_off` writing the offsets again) faults on the JSON
+ladder.
+
+| | steps | format 16 homes, the JIT's | of 3,000 nodes or more |
+|---|---:|---:|---:|
+| JSON's ladder | 15 of 15 | 3,300 | 30 |
+| `.rr`'s ladder, steps 1 to 6 | 6 | 1,464 | 12 |
+| the probes | 3 | 660 | 8 |
+
+`.rr`'s whole ladder and `rerail_rr_aot`'s generated tiers are run on a farm host next; their result follows in the next commit.
+
+## Step 30, done: the JIT's direct run, each node to the writer's ops at its word
+
+Where each node's key is known at its word, the Rust passes each node to the ops as it is made
+(steps 25 to 27). The JIT still wrote rows and passed them at commit points. Now it does what the
+Rust does:
+- `rust_stream::direct_keys`: where `coded` holds, and no field is provisional and no leaf is
+  deferred or an extra, each node word's key bits from the words after it (`key_after`: its field,
+  its supertypes' classes). The JIT takes them from the same analysis, so the two cannot disagree.
+- `OPEN`: the number by the key (`number_of`), `w_open` and `w_commit`, one more open. `LEAF`: `w_leaf`
+  and `w_commit`. A key with no number is `fail::NUMBER`.
+- `CLOSE`: `w_close` at the token's end or the last one taken's. `ACCEPT`: `w_close` at the file's
+  end. `NODE_FIELD` (here) and `NODE_SUPER`: nothing, their bits are in the number.
+- No row, no supertype record, no commit, no pass.
+
+A word's body is shared between places by their ops alone (`shared_runs`). Two runs with the same
+ops but different key bits then shared one body, and the second place's leaf had the first's
+field: `{"k":false,"t":true}` failed with `NUMBER` at node 5. Runs now share only where their key
+bits are the same too.
+
+**The check** (`simdjson_forms_rust_trees_are_the_jits`):
+- the JIT's run is direct, and calls no step on the rows (`CompiledStream::row_calls`, from the
+  CLIF's calls: `blocks`, `commit`, `uncode`, `finish`, `pass`, `retag`);
+- its tape holds no format 15 buffer and no row (step 31);
+- its home is the writer's of the file's format 15 tape (`f16::write_from_with_presence`), not only
+  the Rust's.
+
+96 inputs (65 parsed), and with simdjson's `jsonexamples` 120 (87 parsed), 16 and 16z. The
+ladder test asserts that the JIT is direct exactly where `direct_keys` is.
+
+Mutation: the field from `key_after` dropped: `NUMBER` at node 3 on the first file.
+
+Only the simdjson form is direct. `coded` is computed on the one-function form (`OneFn`), which
+the Rust backend makes only where tier 2 makes the records. No ladder step is that form, so none
+is direct (0 of 15, 0 of 22).
+
+## Step 29, done: a token check that reads back, and Kotlin's ladder, in the generated Rust
+
+JSON's steps 14 and 15 were refused: the `\u` check reads 6 bytes before its token (0428), and
+the Rust had no such check. It has now, as the JIT's (`token_check_short`, `ended_word`):
+- the gate first (`token_gate`): the token's last byte against the check's 256-bit set, else no
+  frame;
+- the frame from `back` bytes before the token, clipped at the file's start (`pre`), each window
+  shifted by what lies before the file;
+- `ENDED` from the records before the token's: at most `back` of them end in the frame;
+- `START` and `LAST` at `back` and `back + n - 1`, `WITHIN` from `pre`.
+
+A region tier 2 splits stays refused for such a check, as in the JIT (0428).
+
+Kotlin's ladder was refused at its first step ("more than one kind of extra"). The refusal is gone:
+the Rust took each extra already. Kotlin's steps are compiled as `kotlin_parser` compiles its
+grammar (`ladder::compile_step_as`: shaped by its rules, tier 1's blocks padded, the clusters by
+rule).
+
+Two compiler faults turned up on Kotlin's steps:
+- step 8: tier 1 refused with "region 6's value on the vectors made outside its branch" (0423).
+  The value was not made outside: `region`'s gate test carried the location of the last value
+  made before it. `region` now clears the location before the test, as before its skip block.
+- step 17: the prover panicked (`bitlex_prove`, no groups at a lag). The window's hypothesis
+  (`whole_hypothesis`) reads values at lags the root never reads, and their bytes had no groups.
+  `unrolled_readers` now walks from those places too.
+
+The test gains the 0428 escape texts in three framings (at the file's start, after a string,
+inside an array).
+
+| | steps | format 16 homes, the JIT's | of 3,000 nodes or more |
+|---|---:|---:|---:|
+| JSON's ladder | 15 of 15 | 3,300 | 30 |
+
+Kotlin's ladder: steps 1 to 16 taken on a farm host before the prover fix; the whole ladder is run
+again with it, and its result follows in the next commit.
+
+Mutations, each failing the check:
+- the read-back frame from one record before only;
+- the gate testing no byte;
+- the windows not shifted at the file's start.
+
+`WITHIN` from 0 in place of `pre` is equivalent: every `within` is ANDed with a byte test that
+reads 0 before the file.
+
 ## Step 28, done: format 16 for every program the Rust backend takes, in the generated Rust
 
 Steps 25 to 27 wrote format 16 only where each node's key is known at its word (`coded`): no edits,
@@ -636,14 +776,15 @@ already have.
 | the probe | 1 | 206 | 2 |
 
 JSON's steps 14 and 15 are refused in both formats: a token check that reads back (0428) has no
-Rust yet. Kotlin's ladder is refused at its first step: more than one kind of extra.
+Rust yet. Kotlin's ladder is refused at its first step: more than one kind of extra. (Both taken
+since step 29.)
 
 Mutations, each failing the check:
 - the ops taking nodes up to the commit point, not one behind (the probe: `NUMBER` at the root);
 - no `retag16` (the probe);
 - the root closed at a commit point.
 
-Not covered: the commit point moved back by an edit before it (`uncode`). The ops read each row as
+Not covered (step 32 shows the mutation equivalent): the commit point moved back by an edit before it (`uncode`). The ops read each row as
 they pass it, so a tape differs only if a second edit reaches a node between the first edit and
 the old commit point. None of the grammars has that.
 
@@ -655,7 +796,7 @@ the old commit point. None of the grammars has that.
 `aot_format_16_tapes_are_the_jits`: 2,008 of the corpus's 2,018 files taken, 4,016 homes, each the
 JIT's.
 
-Left:
+Left (both done since: step 30, step 31):
 - The JIT's format 16 run is still the general one (rows, then `pass` at commit points) where
   `coded` holds. `coded` is the Rust backend's analysis of its one function (`OneFn::stacked`), which
   the JIT does not make.
@@ -688,7 +829,7 @@ has neither.
 `close`, `accept`, `keep_ret` and `taken_ret` touch no row and no format 15 cell; and the bytes
 are still the JIT's on all 82 files. `taken_ret` reading the wrong slot fails it.
 
-Left: the harness still sizes the rows for the bound (`CompiledStream::tape`) though this run
+Left (done in step 31): the harness still sizes the rows for the bound (`CompiledStream::tape`) though this run
 writes none; that is the host's allocation, not the parse's work.
 
 ## Step 26, done: no format 15 cells in the format 16 run, in the generated Rust
