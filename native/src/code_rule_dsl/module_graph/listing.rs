@@ -152,16 +152,17 @@ mod windows {
     fn or_read_dir(directory: &Path, paged: io::Result<Pages>) -> io::Result<Listing> {
         match paged {
             Err(error) if error.kind() != io::ErrorKind::NotFound => {
-                std::fs::read_dir(directory).map(Listing::ReadDir)
+                std::fs::read_dir(directory).map(|entries| Listing::ReadDir(Box::new(entries)))
             }
             paged => paged.map(Listing::Paged),
         }
     }
 
-    /// A folder's entries, as `list` reads them.
+    /// A folder's entries, as `list` reads them. Windows' `ReadDir` holds a whole find record, ten
+    /// times a page cursor's size, so the fallback alone pays for its box.
     pub(in super::super) enum Listing {
         Paged(Pages),
-        ReadDir(std::fs::ReadDir),
+        ReadDir(Box<std::fs::ReadDir>),
     }
 
     impl Iterator for Listing {
