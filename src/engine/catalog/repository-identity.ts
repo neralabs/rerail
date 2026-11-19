@@ -323,10 +323,14 @@ function forget(checkout: string, commonDirectory: string): void {
  * name another repository, and the registry to read is then that repository's. A kept placement costs a few lstats,
  * reads of small files and two real paths. For folders another account owns, Git's last acceptance; for folders the
  * files cannot describe, and while the environment moves Git's lookup, Git's acceptance kept for the registry
- * ({@link keptForRegistry}).
+ * ({@link keptForRegistry}). A folder that is gone keeps no acceptance, as the registry kept nothing for it before: one
+ * made again at its path is asked of Git.
  */
 function registryCommonDirectory(checkout: string): string | undefined {
-  if (!existsSync(checkout)) return undefined;
+  if (!existsSync(checkout)) {
+    gitAcceptances.delete(resolve(checkout));
+    return undefined;
+  }
   const location = placed(resolve(checkout), true);
   return location.git ? physicalPath(dirname(location.identityPath)) : undefined;
 }
@@ -336,7 +340,7 @@ function registryCommonDirectory(checkout: string): string | undefined {
  * Git again: of folders the files cannot describe ({@link gitEntryFacts}), of every folder while the environment moves
  * Git's lookup, and of folders Git places in a repository above them. Each is kept under the facts Git read there
  * ({@link acceptanceStamp}), or, with no stamp, as the registry kept every checkout's before: until a placement asks Git
- * again or Git cannot list the registry. A refusal is not kept.
+ * again, Git cannot list the registry or the folder is gone. A refusal is not kept.
  */
 const gitAcceptances = new Map<string, { readonly stamp: string | undefined; readonly location: RepositoryIdentityLocation }>();
 

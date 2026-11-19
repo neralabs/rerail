@@ -735,6 +735,21 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     repository(inner);
     expectGitsRegistries(inner);
   });
+
+  it("lists as Git does once such a checkout is removed, asked while gone, and made a repository of its own", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    const inner = join(outer, "inner");
+    mkdirSync(join(inner, ".git"), { recursive: true });
+    expect(registryPlacements(inner)).toBe(1);
+
+    await removeFolder(inner);
+    expect(worktreeRegistry(inner)).toBeUndefined();
+    repository(inner);
+    expect(worktreeRegistry(inner)?.worktrees).toEqual(gitsRegistry(inner));
+    expect(worktreeRegistry(inner)?.worktrees).toHaveLength(1);
+  });
 });
 
 describe("an entry Git reads through a link is read through it", () => {
