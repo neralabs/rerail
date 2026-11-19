@@ -302,11 +302,12 @@ def fresh_inode(path):
     except FileNotFoundError:
         pass  # no program: the compile failed, or wrote none
     except OSError as e:
-        log(f"fresh_inode: {path} kept as written: {e}")
+        # The partial copy goes first: it frees the space a full disk needs for the log line.
         try:
             os.unlink(tmp)
         except OSError:
             pass
+        log(f"fresh_inode: {path} kept as written: {e}")
 
 
 def same_in_every_checkout(args, out_dir, crate):
