@@ -491,20 +491,23 @@ describe("MCP callers and the agent guard", () => {
   }
 
   /**
-   * How each finding of the audits `auditIds` reads, by path: `whole`, or `withheld` (rule and place only), in each list
-   * that serves findings.
+   * How a finding {@link auditFinding} recorded reads: `whole`, or `withheld` (rule and place only). `violations_list`
+   * gives no variables, and a missing fix as null.
+   */
+  function findingView({ message, fix = null, variables = {} }: Record<string, unknown>): string {
+    if (typeof message === "string" && message.includes("withheld from this conversation") && fix === null && JSON.stringify(variables) === "{}") return "withheld";
+    return message === "`KEY = 'hunter2'` is plaintext" && fix !== null ? "whole" : JSON.stringify({ message, fix, variables });
+  }
+
+  /**
+   * How each finding of the audits `auditIds` reads, by path ({@link findingView}), in each list that serves findings.
    */
   async function findingViews(auditIds: readonly string[], caller: string | undefined): Promise<Array<Record<string, string>>> {
     const read = async (name: string, args: Record<string, unknown>, path: string): Promise<Record<string, unknown>> => {
       if (caller !== undefined) return (await call(name, args, caller)).result as Record<string, unknown>;
       return await (await createRerailApi(stores, operations, { version: "0.0.0-test" }).request(path)).json() as Record<string, unknown>;
     };
-    // `violations_list` gives no variables, and a missing fix as null.
-    const view = ({ message, fix = null, variables = {} }: Record<string, unknown>): string => {
-      if (typeof message === "string" && message.includes("withheld from this conversation") && fix === null && JSON.stringify(variables) === "{}") return "withheld";
-      return message === "`KEY = 'hunter2'` is plaintext" && fix !== null ? "whole" : JSON.stringify({ message, fix, variables });
-    };
-    const byPath = (rows: Array<Record<string, unknown>>): Record<string, string> => Object.fromEntries(rows.map(row => [String(row.path), view(row)]));
+    const byPath = (rows: Array<Record<string, unknown>>): Record<string, string> => Object.fromEntries(rows.map(row => [String(row.path), findingView(row)]));
     const listed = await read("violations_list", { since: 0 }, "/api/violations?since=0") as { violations: Array<Record<string, unknown>> };
     const audits = await read("audits_list", {}, "/api/audits") as { audits: Array<{ violations: Array<Record<string, unknown>> }> };
     const entries: Array<Record<string, unknown>> = [];
@@ -549,47 +552,100 @@ describe("MCP callers and the agent guard", () => {
     expect(await findingViews(auditIds, undefined)).toEqual([person, person, person]);
   });
 
+  /** Makes `.aws/config.py`, a file holding secrets, in `folder`, and `<folder>/<link>` a link to that `.aws`. */
+  function secretsBehind(folder: string, link: string): void {
+    mkdirSync(join(folder, ".aws"), { recursive: true });
+    writeFileSync(join(folder, ".aws", "config.py"), "KEY = 'hunter2'\n");
+    linkFolder(".aws", join(folder, link));
+  }
+
+  /** Adds a worktree of the agent's checkout at `path`, detached at a first commit, and returns `path`. */
+  function worktree(path: string): string {
+    git(parent, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "first");
+    git(parent, "worktree", "add", "-q", "--detach", path);
+    return path;
+  }
+
   // A repository's history holds its other worktrees' findings, each relative to its own folder. One in a worktree inside
-  // the agent's checkout is judged in that worktree. A worktree beside the checkout is outside it, where the lists read
-  // nothing on disk: its findings are judged by name, never in the agent's own folders, where `conf` means another folder.
-  it("judges a finding from another worktree in that worktree when it lies inside the agent's checkout, else by name", async () => {
-    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: parent, stdio: "ignore" });
-    git("commit", "-q", "--allow-empty", "-m", "first");
-    const inner = join(parent, "worktrees", "inner");
-    const beside = join(root, "beside");
-    git("worktree", "add", "-q", "--detach", inner);
-    git("worktree", "add", "-q", "--detach", beside);
-    for (const checkout of [parent, inner]) {
-      mkdirSync(join(checkout, ".aws"));
-      writeFileSync(join(checkout, ".aws", "config.py"), "KEY = 'hunter2'\n");
-    }
-    linkFolder(".aws", join(inner, "keys"));
-    linkFolder(".aws", join(parent, "conf"));
-    mkdirSync(join(beside, "conf"));
-    writeFileSync(join(beside, "conf", "config.py"), "KEY = 'hunter2'\n");
-    const auditIds = [
-      auditFinding(["keys/config.py"], { sessionId: "inner", folder: inner, checkout: inner }),
-      auditFinding(["conf/config.py", ".aws/config.py"], { sessionId: "beside", folder: beside, checkout: beside }),
-    ];
-    const agent = { "keys/config.py": "withheld", "conf/config.py": "whole", ".aws/config.py": "withheld" };
+  // the agent's checkout is judged in that worktree, where `keys` leads into `.aws`.
+  it("judges a finding from another worktree inside the agent's checkout in that worktree", async () => {
+    const inner = worktree(join(parent, "worktrees", "inner"));
+    secretsBehind(inner, "keys");
+    const auditIds = [auditFinding(["keys/config.py"], { sessionId: "inner", folder: inner, checkout: inner })];
+    const agent = { "keys/config.py": "withheld" };
     expect(await findingViews(auditIds, from(parent))).toEqual([agent, agent, agent]);
-    const person = { "keys/config.py": "whole", "conf/config.py": "whole", ".aws/config.py": "whole" };
+    const person = { "keys/config.py": "whole" };
     expect(await findingViews(auditIds, undefined)).toEqual([person, person, person]);
   });
 
-  // The folder an audit ran in may be gone since, may lead out of the agent's checkout through a link, or may be missing
-  // from its record: the lists read nothing there, judge its findings by name and still answer.
-  it("judges by name a finding whose folder is gone, leads out of the agent's checkout, or was not recorded", async () => {
-    const elsewhere = join(root, "elsewhere");
-    mkdirSync(join(elsewhere, ".aws"), { recursive: true });
-    linkFolder(elsewhere, join(parent, "web", "out"));
-    const auditIds = [
-      auditFinding([".aws/gone.py", "gone.py"], { sessionId: "gone", folder: join(parent, "gone"), checkout: join(parent, "gone") }),
-      auditFinding([".aws/out.py", "out.py"], { sessionId: "out", folder: join(parent, "web", "out"), checkout: join(parent, "web", "out") }),
-      auditFinding([".aws/none.py", "none.py"], { sessionId: "none", workspaceRoot: "", checkout: join(parent, "web") }),
-    ];
-    const agent = { ".aws/gone.py": "withheld", "gone.py": "whole", ".aws/out.py": "withheld", "out.py": "whole", ".aws/none.py": "withheld", "none.py": "whole" };
+  // A worktree beside the agent's checkout is outside it, where the lists read nothing on disk: its findings are judged
+  // by name, though `conf` leads into `.aws` both in that worktree and in the agent's checkout.
+  it("judges by name a finding from a worktree beside the agent's checkout", async () => {
+    const beside = worktree(join(root, "beside"));
+    secretsBehind(beside, "conf");
+    secretsBehind(parent, "conf");
+    const auditIds = [auditFinding(["conf/config.py", ".aws/config.py"], { sessionId: "beside", folder: beside, checkout: beside })];
+    const agent = { "conf/config.py": "whole", ".aws/config.py": "withheld" };
     expect(await findingViews(auditIds, from(parent))).toEqual([agent, agent, agent]);
+    const person = { "conf/config.py": "whole", ".aws/config.py": "whole" };
+    expect(await findingViews(auditIds, undefined)).toEqual([person, person, person]);
+  });
+
+  // The folder an audit ran in may be gone since: the lists read nothing there, judge its findings by name and still
+  // answer.
+  it("judges by name a finding whose folder is gone since its audit ran", async () => {
+    const gone = join(parent, "gone");
+    const auditIds = [auditFinding([".aws/config.py", "config.py"], { sessionId: "gone", folder: gone, checkout: gone })];
+    const agent = { ".aws/config.py": "withheld", "config.py": "whole" };
+    expect(await findingViews(auditIds, from(parent))).toEqual([agent, agent, agent]);
+  });
+
+  // A folder of the agent's checkout may be a link that leads out of it: the lists read nothing where it leads, so a
+  // finding there is judged by name, though in `elsewhere`, where the session ran, `keys` leads into `.aws`.
+  it("judges by name a finding whose folder a link leads out of the agent's checkout", async () => {
+    const elsewhere = join(root, "elsewhere");
+    mkdirSync(elsewhere);
+    secretsBehind(elsewhere, "keys");
+    const out = join(parent, "web", "out");
+    linkFolder(elsewhere, out);
+    const auditIds = [auditFinding(["keys/config.py", ".aws/config.py"], { sessionId: "out", folder: out, checkout: out })];
+    const agent = { "keys/config.py": "whole", ".aws/config.py": "withheld" };
+    expect(await findingViews(auditIds, from(parent))).toEqual([agent, agent, agent]);
+  });
+
+  // An audit with no folder recorded has its findings judged by name, never against the daemon's own working folder,
+  // which a relative path resolves against: here the agent's checkout, where `keys` leads into `.aws`.
+  it("judges by name a finding whose folder was not recorded, where the daemon works in the agent's checkout", async () => {
+    secretsBehind(parent, "keys");
+    const auditIds = [auditFinding(["keys/config.py", ".aws/config.py"], { sessionId: "none", workspaceRoot: "", checkout: join(parent, "web") })];
+    const agent = { "keys/config.py": "whole", ".aws/config.py": "withheld" };
+    const started = process.cwd();
+    process.chdir(parent);
+    try {
+      expect(await findingViews(auditIds, from(parent))).toEqual([agent, agent, agent]);
+    } finally {
+      process.chdir(started);
+    }
+  });
+
+  // One answer resolves at most 256 distinct paths on disk (CHECKOUT_PATH_RESOLUTIONS in src/engine/path-boundary.ts)
+  // across every folder its findings were recorded in, and judges the rest by name. Sessions in `web` and `api` recorded
+  // 256 findings each, the first in `conf/config.py` with `conf` a link to `.aws`; `audits_list`, which judges every
+  // finding of both audits in one answer, withholds that finding in the audit it judges first and serves it whole in the
+  // other, the 257th path.
+  it("resolves at most 256 paths per answer across the folders of its findings, past which it judges by name", async () => {
+    const resolutions = 256;
+    const paths = ["conf/config.py", ...Array.from({ length: resolutions - 1 }, (_, n) => `src/f${n}.py`)];
+    for (const name of ["web", "api"]) {
+      const folder = join(parent, name);
+      mkdirSync(folder, { recursive: true });
+      secretsBehind(folder, "conf");
+      auditFinding(paths, { sessionId: name, folder, checkout: folder });
+    }
+    const { audits } = (await call("audits_list", {}, from(parent))).result as { audits: Array<{ violations: Array<Record<string, unknown>> }> };
+    expect(audits.map(audit => audit.violations.length)).toEqual([resolutions, resolutions]);
+    const first = audits.map(audit => [audit.violations[0]!.path, findingView(audit.violations[0]!)]);
+    expect(first).toEqual([["conf/config.py", "withheld"], ["conf/config.py", "whole"]]);
   });
 
   // Windows opens a folder or a file by its 8.3 short name too (`AWS~1` for `.aws`, `WP-CON~1.PHP` for `wp-config.php`),
