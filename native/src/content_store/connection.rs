@@ -368,6 +368,7 @@ impl ThreadConnection {
 
 /// Closes every thread's idle connection to the database at `database_path`, whatever store was opened there; one
 /// in use stays open. A test's temporary database (`test_support::TemporaryDatabase`) calls it as it drops.
+#[cfg(test)]
 pub(super) fn release_all_at(database_path: &Path) {
     release_in(&connections(), database_path);
 }

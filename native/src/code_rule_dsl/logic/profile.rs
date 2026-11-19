@@ -812,9 +812,9 @@ pub fn snapshot() -> Snapshot {
     Snapshot { at: std::time::Instant::now(), own: cpu() - helped, helped, process: process_clock() }
 }
 
-/// The command's start (`command_begins`) and its run's end (`run_ends`), for the time before and after its run.
-/// The command's, on the thread that runs it (its outermost run runs there).
 thread_local! {
+    /// The command's start (`command_begins`) and its run's end (`run_ends`), for the time before and after its run.
+    /// The command's, on the thread that runs it (its outermost run runs there).
     static COMMAND: std::cell::Cell<(Option<Snapshot>, Option<Snapshot>, f64)> = const { std::cell::Cell::new((None, None, 0.0)) };
 }
 

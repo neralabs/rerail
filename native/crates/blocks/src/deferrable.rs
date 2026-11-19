@@ -24,7 +24,9 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, Weak};
+#[cfg(target_os = "macos")]
+use std::sync::Mutex;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 /// A file's shared mapping: unmapped when the last of its holders (the block's backing, the hand-off) lets go.
@@ -232,10 +234,12 @@ impl Sealed {
 }
 
 /// How long the writer waits for the driver to let go of a range's pages before it gives the segment up.
+#[cfg(target_os = "macos")]
 const LET_GO: Duration = Duration::from_secs(10);
 
 /// `msync`s the range with `MS_SYNC` until no page of it is dirty (`mincore`): a page still wired for the GPU is
 /// skipped by each `msync` until the driver lets go of it.
+#[cfg(target_os = "macos")]
 fn written_back(base: *mut u8, len: usize) -> io::Result<()> {
     let pages = len.div_ceil(crate::block::PAGE);
     let mut v = vec![0 as libc::c_char; pages];
@@ -256,6 +260,13 @@ fn written_back(base: *mut u8, len: usize) -> io::Result<()> {
         std::thread::sleep(wait);
         wait = (wait * 2).min(Duration::from_millis(20));
     }
+}
+
+/// `msync`s the range with `MS_SYNC`: with no device to wire its pages, the call writes every dirty page back. (Linux's
+/// `mincore` tells only whether a page is resident, not whether it is dirty.)
+#[cfg(not(target_os = "macos"))]
+fn written_back(base: *mut u8, len: usize) -> io::Result<()> {
+    msync(base, len, libc::MS_SYNC)
 }
 
 fn msync(base: *mut u8, len: usize, flags: i32) -> io::Result<()> {

@@ -1052,11 +1052,11 @@ pub fn search_one(over: &dyn Fn() -> bool) -> bool {
     true
 }
 
-/// Decision 0243: whether a run's end serves the waiting searches (`drain_at_end`): a one-shot process ends before the
-/// machine is idle, and its requests, with the relations they hold, end with it. Decision 0272: every command of the
-/// CLI (`tools::cli`) sets it; a long-lived caller (the reactor) leaves the searches to the idle job. The caller's
-/// (decision 0442): held by the thread that set it, carried to its runs' jobs (`carried`).
 thread_local! {
+    /// Decision 0243: whether a run's end serves the waiting searches (`drain_at_end`): a one-shot process ends before
+    /// the machine is idle, and its requests, with the relations they hold, end with it. Decision 0272: every command
+    /// of the CLI (`tools::cli`) sets it; a long-lived caller (the reactor) leaves the searches to the idle job. The
+    /// caller's (decision 0442): held by the thread that set it, carried to its runs' jobs (`carried`).
     static DRAIN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
