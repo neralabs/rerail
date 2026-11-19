@@ -151,6 +151,16 @@ Its workers share the first check. Direct reads through the native source API ch
 In a fixture with 12 packs, both 4 and 64 unchanged paths took two checks of 26 storage paths.
 Both warm profiles recorded zero tree decodes.
 
+A pack layout records which indexes can supply each object ID prefix.
+Each lookup still checks the loose object paths.
+Small indexes list the first bytes of the object IDs they contain. A lookup can skip a small
+index when the requested ID starts with a different byte. Every candidate index contributes
+its supplier, including when several packs contain the same object.
+
+With 12 unrelated single-object packs, a warm scan of 4 directories went from 60 index probes to zero.
+With 64 directories, the count fell from 780 to three. Both scans still returned one finding per directory and decoded zero trees.
+An index with more than 256 objects still gets one lookup per requested ID. These counts measure index probes, not elapsed time.
+
 In a two-file Python fixture, three separate native processes used the same
 store and scope. The initial scan had zero file memo hits. A new commit with
 the same tree had two hits. After one file changed, the next scan had one hit

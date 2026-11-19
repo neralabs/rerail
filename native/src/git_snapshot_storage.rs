@@ -8,7 +8,7 @@ pub struct Storage {
     roots: Vec<PathBuf>,
     loose: Sha256,
     packs: Sha256,
-    indices: Option<Vec<PackIndex>>,
+    indices: Option<PackIndices>,
     watched: BTreeMap<PathBuf, [u8; 32]>,
 }
 
@@ -21,6 +21,55 @@ impl std::fmt::Debug for Storage {
 enum PackIndex {
     Single(gix::odb::pack::index::File),
     Multi(gix::odb::pack::multi_index::File),
+}
+
+/// Route lookups by the first byte in small indexes. Limit the work to build this routing
+/// table to 256 IDs per index. Large indexes already have their own fan-out table.
+struct PackIndices {
+    files: Vec<PackIndex>,
+    large: Vec<usize>,
+    by_prefix: BTreeMap<u8, Vec<usize>>,
+}
+
+impl PackIndices {
+    fn new(files: Vec<PackIndex>) -> Self {
+        let mut large = Vec::new();
+        let mut by_prefix = BTreeMap::<u8, Vec<usize>>::new();
+        for (slot, file) in files.iter().enumerate() {
+            let count = match file {
+                PackIndex::Single(index) => index.num_objects(),
+                PackIndex::Multi(index) => index.num_objects(),
+            };
+            if count > 256 {
+                large.push(slot);
+                continue;
+            }
+            // Git stores object IDs in sorted order in both index formats.
+            let mut previous = None;
+            for position in 0..count {
+                let id = match file {
+                    PackIndex::Single(index) => index.oid_at_index(position),
+                    PackIndex::Multi(index) => index.oid_at_index(position),
+                };
+                let prefix = id.as_bytes()[0];
+                if previous != Some(prefix) {
+                    by_prefix.entry(prefix).or_default().push(slot);
+                    previous = Some(prefix);
+                }
+            }
+        }
+        Self { files, large, by_prefix }
+    }
+
+    fn suppliers(&self, id: gix::ObjectId) -> Option<BTreeSet<(PathBuf, u64)>> {
+        let small = self.by_prefix.get(&id.as_slice()[0]).map_or(&[][..], Vec::as_slice);
+        rerail_prof::count("git.pack_index_probes", self.large.len() + small.len());
+        let mut suppliers = BTreeSet::new();
+        for &slot in self.large.iter().chain(small) {
+            self.files[slot].locate(id.as_ref(), &mut suppliers)?;
+        }
+        Some(suppliers)
+    }
 }
 
 impl PackIndex {
@@ -86,7 +135,7 @@ impl Storage {
                 }
             }
         }
-        let storage = Self { roots, loose, packs, indices, watched };
+        let storage = Self { roots, loose, packs, indices: indices.map(PackIndices::new), watched };
         storage.is_current().then_some(storage)
     }
 
@@ -100,12 +149,10 @@ impl Storage {
     }
 
     pub fn object(&self, id: gix::ObjectId) -> Option<String> {
+        rerail_prof::count("git.storage_stamp_requests", 1);
         let oid = id.to_string();
         let mut stamp = self.loose.clone();
-        // More than one pack can supply the same object. Include each possible source.
-        if self.indices.as_ref().and_then(|indices| {
-            let mut suppliers = BTreeSet::new();
-            indices.iter().try_for_each(|index| index.locate(id.as_ref(), &mut suppliers))?;
+        if self.indices.as_ref().and_then(|indices| indices.suppliers(id)).and_then(|suppliers| {
             for (pack, offset) in suppliers {
                 hash_path(&mut stamp, &pack);
                 stamp.update(offset.to_le_bytes());
@@ -177,4 +224,59 @@ fn hash_stat(digest: &mut Sha256, metadata: Option<&std::fs::Metadata>) -> Optio
         digest.update(time(metadata.created())?);
     }
     Some(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    fn pack(repo: &gix::Repository, ids: &[gix::ObjectId]) -> PathBuf {
+        let base = repo.git_dir().join("objects/pack/pack");
+        let mut git = Command::new("git").arg("pack-objects").arg(&base)
+            .current_dir(repo.workdir().unwrap())
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+        let mut input = git.stdin.take().unwrap();
+        for id in ids { writeln!(input, "{id}").unwrap(); }
+        drop(input);
+        let output = git.wait_with_output().unwrap();
+        assert!(output.status.success());
+        let hash = std::str::from_utf8(&output.stdout).unwrap().trim();
+        base.with_file_name(format!("pack-{hash}.pack"))
+    }
+
+    #[test]
+    fn routes_to_every_supplier_and_observes_loose_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = gix::init(temp.path().join("primary")).unwrap();
+        let alternate = gix::init(temp.path().join("alternate")).unwrap();
+        let id = repo.write_blob(b"target").unwrap().detach();
+        assert_eq!(alternate.write_blob(b"target").unwrap().detach(), id);
+        let small = pack(&repo, &[id]);
+        let other = pack(&alternate, &[id]);
+        let mut ids: Vec<_> = (0..256).map(|i| repo.write_blob(i.to_string()).unwrap().detach()).collect();
+        ids.push(id);
+        let large = pack(&repo, &ids);
+        let alt_objects = alternate.git_dir().join("objects").canonicalize().unwrap();
+        let objects = repo.git_dir().join("objects");
+        std::fs::create_dir_all(objects.join("info")).unwrap();
+        std::fs::write(objects.join("info/alternates"), format!("{}\n", alt_objects.display())).unwrap();
+        let layout = || Storage::of(&gix::open(repo.git_dir()).unwrap()).unwrap();
+        let first = layout();
+        let suppliers = first.indices.as_ref().unwrap().suppliers(id).unwrap();
+        let paths: BTreeSet<_> = suppliers.iter().map(|(path, _)| path.canonicalize().unwrap()).collect();
+        assert_eq!(paths, BTreeSet::from([small, large, other].map(|p| p.canonicalize().unwrap())));
+        let stamp = first.object(id).unwrap();
+        assert!(Command::new("git").args(["multi-pack-index", "write"]).current_dir(repo.workdir().unwrap())
+            .status().unwrap().success());
+        assert!(!first.is_current());
+        let next = layout();
+        assert_eq!(next.indices.as_ref().unwrap().suppliers(id).unwrap(), suppliers);
+        assert_eq!(next.object(id).unwrap(), stamp);
+        let hex = id.to_string();
+        std::fs::remove_file(objects.join(&hex[..2]).join(&hex[2..])).unwrap();
+        assert!(next.is_current());
+        assert_ne!(next.object(id).unwrap(), stamp);
+    }
 }
