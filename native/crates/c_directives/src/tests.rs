@@ -119,6 +119,8 @@ fn directives_read_as_the_lean_scan_reads_them() {
     let c = compiled_or_panic();
     let cases: &[&str] = &[
         "#define X 1\n",
+        // Digit separators (C23, C++14) and `u8'…'`: no character constant opens.
+        "int n = 1'000'000 + 0x'1 + 1.5'e+3;\n#define N u8'a' + 1'0\n#if 1'0 == 10\n#endif\n",
         "#include <stdio.h>\nint main() { return 0; }\n",
         "  #  ifdef A  \n#endif\n",
         "#\n# 33 \"f.c\" 1\n#foo bar\n#!x\n",
@@ -179,7 +181,7 @@ fn directives_read_as_the_lean_scan_reads_them() {
 #[test]
 fn what_the_step_does_not_read_is_refused() {
     let c = compiled_or_panic();
-    for src in ["#if A\n#define X\n", "#define X 1\rx\n", "auto s = R\"x(x)x\";\n", "auto s = R\"(x\n", "auto s = R\"(a\\\nb)\";\n", "int n = 1'000;\n", "#define X \"open\n", "/* open\n", "??=define X\n", "%:define X\n", "#error don't\n"] {
+    for src in ["#if A\n#define X\n", "#define X 1\rx\n", "auto s = R\"x(x)x\";\n", "auto s = R\"(x\n", "auto s = R\"(a\\\nb)\";\n", "int n = '.5'a + 1;\n", "#define X \"open\n", "/* open\n", "??=define X\n", "%:define X\n", "#error don't\n"] {
         assert!(c.read(src.as_bytes()).is_none(), "{src:?}");
     }
 }

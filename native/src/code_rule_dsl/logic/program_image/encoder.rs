@@ -34,13 +34,37 @@ pub enum CellText<'a> {
     Branded(crate::code_rule_dsl::logic::front::ast::Branded),
 }
 
-/// A fact relation's hash: its name, whether it is of the `.about` rows, and its rows.
+/// A fact relation's hash: its name, whether it is of the `.about` rows, and its rows. A relation's facts are a set,
+/// so their hash is of the rows whatever their order (each row hashed alone, the hashes summed): the same facts in
+/// another order are the same program (`Version::digest`), as a phase's export maintained from kept rows (read in
+/// their canonical order, decision 0456 K3) gives the same rows as one derived anew, in another order. The `.about`
+/// rows are hashed in their order.
 pub fn facts_hash<'a, Row: Iterator<Item = CellText<'a>>>(rel: &str, about: bool, rows: impl Iterator<Item = Row>) -> u64 {
     let mut h = hasher();
     h.write_u8(2);
     put_text(&mut h, rel);
     h.write_u8(about as u8);
+    if !about {
+        let (mut sum, mut n) = (0u64, 0u64);
+        for row in rows {
+            let mut r = hasher();
+            put_row(&mut r, row);
+            sum = sum.wrapping_add(r.finish());
+            n += 1;
+        }
+        h.write_u64(n);
+        h.write_u64(sum);
+        return h.finish();
+    }
     for row in rows {
+        put_row(&mut h, row);
+    }
+    h.finish()
+}
+
+/// A fact row into `h`.
+fn put_row<'a>(mut h: &mut impl std::hash::Hasher, row: impl Iterator<Item = CellText<'a>>) {
+    {
         h.write_u8(3);
         for c in row {
             match c {
@@ -60,7 +84,6 @@ pub fn facts_hash<'a, Row: Iterator<Item = CellText<'a>>>(rel: &str, about: bool
             }
         }
     }
-    h.finish()
 }
 
 /// The hash of a list of names (inputs, outputs); `tag` tells the lists apart.
@@ -205,6 +228,15 @@ impl<'p> Encoder<'p> {
             return a.0;
         }
         self.atom_base + self.strings.intern(text)
+    }
+    /// The atom of `text`, where the parent or this image has one; none is added.
+    pub fn find(&self, text: &str) -> Option<u32> {
+        if let Some(p) = self.parent
+            && let Some(a) = p.find(text)
+        {
+            return Some(a.0);
+        }
+        self.strings.find(text).map(|i| self.atom_base + i)
     }
     pub fn text(&self, a: u32) -> &str {
         if a >= self.atom_base { self.strings.text(a - self.atom_base) } else { self.parent.expect("an atom below the base has a parent").text(AtomId(a)) }

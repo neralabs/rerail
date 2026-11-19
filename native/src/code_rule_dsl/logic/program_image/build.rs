@@ -93,17 +93,8 @@ impl Builder<'static> {
     pub fn base() -> Builder<'static> {
         Builder { parent: None, ids: None, enc: Encoder::new(None), removed: Vec::new(), parts: Parts::default(), parts_changed: false, rows: 0 }
     }
-    /// A new base of `prog`, every part its own. Refuses what the image has no form for (maintenance's parts, which
-    /// the text refuses too: `of_program_less_maintenance`) and a comparison it does not know.
+    /// A new base of `prog`, every part its own. Refuses a comparison the image does not know.
     pub fn of_program(prog: &Program) -> Result<Builder<'static>, String> {
-        if !prog.again.is_empty() || !prog.together.is_empty() {
-            return Err(super::bad("maintenance's parts (again, together) have no image"));
-        }
-        Builder::of_program_less_maintenance(prog)
-    }
-    /// A new base of all of `prog` but maintenance's parts (`again`, `together`), which a maintained program's version
-    /// holds beside its image (decision 0215, `plan::body::Maint`).
-    pub fn of_program_less_maintenance(prog: &Program) -> Result<Builder<'static>, String> {
         let mut b = Builder::base();
         for r in &prog.rules {
             b.add(r)?;
@@ -124,6 +115,13 @@ impl Builder<'static> {
         self.set_inputs(&prog.inputs);
         self.set_outputs(&prog.outputs);
         self.set_about(&super::about_of(prog));
+    }
+}
+
+/// A new base (`Builder::base`): a lowerer's header before it states anything.
+impl Default for Builder<'static> {
+    fn default() -> Self {
+        Builder::base()
     }
 }
 
@@ -198,6 +196,26 @@ impl<'p> Builder<'p> {
         Ok(Some(Version::view(&base, ranges, v.size(), v.digest())))
     }
 
+    /// A base of all of `edit`, an overlay of `parent` (its derivation's input), under its atom and relation ids: each
+    /// rule copied with the source the derivation records for it: a rule of `parent` with a source its own (as `keep`
+    /// records it), a rule the edit added its source in `parent`; a rule with none stays without (a base's digest). A pass's output folded so is the same edit of its input as the
+    /// overlay was (`manager::Delta`, the request record by rule, decision 0331); `folding` keeps the older sources.
+    fn folding_edit(edit: &'p Version, parent: &Version) -> Builder<'p> {
+        let mut b = Builder::derive(edit);
+        let added = match edit {
+            Version::Overlay { delta, .. } => delta.rule_base(),
+            _ => u32::MAX,
+        };
+        for r in edit.rules() {
+            let id = b.copy(edit, r);
+            let src = r.source().map(|s| if r.id().0 < added && parent.contains(r.id()) { r.id() } else { s });
+            if let Some(src) = src {
+                b.enc.set_from(id.0 - b.enc.rule_base(), src);
+            }
+        }
+        b
+    }
+
     /// The edit's size: rules removed and added, and part rows stated.
     pub fn size(&self) -> usize {
         self.removed.len() + self.enc.rules() as usize + self.parts.decls.len() + self.parts.decls_gone.len() + self.rows + self.parts.facts_gone.len()
@@ -252,6 +270,12 @@ impl<'p> Builder<'p> {
     pub fn add(&mut self, rule: &Rule) -> Result<RuleId, String> {
         let id = self.next_id();
         self.enc.tree_rule(rule)?;
+        Ok(id)
+    }
+    /// Adds a rewritten tree rule and records which input rule it came from.
+    pub fn add_from(&mut self, rule: &Rule, source: RuleId) -> Result<RuleId, String> {
+        let id = self.add(rule)?;
+        self.enc.set_from(id.0 - self.enc.rule_base(), source);
         Ok(id)
     }
     /// Adds a copy of `rule`, one of `from`'s rules: its nodes as they are when `from`'s ids are this builder's,
@@ -441,36 +465,138 @@ impl<'p> Builder<'p> {
         self.parts.outputs = Some((ids, encoder::names_hash(1, names.iter().map(|n| n.as_ref()))));
         self.parts_changed = true;
     }
-    /// States the fields of `header` besides its rules (`Version::header`'s, edited by a pass that reads and writes
-    /// only those): its declarations, facts, inputs, outputs and the rest of its `.about` rows, each where it differs
-    /// from `was`, the header the pass was given. Its rules are the builder's own.
-    pub fn set_header(&mut self, was: &Program, header: &Program) {
-        for (n, c) in &header.decls {
-            if was.decls.get(n) != Some(c) {
-                self.declare_names(n, c.as_slice());
+    /// The inputs this edit states, or its parent's.
+    pub fn input_names(&self) -> Vec<String> {
+        match &self.parts.inputs {
+            Some((ids, _)) => ids.iter().map(|&a| self.enc.text(a).to_owned()).collect(),
+            None => self.parent.map(|p| p.input_names()).unwrap_or_default(),
+        }
+    }
+    /// Whether `rel` is an input this edit states, or its parent's: `input_names` with nothing copied.
+    pub fn has_input(&self, rel: &str) -> bool {
+        match &self.parts.inputs {
+            Some((ids, _)) => self.enc.find(rel).is_some_and(|a| ids.contains(&a)),
+            None => self.parent.is_some_and(|p| p.inputs().any(|a| p.text(a) == rel)),
+        }
+    }
+    /// The outputs this edit states, or its parent's.
+    pub fn output_names(&self) -> Vec<String> {
+        match &self.parts.outputs {
+            Some((ids, _)) => ids.iter().map(|&a| self.enc.text(a).to_owned()).collect(),
+            None => self.parent.map(|p| p.output_names()).unwrap_or_default(),
+        }
+    }
+    /// Relation `rel`'s fact rows as this edit states them, or its parent's (`None` where it has none).
+    pub fn fact_cells(&self, rel: &str) -> Option<Vec<Vec<Cell>>> {
+        let a = self.enc.find(rel)?;
+        match self.parts.facts.get(&a) {
+            Some(f) => Some(f.rows.clone()),
+            None if self.parts.facts_gone.contains(&a) => None,
+            None => self.parent.and_then(|p| p.facts(AtomId(a))).map(|f| f.rows().map(|r| r.collect()).collect()),
+        }
+    }
+    /// Whether relation `rel` is declared, by this edit or its parent.
+    pub fn declares(&self, rel: &str) -> bool {
+        let Some(a) = self.enc.find(rel) else { return false };
+        self.parts.decls.contains_key(&a) || (!self.parts.decls_gone.contains(&a) && self.parent.is_some_and(|p| p.decl(AtomId(a)).is_some()))
+    }
+    /// States the fields edit `e` states (its declarations, facts, inputs, outputs and `.about` rows, by name), as
+    /// this builder's: an edit staged against the same input (`fields::Edit`), its rules this builder's own.
+    pub fn state_fields_of(&mut self, e: &Builder<'_>) {
+        let text = |a: u32| e.enc.text(a).to_owned();
+        let value = |c: &Cell| match *c {
+            Cell::Int(i) => Value::Int(i),
+            Cell::Str(a) => Value::Str(e.enc.text(a.0).to_owned().into()),
+            Cell::Branded(b) => Value::Branded(b),
+        };
+        for (&a, d) in &e.parts.decls {
+            let cols: Vec<(String, String)> = d.cols.iter().map(|&(n, t)| (text(n), text(t))).collect();
+            let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+            self.declare(&text(a), &pairs);
+        }
+        for &a in &e.parts.decls_gone {
+            self.undeclare(&text(a));
+        }
+        for (&k, f) in e.parts.facts.iter().filter(|(k, _)| *k & ABOUT_BIT == 0) {
+            let rows: Vec<List<Value>> = f.rows.iter().map(|row| row.iter().map(value).collect::<Vec<_>>().into()).collect();
+            self.set_facts(&text(k), &rows);
+        }
+        for &a in &e.parts.facts_gone {
+            self.drop_facts(&text(a));
+        }
+        if let Some((ids, _)) = &e.parts.inputs {
+            self.set_inputs(&ids.iter().map(|&a| text(a)).collect::<Vec<_>>());
+        }
+        if let Some((ids, _)) = &e.parts.outputs {
+            self.set_outputs(&ids.iter().map(|&a| text(a)).collect::<Vec<_>>());
+        }
+        if e.parts.owns_about {
+            let about: Vec<(String, Vec<List<Value>>)> = e
+                .parts
+                .facts
+                .iter()
+                .filter(|(k, _)| *k & ABOUT_BIT != 0)
+                .map(|(&k, f)| (text(k & !ABOUT_BIT), f.rows.iter().map(|row| row.iter().map(value).collect::<Vec<_>>().into()).collect()))
+                .collect();
+            self.own_about();
+            self.parts.facts.retain(|k, _| k & ABOUT_BIT == 0);
+            for (name, rows) in about {
+                let cells: Vec<Vec<Cell>> = rows.iter().map(|row| row.iter().map(|v| self.cell(v)).collect()).collect();
+                self.set_about_rows(&name, cells);
             }
         }
-        for n in was.decls.keys().filter(|n| !header.decls.contains_key(*n)) {
-            self.undeclare(n);
+    }
+    /// Relation `rel`'s declared columns (name, type), as this edit leaves them.
+    pub fn columns_of(&self, rel: &str) -> Option<Vec<(String, String)>> {
+        let a = self.enc.find(rel)?;
+        if let Some(d) = self.parts.decls.get(&a) {
+            return Some(d.cols.iter().map(|&(n, t)| (self.enc.text(n).to_owned(), self.enc.text(t).to_owned())).collect());
         }
-        for (r, rows) in &header.facts {
-            if was.facts.get(r) != Some(rows) {
-                self.set_facts(r, rows);
-            }
+        if self.parts.decls_gone.contains(&a) {
+            return None;
         }
-        for r in was.facts.keys().filter(|r| !header.facts.contains_key(*r)) {
-            self.drop_facts(r);
+        self.parent.and_then(|p| p.columns_of(rel))
+    }
+    /// The declared relations' names, in name order, as this edit leaves them.
+    pub fn declared_names(&self) -> Vec<String> {
+        let mut names: std::collections::BTreeSet<String> = self.parent.map(|p| p.declared_names()).unwrap_or_default().into_iter().collect();
+        for a in &self.parts.decls_gone {
+            names.remove(self.enc.text(*a));
         }
-        if was.inputs != header.inputs {
-            self.set_inputs(&header.inputs);
+        names.extend(self.parts.decls.keys().map(|&a| self.enc.text(a).to_owned()));
+        names.into_iter().collect()
+    }
+    /// The relations with facts stated, in name order, as this edit leaves them.
+    pub fn fact_names(&self) -> Vec<String> {
+        let mut names: std::collections::BTreeSet<String> = self.parent.map(|p| p.fact_names()).unwrap_or_default().into_iter().collect();
+        for a in &self.parts.facts_gone {
+            names.remove(self.enc.text(*a));
         }
-        if was.outputs != header.outputs {
-            self.set_outputs(&header.outputs);
+        names.extend(self.parts.facts.keys().filter(|&&k| k & ABOUT_BIT == 0).map(|&a| self.enc.text(a).to_owned()));
+        names.into_iter().collect()
+    }
+    /// The rows of about relation `name` as this edit leaves them, read without taking them over (`about_rows`).
+    pub fn about_cells(&self, name: &str) -> Vec<Vec<Cell>> {
+        if self.parts.owns_about {
+            let Some(a) = self.enc.find(name) else { return Vec::new() };
+            return self.parts.facts.get(&(a | ABOUT_BIT)).map(|f| f.rows.clone()).unwrap_or_default();
         }
-        let (a, b) = (super::about_of(was), super::about_of(header));
-        if a != b {
-            self.set_about(&b);
+        let Some(p) = self.parent else { return Vec::new() };
+        p.about_facts().into_iter().filter(|f| p.text(f.name()) == name).flat_map(|f| f.rows().map(|r| r.collect::<Vec<Cell>>()).collect::<Vec<_>>()).collect()
+    }
+    /// Adds rows `rows` to relation `rel`'s facts, after the parent's.
+    pub fn add_facts(&mut self, rel: &str, rows: &[List<Value>]) {
+        if rows.is_empty() {
+            return;
         }
+        let a = self.atom(rel);
+        let mut cells: Vec<Vec<Cell>> = match self.parts.facts.get(&a.0) {
+            Some(f) => f.rows.clone(),
+            None if self.parts.facts_gone.contains(&a.0) => Vec::new(),
+            None => self.parent.and_then(|p| p.facts(a)).map(|f| f.rows().map(|r| r.collect()).collect()).unwrap_or_default(),
+        };
+        cells.extend(rows.iter().map(|row| row.iter().map(|v| self.cell(v)).collect::<Vec<Cell>>()));
+        self.set_fact_cells(rel, cells);
     }
     /// States the program's other fields (`about_of`), all of them.
     pub fn set_about(&mut self, about: &Facts) {
@@ -541,7 +667,7 @@ impl<'p> Builder<'p> {
         let size = self.size();
         let overlay = Version::over(parent, &self.finish_bytes()?)?;
         if 2 * size >= parent.size().max(1) {
-            return Ok((overlay.fold()?, Made::Folded));
+            return Ok((Builder::folding_edit(&overlay, parent).finish()?.0, Made::Folded));
         }
         Ok((overlay, Made::Overlay))
     }

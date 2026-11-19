@@ -44,6 +44,7 @@ pub mod build;
 pub mod csr;
 pub mod encoder;
 pub mod extents;
+pub mod fields;
 pub mod grouped;
 pub mod handles;
 pub mod show;

@@ -102,11 +102,9 @@ pub struct Work(pub(super) Kind);
 pub(super) enum Kind {
     /// A record (decision 0306): its string and byte area, applied by its items' registered kinds.
     Record { text: String, bytes: Vec<u8> },
-    /// A space's frames (`queue_frames`).
-    Frames(Box<super::frames::FramesWrite>),
     /// A space's memo entries in their segments (`queue_memo_segments`).
-    Memo(Box<super::frames::memo_pack::MemoWrite>),
-    /// A space's next kept file (`queue_kept`, decisions 0401 F6, 0402 K4).
+    Memo(Box<super::held::memo_pack::MemoWrite>),
+    /// A space's next kept file (`queue_kept`, decisions 0401 F6, 0456 K4).
     Kept(Box<super::kept_facts::KeptWrite>),
     /// Sources and tapes gathered into segments, or each in its own rows where no segment could be placed.
     Objects(Box<super::object_segments::ObjectsWrite>),
@@ -136,7 +134,6 @@ impl Work {
     fn run(&mut self, store: &ContentStore) -> StoreResult<()> {
         match &mut self.0 {
             Kind::Record { text, bytes } => super::record::apply(store, text, bytes),
-            Kind::Frames(w) => w.run(store),
             Kind::Memo(w) => w.run(store),
             Kind::Kept(w) => w.run(store),
             Kind::Objects(w) => w.run(store),
@@ -1219,6 +1216,45 @@ mod tests {
         (dir, store)
     }
 
+    /// A store deleted and created again at its path while a handle of the old one lives has a writer of its own: its
+    /// jobs run on a handle of the new store (its atoms), not queued behind the old store's. PR #508's d9c403ebf (t47).
+    #[test]
+    fn a_store_created_again_at_its_path_has_its_own_writer() {
+        use std::sync::{Arc, Mutex, mpsc};
+        let (dir, old) = store("again");
+        let path = old.database_path.clone();
+        // The old store's writer holds its connection, on the old store's file, before the file goes: one it opened
+        // after would be refused (the store at the path is another).
+        old.write_back("open", 0, vec![], job(|_| Ok(())));
+        old.written().unwrap();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let o = Arc::clone(&order);
+        old.write_back("old", 0, vec![], job(move |_| {
+            go_rx.recv().unwrap();
+            o.lock().unwrap().push("old");
+            Ok(())
+        }));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        let new = ContentStore::open(&path).unwrap();
+        assert!(!Arc::ptr_eq(old.writer().unwrap(), new.writer().unwrap()));
+        let (o, atoms) = (Arc::clone(&order), Arc::clone(&new.atoms));
+        new.write_back("new", 0, vec![], job(move |s| {
+            assert!(Arc::ptr_eq(&s.atoms, &atoms), "the new store's atoms");
+            o.lock().unwrap().push("new");
+            Ok(())
+        }));
+        // Written while the old store's job still waits.
+        new.written().unwrap();
+        go_tx.send(()).unwrap();
+        old.written().unwrap();
+        assert_eq!(*order.lock().unwrap(), ["new", "old"]);
+        drop((old, new));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// Jobs run in their order on the writer; a read of a queued key gets the job's value, or waits for it alone;
     /// `written` waits for all and gives the first error; another handle of the store shares the queue.
     #[test]
@@ -1318,8 +1354,11 @@ mod tests {
         go_tx.send(()).unwrap();
         let (done_tx, done_rx) = mpsc::channel();
         let other = ContentStore::open(&store.database_path).unwrap();
-        std::thread::spawn(move || done_tx.send(other.written().is_ok()).unwrap());
+        // The other handle is dropped (its checkpoint written) before the thread ends: joined before the directory
+        // goes, or its checkpoint writes into a directory being removed.
+        let waiter = std::thread::spawn(move || done_tx.send(other.written().is_ok()).unwrap());
         assert_eq!(done_rx.recv_timeout(Duration::from_secs(10)), Ok(true), "every queued job written");
+        waiter.join().unwrap();
         assert!(store.atoms_handle().forked(), "the job forked the batch");
         assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 2, "rolled back and run again");
         assert_eq!(later.load(std::sync::atomic::Ordering::SeqCst), 2, "each wave queued meanwhile written once");

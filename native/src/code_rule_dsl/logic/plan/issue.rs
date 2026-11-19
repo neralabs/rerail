@@ -485,7 +485,7 @@ impl<'a> Board<'a> {
     }
 
     /// Whether `j` may be issued with the relations `held` (its component's earlier members') taken as held: the
-    /// relations its strand holds (`Run::strand_reads`).
+    /// relations its strand holds (`Run::strand_reads_with`).
     #[allow(clippy::too_many_arguments)]
     fn eligible(&self, j: usize, run: &Run<'a, '_>, sccs: &[BTreeSet<String>], rules_of: &dyn Fn(usize) -> Vec<RuleKey>, load: &mut dyn FnMut(usize) -> Result<()>, held: &BTreeSet<String>) -> Result<Option<BTreeSet<String>>> {
         if sccs[j].iter().all(|r| run.views.contains(r)) {

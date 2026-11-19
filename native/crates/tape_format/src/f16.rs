@@ -327,7 +327,7 @@ impl Tape16 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Placement {
     pub n: usize,
-    /// The source's length its header states: a view's spans are held to it (decision 0403).
+    /// The source's length its header states: a view's spans are held to it (decision 0462).
     pub source_len: u64,
     pub cw: usize,
     pub widths: [usize; 3],
@@ -391,7 +391,7 @@ impl Placement {
     /// (0: the tape's own bytes).
     pub fn view(&self, lang: &Lang, base: usize) -> Result<TapeView, String> {
         // Each block's columns at `lang`'s widths: the tape's own, which its stride and blocks were checked against
-        // when it was read in (`header`, `fits`), so a read of a node of the tape lies in its block (decision 0403;
+        // when it was read in (`header`, `fits`), so a read of a node of the tape lies in its block (decision 0462;
         // its walks give only nodes of the tape).
         let (_, _, w) = lang.device();
         if w != self.widths {
@@ -1096,6 +1096,7 @@ const PIECES: usize = 4;
 const RAW: u8 = 0;
 const LZ4: u8 = 1;
 const REPEAT: u8 = 2;
+const _: () = assert!(RAW == rerail_clif::view::z::RAW && LZ4 == rerail_clif::view::z::LZ4 && REPEAT == rerail_clif::view::z::REPEAT);
 
 /// The fewest bytes a piece holds to be stored as a repeat (whose payload is the other piece's index, 4 bytes).
 #[cfg(any(test, feature = "reference"))]
@@ -1227,7 +1228,7 @@ impl Tape16Z {
                 RAW => bytes.len() == want,
                 // Within what LZ4 decodes its bytes to (255 bytes a byte at most): the side lengths the part starts
                 // state size every cache entry, so they are bounded by the bytes stored, not taken on trust
-                // (decision 0403).
+                // (decision 0462).
                 LZ4 => !bytes.is_empty() && want as u64 <= 255 * bytes.len() as u64 + 64,
                 REPEAT => {
                     let other = if bytes.len() == 4 { u32_at(bytes, 0) as usize } else { usize::MAX };
@@ -1958,7 +1959,7 @@ mod tests {
         same_reads(&reads, &f15, &image, &v);
     }
 
-    /// Decision 0403: a 16z tape's reads stay within it and its cache, whatever its blocks hold. A side length past
+    /// Decision 0462: a 16z tape's reads stay within it and its cache, whatever its blocks hold. A side length past
     /// what its block's bytes decode to is refused when the tape is read in. A block whose literals claim more
     /// bytes than it has is decoded no further than its own: the tape lies against a page no read may touch, and
     /// every node is read. A node past the tape's last reads the cache's dead entry, a failure counted. The cache
@@ -1976,7 +1977,7 @@ mod tests {
         let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
         let (n, blocks) = (z.len(), z.len().div_ceil(Z));
         // A piece that states more bytes decoded than its stored bytes can give: refused. Its decoded length is
-        // its column's and its side part's, which size every cache entry (decision 0403).
+        // its column's and its side part's, which size every cache entry (decision 0462).
         let packed = (0..PIECES * blocks).rev().find(|&j| z.kind(j) == LZ4).expect("an LZ4 piece");
         let mut stated = z.as_bytes().to_vec();
         let at = z.zat[ZLENS] + 4 * packed;
@@ -2072,7 +2073,7 @@ mod tests {
         }
     }
 
-    /// Decision 0403: a node's span, from the tape's gaps and lengths, is held to the source its header states:
+    /// Decision 0462: a node's span, from the tape's gaps and lengths, is held to the source its header states:
     /// a tape whose spans claim more than its source reads none past it, in format 16 or 16z, and none reversed.
     #[test]
     fn a_tapes_spans_stay_within_its_source() {

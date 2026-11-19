@@ -1,5 +1,5 @@
 //! The store's upkeep jobs (decision 0190 §4): a SQLite file kept small and its statistics fresh ([`SqliteFile`]),
-//! the store's collection ([`Collect`]), and the frames a keep decision left unreachable ([`Frames`]), each a
+//! the store's collection ([`Collect`]), and the memo entries a keep decision left unreachable ([`MemoSweep`]), each a
 //! `rerail_accel::upkeep::Job`.
 
 #[allow(unused_imports)]
@@ -317,29 +317,29 @@ pub fn interrupted(e: &rusqlite::Error) -> bool {
     matches!(e, rusqlite::Error::SqliteFailure(f, _) if f.code == rusqlite::ErrorCode::OperationInterrupted)
 }
 
-/// The frames the last keep decision left unreachable, collected (decision 0227): a utility job ([`Qos::Utility`]),
+/// The memo entries the last keep decision left unreachable, collected (decision 0227): a utility job ([`Qos::Utility`]),
 /// due once a decision is past the last sweep (`corpus_decided.swept`), so the sweep runs soon after the decision, behind the
 /// run, and before the process exits (`upkeep::finish_soon`). A decision left unswept (a process stopped) is the
 /// next process's to sweep.
-pub struct Frames {
+pub struct MemoSweep {
     path: PathBuf,
     name: String,
 }
 
-impl Frames {
+impl MemoSweep {
     pub fn new(path: &Path) -> Self {
         let name = path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-        Frames { path: path.to_path_buf(), name: format!("frames {name}") }
+        MemoSweep { path: path.to_path_buf(), name: format!("memo sweep {name}") }
     }
 
     /// The job for the store at `path`, registered once a process: the runs over that store share it (the
     /// registry finds it by its name and file).
     pub fn register_once(path: &Path) {
-        rerail_accel::upkeep::register_for_process(Box::new(Frames::new(path)));
+        rerail_accel::upkeep::register_for_process(Box::new(MemoSweep::new(path)));
     }
 }
 
-impl Job for Frames {
+impl Job for MemoSweep {
     fn name(&self) -> String {
         self.name.clone()
     }
@@ -356,7 +356,7 @@ impl Job for Frames {
             return Due::No;
         }
         let wanted = Connection::open_with_flags(&self.path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
-            .is_ok_and(|c| super::corpus_runs::frames_sweep_wanted(&c).unwrap_or(false));
+            .is_ok_and(|c| super::corpus_runs::memo_sweep_wanted(&c).unwrap_or(false));
         drop(gone);
         if wanted { Due::Urgent } else { Due::No }
     }
@@ -382,10 +382,8 @@ impl Job for Frames {
         }
         let store = ContentStore::open(&self.path).map_err(|e| e.to_string())?;
         // Stopped by a run that began: rolled back, and still due.
-        let Some((u, seconds)) = store.sweep_frames(slice.stopper()).map_err(|e| e.to_string())? else { return Ok(Step::More) };
-        rerail_prof::code_rule_dsl::logic::profile::decision("unreachable frames collected (decision 0227)", || {
-            format!("{} memo entries, {} maintained, {} programs' rows ({} of programs no manifest names), {:.3} s", u.memo, u.maintained, u.programs, u.unnamed, seconds)
-        });
+        let Some((n, seconds)) = store.sweep_memo(slice.stopper()).map_err(|e| e.to_string())? else { return Ok(Step::More) };
+        rerail_prof::code_rule_dsl::logic::profile::decision("unreachable memo entries collected (decision 0227)", || format!("{n} memo entries, {seconds:.3} s"));
         Ok(Step::Done)
     }
 }
@@ -394,10 +392,10 @@ impl Job for Frames {
 type FileIdentity = (u64, u64);
 
 /// The stores forgotten (`ContentStore::forget`, as a test's store is removed), by path, with the file each was: its
-/// frames job neither reads nor sweeps that file again; a store made again at the path is another file, read as before.
+/// memo sweep neither reads nor sweeps that file again; a store made again at the path is another file, read as before.
 static GONE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<PathBuf, Option<FileIdentity>>>> = std::sync::LazyLock::new(Default::default);
 
-/// The store at `path` is being removed: once this returns, no frames job reads it (a check under way has ended).
+/// The store at `path` is being removed: once this returns, no memo sweep reads it (a check under way has ended).
 pub(super) fn forget(path: &Path) {
     GONE.lock().unwrap_or_else(|p| p.into_inner()).insert(path.to_path_buf(), identity(path));
 }

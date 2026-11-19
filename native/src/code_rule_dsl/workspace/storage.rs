@@ -75,7 +75,7 @@ impl StorageMaintenance {
         use rerail_accel::upkeep::register;
         let jobs = vec![
             register(Box::new(Collect::new(&store))),
-            register(Box::new(crate::content_store::upkeep::Frames::new(store.database_path()))),
+            register(Box::new(crate::content_store::upkeep::MemoSweep::new(store.database_path()))),
             register(Box::new(SearchIndex::new(&store))),
             register(Box::new(SqliteFile::new(store.database_path(), Tables::All))),
         ];

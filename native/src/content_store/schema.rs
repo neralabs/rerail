@@ -23,20 +23,21 @@ use std::sync::LazyLock;
 // run against it. It is safe to delete by hand once no older binary runs; the CHANGELOG entry of
 // each floor raise names the file (with its -wal and -shm). STORE_FILE_FLOOR pins the pairing, so
 // raising SCHEMA_VERSION alone does not compile.
-pub(super) const SCHEMA_VERSION: i64 = 8;
+pub(super) const SCHEMA_VERSION: i64 = 9;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
-pub const STORE_FILE_NAME: &str = "content-v8.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at. 8: every check result, call summary and tree page is in a segment,
-/// as it is, its row naming its range (decision 0450 step 2, 2026-11-19), which an older binary would read as a row
-/// with no frame; 7: every source and tape is in a segment, as it is, and no row holds
-/// an object's bytes (decision 0295 step 5, 2026-11-19), which an older binary would read as an empty or corrupt
-/// frame; 6: the atoms are blocks in files beside the store (decision 0401:
+pub const STORE_FILE_NAME: &str = "content-v9.sqlite";
+/// The floor `STORE_FILE_NAME` was introduced at. 9: two lines' floors joined (2026-11-19), each of which named its
+/// store `content-v7`: a space's kept facts are a chain of packed files and there are no frames (decisions 0456,
+/// 0439), a kept column may be a node id split at its granule, and every source, tape, check result, call summary
+/// and tree page is in a segment, as it is, its row naming its range (decisions 0295 step 5, 0450 step 2). A binary
+/// of either line would read a store that keeps nothing, wrong values, or a row with no frame. Before: 8 (results
+/// in segments), 7 (no object's bytes in a row; on the other line, the kept facts' chain); 6: the atoms are blocks in files beside the store (decision 0401:
 /// `atom_blocks`), which an older binary would read as a store with no atoms; 5: a frame's row points at its bytes in a segment beside the store
 /// (decision 0295 §4: `frames.seg`), which an older binary would read as an empty frame; 4: a corpus manifest's lane is a column of it
 /// (`corpus_manifests.lane`), not a table of its own (decision 0104); 3 was atoms stored as segments
 /// of the arena (decision 0049); 2 the prefilter vocabulary keyed by atom.
-const STORE_FILE_FLOOR: i64 = 8;
+const STORE_FILE_FLOOR: i64 = 9;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
     "raising the floor requires a new STORE_FILE_NAME"
@@ -385,7 +386,7 @@ CREATE TABLE IF NOT EXISTS corpus_plans (
     live INTEGER NOT NULL
 ) STRICT, WITHOUT ROWID;
 -- Per memo plan, the relations its entries hold rows of, with their declared columns as a JSON array of
--- [name, type] (docs/sql-access/01-design.md §2): a session reads a run's frames by name. Collected with the plan.
+-- [name, type] (docs/sql-access/01-design.md §2): a session reads a run's entries by name. Collected with the plan.
 CREATE TABLE IF NOT EXISTS corpus_plan_relations (
     plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
     relation TEXT NOT NULL,
@@ -413,8 +414,8 @@ CREATE TABLE IF NOT EXISTS object_archive (
 -- The last keep decision: the run counter and unix second it was made at. A new manifest makes a decision due, but
 -- a pass makes one only when it can change something (`CorpusPolicy`): a root past its protected runs since, or
 -- enough runs or seconds since. A new root's first runs are protected, so a run of fresh roots decides rarely.
--- Additive: an older binary ignores it. `swept`: the decision whose unreachable frames were last collected (decision
--- 0227); the `frames` upkeep job is due while `run` is past it (`ADDED_COLUMNS` adds it to an older store).
+-- Additive: an older binary ignores it. `swept`: the decision whose unreachable memo entries were last collected (decision
+-- 0227); the memo sweep is due while `run` is past it (`ADDED_COLUMNS` adds it to an older store).
 CREATE TABLE IF NOT EXISTS corpus_decided (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     run INTEGER NOT NULL,
@@ -464,10 +465,9 @@ CREATE TABLE IF NOT EXISTS atom_blocks (
     tag INTEGER NOT NULL
 ) STRICT;
 
--- A space's kept facts (decisions 0401, 0402 K4-K5): a chain of frozen files in `<store>.facts/<space>/`,
+-- A space's kept facts (decisions 0401, 0456 K4-K5): a chain of frozen files in `<store>.facts/<space>/`,
 -- oldest first, each with its maker's tag (a file not its row's is refused). A run's write appends a
--- row; a merge replaces the newest rows with one. Metadata only: the rows are in the files. Additive:
--- an older binary reads the frames.
+-- row; a merge replaces the newest rows with one. Metadata only: the rows are in the files.
 CREATE TABLE IF NOT EXISTS facts_chain (
     space BLOB NOT NULL CHECK(length(space) = 32),
     seq INTEGER NOT NULL CHECK(seq >= 1),
@@ -737,40 +737,6 @@ CREATE TABLE IF NOT EXISTS text_pending (
 CREATE TRIGGER IF NOT EXISTS text_vocabulary_added AFTER INSERT ON term_freq BEGIN
     INSERT INTO text_pending(lang, term) VALUES(NEW.lang, NEW.term);
 END;
--- A run's relations as stored frames (decision 0104, `frames`), by space, relation, identity and part.
-CREATE TABLE IF NOT EXISTS frames(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL,
-    part INTEGER NOT NULL, digest INTEGER NOT NULL, reads BLOB NOT NULL, width INTEGER NOT NULL, rows INTEGER NOT NULL,
-    types BLOB NOT NULL, data BLOB NOT NULL, used INTEGER NOT NULL, seg INTEGER NOT NULL DEFAULT 0,
-    seg_at INTEGER NOT NULL DEFAULT 0, seg_len INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
--- The segments frames are in (decision 0295 §4: `<store>.frames/<seg>.seg`, mapped): a frame's row names its range
--- (`seg`, `seg_at`, `seg_len`) and holds no bytes; `seg` 0 is a frame whose bytes are its `data` (a forked process's,
--- whose symbols the writer renumbers, or one written at once by `keep_frames`).
-CREATE TABLE IF NOT EXISTS frame_segments(seg INTEGER PRIMARY KEY);
--- A memo frame's digest is its document's key, a function of its path (`memo::doc_keys`): a path's contents are found
--- by it, without reading every frame of the relation (each a page, its rows inline).
-CREATE INDEX IF NOT EXISTS frames_by_digest ON frames(space, rel, digest);
--- The run each frame was last used by (decision 0138): apart from `frames`, whose records hold the frame's encoded
--- rows, since SQLite rewrites a whole record (its overflow pages too) to change one column, and reads past `data`
--- to read `used`. Every frame has its row here: put with it, forgotten with it. `frames.used` is the run that put
--- the frame, for an older binary. A store made before this table gets its rows from `frames.used`, once: SCHEMA is
--- applied when an object is missing, and the rows are then all there (`OR IGNORE`).
-CREATE TABLE IF NOT EXISTS frame_part_used(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL,
-    part INTEGER NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
-INSERT OR IGNORE INTO frame_part_used(space, rel, ident, part, used) SELECT space, rel, ident, part, used FROM frames;
--- How many runs each space has counted.
-CREATE TABLE IF NOT EXISTS frame_spaces(space BLOB PRIMARY KEY, runs INTEGER NOT NULL) WITHOUT ROWID;
--- The spaces' confirmations (decision 0117 step 5): each frame found unchanged under other reads than it names.
-CREATE TABLE IF NOT EXISTS frame_confirmed(space BLOB PRIMARY KEY, data BLOB NOT NULL) WITHOUT ROWID;
--- Each run's use of a space (decision 0117 step 5): the relations its programs used, as sorted keys, one row a
--- run, the last four runs'. A frame is collected once the run that put it is that old and no run since
--- used its relation.
-CREATE TABLE IF NOT EXISTS frame_used(space BLOB NOT NULL, run INTEGER NOT NULL, rels BLOB NOT NULL,
-    PRIMARY KEY (space, run)) WITHOUT ROWID;
--- What each program derives in a space (decision 0227): its relations, as sorted keys, one row a program (`run` 0),
--- written when it first puts there. A relation's frames are kept while a live program's row names it
--- (`frames::collect_unreachable_frames`); rows of a run (`run` > 0) are an older binary's, and go at the next collection.
-CREATE TABLE IF NOT EXISTS frame_program_used(space BLOB NOT NULL, program BLOB NOT NULL, run INTEGER NOT NULL,
-    rels BLOB NOT NULL, PRIMARY KEY (space, program, run)) WITHOUT ROWID;
 -- The per-file memo's entries (decision 0240 §4, 0295 §4): where each one's image is in the segments beside the
 -- store (`<store>.memo/<pack>.seg`, `framed` 1: offset and length in the segment's block), by its plan's space and
 -- its part (its content's and path's), with its path, its content's SHA-256 and its document key. A path's contents
@@ -798,7 +764,7 @@ impl ContentStore {
     /// exclusive lock and applies SCHEMA. Returns the store's identity (`store_identity`).
     pub(super) fn initialize(connection: &mut Connection) -> StoreResult<i64> {
         configure_connection(connection)?;
-        if compatible_version(connection)? != SCHEMA_VERSION || !holds_schema_objects(connection)? {
+        if compatible_version(connection)? != SCHEMA_VERSION || !holds_schema_objects(connection)? || holds_retired(connection)? {
             // A store made here is made by a writer's thread (decision 0104: a run's own threads only read): once,
             // before anything reads it.
             rerail_accel::exec::scoped(|scope| {
@@ -812,6 +778,9 @@ impl ContentStore {
                             transaction.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {declaration}"))?;
                         }
                         transaction.execute_batch(SCHEMA)?;
+                        for table in RETIRED_TABLES {
+                            transaction.execute_batch(&format!("DROP TABLE IF EXISTS {table}"))?;
+                        }
                         if version != SCHEMA_VERSION {
                             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                         }
@@ -823,7 +792,11 @@ impl ContentStore {
             })?;
             if let Some(path) = connection.path() {
                 super::atoms::forget_identity(path);
-                super::frames::forget_snapshot(path);
+                super::held::forget_snapshot(path);
+                // The retired tables' segments (`<store>.frames`): no row names them now.
+                let mut frames = std::ffi::OsString::from(path);
+                frames.push(".frames");
+                let _ = std::fs::remove_dir_all(frames);
             }
         }
         let id: Option<i64> = connection.query_row_cached("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0)).optional()?;
@@ -878,6 +851,21 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
         .as_ref()
         .map_err(|error| StoreError::Corrupt(format!("the schema does not apply: {error}")))?;
     Ok(expected.iter().all(|object| present.contains(object)) && missing_columns(connection)?.is_empty())
+}
+
+/// Tables SCHEMA no longer makes, dropped from a store that has them when it is opened: their rows are no build's
+/// to read. Dropping one raises no floor: an older binary makes it again (SCHEMA's `IF NOT EXISTS`), and this
+/// build drops it again at its next open, a cache's rows lost.
+///
+/// - The frames (decision 0104's first form of the kept facts, and their bookkeeping of decisions 0117, 0138, 0227
+///   and 0295 §4): the kept facts are blocks (decision 0439). A floor-7 store made where frames were still kept as
+///   metadata beside the chain (decision 0456 step 6a) has them.
+const RETIRED_TABLES: &[&str] = &["frames", "frame_segments", "frame_part_used", "frame_spaces", "frame_confirmed", "frame_used", "frame_program_used"];
+
+/// Whether the store holds a table of `RETIRED_TABLES`.
+fn holds_retired(connection: &Connection) -> StoreResult<bool> {
+    let present: HashSet<(String, String)> = schema_object_names(connection)?.into_iter().collect();
+    Ok(RETIRED_TABLES.iter().any(|t| present.contains(&("table".to_owned(), (*t).to_owned()))))
 }
 
 /// Columns SCHEMA's tables gained after stores were made with them, as `(table, column, declaration)`: `CREATE
@@ -995,6 +983,29 @@ mod schema_object_tests {
         assert_eq!(c.query_row("SELECT run, swept FROM corpus_decided", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).unwrap(), (7, 0));
         drop(c);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A store made when the kept facts were frames loses their tables and segments when it is opened: no row of
+    /// theirs is any build's to read (decision 0401 step 9, `RETIRED_TABLES`).
+    #[test]
+    fn a_store_of_before_loses_the_retired_tables_and_their_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        drop(ContentStore::open(&path).unwrap());
+        {
+            let c = Connection::open(&path).unwrap();
+            // As an older binary made them (named from the list, so no scan of the schema's tables reads them as ours).
+            let (frames, spaces) = (RETIRED_TABLES[0], RETIRED_TABLES[3]);
+            c.execute_batch(&format!("CREATE {} {frames}(space BLOB, data BLOB); INSERT INTO {frames} VALUES (x'01', x'02'); CREATE {} {spaces}(space BLOB PRIMARY KEY, runs INTEGER)", "TABLE", "TABLE")).unwrap();
+            assert!(holds_retired(&c).unwrap());
+        }
+        std::fs::create_dir_all(dir.path().join("store.sqlite.frames")).unwrap();
+        std::fs::write(dir.path().join("store.sqlite.frames/1.seg"), [0u8; 64]).unwrap();
+        drop(ContentStore::open(&path).unwrap());
+        let c = Connection::open(&path).unwrap();
+        assert!(!holds_retired(&c).unwrap(), "dropped");
+        assert!(!dir.path().join("store.sqlite.frames").exists(), "their segments removed");
+        assert!(holds_schema_objects(&c).unwrap(), "the rest as it was");
     }
 
     /// The objects read from SCHEMA's text are those SCHEMA creates, less what SQLite makes along with them.

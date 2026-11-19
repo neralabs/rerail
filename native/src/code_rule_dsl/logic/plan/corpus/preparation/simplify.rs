@@ -2528,8 +2528,10 @@ impl ProgramPass for DropUnread {
     }
 }
 
-/// `simplify::location_column`: whether column `c` of derived relation `rel` holds a location.
-fn location_column(v: &Version, f: &Fields<'_>, rel: &str, c: usize) -> bool {
+/// `simplify::location_column`: whether column `c` of derived relation `rel` holds a location. `rules` are `rel`'s, by
+/// its head (`ProjectAll` indexes them once: a scan of every rule for each relation and column was quadratic in the
+/// program).
+fn location_column(v: &Version, f: &Fields<'_>, rel: &str, rules: &[RuleRef<'_>], c: usize) -> bool {
     if f.column_type(rel, c) == Some("node") {
         return true;
     }
@@ -2537,7 +2539,6 @@ fn location_column(v: &Version, f: &Fields<'_>, rel: &str, c: usize) -> bool {
         let name = v.rel_name(a.rel());
         crate::code_rule_dsl::typing::file_local::document_column(name) == Some(i) || (name == "docof" && i == 1) || f.column_type(name, i) == Some("node")
     };
-    let rules: Vec<RuleRef<'_>> = v.rules().filter(|r| v.rel_name(r.head().rel()) == rel).collect();
     !rules.is_empty()
         && rules.iter().all(|r| {
             let Some(TermRef::Var(x)) = r.head().args().nth(c) else { return false };
@@ -2589,17 +2590,20 @@ impl ProgramPass for ProjectAll {
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
         let (v, d) = fields(cx)?;
         let f = Fields::over(v, &d);
-        let heads: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
+        let mut by_head: BTreeMap<&str, Vec<RuleRef<'_>>> = BTreeMap::new();
+        for r in v.rules() {
+            by_head.entry(v.rel_name(r.head().rel())).or_default().push(r);
+        }
         let mut keep_of: HashMap<String, Vec<usize>> = HashMap::new();
-        for rel in heads {
+        for (&rel, rules) in &by_head {
             if kept(&f, rel) || f.nullary(rel) || f.answer(rel) {
                 continue;
             }
             let Some(Some(cols)) = self.read.get(rel) else { continue };
             let Some(n) = f.arity(rel) else { continue };
             let mut keep: Vec<usize> = (0..n).filter(|c| cols.contains(c)).collect();
-            if !keep.iter().any(|&c| location_column(v, &f, rel, c))
-                && let Some(c) = (0..n).find(|&c| location_column(v, &f, rel, c))
+            if !keep.iter().any(|&c| location_column(v, &f, rel, rules, c))
+                && let Some(c) = (0..n).find(|&c| location_column(v, &f, rel, rules, c))
             {
                 keep.push(c);
                 keep.sort_unstable();
@@ -2824,7 +2828,8 @@ pub fn decide(report: &Report) {
 
 // ---- before the prune: the program as the batches bind it ----
 
-/// `corpus::base_inputs`: the base relations the program reads and does not derive are inputs.
+/// The base relations the program reads and does not derive are inputs (`select::input_columns` names a base
+/// relation).
 #[derive(Default)]
 pub struct BaseInputs;
 
@@ -2852,10 +2857,16 @@ impl ProgramPass for BaseInputs {
     }
 }
 
-/// `corpus::CPYTHON_FUNCTORS`.
+/// core.rr's functors only CPython gives, each of a node, and the relations the batches bind them as
+/// (`facts::vtab::syntax::cpython`): `@py_unparse(n)` is the `s` of `cpython_unparse(n, s)`. `@unparse` is decision
+/// 0058's, a tape's text (`rr::lower`, `unparse_of`), not intercepted here.
 const CPYTHON_FUNCTORS: [(&str, &str); 2] = [("py_unparse", crate::code_rule_dsl::facts::core::cpython_relations::UNPARSE), ("ast_dump", crate::code_rule_dsl::facts::core::cpython_relations::AST_DUMP)];
 
-/// `corpus::cpython_functors`: each call of a functor only CPython gives, a variable its relation binds in the body.
+/// Each call of a functor only CPython gives (`CPYTHON_FUNCTORS`) in a rule, lowered to a variable its relation binds
+/// in the rule's body: `v(@sha256(@ast_dump(n))) :- kind(n, "call").` is `v(@sha256(x)) :- kind(n, "call"),
+/// cpython_ast_dump(n, x).` (one variable per functor and argument). Where the node has no value (no `ast` node of its
+/// kind at its span, or CPython raises) the rule has no row, as a functor's undefined value gives none. A call in an
+/// aggregate's atom is refused: its relation would have to be read inside the aggregate.
 #[derive(Default)]
 pub struct CpythonFunctors;
 
@@ -2942,3 +2953,6 @@ impl ProgramPass for CpythonFunctors {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -52,25 +52,18 @@ const FACT_STORE: &[&str] = &[
     "node",
     "tape",
     "node_type",
-    "frames",
-    // A space's kept facts (decisions 0401, 0402): which files its chain has.
+    // A space's kept facts (decisions 0401, 0456): which files its chain has.
     "facts_chain",
-    "frame_spaces",
-    // The frames' own bookkeeping (decision 0117 step 5): each space's confirmations, and each run's use of it.
-    "frame_confirmed",
-    "frame_part_used",
-    "frame_program_used",
-    "frame_used",
     // The per-file memo's entries (decision 0240 §4): where each one's bytes are in the pack beside the store, and the
     // packs. They replace the memo's frames (`local`, `local_out`): the same entries, no new cache.
     "memo_entries",
     "memo_packs",
-    // The segments frames, sources and tapes lie in (decision 0295 step 5): where the rows are, as `memo_packs`.
-    "frame_segments",
+    // The segments objects (sources, tapes) are in (decision 0295): files of their bytes, mapped.
     "object_segments",
-    // Each guest's key by its identity (decision 0391): a name, as `strings`.
+    // Each guest's key (decision 0391): an identity interned to its number, as `strings` and `hashes` are.
     "guest_keys",
-    // The observer's journal of what it saw change (decision 0400): observations, not a result kept for later.
+    // The observer's own journal (decision 0433): the paths its listings named changed, by generation. What it
+    // observed, as `samples` are measurements.
     "observed_changes",
     // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
     "samples",
@@ -272,14 +265,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "STORED"),
     ("code_rule_dsl/logic/native/setfix.rs", "SYMS"),
     // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
     ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
-    // A live connection's file and symbol table, by its handle (dropped as it closes, `forget_scope`): state of the
-    // connections, not a result kept.
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114 §4): which
     // pending atoms no committed row may hold yet, not a result kept.
@@ -375,16 +362,9 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "OPERATION_WAITED"),
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
-    // The run each frame space last counted in this process, so a run's programs count it once.
-    ("content_store/frames.rs", "COUNTED"),
-    // The store's frames as this process holds them, ahead of SQLite (decision 0104): the facts themselves, read
-    // once before a run's first wave, not a cache of anything else.
-    ("content_store/frames.rs", "SNAPSHOTS"),
-    // Each record kind's apply function, registered by its kind: a registry.
-    ("content_store/record.rs", "KINDS"),
-    // The stores forgotten (`ContentStore::forget`), by path and file, so the frames job leaves them: state of the
-    // stores' lifetimes, no result.
-    ("content_store/upkeep.rs", "GONE"),
+    // The store's state as this process holds it, ahead of SQLite (decision 0104): the kept blocks' rows and the
+    // memo's admitted entries, read once before a run's first wave, not a cache of anything else.
+    ("content_store/held.rs", "SNAPSHOTS"),
     // The device's automata and test tables for regex and text stages, held while the thread runs (a command buffer
     // may read them).
     ("code_rule_dsl/logic/native/setfix/device.rs", "AUTOMATA"),
@@ -417,6 +397,16 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/write_back.rs", "WRITERS"),
     // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND"),
+    // A run's changed reads' given versions (decision 0364 step 3), by the run's scope, removed with its tables.
+    ("code_rule_dsl/logic/native/setfix.rs", "GIVEN"),
+    // The kept facts as this process holds them (decision 0401 F3, 0438): each space's blocks mapped, by store, space
+    // and the row naming the files, read in place and mapped again when a commit changes the row. The facts
+    // themselves, as `SNAPSHOTS` holds their rows, not a cache of anything else.
+    ("code_rule_dsl/logic/plan/corpus/retain/kept_read.rs", "BOUND"),
+    // The record kinds' applies, registered at load.
+    ("content_store/record.rs", "KINDS"),
+    // The stores forgotten in this process (a test's store removed), by path and file: a registry of closed things.
+    ("content_store/upkeep.rs", "GONE"),
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
@@ -578,30 +568,4 @@ fn every_kept_map_is_state_or_listed() {
     assert!(gone.is_empty(), "listed maps no longer there (cut them from the list, and lower the pin if moved):\n{}", gone.join("\n"));
     assert!(NOT_YET_MAPS.len() <= NOT_YET_MAPS_PIN, "a cache map added to the list (it may only shrink): {} > {NOT_YET_MAPS_PIN}", NOT_YET_MAPS.len());
     assert_eq!(NOT_YET_MAPS.len(), NOT_YET_MAPS_PIN, "a cache map moved: lower NOT_YET_MAPS_PIN to {}", NOT_YET_MAPS.len());
-}
-
-/// Decision 0402: every place that writes a frame puts its kept entry too, until the frames are retired (step 6). A
-/// frame written alone leaves the kept chain behind it (a later empty frame of `p0_absent`, its old entry kept).
-/// Each call of the engine's (the store's own delegations aside) that queues frames has a `queue_kept` within 40 lines.
-#[test]
-fn every_frame_write_puts_its_kept_entry() {
-    const WRITES: [&str; 6] = [".queue_frames(", ".queue_encoded(", ".queue_frames_retagged(", ".queue_encoded_retagged(", ".queue_placed_retagged(", ".queue_encoded_keyed_by_symbols("];
-    let mut all = Vec::new();
-    files(&src(), &mut all);
-    let mut alone = Vec::new();
-    for p in all.iter().filter(|p| !rel(p).starts_with("content_store")) {
-        let text = std::fs::read_to_string(p).unwrap();
-        let lines: Vec<&str> = text.lines().collect();
-        for (i, l) in lines.iter().enumerate() {
-            let code = l.trim_start();
-            if code.starts_with("//") || !WRITES.iter().any(|w| code.contains(w)) {
-                continue;
-            }
-            let near = &lines[i.saturating_sub(40)..(i + 40).min(lines.len())];
-            if !near.iter().any(|n| n.contains(".queue_kept(")) {
-                alone.push(format!("{}:{}", rel(p), i + 1));
-            }
-        }
-    }
-    assert!(alone.is_empty(), "frames written with no kept entry (decision 0402): {alone:?}");
 }

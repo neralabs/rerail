@@ -86,7 +86,7 @@ fn table_of(head: &[u8], codes: usize) -> Result<Table, Error> {
 fn planned(head: &[u8], tape: usize, source: usize, lines: usize) -> Result<Plan, Error> {
     let stored = resident::stored(head).map_err(invalid)?;
     // Every format's header states its source's length at the same place: the tape's reads hold every span to it,
-    // so it must be the source the document holds (decision 0403).
+    // so it must be the source the document holds (decision 0462).
     const AT: usize = crate::code_rule_dsl::tape::header::SOURCE_LEN;
     let stated = head.get(AT..AT + 8).map(|b| u64::from_le_bytes(b.try_into().expect("8 bytes")));
     if stated != Some(source as u64) {

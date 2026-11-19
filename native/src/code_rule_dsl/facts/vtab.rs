@@ -233,7 +233,6 @@ pub trait Source: Send + Sync {
     }
     /// Its rows as one relation of `rerail_blocks` in one block, every source column at its own place, which the
     /// device reads where they lie (decision 0325 step 3). `None`: the device copies them (`device_view`, `row_at`).
-    #[cfg(target_os = "macos")]
     fn in_block(&self) -> Option<super::rows::InBlock> {
         None
     }
@@ -320,10 +319,27 @@ pub trait Source: Send + Sync {
     fn sorted_range(&self, _column: usize, _value: i64) -> Option<std::ops::Range<u32>> {
         None
     }
+    /// `sorted_range`, searched from `at` where it can be: a sequence of probes in the key's order (a scan in the
+    /// column's order, the other side of a merge join, decision 0456 K7) reads the column forward once, not a
+    /// search of all of it a probe. `at` is set to the range's start; any value is correct, a wrong one is slower.
+    fn sorted_range_at(&self, column: usize, value: i64, _at: &mut u32) -> Option<std::ops::Range<u32>> {
+        self.sorted_range(column, value)
+    }
     /// Whether `sorted_rows` serves `column`, asked without building its index: a plan choosing among a source's
     /// columns built every candidate's sorted form to ask, where it reads one.
     fn sorts_rows(&self, column: usize) -> bool {
         self.sorted_rows(column, 0).is_some()
+    }
+    /// The columns its rows lie in order on, in turn (a kept relation's canonical order, decision 0456 K7), when
+    /// they do: a scan of its rows is in that order, with no sort.
+    fn order(&self) -> Option<Vec<usize>> {
+        None
+    }
+    /// Whether its rows are a kept relation's, read where they lie in the store's mapped chain (decision 0456 step
+    /// 6b): rows that are work, which a run keeps as it keeps a relation it holds, where a view of an input's columns
+    /// or an index's relation is made again in less than reading it back costs.
+    fn kept(&self) -> bool {
+        false
     }
 }
 
@@ -1489,7 +1505,6 @@ impl Source for Relation {
     fn len(&self) -> usize {
         self.rows
     }
-    #[cfg(target_os = "macos")]
     fn in_block(&self) -> Option<super::rows::InBlock> {
         self.cells().in_block()
     }

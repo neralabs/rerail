@@ -375,7 +375,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 6 | An axis's pairs copied into the chunk, then expanded to ids | `within.rs`; `device_chunk.rs`, `put_pairs`; `VIEW_AXIS` | 8 bytes a pair, then the expansion | Step 5 |
 | 7 | `core.rr`'s and the vtab's per-node rows: tape answers (`line`, `end_line`, `col`, `docof`, `visit_index`, `doc_root`, `host_node`) and eager derived values (`text`, `parts`, `words`, `intval`, `op_t`) | `syntax.rs` `node rows`, `NodeRows`; `core_rr`; `tree.rs`; `guests.rs` | 0.45–0.49 s of CPU a run | Step 3 |
 | 8 | The CPU's head rows, staged in `Fresh`, merged by `extend_from_slice`, then pushed into the relation | `setfix.rs`, `Fresh` | Every row a CPU stratum derives | Step 6 |
-| 9 | A second key's index copies the relation (`DevIndex::moved`); a relation over several blocks merged for the device (`in_block`) | `metal_join.rs`; `facts/rows.rs` | Q85 counts them | Step 6 |
+| 9 | A second key's index copies the relation (`DevIndex::moved`); a relation of many parts merged for the device (`in_block`). Since 0384 (steps 1–8, 2026-11-18) a relation is one relation or a chain of continuations read in place, so the merge is left only where a part is appended after another relation's rows (`append_part`, counted), with a chain's newest two segments compacted past `MAX_SEGMENTS` | `metal_join.rs`; `facts/rows.rs` | Q85 counts them; 0 merges on cold 300-file runs | Step 6 |
 | 10 | A device fixpoint's total copied into a run's block at its end | `device.rs` (0325 step 4) | Each recursive stratum's rows | Step 6 |
 | 11 | The transducer's packed batch: 44 bytes a node, and its child lists | `PackedBatch::nodes` (0293 "Interim") | Each matched batch | Step 7 |
 | 12 | Findings, frames and memo entries copied into rows of their own | The output, frames and memo stores | Not yet measured | Step 8 (0325 step 7) |
@@ -596,6 +596,21 @@ Each step ends with:
          - Every loop is bounded, as the device's work queue's are. A read that finds no room (the spare not
            yet cleared, its retries spent) counts a failure in the cache's header; the host refuses that
            dispatch's batch, which runs on the CPU (counted), rather than wait.
+       - Over 0336's 16z (the hub's merge of Native-and-GPU-strata, 2026-11-18). The hub's 16z is not this branch's
+         (one LZ4 block of a block's whole layout, a block index, its side lengths): it keeps format 16's header and
+         part starts, its checkpoints and newline index raw, and stores each block as four pieces, an array's bytes
+         for the block's nodes then its side list's part, each raw, one LZ4 block or a repeat of an earlier piece
+         (0336 §4, §5). The cache, its entries and the reads are this branch's; what knows the layout is ported:
+         `Tape16Z::view` names the piece index's starts, kinds and payload (`columns[0..3]`) and the header's part
+         starts (`parts`), and `z_decode` fills a block's entry as the tape crate's `F16Z` decodes it: each side
+         length from the part starts, each piece copied (raw, or a repeat's earlier piece) or decoded by `z_lz4`
+         into a scratch past the block and copied from there into its array's region and its side list's, the
+         checkpoints copied from the raw run (past the part starts, 8-aligned: `view` refuses a header where they
+         are not), each region's room cleared. The entry holds the scratch (its largest piece) beyond the block.
+         The scratch's two copies are the decode's own (an LZ4 piece decodes to one run, its two parts apart in the
+         block's layout); a decode that writes each part where it lies would take the copies out. The residency's
+         16z stays the hub's: the device decodes the pieces where a document is placed (0336 §8), and this branch's
+         `unblock_into` (row 15, on the host) is not taken.
      - **4c.** The views' reads written once (CLIF, for Rust, the JIT and MSL), over a document's `TapeView` and
        its projection's `Numbering`: each view's scan over 64-node groups (the open subtrees from one descent) and
        its probes (by id; by parent, first child and next numbered sibling). Check: their rows equal `Viewed`'s,

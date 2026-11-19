@@ -1,15 +1,9 @@
-//! The file-local split read from the program's version (decision 0281's path, step 5): what `split_in` finds of
-//! the tree, as an analysis of the version (`FileLocal`), maintained across an edit (`Analysis::maintain`).
+//! The file-local split, read from the program's version (decision 0281's path, step 5), as an analysis of it
+//! (`FileLocal`), maintained across an edit (`Analysis::maintain`).
 //!
-//! The tree's split numbers its relations by their names' addresses (`shape::Rels`) and each body's variables by
-//! first appearance (`shape::Form`), and keeps the run's last splits on its thread (`split_memo`) so a split of a
-//! program a few rules apart computes only what the difference reaches. Here the numbers are the image's own: a
-//! relation is its `RelId`, a variable its `Slot`, and the last split is the analysis of the edit's input, carried to
-//! its output by the manager, which hands `maintain` the edit. The fixpoints, and the questions they ask of a rule,
-//! are the tree's, one for one.
-//!
-//! While the tree's split runs too (its passes are not yet on versions), a debug build checks the two agree
-//! (`file_local::programs_over`).
+//! A split of a program a few rules apart computes only what the difference reaches. The numbers are the image's
+//! own: a relation is its `RelId`, a variable its `Slot`, and the last split is the analysis of the edit's input,
+//! carried to its output by the manager, which hands `maintain` the edit.
 
 use super::{CHUNK_VALUES, document_column, option_input};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
@@ -18,10 +12,28 @@ use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit as L, NativeSpec, Re
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 
-/// A program's split, read from its version: the file-local relations with each cross-file one's cause, the
-/// constant relations (derived in both parts), each derived relation's location columns, the string filters
-/// (decision 0037), the same-document columns of each base input and file-local relation, and whether the program
-/// reads no document (`reads_no_document`). With the digests it was made under, which `maintain` compares.
+/// The relations a program derives within one document (list step 29's split, R0): a relation is file-local when
+/// each of its rules joins only one document's rows. A rule is when every relation it reads (positive, negated or
+/// aggregated) is a base relation, a constant one, or file-local, each with a location (a node, or a document) of the
+/// rule's one component: locations are joined within an atom of a base or file-local relation (`node(d, n, …)`,
+/// `child(p, c, _)`, `nearest_<set>(n, a)`), and nothing else joins them. A symbol shared by two atoms (`text($a,
+/// $x), text($b, $x)`) does not: those may be two files. The relations are the greatest set closed under this, so a
+/// recursion within a document is file-local. Evaluated per chunk of documents, a file-local relation's rows are the
+/// union of the chunks'.
+///
+/// Each part is a greatest fixpoint over the derived relations, read from the version: the file-local relations
+/// (`local`); the constant relations (`constants`: derived from the program's constants alone, as `la_side_queue(x)
+/// :- la_set("…", x)`, every rule reading only facts, the run's options, other such relations and comparisons; a rule
+/// reading one joins no document by it, and both parts derive them); each derived relation's location columns
+/// (`locations`: those every rule fills from a location, a node or a document of `node`, `doc`, …); the string
+/// filters (decision 0037); the same-document columns of each base input and file-local relation (`same_doc`: its
+/// location columns, whose values in one row are all of one document; a row's document is read off any of them,
+/// decision 0052); and whether the program reads no document (`reads_no_document`).
+///
+/// `causes` says why each derived relation is cross-file, by the first rule the split found not to join one
+/// document: a root cause ("joins 2 documents: {n} {m}", "reads field with no location", "made natively") or "reads
+/// cross-file r". Read through the second kind to the first to see what makes a check run over the whole corpus.
+/// With the digests it was made under, which `maintain` compares.
 #[derive(Clone, Debug, Default)]
 pub struct FileLocal {
     pub local: BTreeSet<String>,
@@ -52,8 +64,8 @@ impl PartialEq for FileLocal {
 }
 
 impl FileLocal {
-    /// What the parts are made of (`file_local::found`): the file-local relations and those of constants; none of
-    /// either for a program that reads no document, whose relations are all cross-file.
+    /// What the parts are made of (`programs_of`): the file-local relations and those of constants; none of either for
+    /// a program that reads no document, whose relations are all cross-file.
     pub fn found(&self) -> (BTreeSet<String>, BTreeSet<String>) {
         match self.no_document {
             true => Default::default(),
@@ -190,7 +202,7 @@ struct Keys {
     heads: BTreeMap<String, u64>,
 }
 
-/// The keys' hasher: foldhash's quality hasher with a fixed seed (`split_memo`'s).
+/// The keys' hasher: foldhash's quality hasher with a fixed seed.
 fn hasher() -> impl Hasher {
     use std::hash::BuildHasher;
     foldhash::quality::FixedState::with_seed(0x5eed_5011_7000_0001).build_hasher()
@@ -262,6 +274,16 @@ impl<'v> Program<'v> {
         option_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && self.f.is_input(rel))
     }
 
+    /// An input a file-local rule may join and stay file-local: the run's options alone. An earlier phase's export is
+    /// a run constant, but not placeless: it is every file's rows together, and an edit's delta of it (a function
+    /// added) is the reader's input delta (decision 0083 §2.3). A file-local rule that joined it made every file's
+    /// memo entry a function of all its rows, so each such edit missed every file (the 50-file data-layer pack: 5.3 s
+    /// an edit that adds a definition, 1.6 s one that does not). A rule reading one reads an input with no location:
+    /// cross-file, maintained there by the export's delta.
+    fn placeless_input(&self, rel: &str) -> bool {
+        option_input(rel)
+    }
+
     /// A derived relation's key: its columns and its rules' hashes, in the program's order.
     fn head_key(&self, r: u32) -> u64 {
         let mut h = hasher();
@@ -291,7 +313,7 @@ impl<'v> Program<'v> {
 
     fn keys(&self) -> Keys {
         let mut g = hasher();
-        // The inputs a split asks about (`split_memo::keys`): derived, facts, or a phase's exports.
+        // The inputs a split asks about: derived, facts, or a phase's exports.
         let mut inputs: Vec<&str> = self.f.inputs().filter(|i| self.f.derives(i) || self.fact(i) || crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(i)).collect();
         inputs.sort_unstable();
         inputs.hash(&mut g);
@@ -309,7 +331,7 @@ impl<'v> Program<'v> {
                 heads.insert(self.name(r).to_owned(), self.head_key(r));
             }
         }
-        // A base relation's declaration is its own key (`split_memo::keys`).
+        // A base relation's declaration is its own key.
         for d in self.v.decls() {
             let rel = self.v.text(d.name());
             if !self.f.derives(rel) {
@@ -332,7 +354,9 @@ impl<'v> Program<'v> {
         self.v.decls().into_iter().find(|d| self.v.text(d.name()) == rel).map(|d| Self::decl_key(d.hash()))
     }
 
-    /// A base relation's location columns (`file_local::base_locations`).
+    /// A base relation's location columns: node columns, the document column (`document_column`: `node`, `doc`,
+    /// `pkg`, `syntax_error`, `cpython_syntax_error`, the source text's, the path's, the guests') and `docof(n, d)`'s
+    /// document.
     fn base_locations(&self, rel: &str) -> Vec<usize> {
         if matches!(rel, "reference_edge" | "reference_open") {
             return Vec::new();
@@ -358,7 +382,9 @@ impl<'v> Program<'v> {
         columns
     }
 
-    /// Whether no rule reads a document (`file_local::reads_no_document`).
+    /// Whether no rule reads a document: every relation a rule reads is derived, a fact, or an input with one value for
+    /// the run (`run_constant`), and no rule matches an AST pattern or asks for the nearest of a node. Such a program
+    /// reads an earlier phase's exports and the run's options at most, and reads at least one of them.
     fn reads_no_document(&self) -> bool {
         let mut phased = false;
         let none = self.f.natives().is_empty()
@@ -376,7 +402,7 @@ impl<'v> Program<'v> {
     }
 
     /// The constant relations in `scope` (by flag): a greatest fixpoint, any other derived relation a constant where
-    /// `prev` holds it (`file_local::split_constants`).
+    /// `prev` holds it (`split`).
     fn constants(&self, forms: &Forms<'_, 'v>, scope: &[bool], prev: Option<&BTreeSet<String>>) -> Vec<bool> {
         let rels = &self.rels;
         let mut constant: Vec<bool> = (0..rels.n)
@@ -399,8 +425,10 @@ impl<'v> Program<'v> {
         constant
     }
 
-    /// The split, computed for the derived relations in `scope` only (every one where `None`), every other keeping
-    /// its place in `prev` (`file_local::split_in`).
+    /// The split, computed for the derived relations in `scope` only (every one where `None`: the whole split), every
+    /// other keeping its place in `prev`. That is exact when `scope` holds every relation whose rules changed since
+    /// `prev` and every relation that reads one, transitively (`maintain`): a relation outside reads none inside, so its
+    /// place in each fixpoint is what it was, and each fixpoint inside starts from the top with that boundary fixed.
     fn split(&self, scope: Option<&BTreeSet<u32>>, prev: Option<&FileLocal>) -> FileLocal {
         let rels = &self.rels;
         let n = rels.n;
@@ -408,7 +436,7 @@ impl<'v> Program<'v> {
         let was = |r: usize| prev.filter(|_| !in_scope[r]);
         let forms = Forms::new(self);
         let constant = self.constants(&forms, &in_scope, prev.map(|p| &p.constants));
-        let placeless: Vec<bool> = (0..n).map(|r| rels.fact[r] || constant[r] || rels.run_constant[r] || rels.chunk_value[r] || rels.test[r]).collect();
+        let placeless: Vec<bool> = (0..n).map(|r| rels.fact[r] || constant[r] || rels.placeless_input[r] || rels.chunk_value[r] || rels.test[r]).collect();
         // A derived relation's location columns: those every rule fills from a location.
         let mut locs: Vec<Vec<usize>> = (0..n)
             .map(|r| {
@@ -464,7 +492,7 @@ impl<'v> Program<'v> {
                 _ => true,
             })
         };
-        // A relation `locate` moved (`CROSS_FILE`): its rows name no document, so it is derived once over every file
+        // A relation `locate_all` moved (`CROSS_FILE`): its rows name no document, so it is derived once over every file
         // (decision 0290).
         let moved = |rel: &str| self.f.qualified(rel, super::CROSS_FILE);
         let mut local_now: Vec<bool> = (0..n)
@@ -520,11 +548,11 @@ impl<'v> Program<'v> {
             }
         }
         let local: BTreeSet<String> = derived().filter(|&r| local_now[r as usize]).map(|r| self.name(r).to_owned()).collect();
-        // The same-document columns (`file_local::split_explained`) and the rest: `finish`.
+        // The same-document columns and the rest: `finish`.
         self.finish(FileLocal { local, constants, locations, filters, causes, ..Default::default() }, self.keys())
     }
 
-    /// Why `rule` places more than one document, from its text (`split_in`'s `rule_local`): `None` where it does
+    /// Why `rule` places more than one document, from its text: `None` where it does
     /// not. Asked only of a rule the numbered check fails (and, in a debug build, of each it passes).
     fn why_not_local(&self, rule: RuleRef<'v>, local_now: &[bool], constants: &BTreeSet<String>, filters: &BTreeSet<String>, locations: &BTreeMap<String, Vec<usize>>) -> Option<String> {
         let v = self.v;
@@ -550,7 +578,7 @@ impl<'v> Program<'v> {
             };
             let rel = v.rel_name(atom.rel());
             let derived = self.f.derives(rel);
-            let constant = (!derived && self.fact(rel) && !self.f.is_input(rel)) || constants.contains(rel) || self.run_constant(rel);
+            let constant = (!derived && self.fact(rel) && !self.f.is_input(rel)) || constants.contains(rel) || self.placeless_input(rel);
             let chunk_value = !derived && CHUNK_VALUES.contains(&rel);
             if constant || chunk_value || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) || filters.contains(rel) || filters.contains(head) {
                 continue;
@@ -604,9 +632,9 @@ impl<'v> Program<'v> {
     }
 }
 
-/// What passes between a split's parts (`file_local::crossing`), read from the version: the exports, the base
-/// relations the cross-file part reads (and those it decodes), and the file-local relations it derives itself from a
-/// stored input.
+/// What passes between a split's parts (`assemble`), read from the version, `local` the file-local relations: the
+/// exports, the base relations the cross-file part reads (and those it decodes), and the file-local relations it
+/// derives itself from a stored input (`projected`). Names alone: no part is made.
 pub(super) struct Crossing {
     pub(super) exports: Vec<String>,
     pub(super) base_read: Vec<String>,
@@ -652,13 +680,13 @@ pub(super) fn crossing(v: &Version, f: Fields<'_>, local: &BTreeSet<String>) -> 
     Crossing { exports, base_read, base, projected }
 }
 
-/// A split's relations by `RelId` (`shape::Rels`): what the split asks of each, asked once.
+/// A split's relations by `RelId`: what the split asks of each, asked once.
 struct Rels<'v> {
     n: usize,
     derived_count: usize,
     derived: Vec<bool>,
     fact: Vec<bool>,
-    run_constant: Vec<bool>,
+    placeless_input: Vec<bool>,
     chunk_value: Vec<bool>,
     test: Vec<bool>,
     text: Vec<Option<&'static [usize]>>,
@@ -707,7 +735,7 @@ impl<'v> Rels<'v> {
             n,
             derived_count: derived.iter().filter(|d| **d).count(),
             fact: (0..n).map(|r| base(r) && p.fact(name(r)) && !f.is_input(name(r))).collect(),
-            run_constant: (0..n).map(|r| (derived[r] || read[r]) && p.run_constant(name(r))).collect(),
+            placeless_input: (0..n).map(|r| (derived[r] || read[r]) && p.placeless_input(name(r))).collect(),
             chunk_value: (0..n).map(|r| base(r) && CHUNK_VALUES.contains(&name(r))).collect(),
             test: (0..n).map(|r| (derived[r] || read[r]) && test(name(r))).collect(),
             text: (0..n).map(|r| if derived[r] || read[r] { crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(t, _)| *t == name(r)).map(|(_, c)| *c) } else { None }).collect(),
@@ -722,7 +750,7 @@ impl<'v> Rels<'v> {
     }
 
     fn empty() -> Rels<'v> {
-        Rels { n: 0, derived_count: 0, derived: Vec::new(), fact: Vec::new(), run_constant: Vec::new(), chunk_value: Vec::new(), test: Vec::new(), text: Vec::new(), base_locs: Vec::new(), candidate: Vec::new(), rules: Vec::new(), reading: Vec::new(), head: Vec::new(), _v: std::marker::PhantomData }
+        Rels { n: 0, derived_count: 0, derived: Vec::new(), fact: Vec::new(), placeless_input: Vec::new(), chunk_value: Vec::new(), test: Vec::new(), text: Vec::new(), base_locs: Vec::new(), candidate: Vec::new(), rules: Vec::new(), reading: Vec::new(), head: Vec::new(), _v: std::marker::PhantomData }
     }
 
     fn is_derived(&self, r: u32) -> bool {
@@ -757,8 +785,10 @@ impl<'p, 'v> Forms<'p, 'v> {
     }
 }
 
-/// The value tapes of a rule (`file_local::ValueTapes`), by slot: each class under the rule's `a = b` named by its
-/// least slot.
+/// The value tapes of a rule (decision 0058 §4, O96) and where they stand, by slot: each class under the rule's `a =
+/// b` named by its least slot. A value is made in the chunk of the document whose row gave its text, and is that
+/// document's: `parse_of(x, g, t)`'s t stands with the one atom that binds x (two atoms binding x join two documents
+/// on a string, which is no one document's), and `splice_of(_, n, _, t3)`'s t3 with node n.
 struct ValueTapes {
     /// Each value tape's class and the body index of the atom that gave its text.
     by_binder: BTreeMap<u32, usize>,
@@ -818,7 +848,7 @@ impl ValueTapes {
     }
 }
 
-/// A body literal as the split reads it (`shape::Lit`).
+/// A body literal as the split reads it.
 enum Lit {
     Read { neg: bool, plain: bool, rel: u32, args: Vec<Option<u32>>, binder: bool, tapes: Vec<u32> },
     Ast,
@@ -826,7 +856,7 @@ enum Lit {
     Cmp,
 }
 
-/// A rule body numbered for the split (`shape::Form`): its slots, each with its class under the body's equalities;
+/// A rule body numbered for the split: its slots, each with its class under the body's equalities;
 /// then its value tapes; then one id per body literal.
 struct Form {
     /// Whether a term of the body names the slot (a head's variable is found only then, as the tree's `Form` finds it
@@ -918,7 +948,7 @@ impl Form {
         self.lits.iter().all(|l| match l {
             Lit::Read { rel, .. } => {
                 let r = *rel as usize;
-                constant[r] || rels.run_constant[r] || rels.fact[r]
+                constant[r] || rels.placeless_input[r] || rels.fact[r]
             }
             Lit::Cmp => true,
             _ => false,

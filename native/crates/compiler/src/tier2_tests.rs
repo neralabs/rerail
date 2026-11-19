@@ -387,3 +387,195 @@ fn a_unicode_escapes_checks_run_at_its_u() {
     }
     assert!(accepted > 100 && refused > 100, "{accepted} accepted, {refused} refused");
 }
+
+/// Decision 0411, R1 to R3: JSON's and JSONC's tokens end at their gaps, with no extract of
+/// their last bytes, and on every ladder step whose tokens do, the lasts and codes are the old
+/// extract's. JSONC's comments among them: those ending in spaces, at a token, at the file's
+/// end, and those the fallback takes (a comment opened inside another, a quote inside one).
+#[test]
+fn a_tokens_end_is_its_gaps_as_the_lasts_extract() {
+    let mut docs: Vec<String> = DOCUMENTS.iter().map(|d| d.to_string()).collect();
+    for pad in 0..70 {
+        let a = "a".repeat(pad);
+        let sp = " ".repeat(pad % 9);
+        docs.extend([
+            format!("[\"{a}\\n\\u00e9x  \", 12.5e{pad}, -0, true,null ,false]"),
+            format!("{{ \"{a}\" :\t[ {} ] }}  ", "1".repeat(pad + 1)),
+            format!("\"{a}\\\"\\\\ "),
+            format!("[1{sp}"),
+            format!("// c {sp}\n[1, /* {a} */ 2]\n"),
+            format!("[1/*{a}*/,2//{sp}\n]//{a}"),
+            format!("{{\"k\"/* {sp} */:/**/true}}/* {a} {sp}*/"),
+            format!("[1, // {a} /* x\n2]"),
+            format!("[1 /* {a} // */, 2]"),
+            format!("[1 // \"{a}\n]"),
+            format!("[1 /* {a} \" */]"),
+            format!("[1]/* {a}"),
+        ]);
+    }
+    let mut with = Vec::new();
+    for (name, source) in crate::ladder::steps() {
+        let c = crate::ladder::compile_step(&name, &source);
+        let block = &c.program.block_programs[0];
+        let Some(r) = block.records.as_ref().filter(|r| r.gap.is_some()) else { continue };
+        with.push(name.clone());
+        let native = crate::block_native::BlockNative::lower(block);
+        assert!(native.ruled_lasts().is_some(), "{name}: the CPU makes no lasts");
+        // The program with the lasts extracted, as before.
+        bitlex_masks::NO_GAP_ENDS.set(true);
+        let was = crate::ladder::compile_step(&name, &source);
+        bitlex_masks::NO_GAP_ENDS.set(false);
+        let old = &was.program.block_programs[0];
+        assert!(old.records.as_ref().is_some_and(|r| r.gap.is_none()), "{name}: the oracle extracts the lasts");
+        let (mut tokens, mut refused) = (0, 0);
+        for doc in &docs {
+            let bytes = doc.as_bytes();
+            let (new, was) = (block.run(bytes), old.run(bytes));
+            // A file the fallback takes has no records tier 2 reads.
+            assert_eq!(new.totals, was.totals, "{name}: {doc:?}");
+            if was.totals.iter().any(|&t| t != 0) {
+                refused += 1;
+                continue;
+            }
+            assert_eq!(new.positions[usize::from(r.lasts)], was.positions[usize::from(r.lasts)], "{name}: {doc:?}");
+            assert_eq!(new.codes, was.codes, "{name}: {doc:?}");
+            tokens += new.positions[0].len();
+        }
+        let json = name.starts_with("14-") || name.starts_with("15-");
+        assert!(tokens > if json { 1000 } else { 0 } && (refused > 0 || !json), "{name}: {tokens} tokens, {refused} files refused");
+    }
+    for want in ["14-json", "15-jsonc"] {
+        assert!(with.iter().any(|n| n.starts_with(want)), "{want}'s tokens do not end at their gaps: {with:?}");
+    }
+}
+
+/// Decisions 0405 and 0406: the hot loop carries the bytes before its block in a register
+/// (simdjson's `prev_input_block`), and its UTF-8 error as bytes ORed into a vector (simdjson's
+/// `error`), reduced where the loop leaves.
+/// - Its loop loads no byte before its block, and reduces one vector a block to a word (the
+///   ASCII test): no error is made a mask or a word there.
+/// - The CPU's tier 1 agrees with the interpreter on UTF-8 across the edges of full blocks,
+///   where the carried chunk is the byte before, and in the first and last blocks (the edge
+///   part's): files of five blocks.
+#[test]
+#[cfg(target_arch = "aarch64")]
+fn the_hot_loop_carries_the_bytes_before_its_block() {
+    for (name, source) in crate::ladder::steps().into_iter().filter(|(n, _)| n.starts_with("14-json") || n.starts_with("15-jsonc")) {
+        let c = crate::ladder::compile_step(&name, &source);
+        let hot = crate::clif_text::machine_loop(&c.parser.tier1.loops_disassembly());
+        let before: Vec<&String> = hot.iter().filter(|l| l.starts_with("ldr q") && l.contains(", #-")).collect();
+        assert!(before.is_empty(), "{name}: the hot loop loads bytes before its block: {before:?}");
+        let reduced = hot.iter().filter(|l| l.starts_with("mov x") && l.ends_with(".d[1]")).count();
+        assert_eq!(reduced, 1, "{name}: vectors reduced to words in the hot loop");
+        let (mut docs, mut refused) = (0, 0);
+        for seq in [&[0xc3u8, 0xa9][..], &[0xe2, 0x82, 0xac], &[0xf0, 0x9f, 0x98, 0x80], &[0xed, 0xa0, 0x80], &[0xe0, 0x80, 0x80], &[0xf4, 0x90, 0x80, 0x80], &[0xc0, 0x80], &[0xf5, 0x80], &[0x80], &[0xc3], &[0xe2, 0x82], &[0xc3, 0x80, 0x80]] {
+            for edge in [20usize, 128, 192, 300] {
+                for back in 0..5 {
+                    let pad = edge - 2 - back;
+                    let mut doc = format!("[\"{}", "a".repeat(pad)).into_bytes();
+                    doc.extend(seq);
+                    doc.extend(b"\", 1]");
+                    doc.resize(320, b' ');
+                    let interpreted = c.program.block_programs[0].run_files(&[&doc]).remove(0);
+                    assert!(crate::ladder::tier1_agrees(&c, &c.parser.tier1.extract(&doc), &interpreted), "{name}: {seq:02x?} at {pad}");
+                    docs += 1;
+                    refused += usize::from(interpreted.totals.iter().any(|&t| t != 0));
+                }
+            }
+        }
+        assert!(0 < refused && refused < docs, "{name}: {refused} of {docs} refused");
+    }
+}
+
+/// Decisions 0402, 0404 and 0405: JSON's UTF-8 rules of two bytes are byte-pair lookups on the
+/// CPU, as simdjson's (`native_cpu_pairs`): the eight ORed in the check seven boxes of one pair
+/// (simdjson's bits: `f4..ff` before `9x..bx` one, `f0` and `f5..ff` before `8x` one),
+/// `TWO_CONTS` another, on the same two tables, this byte's a table of high nibbles (one lookup). The CPU's tier 1 still
+/// agrees with the interpreter's: every lead byte before continuation bytes and others, complete
+/// or cut short, continuations first or in runs, across the chunks' and the blocks' edges.
+#[test]
+fn utf8s_two_byte_rules_are_one_pair_lookup() {
+    let (name, source) = crate::ladder::steps().into_iter().find(|(n, _)| n.starts_with("14-json")).expect("14-json");
+    let c = crate::ladder::compile_step(&name, &source);
+    let native = crate::block_native::BlockNative::lower(&c.program.block_programs[0]);
+    let (_, stripped) = crate::native_cpu_block::host_stripped(&native).expect("the host strips the mark");
+    let fused = crate::native_cpu_pairs::fused(&stripped).expect("the rules are pairs");
+    let pairs: Vec<(u16, u16, u8)> = fused.insts.iter().filter_map(|i| if let crate::block_native::BlockInst::Pair { before, table, bits } = *i { Some((before, table, bits)) } else { None }).collect();
+    let bits: Vec<u32> = pairs.iter().map(|p| p.2.count_ones()).collect();
+    assert_eq!(bits, [7, 1], "{name}: the eight rules in seven boxes, then two continuations: {pairs:?}");
+    assert!(pairs.iter().all(|p| (p.0, p.1) == (pairs[0].0, pairs[0].1)), "{name}: one pair of tables: {pairs:?}");
+    assert_eq!(fused.tables[usize::from(pairs[0].1)].lo, [0xff; 16], "{name}: this byte's table is of high nibbles");
+    let (mut docs, mut refused) = (0, 0);
+    for lead in [0xc2u8, 0xdf, 0xe0, 0xe1, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf3, 0xf4, 0xf5] {
+        let len = if lead < 0xe0 { 2 } else if lead < 0xf0 { 3 } else { 4 };
+        for next in (0x70u8..=0xc1).step_by(3).chain([0x8f, 0x90, 0x9f, 0xa0]) {
+            for pad in [0usize, 1, 13, 14, 15, 29, 45, 60, 61, 62, 63, 69] {
+                let mut doc = format!("[\"{}", "a".repeat(pad)).into_bytes();
+                doc.extend([lead, next]);
+                doc.extend(std::iter::repeat_n(0x80u8, len - 2));
+                doc.extend(b"\", 1]");
+                // A continuation more, a lead byte for the continuation, and the bytes first in
+                // the file (where the byte before is none).
+                let mut more = doc.clone();
+                more.insert(pad + 4, 0x80);
+                let mut lead_lead = doc.clone();
+                lead_lead[pad + 3] = 0xc3;
+                let first = [&[next, lead][..], b" 1"].concat();
+                for d in [more, lead_lead, first] {
+                    let (compiled, interpreted) = (c.parser.tier1.extract(&d), c.program.block_programs[0].run_files(&[&d]).remove(0));
+                    assert!(crate::ladder::tier1_agrees(&c, &compiled, &interpreted), "{name}: {d:02x?}");
+                }
+                let (compiled, interpreted) = (c.parser.tier1.extract(&doc), c.program.block_programs[0].run_files(&[&doc]).remove(0));
+                assert!(crate::ladder::tier1_agrees(&c, &compiled, &interpreted), "{name}: {doc:02x?}");
+                refused += usize::from(interpreted.totals.iter().any(|&t| t != 0));
+                docs += 1;
+            }
+        }
+    }
+    assert!(refused > 0 && refused < docs, "{refused} of {docs} refused");
+}
+
+/// Decision 0404: JSON's UTF-8 check in simdjson's form (`lookup4`, every rule of two bytes a
+/// pair, `TWO_CONTS` against the lead bytes 2 and 3 back) refuses exactly the files its plain
+/// form does: a lead byte needs its continuations, and a continuation needs its lead. Every
+/// string of up to 3 bytes from the classes' edges, and of 4 from fewer, at the file's start
+/// and inside a string.
+#[test]
+fn utf8_in_simdjsons_form_refuses_as_the_plain_form() {
+    let source = std::fs::read_to_string(format!("{DIR}/14-json.bitlex")).expect("14-json");
+    let at = source.find("error \"invalid UTF-8\"").expect("the check");
+    let end = at + source[at..].find("\nerror ").expect("the next error");
+    // The plain form: the lead bytes 1, 2 and 3 back say where a continuation is needed.
+    let plain_check = r#"class never     = 0xc0 0xc1 0xf5..0xff
+class lead234   = 0xc2..0xf4
+class lead34    = 0xe0..0xf4
+class lead4only = 0xf0..0xf4
+mask needed     = prev(lead234, 1) | prev(lead34, 2) | prev(lead4only, 3)
+error "invalid UTF-8" when never | (needed ^ cont)
+                         | (prev(e0, 1) & below_a0) | (prev(ed, 1) & from_a0)
+                         | (prev(f0, 1) & below_90) | (prev(f4, 1) & from_90)"#;
+    let plain = format!("{}{plain_check}{}", &source[..at], &source[end..]);
+    let (a, b) = (crate::ladder::compile_step("14-json", &plain), crate::ladder::compile_step("14-json", &source));
+    let (pa, pb) = (&a.program.block_programs[0], &b.program.block_programs[0]);
+    let alphabet = [0x41u8, 0x7f, 0x80, 0x8f, 0x90, 0x9f, 0xa0, 0xbf, 0xc0, 0xc1, 0xc2, 0xdf, 0xe0, 0xe1, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf3, 0xf4, 0xf5, 0xff];
+    let (mut n, mut refused, mut differ) = (0usize, 0usize, Vec::new());
+    let mut seqs: Vec<Vec<u8>> = vec![Vec::new()];
+    let small = [0x41u8, 0x80, 0xa0, 0xbf, 0xc2, 0xe0, 0xed, 0xf0, 0xf4];
+    for round in 0..4 {
+        let from: &[u8] = if round < 3 { &alphabet } else { &small };
+        let base: Vec<Vec<u8>> = if round < 3 { seqs.clone() } else { seqs.iter().filter(|s| s.iter().all(|c| small.contains(c))).cloned().collect() };
+        seqs = base.iter().flat_map(|s| from.iter().map(move |&c| [s.clone(), vec![c]].concat())).collect();
+        for s in &seqs {
+            for doc in [s.clone(), [b"\"".to_vec(), s.clone(), b"\"".to_vec()].concat()] {
+                let (x, y) = (pa.run_files(&[&doc]).remove(0), pb.run_files(&[&doc]).remove(0));
+                let (rx, ry) = (x.totals.iter().any(|&t| t != 0), y.totals.iter().any(|&t| t != 0));
+                n += 1;
+                refused += usize::from(rx);
+                if rx != ry && differ.len() < 10 {
+                    differ.push(format!("{doc:02x?}: old {rx} new {ry}"));
+                }
+            }
+        }
+    }
+    assert!(differ.is_empty() && refused > 0 && refused < n, "{n} documents, {refused} refused; differ: {differ:#?}");
+}

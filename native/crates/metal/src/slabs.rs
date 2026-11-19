@@ -317,7 +317,7 @@ pub fn zcache_failed(cache: &metal::Buffer) -> u32 {
     zcache_counts(cache).failed
 }
 
-/// A cache's counts once its batch's kernels are done, the cache checked (`Spec::check`, decision 0403).
+/// A cache's counts once its batch's kernels are done, the cache checked (`Spec::check`, decision 0462).
 fn zcache_counts(cache: &metal::Buffer) -> rerail_clif::view::cache::Counts {
     // SAFETY: the cache's shared buffer, all of it; its batch's kernels are done.
     rerail_clif::view::cache::Counts::checked(unsafe { std::slice::from_raw_parts(cache.contents().cast::<u8>(), cache.length() as usize) })

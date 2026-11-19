@@ -1044,7 +1044,7 @@ static PATTERN_PIPELINES: LazyLock<Mutex<HashMap<(String, u32), ComputePipelineS
 
 /// A pipeline of a source over [`tape_view`] for a batch of tapes in `format` (0: mixed).
 fn pipeline_of(source: &str, name: &str, format: u32) -> Result<ComputePipelineState, Error> {
-    rerail_metal::runtime::pipeline_named_constant(source, name, Some(format))
+    rerail_metal::runtime::pipeline_named_fixed(source, name, Some(format))
 }
 
 /// Releases the compiled label and pattern kernels (the residency's drop).
@@ -1732,13 +1732,13 @@ fn encode(
         crate::code_rule_dsl::prof::count("formula.within_down", words[19] as usize);
         crate::code_rule_dsl::prof::count("formula.within_climb", words[20] as usize);
     }
-    // A node past the batch's, which a pass would have marked or counted (decision 0403): not written, and the
+    // A node past the batch's, which a pass would have marked or counted (decision 0462): not written, and the
     // passes again on the interpreter. Said once a run: it is a tape's walk or a capture that left its tape.
     if runner.flag(0) & 256 != 0 {
         crate::code_rule_dsl::prof::count("gpu.node_past_batch", 1);
         static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         if !SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            eprintln!("rerail: a label pass took a node past its batch's {} (decision 0403, Q265): not written; the passes on the interpreter", runner.nodes);
+            eprintln!("rerail: a label pass took a node past its batch's {} (decision 0462, Q265): not written; the passes on the interpreter", runner.nodes);
         }
     }
     // A micro walk that outgrew its frames: the passes again on the interpreter.

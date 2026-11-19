@@ -143,7 +143,7 @@ impl Columns15 {
 
     /// The view the tape's reads take (decision 0310), its offsets from its bytes' first (`laid_out`): made from
     /// the columns' places, as cheap as the columns' slices; its spans held to the source's `source_len` bytes (its
-    /// image's: decision 0403).
+    /// image's: decision 0462).
     pub fn view(&self, source_len: usize) -> rerail_clif::view::TapeView {
         let (_, at) = self.laid_out();
         let w = |k: usize| u32::from(self.widths[k]);

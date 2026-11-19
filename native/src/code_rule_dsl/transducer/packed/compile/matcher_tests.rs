@@ -1551,6 +1551,7 @@ fn micro_walks_are_the_interpreters_label_outputs() {
 /// Whether a walk's first move, reached from its start through saves, forks and jumps only, is `after` with a tail
 /// that marks the start alone (tests, a `load` and its tests, a capture, the emit): the shape the device answers once
 /// for a parent's children (`metal_label_passes.metal`'s `sibling_pass`, work queue Q182).
+#[cfg(target_os = "macos")]
 fn sibling_shape(words: &[u32]) -> bool {
     let (mut pc, mut seen) = (0, 0);
     while pc < words.len() && seen <= words.len() {
@@ -1731,7 +1732,7 @@ fn ast_pattern_captures_are_pinned() {
     }
     let got: String = h.finalize().iter().take(16).map(|b| format!("{b:02x}")).collect();
     assert!(matched > 500, "{matched} matches");
-    assert_eq!(got, "ea71d4437b2c2ba12fc3b08d3c7f982c", "the captures moved ({matched} matches)");
+    assert_eq!(got, "2f1444d906c39b0c99a4e20b5b9a56cb", "the captures moved ({matched} matches)");
 }
 
 /// The verdict alone (`matches_ast_pattern`, into bindings reused from node to node) is
@@ -1854,5 +1855,37 @@ fn presence_bitmap_census() {
             "presence: {role:<6} {} pairs: ruled out by presence {} ({:.1}%), empty anchor {} ({:.1}%); by nodes: {:.1}% and {:.1}%",
             c[0], c[1], pct(c[1], c[0]), c[2], pct(c[2], c[0]), pct(c[4], c[3]), pct(c[5], c[3])
         );
+    }
+}
+
+/// The end of children meets a named candidate (RER-131): where the tokens the tape leaves out after
+/// the last matched child begin with the goal's, the rest trails, in the packed matcher as in
+/// ast-grep-core's. `case $V:` matches `case 1: f(); break;` (ast-grep 0.51.0 does); `f($A)` still
+/// refuses `f(a, b)`, whose gap after `a` is `,`.
+/// PR #508's 65ff68df5 (t47).
+#[test]
+fn ast_pattern_end_of_children_meets_implied_tokens() {
+    use ast_grep_core::matcher::MatcherExt as _;
+    let source = Arc::new("switch (x) { case 1: f(); break; }\nf(a);\nf(a, b);\n".to_owned());
+    let grammar = Grammar::new(GrammarDialect::TypeScript).expect("TypeScript grammar");
+    let image = TapeImage::parse(&grammar, &source, &|| false).expect("parser completed").expect("tape image");
+    let tape = TapeDoc::restore(source, grammar, &image, &|| false).expect("restored tape");
+    let root = Root::doc(tape.clone());
+    for (pattern, want) in [
+        (Pattern::contextual("switch ($X) { case $V: }", "switch_case", GrammarDialect::TypeScript).unwrap(), ["case 1: f(); break;"]),
+        (Pattern::try_new("f($A)", GrammarDialect::TypeScript).unwrap(), ["f(a)"]),
+    ] {
+        let program = Program::compile_ast_grep_pattern(&pattern).unwrap();
+        let (mut packed, mut core) = (Vec::new(), Vec::new());
+        for node in root.root().dfs() {
+            if program.execute_ast_pattern(&tape, node.node_id() as u32).unwrap().is_some() {
+                packed.push(node.text().into_owned());
+            }
+            if pattern.match_node(node.clone()).is_some() {
+                core.push(node.text().into_owned());
+            }
+        }
+        assert_eq!(packed, want, "packed");
+        assert_eq!(core, want, "ast-grep-core");
     }
 }

@@ -1,4 +1,6 @@
-# 0403: A tape's reads are proven within its bytes, whatever the bytes hold
+# 0462: A tape's reads are proven within its bytes, whatever the bytes hold
+
+Numbered 0403 where it was written.
 
 Status: decided (2026-11-18), by the user, on Q265: "That's not just a correctness issue but a security issue too.
 That means both identifying and fixing the root-cause for corruption, and ensuring that (at least behind a flag)

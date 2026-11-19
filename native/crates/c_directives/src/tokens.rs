@@ -163,6 +163,8 @@ mod tests {
             "a \\ b\\n c\\ \\\n d \\",
             "",
             "a",
+            // Digit separators (C23, C++14) and `u8'…'` (C23, C++17).
+            "n = 1'000'000 + 0'7 + 0x'1 + 1'a'b + 1.5'e+3 + .5'0 + x.5'1; c = u8'a' + x1'b' + 1' ' + '1''2';\n",
         ];
         for cpp in [false, true] {
             for src in cases {
@@ -180,7 +182,7 @@ mod tests {
 
     #[test]
     fn what_the_grammar_does_not_read_is_refused() {
-        for src in ["a = \\u00e9;\n", "a = é;\n", "a+\\\n+b;\n", "x<::y> z;\n", "??=define X\n", "s = R\"x(a)x\";\n", "int n = 1'000;\n", "a\rb\n"] {
+        for src in ["a = \\u00e9;\n", "a = é;\n", "a+\\\n+b;\n", "x<::y> z;\n", "??=define X\n", "s = R\"x(a)x\";\n", "a\rb\n", "c = '.5'a + 1;\n"] {
             assert_eq!(check(src.as_bytes(), true), Ok(false), "{src:?}");
         }
     }

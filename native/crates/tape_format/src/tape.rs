@@ -345,7 +345,7 @@ pub struct F15Columns<'a> {
     pub tail: &'a [u8],
     pub widths: [u8; 3],
     pub from_start: bool,
-    /// The source's length (its header's, or its image's): a view's spans are held to it (decision 0403).
+    /// The source's length (its header's, or its image's): a view's spans are held to it (decision 0462).
     pub source_len: u64,
 }
 
@@ -450,7 +450,7 @@ impl Tape for F15<'_> {
     fn end(&self, i: usize) -> u64 {
         u64::from(reads::tape_end(self.bytes, &self.view, i as u32))
     }
-    /// A scan's span is the tape's as stated (decision 0403: what its check reads; its slices are checked).
+    /// A scan's span is the tape's as stated (decision 0462: what its check reads; its slices are checked).
     fn start_next(&self, i: usize, _prev_start: u64) -> u64 {
         u64::from(reads::tape_start_stated(self.bytes, &self.view, i as u32))
     }

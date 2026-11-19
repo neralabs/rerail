@@ -187,7 +187,7 @@ pub mod cache {
     pub const NUMBER: u32 = (1 << TAG_SHIFT) - 1;
     /// The room past the dead entry: an entry's masked loads reach at most an entry and a word past it.
     pub const SLACK: usize = 256;
-    /// A guard after the slack, of `GUARD_BYTE`s: no read or write of the cache reaches it (decision 0403), and
+    /// A guard after the slack, of `GUARD_BYTE`s: no read or write of the cache reaches it (decision 0462), and
     /// `Spec::check` finds it as `init` wrote it, else a writer missed its own memory.
     pub const GUARD: usize = 256;
     pub const GUARD_BYTE: u8 = 0xA5;
@@ -253,7 +253,7 @@ pub mod cache {
             self.dead() + self.entry_bytes() + SLACK + GUARD
         }
 
-        /// The cache in `buf` checked as `init` made it (decision 0403): its shape's words, from which every
+        /// The cache in `buf` checked as `init` made it (decision 0462): its shape's words, from which every
         /// address its reads take is made, and its guard. A cache whose threads are done (or a sample while they
         /// run). `Err` says what was overwritten: a write that missed its own memory, never one of the cache's.
         pub fn check(buf: &[u8]) -> Result<Spec, String> {
@@ -319,10 +319,10 @@ pub mod cache {
 
     impl Counts {
         /// The counts of the cache `buf` (a whole cache), checked first (`Spec::check`): a cache found overwritten
-        /// panics, naming what was (decision 0403): memory a writer missed is no state to go on from.
+        /// panics, naming what was (decision 0462): memory a writer missed is no state to go on from.
         pub fn checked(buf: &[u8]) -> Counts {
             if let Err(e) = Spec::check(buf) {
-                panic!("a 16z block cache (decision 0403): {e}");
+                panic!("a 16z block cache (decision 0462): {e}");
             }
             // SAFETY: a cache's header, checked just now, in `buf`.
             unsafe { Counts::read(buf.as_ptr()) }
@@ -395,12 +395,12 @@ impl Reader {
 
 impl Drop for Reader {
     fn drop(&mut self) {
-        // A 16z reader's cache checked as its reads leave it (decision 0403).
+        // A 16z reader's cache checked as its reads leave it (decision 0462).
         if 16 * self.len > READER_CACHE {
             // SAFETY: the cache's bytes after the view, in the buffer `new` made, which no read uses now.
             let cache = unsafe { std::slice::from_raw_parts(self.words.cast::<u8>().add(READER_CACHE), 16 * self.len - READER_CACHE) };
             if let Err(e) = cache::Spec::check(cache) {
-                panic!("a 16z reader's block cache (decision 0403): {e}");
+                panic!("a 16z reader's block cache (decision 0462): {e}");
             }
         }
         // SAFETY: the buffer `new` made, of `len` words.

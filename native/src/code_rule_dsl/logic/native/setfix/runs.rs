@@ -25,7 +25,7 @@ use std::cmp::Ordering;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
-use super::rows::Row;
+use super::rows::{BlockVec, Home, Row};
 
 /// A relation's rows, read by id: one flat vector (`[i64]`, `k` values a row), or the segments a maintained relation
 /// shares with the kept one it started as (`super::Rows`, smoking gun 8). Every row lies whole in one segment.
@@ -35,6 +35,10 @@ pub(super) trait RowData {
     fn row(&self, id: u32, k: usize) -> Row;
     /// Row `id`'s value in column `c`: what a compare, a tag or a fence reads, not the row.
     fn value(&self, id: u32, k: usize, c: usize) -> i64;
+    /// Where its indexes' arrays go (decision 0384 step 4): its relation's block; `None`, a run's open block.
+    fn home(&self) -> Option<Home> {
+        None
+    }
 }
 
 impl RowData for [i64] {
@@ -63,19 +67,19 @@ const PROBE_PER_MERGED_ID: u64 = 8;
 #[derive(Clone)]
 pub(super) struct Run {
     ids: Ids,
-    fences: Vec<i64>,
-    tags: Vec<u16>,
+    fences: BlockVec<i64>,
+    tags: BlockVec<u16>,
     /// In an order probed by whole keys (`Index::printed`): each id's key print (`print`), beside it. A whole key's
     /// ids are found among the prints of its window, a word of prints at a time, and only the first and last match
     /// read (`print_span`). Empty otherwise.
-    prints: Vec<u8>,
+    prints: BlockVec<u8>,
 }
 
 /// A run's ids: listed, or the rows `lo..hi` themselves, known to be in the order already (decision 0180), so no
 /// list is kept (4 bytes a row less) and a probe searches the rows in place.
 #[derive(Clone)]
 enum Ids {
-    List(Vec<u32>),
+    List(BlockVec<u32>),
     Rows(u32, u32),
 }
 
@@ -106,6 +110,7 @@ impl Ids {
     fn iter(&self) -> PartIter<'_> {
         self.part(0, self.len()).iter()
     }
+    #[cfg(test)]
     fn to_vec(&self) -> Vec<u32> {
         self.iter().collect()
     }
@@ -227,6 +232,13 @@ fn implies_key(have: &[usize], k: usize, tag: Option<usize>, cols: &[usize]) -> 
 }
 
 impl Sorted {
+    /// Rows `0..n` of `k` columns, all in the order on `cols` (a source whose rows lie in an order,
+    /// `Source::order`), noted on its columns but the last where they are all `k`: an order on every column is the
+    /// dedup order, which leads with a hash (`tagged`), and these lead with the values.
+    pub(super) fn whole(n: u32, k: usize, cols: &[usize]) -> Sorted {
+        let cols = if tagged(cols, k) { &cols[..k - 1] } else { cols };
+        Sorted(if n > 0 && !cols.is_empty() { vec![(0, n, cols.into())] } else { Vec::new() })
+    }
     /// Rows `lo..hi` of `data` are in the order on `cols`: joined to the range before when it ends at `lo` in the
     /// same order and its last row is not past row `lo`.
     pub(super) fn note<D: RowData + ?Sized>(&mut self, data: &D, k: usize, cols: &[usize], lo: u32, hi: u32) {
@@ -435,15 +447,16 @@ fn cmp_rows<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], a: u32, b: 
 
 impl Run {
     fn fenced<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], ids: Ids) -> Run {
+        let home = data.home();
         if tagged(cols, k) {
-            let tags = ids.iter().map(|id| tag(data.value(id, k, cols[0]))).collect();
-            return Run { ids, fences: Vec::new(), tags, prints: Vec::new() };
+            let tags = BlockVec::from_iter_in(home.as_ref(), ids.iter().map(|id| tag(data.value(id, k, cols[0]))));
+            return Run { ids, fences: BlockVec::new(), tags, prints: BlockVec::new() };
         }
         let fences = match cols.first() {
-            Some(&lead) => ids.iter().step_by(FENCE).map(|id| data.value(id, k, lead)).collect(),
-            None => Vec::new(),
+            Some(&lead) => BlockVec::from_iter_in(home.as_ref(), ids.iter().step_by(FENCE).map(|id| data.value(id, k, lead))),
+            None => BlockVec::new(),
         };
-        Run { ids, fences, tags: Vec::new(), prints: Vec::new() }
+        Run { ids, fences, tags: BlockVec::new(), prints: BlockVec::new() }
     }
 
     /// The rows `lo..hi`, known to be in the order on `cols` (`Sorted`): no sort and no list of ids.
@@ -453,17 +466,20 @@ impl Run {
 
     /// This run with its ids' key prints (an order probed by whole keys): one row read an id.
     fn printed<D: RowData + ?Sized>(mut self, data: &D, k: usize, cols: &[usize]) -> Run {
-        self.prints = self.ids.iter().map(|id| print_vals(cols.iter().map(|&c| data.value(id, k, c)))).collect();
+        self.prints = BlockVec::from_iter_in(data.home().as_ref(), self.ids.iter().map(|id| print_vals(cols.iter().map(|&c| data.value(id, k, c)))));
         self
     }
 
     /// The ids of `ids` sorted by `cols` (then id), with their tag and first two values held beside them while
     /// they sort (`sort_keyed`).
-    fn of<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], mut ids: Vec<u32>) -> Run {
+    fn of<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], ids: impl IntoIterator<Item = u32>) -> Run {
+        let home = data.home();
+        let mut ids = BlockVec::from_iter_in(home.as_ref(), ids);
         let tagged = tagged(cols, k);
-        let tags = sort_keyed(&mut ids, tagged, cols.len(), |id, i| data.value(id, k, cols[i]), |a, b| cmp_rows(data, k, cols, a, b));
+        let mut tags = BlockVec::with_capacity_in(home.as_ref(), if tagged { ids.len() } else { 0 });
+        sort_keyed(&mut ids, tagged, cols.len(), |id, i| data.value(id, k, cols[i]), |a, b| cmp_rows(data, k, cols, a, b), &mut tags);
         if tagged {
-            return Run { ids: Ids::List(ids), fences: Vec::new(), tags, prints: Vec::new() };
+            return Run { ids: Ids::List(ids), fences: BlockVec::new(), tags, prints: BlockVec::new() };
         }
         Run::fenced(data, k, cols, Ids::List(ids))
     }
@@ -584,10 +600,27 @@ impl Run {
                 && mid == mid2
                 && (lo == mid || mid2 == hi || cmp_ids(data, k, cols, tagged(cols, k), mid - 1, *mid).is_le())
             {
-                let prints = if !first.prints.is_empty() && !second.prints.is_empty() { [first.prints.as_slice(), second.prints.as_slice()].concat() } else { Vec::new() };
+                let home = data.home();
+                let joined = |a: &[_], b: &[_]| {
+                    let mut v = BlockVec::with_capacity_in(home.as_ref(), a.len() + b.len());
+                    // copy: derived: two runs' prints joined into the merged run's (an index written where it is computed)
+                    v.extend_from_slice(a);
+                    // copy: derived: as the line above
+                    v.extend_from_slice(b);
+                    v
+                };
+                let prints = if !first.prints.is_empty() && !second.prints.is_empty() { joined(&first.prints, &second.prints) } else { BlockVec::new() };
                 let ids = Ids::Rows(*lo, *hi);
                 if tagged(cols, k) {
-                    return Run { ids, fences: Vec::new(), tags: [first.tags.as_slice(), second.tags.as_slice()].concat(), prints };
+                    let tags = {
+                        let mut v = BlockVec::with_capacity_in(home.as_ref(), first.tags.len() + second.tags.len());
+                        // copy: derived: two runs' tags joined into the merged run's
+                        v.extend_from_slice(&first.tags);
+                        // copy: derived: as the line above
+                        v.extend_from_slice(&second.tags);
+                        v
+                    };
+                    return Run { ids, fences: BlockVec::new(), tags, prints };
                 }
                 return Run { prints, ..Run::fenced(data, k, cols, ids) };
             }
@@ -605,11 +638,12 @@ impl Run {
     /// `merge` by walking both runs, a row comparison per id.
     fn walked<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], a: &Run, b: &Run) -> Run {
         let (an, bn) = (a.ids.len(), b.ids.len());
-        let mut ids = Vec::with_capacity(an + bn);
+        let home = data.home();
+        let mut ids = BlockVec::with_capacity_in(home.as_ref(), an + bn);
         let tagged = !a.tags.is_empty() && !b.tags.is_empty();
-        let mut tags = Vec::with_capacity(if tagged { ids.capacity() } else { 0 });
+        let mut tags = BlockVec::with_capacity_in(home.as_ref(), if tagged { an + bn } else { 0 });
         let printed = !a.prints.is_empty() && !b.prints.is_empty();
-        let mut prints = Vec::with_capacity(if printed { ids.capacity() } else { 0 });
+        let mut prints = BlockVec::with_capacity_in(home.as_ref(), if printed { an + bn } else { 0 });
         let (mut i, mut j) = (0, 0);
         while i < an && j < bn {
             let (x, y) = (a.ids.get(i), b.ids.get(j));
@@ -636,7 +670,7 @@ impl Run {
         if tagged {
             tags.extend_from_slice(&a.tags[i..]);
             tags.extend_from_slice(&b.tags[j..]);
-            return Run { ids: Ids::List(ids), fences: Vec::new(), tags, prints };
+            return Run { ids: Ids::List(ids), fences: BlockVec::new(), tags, prints };
         }
         Run { prints, ..Run::fenced(data, k, cols, Ids::List(ids)) }
     }
@@ -647,14 +681,15 @@ impl Run {
         let (ln, sn) = (large.ids.len(), small.ids.len());
         let tagged = !large.tags.is_empty() && !small.tags.is_empty();
         let printed = !large.prints.is_empty() && !small.prints.is_empty();
-        let mut ids = Vec::with_capacity(ln + sn);
-        let mut tags = Vec::with_capacity(if tagged { ln + sn } else { 0 });
-        let mut prints = Vec::with_capacity(if printed { ln + sn } else { 0 });
+        let home = data.home();
+        let mut ids = BlockVec::with_capacity_in(home.as_ref(), ln + sn);
+        let mut tags = BlockVec::with_capacity_in(home.as_ref(), if tagged { ln + sn } else { 0 });
+        let mut prints = BlockVec::with_capacity_in(home.as_ref(), if printed { ln + sn } else { 0 });
         // Whether `large`'s position `p` orders before `small`'s `q` (the merge's test).
         let before = |p: usize, q: usize| {
             if tagged && large.tags[p] != small.tags[q] { large.tags[p] < small.tags[q] } else { cmp_rows(data, k, cols, large.ids.get(p), small.ids.get(q)).is_le() }
         };
-        let copy = |ids: &mut Vec<u32>, tags: &mut Vec<u16>, prints: &mut Vec<u8>, s: usize, e: usize| {
+        let copy = |ids: &mut BlockVec<u32>, tags: &mut BlockVec<u16>, prints: &mut BlockVec<u8>, s: usize, e: usize| {
             match &large.ids {
                 Ids::List(v) => ids.extend_from_slice(&v[s..e]),
                 Ids::Rows(lo, _) => ids.extend(lo + s as u32..lo + e as u32),
@@ -677,7 +712,7 @@ impl Run {
         }
         copy(&mut ids, &mut tags, &mut prints, at, ln);
         if tagged {
-            return Run { ids: Ids::List(ids), fences: Vec::new(), tags, prints };
+            return Run { ids: Ids::List(ids), fences: BlockVec::new(), tags, prints };
         }
         Run { prints, ..Run::fenced(data, k, cols, Ids::List(ids)) }
     }
@@ -947,7 +982,7 @@ pub(super) const HINTS: usize = 8;
 /// `ids` sorted as `cmp` orders them, where `cmp` orders by the leading value's tag (`tagged`) and then the order's
 /// columns in turn, `val(id, i)` being an id's value in the order's column `i` (of `ncols`): the ids are sorted with
 /// their tag and first two values held beside them, read once a row, and rows are compared (`cmp`) only within a
-/// stretch equal in all three. The sorted ids' tags are returned (empty when untagged). Held beside the ids, the keys
+/// stretch equal in all three. The sorted ids' tags are put in `tags` (none when untagged). Held beside the ids, the keys
 /// are 24 bytes a row sorted, for the sort only; compared through the rows instead, each comparison read two
 /// scattered rows (O125: 8 G instructions of the cold run's 346 G).
 ///
@@ -955,24 +990,31 @@ pub(super) const HINTS: usize = 8;
 /// range needs, side by side in one u64 (8 bytes a row) or u128 (16) when they fit; the 24-byte tuple otherwise.
 /// Each field is ordered as its value, so the packed keys sort as the tuples do. `RERAIL_SORT_PACKED=off` keeps
 /// the tuple (a measurement aid).
-pub(super) fn sort_keyed(ids: &mut [u32], tagged: bool, ncols: usize, val: impl Fn(u32, usize) -> i64, cmp: impl Fn(u32, u32) -> Ordering) -> Vec<u16> {
+pub(super) fn sort_keyed(ids: &mut [u32], tagged: bool, ncols: usize, val: impl Fn(u32, usize) -> i64, cmp: impl Fn(u32, u32) -> Ordering, tags: &mut impl Extend<u16>) {
     static PACKED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *PACKED.get_or_init(|| std::env::var("RERAIL_SORT_PACKED").map_or(true, |v| v != "off"))
-        && let Some(tags) = sort_packed(ids, tagged, ncols, &val, &cmp)
+        && sort_packed(ids, tagged, ncols, &val, &cmp, tags)
     {
-        return tags;
+        return;
     }
-    sort_tupled(ids, tagged, ncols, val, cmp)
+    sort_tupled(ids, tagged, ncols, val, cmp, tags)
 }
 
-/// `sort_keyed` by packed keys, or `None` (nothing done) when its fields need more than 128 bits.
-fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, usize) -> i64, cmp: &impl Fn(u32, u32) -> Ordering) -> Option<Vec<u16>> {
+/// A sort's tags not kept (`sort_keyed` for an order of no run).
+pub(super) struct NoTags;
+
+impl Extend<u16> for NoTags {
+    fn extend<I: IntoIterator<Item = u16>>(&mut self, _: I) {}
+}
+
+/// `sort_keyed` by packed keys, or `false` (nothing done) when its fields need more than 128 bits.
+fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, usize) -> i64, cmp: &impl Fn(u32, u32) -> Ordering, out: &mut impl Extend<u16>) -> bool {
     let (n, nv) = (ids.len(), ncols.min(2));
     // The held fields of each row, read once: its tag (when tagged), then its first two values, each value's bits
     // with the sign flipped, so the fields order as the signed values do.
     let nf = usize::from(tagged) + nv;
     if n < 2 || nf == 0 {
-        return None;
+        return false;
     }
     let flip = |v: i64| (v as u64) ^ (1 << 63);
     let mut f: Vec<u64> = Vec::with_capacity(n * nf);
@@ -994,7 +1036,7 @@ fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, u
         // One value (most orders): packed in place, `(v - least) << id bits | id`.
         let (lo, hi) = f.iter().fold((u64::MAX, 0), |(l, h), &v| (l.min(v), h.max(v)));
         if bits(hi - lo) + wid > 64 {
-            return None;
+            return false;
         }
         for (k, &id) in f.iter_mut().zip(ids.iter()) {
             *k = (*k - lo) << wid | u64::from(id);
@@ -1004,7 +1046,7 @@ fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, u
         for (slot, k) in ids.iter_mut().zip(&f) {
             *slot = (k & mask) as u32;
         }
-        return Some(Vec::new());
+        return true;
     }
     let (mut lo, mut hi) = ([u64::MAX; 3], [0u64; 3]);
     for row in f.chunks_exact(nf) {
@@ -1019,7 +1061,7 @@ fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, u
     }
     let total = w.iter().sum::<u32>() + wid;
     if total > 128 {
-        return None;
+        return false;
     }
     // Each field's place: the first highest, the id lowest.
     let mut shift = [0u32; 3];
@@ -1048,7 +1090,7 @@ fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, u
             *slot = (u128::from(k) & mask) as u32;
         }
         if ncols <= 2 && !tagged {
-            return Some(Vec::new());
+            return true;
         }
         narrow.into_iter().map(u128::from).collect()
     } else {
@@ -1074,11 +1116,14 @@ fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, u
             at = end;
         }
     }
-    Some(if tagged { keys.iter().map(|&k| ((k >> shift[0]) as u64 + lo[0]) as u16).collect() } else { Vec::new() })
+    if tagged {
+        out.extend(keys.iter().map(|&k| ((k >> shift[0]) as u64 + lo[0]) as u16));
+    }
+    true
 }
 
 /// `sort_keyed` by 24-byte tuples of the tag, the first two values and the id.
-fn sort_tupled(ids: &mut [u32], tagged: bool, ncols: usize, val: impl Fn(u32, usize) -> i64, cmp: impl Fn(u32, u32) -> Ordering) -> Vec<u16> {
+fn sort_tupled(ids: &mut [u32], tagged: bool, ncols: usize, val: impl Fn(u32, usize) -> i64, cmp: impl Fn(u32, u32) -> Ordering, out: &mut impl Extend<u16>) {
     let mut keys: Vec<(u16, i64, i64, u32)> = ids
         .iter()
         .map(|&id| {
@@ -1103,7 +1148,9 @@ fn sort_tupled(ids: &mut [u32], tagged: bool, ncols: usize, val: impl Fn(u32, us
             at = end;
         }
     }
-    if tagged { keys.iter().map(|k| k.0).collect() } else { Vec::new() }
+    if tagged {
+        out.extend(keys.iter().map(|k| k.0));
+    }
 }
 
 impl Index {
@@ -1122,11 +1169,11 @@ impl Index {
     fn run_of<D: RowData + ?Sized>(&self, data: &D, k: usize, lo: u32, hi: u32) -> Run {
         presorted::note(data, k, &self.cols, lo, hi, self.printed);
         if !self.printed {
-            return Run::of(data, k, &self.cols, (lo..hi).collect());
+            return Run::of(data, k, &self.cols, lo..hi);
         }
         let by_row: Vec<u8> = (lo..hi).map(|id| print_vals(self.cols.iter().map(|&c| data.value(id, k, c)))).collect();
-        let mut run = Run::of(data, k, &self.cols, (lo..hi).collect());
-        run.prints = run.ids.iter().map(|id| by_row[(id - lo) as usize]).collect();
+        let mut run = Run::of(data, k, &self.cols, lo..hi);
+        run.prints = BlockVec::from_iter_in(data.home().as_ref(), run.ids.iter().map(|id| by_row[(id - lo) as usize]));
         run
     }
 
@@ -1264,7 +1311,7 @@ impl Index {
                 *r = Arc::new(self.run_over(data, k, lo, hi, &known));
                 continue;
             }
-            let run = Run::of(data, k, &self.cols, r.ids.to_vec());
+            let run = Run::of(data, k, &self.cols, r.ids.iter());
             *r = Arc::new(if self.printed { run.printed(data, k, &self.cols) } else { run });
         }
         self.runs = runs;
@@ -1540,6 +1587,39 @@ pub mod tests {
         assert_eq!(keys, one);
     }
 
+    /// Decision 0384 step 4: an order's runs over a relation's rows keep their arrays (ids, tags, fences, prints) in
+    /// the relation's block, merged runs too, and answer as before.
+    #[test]
+    fn a_relations_runs_lie_in_its_block() {
+        let k = 2;
+        let mut rows = super::super::rows::Rows::new(k);
+        let vals: Vec<i64> = (0..3000i64).flat_map(|i| [(i * 7919) % 101, i]).collect();
+        // copy: not block data: a test's rows
+        rows.extend_from_slice(&vals);
+        let home = rows.home().expect("a home").facts().clone();
+        let block = |v: Option<&Arc<super::super::rows::Facts>>| v.is_some_and(|f| Arc::ptr_eq(f, &home));
+        for (ix, tagged) in [(Index::new(vec![0, 1]), true), (Index::printed(vec![0]), false)] {
+            let mut ix = ix;
+            ix.add_run(&rows, k, 0, 1000, 1);
+            ix.add_run(&rows, k, 1000, 3000, 2);
+            *ix.rent.get_mut() = u64::MAX / 16;
+            ix.settle(&rows, k, 3);
+            assert_eq!(ix.runs(), 1, "merged");
+            let run = &ix.runs[0].0;
+            let Ids::List(ids) = &run.ids else { panic!("ids listed") };
+            assert!(block(ids.facts()), "ids in the relation's block");
+            if tagged {
+                assert!(block(run.tags.facts()), "tags in the relation's block");
+            } else {
+                assert!(block(run.fences.facts()) && block(run.prints.facts()), "fences and prints in the relation's block");
+            }
+            let want: Vec<u32> = (0..3000u32).filter(|&i| vals[i as usize * 2] == 5).collect();
+            let mut got: Vec<u32> = ix.find(&rows, k, &[5], None).ids().collect();
+            got.sort_unstable();
+            assert_eq!(got, want);
+        }
+    }
+
     #[test]
     fn orders_find_prefixes_merge_and_delta() {
         let k = 3;
@@ -1749,10 +1829,11 @@ pub mod tests {
                 let cmp = |a: u32, b: u32| cmp_rows(&rows[..], k, &cols, a, b);
                 let start: Vec<u32> = (0..n as u32).rev().collect();
                 let (mut a, mut b) = (start.clone(), start);
-                let ta = sort_packed(&mut a, tagged, cols.len(), &val, &cmp);
-                let tb = sort_tupled(&mut b, tagged, cols.len(), val, cmp);
-                packed_seen[usize::from(name == "wide")] |= ta.is_some();
-                let Some(ta) = ta else { continue };
+                let (mut ta, mut tb) = (Vec::new(), Vec::new());
+                let packed = sort_packed(&mut a, tagged, cols.len(), &val, &cmp, &mut ta);
+                sort_tupled(&mut b, tagged, cols.len(), val, cmp, &mut tb);
+                packed_seen[usize::from(name == "wide")] |= packed;
+                if !packed { continue }
                 assert_eq!(a, b, "{name} {cols:?} tagged={tagged}");
                 assert_eq!(ta, tb, "{name} {cols:?} tagged={tagged}");
             }
@@ -1782,7 +1863,7 @@ pub mod tests {
                     for _ in 0..5 {
                         let mut ids: Vec<u32> = (0..n).collect();
                         let (i0, c0) = rerail_compiler::native_cpu_codegen::retired();
-                        if packed { std::hint::black_box(sort_packed(&mut ids, false, cols.len(), &val, &cmp)); } else { std::hint::black_box(sort_tupled(&mut ids, false, cols.len(), val, cmp)); }
+                        if packed { std::hint::black_box(sort_packed(&mut ids, false, cols.len(), &val, &cmp, &mut NoTags)); } else { sort_tupled(&mut ids, false, cols.len(), val, cmp, &mut NoTags); std::hint::black_box(&ids); }
                         let (i1, c1) = rerail_compiler::native_cpu_codegen::retired();
                         ins = ins.min(i1 - i0);
                         cyc = cyc.min(c1 - c0);
@@ -1836,7 +1917,9 @@ pub mod tests {
             printed.tier(&rows, k, 1);
             assert_eq!(printed.runs(), 1);
             check(&plain, &printed, &shuffled);
-            assert_eq!(printed.bytes(), plain.bytes() + printed.rows(), "a byte a row more");
+            // A byte a row more, its chunk kept to an eighth of its class past it (`Block::try_alloc_chunk_fit`).
+            let more = printed.bytes() - plain.bytes();
+            assert!(more >= printed.rows() && more <= printed.rows() * 9 / 8 + 64, "a byte a row more: {more} for {}", printed.rows());
         }
     }
 
@@ -1883,12 +1966,12 @@ pub mod tests {
         let k = 3;
         let rows: Vec<i64> = (0..30_000i64).flat_map(|i| [(i * 37) % 1009, i % 5, (i * 7) % 11]).collect();
         let cols = [0usize, 1, 2];
-        let run = Run::of(&rows, k, &cols, (0..30_000u32).collect());
+        let run = Run::of(&rows, k, &cols, 0..30_000u32);
         let mut want: Vec<u32> = (0..30_000).collect();
         want.sort_unstable_by(|&a, &b| cmp_rows(&rows, k, &cols, a, b));
         assert_eq!(run.ids.to_vec(), want);
         assert!(run.ids.iter().zip(&run.tags).all(|(id, &t)| t == tag(rows[id as usize * k])));
-        let (a, b) = (Run::of(&rows, k, &cols, (0..12_000).collect()), Run::of(&rows, k, &cols, (12_000..30_000).collect()));
+        let (a, b) = (Run::of(&rows, k, &cols, 0..12_000u32), Run::of(&rows, k, &cols, 12_000..30_000u32));
         let merged = Run::merge(&rows, k, &cols, &a, &b);
         assert_eq!(merged.ids.to_vec(), want);
         assert_eq!(merged.tags, run.tags);

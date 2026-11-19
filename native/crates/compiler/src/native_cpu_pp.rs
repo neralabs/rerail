@@ -40,7 +40,7 @@ macro_rules! em {
 
 /// Why the compiled words refuse a TU: the index the code returns above bit 32 (`run_native`),
 /// each the interpreter's reason.
-const REASONS: &[&str] = &[
+pub const REASONS: &[&str] = &[
     "the compiled words refuse",
     "the program stopped",
     "past the calls' bound",
@@ -6701,6 +6701,15 @@ pub fn rust_source(program: &Words) -> Result<String, String> {
     let one = crate::clif_rust::translate(&c.ir, &[(c.run_id, "pp_run")], &[])?;
     let h = crate::clif_rust::fingerprint(&one);
     Ok(format!("{one}\n/// This source's fingerprint (`clif_rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"))
+}
+
+/// The words' compiled code as MSL (`clif_msl`, decision 0348 stage 5): the JIT's functions, the
+/// run's entry the kernel `pp_batch` over a batch of contexts, and its fingerprint.
+pub fn msl_source(program: &Words) -> Result<String, String> {
+    let c = compile_kept(program, true).map_err(|e| format!("{e:?}"))?;
+    let one = crate::clif_msl::translate(&c.ir, &[(c.run_id, "pp_batch")])?;
+    let h = crate::clif_rust::fingerprint(&one);
+    Ok(format!("{one}\n// This source's fingerprint (`clif_rust::fingerprint` of what comes before): {h:#x}.\n"))
 }
 
 /// The interface an ahead-of-time build shares with the harness that runs it (`run_aot`): the

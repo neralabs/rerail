@@ -53,7 +53,7 @@ applies the DDL; a new store also gets `auto_vacuum=INCREMENTAL`.
 `PRAGMA user_version` is the compatibility floor, `SCHEMA_VERSION` (7). A build refuses a store
 whose floor is newer than its own. Additive changes such as indexes never raise it.
 
-The renamed file is `STORE_FILE_NAME`, now `content-v8.sqlite`. The old file is neither migrated nor
+The renamed file is `STORE_FILE_NAME`, now `content-v9.sqlite`. The old file is neither migrated nor
 deleted.
 
 Tests: `newer_compatibility_floor_is_refused`,
@@ -135,7 +135,7 @@ signed 64-bit lanes, each eight digest bytes read with `i64::from_be_bytes`. SHA
 
 ## Objects
 
-Each source and tape is stored once, uncompressed, in segment files beside the store (`content-v8.sqlite.objects/`),
+Each source and tape is stored once, uncompressed, in segment files beside the store (`content-v9.sqlite.objects/`),
 and read in place; the row points at its range and holds no bytes. Check results, call summaries and tree pages are
 kept the same way (floor 8). A scan gathers its files into a few large
 segments; any other write (a publication, a snapshot, a single put) writes one segment of its own objects before its
@@ -148,19 +148,19 @@ transaction, which numbers it and inserts the rows. Each read checks the range's
 <details>
 <summary>Columns, aliases and integrity checks</summary>
 
-- **`source_objects`** stores raw length, codec (1, Zstandard) and frame.
+- **`source_objects`** stores raw length, codec (0: as it is) and the object's range in a segment (`seg`, `seg_at`,
+  `seg_len`); an aged object's `seg` is `-2`, its bytes one Zstandard frame in `object_archive` (below).
 - **`tape_objects`** stores one tape per source, `grammar_id`, `grammar_version` (the grammar build
-  identity) and `tape_format_version`.
+  identity) and `tape_format_version`, with its range the same way.
 
-Each frame is an independent level-3 Zstandard frame, readable alone. Both tables carry a
-`created_generation` for collection.
+Both tables carry a `created_generation` for collection.
 
 Publication adds an alias when evaluated bytes, from a repository index or host edit, hash to the
 committed blob. Only files whose path is clean in the worktree are hashed (`clean_blob_alias`). An
 alias naming different bytes fails publication as corrupt.
 
 Reads check codec, raw length and SHA-256 against the row, failing with `StoreError::Corrupt` (test:
-`corrupt_zstandard_frames_fail_closed`). A stored tape that does not load is parsed again.
+`objects_whose_rows_disagree_with_their_segments_fail_closed`). A stored tape that does not load is parsed again.
 
 </details>
 

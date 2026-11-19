@@ -13,7 +13,9 @@
 //! both, and a policy that weighs the host's pressure reads the same ledger.
 
 use rerail_blocks::Block;
-use rerail_blocks::alloc::{Budget, Device, Need, Size};
+use rerail_blocks::alloc::{Device, Need};
+#[cfg(target_os = "macos")]
+use rerail_blocks::alloc::{Budget, Size};
 
 /// Installs this policy as the process's (`rerail_blocks::alloc::install`).
 pub fn install() {
@@ -22,6 +24,7 @@ pub fn install() {
 
 /// A block for `need` (module docs).
 pub fn policy(need: &Need) -> Result<Block, String> {
+    #[cfg(target_os = "macos")]
     let shaped = |b| rerail_blocks::alloc::shaped(b, need);
     match need.device {
         #[cfg(target_os = "macos")]

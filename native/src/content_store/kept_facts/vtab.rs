@@ -1,5 +1,9 @@
-//! `kept_facts`: the store's kept relations as an eponymous virtual table (decisions 0401 F5, 0402 K6 step 6), read
-//! where they lie in each space's chain of mapped files. A row of the table is a row of one entry:
+//! The store's kept relations through SQL (decisions 0401 F5, 0456 K8, 0439), read where they lie in each space's chain
+//! of mapped files. Two eponymous tables, beside `atoms`:
+//!
+//! - `kept_entries(space, rel, ident, part, digest, rows, types, reads)`: each entry a space's chain reads (each key's
+//!   newest, a gone one absent), with what a run checks of it and its rows' count.
+//! - `kept_facts`: a row of the table is a row of one entry.
 //!
 //! ```sql
 //! -- every row of `calls`, part 0, in one space
@@ -8,7 +12,8 @@
 //! SELECT c1 FROM kept_facts WHERE space = ?1 AND rel = 'calls' AND c0 = 42;
 //! ```
 //!
-//! Columns: `space`, `rel`, `ident`, `part`, `level` (the row's level, decision 0090, or NULL), then `c0` to `c15`
+//! Columns: `space`, `rel`, `ident`, `part`, `level` (the row's level, decision 0090, or NULL), `id` (the row's place
+//! in its entry, from 0 in the entry's order: what `c0 = ?` narrows keeps its place), then `c0` to `c15`
 //! (a column past the relation's arity is NULL). Values are as the store numbers them: an atom is the store's id,
 //! as the `atoms` table answers. `space = ?`, `rel = ?` and `part = ?` choose the entries; `c0 = ?` narrows each
 //! entry to a range where its first column leads its canonical order. SQLite rechecks every constraint.
@@ -26,13 +31,26 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// The value columns `c0` to `c15`: a relation's first 16 columns.
-pub const VALUES: usize = 16;
 
-/// Registers `kept_facts` on `connection`, a connection to the store at `store`.
+/// Registers `kept_facts` and `kept_entries` on `connection`, a connection to the store at `store`.
 pub(in crate::content_store) fn install(connection: &Connection, store: &Path) -> Result<()> {
     const MODULE: Module<Table> = Module::eponymous_only_module();
-    connection.create_module(c"kept_facts", &MODULE, Some(store.to_path_buf()))
+    const ENTRIES: Module<Entries> = Module::eponymous_only_module();
+    connection.create_module(c"kept_facts", &MODULE, Some(store.to_path_buf()))?;
+    connection.create_module(c"kept_entries", &ENTRIES, Some(store.to_path_buf()))
+}
+
+/// The spaces a filter reads: `space` (a 32-byte blob), else every space with a chain.
+fn spaces_of(connection: &Connection, space: Option<Value>) -> Result<Vec<[u8; 32]>> {
+    Ok(match space {
+        Some(Value::Blob(b)) => b.as_slice().try_into().ok().into_iter().collect(),
+        Some(_) => Vec::new(),
+        None => {
+            let mut st = connection.prepare_cached("SELECT DISTINCT space FROM main.facts_chain")?;
+            let rows = st.query_map([], |r| r.get::<_, Vec<u8>>(0))?;
+            rows.filter_map(|r| r.ok().and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())).collect()
+        }
+    })
 }
 
 #[repr(C)]
@@ -49,11 +67,12 @@ const REL: c_int = 2;
 const PART: c_int = 4;
 const C0: c_int = 8;
 
-/// Columns: `space`, `rel`, `ident`, `part`, `level`, then the values.
-const FIRST_VALUE: c_int = 5;
+/// Columns: `space`, `rel`, `ident`, `part`, `level`, `id`, then the values.
+const ID: c_int = 5;
+const FIRST_VALUE: c_int = 6;
 
 fn schema() -> &'static CStr {
-    c"CREATE TABLE x(space BLOB, rel TEXT, ident BLOB, part INTEGER, level INTEGER, c0 INTEGER, c1 INTEGER, c2 INTEGER, c3 INTEGER, c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER, c8 INTEGER, c9 INTEGER, c10 INTEGER, c11 INTEGER, c12 INTEGER, c13 INTEGER, c14 INTEGER, c15 INTEGER)"
+    c"CREATE TABLE x(space BLOB, rel TEXT, ident BLOB, part INTEGER, level INTEGER, id INTEGER, c0 INTEGER, c1 INTEGER, c2 INTEGER, c3 INTEGER, c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER, c8 INTEGER, c9 INTEGER, c10 INTEGER, c11 INTEGER, c12 INTEGER, c13 INTEGER, c14 INTEGER, c15 INTEGER)"
 }
 
 // SAFETY: SQLite's base is first; the table owns its path, and its handle is the connection SQLite calls it on.
@@ -184,15 +203,7 @@ unsafe impl VTabCursor for Cursor {
         };
         // SAFETY: the connection SQLite calls this filter on; not closed by the wrapper.
         let connection = unsafe { Connection::from_handle(self.db) }?;
-        let spaces: Vec<[u8; 32]> = match space {
-            Some(Value::Blob(b)) => b.as_slice().try_into().ok().into_iter().collect(),
-            Some(_) => Vec::new(),
-            None => {
-                let mut st = connection.prepare_cached("SELECT DISTINCT space FROM main.facts_chain")?;
-                let rows = st.query_map([], |r| r.get::<_, Vec<u8>>(0))?;
-                rows.filter_map(|r| r.ok().and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())).collect()
-            }
-        };
+        let spaces = spaces_of(&connection, space)?;
         let mut entries = Vec::new();
         for space in spaces {
             let rows = chain_rows(&connection, &space).map_err(error)?;
@@ -250,6 +261,7 @@ unsafe impl VTabCursor for Cursor {
                 Some(levels) => ctx.set_result(&levels.get(self.row)),
                 None => ctx.set_result(&rusqlite::types::Null),
             },
+            ID => ctx.set_result(&(self.row as i64)),
             c => {
                 let c = (c - FIRST_VALUE) as usize;
                 let rows = e.rows();
@@ -268,5 +280,121 @@ impl Cursor {
         self.entries.clear();
         self.at = 0;
         Ok(())
+    }
+}
+
+/// `kept_entries`: each space's directory (or one space's, `space = ?`).
+#[repr(C)]
+struct Entries {
+    base: ffi::sqlite3_vtab,
+    store: PathBuf,
+    db: *mut ffi::sqlite3,
+}
+
+// SAFETY: SQLite's base is first; the table owns its path, and its handle is the connection SQLite calls it on.
+unsafe impl<'a> VTab<'a> for Entries {
+    type Aux = PathBuf;
+    type Cursor = EntriesCursor;
+
+    fn connect(db: &mut VTabConnection, aux: Option<&Self::Aux>, _: &[u8], _: &[u8], _: &[u8], _: &[&[u8]]) -> Result<(Cow<'static, CStr>, Self)> {
+        db.config(VTabConfig::Innocuous)?;
+        let store = aux.expect("the store's path").clone();
+        // SAFETY: the handle of the connection this table is created on; it outlives the table.
+        let handle = unsafe { db.handle() };
+        Ok((Cow::Borrowed(c"CREATE TABLE x(space BLOB, rel TEXT, ident BLOB, part INTEGER, digest INTEGER, rows INTEGER, types TEXT, reads TEXT)"), Entries { base: ffi::sqlite3_vtab::default(), store, db: handle }))
+    }
+
+    fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
+        let by_space = info.constraints().enumerate().find(|(_, c)| c.is_usable() && c.column() == 0 && c.operator() == IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ).map(|(i, _)| i);
+        if let Some(i) = by_space {
+            info.constraint_usage(i).set_argv_index(1);
+        }
+        info.set_idx_num(c_int::from(by_space.is_some()));
+        info.set_estimated_cost(if by_space.is_some() { 100.0 } else { 10_000.0 });
+        Ok(true)
+    }
+
+    fn open(&'a mut self) -> Result<EntriesCursor> {
+        Ok(EntriesCursor { base: ffi::sqlite3_vtab_cursor::default(), store: self.store.clone(), db: self.db, rows: Vec::new(), at: 0 })
+    }
+}
+
+/// An entry's columns, read from its file's directory when the cursor reached its space: metadata, not rows.
+struct EntryRow {
+    space: [u8; 32],
+    rel: String,
+    ident: [u8; 32],
+    part: i64,
+    digest: u64,
+    rows: usize,
+    types: String,
+    reads: String,
+}
+
+#[repr(C)]
+struct EntriesCursor {
+    base: ffi::sqlite3_vtab_cursor,
+    store: PathBuf,
+    db: *mut ffi::sqlite3,
+    rows: Vec<EntryRow>,
+    at: usize,
+}
+
+// SAFETY: SQLite's base is first; the cursor owns what it read.
+unsafe impl VTabCursor for EntriesCursor {
+    fn filter(&mut self, idx_num: c_int, _: Option<&str>, args: &Filters<'_>) -> Result<()> {
+        self.at = 0;
+        self.rows.clear();
+        let space = if idx_num == 1 { Some(args.get::<Value>(0)?) } else { None };
+        // SAFETY: the connection SQLite calls this filter on; not closed by the wrapper.
+        let connection = unsafe { Connection::from_handle(self.db) }?;
+        for space in spaces_of(&connection, space)? {
+            let chain_rows = chain_rows(&connection, &space).map_err(error)?;
+            if chain_rows.is_empty() {
+                continue;
+            }
+            let chain = KeptSpace::open(&self.store, &space, &chain_rows).map_err(error)?;
+            for k in chain.view().all() {
+                let reads: Vec<String> = k.reads().map(|(r, d)| format!("{r}:{d:016x}")).collect();
+                self.rows.push(EntryRow {
+                    space,
+                    rel: k.key.rel.to_owned(),
+                    ident: *k.key.ident,
+                    part: k.key.part,
+                    digest: k.digest,
+                    rows: k.rows.len(),
+                    types: String::from_utf8_lossy(k.types).into_owned(),
+                    reads: reads.join(" "),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn next(&mut self) -> Result<()> {
+        self.at += 1;
+        Ok(())
+    }
+
+    fn eof(&self) -> bool {
+        self.at >= self.rows.len()
+    }
+
+    fn column(&self, ctx: &mut Context, column: c_int) -> Result<()> {
+        let r = &self.rows[self.at];
+        match column {
+            0 => ctx.set_result(&r.space.as_slice()),
+            1 => ctx.set_result(&r.rel),
+            2 => ctx.set_result(&r.ident.as_slice()),
+            3 => ctx.set_result(&r.part),
+            4 => ctx.set_result(&(r.digest as i64)),
+            5 => ctx.set_result(&(r.rows as i64)),
+            6 => ctx.set_result(&r.types),
+            _ => ctx.set_result(&r.reads),
+        }
+    }
+
+    fn rowid(&self) -> Result<i64> {
+        Ok(self.at as i64)
     }
 }

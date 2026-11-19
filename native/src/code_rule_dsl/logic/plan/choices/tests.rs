@@ -95,14 +95,14 @@
         std::fs::create_dir_all(&dir).unwrap();
         let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
         let prepared = [9u8; 32];
-        assert!(read_plans(&store, &prepared).unwrap().is_empty());
+        assert!(read_plans(&store, &prepared).unwrap().0.is_empty());
         // As the run's record applies it: the entry made on the run's side.
         let write_plans = |store: &ContentStore, prepared: &[u8; 32], rows: &[Vec<Value>], notes: &NoteRows| {
-            let entry = plans_entry(rows, notes);
+            let entry = plans_entry(rows, notes, &[]);
             apply_plans(&crate::content_store::record::Apply { store, bytes: &entry }, crate::content_store::record::codec::body(prepared)).map(|()| true)
         };
         assert!(write_plans(&store, &prepared, &[row.into_iter().map(Value::Int).collect()], &Default::default()).unwrap());
-        let read = read_plans(&store, &prepared).unwrap();
+        let read = read_plans(&store, &prepared).unwrap().0;
         assert_eq!((read.len(), read.get(&key)), (1, Some(&stored)));
         // The join memo (decision 0203 §6) is kept in the same entry, and given to the process's memo when read.
         let line: super::super::PlanKey = 0x5eed_0192_u128 << 64 | 0x77;
@@ -110,13 +110,24 @@
         let note = super::super::joins::Note { rule: 42, runs: 1, critical: 0.5, est: 10.0, ran: 1e6, wants_search: true, ..Default::default() };
         let rows = note_rows((vec![(line, note.clone())], vec![(line, 42, sig.clone(), [50, 50_000])], vec![(line, "inf".into(), 0)]));
         assert!(write_plans(&store, &prepared, &[StoredPlan::row(key, &stored).into_iter().map(Value::Int).collect()], &rows).unwrap());
-        let read = read_plans(&store, &prepared).unwrap();
+        let read = read_plans(&store, &prepared).unwrap().0;
         assert_eq!(read.get(&key), Some(&stored), "the plans are kept beside the notes");
         let taken = super::super::joins::note(&line).expect("the note, taken from the store");
         assert_eq!((taken.rule, taken.ran, taken.wants_search, taken.exact.clone()), (42, 1e6, true, vec![(sig, [50, 50_000])]));
         assert_eq!(taken.raised, vec![("inf".to_owned(), 0)], "the columns it raised, kept with it (O172)");
         assert!(super::super::joins::raised("inf", 0), "and raised in this process");
-        assert!(read_plans(&store, &[8u8; 32]).unwrap().is_empty(), "another prepared program's are not taken");
+        assert!(read_plans(&store, &[8u8; 32]).unwrap().0.is_empty(), "another prepared program's are not taken");
+        // The prepared plans of the versions planned (decision 0361 step 5, Q228) are kept in the same entry, by the
+        // version's identity, and read back the same.
+        use super::super::prepared::{ByVersion, Prepared, PreparedPlan};
+        let made = Prepared([(0xfeed_u128 << 64 | 7, PreparedPlan { order: vec![Step { at: 2, mode: None }, Step { at: 0, mode: Some(Mode::Climb) }], work_per_node: 0.75, rows_per_node: 0.125 })].into_iter().collect());
+        let by: ByVersion = [([3u8; 32], Arc::new(made.clone())), ([4u8; 32], Arc::new(Prepared::default()))].into_iter().collect();
+        let entry = plans_entry(&[StoredPlan::row(key, &stored).into_iter().map(Value::Int).collect()], &Default::default(), &super::super::prepared::store_rows(&by));
+        apply_plans(&crate::content_store::record::Apply { store: &store, bytes: &entry }, crate::content_store::record::codec::body(&prepared)).unwrap();
+        let (plans, ready) = read_plans(&store, &prepared).unwrap();
+        assert_eq!(plans.get(&key), Some(&stored), "the plans are kept beside the prepared plans");
+        assert_eq!(ready.get(&[3u8; 32]).map(|p| &**p), Some(&made), "a version's prepared plans read back");
+        assert!(ready.get(&[4u8; 32]).is_some_and(|p| p.0.is_empty()), "a version with none is kept as its id alone, read back with nothing to make again");
         assert!(read_all(&store, &prepared).unwrap().is_empty(), "the choices do not read the plans");
         drop(store);
         let _ = std::fs::remove_dir_all(&dir);

@@ -23,9 +23,10 @@ pub mod caches;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
 pub use name::{List, Lists, Name, Stacks};
 pub mod cycles;
+pub mod graph;
 pub mod template;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
-pub use ast::{AXIS, Again, AggOp, Atom, Branded, Class, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, carried_record, readers_of_heads, record_copy, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, Shape, ShapeWait, shape_base, Algo, Fan, LayoutFact, Size as LayoutSize, add_layout, layout_facts, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
+pub use ast::{AXIS, AggOp, Atom, Branded, Class, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, carried_record, readers_of_heads, record_copy, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, Shape, ShapeWait, shape_base, Algo, FEW, Fan, Values as LayoutValues, LayoutFact, Size as LayoutSize, add_layout, layout_facts, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
 
 /// A token and the byte offset where it starts.
 #[derive(Clone, Debug, PartialEq)]
@@ -693,33 +694,50 @@ pub fn declare_axes(prog: &mut Program) {
     }
 }
 
-/// `finish`'s checks, of the program its rewrites made: no computed term in a body atom, bounded lattices, every
-/// input declared, bounded value cycles, the caches' form.
+/// `finish`'s checks of a tree, on its version (`finish_checks_on`): the tree is encoded for them, until the tree's
+/// lowering goes (decision 0276 step 5).
 pub fn finish_checks(prog: &Program) -> Result<(), Error> {
-    for rule in &prog.rules {
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(prog).and_then(|b| b.finish()).map_err(Error::Syntax)?;
+    finish_checks_on(&v)
+}
+
+/// `finish`'s checks, of the program its rewrites made, read on its version: no computed term in a body atom, bounded
+/// lattices, every input declared, bounded value cycles, the caches' form.
+pub fn finish_checks_on(v: &crate::code_rule_dsl::logic::program_image::Version) -> Result<(), Error> {
+    finish_checks_given(v, None)
+}
+
+/// `finish_checks_on` of a program lowered without the rules of the `library` it reads (`rr::Text::lower_in`): its
+/// value cycles are bounded by what the library's relations guarantee there (`cycles::check_given`).
+pub fn finish_checks_given(v: &crate::code_rule_dsl::logic::program_image::Version, library: Option<&crate::code_rule_dsl::logic::program_image::Version>) -> Result<(), Error> {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+    use crate::code_rule_dsl::logic::program_image::handles::{Lit, TermRef};
+    for rule in v.rules() {
         // A computed term is a value, not a pattern: an atom never matches on one (the backends would drop it).
-        if let Some(a) = rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None })
-            .find(|a| a.args.iter().any(|t| matches!(t, Term::Call(..))))
-        {
+        if let Some(a) = rule.body().filter_map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }).find(|a| a.args().any(|t| matches!(t, TermRef::Call(..)))) {
             return Err(Error::Syntax(format!(
                 "computed term in body atom {} of the rule for {}: bind it with `v = @f(...)`",
-                a.rel, rule.head.rel
+                v.rel_name(a.rel()),
+                v.rel_name(rule.head().rel())
             )));
         }
     }
-    for (relation, decl) in &prog.lattice {
+    for (relation, decl) in ProgramFields::lattice(v) {
         if !decl.bounded() {
-            return Err(Error::UnboundedLattice { relation: relation.clone() });
+            return Err(Error::UnboundedLattice { relation });
         }
     }
     // An input's columns are its declaration's: the planner reads them.
-    if let Some(relation) = prog.inputs.iter().find(|rel| !prog.decls.contains_key(rel.as_str())) {
-        return Err(Error::UndeclaredInput { relation: relation.clone() });
+    if let Some(relation) = v.input_names().into_iter().find(|rel| !v.declares(rel)) {
+        return Err(Error::UndeclaredInput { relation });
     }
     let checking = crate::code_rule_dsl::logic::profile::span(|| "check the program's cycles and caches".to_owned());
-    cycles::check(prog)?;
+    match library {
+        Some(library) => cycles::check_given(v, library)?,
+        None => cycles::check(v)?,
+    };
     // A cache is two rules (decision 0103): a broken form refuses the program.
-    caches::caches(prog)?;
+    caches::caches(v)?;
     drop(checking);
     Ok(())
 }
@@ -729,6 +747,27 @@ pub fn finish_checks(prog: &Program) -> Result<(), Error> {
 /// `match_group` over a span are built-ins: the text columns make each regex's relation (`strings`).
 pub fn declared(prog: &Program) -> Result<(), Error> {
     prog.rules.iter().try_for_each(|rule| rule_declared(prog, rule))
+}
+
+/// `declared`, of a version: each rule's reads declared, and each atom with its relation's columns.
+pub fn declared_on(v: &crate::code_rule_dsl::logic::program_image::Version) -> Result<(), Error> {
+    use crate::code_rule_dsl::logic::program_image::handles::Lit;
+    for rule in v.rules() {
+        let head = v.rel_name(rule.head().rel());
+        let atoms = || {
+            rule.body().filter_map(|l| match l.view() {
+                Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(a),
+                _ => None,
+            })
+        };
+        for a in atoms() {
+            read_declared(v, v.rel_name(a.rel()), head)?;
+        }
+        for a in std::iter::once(rule.head()).chain(atoms()) {
+            columns_declared(v, v.rel_name(a.rel()), a.arity(), head)?;
+        }
+    }
+    Ok(())
 }
 
 /// `declared` for one rule: every relation it reads is declared in `prog` (`read_declared`), and each atom of it has
@@ -751,8 +790,8 @@ pub fn rule_declared(prog: &Program, rule: &Rule) -> Result<(), Error> {
 
 /// A read of `rel` in a rule for `head` names a declared relation. The import components' relations (`rr_cx_reach`,
 /// decision 0076) are added by the run to a program that reads them: declared there.
-pub fn read_declared(prog: &Program, rel: &str, head: &str) -> Result<(), Error> {
-    if !prog.decls.contains_key(rel) && !is_transduced(rel) && !rel.starts_with("rr_cx_") && !matches!(rel, "match_all" | "match_group") {
+pub fn read_declared(prog: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), rel: &str, head: &str) -> Result<(), Error> {
+    if !prog.declares(rel) && !is_transduced(rel) && !rel.starts_with("rr_cx_") && !matches!(rel, "match_all" | "match_group") {
         return Err(Error::Syntax(format!("relation {rel} is read by the rule for {head} and not declared: declare it with `.decl`")));
     }
     Ok(())
@@ -760,8 +799,8 @@ pub fn read_declared(prog: &Program, rel: &str, head: &str) -> Result<(), Error>
 
 /// An atom of `rel` with `arity` columns, in a rule for `head`, has the columns `rel` declares: a read of another
 /// arity names some other relation (a rule's own `field(n)` beside the core `field(p, f, c)`), which no plan can join.
-pub fn columns_declared(prog: &Program, rel: &str, arity: usize, head: &str) -> Result<(), Error> {
-    if let Some(cols) = prog.decls.get(rel)
+pub fn columns_declared(prog: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), rel: &str, arity: usize, head: &str) -> Result<(), Error> {
+    if let Some(cols) = prog.columns_of(rel)
         && cols.len() != arity
     {
         return Err(Error::Syntax(format!("relation {rel} is declared with {} columns and read with {arity} in the rule for {head}", cols.len())));
@@ -796,28 +835,27 @@ pub fn strata(prog: &Program) -> Result<(Vec<BTreeSet<String>>, Edges), Error> {
 /// The program's components, dependencies first (`strata` without its edges): an error if a negation or a
 /// non-monotone aggregate closes a cycle. What most callers of `strata` read, made without the edges by name.
 pub fn components_of(prog: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
-    Graph::of(prog).components(&prog.together)
+    Graph::of(prog).components()
 }
 
 /// `components_of` of a dependency graph read from a version (`program_image::analyses::components_by_name`): the
 /// derived relations' names, sorted; each one's dependencies by their places among them, with whether negative, sorted
-/// and each once; the non-monotone aggregation edges; and the sets run as one component. The components, their order
-/// and the error are the tree's.
-pub fn components_of_graph(names: Vec<&str>, succ: Vec<Vec<(u32, bool)>>, aggs: rustc_hash::FxHashSet<(u32, u32)>, together: &[BTreeSet<String>]) -> Result<Vec<BTreeSet<String>>, Error> {
-    Graph { names, succ, aggs }.components(together)
+/// and each once; and the non-monotone aggregation edges. The components, their order and the error are the tree's.
+pub fn components_of_graph(names: Vec<&str>, succ: Vec<Vec<(u32, bool)>>, aggs: rustc_hash::FxHashSet<(u32, u32)>) -> Result<Vec<BTreeSet<String>>, Error> {
+    Graph { names, succ, aggs }.components()
 }
 
 /// Every component that a negation or a non-monotone aggregate closes a cycle in, one error each (`strata` stops at
 /// the first): a caller that drops what made each cycle (demand's split, decision 0048) drops them all in one round.
 pub fn unstratified(prog: &Program) -> Vec<Error> {
     let g = Graph::of(prog);
-    let sccs = g.together(&prog.together);
+    let sccs = tarjan_ids(&g.succ);
     g.first_unstratified(&sccs, false)
 }
 
 /// The dependency graph of `strata` on numbers: the derived relations in their order, each one's dependencies among
-/// them (with whether negative, sorted as `Edges` sorts them), and the non-monotone aggregation edges. The search, the
-/// stratification check and `together`'s rings run on it; the edges by name are made only for a caller that reads
+/// them (with whether negative, sorted as `Edges` sorts them), and the non-monotone aggregation edges. The search and the
+/// stratification check run on it; the edges by name are made only for a caller that reads
 /// them (`edges`). Each edge as a pair of names in a sorted map was most of the strata's cost.
 struct Graph<'p> {
     names: Vec<&'p str>,
@@ -873,39 +911,10 @@ impl<'p> Graph<'p> {
         Graph { names, succ, aggs }
     }
 
-    /// The components, each set of `sets` one of them (decision 0101 §3): its relations joined in a ring for the
-    /// search only, so the edges stay the rules' own. A set that would take in a relation outside it (one read by a
-    /// member and reading another) is left apart.
-    fn together(&self, sets: &[BTreeSet<String>]) -> Vec<Vec<u32>> {
-        let id = |r: &str| self.names.binary_search(&r).ok().map(|i| i as u32);
-        let mut sets: Vec<Vec<u32>> = sets.iter().map(|t| t.iter().filter_map(|r| id(r)).collect::<Vec<_>>()).filter(|t| t.len() > 1).collect();
-        loop {
-            if sets.is_empty() {
-                return tarjan_ids(&self.succ);
-            }
-            let mut ring = self.succ.clone();
-            for t in &sets {
-                for (i, &r) in t.iter().enumerate() {
-                    let e = (t[(i + 1) % t.len()], false);
-                    let s = &mut ring[r as usize];
-                    if let Err(at) = s.binary_search(&e) {
-                        s.insert(at, e);
-                    }
-                }
-            }
-            let sccs = tarjan_ids(&ring);
-            let n = sets.len();
-            sets.retain(|t| sccs.iter().find(|s| s.contains(&t[0])).is_some_and(|s| s.len() == t.len()));
-            if sets.len() == n {
-                return sccs;
-            }
-        }
-    }
 
-    /// The components, dependencies first, `together`'s sets each one (`together`): an error if a negation or a
-    /// non-monotone aggregate closes a cycle.
-    fn components(&self, together: &[BTreeSet<String>]) -> Result<Vec<BTreeSet<String>>, Error> {
-        let sccs = self.together(together);
+    /// The components, dependencies first: an error if a negation or a non-monotone aggregate closes a cycle.
+    fn components(&self) -> Result<Vec<BTreeSet<String>>, Error> {
+        let sccs = tarjan_ids(&self.succ);
         match self.first_unstratified(&sccs, true).into_iter().next() {
             Some(e) => Err(e),
             None => Ok(self.named(&sccs)),
@@ -993,23 +1002,7 @@ fn edges(prog: &Program) -> Edges {
     edges
 }
 
-/// The sets of `prog.together` that are not each one component as `strata` makes them.
-pub fn apart(prog: &Program) -> Vec<usize> {
-    let g = Graph::of(prog);
-    let sccs = g.named(&g.together(&prog.together));
-    (0..prog.together.len()).filter(|&i| {
-        let t = &prog.together[i];
-        !sccs.iter().any(|s| s == t)
-    }).collect()
-}
 
-/// `apart` over a graph given by its names (sorted) and each name's reads (sorted, each with whether negative): for
-/// a program held as a version, whose rules are not trees.
-pub fn apart_of_graph(names: Vec<&str>, succ: Vec<Vec<(u32, bool)>>, together: &[BTreeSet<String>]) -> Vec<usize> {
-    let g = Graph { names, succ, aggs: rustc_hash::FxHashSet::default() };
-    let sccs = g.named(&g.together(together));
-    (0..together.len()).filter(|&i| !sccs.iter().any(|s| *s == together[i])).collect()
-}
 
 /// Strongly connected components on numbers (`tarjan`), dependencies first; each component's members in the order
 /// they leave the stack.

@@ -383,7 +383,7 @@ The plan, in three parts:
    matches nothing there: no roots are looked for, and no anchor index or posting is built for it. A walk for a
    clause's roots (`nodes_of_kinds`, the postings) passes over the blocks that hold none of them. On the device,
    the label kernels' scans start only in the blocks that hold an anchor's kinds.
-3. **The store keeps it**, as a derived fact in a block, written once where it is computed (0353): on 0402's kept
+3. **The store keeps it**, as a derived fact in a block, written once where it is computed (0353): on 0456's kept
    facts (packed columns in a chain of mapped files, SQLite holding pointers only), which are on
    `final-rerail-shape-rr-align` and not yet here. Then the warm path reads it in place of the FTS index's kinds
    for format 16 tapes, and fields too.
@@ -409,7 +409,7 @@ the device's sweeps, which would read each block's presence words before its 1,0
 what lies in the residency slabs, so the block presence must be laid there beside the tape, not uploaded from the
 image's `Vec` (0353); that is part 3's layout, so the device's block skip comes with it.
 
-**Done (2026-11-18): part 3, the store keeps it.** 0402's branch is merged here (75078a7e7). The presence is an entry
+**Done (2026-11-18): part 3, the store keeps it.** 0456's branch (numbered 0402 there) is merged here (75078a7e7). The presence is an entry
 of a kept-facts space of its own (`content_store::kept_facts::presence`), keyed by the tape's write-back key
 (`core::tape_key`: its source's digest, language, grammar and format versions), its rows the words in their order
 (the document's, then each block's), one column kept as given. A wave's presences are gathered and written as one

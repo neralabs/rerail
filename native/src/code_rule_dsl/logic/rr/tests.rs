@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::code_rule_dsl::logic::front::{self, Literal, Term};
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use std::collections::BTreeSet;
 
 #[test]
@@ -2547,11 +2548,12 @@ Found(@place("a.py", 1), i) :- sample(s), match_all("{pattern}", s, i, _, _).
     let a = complete_rule(&rule("A", "xx xx", "xx"));
     let b = complete_rule(&rule("B", "yy yy", "yy"));
     let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b]).unwrap();
-    assert_eq!(combined.natives.len(), 2);
-    for native in combined.natives.values() {
-        for input in native.reads() { assert!(combined.decls.contains_key(input), "{input}"); }
+    let natives = ProgramFields::natives(&*combined);
+    assert_eq!(natives.len(), 2);
+    for native in natives.values() {
+        for input in native.reads() { assert!(combined.declares(input), "{input}"); }
     }
-    let rows = lowered_findings(&print(&combined).unwrap());
+    let rows = lowered_findings_of(&combined);
     assert_eq!(rows.iter().filter(|r| r["code"] == "A").count(), 2, "{rows:?}");
     assert_eq!(rows.iter().filter(|r| r["code"] == "B").count(), 2, "{rows:?}");
 }
@@ -2560,18 +2562,32 @@ Found(@place("a.py", 1), i) :- sample(s), match_all("{pattern}", s, i, _, _).
 fn complete_rule(program: &str) -> String {
     let path = crate::code_rule_dsl::fixtures::temp().with_extension("public.rr");
     std::fs::write(&path, program).unwrap();
-    let (program, _) = read_file(&path).unwrap();
+    let program = parse_file(&path).unwrap();
     std::fs::remove_file(path).unwrap();
     print(&program).unwrap()
 }
 
 fn lowered_findings(program: &str) -> Vec<serde_json::Value> {
+    lowered_findings_with(|root, out| {
+        crate::code_rule_dsl::logic::plan::corpus::run(program, root, None, out, "program",
+            crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).map(|_| ())
+    })
+}
+
+/// `lowered_findings` of a program already read: the run handed it (`corpus::run_read`).
+fn lowered_findings_of(program: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Vec<serde_json::Value> {
+    lowered_findings_with(|root, out| {
+        crate::code_rule_dsl::logic::plan::corpus::run_read(program, root, out, "program",
+            crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), &serde_json::json!({})).map(|_| ())
+    })
+}
+
+fn lowered_findings_with(run: impl FnOnce(&std::path::Path, &std::path::Path) -> crate::code_rule_dsl::logic::plan::Result<()>) -> Vec<serde_json::Value> {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("lowered-findings");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.py"), "").unwrap();
     let out = root.join("out");
-    crate::code_rule_dsl::logic::plan::corpus::run(program, &root, None, &out, "program",
-        crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    run(&root, &out).unwrap();
     // Each diagnostic, from its finding relation's typed row (`rr::lower::findings`, `tools::diagnostic`).
     let rows = crate::code_rule_dsl::tools::diagnostics(&out).unwrap();
     std::fs::remove_dir_all(root).unwrap();
@@ -2976,10 +2992,10 @@ def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
     assert_eq!(alone, ["Fn:a/x.py"]);
     assert_eq!(run(&[&a, &b], "out-ab"), alone, "the pack's findings are the policies' alone");
     // The library's relation is unguarded in both policies (so the simplifier makes it one); B's rule is guarded.
-    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b]).unwrap();
-    let reads_scope = |head: &str| combined.rules.iter().filter(|r| r.head.rel == head).any(|r| r.body.iter().filter_map(|l| l.atom()).any(|x| x.rel.contains("rr_scope_")));
+    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b]).unwrap().heads_and_reads();
+    let reads_scope = |head: &str| combined.iter().filter(|(h, _)| h == head).any(|(_, reads)| reads.iter().any(|(_, x)| x.contains("rr_scope_")));
     assert!(!reads_scope("p0_def_at") && !reads_scope("p1_def_at"), "the library's rules stay as written");
-    assert!(combined.rules.iter().any(|r| r.head.rel.starts_with("p1_") && r.body.iter().filter_map(|l| l.atom()).any(|x| x.neg && x.rel == "p1_rr_scope_not")), "B's reads are guarded");
+    assert!(combined.iter().any(|(h, reads)| h.starts_with("p1_") && reads.iter().any(|(neg, x)| *neg && x == "p1_rr_scope_not")), "B's reads are guarded");
     // `.global`: alike (up to variable names) is shared; different is refused.
     let named = |name: &str, scope: &str, rule: &str| policy(name, scope, &format!(".global named\n.decl named(f: node)\n{rule}\n.violation N(at: node) \"n\"\nN(f) :- named(f)."));
     let c = named("c", "a", "named(f) :- kind(f, \"function_definition\").");
@@ -3014,11 +3030,11 @@ fn a_library_held_once_is_read_by_each_policy_in_its_own_scope() {
     let alone: Vec<String> = [run(&[&a], "out-a"), run(&[&b], "out-b")].concat();
     assert_eq!(alone, ["Fn:a/x.py"]);
     assert_eq!(run(&[&a, &b], "out-ab"), alone, "the pack's findings are the policies' alone");
-    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b]).unwrap();
-    let rules_of = |head: &str| combined.rules.iter().filter(|r| r.head.rel == head).collect::<Vec<_>>();
+    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&a, &b]).unwrap().heads_and_reads();
+    let rules_of = |head: &str| combined.iter().filter(|(h, _)| h == head).collect::<Vec<_>>();
     assert!(!rules_of("call_name").is_empty() && rules_of("p0_call_name").is_empty(), "the library is held once, under its own names");
-    assert!(rules_of("call_name").iter().all(|r| r.body.iter().filter_map(|l| l.atom()).all(|x| !x.rel.contains("rr_scope_"))), "the library's rules are unguarded");
-    assert!(combined.rules.iter().any(|r| r.head.rel.starts_with("p1_") && r.body.iter().filter_map(|l| l.atom()).any(|x| x.neg && x.rel == "p1_rr_scope_not")), "B's rule is guarded");
+    assert!(rules_of("call_name").iter().all(|(_, reads)| reads.iter().all(|(_, x)| !x.contains("rr_scope_"))), "the library's rules are unguarded");
+    assert!(combined.iter().any(|(h, reads)| h.starts_with("p1_") && reads.iter().any(|(neg, x)| *neg && x == "p1_rr_scope_not")), "B's rule is guarded");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -3396,7 +3412,7 @@ fn lowers_back(dirs: &[&str], k: usize, n: usize) {
     crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(paths.iter().skip(k).step_by(n));
     let (mut read, mut differ) = (0, Vec::new());
     for path in paths.iter().skip(k).step_by(n) {
-        let Ok((program, _)) = super::read_file(path) else { continue };
+        let Ok(program) = super::parse_file(path) else { continue };
         let Ok(printed) = super::print(&program) else { continue };
         read += 1;
         let again = match super::read_text(&printed).and_then(|t| t.lower(true)).and_then(|p| super::print(&p)) {
@@ -3502,11 +3518,11 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
     let counts: Vec<(usize, usize)> = paths.iter().enumerate().filter(|(i, _)| i % part.1 == part.0).map(|(_, p)| p).filter_map(|path| {
         let path = path.as_path();
         let Ok((statements, _)) = program(&path) else { return None };
-        let Ok(whole) = lower_files_dropping(&path, statements.clone(), false) else { return None };
+        let Ok(whole) = lower_files_dropping(&path, statements.clone(), false).and_then(|v| v.program(&Default::default()).map_err(Error::Syntax)) else { return None };
         let own = path.canonicalize().unwrap();
         let clauses = |s: &Files| s.iter().flat_map(|(_, items)| items).filter(|(i, _)| matches!(i, syntax::Item::Clause { .. })).count();
         let (n, kept) = (clauses(&statements), clauses(&unreached_dropped(&own, statements.clone())));
-        let less = lower_files_dropping(&path, statements, true).unwrap_or_else(|e| panic!("{}: lowered whole, not with its unreached clauses dropped: {e}", path.display()));
+        let less = lower_files_dropping(&path, statements, true).and_then(|v| v.program(&Default::default()).map_err(Error::Syntax)).unwrap_or_else(|e| panic!("{}: lowered whole, not with its unreached clauses dropped: {e}", path.display()));
         // The lowering numbers its helpers (`rr_up9`, `rr_agg7`) in the order it meets them, and `simplify` the
         // variables it renames apart (`rr_earlier27_f18`, `_t<k>` and `_f<k>` after the name, simplify.rs); dropped
         // clauses no longer take numbers before them, and a context or cover made once is read again where an equal
@@ -3795,17 +3811,17 @@ fn library_modules_link_to_the_lowering_of_them_together() {
             continue;
         }
         let files: Vec<(PathBuf, Vec<syntax::Statement>)> = paths.iter().map(|p| (p.clone(), read(p).unwrap().0.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect())).collect();
-        let together = lower::lower(files.iter().flat_map(|(_, s)| s.iter().cloned()).collect()).unwrap();
+        let together = super::lower_statements_version(files.iter().flat_map(|(_, s)| s.iter().cloned()).collect()).unwrap();
         let modules = library_modules(&paths, files).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
-        // Each module read back from its image (decision 0246 §6) links to the same program.
+        // Each module read back from its image (decision 0246 §6) links to the same program, on versions (0377).
         let images: Vec<lower::Module> = modules.iter().map(|m| module_image::decode(&module_image::encode(m).unwrap()).unwrap_or_else(|e| panic!("{}: a module image: {e}", dir.display()))).collect();
-        // And linked on versions from the images (decision 0377): the program the tree's link makes.
-        let on_versions = super::link_library_versions(images.clone()).unwrap_or_else(|e| panic!("{}: linked on versions: {e}", dir.display()));
-        let linked = lower::link(modules).unwrap();
-        let tree = crate::code_rule_dsl::logic::program_image::Builder::of_program_less_maintenance(&linked).unwrap().finish().unwrap().0;
-        assert_eq!((tree.size(), tree.digest()), (on_versions.size(), on_versions.digest()), "{}: the library linked on versions from its images: {}", dir.display(), crate::code_rule_dsl::logic::program_image::differences(&tree, &on_versions));
-        let from_images = print(&lower::link(images).unwrap()).unwrap();
-        let (a, b) = (print(&together).unwrap(), print(&linked).unwrap());
+        let on_versions = super::link_library_versions(images).unwrap_or_else(|e| panic!("{}: linked on versions from its images: {e}", dir.display()));
+        let linked = super::link_library_versions(modules).unwrap_or_else(|e| panic!("{}: linked on versions: {e}", dir.display()));
+        assert_eq!((linked.size(), linked.digest()), (on_versions.size(), on_versions.digest()), "{}: the library linked from its modules' images: {}", dir.display(), crate::code_rule_dsl::logic::program_image::differences(&linked, &on_versions));
+        // Printed, to compare with the library lowered as one (whose helpers may be numbered apart).
+        let printed = |v: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>| print(&v.program(&Default::default()).unwrap()).unwrap();
+        let from_images = printed(&on_versions);
+        let (a, b) = (printed(&together), printed(&linked));
         let differ = |what: &str, a: &str, b: &str| {
             let (la, lb): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
             let first = la.iter().zip(&lb).position(|(x, y)| x != y).unwrap_or(la.len().min(lb.len()));
@@ -3858,7 +3874,7 @@ fn a_texts_header_is_found_under_its_bytes() {
     let header = text_header(text).unwrap();
     let kept = kept_header_found(text).expect("kept by the first read");
     assert_eq!(format!("{kept:?}"), format!("{header:?}"), "the header kept is the header read");
-    assert!(kept.settings.iter().any(|(k, v)| k == "policy" && v.contains("test:header-0275")), "{:?}", kept.settings);
+    assert!(ProgramFields::settings(&*kept).iter().any(|(k, v)| k == "policy" && v.contains("test:header-0275")), "{kept:?}");
     assert_eq!(format!("{:?}", text_header(text).unwrap()), format!("{header:?}"), "read again from the entry");
     let other = text.replace("header-0275", "header-0275-b");
     assert!(kept_header_found(&other).is_none(), "another text: its own entry");
@@ -4224,8 +4240,7 @@ fn the_lowerings_sets_are_made_on_the_version() {
     let r: Vec<String> = v.rules().filter(|x| v.rel_name(x.head().rel()) == "r").map(|x| v.show_rule(x)).collect();
     assert_eq!(r.len(), 1, "one rule of r, its literal once: {r:?}");
     assert_eq!(r[0].matches("a(").count(), 1, "{r:?}");
-    let head = v.header(&Default::default()).unwrap();
-    assert_eq!(head.facts.get("a").map(|rows| rows.len()), Some(2), "a's facts once each: {:?}", head.facts.get("a"));
+    assert_eq!(v.fact_rows("a").len(), 2, "a's facts once each: {:?}", v.fact_rows("a"));
 }
 
 /// `unit` after aggregate demand runs on a modular text's version (decision 0281's path, step 7b): `count : { b(_) }
@@ -4292,10 +4307,9 @@ fn finishs_rewrites_run_on_the_version() {
     let before = rules.iter().find(|x| x.starts_with("before(")).expect("before's rule");
     assert!(before.contains("node_order("), "{before}");
     assert!(rules.iter().any(|x| x.starts_with("rr_ordered0(")), "the max's helper: {rules:#?}");
-    let head = v.header(&Default::default()).unwrap();
     let owner = rules.iter().find(|x| x.starts_with("owner(")).expect("owner's rule");
     let axis = owner.split(|c: char| !(c.is_alphanumeric() || c == '_')).find(|w| w.starts_with("rr_inside_")).unwrap_or_else(|| panic!("an axis read: {owner}"));
-    assert!(head.inputs.iter().any(|i| i == axis) && head.decls.contains_key(axis), "the axis {axis} an input: {:?}", head.inputs);
+    assert!(v.input_names().iter().any(|i| i == axis) && v.declares(axis), "the axis {axis} an input: {:?}", v.input_names());
 }
 
 /// `whole()`'s last passes before `front::finish` run on a modular text's version (decision 0281's path, step 7b): a
@@ -4317,9 +4331,9 @@ fn nullary_relations_and_the_scope_are_made_on_the_version() {
     let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
     assert!(rules.iter().any(|x| x.starts_with("flag(1)")) && rules.iter().any(|x| x.starts_with("r(") && x.contains("flag(1)")), "{rules:#?}");
-    let head = v.header(&Default::default()).unwrap();
-    assert!(head.nullary.contains("flag") && head.decls["flag"].len() == 1, "{:?}", head.decls.get("flag"));
-    assert!(head.doc_scopes.as_ref().is_some_and(|s| s.iter().any(|(inc, _)| inc.iter().any(|g| g.contains("impl")))), "{:?}", head.doc_scopes);
+    assert!(ProgramFields::nullary(&*v).contains("flag") && v.columns_of("flag").is_some_and(|c| c.len() == 1), "{:?}", v.columns_of("flag"));
+    let scopes = ProgramFields::doc_scopes(&*v);
+    assert!(scopes.as_ref().is_some_and(|s| s.iter().any(|(inc, _)| inc.iter().any(|g| g.contains("impl")))), "{scopes:?}");
     // `value` is answered on request (decision 0174): its reader asks.
     assert!(rules.iter().any(|x| x.starts_with("rr_value_req")), "{rules:#?}");
 }
@@ -4342,8 +4356,8 @@ fn kind_sets_are_made_on_the_version() {
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
     let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
-    let head = v.header(&Default::default()).unwrap();
-    assert!(head.kindsets.get("calls").is_some_and(|k| k == &["call"]), "{:?}", head.kindsets);
+    let kindsets = ProgramFields::kindsets(&*v);
+    assert!(kindsets.get("calls").is_some_and(|k| k == &["call"]), "{kindsets:?}");
     let heads: BTreeSet<&str> = v.rules().map(|x| v.rel_name(x.head().rel())).collect();
     assert!(["rr_anc_code", "rr_near_code", "rr_in_code"].iter().all(|h| heads.contains(h)), "{heads:?}");
 }
@@ -4364,8 +4378,7 @@ fn grammar_names_and_builtins_are_checked_on_the_version() {
     let refused = lower("hit(s) :- kind(s, \"string\"), parsed(s, \"postgres\", _).").map(|_| ()).unwrap_err().to_string();
     assert!(refused.contains("no grammar \"postgres\""), "{refused}");
     let v = lower("hit(s) :- kind(s, \"name\"), within(s, a), kind(a, \"call\").").unwrap();
-    let head = v.header(&Default::default()).unwrap();
-    assert!(!["nearest", "earlier", "split_dot", "unset"].iter().any(|b| head.decls.contains_key(*b)), "{:?}", head.decls.keys().collect::<Vec<_>>());
+    assert!(!["nearest", "earlier", "split_dot", "unset"].iter().any(|b| v.declares(b)), "{:?}", v.declared_names());
 }
 
 /// The span patterns are read off a modular text's version (decision 0281's path, step 7b): a `match` over a line
@@ -4383,10 +4396,10 @@ fn span_patterns_are_found_on_the_version() {
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
     let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
-    let head = v.header(&Default::default()).unwrap();
     use crate::code_rule_dsl::logic::front::SpanIn;
-    assert!(head.rx_spans.iter().any(|(w, p)| *w == SpanIn::Line && p.contains("TODO")), "{:?}", head.rx_spans);
-    assert!(head.rx_spans.iter().any(|(w, p)| *w == SpanIn::Comment && p.contains("fixme")), "{:?}", head.rx_spans);
+    let rx_spans = ProgramFields::rx_spans(&*v);
+    assert!(rx_spans.iter().any(|(w, p)| *w == SpanIn::Line && p.contains("TODO")), "{rx_spans:?}");
+    assert!(rx_spans.iter().any(|(w, p)| *w == SpanIn::Comment && p.contains("fixme")), "{rx_spans:?}");
 }
 
 /// core.rr's declarations and `node`'s projections are made on a modular text's version (decision 0281's path, step
@@ -4401,8 +4414,7 @@ fn core_declarations_and_projections_are_made_on_the_version() {
     let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
     assert!(rules.first().is_some_and(|r| r.starts_with("kind($n, $k) :- node(")), "{rules:#?}");
-    let head = v.header(&Default::default()).unwrap();
-    assert!(!head.inputs.iter().any(|i| i == "kind"), "{:?}", head.inputs);
+    assert!(!v.input_names().iter().any(|i| i == "kind"), "{:?}", v.input_names());
 }
 
 /// The findings of a modular text's `.violation`s are written on its version (decision 0281's path, step 7b): the
@@ -4429,8 +4441,7 @@ fn findings_are_written_on_the_version() {
     assert!(rules.iter().any(|r| r.contains("$rr_message")), "{rules:#?}");
     // The text's own `violation` rule, in the older five columns, read at column 0.
     assert!(rules.iter().any(|r| r.starts_with("violation(\"p\", \"own\", \"X\", $p, 1, 0)")), "{rules:#?}");
-    let head = v.header(&Default::default()).unwrap();
-    assert!(head.outputs.iter().any(|o| o == "violation") && head.decls.get("violation").is_some_and(|c| c.len() == 6), "{:?}", head.outputs);
+    assert!(v.output_names().iter().any(|o| o == "violation") && v.columns_of("violation").is_some_and(|c| c.len() == 6), "{:?}", v.output_names());
 }
 
 /// The three-valued relations are written on a modular text's version (decision 0281's path, step 7b): `p` declared
@@ -4454,8 +4465,7 @@ fn three_valued_relations_are_written_on_the_version() {
     assert!(has("rr_must_p($x) :- known($x)") && has("p($x) :- known($x)") && has("p($x) :- base($x), !known($x)"), "{rules:#?}");
     assert!(!rules.iter().any(|x| x.starts_with("rr_must_p($x) :- base(")), "{rules:#?}");
     assert!(has("rr_must_q($x) :- base($x), !p($x)") && has("q($x) :- base($x), !rr_must_p($x)"), "{rules:#?}");
-    let head = v.header(&Default::default()).unwrap();
-    assert!(head.decls.contains_key("rr_must_p") && head.decls.contains_key("rr_must_q"), "{:?}", head.decls.keys().collect::<Vec<_>>());
+    assert!(v.declares("rr_must_p") && v.declares("rr_must_q"), "{:?}", v.declared_names());
 }
 
 /// A modular text's module is linked onto its scope's version and checked declared there (decision 0281's path, step
@@ -4478,20 +4488,20 @@ fn a_module_is_linked_and_checked_declared_on_the_version() {
     assert!(v.rules().any(|r| v.rel_name(r.head().rel()) == "hit"), "{}", v.show());
 }
 
-/// A text's rules are written as a version in its walk (decision 0377 step 3): the module linked holds its header
-/// alone, its rules in the version the walk wrote, and that version is the one the tree's rules encode to.
+/// A text's rules are written as a version in its walk (decision 0377 step 3), its header with them.
 #[test]
 fn a_texts_rules_are_written_as_a_version_in_its_walk() {
-    // Two aggregates of two literals under one head make two helpers of one stem and column types (`helper_once`):
-    // the link keyed them by their rules, which the walk wrote into the version, and merged them.
+    // Two aggregates of two literals under one head make two helpers of one stem and column types (`helper_once`),
+    // which the link keys by their rules, read from the version the walk wrote.
     let src = "#include \"python/compare.rr\"\n.decl hit(n: node)\n.output hit\n.decl near(n: node, m: node)\nnear(n, m) :- child(_, n, _), child(_, m, _), kind(n, \"call\").\nhit(n) :- kind(n, \"call\"), child(_, n, _), !near(n, n).\n.decl sizes(n: node, a: number, b: number)\n.output sizes\nsizes(n, a, b) :- kind(n, \"call\"), a = count : { child(n, c, _), kind(c, \"name\") }, b = count : { child(n, c, _), kind(c, \"call\") }.\n";
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
-    let (header_alone, v, tv) = super::read_text(src).unwrap().own_written_and_tree(&scoped).unwrap();
-    assert!(header_alone, "the walk wrote the rules");
+    let v = super::read_text(src).unwrap().own_written(&scoped).unwrap();
     assert!(v.rules().count() >= 2, "{}", v.show());
-    assert_eq!((v.size(), v.digest()), (tv.size(), tv.digest()), "{}", crate::code_rule_dsl::logic::program_image::differences(&tv, &v));
+    // Each aggregate's helper, numbered by the link after the scope's: written in the walk, and read by `sizes`.
+    let helpers: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).filter(|h| h.starts_with("rr_agg")).collect();
+    assert_eq!(helpers.len(), 2, "{}", v.show());
 }
 
 /// Decision 0361 step 1: a `.layout` line states facts about a declared relation's rows, its columns by name; several
@@ -4561,5 +4571,31 @@ fn layouts_are_carried_with_the_program() {
     assert_eq!(about.layouts.iter().find(|(r, _)| *r == rel).map(|(_, f)| f), Some(child));
     // Combined: each relation keeps its facts under the name it has there.
     let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&policy("a"), &policy("b")]).unwrap();
-    assert_eq!(combined.layouts.get("child"), Some(child), "{:?}", combined.layouts.keys().collect::<Vec<_>>());
+    let layouts = combined.layouts();
+    assert_eq!(layouts.get("child"), Some(child), "{:?}", layouts.keys().collect::<Vec<_>>());
+}
+
+/// A negated conjunction whose parts bind the rule's variables apart (`!(lit(lo, _), lit(hi, _))`) is bound by the
+/// rule's context: alone its helper is every pair of strings in the corpus (eslint-yoda's `yoda_in_order`). One whose
+/// literals tie them (`!(link(lo, hi), lit(hi, _))`) needs none. PR #508's 3fe6f8227 (t47).
+#[test]
+fn a_negated_cross_product_is_bound_by_the_rules_context() {
+    let p = parse(concat!(
+        ".decl want(a: node, b: node)\n.decl lit(e: node, v: symbol)\n.decl link(a: node, b: node)\n.input want, lit, link\n",
+        ".decl apart(a: node, b: node)\n.decl tied(a: node, b: node)\n.output apart, tied\n",
+        "apart(lo, hi) :- want(lo, hi), !(lit(lo, _), lit(hi, _)).\n",
+        "tied(lo, hi) :- want(lo, hi), !(link(lo, hi), lit(hi, _)).\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let shown: Vec<String> = p.rules.iter().map(|r| r.to_string()).collect();
+    let helper = |head: &str| -> String {
+        let rule = p.rules.iter().find(|r| r.head.rel == head).unwrap_or_else(|| panic!("{shown:#?}"));
+        let not = rule.body.iter().filter_map(Literal::atom).find(|a| a.neg && a.rel.starts_with("rr_not")).unwrap_or_else(|| panic!("{shown:#?}"));
+        p.rules.iter().filter(|r| r.head.rel == not.rel).map(|r| r.to_string()).collect::<Vec<_>>().join("\n")
+    };
+    let (apart, tied) = (helper("apart"), helper("tied"));
+    let bound = |helper: &str| helper.contains("rr_ctx") || helper.contains("want(");
+    assert!(bound(&apart) && apart.contains("lit($lo") && apart.contains("lit($hi"), "{apart}\n{shown:#?}");
+    assert!(!bound(&tied), "{tied}");
 }

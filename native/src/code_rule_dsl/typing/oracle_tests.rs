@@ -153,16 +153,19 @@ fn calls_name() -> String {
 }
 
 /// The combined `calls` program, as a run lowers it, holds no two relations that are one relation and no rule twice
-/// (`corpus::same_relations`): guest hiding's copies whose rules were another's, and its clones repeated, were 40% of
+/// (`combining::same_relations`): guest hiding's copies whose rules were another's, and its clones repeated, were 40% of
 /// O125's cross-file rules and a quarter of a one-file edit's CPU.
 #[test]
 fn the_combined_program_has_no_relation_twice_and_no_rule_twice() {
     let text = program("calls");
-    let mut prog = crate::code_rule_dsl::logic::plan::corpus::combine_texts(&[text.as_str()]).unwrap();
-    let same = crate::code_rule_dsl::logic::simplify::identical_classes(&prog);
-    assert!(same.is_empty(), "{} classes of relations that are one, e.g. {:?}", same.len(), same.iter().take(4).collect::<Vec<_>>());
-    let repeated = crate::code_rule_dsl::logic::plan::corpus::drop_repeated_rules(&mut prog);
-    assert_eq!(repeated, 0, "rules that repeat another");
+    use crate::code_rule_dsl::logic::plan::corpus::preparation::{DropRepeated, MergeIdentical};
+    let v = crate::code_rule_dsl::logic::plan::corpus::combine_texts(&[text.as_str()]).unwrap();
+    let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("test", v);
+    let (mut merge, mut repeats) = (MergeIdentical::default(), DropRepeated::default());
+    p.program(&mut merge).program(&mut repeats);
+    p.current().unwrap();
+    assert_eq!(merge.merged, 0, "relations that are one");
+    assert_eq!(repeats.0, 0, "rules that repeat another");
 }
 
 fn program(name: &str) -> String {
@@ -441,9 +444,10 @@ fn python_type_relations_agree_with_the_runtime() {
     assert_eq!(departures, listed, "receivers whose classes calls.rr does not give exactly");
 }
 
-/// A rule reads the Python program's answers through `lib/python/calls.rr` and `lib/python/types.rr` (decision 0047, point 2): the engine runs
-/// `typing/programs/calls.rr` for it (`corpus::bridge`), and the rule's call edges and proven types, joined back to its
-/// own nodes on `core.rr`'s facts, are exactly the program's on T's.
+/// A rule reads Python's call targets and types through `lib/python/calls.rr` and `lib/python/types.rr`: their rules
+/// (`python/points-to.rr`, the analysis phase's typing, decision 0083 §1) are the rule's own program's, over the
+/// phases the engine runs first (struct, types). No typing program runs beside it, and the rule's call edges and
+/// proven types are exactly `calls_p3`'s, the same rules run as a program of their own.
 #[test]
 fn rules_read_the_python_program_through_lib_calls() {
     let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/calls/project");
@@ -458,7 +462,7 @@ unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
 ";
     let rows = |out: &Path, rel: &str| -> BTreeSet<Vec<String>> { output::shown(out, rel).unwrap().into_iter().collect() };
     let direct = crate::code_rule_dsl::fixtures::temp().with_extension("direct");
-    corpus::run(&format!("{}\n{keyed}", program("calls")), &project, None, &direct, "program", Binding::Cpu, 1 << 18).unwrap();
+    corpus::run(&format!("{}\n{keyed}", program("calls_p3")), &project, None, &direct, "program", Binding::Cpu, 1 << 18).unwrap();
     let rule_dir = crate::code_rule_dsl::fixtures::temp().with_extension("rule");
     std::fs::create_dir_all(&rule_dir).unwrap();
     let rule = rule_dir.join("rule.rr");
@@ -466,7 +470,8 @@ unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let through = rule_dir.join("out");
     let report = corpus::run(&text, &project, None, &through, "program", Binding::Cpu, 1 << 18).unwrap();
-    assert_eq!(report.typing_runs.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["calls"], "the program ran once");
+    let phases: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).collect();
+    assert!(phases.contains(&"struct") && phases.contains(&"types"), "the earlier phases ran: {phases:?}");
     for rel in ["edge", "proven", "unknown"] {
         let (a, b) = (rows(&direct, rel), rows(&through, rel));
         println!("{rel}: {} rows", a.len());
@@ -769,7 +774,7 @@ fn the_analysis_phase_binds_a_library_generics_type_variables_fits_overloads_and
     .unwrap();
     let out = dir.join("out");
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
-    let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
+    let text = format!("{}\n{}", program("calls_p3"), jedi_spans("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| output::shown(&out, rel).unwrap();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
@@ -812,7 +817,7 @@ fn the_analysis_phase_fits_a_library_overload_by_its_keywords_and_its_literal_ar
     let out = dir.join("out");
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     // The overloads each call fits (`lcfn`), by the call's line.
-    let text = format!("{}\n{JEDI_SPANS}\n.decl t_fit(c: node, f: symbol)\nt_fit(c, f) :- lcfn(c, _, f), struct__flag(f, \"overload\").\n.output t_fit\n", program("calls_p3"));
+    let text = format!("{}\n{}\n.decl t_fit(c: node, f: symbol)\nt_fit(c, f) :- pt_lcfn(c, _, f), struct__flag(f, \"overload\").\n.output t_fit\n", program("calls_p3"), jedi_spans("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| output::shown(&out, rel).unwrap();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
@@ -851,7 +856,7 @@ fn the_analysis_phase_infers_a_library_constructors_type_variables_from_its_argu
     .unwrap();
     let out = dir.join("out");
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
-    let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
+    let text = format!("{}\n{}", program("calls_p3"), jedi_spans("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| output::shown(&out, rel).unwrap_or_default();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
@@ -897,7 +902,7 @@ fn the_analysis_phase_binds_a_library_context_managers_type_variable_from_the_wr
     .unwrap();
     let out = dir.join("out");
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
-    let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
+    let text = format!("{}\n{}", program("calls_p3"), jedi_spans("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| output::shown(&out, rel).unwrap_or_default();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
@@ -939,7 +944,7 @@ fn the_analysis_phase_rules_out_an_overload_whose_none_parameter_is_given_a_lite
     .unwrap();
     let out = dir.join("out");
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
-    let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
+    let text = format!("{}\n{}", program("calls_p3"), jedi_spans("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| output::shown(&out, rel).unwrap_or_default();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
@@ -975,7 +980,7 @@ fn the_analysis_phase_reads_a_library_generic_base_as_known() {
     .unwrap();
     let out = dir.join("out");
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
-    let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
+    let text = format!("{}\n{}", program("calls_p3"), jedi_spans("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| output::shown(&out, rel).unwrap_or_default();
     assert!(read("call_open").is_empty(), "A() and A().go() of a class with a library generic base");
@@ -1002,7 +1007,7 @@ fn the_analysis_phase_gives_an_awaited_call_what_the_async_def_returns() {
     .unwrap();
     let out = dir.join("out");
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
-    let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
+    let text = format!("{}\n{}", program("calls_p3"), jedi_spans("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| output::shown(&out, rel).unwrap_or_default();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
@@ -1039,7 +1044,7 @@ fn the_analysis_phase_awaits_an_async_loops_next_value_and_an_async_withs_entere
     .unwrap();
     let out = dir.join("out");
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
-    let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
+    let text = format!("{}\n{}", program("calls_p3"), jedi_spans("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| output::shown(&out, rel).unwrap_or_default();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
@@ -1255,7 +1260,7 @@ at(p, s, \"finding\") :- LEG_083_TYPED(f), node(d, f, _, s, _), doc(d, p, _).
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = rule_dir.join("out");
     let report = corpus::run(&text, &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    assert_eq!(report.typing_runs.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["calls"]);
+    assert!(report.phase_runs.iter().any(|r| r.name == "types"), "the typing phase ran");
     let mut got: BTreeSet<(String, u64, String)> = BTreeSet::new();
     for r in Outputs::open(&out).unwrap().rows("at") {
         let path = r.get(0).text().unwrap();
@@ -1288,6 +1293,12 @@ at(p, s, \"finding\") :- LEG_083_TYPED(f), node(d, f, _, s, _), doc(d, p, _).
 /// Each call's callee class, where calling a class: Jedi's `goto` names the class, the program its `__init__`. The
 /// spans are every definition's, not the targets' only: a row about a definition is then not a function of its
 /// callers, which a run memoising per import component (decision 0076) needs.
+/// The spans a run's outputs are scored against Jedi's by, over typing program `name`: `calls_p3`'s rules are
+/// python/points-to's, whose own relations are named `pt_…`.
+fn jedi_spans(name: &str) -> String {
+    if name == "calls_p3" { JEDI_SPANS.replace("callee(c, e), pv(", "pt_callee(c, e), pt_pv(") } else { JEDI_SPANS.to_owned() }
+}
+
 const JEDI_SPANS: &str = "
 .decl oracle_jedi_cls(c: node, k: node)
 oracle_jedi_cls(c, k) :- callee(c, e), pv(e, \"cls\", k).
@@ -1320,7 +1331,7 @@ fn benchmark_python_calls_program_corpus() {
         Ok(f) => crate::code_rule_dsl::logic::settings::program_text(Path::new(&f)).unwrap(),
         Err(_) => program(&calls_name()),
     };
-    let text = format!("{source}\n{JEDI_SPANS}");
+    let text = format!("{source}\n{}", jedi_spans(&calls_name()));
     let report = corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
     let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
     println!("phase 0: {}; {}", report.files_observed, report.phases.first().map_or("", |p| p.0));
@@ -1469,7 +1480,8 @@ fn benchmark_python_calls_program_corpus() {
 }
 
 /// A probe of the analysis phase: calls_p3 over `RERAIL_P3_PROBE_ROOT` (a small workspace, its `rerail.env` naming a
-/// typeshed), with `RERAIL_P3_PROBE_RULES` appended (rules over P3's own relations, each `.output` it adds printed).
+/// typeshed), with `RERAIL_P3_PROBE_RULES` appended (rules over P3's own relations, python/points-to's `pt_…`, each
+/// `.output` it adds printed).
 /// For asking why one call is open without the corpus's run.
 #[test]
 #[ignore = "a probe: set RERAIL_P3_PROBE_ROOT and RERAIL_P3_PROBE_RULES"]
@@ -1477,7 +1489,7 @@ fn probe_the_analysis_phase() {
     let root = PathBuf::from(std::env::var("RERAIL_P3_PROBE_ROOT").unwrap());
     let rules = std::env::var("RERAIL_P3_PROBE_RULES").unwrap_or_default();
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("p3-probe");
-    let text = format!("{}\n{JEDI_SPANS}\n{rules}\n", program("calls_p3"));
+    let text = format!("{}\n{}\n{rules}\n", program("calls_p3"), jedi_spans("calls_p3"));
     corpus::run(&text, &root, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let asked: Vec<String> = rules.lines().filter_map(|l| l.trim().strip_prefix(".output ")).flat_map(|l| l.split(',').map(|r| r.trim().to_owned())).collect();
     for rel in ["call_target", "call_open", "call_lib"].into_iter().map(str::to_owned).chain(asked) {
@@ -1497,7 +1509,7 @@ fn spike_liveness_of_the_calls_program() {
     use crate::code_rule_dsl::logic::liveness;
     let root = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
     let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
-    let text = format!("{}\n{JEDI_SPANS}", program(&calls_name()));
+    let text = format!("{}\n{}", program(&calls_name()), jedi_spans(&calls_name()));
     let prog = crate::code_rule_dsl::logic::rr::parse(&text).unwrap();
     let live = liveness::program(&prog);
     println!("liveness: {} rules over {} relations", live.rules.len(), live.decls.len());
@@ -1735,7 +1747,7 @@ fn spike_o125_a_session_maintains_calls_rr() {
     use crate::code_rule_dsl::logic::plan::corpus::session;
     let root = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
     let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
-    let text = format!("{}\n{JEDI_SPANS}", program("calls"));
+    let text = format!("{}\n{}", program("calls"), jedi_spans("calls"));
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("o125");
     let out = base.join("out");
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
@@ -1802,7 +1814,7 @@ fn spike_o125_session_maintains_calls() {
     std::fs::create_dir_all(&base).unwrap();
     let copy = std::process::Command::new("cp").arg("-R").arg(&given).arg(&root).status().unwrap();
     assert!(copy.success());
-    let text = format!("{}\n{JEDI_SPANS}", program("calls"));
+    let text = format!("{}\n{}", program("calls"), jedi_spans("calls"));
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": [] })).unwrap();
     let rels = ["call_target", "call_open", "type_of", "possible_type", "finding"];
     let outputs = || -> Vec<Vec<Vec<String>>> { rels.iter().map(|r| output::shown(&out, r).unwrap_or_default()).collect() };
@@ -1910,7 +1922,7 @@ fn spike_o125_replay() {
     for step in 0..a {
         overlay(step);
     }
-    let text = format!("{}\n{JEDI_SPANS}", program("calls"));
+    let text = format!("{}\n{}", program("calls"), jedi_spans("calls"));
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
     let rels = ["call_target", "call_open", "type_of", "possible_type"];
     let outputs = || -> Vec<Vec<Vec<String>>> { rels.iter().map(|r| output::shown(&out, r).unwrap_or_default()).collect() };

@@ -166,7 +166,7 @@ pub enum Line {
     Produced(usize),
     /// The relation's statistics are kept as its rows come (`Rel::stats`): a session keeps it for its next run.
     Stats(usize),
-    /// The relations declared sorted (`.decl … sorted`, decision 0402 K7): laid out in canonical order when done
+    /// The relations declared sorted (`.decl … sorted`, decision 0456 K7): laid out in canonical order when done
     /// (`sorted <rels>`).
     Sorted(Vec<usize>),
     Seed { head: usize, join: Arc<JoinSpec> },
