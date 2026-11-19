@@ -890,6 +890,45 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     expect({ on: reads.on.filter(line => line.includes(ws.repo)), off: idleReads }).toEqual({ on: [], off: [] });
   });
 
+  it("reads no other checkout's branches once a stop lands while turning Merge Assist off reads the first one's, keeps the events of all three, and answers the status", async () => {
+    const ws = await workspace();
+    // Two more checkouts with the main checkout's work: every peer conflicts with each.
+    const checkouts = [ws.repo, addCheckout(ws, "second", "mine"), addCheckout(ws, "third", "mine")];
+    addPeers(ws);
+    const first = ws.service();
+    await first.setEnabled(ws.repo, true);
+    for (const checkout of checkouts) expect((await first.scan(checkout)).conflicts).toHaveLength(PEERS);
+    await first.settled();
+    const service = ws.service();
+    const reading = Promise.withResolvers<{ child: ChildProcess; line: string }>();
+    const reads: string[] = [];
+    let held = false;
+    // Every Git the turn-off starts is counted; its first branch read is held until the test ends it.
+    vi.mocked(spawn).mockImplementation((...args: Parameters<typeof spawn>) => {
+      const line = commandLine(args);
+      if (isGit(args)) reads.push(line);
+      if (held || !line.includes("symbolic-ref")) return actualSpawn(...args);
+      held = true;
+      const child = actualSpawn(process.execPath, HELD_READ, { stdio: ["pipe", "pipe", "pipe"] });
+      reading.resolve({ child, line });
+      return child;
+    });
+    try {
+      const turnOff = service.setEnabled(ws.repo, false);
+      const read = await reading.promise;
+      await service.stop();
+      read.child.kill("SIGKILL");
+
+      // The database is open: the turn-off answers the checkout's status, as one that ends before the stop does.
+      await expect(turnOff).resolves.toMatchObject({ enabled: false, conflicts: [] });
+      const others = checkouts.slice(1);
+      expect({ held: read.line.includes(ws.repo), others: reads.filter(line => others.some(checkout => line.includes(checkout))), kept: checkouts.map(checkout => keptRows(ws, checkout)) })
+        .toEqual({ held: true, others: [], kept: [1, 1, 1] });
+    } finally {
+      vi.mocked(spawn).mockImplementation(actualSpawn);
+    }
+  });
+
   it("resolves a stop with no wait whose release of a scan's mark meets another process's write lock without waiting for the lock, and leaves the mark to go stale, as when its process ends", async () => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
     addPeers(ws);

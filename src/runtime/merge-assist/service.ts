@@ -546,6 +546,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     for (const entry of taken) this.#taken.add(entry);
     for (const entry of taken) {
       const branches = await this.#branches(entry.path);
+      if (this.#stopped) break;
       this.#taken.delete(entry);
       this.#fire({ checkoutPath: entry.path, repositoryKey }, entry.fires, null, branches);
     }
