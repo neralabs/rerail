@@ -108,7 +108,7 @@ pub struct Inventory {
     pub files: Vec<super::BaseFile>,
     pub trees: Vec<crate::content_store::GitTree>,
     pub languages: std::collections::BTreeMap<String, String>,
-    pub invalid_paths: Vec<String>,
+    pub invalid_paths: Vec<InvalidGitPath>,
     pub tree_failures: Vec<SourceFailure>,
     pub tree_observations: std::collections::BTreeMap<gix::ObjectId, String>,
     pub selection: String,
@@ -159,10 +159,41 @@ pub fn raw_entry_name(hex: &str) -> Option<Vec<u8>> {
     hex.as_bytes().chunks_exact(2).map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()).collect()
 }
 
+#[derive(Debug)]
+pub struct InvalidGitPath {
+    pub directory: String,
+    pub hex_name: String,
+}
+
+impl InvalidGitPath {
+    fn failure(&self, prefix: &Path) -> SourceFailure {
+        let parent = Path::new(&self.directory).strip_prefix(prefix).ok().and_then(Path::to_str).unwrap_or(&self.directory);
+        let prefix = if parent.is_empty() { String::new() } else { format!("{parent}/") };
+        let mut hex = rerail_prof::code_rule_dsl::prof::lower_hex(prefix.as_bytes());
+        hex.push_str(&self.hex_name);
+        SourceFailure {
+            path: format!("{prefix}[hex:{}]", self.hex_name), path_identity: PathIdentity::Hex(hex),
+            message: "Git path has invalid UTF-8".into(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, serde::Serialize)]
+#[serde(tag = "encoding", content = "value", rename_all = "lowercase")]
+pub enum PathIdentity { Utf8(String), Hex(String) }
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SourceFailure {
     pub path: String,
     pub message: String,
+    pub path_identity: PathIdentity,
+}
+
+impl SourceFailure {
+    pub fn text(path: String, message: String) -> Self {
+        Self { path_identity: PathIdentity::Utf8(path.clone()), path, message }
+    }
 }
 
 #[derive(Debug)]
@@ -606,27 +637,25 @@ impl Snapshot {
     }
 
     pub fn invalid_paths(&self) -> Vec<String> {
-        self.view.saved_inventory().map_or_else(Vec::new, |(_, inventory)| inventory.invalid_paths.clone())
+        self.view.saved_inventory().map_or_else(Vec::new, |(_, inventory)|
+            inventory.invalid_paths.iter().map(|p| p.failure(Path::new("")).path).collect())
     }
 
     pub fn source_failures(&self) -> Vec<SourceFailure> {
-        let invalid = self.invalid_paths().into_iter().map(|path| SourceFailure {
-            path, message: "Git path has invalid UTF-8".to_owned(),
-        });
-        let tree_failures = self.view.saved_inventory().map_or_else(Vec::new, |(_, inventory)| {
-            inventory.tree_failures.iter().filter_map(|failure| {
+        let inventory_failures = self.view.saved_inventory().map_or_else(Vec::new, |(_, inventory)| {
+            let invalid = inventory.invalid_paths.iter().map(|p| p.failure(&self.view.prefix));
+            invalid.chain(inventory.tree_failures.iter().filter_map(|failure| {
                 let path = Path::new(&failure.path).strip_prefix(&self.view.prefix)
                     .map_or_else(|_| failure.path.clone(), |path| path.to_string_lossy().into_owned());
                 if matches!(self.directory_entries(&path), Ok(Some(_))) { return None; }
-                Some(SourceFailure { path, message: failure.message.clone() })
-            }).collect()
+                Some(SourceFailure::text(path, failure.message.clone()))
+            })).collect()
         });
         let paths = self.view.inventory.lock().unwrap_or_else(|e| e.into_inner()).paths.clone();
         let unreadable = self.view.source_errors.lock().unwrap_or_else(|e| e.into_inner());
-        invalid.chain(tree_failures).chain(unreadable.iter().filter(|(path, _)| paths.as_ref().is_none_or(|selected|
-            selected.iter().any(|wanted| wanted.includes(Path::new(path.as_str()), false)))).map(|(path, message)| SourceFailure {
-            path: path.clone(), message: message.clone(),
-        })).collect()
+        inventory_failures.into_iter().chain(unreadable.iter().filter(|(path, _)| paths.as_ref().is_none_or(|selected|
+            selected.iter().any(|wanted| wanted.includes(Path::new(path.as_str()), false)))).map(|(path, message)|
+            SourceFailure::text(path.clone(), message.clone()))).collect()
     }
 
     /// Verify demanded source identities before a consumer restores saved results.

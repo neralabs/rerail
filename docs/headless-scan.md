@@ -135,6 +135,10 @@ The ref supplies its JSON and `.rr` policies. It also supplies local `.rr` inclu
 Rerail reads policy files from Git objects. Names use Git case rules.
 The scan selects file names before it checks their UTF-8 encoding.
 It reports selected names with invalid UTF-8 in hexadecimal and continues with readable entries.
+In revision JSON, each finding or failure with a path has a `pathIdentity` object.
+Its `encoding` is `utf8` for text or `hex` for bytes. Its `value` identifies the complete path, including the parent directories.
+For a policy from `--rules-ref`, the identity gives the path inside the policy tree. The display path includes the ref.
+Join Git directory entries to the decoded identity. The display label `[hex:ff2e7079]` can also be a literal Git file name.
 The report gives the requested ref and the resolved commit for those policies.
 The resolved commit stays the same if the ref moves during the scan.
 If the ref has no rules directory, the ref supplies zero policies.

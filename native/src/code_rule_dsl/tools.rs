@@ -572,6 +572,13 @@ pub fn run_program_checked(
         nodes += report.nodes;
         phases.extend(report.phases);
     }
+    if crate::git_workspace::snapshot::contains(root) {
+        for row in &mut rows {
+            if let Some(path) = row["path"].as_str() {
+                row["pathIdentity"] = serde_json::json!({"encoding": "utf8", "value": path});
+            }
+        }
+    }
     Ok(
         serde_json::json!({"diagnostics": rows, "files": files_read, "nodes": nodes,
                          "metadata": metadata,

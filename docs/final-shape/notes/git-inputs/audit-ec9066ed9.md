@@ -2,7 +2,15 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Sixteen of the 28 follow-up findings have verified results. Twelve remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+Seventeen of the 28 follow-up findings have verified results. Eleven remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+
+## Paths that share a display label
+
+Case 75 put two entries at the root and below `nested`. One name had the bytes `ff 2e 70 79`. The other was the text `[hex:ff2e7079]`.
+The earlier headless report used the same display path for the finding and failure and provided no second key.
+The new headless and native reports give the complete path with an explicit encoding. Each identity matched exactly one entry from the native directory listing.
+The diff and policy-ref checks also preserved byte names. Six related tests passed together in 16 seconds with a 30-second per-test timeout.
+Two earlier runs exceeded the default five seconds in different tests. [Report format](../../../headless-scan.md) · [Public regressions](../../../../test/cli/headless-scan.test.ts)
 
 ## Cost of inspecting a policy in a fresh catalog
 

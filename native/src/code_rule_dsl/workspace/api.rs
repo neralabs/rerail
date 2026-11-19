@@ -92,6 +92,14 @@ pub struct GitDirectoryEntry {
 pub struct GitSourceFailure {
     pub path: String,
     pub message: String,
+    pub path_identity: GitPathIdentity,
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi(object)]
+pub struct GitPathIdentity {
+    pub encoding: String,
+    pub value: String,
 }
 
 #[cfg(not(feature = "headless"))]
@@ -152,8 +160,13 @@ impl GitRevisionSource {
 
     #[napi]
     pub fn source_failures(&self) -> Vec<GitSourceFailure> {
-        self.snapshot.source_failures().into_iter().map(|failure| GitSourceFailure {
-            path: failure.path, message: failure.message,
+        use crate::git_workspace::snapshot::PathIdentity;
+        self.snapshot.source_failures().into_iter().map(|failure| {
+            let (encoding, value) = match failure.path_identity {
+                PathIdentity::Utf8(path) => ("utf8", path),
+                PathIdentity::Hex(bytes) => ("hex", bytes),
+            };
+            GitSourceFailure { path: failure.path, message: failure.message, path_identity: GitPathIdentity { encoding: encoding.into(), value } }
         }).collect()
     }
 

@@ -29,7 +29,7 @@ import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { isWorktreePack, MAX_RULE_DOCUMENT_BYTES, rrPayloadHash, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeRuleCatalog, worktreeScanCatalog } from "../engine/catalog/worktree-pack.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
-import { loadNativeBinding, type GitPathSkipReason, type NativeAnalysisScopeRun, type NativeGitRevisionSource, type NativeLoadedRrPolicies } from "../engine/native/native.js";
+import { loadNativeBinding, type GitPathIdentity, type GitPathSkipReason, type NativeAnalysisScopeRun, type NativeGitRevisionSource, type NativeLoadedRrPolicies } from "../engine/native/native.js";
 import { acquireDirectoryAnalysisRegistration, acquireNamedAnalysisRun, analysisScopeHome, finishNamedAnalysisRegistration, scanContentStore } from "../engine/native/analysis-scope.js";
 import { assertContentStoreOwner } from "../engine/native/main-instance.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES } from "../engine/code-rule/code-rule-languages.js";
@@ -71,6 +71,7 @@ export interface ScanViolation {
   code: string;
   clauseId: string;
   path: string | null;
+  pathIdentity?: GitPathIdentity;
   /** Inclusive start. */
   start: ScanPosition | null;
   /** Exclusive end: the position just past the match. */
@@ -84,8 +85,11 @@ export interface ScanFailure {
   code: string;
   message: string;
   path: string | null;
+  pathIdentity?: GitPathIdentity;
   ruleId: string | null;
 }
+
+const textPath = (value: string): GitPathIdentity => ({ encoding: "utf8", value });
 
 /** The headless scan's report: contract `rerail.scan/1`. */
 export interface ScanReport {
@@ -180,7 +184,7 @@ function diffPaths(root: string, against: string): { paths: string[]; failures: 
   return {
     paths: [...paths].sort((left, right) => left.localeCompare(right)),
     failures: [...invalid].sort().map(hex => ({
-      code: "source-incomplete", path: `[hex:${hex}]`, message: "Git path has invalid UTF-8", ruleId: null,
+      code: "source-incomplete", path: `[hex:${hex}]`, pathIdentity: { encoding: "hex", value: hex }, message: "Git path has invalid UTF-8", ruleId: null,
     })),
   };
 }
@@ -207,9 +211,9 @@ function rulesAtRef(root: string, ref: string, loadedRr: NativeLoadedRrPolicies,
   if (!commit) throw new Error(`--rules-ref ${ref} resolved to tree ${source.tree}. This option requires a commit.`);
   const provenance: RefRuleSource = { kind: "ref", ref, commit };
   const failures: ScanFailure[] = [];
-  const unreadable = (path: string, error: unknown) => {
+  const unreadable = (path: string, error: unknown, pathIdentity = textPath(path)) => {
     failures.push({
-      code: "adapter-error", path: `${ref}:${path}`, ruleId: null,
+      code: "adapter-error", path: `${ref}:${path}`, pathIdentity, ruleId: null,
       message: error instanceof Error ? error.message : String(error),
     });
   };
@@ -224,7 +228,10 @@ function rulesAtRef(root: string, ref: string, loadedRr: NativeLoadedRrPolicies,
     if (name == null) {
       const bytes = nameBytes?.toString("latin1");
       if (nameBytes !== undefined && (bytes?.endsWith(".json") || bytes?.endsWith(".rr"))) {
-        unreadable(`${WORKTREE_RULES_FOLDER}/[hex:${nameBytes.toString("hex")}]`, new Error("Git policy name has invalid UTF-8"));
+        const parent = WORKTREE_RULES_FOLDER + "/";
+        unreadable(`${parent}[hex:${nameBytes.toString("hex")}]`, new Error("Git policy name has invalid UTF-8"), {
+          encoding: "hex", value: Buffer.concat([Buffer.from(parent), nameBytes]).toString("hex"),
+        });
       }
       return [];
     }
@@ -268,6 +275,7 @@ function rulesAtRef(root: string, ref: string, loadedRr: NativeLoadedRrPolicies,
     code: entry.path.endsWith(".rr") ? "adapter-error" : "rule-left-out",
     message: `${entry.reason}; it does not run`,
     path: `${ref}:${entry.path}`,
+    pathIdentity: textPath(entry.path),
     ruleId: null,
   }));
   return { provenance, documents, skipped: [...failures, ...skipped], ...(rr.length === 0 ? {} : { rr: { catalog, source } }) };
@@ -746,9 +754,14 @@ async function scanReport(
       completed = false;
     }
   }
-  for (const { path, message } of source?.sourceFailures() ?? []) {
-    failures.push({ code: "adapter-error", message, path, ruleId: null });
+  for (const { path, message, pathIdentity } of source?.sourceFailures() ?? []) {
+    failures.push({ code: "adapter-error", message, path, pathIdentity, ruleId: null });
     completed = false;
+  }
+  if (source !== undefined || options.scope === "git-diff") {
+    for (const row of [...violations, ...failures]) {
+      if (row.path !== null) row.pathIdentity ??= textPath(row.path);
+    }
   }
   return {
     schema: SCAN_SCHEMA,

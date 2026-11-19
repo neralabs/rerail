@@ -559,7 +559,7 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>, own
     let tree_failures = outputs.rows("inventory_error").into_iter().map(|row| {
         let (Cell::Text(path), Cell::Text(tree), Cell::Text(reason)) = (row.get(0), row.get(1), row.get(2))
             else { return Err(invalid()) };
-        Ok(snapshot::SourceFailure { path: path.to_owned(), message: format!("cannot inventory Git tree {tree}: {reason}") })
+        Ok(snapshot::SourceFailure::text(path.to_owned(), format!("cannot inventory Git tree {tree}: {reason}")))
     }).collect::<Result<_, String>>()?;
     let key = |oid: &str| {
         let id = gix::ObjectId::from_hex(oid.as_bytes()).map_err(|err| err.to_string())?;
@@ -606,8 +606,10 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>, own
         .collect::<Result<_, _>>()?;
     files.sort_by(|a, b| a.path.cmp(&b.path));
     trees.sort_by_key(|tree| tree.id);
-    let invalid_paths = outputs.rows("inventory_path_error").into_iter()
-        .filter_map(|row| row.get(0).text().map(str::to_owned)).collect();
+    let invalid_paths = outputs.rows("inventory_path_error").into_iter().map(|row| {
+        let (Cell::Text(directory), Cell::Text(hex_name)) = (row.get(0), row.get(1)) else { return Err(invalid()) };
+        Ok(snapshot::InvalidGitPath { directory: directory.to_owned(), hex_name: hex_name.to_owned() })
+    }).collect::<Result<_, String>>()?;
     let tree_observations = outputs.rows("inventory_tree_observation").into_iter().map(|row| {
         let (Cell::Text(tree), Cell::Text(stamp)) = (row.get(0), row.get(1))
             else { return Err("invalid Git tree observation".to_owned()) };

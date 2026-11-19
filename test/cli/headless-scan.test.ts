@@ -238,7 +238,7 @@ Seen(@place("git",1), oid) :- git_revision(r, "HEAD", oid), git_revision(r, ":a.
     const report = await scan(root, { scope: "git-diff" });
     expect(report.paths).toEqual([valid]);
     expect(report.status).toBe("failed");
-    expect(report.failures).toContainEqual(expect.objectContaining({ path: "[hex:66ff2e7079]", code: "source-incomplete" }));
+    expect(report.failures).toContainEqual(expect.objectContaining({ path: "[hex:66ff2e7079]", code: "source-incomplete", pathIdentity: { encoding: "hex", value: "66ff2e7079" } }));
     expect(report.violations.map(row => row.path)).toContain(valid);
   });
 
@@ -1571,8 +1571,57 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
     const selectedPolicy = await scan(root, { ...source, rulesRef: refWith(".rr") });
     expect(selectedPolicy.status).toBe("failed");
     expect(selectedPolicy.violations.map(finding => finding.path)).toEqual(["a.py"]);
-    expect(selectedPolicy.failures).toEqual([expect.objectContaining({ path: expect.stringMatching(/\.rerail\/rules\/\[hex:ff2e7272\]$/u) })]);
+    expect(selectedPolicy.failures).toEqual([expect.objectContaining({
+      path: expect.stringMatching(/\.rerail\/rules\/\[hex:ff2e7272\]$/u),
+      pathIdentity: { encoding: "hex", value: Buffer.from(".rerail/rules/").toString("hex") + "ff2e7272" },
+    })]);
   });
+
+  it("joins Git findings and failures to distinct raw names with the same display path", async () => {
+    const root = checkout(), name = "[hex:ff2e7079]", bytes = Buffer.from("ff2e7079", "hex");
+    const blob = git(root, "rev-parse", "HEAD:a.py");
+    const tree = (names: [string, Buffer][]) => execFileSync("git", ["mktree", "-z"], {
+      cwd: root, input: Buffer.concat(names.flatMap(([header, path]) => [Buffer.from(header + "\t"), path, Buffer.of(0)])),
+      encoding: "utf8",
+    }).trim();
+    const files: [string, Buffer][] = [[`100644 blob ${blob}`, Buffer.from(name)], [`100644 blob ${blob}`, bytes]];
+    const directory = "nested";
+    const revision = tree([...files, [`040000 tree ${tree(files)}`, Buffer.from(directory)], [`100644 blob ${blob}`, Buffer.from("a.py")]]);
+    const rr = join(root, "paths.rr");
+    writeFileSync(rr, `#include "git.rr"
+.policy "paths" revision 1
+.violation File(at: span) "text entry"
+git_tree_walk_request(r, t) :- git_source_tree(r, t).
+File(@place(p, 1)) :- git_source_tree(r, t), git_tree_file(r, t, p, _, _).
+`);
+    const parse = join(root, "parse.rr");
+    writeFileSync(parse, '.policy "parse" revision 1\n.language python\n.violation Id(at: node) "id"\nId(n) :- kind(n, "identifier").\n');
+    const report = await scan(root, { revision, analysisScope: "names", rr: [rr, parse] });
+    expect(report.status).toBe("failed");
+    const engine = loadNativeBinding();
+    const view = new engine.GitRevisionSource(root, revision, "names");
+    const nativeReports = JSON.parse(await engine.scanRrPoliciesAsync([rr, parse], root, ":memory:", "", undefined, undefined, view));
+    const nativeFailures = view.sourceFailures();
+    for (const parent of ["", directory]) {
+      const prefix = parent && parent + "/";
+      const display = prefix + name;
+      const matches = report.violations.filter(v => v.path === display);
+      const failed = report.failures.filter(f => f.path === display);
+      expect(matches.map(v => v.pathIdentity)).toEqual([{ encoding: "utf8", value: display }]);
+      expect(failed.map(f => f.pathIdentity)).toEqual([{ encoding: "hex", value: Buffer.from(prefix).toString("hex") + bytes.toString("hex") }]);
+      expect(nativeReports[0].diagnostics).toContainEqual(expect.objectContaining({ path: display, pathIdentity: matches[0]!.pathIdentity }));
+      expect(nativeFailures).toContainEqual(expect.objectContaining({ path: display, pathIdentity: failed[0]!.pathIdentity }));
+      const entries = view.readDirectory(parent || ".")!;
+      for (const row of [...matches, ...failed]) {
+        const { encoding, value } = row.pathIdentity!;
+        const full = Buffer.from(value, encoding);
+        const rawName = full.subarray(Buffer.byteLength(prefix));
+        const found = entries.filter(entry => (entry.nameBytes ?? Buffer.from(entry.name!)).equals(rawName));
+        expect(found).toHaveLength(1);
+        expect(found[0]!.name ?? null).toBe(encoding === "hex" ? null : name);
+      }
+    }
+  }, 30_000);
 
   it("resolves a revision before creating its store or registering its named scope", async () => {
     const root = checkout(), home = root + "-home", databasePath = join(home, RERAIL_DATABASE_FILE);

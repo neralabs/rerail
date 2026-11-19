@@ -192,6 +192,7 @@ export interface NativeCodeRuleDslWorkspace {
 }
 
 export type GitPathSkipReason = "absent" | "symlink" | "gitlink" | "not-directory" | "unsupported-mode";
+export interface GitPathIdentity { encoding: "utf8" | "hex"; value: string }
 
 /** One pinned Git tree, with its optional commit and source selection. */
 export interface NativeGitRevisionSource {
@@ -202,7 +203,7 @@ export interface NativeGitRevisionSource {
   containsPath(path: string): boolean;
   pathStatus(path: string): { status: "selected" | GitPathSkipReason; mode?: number };
   invalidPaths(): string[];
-  sourceFailures(): { path: string; message: string }[];
+  sourceFailures(): { path: string; message: string; pathIdentity: GitPathIdentity }[];
   /** Legacy nullable shorthand for a read with a 32,000,000-byte limit. */
   readSource(path: string): Buffer | null;
   /** A required Git object that is unavailable or corrupt raises an error. */
