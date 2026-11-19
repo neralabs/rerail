@@ -62,7 +62,6 @@
 .pstats div{padding:12px;min-width:0;background:var(--sheet-inset);border-radius:var(--radius-xl)}
 .pstats b,.pstats span,.pstats small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pstats b{font-size:18px;font-weight:600;line-height:1.2}
-.pstats b.declined{color:var(--danger-foreground)}
 .pstats span{font-size:12px;color:var(--foreground);margin-top:4px}
 .pstats small{font-size:12px;color:var(--muted-foreground)}
 .pbody .pstats-none{margin:0 0 6px;font-size:13px;color:var(--muted-foreground)}

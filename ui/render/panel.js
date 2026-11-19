@@ -137,7 +137,6 @@ function renderStats(stored, id) {
   setText(s1.firstChild, measured ? fmt(f) : "–");
   setText(s1.lastChild, when);
   setText(s2.firstChild, measured ? fmt(declined) : "–");
-  s2.firstChild.classList.toggle("declined", declined > 0);
   setText(s2.lastChild, when);
   setText(s3.firstChild, measured ? fmt(all) : "–");
   setText(s3.lastChild, measured ? "since install" : "not counted yet");
