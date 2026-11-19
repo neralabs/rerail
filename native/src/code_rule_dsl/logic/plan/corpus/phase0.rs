@@ -165,7 +165,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     // holds: a digest of each file and a look at each absent candidate, not a run of `bootstrap.rr`.
     let mut wanted = wanted;
     if !wanted.is_empty() && let Some(images) = Images::here() {
-        let mut map = kept.lock().expect("phase 0's graphs");
+        let mut accepted = HashMap::new();
         // A pack's graphs share their modules: each file is looked at once for all of them, not once a graph.
         let mut looked: HashMap<PathBuf, Option<[u8; 32]>> = HashMap::new();
         let mut missing: HashMap<PathBuf, bool> = HashMap::new();
@@ -195,14 +195,15 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
                 return true;
             };
             crate::code_rule_dsl::prof::count("phase0.graph_image_read", 1);
-            map.insert(seed.clone(), Arc::new(g));
+            accepted.insert(seed.clone(), Arc::new(g));
             false
         });
         for (g, seed) in found.iter_mut().zip(seeds) {
             if g.is_none() {
-                *g = map.get(seed).cloned();
+                *g = accepted.get(seed).cloned();
             }
         }
+        kept.lock().expect("phase 0's graphs").extend(accepted);
     }
     if !wanted.is_empty() {
         if std::env::var_os("RERAIL_PHASE0_TRACE").is_some() {

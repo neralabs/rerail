@@ -313,6 +313,9 @@ The cached graph also matches the eager resolver for a package with inheritance 
 
 ## 7. Mutable observations and failure retry
 
+A policy reload checks its include graph against the current policy files. If the engine rejects
+a graph in memory, only a validated stored graph or a newly derived graph can replace it.
+
 Ref and revision resolution are observed inputs.
 An unchanged resolved full ID leaves dependent immutable keys unchanged.
 A changed ID updates selection and placement facts, while unchanged content and tapes remain reusable.

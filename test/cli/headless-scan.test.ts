@@ -141,6 +141,28 @@ describe("headless rerail scan", () => {
     expect(report.violations).toEqual([expect.objectContaining({ path: "a.py", ruleId: "needle" })]);
   });
 
+  it("uses the current include and its matching policy digest after an edit and a revert", async () => {
+    const root = checkout();
+    const policy = join(root, "live.rr");
+    writeFileSync(policy, `
+#include "core.rr"
+#include "live-message.rr"
+.policy "live" revision 1
+.violation Message(at: span, text: symbol) "{text}"
+Message(@place("policy", 1), t) :- live_message(t).
+`);
+    const run = async (message: string) => {
+      writeFileSync(join(root, "live-message.rr"), `.decl live_message(m: symbol)\nlive_message("${message}").\n`);
+      const result = await scan(root, { revision: "HEAD", analysisScope: "live", rr: [policy] });
+      expect(result.status, JSON.stringify(result.failures)).toBe("completed");
+      expect(result.violations.map(v => v.message)).toEqual([message]);
+      return result.rules[0]!.payloadHash;
+    };
+    const first = await run("first");
+    expect(await run("second")).not.toBe(first);
+    expect(await run("first")).toBe(first);
+  });
+
   it("selects the whole revision when --path names the root", async () => {
     const root = checkout();
     const home = `${root}-home`;
