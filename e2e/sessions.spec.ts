@@ -25,6 +25,28 @@ test.describe("History by session", () => {
     await expect(withViolations.first().locator(".st")).toHaveText(/^\d+ steered$/);
   });
 
+  test("mature: a steer the agent declined reads Declined with its reason, is counted on the row and header, and has its own chip", async ({ page, rerail }) => {
+    const { manifest } = await rerail.scenario("mature");
+    const open = manifest.sessionIds.at(-1)!;
+
+    await page.goto(await rerail.dashboard("mature", { hash: "sessions" }));
+
+    await expect(rowOf(page, open).locator(".dc")).toHaveText("1 declined");
+    await expect(page.locator("#content .shead .l3")).toContainText("1 declined");
+    const declined = page.locator("#content .corr").filter({ has: page.locator(".badge.declined:visible") });
+    await expect(declined).toHaveCount(1);
+    await expect(declined.locator(".ch .mono")).toHaveText("typescript-eslint-no-non-null-assertion");
+    await expect(declined.locator(".badge.outcome")).toHaveText("Steered");
+    await expect(declined.locator("dd.reason")).toHaveText(/^The cart is checked for null two lines above/);
+    // Every other card, steered or logged, has no decline on record and says nothing about one.
+    await expect(page.locator("#content .corr dd.reason:visible")).toHaveCount(1);
+
+    await page.locator('#content [data-act="sfilter"][data-i="declined"]').click();
+    await expect(page).toHaveURL(/#sessions\?filter=declined$/);
+    await expect(page.locator("#content .srow")).toHaveCount(1);
+    await expect(rowOf(page, open)).toBeVisible();
+  });
+
   test("mature: a session from Overview's recent sessions opens selected in History by session", async ({ page, rerail }) => {
     await page.goto(await rerail.dashboard("mature"));
     const link = page.locator('#content [data-act="session"]').last();

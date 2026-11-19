@@ -513,7 +513,7 @@ function dropSession(id) {
 export async function loadSession(id) {
   let detail = data.sessionDetail.get(id);
   if (detail === undefined) {
-    detail = { head: null, gaps: null, events: [], nextAfter: 0, loaded: false, earlier: false, loading: null };
+    detail = { head: null, gaps: null, declined: null, events: [], nextAfter: 0, loaded: false, earlier: false, loading: null };
     data.sessionDetail.set(id, detail);
   }
   return sessionLoad(detail, async () => {
@@ -525,12 +525,13 @@ export async function loadSession(id) {
       dropSession(id);
       return true;
     }
-    const was = detail.head, wasGaps = detail.gaps;
+    const was = detail.head, wasGaps = detail.gaps, wasDeclined = detail.declined;
     detail.head = body.session;
     detail.gaps = body.gaps;
-    patchSessionRow(body.session);
+    detail.declined = body.declined;
+    patchSessionRow({ ...body.session, declinedViolations: body.declined.violations });
     const changed = was?.eventCount !== body.session.eventCount || was?.endedAt !== body.session.endedAt
-      || JSON.stringify(wasGaps) !== JSON.stringify(body.gaps);
+      || JSON.stringify(wasGaps) !== JSON.stringify(body.gaps) || JSON.stringify(wasDeclined) !== JSON.stringify(body.declined);
     const page = await eventsPage(id, detail.loaded ? `after=${detail.nextAfter}` : `before=${Number.MAX_SAFE_INTEGER}`);
     if (!detail.loaded) detail.earlier = page.events.length === EVENTS_PAGE;
     detail.loaded = true;

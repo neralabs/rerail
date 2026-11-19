@@ -184,16 +184,43 @@ export function loadedFrom(sessionId) {
 }
 
 /**
- * The session's violations from the pages loaded for it and inside `loadedFrom`, joined to their rules. A violation
- * whose rule is no longer in the repository keeps its card, with `rule: null`, so the timeline still shows it.
+ * The session's violations from the pages loaded for it and inside `loadedFrom`, joined to their rules and, for a
+ * steered one, to the reasons the coding agent gave for declining its steer (`declined`, oldest first; `null` when it
+ * recorded none, which says nothing of whether it followed the steer). A violation whose rule is no longer in the
+ * repository keeps its card, with `rule: null`, so the timeline still shows it.
  */
 export function sessionCorrections(sessionId) {
   const slot = data.sessionFindings;
   if (slot.owner !== sessionId) return [];
   const from = loadedFrom(sessionId);
+  const reasons = declineReasons(sessionId);
   return slot.rows
     .filter(f => f.at >= from)
-    .map(f => ({ key: `${f.auditId}:${f.id}`, finding: f, rule: data.rules.get(f.ruleId) ?? null }));
+    .map(f => ({
+      key: `${f.auditId}:${f.id}`, finding: f, rule: data.rules.get(f.ruleId) ?? null,
+      declined: f.logged ? null : reasons.get(declineKey(f.auditId, f.ruleId)) ?? null,
+    }));
+}
+
+const declineKey = (auditId, ruleId) => `${auditId}\u0000${ruleId}`;
+
+/** The session's decline notes (`GET /api/sessions/{id}`) by the steer they answer, its audit and rule: their reasons. */
+function declineReasons(sessionId) {
+  const reasons = new Map();
+  for (const note of data.sessionDetail.get(sessionId)?.declined?.notes ?? []) {
+    if (note.auditId === null) continue;
+    const key = declineKey(note.auditId, note.ruleId);
+    reasons.set(key, [...(reasons.get(key) ?? []), note.reason]);
+  }
+  return reasons;
+}
+
+/**
+ * The session's steered violations whose steer its coding agent declined: the daemon's count for the whole session
+ * once the session is loaded (a deep-linked session has no list row), else the list row's.
+ */
+export function sessionDeclinedTotal(s) {
+  return data.sessionDetail.get(s.sessionId)?.declined?.violations ?? violationCounts(s).declined;
 }
 
 /** Every violation logged in the session, once the first page of them is in; `null` before. */
@@ -260,10 +287,14 @@ export function lastEventAt(s) {
   return Math.max(row ?? -Infinity, loaded ?? -Infinity);
 }
 
-/** A list row's violations: logged in the session, and of those the ones steered (recorded by an audit in Steer mode while their rule was on Steer or Block). */
+/**
+ * A list row's violations: logged in the session, of those the ones steered (recorded by an audit in Steer mode while
+ * their rule was on Steer or Block), and of those the ones whose steer the coding agent declined (`rerail feedback`).
+ */
 export function violationCounts(s) {
   const logged = s.violationCount ?? 0;
-  return { logged, steered: Math.min(logged, s.steeredViolations ?? 0) };
+  const steered = Math.min(logged, s.steeredViolations ?? 0);
+  return { logged, steered, declined: Math.min(steered, s.declinedViolations ?? 0) };
 }
 
 /** What the session's whole transcript says it missed, from the daemon (`GET /api/sessions/{id}`); zeros until it answers. */

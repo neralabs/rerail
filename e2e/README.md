@@ -45,7 +45,7 @@ is the primary one in every scenario.
 | --- | --- |
 | `no-packs` | Set up 30 minutes ago with nothing added; started; no sessions; no file a pack matches, so no recommendations. |
 | `packs-no-session` | Set up an hour ago with `typescript` and `javascript`; started; no sessions. |
-| `mature` | Set up 5 weeks ago with `typescript`, `javascript`, `complexity` and two rules created by you; 30 sessions (Claude Code, Codex, Cursor), the last still open; violations in Log, Steer and Block spread over the 5 weeks, steered sessions have steer receipts. |
+| `mature` | Set up 5 weeks ago with `typescript`, `javascript`, `complexity` and two rules created by you; 30 sessions (Claude Code, Codex, Cursor), the last still open; violations in Log, Steer and Block spread over the 5 weeks, steered sessions have steer receipts; the open session's agent declined its `typescript-eslint-no-non-null-assertion` steer and recorded why. |
 | `multi-repo` | storefront (3 weeks of history, 10 sessions, one open), `acme/billing` (set up, no sessions), `acme/docs-site` (known, never set up or started). |
 | `not-set-up` | Started 20 minutes ago, never set up: nothing runs. |
 | `stopped` | Set up 10 days ago with `typescript` and `javascript`, two sessions, stopped 2 days ago. |

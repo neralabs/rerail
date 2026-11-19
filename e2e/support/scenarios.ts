@@ -34,6 +34,7 @@ import {
   setRuleSetting,
   setUpRepository,
   SqliteAuditStore,
+  steerFeedback,
   upsertLibraryRule,
   approve,
   ruleSubject,
@@ -197,6 +198,14 @@ interface RuleSchedule {
   readonly count: (index: number, daysAgo: number) => number;
 }
 
+/** A steer the coding agent declined, and the line it recorded with `rerail feedback` a minute after the steer. */
+interface Decline {
+  /** The session's index in its repository's plan (0-based, oldest first). */
+  readonly index: number;
+  readonly ruleId: string;
+  readonly reason: string;
+}
+
 interface SessionPlan {
   readonly sessionId: string;
   readonly host: RerailHost;
@@ -285,10 +294,13 @@ interface HistoryContext {
 /**
  * Records one session the way a coding agent's hooks do: it opens, a prompt and a write are recorded, the touched file
  * is audited against the rules on in the checkout at that instant (each violation carries the mode its rule had then),
- * the violations of rules on Steer or Block are steered, and the session ends, except the open one, which gets a second
- * prompt two minutes before the seed clock so it reads live.
+ * the violations of rules on Steer or Block are steered, the agent records why it declined any of `declines` it was
+ * steered on, and the session ends, except the open one, which gets a second prompt two minutes before the seed clock
+ * so it reads live.
  */
-function recordSession(context: HistoryContext, plan: SessionPlan, schedules: readonly RuleSchedule[], violating: Set<string>): void {
+function recordSession(
+  context: HistoryContext, plan: SessionPlan, schedules: readonly RuleSchedule[], declines: readonly Decline[], violating: Set<string>,
+): void {
   const { sessions, audits, repositoryKey, checkoutPath } = context;
   const session = { host: plan.host, sessionId: plan.sessionId, cwd: checkoutPath };
   const rules = listRepositoryRules(context.db, context.catalog, repositoryKey, { checkoutPath }).rules
@@ -355,6 +367,12 @@ function recordSession(context: HistoryContext, plan: SessionPlan, schedules: re
 
   const steered = [...new Set(violations.filter(violation => violation.mode !== "log").map(violation => violation.ruleId))];
   if (steered.length > 0) atTime(auditAt + 3_000, () => sessions.recordSteer(session, `${plan.sessionId}-steer`, steered));
+  for (const decline of declines.filter(entry => entry.index === plan.index && steered.includes(entry.ruleId))) {
+    context.db.insert(steerFeedback).values({
+      id: `${plan.sessionId}-decline-${decline.ruleId}`, ruleId: decline.ruleId, host: plan.host, sessionId: plan.sessionId,
+      repositoryId: repositoryKey, reason: decline.reason, rerailVersion: "0.0.0-e2e", recordedAt: auditAt + MINUTE,
+    }).run();
+  }
   sessions.append({ sessionId: plan.sessionId, eventId: `${plan.sessionId}-turn`, kind: "turn-end", observedAt: at(6 * MINUTE), payload: { turn: 1 } });
   if (plan.endedAt !== null) sessions.closeSession(plan.sessionId, plan.endedAt);
   else {
@@ -375,6 +393,8 @@ interface RepositoryPlan {
   readonly changes: readonly Change[];
   readonly sessions: readonly SessionPlan[];
   readonly schedules: readonly RuleSchedule[];
+  /** Steers the coding agent declined, with its reasons; none when absent. */
+  readonly declines?: readonly Decline[];
   /** Merge Assist turned on by a person, with the checkout's in-flight conflicts; off when absent. */
   readonly mergeAssist?: MergeAssistPlan;
 }
@@ -590,6 +610,12 @@ function plansFor(scenario: ScenarioName, catalog: () => RuleCatalog, now: numbe
           { ruleId: NO_RAW_FETCH.id, count: (index, daysAgo) => (daysAgo <= 6 && index % 3 !== 0 ? 1 : 0) },
           { ruleId: "eslint-no-debugger", count: (_, daysAgo) => (daysAgo === 0 ? 1 : 0) },
         ],
+        // The open session's agent declines its non-null assertion steer and says why.
+        declines: [{
+          index: 29,
+          ruleId: "typescript-eslint-no-non-null-assertion",
+          reason: "The cart is checked for null two lines above; the assertion only narrows a type the compiler cannot follow there.",
+        }],
       }];
     case "multi-repo":
       return [
@@ -656,7 +682,7 @@ export async function seedScenario(scenario: ScenarioName, folder: string, now: 
       const violating = new Set<string>();
       const steps = [
         ...plan.changes.map(change => ({ at: change.at, run: () => atTime(change.at, () => change.apply(db, recorded.repositoryKey, change.at)) })),
-        ...plan.sessions.map(session => ({ at: session.startedAt, run: () => recordSession(context, session, plan.schedules, violating) })),
+        ...plan.sessions.map(session => ({ at: session.startedAt, run: () => recordSession(context, session, plan.schedules, plan.declines ?? [], violating) })),
       ].sort((left, right) => left.at - right.at);
       for (const step of steps) step.run();
       const listing = listRepositories(db).find(repository => repository.repositoryKey === recorded.repositoryKey)!;

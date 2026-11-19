@@ -1,13 +1,14 @@
 /**
  * History, by session (`#sessions`, `?sessionId=<id>&host=<agent>` selects one): the repository's coding agent
- * sessions by day (All · With violations · In progress, `?filter=`), and the selected one's transcript with the
- * violations Rerail logged and steered in it, filtered to one rule from its dropdown in either Show all events state.
+ * sessions by day (All · With violations · Declined steers · In progress, `?filter=`), and the selected one's
+ * transcript with the violations Rerail logged and steered in it and the steers the coding agent declined with its
+ * reasons, filtered to one rule from its dropdown in either Show all events state.
  */
 import { h, setAttr, setText, setClass, chevron, searchIcon, syncChildren } from "../dom.js";
 import { fmt, plural, ago, duration, stamp, dayLabel, daysAgo, shortSessionId, truncate } from "../format.js";
 import { data, ui, repoName, titleOf as ruleTitle, packRuleOf } from "../state.js";
 import { ensureTitle, loadSession, loadSessionFindings, loadMoreSessions, loadEarlier } from "../poll.js";
-import { sessionTurns, sessionCorrections, sessionViolationTotal, loadedFrom, placeCorrections, resumeCommand, openState, lastEventAt, isOpen, violationCounts } from "../sessions-model.js";
+import { sessionTurns, sessionCorrections, sessionViolationTotal, sessionDeclinedTotal, loadedFrom, placeCorrections, resumeCommand, openState, lastEventAt, isOpen, violationCounts } from "../sessions-model.js";
 import { copyText, invalidate, loadMore, renderNow, toast } from "../shell.js";
 import { renderTimeline, jumpTo, placeTicks } from "../render/timeline.js";
 
@@ -97,6 +98,7 @@ function build() {
   el.chips = h("div.chips", { style: "margin-bottom:8px" },
     h("button.chip", { "data-act": "sfilter", "data-i": "all" }, "All"),
     h("button.chip", { "data-act": "sfilter", "data-i": "corr" }, "With violations"),
+    h("button.chip", { "data-act": "sfilter", "data-i": "declined" }, "Declined steers"),
     h("button.chip", { "data-act": "sfilter", "data-i": "open" }, "In progress"));
   el.list = h("div.srows");
   el.listBox = h("div.list.slist", null, h("div.slhead", null, h("span", null, "Session"), h("span", null, "Violations")), el.list);
@@ -107,7 +109,7 @@ function build() {
   el.hpickLabel = h("span.m", { "aria-hidden": "true" });
   el.hpickWrap = h("h2.hpick", { hidden: true }, h("span.sel", null, el.hpickLabel, el.hpick, chevron(12)));
   el.state = h("span", { hidden: true });
-  el.started = h("span"); el.dur = h("span"); el.events = h("span"); el.violations = h("span"); el.sid = h("span.mono");
+  el.started = h("span"); el.dur = h("span"); el.events = h("span"); el.violations = h("span"); el.declined = h("span", { hidden: true }); el.sid = h("span.mono");
   el.resume = h("button.btn.sm.solid", { "data-act": "resumetoggle", "aria-expanded": "false" });
   el.resumeLbl = h("p.lbl");
   el.resumeText = h("textarea.one", { id: "resumeText", readonly: true, "aria-label": "Resume command" });
@@ -134,7 +136,7 @@ function build() {
     h("section", null, h("div.list", null,
       h("div.shead", null,
         h("div.l1", null, el.title, el.hpickWrap, el.state),
-        h("div.l3", null, el.started, el.dur, el.events, el.violations, el.sid, h("span.acts", null, el.resume)),
+        h("div.l3", null, el.started, el.dur, el.events, el.violations, el.declined, el.sid, h("span.acts", null, el.resume)),
         el.resumeBox),
       h("div.tfilter", null, el.ruleCtl, h("label.tall", null, el.showAll, " Show all events")),
       el.scroll)));
@@ -149,7 +151,7 @@ function createListItem(item) {
   const s = item.s;
   return h("button.srow", { "data-act": "ssel", "data-i": s.sessionId, "aria-current": "false" },
     h("span.l", null, h("span.t"), h("span.m", null, h("span.state"), h("span.ev"), h("span.sid"))),
-    h("span.c.num", null, h("b"), h("span.st")));
+    h("span.c.num", null, h("b"), h("span.st"), h("span.dc")));
 }
 
 function updateListItem(node, item) {
@@ -172,11 +174,13 @@ function updateListItem(node, item) {
   setAttr(state, "title", "Last event");
   setText(node.querySelector(".ev"), `${fmt(s.eventCount)} events`);
   setText(node.querySelector(".sid"), shortSessionId(s.sessionId, s.host));
-  const c = node.querySelector(".c"), { logged, steered } = violationCounts(s);
+  const c = node.querySelector(".c"), { logged, steered, declined } = violationCounts(s);
   setClass(c, "zero", logged === 0);
-  setText(c.firstChild, fmt(logged));
-  setText(c.lastChild, logged === 0 ? "" : `${fmt(steered)} steered`);
-  setAttr(c, "title", `${fmt(logged)} ${plural(logged, "violation")} logged, ${fmt(steered)} steered`);
+  setText(c.querySelector("b"), fmt(logged));
+  setText(c.querySelector(".st"), logged === 0 ? "" : `${fmt(steered)} steered`);
+  setText(c.querySelector(".dc"), declined === 0 ? "" : `${fmt(declined)} declined`);
+  const ofDeclined = declined === 0 ? "" : `, ${fmt(declined)} of them declined by the coding agent`;
+  setAttr(c, "title", `${fmt(logged)} ${plural(logged, "violation")} logged, ${fmt(steered)} steered${ofDeclined}`);
 }
 
 function rowState(st, s) {
@@ -212,6 +216,7 @@ export function render(root) {
 
 function passesFilter(s) {
   if (ui.sessFilter === "corr") return s.violationCount > 0;
+  if (ui.sessFilter === "declined") return violationCounts(s).declined > 0;
   if (ui.sessFilter === "open") return isOpen(s);
   return ui.sessFilter === "all";
 }
@@ -306,6 +311,10 @@ function renderHeader(sess) {
   // The violation count sits in the meta line; the controls row below is only the rule filter and Show all events.
   const violations = sessionViolationTotal(sess.sessionId) ?? sess.violationCount ?? 0;
   setText(v.violations, `${fmt(violations)} ${plural(violations, "violation")}`);
+  const declined = sessionDeclinedTotal(sess);
+  setAttr(v.declined, "hidden", declined === 0);
+  setText(v.declined, `${fmt(declined)} declined`);
+  setAttr(v.declined, "title", "Steered violations whose steer the coding agent declined, with its reason on each card.");
   setText(v.sid, shortSessionId(sess.sessionId, sess.host));
   setAttr(v.sid, "title", sess.sessionId);
   const rc = resumeCommand(sess);

@@ -136,8 +136,22 @@ function updateEvent(node, ev) {
 
 function createCorr(item) {
   return h("div.corr", { id: `c-${item.key}`, "data-key": item.key },
-    h("div.ch", null, h("b"), h("span.mono"), h("span.badge"), h("div.act", null, h("button.btn.sm.ghost", { "data-act": "detail" }, "Open rule"))),
-    h("dl.beats", null, h("dt.nera", null, "Rerail said"), h("dd.said"), h("dt.where", null, "Where"), h("dd.where", null, h("code"))));
+    h("div.ch", null, h("b"), h("span.mono"), h("span.badge.outcome"),
+      h("span.badge.declined", { hidden: true, title: "The coding agent didn’t follow this steer and recorded why with rerail feedback." }, "Declined"),
+      h("div.act", null, h("button.btn.sm.ghost", { "data-act": "detail" }, "Open rule"))),
+    h("dl.beats", null, h("dt.nera", null, "Rerail said"), h("dd.said"),
+      h("dt.reason", { hidden: true }, "Agent said"), h("dd.reason", { hidden: true }),
+      h("dt.where", null, "Where"), h("dd.where", null, h("code"))));
+}
+
+/** A declined steer's badge and the agent's reasons, one per line; hidden for a card no note answers. */
+function updateDeclined(node, reasons) {
+  const declined = reasons !== null;
+  setAttr(node.querySelector(".badge.declined"), "hidden", !declined);
+  setAttr(node.querySelector("dt.reason"), "hidden", !declined);
+  const said = node.querySelector("dd.reason");
+  setAttr(said, "hidden", !declined);
+  setText(said, declined ? reasons.join("\n") : "");
 }
 
 /** `path:line` of a finding, or `""` when it has no path. */
@@ -154,9 +168,10 @@ function updateCorr(node, item) {
   setText(node.querySelector(".mono"), f.ruleId);
   const result = violationOutcome(f);
   node.dataset.outcome = result;
-  const badge = node.querySelector(".badge");
+  const badge = node.querySelector(".badge.outcome");
   setText(badge, result === "logged" ? "Logged" : "Steered");
   setAttr(badge, "title", result === "logged" ? "Rerail recorded it; the coding agent wasn’t told." : "Rerail told the coding agent.");
+  updateDeclined(node, c.declined);
   setAttr(node.querySelector("[data-act=detail]"), "data-i", f.ruleId);
   setAttr(node.querySelector("[data-act=detail]"), "hidden", c.rule === null);
   setText(node.querySelector(".said"), f.message);

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { deserialize, serialize } from "node:v8";
-import { and, asc, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, lt, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import type { AdapterSession } from "../engine/adapter-contract.js";
 import type { DiscoveryPendingBoundary, IgnoredEdit } from "../engine/code-rule/code-rule-bridge.js";
@@ -12,7 +12,7 @@ import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
 import { listRepositoryRules, ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
-import { auditViolations, checkouts, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
+import { auditViolations, checkouts, events, sessions, sessionsOfRepository, steerFeedback, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
 import { conflictFooter, type ConflictFooter } from "./merge-assist/notes.js";
@@ -72,6 +72,47 @@ export interface SessionGaps {
 
 const NO_GAPS: SessionGaps = { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0 };
 
+/** A coding agent's note on a steer it declined (`rerail feedback`), with the audit whose steer it was. */
+export interface DeclineNote {
+  ruleId: string;
+  /** The one line the agent gave the person. */
+  reason: string;
+  recordedAt: number;
+  /** The audit that steered the rule's violations the agent declined ({@link DECLINED_AUDIT}); null when none did. */
+  auditId: string | null;
+}
+
+/** The steers a session's coding agent declined (`SqliteSessionReader.declines`). */
+export interface SessionDeclines {
+  /** Steered violations of a declined steer: its audit's violations of the rule, each counted once however many notes name it. */
+  violations: number;
+  /** Oldest first. */
+  notes: DeclineNote[];
+}
+
+/**
+ * The audit whose steer the `steer_feedback` row aliased `note` declined. A note keeps no audit, so time places it:
+ * `rerail feedback` runs after the steer it answers, so that steer is the latest audit of the note's session to report
+ * the rule's violations steered (`logged = 0`) and start at or before the note. Null when no audit did. The `+` keeps
+ * SQLite off `audit_violations_rule_started`, which reads the rule's violations in every session: it walks the
+ * session's own back from the note (`audit_violations_session_started`) and stops at the first.
+ */
+const DECLINED_AUDIT = sql`(
+  SELECT steered.audit_id FROM ${auditViolations} steered
+  WHERE steered.session_id = note.session_id AND +steered.rule_id = note.rule_id
+    AND steered.logged = 0 AND steered.started_at <= note.recorded_at
+  ORDER BY steered.started_at DESC LIMIT 1)`;
+
+/**
+ * How many steered violations of `session` a note declined: those its audit reported for its rule. An audit belongs to
+ * one session, so `(audit_id, rule_id)` alone finds them, an `audit_violations_audit_key` probe per note. Notes are
+ * few and only `rerail feedback` writes them, so reading them by session needs no index of its own.
+ */
+const declinedViolationCount = (session: SQL) => sql`(
+  SELECT count(*) FROM ${auditViolations} declined
+  WHERE declined.logged = 0 AND (declined.audit_id, declined.rule_id) IN (
+    SELECT ${DECLINED_AUDIT}, note.rule_id FROM ${steerFeedback} note WHERE note.session_id = ${session}))`;
+
 export interface SessionPageQuery {
   /** Only sessions started at or after this instant. */
   since?: number;
@@ -86,6 +127,8 @@ export interface SessionPageRow extends StoredSessionSummary {
   violationCount: number;
   /** Of those, the ones no audit recorded in Log mode: steered (or blocked). */
   steeredViolations: number;
+  /** Of the steered, those of a steer the coding agent declined (`SessionDeclines.violations`). */
+  declinedViolations: number;
   /** `observed_at` of the session's newest event; null when it has none. */
   lastEventAt: number | null;
 }
@@ -529,6 +572,25 @@ export class SqliteSessionReader {
     return row ?? { ...NO_GAPS };
   }
 
+  /**
+   * The steers the session's coding agent declined, each with the reason it recorded and the audit whose steer it was.
+   * Only a note says a steer was declined: an agent can decline one without recording why, so a steer with no note is
+   * not known to be followed either.
+   */
+  declines(sessionId: string): SessionDeclines {
+    const database = this.#database.open();
+    if (database === undefined) return { violations: 0, notes: [] };
+    return database.transaction(() => ({
+      violations: database.all<{ total: number }>(sql`SELECT ${declinedViolationCount(sql`${sessionId}`)} AS total`)[0]?.total ?? 0,
+      notes: database.all<DeclineNote>(sql`
+        SELECT note.rule_id AS ruleId, note.reason AS reason, note.recorded_at AS recordedAt, ${DECLINED_AUDIT} AS auditId
+        FROM ${steerFeedback} note
+        WHERE note.session_id = ${sessionId}
+        ORDER BY note.recorded_at, note.rowid
+      `),
+    }));
+  }
+
   events(sessionId: string, query: SessionEventQuery = {}): readonly SessionEventRecord[] {
     const database = this.#database.open();
     if (database === undefined) return [];
@@ -593,7 +655,8 @@ export class SqliteSessionReader {
           -- partial index audit_violations_key_logged); "logged = 0" would read every violation row of the session.
           (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id)
             - (SELECT count(*) FROM ${auditViolations}
-              WHERE ${auditViolations.sessionId} = page.session_id AND ${auditViolations.logged} = 1) AS steeredViolations
+              WHERE ${auditViolations.sessionId} = page.session_id AND ${auditViolations.logged} = 1) AS steeredViolations,
+          ${declinedViolationCount(sql`page.session_id`)} AS declinedViolations
         FROM (
           SELECT * FROM ${sessions}
           WHERE ${and(matching, continuing) ?? sql`1 = 1`}
