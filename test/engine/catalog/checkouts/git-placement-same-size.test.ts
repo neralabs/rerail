@@ -9,7 +9,7 @@ import { mkdtemp, open, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { repositoryIdentityLocation, type RepositoryIdentityLocation } from "../../../../src/engine/catalog/repository-identity.js";
+import { repositoryIdentityLocation, worktreeRegistry, type RepositoryIdentityLocation } from "../../../../src/engine/catalog/repository-identity.js";
 import { runGit } from "../../../../src/engine/git.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 
@@ -172,6 +172,36 @@ describe.skipIf(process.platform === "win32")("a kept answer on POSIX, where an 
     expect(repositoryIdentityLocation(main)).toEqual(answer);
     // Git takes another account's folder only through safe.directory, read from files outside the stamp.
     expect({ answer, gitAfterTheFirst: placements(main) - placed }).toEqual({ answer: gitsAnswer(main), gitAfterTheFirst: 2 });
+  });
+
+  it("asks Git at every ask once the checkout's Git folder is another account's, as Git reads its owner too", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "aa"));
+    const answer = repositoryIdentityLocation(main);
+    const placed = placements(main);
+    const gitFolder = join(main, ".git");
+
+    lstatKeeps(gitFolder, anotherAccounts(realLstat(gitFolder)));
+    expect(repositoryIdentityLocation(main)).toEqual(answer);
+    expect(repositoryIdentityLocation(main)).toEqual(answer);
+    expect({ answer, gitAfterTheFirst: placements(main) - placed }).toEqual({ answer: gitsAnswer(main), gitAfterTheFirst: 2 });
+  });
+
+  it("gives no worktree list for a worktree whose .git file names a link once the Git folder behind it is another account's", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "aa"));
+    const worktree = join(root, "w");
+    git(main, "worktree", "add", "--quiet", "-b", "w", worktree);
+    const link = join(root, "w.git");
+    symlinkSync(join(main, ".git", "worktrees", "w"), link);
+    await rewriteInPlace(join(worktree, ".git"), `gitdir: ${link}\n`);
+    expect(worktreeRegistry(worktree)?.worktrees).toHaveLength(2);
+
+    const gitFolder = join(main, ".git", "worktrees", "w");
+    lstatKeeps(gitFolder, anotherAccounts(realLstat(gitFolder)));
+    gitSeesAnotherOwner(root);
+    expect(gitsAnswer(worktree, { ...process.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: "1" }).git).toBe(false);
+    expect(worktreeRegistry(worktree)).toBeUndefined();
   });
 
   // Git reads the owner of the folder it changed into by that folder's real path, never a link's own.

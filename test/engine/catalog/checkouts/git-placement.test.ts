@@ -618,6 +618,28 @@ describe("a kept answer follows the folders' owners, and the user's trust in ano
     expect(asGit().map(answer => answer.git)).toEqual([false, false]);
     expect(asRerail()).toEqual(asGit());
   });
+
+  it("gives no list for another account's checkout whose files come back as they were after Git refused it", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    const global = join(root, "global.gitconfig");
+    await writeFile(global, "[safe]\n\tdirectory = *\n");
+    vi.stubEnv("GIT_CONFIG_GLOBAL", global);
+    vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
+    takeOwnersAway();
+    gitSeesAnotherOwner();
+    expect(worktreeRegistry(main)?.worktrees).toHaveLength(1);
+
+    // While its .git is a link the files cannot describe it, and Git, the safe.directory entry gone, refuses it.
+    await rename(join(main, ".git"), join(root, "main.git"));
+    linkFolder(join(root, "main.git"), join(main, ".git"));
+    await writeFile(global, "");
+    expect(worktreeRegistry(main)).toBeUndefined();
+    await unlink(join(main, ".git"));
+    await rename(join(root, "main.git"), join(main, ".git"));
+    expect(gitsAnswer(main, { ...process.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: "1" }).git).toBe(false);
+    expect(worktreeRegistry(main)).toBeUndefined();
+  });
 });
 
 /** A repository at `path` whose `.git` is a link to its Git folder, moved to `store`; returns the checkout's real path. */
@@ -725,6 +747,44 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expect(worktreeRegistry(worktree)).toBeUndefined();
     await relink(link, join(main, ".git", "worktrees", "w"));
     expect(registryPlacements(worktree)).toBe(placements);
+  });
+
+  it("lists such a worktree as Git does once its commondir names another repository, that repository's config moves, or the folder it names is gone", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    const other = repository(join(root, "other"));
+    const worktree = join(root, "w");
+    git(main, "worktree", "add", "--quiet", "-b", "w", worktree);
+    git(other, "worktree", "add", "--quiet", "-b", "w", join(root, "ow"));
+    const link = join(root, "w.git");
+    linkFolder(join(main, ".git", "worktrees", "w"), link);
+    await rewriteInPlace(join(worktree, ".git"), `gitdir: ${link}\n`);
+    // Git for Windows refuses a .git file that names a junction: there each list asks Git and nothing is kept.
+    const placements = gitsAnswer(worktree).git ? 1 : 3;
+    expect(registryPlacements(worktree)).toBe(placements);
+
+    const commondir = join(main, ".git", "worktrees", "w", "commondir");
+    await rewriteInPlace(commondir, `${join(other, ".git")}\n`);
+    expect(registryPlacements(worktree)).toBe(placements);
+    git(other, "config", "core.repositoryformatversion", "1");
+    git(other, "config", "extensions.worktreeConfig", "true");
+    expect(registryPlacements(worktree)).toBe(placements);
+
+    await rewriteInPlace(commondir, `${join(root, "gone")}\n`);
+    expect(gitsAnswer(worktree).git).toBe(false);
+    expect(worktreeRegistry(worktree)).toBeUndefined();
+  });
+
+  it("gives no list for a checkout whose .git is a link once its objects folder is gone, as Git gives none", async () => {
+    const root = await temporaryRoot();
+    const main = await gitFolderLinked(join(root, "main"), join(root, "main.git"));
+    expect(registryPlacements(main)).toBe(1);
+
+    await rename(join(root, "main.git", "objects"), join(root, "objects"));
+    expect(gitsAnswer(main).git).toBe(false);
+    expect(worktreeRegistry(main)).toBeUndefined();
+    await rename(join(root, "objects"), join(root, "main.git", "objects"));
+    expect(registryPlacements(main)).toBe(1);
   });
 
   it("lists as Git does once a checkout's .git link names another Git folder, and none once that Git folder moves", async () => {
