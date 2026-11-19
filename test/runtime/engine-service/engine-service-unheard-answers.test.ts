@@ -44,9 +44,9 @@ describe("engine service answers a hook no longer waits for", () => {
     expect(await ingestEngineEvent(service.engine, prompt("prompt-3"))).toEqual([]);
     // Recorded once, by the answer that never reached its hook.
     expect(await service.deliveriesOf(STEER)).toBe(1);
-  }, 20_000);
+  });
 
-  it("keeps a steer for the session's next hook when the daemon writes the answer before it has read the hook's close", async () => {
+  it("keeps a steer for the session's next hook when the daemon writes the answer before it has read the hook's close", async ({ task }) => {
     const service = await checkingService();
     const responses = serverResponses(2);
     const stop = hook(service.socketPath, turnEnd("stop-1", service.root));
@@ -54,14 +54,14 @@ describe("engine service answers a hook no longer waits for", () => {
     // The session's next hook asks meanwhile and waits behind the turn's end, as a hook does on a busy daemon.
     const next = ingestEngineEvent(service.engine, prompt("prompt-2"));
     const [answer, queued] = await responses;
-    await vi.waitFor(() => expect(queued?.req.readableEnded).toBe(true), { timeout: 5_000, interval: 10 });
+    await vi.waitFor(() => expect(queued?.req.readableEnded).toBe(true), { timeout: task.timeout, interval: 10 });
     await new Promise<void>(done => setImmediate(done));
     // The hook goes as its answer is written, before the daemon can read its close: the write is refused.
     goneAtItsAnswer(answer, stop.destroy);
     service.finishCheck();
     expect(contents(await next)).toEqual([STEER]);
     expect(await ingestEngineEvent(service.engine, prompt("prompt-3"))).toEqual([]);
-  }, 20_000);
+  });
 
   it("tells a steer once when the hook whose answer took it still waited", async () => {
     const service = await checkingService();
@@ -70,43 +70,43 @@ describe("engine service answers a hook no longer waits for", () => {
     service.finishCheck();
     expect(contents(await stop.answer)).toEqual([STEER]);
     expect(await ingestEngineEvent(service.engine, prompt("prompt-2"))).toEqual([]);
-  }, 20_000);
+  });
 
-  it("answers the session's next hook while a hook that has stopped reading holds its answer, which it then reads whole", async () => {
+  it("answers the session's next hook while a hook that has stopped reading holds its answer, which it then reads whole", async ({ task }) => {
     const service = await checkingService();
     await service.steer(SESSION, BIG_STEER);
-    const stuck = await stuckHook(service.socketPath, prompt("prompt-1"));
+    const stuck = await stuckHook(service.socketPath, prompt("prompt-1"), task.timeout);
     // Answered while the stuck hook reads nothing of its own answer.
     expect(await ingestEngineEvent(service.engine, prompt("prompt-2"))).toEqual([]);
     const received = await stuck.readAll();
     expect(received.split(BIG_STEER.slice(0, 64)).length - 1).toBe(1);
     expect(await ingestEngineEvent(service.engine, prompt("prompt-3"))).toEqual([]);
-  }, 20_000);
+  });
 
-  it("gives the steers of an answer a hook stopped reading to the session's next hook once that hook gives up, before newer ones", async () => {
+  it("gives the steers of an answer a hook stopped reading to the session's next hook once that hook gives up, before newer ones", async ({ task }) => {
     const service = await checkingService();
     await service.steer(SESSION, BIG_STEER);
     await service.steer(SESSION, SECOND_STEER);
-    const stuck = await stuckHook(service.socketPath, prompt("prompt-1"));
+    const stuck = await stuckHook(service.socketPath, prompt("prompt-1"), task.timeout);
     expect(await ingestEngineEvent(service.engine, prompt("prompt-2"))).toEqual([]);
     await service.steer(SESSION, NEWER_STEER);
     await stuck.giveUp();
     expect(leads(await ingestEngineEvent(service.engine, prompt("prompt-3")))).toEqual(leads([BIG_STEER, SECOND_STEER, NEWER_STEER]));
     expect(await ingestEngineEvent(service.engine, prompt("prompt-4"))).toEqual([]);
-  }, 20_000);
+  });
 
-  it("keeps no steer of a session's earlier opening when the hook that stopped reading its answer gives up after the session opened again", async () => {
+  it("keeps no steer of a session's earlier opening when the hook that stopped reading its answer gives up after the session opened again", async ({ task }) => {
     let clock = 1_000;
     const service = await checkingService({ now: () => clock, idleSessionMs: 1_000 });
     await service.steer(SESSION, BIG_STEER);
-    const stuck = await stuckHook(service.socketPath, prompt("prompt-1"));
+    const stuck = await stuckHook(service.socketPath, prompt("prompt-1"), task.timeout);
     // The session goes quiet and closes, and its next hook opens it again, while the stuck hook still holds its answer.
     clock += 60_000;
     await service.closeIdleSessions();
     expect(await ingestEngineEvent(service.engine, prompt("prompt-2", SESSION, service.root))).toEqual([]);
     await stuck.giveUp();
     expect(await ingestEngineEvent(service.engine, prompt("prompt-3", SESSION, service.root))).toEqual([]);
-  }, 20_000);
+  });
 
   it("keeps the steer a session owed when it opened again for its next hook when the hook whose answer took it gave up", async () => {
     let clock = 1_000;
@@ -122,7 +122,7 @@ describe("engine service answers a hook no longer waits for", () => {
     expect(contents(await ingestEngineEvent(service.engine, prompt("prompt-3")))).toEqual([STEER]);
     expect(await ingestEngineEvent(service.engine, prompt("prompt-4"))).toEqual([]);
     expect(await service.deliveriesOf(STEER)).toBe(1);
-  }, 20_000);
+  });
 
   it("records a steer once when the daemon restarts between the answer no hook read and the session's next hook", async () => {
     const first = await checkingService();
@@ -136,9 +136,9 @@ describe("engine service answers a hook no longer waits for", () => {
     expect(contents(await ingestEngineEvent(second.engine, prompt("prompt-2", SESSION, second.root)))).toEqual([STEER]);
     expect(await ingestEngineEvent(second.engine, prompt("prompt-3"))).toEqual([]);
     expect(await second.deliveriesOf(STEER)).toBe(1);
-  }, 20_000);
+  });
 
-  it("tells a steer once when its answer waits on its connection behind another session's answer", async () => {
+  it("tells a steer once when its answer waits on its connection behind another session's answer", async ({ task }) => {
     const service = await checkingService();
     await service.start(OTHER);
     await service.steer(OTHER, OTHER_STEER);
@@ -148,24 +148,24 @@ describe("engine service answers a hook no longer waits for", () => {
     const connection = await pipelined(service.socketPath, [turnEnd("stop-1", service.root), prompt("other-1", OTHER)]);
     await service.checking;
     const answers = await responses;
-    await vi.waitFor(() => expect(answers[1]?.writableEnded).toBe(true), { timeout: 5_000, interval: 10 });
+    await vi.waitFor(() => expect(answers[1]?.writableEnded).toBe(true), { timeout: task.timeout, interval: 10 });
     service.finishCheck();
     const received = await connection.received;
     expect({ steer: received.split(STEER).length - 1, other: received.split(OTHER_STEER).length - 1 }).toEqual({ steer: 1, other: 1 });
     expect(await ingestEngineEvent(service.engine, prompt("other-2", OTHER))).toEqual([]);
-  }, 20_000);
+  });
 
-  it("leaves no listener of its own on a connection for each answer it writes there", async () => {
+  it("leaves no listener of its own on a connection for each answer it writes there", async ({ task }) => {
     const service = await checkingService();
     const listeners = async (count: number): Promise<number> => {
       const responses = serverResponses(count);
       await pipelined(service.socketPath, Array.from({ length: count }, (_, index) => prompt(`kept-${count}-${index}`)), false);
       const answers = await responses;
-      await vi.waitFor(() => expect(answers.every(answer => answer.writableFinished)).toBe(true), { timeout: 5_000, interval: 10 });
+      await vi.waitFor(() => expect(answers.every(answer => answer.writableFinished)).toBe(true), { timeout: task.timeout, interval: 10 });
       return answers[0]?.req.socket.listenerCount("close") ?? -1;
     };
     expect(await listeners(12)).toBe(await listeners(1));
-  }, 20_000);
+  });
 
   it("answers a session's end once the service has let go of the session, as before", async () => {
     const service = await checkingService({ idleRuntimeMs: 0 });
@@ -177,7 +177,7 @@ describe("engine service answers a hook no longer waits for", () => {
     const openWhenAnswered = new Promise<number>(done => response.once("finish", () => done(service.openRuntimes())));
     await ending;
     expect(await openWhenAnswered).toBe(0);
-  }, 20_000);
+  });
 });
 
 function turnEnd(eventId: string, cwd: string): AdapterEvent {
@@ -247,10 +247,10 @@ async function pipelined(socketPath: string, events: AdapterEvent[], closes = tr
 
 /**
  * A hook alive that has stopped reading: it sends `event` and reads nothing of the answer, which the server has started
- * to write when this resolves. `readAll` reads it whole at last; `giveUp` closes the connection, once the server has seen
- * it close.
+ * to write when this resolves, within `limit` ms (the case's own limit). `readAll` reads it whole at last; `giveUp`
+ * closes the connection, once the server has seen it close.
  */
-async function stuckHook(socketPath: string, event: AdapterEvent): Promise<{ readAll: () => Promise<string>; giveUp: () => Promise<void> }> {
+async function stuckHook(socketPath: string, event: AdapterEvent, limit: number): Promise<{ readAll: () => Promise<string>; giveUp: () => Promise<void> }> {
   const responses = serverResponses(1);
   const socket: Socket = connect(socketPath);
   socket.on("error", () => undefined);
@@ -264,7 +264,7 @@ async function stuckHook(socketPath: string, event: AdapterEvent): Promise<{ rea
   socket.write(`POST /events HTTP/1.1\r\nHost: localhost\r\nconnection: close\r\ncontent-type: application/json\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
   const [response] = await responses;
   if (response === undefined) throw new Error("the server read no request");
-  await vi.waitFor(() => expect(response.writableEnded).toBe(true), { timeout: 10_000, interval: 10 });
+  await vi.waitFor(() => expect(response.writableEnded).toBe(true), { timeout: limit, interval: 10 });
   expect(response.writableFinished).toBe(false);
   return {
     readAll: async () => {
