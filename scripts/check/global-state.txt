@@ -166,14 +166,7 @@ native/src/code_rule_dsl/logic/lanes.rs::FORMS	shared	shared by design: an execu
 native/src/code_rule_dsl/logic/lanes.rs::MADE	review	
 native/src/code_rule_dsl/logic/lanes.rs::NEXT	review	
 native/src/code_rule_dsl/logic/lanes.rs::SQL	shared	shared by design: an executor or its queues
-native/src/code_rule_dsl/logic/native/setfix.rs::ADOPTED	connection	a connection's own state, keyed by connection in a process map
-native/src/code_rule_dsl/logic/native/setfix.rs::CHANGING	connection	a connection's own state, keyed by connection in a process map
-native/src/code_rule_dsl/logic/native/setfix.rs::COMPONENTS	connection	a connection's own state, keyed by connection in a process map
-native/src/code_rule_dsl/logic/native/setfix.rs::DERIVED	connection	a connection's own state, keyed by connection in a process map
-native/src/code_rule_dsl/logic/native/setfix.rs::INPUTS	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/native/setfix.rs::ONCE	review	
-native/src/code_rule_dsl/logic/native/setfix.rs::SCOPE_PATHS	connection	a connection's own state, keyed by connection in a process map
-native/src/code_rule_dsl/logic/native/setfix.rs::SCOPE_SYMS	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/native/setfix.rs::STORED	connection	the stored tables read, by database: kept across runs with the connection's inputs (INPUTS, batch 4)
 native/src/code_rule_dsl/logic/native/setfix.rs::SYMS	shared	shared by design: one per store file
 native/src/code_rule_dsl/logic/native/setfix/device.rs::TICKETS	review	

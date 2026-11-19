@@ -483,18 +483,44 @@ impl Drop for Modules {
 pub struct Db<'a> {
     at: usize,
     conn: Option<&'a Connection>,
+    /// What the engine keeps for the connection (`connection_data`): alive while the connection is borrowed, or, for
+    /// a detached one, while its holder keeps it (`detached`).
+    data: DataRef,
 }
+
+/// A pointer to a connection's `ConnData`, the `Arc`'s.
+#[derive(Clone, Copy)]
+struct DataRef(std::ptr::NonNull<ConnData>);
+// SAFETY: `ConnData` is `Send + Sync`; the pointer is read only while the data lives (`Db`).
+unsafe impl Send for DataRef {}
+unsafe impl Sync for DataRef {}
 
 impl<'a> Db<'a> {
     pub fn of(conn: &'a Connection) -> Self {
-        Db { at: connection_scope(conn), conn: Some(conn) }
+        // SAFETY: the client data of the open `conn` (`client`), alive while `conn` is borrowed.
+        let client = unsafe { &*client(conn) };
+        Db { at: client.0, conn: Some(conn), data: DataRef(std::ptr::NonNull::from(&*client.1)) }
     }
-    /// The scope alone: a job off the connection's thread.
-    pub fn detached(self) -> Db<'static> {
-        Db { at: self.at, conn: None }
+    /// The scope alone, for a job off the connection's thread, and the connection's data, which the job holds while
+    /// it runs.
+    ///
+    /// # Safety
+    /// The returned `Db` is used only while the returned `Arc` lives.
+    pub unsafe fn detached(self) -> (Db<'static>, Arc<ConnData>) {
+        // SAFETY: `data` points into an `Arc` alive while `self` is (the connection's client data).
+        let keep = unsafe {
+            Arc::increment_strong_count(self.data.0.as_ptr());
+            Arc::from_raw(self.data.0.as_ptr())
+        };
+        (Db { at: self.at, conn: None, data: self.data }, keep)
     }
     pub fn at(&self) -> usize {
         self.at
+    }
+    /// What the engine keeps for the connection (decision 0442).
+    pub fn data(&self) -> &ConnData {
+        // SAFETY: alive while `self` may be used (`Db::of`, `Db::detached`).
+        unsafe { self.data.0.as_ref() }
     }
     pub fn sql(&self) -> rusqlite::Result<&'a Connection> {
         self.conn.ok_or_else(|| rusqlite::Error::ModuleError("SQL read by a stratum off the run's thread (decision 0113): it has only its connection's scope".into()))
@@ -557,36 +583,83 @@ fn node_tables() -> &'static [NodeTables] {
     NODE_TABLES.get().map_or(&[], Vec::as_slice)
 }
 
-pub fn connection_scope(db: &Connection) -> usize {
-    const KEY: &std::ffi::CStr = c"rerail.connection-scope";
-    // Each close bumps the generation: a thread's last connection with its hook set (`LAST`) is known to have it
-    // until some connection closes (whose address the next one may take), without asking SQLite on every lookup.
+/// What the engine keeps for one connection (decision 0442): its own values, by type, each made as it is first asked
+/// for (`get`). It lives in the connection's client data and is dropped as the connection closes, after `Forget::scope`
+/// has taken what it frees elsewhere. A job off the connection's thread holds it through its [`Db`].
+#[derive(Default)]
+pub struct ConnData {
+    values: parking_lot::Mutex<HashMap<std::any::TypeId, Arc<dyn std::any::Any + Send + Sync>>>,
+}
+
+impl ConnData {
+    /// The connection's value of type `T`, made the first time it is asked for.
+    pub fn get<T: Default + Send + Sync + 'static>(&self) -> Arc<T> {
+        let v = Arc::clone(self.values.lock().entry(std::any::TypeId::of::<T>()).or_insert_with(|| Arc::new(T::default())));
+        v.downcast::<T>().expect("a connection's value's type is its key")
+    }
+    /// The connection's value of type `T`, if it was made.
+    pub fn get_if_any<T: Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+        let v = self.values.lock().get(&std::any::TypeId::of::<T>()).cloned()?;
+        v.downcast::<T>().ok()
+    }
+}
+
+/// The connection's client data: its scope (its handle when first seen) and its values.
+type Client = (usize, Arc<ConnData>);
+
+const KEY: &std::ffi::CStr = c"rerail.connection-scope";
+
+/// The client data of `db`, set the first time it is asked for: the connection's scope, and its values.
+fn client(db: &Connection) -> *const Client {
+    // Each close bumps the generation: a thread's last connection with its client data set (`LAST`) is known to have
+    // it until some connection closes (whose address the next one may take), without asking SQLite on every lookup.
     static CLOSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    thread_local!(static LAST: std::cell::Cell<(usize, u64)> = const { std::cell::Cell::new((0, u64::MAX)) });
-    unsafe extern "C" fn closed(at: *mut std::os::raw::c_void) {
+    thread_local!(static LAST: std::cell::Cell<(usize, u64, usize)> = const { std::cell::Cell::new((0, u64::MAX, 0)) });
+    unsafe extern "C" fn closed(client: *mut std::os::raw::c_void) {
         CLOSES.fetch_add(1, Ordering::AcqRel);
-        let at = at as usize;
+        // SAFETY: the pointer `client` set, given back once as the connection closes.
+        let client = unsafe { Box::from_raw(client.cast::<Client>()) };
+        let at = client.0;
         BOUND.lock().retain(|(h, _), _| *h != at);
         REGISTERED.lock().retain(|(h, _), _| *h != at);
         VIEWS.lock().retain(|(h, _), _| *h != at);
         UNRESOLVED.lock().remove(&at);
         SETUP.lock().remove(&at);
         if let Some(forget) = FORGET.get() {
-            (forget.scope)(at);
+            (forget.scope)(at, &client.1);
         }
+        drop(client);
     }
     let handle = unsafe { db.handle() };
     let closes = CLOSES.load(Ordering::Acquire);
-    if LAST.get() == (handle as usize, closes) {
-        return handle as usize;
+    let last = LAST.get();
+    if (last.0, last.1) == (handle as usize, closes) {
+        return last.2 as *const Client;
     }
-    unsafe {
-        if rusqlite::ffi::sqlite3_get_clientdata(handle, KEY.as_ptr()).is_null() {
-            rusqlite::ffi::sqlite3_set_clientdata(handle, KEY.as_ptr(), handle.cast(), Some(closed));
+    // SAFETY: `handle` is `db`'s, open; the client data set here is a `Client` box, freed by `closed` alone.
+    let client = unsafe {
+        let mut p = rusqlite::ffi::sqlite3_get_clientdata(handle, KEY.as_ptr());
+        if p.is_null() {
+            p = Box::into_raw(Box::new((handle as usize, Arc::new(ConnData::default())) as Client)).cast();
+            rusqlite::ffi::sqlite3_set_clientdata(handle, KEY.as_ptr(), p, Some(closed));
         }
-    }
-    LAST.set((handle as usize, closes));
-    handle as usize
+        p as *const Client
+    };
+    LAST.set((handle as usize, closes, client as usize));
+    client
+}
+
+/// The scope of what the engine keeps for `db`: its handle when first seen, reused by a connection opened after it
+/// closes, whose own values (`connection_data`) start empty.
+pub fn connection_scope(db: &Connection) -> usize {
+    // SAFETY: the client data of the open `db` (`client`), freed only as it closes.
+    unsafe { (*client(db)).0 }
+}
+
+/// What the engine keeps for `db` (decision 0442): its own values, dropped as it closes.
+pub fn connection_data(db: &Connection) -> Arc<ConnData> {
+    // SAFETY: as `connection_scope`.
+    unsafe { Arc::clone(&(*client(db)).1) }
 }
 
 /// A view of one bound input that a run read in place and did not make in SQL (`plan`): the input, the input's columns
@@ -680,7 +753,7 @@ pub fn reuse(db: &Connection) -> Result<()> {
     drop(registered);
     VIEWS.lock().retain(|(h, _), _| *h != at);
     if let Some(forget) = FORGET.get() {
-        (forget.engine)(at);
+        (forget.engine)(&connection_data(db));
     }
     Ok(())
 }
@@ -688,8 +761,8 @@ pub fn reuse(db: &Connection) -> Result<()> {
 /// What the evaluator keeps per connection, dropped with it: `scope` when the connection closes (its symbols,
 /// paths and plans with its relations), `engine` when a run reuses it (its relations and components alone).
 pub struct Forget {
-    pub scope: fn(usize),
-    pub engine: fn(usize),
+    pub scope: fn(usize, &ConnData),
+    pub engine: fn(&ConnData),
 }
 
 static FORGET: std::sync::OnceLock<Forget> = std::sync::OnceLock::new();

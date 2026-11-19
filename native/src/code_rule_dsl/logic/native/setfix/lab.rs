@@ -28,7 +28,7 @@
 //! skipped, with its reason on stderr. Captures stop at 2 GB in all.
 
 use super::spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Source, Start};
-use super::{DERIVED, InRel, Interner, input_of, is_dead, scope, symbols};
+use super::{InRel, Interner, input_of, is_dead, on, symbols};
 use rusqlite::{Connection, params_from_iter};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -97,7 +97,7 @@ fn rows_of(rel: &InRel) -> impl Iterator<Item = Vec<i64>> + '_ {
 
 /// The rows of the run's table `table` (columns `c0…`, `types`), from the engine where it holds them, else SQL.
 fn table_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner) -> super::Result<Vec<Vec<i64>>> {
-    if let Some(rel) = DERIVED.lock(scope(conn)).get(&(scope(conn), table.to_owned())).cloned() {
+    if let Some(rel) = on(conn).derived.lock().get(table).cloned() {
         return Ok(rows_of(&rel).collect());
     }
     let cols: Vec<String> = (0..types.len()).map(|c| format!("c{c}")).collect();
@@ -184,10 +184,10 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
     let mut bytes = 0u64;
     for (k, src) in sources.iter().enumerate() {
         let (rel, base): (Arc<InRel>, bool) = match src {
-            Source::Native(table) => (DERIVED.lock(scope(conn)).get(&(scope(conn), table.clone())).cloned().ok_or_else(|| format!("no native relation {table}"))?, false),
+            Source::Native(table) => (on(conn).derived.lock().get(table.as_str()).cloned().ok_or_else(|| format!("no native relation {table}"))?, false),
             Source::Input(key) => (input_of(conn, key, &mut syms).map_err(|e| e.to_string())?, key.base),
             Source::Version(table, ver) => {
-                let held = DERIVED.lock(scope(conn)).get(&(scope(conn), table.clone())).cloned().ok_or_else(|| format!("no native relation {table}"))?;
+                let held = on(conn).derived.lock().get(table.as_str()).cloned().ok_or_else(|| format!("no native relation {table}"))?;
                 let v = match ver { super::spec::Ver::New => Some(held), super::spec::Ver::Old => held.version_view(super::Ver::Old), super::spec::Ver::Minus => held.version_view(super::Ver::Minus), super::spec::Ver::Plus => held.version_view(super::Ver::Plus) };
                 (v.ok_or_else(|| format!("{table} has no version"))?, false)
             }

@@ -239,30 +239,15 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix/device.rs", "ARENA"),
     // Which connections hold tables or views a run left in SQL: state of the connections, not a result kept.
     ("code_rule_dsl/logic/plan.rs", "TEMP_LEFT"),
-    // Each live connection's path and symbols, by its scope; dropped when it closes (`setfix::forget_scope`).
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     ("code_rule_dsl/logic/lanes.rs", "ALL"),
     ("code_rule_dsl/logic/lanes.rs", "CPU"),
     ("code_rule_dsl/logic/lanes.rs", "BATCHES"),
     ("code_rule_dsl/logic/lanes.rs", "FORMS"),
     ("code_rule_dsl/logic/lanes.rs", "DONE"),
     ("code_rule_dsl/logic/lanes.rs", "QUEUED"),
-    ("code_rule_dsl/logic/native/setfix.rs", "ADOPTED"),
-    ("code_rule_dsl/logic/native/setfix.rs", "CHANGING"),
-    ("code_rule_dsl/logic/native/setfix.rs", "COMPONENTS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "DERIVED"),
-    ("code_rule_dsl/logic/native/setfix.rs", "INPUTS"),
     ("code_rule_dsl/logic/native/setfix.rs", "STORED"),
     ("code_rule_dsl/logic/native/setfix.rs", "SYMS"),
-    // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
-    // A live connection's file and symbol table, by its handle (dropped as it closes, `forget_scope`): state of the
-    // connections, not a result kept.
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114 §4): which
     // pending atoms no committed row may hold yet, not a result kept.

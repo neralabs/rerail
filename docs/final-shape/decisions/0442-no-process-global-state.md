@@ -65,3 +65,13 @@ by any caller in the process, so two callers of different trust could not be kep
     move with the pool into `Shared` (step 5).
   - Not done yet: `WAVES` (the process's count of waves, for a thread with no run's context) and `WARM_FAULTS` (the
     process's exit status under `RERAIL_WARM=list`).
+- Step 4 (the connection), first part:
+  - Each connection holds the engine's values for it in its SQLite client data (`vtab::ConnData`, by type). They are
+    dropped as it closes, after `Forget::scope` has taken what it frees on a thread of its own.
+  - A `Db` points at them. An attached `Db` borrows its connection, which cannot close meanwhile. A detached one (a
+    stratum's job off the connection's thread) is made with the `Arc` its holder keeps (`plan::Strand`'s last field).
+  - setfix's per-connection maps (COMPONENTS, DERIVED, ADOPTED, INPUTS, CHANGING, SCOPE_PATHS, SCOPE_SYMS), each a
+    process map keyed by the connection's address, are one `OnConn` on the connection. `accel::sharded::ByScope`,
+    their sharded lock, is gone with them.
+  - Still keyed by address: vtab's BOUND, REGISTERED, VIEWS, UNRESOLVED and SETUP, plan's TEMP_LEFT, atoms' RESERVED,
+    and setfix's STORED (by database).

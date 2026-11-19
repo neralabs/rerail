@@ -7416,7 +7416,9 @@ fn const_tok(t: &Term) -> Option<Tok> {
 /// A stratum's run off the run's thread, and the atoms' arena of its scope (whose new atoms it reserves).
 /// Its third part: the device waves its job flushed and the launches they held (`lanes::wave`), credited to the run's
 /// thread when the strand is taken back, as its relations are: a level's launches a job ran are the level's wave.
-struct Strand<'a>(Run<'a, 'static>, Arc<crate::content_store::atoms::Atoms>, (u64, u64));
+/// Its last field keeps the connection's data (`vtab::ConnData`) while the strand's detached `Db` reads it: dropped
+/// after the run (fields drop in order).
+struct Strand<'a>(Run<'a, 'static>, Arc<crate::content_store::atoms::Atoms>, (u64, u64), Arc<crate::code_rule_dsl::facts::vtab::ConnData>);
 
 // SAFETY: a strand holds no connection (`Db::detached`, whose SQL is an error) and no answer hook (`strand` makes it
 // with neither). Its model, relations and maps are its own. What it shares with the run is read-only while it runs: the
@@ -7507,8 +7509,10 @@ impl<'a> Run<'a, '_> {
     fn strand(&mut self, reads: &BTreeSet<String>, rules: &[u64], resolve: &[&str]) -> Result<Strand<'a>> {
         let arena = super::native::component::prime(&self.db)?;
         let model = self.model.fork(self.versions.whole(self.version), reads, rules, resolve.iter().copied())?;
+        // SAFETY: the strand holds `keep` while its `db` is used (`Strand`'s last field, dropped after its run).
+        let (db, keep) = unsafe { self.db.detached() };
         Ok(Strand(Run {
-            db: self.db.detached(),
+            db,
             model,
             views: Arc::clone(&self.views),
             made: HashSet::new(),
@@ -7531,7 +7535,7 @@ impl<'a> Run<'a, '_> {
             logging: None,
             answer_logs: HashMap::new(),
             quiet: Arc::clone(&self.quiet),
-        }, arena, (0, 0)))
+        }, arena, (0, 0), keep))
     }
 
     /// A strand for a component of maintained forms (decision 0117): each form's pieces read `reads` (its
@@ -7545,9 +7549,11 @@ impl<'a> Run<'a, '_> {
         }
         let fields: Vec<Fields<'_>> = forms.iter().map(|f| vs.whole(f.0)).collect();
         let model = self.model.fork_with(&|r: &str| fields.iter().find_map(|f| f.arity(r)).unwrap_or(0), reads, rules);
+        // SAFETY: the strand holds `keep` while its `db` is used (`Strand`'s last field, dropped after its run).
+        let (db, keep) = unsafe { self.db.detached() };
         Ok(Strand(Run {
             version: forms[0].0,
-            db: self.db.detached(),
+            db,
             model,
             views: Arc::clone(&self.views),
             made: HashSet::new(),
@@ -7569,13 +7575,13 @@ impl<'a> Run<'a, '_> {
             logging: None,
             answer_logs: HashMap::new(),
             quiet: Arc::clone(&self.quiet),
-        }, arena, (0, 0)))
+        }, arena, (0, 0), keep))
     }
 
     /// Takes back a component of forms' strand (`strand_forms`): per form, its relations `own` and what the strand
     /// learnt of them and of its rules.
     fn absorb_forms(&mut self, s: Strand<'a>, forms: &[(usize, BTreeSet<String>, Vec<u64>)]) {
-        let Strand(mut run, _, waves) = s;
+        let Strand(mut run, _, waves, _) = s;
         super::lanes::wave::credit(waves);
         let vs = Arc::clone(&self.versions);
         for (form, own, rules) in forms {
@@ -7588,7 +7594,7 @@ impl<'a> Run<'a, '_> {
     /// Takes back a strand of the stratum `scc` that ran: its relations, and what its model learnt of them and of
     /// its rules (`rules`, their digests).
     fn absorb(&mut self, s: Strand<'a>, scc: &BTreeSet<String>, rules: &[u64]) {
-        let Strand(run, _, waves) = s;
+        let Strand(run, _, waves, _) = s;
         super::lanes::wave::credit(waves);
         self.model.absorb(self.versions.whole(self.version), run.model, scc, rules);
         self.native_rels.extend(run.native_rels.into_iter().filter(|r| scc.contains(r)));
