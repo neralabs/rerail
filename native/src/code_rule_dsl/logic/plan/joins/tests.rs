@@ -406,7 +406,15 @@ fn a_slow_line_is_bounded_on_every_path() {
     assert_eq!(limit_again(1.5, 0.0, 50.0, 300.0), f * 1.5 * 50.0);
     // Neither order has done a row: the one that goes on may double its work before the next comparison.
     assert_eq!(limit_again(f64::INFINITY, 201_431.0, 423.0, 201_431.0), 2.0 * 201_431.0);
-    assert_eq!(limit_again(f64::INFINITY, 0.0, 423.0, 0.0), 1.0);
+    assert_eq!(limit_again(f64::INFINITY, 0.0, 423.0, 0.0), 2.0);
+    // A replacement that starts its counts again (`base` 0) and is cut with no row done at each limit: the limit grows
+    // with each cut, so a row that costs a million rows of work is reached within 20 cuts, never cut at 2 for ever.
+    let (mut limit, mut cuts) = (2.0, 0);
+    while limit < 1e6 {
+        limit = limit_again(f64::INFINITY, 0.0, 209.0, limit);
+        cuts += 1;
+    }
+    assert!(cuts <= 20, "{cuts} cuts");
     for (rate, base, left, work) in [(0.0, 0.0, 0.0, 0.0), (f64::INFINITY, 0.0, 0.0, 7.0), (1e9, 1e9, 1e9, 1e9)] {
         assert!(limit_again(rate, base, left, work).is_finite(), "no order goes on unlimited: {rate} {base} {left} {work}");
     }

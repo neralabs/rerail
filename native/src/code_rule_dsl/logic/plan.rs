@@ -9368,9 +9368,16 @@ impl<'a> Run<'a, '_> {
                     let work = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64;
                     let due = match &handoff[line] {
                         Some(h) => Some(h.limit),
+                        // A probe with a whole plan (O168) runs one or the other in a wave, under one budget: due at
+                        // the later of the two orders' checks, none where either is flagged. Its probe order flagged
+                        // and its budget taken from the whole order, it was due at once at each chunk, never checked
+                        // again (the probe's check skips a flagged order), and cut at each row: SLF001's `qualname`
+                        // on 1,644 PostHog files, 405,000 cuts of 1 row of work in 60 s.
                         None => keys.get(line).copied().flatten().and_then(|key| {
                             let k = line.wrapping_sub(nseeds);
-                            joins::next_due(key, if line < nseeds { &orders[line].1 } else { wholes.get(&k).unwrap_or(&probes[k].2) })
+                            if line < nseeds { return joins::next_due(key, &orders[line].1); }
+                            let probe = joins::next_due(key, &probes[k].2);
+                            match wholes.get(&k) { Some(w) => probe.zip(joins::next_due(key, w)).map(|(a, b)| a.max(b)), None => probe }
                         }),
                     };
                     (line, due.map(|d| (d - work).max(1.0) as u64))

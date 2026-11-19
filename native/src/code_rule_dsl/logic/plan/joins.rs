@@ -443,10 +443,12 @@ pub(super) fn measured_below(sampled: bool, in_handoff: bool) -> bool {
 
 /// Decision 0271: the limit of the order that goes on at a replacement's cut, before the two are compared again: past
 /// the work `base` it has done (none, for the old order placed back), `slow_factor` times its work per row `rate`
-/// over the `left` rows left. An order that has done no row (`rate` infinite) may double the work, at least the cut's
-/// `work`, before the next comparison. Always finite: no order goes on unlimited.
+/// over the `left` rows left. An order that has done no row (`rate` infinite) may double the work, the larger of what
+/// it has done and the cut's `work`, before the next comparison: a replacement placed starts its counts again (`base`
+/// 0), and `base` plus the larger of the two gave it its cut's work again: the limit it was just cut at, so a row
+/// costing more than that was cut with none done at each limit for ever. Always finite: no order goes on unlimited.
 pub(super) fn limit_again(rate: f64, base: f64, left: f64, work: f64) -> f64 {
-    base + if rate.is_finite() { slow_factor() * rate * left.max(1.0) } else { base.max(work).max(1.0) }
+    if rate.is_finite() { base + slow_factor() * rate * left.max(1.0) } else { 2.0 * base.max(work).max(1.0) }
 }
 
 /// A handoff made, or ended with the old order going on (`back`).
