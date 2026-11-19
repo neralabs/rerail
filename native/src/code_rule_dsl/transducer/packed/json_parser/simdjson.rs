@@ -109,7 +109,7 @@ fn encode_16(kernel: rerail_simdjson::Kernel, kinds: &rerail_simdjson::Kinds, va
     use crate::code_rule_dsl::tape::f16;
     let Some((lang, tag, z)) = formats::run_16(GrammarDialect::Json) else { return Ok(None) };
     let src = source.as_bytes();
-    let walk = |jsonc: bool| -> Result<(f16::Writer<'static>, [u8; 32], Option<String>), Refusal> {
+    let walk = |jsonc: bool| -> Result<(f16::Writer, [u8; 32], Option<String>), Refusal> {
         // About a node for every 8 bytes: the writer grows past it.
         let mut w = f16::Writer::new(lang, src, tag, z, false, src.len() / 8 + 16);
         let mut numbers: Vec<u32> = Vec::new();

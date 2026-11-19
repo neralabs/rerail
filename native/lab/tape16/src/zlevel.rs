@@ -118,8 +118,8 @@ pub fn print(title: &str, r: &Report) {
     println!();
 }
 
-/// Decision 0399 §6, R13 at scale: each file's format 16 and 16z tapes by the writer's ops in CLIF (their Rust)
-/// and by the reference writer, byte for byte; each writer's time.
+/// Decision 0399 §6, R13 at scale: each file's format 16 and 16z tapes by the writer (the ops in CLIF, through
+/// their Rust) and by the reference writer, byte for byte; each writer's time.
 #[derive(Default)]
 pub struct Ops {
     pub files: usize,
@@ -144,11 +144,11 @@ pub fn ops(files: &[&File]) -> Result<Ops, String> {
         r.nodes += t.len() as u64;
         for (k, z) in [false, true].into_iter().enumerate() {
             let (t0, i0) = (std::time::Instant::now(), crate::measure::retired().0);
-            let want = f16::write_from(lang, &t, &number, &f.source, f.tag, z)?;
+            let want = f16::reference::write_from(lang, &t, &number, &f.source, f.tag, z)?;
             r.ns_ref[k] += t0.elapsed().as_nanos() as u64;
             r.in_ref[k] += crate::measure::retired().0 - i0;
             let (t0, i0) = (std::time::Instant::now(), crate::measure::retired().0);
-            let got = f16::ops::write_from(lang, &t, &number, &f.source, f.tag, z)?;
+            let got = f16::write_from(lang, &t, &number, &f.source, f.tag, z)?;
             r.ns_ops[k] += t0.elapsed().as_nanos() as u64;
             r.in_ops[k] += crate::measure::retired().0 - i0;
             let bytes = |w: &Written| match w {

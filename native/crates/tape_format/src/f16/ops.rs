@@ -20,7 +20,7 @@ macro_rules! call {
     }};
 }
 
-/// The ops compiled by the JIT (decision 0399 §6, R15), a test's: what `OpsWriter` calls in place of their Rust.
+/// The ops compiled by the JIT (decision 0399 §6, R15), a test's: what `Writer` calls in place of their Rust.
 #[cfg(test)]
 pub(super) struct Jit {
     _module: rerail_clif::jit::Writer,
@@ -66,8 +66,10 @@ const ZBLOCK_MAX: usize = 4 * PIECE_MAX + w::lz4_bound(PIECE_MAX as u64) as usiz
 /// What a fresh byte of the tape's buffer holds: in tests not zero, so a byte the ops do not write shows.
 const FRESH: u8 = if cfg!(test) { 0xa5 } else { 0 };
 
-/// A document's writer whose ops are the CLIF ones: `f16::Writer`'s API.
-pub struct OpsWriter {
+/// Format 16 or 16z written in one pass as a parser goes (decision 0399 §2), by the writer's ops in CLIF (§6)
+/// through their Rust: `f16::Writer`. Its API and its bytes are the hand-written reference writer's
+/// (`reference::Writer`, whose doc says what each op writes where), which the tests check it against (R13, R16).
+pub struct Writer {
     state: Box<State>,
     /// The parts' buffers, by `part::*`, each its capacity long.
     parts: [Vec<u8>; part::COUNT],
@@ -82,8 +84,10 @@ pub struct OpsWriter {
     pub(super) jit: Option<&'static Jit>,
 }
 
-impl OpsWriter {
-    /// `f16::Writer::new`: 16z where `z`.
+impl Writer {
+    /// A writer of a document of `source` in `lang`, of about `nodes` nodes, in 16z where `z`, with each block's
+    /// presence where `blocks`. Its parts' room is reserved for `nodes` nodes, their side lists' usual share and the
+    /// source's newline index: more nodes grow them.
     pub fn new(lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
         let source_len = source.len() as u64;
         let wd = lang.widths;
@@ -130,7 +134,9 @@ impl OpsWriter {
         let caps: [usize; part::COUNT] = [
             kinds.len() + 8,
             64 * OPEN as usize,
-            if z { w::HEAD16 as usize + ZBLOCK_MAX + 64 } else { w::HEAD16 as usize + count * stride + 64 },
+            // 16: the tape is this part (R4): its blocks, then the tail's room at `finish` (the side lists' usual share,
+            // their part starts, the newline index), so a tape within the hint is not moved.
+            if z { w::HEAD16 as usize + ZBLOCK_MAX + 64 } else { w::HEAD16 as usize + count * stride + 8 + nodes / 2 + 16 * (count + 1) + lines.len() + 9 * 4 * count + 64 + 8 },
             count * TABLE as usize,
             2 * SIDE_AREA as usize,
             64,
@@ -153,7 +159,7 @@ impl OpsWriter {
         }
         parts[part::OUT as usize].fill(FRESH);
         parts[part::SEEN as usize].fill(0xff);
-        let mut wr = OpsWriter { state: Box::new(State::default()), parts, presence_words: (kind_words, field_words), keep_blocks: blocks, z, #[cfg(test)] fixed: None, #[cfg(test)] jit: None };
+        let mut wr = Writer { state: Box::new(State::default()), parts, presence_words: (kind_words, field_words), keep_blocks: blocks, z, #[cfg(test)] fixed: None, #[cfg(test)] jit: None };
         for (k, &len) in lens.iter().enumerate() {
             *wr.part_mut(&mut state, k) = Part { at: 0, cap: 0, len };
         }
@@ -287,7 +293,7 @@ impl OpsWriter {
         std::ptr::from_mut::<State>(&mut self.state).cast::<u8>()
     }
 
-    /// `f16::Writer::open`.
+    /// The next node opened, of `number`, at `start` (`w_open`): its index.
     pub fn open(&mut self, number: u32, start: u64) -> usize {
         let (i, open) = (self.state.n as usize, self.state.open_len as usize);
         self.reserve(part::OPEN, (open + 1) * OPEN as usize);
@@ -317,7 +323,7 @@ impl OpsWriter {
         i
     }
 
-    /// `f16::Writer::close`.
+    /// The innermost open node closed at `end` (`w_close`).
     pub fn close(&mut self, end: u64) {
         // A close makes the closing node's block final only once a later block has begun.
         let open = self.state.open_len as usize;
@@ -333,14 +339,14 @@ impl OpsWriter {
         call!(self, w_close(desc, end));
     }
 
-    /// `f16::Writer::leaf`.
+    /// A closed node with no children.
     pub fn leaf(&mut self, number: u32, start: u64, end: u64) -> usize {
         let i = self.open(number, start);
         self.close(end);
         i
     }
 
-    /// `f16::Writer::commit`.
+    /// The nodes so far final but for the open ones (`w_commit`): no edit reaches before them (decision 0399 §2).
     pub fn commit(&mut self) {
         let blocks = (self.state.n as usize / Z).saturating_sub(self.state.frontier as usize / Z);
         self.reserve_final(blocks);
@@ -349,14 +355,14 @@ impl OpsWriter {
         call!(self, w_commit(desc));
     }
 
-    /// `f16::Writer::retag`.
+    /// Node `i`'s number made `number` (`w_retag`): an edit of a node not yet final.
     pub fn retag(&mut self, i: usize, number: u32) {
         let desc = self.desc();
         // SAFETY: as `open`'s; a code's entry takes no room past its list's.
         call!(self, w_retag(desc, i as u32, number));
     }
 
-    /// `f16::Writer::set_start`.
+    /// Node `i`'s start made `start` (`w_set_start`): an edit of a node not yet final.
     pub fn set_start(&mut self, i: usize, start: u64) {
         let desc = self.desc();
         // SAFETY: as `open`'s.
@@ -368,7 +374,8 @@ impl OpsWriter {
         (self.state.bad != 0).then_some((self.state.bad, self.state.bad_node))
     }
 
-    /// `f16::Writer::finish`: the tape and its presence.
+    /// The tape and its presence (`w_finish_blocks`, then `w_finish_tail`); `Err` where an op failed, with the
+    /// first failure's code (`fail`) and node.
     pub fn finish(mut self) -> Result<Finished, String> {
         self.finish_ops()?;
         let count = (self.state.n as usize).div_ceil(Z);
@@ -386,8 +393,22 @@ impl OpsWriter {
         // SAFETY: as `open`'s.
         let mut r = call!(self, w_finish_blocks(desc));
         if r == 0 {
-            // The tail's room, the blocks' laid parts now known.
-            let need = self.len_of(part::OUT) + self.len_of(part::LAID) + 16 * (count + 1) + self.len_of(part::LINES) + self.len_of(part::CKPT) + 9 * 4 * count + 64;
+            // The tail's room, the blocks' laid parts now known. In 16, `w_finish_tail`'s own: the last block's
+            // columns moved down to its rows, then the laid parts, their starts, the newline index (so a tape within
+            // the writer's hint stays where it is: R4). In 16z, its checkpoints and piece index too.
+            let (laid, lines) = (self.len_of(part::LAID), self.len_of(part::LINES));
+            let need = if self.z {
+                self.len_of(part::OUT) + laid + 16 * (count + 1) + lines + self.len_of(part::CKPT) + 9 * 4 * count + 64
+            } else {
+                let s = &self.state;
+                let blocks_end = if count == 0 {
+                    w::HEAD16 as usize
+                } else {
+                    let rows = s.n as usize - (count - 1) * Z;
+                    w::HEAD16 as usize + (count - 1) * s.stride as usize + rows * (s.at[4] as usize / Z) + rows.div_ceil(K) * s.cw as usize
+                };
+                blocks_end + laid + 16 * (count + 1) + lines + 8 * 6 + 8
+            };
             self.reserve(part::OUT, need);
             let desc = self.desc();
             // SAFETY: as `open`'s.
@@ -413,10 +434,6 @@ fn finished(out: Vec<u8>, presence: &[u8], (kind_words, field_words): (usize, us
     Ok(Finished { tape, presence })
 }
 
-/// `f16::write_from` by the ops in CLIF.
-pub fn write_from<T: crate::tape::Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], tag: u8, z: bool) -> Result<Written, String> {
-    super::write_with(OpsWriter::new(lang, source, tag, z, false, t.len()), t.len(), super::nodes_of(t, number))
-}
 
 /// The CLIF LZ4 compressor alone (a test's): its state, its tables, a piece's room.
 #[cfg(test)]
@@ -454,7 +471,7 @@ impl Lz {
 /// reserved (sizing it from bounds is tier 2's, R17).
 #[cfg(all(test, target_os = "macos"))]
 pub(super) mod device {
-    use super::{FRESH, OpsWriter, State, Z, finished, part};
+    use super::{FRESH, Writer, State, Z, finished, part};
     use crate::f16::{Finished, Lang};
     use metal::{CompileOptions, Device, MTLResourceOptions, MTLSize};
 
@@ -482,14 +499,14 @@ kernel void replay(device uchar* r [[buffer(0)]], device const ulong* c [[buffer
     pub(in crate::f16) struct DeviceOps {
         device: Device,
         /// The host's run of the calls, for the room each part needs; and the writer as made, for the region.
-        host: OpsWriter,
-        made: OpsWriter,
+        host: Writer,
+        made: Writer,
         calls: Vec<[u64; 4]>,
     }
 
     impl DeviceOps {
         pub(in crate::f16) fn new(device: &Device, lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
-            DeviceOps { device: device.clone(), host: OpsWriter::new(lang, source, tag, z, blocks, nodes), made: OpsWriter::new(lang, source, tag, z, blocks, nodes), calls: Vec::new() }
+            DeviceOps { device: device.clone(), host: Writer::new(lang, source, tag, z, blocks, nodes), made: Writer::new(lang, source, tag, z, blocks, nodes), calls: Vec::new() }
         }
         pub(in crate::f16) fn open(&mut self, number: u32, start: u64) -> usize {
             self.calls.push([0, number.into(), start, 0]);

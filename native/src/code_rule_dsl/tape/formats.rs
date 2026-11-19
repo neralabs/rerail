@@ -217,7 +217,7 @@ pub(super) struct TreeOps {
     language: GrammarDialect,
     lang: &'static Lang,
     tag: u8,
-    w: f16::Writer<'static>,
+    w: f16::Writer,
     /// The open nodes' ends.
     ends: Vec<u32>,
     numbers: rustc_hash::FxHashMap<Code, u32>,

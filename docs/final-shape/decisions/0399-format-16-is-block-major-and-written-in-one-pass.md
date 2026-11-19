@@ -286,12 +286,24 @@ reads' (`ID_BASE`), since the translators look a function's family up by its num
 compiles every op into one JIT module, each calling the others. R13's cases run three ways against the reference
 writer, byte for byte in 16 and 16z with the presence: the generated Rust (`the_clif_ops_write_the_references_tape`),
 the JIT (`the_jit_ops_write_the_references_tape`, `OpsWriter` calling the JIT's ops in place of the Rust's), and
-Metal (`the_metal_ops_write_the_references_tape`: one kernel thread replays the recorded calls over the state and
+Metal (`the_device_writes_the_references_tape`: one kernel thread replays the recorded calls over the state and
 its parts in one shared buffer). Each fails when the tail's padding write is taken out of the CLIF. On the device
 the region does not grow: the test gives each part the room the host's run of the same calls reserved; sizing the
 region from bounds before a parse is tier 2's (R17), with a part found full the device's failure (fail::FULL).
 
-Next: the host's `Writer` as the ops (R16), tier 2 (R17).
+**Done (2026-11-18): the host's writer is the ops (R16).** `f16::Writer` is the ops in CLIF through their Rust
+(`f16/ops.rs`); the hand-written writer is `f16::reference::Writer`, compiled only for the tests and for the lab,
+which turns on the tape crate's `reference` feature (no build of the engine does), and so is liblz4's compressor:
+the reader keeps liblz4's decompressor. `the_writer_is_the_clif_ops` locks it: a broken node is the ops' failure,
+by its code and node, and `write_from` writes the reference's tape in 16 and 16z. Tests of the writer's behaviour
+(R4's "the tape is the writer's room", R6's late edits, broken nodes) now run the ops; tests of the reference's
+own state (`blocks_finish_when_closed`) and `Tape16::blocks`, a 16-to-16z conversion only tests use, stay with
+the reference. For R4 the host reserves at `finish` exactly what `w_finish_tail` checks in 16 (the last block's
+columns moved down, then the laid parts, their starts, the newline index), and the 16 tape's part starts with
+the reference's hint for the tail, so a tape within the hint is the writer's room. The lab's `zops` now compares
+`f16::write_from` with `f16::reference::write_from`: the same bytes on all 6,731 captured files.
+
+Next: tier 2 (R17).
 
 ## Requirements, each with its test
 

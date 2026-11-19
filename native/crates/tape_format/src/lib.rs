@@ -327,7 +327,7 @@ impl<Out, F: FnMut(Writer) -> Result<Out, Redo>> Sink<Out> for F {
 
 /// The format 16 writer the nodes are passed to as they are committed (`Writer::pass`).
 struct Passing {
-    w: f16::Writer<'static>,
+    w: f16::Writer,
     number: std::sync::Arc<dyn Fn(u32) -> Option<u32> + Send + Sync>,
     /// Each code id's number, as far as resolved.
     numbers: Vec<u32>,

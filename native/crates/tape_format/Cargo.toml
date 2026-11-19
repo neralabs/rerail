@@ -5,6 +5,11 @@ edition = "2024"
 publish = false
 description = "The engine's tape as bytes: format 15 (v9np), its constants and a writer a parser writes it with; format 16 and its fixed blocks; one API over them, read in place (0293)."
 
+[features]
+# The hand-written reference writer of format 16 (`f16::reference`), which the writer's ops are checked against: the
+# tests', and the lab's (decision 0399 §6, R16). No build of the engine turns it on.
+reference = []
+
 [dependencies]
 # The view a tape's reads are told where it lies by (decision 0310), without the reads' IR.
 rerail-clif = { path = "../clif", default-features = false }

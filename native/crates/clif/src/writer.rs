@@ -1,8 +1,8 @@
 //! The tape's writer in CLIF (decision 0399 §6): format 16's ops (`open`, `close`, `leaf`, `commit`, `retag`,
 //! `set_start`, `finish`) written once, for the Rust backend, the JIT and the kernels, over one region of memory
 //! whose layout is fixed when it is made: the writer's `State`, then its parts, each named by its offset from the
-//! state and its capacity. The reference is `rerail_tape_format::f16::Writer`, which these ops write the same bytes
-//! as.
+//! state and its capacity. The reference is `rerail_tape_format::f16::reference::Writer`, written by hand, which these
+//! ops write the same bytes as; the tape crate's writer (`f16::Writer`) is these ops.
 //!
 //! An op returns 0, or its failure (`fail`): the first is kept in the state, and a full part names itself, its
 //! op having written nothing past the part's capacity. A cell of the tape is written as a word: its bytes in a
