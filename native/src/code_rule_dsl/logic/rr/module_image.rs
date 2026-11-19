@@ -20,7 +20,7 @@ pub fn encode(m: &Module) -> Result<Vec<u8>, String> {
         b.copy(v, r);
     }
     let program = |r: &str| !r.starts_with("module_");
-    b.copy_fields(v, &program);
+    b.fields().copy_fields(v, &program);
     let mut about = v.about_kept(&program);
     let s = |t: &str| Value::Str(t.into());
     let n = |k: usize| Value::Int(k as i64);
@@ -69,7 +69,7 @@ pub fn encode(m: &Module) -> Result<Vec<u8>, String> {
     for d in &p.printed {
         put("module_printed", vec![s(d)]);
     }
-    b.set_about(&about);
+    b.fields().set_about(&about);
     b.finish_bytes()
 }
 

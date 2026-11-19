@@ -422,12 +422,12 @@ impl Header for crate::code_rule_dsl::logic::program_image::Builder<'static> {
     fn declare_cols<C: AsRef<str>, T: AsRef<str>>(&mut self, rel: &str, cols: impl IntoIterator<Item = (C, T)>) {
         let cols: Vec<(C, T)> = cols.into_iter().collect();
         let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_ref(), t.as_ref())).collect();
-        self.declare(rel, &pairs);
+        self.fields().declare(rel, &pairs);
     }
     fn edit<X>(&mut self, read: impl FnOnce(&Self) -> X, field: for<'a> fn(&'a X) -> Field<'a>, f: impl FnOnce(&mut X)) {
         let mut x = read(self);
         f(&mut x);
-        self.set_field(field(&x));
+        self.fields().set_field(field(&x));
     }
 }
 
@@ -604,9 +604,9 @@ pub fn keep_declared_kind_sets(v: &std::sync::Arc<crate::code_rule_dsl::logic::p
     }
     let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(v);
     for (set, kinds) in add {
-        FieldsMut::declare(&mut b, set, &[("k", "sym")]);
+        FieldsMut::declare(&mut b.fields(), set, &[("k", "sym")]);
         let rows: Vec<List<Value>> = kinds.iter().map(|k| [Value::Str(k.as_str().into())].into()).collect();
-        FieldsMut::set_facts(&mut b, set, &rows);
+        FieldsMut::set_facts(&mut b.fields(), set, &rows);
     }
     b.finish().map(|(v, _)| v).map_err(Error::Syntax)
 }
@@ -703,7 +703,7 @@ pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Resu
                     l.prog.push_setting(if output { "output" } else { "input" }.to_owned(), format!("{name}({text})"));
                 }
                 for n in &names {
-                    if output { l.prog.add_output(n) } else { l.prog.add_input(n) }
+                    if output { l.prog.fields().add_output(n) } else { l.prog.fields().add_input(n) }
                 }
             }
             S::Lattice(_) => {
@@ -763,7 +763,7 @@ pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Resu
         }
     }
     for (rel, rows) in own_facts {
-        l.prog.add_facts(&rel, &rows);
+        l.prog.fields().add_facts(&rel, &rows);
     }
     for (text, line) in layouts {
         let (rel, facts) = layout(&l.prog, &text).map_err(|m| Error::Syntax(format!("line {line}: `.layout {}`: {m}", text.trim())))?;
@@ -1046,7 +1046,7 @@ impl Lowerer {
             }
             for rel in F::input_names(p).into_iter().filter(|r| !helpers.contains(r)) {
                 if seeded.inputs.insert(rel.clone()) {
-                    self.prog.add_input(&rel);
+                    self.prog.fields().add_input(&rel);
                 }
             }
             let natives = F::natives(p);
@@ -1102,10 +1102,10 @@ impl Lowerer {
         let p = &mut self.prog;
         for r in p.declared_names() {
             if seeded.decls.contains(&r) {
-                p.undeclare(&r);
+                p.fields().undeclare(&r);
             }
         }
-        p.retain_inputs(|r| !seeded.inputs.contains(r));
+        p.fields().retain_inputs(|r| !seeded.inputs.contains(r));
         p.edit(|b| b.natives(), |n| Field::Natives(n), |n| n.retain(|r, _| !seeded.natives.contains(r)));
         p.edit(|b| b.kindsets(), |k| Field::Kindsets(k), |k| k.retain(|r, _| !seeded.kindsets.contains(r)));
         p.edit(|b| b.lattice(), |d| Field::Lattice(d), |d| d.retain(|r, _| !seeded.lattice.contains(r)));
@@ -1250,7 +1250,7 @@ pub fn relinked(v: &crate::code_rule_dsl::logic::program_image::Version, rename:
     if edits {
         renamed_fields(&mut b, v, &to, rename, &into);
     } else {
-        b.copy_fields(v, &|r: &str| !r.starts_with("module_"));
+        b.fields().copy_fields(v, &|r: &str| !r.starts_with("module_"));
     }
     let bytes = b.finish_bytes().map_err(Error::Syntax)?;
     crate::code_rule_dsl::logic::program_image::Version::open(&bytes).map_err(Error::Syntax)
@@ -1289,14 +1289,14 @@ pub fn link_versions(modules: Vec<Module>) -> Result<LinkedVersions, Error> {
     // The lowerer's header is the modules' linked so far: what the next module's renames are checked against.
     let first = relinked(&v, &Default::default(), &[])?;
     let mut stated = 0;
-    append_fields(&mut l.prog, &*first, &mut stated, l.stated);
+    append_fields(&mut l.prog.fields(), &*first, &mut stated, l.stated);
     l.stated = stated;
     l.appended = first.size();
     let mut appended = Vec::new();
     for m in modules {
         let (own, b_stated) = l.link(m)?;
         appended.push((std::sync::Arc::clone(&own), l.stated, b_stated));
-        append_fields(&mut l.prog, &*own, &mut l.stated, b_stated);
+        append_fields(&mut l.prog.fields(), &*own, &mut l.stated, b_stated);
     }
     let lowered = whole_front(l)?;
     Ok(LinkedVersions { first, appended, lowered })
@@ -1473,35 +1473,35 @@ fn renamed_fields(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_
     use crate::code_rule_dsl::logic::program_facts::Field;
     use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut, ProgramFields as F};
     let to = |r: &str| to(r).unwrap_or_else(|| r.to_owned());
-    b.set_about(&v.about_kept(&|r: &str| !r.starts_with("module_")));
+    b.fields().set_about(&v.about_kept(&|r: &str| !r.starts_with("module_")));
     for rel in F::declared_names(v) {
         if into.contains_key(rename.get(&rel).map_or(rel.as_str(), String::as_str)) {
             continue;
         }
         let cols: Vec<(String, String)> = F::columns_of(v, &rel).unwrap_or_default().into_iter().map(|(c, t)| (to(&c), t)).collect();
         let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-        FieldsMut::declare(b, &to(&rel), &pairs);
+        FieldsMut::declare(&mut b.fields(), &to(&rel), &pairs);
     }
     for rel in F::fact_names(v) {
-        b.set_facts(&to(&rel), &F::fact_rows(v, &rel));
+        b.fields().set_facts(&to(&rel), &F::fact_rows(v, &rel));
     }
     let names = |l: Vec<String>| -> Vec<String> { l.iter().map(|r| to(r)).collect() };
-    b.set_inputs(&names(F::input_names(v)));
-    b.set_outputs(&names(F::output_names(v)));
+    b.fields().set_inputs(&names(F::input_names(v)));
+    b.fields().set_outputs(&names(F::output_names(v)));
     fn keyed<X>(m: BTreeMap<String, X>, to: &dyn Fn(&str) -> String) -> BTreeMap<String, X> {
         m.into_iter().map(|(k, x)| (to(&k), x)).collect()
     }
-    b.set_field(Field::Lattice(&keyed(F::lattice(v), &to)));
-    b.set_field(Field::Kindsets(&keyed(F::kindsets(v), &to)));
-    b.set_field(Field::Qualifiers(&keyed(F::qualifiers(v), &to)));
-    b.set_field(Field::Tapes(&keyed(F::tapes(v), &to)));
+    b.fields().set_field(Field::Lattice(&keyed(F::lattice(v), &to)));
+    b.fields().set_field(Field::Kindsets(&keyed(F::kindsets(v), &to)));
+    b.fields().set_field(Field::Qualifiers(&keyed(F::qualifiers(v), &to)));
+    b.fields().set_field(Field::Tapes(&keyed(F::tapes(v), &to)));
     let natives: BTreeMap<String, _> = F::natives(v).into_iter().map(|(k, mut n)| {
         n.rename_reads(&to);
         (to(&k), n)
     }).collect();
-    b.set_field(Field::Natives(&natives));
-    b.set_field(Field::Nullary(&F::nullary(v).iter().map(|r| to(r)).collect()));
-    b.set_field(Field::Demand(&names(F::demand(v))));
+    b.fields().set_field(Field::Natives(&natives));
+    b.fields().set_field(Field::Nullary(&F::nullary(v).iter().map(|r| to(r)).collect()));
+    b.fields().set_field(Field::Demand(&names(F::demand(v))));
     // Its layouts (decision 0361), each fact's columns' relation renamed too.
     let layouts: BTreeMap<String, _> = F::layouts(v)
         .into_iter()
@@ -1510,7 +1510,7 @@ fn renamed_fields(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_
             (to(&rel), facts)
         })
         .collect();
-    b.set_field(Field::Layouts(&layouts));
+    b.fields().set_field(Field::Layouts(&layouts));
     let mut shapes = F::shapes(v);
     for shape in &mut shapes {
         shape.head = to(&shape.head);
@@ -1519,7 +1519,7 @@ fn renamed_fields(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_
             *a = to(a);
         }
     }
-    b.set_field(Field::Shapes(&shapes));
+    b.fields().set_field(Field::Shapes(&shapes));
 }
 
 /// The scope's own declarations taken out of a module's program linked in it (`rr::link_seeded_version`), but for
@@ -2838,7 +2838,7 @@ impl Lowerer {
         }
         self.violations.push(Violation { name: name.clone(), arity: cols.len(), code, node, places: false, columns: cols.clone(), message, tag });
         self.decl(name.clone(), cols, &[])?;
-        self.prog.add_output(&name);
+        self.prog.fields().add_output(&name);
         Ok(())
     }
 
@@ -3087,7 +3087,7 @@ impl Lowerer {
                 let s = place(self, sub, "tape");
                 out.push(LitAt::Op(n, s));
                 if !self.prog.has_input(rel) {
-                    self.prog.add_input(rel);
+                    self.prog.fields().add_input(rel);
                     self.prog.declare_cols(rel, cols.iter().copied());
                     self.prog.edit(|b| b.tapes(), |t| Field::Tapes(t), |t| t.entry(rel.to_owned()).or_default().extend(super::tape_type::tape_columns(rel)));
                 }
@@ -3098,7 +3098,7 @@ impl Lowerer {
                 let s = place(self, sub, "digest");
                 out.push(LitAt::Op(n, s));
                 if !self.prog.has_input("tree_digest") {
-                    self.prog.add_input("tree_digest");
+                    self.prog.fields().add_input("tree_digest");
                     self.prog.declare_cols("tree_digest", [("n", "node"), ("s", "sym")]);
                 }
             }
@@ -3401,7 +3401,7 @@ impl Lowerer {
             T::Str(k) => {
                 let row: crate::code_rule_dsl::logic::front::List<Value> = [Value::Str(k.into())].into();
                 if !self.prog.fact_rows(demand).contains(&row) {
-                    self.prog.add_facts(demand, &[row]);
+                    self.prog.fields().add_facts(demand, &[row]);
                 }
                 return Ok(());
             }
@@ -3656,7 +3656,7 @@ impl Lowerer {
             self.prog.declare_cols("tape", ["n", "par", "size", "depth"].map(|c| (c, "int")));
         }
         if !self.prog.has_input("tape") {
-            self.prog.add_input("tape");
+            self.prog.fields().add_input("tape");
         }
     }
 
@@ -3817,7 +3817,7 @@ impl Lowerer {
         let within = crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
         self.prog.declare_cols(&within, [("n", "node"), ("a", "node")]);
         if !self.prog.has_input(within) {
-            self.prog.add_input(within);
+            self.prog.fields().add_input(within);
         }
         let below = |me: &mut Self, neg: bool| me.emit_atom(within, vec![n.clone(), a.clone()], neg, false);
         let Some(stop) = stop else {
@@ -4102,7 +4102,7 @@ impl Lowerer {
             return Err(Error::Syntax(format!("`{pattern}`: a pattern's subject is a variable")));
         };
         if !self.prog.has_input("ast_match") {
-            self.prog.add_input("ast_match");
+            self.prog.fields().add_input("ast_match");
             let cols = [("p", "sym"), ("n", "node"), ("g", "sym"), ("c", "node")];
             self.prog.declare_cols("ast_match", cols.iter().copied());
         }
@@ -4124,7 +4124,7 @@ impl Lowerer {
     /// `rx_span` as an input of the program (`facts::vtab::syntax`'s `Extra` makes it).
     fn rx_span_input(&mut self) {
         if !self.prog.has_input("rx_span") {
-            self.prog.add_input("rx_span");
+            self.prog.fields().add_input("rx_span");
             let cols = [("p", "sym"), ("c", "node"), ("j", "int"), ("g", "sym"), ("m", "node")];
             self.prog.declare_cols("rx_span", cols.iter().copied());
         }
@@ -5556,7 +5556,7 @@ pub fn undone_with(
 ) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, String> {
     let mut dropped = BTreeSet::new();
     let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(v);
-    undo(&mut b, &mut KeptRules { v, dropped: &mut dropped });
+    undo(&mut b.fields(), &mut KeptRules { v, dropped: &mut dropped });
     b.retain(|r| !dropped.contains(v.rel_name(r.head().rel())));
     Ok(b.finish()?.0)
 }

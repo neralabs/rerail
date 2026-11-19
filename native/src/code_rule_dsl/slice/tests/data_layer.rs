@@ -49,7 +49,7 @@ fn authored(options: &serde_json::Map<String, serde_json::Value>) -> std::sync::
         with_options(document, options);
     }
     let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&program);
-    b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Policies(&documents));
+    b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Policies(&documents));
     b.finish().unwrap().0
 }
 

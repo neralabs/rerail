@@ -120,17 +120,17 @@ impl RulePass for Normalize {
             }
             if self.sentinel[v.rel_of(d.name()).expect("declared").index()] {
                 let cols: Vec<(&str, &str)> = std::iter::once(("__presence", "int")).chain(d.cols().map(|(c, t)| (v.text(c), v.text(t)))).collect();
-                b.declare(v.text(d.name()), &cols);
+                b.fields().declare(v.text(d.name()), &cols);
             }
         }
         for l in &about.lattice {
             if self.sentinel[l.rel.index()] {
-                b.set_lattice_keys(v.rel_name(l.rel), l.keys + 1);
+                b.fields().set_lattice_keys(v.rel_name(l.rel), l.keys + 1);
             }
         }
-        b.add_nullary(&empty);
+        b.fields().add_nullary(&empty);
         for (r, rows) in std::mem::take(&mut self.facts) {
-            b.set_fact_cells(v.rel_name(r), rows);
+            b.fields().set_fact_cells(v.rel_name(r), rows);
         }
         Ok(())
     }
@@ -275,9 +275,9 @@ impl ProgramPass for StatedApart {
             let rows: Vec<Vec<Cell>> = v.facts(v.rel_atom(rel)).expect("stated facts").rows().map(|r| r.collect()).collect();
             let d = v.decl(v.rel_atom(rel)).ok_or_else(|| format!("{name} has stated facts and no declaration"))?;
             let cols: Vec<(&str, &str)> = d.cols().map(|(c, t)| (v.text(c), v.text(t))).collect();
-            b.drop_facts(name);
-            b.declare(&apart, &cols);
-            b.set_fact_cells(&apart, rows);
+            b.fields().drop_facts(name);
+            b.fields().declare(&apart, &cols);
+            b.fields().set_fact_cells(&apart, rows);
             let args: Vec<String> = (0..cols.len()).map(|i| format!("rr_s{i}")).collect();
             let args: Vec<T<'_>> = args.iter().map(|a| T::Var(a)).collect();
             let to = b.rel(&apart);
@@ -318,8 +318,8 @@ impl<F: Fn(super::RuleId) -> bool, S: AsRef<str>, T: AsRef<str>> ProgramPass for
     fn run(&mut self, _: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let b = w.overlay()?;
         b.retain(|r| (self.keep)(r.id()));
-        b.set_inputs(self.inputs);
-        b.set_outputs(self.outputs);
+        b.fields().set_inputs(self.inputs);
+        b.fields().set_outputs(self.outputs);
         Ok(())
     }
 }
@@ -336,11 +336,11 @@ impl<S: AsRef<str>> ProgramPass for PartOf<'_, S> {
     const NAME: &'static str = "part's fields";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let b = w.overlay()?;
-        b.set_inputs(self.inputs);
-        b.set_outputs(self.outputs);
-        b.keep_relation_fields(self.fields.natives, self.fields.lattice, self.fields.gates);
+        b.fields().set_inputs(self.inputs);
+        b.fields().set_outputs(self.outputs);
+        b.fields().keep_relation_fields(self.fields.natives, self.fields.lattice, self.fields.gates);
         // The request record of the relations whose rules the part holds (decision 0331): the record is by rule.
-        b.keep_asked(&|rel| cx.v().rel(rel).is_some_and(|r| cx.v().heads(r).next().is_some()));
+        b.fields().keep_asked(&|rel| cx.v().rel(rel).is_some_and(|r| cx.v().heads(r).next().is_some()));
         Ok(())
     }
 }
@@ -351,7 +351,7 @@ pub struct SetAnswers<'a>(pub &'a BTreeMap<String, Vec<String>>);
 impl ProgramPass for SetAnswers<'_> {
     const NAME: &'static str = "answers";
     fn run(&mut self, _: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        w.overlay()?.set_answers(self.0);
+        w.overlay()?.fields().set_answers(self.0);
         Ok(())
     }
 }
@@ -362,7 +362,7 @@ pub struct SetQualifiers<'a>(pub &'a [(&'a str, &'a str)]);
 impl ProgramPass for SetQualifiers<'_> {
     const NAME: &'static str = "qualifiers";
     fn run(&mut self, _: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        w.overlay()?.set_qualifiers(self.0);
+        w.overlay()?.fields().set_qualifiers(self.0);
         Ok(())
     }
 }

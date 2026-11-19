@@ -55,10 +55,10 @@ pub fn program(docs: &[Value]) -> Result<Arc<Version>, Error> {
         }
         headers.push(header);
     }
-    b.declare(HEAD, &[("policy", "sym"), ("clause", "sym"), ("d", "int"), ("n", "node")]);
-    b.set_outputs(&[HEAD]);
+    b.fields().declare(HEAD, &[("policy", "sym"), ("clause", "sym"), ("d", "int"), ("n", "node")]);
+    b.fields().set_outputs(&[HEAD]);
     if !headers.is_empty() {
-        b.set_field(Field::Policies(&headers));
+        b.fields().set_field(Field::Policies(&headers));
     }
     b.finish().map(|(v, _)| v).map_err(bad)
 }

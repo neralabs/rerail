@@ -892,7 +892,7 @@ fn without_requests(p: &Version) -> Arc<Version> {
     }
     let mut b = crate::code_rule_dsl::logic::program_image::Builder::derive(p);
     for rel in p.declared_names().iter().filter(|r| gone.contains(*r)) {
-        b.undeclare(rel);
+        b.fields().undeclare(rel);
     }
     for r in rules_of(p, |h| !gone.contains(h)) {
         b.keep(p, r);
@@ -3588,7 +3588,7 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
             let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&read);
             for rel in requests {
                 if read.rules().any(|r| read.rel_name(r.head().rel()) == rel) && !outputs.iter().any(|o| o == rel) {
-                    b.add_output(rel);
+                    b.fields().add_output(rel);
                 }
             }
             // Then simplified and pruned again, as `corpus::run_observed` prepares it: identical relations merge
@@ -4500,7 +4500,7 @@ fn with_asked(text: &str, asked: &[(&str, &[&[&str]])]) -> Arc<crate::code_rule_
     let read = parse_version(text).expect("parses");
     let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&read);
     let asked = asked.iter().map(|(rel, by)| ((*rel).to_owned(), by.iter().map(|r| r.iter().map(|s| (*s).to_owned()).collect()).collect())).collect();
-    b.set_asked(&asked);
+    b.fields().set_asked(&asked);
     b.finish().unwrap().0
 }
 

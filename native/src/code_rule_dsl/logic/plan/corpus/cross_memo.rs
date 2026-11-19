@@ -95,13 +95,13 @@ pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
         natives.entry(rel.clone()).or_insert_with(|| native.clone());
     }
     if natives.len() != natives_were {
-        b.set_field(Field::Natives(&natives));
+        b.fields().set_field(Field::Natives(&natives));
     }
     let missing: BTreeSet<String> = needed.iter().filter(|rel| !v.declares(rel)).cloned().collect();
     for rel in &missing {
         let Some(cols) = image.columns_of(rel) else { continue };
         let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-        b.declare(rel, &pairs);
+        b.fields().declare(rel, &pairs);
     }
     let mut qualifiers = v.qualifier_map().map_err(Error::Plan)?;
     let mut qualified = false;
@@ -112,17 +112,17 @@ pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
         qualified |= had.len() != n;
     }
     if qualified {
-        b.set_field(Field::Qualifiers(&qualifiers));
+        b.fields().set_field(Field::Qualifiers(&qualifiers));
     }
     for rel in ProgramFields::fact_names(&*image).iter().filter(|rel| missing.contains(*rel)) {
         if !ProgramFields::has_fact_rows(&**v, rel) {
-            b.add_facts(rel, &ProgramFields::fact_rows(&*image, rel));
+            b.fields().add_facts(rel, &ProgramFields::fact_rows(&*image, rel));
         }
     }
     for input in image.input_names().iter().filter(|rel| missing.contains(*rel)) {
-        b.add_input(input);
+        b.fields().add_input(input);
     }
-    b.add_output(COMPONENT);
+    b.fields().add_output(COMPONENT);
     // A rule the program holds already is taken once (by its hash and its text).
     let held: std::collections::HashMap<u64, Vec<String>> = v.rules().fold(std::collections::HashMap::new(), |mut m, r| {
         m.entry(r.hash()).or_insert_with(Vec::new).push(v.show_rule(r));
@@ -330,7 +330,7 @@ pub(super) fn split(
         for facts in part.all_facts() {
             let rel = part.text(facts.name());
             if !facts.about() && (facts.rows().len() == 0 || WORLD_FACTS.contains(&rel)) {
-                b.drop_facts(rel);
+                b.fields().drop_facts(rel);
             }
         }
         b.finish_overlay().map_err(Error::Plan)?
@@ -436,22 +436,22 @@ pub(super) fn split(
         }
     }
     let mut inputs: Vec<String> = inputs.iter().map(|s| (*s).to_owned()).collect();
-    b.declare(DOCS, &[("d", "int")]);
+    b.fields().declare(DOCS, &[("d", "int")]);
     inputs.push(DOCS.to_owned());
     for rel in memo.keys() {
         let input = format!("{rel}{SUFFIX}");
         let cols = f.columns(rel).unwrap_or_default();
-        b.declare(&input, &cols);
+        b.fields().declare(&input, &cols);
         inputs.push(input.clone());
         let vars: Vec<String> = (0..cols.len()).map(|i| format!("rr_x{i}")).collect();
         let vars: Vec<T<'_>> = vars.iter().map(|x| T::Var(x)).collect();
         b.rule().head(rel.as_str(), &vars).atom(input.as_str(), &vars).finish().map_err(Error::Plan)?;
     }
-    b.set_inputs(&inputs);
+    b.fields().set_inputs(&inputs);
     // Stored, never inlined into its readers (decision 0099): its derived rows are read from its table to be
     // recorded (`record`), and replayed into it.
     let words: Vec<(&str, &str)> = memo.keys().map(|rel| (rel.as_str(), "no_inline")).collect();
-    b.add_qualifiers(&words);
+    b.fields().add_qualifiers(&words);
     let (version, _) = b.finish().map_err(Error::Plan)?;
     Ok((Some(Plan { components, memo, syms, digest }), version))
 }
@@ -546,7 +546,7 @@ pub(super) fn keep_copies(cross: &mut super::lower::Lowered, plan: &Plan, kept: 
     let (mut made, _) = b.finish().map_err(Error::Plan)?;
     if !natives_gone.is_empty() {
         let mut b = Builder::on(&made);
-        b.keep_relation_fields(&|r| !natives_gone.contains(r), &|_| true, &|_| true);
+        b.fields().keep_relation_fields(&|r| !natives_gone.contains(r), &|_| true, &|_| true);
         made = b.finish_overlay().map_err(Error::Plan)?;
     }
     cross.version = made;

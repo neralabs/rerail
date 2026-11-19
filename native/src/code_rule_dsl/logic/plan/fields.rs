@@ -331,22 +331,22 @@ mod tests {
     use super::super::super::front::{LatticeDecl, Native};
     use super::super::super::program_facts::Field;
     use super::super::super::program_image::{Builder, T, fields::FieldsMut};
-    use super::super::body::{Placed, Versions};
+    use super::super::body::{Freeze as _, Placed, Versions};
     use super::Fields;
 
     /// A version's fields are read once, shared by its clones, and say what was written.
     #[test]
     fn fields_are_read_once_and_say_what_was_written() {
         let mut b = Builder::base();
-        b.declare("e", &[("a", "int"), ("b", "sym")]);
-        b.add_input("e");
-        b.add_input("s");
-        b.add_output("best");
-        b.add_output("far");
+        b.fields().declare("e", &[("a", "int"), ("b", "sym")]);
+        b.fields().add_input("e");
+        b.fields().add_input("s");
+        b.fields().add_output("best");
+        b.fields().add_output("far");
         b.rule().head("best", &[T::Var("x"), T::Var("y")]).atom("e", &[T::Var("x"), T::Var("y")]).finish().unwrap();
-        b.set_field(Field::Lattice(&[("best".to_owned(), LatticeDecl { keys: 1, ty: "sym".into(), merge: Some("type_join".into()), widen: Some(2) })].into()));
-        b.set_field(Field::Natives(&[("far".to_owned(), Native::DfsFirst { edge: "e".into(), target: "s".into(), roots: Some("s".into()) })].into()));
-        let placed = Placed::whole(b.finish().unwrap().0);
+        b.fields().set_field(Field::Lattice(&[("best".to_owned(), LatticeDecl { keys: 1, ty: "sym".into(), merge: Some("type_join".into()), widen: Some(2) })].into()));
+        b.fields().set_field(Field::Natives(&[("far".to_owned(), Native::DfsFirst { edge: "e".into(), target: "s".into(), roots: Some("s".into()) })].into()));
+        let placed = b.freeze().unwrap();
         let f = Fields::of(&placed).unwrap();
         assert!(std::ptr::eq(f.about, Fields::of(&placed.clone()).unwrap().about));
         assert_eq!(f.inputs().collect::<Vec<_>>(), ["e", "s"]);
@@ -367,9 +367,9 @@ mod tests {
         // A whole program added (a maintained form) is a whole version of its own.
         let mut vs = vs;
         let mut form = Builder::base();
-        form.declare("e", &[("a", "int")]);
-        form.add_input("e");
-        let k = vs.push(Placed::whole(form.finish().unwrap().0));
+        form.fields().declare("e", &[("a", "int")]);
+        form.fields().add_input("e");
+        let k = vs.push(form.freeze().unwrap());
         assert_eq!(k, 1);
         assert_eq!((vs.whole(k).inputs().collect::<Vec<_>>(), vs.whole(k).columns("e")), (vec!["e"], Some(vec![("a", "int")])));
         assert!(vs.fields(2).is_none());

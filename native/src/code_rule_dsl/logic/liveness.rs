@@ -149,20 +149,20 @@ pub fn program(v: &Version) -> Result<Arc<Version>, String> {
             targets.insert(rel.to_owned());
         }
     }
-    b.declare(COUNTS, &[("rel", "symbol"), ("what", "symbol"), ("n", "number")]);
+    b.fields().declare(COUNTS, &[("rel", "symbol"), ("what", "symbol"), ("n", "number")]);
     let library = v.declares("doc") && v.declares("loaded");
     for t in &targets {
         let cols = v.columns_of(t).unwrap_or_default();
         let col_refs: Vec<(&str, &str)> = cols.iter().map(|(n, ty)| (n.as_str(), ty.as_str())).collect();
         let c_names: Vec<String> = (0..cols.len()).map(|i| format!("c{i}")).collect();
         let vars: Vec<T<'_>> = c_names.iter().map(|n| T::Var(n)).collect();
-        b.declare(&live(t), &col_refs);
+        b.fields().declare(&live(t), &col_refs);
         count(&mut b, t, MEASURES[0], t, &vars)?;
         count(&mut b, t, MEASURES[1], &live(t), &vars)?;
         // Keys: the first column's values, of all rows and of the live ones.
         let key = |of: &str| format!("liveof_key{of}_{t}");
         for (name, rel) in [(key(""), t.clone()), (key("l"), live(t))] {
-            b.declare(&name, &col_refs[..1]);
+            b.fields().declare(&name, &col_refs[..1]);
             let mut args = vec![T::Var("k")];
             args.extend((1..cols.len()).map(|_| T::Wild));
             b.rule().head(name.as_str(), &[T::Var("k")]).atom(rel.as_str(), &args).finish()?;
@@ -172,7 +172,7 @@ pub fn program(v: &Version) -> Result<Arc<Version>, String> {
         // Rows about a loaded document: a library's.
         if library && cols[0].1 == "node" {
             for (name, rel, what) in [(format!("liveof_lib_{t}"), t.clone(), MEASURES[4]), (format!("liveof_libl_{t}"), live(t), MEASURES[5])] {
-                b.declare(&name, &col_refs);
+                b.fields().declare(&name, &col_refs);
                 let (d, p) = (T::Var("liveof_vd"), T::Var("liveof_vp"));
                 b.rule()
                     .head(name.as_str(), &vars)
@@ -185,7 +185,7 @@ pub fn program(v: &Version) -> Result<Arc<Version>, String> {
             }
         }
     }
-    super::program_image::fields::FieldsMut::add_output(&mut b, COUNTS);
+    super::program_image::fields::FieldsMut::add_output(&mut b.fields(), COUNTS);
     Ok(b.finish()?.0)
 }
 

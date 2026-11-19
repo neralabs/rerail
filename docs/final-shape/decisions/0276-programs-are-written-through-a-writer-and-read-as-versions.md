@@ -594,11 +594,29 @@ Progress (2026-11-18):
     (`plan::identity_parts`), under `rerail.relation/v2`; not of the tree's `Debug` text written again from the handles
     (`tree_text`, gone, with its frozen golden text). Every store's kept strata are cold once. Locked by
     `a_relations_identity_is_its_versions_hashes`.
-  - *Met by what exists (`fields()`, `freeze`, `pass`).* The grouped field writer is `program_image::fields::FieldsMut`
-    (step 3's fields), which every pass writes through; `Builder`'s own setters are its implementation, not a second
-    surface a pass picks between. `Pipeline` is the `pass` wrapper: it takes each step's span, writer form, delta and
-    trace. Of 139 `Placed::whole` calls, 4 wrap a builder just finished, so `freeze -> Placed` would change only
-    those; not made.
+  - *Done (`fields()`, 2026-11-19).* An edit's fields are written through one sub-writer, `Builder::fields()`
+    (`program_image::fields::FieldsW`), grouped by field: declarations, inputs and outputs, facts, and the `.about`
+    fields. `Builder`'s own setters (31 of them, across `build.rs`, `about.rs` and `fields.rs`) are private to the
+    image, so no pass can pick between two surfaces. `FieldsMut` (an edit of fields alone, which a pass generic over
+    it takes) is `FieldsW`'s, no longer `Builder`'s. The link's `Merged` holds the linked header's builder and writes
+    it through `fields()`. An earlier entry here recorded this as met by `FieldsMut` beside the setters: it was not,
+    since every pass still called the setters.
+  - *Done (`freeze` to `Placed`).* `body::Freeze` freezes a writer to a `Placed`: `freeze` as written,
+    `freeze_placed(order, whole)` with the rules in the pass's own order. A fold numbers the rules afresh, and the
+    builder now says how (`Builder::finish_placing`, from the overlay's order as the fold copies it), so the four
+    passes that kept an order (`demand::overlaid`, `keeps::inline`'s rounds, `inline::copies`, the factorized
+    store's part) read it back from the builder. `inline::renumbered` and its reconstruction from the removed and
+    added ids are gone. Locked by `a_frozen_edit_keeps_its_order_through_a_fold` (an overlay and a fold).
+  - *Done (the `pass` wrapper).* `body::pass(site, span, &p, |p| ..)` takes a pass's profile span and its version
+    trace (§6) once, for the planner's three passes: normalize (`plan.normalize`), inline or store (`plan.inline`;
+    `choose`'s own second span of the same name is gone) and the negation split (`plan.demand`). The span names stay
+    as the profile and decisions 0099 and 0178 cite them, and the sites as 0173's table names them.
+    - *Departure from the sketch:* the closure gets the program, not a writer. A pass opens its writers itself,
+      because inlining writes one edit per unfolding round over the round before (at most eight), so no single
+      writer the wrapper opened could hold it.
+    - *Not ported:* the `Pipeline`'s steps, which already take their span and trace in `Pipeline` (`Stage`); and the
+      run's notes `run.local`, `run.cross`, `session.cut` and `session.maintained`, which note a lowering or a cut,
+      not a pass over a `Placed`.
   - *Measured (dl1, after).* At a26e71b5d, profiling build, the 44-policy batch, images required, CPU, strict, an
     M3 farm host at load 40-50: 48 findings, as every earlier dl1 run recorded; cold 81.7 G instructions (13.9 s), warm
     5.7 G then 3.3 G. The last number recorded before stage 6 (t36, 2026-11-15: 171-179 G cold, 4.5-5 G warm) spans

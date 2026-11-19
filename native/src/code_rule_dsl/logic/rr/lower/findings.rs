@@ -275,11 +275,11 @@ impl<'p> Findings<'_, 'p> {
         let scoped = self.scope_filter()?;
         // A finding is its rule, clause, code, path, line and column (the anchor's 0-based byte column): two findings
         // on one line are two rows. A finding with no column (a place, an error of a file or input) has column 0.
-        self.b.declare("violation", &[("rule", "sym"), ("clause", "sym"), ("code", "sym"), ("path", "sym"), ("line", "int"), ("col", "int")]);
+        self.b.fields().declare("violation", &[("rule", "sym"), ("clause", "sym"), ("code", "sym"), ("path", "sym"), ("line", "int"), ("col", "int")]);
         // A program that derives `violation` itself, in the older five columns, is read at column 0: the caller's
         // (`lowering_tail`'s findings step), for this sees no rules.
         // Where it is already (a printed program's `.output`), else last.
-        self.b.add_output("violation");
+        self.b.fields().add_output("violation");
         // Whether a rule makes a `@place` value: only then can a span or loc `at` hold one.
         let place_values = seen.place_values;
         let (p, l, c, d, v0) = (self.v("rr_p"), self.v("rr_l"), self.v("rr_c"), self.v("rr_d"), self.v("rr_v0"));
@@ -310,8 +310,8 @@ impl<'p> Findings<'_, 'p> {
             self.scope(&mut o, scoped);
             self.close(o)?;
             // Decision 0431 R9: a finding at a node whose document is no file's (a tape value's) is refused by the run.
-            self.b.declare_absent(UNPLACED, &[("clause", "sym")]);
-            self.b.add_output(UNPLACED);
+            self.b.fields().declare_absent(UNPLACED, &[("clause", "sym")]);
+            self.b.fields().add_output(UNPLACED);
             let clause = self.s(&f.name);
             let mut o = self.open(UNPLACED, &[clause]);
             self.put(&mut o, &f.name, &cols, false);
@@ -355,7 +355,7 @@ impl<'p> Findings<'_, 'p> {
             let head = vec![self.s(&policy), self.s(&what), self.s(&code), p.clone(), l.clone(), Tm::Int(0)];
             for rel in [what.as_str(), "doc"] {
                 if self.b.declares(rel) {
-                    self.b.add_input(rel);
+                    self.b.fields().add_input(rel);
                 }
             }
             let syntax = what == "syntax_error";
@@ -391,8 +391,8 @@ impl<'p> Findings<'_, 'p> {
                 ("syntax_error", &[("d", "int"), ("l", "int"), ("msg", "sym")][..]),
                 ("doc", &[("d", "int"), ("path", "sym"), ("module", "sym")][..]),
             ] {
-                self.b.declare_absent(rel, cols);
-                self.b.add_input(rel);
+                self.b.fields().declare_absent(rel, cols);
+                self.b.fields().add_input(rel);
             }
             self.guest_input();
             let body = |me: &mut Self, o: &mut Open| {
@@ -411,7 +411,7 @@ impl<'p> Findings<'_, 'p> {
             // program has tape values (`tape_of`, `sub_tape`).
             if ["tape_of", "sub_tape"].iter().all(|r| self.b.declares(r)) {
                 for rel in ["tape_of", "sub_tape"] {
-                    self.b.add_input(rel);
+                    self.b.fields().add_input(rel);
                 }
                 let at_string = |me: &mut Self, o: &mut Open| {
                     let (p, l, d) = (me.v("rr_p"), me.v("rr_l"), me.v("rr_d"));
@@ -450,19 +450,19 @@ impl<'p> Findings<'_, 'p> {
         // The corpus reads only these documents (`Field::DocScopes`): their facts are the policy's, as the
         // scripts' discovery has them; the drop below still holds for a combined run that reads more.
         if !within.is_empty() || !out.is_empty() {
-            self.b.set_field(crate::code_rule_dsl::logic::program_facts::Field::DocScopes(Some(&[(within.clone(), out.clone())])));
+            self.b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::DocScopes(Some(&[(within.clone(), out.clone())])));
         }
         if within.iter().chain(&out).chain(&report).any(|g| option_entry(g).is_some()) {
-            self.b.declare_absent("option_item", &[("name", "sym"), ("i", "int"), ("v", "sym")]);
-            self.b.add_input("option_item");
+            self.b.fields().declare_absent("option_item", &[("name", "sym"), ("i", "int"), ("v", "sym")]);
+            self.b.fields().add_input("option_item");
         }
-        self.b.declare_absent("doc", &[("d", "int"), ("path", "sym"), ("module", "sym")]);
-        self.b.add_input("doc");
+        self.b.fields().declare_absent("doc", &[("d", "int"), ("path", "sym"), ("module", "sym")]);
+        self.b.fields().add_input("doc");
         // rr_scope_drop(p): a document's path out of the scope.
-        self.b.declare("rr_scope_drop", &[("p", "sym")]);
+        self.b.fields().declare("rr_scope_drop", &[("p", "sym")]);
         let (d, p) = (self.v("d"), self.v("p"));
         if !within.is_empty() {
-            self.b.declare("rr_scope_in", &[("d", "int")]);
+            self.b.fields().declare("rr_scope_in", &[("d", "int")]);
             for g in &within {
                 let mut o = self.open("rr_scope_in", std::slice::from_ref(&d));
                 self.scope_doc(&mut o);
@@ -483,7 +483,7 @@ impl<'p> Findings<'_, 'p> {
         // rr_scope_not(d): a document out of the scope, which a combined run's guards negate (decision 0091): in a
         // pack that reads more documents than this policy's scope, the policy's rules see only the others' rows.
         if !within.is_empty() || !out.is_empty() {
-            self.b.declare(SCOPE_NOT, &[("d", "int")]);
+            self.b.fields().declare(SCOPE_NOT, &[("d", "int")]);
             if !within.is_empty() {
                 let mut o = self.open(SCOPE_NOT, std::slice::from_ref(&d));
                 self.scope_doc(&mut o);
@@ -499,7 +499,7 @@ impl<'p> Findings<'_, 'p> {
         }
         // `.scope report dirs`: a finding in a document under none of them is dropped too.
         if !report.is_empty() {
-            self.b.declare("rr_report_in", &[("d", "int")]);
+            self.b.fields().declare("rr_report_in", &[("d", "int")]);
             for g in &report {
                 let mut o = self.open("rr_report_in", std::slice::from_ref(&d));
                 self.scope_doc(&mut o);
@@ -545,8 +545,8 @@ impl<'p> Findings<'_, 'p> {
 
     /// `guest(g, host, at, grammar)` as an input (`core.rr` declares it; a program without it has it here).
     fn guest_input(&mut self) {
-        self.b.declare_absent("guest", &[("g", "int"), ("host", "int"), ("at", "node"), ("grammar", "sym")]);
-        self.b.add_input("guest");
+        self.b.fields().declare_absent("guest", &[("g", "int"), ("host", "int"), ("at", "node"), ("grammar", "sym")]);
+        self.b.fields().add_input("guest");
     }
 
     /// Decision 0055's settings as `guest_policy` facts, which the corpus runner and the batch read:
@@ -561,7 +561,7 @@ impl<'p> Findings<'_, 'p> {
         if warn {
             let mut all = settings.clone();
             all.push(("severity".to_owned(), "guest_error warning".to_owned()));
-            self.b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&all));
+            self.b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&all));
         }
         // The libraries' `embed`s are made by default: a program that reads the setting and sets none reads
         // `guest_policy("library", "on")`, a stated fact, so `!guest_policy("library", "off")` is decided before the
@@ -572,9 +572,9 @@ impl<'p> Findings<'_, 'p> {
             facts.push(("library".to_owned(), "on".to_owned()));
         }
         if !facts.is_empty() {
-            self.b.declare(GUEST_POLICY, &[("k", "sym"), ("v", "sym")]);
+            self.b.fields().declare(GUEST_POLICY, &[("k", "sym"), ("v", "sym")]);
             let rows: Vec<crate::code_rule_dsl::logic::front::List<Value>> = facts.into_iter().map(|(k, v)| [Value::Str(k.into()), Value::Str(v.into())].into()).collect();
-            self.b.add_facts(GUEST_POLICY, &rows);
+            self.b.fields().add_facts(GUEST_POLICY, &rows);
         }
         findings
     }
@@ -666,7 +666,7 @@ impl<'p> Findings<'_, 'p> {
             let mut all = self.b.settings();
             if !all.contains(&setting) {
                 all.push(setting);
-                self.b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&all));
+                self.b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&all));
             }
         }
         // A code from a column of another type than text: its text, as a code is.
@@ -698,8 +698,8 @@ impl<'p> Findings<'_, 'p> {
         }
         let rel = diagnostic_name(policy, &finding.name, place);
         let pairs: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-        self.b.declare(&rel, &pairs);
-        self.b.add_output(&rel);
+        self.b.fields().declare(&rel, &pairs);
+        self.b.fields().add_output(&rel);
         let mut o = self.open(&rel, &args);
         body(self, &mut o);
         for read in reads {

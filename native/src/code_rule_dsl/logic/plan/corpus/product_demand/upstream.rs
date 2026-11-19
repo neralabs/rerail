@@ -228,9 +228,9 @@ fn install(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTre
         &mut |v, b| {
             use crate::code_rule_dsl::logic::program_image::fields::FieldsMut as _;
             let pairs: Vec<(&str, &str)> = columns.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-            b.declare(&name, &pairs);
+            b.fields().declare(&name, &pairs);
             if !rows.is_empty() {
-                b.set_facts(&name, &rows);
+                b.fields().set_facts(&name, &rows);
             }
             for proof in &proofs {
                 let r = v.rule(proof.rule).expect("a reader of the version");
@@ -243,8 +243,8 @@ fn install(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTre
                 };
                 write_demand(v, r, b, &name, &head, (&name, &guard), &proof.parts)?;
             }
-            b.set_field(Field::Qualifiers(&qualifiers));
-            b.set_field(Field::Demand(&demand));
+            b.fields().set_field(Field::Qualifiers(&qualifiers));
+            b.fields().set_field(Field::Demand(&demand));
             Ok(())
         },
     )?;

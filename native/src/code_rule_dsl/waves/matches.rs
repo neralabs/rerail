@@ -66,18 +66,18 @@ fn joined(prog: &Arc<Version>, more: &Version) -> StoreResult<Arc<Version>> {
     }
     for rel in more.declared_names() {
         let columns = more.columns_of(&rel).unwrap_or_default();
-        b.declare(&rel, &columns.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect::<Vec<_>>());
+        b.fields().declare(&rel, &columns.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect::<Vec<_>>());
     }
     let (mut inputs, mut outputs) = (prog.input_names(), prog.output_names());
     inputs.extend(more.input_names().into_iter().filter(|i| !prog.input_names().contains(i)));
     outputs.extend(more.output_names().into_iter().filter(|o| !prog.output_names().contains(o)));
-    b.set_inputs(&inputs);
-    b.set_outputs(&outputs);
+    b.fields().set_inputs(&inputs);
+    b.fields().set_outputs(&outputs);
     for r in more.rules() {
         b.copy(more, r);
     }
     for rel in more.fact_names() {
-        b.add_facts(&rel, &more.fact_rows(&rel));
+        b.fields().add_facts(&rel, &more.fact_rows(&rel));
     }
     b.finish().map(|(v, _)| v).map_err(invalid)
 }

@@ -107,11 +107,11 @@ pub(super) fn as_outputs_of(v: &std::sync::Arc<Version>, wanted: &[String]) -> R
         let names: Vec<String> = (0..cols.len()).map(|i| format!("c{i}")).collect();
         let args: Vec<T<'_>> = names.iter().map(|n| T::Var(n.as_str())).collect();
         let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-        b.declare(&copy(rel), &pairs);
+        b.fields().declare(&copy(rel), &pairs);
         b.rule().head(copy(rel).as_str(), &args).atom(rel.as_str(), &args).finish().map_err(super::super::Error::Plan)?;
         outputs.push(copy(rel));
     }
-    b.set_outputs(&outputs);
+    b.fields().set_outputs(&outputs);
     b.finish().map(|(v, _)| v).map_err(super::super::Error::Plan)
 }
 
@@ -183,7 +183,7 @@ pub(super) fn fold(
     // The version: the rows as facts, the relations' rules dropped.
     let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(v);
     for (rel, rows) in &folded {
-        b.set_facts(rel, rows);
+        b.fields().set_facts(rel, rows);
     }
     b.retain(|r| !wanted.contains(v.rel_name(r.head().rel())));
     *v = b.finish().map(|(v, _)| v).map_err(super::super::Error::Plan)?;

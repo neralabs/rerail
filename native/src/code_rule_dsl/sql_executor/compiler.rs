@@ -49,10 +49,10 @@ impl CodeRuleSqlExecutor {
         } else {
             let mut b = Builder::on(&program);
             for name in inputs.iter().filter(|name| !read.contains(*name)) {
-                b.undeclare(name);
-                b.drop_facts(name);
+                b.fields().undeclare(name);
+                b.fields().drop_facts(name);
             }
-            b.set_inputs(&inputs.iter().filter(|name| read.contains(*name)).collect::<Vec<_>>());
+            b.fields().set_inputs(&inputs.iter().filter(|name| read.contains(*name)).collect::<Vec<_>>());
             b.finish().map_err(error)?.0
         };
         let lattices = ProgramFields::lattice(&*program);

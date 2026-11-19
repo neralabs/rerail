@@ -253,8 +253,8 @@ fn probes() -> Vec<Probe> {
     // One rule holding each literal form, read back as the image's literals.
     use crate::code_rule_dsl::logic::program_image::{Builder, CmpOp, T};
     let mut b = Builder::base();
-    b.declare("h", &[]);
-    b.declare("n", &[]);
+    b.fields().declare("h", &[]);
+    b.fields().declare("n", &[]);
     let mut o = b.open_rule();
     b.put_head(&mut o, "h", &[]);
     b.put_atom(&mut o, "n", &[], false, false);

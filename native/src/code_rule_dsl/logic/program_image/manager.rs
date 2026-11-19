@@ -1727,7 +1727,7 @@ impl<'s> Pipeline<'s> {
         }
         let v = self.v.clone();
         let mut b = v.builder();
-        b.set_asked(&asked);
+        b.fields().set_asked(&asked);
         let stated = b.finish_overlay()?;
         let cx = Cx { v: &stated, store: stated.analyses(), pass: "the request record stated", decided: &self.decided, asked: None };
         stated.analyses().carry(v.analyses(), &cx, &Delta::of(&v, &stated))?;
@@ -2016,9 +2016,9 @@ pub fn rebase(last: &Arc<Version>, new: &Arc<Version>) -> Result<Option<Arc<Vers
     for r in added {
         b.copy(new, r);
     }
-    b.state_fields_as(last, new);
+    b.fields().state_fields_as(last, new);
     if let Some(asked) = asked {
-        b.set_asked(&asked);
+        b.fields().set_asked(&asked);
     }
     b.finish_overlay().map(Some)
 }
@@ -2062,7 +2062,7 @@ pub fn rebase_output(last: &Arc<Version>, new: &Arc<Version>) -> Result<Option<A
     for r in added {
         b.copy_as_is(new, r);
     }
-    b.state_fields_as(last, new);
+    b.fields().state_fields_as(last, new);
     b.finish_overlay().map(Some)
 }
 

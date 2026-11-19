@@ -119,11 +119,11 @@ mod tests {
     #[test]
     fn added_rows_go_to_the_programs_that_declare_them_and_key_by_value() {
         let mut declares = base();
-        declares.declare("env", &[("k", "symbol"), ("v", "symbol")]);
+        declares.fields().declare("env", &[("k", "symbol"), ("v", "symbol")]);
         let mut not = base();
         let added = Added::settings(&[("a".into(), "1".into()), ("b".into(), "x\ty".into())]).with("declared_ret", Vec::new());
-        added.add_to(&mut declares);
-        added.add_to(&mut not);
+        added.add_to(&mut declares.fields());
+        added.add_to(&mut not.fields());
         let env: Vec<Vec<Value>> = declares.fact_rows("env").iter().map(|r| r.to_vec()).collect();
         assert_eq!(env, [vec![Value::Str("a".into()), Value::Str("1".into())], vec![Value::Str("b".into()), Value::Str("x\ty".into())]]);
         assert!(not.fact_names().is_empty());
@@ -137,11 +137,11 @@ mod tests {
         let tsx = Added::of(&[], &serde_json::json!({"dialect": "tsx"}));
         assert!(!tsx.is_empty());
         let mut named = base();
-        named.set_field(Field::Settings(&[("language".into(), "typescript".into()), ("policy".into(), "\"p\"".into())]));
-        tsx.add_to(&mut named);
+        named.fields().set_field(Field::Settings(&[("language".into(), "typescript".into()), ("policy".into(), "\"p\"".into())]));
+        tsx.add_to(&mut named.fields());
         assert_eq!(named.settings(), [("language".to_owned(), "tsx".to_owned()), ("policy".to_owned(), "\"p\"".to_owned())]);
         let mut unnamed = base();
-        tsx.add_to(&mut unnamed);
+        tsx.add_to(&mut unnamed.fields());
         assert!(unnamed.settings().is_empty());
         assert_ne!(tsx.digest(), Added::default().digest());
         assert_eq!(Added::of(&[], &serde_json::json!({})), Added::default());

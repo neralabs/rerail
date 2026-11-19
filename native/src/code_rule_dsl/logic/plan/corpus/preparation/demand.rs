@@ -36,7 +36,7 @@ pub(super) fn edit_native_rows(b: &mut Builder<'_>, name: &str, drop: &HashSet<S
         };
         (rel_of(b, r), n)
     });
-    b.set_about_rows(name, rows);
+    b.fields().set_about_rows(name, rows);
 }
 
 /// The program's name cell of an about row (column 0).
@@ -301,7 +301,7 @@ impl ProgramPass for ReachForm {
             let seed = format!("{SEED}{rel}");
             let cols: Vec<(String, String)> = input.decl_of(rel).ok_or_else(|| format!("{rel} is not declared"))?.cols().map(|(n, t)| (input.text(n).to_owned(), input.text(t).to_owned())).collect();
             let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-            b.declare(&seed, &cols);
+            b.fields().declare(&seed, &cols);
             let (r, s, e) = (b.atom(rel), b.atom(&seed), b.atom(edge));
             rows.push(vec![p, Cell::Str(r), Cell::Str(s), Cell::Str(e)]);
         }
@@ -403,7 +403,7 @@ impl ProgramPass for UndoInCycles {
             }
         }
         for seed in seeds.keys() {
-            b.undeclare(seed);
+            b.fields().undeclare(seed);
         }
         edit_native_rows(b, "native_reach", &gone, Vec::new());
         edit_native_rows(b, "native_reach_through", &gone, Vec::new());
@@ -559,7 +559,7 @@ impl ProgramPass for NegatedDemand {
         for rel in &demand {
             let name = &names[rel.as_str()];
             let ty = input.text(input.decl_of(rel).ok_or_else(|| format!("{rel} is not declared"))?.cols().next().ok_or("a demanded relation of no columns")?.1).to_owned();
-            b.declare(name, &[("k", ty.as_str())]);
+            b.fields().declare(name, &[("k", ty.as_str())]);
             // Each distinct body once: an atom's text with its key as `k`.
             let mut bodies: BTreeMap<String, &Vec<(String, Vec<TermRef<'_>>, RuleRef<'_>, crate::code_rule_dsl::logic::program_image::Slot)>> = BTreeMap::new();
             for body in wanted.get(rel).into_iter().flatten() {

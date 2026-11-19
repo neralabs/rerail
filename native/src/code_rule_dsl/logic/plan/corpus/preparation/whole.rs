@@ -49,7 +49,7 @@ impl ProgramPass for Projected {
         let inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
         if inputs.iter().any(|i| projected.contains(&i.as_str())) {
             let kept: Vec<String> = inputs.into_iter().filter(|i| !projected.contains(&i.as_str())).collect();
-            w.on()?.set_inputs(&kept);
+            w.on()?.fields().set_inputs(&kept);
         }
         Ok(())
     }
@@ -135,7 +135,7 @@ impl ProgramPass for RetypeHelpers {
             let b = w.on()?;
             for rel in &retyped {
                 let cols: Vec<(&str, &str)> = decls[rel].iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-                b.declare(rel, &cols);
+                b.fields().declare(rel, &cols);
             }
         }
         Ok(())

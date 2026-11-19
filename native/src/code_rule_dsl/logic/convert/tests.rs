@@ -363,7 +363,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     }
     let prog = {
         let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&read);
-        b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&settings));
+        b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&settings));
         b.finish().unwrap_or_else(|e| panic!("{}: {e}", path.display())).0
     };
     // The authored file's clauses over the converter's, with only what `violation` reaches.

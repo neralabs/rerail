@@ -483,7 +483,7 @@ impl<'p> Builder<'p> {
         self.declare(rel, &pairs);
     }
     /// Declares relation `rel`'s columns (names and types), replacing the parent's.
-    pub fn declare(&mut self, rel: &str, cols: &[(&str, &str)]) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn declare(&mut self, rel: &str, cols: &[(&str, &str)]) {
         let a = self.enc.atom(rel);
         self.enc.rel_of_atom(a);
         let ids = cols.iter().map(|&(n, t)| (self.enc.atom(n), self.enc.atom(t))).collect();
@@ -492,7 +492,7 @@ impl<'p> Builder<'p> {
         self.parts_changed = true;
     }
     /// Removes the parent's declaration of `rel`.
-    pub fn undeclare(&mut self, rel: &str) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn undeclare(&mut self, rel: &str) {
         let a = self.enc.atom(rel);
         self.parts.decls.remove(&a);
         if self.parent.is_some_and(|p| p.decl(AtomId(a)).is_some()) {
@@ -515,7 +515,7 @@ impl<'p> Builder<'p> {
         })))
     }
     /// States relation `rel`'s facts, replacing the parent's.
-    pub fn set_facts(&mut self, rel: &str, rows: &[List<Value>]) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_facts(&mut self, rel: &str, rows: &[List<Value>]) {
         let a = self.enc.atom(rel);
         self.enc.rel_of_atom(a);
         let cells = self.rows_of(rows);
@@ -525,7 +525,7 @@ impl<'p> Builder<'p> {
         self.parts_changed = true;
     }
     /// Removes the parent's facts of `rel`.
-    pub fn drop_facts(&mut self, rel: &str) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn drop_facts(&mut self, rel: &str) {
         let a = self.enc.atom(rel);
         self.parts.facts.remove(&a);
         if self.parent.is_some_and(|p| p.facts(AtomId(a)).is_some()) {
@@ -534,7 +534,7 @@ impl<'p> Builder<'p> {
         self.parts_changed = true;
     }
     /// States relation `rel`'s facts as cells of this builder's atoms, replacing the parent's.
-    pub fn set_fact_cells(&mut self, rel: &str, rows: Vec<Vec<Cell>>) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_fact_cells(&mut self, rel: &str, rows: Vec<Vec<Cell>>) {
         let a = self.enc.atom(rel);
         self.enc.rel_of_atom(a);
         let hash = self.hash_cells(rel, false, &rows);
@@ -558,7 +558,7 @@ impl<'p> Builder<'p> {
         self.parts.facts.get(&(a | ABOUT_BIT)).map(|f| f.rows.clone()).unwrap_or_default()
     }
     /// States about relation `name`'s rows, every other about relation kept.
-    pub fn set_about_rows(&mut self, name: &str, rows: Vec<Vec<Cell>>) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_about_rows(&mut self, name: &str, rows: Vec<Vec<Cell>>) {
         self.own_about();
         let a = self.enc.atom(name);
         for &c in super::about::relation_columns(name) {
@@ -591,12 +591,12 @@ impl<'p> Builder<'p> {
         }
         self.parts.owns_about = true;
     }
-    pub fn set_inputs<S: AsRef<str>>(&mut self, names: &[S]) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_inputs<S: AsRef<str>>(&mut self, names: &[S]) {
         let ids = names.iter().map(|n| self.enc.rel_atom_of(n.as_ref())).collect();
         self.parts.inputs = Some((ids, encoder::names_hash(0, names.iter().map(|n| n.as_ref()))));
         self.parts_changed = true;
     }
-    pub fn set_outputs<S: AsRef<str>>(&mut self, names: &[S]) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_outputs<S: AsRef<str>>(&mut self, names: &[S]) {
         let ids = names.iter().map(|n| self.enc.rel_atom_of(n.as_ref())).collect();
         self.parts.outputs = Some((ids, encoder::names_hash(1, names.iter().map(|n| n.as_ref()))));
         self.parts_changed = true;
@@ -638,7 +638,7 @@ impl<'p> Builder<'p> {
     }
     /// States the fields edit `e` states (its declarations, facts, inputs, outputs and `.about` rows, by name), as
     /// this builder's: an edit staged against the same input (`fields::Edit`), its rules this builder's own.
-    pub fn state_fields_of(&mut self, e: &Builder<'_>) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn state_fields_of(&mut self, e: &Builder<'_>) {
         let text = |a: u32| e.enc.text(a).to_owned();
         let value = |c: &Cell| match *c {
             Cell::Int(i) => Value::Int(i),
@@ -721,7 +721,7 @@ impl<'p> Builder<'p> {
         p.about_facts().into_iter().filter(|f| p.text(f.name()) == name).flat_map(|f| f.rows().map(|r| r.collect::<Vec<Cell>>()).collect::<Vec<_>>()).collect()
     }
     /// Adds rows `rows` to relation `rel`'s facts, after the parent's.
-    pub fn add_facts(&mut self, rel: &str, rows: &[List<Value>]) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn add_facts(&mut self, rel: &str, rows: &[List<Value>]) {
         if rows.is_empty() {
             return;
         }
@@ -735,7 +735,7 @@ impl<'p> Builder<'p> {
         self.set_fact_cells(rel, cells);
     }
     /// States the program's other fields (`about_of`), all of them.
-    pub fn set_about(&mut self, about: &Facts) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_about(&mut self, about: &Facts) {
         self.parts.facts.retain(|k, _| k & ABOUT_BIT == 0);
         for (rel, rows) in about {
             let a = self.enc.atom(rel);
@@ -789,23 +789,34 @@ impl<'p> Builder<'p> {
         Version::over(parent, &self.finish_bytes()?)
     }
     /// The version the edit makes: a view, an overlay, or folded (`Builder`'s doc).
-    pub fn finish(mut self) -> Result<(Arc<Version>, Made), String> {
+    pub fn finish(self) -> Result<(Arc<Version>, Made), String> {
+        self.finish_as(false).map(|(v, made, _)| (v, made))
+    }
+    /// The version the edit makes (`finish`), and where it folded, each rule's id in the folded version by its id in
+    /// the edit: a fold numbers the rules from 0, in the edit's order (the parent's kept, then the added). A pass that
+    /// keeps its rules in an order of its own (`Placed`'s) reads its order back through it.
+    pub fn finish_placing(self) -> Result<(Arc<Version>, Made, Option<std::collections::BTreeMap<RuleId, RuleId>>), String> {
+        self.finish_as(true)
+    }
+    fn finish_as(mut self, placing: bool) -> Result<(Arc<Version>, Made, Option<std::collections::BTreeMap<RuleId, RuleId>>), String> {
         let Some(parent) = self.parent else {
-            return Ok((Version::open(&self.finish_bytes()?)?, Made::Folded));
+            return Ok((Version::open(&self.finish_bytes()?)?, Made::Folded, None));
         };
         self.removed.sort_unstable();
         self.removed.dedup();
         if self.enc.rules() == 0 && !self.parts_changed
             && let Some(v) = view(parent, &self.removed)
         {
-            return Ok((v, Made::View));
+            return Ok((v, Made::View, None));
         }
         let size = self.size();
         let overlay = Version::over(parent, &self.finish_bytes()?)?;
         if 2 * size >= parent.size().max(1) {
-            return Ok((Builder::folding_edit(&overlay, parent).finish()?.0, Made::Folded));
+            // `folding_edit` copies the overlay's rules in its order, so the k-th is rule k.
+            let order = placing.then(|| overlay.rules().enumerate().map(|(k, r)| (r.id(), RuleId(k as u32))).collect());
+            return Ok((Builder::folding_edit(&overlay, parent).finish()?.0, Made::Folded, order));
         }
-        Ok((overlay, Made::Overlay))
+        Ok((overlay, Made::Overlay, None))
     }
 }
 

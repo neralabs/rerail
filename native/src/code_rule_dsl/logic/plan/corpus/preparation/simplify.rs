@@ -485,10 +485,10 @@ impl ProgramPass for UnitColumns {
         let b = w.derive()?;
         b.rewrite_all(&input, &mut Units { v: &input, units: &units, head: 0 })?;
         for rel in &units {
-            b.declare(rel, &[("unit", "int")]);
+            b.fields().declare(rel, &[("unit", "int")]);
             if let Some(rows) = f.facts(rel) {
                 let n = rows.rows().len();
-                b.set_fact_cells(rel, vec![vec![Cell::Int(1)]; n]);
+                b.fields().set_fact_cells(rel, vec![vec![Cell::Int(1)]; n]);
             }
         }
         Ok(())
@@ -584,7 +584,7 @@ impl ProgramPass for GroundRules {
         }
         for (rel, rows) in facts {
             let cells = rows.into_iter().map(|row| row.into_iter().map(|x| x.write(b)).collect()).collect();
-            b.set_fact_cells(&rel, cells);
+            b.fields().set_fact_cells(&rel, cells);
         }
         Ok(())
     }
@@ -893,7 +893,7 @@ impl ProgramPass for JoinComplements {
             }
             wr.finish()?;
             b.rule().head(*rel, &n).atom("node", &[T::Wild, T::Var("n"), T::Wild, T::Wild, T::Wild]).not(all.as_str(), &n).finish()?;
-            b.declare(all, &[("n", "node")]);
+            b.fields().declare(all, &[("n", "node")]);
         }
         Ok(())
     }
@@ -984,7 +984,7 @@ fn replace_inlined_readers(v: &Version, b: &mut Builder<'_>, gone: &BTreeSet<&st
         }
     }
     if asked != was {
-        b.set_asked(&asked);
+        b.fields().set_asked(&asked);
     }
 }
 
@@ -1101,7 +1101,7 @@ impl ProgramPass for InlineNodeTests {
             wr.finish()?;
         }
         for rel in bodies.keys() {
-            b.undeclare(rel);
+            b.fields().undeclare(rel);
         }
         replace_inlined_readers(v, b, &bodies.keys().copied().collect());
         self.0.extend(bodies.keys().map(|r| (*r).to_owned()));
@@ -1370,7 +1370,7 @@ impl ProgramPass for InlineFilters {
             wr.finish()?;
         }
         for rel in bodies.keys() {
-            b.undeclare(rel);
+            b.fields().undeclare(rel);
         }
         replace_inlined_readers(v, b, &bodies.keys().copied().collect());
         self.0.extend(bodies.keys().map(|r| (*r).to_owned()));
@@ -2155,7 +2155,7 @@ impl ProgramPass for FunctionKeys {
         }
         for (name, decl) in &decls {
             let cols: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-            b.declare(name, &cols);
+            b.fields().declare(name, &cols);
         }
         for (name, rel, n, shape) in &new_rules {
             let cols: Vec<String> = (0..*n).map(|i| format!("c{i}")).collect();
@@ -2270,7 +2270,7 @@ impl ProgramPass for ProjectExistentials {
             wr.finish()?;
         }
         for (name, ty) in &decls {
-            b.declare(name, &[("d", ty.as_str())]);
+            b.fields().declare(name, &[("d", ty.as_str())]);
         }
         self.0 = made;
         Ok(())
@@ -2621,12 +2621,12 @@ impl ProgramPass for ClimbsAsAxes {
             }
         }
         if !declared_within {
-            b.declare(WITHIN, &[("n", "node"), ("a", "node")]);
+            b.fields().declare(WITHIN, &[("n", "node"), ("a", "node")]);
         }
         if !input_within {
             let mut inputs = inputs;
             inputs.push(WITHIN.to_owned());
-            b.set_inputs(&inputs);
+            b.fields().set_inputs(&inputs);
         }
         self.0.extend(done.into_iter().map(|(m, _)| m.into_iter().collect::<Vec<_>>().join("/")));
         Ok(())
@@ -2681,7 +2681,7 @@ impl ProgramPass for SubsumeRequests {
         self.0 += n;
         let gone: HashSet<_> = rules.iter().zip(&dropped).filter(|(_, d)| **d).map(|(r, _)| r.id()).collect();
         w.keep(|r| !gone.contains(&r.id()))?;
-        w.on()?.set_asked(&asked);
+        w.on()?.fields().set_asked(&asked);
         Ok(())
     }
 }
@@ -2731,7 +2731,7 @@ impl ProgramPass for DropUnread {
             let mut asked = was.clone();
             asked.retain(|req, _| !unread.contains(req.as_str()));
             if asked != was {
-                b.set_asked(&asked);
+                b.fields().set_asked(&asked);
             }
         }
         self.0 = unread.into_iter().map(str::to_owned).collect();
@@ -2869,7 +2869,7 @@ impl ProgramPass for ProjectAll {
         b.rewrite_all(&input, &mut Project { v: &input, keep: &keep_of })?;
         for (rel, cols) in &decls {
             let decl: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-            b.declare(rel, &decl);
+            b.fields().declare(rel, &decl);
         }
         self.kept = keep_of.into_iter().collect();
         Ok(())
@@ -3014,9 +3014,9 @@ impl ProgramPass for DeclareInput {
         let v = cx.v();
         let mut inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
         let b = w.on()?;
-        b.declare(self.rel, self.cols);
+        b.fields().declare(self.rel, self.cols);
         inputs.push(self.rel.to_owned());
-        b.set_inputs(&inputs);
+        b.fields().set_inputs(&inputs);
         Ok(())
     }
 }
@@ -3085,7 +3085,7 @@ impl ProgramPass for BaseInputs {
             }
         }
         if inputs.len() > n {
-            w.on()?.set_inputs(&inputs);
+            w.on()?.fields().set_inputs(&inputs);
         }
         Ok(())
     }
@@ -3181,7 +3181,7 @@ impl ProgramPass for CpythonFunctors {
         for rel in used {
             if input.decl_of(rel).is_none() {
                 let cols = crate::code_rule_dsl::facts::core::cpython_relations::columns(rel);
-                b.declare(rel, &[(cols[0], "node"), (cols[1], "sym")]);
+                b.fields().declare(rel, &[(cols[0], "node"), (cols[1], "sym")]);
             }
         }
         Ok(())

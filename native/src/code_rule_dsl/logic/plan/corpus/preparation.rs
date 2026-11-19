@@ -48,7 +48,7 @@ impl ProgramPass for InputsRead {
         let inputs: Vec<&str> = v.inputs().map(|a| v.text(a)).collect();
         let kept: Vec<&str> = inputs.iter().copied().filter(|i| v.rel(i).is_some_and(|r| read.contains(&r.0)) || outputs.contains(i)).collect();
         if kept.len() != inputs.len() {
-            w.on()?.set_inputs(&kept);
+            w.on()?.fields().set_inputs(&kept);
         }
         Ok(())
     }
@@ -281,7 +281,7 @@ mod tests {
         use crate::code_rule_dsl::logic::program_facts::Field;
         use crate::code_rule_dsl::logic::program_image::{Builder, fields::FieldsMut};
         let mut b = Builder::on(p);
-        b.set_field(Field::Asked(&std::collections::BTreeMap::from([("q".to_owned(), readers)])));
+        b.fields().set_field(Field::Asked(&std::collections::BTreeMap::from([("q".to_owned(), readers)])));
         b.finish().unwrap().0
     }
 

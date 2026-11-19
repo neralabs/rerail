@@ -243,17 +243,17 @@ impl ProgramPass for BoundProducts {
             let cols = F::columns_of(made, &rel).unwrap_or_default();
             if F::columns_of(version, &rel).as_ref() != Some(&cols) {
                 let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-                builder.declare(&rel, &pairs);
+                builder.fields().declare(&rel, &pairs);
             }
         }
         let qualifiers = F::qualifiers(made);
         if qualifiers != F::qualifiers(version) {
-            builder.set_field(crate::code_rule_dsl::logic::program_facts::Field::Qualifiers(&qualifiers));
+            builder.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Qualifiers(&qualifiers));
         }
         for rel in F::fact_names(made) {
             let rows = F::fact_rows(made, &rel);
             if !F::states_facts(version, &rel) || F::fact_rows(version, &rel) != rows {
-                builder.set_facts(&rel, &rows);
+                builder.fields().set_facts(&rel, &rows);
             }
         }
         // Each rule a step rewrote replaces its input's rule, its source recorded; the rules the steps added follow.
@@ -598,9 +598,9 @@ fn rewrite_products(program: &mut Program<'_>, mut demanded: BTreeSet<String>) -
                 use crate::code_rule_dsl::logic::program_image::fields::FieldsMut as _;
                 for (rel, cols) in &decls {
                     let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-                    b.declare(rel, &pairs);
+                    b.fields().declare(rel, &pairs);
                 }
-                b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Qualifiers(&qualifiers));
+                b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Qualifiers(&qualifiers));
                 for (reader, i, parts) in &demands {
                     let r = v.rule(*reader).expect("a reader of the version");
                     let a = r.body().nth(*i).and_then(|l| l.atom()).expect("the read");
@@ -610,7 +610,7 @@ fn rewrite_products(program: &mut Program<'_>, mut demanded: BTreeSet<String>) -
                     write_demand(v, r, b, &rel, &head, (&guard_rel, &guard), parts)?;
                 }
                 for (rel, rows) in &facts {
-                    b.set_facts(rel, rows);
+                    b.fields().set_facts(rel, rows);
                 }
                 Ok(())
             },

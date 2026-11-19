@@ -41,13 +41,13 @@ pub fn prune(program: Arc<Version>) -> Result<Arc<Version>> {
     // Kept as outputs while pruned, then the outputs as they were.
     let mut b = Builder::on(&program);
     for rel in &keep {
-        b.add_output(rel);
+        b.fields().add_output(rel);
     }
     let mut p = Pipeline::new("sql producers' prune", b.finish().map_err(error)?.0);
     p.program(&mut plan::corpus::preparation::Prune::default());
     let pruned = p.finish().map_err(error)?.0;
     let mut b = Builder::on(&pruned);
-    b.set_outputs(&outputs);
+    b.fields().set_outputs(&outputs);
     Ok(b.finish().map_err(error)?.0)
 }
 
@@ -99,14 +99,14 @@ pub fn take(program: Arc<Version>) -> Result<(Arc<Version>, Vec<Producer>)> {
     }
     let mut b = Builder::on(&program);
     let inputs: Vec<String> = program.input_names().into_iter().filter(|i| !producers.iter().any(|p| p.rel == *i)).collect();
-    b.set_inputs(&inputs);
+    b.fields().set_inputs(&inputs);
     // The settings left, in their order.
     let p = b.about_rows("setting").first().map(|row| row[0]);
     let rows = match p {
         Some(p) => kept.iter().enumerate().map(|(k, (key, text))| vec![p, Cell::Int(k as i64), Cell::Str(b.atom(key)), Cell::Str(b.atom(text))]).collect(),
         None => Vec::new(),
     };
-    b.set_about_rows("setting", rows);
+    b.fields().set_about_rows("setting", rows);
     Ok((b.finish().map_err(error)?.0, producers))
 }
 

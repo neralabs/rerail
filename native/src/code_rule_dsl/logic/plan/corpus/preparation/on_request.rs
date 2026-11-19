@@ -832,8 +832,8 @@ impl ProgramPass for SourcesOnRequest {
             let n = cols.len();
             if let Some(input) = eager {
                 answers.push(Answering::Eager { rel, input, n });
-                declare_columns(b, input, &cols);
-                b.add_input(input);
+                declare_columns(&mut b.fields(), input, &cols);
+                b.fields().add_input(input);
             }
             match answer {
                 Answer::Function(function) => answers.push(Answering::Function { rel, req, function, n }),
@@ -841,31 +841,31 @@ impl ProgramPass for SourcesOnRequest {
                     answers.push(Answering::Children { rel, req, named, n });
                     let mut named_cols = cols.clone();
                     named_cols[2] = col("c", "node");
-                    declare_columns(b, named, &named_cols);
-                    b.add_input(named);
+                    declare_columns(&mut b.fields(), named, &named_cols);
+                    b.fields().add_input(named);
                     if !b.input_names().iter().any(|i| i == "node_text") {
-                        b.declare_absent("node_text", &[("n", cols[0].1.as_str()), ("s", cols[2].1.as_str())]);
-                        b.add_input("node_text");
+                        b.fields().declare_absent("node_text", &[("n", cols[0].1.as_str()), ("s", cols[2].1.as_str())]);
+                        b.fields().add_input("node_text");
                     }
                 }
             }
-            b.declare(req, &[(cols[0].0.as_str(), "node")]);
-            b.retain_inputs(&|i: &str| i != rel);
+            b.fields().declare(req, &[(cols[0].0.as_str(), "node")]);
+            b.fields().retain_inputs(&|i: &str| i != rel);
         }
         for (r, cols) in &wide.decls {
-            declare_columns(b, r, cols);
+            declare_columns(&mut b.fields(), r, cols);
         }
         for dem in demanded {
-            b.declare(&dem, &[("n", "node")]);
+            b.fields().declare(&dem, &[("n", "node")]);
         }
         for (rel, rows) in wide.facts {
             let rows: Vec<List<Value>> = rows.into_iter().map(List::from).collect();
-            b.add_facts(&rel, &rows);
+            b.fields().add_facts(&rel, &rows);
         }
         let mut all_asked = b.asked();
         all_asked.extend(asked);
         all_asked.extend(wide.asked);
-        b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Asked(&all_asked));
+        b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Asked(&all_asked));
         // In the tree's order: the requests and answers, then the widened copies.
         let names: Vec<String> = (0..answers.iter().map(|a| match a { Answering::Eager { n, .. } | Answering::Function { n, .. } | Answering::Children { n, .. } => *n }).max().unwrap_or(0)).map(|i| format!("x{i}")).collect();
         let x = |i: usize| T::Var(names[i].as_str());

@@ -689,13 +689,13 @@ pub fn document(facts: &Facts, extra: &[(&str, &[(&str, &str)])]) -> Result<Stri
     let mut b = Builder::base();
     for (rel, cols) in program_facts::schema() {
         let cols: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-        b.declare(rel.as_str(), &cols);
+        b.fields().declare(rel.as_str(), &cols);
     }
     for (rel, cols) in extra {
-        b.declare(rel, cols);
+        b.fields().declare(rel, cols);
     }
     for (rel, rows) in facts {
-        b.set_facts(rel, rows);
+        b.fields().set_facts(rel, rows);
     }
     let (v, _) = b.finish()?;
     super::rr::print_version(&v).map_err(|e| format!("program facts: {e:?}"))

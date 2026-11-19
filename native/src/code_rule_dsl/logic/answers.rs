@@ -219,10 +219,10 @@ impl RulePass for GateRules<'_> {
         let f = Fields::over(cx.v(), d);
         for (done, ask, rel, cols) in &self.made {
             let decl: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-            b.declare(done, &decl);
+            b.fields().declare(done, &decl);
             match ask {
                 Some(ask) => {
-                    b.declare(ask, &decl);
+                    b.fields().declare(ask, &decl);
                     let vs: Vec<String> = (0..cols.len()).map(|i| format!("_g{i}")).collect();
                     let vs: Vec<T<'_>> = vs.iter().map(|x| T::Var(x.as_str())).collect();
                     b.rule().head(done.as_str(), &vs).atom(ask.as_str(), &vs).finish()?;
@@ -286,8 +286,8 @@ impl ProgramPass for GateFields<'_, '_> {
         }
         cx.decide("gated", || format!("{} gates in {} answered components", gates.len(), g.answered.len()));
         let b = w.overlay()?;
-        b.add_tree_gates(&gates);
-        b.set_answers(g.answers);
+        b.fields().add_tree_gates(&gates);
+        b.fields().set_answers(g.answers);
         Ok(())
     }
 }
@@ -417,7 +417,7 @@ pub mod tests {
         .unwrap();
         let answers: BTreeMap<String, Vec<String>> = [("req".to_owned(), vec!["got".to_owned()])].into();
         let mut ungated = Builder::on(&prog);
-        ungated.set_field(crate::code_rule_dsl::logic::program_facts::Field::Answers(&answers));
+        ungated.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Answers(&answers));
         let (ungated, _) = ungated.finish().unwrap();
         assert!(Placed::whole(ungated).components().is_err(), "ungated, the negation is inside the component");
         let gated = gate(&Placed::whole(prog.clone()), &answers).unwrap();
@@ -433,7 +433,7 @@ pub mod tests {
         let shown = super::super::rr::parse_version(".decl fresh(x: symbol)\n.decl shown(x: symbol)\nshown(x) :- fresh(x).\n").unwrap();
         let mut b = Builder::on(&gated);
         b.copy(&shown, shown.rules().next().unwrap());
-        b.declare("shown", &[("x", "sym")]);
+        b.fields().declare("shown", &[("x", "sym")]);
         let (with_shown, _) = b.finish().unwrap();
         let parts = split(&Placed::whole(with_shown.clone())).unwrap();
         let (load, rest) = parts.parts(&with_shown).unwrap();

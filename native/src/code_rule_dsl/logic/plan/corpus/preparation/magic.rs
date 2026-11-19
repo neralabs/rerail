@@ -640,16 +640,16 @@ impl ProgramDemand {
         }
         for (rel, cols) in decls.iter().chain(&trial.done) {
             let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-            b.declare(rel, &cols);
+            b.fields().declare(rel, &cols);
         }
-        b.declare("magic_true", &[("k", "int")]);
+        b.fields().declare("magic_true", &[("k", "int")]);
         let mut rows: Vec<Vec<Cell>> = input.find("magic_true").and_then(|a| input.facts(a)).map(|f| f.rows().map(|r| r.collect()).collect()).unwrap_or_default();
         rows.push(vec![Cell::Int(0)]);
-        b.set_fact_cells("magic_true", rows);
+        b.fields().set_fact_cells("magic_true", rows);
         // No demand left, and only the gates this demand made.
         for name in ["demand", "gate", "gate_src", "gate_quiet", "gate_dep"] {
             if !b.about_rows(name).is_empty() {
-                b.set_about_rows(name, Vec::new());
+                b.fields().set_about_rows(name, Vec::new());
             }
         }
         let pc = super::demand::about_p(b);
@@ -669,11 +669,11 @@ impl ProgramDemand {
         }
         for (name, rows) in [("gate", gate), ("gate_src", src), ("gate_quiet", quiet), ("gate_dep", deps)] {
             if !rows.is_empty() {
-                b.set_about_rows(name, rows);
+                b.fields().set_about_rows(name, rows);
             }
         }
         // The report, as the program keeps it (`Program::magic_report`: `magic_report` and `report_list`).
-        b.set_about_rows("magic_report", vec![vec![pc, Cell::Int(report.magic_rules as i64), Cell::Int(report.extras_kept as i64), Cell::Int(report.gates as i64)]]);
+        b.fields().set_about_rows("magic_report", vec![vec![pc, Cell::Int(report.magic_rules as i64), Cell::Int(report.extras_kept as i64), Cell::Int(report.gates as i64)]]);
         let mut list = Vec::new();
         for (name, items) in [("adornments", &report.adornments), ("full", &report.full), ("full_for_negation", &report.full_for_negation)] {
             for (k, item) in items.iter().enumerate() {
@@ -681,7 +681,7 @@ impl ProgramDemand {
                 list.push(vec![pc, Cell::Str(n), Cell::Int(k as i64), Cell::Str(x)]);
             }
         }
-        b.set_about_rows("report_list", list);
+        b.fields().set_about_rows("report_list", list);
         self.outcome = Some(Ok(report));
         Ok(())
     }
@@ -744,12 +744,12 @@ impl ProgramPass for KeyDemand {
                 }
                 for (rel, cols) in decls {
                     let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-                    b.declare(rel, &cols);
+                    b.fields().declare(rel, &cols);
                 }
-                b.declare("magic_true", &[("k", "int")]);
+                b.fields().declare("magic_true", &[("k", "int")]);
                 let mut rows: Vec<Vec<Cell>> = input.find("magic_true").and_then(|a| input.facts(a)).map(|f| f.rows().map(|r| r.collect()).collect()).unwrap_or_default();
                 rows.push(vec![Cell::Int(0)]);
-                b.set_fact_cells("magic_true", rows);
+                b.fields().set_fact_cells("magic_true", rows);
                 self.extras = Some(*extras);
             }
             None => {
@@ -761,11 +761,11 @@ impl ProgramPass for KeyDemand {
         // The demand left, what was dropped and the extras kept, as the program keeps them.
         let pc = super::demand::about_p(b);
         let rows = demand.iter().enumerate().map(|(k, r)| vec![pc, Cell::Int(k as i64), Cell::Str(b.atom(r))]).collect();
-        b.set_about_rows("demand", rows);
+        b.fields().set_about_rows("demand", rows);
         let rows = dropped.iter().enumerate().map(|(k, (r, why))| vec![pc, Cell::Int(k as i64), Cell::Str(b.atom(r)), Cell::Str(b.atom(why))]).collect();
-        b.set_about_rows("demand_dropped", rows);
+        b.fields().set_about_rows("demand_dropped", rows);
         if let Some(n) = self.extras {
-            b.set_about_rows("magic_extras", vec![vec![pc, Cell::Int(n as i64)]]);
+            b.fields().set_about_rows("magic_extras", vec![vec![pc, Cell::Int(n as i64)]]);
         }
         Ok(())
     }

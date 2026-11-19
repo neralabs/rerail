@@ -145,7 +145,7 @@ mod form {
             let mut b = Builder::on(&prog);
             b.rule().head("w", &[T::Var("a")]).atom("r", &[T::Var("a"), T::Wild]).finish().unwrap();
             let inputs: Vec<String> = prog.input_names().into_iter().filter(|i| i != "w").collect();
-            b.set_inputs(&inputs);
+            b.fields().set_inputs(&inputs);
             b.finish().unwrap().0
         };
         let (prog, mut undone) = undo_in_cycles(prog);

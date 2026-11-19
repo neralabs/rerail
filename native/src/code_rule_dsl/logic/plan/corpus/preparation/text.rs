@@ -349,7 +349,7 @@ impl RulePass for MatcherRelations {
             let made = transformed(text);
             let types = std::iter::once("node").chain(names.iter().map(|n| if made.contains(n) { "sym" } else { "node" }));
             let cols: Vec<(&str, &str)> = columns(&rel).iter().copied().zip(types).collect();
-            b.declare(&rel, &cols);
+            b.fields().declare(&rel, &cols);
             if !inputs.contains(&rel) {
                 inputs.push(rel.clone());
             }
@@ -361,12 +361,12 @@ impl RulePass for MatcherRelations {
         let read = self.docof || v.rules().any(|r| r.body().filter_map(|l| l.atom()).any(|a| v.rel_name(a.rel()) == "docof"));
         if !self.out.is_empty() && !derived && !inputs.iter().any(|r| r == "docof") && read {
             if v.decl_of("docof").is_none() {
-                b.declare("docof", &[("n", "loc"), ("d", "number")]);
+                b.fields().declare("docof", &[("n", "loc"), ("d", "number")]);
             }
             inputs.push("docof".to_owned());
         }
         if inputs.len() != before {
-            b.set_inputs(&inputs);
+            b.fields().set_inputs(&inputs);
         }
         Ok(())
     }
@@ -527,11 +527,11 @@ impl RulePass for Twins {
             return Ok(());
         }
         let v = cx.v();
-        b.declare("rr_long_text_node", &[("n", "node")]);
+        b.fields().declare("rr_long_text_node", &[("n", "node")]);
         let mut inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
         if !inputs.iter().any(|r| r == "rr_long_text_node") {
             inputs.push("rr_long_text_node".into());
-            b.set_inputs(&inputs);
+            b.fields().set_inputs(&inputs);
         }
         cx.decide("long text twins (decision 0109)", || format!("{made} rules read text past the inline bound for the nodes they bind"));
         Ok(())
@@ -1062,7 +1062,7 @@ impl RulePass for TextRelations {
             let set = T::Call(SET, pats.iter().map(|p| T::Str(p)).collect());
             b.rule().head(native.as_str(), &a).atom(input.as_str(), &a).cmp(T::Call(&op, vec![T::Var(&xs[column]), set]), CmpOp::Eq, T::Int(1)).finish()?;
             let cols: Vec<(&str, &str)> = decl.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-            b.declare(&native, &cols);
+            b.fields().declare(&native, &cols);
             natives.push((native, input, column, op, pats));
         }
         natives.extend(std::mem::take(&mut self.defined));
@@ -1089,27 +1089,27 @@ impl RulePass for TextRelations {
             };
             tests.sort_by_cached_key(|r| key(b, r).0);
             pats.sort_by_cached_key(|r| key(b, r));
-            b.set_about_rows("native_text_test", tests);
-            b.set_about_rows("native_text_pattern", pats);
+            b.fields().set_about_rows("native_text_test", tests);
+            b.fields().set_about_rows("native_text_pattern", pats);
         }
         for (rel, _) in &self.tests {
-            b.declare(rel, &[("s", "sym")]);
+            b.fields().declare(rel, &[("s", "sym")]);
             if !inputs.contains(rel) {
                 inputs.push(rel.clone());
             }
         }
         for (rel, group) in std::mem::take(&mut self.made) {
             if group {
-                b.declare(&rel, &[("sp", "node"), ("m", "node"), ("g", "sym"), ("gsp", "node")]);
+                b.fields().declare(&rel, &[("sp", "node"), ("m", "node"), ("g", "sym"), ("gsp", "node")]);
             } else {
-                b.declare(&rel, &[("sp", "node"), ("m", "node")]);
+                b.fields().declare(&rel, &[("sp", "node"), ("m", "node")]);
             }
             if !inputs.contains(&rel) {
                 inputs.push(rel);
             }
         }
         if inputs.len() != before {
-            b.set_inputs(&inputs);
+            b.fields().set_inputs(&inputs);
         }
         Ok(())
     }

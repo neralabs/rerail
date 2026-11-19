@@ -114,7 +114,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     let p = {
         let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&p);
         let outputs: Vec<String> = p.output_names().into_iter().chain(helpers.iter().cloned()).collect();
-        b.set_outputs(&outputs);
+        b.fields().set_outputs(&outputs);
         b.finish().unwrap().0
     };
     let file = crate::code_rule_dsl::fixtures::temp();
@@ -236,7 +236,7 @@ fn multiple_consumers_union_their_safe_demands() {
         }
     }
     let mut b = Builder::derive(&p);
-    b.undeclare(&demand);
+    b.fields().undeclare(&demand);
     for r in p.rules().filter(|r| p.rel_name(r.head().rel()) != demand) {
         b.rewrite(&p, r, &mut Unread(&p, &demand)).finish().unwrap();
     }

@@ -65,14 +65,14 @@ impl RulePass for Nearest {
         let before = inputs.len();
         for set in std::mem::take(&mut self.used) {
             let rel = format!("{NEAREST}{set}");
-            b.declare(&rel, &[("n", "node"), ("a", "node")]);
+            b.fields().declare(&rel, &[("n", "node"), ("a", "node")]);
             if !inputs.contains(&rel) {
                 inputs.push(rel.clone());
             }
             self.sets.push((rel, kinds(&set)));
         }
         if inputs.len() != before {
-            b.set_inputs(&inputs);
+            b.fields().set_inputs(&inputs);
         }
         Ok(())
     }

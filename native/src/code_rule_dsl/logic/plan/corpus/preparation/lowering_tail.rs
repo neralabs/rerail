@@ -233,7 +233,7 @@ impl ProgramPass for FactsOnce {
         if !once.is_empty() {
             let b = w.on()?;
             for (rel, rows) in &once {
-                b.set_facts(rel, rows);
+                b.fields().set_facts(rel, rows);
             }
         }
         Ok(())
@@ -260,8 +260,8 @@ impl ProgramPass for Unit {
         }
         let input = std::sync::Arc::clone(w.input());
         let b = w.derive()?;
-        b.declare(UNIT, &[("x", "int")]);
-        b.set_facts(UNIT, &[[crate::code_rule_dsl::logic::front::Value::Int(0)].into()]);
+        b.fields().declare(UNIT, &[("x", "int")]);
+        b.fields().set_facts(UNIT, &[[crate::code_rule_dsl::logic::front::Value::Int(0)].into()]);
         for rule in input.rules() {
             if !lone.contains(&rule.id()) {
                 b.keep(&input, rule);
@@ -704,7 +704,7 @@ fn placed_version(input: &std::sync::Arc<Version>, p: &Placement) -> Result<std:
 fn declare_placed(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, p: &Placement) {
     for (d, cols) in &p.decls {
         let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-        b.declare(d, &pairs);
+        b.fields().declare(d, &pairs);
     }
 }
 
@@ -859,10 +859,10 @@ impl ProgramPass for OrderNodes {
         let b = w.derive()?;
         for (rel, decl) in &declared {
             let pairs: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-            b.declare(rel, &pairs);
+            b.fields().declare(rel, &pairs);
         }
-        b.declare_absent(node_order, &[("n", "node"), ("k", "int")]);
-        b.add_input(node_order);
+        b.fields().declare_absent(node_order, &[("n", "node"), ("k", "int")]);
+        b.fields().add_input(node_order);
         use crate::code_rule_dsl::logic::program_image::build::t_of;
         for r in input.rules() {
             let Some(plan) = plans.get(&r.id()) else {
@@ -927,8 +927,8 @@ impl ProgramPass for DeclareAxes {
         if !axes.is_empty() {
             let b = w.on()?;
             for rel in axes {
-                b.declare(rel, &[("n", "node"), ("a", "node")]);
-                b.add_input(rel);
+                b.fields().declare(rel, &[("n", "node"), ("a", "node")]);
+                b.fields().add_input(rel);
             }
         }
         Ok(())
@@ -978,13 +978,13 @@ impl ProgramPass for BooleanRelations {
         let had: Vec<(String, Vec<crate::code_rule_dsl::logic::front::List<crate::code_rule_dsl::logic::front::Value>>)> =
             names.iter().filter(|n| ProgramFields::states_facts(v, n)).map(|n| (n.clone(), ProgramFields::fact_rows(v, n))).collect();
         let b = w.derive()?;
-        b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Nullary(&nullary));
+        b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Nullary(&nullary));
         for name in &names {
-            b.declare(name, &[("rr_unit", "int")]);
+            b.fields().declare(name, &[("rr_unit", "int")]);
         }
         for (name, rows) in &had {
             let rows: Vec<_> = rows.iter().map(|row| row.iter().cloned().chain([crate::code_rule_dsl::logic::front::Value::Int(1)]).collect::<Vec<_>>().into()).collect();
-            b.set_facts(name, &rows);
+            b.fields().set_facts(name, &rows);
         }
         b.rewrite_all(&input, &mut Unit1 { v: &input, names: &names, touched: &touched })?;
         Ok(())
@@ -1005,10 +1005,10 @@ impl ProgramPass for ScopeGlobs {
         let globs = scope_text_globs(&settings);
         let scopes = was_scopes.clone().or_else(|| scope_globs(&settings).map(|g| vec![g]));
         if globs != was_globs {
-            w.on()?.set_field(crate::code_rule_dsl::logic::program_facts::Field::TextGlobs(&globs));
+            w.on()?.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::TextGlobs(&globs));
         }
         if scopes != was_scopes {
-            w.on()?.set_field(crate::code_rule_dsl::logic::program_facts::Field::DocScopes(scopes.as_deref()));
+            w.on()?.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::DocScopes(scopes.as_deref()));
         }
         Ok(())
     }
@@ -1141,10 +1141,10 @@ impl ProgramPass for KindSets {
             }
             for set in unread {
                 if head.states_facts(&set) {
-                    head.b.drop_facts(&set);
+                    head.b.fields().drop_facts(&set);
                 }
                 if head.declares(&set) {
-                    head.b.undeclare(&set);
+                    head.b.fields().undeclare(&set);
                 }
                 gone.insert(set);
             }
@@ -1184,7 +1184,7 @@ impl ProgramPass for KindSets {
         // `base_relation_derived` for `child` and `node`, the rules gone left out.
         if !need.is_empty() {
             for rel in ["child", "node"] {
-                crate::code_rule_dsl::logic::rr::lower::base_relation_derived(&mut head.b, rel, heads_of(&gone, rel));
+                crate::code_rule_dsl::logic::rr::lower::base_relation_derived(&mut head.b.fields(), rel, heads_of(&gone, rel));
             }
         }
         // The helpers' rules, as `derived_axes` pushes them: a set's members once, then each helper's rules.
@@ -1193,7 +1193,7 @@ impl ProgramPass for KindSets {
         for (set, helper) in &need {
             let member = format!("rr_in_{set}");
             if !head.declares(&member) {
-                head.b.declare(&member, &[("x", "node")]);
+                head.b.fields().declare(&member, &[("x", "node")]);
                 made.push((member.clone(), vec!["x"], vec![("node".to_owned(), vec!["_", "x", "k", "_", "_"], false), (set.clone(), vec!["k"], false)]));
             }
             let rel = format!("rr_{helper}_{set}");
@@ -1208,19 +1208,19 @@ impl ProgramPass for KindSets {
                 _ => (vec!["a"], vec![vec![is("n", false), child("a", "n")], vec![me(vec!["p"]), child("a", "p")]]),
             };
             let pairs: Vec<(&str, &str)> = cols.iter().map(|c| (*c, "node")).collect();
-            head.b.declare(&rel, &pairs);
+            head.b.fields().declare(&rel, &pairs);
             for body in bodies {
                 made.push((rel.clone(), cols.clone(), body));
             }
         }
         if kindsets != was_kindsets {
-            head.b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Kindsets(&kindsets));
+            head.b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Kindsets(&kindsets));
         }
         if gone.is_empty() && axes.is_empty() && made.is_empty() && head.b.is_empty() {
             return Ok(());
         }
         let b = w.derive()?;
-        b.state_fields_of(&head.b);
+        b.fields().state_fields_of(&head.b);
         use crate::code_rule_dsl::logic::program_image::build::t_of;
         for r in input.rules() {
             if gone.contains(input.rel_name(r.head().rel())) {
@@ -1313,15 +1313,15 @@ impl ProgramPass for BuiltinsOut {
         let head = w.on()?;
         for &b in &out {
             if head.declares(b) {
-                head.undeclare(b);
+                head.fields().undeclare(b);
             }
         }
         if out.iter().any(|b| head.input_names().iter().any(|i| i == b)) {
-            head.retain_inputs(|i| !out.contains(&i));
+            head.fields().retain_inputs(|i| !out.contains(&i));
         }
         if reads_within {
-            head.declare_absent(WITHIN, &[("n", "node"), ("a", "node")]);
-            head.add_input(WITHIN);
+            head.fields().declare_absent(WITHIN, &[("n", "node"), ("a", "node")]);
+            head.fields().add_input(WITHIN);
         }
         Ok(())
     }
@@ -1384,10 +1384,10 @@ impl ProgramPass for SpanPatterns {
         spans.extend(found.0);
         patterns.extend(found.1);
         if spans != was_spans {
-            w.on()?.set_field(crate::code_rule_dsl::logic::program_facts::Field::RxSpans(&spans));
+            w.on()?.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::RxSpans(&spans));
         }
         if patterns != was_patterns {
-            w.on()?.set_field(crate::code_rule_dsl::logic::program_facts::Field::AstPatterns(&patterns));
+            w.on()?.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::AstPatterns(&patterns));
         }
         Ok(())
     }
@@ -1420,12 +1420,12 @@ impl ProgramPass for CoreDecls {
             })
             .collect();
         let mut docof = self.docof_of_locs;
-        declare_core(&mut head.b, &read, &mut docof).map_err(|e| e.to_string())?;
+        declare_core(&mut head.b.fields(), &read, &mut docof).map_err(|e| e.to_string())?;
         let derives_node = v.rel("node").is_some_and(|rel| v.heads(rel).next().is_some());
-        let made = projections(&mut head.b, &read, docof, derives_node);
+        let made = projections(&mut head.b.fields(), &read, docof, derives_node);
         if made.is_empty() {
             if !head.b.is_empty() {
-                w.on()?.state_fields_of(&head.b);
+                w.on()?.fields().state_fields_of(&head.b);
             }
             return Ok(());
         }
@@ -1443,7 +1443,7 @@ impl ProgramPass for CoreDecls {
             order.insert(projection_at(rel, first), Item::New(rel));
         }
         let b = w.derive()?;
-        b.state_fields_of(&head.b);
+        b.fields().state_fields_of(&head.b);
         for x in order {
             match x {
                 Item::Old(r) => drop(b.keep(&input, r)),
@@ -1494,7 +1494,7 @@ impl ProgramPass for Findings {
             let mut head = crate::code_rule_dsl::logic::program_image::fields::Edit::on(&input);
             findings_on(&mut head.b, &self.pending, seen).map_err(|e| e.to_string())?;
             if !head.b.is_empty() {
-                w.on()?.state_fields_of(&head.b);
+                w.on()?.fields().state_fields_of(&head.b);
             }
             return Ok(());
         }
@@ -1578,7 +1578,7 @@ impl ProgramPass for ThreeValued {
         drop(shape);
         let input = std::sync::Arc::clone(w.input());
         let b = w.derive()?;
-        three_valued_header(b, &three);
+        three_valued_header(&mut b.fields(), &three);
         for (i, r) in input.rules().enumerate() {
             if !three.contains(input.rel_name(r.head().rel())) {
                 b.keep(&input, r);
@@ -1611,7 +1611,7 @@ impl ProgramPass for AppendModule {
         let mut stated = self.stated;
         let input = std::sync::Arc::clone(w.input());
         let b = w.derive()?;
-        crate::code_rule_dsl::logic::rr::lower::append_fields(b, &*self.own, &mut stated, self.own_stated);
+        crate::code_rule_dsl::logic::rr::lower::append_fields(&mut b.fields(), &*self.own, &mut stated, self.own_stated);
         for r in input.rules() {
             b.keep(&input, r);
         }
@@ -1689,8 +1689,8 @@ mod tests {
         let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
         let mut b = Builder::on(&v);
         for name in ["nearest", "earlier", "precedes"] {
-            crate::code_rule_dsl::logic::program_image::fields::FieldsMut::declare(&mut b, name, &[("x", "number")]);
-            crate::code_rule_dsl::logic::program_image::fields::FieldsMut::add_input(&mut b, name);
+            crate::code_rule_dsl::logic::program_image::fields::FieldsMut::declare(&mut b.fields(), name, &[("x", "number")]);
+            crate::code_rule_dsl::logic::program_image::fields::FieldsMut::add_input(&mut b.fields(), name);
         }
         // A rule reading `within`, undeclared.
         {

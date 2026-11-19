@@ -143,8 +143,8 @@
             let p = super::super::super::rr::parse_version(".decl e(x: int)\n.decl f(x: int)\n.output f\ne(1).\nf(x) :- e(x).\n").unwrap();
             let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&p);
             let settings: Vec<(String, String)> = settings.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect();
-            b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&settings));
-            key(&super::super::body::Placed::whole(b.finish().unwrap().0))
+            b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&settings));
+            key(&super::super::body::Freeze::freeze(b).unwrap())
         };
         let base = with(&[(MESSAGE, "f \"one\"")]);
         assert_eq!(base, with(&[(MESSAGE, "f \"two\"")]), "a message's edit keeps the key");

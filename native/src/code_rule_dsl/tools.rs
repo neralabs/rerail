@@ -795,13 +795,13 @@ mod settings_tests {
         let added = crate::code_rule_dsl::logic::plan::corpus::added::Added::settings(&settings);
         use crate::code_rule_dsl::logic::program_image::{Builder, fields::ProgramFields};
         let mut declares = Builder::base();
-        declares.declare("env", &[("key", "symbol"), ("value", "symbol")]);
-        added.add_to(&mut declares);
+        declares.fields().declare("env", &[("key", "symbol"), ("value", "symbol")]);
+        added.add_to(&mut declares.fields());
         let rows: Vec<Vec<Value>> = declares.fact_rows("env").iter().map(|r| r.to_vec()).collect();
         assert_eq!(rows, [vec![Value::Str("quote".into()), Value::Str("a\"b".into())], vec![Value::Str("python.version".into()), Value::Str("3.13".into())]]);
         let mut not = Builder::base();
-        not.declare("envy", &[("x", "symbol")]);
-        added.add_to(&mut not);
+        not.fields().declare("envy", &[("x", "symbol")]);
+        added.add_to(&mut not.fields());
         assert!(!not.has_fact_rows("env"));
     }
 

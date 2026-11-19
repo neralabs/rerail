@@ -154,7 +154,7 @@ impl Version {
 
 impl Builder<'_> {
     /// States field `f`: its relations' rows are `f`'s, every other field's kept.
-    pub fn set_field(&mut self, f: Field<'_>) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_field(&mut self, f: Field<'_>) {
         // The program's own row, which every field's reader asks for: a new base's first field states it (a
         // version's from a tree has it from `about_of`).
         if self.about_cells("program").is_empty() {
@@ -178,7 +178,7 @@ impl Builder<'_> {
     }
 
     /// Adds `rel` to the inputs, after the others, unless it is one.
-    pub fn add_input(&mut self, rel: &str) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn add_input(&mut self, rel: &str) {
         let mut names = self.input_names();
         if !names.iter().any(|n| n == rel) {
             names.push(rel.to_owned());
@@ -186,7 +186,7 @@ impl Builder<'_> {
         }
     }
     /// Adds `rel` to the outputs, after the others, unless it is one.
-    pub fn add_output(&mut self, rel: &str) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn add_output(&mut self, rel: &str) {
         let mut names = self.output_names();
         if !names.iter().any(|n| n == rel) {
             names.push(rel.to_owned());
@@ -194,7 +194,7 @@ impl Builder<'_> {
         }
     }
     /// Keeps the inputs `keep` takes.
-    pub fn retain_inputs(&mut self, mut keep: impl FnMut(&str) -> bool) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn retain_inputs(&mut self, mut keep: impl FnMut(&str) -> bool) {
         let names = self.input_names();
         let kept: Vec<&String> = names.iter().filter(|n| keep(n)).collect();
         if kept.len() != names.len() {
@@ -202,7 +202,7 @@ impl Builder<'_> {
         }
     }
     /// Keeps the outputs `keep` takes.
-    pub fn retain_outputs(&mut self, mut keep: impl FnMut(&str) -> bool) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn retain_outputs(&mut self, mut keep: impl FnMut(&str) -> bool) {
         let names = self.output_names();
         let kept: Vec<&String> = names.iter().filter(|n| keep(n)).collect();
         if kept.len() != names.len() {
@@ -313,8 +313,8 @@ fn field<P: ProgramFields + ?Sized, T>(p: &P, relations: &[&str], read: impl FnO
     program_facts::fields(&facts, ABOUT).and_then(|f| read(&f)).unwrap_or_else(|e| panic!("a program's field {relations:?} does not read: {e}"))
 }
 
-/// An edit of a program's fields, a field at a time, beside the reads (`ProgramFields`): a builder's (the version's
-/// edit) or, until the tree goes, a parsed program's. A pass generic over it states one edit for both.
+/// An edit of a program's fields, a field at a time, beside the reads (`ProgramFields`): what a pass that edits fields
+/// alone takes, written by an edit's `FieldsW` (`Builder::fields`).
 pub trait FieldsMut: ProgramFields {
     /// Declares `rel`'s columns, replacing any declaration.
     fn declare(&mut self, rel: &str, cols: &[(&str, &str)]);
@@ -398,13 +398,13 @@ impl Builder<'_> {
     /// States `now`'s fields (its declarations, facts, inputs, outputs and `.about` rows) where they differ from
     /// `was`'s, each read by name: `now` a version made apart from `was`, the version this builder edits, its rules
     /// the builder's own (`manager`'s edit of the last version to the new one).
-    pub fn state_fields_as(&mut self, was: &Version, now: &Version) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn state_fields_as(&mut self, was: &Version, now: &Version) {
         for rel in now.declared_names() {
             let cols = now.columns_of(&rel);
             if was.columns_of(&rel) != cols {
                 let cols = cols.unwrap_or_default();
                 let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-                FieldsMut::declare(self, &rel, &pairs);
+                Builder::declare(self, &rel, &pairs);
             }
         }
         for rel in was.declared_names() {
@@ -441,11 +441,11 @@ impl Builder<'_> {
 
     /// States `v`'s header on this builder as `set_program_header` states a program's: its declarations, facts, inputs
     /// and outputs, and the `.about` relations `about` keeps (an image's `module_*` rows are no program's fields).
-    pub fn copy_fields(&mut self, v: &Version, about: &dyn Fn(&str) -> bool) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn copy_fields(&mut self, v: &Version, about: &dyn Fn(&str) -> bool) {
         for rel in ProgramFields::declared_names(v) {
             let cols = ProgramFields::columns_of(v, &rel).unwrap_or_default();
             let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-            FieldsMut::declare(self, &rel, &pairs);
+            Builder::declare(self, &rel, &pairs);
         }
         for rel in ProgramFields::fact_names(v) {
             self.set_facts(&rel, &ProgramFields::fact_rows(v, &rel));
@@ -510,42 +510,183 @@ impl ProgramFields for Builder<'_> {
     }
 }
 
-impl FieldsMut for Builder<'_> {
+/// A program's fields, written (decision 0276 §3): the one surface an edit's fields are written through, grouped by
+/// field: declarations, inputs and outputs, facts, and the `.about` fields (qualifiers, answers, gates, settings,
+/// natives, lattices, the nullary relations, tapes). `Builder::fields` opens it; `Builder`'s own setters are its
+/// implementation, private to the image. It reads as the edit does (`ProgramFields`): what it stated, else the
+/// parent's.
+pub struct FieldsW<'b, 'v>(&'b mut Builder<'v>);
+
+impl<'v> Builder<'v> {
+    /// The edit's fields, to write (`FieldsW`).
+    pub fn fields(&mut self) -> FieldsW<'_, 'v> {
+        FieldsW(self)
+    }
+}
+
+impl FieldsW<'_, '_> {
+    pub fn copy_fields(&mut self, v: &Version, about: &dyn Fn(&str) -> bool) {
+        self.0.copy_fields(v, about)
+    }
+    pub fn set_lattice_keys(&mut self, rel: &str, keys: usize) {
+        self.0.set_lattice_keys(rel, keys)
+    }
+    pub fn drop_native(&mut self, rel: &str) {
+        self.0.drop_native(rel)
+    }
+    pub fn keep_relation_fields(&mut self, natives: &dyn Fn(&str) -> bool, lattice: &dyn Fn(&str) -> bool, gates: &dyn Fn(&str) -> bool) {
+        self.0.keep_relation_fields(natives, lattice, gates)
+    }
+    pub fn add_qualifiers<S: AsRef<str>>(&mut self, words: &[(S, S)]) {
+        self.0.add_qualifiers(words)
+    }
+    pub fn set_qualifiers<S: AsRef<str>>(&mut self, words: &[(S, S)]) {
+        self.0.set_qualifiers(words)
+    }
+    pub fn add_tree_gates(&mut self, gates: &[(String, crate::code_rule_dsl::logic::front::ast::Gate)]) {
+        self.0.add_tree_gates(gates)
+    }
+    pub fn set_answers(&mut self, answers: &std::collections::BTreeMap<String, Vec<String>>) {
+        self.0.set_answers(answers)
+    }
+    pub fn set_asked(&mut self, asked: &super::about::Asked) {
+        self.0.set_asked(asked)
+    }
+    pub fn keep_asked(&mut self, keep: &dyn Fn(&str) -> bool) {
+        self.0.keep_asked(keep)
+    }
+    pub fn add_gates(&mut self, gates: &[(String, String, usize, Vec<String>, Vec<String>)]) {
+        self.0.add_gates(gates)
+    }
+    pub fn add_setting(&mut self, key: &str, text: &str) {
+        self.0.add_setting(key, text)
+    }
+    pub fn add_nullary<S: AsRef<str>>(&mut self, rels: &[S]) {
+        self.0.add_nullary(rels)
+    }
+    pub fn set_tapes<S: AsRef<str>>(&mut self, tapes: &[(S, usize)]) {
+        self.0.set_tapes(tapes)
+    }
+    pub fn set_field(&mut self, f: Field<'_>) {
+        self.0.set_field(f)
+    }
+    pub fn add_input(&mut self, rel: &str) {
+        self.0.add_input(rel)
+    }
+    pub fn add_output(&mut self, rel: &str) {
+        self.0.add_output(rel)
+    }
+    pub fn retain_inputs(&mut self, keep: impl FnMut(&str) -> bool) {
+        self.0.retain_inputs(keep)
+    }
+    pub fn retain_outputs(&mut self, keep: impl FnMut(&str) -> bool) {
+        self.0.retain_outputs(keep)
+    }
+    pub fn state_fields_as(&mut self, was: &Version, now: &Version) {
+        self.0.state_fields_as(was, now)
+    }
+    pub fn declare(&mut self, rel: &str, cols: &[(&str, &str)]) {
+        self.0.declare(rel, cols)
+    }
+    pub fn undeclare(&mut self, rel: &str) {
+        self.0.undeclare(rel)
+    }
+    pub fn set_facts(&mut self, rel: &str, rows: &[List<Value>]) {
+        self.0.set_facts(rel, rows)
+    }
+    pub fn drop_facts(&mut self, rel: &str) {
+        self.0.drop_facts(rel)
+    }
+    pub fn set_fact_cells(&mut self, rel: &str, rows: Vec<Vec<Cell>>) {
+        self.0.set_fact_cells(rel, rows)
+    }
+    pub fn set_about_rows(&mut self, name: &str, rows: Vec<Vec<Cell>>) {
+        self.0.set_about_rows(name, rows)
+    }
+    pub fn set_inputs<S: AsRef<str>>(&mut self, names: &[S]) {
+        self.0.set_inputs(names)
+    }
+    pub fn set_outputs<S: AsRef<str>>(&mut self, names: &[S]) {
+        self.0.set_outputs(names)
+    }
+    pub fn state_fields_of(&mut self, e: &Builder<'_>) {
+        self.0.state_fields_of(e)
+    }
+    pub fn add_facts(&mut self, rel: &str, rows: &[List<Value>]) {
+        self.0.add_facts(rel, rows)
+    }
+    pub fn set_about(&mut self, about: &Facts) {
+        self.0.set_about(about)
+    }
+}
+
+/// Its fields read through the edit it writes.
+impl ProgramFields for FieldsW<'_, '_> {
+    fn input_names(&self) -> Vec<String> {
+        ProgramFields::input_names(&*self.0)
+    }
+    fn output_names(&self) -> Vec<String> {
+        ProgramFields::output_names(&*self.0)
+    }
+    fn declares(&self, rel: &str) -> bool {
+        ProgramFields::declares(&*self.0, rel)
+    }
+    fn columns_of(&self, rel: &str) -> Option<Vec<(String, String)>> {
+        ProgramFields::columns_of(&*self.0, rel)
+    }
+    fn declared_names(&self) -> Vec<String> {
+        ProgramFields::declared_names(&*self.0)
+    }
+    fn fact_names(&self) -> Vec<String> {
+        ProgramFields::fact_names(&*self.0)
+    }
+    fn states_facts(&self, rel: &str) -> bool {
+        ProgramFields::states_facts(&*self.0, rel)
+    }
+    fn fact_rows(&self, rel: &str) -> Vec<List<Value>> {
+        ProgramFields::fact_rows(&*self.0, rel)
+    }
+    fn about(&self, relations: &[&str]) -> Facts {
+        ProgramFields::about(&*self.0, relations)
+    }
+}
+
+impl FieldsMut for FieldsW<'_, '_> {
     fn declare(&mut self, rel: &str, cols: &[(&str, &str)]) {
-        Builder::declare(self, rel, cols)
+        FieldsW::declare(self, rel, cols)
     }
     fn undeclare(&mut self, rel: &str) {
-        Builder::undeclare(self, rel)
+        FieldsW::undeclare(self, rel)
     }
     fn add_input(&mut self, rel: &str) {
-        Builder::add_input(self, rel)
+        FieldsW::add_input(self, rel)
     }
     fn retain_inputs(&mut self, keep: &dyn Fn(&str) -> bool) {
-        Builder::retain_inputs(self, keep)
+        FieldsW::retain_inputs(self, keep)
     }
     fn set_inputs(&mut self, names: &[String]) {
-        Builder::set_inputs(self, names)
+        FieldsW::set_inputs(self, names)
     }
     fn set_outputs(&mut self, names: &[String]) {
-        Builder::set_outputs(self, names)
+        FieldsW::set_outputs(self, names)
     }
     fn add_output(&mut self, rel: &str) {
-        Builder::add_output(self, rel)
+        FieldsW::add_output(self, rel)
     }
     fn retain_outputs(&mut self, keep: &dyn Fn(&str) -> bool) {
-        Builder::retain_outputs(self, keep)
+        FieldsW::retain_outputs(self, keep)
     }
     fn set_facts(&mut self, rel: &str, rows: &[List<Value>]) {
-        Builder::set_facts(self, rel, rows)
+        FieldsW::set_facts(self, rel, rows)
     }
     fn drop_facts(&mut self, rel: &str) {
-        Builder::drop_facts(self, rel)
+        FieldsW::drop_facts(self, rel)
     }
     fn add_facts(&mut self, rel: &str, rows: &[List<Value>]) {
-        Builder::add_facts(self, rel, rows)
+        FieldsW::add_facts(self, rel, rows)
     }
     fn set_field(&mut self, f: Field<'_>) {
-        Builder::set_field(self, f)
+        FieldsW::set_field(self, f)
     }
 }
 

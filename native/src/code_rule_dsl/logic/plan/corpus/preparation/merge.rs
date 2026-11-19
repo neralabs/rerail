@@ -58,7 +58,7 @@ impl ProgramPass for DropRepeated {
                 *by = heads.iter().filter(|h| !drop.contains_key(h)).map(|h| serves.remove(h).unwrap_or_default()).collect();
             }
             if asked != was {
-                w.on()?.set_asked(&asked);
+                w.on()?.fields().set_asked(&asked);
             }
         }
         Ok(())
@@ -244,7 +244,7 @@ impl ProgramPass for MergeIdentical {
                 })
                 .collect();
             if changed {
-                b.set_about_rows(name, rows);
+                b.fields().set_about_rows(name, rows);
             }
         }
         // The request record (decision 0331) after the merge: a renamed reader is read by its
@@ -309,7 +309,7 @@ impl ProgramPass for MergeIdentical {
                 };
                 let mut keyed: Vec<((String, i64, String), Vec<Cell>)> = kept.into_iter().map(|r| ((text(b, r.get(1)), num(r.get(2)), text(b, r.get(3))), r)).collect();
                 keyed.sort_by(|x, y| x.0.cmp(&y.0));
-                b.set_about_rows("asked", keyed.into_iter().map(|(_, r)| r).collect());
+                b.fields().set_about_rows("asked", keyed.into_iter().map(|(_, r)| r).collect());
             }
         }
         // The declarations and facts, each class's held by its name: the first member's where the name is new; an
@@ -319,19 +319,19 @@ impl ProgramPass for MergeIdentical {
         for (from, t) in &rename {
             if let Some(cols) = f.columns(from) {
                 if !f.is_output(from) {
-                    b.undeclare(from);
+                    b.fields().undeclare(from);
                     declared.remove(from);
                 }
                 if declared.insert(t.clone()) {
-                    b.declare(t, &cols);
+                    b.fields().declare(t, &cols);
                 }
             }
             if let Some(facts) = f.facts(from).filter(|r| !r.about()) {
                 let rows: Vec<Vec<Cell>> = facts.rows().map(|r| r.collect()).collect();
-                b.drop_facts(from);
+                b.fields().drop_facts(from);
                 with_facts.remove(from);
                 if with_facts.insert(t.clone()) {
-                    b.set_fact_cells(t, rows);
+                    b.fields().set_fact_cells(t, rows);
                 }
             }
         }
@@ -1059,7 +1059,7 @@ mod tests {
             if repeat {
                 b.rule().head("q", &[T::Var("x")]).atom("a", &[T::Var("x")]).finish().unwrap();
             }
-            b.set_asked(&std::collections::BTreeMap::from([("q".to_owned(), asked)]));
+            b.fields().set_asked(&std::collections::BTreeMap::from([("q".to_owned(), asked)]));
             let (o, _) = b.finish().unwrap();
             Version::open(o.fold().unwrap().base_bytes().unwrap()).unwrap()
         };
@@ -1102,7 +1102,7 @@ mod tests {
         let read = read(text);
         let mut b = Builder::on(&read);
         let asked = std::collections::BTreeMap::from([("rr_token_req".to_owned(), vec![by(&["a"])]), ("rr_wide_node_text_rr_token_req".to_owned(), vec![by(&["b"])])]);
-        b.set_asked(&asked);
+        b.fields().set_asked(&asked);
         let (v, _) = b.finish().unwrap();
         let mut p = Pipeline::new("test", v);
         let mut merge = super::MergeIdentical::default();
@@ -1120,12 +1120,12 @@ mod tests {
     fn rules_merge_only_on_the_same_branded_atom() {
         use crate::code_rule_dsl::logic::front::Branded;
         let mut b = Builder::base();
-        b.declare("e", &[("x", "number"), ("k", "symbol")]);
+        b.fields().declare("e", &[("x", "number"), ("k", "symbol")]);
         for rel in ["a1", "a2", "b", "uses"] {
-            b.declare(rel, &[("x", "number")]);
+            b.fields().declare(rel, &[("x", "number")]);
         }
-        b.set_inputs(&["e"]);
-        b.set_outputs(&["uses"]);
+        b.fields().set_inputs(&["e"]);
+        b.fields().set_outputs(&["uses"]);
         for (rel, atom) in [("a1", 1), ("a2", 1), ("b", 2)] {
             b.rule().head(rel, &[T::Var("x")]).atom("e", &[T::Var("x"), T::Branded(Branded::name(atom))]).finish().unwrap();
         }

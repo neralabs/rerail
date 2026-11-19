@@ -932,7 +932,7 @@ pub(crate) fn with_cone_version(program: &std::sync::Arc<super::program_image::V
         if !program.declares(&rel) {
             let cols = library.columns_of(&rel).unwrap_or_default();
             let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-            FieldsMut::declare(&mut b, &rel, &pairs);
+            FieldsMut::declare(&mut b.fields(), &rel, &pairs);
         }
     }
     let mut natives = ProgramFields::natives(&**program);
@@ -941,7 +941,7 @@ pub(crate) fn with_cone_version(program: &std::sync::Arc<super::program_image::V
         natives.entry(rel.clone()).or_insert_with(|| native.clone());
     }
     if natives.len() != n {
-        b.set_field(Field::Natives(&natives));
+        b.fields().set_field(Field::Natives(&natives));
     }
     // A relation the program states facts of has the library's too, as the program read whole holds both.
     for rel in library.fact_names().into_iter().filter(|r| take.contains(r)) {
@@ -953,7 +953,7 @@ pub(crate) fn with_cone_version(program: &std::sync::Arc<super::program_image::V
             }
         }
         if rows.len() != n || !program.states_facts(&rel) {
-            b.set_facts(&rel, &rows);
+            b.fields().set_facts(&rel, &rows);
         }
     }
     let mut lattice = ProgramFields::lattice(&**program);
@@ -962,7 +962,7 @@ pub(crate) fn with_cone_version(program: &std::sync::Arc<super::program_image::V
         lattice.entry(rel).or_insert(d);
     }
     if lattice.len() != n {
-        b.set_field(Field::Lattice(&lattice));
+        b.fields().set_field(Field::Lattice(&lattice));
     }
     b.finish_overlay()
 }
@@ -975,7 +975,7 @@ fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::progr
     let lower::Linked { lowered, stated, own_stated, .. } = linked;
     let v = lowering_tail_on(scoped.version()?, vec![(own_v, stated, own_stated)], true, lowered, library)?;
     let mut b = Builder::on(&v);
-    lower::unseed(&mut b, seeds, core);
+    lower::unseed(&mut b.fields(), seeds, core);
     b.finish().map(|(v, _)| v).map_err(Error::Syntax)
 }
 
@@ -1331,12 +1331,12 @@ pub fn files_given(v: &std::sync::Arc<super::program_image::Version>) -> Result<
         b.rewrite(v, r, &mut Unfiltered(v)).finish().map_err(Error::Syntax)?;
     }
     for f in FILTER.iter().filter(|f| v.declares(f)) {
-        b.undeclare(f);
+        b.fields().undeclare(f);
     }
     let mut settings = ProgramFields::settings(&**v);
     settings.push(("scope".to_owned(), "given".to_owned()));
-    b.set_field(Field::Settings(&settings));
-    b.set_field(Field::DocScopes(None));
+    b.fields().set_field(Field::Settings(&settings));
+    b.fields().set_field(Field::DocScopes(None));
     Ok(b.finish().map_err(Error::Syntax)?.0)
 }
 
@@ -1530,7 +1530,7 @@ pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Resul
         return Ok(program);
     }
     let mut b = super::program_image::Builder::on(&program);
-    b.add_setting(super::front::GLOBAL, &format!("{} {}", super::front::LIBRARY, library.join(", ")));
+    b.fields().add_setting(super::front::GLOBAL, &format!("{} {}", super::front::LIBRARY, library.join(", ")));
     b.finish().map(|(v, _)| v).map_err(Error::Syntax)
 }
 

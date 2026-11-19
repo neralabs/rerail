@@ -577,30 +577,30 @@ impl ProgramPass for FoldOwn<'_> {
         // The fields edited in the same derivation.
         let b = w.derive()?;
         for rel in folded.keys() {
-            b.undeclare(rel);
+            b.fields().undeclare(rel);
         }
         let named = |b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, c: Cell, gone: &dyn Fn(&str) -> bool| matches!(c, Cell::Str(a) if gone(b.text(a)));
         let qualifiers: Vec<Vec<Cell>> = b.about_rows("qualifier").into_iter().filter(|r| !named(b, r[1], &|x| folded.contains_key(x))).collect();
-        b.set_about_rows("qualifier", qualifiers);
+        b.fields().set_about_rows("qualifier", qualifiers);
         // The request record's readers (`hiding::fold_own`'s `rename_readers`, decision 0331).
         b.rename_asked_readers(&|r| folded.get(r).cloned());
         for about in ["kindset", "kindset_kind"] {
             let rows: Vec<Vec<Cell>> = b.about_rows(about).into_iter().filter(|r| !named(b, r[1], &|x| sets.contains_key(x))).collect();
-            b.set_about_rows(about, rows);
+            b.fields().set_about_rows(about, rows);
         }
         let renamed = |list: Vec<String>| -> Vec<String> { list.into_iter().map(|r| folded.get(&r).cloned().unwrap_or(r)).collect() };
         let inputs = renamed(f.inputs().map(str::to_owned).collect());
         let outputs = renamed(f.outputs().map(str::to_owned).collect());
         if f.inputs().any(|r| folded.contains_key(r)) {
-            b.set_inputs(&inputs);
+            b.fields().set_inputs(&inputs);
         }
         if f.outputs().any(|r| folded.contains_key(r)) {
-            b.set_outputs(&outputs);
+            b.fields().set_outputs(&outputs);
         }
         if f.demand().any(|r| folded.contains_key(r)) {
             let p = super::demand::about_p(b);
             let rows: Vec<Vec<Cell>> = renamed(f.demand().map(str::to_owned).collect()).iter().enumerate().map(|(k, r)| vec![p, Cell::Int(k as i64), Cell::Str(b.atom(r))]).collect();
-            b.set_about_rows("demand", rows);
+            b.fields().set_about_rows("demand", rows);
         }
         // The request record's readers renamed as the reads are (`Program::rename_readers`): a request of a folded
         // copy serves its original (decision 0331).
@@ -612,7 +612,7 @@ impl ProgramPass for FoldOwn<'_> {
             }
         }
         if asked != was {
-            b.set_asked(&asked);
+            b.fields().set_asked(&asked);
         }
         self.folded += folded.len() + sets.len();
         Ok(())

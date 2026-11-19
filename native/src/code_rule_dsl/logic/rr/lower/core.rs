@@ -144,7 +144,7 @@ impl Lowerer {
         if !self.prog.declares(&name) {
             let (params, own) = shape(rel);
             let cols: Vec<(&str, &str)> = DECLS[rel].iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-            self.prog.declare(&name, &cols);
+            self.prog.fields().declare(&name, &cols);
             let map: Vec<(&str, Tm)> = params.iter().chain(own).map(|v| (*v, self.var_tm(v))).collect();
             let args: Vec<Tm> = params.iter().map(|p| term_of(&map, p)).collect();
             self.fixed_rule_with(&name, &args, false, |me| write_definition(me, rel, &map));
@@ -207,9 +207,9 @@ pub fn drop_unread_core(v: &std::sync::Arc<crate::code_rule_dsl::logic::program_
     }
     let mut b = Builder::on(v);
     for rel in &unused {
-        b.undeclare(rel);
+        b.fields().undeclare(rel);
     }
     let inputs: Vec<String> = v.input_names().into_iter().filter(|i| !unused.contains(i)).collect();
-    b.set_inputs(&inputs);
+    b.fields().set_inputs(&inputs);
     Ok(b.finish()?.0)
 }

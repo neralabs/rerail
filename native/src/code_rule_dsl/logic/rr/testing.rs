@@ -386,7 +386,7 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
         if !declared.contains(relation) {
             return bad(path, e.line, format!("`.expect` names {relation}, which no rule declares"));
         }
-        program.add_output(relation);
+        program.fields().add_output(relation);
     }
     let program = program.finish().map(|(v, _)| v).map_err(|e| format!("{id}: {e}"))?;
     let report = crate::code_rule_dsl::tools::run_program(program, &files, &root, &out, &serde_json::Value::Null).map_err(|e| format!("{id}: {e}"))?;

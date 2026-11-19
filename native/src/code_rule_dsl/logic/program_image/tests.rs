@@ -28,12 +28,12 @@ fn remade(from: &Version, keep: impl Fn(RuleRef<'_>) -> bool, edit: impl FnOnce(
 /// Every part of a program: names, the least number, strings that need escapes, each literal and aggregate, gated
 /// negations, a relation with no rows, and the `.about` parts.
 fn every_part_on(b: &mut Builder<'_>) {
-    b.declare("r", &[("c", "int"), ("d", "sym")]);
-    b.declare("nearest", &[("x", "int")]);
-    b.set_inputs(&["a", "b"]);
-    b.set_outputs(&["r"]);
-    b.set_facts("k", &[vec![Value::Int(i64::MIN), Value::Str("q\"\\\n\u{1}é".into())].into(), vec![Value::Int(-3), Value::Str(String::new().into())].into()]);
-    b.set_facts("empty", &[]);
+    b.fields().declare("r", &[("c", "int"), ("d", "sym")]);
+    b.fields().declare("nearest", &[("x", "int")]);
+    b.fields().set_inputs(&["a", "b"]);
+    b.fields().set_outputs(&["r"]);
+    b.fields().set_facts("k", &[vec![Value::Int(i64::MIN), Value::Str("q\"\\\n\u{1}é".into())].into(), vec![Value::Int(-3), Value::Str(String::new().into())].into()]);
+    b.fields().set_facts("empty", &[]);
     let x = || T::Var("x");
     let y = || T::Var("y");
     b.rule()
@@ -56,11 +56,11 @@ fn every_part_on(b: &mut Builder<'_>) {
         .finish()
         .unwrap();
     b.rule().head("unit", &[]).finish().unwrap();
-    b.set_field(Field::Natives(&[("reach_x".to_owned(), Native::Reach { seed: "s".into(), edge: "e".into() })].into()));
-    b.set_field(Field::Kindsets(&[("Scope".to_owned(), vec!["module".to_owned(), "class".to_owned()])].into()));
-    b.set_field(Field::Demand(&["*".to_owned()]));
-    b.set_field(Field::Settings(&[("mode".to_owned(), "block".to_owned()), ("input".to_owned(), "r(IO=json)".to_owned())]));
-    b.set_field(Field::Nullary(&["unit".to_owned()].into()));
+    b.fields().set_field(Field::Natives(&[("reach_x".to_owned(), Native::Reach { seed: "s".into(), edge: "e".into() })].into()));
+    b.fields().set_field(Field::Kindsets(&[("Scope".to_owned(), vec!["module".to_owned(), "class".to_owned()])].into()));
+    b.fields().set_field(Field::Demand(&["*".to_owned()]));
+    b.fields().set_field(Field::Settings(&[("mode".to_owned(), "block".to_owned()), ("input".to_owned(), "r(IO=json)".to_owned())]));
+    b.fields().set_field(Field::Nullary(&["unit".to_owned()].into()));
 }
 
 fn every_part() -> Arc<Version> {
@@ -268,13 +268,13 @@ fn views_and_overlays_are_the_programs_they_say() {
         b.rule().head("made_here", &[x()]).atom(head0.as_str(), &[x()]).finish().unwrap();
     };
     let parts = |b: &mut Builder<'_>, facts: bool| {
-        b.declare(&d_changed, &[("only", "int")]);
-        b.undeclare(&d_gone);
-        b.declare("made_here", &[("x", "int")]);
+        b.fields().declare(&d_changed, &[("only", "int")]);
+        b.fields().undeclare(&d_gone);
+        b.fields().declare("made_here", &[("x", "int")]);
         if facts {
-            b.set_facts("made_facts", &[vec![Value::Int(7)].into()]);
+            b.fields().set_facts("made_facts", &[vec![Value::Int(7)].into()]);
         }
-        b.set_inputs(&inputs);
+        b.fields().set_inputs(&inputs);
     };
     let mut b = v0.builder();
     b.remove(RuleId(5));
@@ -298,8 +298,8 @@ fn views_and_overlays_are_the_programs_they_say() {
     for &id in &last {
         b.remove(id);
     }
-    b.drop_facts("made_facts");
-    b.set_outputs(&outputs);
+    b.fields().drop_facts("made_facts");
+    b.fields().set_outputs(&outputs);
     let (v3, made) = b.finish().unwrap();
     assert_eq!(made, Made::Overlay);
     let mut b = v3.builder();
@@ -310,7 +310,7 @@ fn views_and_overlays_are_the_programs_they_say() {
     // The added rule goes last in an overlay: its order is the version's.
     let p4 = remade(&v0, |r| ![1, 5].contains(&r.id().0) && !last.contains(&r.id()), |b| {
         parts(b, false);
-        b.set_outputs(&outputs);
+        b.fields().set_outputs(&outputs);
         made_here(b);
     });
     same(&v4, &p4);
@@ -340,12 +340,12 @@ fn a_part_is_a_view_with_its_fields_overlaid() {
     natives.insert(heads[1].clone(), Native::Reach { seed: heads[2].clone(), edge: heads[3].clone() });
     let v0 = {
         let mut b = Builder::on(&big);
-        b.set_field(Field::Lattice(&lattice));
-        b.set_field(Field::Gates(&gates));
-        b.set_field(Field::Natives(&natives));
+        b.fields().set_field(Field::Lattice(&lattice));
+        b.fields().set_field(Field::Gates(&gates));
+        b.fields().set_field(Field::Natives(&natives));
         // Facts named as about relations are (`gate`, `lattice`): the fields' overlay hides none of them.
-        b.set_facts("gate", &[vec![Value::Int(1)].into()]);
-        b.set_facts("lattice", &[vec![Value::Str("x".into())].into()]);
+        b.fields().set_facts("gate", &[vec![Value::Int(1)].into()]);
+        b.fields().set_facts("lattice", &[vec![Value::Str("x".into())].into()]);
         b.finish().unwrap().0.fold().unwrap()
     };
     // Every other relation, so the part interleaves the program's rules: many ranges.
@@ -355,12 +355,12 @@ fn a_part_is_a_view_with_its_fields_overlaid() {
     let outputs: Vec<String> = heads.iter().step_by(4).cloned().collect();
     let part = v0.part(&keep, &inputs, &outputs, super::PartFields { natives: &keep, lattice: &keep, gates: &keep }).unwrap();
     let fields_of = |b: &mut Builder<'_>| {
-        b.set_field(Field::Natives(&natives.iter().filter(|(r, _)| keep(r)).map(|(r, n)| (r.clone(), n.clone())).collect()));
-        b.set_field(Field::Lattice(&lattice.iter().filter(|(r, _)| keep(r)).map(|(r, l)| (r.clone(), l.clone())).collect()));
-        b.set_field(Field::Gates(&gates.iter().filter(|(r, _)| keep(r)).cloned().collect::<Vec<_>>()));
-        b.set_field(Field::Asked(&ProgramFields::asked(&*v0).into_iter().filter(|(r, _)| keep(r)).collect()));
-        b.set_inputs(&inputs);
-        b.set_outputs(&outputs);
+        b.fields().set_field(Field::Natives(&natives.iter().filter(|(r, _)| keep(r)).map(|(r, n)| (r.clone(), n.clone())).collect()));
+        b.fields().set_field(Field::Lattice(&lattice.iter().filter(|(r, _)| keep(r)).map(|(r, l)| (r.clone(), l.clone())).collect()));
+        b.fields().set_field(Field::Gates(&gates.iter().filter(|(r, _)| keep(r)).cloned().collect::<Vec<_>>()));
+        b.fields().set_field(Field::Asked(&ProgramFields::asked(&*v0).into_iter().filter(|(r, _)| keep(r)).collect()));
+        b.fields().set_inputs(&inputs);
+        b.fields().set_outputs(&outputs);
     };
     let want = remade(&v0, |r| keep(v0.rel_name(r.head().rel())), fields_of);
     same(&part, &want);
@@ -384,11 +384,11 @@ fn a_part_is_a_view_with_its_fields_overlaid() {
     handles_agree(&cut, &want_cut);
     let mut b = Builder::on(&cut);
     let more: Vec<String> = inputs.iter().cloned().chain(["delta_in".to_owned()]).collect();
-    b.set_inputs(&more);
+    b.fields().set_inputs(&more);
     let cut_in = b.finish_overlay().unwrap();
     same(&cut_in, &remade(&v0, |r| keep(v0.rel_name(r.head().rel())) && !out.contains(&r.id()), |b| {
         fields_of(b);
-        b.set_inputs(&more);
+        b.fields().set_inputs(&more);
     }));
 }
 
@@ -514,11 +514,11 @@ fn an_edit_of_half_its_parent_folds() {
     for g in n / 3..n {
         b.remove(RuleId(g));
     }
-    b.set_inputs(&inputs);
+    b.fields().set_inputs(&inputs);
     let (v1, made) = b.finish().unwrap();
     assert_eq!(made, Made::Folded);
     assert_eq!(v1.depth(), 0);
-    same(&v1, &remade(&v0, |r| r.id().0 < n / 3, |b| b.set_inputs(&inputs)));
+    same(&v1, &remade(&v0, |r| r.id().0 < n / 3, |b| b.fields().set_inputs(&inputs)));
 }
 
 /// An overlay's delta is the size of its edit, not of its parent: one rule added to a program ten times larger
@@ -574,11 +574,11 @@ fn analysed_on(b: &mut Builder<'_>) {
     for k in 0..24 {
         b.rule().head("pad", &[x()]).atom("in", &[x(), y(), T::Int(k)]).finish().unwrap();
     }
-    b.set_field(Field::Answers(&[("ask".to_owned(), vec!["told".to_owned()])].into()));
-    b.set_field(Field::Lattice(&[("best".to_owned(), LatticeDecl { keys: 1, ty: "max".into(), merge: None, widen: None })].into()));
-    b.set_field(Field::Natives(&[("r".to_owned(), Native::Reach { seed: "lone".into(), edge: "e".into() })].into()));
-    b.set_inputs(&["in", "seed"]);
-    b.set_outputs(&["out", "best", "pad"]);
+    b.fields().set_field(Field::Answers(&[("ask".to_owned(), vec!["told".to_owned()])].into()));
+    b.fields().set_field(Field::Lattice(&[("best".to_owned(), LatticeDecl { keys: 1, ty: "max".into(), merge: None, widen: None })].into()));
+    b.fields().set_field(Field::Natives(&[("r".to_owned(), Native::Reach { seed: "lone".into(), edge: "e".into() })].into()));
+    b.fields().set_inputs(&["in", "seed"]);
+    b.fields().set_outputs(&["out", "best", "pad"]);
 }
 
 fn analysed() -> Arc<Version> {
@@ -596,8 +596,8 @@ fn the_composed_path_accepts_a_plain_program() {
     b.rule().head("e", &[x(), y()]).atom("in", &[x(), y(), T::Int(3)]).finish().unwrap();
     b.rule().head("p", &[x()]).atom("e", &[x(), T::Wild]).finish().unwrap();
     b.rule().head("p", &[y()]).atom("p", &[x()]).atom("e", &[x(), y()]).finish().unwrap();
-    b.set_inputs(&["in"]);
-    b.set_outputs(&["p"]);
+    b.fields().set_inputs(&["in"]);
+    b.fields().set_outputs(&["p"]);
     let plain = b.finish().unwrap().0;
     assert_eq!(super::analyses::accepts(&plain, &super::About::of(&plain)).ok(), Some(true));
 }
@@ -648,18 +648,18 @@ fn passes_hold(v: &Arc<Version>) {
 /// keys and one of keys, `top` in heads, bodies, calls and comparisons, ground rules, and stated facts beside rules.
 fn normalizable_on(b: &mut Builder<'_>) {
     analysed_on(b);
-    b.declare("flag", &[]);
-    b.declare("in", &[("a", "int"), ("b", "int"), ("c", "int")]);
-    b.declare("best", &[("x", "int"), ("n", "int")]);
-    b.declare("lo", &[("n", "int")]);
-    b.declare("e", &[("x", "int"), ("y", "int")]);
-    b.set_field(Field::Lattice(&[
+    b.fields().declare("flag", &[]);
+    b.fields().declare("in", &[("a", "int"), ("b", "int"), ("c", "int")]);
+    b.fields().declare("best", &[("x", "int"), ("n", "int")]);
+    b.fields().declare("lo", &[("n", "int")]);
+    b.fields().declare("e", &[("x", "int"), ("y", "int")]);
+    b.fields().set_field(Field::Lattice(&[
         ("best".to_owned(), LatticeDecl { keys: 1, ty: "max".into(), merge: None, widen: None }),
         ("lo".to_owned(), LatticeDecl { keys: 0, ty: "min".into(), merge: None, widen: None }),
     ].into()));
-    b.set_facts("flag", &[Vec::<Value>::new().into()]);
-    b.set_facts("e", &[vec![Value::Int(1), Value::Int(2)].into()]);
-    b.set_facts("lo", &[vec![Value::Int(7)].into()]);
+    b.fields().set_facts("flag", &[Vec::<Value>::new().into()]);
+    b.fields().set_facts("e", &[vec![Value::Int(1), Value::Int(2)].into()]);
+    b.fields().set_facts("lo", &[vec![Value::Int(7)].into()]);
     let (x, n, m) = (|| T::Var("x"), || T::Var("n"), || T::Var("m"));
     b.rule().head("flag", &[]).atom("p", &[T::Wild]).finish().unwrap();
     b.rule().head("lo", &[n()]).atom("best", &[T::Wild, n()]).atom("flag", &[]).finish().unwrap();
@@ -781,19 +781,19 @@ fn every_field() -> Arc<Version> {
     .into_iter()
     .map(|(r, n)| (r.to_owned(), n))
     .collect();
-    b.set_field(Field::Natives(&natives));
-    b.set_field(Field::Lattice(&[
+    b.fields().set_field(Field::Natives(&natives));
+    b.fields().set_field(Field::Lattice(&[
         ("best".to_owned(), LatticeDecl { keys: 1, ty: "max".into(), merge: None, widen: None }),
         ("joined".to_owned(), LatticeDecl { keys: 2, ty: "sym".into(), merge: Some("type_join".into()), widen: Some(3) }),
     ].into()));
-    b.set_field(Field::Answers(&[("ask".to_owned(), vec!["told".to_owned(), "also".to_owned()]), ("ask2".to_owned(), vec!["told2".to_owned()])].into()));
-    b.set_field(Field::Gates(&[
+    b.fields().set_field(Field::Answers(&[("ask".to_owned(), vec!["told".to_owned(), "also".to_owned()]), ("ask2".to_owned(), vec!["told2".to_owned()])].into()));
+    b.fields().set_field(Field::Gates(&[
         ("done_x".to_owned(), Gate { src: Some("x_demand".into()), rel: "x".into(), level: 2, quiet: vec!["q1".into(), "q0".into()], deps: vec!["done_y".into()] }),
         ("done_y".to_owned(), Gate { src: None, rel: "y".into(), level: 1, quiet: vec![], deps: vec![] }),
     ]));
-    b.set_field(Field::Qualifiers(&[("r".to_owned(), ["inline".to_owned(), "no_magic".to_owned()].into()), ("nearest".to_owned(), ["no_inline".to_owned()].into())].into()));
-    b.set_field(Field::Tapes(&[("r".to_owned(), [1usize].into())].into()));
-    b.set_field(Field::Demand(&["r".to_owned(), "*".to_owned(), "nearest".to_owned()]));
+    b.fields().set_field(Field::Qualifiers(&[("r".to_owned(), ["inline".to_owned(), "no_magic".to_owned()].into()), ("nearest".to_owned(), ["no_inline".to_owned()].into())].into()));
+    b.fields().set_field(Field::Tapes(&[("r".to_owned(), [1usize].into())].into()));
+    b.fields().set_field(Field::Demand(&["r".to_owned(), "*".to_owned(), "nearest".to_owned()]));
     b.finish().unwrap().0
 }
 
@@ -975,11 +975,11 @@ fn managed() -> Arc<Version> {
     let mut b = Builder::base();
     for (n, k) in [("e", 2), ("f", 1), ("p", 1), ("q", 1), ("r", 1)] {
         let cols: Vec<String> = (0..k).map(|i| format!("c{i}")).collect();
-        b.declare(n, &cols.iter().map(|c| (c.as_str(), "int")).collect::<Vec<_>>());
+        b.fields().declare(n, &cols.iter().map(|c| (c.as_str(), "int")).collect::<Vec<_>>());
     }
-    b.set_facts("f", &[vec![Value::Int(1)].into()]);
-    b.set_inputs(&["e"]);
-    b.set_outputs(&["p", "r"]);
+    b.fields().set_facts("f", &[vec![Value::Int(1)].into()]);
+    b.fields().set_inputs(&["e"]);
+    b.fields().set_outputs(&["p", "r"]);
     let (x, y) = (|| T::Var("x"), || T::Var("y"));
     b.rule().head("p", &[x()]).atom("e", &[x(), T::Wild]).finish().unwrap();
     b.rule().head("q", &[y()]).atom("e", &[T::Wild, y()]).finish().unwrap();
@@ -1057,7 +1057,7 @@ struct DropFacts;
 impl super::manager::ProgramPass for DropFacts {
     const NAME: &'static str = "drop facts";
     fn run(&mut self, cx: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
-        w.on()?.drop_facts("f");
+        w.on()?.fields().drop_facts("f");
         cx.decide("dropped", || "f".into());
         Ok(())
     }
@@ -1314,7 +1314,7 @@ fn a_stored_run_reruns_on_an_edit_in_a_new_process() {
 fn asked_base(text: &str, asked: &[(&str, Vec<BTreeSet<String>>)]) -> Arc<Version> {
     let read = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
     let mut b = Builder::on(&read);
-    b.set_asked(&asked.iter().map(|(r, by)| ((*r).to_owned(), by.clone())).collect());
+    b.fields().set_asked(&asked.iter().map(|(r, by)| ((*r).to_owned(), by.clone())).collect());
     let (v, _) = b.finish().unwrap();
     Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap()
 }
@@ -1568,10 +1568,10 @@ mod program_facts_tests {
         for scopes in [None, Some(vec![(vec!["impl/**".to_owned(), "api/**".to_owned()], vec!["**/tests/**".to_owned()]), (vec![], vec![])])] {
             let globs = if scopes.is_some() { vec!["**/*.md".to_owned(), "docs/*.rst".to_owned()] } else { Vec::new() };
             let mut b = Builder::base();
-            b.declare("a", &[("n", "node")]);
-            b.set_outputs(&["a"]);
-            b.set_field(Field::DocScopes(scopes.as_deref()));
-            b.set_field(Field::TextGlobs(&globs));
+            b.fields().declare("a", &[("n", "node")]);
+            b.fields().set_outputs(&["a"]);
+            b.fields().set_field(Field::DocScopes(scopes.as_deref()));
+            b.fields().set_field(Field::TextGlobs(&globs));
             let v = b.finish().unwrap().0;
             let back = Version::open(v.base_bytes().unwrap()).unwrap();
             assert_eq!(ProgramFields::doc_scopes(&*back), scopes);
@@ -1586,8 +1586,8 @@ mod program_facts_tests {
         use crate::code_rule_dsl::logic::front::Value;
         use crate::code_rule_dsl::logic::program_image::{Builder, Version, fields::ProgramFields};
         let mut b = Builder::base();
-        b.set_facts("none", &[]);
-        b.set_facts("one", &[vec![Value::Int(1)].into()]);
+        b.fields().set_facts("none", &[]);
+        b.fields().set_facts("one", &[vec![Value::Int(1)].into()]);
         let v = b.finish().unwrap().0;
         let back = Version::open(v.base_bytes().unwrap()).unwrap();
         assert_eq!(ProgramFields::fact_names(&*back), ["none", "one"]);
@@ -1604,9 +1604,9 @@ mod program_facts_tests {
         use crate::code_rule_dsl::logic::program_image::{Builder, Version, fields::ProgramFields};
         let patterns: std::collections::BTreeSet<String> = ["$O[:-$K]".to_owned(), "print($$$A)".to_owned()].into();
         let mut b = Builder::base();
-        b.declare("a", &[("n", "node")]);
-        b.set_outputs(&["a"]);
-        b.set_field(Field::AstPatterns(&patterns));
+        b.fields().declare("a", &[("n", "node")]);
+        b.fields().set_outputs(&["a"]);
+        b.fields().set_field(Field::AstPatterns(&patterns));
         let v = b.finish().unwrap().0;
         let back = Version::open(v.base_bytes().unwrap()).unwrap();
         assert_eq!(ProgramFields::ast_patterns(&*back), patterns);
@@ -1642,7 +1642,7 @@ fn a_rewrite_renames_an_aggregates_result_too() {
 fn managed_asked() -> Arc<Version> {
     let v = managed();
     let mut b = v.builder();
-    b.set_asked(&std::collections::BTreeMap::from([("q".to_owned(), vec![std::collections::BTreeSet::from(["p".to_owned()])])]));
+    b.fields().set_asked(&std::collections::BTreeMap::from([("q".to_owned(), vec![std::collections::BTreeSet::from(["p".to_owned()])])]));
     let (o, _) = b.finish().unwrap();
     Version::open(o.fold().unwrap().base_bytes().unwrap()).unwrap()
 }
@@ -1650,7 +1650,7 @@ fn managed_asked() -> Arc<Version> {
 /// `v` with request record `asked`, as one base image (`managed_asked`'s way).
 fn asked_of(v: &Arc<Version>, asked: &super::about::Asked) -> Arc<Version> {
     let mut b = v.builder();
-    b.set_asked(asked);
+    b.fields().set_asked(asked);
     let (o, _) = b.finish().unwrap();
     Version::open(o.fold().unwrap().base_bytes().unwrap()).unwrap()
 }
@@ -1780,7 +1780,7 @@ fn a_request_record_a_step_drops_stays_dropped() {
     impl super::manager::ProgramPass for DropRecord {
         const NAME: &'static str = "drop the record";
         fn run(&mut self, _: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
-            w.on()?.keep_asked(&|r| r != "q");
+            w.on()?.fields().keep_asked(&|r| r != "q");
             Ok(())
         }
     }

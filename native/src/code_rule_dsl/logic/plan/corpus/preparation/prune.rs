@@ -126,10 +126,10 @@ impl ProgramPass for Prune {
         let inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).chain(revived.iter().cloned()).collect();
         let b = w.on()?;
         if !revived.is_empty() {
-            b.set_inputs(&inputs);
+            b.fields().set_inputs(&inputs);
         }
         if asked_after != asked {
-            b.set_asked(&asked_after);
+            b.fields().set_asked(&asked_after);
         }
         // The natives' rows (each names its native in column 1).
         if !dropped_natives.is_empty() {
@@ -157,7 +157,7 @@ mod tests {
         let pruned = |reader: &str| {
             let read = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
             let mut b = Builder::on(&read);
-            b.set_asked(&std::collections::BTreeMap::from([("req".to_owned(), vec![BTreeSet::from([reader.to_owned()])])]));
+            b.fields().set_asked(&std::collections::BTreeMap::from([("req".to_owned(), vec![BTreeSet::from([reader.to_owned()])])]));
             let (v, _) = b.finish().unwrap();
             let mut p = Pipeline::new("test", v);
             let mut prune = super::Prune::default();

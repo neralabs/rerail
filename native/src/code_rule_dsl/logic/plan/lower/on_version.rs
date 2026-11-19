@@ -355,7 +355,7 @@ impl ProgramPass for FactsAndSets<'_> {
         }
         let b = w.on()?;
         for (rel, rows) in facts {
-            b.set_fact_cells(&rel, rows);
+            b.fields().set_fact_cells(&rel, rows);
         }
         let rows = b.about_rows("kindset_kind");
         if rows.is_empty() {
@@ -384,7 +384,7 @@ impl ProgramPass for FactsAndSets<'_> {
             }
             out.push(row);
         }
-        b.set_about_rows("kindset_kind", out);
+        b.fields().set_about_rows("kindset_kind", out);
         Ok(())
     }
 }

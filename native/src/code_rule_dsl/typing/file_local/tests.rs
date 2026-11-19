@@ -581,12 +581,12 @@ fn a_located_rule_keeps_its_branded_atoms() {
     use crate::code_rule_dsl::logic::program_image::T;
     let kind = Branded { class: Class::Kind, atom: 7 };
     let mut b = Builder::base();
-    b.declare("node", &[("d", "number"), ("n", "node"), ("kind", "symbol"), ("start", "number"), ("end", "number")]);
-    b.declare("text", &[("n", "node"), ("s", "symbol")]);
-    b.declare("named", &[("s", "symbol")]);
-    b.declare("all", &[("s", "symbol")]);
-    b.set_inputs(&["node", "text"]);
-    b.set_outputs(&["all"]);
+    b.fields().declare("node", &[("d", "number"), ("n", "node"), ("kind", "symbol"), ("start", "number"), ("end", "number")]);
+    b.fields().declare("text", &[("n", "node"), ("s", "symbol")]);
+    b.fields().declare("named", &[("s", "symbol")]);
+    b.fields().declare("all", &[("s", "symbol")]);
+    b.fields().set_inputs(&["node", "text"]);
+    b.fields().set_outputs(&["all"]);
     b.rule().head("named", &[T::Var("s")]).atom("node", &[T::Wild, T::Var("n"), T::Branded(kind), T::Wild, T::Wild]).atom("text", &[T::Var("n"), T::Var("s")]).finish().unwrap();
     b.rule().head("all", &[T::Var("s")]).atom("named", &[T::Var("s")]).finish().unwrap();
     let (v, _) = b.finish().unwrap();
@@ -776,7 +776,7 @@ fn the_split_of_a_version_reads_an_undeclared_axis() {
     assert!(!axes.is_empty(), "the program reads an axis:\n{}", v.show());
     let mut b = Builder::on(&v);
     for a in &axes {
-        b.undeclare(a);
+        b.fields().undeclare(a);
     }
     let (v, _) = b.finish().unwrap();
     let split = split_of(&v);

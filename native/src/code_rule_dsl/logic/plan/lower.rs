@@ -384,7 +384,7 @@ pub fn relocate(v: &Version, to: &HashMap<u32, u32>) -> Result<Option<std::sync:
             }
             *row = cells.into();
         }
-        b.set_facts(&rel, &rows);
+        b.fields().set_facts(&rel, &rows);
     }
     if moved.missing {
         return Ok(None);

@@ -364,18 +364,18 @@ fn state_fields(b: &mut Builder<'_>, own: &dyn ProgramFields, shared: &dyn Progr
     for rel in own.declared_names() {
         let cols = own.columns_of(&rel).unwrap_or_default();
         let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-        FieldsMut::declare(b, &rel, &pairs);
+        FieldsMut::declare(&mut b.fields(), &rel, &pairs);
     }
     for rel in own.fact_names() {
-        b.set_facts(&rel, &own.fact_rows(&rel));
+        b.fields().set_facts(&rel, &own.fact_rows(&rel));
     }
-    b.set_inputs(&own.input_names());
-    b.set_outputs(&own.output_names());
-    b.set_field(Field::Nullary(&own.nullary()));
-    b.set_field(Field::Lattice(&own.lattice()));
-    b.set_field(Field::Qualifiers(&own.qualifiers()));
-    b.set_field(Field::Tapes(&own.tapes()));
-    b.set_field(Field::Demand(&own.demand()));
+    b.fields().set_inputs(&own.input_names());
+    b.fields().set_outputs(&own.output_names());
+    b.fields().set_field(Field::Nullary(&own.nullary()));
+    b.fields().set_field(Field::Lattice(&own.lattice()));
+    b.fields().set_field(Field::Qualifiers(&own.qualifiers()));
+    b.fields().set_field(Field::Tapes(&own.tapes()));
+    b.fields().set_field(Field::Demand(&own.demand()));
     // A shared field as `shared` holds it, or none where `whole` holds it alike.
     macro_rules! shared {
         ($get:ident) => {{
@@ -383,22 +383,22 @@ fn state_fields(b: &mut Builder<'_>, own: &dyn ProgramFields, shared: &dyn Progr
             if whole.is_some_and(|w| format!("{:?}", w.$get()) == format!("{x:?}")) { Default::default() } else { x }
         }};
     }
-    b.set_field(Field::Kindsets(&shared!(kindsets)));
-    b.set_field(Field::DemandDropped(&shared!(demand_dropped)));
-    b.set_field(Field::MagicExtras(shared!(magic_extras)));
-    b.set_field(Field::MagicReport(shared!(magic_report).as_ref()));
-    b.set_field(Field::Gates(&shared!(gates)));
-    b.set_field(Field::Policies(&shared!(policies)));
-    b.set_field(Field::Settings(&shared!(settings)));
-    b.set_field(Field::Natives(&shared!(natives)));
-    b.set_field(Field::RxSpans(&shared!(rx_spans)));
-    b.set_field(Field::AstPatterns(&shared!(ast_patterns)));
-    b.set_field(Field::DocScopes(shared!(doc_scopes).as_deref()));
-    b.set_field(Field::Answers(&shared!(answers)));
-    b.set_field(Field::TextGlobs(&shared!(text_globs)));
-    b.set_field(Field::Asked(&shared!(asked)));
-    b.set_field(Field::Shapes(&shared!(shapes)));
-    b.set_field(Field::Layouts(&shared!(layouts)));
+    b.fields().set_field(Field::Kindsets(&shared!(kindsets)));
+    b.fields().set_field(Field::DemandDropped(&shared!(demand_dropped)));
+    b.fields().set_field(Field::MagicExtras(shared!(magic_extras)));
+    b.fields().set_field(Field::MagicReport(shared!(magic_report).as_ref()));
+    b.fields().set_field(Field::Gates(&shared!(gates)));
+    b.fields().set_field(Field::Policies(&shared!(policies)));
+    b.fields().set_field(Field::Settings(&shared!(settings)));
+    b.fields().set_field(Field::Natives(&shared!(natives)));
+    b.fields().set_field(Field::RxSpans(&shared!(rx_spans)));
+    b.fields().set_field(Field::AstPatterns(&shared!(ast_patterns)));
+    b.fields().set_field(Field::DocScopes(shared!(doc_scopes).as_deref()));
+    b.fields().set_field(Field::Answers(&shared!(answers)));
+    b.fields().set_field(Field::TextGlobs(&shared!(text_globs)));
+    b.fields().set_field(Field::Asked(&shared!(asked)));
+    b.fields().set_field(Field::Shapes(&shared!(shapes)));
+    b.fields().set_field(Field::Layouts(&shared!(layouts)));
 }
 
 /// A part's program: its own header (`Own`) on the shared fields of the program `v`, and its rules, copied from it.
@@ -707,23 +707,23 @@ fn merge_header(all: &mut Builder<'_>, before: &Selected<'_>, after: &dyn Progra
         if before.columns_of(&rel) != cols {
             let cols = cols.unwrap_or_default();
             let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-            FieldsMut::declare(all, &rename(&rel), &pairs);
+            FieldsMut::declare(&mut all.fields(), &rename(&rel), &pairs);
         }
     }
     for rel in before.declared_names() {
         if !after.declares(&rel) && owned(&rel) && ProgramFields::declares(all, &rel) {
-            all.undeclare(&rel);
+            all.fields().undeclare(&rel);
         }
     }
     for rel in after.fact_names() {
         let rows = after.fact_rows(&rel);
         if !before.states_facts(&rel) || before.fact_rows(&rel) != rows {
-            all.set_facts(&rename(&rel), &rows);
+            all.fields().set_facts(&rename(&rel), &rows);
         }
     }
     for rel in before.fact_names() {
         if !after.states_facts(&rel) && owned(&rel) && ProgramFields::states_facts(all, &rel) {
-            all.drop_facts(&rel);
+            all.fields().drop_facts(&rel);
         }
     }
     macro_rules! map {
@@ -739,7 +739,7 @@ fn merge_header(all: &mut Builder<'_>, before: &Selected<'_>, after: &dyn Progra
                 for k in gone {
                     x.remove(k);
                 }
-                all.set_field(Field::$field(&x));
+                all.fields().set_field(Field::$field(&x));
             }
         }};
     }
@@ -760,7 +760,7 @@ fn merge_header(all: &mut Builder<'_>, before: &Selected<'_>, after: &dyn Progra
             x.entry(k).or_insert(v);
         }
         if x.len() != n {
-            all.set_field(Field::Kindsets(&x));
+            all.fields().set_field(Field::Kindsets(&x));
         }
     }
     let (b, a) = (before.nullary(), after.nullary());
@@ -771,7 +771,7 @@ fn merge_header(all: &mut Builder<'_>, before: &Selected<'_>, after: &dyn Progra
         for r in gone {
             x.remove(r);
         }
-        all.set_field(Field::Nullary(&x));
+        all.fields().set_field(Field::Nullary(&x));
     }
     let (b, a) = (before.demand(), after.demand());
     if a.iter().any(|r| !b.contains(r)) || b.iter().any(|r| !a.contains(r) && owned(r)) {
@@ -783,7 +783,7 @@ fn merge_header(all: &mut Builder<'_>, before: &Selected<'_>, after: &dyn Progra
             }
         }
         x.retain(|r| !(b.contains(r) && !a.contains(r) && owned(r)));
-        all.set_field(Field::Demand(&x));
+        all.fields().set_field(Field::Demand(&x));
     }
     let more = after.rx_spans();
     if !more.is_empty() {
@@ -791,7 +791,7 @@ fn merge_header(all: &mut Builder<'_>, before: &Selected<'_>, after: &dyn Progra
         let n = x.len();
         x.extend(more);
         if x.len() != n {
-            all.set_field(Field::RxSpans(&x));
+            all.fields().set_field(Field::RxSpans(&x));
         }
     }
     let more = after.ast_patterns();
@@ -800,7 +800,7 @@ fn merge_header(all: &mut Builder<'_>, before: &Selected<'_>, after: &dyn Progra
         let n = x.len();
         x.extend(more);
         if x.len() != n {
-            all.set_field(Field::AstPatterns(&x));
+            all.fields().set_field(Field::AstPatterns(&x));
         }
     }
     let (b, a) = (before.gates(), after.gates());
@@ -808,7 +808,7 @@ fn merge_header(all: &mut Builder<'_>, before: &Selected<'_>, after: &dyn Progra
     if !added.is_empty() {
         let mut x = all.gates();
         x.extend(added.into_iter().map(|(rel, g)| (rename(&rel), g)));
-        all.set_field(Field::Gates(&x));
+        all.fields().set_field(Field::Gates(&x));
     }
     // A list's entries `after` added: each the link has not.
     macro_rules! list {
@@ -824,7 +824,7 @@ fn merge_header(all: &mut Builder<'_>, before: &Selected<'_>, after: &dyn Progra
                     }
                 }
                 if x.len() != n {
-                    all.set_field(Field::$field(&x));
+                    all.fields().set_field(Field::$field(&x));
                 }
             }
         }};
@@ -843,17 +843,17 @@ fn merge_header(all: &mut Builder<'_>, before: &Selected<'_>, after: &dyn Progra
         }
     }
     if grew {
-        all.set_field(Field::Layouts(&layouts));
+        all.fields().set_field(Field::Layouts(&layouts));
     }
     list!(settings, Settings);
     let (b, a) = (before.magic_report(), after.magic_report());
     if a != b && a.is_some() {
-        all.set_field(Field::MagicReport(a.as_ref()));
+        all.fields().set_field(Field::MagicReport(a.as_ref()));
     }
     let (b, a) = (before.magic_extras(), after.magic_extras());
     if a != b {
         let x = Some(all.magic_extras().unwrap_or(0) + a.unwrap_or(0));
-        all.set_field(Field::MagicExtras(x));
+        all.fields().set_field(Field::MagicExtras(x));
     }
 }
 
@@ -1309,8 +1309,8 @@ fn link(version: &Version, parts: &[Part], prepared: &[(Own, Prepared)]) -> Resu
     let mut inputs: Vec<String> = version.input_names();
     inputs.extend(added_inputs.into_iter().filter(|r| !inputs.contains(r)).collect::<Vec<_>>());
     inputs.retain(|r| !derived.contains(r));
-    all.set_inputs(&inputs);
-    all.set_outputs(&outputs);
+    all.fields().set_inputs(&inputs);
+    all.fields().set_outputs(&outputs);
     let mut b = all;
     for ((_, p), to) in prepared.iter().zip(&renames) {
         for r in p.version.rules() {
@@ -1697,13 +1697,13 @@ fn link_after(v1: &Version, parts: &[Part], heads: &[Own], versions: &[Arc<Versi
         words.retain(|w| !w.starts_with("part:"));
     }
     qualifiers.retain(|r, words| !words.is_empty() && !r.starts_with("part:"));
-    all.set_field(Field::Qualifiers(&qualifiers));
+    all.fields().set_field(Field::Qualifiers(&qualifiers));
     let derived: BTreeSet<&str> = versions.iter().flat_map(|v| v.rules().map(|r| v.rel_name(r.head().rel()))).collect();
     let mut inputs: Vec<String> = v1.input_names();
     inputs.extend(added.into_iter().filter(|r| !inputs.contains(r)).collect::<Vec<_>>());
     inputs.retain(|r| !derived.contains(r.as_str()));
-    all.set_inputs(&inputs);
-    all.set_outputs(&outputs);
+    all.fields().set_inputs(&inputs);
+    all.fields().set_outputs(&outputs);
     drop(s_headers);
     let _s_rules = crate::code_rule_dsl::logic::profile::span(|| "link after lowering: the rules".into());
     let mut b = all;

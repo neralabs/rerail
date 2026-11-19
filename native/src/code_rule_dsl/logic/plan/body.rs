@@ -595,6 +595,45 @@ pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &Var
 pub struct Versions(Vec<(usize, usize, Placed)>);
 
 
+/// A writer frozen to what a pass reads (decision 0276 §3): a `Placed`, its `Fields` read afresh at their first
+/// reader. A writer cannot fail to make a version, so an error is an error, never a fall back to another form.
+pub trait Freeze {
+    /// The version the writer makes, its rules in its order.
+    fn freeze(self) -> std::result::Result<Placed, String>;
+    /// The version the writer makes, the program's rule `k` its rule `order[k]` as the writer numbered them, read
+    /// back where the edit folded (`Builder::finish_placing`); `whole` where it holds the program's other fields too.
+    fn freeze_placed(self, order: Vec<RuleId>, whole: bool) -> std::result::Result<Placed, String>;
+}
+
+impl Freeze for Builder<'_> {
+    fn freeze(self) -> std::result::Result<Placed, String> {
+        Ok(Placed::whole(self.finish()?.0))
+    }
+    fn freeze_placed(self, mut order: Vec<RuleId>, whole: bool) -> std::result::Result<Placed, String> {
+        let (v, _, folded) = self.finish_placing()?;
+        if let Some(folded) = folded {
+            order.iter_mut().for_each(|id| *id = folded[id]);
+        }
+        Ok(Placed::new(v, order, whole))
+    }
+}
+
+/// A program pass (decision 0276 §3), from the program `p` to what it makes of it, or `None` where it changes nothing:
+/// `f`. Its profile span (`span`, the name the profile and the decisions cite) and its version trace (`site`,
+/// `version_trace`, §6) are taken here, once for every pass, not by each pass.
+pub fn pass<T, E>(site: &'static str, span: &'static str, p: &Placed, f: impl FnOnce(&Placed) -> std::result::Result<Option<(T, Placed)>, E>) -> std::result::Result<Option<(T, Placed)>, E> {
+    let out = {
+        let _span = super::super::profile::span(|| span.into());
+        f(p)?
+    };
+    if let Some((_, q)) = &out
+        && super::super::version_trace::on()
+    {
+        super::super::version_trace::note(site, &p.v, &q.v);
+    }
+    Ok(out)
+}
+
 /// A program's version, and where its rules are in it: the program's rule `k` is the version's rule `ids[k]` (rule
 /// `k` where `ids` is `None`, a version made of the rules in order). A pass's overlay keeps its rules where its edits
 /// put them (a reader's copies after the rules it does not touch), and the program, decoded, in the tree pass's order.
@@ -789,4 +828,34 @@ impl Versions {
 /// Rule `k` of version `v`, as the planner reads it.
 pub fn nth(v: &Version, k: usize) -> Body<'_> {
     Body::of(v, v.rule(RuleId(k as u32)).expect("a made rule"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::program_image::{Builder, T, Version};
+    use super::super::super::rr::parse_version;
+    use super::{Freeze as _, Placed};
+
+    /// 0276 §3: a writer frozen in an order of its own reads each rule where the pass put it, the edit folded or not.
+    /// A fold numbers the rules afresh (`Builder::finish_placing`), so the order the pass wrote is read back through it.
+    #[test]
+    fn a_frozen_edit_keeps_its_order_through_a_fold() {
+        let rels = ["a", "b", "c", "f", "g", "h", "i", "j"];
+        let text: String = rels.iter().map(|r| format!(".decl {r}(x: number)\n{r}(x) :- e(x).\n")).collect();
+        let v = parse_version(&format!(".decl e(x: number)\n.input e\n.decl d(x: number)\n{text}")).unwrap();
+        let shown = |p: &Placed| (0..p.len()).map(|k| p.v.show_rule(p.rule(k))).collect::<Vec<_>>();
+        let ids: Vec<_> = v.rules().map(|r| r.id()).collect();
+        // One rule removed and two added: an overlay of the eight. Four removed: half the program or more, folded.
+        for (remove, folds) in [(1, false), (4, true)] {
+            let mut b = Builder::on(&v);
+            for &id in &ids[..remove] {
+                b.remove(id);
+            }
+            let x = b.rule().head("d", &[T::Var("x")]).atom("a", &[T::Var("x")]).finish().unwrap();
+            let y = b.rule().head("d", &[T::Var("x")]).atom("b", &[T::Var("x")]).finish().unwrap();
+            let p = b.freeze_placed(vec![y, ids[7], x], true).unwrap();
+            assert_eq!(!matches!(&*p.v, Version::Overlay { .. }), folds, "{remove} removed: folded");
+            assert_eq!(shown(&p), ["d($x) :- b($x)", "j($x) :- e($x)", "d($x) :- a($x)"], "{remove} removed");
+        }
+    }
 }

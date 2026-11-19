@@ -147,16 +147,16 @@ fn declare_read(b: &mut Builder<'_>, read: &BTreeSet<String>) {
         }
         if is_py(rel) {
             let columns = crate::code_rule_dsl::facts::vtab::syntax::family_columns(rel).expect("a family's relation");
-            b.declare(rel, &columns.iter().map(|c| (*c, "int")).collect::<Vec<_>>());
+            b.fields().declare(rel, &columns.iter().map(|c| (*c, "int")).collect::<Vec<_>>());
         } else if let Some((_, columns)) = BASE.iter().find(|(base, _)| *base == rel) {
-            b.declare(rel, columns);
+            b.fields().declare(rel, columns);
         }
     }
 }
 
 fn declare_violation(b: &mut Builder<'_>) {
     if !b.declares(VIOLATION) {
-        b.declare(VIOLATION, &[("policy", "sym"), ("clause", "sym"), ("d", "int"), ("n", "int")]);
+        b.fields().declare(VIOLATION, &[("policy", "sym"), ("clause", "sym"), ("d", "int"), ("n", "int")]);
     }
 }
 
@@ -165,7 +165,7 @@ fn output_violation(b: &mut Builder<'_>) {
     let mut outputs = b.output_names();
     if !outputs.iter().any(|o| o == VIOLATION) {
         outputs.push(VIOLATION.to_owned());
-        b.set_outputs(&outputs);
+        b.fields().set_outputs(&outputs);
     }
 }
 
@@ -176,7 +176,7 @@ fn declare_from(b: &mut Builder<'_>, from: &Version) {
             continue;
         }
         let columns = from.columns_of(&rel).unwrap_or_default();
-        b.declare(&rel, &columns.iter().map(|(c, t)| (c.as_str(), if t == "node" { "int" } else { t.as_str() })).collect::<Vec<_>>());
+        b.fields().declare(&rel, &columns.iter().map(|(c, t)| (c.as_str(), if t == "node" { "int" } else { t.as_str() })).collect::<Vec<_>>());
     }
 }
 
@@ -347,8 +347,8 @@ fn merged(v: &Arc<Version>) -> StoreResult<Arc<Version>> {
             }
         };
         let columns: Vec<(String, &str)> = rows[0].iter().enumerate().map(|(j, c)| (format!("k{j}"), kind(c))).collect();
-        b.declare(&rel, &columns.iter().map(|(c, t)| (c.as_str(), *t)).collect::<Vec<_>>());
-        b.set_facts(&rel, &rows.iter().map(|row| List::from(row.clone())).collect::<Vec<_>>());
+        b.fields().declare(&rel, &columns.iter().map(|(c, t)| (c.as_str(), *t)).collect::<Vec<_>>());
+        b.fields().set_facts(&rel, &rows.iter().map(|row| List::from(row.clone())).collect::<Vec<_>>());
         // The constants' variables, `K0, K1, …`, each named apart from the rule's own.
         let names: BTreeSet<&str> = r.vars().map(|a| v.text(a)).collect();
         let ks: Vec<AtomId> = (0..rows[0].len())
@@ -851,10 +851,10 @@ pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRule
     }
     let mut outputs = program.output_names();
     outputs.extend(authored.output_names().into_iter().filter(|o| !outputs.contains(o)).collect::<Vec<_>>());
-    wave.set_outputs(&outputs);
+    wave.fields().set_outputs(&outputs);
     output_violation(&mut wave);
     for rel in authored.fact_names() {
-        wave.set_facts(&rel, &authored.fact_rows(&rel));
+        wave.fields().set_facts(&rel, &authored.fact_rows(&rel));
     }
     let shared: Vec<(String, String)> = clauses.iter().map(|clause| clause.key.clone()).collect();
     if let Some(key) = shared.iter().enumerate().find_map(|(at, key)| shared[..at].contains(key).then_some(key)) {
@@ -885,12 +885,12 @@ fn demand_program(mut rules: Builder<'_>, atoms: usize) -> StoreResult<Option<Ar
         return Ok(None);
     }
     let names: Vec<String> = (0..atoms).map(|i| format!("ast_{i}")).collect();
-    rules.declare(WAVE, &[("d", "int")]);
+    rules.fields().declare(WAVE, &[("d", "int")]);
     for name in &names {
-        rules.declare(name, &[("d", "int"), ("n", "int")]);
+        rules.fields().declare(name, &[("d", "int"), ("n", "int")]);
     }
-    rules.set_inputs(&std::iter::once(WAVE.to_owned()).chain(names.iter().cloned()).collect::<Vec<_>>());
-    rules.set_field(Field::Demand(&names));
+    rules.fields().set_inputs(&std::iter::once(WAVE.to_owned()).chain(names.iter().cloned()).collect::<Vec<_>>());
+    rules.fields().set_field(Field::Demand(&names));
     let mut p = Pipeline::new("the policies' demand", finished(rules)?);
     p.program(&mut KeyDemand::default());
     let magic = p.finish().map_err(|e| invalid(format!("the policies' demand: {e}")))?.0;
@@ -949,21 +949,21 @@ fn demand_program(mut rules: Builder<'_>, atoms: usize) -> StoreResult<Option<Ar
     }
     for rel in referenced.iter().filter(|rel| magic.declares(rel)) {
         let columns = magic.columns_of(rel).unwrap_or_default();
-        b.declare(rel, &columns.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect::<Vec<_>>());
+        b.fields().declare(rel, &columns.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect::<Vec<_>>());
     }
-    b.declare(DEMANDED, &[("c", "int"), ("d", "int")]);
-    b.declare(WAVE, &[("d", "int")]);
+    b.fields().declare(DEMANDED, &[("c", "int"), ("d", "int")]);
+    b.fields().declare(WAVE, &[("d", "int")]);
     for name in &names {
         if !b.declares(&format!("magic_{name}")) {
-            b.declare(&format!("magic_{name}"), &[("d", "int")]);
+            b.fields().declare(&format!("magic_{name}"), &[("d", "int")]);
         }
     }
     for rel in magic.fact_names().into_iter().filter(|rel| referenced.contains(rel)) {
-        b.set_facts(&rel, &magic.fact_rows(&rel));
+        b.fields().set_facts(&rel, &magic.fact_rows(&rel));
     }
     // The chunk's documents and the `py.*` families the magic rules read are its inputs.
-    b.set_inputs(&std::iter::once(WAVE.to_owned()).chain(referenced.iter().filter(|rel| is_bound(rel)).cloned()).collect::<Vec<_>>());
-    b.set_outputs(&[DEMANDED]);
+    b.fields().set_inputs(&std::iter::once(WAVE.to_owned()).chain(referenced.iter().filter(|rel| is_bound(rel)).cloned()).collect::<Vec<_>>());
+    b.fields().set_outputs(&[DEMANDED]);
     let demand = finished(b)?;
     analysis::<Components>(&demand).map_err(|e| invalid(format!("the policies' demand: {e}")))?;
     Ok(Some(demand))

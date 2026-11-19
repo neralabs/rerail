@@ -645,7 +645,7 @@ fn external_inputs(prog: &mut Edit<'_>, shape: &shape::Shape, root: &Path) -> Re
     for (rel, what) in NOT_MADE {
         if prog.input_names().iter().any(|i| i == rel) {
             crate::code_rule_dsl::logic::profile::decision("relations not made yet (O76)", || format!("{rel} is empty: {what}"));
-            prog.b.retain_inputs(|i| i != rel);
+            prog.b.fields().retain_inputs(|i| i != rel);
         }
     }
     Ok(())
@@ -1631,7 +1631,7 @@ impl crate::code_rule_dsl::logic::program_image::manager::ProgramPass for Answer
             return Ok(());
         }
         let b = w.on()?;
-        b.state_fields_as(&v, &out);
+        b.fields().state_fields_as(&v, &out);
         b.retain(|r| out.contains(r.id()));
         Ok(())
     }
@@ -1685,7 +1685,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
     // (`front::declared_on`).
     let given_version = |v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>| -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>> {
         let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&v);
-        extra.add_to(&mut b);
+        extra.add_to(&mut b.fields());
         let v = if b.is_empty() { v } else { b.finish().map_err(Error::Plan)?.0 };
         front::declared_on(&v)?;
         Ok(v)
@@ -2447,7 +2447,7 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
                 return Some(p);
             }
             let mut b = Builder::on(&p);
-            b.set_answers(&kept);
+            b.fields().set_answers(&kept);
             b.finish_overlay().ok()
         });
         let made = made.expect("a part of a version by its relations is made");
@@ -3460,10 +3460,10 @@ fn run_observed(
     // The split takes them as constants of the run (`file_local::run_constant`).
     let add_bridged = |prog: &mut Edit<'_>| {
         for (rel, rows) in &bridged {
-            prog.b.add_facts(rel, &rows.iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>());
+            prog.b.fields().add_facts(rel, &rows.iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>());
         }
         for rel in phased.keys() {
-            prog.b.add_input(rel);
+            prog.b.fields().add_input(rel);
         }
     };
     edit_fields(&mut v, |p| Ok(add_bridged(p)))?;
@@ -3638,7 +3638,7 @@ fn run_observed(
     let requests: Vec<&str> = guests::LIBRARY.iter().copied().chain(guests::DEMANDS).filter(|_| reads_guests).chain(world_requests).collect();
     edit_fields(&mut v, |p| {
         for &rel in requests.iter().filter(|rel| shape.made.contains(**rel)) {
-            p.b.add_output(rel);
+            p.b.fields().add_output(rel);
         }
         Ok(())
     })?;
@@ -3747,7 +3747,7 @@ fn run_observed(
         // The constants' own run outputs the constants alone (`constants::as_outputs`): it runs over no documents, so
         // it makes no components, and its prune drops their rules.
         if options.get(constants::OWN).is_some() {
-            edit_fields(&mut v, |p| Ok(p.b.retain_outputs(|o| o != cross_memo::COMPONENT)))?;
+            edit_fields(&mut v, |p| Ok(p.b.fields().retain_outputs(|o| o != cross_memo::COMPONENT)))?;
         }
     }
     // A run that reads the file system answers a load with the loaded documents' rows of each export its cone of

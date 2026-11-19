@@ -91,7 +91,6 @@ pub(super) fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<Str
         super::super::profile::decision("inline or store (decision 0099)", || "RERAIL_INLINE=off: every relation stored, `.decl … inline` too".to_owned());
         return Ok(None);
     }
-    let _span = super::super::profile::span(|| "inline or store".into());
     // Each relation's rules (the program's rule indices, in its order), by head.
     let mut ids_of: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for k in 0..n {
@@ -771,7 +770,7 @@ fn factorizable(f: Fields<'_>, base: &Placed, ids_of: &BTreeMap<&str, Vec<usize>
                         for &i in part {
                             rb = rb.lit(v, r, r.body().nth(i).expect("a literal of the part"));
                         }
-                        let rows = rb.finish().ok().and_then(|id| bd.finish().ok().map(|(pv, made)| (pv, inline::renumbered(v, &[], &[id], made).map_or(id, |o| o[&id])))).and_then(|(pv, id)| {
+                        let rows = rb.finish().ok().and_then(|id| bd.finish_placing().ok().map(|(pv, _, order)| (pv, order.map_or(id, |o| o[&id])))).and_then(|(pv, id)| {
                             let pb = Body::of(&pv, pv.rule(id).expect("the part"));
                             model.plan_rule(f, &pb, None).ok().map(|p| p.2)
                         }).unwrap_or(f64::INFINITY);

@@ -909,17 +909,17 @@ pub(in crate::code_rule_dsl) fn reachable(v: &Arc<Version>) -> Result<Arc<Versio
     }
     let mut b = Builder::on(&pruned);
     for rel in pruned.declared_names().iter().filter(|r| !used.contains(*r)) {
-        b.undeclare(rel);
+        b.fields().undeclare(rel);
     }
     let inputs: Vec<String> = pruned.input_names().into_iter().filter(|r| used.contains(r)).collect();
-    b.set_inputs(&inputs);
+    b.fields().set_inputs(&inputs);
     for rel in pruned.fact_names().iter().filter(|r| !used.contains(*r)) {
-        b.drop_facts(rel);
+        b.fields().drop_facts(rel);
     }
     let lattice: BTreeMap<String, front::LatticeDecl> = ProgramFields::lattice(&*pruned).into_iter().filter(|(r, _)| used.contains(r)).collect();
-    b.set_field(Field::Lattice(&lattice));
+    b.fields().set_field(Field::Lattice(&lattice));
     let kindsets: BTreeMap<String, Vec<String>> = ProgramFields::kindsets(&*pruned).into_iter().filter(|(k, _)| sets.contains(k)).collect();
-    b.set_field(Field::Kindsets(&kindsets));
+    b.fields().set_field(Field::Kindsets(&kindsets));
     Ok(b.finish()?.0)
 }
 
@@ -1126,7 +1126,7 @@ pub(in crate::code_rule_dsl) fn overlay(converted: &Arc<Version>, authored: &Arc
                 return err(format!("{name} is declared as ({}) here and as ({}) by the converter", spelled(types(columns)), spelled(types(&c))));
             }
             Some(_) => {}
-            None => b.declare(name, &columns.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect::<Vec<_>>()),
+            None => b.fields().declare(name, &columns.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect::<Vec<_>>()),
         }
     }
     let mut kindsets = ProgramFields::kindsets(&*converted);
@@ -1139,7 +1139,7 @@ pub(in crate::code_rule_dsl) fn overlay(converted: &Arc<Version>, authored: &Arc
             }
         }
     }
-    b.set_field(Field::Kindsets(&kindsets));
+    b.fields().set_field(Field::Kindsets(&kindsets));
     let mut lattice = ProgramFields::lattice(&*converted);
     for (name, l) in ProgramFields::lattice(&*a) {
         match lattice.get(&name) {
@@ -1149,23 +1149,23 @@ pub(in crate::code_rule_dsl) fn overlay(converted: &Arc<Version>, authored: &Arc
             }
         }
     }
-    b.set_field(Field::Lattice(&lattice));
+    b.fields().set_field(Field::Lattice(&lattice));
     for rel in &a_facts {
-        b.add_facts(rel, &ProgramFields::fact_rows(&*a, rel));
+        b.fields().add_facts(rel, &ProgramFields::fact_rows(&*a, rel));
     }
     // core.rr's `.input` of a relation the converter gives (`option_item`) is the converter's facts, not an input.
     let mut inputs = converted.input_names();
     push_new(&mut inputs, a_inputs.into_iter().filter(|i| !GIVEN.contains(&i.as_str())).chain(reads_base));
-    b.set_inputs(&inputs);
+    b.fields().set_inputs(&inputs);
     let mut outs = converted.output_names();
     push_new(&mut outs, outputs.into_iter().chain(["violation".to_owned()]));
-    b.set_outputs(&outs);
+    b.fields().set_outputs(&outs);
     let mut demand = ProgramFields::demand(&*converted);
     push_new(&mut demand, ProgramFields::demand(&*a));
-    b.set_field(Field::Demand(&demand));
+    b.fields().set_field(Field::Demand(&demand));
     let mut all = ProgramFields::settings(&*converted);
     all.extend(library);
-    b.set_field(Field::Settings(&all));
+    b.fields().set_field(Field::Settings(&all));
     for r in a.rules().filter(|r| violation_of(&a, *r).is_none_or(|(_, c)| keep(c))) {
         b.copy(&a, r);
     }

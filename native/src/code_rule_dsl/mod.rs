@@ -1892,13 +1892,6 @@ pub(crate) mod logic {
     #[path = "rr"]
     pub mod rr {
         pub use rerail_logic::code_rule_dsl::logic::rr::*;
-        pub mod aggregate_demand {
-            pub use rerail_rr::code_rule_dsl::logic::rr::aggregate_demand::*;
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::front::{self, AggOp};
-            #[allow(unused_imports)]
-            use std::collections::{BTreeMap, BTreeSet};
-        }
         #[cfg(test)]
         pub mod tape_tests;
         pub mod tape_type {

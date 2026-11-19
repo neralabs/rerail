@@ -202,8 +202,8 @@ fn named_errors() {
     let mut b = crate::code_rule_dsl::logic::program_image::Builder::base();
     {
         use crate::code_rule_dsl::logic::program_image::{T, fields::FieldsMut};
-        b.declare("e", &[("x", "sym")]);
-        b.declare("a", &[("x", "sym")]);
+        b.fields().declare("e", &[("x", "sym")]);
+        b.fields().declare("a", &[("x", "sym")]);
         b.rule().head("a", &[T::Var("x")]).atom("e", &[T::Call("cat", vec![T::Var("x"), T::Var("x")])]).finish().unwrap();
     }
     let computed = finish_checks_on(&b.finish().unwrap().0);

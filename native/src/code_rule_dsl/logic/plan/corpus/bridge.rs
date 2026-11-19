@@ -84,7 +84,7 @@ fn add_spans(program: &Arc<Version>, columns: &BTreeMap<&str, Vec<bool>>) -> Res
     use crate::code_rule_dsl::logic::program_image::fields::FieldsMut;
     const AT: &str = "typing_bridge_at";
     let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(program);
-    b.declare(AT, &[("n", "node"), ("k", "sym"), ("s", "int"), ("e", "int")]);
+    b.fields().declare(AT, &[("n", "node"), ("k", "sym"), ("s", "int"), ("e", "int")]);
     for (output, nodes) in columns {
         let names: Vec<String> = (0..nodes.len()).map(|i| format!("typing_v{i}")).collect();
         let vars: Vec<T<'_>> = names.iter().map(|n| T::Var(n)).collect();
@@ -98,9 +98,9 @@ fn add_spans(program: &Arc<Version>, columns: &BTreeMap<&str, Vec<bool>>) -> Res
                 .map_err(Error::Plan)?;
         }
     }
-    crate::code_rule_dsl::logic::rr::lower::base_relation_derived(&mut b, "node", program.rules().any(|r| program.rel_name(r.head().rel()) == "node"));
+    crate::code_rule_dsl::logic::rr::lower::base_relation_derived(&mut b.fields(), "node", program.rules().any(|r| program.rel_name(r.head().rel()) == "node"));
     if !b.output_names().iter().any(|o| o == AT) {
-        b.add_output(AT);
+        b.fields().add_output(AT);
     }
     Ok(b.finish().map_err(Error::Plan)?.0)
 }

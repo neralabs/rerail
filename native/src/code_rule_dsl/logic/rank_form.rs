@@ -228,7 +228,7 @@ pub(crate) fn write(v: &Version, of: &dyn Of, plan: &Plan, b: &mut Builder<'_>) 
             let mut cols: Vec<(String, String)> = vars.iter().enumerate().map(|(i, x)| (format!("c{i}"), type_of(*x))).collect();
             cols.extend(last.map(|(n, t)| (n.to_owned(), t)));
             let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-            b.declare(rel, &cols);
+            b.fields().declare(rel, &cols);
         };
         let [q, g, bn, r] = &rank.names;
         let asked: Vec<Slot> = s.group.iter().chain(&s.asked).copied().collect();

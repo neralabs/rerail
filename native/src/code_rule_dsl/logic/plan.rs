@@ -5629,8 +5629,8 @@ mod complete_answer_tests {
             use super::super::program_image::fields::FieldsMut as _;
             let read = super::super::rr::parse_version(".decl seed(x:int)\n.decl req(x:int)\n.decl got(x:int)\n.decl shown(x:int)\nreq(x) :- seed(x).\nshown(x) :- got(x).\n.output shown\n").unwrap();
             let mut b = super::super::program_image::Builder::on(&read);
-            b.set_facts("seed", &(0..1000).map(|n| super::super::front::List::from(vec![Value::Int(n)])).collect::<Vec<_>>());
-            b.set_field(super::super::program_facts::Field::Answers(&BTreeMap::from([("req".to_owned(), vec!["got".to_owned()])])));
+            b.fields().set_facts("seed", &(0..1000).map(|n| super::super::front::List::from(vec![Value::Int(n)])).collect::<Vec<_>>());
+            b.fields().set_field(super::super::program_facts::Field::Answers(&BTreeMap::from([("req".to_owned(), vec!["got".to_owned()])])));
             let (program, _) = b.finish().unwrap();
             let lowered = lower::Lowered::of_placed(body::Placed::whole(program.clone()), lower::domains_of(&program).unwrap(), [0; 3], crate::code_rule_dsl::language::GrammarDialect::Python);
             let path = crate::code_rule_dsl::fixtures::temp();
@@ -11257,13 +11257,11 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     // The program's version as the run reads it (t36 item 7, step 2): normalized by the version passes
     // (`passes::normalize`, `stated_apart`), which the planner reads its rules and fields from, and the passes below
     // edit.
-    let body::Normalized { placed: normal_v, sentinels, stated } = {
-        let _span = super::profile::span(|| "the program's version".into());
-        program.normalized(apart)?
-    };
-    if super::version_trace::on() {
-        super::version_trace::note("plan.normalize", &program.v, &normal_v.v);
-    }
+    let ((sentinels, stated), normal_v) = body::pass("plan.normalize", "the program's version", program, |p| {
+        let body::Normalized { placed, sentinels, stated } = p.normalized(apart)?;
+        Ok::<_, Error>(Some(((sentinels, stated), placed)))
+    })?
+    .expect("normalizing makes a version");
     // The lowering's domains, with the columns normalizing added: a sentinel's presence column first, and a relation's
     // stated facts apart under its own domains.
     let domains = lowering.map(|l| {
@@ -11399,15 +11397,10 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             // What each derived relation keeps (decision 0099): stored, or inlined into its readers, from this plan's
             // estimates; before demand, which then sees the readers as inlining left them. Corpus runs only, as demand.
             let mut inlined_names = Vec::new();
-            let chose = super::profile::span(|| "inline or store".into());
             // The program's version: each pass edits the one before as an overlay.
-            let choice = if corpus { keeps::choose(&normal_v, &mut model).map_err(Error::Plan)? } else { None };
-            drop(chose);
+            let choice = if corpus { body::pass("plan.inline", "inline or store", &normal_v, |p| keeps::choose(p, &mut model)).map_err(Error::Plan)? } else { None };
             let inlined = match choice {
                 Some((done, v)) => {
-                    if super::version_trace::on() {
-                        super::version_trace::note("plan.inline", &normal_v.v, &v.v);
-                    }
                     super::profile::decision("inline or store (decision 0099)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
                     // A measurement aid: `RERAIL_INLINE_DUMP=<file>` appends the rules as inlining left them.
                     if let Some(path) = std::env::var_os("RERAIL_INLINE_DUMP") {
@@ -11428,14 +11421,9 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             // Relations computed for every node that rules only negate, computed for the keys those rules reach
             // (decision 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
             let mut demanded_names = Vec::new();
-            let splitting = super::profile::span(|| "negation split".into());
-            let split_neg = if corpus { demand::split_negations(inlined.as_ref().unwrap_or(&normal_v), &model) } else { None };
-            drop(splitting);
+            let Ok(split_neg) = body::pass("plan.demand", "negation split", inlined.as_ref().unwrap_or(&normal_v), |p| Ok::<_, std::convert::Infallible>(if corpus { demand::split_negations(p, &model) } else { None }));
             let split = match split_neg {
                 Some((demanded, v)) => {
-                    if super::version_trace::on() {
-                        super::version_trace::note("plan.demand", &inlined.as_ref().unwrap_or(&normal_v).v, &v.v);
-                    }
                     super::profile::decision("demand (decision 0048)", || {
                         format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
                     });

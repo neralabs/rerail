@@ -6,7 +6,6 @@
 
 use super::COPIES;
 use crate::code_rule_dsl::logic::program_image::{AtomId, AtomRef, Builder, CmpOp, Lit, LitRef, RelId, Rewrite, RuleRef, Site, T, TermRef, Version};
-use crate::code_rule_dsl::logic::program_image::version::Made;
 use crate::code_rule_dsl::logic::program_image::{RuleId, Slot};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -41,7 +40,6 @@ pub(super) fn inline(base: &Arc<Version>, order: &[RuleId], inline: &BTreeSet<St
         let mut b = Builder::on(&cur);
         let mut next = Vec::with_capacity(seq.len());
         let mut changed = false;
-        let (mut removed, mut added) = (Vec::new(), Vec::new());
         // Each rule of the program's copies so far (`RULE_COPIES` bounds them over every pass).
         let mut of_rule: BTreeMap<RuleId, usize> = BTreeMap::new();
         seq.iter().for_each(|(_, o, _)| *of_rule.entry(*o).or_default() += 1);
@@ -58,8 +56,6 @@ pub(super) fn inline(base: &Arc<Version>, order: &[RuleId], inline: &BTreeSet<St
                     let n = of_rule.get_mut(&origin).expect("its origin's count");
                     *n = (*n + copies.len()).saturating_sub(1);
                     b.remove(id);
-                    removed.push(id);
-                    added.extend(copies.iter().copied());
                     let mut into = into;
                     into.insert(cur.rel_name(read.rel()).to_owned());
                     next.extend(copies.into_iter().map(|c| (c, origin, into.clone())));
@@ -68,8 +64,8 @@ pub(super) fn inline(base: &Arc<Version>, order: &[RuleId], inline: &BTreeSet<St
                 None => next.push((id, origin, into)),
             }
         }
-        let (v, made) = b.finish()?;
-        renumber(&cur, &removed, &added, made, &mut next);
+        let (v, _, order) = b.finish_placing()?;
+        renumber(order, &mut next);
         cur = v;
         seq = next;
         if !changed {
@@ -95,9 +91,9 @@ pub(super) fn inline(base: &Arc<Version>, order: &[RuleId], inline: &BTreeSet<St
         for &id in &drop_ids {
             b.remove(id);
         }
-        let (v, made) = b.finish()?;
+        let (v, _, order) = b.finish_placing()?;
         seq.retain(|e| !drop_ids.contains(&e.0));
-        renumber(&cur, &drop_ids, &[], made, &mut seq);
+        renumber(order, &mut seq);
         cur = v;
     }
     Ok(Inlined { v: cur, rules: seq, unfinished })
@@ -128,42 +124,26 @@ pub(super) fn copies(base: &Arc<Version>, reads: &[(RuleId, usize)], defs: &[Rul
     let ds: Vec<RuleRef<'_>> = defs.iter().map(|&d| base.rule(d).expect("a def")).collect();
     let mut b = Builder::on(base);
     let mut out = Vec::new();
-    let mut added = Vec::new();
     for &(id, at) in reads {
         let reader = base.rule(id).expect("a reader");
         let read = reader.body().nth(at).and_then(|l| l.atom()).expect("a read");
         // Each read's copies within the bound a rule copied once has left in `inline` (`RULE_COPIES`).
-        let made = unfold(&mut b, base, reader, at, read, &ds, 0, super::RULE_COPIES)?.unwrap_or_default();
-        added.extend(made.iter().copied());
-        out.push(made);
+        out.push(unfold(&mut b, base, reader, at, read, &ds, 0, super::RULE_COPIES)?.unwrap_or_default());
     }
-    let (v, made) = b.finish()?;
-    if let Some(order) = renumbered(base, &[], &added, made) {
+    let (v, _, order) = b.finish_placing()?;
+    if let Some(order) = order {
         out.iter_mut().flatten().for_each(|id| *id = order[id]);
     }
     Ok((v, out))
 }
 
-/// The ids of `seq`'s rules after an edit of `parent` (`removed` gone, `added` added) was folded (`Builder::finish`
-/// folds an edit of half its parent or more): a fold numbers the rules from 0, in the overlay's order (the parent's
-/// left, then the added).
-fn renumber(parent: &Version, removed: &[RuleId], added: &[RuleId], made: Made, seq: &mut [(RuleId, RuleId, BTreeSet<String>)]) {
-    if let Some(order) = renumbered(parent, removed, added, made) {
+/// The ids of `seq`'s rules after their edit folded (`Builder::finish_placing`'s `order`; `None` where it did not).
+fn renumber(order: Option<BTreeMap<RuleId, RuleId>>, seq: &mut [(RuleId, RuleId, BTreeSet<String>)]) {
+    if let Some(order) = order {
         for e in seq.iter_mut() {
             e.0 = order[&e.0];
         }
     }
-}
-
-/// Each rule's id after a fold of the edit (`renumber`), or `None` where it was not folded.
-pub(in crate::code_rule_dsl::logic::plan) fn renumbered(parent: &Version, removed: &[RuleId], added: &[RuleId], made: Made) -> Option<BTreeMap<RuleId, RuleId>> {
-    if !matches!(made, Made::Folded) {
-        return None;
-    }
-    let gone: BTreeSet<RuleId> = removed.iter().copied().collect();
-    let mut added = added.to_vec();
-    added.sort_unstable();
-    Some(parent.rules().map(|r| r.id()).filter(|id| !gone.contains(id)).chain(added).enumerate().map(|(k, id)| (id, RuleId(k as u32))).collect())
 }
 
 /// Rule `id`'s first read of an inlined relation: its place in the body, and the atom.
@@ -423,8 +403,7 @@ pub(super) fn unfolded(v: &Arc<Version>, reader: RuleRef<'_>, at: usize, defs: &
     let Lit::Atom(read) = reader.body().nth(at)?.view() else { return None };
     let mut b = Builder::on(v);
     let made = unfold(&mut b, v, reader, at, read, defs, fresh, super::RULE_COPIES).ok()??;
-    let (out, m) = b.finish().ok()?;
-    let order = renumbered(v, &[], &made, m);
+    let (out, _, order) = b.finish_placing().ok()?;
     Some((Arc::clone(&out), made.iter().map(|id| order.as_ref().map_or(*id, |o| o[id])).collect()))
 }
 
