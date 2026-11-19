@@ -76,9 +76,11 @@ findings in every run, no Metal stop:
 - Metal reaches the 262,144-node chunks t49 measured at 71-72 B. The count's most was 1,148 MB of the 1,536 MB limit
   (462 MB of it the GPU pool's leases); the footprint's rise past it is the first command buffer and GPU-written pages.
 - Choices the measures made:
-  - a first chunk of 4,096 nodes planned the strata from an unlike sample (twice the stratum variants, 2-3 B more on
-    the CPU), so the first is 65,536;
-  - doubling took six chunks a phase to climb (8 B on Metal), so growth is up to eight times;
+  - a first chunk of 4,096 nodes cost the CPU 1-5 B (92.5-93.7 B against 88.8-92.0 B at 65,536), with 20-30 distinct
+    negation-split strata (`pre_k`) against 11; the cause is not yet known (Q261), so the first is 65,536;
+  - doubling from 4,096 ran 36 chunks; growth up to eight times ran 20-23 and 2-4 B fewer on Metal (79.0/76.2 B
+    against 75.7/74.0 B), measured together with the peak sampler, so not apart from it. An earlier "8 B" in the code
+    and fe2007e38's message was written before it was measured, and was wrong;
   - the count read at a chunk's end missed its peak (its relations already given back), so a sampler keeps its most.
 
 ## Supersedes

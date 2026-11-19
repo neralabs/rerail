@@ -13,13 +13,15 @@
 //! While chunks grow they evaluate one at a time, so a chunk's growth is its own. Once the size stops growing (at
 //! the caller's most, or held by the room), as many evaluate at once as the room holds at that size.
 
-/// The first chunk's nodes (at most the caller's most). Its strata's plans are made from it: at 4,096 nodes they were
-/// planned from a sample unlike the run's, with twice the stratum variants and 2-3 B more of hogql's instructions on
-/// the CPU than at 65,536.
+/// The first chunk's nodes (at most the caller's most). At 4,096 nodes hogql's CPU runs retired 92.5-93.7 B against
+/// 88.8-92.0 B at 65,536, with 20-30 distinct negation-split strata (`pre_k`, decision 0048) against 11 and more
+/// stratum runs; why the first chunk's size changes the splits is not yet known (Q261).
 pub const FIRST_NODES: usize = 65_536;
 
-/// The most a chunk grows past the last, when the room holds it: from the first to 262,144 nodes in two steps. At twice,
-/// six chunks climbed there in every phase's run, and their per-chunk work cost 8 B of hogql's instructions.
+/// The most a chunk grows past the last, when the room holds it: from the first to 262,144 nodes in one or two steps.
+/// Each chunk runs every file-local stratum once, so a climb of small chunks pays that fixed work per step, in every
+/// phase's run. Doubling from 4,096 nodes ran 36 chunks on hogql; growth up to 8 times, 20-23 (2-4 B fewer
+/// instructions, measured together with the count's peak sampling, so not apart from it).
 pub const GROWTH: usize = 8;
 
 /// What the chunk just evaluated measured.
