@@ -25,7 +25,7 @@ use super::propagate::propagate;
 use crate::code_rule_dsl::language::{GrammarDialect, dialect_by_label, label_of_path, tape_tag};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::facts::vtab::syntax::{Families as LazyFamilies, families};
-use crate::code_rule_dsl::tape::{self, FileImage, TAPE_FORMAT_VERSION, TapeDoc, TapeImage};
+use crate::code_rule_dsl::tape::{self, FileImage, TapeDoc, TapeImage};
 use crate::code_rule_dsl::build_ids::grammar_version;
 use crate::content_store::prefilter::{PREFILTER_VERSION, TapePrefilter};
 use crate::content_store::{
@@ -70,7 +70,7 @@ pub fn derived_name(families: &dyn LazyFamilies, scope: &str, path: &str) -> Str
 pub(crate) fn tape_producer() -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(b"rerail.tape/v1\0");
-    hash.update(TAPE_FORMAT_VERSION.to_le_bytes());
+    hash.update(tape::formats::stored_version().to_le_bytes());
     hash.update(grammar_version().to_le_bytes());
     hash.finalize().into()
 }
@@ -79,7 +79,7 @@ pub(crate) fn tape_producer() -> [u8; 32] {
 pub(crate) fn core_producer() -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(b"rerail.core/v4\0");
-    hash.update(TAPE_FORMAT_VERSION.to_le_bytes());
+    hash.update(tape::formats::stored_version().to_le_bytes());
     hash.finalize().into()
 }
 
@@ -140,17 +140,14 @@ pub fn derived_inputs(
 
 /// A file's (kind atom, count) and (class atom, count), each sorted by atom.
 pub(crate) fn histogram(f: &Facts) -> (Vec<(u32, u32)>, Vec<(u32, u32)>) {
-    let counts = |keys: &[u32], offsets: &[u32]| {
-        keys.iter().enumerate().map(|(i, &key)| (key, offsets[i + 1] - offsets[i])).collect::<Vec<_>>()
-    };
-    (counts(&f.kind_keys, &f.kind_offsets), counts(&f.class_keys, &f.class_offsets))
+    f.histogram()
 }
 
 pub(crate) fn histogram_digest(f: &Facts) -> [u8; 32] {
     let (kinds, classes) = histogram(f);
     let mut hash = Sha256::new();
     hash.update(b"rerail.kind-histogram/v1\0");
-    hash.update([u8::from(f.syntax_errors)]);
+    hash.update([u8::from(f.syntax_errors())]);
     for table in [kinds, classes] {
         hash.update((table.len() as u64).to_le_bytes());
         for (key, count) in table {
@@ -343,7 +340,7 @@ impl Families {
             let Some(source_id) = blob_source_id(graph, blob)? else { continue };
             let tag = i64::from(tape_tag(language).expect("a tape dialect"));
             if self.parsed.contains_key(&source_id)
-                || store.tape_by_source(source_id, tag, grammar_version(), i64::from(TAPE_FORMAT_VERSION))?.is_some()
+                || store.tape_by_source(source_id, tag, grammar_version(), i64::from(tape::formats::stored_version()))?.is_some()
             {
                 continue;
             }
@@ -374,7 +371,7 @@ impl Families {
             return Ok(None);
         };
         let tag = i64::from(tape_tag(language).expect("a tape dialect"));
-        let version = i64::from(TAPE_FORMAT_VERSION);
+        let version = i64::from(tape::formats::stored_version());
         if let Some(id) = store.tape_by_source(source_id, tag, grammar_version(), version)? {
             return self.decode(graph, source_id, id, language);
         }
@@ -398,7 +395,7 @@ impl Families {
         // A derived document's tape is not stored here: the slice's dialect (Python) has none.
         let bytes = image.primary.to_bytes().map_err(StoreError::Invalid)?;
         let id = crate::code_rule_dsl::prof::time("push.put_tape", || store.put_tape(source_id, tag, grammar_version(), version, &bytes))?;
-        let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
+        let lines = Arc::new(LineTable::placed(&source, Terminators::of(language)));
         let doc = crate::code_rule_dsl::prof::time("push.restore", || TapeDoc::restore_with_lines(source, grammar, &image, Arc::clone(&lines), &|| false))
             .map_err(StoreError::Invalid)?;
         let identity = crate::code_rule_dsl::tape::tape_identity(doc.source_digest(), &bytes);
@@ -426,7 +423,7 @@ impl Families {
         self.parses.decoded += 1;
         let primary = TapeImage::from_bytes(&bytes, &grammar).map_err(StoreError::Invalid)?;
         let image = FileImage { primary, derived: Vec::new() };
-        let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
+        let lines = Arc::new(LineTable::placed(&source, Terminators::of(language)));
         let doc = TapeDoc::restore_with_lines(source, grammar, &image, Arc::clone(&lines), &|| false)
             .map_err(StoreError::Invalid)?;
         let identity = crate::code_rule_dsl::tape::tape_identity(doc.source_digest(), &bytes);
@@ -456,7 +453,7 @@ impl Families {
             return Ok(None);
         };
         let tag = i64::from(tape_tag(language).expect("a tape dialect"));
-        let Some(id) = graph.store().tape_by_source(source_id, tag, grammar_version(), i64::from(TAPE_FORMAT_VERSION))? else {
+        let Some(id) = graph.store().tape_by_source(source_id, tag, grammar_version(), i64::from(tape::formats::stored_version()))? else {
             return Ok(None);
         };
         Ok(self

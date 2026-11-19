@@ -387,6 +387,9 @@ pub fn grammar_json(lang: GrammarDialect) -> Option<&'static str> {
         GrammarDialect::CSharp => grammar!("token-grammars/csharp"),
         GrammarDialect::Html => grammar!("token-grammars/html"),
         GrammarDialect::Css => grammar!("token-grammars/css"),
+        GrammarDialect::Kotlin => grammar!("token-grammars/kotlin"),
+        GrammarDialect::Swift => grammar!("token-grammars/swift"),
+        GrammarDialect::Scala => grammar!("token-grammars/scala"),
         GrammarDialect::Go => grammar!("token-grammars/go"),
         GrammarDialect::C => grammar!("token-grammars/c"),
         GrammarDialect::Cpp => grammar!("token-grammars/cpp"),
@@ -397,15 +400,21 @@ pub fn grammar_json(lang: GrammarDialect) -> Option<&'static str> {
 impl TokenGrammar {
     /// A dialect's automata, for its tape grammar's tree-sitter language; `None` where it has none.
     pub fn of_dialect(lang: GrammarDialect) -> Option<Arc<Self>> {
+        Self::by_dialect(lang)?.clone()
+    }
+
+    fn by_dialect(lang: GrammarDialect) -> Option<&'static Option<Arc<Self>>> {
         // Built once per dialect, as `of` builds it; a lookup after that, for the token queries.
         static BY_DIALECT: [OnceLock<Option<Arc<TokenGrammar>>>; 256] = [const { OnceLock::new() }; 256];
-        BY_DIALECT
-            .get(lang as usize)?
-            .get_or_init(|| {
-                let grammar = super::Grammar::new(lang).ok()?;
-                Self::of(lang, grammar.kinds.grammar()?)
-            })
-            .clone()
+        Some(BY_DIALECT.get(lang as usize)?.get_or_init(|| {
+            let grammar = super::Grammar::new(lang).ok()?;
+            Self::of(lang, grammar.kinds.grammar()?)
+        }))
+    }
+
+    /// The dialect's grammar as `of_dialect` keeps it, for the life of the process (it is never dropped).
+    pub fn of_dialect_static(lang: GrammarDialect) -> Option<&'static Self> {
+        Self::by_dialect(lang)?.as_deref()
     }
 
     /// `text` (a token text or field name of this grammar) for the life of the process: the

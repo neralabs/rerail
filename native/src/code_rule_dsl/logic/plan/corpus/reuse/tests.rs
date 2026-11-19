@@ -88,6 +88,20 @@
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Read off phase 0's graph (no `phase_dir`), a phase program a text names and the engine does not have is listed
+    /// where it was looked for, with no digest, as `listed` lists it (decision 0275): one written there differs.
+    #[test]
+    fn a_phase_program_the_graph_did_not_find_is_listed_as_missing() {
+        let text = "#include \"core.rr\"\n.decl nosuchphase__x(s: symbol)\n";
+        let texts = [text];
+        let given = super::super::Texts::of(&texts).unwrap();
+        assert!(given.graphs.iter().all(Option::is_some), "the text has its graph");
+        let rules = super::rule_files(&given, &serde_json::json!({})).unwrap();
+        let missing: Vec<_> = rules.iter().filter(|r| r.1.ends_with("typing/programs/nosuchphase.rr")).collect();
+        assert_eq!(missing.len(), 1, "{rules:?}");
+        assert!(missing[0].2.is_empty(), "no digest: {rules:?}");
+    }
+
     #[test]
     fn unchanged_cross_file_outputs_skip_derivation_and_changed_members_invalidate() {
         let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cross-reuse");
@@ -136,4 +150,79 @@
         assert_eq!(super::decode_consulted(&super::encode_consulted(&c)), Some(c.clone()));
         let bytes = super::encode_consulted(&c);
         assert_eq!(super::decode_consulted(&bytes[..bytes.len() - 1]), None, "a cut record is none");
+    }
+
+    /// A run measured as it goes (the heap sampler's switches, a profile, a cost store and an image store of its own,
+    /// a trace) is the same run as one that is not: the warm run after a cold one sampled for its heap is kept. The
+    /// cold runs of a measurement passed `RERAIL_HEAP_SAMPLE` and `RERAIL_HEAP_AT` and the warm runs did not, so every
+    /// warm run looked its record up under a key no cold run wrote, and ran phase 1 again (9 s of CPU against 0.2 s).
+    /// A switch that changes what a run outputs still runs it again.
+    #[test]
+    fn a_run_measured_as_it_goes_keeps_the_key_of_one_that_is_not() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("reuse-measured");
+        let _ = std::fs::remove_dir_all(&dir);
+        let src = dir.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("a.py"), "def f():\n    return 1\n").unwrap();
+        let out = dir.join("out");
+        super::super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let text = {
+            let text = "#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
+            crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(text).unwrap()).unwrap()
+        };
+        let options = serde_json::json!({ "reuse": true });
+        let run = || super::super::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+        let kept = |r: &super::super::Report| r.phases.iter().any(|p| p.0.starts_with("unchanged"));
+        let costs = dir.join("costs.sqlite");
+        let images = dir.join("images");
+        {
+            let _measured = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[
+                ("RERAIL_HEAP_SAMPLE", "1"),
+                ("RERAIL_HEAP_AT", "1500"),
+                ("RERAIL_HEAP_FRAMES", "1"),
+                ("RERAIL_PROF_MEMORY_MS", "5"),
+                ("RERAIL_TIMELINE", "1"),
+                ("RERAIL_COSTS", costs.to_str().unwrap()),
+                ("RERAIL_IMAGE_STORE", images.to_str().unwrap()),
+                ("RERAIL_FRAMES_TRACE", "1"),
+            ]);
+            assert!(!kept(&run()), "the cold run derives");
+        }
+        assert!(kept(&run()), "the warm run, measured by none of them, is the cold run's");
+        {
+            let _other = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_AST_PARTS", "off")]);
+            assert!(!kept(&run()), "a switch that changes the run's outputs runs it again");
+        }
+        super::super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Every switch a profile or the heap sampler reads only measures the run, so none is in a run's key: a new one
+    /// read there is left out of it without being listed (`reuse::measures_only`).
+    #[test]
+    fn every_switch_a_profile_reads_is_left_out_of_the_runs_key() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let dirs = [root.join("src/code_rule_dsl/logic/profile"), root.join("crates/prof/src")];
+        let mut files = vec![root.join("src/code_rule_dsl/logic/profile.rs")];
+        for d in dirs {
+            let mut stack = vec![d];
+            while let Some(d) = stack.pop() {
+                for e in std::fs::read_dir(&d).unwrap() {
+                    let p = e.unwrap().path();
+                    if p.is_dir() { stack.push(p) } else if p.extension().is_some_and(|x| x == "rs") { files.push(p) }
+                }
+            }
+        }
+        let re = regex::Regex::new(r#""(RERAIL_[A-Z0-9_]+)""#).unwrap();
+        let mut seen = std::collections::BTreeSet::new();
+        for f in &files {
+            let text = std::fs::read_to_string(f).unwrap();
+            for c in re.captures_iter(&text) {
+                seen.insert(c[1].to_owned());
+            }
+        }
+        assert!(seen.contains("RERAIL_HEAP_SAMPLE") && seen.contains("RERAIL_HEAP_AT"), "the sampler's switches are found: {seen:?}");
+        // A dump turns the cutoff off (`reuse::wanted`); every other switch read there must be left out of the key.
+        let keyed: Vec<&String> = seen.iter().filter(|s| !s.starts_with("RERAIL_DUMP") && !super::measures_only(s)).collect();
+        assert!(keyed.is_empty(), "read by a profile and in a run's key: {keyed:?}");
     }

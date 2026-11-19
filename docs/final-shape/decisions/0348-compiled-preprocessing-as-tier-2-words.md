@@ -168,8 +168,8 @@ directives' ladder, so mode (a) keeps its lean tape.
   that start, while the CPU's and the interpreter's run rule reads through it. Making the rule
   `R & ~S` gave every backend Metal's answer, but it cost JSON's tier 2 its shape (30 calls of
   its own, where it has none), so it was not kept. The grammar keeps its starts out of its runs
-  (`run lit_bytes & ~lit_start`). Work queue Q32 has the guard this needs.
-- **Digit separators and `u8'…'`, read since (Q35).** A separator's `'` (`1'000'000`, `0x'1`)
+  (`run lit_bytes & ~lit_start`). Work queue Q129 has the guard this needs.
+- **Digit separators and `u8'…'`, read since (Q132).** A separator's `'` (`1'000'000`, `0x'1`)
   must open no character constant, but the regions are found before the numbers. Both grammars
   (this one and the directives' `06-raw`) find it first, from a run of numbers made without the
   regions (`sep`). They check it after, against the code's numbers: an escape where they differ.
@@ -389,7 +389,7 @@ of its 47k CLIF instructions. `GLUE`, `PRAGMA`, `LINEDIR`, `DEFINED` and `EXPR`'
   value, and deep `#if`s.
 - `the_compiled_words_have_their_shape`.
 - The corpus, ignored and run on the farm: 3,060 TUs the same, 75 refused by both (the token
-  grammar's refusals, Q35), 0 differ.
+  grammar's refusals, Q132), 0 differ.
 
 **Time.** Over the corpus's 3,060 TUs, on an M1 Max in a quiet run, profiling build. The words
 are timed alone: the TUs' files are lexed ahead, as stage 1 does once per file content. The lean
@@ -441,9 +441,9 @@ need a profiler run, which is open.
   On the corpus (3,060 TUs, 0 differ): the interpreter 1,098 M cycles, Cranelift 1,235 M,
   rustc 487 M, the lean pass 1,876 M.
 
-- **The stall found (Q36).** Cranelift's Arm jump tables carry a speculation barrier (`csdb`) on
+- **The stall found (Q184).** Cranelift's Arm jump tables carry a speculation barrier (`csdb`) on
   every dispatch, and every `RETURN` dispatched through one. Cranelift's code has its jump
-  tables as trees of compares (`native_cpu_codegen::tables_as_compares`, every backend's, Q38),
+  tables as trees of compares (`native_cpu_codegen::switch_trees`, every backend's, Q186),
   and the shape test refuses a `csdb` in the words' code; rustc's keeps the tables. With two smaller
   changes (extending loads, branches on each test of a combination), Cranelift's code went
   from 1,235 M cycles to 550 M: 0.50× the interpreter's, 1.14× rustc's (t44).

@@ -256,11 +256,12 @@ pub struct AnchorScanProfile {
 }
 
 impl PreparedAnchorScan {
-    pub fn run(&self) -> Result<AnchorLists, Error> {
+    /// It writes its own buffers (the hit count, the hits), so a run holds the scan alone (`&mut`).
+    pub fn run(&mut self) -> Result<AnchorLists, Error> {
         self.run_profiled().map(|(anchors, _)| anchors)
     }
 
-    pub fn run_profiled(&self) -> Result<(AnchorLists, AnchorScanProfile), Error> {
+    pub fn run_profiled(&mut self) -> Result<(AnchorLists, AnchorScanProfile), Error> {
         let mut anchors = (0..self.file_count)
             .map(|_| (0..self.program_count).map(|_| Vec::new()).collect())
             .collect::<Vec<Vec<Vec<u32>>>>();
@@ -274,7 +275,7 @@ impl PreparedAnchorScan {
                 },
             ));
         }
-        let _execution_guard = metal_execution_guard()?;
+        let _evaluation = evaluation_scope();
         unsafe {
             self.hit_count.buffer.contents().cast::<u32>().write(0);
         }

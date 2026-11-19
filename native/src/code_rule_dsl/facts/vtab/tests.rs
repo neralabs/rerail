@@ -172,3 +172,50 @@ fn a_relations_fenced_search_finds_what_a_whole_search_finds() {
         assert_eq!(got, whole(v, v), "lookup {v}");
     }
 }
+
+/// A column pushed in order is its own index (a node's lines, by node): its lookups, ranges and estimates are the
+/// sorted index's, and a column pushed out of order is still sorted.
+#[test]
+fn a_column_pushed_in_order_answers_as_its_sorted_index_does() {
+    // `n` in order with repeats, `l` out of order.
+    let rows: Vec<[i64; 2]> = (0..300).map(|i| [i / 3, (i * 37) % 101]).collect();
+    let mut r = Relation::new(&["n", "l"]);
+    rows.iter().for_each(|row| r.push(row));
+    assert!(r.ordered(0) && !r.ordered(1));
+    for column in 0..2 {
+        let sorted = |lo: i64, hi: i64| -> Vec<usize> {
+            let mut want: Vec<usize> = (0..rows.len()).filter(|&i| (lo..=hi).contains(&rows[i][column])).collect();
+            want.sort_by_key(|&i| rows[i][column]);
+            want
+        };
+        for v in [-1, 0, 7, 50, 99, 100, 200] {
+            assert_eq!(r.lookup(column, &[v]).unwrap(), sorted(v, v), "column {column}, {v}");
+            // A probe's slice (no list made) holds the same rows: the ids of an ordered column's run, or the index's.
+            let slice: Vec<usize> = r.sorted_rows(column, v).unwrap().iter().map(|&i| i as usize).collect();
+            assert_eq!(slice, sorted(v, v), "sorted_rows, column {column}, {v}");
+        }
+        assert!(r.sorts_rows(column));
+        assert_eq!(r.lookup(column, &[3, 9]).unwrap(), [sorted(3, 3), sorted(9, 9)].concat());
+        assert_eq!(r.range_lookup(column, Some((10, true)), Some((20, false))).unwrap(), sorted(10, 19));
+    }
+    assert_eq!(r.estimated_matches(0, false), 3);
+    // A value below the last one ends the order.
+    let mut late = Relation::new(&["n"]);
+    [[1], [2], [2], [1]].iter().for_each(|row| late.push(row));
+    assert!(!late.ordered(0));
+    assert_eq!(late.lookup(0, &[1]).unwrap(), vec![0, 3]);
+}
+
+/// A column pushed in order with each value once is a key (`Source::keys_rows`): `key_row` finds what `lookup` does,
+/// absent values none. One with repeats, or out of order, is not a key.
+#[test]
+fn a_column_pushed_in_order_once_a_value_is_a_key() {
+    // `n` ascending once each, `d` ascending with repeats, `l` out of order.
+    let mut r = Relation::new(&["n", "d", "l"]);
+    (0..300i64).for_each(|i| r.push(&[i * 2 + 5, i / 3, (i * 37) % 101]));
+    assert!(r.keys_rows(0) && !r.keys_rows(1) && !r.keys_rows(2));
+    for v in [-1, 4, 5, 6, 7, 299, 603, 604, 605, i64::MAX] {
+        assert_eq!(r.key_row(0, v), r.lookup(0, &[v]).unwrap().first().copied(), "{v}");
+    }
+    assert!(Relation::new(&["n"]).keys_rows(0), "no rows: every value once");
+}

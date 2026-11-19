@@ -21,7 +21,8 @@ use crate::code_rule_dsl::calls::{self, closure::Graph, contracts, summary::Summ
 use crate::code_rule_dsl::facts::core::Facts;
 use crate::code_rule_dsl::facts::vtab::syntax;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::logic::front::Program;
+use crate::code_rule_dsl::tape::TapeDoc;
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::model::{CodeRuleScope, FileInput, package_marker_directory, python_module_in};
 use crate::content_store::ContentStore;
 use serde_json::Value;
@@ -43,8 +44,9 @@ struct Config {
 
 impl Config {
     /// `prog`'s `.references` setting (module doc).
-    fn of(prog: &Program) -> Result<Self> {
-        let mut settings = prog.settings.iter().filter(|(key, _)| key == "references");
+    fn of(prog: &dyn ProgramFields) -> Result<Self> {
+        let all = prog.settings();
+        let mut settings = all.iter().filter(|(key, _)| key == "references");
         let Some((_, text)) = settings.next() else {
             return Ok(Config { key: 0, scope: Some(scope(None)?) });
         };
@@ -82,7 +84,7 @@ pub(in crate::code_rule_dsl) struct Files {
 
 impl Files {
     /// For `prog`, over the corpus's `paths`; `None` where `prog` reads neither relation.
-    pub(in crate::code_rule_dsl) fn new(prog: &Program, read: &BTreeSet<String>, paths: &[String]) -> Result<Option<Self>> {
+    pub(in crate::code_rule_dsl) fn new(prog: &dyn ProgramFields, read: &BTreeSet<String>, paths: &[String]) -> Result<Option<Self>> {
         if !RELATIONS.iter().any(|r| read.contains(*r)) {
             return Ok(None);
         }
@@ -90,16 +92,17 @@ impl Files {
         Ok(Some(Files { config: Config::of(prog)?, packages, files: Mutex::new(Vec::new()) }))
     }
 
-    /// Document `key` at `path`, with its source and core facts: summarized as W's stateless evaluation summarizes an
-    /// in-scope Python file, its module named by the corpus's package markers (`eval::parse_snapshot`).
-    fn add_file(&self, key: u32, path: &str, source: &Arc<String>, facts: &Arc<Facts>) -> Result<()> {
+    /// Document `key` at `path`, with its source, core facts and tape: summarized as W's stateless evaluation
+    /// summarizes an in-scope Python file, its module named by the corpus's package markers (`eval::parse_snapshot`).
+    /// The summary reads the run's tape in place, as W's workspace reads a restored one (`calls_state`): no parse.
+    fn add_file(&self, key: u32, path: &str, source: &Arc<String>, facts: &Arc<Facts>, tape: &TapeDoc) -> Result<()> {
         if !self.config.scope.as_ref().is_some_and(|scope| scope.matches(path)) {
             return Ok(());
         }
         let module = (!self.packages.is_empty()).then(|| python_module_in(path, |directory| self.packages.contains(directory))).flatten();
         let file = FileInput::new(path.to_owned(), "python".to_owned(), Arc::clone(source), module.as_ref(), None, "references").map_err(|e| Error::Plan(format!("{path}: {}", e.reason)))?;
-        let root = crate::code_rule_dsl::language::adapter::ast_grep(GrammarDialect::Python, &file.source);
-        let has_errors = root.root().get_doc().tree.root_node().has_error();
+        let has_errors = !crate::code_rule_dsl::soundness::SyntaxErrors::of_doc(tape).is_empty();
+        let root = ast_grep_core::AstGrep::doc(tape.clone());
         let (summary, _) = calls::summarize(root.root(), GrammarDialect::Python, path, file.module.as_deref(), has_errors, file.source.len(), None);
         let nodes = syntax::definitions(key, facts).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
         self.files.lock().expect("reference files").push((Arc::from(path), Arc::new(summary), nodes));
@@ -146,7 +149,7 @@ fn columns(names: &[&str]) -> Vec<String> {
 }
 
 /// Python's reference graph, made where a program of Python files reads it (`corpus::install_cross_file`).
-pub(in crate::code_rule_dsl) fn make(label: &str, prog: &Program, read: &BTreeSet<String>, paths: &[String]) -> Result<Option<Box<dyn super::CrossFileRelations>>> {
+pub(in crate::code_rule_dsl) fn make(label: &str, prog: &dyn ProgramFields, read: &BTreeSet<String>, paths: &[String]) -> Result<Option<Box<dyn super::CrossFileRelations>>> {
     if label != "python" {
         return Ok(None);
     }
@@ -154,8 +157,8 @@ pub(in crate::code_rule_dsl) fn make(label: &str, prog: &Program, read: &BTreeSe
 }
 
 impl super::CrossFileRelations for Files {
-    fn add(&self, key: u32, path: &str, source: &Arc<String>, facts: &Arc<Facts>) -> Result<()> {
-        self.add_file(key, path, source, facts)
+    fn add(&self, key: u32, path: &str, source: &Arc<String>, facts: &Arc<Facts>, tape: &TapeDoc) -> Result<()> {
+        self.add_file(key, path, source, facts, tape)
     }
     fn relations(self: Box<Self>, store: &ContentStore, read: &BTreeSet<String>) -> Result<Vec<(&'static str, Vec<String>, Vec<Option<Vec<i64>>>)>> {
         (*self).relations_of(store, read)

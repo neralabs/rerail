@@ -35,14 +35,26 @@ pub(super) fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Opti
 /// The run's key: everything it is a function of besides what it consults.
 /// Switches that change how a run is measured or held, never what it outputs: left out of the key. A profile's path
 /// differs every run, so with it in the key no profiled run ever found the last run's record.
-const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE", "RERAIL_UPKEEP", "RERAIL_UPKEEP_CPU", "RERAIL_UPKEEP_MB", "RERAIL_UPKEEP_IDLE", "RERAIL_UPKEEP_BATTERY", "RERAIL_UPKEEP_JOBS", "RERAIL_UPKEEP_LOG", "RERAIL_JOINS", "RERAIL_JOINS_LOG", "RERAIL_JOIN_SLOW", "RERAIL_JOIN_SLOW_ROWS", "RERAIL_JOIN_CRITICAL", "RERAIL_JOIN_EXPLORE", "RERAIL_JOIN_MARGIN", "RERAIL_JOIN_SEED", "RERAIL_OBSERVE_TRACE"];
+const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE", "RERAIL_UPKEEP", "RERAIL_UPKEEP_CPU", "RERAIL_UPKEEP_MB", "RERAIL_UPKEEP_IDLE", "RERAIL_UPKEEP_BATTERY", "RERAIL_UPKEEP_JOBS", "RERAIL_UPKEEP_LOG", "RERAIL_JOINS", "RERAIL_JOINS_LOG", "RERAIL_JOIN_SLOW", "RERAIL_JOIN_SLOW_ROWS", "RERAIL_JOIN_CRITICAL", "RERAIL_JOIN_EXPLORE", "RERAIL_JOIN_MARGIN", "RERAIL_JOIN_SEED", "RERAIL_OBSERVE_TRACE",
+    // A profile's and the heap sampler's (`profile::memory`, `rerail_prof`): a measurement's cold runs sample the heap
+    // and its warm runs do not, so with these in the key no warm run found the cold run's record (decision 0376).
+    "RERAIL_PROF", "RERAIL_HEAP_SAMPLE", "RERAIL_HEAP_AT", "RERAIL_HEAP_FRAMES", "RERAIL_PROF_MEMORY_MS", "RERAIL_TIMELINE",
+    // The stores a measurement keeps apart (the cost model's, the rule images'): a plan's costs and a program's stored
+    // form, never the run's outputs.
+    "RERAIL_COSTS", "RERAIL_IMAGE_STORE", "RERAIL_EXPORT_IMAGES",
+    "RERAIL_FRAMES_TRACE"];
+
+/// Whether a switch only measures a run, never changes what it outputs: left out of the run's key.
+pub fn measures_only(name: &str) -> bool {
+    NOT_OUTPUTS.contains(&name)
+}
 
 /// Every engine switch that can change what a run outputs (`RERAIL_*` less `NOT_OUTPUTS`), in name order, as bytes for
 /// the run's key.
 fn switches() -> Vec<u8> {
     let mut switches: Vec<(String, String)> = std::env::vars_os()
         .filter_map(|(k, v)| Some((k.into_string().ok()?, v.to_string_lossy().into_owned())))
-        .filter(|(k, _)| k.starts_with("RERAIL_") && !NOT_OUTPUTS.contains(&k.as_str()))
+        .filter(|(k, _)| k.starts_with("RERAIL_") && !measures_only(k))
         .collect();
     switches.sort();
     let mut out = Vec::new();
@@ -83,6 +95,25 @@ fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &se
     format!("{CUTOFF}{}", h.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
+/// The key's parts, each as a short digest, and the options (`RERAIL_REUSE_TRACE`): which part made a run miss.
+fn key_parts(programs: &[&str], root: &Path, options: &serde_json::Value, typing: &Typing) -> String {
+    if std::env::var_os("RERAIL_REUSE_TRACE").is_none() {
+        return String::new();
+    }
+    let short = |b: &[u8]| Sha256::digest(b).iter().take(3).map(|b| format!("{b:02x}")).collect::<String>();
+    let texts: Vec<u8> = programs.iter().flat_map(|p| p.bytes()).collect();
+    format!(
+        "texts {}, root {} ({}), typing {}, handed down {}, switches {}, options {}",
+        short(&texts),
+        short(root.to_string_lossy().as_bytes()),
+        root.display(),
+        short(format!("{typing:?}").as_bytes()),
+        short(super::phases::handed_down_text().as_bytes()),
+        short(&switches()),
+        options.to_string().chars().take(300).collect::<String>()
+    )
+}
+
 /// The prefix of a whole-run cutoff's record (the observer's `run_record`). Its consulted lines name the plans the
 /// run used (`plan`, digest in hex): the observer's store is collected with the content store's, and a record no
 /// live plan of which it names is dropped (`observe::collect`).
@@ -118,20 +149,35 @@ fn settings(root: &Path, options: &serde_json::Value) -> Result<super::added::Ad
 }
 
 /// The library files the programs include, each with its digest now: the record's `rule` entries.
+///
+/// Read off phase 0's graphs (decision 0246): each text's includes (`Graph::digests`) and the phase programs its
+/// declarations name, with theirs (`Graph::rules`), which `bootstrap.rr` resolved as it loaded the modules. Nothing is
+/// parsed: listing them by reading every module again was 4.3 G of a one-file run, the parse the shipped bundle saves.
+/// A text phase 0 has no graph of (it includes nothing, or the run was handed it read), or a `phase_dir` the graph
+/// does not search, lists them as before (`listed`). `RERAIL_REUSE_CHECK` lists both and says where they differ.
 pub fn rule_files(given: &super::Texts<'_>, options: &serde_json::Value) -> Result<Vec<(String, String, String)>> {
-    let read = given.names()?;
+    let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(std::path::PathBuf::from);
+    let (paths, missed) = match graph_files(given, dir.as_deref()) {
+        Some((paths, missed)) => {
+            if std::env::var_os("RERAIL_REUSE_CHECK").is_some() {
+                let (old, old_missed) = listed(given, dir.as_deref())?;
+                let old: std::collections::BTreeSet<_> = old.into_iter().collect();
+                let new: std::collections::BTreeSet<_> = paths.iter().cloned().collect();
+                eprintln!("RERAIL_REUSE_CHECK rule files: {} from the graph, {} listed; only the graph's {:?}; only listed {:?}", new.len(), old.len(), new.difference(&old).collect::<Vec<_>>(), old.difference(&new).collect::<Vec<_>>());
+                let old_missed: std::collections::BTreeSet<_> = old_missed.into_iter().collect();
+                let new_missed: std::collections::BTreeSet<_> = missed.iter().cloned().collect();
+                eprintln!("RERAIL_REUSE_CHECK missing phase programs: {} from the graph, {} listed; only the graph's {:?}; only listed {:?}", new_missed.len(), old_missed.len(), new_missed.difference(&old_missed).collect::<Vec<_>>(), old_missed.difference(&new_missed).collect::<Vec<_>>());
+            }
+            (paths, missed)
+        }
+        None => listed(given, dir.as_deref())?,
+    };
     let mut out = Vec::new();
     // Phase 1's program (`sources.rr`), which every run's documents come from: its includes are core's, as the
     // programs' are.
     let sources = super::phases::sources_path();
     let digest = observe(|o| o.digest(&sources)).map(|d| crate::content_store::observe::hex(&d)).unwrap_or_default();
     out.push(("rule".to_owned(), sources.to_string_lossy().into_owned(), digest));
-    // The programs' includes, and every phase program they read (with its includes).
-    let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(std::path::PathBuf::from);
-    let (mut paths, missed) = super::phases::phase_files(read, dir.as_deref())?;
-    for t in read {
-        paths.extend(t.included.iter().cloned());
-    }
     for path in paths {
         let digest = observe(|o| o.digest(&path)).map(|d| crate::content_store::observe::hex(&d)).unwrap_or_default();
         out.push(("rule".to_owned(), path.to_string_lossy().into_owned(), digest));
@@ -141,6 +187,33 @@ pub fn rule_files(given: &super::Texts<'_>, options: &serde_json::Value) -> Resu
     out.sort();
     out.dedup();
     Ok(out)
+}
+
+/// The programs' rule files from phase 0's graphs, where every text has one and no `phase_dir` shadows the phase
+/// programs' directory the graphs were resolved in; with the phase programs' candidates that were not there
+/// (`Graph::absent`), which a run checks are still missing (decision 0275), as `listed`'s.
+#[allow(clippy::type_complexity)]
+fn graph_files(given: &super::Texts<'_>, dir: Option<&Path>) -> Option<(Vec<std::path::PathBuf>, Vec<std::path::PathBuf>)> {
+    if dir.is_some() || given.graphs.is_empty() || given.graphs.iter().any(Option::is_none) || given.derived.len() != given.graphs.len() {
+        return None;
+    }
+    let mut paths: Vec<std::path::PathBuf> = given.derived.iter().flat_map(|g| g.digests.keys().chain(g.rules.keys()).cloned()).collect();
+    paths.extend(crate::code_rule_dsl::logic::rr::engine_files());
+    let missed = given.derived.iter().flat_map(|g| g.phases.values().flatten().map(|(_, c)| c).filter(|c| g.absent.contains(c)).cloned()).collect();
+    Some((paths, missed))
+}
+
+/// The programs' rule files read off their texts (`Texts::names`, which resolves each text's includes again) and
+/// the phase programs their declarations name (`phases::phase_files`, which reads each), with the places a phase
+/// program was looked for and not found.
+#[allow(clippy::type_complexity)]
+fn listed(given: &super::Texts<'_>, dir: Option<&Path>) -> Result<(Vec<std::path::PathBuf>, Vec<std::path::PathBuf>)> {
+    let read = given.names()?;
+    let (mut paths, missed) = super::phases::phase_files(read, dir)?;
+    for t in read {
+        paths.extend(t.included.iter().cloned());
+    }
+    Ok((paths, missed))
 }
 
 /// A record's lists as bytes: the observer's codec (one definition for every record, `observe::encode_lists`).
@@ -198,7 +271,7 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     let checking = super::thread_usage();
     let key = key(programs, &settings(root, options)?, root, options, modes, typing);
     let Some((consulted, outputs)) = observe(|o| o.run_record(&key)) else {
-        miss(&format!("no record under the run's key {} (programs {})", &key[..CUTOFF.len() + 12], programs.len()));
+        miss(&format!("no record under the run's key {} (programs {}; {})", &key[..CUTOFF.len() + 12], programs.len(), key_parts(programs, root, options, typing)));
         return Ok(None);
     };
     let Some(consulted) = decode_consulted(&consulted) else {

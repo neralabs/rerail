@@ -125,11 +125,28 @@ pub struct Body<'v> {
     /// The version the rule's source (`RuleRef::source`) is a rule of: the run's version 0, for a rule of a
     /// maintained form (`Versions::at`); `None` for every other rule.
     sources: Option<&'v Version>,
+    /// Its head's plain variables bound before its first step (`with_head_bound`): a recheck's, run once per
+    /// candidate row (decision 0364 stage 3, Q208).
+    head_bound: bool,
 }
 
 impl<'v> Body<'v> {
     pub fn of(v: &'v Version, rule: RuleRef<'v>) -> Body<'v> {
-        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: None }
+        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: None, head_bound: false }
+    }
+    /// The rule with its head's plain variables bound before its first step: a recheck of one candidate row
+    /// (decision 0364 stage 3). The planner prices and keeps its order apart from the rule's own (`key` names it):
+    /// each step starts from those variables bound and one row (Q208).
+    pub fn with_head_bound(&self) -> Body<'v> {
+        Body { v: self.v, rule: self.rule, lits: self.lits.clone(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: self.sources, head_bound: true }
+    }
+    /// The variables bound before its first step: its head's plain ones for a recheck (`with_head_bound`), else none.
+    /// A computed term's variables are not bound by the candidate.
+    pub fn bound_before(&self) -> VarSet {
+        if !self.head_bound {
+            return VarSet::new();
+        }
+        VarSet::of(self.head().args().filter_map(|t| t.var()))
     }
     /// The rule this one was written from (decision 0258): for a maintenance rule of a session's form (`h__del`,
     /// `h__ins`, `h__redo`, …), its source rule `h :- …` of the run's version. `None` for a rule not written from one.
@@ -208,9 +225,44 @@ impl<'v> Body<'v> {
     pub fn read_count(&self) -> usize {
         self.lits.iter().filter(|l| l.atom().is_some()).count()
     }
-    /// The demand of a demand-restricted aggregate (`rr_demand_agg_…`, a positive atom), which drives its rule.
+    /// The demand that drives its rule whatever the statistics say: a demand-restricted aggregate's
+    /// (`rr_demand_agg_…`, a positive atom), whose witnesses are enumerated from its requested keys.
     pub fn demand_first(&self) -> Option<usize> {
-        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).contains("rr_demand_agg_")))
+        let head = self.rel(self.head());
+        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| {
+            let rel = self.rel(a);
+            !a.neg() && (rel.contains("rr_demand_agg_") || rel.strip_prefix(super::corpus::product_demand::PREFIX) == Some(head))
+        }))
+    }
+    /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads.
+    pub fn own_demand(&self) -> Option<usize> {
+        let head = self.rel(self.head());
+        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).strip_prefix("demand_").is_some_and(|r| r == head)))
+    }
+    /// Whether an order led by literal `lead` keeps a demanded relation's rule to what its demand bounds (Q59): led
+    /// by the demand, or by an atom a constant restricts (a column a constant names, or a variable an equality binds
+    /// to one: `kind($i, #k1139)` reads one kind's nodes). An unrestricted atom first (`col(v, c)`) scans the corpus
+    /// per chunk: 29 M rows, not 34 k, on PostHog. Forcing the demand first always cost 66x on a restricted lead
+    /// (`not_name` on 50 files of B-now: a 42 k-row demand against a kind of 498 nodes).
+    pub fn demand_bounds_lead(&self, lead: usize) -> bool {
+        let Some(d) = self.own_demand() else { return true };
+        if lead == d {
+            return true;
+        }
+        let Some(a) = self.plain_atom(lead) else { return false };
+        if a.neg() {
+            return false;
+        }
+        let bound: Vec<_> = (0..self.len())
+            .filter_map(|l| match self.view(l) {
+                Lit::Cmp { l: x, op: CmpOp::Eq, r: y } => match (x, y) {
+                    (TermRef::Var(v), t) | (t, TermRef::Var(v)) if self.constant(t).is_some() => Some(v),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        self.args(lead).iter().any(|&t| self.constant(t).is_some() || t.var().is_some_and(|v| bound.contains(&v)))
     }
     /// The share of rows filter `i` passes on (decision 0297): measured by kind of filter, rows weighted, over the
     /// 300-file bench's 317 rules (`profile`'s `native.tsv`, each step's rows in and out). An equality that binds a
@@ -222,7 +274,8 @@ impl<'v> Body<'v> {
                 let joined = |t: TermRef<'_>| t.var().is_some_and(|v| (0..self.len()).any(|j| self.is_join(j) && self.vars(j).contains(v)));
                 let free = |t: TermRef<'_>| t.var().is_some() && !joined(t);
                 let call = matches!(l, TermRef::Call(..)) || matches!(r, TermRef::Call(..));
-                let constant = |t: TermRef<'_>| matches!(t, TermRef::Int(_) | TermRef::Str(_));
+                // A kind, field or name is branded (decision 0270): a constant like any other.
+                let constant = |t: TermRef<'_>| matches!(t, TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_));
                 match op {
                     CmpOp::Eq if free(l) || free(r) => 1.0,
                     CmpOp::Eq if call => 0.4,
@@ -378,6 +431,10 @@ impl<'v> Body<'v> {
 
     /// The rule written into a digest, as `plan::digest_atom` and `plan::digest_literal` write the tree's head and body.
     pub(in crate::code_rule_dsl) fn digest(&self, d: &mut super::super::derived::Inputs) {
+        // A recheck's order is not the rule's: kept apart (Q208).
+        if self.head_bound {
+            d.str("head bound");
+        }
         self.digest_atom(d, self.head());
         d.u64(self.lits.len() as u64);
         for &l in &self.lits {
@@ -522,17 +579,8 @@ pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &Var
 /// form a version of its own (`push`). A caller that holds a program as a tree (`with`) finds a rule's key by its
 /// address (`key`), once, where its list is made. A program is added once it is final: its rules do not move after.
 #[derive(Clone, Default)]
-pub struct Versions(Vec<(usize, usize, Placed)>, Vec<AgainAt>);
+pub struct Versions(Vec<(usize, usize, Placed)>);
 
-/// Where a maintained program's stratum's rules for deriving it again, or its deltas, are among a run's versions
-/// (`Versions::add_again`): its `Maint` (by address), the stratum's place there, which list, and the version's place.
-#[derive(Clone, Copy)]
-struct AgainAt {
-    maint: usize,
-    group: usize,
-    deltas: bool,
-    at: usize,
-}
 
 /// A program's version, and where its rules are in it: the program's rule `k` is the version's rule `ids[k]` (rule
 /// `k` where `ids` is `None`, a version made of the rules in order). A pass's overlay keeps its rules where its edits
@@ -543,8 +591,6 @@ pub struct Placed {
     ids: Option<Arc<[RuleId]>>,
     /// Whether `v` holds the program's other fields too (`of_program`), not its rules alone.
     pub whole: bool,
-    /// A maintained program's parts (decision 0215): `None` for every other program.
-    pub maint: Option<Arc<Maint>>,
     /// The version's other fields, read once at the first `Fields::of` and shared by every clone after it.
     pub(super) fields: std::sync::OnceLock<Arc<super::fields::FieldsData>>,
     /// The ids of `v`'s rules in order, made at the first `id` where `ids` is `None` and `v` numbers its rules other
@@ -552,188 +598,19 @@ pub struct Placed {
     positions: std::sync::OnceLock<Arc<[RuleId]>>,
 }
 
-/// A maintained program's parts beside its version (decision 0215): each stratum that may be derived again
-/// (`front::Again`), its rules and deltas rules of `v`, an overlay of the program's version, and the sets of relations
-/// run as one component (`front::Program::together`). Every relation and rule is `v`'s.
-#[derive(Clone)]
-pub struct Maint {
-    pub v: Arc<Version>,
-    pub again: Vec<AgainRef>,
-    pub together: Vec<Vec<RelId>>,
-}
-
-/// A stratum derived again, as a maintained form's writer states it (`Maint::written`): its relations (each set in
-/// name order, as the tree's sets), its rules as given (rules of the form's source), its relations whose deltas
-/// against their old rows it makes (with their widths), the input deltas it reads and its old rows.
-pub struct Group {
-    pub scc: Vec<String>,
-    pub owned: Vec<String>,
-    pub given: Vec<RuleId>,
-    pub deltas: Vec<(String, usize)>,
-    pub reads: Vec<String>,
-    pub olds: Vec<String>,
-}
-
-/// A stratum derived again (`front::Again`): its relations, those its maintained form makes, its rules over the
-/// current inputs and its deltas against its old rows, the input deltas it reads and its old rows.
-#[derive(Clone, Debug)]
-pub struct AgainRef {
-    pub scc: Vec<RelId>,
-    pub owned: Vec<RelId>,
-    pub rules: Vec<RuleId>,
-    pub deltas: Vec<RuleId>,
-    pub reads: Vec<RelId>,
-    pub olds: Vec<RelId>,
-}
-
-impl Maint {
-    /// The parts' digest (decision 0173 §7): each stratum derived again (its relations by name, its rules' and deltas'
-    /// hashes) and each set run as one component, summed, so it reads no rule's text. A program's digest with its
-    /// version's is `Placed::digest`.
-    pub fn digest(&self) -> u64 {
-        use super::super::program_image::strings::hash;
-        let names = |rels: &[RelId]| self.names(rels).collect::<Vec<_>>().join("\0");
-        let rules = |ids: &[RuleId]| ids.iter().fold(0u64, |a, &id| a.wrapping_add(self.v.rule(id).map_or(0, |r| r.hash())));
-        let mut d = 0u64;
-        for g in &self.again {
-            let text = format!("again\x01{}\x01{}\x01{}\x01{}\x01{:016x}\x01{:016x}", names(&g.scc), names(&g.owned), names(&g.reads), names(&g.olds), rules(&g.rules), rules(&g.deltas));
-            d = d.wrapping_add(hash(text.as_bytes()));
-        }
-        for t in &self.together {
-            d = d.wrapping_add(hash(format!("together\x01{}", names(t)).as_bytes()));
-        }
-        d
-    }
-    /// The name of relation `r`, one of `v`'s.
-    pub fn name(&self, r: RelId) -> &str {
-        self.v.rel_name(r)
-    }
-    /// The names of `rels`, a set of a stratum's (`AgainRef`), in order.
-    pub fn names<'m>(&'m self, rels: &'m [RelId]) -> impl Iterator<Item = &'m str> + 'm {
-        rels.iter().map(move |&r| self.v.rel_name(r))
-    }
-    /// The stratum derived again whose relations are `scc`, if one is.
-    pub fn group_of(&self, scc: &std::collections::BTreeSet<String>) -> Option<usize> {
-        self.again.iter().position(|g| g.scc.len() == scc.len() && self.names(&g.scc).zip(scc).all(|(a, b)| a == b))
-    }
-    /// Whether a set run as one component (`together`) holds `rel`.
-    pub fn together_holds(&self, rel: &str) -> bool {
-        self.v.rel(rel).is_some_and(|r| self.together.iter().any(|t| t.contains(&r)))
-    }
-    /// A maintained form's `again` and `together` (decision 0241), over `parent`, the form's derivation: each group's
-    /// rules as given (`given`, rules of `src`), then its deltas against its old rows (`deltas`: each relation and its
-    /// width, `r__minus` then `r__plus`), as `maintain` writes them.
-    pub fn written(parent: &Arc<Version>, src: &Version, groups: &[Group], together: &[std::collections::BTreeSet<String>]) -> Result<Maint> {
-        use super::super::program_image::T;
-        let mut b = Builder::on(parent);
-        let mut ids = Vec::with_capacity(groups.len());
-        for g in groups {
-            let rules: Vec<RuleId> = g.given.iter().map(|&id| b.copy(src, src.rule(id).expect("a given rule"))).collect();
-            let mut deltas = Vec::with_capacity(2 * g.deltas.len());
-            for (rel, width) in &g.deltas {
-                let names: Vec<String> = (0..*width).map(|i| format!("_m{i}")).collect();
-                let v: Vec<T<'_>> = names.iter().map(|n| T::Var(n)).collect();
-                let (old, minus, plus) = (format!("{rel}__old"), format!("{rel}__minus"), format!("{rel}__plus"));
-                deltas.push(b.rule().head(minus.as_str(), &v).atom(old.as_str(), &v).not(rel.as_str(), &v).finish().map_err(Error::Plan)?);
-                deltas.push(b.rule().head(plus.as_str(), &v).atom(rel.as_str(), &v).not(old.as_str(), &v).finish().map_err(Error::Plan)?);
-            }
-            for n in g.scc.iter().chain(&g.owned).chain(&g.reads).chain(&g.olds) {
-                b.rel(n);
-            }
-            ids.push((rules, deltas));
-        }
-        for s in together {
-            for n in s {
-                b.rel(n);
-            }
-        }
-        // An overlay, never folded: its rules keep the ids they were written with.
-        let v = b.finish_overlay().map_err(Error::Plan)?;
-        let rel = |n: &str| v.rel(n).ok_or_else(|| Error::Plan(format!("a maintained form's relation {n} has no id")));
-        let rels = |ns: &[String]| ns.iter().map(|n| rel(n)).collect::<Result<Vec<RelId>>>();
-        let again = groups
-            .iter()
-            .zip(ids)
-            .map(|(g, (rules, deltas))| Ok(AgainRef { scc: rels(&g.scc)?, owned: rels(&g.owned)?, rules, deltas, reads: rels(&g.reads)?, olds: rels(&g.olds)? }))
-            .collect::<Result<Vec<_>>>()?;
-        let together = together.iter().map(|s| s.iter().map(|n| rel(n)).collect::<Result<Vec<RelId>>>()).collect::<Result<Vec<_>>>()?;
-        Ok(Maint { v, again, together })
-    }
-    /// The parts as the tree's (`front::Again`, `Program::together`): for a caller that still reads a tree (the
-    /// session's maintained part, until t36 item 7 step 9).
-    pub fn to_tree(&self, lists: &super::super::front::Lists) -> (Vec<super::super::front::Again>, Vec<std::collections::BTreeSet<String>>) {
-        let mut tree = super::super::program_image::Tree::new(&self.v, lists);
-        let names = |rels: &[RelId]| -> Vec<String> { rels.iter().map(|&r| self.v.rel_name(r).to_owned()).collect() };
-        let again = self
-            .again
-            .iter()
-            .map(|g| super::super::front::Again {
-                scc: names(&g.scc).into_iter().collect(),
-                owned: names(&g.owned).into_iter().collect(),
-                rules: g.rules.iter().map(|&id| tree.rule(self.v.rule(id).expect("a maintained rule"))).collect(),
-                deltas: g.deltas.iter().map(|&id| tree.rule(self.v.rule(id).expect("a maintained rule"))).collect(),
-                reads: names(&g.reads).into_iter().collect(),
-                olds: names(&g.olds).into_iter().collect(),
-            })
-            .collect();
-        (again, self.together.iter().map(|t| names(t).into_iter().collect()).collect())
-    }
-    /// `prog`'s `again` and `together`, over `parent`, its version.
-    fn of(parent: &Arc<Version>, prog: &Program) -> Result<Maint> {
-        let mut b = Builder::on(parent);
-        let names = |set: &mut dyn Iterator<Item = &str>, b: &mut Builder<'_>| -> Vec<String> {
-            set.map(|n| {
-                b.rel(n);
-                n.to_owned()
-            })
-            .collect()
-        };
-        let mut groups = Vec::with_capacity(prog.again.len());
-        let mut added = Vec::new();
-        for g in &prog.again {
-            let rules = g.rules.iter().map(|r| b.add(r)).collect::<std::result::Result<Vec<_>, _>>().map_err(Error::Plan)?;
-            let deltas = g.deltas.iter().map(|r| b.add(r)).collect::<std::result::Result<Vec<_>, _>>().map_err(Error::Plan)?;
-            added.extend(rules.iter().chain(&deltas).copied());
-            let sets = [
-                names(&mut g.scc.iter().map(String::as_str), &mut b),
-                names(&mut g.owned.iter().map(String::as_str), &mut b),
-                names(&mut g.reads.iter().map(String::as_str), &mut b),
-                names(&mut g.olds.iter().map(String::as_str), &mut b),
-            ];
-            groups.push((rules, deltas, sets));
-        }
-        let together: Vec<Vec<String>> = prog.together.iter().map(|s| names(&mut s.iter().map(String::as_str), &mut b)).collect();
-        let (v, made) = b.finish().map_err(Error::Plan)?;
-        let order = super::keeps::inline::renumbered(parent, &[], &added, made);
-        let id = |r: RuleId| order.as_ref().map_or(r, |o| o[&r]);
-        let rel = |n: &str| v.rel(n).ok_or_else(|| Error::Plan(format!("a maintained program's relation {n} has no id")));
-        let rels = |ns: &[String]| ns.iter().map(|n| rel(n)).collect::<Result<Vec<RelId>>>();
-        let again = groups
-            .iter()
-            .map(|(rules, deltas, [scc, owned, reads, olds])| {
-                Ok(AgainRef { scc: rels(scc)?, owned: rels(owned)?, rules: rules.iter().map(|&r| id(r)).collect(), deltas: deltas.iter().map(|&r| id(r)).collect(), reads: rels(reads)?, olds: rels(olds)? })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let together = together.iter().map(|s| rels(s)).collect::<Result<Vec<_>>>()?;
-        Ok(Maint { v, again, together })
-    }
-}
-
 impl Placed {
     /// `rules` made into a version of their own, in order.
     pub fn made(rules: &[Rule]) -> Result<Placed> {
-        Ok(Placed { v: made(rules)?, ids: None, whole: false, maint: None, fields: Default::default(), positions: Default::default() })
+        Ok(Placed { v: made(rules)?, ids: None, whole: false, fields: Default::default(), positions: Default::default() })
     }
     /// `prog`'s image (decision 0173): its rules in order, and its declarations, facts, inputs, outputs and other
-    /// fields (`About`), which the passes read beside the rules; and a maintained program's parts beside it
-    /// (`maint`, decision 0215).
+    /// fields (`About`), which the passes read beside the rules.
     pub fn of_program(prog: &Program) -> Result<Placed> {
         // A program the image has no form for (a comparison it does not know) is made of its rules alone.
-        let Ok(v) = Builder::of_program_less_maintenance(prog).and_then(|b| b.finish()).map(|(v, _)| v) else {
+        let Ok(v) = Builder::of_program(prog).and_then(|b| b.finish()).map(|(v, _)| v) else {
             return Placed::made(&prog.rules);
         };
-        let maint = if prog.again.is_empty() && prog.together.is_empty() { None } else { Some(Arc::new(Maint::of(&v, prog)?)) };
-        Ok(Placed { v, ids: None, whole: true, maint, fields: Default::default(), positions: Default::default() })
+        Ok(Placed { v, ids: None, whole: true, fields: Default::default(), positions: Default::default() })
     }
     /// The run's version of the program whose image this is (t36 item 7, step 2): normalized for the SQL kernel
     /// (`passes::normalize`, a derivation), with its stated facts apart where `apart` (`passes::stated_apart`, an
@@ -748,49 +625,28 @@ impl Placed {
         let sentinels = sentinels.iter().map(|&r| v.rel_name(r).to_owned()).collect();
         let (v, stated) = if apart { passes::stated_apart(&v).map_err(Error::Plan)? } else { (v, Vec::new()) };
         let stated = stated.iter().map(|&(r, s)| (v.rel_name(r).to_owned(), v.rel_name(s).to_owned())).collect();
-        Ok(Normalized { placed: Placed { v, ids: None, whole: true, maint: self.maint.clone(), fields: Default::default(), positions: Default::default() }, sentinels, stated })
+        Ok(Normalized { placed: Placed { v, ids: None, whole: true, fields: Default::default(), positions: Default::default() }, sentinels, stated })
     }
-    /// The program this version is, as the tree: its rules in the program's order, and a maintained program's parts
-    /// (`Maint`). For a reader that still reads a tree: the program digests (decision 0173, step 6), the stored text,
+    /// The program this version is, as the tree: its rules in the program's order. For a reader that still reads a tree: the program digests (decision 0173, step 6), the stored text,
     /// the measurement aids.
     pub fn program(&self, lists: &super::super::front::Lists) -> Result<Program> {
-        let mut prog = super::super::program_image::Tree::new(&self.v, lists).program_of(self.order().into_iter().map(|id| self.v.rule(id).expect("a rule of its version"))).map_err(Error::Plan)?;
-        if let Some(m) = &self.maint {
-            (prog.again, prog.together) = m.to_tree(lists);
-        }
-        Ok(prog)
+        super::super::program_image::Tree::new(&self.v, lists).program_of(self.order().into_iter().map(|id| self.v.rule(id).expect("a rule of its version"))).map_err(Error::Plan)
     }
-    /// A maintained form, a derivation of the run's version (decision 0241): its rules `v`'s in order, its fields
-    /// its own, and its maintenance's parts beside it.
-    pub fn derived(v: Arc<Version>, maint: Option<Arc<Maint>>) -> Placed {
-        Placed { v, ids: None, whole: true, maint, fields: Default::default(), positions: Default::default() }
-    }
-    /// Its components, dependencies first, in the tree's order (`front::components_of`), its maintained program's
-    /// sets run together.
+    /// Its components, dependencies first, in the tree's order (`front::components_of`). Held by the version
+    /// (decision 0281 §2): computed once however many readers and `Placed`s ask.
     pub fn components(&self) -> Result<Arc<super::super::program_image::analyses::Components>> {
-        use super::super::program_image::analyses::Components;
-        let f = super::fields::Fields::of(self).ok_or_else(|| Error::Plan("the components of a version of rules alone".into()))?;
-        let together = self.together();
-        if together.is_empty() {
-            // Held by the version (decision 0281 §2): computed once however many readers and `Placed`s ask.
-            return super::super::program_image::manager::analysis::<Components>(&self.v).map_err(Error::Plan);
-        }
-        Ok(Arc::new(Components(super::super::program_image::analyses::components_by_name(f.v, f.about, &together)?)))
-    }
-    /// The sets its maintained program runs as one component (`Program::together`, `Maint`), by name.
-    pub fn together(&self) -> Vec<std::collections::BTreeSet<String>> {
-        self.maint.as_ref().map_or_else(Vec::new, |m| m.together.iter().map(|s| s.iter().map(|&r| m.v.rel_name(r).to_owned()).collect()).collect())
+        super::super::program_image::manager::analysis::<super::super::program_image::analyses::Components>(&self.v).map_err(Error::Plan)
     }
     /// A version whose rules are `v`'s in order (a program's image).
     pub fn whole(v: Arc<Version>) -> Placed {
-        Placed { v, ids: None, whole: true, maint: None, fields: Default::default(), positions: Default::default() }
+        Placed { v, ids: None, whole: true, fields: Default::default(), positions: Default::default() }
     }
     /// `v`, the program's rule `k` its rule `ids[k]`.
     pub fn new(v: Arc<Version>, ids: Vec<RuleId>, whole: bool) -> Placed {
-        Placed { v, ids: Some(ids.into()), whole, maint: None, fields: Default::default(), positions: Default::default() }
+        Placed { v, ids: Some(ids.into()), whole, fields: Default::default(), positions: Default::default() }
     }
     /// The program's digest (decision 0173 §7): its version's, kept as the version was made, less the rules the
-    /// program leaves out of it (where it is some of its version's rules), with its maintained parts'. A sum, so it
+    /// program leaves out of it (where it is some of its version's rules). A sum, so it
     /// does not see the rules' order.
     pub fn digest(&self) -> u64 {
         let d = match &self.ids {
@@ -800,7 +656,7 @@ impl Placed {
                 ids.iter().fold(self.v.digest().wrapping_sub(all), |a, &id| a.wrapping_add(self.v.rule(id).map_or(0, |r| r.hash())))
             }
         };
-        self.maint.as_ref().map_or(d, |m| d.wrapping_add(m.digest()))
+        d
     }
     /// How many rules the program has.
     pub fn len(&self) -> usize {
@@ -887,12 +743,12 @@ impl Versions {
     pub fn with(prog: &Program, placed: Placed) -> Versions {
         let rules = &prog.rules;
         let start = rules.as_ptr() as usize;
-        Versions(vec![(start, start + std::mem::size_of_val(rules.as_slice()), placed)], Vec::new())
+        Versions(vec![(start, start + std::mem::size_of_val(rules.as_slice()), placed)])
     }
     /// `placed` alone, the run's version 0, for a caller that holds no tree (the composed path's edited versions): no
     /// rule or program is found by its address.
     pub fn of_placed(placed: Placed) -> Versions {
-        Versions(vec![(0, 0, placed)], Vec::new())
+        Versions(vec![(0, 0, placed)])
     }
     /// Adds `placed` (a maintained form, a derivation of the run's version: decision 0241): its place.
     pub fn push(&mut self, placed: Placed) -> usize {
@@ -914,28 +770,6 @@ impl Versions {
     /// The keys of the `v`-th version's rules, `n` of them (its program's rule count), in the program's order.
     pub fn keys(v: usize, n: usize) -> impl Iterator<Item = RuleKey> {
         (0..n).map(move |k| RuleKey::new(v, k))
-    }
-    /// Adds the rules stratum `g` of `maint` (decision 0215) is derived again by (`deltas` false: its rules over the
-    /// current reads) or its deltas against its old rows (`deltas` true), rules of `maint.v`, unless held already:
-    /// their version's place (`None` for no rules). Rule `k` of the version is the list's `k`-th.
-    pub fn add_again(&mut self, maint: &Arc<Maint>, g: usize, deltas: bool) -> Option<usize> {
-        if let Some(at) = self.again_at(maint, g, deltas) {
-            return Some(at);
-        }
-        let at = Arc::as_ptr(maint) as usize;
-        let a = &maint.again[g];
-        let ids = if deltas { &a.deltas } else { &a.rules };
-        if ids.is_empty() {
-            return None;
-        }
-        self.0.push((0, 0, Placed::new(Arc::clone(&maint.v), ids.clone(), false)));
-        self.1.push(AgainAt { maint: at, group: g, deltas, at: self.0.len() - 1 });
-        Some(self.0.len() - 1)
-    }
-    /// Where the run holds stratum `g` of `maint`'s rules derived again, or its deltas (`add_again`), if it does.
-    pub fn again_at(&self, maint: &Arc<Maint>, g: usize, deltas: bool) -> Option<usize> {
-        let at = Arc::as_ptr(maint) as usize;
-        self.1.iter().find(|e| e.maint == at && e.group == g && e.deltas == deltas).map(|e| e.at)
     }
     /// `r`'s key, a rule of a program the run holds.
     pub fn key(&self, r: &Rule) -> Option<RuleKey> {

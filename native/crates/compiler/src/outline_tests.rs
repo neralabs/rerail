@@ -4,7 +4,8 @@
 //!
 //! The general body (the first block of a file and the last ones, where `within` is not all
 //! ones) runs a block or two per file: the pass calls it, with the loop's parameters through
-//! a stack slot. A gated region (`native_cpu_lanes::Region`) runs only where its gate has a
+//! a stack slot. Where the full body runs on those blocks too, with its edge part (0383), there
+//! is no general body. A gated region (`native_cpu_lanes::Region`) runs only where its gate has a
 //! bit: its branch calls it, with what it reads and gives through a stack slot.
 
 use crate::clif_text::{hot_loop, opcode};
@@ -22,20 +23,21 @@ fn the_general_body_is_a_call_not_a_copy() {
         let g = small(&text);
         let compiled = native_cpu_block::compile(&g.native).expect("compiles");
         for (k, pass) in compiled.passes.iter().enumerate().filter(|(_, p)| !p.back) {
-            assert!(!pass.outlined.is_empty(), "{name} pass {k}: the general body is not outlined");
             let calls = instructions(&pass.clif).iter().filter(|l| opcode(l) == "call").count();
-            // The general body's call, and each region's, once in each body that has it.
-            let bodies = 1 + usize::from(pass.ascii_branch);
-            assert_eq!(calls, 1 + bodies * (pass.outlined.len() - 1), "{name} pass {k}: a call each");
-            let general = &pass.outlined[0].clif;
+            // The general body's call, where there is one, and each region's, once: the full
+            // body is one (0364).
+            assert_eq!(calls, pass.outlined.len(), "{name} pass {k}: a call each");
             for o in &pass.outlined {
                 assert!(instructions(&o.clif).iter().all(|l| opcode(l) != "call"), "{name} pass {k}: an outlined function calls nothing");
             }
             // Outside the hot loop the pass holds only the loops' scaffolding: fewer
             // instructions than the body it calls.
-            let hot: usize = hot_loop(&pass.clif).iter().map(|(_, lines)| lines.len()).sum();
-            let rest = instructions(&pass.clif).len() - hot;
-            assert!(rest < instructions(general).len(), "{name} pass {k}: {rest} instructions outside the hot loop, the general body {}", instructions(general).len());
+            if pass.general {
+                let general = &pass.outlined[0].clif;
+                let hot: usize = hot_loop(&pass.clif).iter().map(|(_, lines)| lines.len()).sum();
+                let rest = instructions(&pass.clif).len() - hot;
+                assert!(rest < instructions(general).len(), "{name} pass {k}: {rest} instructions outside the hot loop, the general body {}", instructions(general).len());
+            }
         }
     }
 }
@@ -72,12 +74,12 @@ fn a_gated_region_is_called_only_where_the_call_is_free() {
                 assert!(vecs == 0 && ints <= 10, "{name}: a region called with {ints} integers and {vecs} vectors live across");
             }
             // Each region function made is called; an inlined region has none.
-            let called = pass.outlined.len() - 1;
+            let called = pass.outlined.len() - usize::from(pass.general);
             assert!(called <= pass.region_calls.len(), "{name}: a region function no call reaches");
             assert!(called + pass.inlined_regions > 0, "{name}: a region neither called nor inlined");
             let hot: Vec<String> = hot_loop(&pass.clif).into_iter().flat_map(|(_, l)| l).collect();
             assert_eq!(hot.iter().filter(|l| opcode(l) == "call").count(), pass.region_calls.len(), "{name}: the hot loop's calls are the regions'");
-            for o in &pass.outlined[1..] {
+            for o in &pass.outlined[usize::from(pass.general)..] {
                 let lines = instructions(&o.clif);
                 assert!(lines.iter().any(|l| l.contains("load.i8x16") || l.contains("load.i64")), "{name}: a region's function reads nothing");
                 assert!(lines.iter().all(|l| opcode(l) != "call"), "{name}: a region's function calls");

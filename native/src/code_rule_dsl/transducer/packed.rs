@@ -95,67 +95,7 @@ pub mod compile_sets;
 pub mod compile_micro;
 pub use compile_micro::{Emit, Frames, Micro, RootRecord, steps as micro_steps};
 // cratify: `compile_matcher_tests` is rerail-engine's (it mounts it)
-// cratify: `metal_bulk_closure` is rerail-device-metal's (it mounts it)
-// cratify: `metal_bulk_closure_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_candidate_batch` is rerail-device-metal's (it mounts it)
-// cratify: `metal_capture_arguments` is rerail-device-metal's (it mounts it)
-// cratify: `metal_capture_groups` is rerail-device-metal's (it mounts it)
-// cratify: `metal_capture_literals` is rerail-device-metal's (it mounts it)
-// cratify: `metal_capture_predicates` is rerail-device-metal's (it mounts it)
-pub mod metal_child_index;
-// cratify: `metal_closure_continuation` is rerail-device-metal's (it mounts it)
-// cratify: `metal_closure_prepare` is rerail-device-metal's (it mounts it)
-// cratify: `metal_closure_prepare_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_constant_output` is rerail-device-metal's (it mounts it)
-// cratify: `metal_cutover_architecture` is rerail-device-metal's (it mounts it)
-// cratify: `metal_dynamic_execution` is rerail-device-metal's (it mounts it)
-// cratify: `metal_failure_records` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frame_identity` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frame_identity_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frontier_conformance` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frontier_reduce` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frontier_seed` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frontier_seed_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_frontier_validation` is rerail-device-metal's (it mounts it)
-pub mod metal_grid;
-// cratify: `metal_grid_contract` is rerail-device-metal's (it mounts it)
-// cratify: `metal_grid_executor` is rerail-device-metal's (it mounts it)
-// cratify: `metal_grid_plan` is rerail-device-metal's (it mounts it)
-// cratify: `metal_initial_prefix` is rerail-device-metal's (it mounts it)
-// cratify: `metal_initial_range_codegen` is rerail-device-metal's (it mounts it)
-// cratify: `metal_inline_predicates` is rerail-device-metal's (it mounts it)
-// cratify: `metal_named_order` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_contract` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_dispatch` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_mime` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_pages` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_selection` is rerail-device-metal's (it mounts it)
-// cratify: `metal_output_strip` is rerail-device-metal's (it mounts it)
-// cratify: `metal_position_order` is rerail-device-metal's (it mounts it)
-// cratify: `metal_grid_backend` is rerail-device-metal's (it mounts it)
-// cratify: `metal_ready_batch` is rerail-device-metal's (it mounts it)
-// cratify: `metal_ready_batch_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_ready_proof` is rerail-device-metal's (it mounts it)
-// cratify: `metal_regex_code` is rerail-device-metal's (it mounts it)
-// cratify: `metal_regex_frontier` is rerail-device-metal's (it mounts it)
-// cratify: `metal_register_codegen` is rerail-device-metal's (it mounts it)
-// cratify: `metal_register_conformance` is rerail-device-metal's (it mounts it)
-// cratify: `metal_register_execution` is rerail-device-metal's (it mounts it)
-// cratify: `metal_semantic_columns` is rerail-device-metal's (it mounts it)
-// cratify: `metal_semantic_conformance` is rerail-device-metal's (it mounts it)
-// cratify: `metal_state_values` is rerail-device-metal's (it mounts it)
-// cratify: `metal_state_values_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor_branch_codegen` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor_codegen` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor_prepare` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor_repeat_codegen` is rerail-device-metal's (it mounts it)
-// cratify: `metal_successor_tests` is rerail-device-metal's (it mounts it)
-// cratify: `metal_terminal` is rerail-device-metal's (it mounts it)
-// cratify: `metal_terminal_capture_order` is rerail-device-metal's (it mounts it)
-// cratify: `metal_terminal_repeat` is rerail-device-metal's (it mounts it)
-// cratify: `metal_typed_output` is rerail-device-metal's (it mounts it)
-// cratify: `metal_unique_child_tests` is rerail-device-metal's (it mounts it)
+// cratify: `metal_semantic_conformance` is rerail-engine's (it mounts it: its fixtures parse documents)
 pub mod compilation;
 pub use compilation::PlanId;
 pub mod native_cpu;
@@ -169,6 +109,7 @@ pub mod native_cpu_output_transform;
 pub mod native_cpu_reduction;
 pub mod native_cpu_regex;
 pub mod native_cpu_scheduler;
+pub mod native_cpu_tape;
 pub mod native_cpu_value;
 // Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2), the compiler crate's.
 #[allow(unused_imports)]
@@ -180,7 +121,6 @@ pub mod output;
 pub mod packed_arena;
 pub mod packed_batch;
 pub use packed_batch::PackedExecution;
-// cratify: `metal_value_prefix_tests` is rerail-device-metal's (it mounts it)
 pub mod packed_workspace;
 pub mod scheduler;
 pub mod set_mode;
@@ -207,7 +147,7 @@ pub mod block_plan;
 #[cfg(test)]
 pub mod block_plan_tests;
 pub mod value_packing;
-pub mod value_prefix;
+pub mod evaluation_costs;
 
 // The transducer's word program and its opcodes, the compiler crate's (`rerail_compiler::program`).
 use rerail_compiler::program::*;
@@ -215,6 +155,194 @@ pub use rerail_compiler::program::{NAMED, Words, word};
 pub const MAX_FINITE_JOB_INSTRUCTIONS: usize = 256;
 pub const MAX_STEPS_PER_PATH: usize = 1 << 20;
 pub const MAX_WORK_PER_TASK: usize = 1 << 26;
+
+/// 2 to the power `times`, at most `u64::MAX`: a budget doubled that many times multiplies by it (saturating, where a
+/// shift would drop the high bits).
+fn power_of_two(times: u32) -> u64 {
+    1_u64.checked_shl(times).unwrap_or(u64::MAX)
+}
+
+/// What an evaluation split by root kept where it ran over its budget (`Program::execute_roots_split`): the roots that
+/// finished, in order, their outputs and their steps.
+#[derive(Debug, Default)]
+pub struct Partial {
+    pub finished: usize,
+    pub outputs: Vec<Output>,
+    pub steps: usize,
+}
+
+/// What a task may spend before it stops (decision 0334), on the device and on the CPU JIT alike.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkBudget {
+    /// The CPU's limits: `MAX_WORK_PER_TASK` a task, `MAX_STEPS_PER_PATH` a path. A task runs past its prediction,
+    /// and its results are the CPU's. `RERAIL_DEVICE_BUDGET=full`.
+    Full,
+    /// The task's predicted steps (`evaluation_costs::predict`) times `slack`, doubled `doublings` times, below the
+    /// ceiling. A task past it stops `OverBudget`, unfinished: its evaluation is replanned (`execute_planned`), never
+    /// an error until the ceiling. Results are `Full`'s. The default.
+    Replan { slack: u32, doublings: u32 },
+}
+
+/// A replanned budget's slack over the prediction: a well-predicted task never reaches it.
+pub const REPLAN_SLACK: u32 = 8;
+/// A task's states of each kind per unit of its size (its nodes, and its text's bytes over eight): the paths, captures
+/// and results a task holds follow the nodes it reaches, not its program's words (a query's many words fail fast at
+/// most nodes). A task that holds more restarts with twice the states (decision 0334 §9).
+pub const STATES_PER_UNIT: u64 = 4;
+/// A task's states of each kind at least.
+pub const MIN_STATES: u64 = 512;
+
+impl WorkBudget {
+    /// The process's budget: `RERAIL_DEVICE_BUDGET` (`replan`, the default since decision 0334's pack check, or
+    /// `full`).
+    pub fn current() -> Self {
+        match std::env::var("RERAIL_DEVICE_BUDGET").as_deref() {
+            Ok("full") => Self::Full,
+            _ => Self::Replan { slack: REPLAN_SLACK, doublings: 0 },
+        }
+    }
+
+    /// An evaluation's budget on the interpreter from its predicted steps, `usize::MAX` (none) at or past `ceiling`
+    /// (where the interpreter's own limits stop it) and under the full budget.
+    pub fn evaluation_limit(self, predicted: u64, ceiling: u64) -> usize {
+        match self {
+            Self::Full => usize::MAX,
+            Self::Replan { slack, doublings } => {
+                let limit = predicted.saturating_mul(u64::from(slack.max(1))).max(1).saturating_mul(power_of_two(doublings));
+                if limit < ceiling { usize::try_from(limit).unwrap_or(usize::MAX) } else { usize::MAX }
+            }
+        }
+    }
+
+    /// A task's budget from its predicted steps: at most the ceiling.
+    pub fn task_limit(self, predicted: u64) -> u32 {
+        let ceiling = MAX_WORK_PER_TASK as u64;
+        match self {
+            Self::Full => ceiling as u32,
+            Self::Replan { slack, doublings } => {
+                let base = predicted.saturating_mul(u64::from(slack.max(1))).max(1);
+                base.saturating_mul(power_of_two(doublings)).min(ceiling) as u32
+            }
+        }
+    }
+
+    /// The budget a restart runs with: twice this one.
+    pub fn doubled(self) -> Self {
+        match self {
+            Self::Replan { slack, doublings } => Self::Replan { slack, doublings: doublings + 1 },
+            other => other,
+        }
+    }
+
+    pub fn replans(self) -> bool {
+        matches!(self, Self::Replan { .. })
+    }
+}
+
+/// A batch's budgets (decision 0334): a task's steps (`work`), from its predicted steps (`evaluation_costs::predict`),
+/// and its states, from its size. An evaluation that outgrows either is unfinished, never failed: it
+/// restarts with twice as much (`restarting`), up to the ceilings. Steps are bounded under `WorkBudget::Replan`
+/// (`OverBudget`); states whenever they are predicted (`StatesOutgrown`). So neither changes results.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Budget {
+    pub work: WorkBudget,
+    /// A task's states of each kind: `Some(d)`, its size times `STATES_PER_UNIT` (at least `MIN_STATES`), doubled `d` times; `None`,
+    /// the worst case (the workspace formula, `PackedBatch::new_in_place`), for a run that cannot restart.
+    pub states: Option<u32>,
+}
+
+impl Budget {
+    /// The process's step budget, and states as predicted: what a run that restarts takes.
+    pub fn current() -> Self {
+        Self { work: WorkBudget::current(), states: Some(0) }
+    }
+
+    /// The ceilings: no step budget, states for the worst case. A run that does not restart.
+    pub fn worst() -> Self {
+        Self { work: WorkBudget::Full, states: None }
+    }
+
+    /// A task's states of each kind, doubled `grown` more times where the task outgrew them (`StateGrowth`): the
+    /// worst case's (`worst`) where none are predicted, else at most it.
+    pub fn task_states(self, size: u64, worst: u32, grown: u32) -> u32 {
+        match self.states {
+            None => worst,
+            Some(doublings) => size
+                .saturating_mul(STATES_PER_UNIT)
+                .max(MIN_STATES)
+                .saturating_mul(power_of_two(doublings.saturating_add(grown)))
+                .min(u64::from(worst)) as u32,
+        }
+    }
+
+    pub fn with_more_work(self) -> Self {
+        Self { work: self.work.doubled(), ..self }
+    }
+
+}
+
+/// What made an evaluation unfinished (decision 0334): a task's steps past its budget, or the roots whose tasks ran
+/// out of their states.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Unfinished {
+    pub work: bool,
+    pub outgrown: Vec<u32>,
+}
+
+/// The tasks whose states grew in a restart (decision 0334 §9): (file, program, root within its file) to how many
+/// times they doubled. Only a task that ran out grows: its evaluation's other tasks keep their size.
+pub type StateGrowth = std::collections::BTreeMap<(usize, usize, u32), u32>;
+
+/// Runs a packed batch with `budget` (`once`), and restarts its unfinished evaluations alone, with the same programs
+/// and files (so the same compiled binding): twice the step budget where a task ran over it, twice the states for
+/// each task that ran out of them (`StateGrowth`), until each finishes or reaches a ceiling (`WorkLimit`,
+/// `BackendCapacity`, as `Budget::worst` gives). Restarts begin again from the roots, never from the stopped state;
+/// their results stand for the evaluations' (`PackedExecution::with_restarted`), so every budget gives the worst
+/// case's results. Each run's evaluations are observed for the cost store (`evaluation_costs`).
+pub fn restarting(
+    programs: &[Program],
+    anchors: &[Vec<Vec<u32>>],
+    budget: Budget,
+    once: &mut dyn FnMut(&[Vec<Vec<u32>>], Budget, &StateGrowth) -> Result<packed_batch::PackedExecution, Error>,
+) -> Result<packed_batch::PackedExecution, Error> {
+    restarting_grown(programs, anchors, budget, &StateGrowth::new(), once)
+}
+
+fn restarting_grown(
+    programs: &[Program],
+    anchors: &[Vec<Vec<u32>>],
+    budget: Budget,
+    growth: &StateGrowth,
+    once: &mut dyn FnMut(&[Vec<Vec<u32>>], Budget, &StateGrowth) -> Result<packed_batch::PackedExecution, Error>,
+) -> Result<packed_batch::PackedExecution, Error> {
+    let execution = once(anchors, budget, growth)?;
+    // Every run reprices its programs for the evaluations not yet started (decision 0334).
+    evaluation_costs::observe(execution.observations(programs));
+    let unfinished = execution.unfinished();
+    if unfinished.is_empty() {
+        return Ok(execution);
+    }
+    let next = if unfinished.iter().any(|(_, _, why)| why.work) { budget.with_more_work() } else { budget };
+    let mut grown = growth.clone();
+    for (file, program, why) in &unfinished {
+        for &root in &why.outgrown {
+            *grown.entry((*file, *program, root)).or_default() += 1;
+        }
+    }
+    crate::code_rule_dsl::logic::profile::decision("evaluations over their budget, restarted with twice the budget (0334)", || {
+        format!("{} evaluations at {budget:?}", unfinished.len())
+    });
+    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+        eprintln!("TEMPO_PACKED_RESTART budget={budget:?} next={next:?} unfinished={unfinished:?}");
+    }
+    let mut rerun = anchors.iter().map(|file| vec![Vec::new(); file.len()]).collect::<Vec<_>>();
+    for &(file, program, _) in &unfinished {
+        rerun[file][program] = anchors[file][program].clone();
+    }
+    let restarted = restarting_grown(programs, &rerun, next, &grown, once)?;
+    let evaluations = unfinished.iter().map(|&(file, program, _)| (file, program)).collect::<Vec<_>>();
+    execution.with_restarted(restarted, &evaluations)
+}
 
 #[derive(Clone)]
 pub enum TextPredicate {
@@ -844,7 +972,6 @@ pub enum ExecutionBackend {
     MetalJit,
     /// Metal's compiled kernel once built in the background, its interpreter until then.
     MetalBackground,
-    Metal,
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
@@ -1789,6 +1916,19 @@ impl Program {
         )
     }
 
+    /// Whether `pattern` is a bare metavariable (`$X`, `$_`, `$$X`), and if so whether it wants a named node. At its
+    /// root such a pattern holds at every node (a named one for `$X`), its one capture the node itself: a node test,
+    /// not a pattern to match (t45 §3).
+    pub fn bare_metavariable(pattern: &Pattern) -> Option<bool> {
+        if !matches!(pattern.strictness, MatchStrictness::Smart) {
+            return None;
+        }
+        match &pattern.node {
+            PatternNode::MetaVar { meta_var: MetaVariable::Capture(_, named) | MetaVariable::Dropped(named) } => Some(*named),
+            _ => None,
+        }
+    }
+
     pub fn compile_ast_grep_pattern(pattern: &Pattern) -> Result<Self, Error> {
         if !matches!(pattern.strictness, MatchStrictness::Smart) {
             return Err(Error::UnsupportedPattern);
@@ -2632,8 +2772,8 @@ impl Program {
                             let text = tape.transducer_text(node);
                             strings.iter().map(move |string| {
                                 let needle = &self.strings[usize::from(*string)];
-                                needle.is_empty()
-                                    || text.windows(needle.len()).any(|window| window == needle)
+                                // A few captured nodes' texts: memchr's SIMD search of each (Q54), not a window a byte.
+                                memchr::memmem::find(text, needle).is_some()
                             })
                         })
                         .collect();
@@ -2803,11 +2943,7 @@ impl Program {
                             let text = node.text();
                             strings.iter().map(move |string| {
                                 let needle = &self.strings[usize::from(*string)];
-                                needle.is_empty()
-                                    || text
-                                        .as_bytes()
-                                        .windows(needle.len())
-                                        .any(|window| window == needle)
+                                memchr::memmem::find(text.as_bytes(), needle).is_some()
                             })
                         })
                         .collect();
@@ -3310,11 +3446,54 @@ impl Program {
         tape: &TapeDoc,
         roots: impl IntoIterator<Item = u32>,
         initial_pc: u16,
+        stats: Option<&mut ExecutionStats>,
+        work_limit: usize,
+    ) -> Result<Vec<Output>, Error> {
+        self.execute_roots_budgeted_from(tape, roots, initial_pc, stats, work_limit, usize::MAX, None).map(|(outputs, _)| outputs)
+    }
+
+    /// [`execute_roots`](Self::execute_roots) held to `budget` steps over all its roots (decision 0334): past it,
+    /// `OverBudget`, the evaluation unfinished (the wave replans it, `LoweredWave::roots_batch`). Also the steps
+    /// it took.
+    pub fn execute_roots_budgeted(
+        &self,
+        tape: &TapeDoc,
+        roots: impl IntoIterator<Item = u32>,
+        budget: usize,
+    ) -> Result<(Vec<Output>, usize), Error> {
+        self.execute_roots_budgeted_from(tape, roots, 0, None, MAX_STEPS_PER_PATH, budget, None)
+    }
+
+    /// [`execute_roots_budgeted`](Self::execute_roots_budgeted), split by root where it runs over (decision 0334 §5,
+    /// the evaluation split by subtree): with `OverBudget`, `partial` holds the roots that finished before the one
+    /// that ran over, their outputs and steps, so a rerun need take only the rest. Only where a program's outputs
+    /// are each root's own (not a tree-sitter query, whose outputs are reduced across roots: `finalize_outputs`);
+    /// for a query `partial` stays empty.
+    pub fn execute_roots_split(
+        &self,
+        tape: &TapeDoc,
+        roots: impl IntoIterator<Item = u32>,
+        budget: usize,
+        partial: &mut Partial,
+    ) -> Result<(Vec<Output>, usize), Error> {
+        self.execute_roots_budgeted_from(tape, roots, 0, None, MAX_STEPS_PER_PATH, budget, Some(partial))
+    }
+
+    fn execute_roots_budgeted_from(
+        &self,
+        tape: &TapeDoc,
+        roots: impl IntoIterator<Item = u32>,
+        initial_pc: u16,
         #[cfg_attr(not(any(test, feature = "test-hooks")), allow(unused_variables, unused_mut))] mut stats: Option<
             &mut ExecutionStats,
         >,
         work_limit: usize,
-    ) -> Result<Vec<Output>, Error> {
+        budget: usize,
+        mut partial: Option<&mut Partial>,
+    ) -> Result<(Vec<Output>, usize), Error> {
+        let mut spent = 0_usize;
+        // Where the last root that finished left the outputs, and how many roots finished (`execute_roots_split`).
+        let (mut kept, mut finished) = (0_usize, 0_usize);
         let mut output = Vec::new();
         let mut pending = Vec::new();
         let mut queued_states = HashSet::new();
@@ -3453,6 +3632,13 @@ impl Program {
                         }
                     }
                     charge_task_work(&mut task_work)?;
+                    if spent.saturating_add(task_work) > budget {
+                        if let Some(partial) = partial.as_deref_mut().filter(|_| !self.tree_sitter_query) {
+                            output.truncate(kept);
+                            *partial = Partial { finished, outputs: std::mem::take(&mut output), steps: spent };
+                        }
+                        return Err(Error::OverBudget);
+                    }
                     if has_repeats
                         && !admitted
                         && !self.admit_query_state(
@@ -3737,8 +3923,10 @@ impl Program {
                     }
                 }
             }
+            spent = spent.saturating_add(task_work);
+            (kept, finished) = (output.len(), finished + 1);
         }
-        self.finalize_outputs(tape, output, has_repeats)
+        self.finalize_outputs(tape, output, has_repeats).map(|outputs| (outputs, spent))
     }
 
     pub fn finalize_outputs(
@@ -3950,7 +4138,7 @@ pub fn packed_workspace_fits(
     anchors: &[Vec<Vec<u32>>],
     result_limits: &[u32],
 ) -> Result<(), Error> {
-    let mut batch = packed_batch::PackedBatch::new(programs, files, anchors)?;
+    let mut batch = packed_batch::PackedBatch::new_in_place(programs, files, anchors)?;
     batch
         .assign_workspace_with_result_limits(programs, Some(result_limits))
         .map(|_| ())
@@ -3966,7 +4154,7 @@ pub fn packed_workspace_size(
     anchors: &[Vec<Vec<u32>>],
     result_limits: &[u32],
 ) -> Result<(u64, [u64; 15]), Error> {
-    let mut batch = packed_batch::PackedBatch::new(programs, files, anchors)?;
+    let mut batch = packed_batch::PackedBatch::new_in_place(programs, files, anchors)?;
     let totals = batch.assign_workspace_with_result_limits(programs, Some(result_limits))?;
     let bytes = batch.workspace_allocation_bytes(totals).ok_or(Error::BackendCapacity)?;
     Ok((bytes, batch.workspace_counts(totals)))
@@ -3978,7 +4166,7 @@ pub fn packed_program_counts(
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
 ) -> Result<Vec<[u64; 15]>, Error> {
-    packed_batch::PackedBatch::new(programs, files, anchors)?.program_counts(programs)
+    packed_batch::PackedBatch::new_in_place(programs, files, anchors)?.program_counts(programs)
 }
 
 pub(in crate::code_rule_dsl) fn packed_workspace_bytes(
@@ -3987,7 +4175,7 @@ pub(in crate::code_rule_dsl) fn packed_workspace_bytes(
     anchors: &[Vec<Vec<u32>>],
     result_limits: &[u32],
 ) -> Result<u64, Error> {
-    let mut batch = packed_batch::PackedBatch::new(programs, files, anchors)?;
+    let mut batch = packed_batch::PackedBatch::new_in_place(programs, files, anchors)?;
     let totals = batch.assign_workspace_with_result_limits(programs, Some(result_limits))?;
     batch.workspace_allocation_bytes(totals).ok_or(Error::BackendCapacity)
 }
@@ -4013,6 +4201,34 @@ pub fn execute_planned(
     anchors: &[Vec<Vec<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<packed_batch::PackedExecution, Error> {
+    execute_planned_budgeted(backend, plan, programs, files, anchors, result_limits, Budget::current())
+}
+
+/// [`execute_planned`] with `budget` (decision 0334): an evaluation that outgrows its steps or states is unfinished,
+/// not failed, and the backend restarts it with twice as much (`restarting`), until it finishes or reaches a ceiling
+/// (`WorkLimit`, which callers answer with another plan: W's matcher, `WaveRun::limited`). Every budget gives the
+/// worst case's results.
+pub fn execute_planned_budgeted(
+    backend: ExecutionBackend,
+    plan: PlanId,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+    budget: Budget,
+) -> Result<packed_batch::PackedExecution, Error> {
+    execute_planned_once(backend, plan, programs, files, anchors, result_limits, budget)
+}
+
+fn execute_planned_once(
+    backend: ExecutionBackend,
+    plan: PlanId,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+    budget: Budget,
+) -> Result<packed_batch::PackedExecution, Error> {
     if anchors.len() != files.len() || anchors.iter().any(|file| file.len() != programs.len()) {
         return Err(Error::InvalidAnchor);
     }
@@ -4021,19 +4237,20 @@ pub fn execute_planned(
             let limits = result_limits.map_or_else(|| vec![u32::MAX; programs.len()], <[u32]>::to_vec);
             packed_batch::PackedExecution::interpret(programs, files, anchors, &limits)
         }
-        ExecutionBackend::CpuJit => native_cpu::execute_batch_packed_with_result_limits(
+        ExecutionBackend::CpuJit => native_cpu::execute_batch_packed_budgeted(
             programs,
             files,
             anchors,
             result_limits,
+            budget,
         ),
         ExecutionBackend::MetalInterpreter => {
-            device::required()?.execute_packed(device::Engine::Interpreter, programs, files, anchors, result_limits)
+            device::required()?.execute_packed(device::Engine::Interpreter, programs, files, anchors, result_limits, budget)
         }
         ExecutionBackend::MetalJit => {
-            device::required()?.execute_packed(device::Engine::Jit, programs, files, anchors, result_limits)
+            device::required()?.execute_packed(device::Engine::Jit, programs, files, anchors, result_limits, budget)
         }
-        ExecutionBackend::Metal | ExecutionBackend::CpuBackground | ExecutionBackend::MetalBackground => {
+        ExecutionBackend::CpuBackground | ExecutionBackend::MetalBackground => {
             Err(Error::UnsupportedBackend)
         }
     }
@@ -4048,7 +4265,7 @@ pub fn execute_with_backend_outcomes(
     match compilation::resolve(backend, programs)? {
         ExecutionBackend::CpuInterpreter => execute_batch_outcomes(programs, files, anchors),
         ExecutionBackend::CpuJit => native_cpu::execute_batch_outcomes(programs, files, anchors),
-        backend @ (ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::Metal) => {
+        backend @ (ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit) => {
             device::required()?.execute_outcomes(backend, programs, files, anchors)
         }
         ExecutionBackend::CpuBackground | ExecutionBackend::MetalBackground => Err(Error::UnsupportedBackend),
@@ -4255,50 +4472,22 @@ pub(in crate::code_rule_dsl) fn warm_production_programs(programs: &[Program]) -
     Ok(())
 }
 
+/// The production corpus's programs over `files`, sharing its files' anchors: on the device's JIT when there is
+/// one (over the tape in the slabs), else the CPU's.
 pub fn execute_production_corpus(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Arc<[u32]>>],
     result_limits: &[u32],
 ) -> Result<packed_batch::PackedExecution, Error> {
+    let anchors = anchors
+        .iter()
+        .map(|file| file.iter().map(|roots| roots.to_vec()).collect())
+        .collect::<Vec<_>>();
     if let Some(device) = device::matcher() {
-        return device.execute_shared_corpus(programs, files, anchors, result_limits);
+        return device.execute_packed(device::Engine::Jit, programs, files, &anchors, Some(result_limits), Budget::current());
     }
-    {
-        let anchors = anchors
-            .iter()
-            .map(|file| file.iter().map(|roots| roots.to_vec()).collect())
-            .collect::<Vec<_>>();
-        execute_with_backend_packed_result_limits(
-            ExecutionBackend::CpuJit,
-            programs,
-            files,
-            &anchors,
-            Some(result_limits),
-        )
-    }
-}
-
-pub fn execute_production_corpus_pages(
-    programs: &[Program],
-    files: &[crate::code_rule_dsl::tape::TapeSource],
-    anchors: &[Vec<Arc<[u32]>>],
-    result_limits: &[u32],
-    consumer: &mut dyn FnMut(PackedExecution, usize) -> Result<(), Error>,
-) -> Result<(), Error> {
-    if let Some(device) = device::matcher() {
-        return device.execute_shared_corpus_pages(programs, files, anchors, result_limits, consumer);
-    }
-    {
-        let docs = files
-            .iter()
-            .map(|file| file.restore(&|| false).map_err(|_| Error::BackendFailure))
-            .collect::<Result<Vec<_>, _>>()?;
-        consumer(
-            execute_production_corpus(programs, &docs, anchors, result_limits)?,
-            files.len(),
-        )
-    }
+    execute_with_backend_packed_result_limits(ExecutionBackend::CpuJit, programs, files, &anchors, Some(result_limits))
 }
 
 pub const POSITIONAL_INDEX_VERSION: i64 = 5;

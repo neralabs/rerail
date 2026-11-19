@@ -70,6 +70,8 @@ pub enum BlockInst {
     /// The carried operations (`block::carry`): on the CPU the carry passes in a register from
     /// block to block; on Metal by a scan of lane summaries (`metal_block_program`).
     Prev(u16, u8),
+    /// `block::BlockOp::Early`: `a >> k` in the word, no carry; a file's first bytes only.
+    Early(u16, u8),
     Toggle(u16),
     Escaped(u16),
     /// `fill(s, e)` (`block::BlockOp::Fill`): one add per word, its carry a borrow.
@@ -82,6 +84,10 @@ pub enum BlockInst {
     Load(u16),
     /// The bytes inside the stream at a delay (`block::BlockOp::Within`), from its length.
     Within(u8),
+    /// The file's positions before the stream (`block::BlockOp::Prefix`): the low `n` bits of
+    /// the first block where the file starts with `word`'s `n` bytes. From the file's first
+    /// word, compared once (`native_cpu_block::stream_start`).
+    Prefix(u8, u64),
     /// The bytes whose position is `r` mod `k` (`block::BlockOp::Phase`), from the position.
     Phase(u8, u8),
     /// Plane `j` of each byte's position (`block::BlockOp::Position`), from the position.
@@ -111,7 +117,7 @@ impl BlockInst {
     /// The values the instruction reads.
     pub fn operands(&self) -> Vec<usize> {
         match *self {
-            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) | BlockInst::Carry(a) | BlockInst::Walk { args: a, .. } => vec![usize::from(a)],
+            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Early(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) | BlockInst::Carry(a) | BlockInst::Walk { args: a, .. } => vec![usize::from(a)],
             BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) | BlockInst::BackFill(a, b) | BlockInst::Args(a, b) => {
                 vec![usize::from(a), usize::from(b)]
             }
@@ -137,11 +143,13 @@ impl BlockNative {
                 BlockOp::Xor(a, b) => BlockInst::Xor(a, b),
                 BlockOp::AndNot(a, b) => BlockInst::AndNot(a, b),
                 BlockOp::Prev(a, k) => BlockInst::Prev(a, k),
+                BlockOp::Early(a, k) => BlockInst::Early(a, k),
                 BlockOp::Toggle(a) => BlockInst::Toggle(a),
                 BlockOp::Escaped(a) => BlockInst::Escaped(a),
                 BlockOp::Fill(a, b) => BlockInst::Fill(a, b),
                 BlockOp::BackFill(a, b) => BlockInst::BackFill(a, b),
                 BlockOp::Within(d) => BlockInst::Within(d),
+                BlockOp::Prefix(n, w) => BlockInst::Prefix(n, w),
                 BlockOp::Phase(k, r) => BlockInst::Phase(k, r),
                 BlockOp::Position(j) => BlockInst::Position(j),
                 BlockOp::Carry(a) => BlockInst::Carry(a),
@@ -174,6 +182,7 @@ impl BlockNative {
             BlockInst::Xor(a, b) => BlockInst::Xor(m(a), m(b)),
             BlockInst::AndNot(a, b) => BlockInst::AndNot(m(a), m(b)),
             BlockInst::Prev(a, k) => BlockInst::Prev(m(a), k),
+            BlockInst::Early(a, k) => BlockInst::Early(m(a), k),
             BlockInst::Toggle(a) => BlockInst::Toggle(m(a)),
             BlockInst::Escaped(a) => BlockInst::Escaped(m(a)),
             BlockInst::Fill(a, b) => BlockInst::Fill(m(a), m(b)),
@@ -187,7 +196,7 @@ impl BlockNative {
 
     /// A walk with its values renamed by `m`.
     fn walk_renamed(w: &crate::block::Walk, m: impl Fn(u16) -> u16) -> crate::block::Walk {
-        let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: m(k.opener), closer: m(k.closer), open: m(k.open), fill: m(k.fill), empty: k.empty.map(|(e, n)| (m(e), n)), ..*k }).collect();
+        let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: m(k.opener), closer: m(k.closer), open: m(k.open), fill: m(k.fill), empty: k.empty.map(|(e, n)| (m(e), n)), or: k.or.map(|(c, n)| (m(c), n)), ..*k }).collect();
         crate::block::Walk { group: w.group, hidden: m(w.hidden), kinds }
     }
 
@@ -196,7 +205,14 @@ impl BlockNative {
     /// goes, and with it whatever only the rounds read (an `else`'s `back_fill`, and the
     /// backward pass it took). Metal runs the program as it is.
     pub fn cpu_form(&self) -> BlockNative {
-        let made = self.records_made();
+        self.cpu_form_keeping(&[])
+    }
+
+    /// `cpu_form`, with outputs `keep` made by the body though the record pass reads them from
+    /// the bytes elsewhere: the refill's words it reads from the rows (decision 0361).
+    pub fn cpu_form_keeping(&self, keep: &[usize]) -> BlockNative {
+        let mut made = self.records_made();
+        made.retain(|k| !keep.contains(k));
         if self.walks.is_empty() && made.is_empty() {
             return self.clone();
         }
@@ -314,10 +330,13 @@ impl BlockNative {
         }
     }
 
-    /// The output of the records' lasts extract, where their end rules give the lasts instead
-    /// (decision 0177): the CPU makes no last-byte mask for it.
+    /// The output of the records' lasts extract, where their end rules (decision 0177) or
+    /// their gaps (0411) give the lasts instead: the CPU makes no last-byte mask for it.
     pub fn ruled_lasts(&self) -> Option<usize> {
-        let r = self.records.as_ref().filter(|r| !r.rules.is_empty())?;
+        let r = self
+            .records
+            .as_ref()
+            .filter(|r| !r.rules.is_empty() || r.gap.is_some())?;
         self.extracts.get(usize::from(r.lasts)).copied()
     }
 
@@ -349,6 +368,17 @@ impl BlockNative {
         r.marks.iter().enumerate().filter(|&(k, m)| looped >> k & 1 == 0 && m.0 != crate::records::WORD_ALONE).map(|(_, m)| usize::from(m.0)).collect()
     }
 
+    /// The outputs whose rows the CPU's tier 1 does not store: those the record pass makes
+    /// (`records_made`), and the totals no one reads by their rows (`rowless_totals`), each its
+    /// file's flag only. Its rows are compared to the interpreter's without them.
+    pub fn cpu_unstored(&self) -> Vec<usize> {
+        let mut v = self.records_made();
+        v.extend(self.rowless_totals());
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
     /// The outputs the CPU's token loop makes from the file's bytes where it reads them
     /// (`native_cpu_bytes`), and nothing else of the records reads from the rows: the CPU's
     /// body makes none of them. The skip, the end rules', the readers' and the tests' masks.
@@ -364,7 +394,8 @@ impl BlockNative {
             EndRule::Run(o) | EndRule::Pair(o) | EndRule::Last(o) => Some(o),
             EndRule::Read(_) | EndRule::Next(_) => None,
         }));
-        read.extend(r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer])));
+        read.extend(r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer].into_iter().chain(a.last))));
+        read.extend(r.readers.iter().flat_map(|rd| rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))));
         read.extend(r.checks.iter().map(|c| c.o));
         // The marks the token loop sets from the bytes (`loop_marks`); an output another mark
         // still reads from its row stays stored.
@@ -380,6 +411,29 @@ impl BlockNative {
         v.sort_unstable();
         v.dedup();
         v
+    }
+
+    /// The totals whose words no one reads from the rows (decisions 0347, 0406): a total is read
+    /// as one running word, its file's flag (`Batch::results`, tier 2's `totals`), and only
+    /// tier 2 (`masks`), a mark, or the token loop's own reads (the skip, the end rules', the
+    /// readers', the tests') read a row. With no token loop, only tier 2's masks and the marks.
+    /// simdjson keeps its error flags so: one register, never stored a block.
+    pub fn rowless_totals(&self) -> Vec<usize> {
+        use crate::records::EndRule;
+        let mut read: Vec<usize> = self.masks.clone();
+        let Some(r) = self.records.as_ref() else {
+            return self.totals.iter().copied().filter(|t| !read.contains(t)).collect();
+        };
+        read.extend(r.skip.map(usize::from));
+        read.extend(r.marks.iter().filter(|m| m.0 != crate::records::WORD_ALONE).map(|m| usize::from(m.0)));
+        read.extend(r.rules.iter().filter_map(|x| match *x {
+            EndRule::Run(o) | EndRule::Pair(o) | EndRule::Last(o) => Some(usize::from(o)),
+            EndRule::Read(_) | EndRule::Next(_) => None,
+        }));
+        read.extend(r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [usize::from(a.opener), usize::from(a.closer)])));
+        read.extend(r.readers.iter().flat_map(|rd| rd.parts.iter().map(|p| usize::from(p.start))));
+        read.extend(r.checks.iter().map(|c| usize::from(c.o)));
+        self.totals.iter().copied().filter(|t| !read.contains(t)).collect()
     }
 
     /// The outputs of the start masks the CPU's readers say instead (`Records::retags`): where
@@ -441,6 +495,7 @@ impl BlockNative {
                 BlockInst::Xor(a, b) => f.push(BlockInst::Xor(m(a), m(b))),
                 BlockInst::AndNot(a, b) => f.push(BlockInst::AndNot(m(a), m(b))),
                 BlockInst::Prev(a, k) => f.push(BlockInst::Prev(m(a), k)),
+                BlockInst::Early(a, k) => f.push(BlockInst::Early(m(a), k)),
                 BlockInst::Toggle(a) => f.push(BlockInst::Toggle(m(a))),
                 BlockInst::Escaped(a) => f.push(BlockInst::Escaped(m(a))),
                 BlockInst::Fill(a, b) => f.push(BlockInst::Fill(m(a), m(b))),
@@ -526,8 +581,8 @@ impl BlockNative {
         let mut pure = vec![false; n];
         for x in 0..n {
             pure[x] = match self.insts[x] {
-                BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) | BlockInst::Pair { .. } => true,
-                BlockInst::Not(_) | BlockInst::And(..) | BlockInst::Or(..) | BlockInst::Xor(..) | BlockInst::AndNot(..) | BlockInst::Prev(..) => self.insts[x].operands().into_iter().all(|o| pure[o]),
+                BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::Prefix(..) | BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) | BlockInst::Pair { .. } => true,
+                BlockInst::Not(_) | BlockInst::And(..) | BlockInst::Or(..) | BlockInst::Xor(..) | BlockInst::AndNot(..) | BlockInst::Prev(..) | BlockInst::Early(..) => self.insts[x].operands().into_iter().all(|o| pure[o]),
                 _ => false,
             };
         }
@@ -682,6 +737,7 @@ impl BlockNative {
                     BlockInst::Xor(a, b) => BlockInst::Xor(m(a), m(b)),
                     BlockInst::AndNot(a, b) => BlockInst::AndNot(m(a), m(b)),
                     BlockInst::Prev(a, k) => BlockInst::Prev(m(a), k),
+                    BlockInst::Early(a, k) => BlockInst::Early(m(a), k),
                     BlockInst::Toggle(a) => BlockInst::Toggle(m(a)),
                     BlockInst::Escaped(a) => BlockInst::Escaped(m(a)),
                     BlockInst::Fill(a, b) => BlockInst::Fill(m(a), m(b)),

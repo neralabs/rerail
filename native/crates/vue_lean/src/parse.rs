@@ -87,6 +87,11 @@ struct P<'a> {
 
 /// `src` parsed.
 pub fn parse(src: &[u8]) -> R<Tape> {
+    parse_into(src, &mut Writer::<Widths>::finish_columns)
+}
+
+/// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
+pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
     // The scanner reads a NUL as the text's end.
     if src.contains(&0) {
         return Err(Refusal::Lex(src.iter().position(|&c| c == 0).unwrap_or(0) as u32));
@@ -105,8 +110,8 @@ pub fn parse(src: &[u8]) -> R<Tape> {
             at: 0,
         };
         p.document()?;
-        match p.w.finish_columns() {
-            Ok(columns) => return Ok(columns),
+        match finish(p.w) {
+            Ok(done) => return Ok(done),
             Err(Redo(w)) => {
                 if w == widths {
                     return Err(Refusal::TooLarge);

@@ -1,5 +1,24 @@
 # Agent instructions
 
+## Blocks are never copied
+
+Read [decision 0353](docs/final-shape/decisions/0353-blocks-are-never-copied-every-reader-reads-in-place.md)
+before touching how the engine holds or reads data. Data lives in one place, in one layout: a document's tape, the
+relations the rules derive, and their indexes, each in its block. Every reader reads it there: the CPU executor, the
+JIT, the Metal kernels and SQLite's virtual tables, all through the reads written once in CLIF (decision 0310).
+
+- **Never copy a block or a tape into another data structure.** That includes columns, rows, per-node arrays, a
+  device relation, an upload, a staging vector or a "view made" for a kernel. No exception for convenience, speed,
+  a layout a kernel prefers, or a missing accessor. Write the missing read instead, once.
+- **A view (`node`, `child`, `field`, `line`, …) is a read of the tape, not a relation.** Nothing makes its rows.
+- **Not copies:**
+  - a load from disk to the exact in-memory bytes;
+  - a derived fact (a rule's head, an axis's answer, an interned text), written once where it is computed, into a
+    relation in a block;
+  - an index in its relation's block.
+- **The copies that still exist are listed in 0353** and marked `copy (0353 step N)` in the code. The list only
+  shrinks. `scripts/check/check-no-block-copies.py` (pre-commit) refuses a commit that adds one.
+
 ## Builds and test runs
 
 Run every build and test run at a high nice value, so it never starves other work on the
@@ -24,7 +43,28 @@ its test target compiles the whole crate a second time:
 So a run of the CLI builds `--bin rerail-engine` only, and the test target is built when
 tests are run, not with every build.
 
-The farm's wrapper runs `scripts/dev/clean-target` on each target directory hourly: it removes the
+Build the CLI for development with the tests' features:
+
+```
+nice -n 19 cargo build --bin rerail-engine --features test-hooks
+```
+
+The tests turn on `test-hooks` in every dependency crate (and a few registry features). A CLI
+build without it compiles each of those crates a second time, apart from the tests' build, and
+keeps a second set of incremental state: twice the CPU per edit, and about 2 GB of disk per crate
+variant. With it, an edit compiles each dependency crate once for both, and a crate's own tests
+(`cargo test -p rerail-logic`) build the crates below it the same way too. Product builds (release,
+wasm, the Node addon) and measurement builds (`--profile profiling`) stay without it.
+
+Keep to that one feature set in this worktree's target. The farm's wrapper tells any build that
+compiles a workspace crate with other features than a build of the last 2 hours did, names the
+features and the earlier command, and repeats it at the checkout's next builds for 3 hours. Run a
+build with other features (`metal-tests`, `headless`, `code-rule-profile`, `--no-default-features`)
+on a farm host with `scripts/dev/test-remote`. `scripts/check/check-dev-features.py` (pre-commit)
+keeps the manifests' features in line: a crate's `test-hooks` and `default` turn on those of the
+crates below it.
+
+The farm's wrapper runs `scripts/dev/clean-target` on each target directory every 15 minutes: it removes the
 builds no current build was made from, debug objects no binary names, and stale incremental state.
 Never run a full `cargo clean`.
 
@@ -39,6 +79,11 @@ nice -n 19 cargo nextest run --lib                             # the quick tier:
 nice -n 19 cargo nextest run --lib --profile gate              # everything: a phase gate only
 nice -n 19 cargo nextest run --lib --ignore-default-filter NAME  # one slow test by name
 ```
+
+On a machine with the build farm (below), run these through `scripts/dev/test-remote -- cargo nextest
+run …` by default: the hosts take several test commands each at once, in a warm target directory per
+checkout, and this machine stays free for the edit loop. A build here prints when a host has a free
+test slot. Run tests here only when no host is usable (test-remote then runs them here itself).
 
 A test that takes 20 s or more belongs in the slow tier (the default profile's
 `default-filter`). Tests that read the packs' test data need it pulled first
@@ -59,14 +104,11 @@ scripts/build/farm/diagnose [DIR | --all]          # why a checkout's builds mis
 scripts/dev/test-remote -- cargo nextest run --lib --profile gate
 scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'
 scripts/dev/live-test-remote PACKAGE --lib -- FILTER   # Relax's live loop on a host
-scripts/dev/quiet-run [--minutes N] -- COMMAND        # a benchmark on an idle host, 10 min at most
 ```
 
-Benchmark only through `quiet-run` (README, "Quiet runs"). It waits its turn, keeps the farm's work
-off a host, and runs COMMAND there for 10 minutes at most. When a build prints that this machine
-is leased for a benchmark, its compiles wait. Don't start tests, Relax or other heavy work here
-until the lease ends: send them with `test-remote`. Doing so is unfair to the benchmark, and the
-checkout is told so at its next builds.
+Benchmarks are ordinary commands: run them with `test-remote` (`--tree DIR` sends their inputs or a
+program built here) or here, without waiting for an idle machine, and note the machine's load with
+the result. There are no benchmark leases.
 
 `test-remote` sends this checkout's changes to a usable host and runs the command there, from
 `native/` (or `--dir`), in a warm target directory of its own on that host. A host can be asleep, gone,
@@ -75,7 +117,10 @@ themselves: a host reached over the wrong link is moved back to its fast one whe
 be, a host that fails a probe is skipped, with a growing back-off, and a lost connection
 reruns the command here at `nice -n 19`. Don't work around a host that is down. Run
 `status` to see why, and go on locally. `--remote-only` exits 69 when no host can take the
-command. Both scripts run the installed farm (`~/.local/share/rerail-farm`), whatever version
+command. A host may be a Linux machine: it takes a command when every Mac slot is busy (never a
+Metal one or a `--tree` run), and the command is then a Linux build and run, as CI's; its line
+says `(Linux: ...)`, and `--os macos` keeps a command on a Mac. It also compiles this Mac's library
+crates, in a container, to the very bytes this Mac would (the farm's README, "Mac compiles on a Linux host"). Both scripts run the installed farm (`~/.local/share/rerail-farm`), whatever version
 this checkout has.
 
 On a machine with the farm, every build already goes through it: `~/.cargo/config.toml` (written
@@ -99,7 +144,7 @@ after the same tests pass under cargo, because Relax's std is its own.
 scripts/dev/relax/build        # once, and after it changes: the pinned, patched Relax, into ~/.local/share/rerail-relax
 cd native && RUSTC_WRAPPER= RELAX_ALLOW_C=1 RELAX_SHARED_OPEN=1 RELAX_SHARE=rerail RELAX_CACHE_MAX=8192 RELAX_STD=~/.local/share/rerail-relax/src/libs/relax/compiler/std \
   nice -n 19 ~/.local/share/rerail-relax/bin/relax test --live rerail-engine --lib -- FILTER
-scripts/dev/live-test-remote rerail-engine --lib -- FILTER    # the same, on a farm host
+scripts/dev/live-test-remote rerail-engine --lib -- FILTER    # the same, on a farm host (a Mac first, else a Linux one)
 ```
 
 The engine needs std items that upstream Relax lacked. They are `scripts/dev/relax/std.patch`,

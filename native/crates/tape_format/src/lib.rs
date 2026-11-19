@@ -19,6 +19,10 @@
 
 pub mod tape;
 pub mod f16;
+pub mod newlines;
+pub mod home;
+/// The tape's reads as Rust, written from their CLIF (decision 0310; `rerail_clif::reads::rust_source`).
+mod generated_reads;
 
 pub const MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// 10: supertype memberships folded into the codes; 11: columns aligned (`COLUMN_ALIGN`); 12:
@@ -206,6 +210,23 @@ pub const MAX_CLASSES: usize = 4;
 /// columns are moved into place after the code column, and the header and code table written.
 ///
 /// A node's key is its code: `kf | flags << 16`, and a bit for each supertype class it is in
+
+/// `v[from..to]` moved up by `by` cells (an insert's room). A span that fits a fixed window of
+/// `W` cells, with room for the window past it, moves as one fixed-size copy: a vector load and
+/// store, not a call of `memmove` (most wraps move a few nodes). The writer's windows are 16 nodes
+/// of each column (64 bytes of a size or tail column, 2 or 4 bytes a node). The cells past `to` it writes
+/// are free capacity.
+#[inline(always)]
+fn shift_up<T: Copy + Default, const W: usize>(v: &mut [T], from: usize, to: usize, by: usize) {
+    if to - from <= W && from + by + W <= v.len() {
+        let mut win = [T::default(); W];
+        win.copy_from_slice(&v[from..from + W]);
+        v[from + by..from + by + W].copy_from_slice(&win);
+    } else {
+        v.copy_within(from..to, from + by);
+    }
+}
+
 /// (`classes`, from `CLASS_SHIFT`).
 pub struct Writer<L: Layout = Widths> {
     /// The header, then the code column: the image's start, as it will be. Reserved for the
@@ -258,6 +279,15 @@ struct Held {
     end: u32,
 }
 
+/// A closed leaf to put in before the node at `at` (`Writer::insert_leaves`).
+#[derive(Clone, Copy, Debug)]
+pub struct Leaf {
+    pub key: u32,
+    pub start: u32,
+    pub end: u32,
+    pub at: u32,
+}
+
 /// Where a writer was (`Writer::checkpoint`): its nodes, and its open chains and their wraps.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Checkpoint {
@@ -266,8 +296,6 @@ pub struct Checkpoint {
     held: usize,
 }
 
-/// The most nodes `Writer::insert` moves a cell at a time (more: by `copy_within`).
-const SHORT_MOVE: usize = 16;
 
 const TAIL_WIDE: u8 = 1;
 const EARLY: u8 = 2;
@@ -278,6 +306,13 @@ const CODES_RESERVED: usize = 6 * 256;
 thread_local! {
     /// The code ids by key, kept between a thread's tapes: each tape clears what it set.
     static IDS: std::cell::RefCell<Vec<u16>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// What a parser's writer is finished into, whatever the type of its widths (`Layout`): format 15's image or
+/// columns, or format 16 (`Writer::finish_16`). For a parser generic over its layout; others take a closure.
+pub trait Finish {
+    type Out;
+    fn finish<L: Layout>(&mut self, w: Writer<L>) -> Result<Self::Out, Redo>;
 }
 
 /// The widths a tape needs, where the writer's did not hold its values: parse again at these.
@@ -418,21 +453,6 @@ impl<L: Layout> Writer<L> {
         from.wrapping_add(tail)
     }
 
-    /// Cell `at` of a column of `width`-byte cells: a 2- or 4-byte load.
-    #[inline(always)]
-    fn get(column: &[u8], at: usize, width: u8) -> u32 {
-        debug_assert!((at + 1) * usize::from(width) <= column.len());
-        let p = column.as_ptr();
-        // SAFETY: the cell is inside the column, as the assertion says.
-        unsafe {
-            if width == 2 {
-                u32::from(u16::from_le(std::ptr::read_unaligned(p.add(2 * at).cast::<u16>())))
-            } else {
-                u32::from_le(std::ptr::read_unaligned(p.add(4 * at).cast::<u32>()))
-            }
-        }
-    }
-
     /// Cell `at` of a column of `width`-byte cells: a 2- or 4-byte store.
     #[inline(always)]
     fn put(column: &mut [u8], at: usize, width: u8, value: u32) {
@@ -559,6 +579,11 @@ impl<L: Layout> Writer<L> {
             self.held.push(Held { key, start, nodes: 0, end: 0 });
             return;
         }
+        self.insert_node(at, key, start);
+    }
+
+    /// `insert` on the tape, a chain at `at` or not (a leaf: a chain's wraps go before it).
+    fn insert_node(&mut self, at: usize, key: u32, start: u32) {
         if at == self.n {
             self.push(key, start);
             return;
@@ -567,27 +592,17 @@ impl<L: Layout> Writer<L> {
             self.grow();
         }
         let (n, ws) = (self.n, self.layout.widths());
-        // Most inserts wrap a leaf or a short subtree (a call's function, an operator's left
-        // operand): 58% of C++'s move one node, 93% fewer than 16. Those are moved here, a cell at
-        // a time from the end, where `copy_within` is a call to `memmove` a column.
-        if n - at <= SHORT_MOVE {
-            for j in (at..n).rev() {
-                self.keys[j + 1] = self.keys[j];
-                self.starts[j + 1] = self.starts[j];
-                let (size, tail) = (Self::get(&self.size, j, ws.size), Self::get(&self.tail, j, ws.tail));
-                Self::put(&mut self.size, j + 1, ws.size, size);
-                Self::put(&mut self.tail, j + 1, ws.tail, tail);
-            }
-        } else {
-            let shift = |column: &mut [u8], width: u8| {
-                let w = usize::from(width);
-                column.copy_within(at * w..n * w, at * w + w);
-            };
-            shift(&mut self.size, ws.size);
-            shift(&mut self.tail, ws.tail);
-            self.keys.copy_within(at..n, at + 1);
-            self.starts.copy_within(at..n, at + 1);
-        }
+        // Most inserts wrap a leaf or a short subtree (a call's function, an operator's left operand): 58% of
+        // C++'s move one node, 93% fewer than 16 (decision 0313). `shift_up`'s window holds 16 nodes of every
+        // column, so those are one fixed-size copy each, not a call to `memmove`.
+        let shift = |column: &mut [u8], width: u8| {
+            let w = usize::from(width);
+            shift_up::<u8, 64>(column, at * w, n * w, w);
+        };
+        shift(&mut self.size, ws.size);
+        shift(&mut self.tail, ws.tail);
+        shift_up::<u32, 16>(&mut self.keys, at, n, 1);
+        shift_up::<u32, 16>(&mut self.starts, at, n, 1);
         self.n = n + 1;
         self.keys[at] = key;
         self.starts[at] = start;
@@ -624,6 +639,16 @@ impl<L: Layout> Writer<L> {
             self.chain_at = self.chains.last().map_or(usize::MAX, |c| c.0);
             self.put_held(at, base);
         }
+    }
+
+    /// Where the innermost chain holds a wrap at `node`: the end of the last held one's subtree
+    /// on the tape (its children's; the tape's end while it is open).
+    #[inline]
+    pub fn held_end(&self, node: usize) -> Option<usize> {
+        if node != self.chain_at {
+            return None;
+        }
+        self.held_last().map(|h| if h.nodes != 0 { h.nodes as usize } else { self.n })
     }
 
     #[inline]
@@ -709,7 +734,7 @@ impl<L: Layout> Writer<L> {
     /// place is known before its parent knows whether the tape stores it (a held token, written at
     /// its parent's close). The nodes before `at` that are closed do not contain it.
     pub fn insert_leaf(&mut self, at: usize, key: u32, start: u32, end: u32) {
-        self.insert(at, key, start);
+        self.insert_node(at, key, start);
         let ws = self.layout.widths();
         // A leaf is its own last descendant: its tail is from its start either way.
         let tail = end.wrapping_sub(start);
@@ -718,6 +743,68 @@ impl<L: Layout> Writer<L> {
         }
         Self::put(&mut self.size, at, ws.size, 1);
         Self::put(&mut self.tail, at, ws.tail, tail);
+    }
+
+    /// Closed leaves put in at once, as `insert_leaf` would put each in turn: `leaves[j]` before
+    /// the node at `leaves[j].at` of the tape as it is now (`at` not decreasing; leaves at one
+    /// place in their order). One backward pass: each node after the first place moves once, by
+    /// the leaves before it, where an insert each moved it once a leaf.
+    pub fn insert_leaves(&mut self, leaves: &[Leaf]) {
+        let k = leaves.len();
+        match k {
+            0 => return,
+            1 => {
+                let l = leaves[0];
+                return self.insert_leaf(l.at as usize, l.key, l.start, l.end);
+            }
+            _ => {}
+        }
+        debug_assert!(leaves.windows(2).all(|w| w[0].at <= w[1].at));
+        debug_assert!(leaves.iter().all(|l| l.at as usize <= self.n));
+        while self.n + k > self.cap {
+            self.grow();
+        }
+        let (n, ws) = (self.n, self.layout.widths());
+        let (wz, wt) = (usize::from(ws.size), usize::from(ws.tail));
+        // From the last place down: the nodes from leaf j's place to the next leaf's go up by
+        // j + 1, then leaf j goes at its place moved up by the j leaves before it.
+        let mut to = n;
+        for (j, l) in leaves.iter().enumerate().rev() {
+            let at = l.at as usize;
+            let by = j + 1;
+            if at < to && to == n {
+                // The top run: `shift_up`'s window may write past it, where nothing is yet.
+                shift_up::<u8, 64>(&mut self.size, at * wz, to * wz, by * wz);
+                shift_up::<u8, 64>(&mut self.tail, at * wt, to * wt, by * wt);
+                shift_up::<u32, 16>(&mut self.keys, at, to, by);
+                shift_up::<u32, 16>(&mut self.starts, at, to, by);
+            } else if at < to {
+                // A run below one already moved: exactly its nodes.
+                self.size.copy_within(at * wz..to * wz, (at + by) * wz);
+                self.tail.copy_within(at * wt..to * wt, (at + by) * wt);
+                self.keys.copy_within(at..to, at + by);
+                self.starts.copy_within(at..to, at + by);
+            }
+            to = at;
+        }
+        self.n = n + k;
+        self.uncode_from(leaves[0].at as usize);
+        // A mark's node moves up by the leaves at or before it.
+        for m in self.marks.iter_mut() {
+            m.0 += leaves.partition_point(|l| l.at <= m.0) as u32;
+        }
+        for (j, l) in leaves.iter().enumerate() {
+            let node = l.at as usize + j;
+            self.keys[node] = l.key;
+            self.starts[node] = l.start;
+            // A leaf is its own last descendant: its tail is from its start either way.
+            let tail = l.end.wrapping_sub(l.start);
+            if tail >= self.wide_from {
+                self.close_marks(node, l.end, l.start, l.start, tail);
+            }
+            Self::put(&mut self.size, node, ws.size, 1);
+            Self::put(&mut self.tail, node, ws.tail, tail);
+        }
     }
 
     /// `node`'s start, given after it was pushed (a node put before its first child, whose start
@@ -794,6 +881,46 @@ impl<L: Layout> Writer<L> {
             return Err(Redo(want));
         }
         Ok((base, off))
+    }
+
+    /// The keys of the codes the nodes use, by code id (numbered by first use): what a caller maps to a language's
+    /// format 16 numbers for `finish_16`.
+    pub fn code_keys(&mut self) -> Vec<u32> {
+        self.commit();
+        self.codes.iter().map(|&(key, _)| key).collect()
+    }
+
+    /// The tape in format 16, or 16z where `z` (decision 0293), in one pass over the nodes as the parser left them
+    /// (`f16::write`): node `i`'s number is `numbers` at its code id (`code_keys`), its span and subtree the writer's.
+    /// Format 15's columns are not made. `Redo` where the writer's widths did not keep every size and end exactly
+    /// (format 15's offsets do not matter here); `Ok(Err)` where a node breaks format 16's bounds, the writer kept
+    /// (format 15's `finish_columns` takes it).
+    pub fn finish_16(&mut self, lang: &f16::Lang, numbers: &[u32], source: &[u8], tag: u8, z: bool) -> Result<Result<f16::Written, String>, Redo> {
+        debug_assert!(self.chains.is_empty(), "a chain not ended");
+        self.commit();
+        let w = self.layout.widths();
+        let has = |what: u8| self.marks.iter().any(|m| m.1 == what);
+        // Sizes past their width, an end before the last descendant's start (tails from it), or a tail past its
+        // width: not kept exactly.
+        let size = w.size.max(width_for(self.n as u32));
+        let from_start = w.from_start || has(EARLY);
+        let tail = if from_start == w.from_start && has(TAIL_WIDE) { 4 } else { w.tail };
+        let want = Widths { size, off: w.off, tail, from_start };
+        if want != w {
+            return Err(Redo(want));
+        }
+        // Every node's code id is below the codes' count (`commit`).
+        if numbers.len() < self.codes.len() {
+            return Ok(Err(format!("{} codes, {} numbers", self.codes.len(), numbers.len())));
+        }
+        let ids = &self.out[HEADER_BYTES..HEADER_BYTES + 2 * self.n];
+        let this = &*self;
+        Ok(f16::write(lang, self.n, source, tag, z, |i| f16::Node {
+            number: numbers[usize::from(u16::from_le_bytes([ids[2 * i], ids[2 * i + 1]]))],
+            start: u64::from(this.starts[i]),
+            end: u64::from(this.end(i)),
+            subtree_end: i + this.size(i) as usize,
+        }))
     }
 
     /// The columns alone, for a parser whose codes the caller makes (a key is the parser's own, not
@@ -1137,6 +1264,62 @@ mod tests {
         }
     }
 
+    /// Leaves put in at once (`insert_leaves`) give the tape an insert each gives, runs between
+    /// them long and short, leaves at one place, at the end, a wide tail among them.
+    #[test]
+    fn leaves_inserted_at_once_are_an_insert_each() {
+        let src = vec![b' '; 200_000];
+        let w = Widths::guess(src.len());
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for _ in 0..300 {
+            let n = 1 + (next() % 60) as usize;
+            let k = 1 + (next() % 8) as usize;
+            let mut places: Vec<u32> = (0..k).map(|_| 1 + (next() % n as u64) as u32).collect();
+            places.sort();
+            let leaves: Vec<Leaf> = places
+                .iter()
+                .enumerate()
+                .map(|(j, &at)| {
+                    let start = 10 * at + j as u32;
+                    let end = if next() % 9 == 0 { start + 70_000 } else { start + 1 };
+                    Leaf { key: key(4 + j as u16, 0, 0), start, end, at }
+                })
+                .collect();
+            let build = |batch: bool| {
+                let mut w = w;
+                loop {
+                    let mut o = Writer::new(1, w, 8);
+                    let r = o.push(key(1, 0, 0), 0);
+                    for i in 1..n {
+                        let x = o.push(key(2, 0, 0), 10 * i as u32);
+                        o.close(x, 10 * i as u32 + 1);
+                    }
+                    if batch {
+                        o.insert_leaves(&leaves);
+                    } else {
+                        for (j, l) in leaves.iter().enumerate() {
+                            o.insert_leaf(l.at as usize + j, l.key, l.start, l.end);
+                        }
+                    }
+                    o.close(r, 199_999);
+                    o.commit();
+                    match o.finish(&src) {
+                        Ok(t) => break decode(&t).unwrap(),
+                        // Wider columns where the guess was short (the wide tails).
+                        Err(Redo(wider)) => w = wider,
+                    }
+                }
+            };
+            assert_eq!(build(false), build(true), "{places:?} over {n}");
+        }
+    }
+
     /// A leaf put in later, between closed nodes (`insert_leaf`), gives the tape written in order.
     #[test]
     fn a_leaf_inserted_later_is_the_tape_in_order() {
@@ -1172,6 +1355,59 @@ mod tests {
         l.close(r, 9);
         l.commit();
         assert_eq!(decode(&o.finish(&src).unwrap()).unwrap(), decode(&l.finish(&src).unwrap()).unwrap());
+    }
+
+    /// A parser's writer finished in format 16 or 16z (`finish_16`) is the tree it finishes in format 15, after the
+    /// edits a parse makes: a rewind, a node put before its first child, a key changed.
+    #[test]
+    fn a_parsers_writer_finishes_in_format_16_as_in_format_15() {
+        use crate::tape::{F15, Tape, f15_columns};
+        let src = vec![b' '; 100];
+        let make = || {
+            let mut l = Writer::new(1, Widths::guess(src.len()), 8);
+            let r = l.push(key(1, 0, 0), 0);
+            let held = l.checkpoint();
+            let t = l.push(key(9, 0, 0), 0);
+            l.close(t, 1);
+            l.rewind(held);
+            let x = l.push(key(3, 0, 0), 0);
+            l.close(x, 3);
+            // An operator found after its left operand: put before it, closed over both operands.
+            l.insert(x, key(2, 0, 0), 0);
+            let y = l.push(key(3, 0, 0), 6);
+            l.close(y, 9);
+            l.close(x, 9);
+            l.set_key(x, key(5, 0, 0));
+            let c = l.push(key(4, 0, 0), 9);
+            l.close(c, 10);
+            l.close(r, 10);
+            l
+        };
+        let image = make().finish(&src).unwrap();
+        let (columns, table) = f15_columns(&image).unwrap();
+        let f15 = F15::new(&image, columns, &table).unwrap();
+        let lang = f16::Lang::new(table.clone(), [1, 1, 1], 1).unwrap();
+        for z in [false, true] {
+            let mut w = make();
+            let numbers: Vec<u32> = (0..w.code_keys().len() as u32).collect();
+            let written = w.finish_16(&lang, &numbers, &src, 1, z).unwrap().unwrap();
+            let check = |t: &dyn Fn(usize) -> (u32, usize, Option<usize>, u64, u64), n: usize| {
+                assert_eq!(n, f15.len());
+                for i in 0..n {
+                    assert_eq!(t(i), (f15.code(i), f15.subtree_end(i), f15.parent(i), f15.start(i), f15.end(i)), "node {i}, 16z {z}");
+                }
+            };
+            match written {
+                f16::Written::F16(t) => {
+                    let r = t.reader(&lang).unwrap();
+                    check(&|i| (r.code(i), r.subtree_end(i), r.parent(i), r.start(i), r.end(i)), r.len());
+                }
+                f16::Written::F16Z(t) => {
+                    let r = t.reader(&lang).unwrap();
+                    check(&|i| (r.code(i), r.subtree_end(i), r.parent(i), r.start(i), r.end(i)), r.len());
+                }
+            }
+        }
     }
 
 }

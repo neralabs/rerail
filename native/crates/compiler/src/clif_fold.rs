@@ -192,6 +192,18 @@ fn binary_bits(op: Opcode, x: Bits, y: Bits, w: u32) -> Bits {
             }
             None => Bits::default(),
         },
+        // An arithmetic shift: `ushr`'s bits, the top `k` the sign bit's (known where it is).
+        Opcode::Sshr => match y.value(w) {
+            Some(k) => {
+                let k = (k & u64::from(w - 1)) as u32;
+                let sign = 1u64 << (w - 1);
+                let top = !(m >> k) & m;
+                let zeros = ((x.zeros & m) >> k) | if x.zeros & sign != 0 { top } else { 0 };
+                let ones = ((x.ones & m) >> k) | if x.ones & sign != 0 { top } else { 0 };
+                Bits { zeros, ones }
+            }
+            None => Bits::default(),
+        },
         _ => Bits::default(),
     }
 }
@@ -444,7 +456,7 @@ fn fold_once(func: &mut ir::Function, callees: &Summaries) -> bool {
                         match (x.value(w), y.value(w)) {
                             (None, Some(_)) => decided(opcode, a, x, y, true, w),
                             (Some(_), None) => decided(opcode, c, y, x, false, w),
-                            (None, None) if a == c && matches!(opcode, Opcode::Band | Opcode::Bor) => Some(Folded::Same(a)),
+                            (None, None) if dfg.resolve_aliases(a) == dfg.resolve_aliases(c) && matches!(opcode, Opcode::Band | Opcode::Bor | Opcode::Smax | Opcode::Smin | Opcode::Umax | Opcode::Umin) => Some(Folded::Same(a)),
                             (None, None) if a == c && matches!(opcode, Opcode::Bxor | Opcode::Isub | Opcode::BandNot) => Some(Folded::Const(0)),
                             // `(c + x) - c`, `(x + c) - c`: `x`.
                             (None, None) if opcode == Opcode::Isub && added(func, a, c).is_some() => added(func, a, c).map(Folded::Same),
@@ -942,6 +954,25 @@ mod tests {
         assert_eq!(cmps, 1, "only `len < 16` is open: {}", func.display());
     }
 
+    /// A max or a min of a value and itself is the value.
+    #[test]
+    fn a_max_of_a_value_and_itself_is_it() {
+        for op in [Opcode::Smax, Opcode::Smin, Opcode::Umax, Opcode::Umin] {
+            let mut func = function(1, |f, p| {
+                let m = match op {
+                    Opcode::Smax => f.ins().smax(p[0], p[0]),
+                    Opcode::Smin => f.ins().smin(p[0], p[0]),
+                    Opcode::Umax => f.ins().umax(p[0], p[0]),
+                    _ => f.ins().umin(p[0], p[0]),
+                };
+                f.ins().return_(&[m]);
+            });
+            fold(&mut func);
+            verified(&func);
+            assert_eq!(ops(&func), vec![Opcode::Return], "{op}: {}", func.display());
+        }
+    }
+
     /// A complement's complement is the value: both `bnot`s go, where the inner one has no
     /// other reader; one complement stays one.
     #[test]
@@ -1064,6 +1095,23 @@ mod tests {
         let ops = ops(&func);
         assert!(!ops.contains(&Opcode::UshrImm), "the high half is 7: {}", func.display());
         assert_eq!(ops.iter().filter(|o| **o == Opcode::BandImm).count(), 1, "only the low half of `x | 7 << 32` kept: {}", func.display());
+    }
+
+    /// An arithmetic shift of a value whose sign bit is known none is none above its bits: a
+    /// test's hit at bit 28 shifted down by 63 (a refusal's sign, `pack_rule`) is zero.
+    #[test]
+    fn a_signed_shift_of_a_known_positive_is_known() {
+        let mut func = function(1, |f, p| {
+            let hit = f.ins().icmp_imm(IntCC::NotEqual, p[0], 0);
+            let hit = f.ins().uextend(types::I64, hit);
+            let bit = f.ins().ishl_imm(hit, 28);
+            let sign = f.ins().sshr_imm(bit, 63);
+            let r = f.ins().iadd(sign, p[0]);
+            f.ins().return_(&[r]);
+        });
+        fold(&mut func);
+        verified(&func);
+        assert!(!ops(&func).contains(&Opcode::SshrImm), "the sign of a hit at bit 28 is none: {}", func.display());
     }
 
     /// A callee's results known in every return (`returns`) are known of its call's results

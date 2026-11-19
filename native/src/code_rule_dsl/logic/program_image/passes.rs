@@ -2,11 +2,11 @@
 //! derivation (every rule rewritten, each recording its source, §9), `stated_apart` an overlay of what it moves. Each is
 //! the tree pass it replaces (`plan::sql_kernel::normalize`, `plan::stated_apart`), checked against it (`tests`).
 use super::about::About;
-use super::build::{Builder, Rewrite, Site, T};
+use super::build::{Builder, PartFields, Rewrite, Site, T};
 use super::manager::{Cx, Pipeline, ProgramPass, ProgramW, RuleOut, RulePass, Select, Step};
 use super::handles::{AtomRef, Lit, RuleRef, TermRef};
 use super::version::Version;
-use super::{Cell, RelId, Slot};
+use super::{Cell, RelId, RuleId, Slot};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
@@ -288,6 +288,26 @@ impl<F: Fn(&str) -> bool> ProgramPass for Retain<F> {
     }
 }
 
+/// A maintained stratum's selection from its general form (decision 0298): the rules whose id `keep` takes, the rest
+/// removed, with the inputs and outputs the selection states. One overlay, never folded (so the rules keep the ids
+/// the form's maintenance names), whose relations' other fields are the general form's.
+pub struct SelectPart<'f, F, S, T> {
+    pub keep: F,
+    pub inputs: &'f [S],
+    pub outputs: &'f [T],
+}
+
+impl<F: Fn(super::RuleId) -> bool, S: AsRef<str>, T: AsRef<str>> ProgramPass for SelectPart<'_, F, S, T> {
+    const NAME: &'static str = "a selection from a general form";
+    fn run(&mut self, _: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let b = w.overlay()?;
+        b.retain(|r| (self.keep)(r.id()));
+        b.set_inputs(self.inputs);
+        b.set_outputs(self.outputs);
+        Ok(())
+    }
+}
+
 /// A part's own fields (decision 0244, `Version::part`): its inputs and outputs, and the natives, lattices and gates
 /// of the relations `fields` takes. An overlay, never folded, so the part costs its range list and its fields.
 pub struct PartOf<'f, S> {
@@ -298,11 +318,13 @@ pub struct PartOf<'f, S> {
 
 impl<S: AsRef<str>> ProgramPass for PartOf<'_, S> {
     const NAME: &'static str = "part's fields";
-    fn run(&mut self, _: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let b = w.overlay()?;
         b.set_inputs(self.inputs);
         b.set_outputs(self.outputs);
         b.keep_relation_fields(self.fields.natives, self.fields.lattice, self.fields.gates);
+        // The request record of the relations whose rules the part holds (decision 0331): the record is by rule.
+        b.keep_asked(&|rel| cx.v().rel(rel).is_some_and(|r| cx.v().heads(r).next().is_some()));
         Ok(())
     }
 }
@@ -327,4 +349,35 @@ impl ProgramPass for SetQualifiers<'_> {
         w.overlay()?.set_qualifiers(self.0);
         Ok(())
     }
+}
+
+/// A part of a version, made by the passes (`Retain`, `PartOf`, `SelectPart`): above the image, which runs no passes.
+pub trait Parts {
+    /// A part of this version (decision 0244): a view of the rules whose head `rules` takes, and over it an overlay of
+    /// the part's own fields, never folded: `inputs` and `outputs`, and the natives, lattices and gates of the relations
+    /// `fields` takes (`keep_relation_fields`). It costs its range list and its fields, never a copy of the program.
+    fn part<S: AsRef<str>>(&self, rules: impl Fn(&str) -> bool, inputs: &[S], outputs: &[S], fields: PartFields<'_>) -> Result<Arc<Version>, String>;
+    /// A part of this version whose rules are those whose id `rules` takes, with its own inputs and outputs (a
+    /// selection from a general form, decision 0298): one overlay, its relations' other fields this version's.
+    fn part_rules<S: AsRef<str>, T: AsRef<str>>(&self, rules: impl Fn(RuleId) -> bool, inputs: &[S], outputs: &[T]) -> Result<Arc<Version>, String>;
+}
+
+impl Parts for std::sync::Arc<Version> {
+    /// A part of this version (decision 0244): a view of the rules whose head `rules` takes, and over it an overlay of
+    /// the part's own fields, never folded: `inputs` and `outputs`, and the natives, lattices and gates of the relations
+    /// `fields` takes (`keep_relation_fields`). It costs its range list and its fields, never a copy of the program.
+    fn part<S: AsRef<str>>(&self, rules: impl Fn(&str) -> bool, inputs: &[S], outputs: &[S], fields: PartFields<'_>) -> Result<Arc<Version>, String> {
+        let mut p = Pipeline::new("part", self.clone());
+        p.program(&mut Retain(rules)).program(&mut PartOf { inputs, outputs, fields });
+        Ok(p.finish()?.0)
+    }
+
+    /// A part of this version whose rules are those whose id `rules` takes, with its own inputs and outputs (a
+    /// selection from a general form, decision 0298): one overlay, its relations' other fields this version's.
+    fn part_rules<S: AsRef<str>, T: AsRef<str>>(&self, rules: impl Fn(RuleId) -> bool, inputs: &[S], outputs: &[T]) -> Result<Arc<Version>, String> {
+        let mut p = Pipeline::new("part", self.clone());
+        p.program(&mut SelectPart { keep: rules, inputs, outputs });
+        Ok(p.finish()?.0)
+    }
+
 }

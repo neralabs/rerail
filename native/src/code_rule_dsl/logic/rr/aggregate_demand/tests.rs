@@ -21,10 +21,9 @@ fn program(extra: &str) -> Program {
 
 #[test]
 fn zero_count_is_an_antijoin_with_demanded_world_scope_and_name() {
-    let mut p = program(
+    let p = program(
         "result(w,s,x,0) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 0.",
     );
-    optimize(&mut p);
     let reader = p.rules.iter().find(|r| r.head.rel == "result").unwrap();
     assert!(
         !reader.body.iter().any(|l| matches!(l, Literal::Agg { .. })),
@@ -48,10 +47,9 @@ fn zero_count_is_an_antijoin_with_demanded_world_scope_and_name() {
 #[test]
 fn general_count_and_sum_restrict_groups_without_dropping_witness_columns() {
     for expression in ["count", "sum v"] {
-        let mut p = program(&format!(
+        let p = program(&format!(
             "result(w,s,x,k) :- wanted(w,s,x), k = {expression} : {{ ancestor(w,s,p), binding(w,p,x,v) }}."
         ));
-        optimize(&mut p);
         let helper = p
             .rules
             .iter()
@@ -69,10 +67,9 @@ fn general_count_and_sum_restrict_groups_without_dropping_witness_columns() {
 
 #[test]
 fn recursive_consumer_does_not_create_an_aggregate_dependency_cycle() {
-    let mut p = program(
+    let p = program(
         "result(w,s,x,0) :- wanted(w,s,x).\nresult(w,s,x,k) :- result(w,s,x,0), wanted(w,s,x), k = count : { ancestor(w,s,p), binding(w,p,x,v) }.",
     );
-    optimize(&mut p);
     front::strata(&p).unwrap();
     let demands: Vec<_> = p
         .rules
@@ -90,7 +87,6 @@ fn recursive_consumer_does_not_create_an_aggregate_dependency_cycle() {
 
 /// Actual helper rows stay proportional to demanded keys, despite unrelated scopes and names.
 #[test]
-#[ignore = "open (decision 0128): unrun since the crate split; a seed step of rr_agg2 makes 6 rows for 3 demanded groups (1:3,3:6,6:3,3:3)"]
 fn aggregate_demand_executes_only_requested_groups_and_keeps_empty_groups() {
     use crate::code_rule_dsl::logic::plan;
     let mut source = String::from(
@@ -119,7 +115,6 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
         }
     }
     let mut p = rr::parse(&source).unwrap();
-    optimize(&mut p);
     let helpers: BTreeSet<_> = p
         .rules
         .iter()
@@ -183,7 +178,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     let lowered = plan::lower::lower(&p, crate::code_rule_dsl::language::GrammarDialect::Python,
         &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
-    let native = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty(&lowered.program),
+    let native = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty_of_lowered(&lowered).unwrap(),
         BTreeSet::new(), "program").unwrap();
     assert_eq!(native.shown(), result.shown());
     assert!(native.native.contains("sums"), "production sum must use the native reduction");
@@ -220,11 +215,10 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
 
 #[test]
 fn already_restricted_helpers_are_stable_and_recursive_only_guards_are_refused() {
-    let mut p = program(
+    let p = program(
         "result(w,s,x,k) :- wanted(w,s,x), k = count : { ancestor(w,s,p), binding(w,p,x,v) }.",
     );
     let before = p.rules.clone();
-    optimize(&mut p);
     assert_eq!(p.rules, before, "optimization must be idempotent");
     let p = program(
         "result(w,s,x,0) :- wanted(w,s,x).\nresult(w,s,x,k) :- result(w,s,x,0), k = count : { ancestor(w,s,p), binding(w,p,x,v) }.",
@@ -269,13 +263,21 @@ fn multiple_consumers_union_their_safe_demands() {
         r: Term::Int(2),
     });
     p.rules.push(second);
-    optimize(&mut p);
+    // The pass placed again, on the version of the edited program.
+    use crate::code_rule_dsl::logic::program_image::{build::Builder, manager::Pipeline};
+    let (v, _) = Builder::of_program(&p).unwrap().finish().unwrap();
+    let mut pipe = Pipeline::new("test", v);
+    pipe.program(&mut crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::AggregateDemand);
+    let (out, _) = pipe.finish().unwrap();
+    let p = out.program(&front::Lists::default()).unwrap();
     assert_eq!(
         p.rules
             .iter()
             .filter(|r| r.head.rel.starts_with("rr_demand_agg"))
             .count(),
-        2
+        2,
+        "{}",
+        out.show()
     );
     front::strata(&p).unwrap();
 }
@@ -324,7 +326,7 @@ fn pyflakes_outer_binding_existence_keeps_load_and_nearest_scope_demands() {
 #[test]
 fn nested_zero_counts_preserve_outer_groups_in_sql_and_native_execution() {
     use crate::code_rule_dsl::logic::{native, plan};
-    let p = rr::parse(r#"
+    let p = rr::parse_version(r#"
 .decl ident(x:symbol)
 ident("a"). ident("b").
 .decl fn(f:number)
@@ -340,9 +342,9 @@ hit(f) :- fn(f), count : { ident(x), count : { ref(n,f,x) } = 0 } > 0.
         let store = crate::content_store::ContentStore::open(&path).unwrap();
         let db = rusqlite::Connection::open(&path).unwrap();
         native::register(&db).unwrap();
-        let lowered = plan::lower::lower(&p, crate::code_rule_dsl::language::GrammarDialect::Python,
+        let lowered = plan::lower::lowered(p.clone(), crate::code_rule_dsl::language::GrammarDialect::Python,
             &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
-        let result = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty(&lowered.program),
+        let result = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty_of_lowered(&lowered).unwrap(),
             BTreeSet::new(), modes).unwrap();
         assert_eq!(result.shown()["hit"], [["2"], ["3"]], "outer groups lost in {modes:?}");
     }
@@ -353,7 +355,7 @@ hit(f) :- fn(f), count : { ident(x), count : { ref(n,f,x) } = 0 } > 0.
 /// positions, not every byte (the pairs below each, every pair of the text's bytes, were 17.9 M rows of a 6 KB text).
 #[test]
 fn a_guard_reached_through_a_comparison_restricts_the_demand() {
-    let mut p = rr::parse(
+    let p = rr::parse(
         r#"
 .decl byte(i: number, v: number)
 .input byte
@@ -363,7 +365,6 @@ odd(p) :- byte(p, _), q = @sub(p, 1), byte(q, 92), m = max j : { byte(j, v), v !
 "#,
     )
     .unwrap();
-    optimize(&mut p);
     let demand = p.rules.iter().find(|r| r.head.rel.starts_with("rr_demand_agg")).unwrap_or_else(|| panic!("no demand: {p:?}"));
     assert!(
         demand.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel == "byte" && matches!(&a.args[1], front::Term::Int(92)))),

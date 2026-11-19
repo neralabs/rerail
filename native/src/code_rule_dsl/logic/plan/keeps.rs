@@ -76,10 +76,9 @@ pub(super) mod inline;
 /// The relations inlined, and the program's version with them unfolded into their readers (an overlay of `base`);
 /// `None` when nothing is inlined. `Err` names a `.decl r(…) inline` that cannot be honoured.
 pub(super) fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<String>, Placed)>, String> {
-    // The program's fields beside its rules, read from its version; a program of no image (maintenance's parts: a
-    // session's maintained program) inlines nothing, its relations each `no_inline` or a session's piece.
-    let Some(f) = Fields::of(base).filter(|_| base.maint.is_none()) else {
-        super::super::profile::decision("inline or store (decision 0099)", || "a maintained program (maintenance's parts): nothing estimated".to_owned());
+    // The program's fields beside its rules, read from its version; a version of rules alone inlines nothing.
+    let Some(f) = Fields::of(base) else {
+        super::super::profile::decision("inline or store (decision 0099)", || "a version of rules alone: nothing estimated".to_owned());
         return Ok(None);
     };
     let v: &Version = &base.v;
@@ -177,8 +176,15 @@ pub(super) fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<Str
     // Each candidate priced twice: by the plan's estimates alone (what `RERAIL_OBSERVED_STEPS=off` decides), and,
     // once an earlier chunk or part observed anything, with its observations (`calibrated`, `weigh`). The choice is
     // the estimates' unless the observations are evidence against it (`settle`).
-    let held = OBSERVED.with(|o| o.borrow_mut().as_mut().map(std::mem::take));
-    let observed_any = held.as_ref().is_some_and(|o| !o.rules.is_empty());
+    // Decision 0301: the jobs' sums handed in so far folded in first, then hidden from the estimates on this thread (and
+    // the jobs it starts) by an empty handle in the run's place, not taken out of the run's.
+    OBSERVED.with(|o| o.0.fold(true));
+    let held = OBSERVED_AT.with(|a| {
+        let run = a.borrow().clone();
+        let on = run.published.load().is_some();
+        on.then(|| std::mem::replace(&mut *a.borrow_mut(), Arc::new(ObservedShared::observing(true))))
+    });
+    let observed_any = held.as_ref().is_some_and(|run| run.published.load().as_ref().is_some_and(|o| !o.rules.is_empty()));
     // The statistics the cone's plans read, if they are made when first planned with (`Model::resolve`); and its
     // readers' (the pricing below plans them).
     let read: Vec<&str> = need.iter().flat_map(|rel| ids_of.get(rel).into_iter().flatten()).flat_map(|&k| reads_of(k)).collect();
@@ -191,11 +197,9 @@ pub(super) fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<Str
     if !bounded_small.is_empty() {
         super::super::profile::decision("inline or store (decision 0099)", || format!("{} candidates stored small, their inputs' counts bounding them under {SMALL} rows: not planned", bounded_small.len()));
     }
-    OBSERVED.with(|o| {
-        if let (Some(o), Some(h)) = (o.borrow_mut().as_mut(), held) {
-            *o = h;
-        }
-    });
+    if let Some(run) = held {
+        OBSERVED_AT.with(|a| *a.borrow_mut() = run);
+    }
     // The observations can change a choice only where the stored side ran (every reader as it is): a veto of an
     // inlining, or, where the inlined side ran too, a revert. Only those are priced again: over the estimates, each
     // relation an earlier chunk or part measured takes its measured rows and columns (`overlay`), and each build is
@@ -552,6 +556,21 @@ fn weigh(own: &[(f64, Option<f64>)], copies: &[(f64, Option<f64>)], build: (f64,
 
 /// Why each derived relation that must be stored is (the module's list), over the program's version (`f`, its rules
 /// `base`'s, `rules_of` by head); a relation absent may be inlined.
+/// Whether `ks` are the lowering's projection of an input: `kind(n, k) :- node(_, n, k, _, _)`, and `docof` over nodes
+/// (decision 0141). One rule of one positive input atom, each head variable once in it: priced as any candidate, not
+/// refused as core.rr's. Inlined, a reader reads the input in place (`node`'s view, by kind). Inlined unpriced in every
+/// module of a cold PostHog run, instructions went 2,558 -> 4,734 G (a reader probing `node` by node, not `kind`'s
+/// hash index), so the pricing and its copies' bound decide.
+fn input_projection(f: &Fields<'_>, base: &Placed, ks: &[usize]) -> bool {
+    let &[k] = ks else { return false };
+    let r = base.rule(k);
+    let mut body = r.body();
+    let (Some(l), None) = (body.next(), body.next()) else { return false };
+    let Some(a) = l.atom().filter(|a| !a.neg() && f.is_input(base.v.rel_name(a.rel()))) else { return false };
+    let mut seen = Vec::new();
+    r.head().args().all(|t| t.var().is_some_and(|h| !seen.contains(&h) && { seen.push(h); a.args().filter(|t| t.var() == Some(h)).count() == 1 }))
+}
+
 fn refusals(f: &Fields<'_>, base: &Placed, n: usize, rules_of: &BTreeMap<&str, Vec<usize>>, sccs: &[BTreeSet<String>]) -> BTreeMap<String, &'static str> {
     use super::super::program_image::{Lit, NativeKind, TermRef};
     let v: &Version = &base.v;
@@ -579,7 +598,7 @@ fn refusals(f: &Fields<'_>, base: &Placed, n: usize, rules_of: &BTreeMap<&str, V
             Some("demanded or a gate")
         } else if f.answer(rel) || f.nullary(rel) {
             Some("an answer or nullary")
-        } else if super::corpus::guests::REQUESTS.contains(&rel) || core.contains(rel) || rel.contains("__") {
+        } else if super::corpus::guests::REQUESTS.contains(&rel) || (core.contains(rel) && !input_projection(f, base, ks)) || rel.contains("__") {
             Some("the engine's (a request, core.rr's, or a session's copy)")
         } else if recursive.contains(rel) || rules().any(|r| reads(r).contains(&rel)) {
             Some("recursive")
@@ -716,7 +735,7 @@ fn bounds(f: &Fields<'_>, base: &Placed, n: usize, model: &Model, rules_of: &BTr
 /// The relations that cross the chunk boundary (the local part's outputs: its exports and findings) stored as the
 /// flat join of parts that meet only at a variable they project away: `fl853_p4_outer(f, x) :- rr_inside_ks5(f, p),
 /// bound_in(p, x)` holds 777 k rows, its two parts about 100 k. Such an export is handed on as its parts before the
-/// first chunk (`file_local::factorize_exports`, decision 0099); this names each relation still stored flat that would
+/// first chunk (`file_local::FactorizeExports`, decision 0099); this names each relation still stored flat that would
 /// shrink so (one the program's test refused: a finding, a part of one row a key, a reader binding none of it), with
 /// its flat rows (observed where an earlier chunk measured them) and its parts' estimated rows, where the flat rows
 /// are over twice the parts'.
@@ -789,7 +808,7 @@ pub(in crate::code_rule_dsl) fn factors(rule: &Rule) -> Option<(String, Vec<Vec<
 }
 
 /// `factors` over a rule of a version: the key's name, and each part's literals by place.
-fn factors_of(v: &Version, r: super::super::program_image::RuleRef<'_>) -> Option<(String, Vec<Vec<usize>>)> {
+pub(in crate::code_rule_dsl) fn factors_of(v: &Version, r: super::super::program_image::RuleRef<'_>) -> Option<(String, Vec<Vec<usize>>)> {
     use super::super::program_image::Lit;
     let lits: Vec<_> = r.body().collect();
     if !lits.iter().all(|l| matches!(l.view(), Lit::Atom(_) | Lit::Cmp { .. })) {
@@ -915,7 +934,82 @@ fn factor_parts(b: &Numbered<'_>, positive: &[usize]) -> Option<(usize, Vec<Vec<
 /// chunk's choice prices each relation from the rows its join steps produced. The run's thread's, shared by the jobs
 /// its strata run as on other threads (decision 0113, `share_observed`): each stratum observes its own rules and
 /// relations.
-pub(in crate::code_rule_dsl) type SharedObserved = std::sync::Arc<parking_lot::RwLock<Option<Observed>>>;
+pub(in crate::code_rule_dsl) type SharedObserved = Arc<ObservedShared>;
+
+/// The run's observations as its jobs share them (decision 0301): the sums published (RCU: read with no lock, `None`
+/// while not observing), and the sums jobs handed in as they ended, folded in by one of them every `FOLD_EVERY`, and
+/// all of them before a chunk's choice reads them (`fold`). Over PostHog the sums were read 1.1 M times and added to
+/// 294,000 times, each add under the readers' lock.
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct ObservedShared {
+    published: arc_swap::ArcSwapOption<Observed>,
+    pending: parking_lot::Mutex<Vec<Observed>>,
+    folding: parking_lot::Mutex<()>,
+    /// A chunk's (Q88, `chunk_observed`): what its jobs handed in over the run's as filed, apart, for the run's in the
+    /// chunks' order (`file_observed`).
+    made: Option<parking_lot::Mutex<Observed>>,
+}
+
+/// The jobs' sums handed in before one of them folds them in: the lag of an estimate read in a job.
+const FOLD_EVERY: usize = 256;
+
+/// Folds of the observed sums (decision 0301), for the profile.
+pub(super) static FOLDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+impl ObservedShared {
+    fn observing(on: bool) -> Self {
+        let s = ObservedShared::default();
+        s.published.store(on.then(|| Arc::new(Observed::default())));
+        s
+    }
+
+    /// A job's sums, as it ends: folded in once `FOLD_EVERY` are waiting, by a job that finds no fold under way.
+    fn hand_in(&self, mine: Observed) {
+        let waiting = {
+            let mut p = self.pending.lock();
+            p.push(mine);
+            p.len()
+        };
+        if waiting >= FOLD_EVERY {
+            self.fold(false);
+        }
+    }
+
+    /// The sums handed in, folded into a copy of the run's and published: waiting for a fold under way (`wait`), or
+    /// leaving it to that one.
+    pub(super) fn fold(&self, wait: bool) {
+        let _folding = if wait { self.folding.lock() } else {
+            let Some(g) = self.folding.try_lock() else { return };
+            g
+        };
+        let pending = std::mem::take(&mut *self.pending.lock());
+        if pending.is_empty() {
+            return;
+        }
+        let Some(now) = self.published.load_full() else { return };
+        let mut next = Observed::clone(&now);
+        for p in pending {
+            if let Some(made) = &self.made {
+                made.lock().add(p.clone());
+            }
+            next.add(p);
+        }
+        self.published.store(Some(Arc::new(next)));
+        FOLDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// `f` on the run's sums, as a thread observing outside a job does: folded and published at once.
+    fn change(&self, f: impl FnOnce(&mut Observed)) {
+        let _folding = self.folding.lock();
+        let Some(now) = self.published.load_full() else { return };
+        let mut next = Observed::clone(&now);
+        for p in std::mem::take(&mut *self.pending.lock()) {
+            next.add(p);
+        }
+        f(&mut next);
+        self.published.store(Some(Arc::new(next)));
+    }
+}
 
 thread_local! {
     static OBSERVED_AT: RefCell<SharedObserved> = RefCell::new(Default::default());
@@ -937,15 +1031,11 @@ fn observing_into(f: impl FnOnce(&mut Observed, Option<&Observed>)) {
     let f = OWN_OBSERVED.with(|own| {
         let mut own = own.borrow_mut();
         let Some(mine) = own.as_mut() else { return Some(f) };
-        OBSERVED.with(|o| f(mine, o.borrow().as_ref()));
+        OBSERVED.with(|o| f(mine, o.borrow().as_deref()));
         None
     });
     if let Some(f) = f {
-        OBSERVED.with(|o| {
-            if let Some(o) = o.borrow_mut().as_mut() {
-                f(o, None);
-            }
-        });
+        OBSERVED.with(|o| o.0.change(|o| f(o, None)));
     }
 }
 
@@ -993,14 +1083,11 @@ impl Observed {
     }
 }
 
-/// The observations as a cell: read (`borrow`, several at once) or written (`borrow_mut`).
+/// The observations as last published (decision 0301): read with no lock.
 struct ObservedCell(SharedObserved);
 impl ObservedCell {
-    fn borrow(&self) -> parking_lot::RwLockReadGuard<'_, Option<Observed>> {
-        self.0.read_recursive()
-    }
-    fn borrow_mut(&self) -> parking_lot::RwLockWriteGuard<'_, Option<Observed>> {
-        self.0.write()
+    fn borrow(&self) -> arc_swap::Guard<Option<Arc<Observed>>> {
+        self.0.published.load()
     }
 }
 struct ObservedKey;
@@ -1010,6 +1097,30 @@ impl ObservedKey {
     }
 }
 static OBSERVED: ObservedKey = ObservedKey;
+
+/// A chunk's observations (Q88): the run's as filed when it began (`published`), what it observes over them, and that
+/// apart (`observed_made`).
+pub(in crate::code_rule_dsl) fn chunk_observed(published: Option<Arc<Observed>>) -> SharedObserved {
+    let s = ObservedShared { made: Some(Default::default()), ..Default::default() };
+    s.published.store(published);
+    Arc::new(s)
+}
+
+/// What a chunk observed (`chunk_observed`), every job's handed in.
+pub(in crate::code_rule_dsl) fn observed_made(chunk: &SharedObserved) -> Observed {
+    chunk.fold(true);
+    chunk.made.as_ref().map(|m| std::mem::take(&mut *m.lock())).unwrap_or_default()
+}
+
+/// The observations as last published: `None` while not observing.
+pub(in crate::code_rule_dsl) fn observed_now(s: &SharedObserved) -> Option<Arc<Observed>> {
+    s.published.load_full()
+}
+
+/// Adds a chunk's observations to the run's, as the main thread files it (Q88: in the chunks' order).
+pub(in crate::code_rule_dsl) fn file_observed(run: &SharedObserved, made: Observed) {
+    run.change(|o| o.add(made));
+}
 
 /// This thread's observations, for a job on another thread to enter.
 pub(in crate::code_rule_dsl) fn share_observed() -> SharedObserved {
@@ -1021,17 +1132,15 @@ pub(in crate::code_rule_dsl) fn enter_observed(to: SharedObserved) -> impl Drop 
     struct Entered(Option<SharedObserved>, Option<Observed>);
     impl Drop for Entered {
         fn drop(&mut self) {
-            if let Some(mine) = OWN_OBSERVED.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.1.take()))
-                && let Some(o) = OBSERVED_AT.with(|a| a.borrow().clone()).write().as_mut()
-            {
-                o.add(mine);
+            if let Some(mine) = OWN_OBSERVED.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.1.take())) {
+                OBSERVED_AT.with(|a| a.borrow().clone()).hand_in(mine);
             }
             if let Some(a) = self.0.take() {
                 OBSERVED_AT.with(|o| *o.borrow_mut() = a);
             }
         }
     }
-    let own = to.read().is_some().then(Observed::default);
+    let own = to.published.load().is_some().then(Observed::default);
     let was = OBSERVED_AT.with(|a| std::mem::replace(&mut *a.borrow_mut(), to));
     Entered(Some(was), OWN_OBSERVED.with(|o| std::mem::replace(&mut *o.borrow_mut(), own)))
 }
@@ -1040,7 +1149,7 @@ pub(in crate::code_rule_dsl) fn enter_observed(to: SharedObserved) -> impl Drop 
 /// chunk reads a rate per node: per rule (`obs_rule`: its head and body), the rows into and out of every step of every
 /// probe of it (the planner's units of work: `native.tsv`'s `steps_in_out`); per relation, its rows when its stratum
 /// ended and per column its distinct values and fanout (`Rel`).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(in crate::code_rule_dsl) struct Observed {
     rules: rustc_hash::FxHashMap<u64, (f64, f64)>,
     rels: rustc_hash::FxHashMap<String, Rel>,
@@ -1056,7 +1165,7 @@ pub(in crate::code_rule_dsl) struct Observed {
 
 /// A relation as its strata left it, summed over the runs that observed it: rows and nodes, and per column the
 /// distinct values (summed: a rate per node) and the fanout of an equality probe weighted by the run's rows.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Rel {
     rows: f64,
     nodes: f64,
@@ -1076,7 +1185,8 @@ pub(super) struct Seen<'a> {
 /// (every choice from the plan's estimates), for comparison.
 pub(super) fn observing(on: bool) {
     let on = on && !std::env::var("RERAIL_OBSERVED_STEPS").is_ok_and(|v| v == "off");
-    OBSERVED.with(|o| *o.borrow_mut() = on.then(Observed::default));
+    // A new handle: what the last run's jobs handed in stays with theirs.
+    OBSERVED_AT.with(|a| *a.borrow_mut() = Arc::new(ObservedShared::observing(on)));
 }
 
 /// A stratum's native run: per rule, the (in, out) rows of each step of each of its probes, and each relation it
@@ -1571,9 +1681,10 @@ pub mod tests {
     /// `binding` 3, the comparison every row) makes the copy about 66 k rows of work against about 18 k stored, so
     /// `ctx` should stay stored. Before the measured key domains (2ab61d7b4, O148) the estimate priced the copy's
     /// probe of `look` as keeping a binding in a hundred and inlined it, and only the observed side took that back.
-    /// The estimate now bounds the bindings by their constant filters and applies containment to every probe, and
-    /// keeps `ctx` stored from the start; once the stored side has run, the copy is priced by those selectivities,
-    /// and `ctx` still stays stored. (`the_side_that_ran_is_believed` pins `weigh`'s taking an estimate back.)
+    /// The estimate then bounded the bindings by their constant filters and kept `ctx` stored from the start. Priced
+    /// as the executor counts (decision 0297: a step costs the rows it passes on, not its rows in as well), the
+    /// estimates inline it again: the build scans `load`. Once the stored side has run (its build made 2 k rows),
+    /// the copy is priced by those selectivities, and `ctx` stays stored. (`the_side_that_ran_is_believed` pins `weigh`'s taking an estimate back.)
     #[test]
     fn observed_selectivities_price_a_copy_that_never_ran() {
         use super::super::{Inputs, Stats, make_plan};
@@ -1619,7 +1730,9 @@ pub mod tests {
             got
         };
         let shown = priced(&mut model);
-        assert!(decided(&mut model).is_empty(), "estimated, the copy is priced above the stored side: {shown}");
+        // Priced as the executor counts (decision 0297), the build scans `load`'s 200 k rows and the copy, starting
+        // from `binding`, does 65 k: the estimates inline `ctx`.
+        assert_eq!(decided(&mut model), vec!["ctx".to_owned()], "estimated, the copy is priced under the stored side: {shown}");
         // The stored side ran: the reader and the build, with the rows each step made.
         let nodes = model.stats.nodes;
         let ran = |rule: &Rule, factors: &dyn Fn(&Literal) -> f64| -> Vec<(u64, u64)> {

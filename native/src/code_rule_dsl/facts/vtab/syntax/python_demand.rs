@@ -1,5 +1,5 @@
 //! Batched semantic facts over explicit SQL demands. State belongs to one immutable document batch.
-use super::{Batch, NONE, Projected};
+use super::{Batch, Item, NONE, Projected};
 use crate::code_rule_dsl::facts::producers::python::families as py;
 use crate::code_rule_dsl::{
     facts::producers::python::{
@@ -73,10 +73,10 @@ impl Semantics {
         for &n in &missing {
             let tape = root.get_doc();
             let span = tape.transducer_span(n);
-            if span.start != p.facts.start[n as usize] as usize
-                || span.end != p.facts.end[n as usize] as usize
+            if span.start != p.facts.start(n) as usize
+                || span.end != p.facts.end(n) as usize
                 || tape.transducer_kind(n)
-                    != crate::code_rule_dsl::facts::core::kind_code(p.facts.kind[n as usize])
+                    != crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(n))
             {
                 return Err("semantic tape node identity differs from demanded core node".into());
             }
@@ -145,18 +145,18 @@ impl PythonProject for Batch {
                 let local = p
                     .local_of(n)
                     .ok_or("Python demand references an invalid node")?;
-                let core = *p
-                    .core
-                    .get(local as usize)
+                let core = p
+                    .ranks()
+                    .select(Item::Node, local)
                     .ok_or("Python demand references a span instead of a node")?;
                 ids.insert(core);
             }
             requested += ids.len();
             let global = |n: u32| -> Result<i64, String> {
-                let local = *p
-                    .local
-                    .get(n as usize)
-                    .ok_or("semantic result outside core")?;
+                if p.facts.len() <= n as usize {
+                    return Err("semantic result outside core".into());
+                }
+                let local = p.local_of_node(n);
                 if local == NONE {
                     return Err("semantic result outside projected world".into());
                 }

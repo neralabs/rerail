@@ -347,12 +347,12 @@ pub struct MetalEvaluation {
     pub task_start: u32,
     pub task_count: u32,
     /// A resident label batch's (decision 0033): the evaluation's program and file, and its
-    /// roots: its rule's segments (their header) and its first root's index in the rule. Its
-    /// tasks are those roots, with no task records. Zero elsewhere.
+    /// roots' rule (its word in the run's root table, `root_mask`). Its tasks are its document's
+    /// groups of 64 nodes, with no task records. Zero elsewhere.
     pub program: u32,
     pub file: u32,
-    pub root_segment: u32,
-    pub root_base: u32,
+    pub root_rule: u32,
+    pub root_reserved: u32,
     pub quotas: [EvaluationQuotaRecord; ARENA_KIND_COUNT],
     pub pending: LazyArenaBlockRecord,
     pub capture: LazyArenaBlockRecord,
@@ -382,8 +382,11 @@ pub struct MetalTask {
     pub file: u32,
     pub program: u32,
     pub root: u32,
-    /// Workspace estimate only. Runtime task and path budgets are independent.
+    /// Workspace estimate only: it sizes the task's states, never stops the task.
     pub workspace_work_estimate: u32,
+    /// The task's work budget on the device (`WorkBudget`): its steps in all; a path's steps and a value's are
+    /// held to it and to `MAX_STEPS_PER_PATH`, as the CPU's.
+    pub work_limit: u32,
 }
 
 const _: [(); 88] = [(); size_of::<MetalBatchHeader>()];
@@ -410,7 +413,7 @@ const _: [(); 8] = [(); size_of::<EvaluationQuotaRecord>()];
 const _: [(); 16] = [(); size_of::<LazyArenaBlockRecord>()];
 const _: [(); 324] = [(); size_of::<MetalEvaluation>()];
 const _: [(); 184] = [(); size_of::<MetalGlobalArenas>()];
-const _: [(); 24] = [(); size_of::<MetalTask>()];
+const _: [(); 28] = [(); size_of::<MetalTask>()];
 
 const _: [(); 4] = [(); align_of::<MetalBatchHeader>()];
 const _: [(); 4] = [(); align_of::<MetalNode>()];
@@ -450,7 +453,7 @@ pub mod tests {
         assert_eq!(size_of::<LazyArenaBlockRecord>(), 16);
         assert_eq!(size_of::<MetalEvaluation>(), 324);
         assert_eq!(size_of::<MetalGlobalArenas>(), 184);
-        assert_eq!(size_of::<MetalTask>(), 24);
+        assert_eq!(size_of::<MetalTask>(), 28);
         assert_eq!(align_of::<MetalBatchHeader>(), 4);
         assert_eq!(align_of::<MetalTask>(), 4);
     }

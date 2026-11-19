@@ -26,7 +26,18 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::*};
 
 pub const FROZEN: u32 = 1;
 pub const DELTA: u32 = 2;
-pub const MAX_KEY: usize = 4;
+/// Its index directory and every index in it were added (`try_reserve_index`), each a chunk of the block's: given back
+/// with the relation (`release`), or when forgotten (`forget_indexes`). A built relation's indexes lie with its rows.
+pub const ADDED: u32 = 4;
+/// Its rows' values change in place (a lattice's fold, decision 0384 step 5), so its indexes are forgotten after each
+/// change and built again: each is a whole chunk of its class (`Block::try_alloc_chunk`), which the next index of its
+/// size takes back from the free list. A fitted chunk (every other relation's, `try_alloc_chunk_fit`) goes back as
+/// smaller pieces that a chunk of its size cannot take.
+pub const REWRITTEN: u32 = 8;
+/// A key's columns at most: the device's probes' (decision 0325 step 5).
+pub const MAX_KEY: usize = 8;
+/// Indexes a relation can be given after it is made (`try_add_index`): its directory's room.
+pub const ADDED_INDEXES: usize = 8;
 
 structure! {
     pub struct Index {
@@ -34,7 +45,8 @@ structure! {
         /// 1 when the key is the order key's first columns: its rows are one range of the sorted rows, found by
         /// binary search, and the index holds no buckets or rows.
         pub ordered: u32,
-        pub key: [u16; 4],
+        /// Its key's columns, `ncols` of them. An added index not yet built has `ncols` 0 (`find_index` skips it).
+        pub key: [u16; 8],
         /// Buckets less one (a power of two less one).
         pub mask: u64,
         /// Bucket `b`'s rows are `rows[offs[b]..offs[b + 1]]`: every key whose hash falls in `b`, in canonical
@@ -72,6 +84,20 @@ structure! {
     }
 }
 
+/// An index's room in its relation's block (`Relation::try_reserve_index`): its number, its buckets' and rows'
+/// offsets in the block, its mask, and the rows it covers.
+#[derive(Clone, Copy, Debug)]
+pub struct IndexRoom {
+    pub index: usize,
+    pub offs: usize,
+    pub rows: usize,
+    pub mask: u64,
+    pub rows_n: u32,
+    /// Its key's columns: `ncols` of `key`.
+    pub key: [u16; MAX_KEY],
+    pub ncols: usize,
+}
+
 /// What a relation is: its columns' widths, and what freeze builds for its readers.
 #[derive(Clone, Debug)]
 pub struct Spec {
@@ -87,7 +113,16 @@ pub struct Spec {
 impl Relation {
     /// Makes an empty relation in `block`: a delta of `base` when given. Returns its descriptor.
     pub fn create<'b>(block: &'b Block, spec: &Spec, base: Option<&Relation>) -> &'b Relation {
-        let p: *mut Relation = block.alloc_t(1);
+        Relation::try_create(block, spec, base).unwrap_or_else(|| panic!("block full: a relation of {} columns", spec.widths.len()))
+    }
+
+    /// `create`, or `None` when the block cannot hold the relation's descriptor and directories (what it took of
+    /// the block then stays unused).
+    pub fn try_create<'b>(block: &'b Block, spec: &Spec, base: Option<&Relation>) -> Option<&'b Relation> {
+        // The descriptor and both row sets' column directories, one chunk: given back whole (`release`).
+        let at = block.try_alloc_chunk(Relation::descriptor_bytes(spec.widths.len()), 64)?;
+        let p: *mut Relation = block.ptr(at);
+        let cols: *mut crate::rows::ColDir = block.ptr(at + Relation::DIRS_AT);
         unsafe {
             (*p).arity = spec.widths.len() as u32;
             (*p).flags.store(if base.is_some() { DELTA } else { 0 }, Relaxed);
@@ -100,10 +135,136 @@ impl Relation {
                 (*p).okey[i] = c;
             }
             (*p).nokey = spec.order.len() as u32;
-            Rows::init(&raw mut (*p).rows, block, &spec.widths, spec.min_log);
-            Rows::init(&raw mut (*p).killed, block, &[4], 6);
-            &*p
+            Rows::init_in(&raw mut (*p).rows, cols, &spec.widths, spec.min_log);
+            Rows::init_in(&raw mut (*p).killed, cols.add(spec.widths.len()), &[4], 6);
+            Some(&*p)
         }
+    }
+
+    /// A delta of `base` with no rows of its own whose dead bits are `words` (row `id` dead when bit `id` of them is
+    /// set): a relation's kills of the rows it shares, read beside them where they lie (decision 0325: the device
+    /// skips a dead row by its bit, `rel_dead`). `None` when the block cannot hold it.
+    /// Its dead bits are a chunk of their own, so a delta replaced when they change goes back whole
+    /// (`release_kills`).
+    pub fn try_kills<'b>(block: &'b Block, spec: &Spec, base: &Relation, words: &[u64]) -> Option<&'b Relation> {
+        let rel = Relation::try_create(block, spec, Some(base))?;
+        let Some(at) = block.try_alloc_chunk(Relation::kills_bytes(words.len()), 64) else {
+            // SAFETY: just made in `block`; no one has it.
+            unsafe { rel.release(block) };
+            return None;
+        };
+        let w: *mut u64 = block.ptr(at);
+        // SAFETY: `w` holds `words.len()` words, just allocated in `block`, as `rel` is.
+        unsafe {
+            std::ptr::copy_nonoverlapping(words.as_ptr(), w, words.len());
+            Span::set(&rel.dead, w, words.len());
+        }
+        Some(rel)
+    }
+
+    /// The chunk a kills delta's `n` dead words take (`try_kills`).
+    fn kills_bytes(n: usize) -> usize {
+        n.max(1) * size_of::<u64>()
+    }
+
+    /// Gives a kills delta (`try_kills`) back to the block's free list: its dead bits' chunk, then itself
+    /// (`release`). Returns the bytes given to the OS with them.
+    ///
+    /// # Safety
+    /// It is a delta `try_kills` made in `block`, and no one reads it after (its last holder's).
+    pub unsafe fn release_kills(&self, block: &Block) -> usize {
+        let dead = self.dead.as_slice();
+        let given = block.free_chunk(block.offset_of(dead.as_ptr()), Relation::kills_bytes(dead.len()));
+        given + unsafe { self.release(block) }
+    }
+
+    /// A copy of this full relation in open `block`: its descriptor made again, then its rows' and kills' chunks,
+    /// dead bits, indexes and statistics copied whole by `memcpy` (no row decoded or re-sorted, no index rebuilt),
+    /// each reference set to its copy. A reader of the copy reads what a reader of this reads (0401 F2, F6). It is
+    /// frozen or not (a run's part, its rows in any order, with the indexes the run added); nothing writes it
+    /// meanwhile, and an open relation's set test (`pending`) is not copied. `None` when `block` has no room.
+    pub fn try_copy_into<'b>(&self, block: &'b Block) -> Option<&'b Relation> {
+        assert!(!self.is_delta(), "only a full relation is copied");
+        let spec = Spec {
+            widths: (0..self.arity as usize).map(|c| self.rows.col(c).width).collect(),
+            order: self.okey[..self.nokey as usize].to_vec(),
+            indexes: Vec::new(),
+            min_log: self.rows.min_log,
+        };
+        let rel = Relation::try_create(block, &spec, None)?;
+        if !rel.rows.try_copy_from(block, &self.rows) || !rel.killed.try_copy_from(block, &self.killed) {
+            return None;
+        }
+        /// `src`'s items in `block`, `dst` set to them.
+        fn copy_span<T>(block: &Block, dst: &Span<T>, src: &Span<T>) -> Option<()> {
+            if src.is_empty() {
+                return Some(());
+            }
+            let p: *mut T = block.try_alloc_t(src.len())?;
+            // SAFETY: `p` holds `src.len()` items, just allocated in open `block`, where `dst` lies too; the items are
+            // plain data (`Pod`), copied as bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(src.as_ptr(), p, src.len());
+                Span::set(dst, p, src.len());
+            }
+            Some(())
+        }
+        copy_span(block, &rel.dead, &self.dead)?;
+        copy_span(block, &rel.stats, &self.stats)?;
+        if !self.indexes.is_empty() {
+            let n = self.indexes.len();
+            let dir: *mut Index = block.try_alloc_t(n)?;
+            // SAFETY: `dir` holds `n` zeroed entries in open `block`, as `rel` is; each index's spans are copied
+            // after its fixed fields.
+            unsafe {
+                Span::set(&rel.indexes, dir, n);
+                for (i, ix) in self.indexes.as_slice().iter().enumerate() {
+                    let to = &*dir.add(i);
+                    let w = dir.add(i);
+                    (*w).ncols = std::ptr::read_volatile(&raw const ix.ncols);
+                    (*w).ordered = ix.ordered;
+                    (*w).key = ix.key;
+                    (*w).mask = ix.mask;
+                    copy_span(block, &to.offs, &ix.offs)?;
+                    copy_span(block, &to.rows, &ix.rows)?;
+                }
+            }
+        }
+        // SAFETY: `rel` is this block's and not yet given to anyone: its counters are ours to set.
+        unsafe {
+            let me = std::ptr::from_ref(rel).cast_mut();
+            (*me).base_rows = 0;
+        }
+        rel.live.store(self.live.load(Acquire), Relaxed);
+        rel.nindex.store(self.nindex.load(Acquire), Relaxed);
+        rel.flags.store(self.flags.load(Acquire), Release);
+        Some(rel)
+    }
+
+    /// Gives its chunks back to the block's free list (decision 0342), when the block keeps one. Returns the bytes
+    /// given to the OS with them (`Block::free_chunk`).
+    ///
+    /// # Safety
+    /// It lies in `block`, and no one reads or writes it after (its last holder's).
+    pub unsafe fn release(&self, block: &Block) -> usize {
+        let given = unsafe { self.rows.release(block) + self.killed.release(block) };
+        // Its added indexes, and their directory: chunks of the block's.
+        if self.flags.load(Acquire) & ADDED != 0 {
+            // SAFETY: the caller's: this is the relation's last use.
+            unsafe { self.forget_indexes(block) };
+            block.free_chunk_fit_resident(block.offset_of(self.indexes.as_ptr()), block.fit_kept(ADDED_INDEXES * size_of::<Index>()));
+        }
+        let (at, bytes) = (block.offset_of(std::ptr::from_ref(self)), Relation::descriptor_bytes(self.arity as usize));
+        // The last use of `self`: its own memory goes back.
+        given + block.free_chunk(at, bytes)
+    }
+
+    /// Where the column directories lie in a descriptor's chunk.
+    const DIRS_AT: usize = size_of::<Relation>().next_multiple_of(64);
+
+    /// A descriptor's chunk: the relation, and the directories of its `arity` columns and its killed rows' one.
+    pub fn descriptor_bytes(arity: usize) -> usize {
+        Relation::DIRS_AT + (arity + 1) * size_of::<crate::rows::ColDir>()
     }
 
     #[inline]
@@ -126,11 +287,11 @@ impl Relation {
         self.rows.get(id - self.base_rows, c)
     }
 
+    /// Whether the dead bits mark row `id`: the read written once (`rel_dead`, decision 0325).
     #[inline]
     pub fn dead_bit(&self, id: u32) -> bool {
-        let w = (id >> 6) as usize;
-        let d = self.dead.as_slice();
-        w < d.len() && (d[w] >> (id & 63)) & 1 == 1
+        // SAFETY: a live descriptor; the read checks `id` against the bits' length.
+        unsafe { crate::generated_reads::rel_dead(std::ptr::from_ref(self).cast(), id) != 0 }
     }
 
     #[inline]
@@ -138,16 +299,170 @@ impl Relation {
         &self.indexes.as_slice()[i]
     }
 
-    /// One relation's rows for a key of hash `h` on index `i`, before liveness and key equality: its bucket.
+    /// One relation's rows for a key of hash `h` on index `i`, before liveness and key equality: its bucket, found
+    /// by the read written once (`rel_group`, decision 0325).
     #[inline]
     pub fn group(&self, i: usize, h: u64) -> &[u32] {
-        let ix = self.index(i);
-        let o = ix.offs.as_slice();
-        if o.is_empty() {
+        // SAFETY: a live descriptor; index `i` is one of its indexes.
+        let g = unsafe { crate::generated_reads::rel_group(std::ptr::from_ref(self).cast(), i as u32, h) };
+        let (start, len) = ((g >> 32) as usize, (g & 0xffff_ffff) as usize);
+        if len == 0 {
             return &[];
         }
-        let b = (h & ix.mask) as usize;
-        &ix.rows.as_slice()[o[b] as usize..o[b + 1] as usize]
+        &self.index(i).rows.as_slice()[start..start + len]
+    }
+
+    /// The index whose key is `cols` over its rows `0..rows` (a hashed one: an ordered index holds no buckets), built.
+    /// An index of fewer rows (built before the relation grew) is not it.
+    pub fn find_index(&self, cols: &[u16], rows: u32) -> Option<usize> {
+        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
+        let ix = self.indexes.as_slice();
+        // SAFETY: an entry's `ncols` is written once, last (`index_built`); read as written, then the index after it.
+        let built = |i: usize| unsafe { std::ptr::read_volatile(&raw const ix[i].ncols) } as usize;
+        let found = (0..n).find(|&i| ix[i].ordered == 0 && built(i) == cols.len() && ix[i].key[..cols.len()] == *cols && ix[i].rows.len() == rows as usize);
+        std::sync::atomic::fence(Acquire);
+        found
+    }
+
+    /// Room for an index on `cols` of rows `0..n` in `block`, which holds this relation: its directory's entry, its
+    /// `2^log` buckets (`n`'s power of two at least) and its rows, which a builder fills (`build_index`, or the
+    /// device's), then marks built (`index_built`). Its number, its buckets' and rows' offsets in the block, and its
+    /// mask; `None` when the block or the directory has no room.
+    ///
+    /// # Safety
+    /// No other thread adds an index to this relation meanwhile (its owner's lock), and its rows `0..n` are written.
+    pub unsafe fn try_reserve_index(&self, block: &Block, cols: &[u16], n: u32) -> Option<IndexRoom> {
+        // SAFETY: the caller's.
+        unsafe { self.try_reserve_index_buckets(block, cols, n, n as usize) }
+    }
+
+    /// `try_reserve_index` with room for `keys` distinct keys: `keys`' power of two buckets (at most `n`'s), about
+    /// one key a bucket. A key of few values (a kind) is a few buckets, not one a row: its index is about 4 bytes a
+    /// row and 4 a key.
+    ///
+    /// # Safety
+    /// As `try_reserve_index`'s.
+    pub unsafe fn try_reserve_index_buckets(&self, block: &Block, cols: &[u16], n: u32, keys: usize) -> Option<IndexRoom> {
+        assert!(!cols.is_empty() && cols.len() <= MAX_KEY, "a key of {} columns", cols.len());
+        // SAFETY: the caller's: this relation's descriptor is ours to change.
+        unsafe {
+            let me = std::ptr::from_ref(self).cast_mut();
+            if self.indexes.len() == 0 {
+                let (at, _) = block.try_alloc_chunk_fit_zeroed(ADDED_INDEXES * size_of::<Index>(), 8)?;
+                Span::set(&raw mut (*me).indexes, block.ptr::<Index>(at), ADDED_INDEXES);
+                self.flags.fetch_or(ADDED, Release);
+            }
+            let i = self.nindex.load(Relaxed) as usize;
+            if i >= self.indexes.len() {
+                return None;
+            }
+            let cap = keys.min(n as usize).next_power_of_two().max(1);
+            // Chunks the block's free list takes back when the index is forgotten (`forget_indexes`), zeroed as an
+            // allocation is.
+            let (ob, rb) = (4 * (cap + 1), 4 * (n as usize).max(1));
+            let (offs_at, rows_at) = if self.flags.load(Acquire) & REWRITTEN != 0 {
+                let o = block.try_alloc_chunk(ob, 8)?;
+                let Some(r) = block.try_alloc_chunk(rb, 8) else {
+                    block.free_chunk(o, ob);
+                    return None;
+                };
+                (o, r)
+            } else {
+                let (o, _) = block.try_alloc_chunk_fit_zeroed(ob, 8)?;
+                let Some((r, _)) = block.try_alloc_chunk_fit_zeroed(rb, 8) else {
+                    block.free_chunk_fit(o, block.fit_kept(ob));
+                    return None;
+                };
+                (o, r)
+            };
+            let (offs, rows): (*mut u32, *mut u32) = (block.ptr(offs_at), block.ptr(rows_at));
+            let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
+            (*ix).ncols = 0;
+            (*ix).ordered = 0;
+            let mut key = [0u16; MAX_KEY];
+            key[..cols.len()].copy_from_slice(cols);
+            (*ix).key = key;
+            (*ix).mask = (cap - 1) as u64;
+            Span::set(&raw mut (*ix).offs, offs, cap + 1);
+            Span::set(&raw mut (*ix).rows, rows, n as usize);
+            self.nindex.store(i as u32 + 1, Release);
+            Some(IndexRoom { index: i, offs: block.offset_of(offs), rows: block.offset_of(rows), mask: (cap - 1) as u64, rows_n: n, key: (*ix).key, ncols: cols.len() })
+        }
+    }
+
+    /// Fills index `room` on the host: each row's bucket by its key's hash, the buckets' starts, then the rows in id
+    /// order within each bucket, as the device's builder places them.
+    ///
+    /// # Safety
+    /// `room` is this relation's, reserved and not yet built, and nothing reads it meanwhile.
+    pub unsafe fn build_index(&self, room: &IndexRoom) {
+        let ix = &self.indexes.as_slice()[room.index];
+        let n = room.rows_n as usize;
+        // SAFETY: the caller's: the room's spans are ours to write.
+        let (offs, rows) = unsafe {
+            (std::slice::from_raw_parts_mut(ix.offs.as_slice().as_ptr().cast_mut(), ix.offs.len()),
+             std::slice::from_raw_parts_mut(ix.rows.as_slice().as_ptr().cast_mut(), ix.rows.len()))
+        };
+        offs.fill(0);
+        let base = self.base_rows;
+        let key = &room.key[..room.ncols];
+        let bucket: Vec<u32> = (0..n as u32).map(|i| (key.iter().fold(crate::SEED, |h, &c| crate::mix(h, self.rows.get(i, c as usize))) & room.mask) as u32).collect();
+        for &b in &bucket {
+            offs[b as usize + 1] += 1;
+        }
+        for b in 0..offs.len() - 1 {
+            offs[b + 1] += offs[b];
+        }
+        let mut at: Vec<u32> = offs[..offs.len() - 1].to_vec();
+        for (i, &b) in bucket.iter().enumerate() {
+            rows[at[b as usize] as usize] = base + i as u32;
+            at[b as usize] += 1;
+        }
+    }
+
+    /// Index `room` built (by the host or the device): `find_index` finds it from now on.
+    ///
+    /// # Safety
+    /// Its builder has finished.
+    pub unsafe fn index_built(&self, room: &IndexRoom) {
+        let ix = std::ptr::from_ref(&self.indexes.as_slice()[room.index]).cast_mut();
+        std::sync::atomic::fence(Release);
+        // SAFETY: the caller's; `ncols` is a u32 written once, after the index (the fence above).
+        unsafe { std::ptr::write_volatile(&raw mut (*ix).ncols, room.ncols as u32) };
+    }
+
+    /// Marks its rows' values as changed in place (`REWRITTEN`): before any index is added.
+    pub fn rewritten(&self) {
+        debug_assert!(self.indexes.is_empty(), "marked rewritten after an index was added");
+        self.flags.fetch_or(REWRITTEN, Release);
+    }
+
+    /// Every index added forgotten, its buckets and rows given back to `block`'s free list (`try_reserve_index`'s
+    /// chunks): for a relation whose rows' values change in place (a lattice's fold, decision 0384 step 5), whose
+    /// indexes built before no longer hold. The next reader that probes a key builds its index again, in room the
+    /// block takes from its free list.
+    ///
+    /// # Safety
+    /// `block` holds this relation, whose indexes were all added (`try_reserve_index`, none of a built relation's);
+    /// under its owner's index lock, and no reader probes an index of it meanwhile, or after.
+    pub unsafe fn forget_indexes(&self, block: &Block) {
+        assert!(self.flags.load(Acquire) & ADDED != 0 || self.indexes.is_empty(), "a built relation's indexes forgotten");
+        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
+        for ix in &self.indexes.as_slice()[..n] {
+            // SAFETY: the caller's; `find_index` skips an entry whose `ncols` is 0.
+            unsafe { std::ptr::write_volatile(&raw mut (*std::ptr::from_ref(ix).cast_mut()).ncols, 0) };
+            let (offs, rows) = (4 * ix.offs.len(), 4 * ix.rows.len().max(1));
+            let (o, r) = (block.offset_of(ix.offs.as_ptr()), block.offset_of(ix.rows.as_ptr()));
+            // Left resident, as an index's room was before it went back (a few bytes a row; the next index takes it).
+            if self.flags.load(Acquire) & REWRITTEN != 0 {
+                block.free_chunk_resident(o, offs);
+                block.free_chunk_resident(r, rows);
+            } else {
+                block.free_chunk_fit_resident(o, block.fit_kept(offs));
+                block.free_chunk_fit_resident(r, block.fit_kept(rows));
+            }
+        }
+        self.nindex.store(0, Release);
     }
 
     /// `held_bytes` by part: values written, chunk room unwritten, order, index buckets, index rows, dead bits,
@@ -830,12 +1145,120 @@ impl<A: Iterator<Item = u32>, B: Iterator<Item = u32>> Iterator for Merge<'_, A,
 
 #[cfg(test)]
 mod tests {
+    /// A relation released in a free-listed block (decision 0342) gives its chunks back: the next relation of its
+    /// shape takes them, so the block grows by the descriptors alone, and reads its own rows.
+    #[test]
+    fn a_released_relations_chunks_are_taken_by_the_next() {
+        let block = Block::anon(kind::FACTS, 64 << 20).with_free_list();
+        let spec = Spec { widths: vec![8, 8, 8], order: Vec::new(), indexes: Vec::new(), min_log: crate::rows::MIN_LOG };
+        let fill = |r: &Relation, base: i64| {
+            assert!(r.rows.try_reserve(&block, 50_000));
+            unsafe {
+                r.rows.claim_reserved(50_000);
+                for i in 0..50_000u32 {
+                    for c in 0..3 {
+                        r.rows.put(i, c, base + i as i64 * 3 + c as i64);
+                    }
+                }
+            }
+        };
+        let a = Relation::try_create(&block, &spec, None).unwrap();
+        fill(a, 0);
+        let after_one = block.used();
+        unsafe { a.release(&block) };
+        assert!(block.free_bytes() >= 50_000 * 24, "its chunks are free: {}", block.free_bytes());
+        let b = Relation::try_create(&block, &spec, None).unwrap();
+        fill(b, 1_000_000);
+        assert_eq!(block.used(), after_one, "the next took its chunks and its descriptor: nothing new from the front");
+        assert_eq!(b.rows.get(49_999, 2), 1_000_000 + 49_999 * 3 + 2);
+    }
+
     use super::*;
     use crate::block::kind;
     use std::collections::BTreeSet;
 
+    /// Decision 0384 step 5: an added index's buckets and rows are chunks of a free-listed block, which forgetting it
+    /// (`forget_indexes`, a relation whose rows changed in place) gives back, and the next index takes again: a
+    /// relation probed after every change of its rows grows its block by nothing. Released, the relation gives back
+    /// its indexes and their directory too.
+    #[test]
+    fn a_forgotten_index_gives_its_room_back() {
+        let block = Block::anon(kind::FACTS, 16 << 20).with_free_list();
+        let spec = Spec { widths: vec![8, 8], order: Vec::new(), indexes: Vec::new(), min_log: crate::rows::MIN_LOG };
+        let rel = Relation::try_create(&block, &spec, None).unwrap();
+        rel.rewritten();
+        let n = 20_000u32;
+        assert!(rel.rows.try_reserve(&block, u64::from(n)));
+        unsafe {
+            rel.rows.claim_reserved(n);
+            for i in 0..n {
+                rel.rows.put(i, 0, i64::from(i % 97));
+                rel.rows.put(i, 1, i64::from(i));
+            }
+        }
+        let index = |r: &Relation| unsafe {
+            let room = r.try_reserve_index(&block, &[0], n).expect("room");
+            r.build_index(&room);
+            r.index_built(&room);
+        };
+        index(rel);
+        assert!(rel.find_index(&[0], n).is_some());
+        let used = block.used();
+        let free = block.free_bytes();
+        unsafe { rel.forget_indexes(&block) };
+        assert!(rel.find_index(&[0], n).is_none(), "forgotten");
+        assert!(block.free_bytes() >= free + 4 * n as usize, "its buckets and rows back on the free list: {} from {free}", block.free_bytes());
+        for _ in 0..20 {
+            index(rel);
+            unsafe { rel.forget_indexes(&block) };
+        }
+        index(rel);
+        assert_eq!(block.used(), used, "each index again in the room the last gave back");
+        let i = rel.find_index(&[0], n).expect("built again");
+        let group = rel.group(i, [5i64].iter().fold(crate::SEED, |h, &v| crate::mix(h, v)));
+        assert_eq!(group.iter().filter(|&&r| rel.rows.get(r, 0) == 5).count(), (0..n).filter(|i| i % 97 == 5).count(), "a key's rows");
+        let free = block.free_bytes();
+        unsafe { rel.release(&block) };
+        assert!(block.free_bytes() >= free + 4 * n as usize + 16 * n as usize, "rows, index and directory given back");
+    }
+
     fn rows_of(v: &View) -> Vec<Vec<i64>> {
         v.ordered_iter().map(|id| v.row(id)).collect()
+    }
+
+    /// An index added after the relation was made (`try_reserve_index`, `build_index`): found by its key once built
+    /// (not before), and each key's group, read by the read written once (`group`), holds exactly that key's rows
+    /// in id order, for a key of one column and one of eight. A full directory refuses.
+    #[test]
+    fn an_added_index_groups_each_keys_rows_in_id_order() {
+        let block = Block::anon(kind::FACTS, 16 << 20);
+        let lock = Mutex::new(());
+        let spec = Spec { widths: vec![8; 9], order: Vec::new(), indexes: Vec::new(), min_log: 4 };
+        let rel = Relation::create(&block, &spec, None);
+        let rows: Vec<[i64; 9]> = (0..2_000i64).map(|i| std::array::from_fn(|c| if c == 0 { i % 37 } else { (i * 7 + c as i64) % 5 - 2 })).collect();
+        RelW { block: &block, rel, lock: &lock }.extend(&rows.iter().flatten().copied().collect::<Vec<_>>());
+        let n = rel.rows.len();
+        for cols in [vec![0u16], (1..9).collect::<Vec<u16>>()] {
+            assert_eq!(rel.find_index(&cols, n), None);
+            // SAFETY: one thread; the rows are written.
+            let room = unsafe { rel.try_reserve_index(&block, &cols, n) }.expect("room");
+            assert_eq!(rel.find_index(&cols, n), None, "not found before it is built");
+            unsafe {
+                rel.build_index(&room);
+                rel.index_built(&room);
+            }
+            let i = rel.find_index(&cols, n).expect("found once built");
+            for probe in [0usize, 1, 5, 36, 1999] {
+                let key: Vec<i64> = cols.iter().map(|&c| rows[probe][c as usize]).collect();
+                let want: Vec<u32> = (0..n).filter(|&r| cols.iter().zip(&key).all(|(&c, &v)| rows[r as usize][c as usize] == v)).collect();
+                let got: Vec<u32> = rel.group(i, crate::key_hash(&key)).iter().copied().filter(|&r| cols.iter().zip(&key).all(|(&c, &v)| rel.rows.get(r, c as usize) == v)).collect();
+                assert_eq!(got, want, "key {key:?} on {cols:?}");
+            }
+        }
+        for c in 2..ADDED_INDEXES as u16 {
+            assert!(unsafe { rel.try_reserve_index(&block, &[c], n) }.is_some());
+        }
+        assert!(unsafe { rel.try_reserve_index(&block, &[0, 1], n) }.is_none(), "the directory is full");
     }
 
     /// Freeze keeps a set in canonical order, a delta's set being its base's less its kills plus its own rows; the

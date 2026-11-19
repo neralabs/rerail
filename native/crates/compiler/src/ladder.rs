@@ -550,12 +550,16 @@ pub fn check_shape(name: &str, c: &Compiled) {
             assert_eq!(k + 1, c.parser.tier1.passes.len(), "{name}: tier 1's pass {k} has no block loop and is not the last");
             continue;
         }
+        if !pass.block_loop {
+            // No block loop (`native_cpu_block::bodiless_body`): the token loop is the pass's.
+            continue;
+        }
         let body: Vec<String> = crate::clif_text::hot_loop_until(&pass.clif, &pass.exits).into_iter().flat_map(|(_, l)| l).collect();
         // Its back edge's branch, where it loops to itself; a body that goes on to the token
         // loop over the final blocks jumps there instead (`PassShape::exits`).
         let back_edge = usize::from(pass.exits.len() == 1);
-        let want = back_edge + 2 * pass.extracts + usize::from(pass.ascii_branch) + pass.gate_branches + pass.round_branches;
-        assert_eq!(branches(&body), want, "{name}: tier 1's pass {k} branches beyond its loop, its flattening, its ASCII test and its gates");
+        let want = back_edge + 2 * pass.extracts + usize::from(pass.ascii_branch) + pass.gate_branches + pass.round_branches + pass.rare_branches;
+        assert_eq!(branches(&body), want, "{name}: tier 1's pass {k} branches beyond its loop, its flattening, its ASCII test, its gates and its rare paths");
     }
     let heads = &c.parser.tier2.heads;
     assert!(heads.iter().any(|h| h.1 == Step::Token), "{name}: tier 2 has no token loop");
@@ -565,7 +569,7 @@ pub fn check_shape(name: &str, c: &Compiled) {
             // The table's final pass (parents, extras), and the wraps' placing.
             Step::Node => true,
             // No loop over bits: a local check (`CHECK`) is word-parallel, a loop over words.
-            Step::Bits | Step::File | Step::Round | Step::Region | Step::Word | Step::Pop | Step::Probe | Step::Item | Step::Halve => false,
+            Step::Bits | Step::File | Step::Round | Step::Region | Step::Word | Step::Bytes | Step::Pop | Step::Probe | Step::Item | Step::Halve => false,
         };
         assert!(ok, "{name}: tier 2 loops at {b} over {step:?}");
     }
@@ -573,7 +577,7 @@ pub fn check_shape(name: &str, c: &Compiled) {
     // `native_cpu_stream::outline`).
     // No indirect jump: tier 2's shared arms (`native_cpu_stream::shared_runs`) end in a jump
     // table of their own in the IR, which Cranelift's code has as a tree of compares
-    // (`native_cpu_codegen::tables_as_compares`: its Arm jump tables carry a speculation
+    // (`native_cpu_codegen::switch_trees`: its Arm jump tables carry a speculation
     // barrier), so neither tier's machine code has a jump table or a `br`.
     for (tier, asm, own) in [("tier 1", &c.parser.tier1.disassembly, c.parser.tier1.own_calls()), ("tier 2", &c.parser.tier2.disassembly, c.parser.tier2.own_calls)] {
         // A jump table's sequence is one line, its `br` inside, its entries the function's labels.
@@ -585,25 +589,38 @@ pub fn check_shape(name: &str, c: &Compiled) {
     }
 }
 
-/// A ladder's checks (`every_step_parses_as_the_reference`) over `steps`, mutations drawn from
-/// `alphabet`, and `fixed` documents besides; and `also`, for each document, given the
-/// reference's nodes: a difference with another parser, if any. The differences, one per step at
-/// most.
 /// Tier 1 on the CPU against its interpreter, on what the CPU makes: every output but those its
-/// record pass makes instead (`BlockNative::records_made`, all of them where the pass has no
+/// record pass makes instead (`BlockNative::cpu_unstored`, all of them where the pass has no
 /// block loop: `PassShape::block_loop`), the positions and totals, and the codes but for the
 /// gap marks tier 2 on the CPU tests itself (`native_cpu_block::lazy_code_bits`). A file both
-/// send to the fallback (a total set) goes no further: its outputs and codes are not read.
-fn tier1_equal(c: &Compiled, cpu: &crate::block::BlockRun, interpreted: &crate::block::BlockRun) -> bool {
+/// send to the fallback (a total set) is the same up to its refusal: a refusal leaves the compiled
+/// loop (decision 0177), so its positions are a prefix of the interpreter's, which goes on, and its
+/// codes the interpreter's up to the refusal and none or 0s past it; its outputs are not read.
+/// The outputs not compared are those the CPU stores no rows for (`BlockNative::cpu_unstored`:
+/// the record pass's, a token's last by its gap (decision 0411), and the totals read by no row).
+pub(crate) fn tier1_agrees(c: &Compiled, cpu: &crate::block::BlockRun, interpreted: &crate::block::BlockRun) -> bool {
     let block = &c.native.block_programs[0];
-    let unmade = block.records_made();
+    let unmade = block.cpu_unstored();
     let looped = c.parser.tier1.passes.iter().all(|p| p.back || p.block_loop);
     let lazy = crate::native_cpu_block::lazy_code_bits(block);
     let outputs = !looped || (cpu.outputs.len() == interpreted.outputs.len() && (0..cpu.outputs.len()).all(|o| unmade.contains(&o) || cpu.outputs[o] == interpreted.outputs[o]));
     let codes = cpu.codes.len() == interpreted.codes.len() && cpu.codes.iter().zip(&interpreted.codes).all(|(a, b)| a & !lazy == b & !lazy);
     let fell = interpreted.totals.iter().any(|&t| t != 0);
-    cpu.positions == interpreted.positions && cpu.totals == interpreted.totals && (fell || (outputs && codes))
+    if fell {
+        let prefix = |a: &[u32], b: &[u32]| a.len() <= b.len() && a == &b[..a.len()];
+        // Past the refusal the compiled loop writes no code: none (a shorter run), or 0s.
+        let left = cpu.codes.iter().zip(&interpreted.codes).position(|(a, b)| a & !lazy != b & !lazy).unwrap_or(cpu.codes.len());
+        let codes = cpu.codes.len() <= interpreted.codes.len() && cpu.codes[left..].iter().all(|&c| c & !lazy == 0);
+        let positions = cpu.positions.len() == interpreted.positions.len() && cpu.positions.iter().zip(&interpreted.positions).all(|(a, b)| prefix(a, b));
+        return cpu.totals == interpreted.totals && positions && codes;
+    }
+    cpu.positions == interpreted.positions && cpu.totals == interpreted.totals && outputs && codes
 }
+
+/// A ladder's checks (`every_step_parses_as_the_reference`) over `steps`, mutations drawn from
+/// `alphabet`, and `fixed` documents besides; and `also`, for each document, given the
+/// reference's nodes: a difference with another parser, if any. The differences, one per step at
+/// most.
 
 pub fn check_ladder(
     steps: &[(String, String)],
@@ -616,74 +633,84 @@ pub fn check_ladder(
     for (name, source) in steps {
         let c = compile_step(name, source);
         check_shape(name, &c);
-        let mut lang = Lang::of(&c.stmts);
-        for (kind, texts) in samples {
-            lang.samples.insert((*kind).to_owned(), texts.iter().map(|t| t.as_bytes().to_vec()).collect());
-        }
-        let (mut parsed, mut fell, mut with_extras) = (0usize, 0usize, 0usize);
-        let (mut sentences, mut mutations) = ([0usize; 2], [0usize; 2]);
-        let mut reasons: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-        let extra_ids: Vec<u16> = lang.extras.iter().map(|e| c.ids.of(e)).collect();
-        let (mut docs, before) = documents_with(&lang, seed(name), &|b| reference(&c, b).is_some(), alphabet);
-        docs.extend(fixed.iter().map(|d| d.as_bytes().to_vec()));
-        for (i, bytes) in docs.into_iter().enumerate() {
-            let show = || format!("{name}: {:?}", String::from_utf8_lossy(&bytes));
-            let want = reference(&c, &bytes);
-            let run = c.program.block_programs[0].run_files(&[&bytes]).remove(0);
-            let interp = crate::stream::run(&c.program, &bytes, &run).ok().map(as_ids);
-            let compiled = c.parser.parse(&bytes).ok().map(as_ids);
-            let tier1 = c.parser.tier1.extract(&bytes);
-            if !tier1_equal(&c, &tier1, &run) {
-                differ.push(format!("{}: tier 1 compiled differs from its interpreter", show()));
-                break;
-            }
-            if interp != want || compiled != want {
-                let why = crate::stream::run(&c.program, &bytes, &run).err().map(|r| format!("word {}: {}", r.pc, r.why));
-                let fell = run.totals.iter().any(|&t| t != 0);
-                differ.push(format!("{}:\n  reference {want:?}\n  interpreters {interp:?} ({why:?}, tier 1 falls back: {fell})\n  compiled {compiled:?}", show()));
-                break;
-            }
-            // The tape's bytes: the compiled code's, the interpreter's nodes through the tape's
-            // writer (`stream::image`), each extra's code flagged.
-            if let (Ok(image), Ok(nodes)) = (c.parser.image(&bytes), crate::stream::run(&c.program, &bytes, &run)) {
-                let want = crate::stream::image(&nodes, &c.program.readings.extras, c.parser.tier2.widths_tag().1, &bytes);
-                if image != want {
-                    let at = image.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(image.len().min(want.len()));
-                    differ.push(format!("{}: the tape differs from the interpreter's at {}", show(), rerail_tape_format::place(&want, at)));
-                    break;
-                }
-            }
-            if let Some(d) = also(name, &c, &bytes, &want) {
-                differ.push(format!("{}:\n  {d}", show()));
-                break;
-            }
-            let bucket = if i < before { &mut sentences } else { &mut mutations };
-            bucket[usize::from(want.is_none())] += 1;
-            match &want {
-                Some(nodes) => {
-                    parsed += 1;
-                    with_extras += usize::from(nodes.iter().any(|n| extra_ids.contains(&n.0)));
-                }
-                None => {
-                    fell += 1;
-                    if i < before {
-                        *reasons.entry(refusal(&c, &bytes)).or_default() += 1;
-                    }
-                }
-            }
-        }
-        eprintln!(
-            "{name}: {} words. sentences: {} parsed, {} refused {reasons:?}. mutated: {} parsed, {} refused. {with_extras} parsed with extras",
-            c.native.structural.len(),
-            sentences[0],
-            sentences[1],
-            mutations[0],
-            mutations[1]
-        );
-        if parsed < 20 || fell < 10 || (!extra_ids.is_empty() && with_extras < 20) {
-            differ.push(format!("{name}: {parsed} parsed, {fell} to tree-sitter: too few to test"));
-        }
+        differ.extend(check_documents(name, &c, alphabet, samples, fixed, also));
     }
     differ
+}
+
+/// One step's documents (`check_ladder`'s, without the shape): the grammar's sentences, their
+/// mutations from `alphabet`, and `fixed`. The first difference, if any.
+pub fn check_documents(
+    name: &str,
+    c: &Compiled,
+    alphabet: &[u8],
+    samples: &[(&str, &[&str])],
+    fixed: &[&str],
+    also: &dyn Fn(&str, &Compiled, &[u8], &Option<Vec<IdNode>>) -> Option<String>,
+) -> Option<String> {
+    let mut lang = Lang::of(&c.stmts);
+    for (kind, texts) in samples {
+        lang.samples.insert((*kind).to_owned(), texts.iter().map(|t| t.as_bytes().to_vec()).collect());
+    }
+    let (mut parsed, mut fell, mut with_extras) = (0usize, 0usize, 0usize);
+    let (mut sentences, mut mutations) = ([0usize; 2], [0usize; 2]);
+    let mut reasons: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let extra_ids: Vec<u16> = lang.extras.iter().map(|e| c.ids.of(e)).collect();
+    let (mut docs, before) = documents_with(&lang, seed(name), &|b| reference(c, b).is_some(), alphabet);
+    docs.extend(fixed.iter().map(|d| d.as_bytes().to_vec()));
+    for (i, bytes) in docs.into_iter().enumerate() {
+        let show = || format!("{name}: {:?}", String::from_utf8_lossy(&bytes));
+        let want = reference(&c, &bytes);
+        let run = c.program.block_programs[0].run_files(&[&bytes]).remove(0);
+        let interp = crate::stream::run(&c.program, &bytes, &run).ok().map(as_ids);
+        let compiled = c.parser.parse(&bytes).ok().map(as_ids);
+        let tier1 = c.parser.tier1.extract(&bytes);
+        if !tier1_agrees(c, &tier1, &run) {
+            return Some(format!("{}: tier 1 compiled differs from its interpreter", show()));
+        }
+        if interp != want || compiled != want {
+            let why = crate::stream::run(&c.program, &bytes, &run).err().map(|r| format!("word {}: {}", r.pc, r.why));
+            let fell = run.totals.iter().any(|&t| t != 0);
+            return Some(format!("{}:\n  reference {want:?}\n  interpreters {interp:?} ({why:?}, tier 1 falls back: {fell})\n  compiled {compiled:?}", show()));
+        }
+        // The tape's bytes: the compiled code's, the interpreter's nodes through the tape's
+        // writer (`stream::image`), each extra's code flagged.
+        if let (Ok(image), Ok(nodes)) = (c.parser.image(&bytes), crate::stream::run(&c.program, &bytes, &run)) {
+            let want = crate::stream::image(&nodes, &c.program.readings.extras, c.parser.tier2.widths_tag().1, &bytes);
+            if image != want {
+                let at = image.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(image.len().min(want.len()));
+                return Some(format!("{}: the tape differs from the interpreter's at {}", show(), rerail_tape_format::place(&want, at)));
+            }
+        }
+        if let Some(d) = also(name, c, &bytes, &want) {
+            return Some(format!("{}:\n  {d}", show()));
+        }
+        let bucket = if i < before { &mut sentences } else { &mut mutations };
+        bucket[usize::from(want.is_none())] += 1;
+        match &want {
+            Some(nodes) => {
+                parsed += 1;
+                with_extras += usize::from(nodes.iter().any(|n| extra_ids.contains(&n.0)));
+            }
+            None => {
+                fell += 1;
+                if i < before {
+                    *reasons.entry(refusal(&c, &bytes)).or_default() += 1;
+                }
+            }
+        }
+    }
+    eprintln!(
+        "{name}: {} words. sentences: {} parsed, {} refused {reasons:?}. mutated: {} parsed, {} refused. {with_extras} parsed with extras",
+        c.native.structural.len(),
+        sentences[0],
+        sentences[1],
+        mutations[0],
+        mutations[1]
+    );
+    if parsed < 20 || fell < 10 || (!extra_ids.is_empty() && with_extras < 20) {
+        return Some(format!("{name}: {parsed} parsed, {fell} to tree-sitter: too few to test"));
+    }
+    None
 }
 

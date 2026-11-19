@@ -1,12 +1,14 @@
 use super::{
-    metal_batch_abi::{LinkRecord, MetalNode},
+    metal_batch_abi::LinkRecord,
     native_cpu::NativeTaskContext,
+    native_cpu_tape,
     value::CaptureProgram,
 };
 use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Linkage, Module};
+use rerail_clif::inline::ReadIds;
 use std::mem;
 
 fn pointer(
@@ -33,20 +35,6 @@ fn link_pointer(
         .imul_imm(index, mem::size_of::<LinkRecord>() as i64);
     let offset = function.ins().uextend(ty, offset);
     function.ins().iadd(captures, offset)
-}
-
-fn node_pointer(
-    function: &mut FunctionBuilder<'_>,
-    task: cranelift_codegen::ir::Value,
-    node: cranelift_codegen::ir::Value,
-) -> cranelift_codegen::ir::Value {
-    let ty = function.func.dfg.value_type(task);
-    let nodes = pointer(function, task, mem::offset_of!(NativeTaskContext, nodes));
-    let offset = function
-        .ins()
-        .imul_imm(node, mem::size_of::<MetalNode>() as i64);
-    let offset = function.ins().uextend(ty, offset);
-    function.ins().iadd(nodes, offset)
 }
 
 fn label_count(
@@ -193,82 +181,107 @@ fn label_node(
     function.block_params(finish)[0]
 }
 
+/// `width` bytes of the source at `base + index` (unaligned).
+fn source_load(
+    function: &mut FunctionBuilder<'_>,
+    ty: types::Type,
+    width: types::Type,
+    base: cranelift_codegen::ir::Value,
+    index: cranelift_codegen::ir::Value,
+) -> cranelift_codegen::ir::Value {
+    let offset = function.ins().uextend(ty, index);
+    let at = function.ins().iadd(base, offset);
+    function
+        .ins()
+        .load(width, MemFlags::new().with_notrap().with_readonly(), at, 0)
+}
+
+/// Whether two nodes' texts are equal: their lengths, then their bytes a word (8 bytes) at a time, and what is
+/// left as at most one each of 4, 2 and 1 bytes. No step a byte (Q54).
 fn text_equal(
     function: &mut FunctionBuilder<'_>,
+    reads: &ReadIds,
     task: cranelift_codegen::ir::Value,
     left: cranelift_codegen::ir::Value,
     right: cranelift_codegen::ir::Value,
 ) -> cranelift_codegen::ir::Value {
     let ty = function.func.dfg.value_type(task);
-    let left_node = node_pointer(function, task, left);
-    let right_node = node_pointer(function, task, right);
-    let left_start = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        left_node,
-        mem::offset_of!(MetalNode, source_start) as i32,
-    );
-    let left_end = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        left_node,
-        mem::offset_of!(MetalNode, source_end) as i32,
-    );
-    let right_start = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        right_node,
-        mem::offset_of!(MetalNode, source_start) as i32,
-    );
-    let right_end = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        right_node,
-        mem::offset_of!(MetalNode, source_end) as i32,
-    );
-    let left_length = function.ins().isub(left_end, left_start);
+    let (left_start, left_end) = native_cpu_tape::span(function, reads, task, left);
+    let (right_start, right_end) = native_cpu_tape::span(function, reads, task, right);
+    let length = function.ins().isub(left_end, left_start);
     let right_length = function.ins().isub(right_end, right_start);
-    let loop_block = function.create_block();
-    function.append_block_param(loop_block, types::I32);
-    let compare = function.create_block();
-    function.append_block_param(compare, types::I32);
+    let source = pointer(function, task, mem::offset_of!(NativeTaskContext, source));
+    let left_offset = function.ins().uextend(ty, left_start);
+    let right_offset = function.ins().uextend(ty, right_start);
+    let left_base = function.ins().iadd(source, left_offset);
+    let right_base = function.ins().iadd(source, right_offset);
+    let words = function.create_block();
+    function.append_block_param(words, types::I32);
+    let word = function.create_block();
+    function.append_block_param(word, types::I32);
+    // The tail's steps: whether `bytes` are left, then their compare; the next step from where it ends.
+    let steps = [(types::I32, 4_i64), (types::I16, 2), (types::I8, 1)];
+    let tests = steps.map(|_| {
+        let block = function.create_block();
+        function.append_block_param(block, types::I32);
+        block
+    });
+    let compares = steps.map(|_| {
+        let block = function.create_block();
+        function.append_block_param(block, types::I32);
+        block
+    });
     let accept = function.create_block();
     let reject = function.create_block();
     let finish = function.create_block();
     function.append_block_param(finish, types::I8);
-    let same_length = function.ins().icmp(IntCC::Equal, left_length, right_length);
+    let same_length = function.ins().icmp(IntCC::Equal, length, right_length);
     let zero = function.ins().iconst(types::I32, 0);
     function
         .ins()
-        .brif(same_length, loop_block, &[zero.into()], reject, &[]);
-    function.switch_to_block(loop_block);
-    let index = function.block_params(loop_block)[0];
-    let done = function
+        .brif(same_length, words, &[zero.into()], reject, &[]);
+    // Whole words while 8 bytes are left.
+    function.switch_to_block(words);
+    let index = function.block_params(words)[0];
+    let left_over = function.ins().isub(length, index);
+    let short = function
         .ins()
-        .icmp(IntCC::UnsignedGreaterThanOrEqual, index, left_length);
+        .icmp_imm(IntCC::UnsignedLessThan, left_over, 8);
     function
         .ins()
-        .brif(done, accept, &[], compare, &[index.into()]);
-    function.switch_to_block(compare);
-    let index = function.block_params(compare)[0];
-    let source = pointer(function, task, mem::offset_of!(NativeTaskContext, source));
-    let left_at = function.ins().iadd(left_start, index);
-    let right_at = function.ins().iadd(right_start, index);
-    let left_at = function.ins().uextend(ty, left_at);
-    let right_at = function.ins().uextend(ty, right_at);
-    let left_source = function.ins().iadd(source, left_at);
-    let right_source = function.ins().iadd(source, right_at);
-    let left_byte = function
-        .ins()
-        .load(types::I8, MemFlags::trusted(), left_source, 0);
-    let right_byte = function
-        .ins()
-        .load(types::I8, MemFlags::trusted(), right_source, 0);
-    let equal = function.ins().icmp(IntCC::Equal, left_byte, right_byte);
-    let next = function.ins().iadd_imm(index, 1);
+        .brif(short, tests[0], &[index.into()], word, &[index.into()]);
+    function.switch_to_block(word);
+    let index = function.block_params(word)[0];
+    let left_word = source_load(function, ty, types::I64, left_base, index);
+    let right_word = source_load(function, ty, types::I64, right_base, index);
+    let equal = function.ins().icmp(IntCC::Equal, left_word, right_word);
+    let next = function.ins().iadd_imm(index, 8);
     function
         .ins()
-        .brif(equal, loop_block, &[next.into()], reject, &[]);
+        .brif(equal, words, &[next.into()], reject, &[]);
+    // What is left (under 8 bytes): 4, 2 and 1 bytes where its count has them.
+    for (k, &(width, bytes)) in steps.iter().enumerate() {
+        let after = tests.get(k + 1).copied().unwrap_or(accept);
+        let after_args = |index: cranelift_codegen::ir::Value| -> Vec<cranelift_codegen::ir::BlockArg> {
+            if k + 1 < steps.len() { vec![index.into()] } else { Vec::new() }
+        };
+        function.switch_to_block(tests[k]);
+        let index = function.block_params(tests[k])[0];
+        let left_over = function.ins().isub(length, index);
+        let has = function.ins().band_imm(left_over, bytes);
+        let skip = after_args(index);
+        function
+            .ins()
+            .brif(has, compares[k], &[index.into()], after, &skip);
+        function.switch_to_block(compares[k]);
+        let index = function.block_params(compares[k])[0];
+        let left_part = source_load(function, ty, width, left_base, index);
+        let right_part = source_load(function, ty, width, right_base, index);
+        let equal = function.ins().icmp(IntCC::Equal, left_part, right_part);
+        let next = function.ins().iadd_imm(index, bytes);
+        let on = after_args(next);
+        function.ins().brif(equal, after, &on, reject, &[]);
+    }
     function.switch_to_block(accept);
     let one = function.ins().iconst(types::I8, 1);
     function.ins().jump(finish, &[one.into()]);
@@ -279,70 +292,20 @@ fn text_equal(
     function.block_params(finish)[0]
 }
 
+/// Whether two nodes start on the same line: their starts' lines, a search of the task's line starts each
+/// (`native_cpu_output::line_for`, as the JIT's line properties read them), not a scan of the bytes between (Q54).
 fn same_line(
     function: &mut FunctionBuilder<'_>,
+    reads: &ReadIds,
     task: cranelift_codegen::ir::Value,
     left: cranelift_codegen::ir::Value,
     right: cranelift_codegen::ir::Value,
 ) -> cranelift_codegen::ir::Value {
-    let ty = function.func.dfg.value_type(task);
-    let left_node = node_pointer(function, task, left);
-    let right_node = node_pointer(function, task, right);
-    let left_start = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        left_node,
-        mem::offset_of!(MetalNode, source_start) as i32,
-    );
-    let right_start = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        right_node,
-        mem::offset_of!(MetalNode, source_start) as i32,
-    );
-    let left_first = function
-        .ins()
-        .icmp(IntCC::UnsignedLessThan, left_start, right_start);
-    let start = function.ins().select(left_first, left_start, right_start);
-    let end = function.ins().select(left_first, right_start, left_start);
-    let loop_block = function.create_block();
-    function.append_block_param(loop_block, types::I32);
-    let inspect = function.create_block();
-    function.append_block_param(inspect, types::I32);
-    let accept = function.create_block();
-    let reject = function.create_block();
-    let finish = function.create_block();
-    function.append_block_param(finish, types::I8);
-    function.ins().jump(loop_block, &[start.into()]);
-    function.switch_to_block(loop_block);
-    let at = function.block_params(loop_block)[0];
-    let done = function
-        .ins()
-        .icmp(IntCC::UnsignedGreaterThanOrEqual, at, end);
-    function
-        .ins()
-        .brif(done, accept, &[], inspect, &[at.into()]);
-    function.switch_to_block(inspect);
-    let at = function.block_params(inspect)[0];
-    let source = pointer(function, task, mem::offset_of!(NativeTaskContext, source));
-    let offset = function.ins().uextend(ty, at);
-    let source_at = function.ins().iadd(source, offset);
-    let byte = function
-        .ins()
-        .load(types::I8, MemFlags::trusted(), source_at, 0);
-    let newline = function.ins().icmp_imm(IntCC::Equal, byte, b'\n' as i64);
-    let next = function.ins().iadd_imm(at, 1);
-    function
-        .ins()
-        .brif(newline, reject, &[], loop_block, &[next.into()]);
-    function.switch_to_block(accept);
-    let one = function.ins().iconst(types::I8, 1);
-    function.ins().jump(finish, &[one.into()]);
-    function.switch_to_block(reject);
-    let zero = function.ins().iconst(types::I8, 0);
-    function.ins().jump(finish, &[zero.into()]);
-    function.switch_to_block(finish);
-    function.block_params(finish)[0]
+    let (left_start, _) = native_cpu_tape::span(function, reads, task, left);
+    let (right_start, _) = native_cpu_tape::span(function, reads, task, right);
+    let left_line = super::native_cpu_output::line_for(function, task, left_start);
+    let right_line = super::native_cpu_output::line_for(function, task, right_start);
+    function.ins().icmp(IntCC::Equal, left_line, right_line)
 }
 
 pub(super) fn define(
@@ -373,6 +336,7 @@ pub(super) fn define(
         Linkage::Local,
         &signature,
     )?;
+    let reads = ReadIds::declare(module)?;
     let mut context = module.make_context();
     context.func.signature = signature;
     let mut builder_context = FunctionBuilderContext::new();
@@ -421,9 +385,9 @@ pub(super) fn define(
         let left_node = label_node(&mut function, task, left, left_count, values[0]);
         let right_node = label_node(&mut function, task, right, right_count, values[0]);
         let result = if compare_text {
-            text_equal(&mut function, task, left_node, right_node)
+            text_equal(&mut function, &reads, task, left_node, right_node)
         } else {
-            same_line(&mut function, task, left_node, right_node)
+            same_line(&mut function, &reads, task, left_node, right_node)
         };
         let inverse = function.ins().bxor_imm(result, 1);
         let positive = if any {

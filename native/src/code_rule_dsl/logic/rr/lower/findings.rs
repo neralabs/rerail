@@ -4,6 +4,7 @@
 //! (policy, clause, code, path, line, at, message, its tag and each parameter's name beside its value), so tabs,
 //! newlines, numeric parameters, tags and distinct witnesses are kept as values, and no reader parses a text.
 use super::*;
+use crate::code_rule_dsl::logic::program_image::fields::FieldsMut;
 
 /// The relations' name's start: `rr_diagnostic_<digest>`, one relation for each finding and form (a node's or a
 /// place's).
@@ -117,7 +118,310 @@ fn column_type(ty: &str) -> &str {
     }
 }
 
-impl Lowerer {
+/// The findings of a program's `.violation`s and `.on … report` settings (`Findings::findings`), written over its
+/// fields (`FieldsMut`): a version's edit (`lowering_tail::Findings`) or, until the tree goes, a parsed program's.
+/// The rules it makes are collected (`rules`), for the caller to place.
+pub(super) struct Findings<'a, P: FieldsMut + ?Sized> {
+    prog: &'a mut P,
+    next: usize,
+    made: Vec<(String, usize)>,
+    rules: Vec<Rule>,
+}
+
+impl<P: FieldsMut + ?Sized> Findings<'_, P> {
+    /// A new name, none the program declares (`Lowerer::fresh`).
+    fn fresh(&mut self, stem: &str) -> String {
+        let prog = &*self.prog;
+        super::fresh_name(&mut self.next, &mut self.made, |n| prog.declares(n), stem)
+    }
+
+    fn write(&mut self, rule: Rule) {
+        self.rules.push(rule);
+    }
+
+    /// The findings of the `.violation`s: `violation(policy, V, code, path, line)` for each row of V, at its first
+    /// column's line (the engine's findings relation, as the converter's programs give it). A node's document is
+    /// `node`'s column; a span's is `docof` (`core.rr`), and so is its line. A `@place(path, line)` row is read from
+    /// V's place relation; a span or loc `at` that holds a `@place` value made elsewhere (`PLACE`) is found at its
+    /// path and line.
+    fn findings(&mut self, mut violations: Vec<Violation>, seen: RulesSeen) -> Result<bool, Error> {
+        // `.on syntax_error report CODE [at line 1]` and `.on input_error report CODE` (`core.rr`).
+        let on: Vec<(String, String, bool)> = self
+            .prog
+            .settings()
+            .into_iter()
+            .filter(|(k, _)| k == "on")
+            .filter_map(|(_, text)| {
+                let words: Vec<&str> = text.split_whitespace().collect();
+                match words.as_slice() {
+                    [what @ ("syntax_error" | "input_error"), "report", code, rest @ ..] => Some(((*what).to_owned(), (*code).to_owned(), rest == ["at", "line", "1"])),
+                    _ => None,
+                }
+            })
+            .collect();
+        let guest_errors = self.guest_policy(seen.reads_guest_policy);
+        if violations.is_empty() && on.is_empty() && guest_errors.is_empty() {
+            return Ok(false);
+        }
+        let policy = self
+            .prog
+            .settings()
+            .into_iter()
+            .find(|(k, _)| k == "policy")
+            .and_then(|(_, text)| text.split('"').nth(1).map(str::to_owned))
+            .unwrap_or_default();
+        let scoped = self.scope_filter();
+        // A finding is its rule, clause, code, path, line and column (the anchor's 0-based byte column): two findings
+        // on one line are two rows. A finding with no column (a place, an error of a file or input) has column 0.
+        self.prog.declare("violation", &[("rule", "sym"), ("clause", "sym"), ("code", "sym"), ("path", "sym"), ("line", "int"), ("col", "int")]);
+        // A program that derives `violation` itself, in the older five columns, is read at column 0: the caller's
+        // (`widen_violation_heads`), for this sees no rules.
+        // Where it is already (a printed program's `.output`), else last.
+        self.prog.add_output("violation");
+        let v = |s: &str| Term::Var(s.to_owned().into());
+        let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false });
+        // Whether a rule makes a `@place` value: only then can a span or loc `at` hold one.
+        let place_values = seen.place_values;
+        for f in std::mem::take(&mut violations) {
+            self.diagnostics(&policy, &f)?;
+            let code_col = match f.code {
+                FindingCode::Column(i) => Some(i),
+                _ => None,
+            };
+            let code = match &f.code {
+                FindingCode::Name => Term::Str(f.name.clone().into()),
+                FindingCode::Column(i) => v(&format!("rr_v{i}")),
+                FindingCode::Constant(c) => Term::Str(c.clone().into()),
+            };
+            let head = Atom { rel: "violation".into(), args: [Term::Str(policy.clone().into()), Term::Str(f.name.clone().into()), code, v("rr_p"), v("rr_l"), v("rr_c")].into(), neg: false, gated: false };
+            let cols: Vec<Term> = (0..f.arity).map(|i| if i == 0 || Some(i) == code_col { v(&format!("rr_v{i}")) } else { Term::Wild }).collect();
+            let at = if f.node {
+                vec![atom("node", vec![v("rr_d"), v("rr_v0"), Term::Wild, Term::Wild, Term::Wild]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), atom("line", vec![v("rr_v0"), v("rr_l")]), atom("col", vec![v("rr_v0"), v("rr_c")])]
+            } else {
+                vec![atom("docof", vec![v("rr_v0"), v("rr_d")]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), atom("line", vec![v("rr_v0"), v("rr_l")]), atom("col", vec![v("rr_v0"), v("rr_c")])]
+            };
+            self.write(Rule { head: head.clone(), body: std::iter::once(atom(&f.name, cols.clone())).chain(at).chain(scoped.iter().cloned()).collect() });
+            if !f.node && place_values {
+                let of = |g: &str| Term::Call(g.to_owned().into(), [v("rr_v0")].into());
+                let mut found = head.clone();
+                found.args.make_mut()[3] = of(PLACE_PATH);
+                found.args.make_mut()[4] = of(PLACE_LINE);
+                found.args.make_mut()[5] = Term::Int(0);
+                let mut body = vec![atom(&f.name, cols.clone()), Literal::Cmp { l: v("rr_v0"), op: "<", r: Term::Int(UNSET) }];
+                // The scope tests the place's path, bound for it here.
+                if !scoped.is_empty() {
+                    body.push(Literal::Cmp { l: v("rr_p"), op: "=", r: of(PLACE_PATH) });
+                    body.extend(scoped.iter().cloned());
+                }
+                self.write(Rule { head: found, body: body.into() });
+            }
+            if f.places {
+                let mut args = vec![v("rr_p"), v("rr_l")];
+                args.extend(cols.into_iter().skip(1));
+                let mut head = head;
+                head.args.make_mut()[5] = Term::Int(0);
+                self.write(Rule { head, body: std::iter::once(atom(&place_relation(&f.name), args)).chain(scoped.iter().cloned()).collect() });
+            }
+        }
+        // A syntax error at its line (or line 1), in its document; an input error at line 1 of the input's path.
+        for (what, code, line_one) in on {
+            let head = Atom { rel: "violation".into(), args: [Term::Str(policy.clone().into()), Term::Str(what.clone().into()), Term::Str(code.clone().into()), v("rr_p"), v("rr_l"), Term::Int(0)].into(), neg: false, gated: false };
+            let body = if what == "syntax_error" {
+                let line = if line_one { Term::Wild } else { v("rr_l") };
+                // A file's own error: a guest's is `.on guest_error`'s.
+                let not_guest = Literal::Atom(Atom { rel: "guest".into(), args: [v("rr_d"), Term::Wild, Term::Wild, Term::Wild].into(), neg: true, gated: false });
+                let mut body = vec![atom("syntax_error", vec![v("rr_d"), line, Term::Wild]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), not_guest];
+                body.extend(scoped.iter().cloned());
+                if line_one {
+                    body.push(Literal::Cmp { l: v("rr_l"), op: "=", r: Term::Int(1) });
+                }
+                body
+            } else {
+                vec![atom("input_error", vec![v("rr_p"), Term::Wild, Term::Wild]), Literal::Cmp { l: v("rr_l"), op: "=", r: Term::Int(1) }]
+            };
+            for rel in [what.as_str(), "doc"] {
+                if self.prog.declares(rel) {
+                    self.prog.add_input(rel);
+                }
+            }
+            self.error_diagnostic(&policy, &what, &code, body.clone())?;
+            if what == "syntax_error" {
+                self.guest_input();
+            }
+            self.write(Rule { head, body: body.into() });
+        }
+        // A guest that does not parse, reported at its host's line (`syntax_error` of a guest is a file line).
+        for (grammar, code) in guest_errors {
+            let head = Atom { rel: "violation".into(), args: [Term::Str(policy.clone().into()), Term::Str("guest_error".into()), Term::Str(code.clone().into()), v("rr_p"), v("rr_l"), Term::Int(0)].into(), neg: false, gated: false };
+            let g = grammar.map_or(Term::Wild, |g| Term::Str(g.into()));
+            let body = vec![atom("syntax_error", vec![v("rr_d"), v("rr_l"), Term::Wild]), atom("guest", vec![v("rr_d"), Term::Wild, Term::Wild, g]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild])];
+            for (rel, cols) in [
+                ("syntax_error", &[("d", "int"), ("l", "int"), ("msg", "sym")][..]),
+                ("doc", &[("d", "int"), ("path", "sym"), ("module", "sym")][..]),
+            ] {
+                self.prog.declare_absent(rel, cols);
+                self.prog.add_input(rel);
+            }
+            self.guest_input();
+            self.error_diagnostic(&policy, "guest_error", &code, body.clone())?;
+            self.write(Rule { head, body: body.into() });
+        }
+        Ok(true)
+    }
+
+    /// The `.scope` settings as a test of a finding's path `$rr_p` (`core.rr`): a document's path is in scope in one
+    /// of `dirs` (each a directory or a glob of one, at the root) or `include`'s globs when there are any, in none
+    /// of `exclude`'s, and with `tests false` under no `test` or `tests` path part. Findings in other documents are
+    /// dropped; one at a path that is no document (a budget file) is kept. Facts still come from every file. A
+    /// `.scope given` program reads the files it is given, all in scope.
+    fn scope_filter(&mut self) -> Vec<Literal> {
+        let settings = self.prog.settings();
+        let report = scope_report_globs(&settings);
+        let given = settings.iter().any(|(k, t)| k == "scope" && t.trim() == "given");
+        let (within, out) = match scope_globs(&settings) {
+            Some(globs) => globs,
+            None if !report.is_empty() && !given => (Vec::new(), Vec::new()),
+            None => return Vec::new(),
+        };
+        // The corpus reads only these documents (`front::Program::doc_scopes`): their facts are the policy's, as the
+        // scripts' discovery has them; the drop below still holds for a combined run that reads more.
+        if !within.is_empty() || !out.is_empty() {
+            self.prog.set_field(crate::code_rule_dsl::logic::program_facts::Field::DocScopes(Some(&[(within.clone(), out.clone())])));
+        }
+        let v = |s: &str| Term::Var(s.to_owned().into());
+        let doc = Literal::Atom(Atom { rel: "doc".into(), args: [v("d"), v("p"), Term::Wild].into(), neg: false, gated: false });
+        let glob = |g: &str| Literal::Cmp { l: Term::Call("glob".into(), [v("p"), Term::Str(g.to_owned().into())].into()), op: "=", r: Term::Int(1) };
+        // An entry from a policy option (`front::OPTION_GLOB`): the option's values, as `option_item` holds them; a
+        // directory's documents are those under it.
+        let option_entry = |g: &str| g.strip_prefix(crate::code_rule_dsl::logic::front::OPTION_GLOB).and_then(|r| r.split_once(':')).map(|(f, n)| (f.to_owned(), n.to_owned()));
+        let by_option = |form: &str, name: &str| -> Vec<Literal> {
+            let item = Literal::Atom(Atom { rel: "option_item".into(), args: [Term::Str(name.to_owned().into()), Term::Wild, v("rr_o")].into(), neg: false, gated: false });
+            let test = if form == "dirs" {
+                Literal::Cmp { l: Term::Call("prefix".into(), [v("p"), Term::Call("concat".into(), [v("rr_o"), Term::Str("/".into())].into())].into()), op: "=", r: Term::Int(1) }
+            } else {
+                Literal::Cmp { l: Term::Call("glob".into(), [v("p"), v("rr_o")].into()), op: "=", r: Term::Int(1) }
+            };
+            vec![item, test]
+        };
+        if within.iter().chain(&out).chain(&report).any(|g| option_entry(g).is_some()) {
+            self.prog.declare_absent("option_item", &[("name", "sym"), ("i", "int"), ("v", "sym")]);
+            self.prog.add_input("option_item");
+        }
+        let test = |g: &str| -> Vec<Literal> {
+            match option_entry(g) {
+                Some((form, name)) => by_option(&form, &name),
+                None => vec![glob(g)],
+            }
+        };
+        let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg, gated: false });
+        let head = |rel: &str, var: &str| Atom { rel: rel.to_owned().into(), args: [v(var)].into(), neg: false, gated: false };
+        self.prog.declare_absent("doc", &[("d", "int"), ("path", "sym"), ("module", "sym")]);
+        self.prog.add_input("doc");
+        // rr_scope_drop(p): a document's path out of the scope.
+        self.prog.declare("rr_scope_drop", &[("p", "sym")]);
+        if !within.is_empty() {
+            self.prog.declare("rr_scope_in", &[("d", "int")]);
+            for g in &within {
+                self.write(Rule { head: head("rr_scope_in", "d"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
+            }
+            self.write(Rule { head: head("rr_scope_drop", "p"), body: [doc.clone(), atom("rr_scope_in", vec![v("d")], true)].into() });
+        }
+        for g in &out {
+            self.write(Rule { head: head("rr_scope_drop", "p"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
+        }
+        // rr_scope_not(d): a document out of the scope, which a combined run's guards negate (decision 0091): in a
+        // pack that reads more documents than this policy's scope, the policy's rules see only the others' rows.
+        if !within.is_empty() || !out.is_empty() {
+            self.prog.declare(SCOPE_NOT, &[("d", "int")]);
+            if !within.is_empty() {
+                self.write(Rule { head: head(SCOPE_NOT, "d"), body: [doc.clone(), atom("rr_scope_in", vec![v("d")], true)].into() });
+            }
+            for g in &out {
+                self.write(Rule { head: head(SCOPE_NOT, "d"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
+            }
+        }
+        // `.scope report dirs`: a finding in a document under none of them is dropped too.
+        if !report.is_empty() {
+            self.prog.declare("rr_report_in", &[("d", "int")]);
+            for g in &report {
+                self.write(Rule { head: head("rr_report_in", "d"), body: [doc.clone(), glob(g)].into() });
+            }
+            self.write(Rule { head: head("rr_scope_drop", "p"), body: [doc.clone(), atom("rr_report_in", vec![v("d")], true)].into() });
+        }
+        vec![atom("rr_scope_drop", vec![v("rr_p")], true)]
+    }
+
+    /// `guest(g, host, at, grammar)` as an input (`core.rr` declares it; a program without it has it here).
+    fn guest_input(&mut self) {
+        self.prog.declare_absent("guest", &[("g", "int"), ("host", "int"), ("at", "node"), ("grammar", "sym")]);
+        self.prog.add_input("guest");
+    }
+
+    /// Decision 0055's settings as `guest_policy` facts, which the corpus runner and the batch read:
+    /// - `.guests on | off`: `guest_policy("library", …)`, whether the libraries' `embed`s are made (on by default);
+    /// - `.on guest_error [GRAMMAR] skip | partial [warn | report CODE]`, or `.on guest_error [GRAMMAR] warn | report
+    ///   CODE` (skip): `guest_policy("errors" | "errors:GRAMMAR", "skip" | "partial")`. A skipped guest is
+    ///   withheld; a partial one keeps the tree it has. `warn` and `report` both give a finding, `warn`'s of severity
+    ///   warning (`.severity guest_error warning`); the findings are returned, `(grammar, code)`, for `findings`.
+    fn guest_policy(&mut self, reads: bool) -> Vec<(Option<String>, String)> {
+        let mut facts = Vec::new();
+        let mut findings = Vec::new();
+        let mut warn = false;
+        let settings = self.prog.settings();
+        for (key, text) in &settings {
+            let words: Vec<&str> = text.split_whitespace().collect();
+            if key == "guests" {
+                if let [v @ ("on" | "off")] = words.as_slice() {
+                    facts.push(("library".to_owned(), (*v).to_owned()));
+                }
+                continue;
+            }
+            // `.scope embedded false` keeps the policy to primary documents: `.guests off` (`core.rr`).
+            if key == "scope" {
+                if let ["embedded", v @ ("true" | "false")] = words.as_slice() {
+                    facts.push(("library".to_owned(), if *v == "true" { "on" } else { "off" }.to_owned()));
+                }
+                continue;
+            }
+            let ["guest_error", rest @ ..] = words.as_slice() else { continue };
+            if key != "on" {
+                continue;
+            }
+            let (grammar, rest) = match rest {
+                [g, rest @ ..] if !matches!(*g, "skip" | "partial" | "warn" | "report") => (Some((*g).to_owned()), rest),
+                _ => (None, rest),
+            };
+            let (mode, rest) = match rest {
+                [m @ ("skip" | "partial"), rest @ ..] => (*m, rest),
+                _ => ("skip", rest),
+            };
+            facts.push((grammar.as_ref().map_or("errors".to_owned(), |g| format!("errors:{g}")), mode.to_owned()));
+            if let [how @ ("warn" | "report"), code] = rest {
+                warn |= *how == "warn";
+                findings.push((grammar, (*code).to_owned()));
+            }
+        }
+        if warn {
+            let mut all = settings.clone();
+            all.push(("severity".to_owned(), "guest_error warning".to_owned()));
+            self.prog.set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&all));
+        }
+        // The libraries' `embed`s are made by default: a program that reads the setting and sets none reads
+        // `guest_policy("library", "on")`, a stated fact, so `!guest_policy("library", "off")` is decided before the
+        // run (`simplify`) instead of reading a relation nothing gives.
+        // A program printed with the fact states it already.
+        let stated = self.prog.fact_rows(GUEST_POLICY).iter().any(|r| matches!(r.first(), Some(Value::Str(k)) if k == "library"));
+        if reads && !stated && !facts.iter().any(|(k, _)| k == "library") {
+            facts.push(("library".to_owned(), "on".to_owned()));
+        }
+        if !facts.is_empty() {
+            self.prog.declare(GUEST_POLICY, &[("k", "sym"), ("v", "sym")]);
+            let rows: Vec<crate::code_rule_dsl::logic::front::List<Value>> = facts.into_iter().map(|(k, v)| [Value::Str(k.into()), Value::Str(v.into())].into()).collect();
+            self.prog.add_facts(GUEST_POLICY, &rows);
+        }
+        findings
+    }
+
     /// Error directives use the same public diagnostic transport as ordinary violations.
     pub(super) fn error_diagnostic(&mut self, policy: &str, clause: &str, code: &str, body: Vec<Literal>) -> Result<(), Error> {
         let finding = Violation {
@@ -175,7 +479,7 @@ impl Lowerer {
                 }
             } else if let Some((relation, argument)) = key.strip_suffix(')').and_then(|key| key.split_once('(')) {
                 let i = column(argument)?;
-                if !self.prog.decls.contains_key(relation) {
+                if !self.prog.declares(relation) {
                     return Err(Error::Syntax(format!(".violation {} message: no relation {relation}", finding.name)));
                 }
                 body.push(atom(relation, vec![cols[i].clone(), v(&value)]));
@@ -193,8 +497,12 @@ impl Lowerer {
         }
         // The template beside the program, for `rr::print` and the writer (`MESSAGE`).
         let setting = (MESSAGE.to_owned(), format!("{} {}", finding.name, rerail_rr_syntax::syntax::quote(&finding.message)));
-        if !finding.message.is_empty() && !self.prog.settings.contains(&setting) {
-            self.prog.settings.push(setting);
+        if !finding.message.is_empty() {
+            let mut all = self.prog.settings();
+            if !all.contains(&setting) {
+                all.push(setting);
+                self.prog.set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&all));
+            }
         }
         // A code from a column of another type than text: its text, as a code is.
         let code = match &finding.code {
@@ -224,11 +532,18 @@ impl Lowerer {
             args.push(hole);
         }
         let rel = diagnostic_name(policy, &finding.name, place);
-        self.prog.decls.insert(rel.clone().into(), decl.into_iter().map(|(c, t)| (c.into(), t.into())).collect::<Vec<_>>().into());
-        if !self.prog.outputs.iter().any(|name| *name == rel) {
-            self.prog.outputs.push(rel.clone());
-        }
-        self.prog.rules.push(Rule { head: Atom { rel: rel.into(), args: args.into(), neg: false, gated: false }, body: body.into() });
+        let pairs: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+        self.prog.declare(&rel, &pairs);
+        self.prog.add_output(&rel);
+        self.write(Rule { head: Atom { rel: rel.into(), args: args.into(), neg: false, gated: false }, body: body.into() });
         Ok(())
     }
+}
+
+/// The findings (`Findings`) of `pending` over `prog`'s fields: the rules they make, and whether they wrote the
+/// findings (then the program's own `violation` heads of five columns are widened, `widen_violation_heads`).
+pub fn findings_on(prog: &mut (impl FieldsMut + ?Sized), pending: &PendingFindings, seen: RulesSeen) -> Result<(Vec<Rule>, bool), Error> {
+    let mut f = Findings { prog, next: pending.next, made: Vec::new(), rules: Vec::new() };
+    let wrote = f.findings(pending.violations.clone(), seen)?;
+    Ok((f.rules, wrote))
 }

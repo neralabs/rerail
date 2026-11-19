@@ -182,10 +182,10 @@ fn opening_a_store_without_the_facts_tables_adds_them_at_the_same_floor() {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(floor, SCHEMA_VERSION);
-        // The facts memo is additive: it raised no floor (4 is the manifests' lane column; 3 was the atom segments',
-        // decision 0049).
-        assert_eq!(SCHEMA_VERSION, 4);
-        assert_eq!(STORE_FILE_NAME, "content-v4.sqlite");
+        // The facts memo is additive: it raised no floor (6 is the atoms' blocks, decision 0401; 5 the frames'
+        // segments, decision 0295; 4 the manifests' lane column; 3 was the atom segments', decision 0049).
+        assert_eq!(SCHEMA_VERSION, 6);
+        assert_eq!(STORE_FILE_NAME, "content-v6.sqlite");
     }
     assert_eq!(store.get_source(old).unwrap(), b"older source");
     let source = store.put_facts_source(b"older source", content(b"older source"), &[]).unwrap();
@@ -310,7 +310,7 @@ fn results_for_many_files_answer_as_one_file_at_a_time() {
     assert_eq!(found, vec![Some(b"b at b".to_vec()), None, Some(b"a at a".to_vec()), Some(b"b pure".to_vec()), None]);
     assert_eq!(store.facts_results_for(8, plan(1), &[(sa, "a.py")]).unwrap(), vec![None]);
     let hashes = [HashKey::sha256(b), HashKey::sha256(b"absent"), HashKey::sha256(a)];
-    assert_eq!(store.held_sources_by_hash(&hashes).unwrap(), vec![store.source_by_hash(hashes[0]).unwrap(), None, store.source_by_hash(hashes[2]).unwrap()]);
+    assert_eq!(store.sources_by_hashes(&hashes).unwrap(), vec![store.source_by_hash(hashes[0]).unwrap(), None, store.source_by_hash(hashes[2]).unwrap()]);
 }
 
 /// A small demanded batch must probe its keys, not multiply every retained plan row by every request.

@@ -7,6 +7,7 @@
 //! joins read the matches as any base relation.
 use crate::code_rule_dsl::logic::front::{Atom, Literal, Program, Term};
 use std::collections::{BTreeSet, HashMap};
+use crate::code_rule_dsl::logic::program_image::{Lit, TermRef, Version};
 
 pub use crate::code_rule_dsl::facts::grammar_shape::single_field;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -32,8 +33,9 @@ fn atom(rel: &str, args: Vec<Term>) -> Literal {
 /// tested without a kind stays a join. The number of rules rewritten.
 pub fn absorb(prog: &mut Program, capture: bool) -> usize {
     let mut rewritten = 0;
-    let mut fresh = 0;
     for rule in &mut prog.rules {
+        // Fresh names counted per rule: a rule's do not depend on the others'.
+        let mut fresh = 0;
         // A kind or field name as the program holds it (`python:call`), as the matcher names it (`call`).
         let str_of = |t: &Term| match t {
             Term::Str(s) => Some(s.strip_prefix("python:").unwrap_or(s).to_owned()),
@@ -116,7 +118,19 @@ pub fn absorb(prog: &mut Program, capture: bool) -> usize {
 /// Rewrites `prog`'s `ast` atoms over the matchers' relations: each relation, its matcher's text and the names it
 /// captures (an atom naming more than [`MOST_CAPTURES`] is left as written).
 pub fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
-    let mut texts: Vec<(String, Vec<String>)> = Vec::new();
+    // Each distinct matcher (its text and captured names) numbered in its content's order, not the rules': a
+    // program's names do not depend on the order its rules come in.
+    let texts: Vec<(String, Vec<String>)> = prog
+        .rules
+        .iter()
+        .flat_map(|r| &r.body)
+        .filter_map(|l| match l {
+            Literal::Ast { matcher, captures, .. } if captures.len() <= MOST_CAPTURES => Some((matcher.clone(), captures.iter().map(|(name, _)| name.clone()).collect())),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     for rule in &mut prog.rules {
         if !rule.body.iter().any(|l| matches!(l, Literal::Ast { captures, .. } if captures.len() <= MOST_CAPTURES)) {
             continue;
@@ -135,10 +149,7 @@ pub fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
             match l {
                 Literal::Ast { document, node, matcher, captures } if captures.len() <= MOST_CAPTURES => {
                     let names: Vec<String> = captures.iter().map(|(name, _)| name.clone()).collect();
-                    let k = texts.iter().position(|(t, n)| t == matcher && *n == names).unwrap_or_else(|| {
-                        texts.push((matcher.clone(), names.clone()));
-                        texts.len() - 1
-                    });
+                    let k = texts.iter().position(|(t, n)| t == matcher && *n == names).expect("numbered above");
                     let mut args = vec![Term::Var(node.clone().into())];
                     args.extend(captures.iter().map(|(_, var)| Term::Var(var.clone().into())));
                     made.push(atom(&relation(k, names.len()), args));
@@ -183,10 +194,125 @@ fn transformed(text: &str) -> BTreeSet<String> {
 }
 
 /// Each relation's matcher compiled for the transducer, over the program's first `.policy` (its utils), by the
-/// registered compiler (`facts::vtab::syntax::AstCompiler`). A matcher that does not lower fails the run, naming it.
-pub(in crate::code_rule_dsl) fn compiled(matchers: &[(String, String, Vec<String>)], policies: &[serde_json::Value]) -> Result<crate::code_rule_dsl::facts::vtab::syntax::Matchers, String> {
+/// registered compiler (`facts::vtab::syntax::AstCompiler`), with the matchers whose roots bound its rows
+/// ([`demanded_by_roots`]). A matcher that does not lower fails the run, naming it.
+pub(in crate::code_rule_dsl) fn compiled(
+    matchers: &[(String, String, Vec<String>)],
+    demand: &[Option<Vec<usize>>],
+    policies: &[serde_json::Value],
+) -> Result<crate::code_rule_dsl::facts::vtab::syntax::Matchers, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "ast matchers lowered".into());
-    crate::code_rule_dsl::facts::vtab::syntax::compile_matchers(matchers, policies)
+    crate::code_rule_dsl::facts::vtab::syntax::compile_matchers(matchers, demand, policies)
+}
+
+/// Per matcher, the other matchers whose roots hold every node its rows are read at, where the rules say so
+/// (decision 0424): each rule that reads its relation joins its node with a column that only other matchers' roots
+/// fill (`raw_module_name(w, …)`, made from `rr_ast_11(w)`, beside `rr_ast_14(w, f)`). The wave knows every
+/// matcher's roots before it binds any capture, so a matcher's captures are bound only at the nodes in those roots:
+/// internal_dead_code's `mn_function` bound 737,806 roots for the 27,849 its join keeps (t45 §2). The magic rule of
+/// the atom is widened to the document where its body is the batch's own relations; this is that rule at node grain,
+/// where its body is the same wave's matchers. `None` where any read is not so joined: negated, in an aggregate, an
+/// output, or joined only with what the batch's rows or the inputs fill.
+pub fn demanded_by_roots(v: &Version, matchers: &[(String, String, Vec<String>)]) -> Vec<Option<Vec<usize>>> {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
+    let outputs = v.output_names();
+    let index: HashMap<&str, usize> = matchers.iter().enumerate().map(|(k, (rel, _, _))| (rel.as_str(), k)).collect();
+    let mut known = HashMap::new();
+    matchers
+        .iter()
+        .enumerate()
+        .map(|(k, (rel, _, _))| {
+            if outputs.iter().any(|out| out == rel) {
+                return None;
+            }
+            let mut by = BTreeSet::new();
+            let mut read = false;
+            for rule in v.rules() {
+                let body: Vec<Lit<'_>> = rule.body().map(|literal| literal.view()).collect();
+                for (at, literal) in body.iter().enumerate() {
+                    let atom = match *literal {
+                        Lit::Atom(atom) if v.rel_name(atom.rel()) == rel.as_str() => atom,
+                        Lit::Agg { atom, .. } if v.rel_name(atom.rel()) == rel.as_str() => return None,
+                        _ => continue,
+                    };
+                    let Some(node) = atom.args().next().and_then(TermRef::var).filter(|_| !atom.neg()) else { return None };
+                    read = true;
+                    // Another positive atom of the body that binds the node where only matchers' roots fill it.
+                    let roots = body.iter().enumerate().filter(|(other, _)| *other != at).find_map(|(_, other)| {
+                        let Lit::Atom(other) = *other else { return None };
+                        if other.neg() {
+                            return None;
+                        }
+                        other.args().enumerate().find_map(|(column, arg)| {
+                            (arg.var() == Some(node)).then(|| filled_by_roots(v, &index, v.rel_name(other.rel()), column, &mut known, &mut Vec::new())).flatten()
+                        })
+                    });
+                    match roots {
+                        Some(roots) if !roots.contains(&k) => by.extend(roots),
+                        _ => return None,
+                    }
+                }
+            }
+            (read && !by.is_empty()).then(|| by.into_iter().collect())
+        })
+        .collect()
+}
+
+/// The matchers whose roots hold every value of `rel`'s `column`, where only they fill it: a matcher's own relation's
+/// node, or a derived relation whose every rule binds the column from such a column of a positive atom.
+fn filled_by_roots(
+    v: &Version,
+    index: &HashMap<&str, usize>,
+    rel: &str,
+    column: usize,
+    known: &mut HashMap<(String, usize), Option<BTreeSet<usize>>>,
+    visiting: &mut Vec<(String, usize)>,
+) -> Option<BTreeSet<usize>> {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
+    if let Some(&k) = index.get(rel) {
+        return (column == 0).then(|| BTreeSet::from([k]));
+    }
+    let key = (rel.to_owned(), column);
+    if let Some(found) = known.get(&key) {
+        return found.clone();
+    }
+    // A cycle, an input, a native or lattice relation, or a relation with facts: not only matchers' roots.
+    if visiting.contains(&key)
+        || v.input_names().iter().any(|input| input == rel)
+        || v.natives().contains_key(rel)
+        || v.lattice().contains_key(rel)
+        || v.has_fact_rows(rel)
+    {
+        return None;
+    }
+    visiting.push(key.clone());
+    let mut found = Some(BTreeSet::new());
+    let mut rules = 0;
+    for rule in v.rules().filter(|rule| v.rel_name(rule.head().rel()) == rel) {
+        rules += 1;
+        let Some(var) = rule.head().args().nth(column).and_then(TermRef::var) else {
+            found = None;
+            break;
+        };
+        let from = rule.body().find_map(|literal| {
+            let Lit::Atom(atom) = literal.view() else { return None };
+            if atom.neg() {
+                return None;
+            }
+            atom.args().enumerate().find_map(|(c, arg)| (arg.var() == Some(var)).then(|| filled_by_roots(v, index, v.rel_name(atom.rel()), c, known, visiting)).flatten())
+        });
+        match (from, found.as_mut()) {
+            (Some(from), Some(found)) => found.extend(from),
+            _ => {
+                found = None;
+                break;
+            }
+        }
+    }
+    visiting.pop();
+    let found = found.filter(|_| rules > 0);
+    known.insert(key, found.clone());
+    found
 }
 
 #[cfg(test)]

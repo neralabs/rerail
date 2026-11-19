@@ -156,3 +156,47 @@ Every step keeps:
 
 The ladder's shape check changes with it. On the CPU, tier 1 may loop over a block's regions
 and its tokens; still never over bytes.
+
+## Measured part by part (2026-11-17, M3)
+
+The corpus is now every `.rr` file in the tree: 1,999 files, 17.8 MB, 3.5M tokens.
+The figures of 43 to 62 instructions a byte above are of the 8.8 MB corpus, before the
+records' marks and the token marks.
+
+| Over the corpus (`jit_against_aot`) | Instructions | A byte | Cycles |
+|---|---|---|---|
+| Tier 1, ahead of time | 233.4M | 13.1 | 71.9M |
+| Tier 1, JIT | 339.6M | 19.1 | 96.6M |
+| The lean lexer | 256.3M | 14.4 | 59.9M |
+| simdjson's stage 1 (JSON, page 21) | | 2.7 | |
+
+Tier 1 is one pass: one entry, its 17 outlined functions included. Sampled ahead of time
+(`aot_profile_loop`, `sample`), the file loop `f0` has 96% of tier 1's samples; the outlined
+functions share the other 4%. So a split by function says nothing. Two other splits:
+
+- **By ablation, the JIT** (`rr_tier1_split`): without the record pass, tier 1 costs more
+  (370.1M to 526.8M), since the body then makes the masks the token loop reads from the
+  bytes itself (`records_made`). Without the extracts, 74.2M less; without the totals,
+  15.4M less; with no output at all, 1.5M. Every part is a cone of an output, and the
+  record pass is not separable from the masks it replaces.
+- **By what scales with blocks and what with tokens, ahead of time** (`tier1_by_kind`, `RR_LINE`):
+  a 64-byte line of spaces and one word costs 272 instructions a line, about 200 of them the
+  block's masks, 3.2 a byte. Over the corpus that is about 55M of the 233M. The other
+  three quarters, about 50 instructions a token, are the token loop: the kind, the end, the
+  word's hash and marks, the record.
+
+By kind of token, instructions (cycles) a token:
+
+| | tier 1 AOT | lean lexer |
+|---|---|---|
+| words | 77.7 (16.9) | 99.0 (16.3) |
+| punctuation | 46.9 (9.1) | 55.7 (8.9) |
+| mixed code | 47.8 (9.3) | 65.3 (9.4) |
+| strings | 185.3 (56.4) | 161.2 (52.7) |
+| numbers | 106.3 (16.8) | 101.1 (20.7) |
+| comments | 152.0 (55.0) | 160.8 (57.4) |
+
+Tier 1 ahead of time is at the lean lexer's cycles a token for every kind but strings, and under its instructions
+for most. Against simdjson the gap is the token loop: simdjson's stage 1 writes a position a
+structural byte and leaves the rest to stage 2; tier 1 writes a coded record a token. Strings
+and comments run at an IPC of about 3 in both lexers: their stop masks' loop over a long run.

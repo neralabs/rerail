@@ -1,5 +1,5 @@
-//! Independent semantic fixtures retained through the deletion-first cutover.
-//! These parity tests remain pending until their semantic stages exist.
+//! Metal's semantic fixtures against the CPU interpreter: the packed JIT over the tape (decision 0324 retired the
+//! grid machine they were written for; its kernel-specific checks went with it).
 use super::*;
 use crate::code_rule_dsl::tape::{Grammar, TapeImage};
 use ast_grep_core::tree_sitter::StrDoc;
@@ -13,12 +13,20 @@ fn tape(source: &str) -> TapeDoc {
     TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
 }
 
+/// The packed Metal JIT over the tape, with the grid's entry's arguments (decision 0324).
+pub(super) fn metal_packed(
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+) -> Result<PackedExecution, Error> {
+    device::matcher().ok_or(Error::UnsupportedBackend)?.execute_packed(device::Engine::Jit, programs, files, anchors, result_limits, crate::code_rule_dsl::transducer::packed::Budget::current())
+}
+
 #[cfg(test)]
 #[path = "metal_phase_four_tests.rs"]
 pub mod phase_four;
 
-#[path = "metal_phase_three_mixed_inputs.rs"]
-pub mod phase_three_mixed_inputs;
 
 #[test]
 #[ignore = "pinned corpus differential subset against the independent CPU interpreter"]
@@ -71,17 +79,9 @@ fn pinned_corpus_optional_body_and_injection_differential() {
         .collect::<Vec<_>>();
     let expected = execute_batch(&programs, &files, Some(&anchors)).unwrap();
     let scope = metal_backend::launch::LaunchScope::enter();
-    let result = execute_with_backend(ExecutionBackend::Metal, &programs, &files, &anchors);
+    let result = execute_with_backend(ExecutionBackend::MetalJit, &programs, &files, &anchors);
     let trace = scope.snapshot();
     drop(scope);
-    if metal_dynamic_execution::ViewConformanceScope::active() {
-        assert!(
-            trace
-                .iter()
-                .any(|record| record.kernel == "expanded_counts"),
-            "the forced view conformance run must execute the operator it validates"
-        );
-    }
 
     let mut commands = BTreeMap::<u64, Vec<&str>>::new();
     let mut kernels = BTreeMap::<&str, usize>::new();
@@ -114,13 +114,6 @@ fn pinned_corpus_optional_body_and_injection_differential() {
             .all(|record| record.encoded && record.submitted && record.completed)
     );
     assert!(trace.iter().all(|record| record.peak_application_buffer_bytes <= metal_backend::metal_buffer_limit()));
-    assert_eq!(
-        trace
-            .iter()
-            .filter(|record| record.kernel == "register_roots")
-            .count(),
-        1
-    );
     let counts = actual
         .iter()
         .flatten()
@@ -182,7 +175,7 @@ fn corpus_optional_test_bodies_and_regex_injections_match_cpu() {
     assert!(!expected[0][0].is_empty());
     assert!(!expected[3][1].is_empty());
     let actual =
-        execute_with_backend(ExecutionBackend::Metal, &programs, &files, &anchors).unwrap();
+        execute_with_backend(ExecutionBackend::MetalJit, &programs, &files, &anchors).unwrap();
     for (file, source) in sources.iter().enumerate() {
         for (program, query) in queries.iter().enumerate() {
             assert_eq!(
@@ -222,13 +215,17 @@ fn assert_fixture<F: FixtureDocument>(
         execute_with_backend_outcomes(ExecutionBackend::CpuInterpreter, programs, &files, anchors)
             .map(|batch| (batch.outputs, batch.errors));
     let scope = metal_backend::launch::LaunchScope::enter();
-    let actual = execute_with_backend_outcomes(ExecutionBackend::Metal, programs, &files, anchors)
+    let actual = execute_with_backend_outcomes(ExecutionBackend::MetalJit, programs, &files, anchors)
         .map(|batch| (batch.outputs, batch.errors));
     if actual != expected {
         let trace = scope.snapshot();
+        let cpu_jit = execute_with_backend_outcomes(ExecutionBackend::CpuJit, programs, &files, anchors)
+            .map(|batch| (batch.outputs, batch.errors));
         eprintln!(
             "FIXTURE_FAILURE_TRACE {}",
             serde_json::json!({
+                "cpuJitAgrees": cpu_jit == expected,
+                "cpuJitAgreesWithMetal": cpu_jit == actual,
                 "attempts": trace.len(),
                 "kernels": trace.iter().map(|record| &record.kernel).collect::<Vec<_>>(),
             })
@@ -1203,7 +1200,7 @@ pub mod retained_grid_runtime {
         assert_eq!(native, expected);
         let scope = metal_backend::launch::LaunchScope::enter();
         let started = std::time::Instant::now();
-        let actual = execute_with_backend(ExecutionBackend::Metal, &programs, &files, &anchors);
+        let actual = execute_with_backend(ExecutionBackend::MetalJit, &programs, &files, &anchors);
         let elapsed = started.elapsed().as_secs_f64();
         let trace = scope.snapshot();
         eprintln!(
@@ -3896,13 +3893,6 @@ pub mod retained_grid_history_runtime {
     }
 }
 
-#[test]
-#[ignore = "all pinned patterns through the successor-view operator against the independent CPU interpreter"]
-fn pinned_corpus_successor_view_differential() {
-    let _views = metal_dynamic_execution::ViewConformanceScope::enter();
-    pinned_corpus_optional_body_and_injection_differential();
-}
-
 #[ignore = "O83: G's grid-executor copy, written for the old 600-launch bound; it needs more than KERNEL_LAUNCH_LIMIT (200 since list step 26). The executor is superseded (decision 0028, O33) and stays until list step 31"]#[test]
 fn long_interpolated_query_preserves_every_capture_and_property_within_the_original_evaluation_limits()
  {
@@ -4045,15 +4035,11 @@ fn long_interpolated_query_oracles(complete_cpu: bool, metal: bool) {
                 expected
             );
         }
-        for forced_views in [false, true]
-            .into_iter()
-            .filter(|force| metal && (!force || parts <= 8))
-        {
-            let _views = forced_views.then(metal_dynamic_execution::ViewConformanceScope::enter);
+        for forced_views in [false].into_iter().filter(|_| metal) {
             let scope = metal_backend::launch::LaunchScope::enter();
             let started = std::time::Instant::now();
             let actual = execute_with_backend(
-                ExecutionBackend::Metal,
+                ExecutionBackend::MetalJit,
                 std::slice::from_ref(&program),
                 &files,
                 &anchors,
@@ -4074,9 +4060,117 @@ fn long_interpolated_query_oracles(complete_cpu: bool, metal: bool) {
                 && r.submitted
                 && r.completed
                 && r.peak_application_buffer_bytes <= metal_backend::metal_buffer_limit()));
-            if forced_views {
-                assert!(trace.iter().any(|r| r.kernel == "expanded_publish"));
-            }
         }
+    }
+}
+
+/// The program's cost as the store would give it badly: a rate of almost nothing, so every task is predicted
+/// `MIN_PREDICTED` steps (decision 0334's misprediction).
+fn mispredict(program: &Program) {
+    use crate::code_rule_dsl::transducer::packed::evaluation_costs::{self, Rate};
+    evaluation_costs::install([(program.plain_digest().to_owned(), Rate { steps_per_unit: 1e-6, samples: 1 })].into_iter().collect());
+}
+
+/// Decision 0334: a badly predicted evaluation (a long string's regex, as Q49's clause, under a rate of almost
+/// nothing) stops over its step budget, is restarted with twice the budget until it finishes, and gives the worst
+/// case's results, on the CPU JIT and on Metal. Its runs are observed for the cost store: the over-budget run as a
+/// misprediction (predicted below what the finished run took), the finished one with its steps. (Each run reprices
+/// the program at once, so the misprediction is set again before each misplanned run.)
+#[test]
+fn a_misplanned_evaluation_is_restarted_and_gives_the_full_budgets_results() {
+    use crate::code_rule_dsl::transducer::packed::{
+        Budget, CAPTURE, EMIT, PlanId, TEXT, TextPredicate, WorkBudget, evaluation_costs, execute_planned_budgeted,
+    };
+    let source = format!("x = '{}'\ny = 'short b'\n", "a".repeat(40_000));
+    let files = [tape(&source)];
+    let pattern = "b";
+    let programs = [Program::new(
+        vec![word(TEXT, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+        vec![b"match".to_vec(), pattern.as_bytes().to_vec()],
+        vec![TextPredicate::Regex { source: 1, compiled: regex::Regex::new(pattern).unwrap() }],
+        vec![0],
+        Vec::new(),
+    )
+    .unwrap()];
+    let anchors = [vec![(0..files[0].transducer_len() as u32).collect::<Vec<_>>()]];
+    let plan = PlanId::of_programs(&programs);
+    evaluation_costs::keep(true);
+    let misplanned = Budget { work: WorkBudget::Replan { slack: 1, doublings: 0 }, states: Some(0) };
+    for backend in [ExecutionBackend::CpuJit, ExecutionBackend::MetalJit] {
+        let full = execute_planned_budgeted(backend, plan, &programs, &files, &anchors, None, Budget::worst())
+            .and_then(|execution| execution.into_outcome())
+            .map(|outcome| (outcome.outputs, outcome.errors))
+            .unwrap();
+        assert_eq!(full.1, [vec![None]], "{backend:?}");
+        assert!(!full.0[0][0].is_empty(), "{backend:?}");
+        let _ = evaluation_costs::drain();
+        mispredict(&programs[0]);
+        let replanned = execute_planned_budgeted(backend, plan, &programs, &files, &anchors, None, misplanned).unwrap();
+        assert!(replanned.restarted_evaluations() > 0, "{backend:?}: the misplanned evaluation stops over its budget");
+        let replanned = replanned.into_outcome().map(|outcome| (outcome.outputs, outcome.errors)).unwrap();
+        assert_eq!(replanned, full, "{backend:?}");
+        let (observed, _) = evaluation_costs::drain();
+        let over = observed.iter().find(|o| o.over_budget).unwrap_or_else(|| panic!("{backend:?}: the misprediction is observed: {observed:?}"));
+        let finished = observed.iter().find(|o| !o.over_budget).expect("the finished run is observed");
+        assert!(finished.steps > over.predicted, "{backend:?}: {over:?} {finished:?}");
+    }
+}
+
+/// Decision 0334 §5, the evaluation split by root: held to half the steps the whole evaluation takes, a root walk
+/// stops over its budget with the roots that finished before it kept (their outputs and steps), and the rest run
+/// alone give the whole run's outputs. A tree-sitter query keeps nothing (its outputs are reduced across roots).
+#[test]
+fn an_evaluation_over_its_budget_keeps_its_finished_roots() {
+    use crate::code_rule_dsl::transducer::packed::{CAPTURE, EMIT, Partial, TEXT, TextPredicate};
+    let source = "x = 'a b'\n".repeat(200);
+    let files = [tape(&source)];
+    let program = Program::new(
+        vec![word(TEXT, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+        vec![b"match".to_vec(), b"b".to_vec()],
+        vec![TextPredicate::Regex { source: 1, compiled: regex::Regex::new("b").unwrap() }],
+        vec![0],
+        Vec::new(),
+    )
+    .unwrap();
+    let roots: Vec<u32> = (0..files[0].transducer_len() as u32).collect();
+    let (whole, steps) = program.execute_roots_budgeted(&files[0], roots.iter().copied(), usize::MAX).unwrap();
+    assert!(!whole.is_empty() && steps > 0);
+    let mut partial = Partial::default();
+    let stopped = program.execute_roots_split(&files[0], roots.iter().copied(), steps / 2, &mut partial);
+    assert!(matches!(stopped, Err(Error::OverBudget)), "{stopped:?}");
+    assert!(partial.finished > 0 && partial.finished < roots.len(), "{}", partial.finished);
+    assert!(partial.steps <= steps / 2);
+    let (rest, rest_steps) = program.execute_roots_budgeted(&files[0], roots[partial.finished..].iter().copied(), usize::MAX).unwrap();
+    assert_eq!(partial.steps + rest_steps, steps, "the split takes the whole run's steps, none twice");
+    // An output's ordinal is its index in the evaluation's outputs: the rest's follow the kept ones.
+    let mut split = partial.outputs;
+    let base = split.len() as u32;
+    split.extend(rest.into_iter().map(|output| crate::code_rule_dsl::transducer::packed::Output { local_ordinal: output.local_ordinal + base, ..output }));
+    assert_eq!(split, whole);
+}
+
+/// Decision 0334 §9: states sized from a task's size (`STATES_PER_UNIT` a node) run out where every node gives eight
+/// results (three forks before the emit); the evaluation restarts with twice the states until it fits, and gives the
+/// worst case's results, on the CPU JIT and on Metal.
+#[test]
+fn outgrown_states_restart_and_give_the_worst_cases_results() {
+    use crate::code_rule_dsl::transducer::packed::{Budget, PlanId, WorkBudget, execute_planned_budgeted};
+    let source = "a = 1\n".repeat(800);
+    let files = [tape(&source)];
+    let words = vec![word(DESCEND, 0, 0), word(FORK, 0, 2), word(FORK, 0, 3), word(FORK, 0, 4), word(EMIT, 0, 0)];
+    let programs = [Program::new(words, vec![b"match".to_vec()], Vec::new(), vec![0], Vec::new()).unwrap()];
+    let anchors = [vec![vec![0]]];
+    let plan = PlanId::of_programs(&programs);
+    for backend in [ExecutionBackend::CpuJit, ExecutionBackend::MetalJit] {
+        let worst = execute_planned_budgeted(backend, plan, &programs, &files, &anchors, None, Budget::worst())
+            .and_then(|execution| execution.into_outcome())
+            .map(|outcome| (outcome.outputs, outcome.errors))
+            .unwrap();
+        assert_eq!(worst.1, [vec![None]], "{backend:?}");
+        assert!(worst.0[0][0].len() > 4 * files[0].transducer_len(), "{backend:?}: {}", worst.0[0][0].len());
+        let sized = execute_planned_budgeted(backend, plan, &programs, &files, &anchors, None, Budget { work: WorkBudget::Full, states: Some(0) }).unwrap();
+        assert!(sized.restarted_evaluations() > 0, "{backend:?}: the predicted states run out");
+        let sized = sized.into_outcome().map(|outcome| (outcome.outputs, outcome.errors)).unwrap();
+        assert_eq!(sized, worst, "{backend:?}");
     }
 }

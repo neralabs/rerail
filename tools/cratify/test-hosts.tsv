@@ -77,6 +77,7 @@ tape::token_readers	rerail-w
 test_support	rerail-engine
 transducer::packed::block_rows_tests	rerail-device-metal
 transducer::packed::compile_matcher_tests	rerail-engine
+transducer::packed::metal_semantic_conformance	rerail-engine
 transducer::packed::regex_block::tests	rerail-device-metal
 transducer::packed::tests	rerail-device-metal
 typing::file_local::tests	rerail-device-metal

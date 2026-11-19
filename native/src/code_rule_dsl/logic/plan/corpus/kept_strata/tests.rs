@@ -98,14 +98,14 @@
             .decl total(n:number)\ntotal(n) :- n=count : {r(_,_)}.\n.output total\n";
         let run = || {
             let store = ContentStore::open(&path).unwrap();
-            let p = rr::parse(text).unwrap();
+            let p = rr::parse_version(text).unwrap();
             let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
-            let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
+            let lowered = lower::lowered(p, python, &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
             let db = rusqlite::Connection::open(&path).unwrap();
             native::register(&db).unwrap();
             native::register_symbols(&db).unwrap();
             let mut kept = Kept::new(&store, [42; 32], [0; 32], &[], HashMap::new());
-            let outcome = plan::run_atoms_native_hooked(&lowered, &db, "main", plan::Stats::empty(&lowered.program),
+            let outcome = plan::run_atoms_native_hooked(&lowered, &db, "main", plan::Stats::empty_of_lowered(&lowered).unwrap(),
                 Default::default(), "program", plan::Hooks { strata: Some(&mut kept), ..Default::default() }).unwrap();
             let counts = kept.strata.unwrap();
             let admitted: Vec<_> = kept.admitted.keys().cloned().collect();

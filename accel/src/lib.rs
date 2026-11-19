@@ -15,15 +15,18 @@
 //! threads), one submission a batch on each other lane. Every lane runs at the same time, and the [`score`] board
 //! counts every job. Every lane's output is the reference's, exactly: the tests compare them.
 
+pub mod blocks;
 pub mod budget;
 pub mod col;
 pub mod cost_model;
 pub mod cpu;
 pub mod exec;
 pub mod forms;
+pub mod join_model;
 pub mod kernel;
 pub mod lanes;
 pub mod price;
+pub mod program_steps;
 pub mod rows;
 pub mod score;
 pub mod sharded;

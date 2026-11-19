@@ -13,7 +13,7 @@
 //!   imply: operators, `def`, a trailing comma and its closing bracket, …).
 
 use crate::lex::{Extra, Lexed, Refusal, T, Tok, soft};
-use crate::{K, Tape, f, key, unkey};
+use crate::{K, f, key, unkey};
 use rerail_tape_format::{Redo, Widths, Writer};
 
 type R<X> = Result<X, Refusal>;
@@ -156,7 +156,7 @@ pub enum Relex {
 pub const MAX_JOINS: usize = 64;
 
 /// `src` parsed, `joins` joined; `Err(Ok(r))`, the text to be lexed again.
-pub fn parse(src: &[u8], lexed: &Lexed, joins: &[u32]) -> Result<Tape, Result<Relex, Refusal>> {
+pub fn parse<Out>(src: &[u8], lexed: &Lexed, joins: &[u32], finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> Result<Out, Result<Relex, Refusal>> {
     let mut widths = Widths::guess(src.len());
     loop {
         let mut p = P {
@@ -174,8 +174,8 @@ pub fn parse(src: &[u8], lexed: &Lexed, joins: &[u32]) -> Result<Tape, Result<Re
         if let Err(r) = p.module() {
             return Err(p.relex.ok_or(r));
         }
-        match p.w.finish_columns() {
-            Ok(columns) => return Ok(columns),
+        match finish(p.w) {
+            Ok(done) => return Ok(done),
             Err(Redo(w)) => {
                 if w == widths {
                     return Err(Err(Refusal::TooLarge));

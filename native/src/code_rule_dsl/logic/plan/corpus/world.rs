@@ -21,6 +21,7 @@
 //! Only paths under the corpus root, or under a directory a setting names (`env(k, v)` with v a directory, relative
 //! to the root or absolute), are read. A path elsewhere, or missing, has no entries or lines.
 
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use super::front;
 use crate::code_rule_dsl::logic::rr::{FILE_SYSTEM, WORLD};
 use std::collections::{BTreeMap, BTreeSet};
@@ -33,14 +34,15 @@ pub(super) const LOAD: &str = "load";
 pub(super) const LOADED: &str = "loaded";
 
 /// Whether the program reads the file system or loads documents.
-pub(super) fn wanted(prog: &front::Program) -> bool {
-    std::iter::once(LOAD).chain(WORLD.iter().map(|(_, req)| *req)).any(|req| asks(prog, req))
+/// `prog` is the program's fields (a version's), `shape` its rules'.
+pub(super) fn wanted(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape) -> bool {
+    std::iter::once(LOAD).chain(WORLD.iter().map(|(_, req)| *req)).any(|req| asks(prog, shape, req))
 }
 
 /// Whether `prog` makes request `req`: by a rule, or as facts (a constant key lowers to one: `dir_entry("sub", …)`
 /// asks with the fact `rr_dir_req("sub")`, `rr::lower`'s `world_demand`).
-fn asks(prog: &front::Program, req: &str) -> bool {
-    prog.rules.iter().any(|r| r.head.rel == req) || prog.facts.get(req).is_some_and(|rows| !rows.is_empty())
+fn asks(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, req: &str) -> bool {
+    shape.made.contains(req) || prog.has_fact_rows(req)
 }
 
 /// The requests a program makes, each with what answers it, before a load's per-file rows are added
@@ -93,11 +95,35 @@ pub(super) struct World {
 
 impl World {
     /// The roots a request may read: the corpus root, and each setting's value that is a directory.
-    pub(super) fn new(root: &Path, prog: &front::Program) -> World {
+    pub(super) fn new(root: &Path, prog: &(impl ProgramFields + ?Sized)) -> World {
+        let (roots, budget) = Self::roots(root, prog);
+        // Watched before the first wave (`watch`); asked again here, each is one this run asked already.
+        Self::watch_roots(root, &roots);
+        World { roots, root: root.to_path_buf(), budget, ..World::default() }
+    }
+
+    /// Watches the roots a request of `prog` may read (decision 0105), before the first wave: watching a root reads
+    /// its part of the observer's store, which no wave may ask (decision 0104). A `World` made inside the waves then
+    /// finds each asked already (Q150: a warm run faulted, "the observer's store not asked inside the waves").
+    pub(super) fn watch(root: &Path, prog: &(impl ProgramFields + ?Sized)) {
+        Self::watch_roots(root, &Self::roots(root, prog).0);
+    }
+
+    /// What may be read, watched (decision 0105): a directory listed or a file read that the journal says is
+    /// unchanged is not statted. Not phase 0's root, up front: an empty placeholder (`phase0`); a read under it is
+    /// watched as it comes.
+    fn watch_roots(root: &Path, roots: &[PathBuf]) {
+        let placeholder = super::phase0::active().then(|| std::fs::canonicalize(root).ok()).flatten();
+        let watched: Vec<PathBuf> = roots.iter().filter(|r| Some(*r) != placeholder.as_ref()).cloned().collect();
+        super::observe(|o| o.watch(&watched));
+    }
+
+    /// The roots (`new`) and the load budget `prog`'s settings give.
+    fn roots(root: &Path, prog: &(impl ProgramFields + ?Sized)) -> (Vec<PathBuf>, usize) {
         let canonical = |p: &Path| std::fs::canonicalize(p).ok();
         let mut roots: Vec<PathBuf> = canonical(root).into_iter().collect();
         let mut budget = BUDGET;
-        for row in prog.facts.get("env").into_iter().flatten() {
+        for row in prog.fact_rows("env") {
             if let [front::Value::Str(k), front::Value::Str(v)] = row.as_slice() {
                 if k == "load.budget" {
                     budget = v.parse().unwrap_or(budget);
@@ -107,13 +133,7 @@ impl World {
                 }
             }
         }
-        // What the requests may read is watched (decision 0105): a directory listed or a file read that the
-        // journal says is unchanged is not statted.
-        // Not phase 0's root, up front: an empty placeholder (`phase0`); a read under it is watched as it comes.
-        let placeholder = super::phase0::active().then(|| canonical(root)).flatten();
-        let watched: Vec<PathBuf> = roots.iter().filter(|r| Some(*r) != placeholder.as_ref()).cloned().collect();
-        super::observe(|o| o.watch(&watched));
-        World { roots, root: root.to_path_buf(), budget, ..World::default() }
+        (roots, budget)
     }
 
     /// The file `asked` names, when it lies under a root: relative to the corpus root, or absolute.
@@ -402,13 +422,27 @@ pub(in crate::code_rule_dsl::logic::plan) fn bytes_digest(path: &Path) -> String
 /// hashed on the pool, outside its lock, then recorded. One at a time, a run's first pass over PostHog's 29,885
 /// files read and hashed each on the main thread, under the observer's lock (1.9 s on an M3 Max, the pool idle).
 pub(in crate::code_rule_dsl::logic::plan) fn bytes_digests(paths: &[PathBuf]) -> Vec<String> {
-    use crate::content_store::observe::DigestStep;
+    bytes_digests_held(paths, None)
+}
+
+/// `bytes_digests`, the bytes read kept in `hold` for the run's builders: the run's one read of each (decision 0300).
+pub(in crate::code_rule_dsl::logic::plan) fn bytes_digests_held(paths: &[PathBuf], hold: Option<&super::texts::Sources>) -> Vec<String> {
+    use crate::content_store::observe::{DigestRead, DigestStep};
     use rayon::prelude::*;
     let steps: Vec<DigestStep> = super::observe(|o| paths.iter().map(|p| o.digest_step(p)).collect());
     let hashed: Vec<Option<(u64, [u8; 32])>> = steps
         .par_iter()
-        .map(|s| match s {
-            DigestStep::Read(r) => r.hash(),
+        .zip(paths.par_iter())
+        .map(|(s, path)| match s {
+            DigestStep::Read(r) => {
+                let bytes = r.read()?;
+                let hashed = DigestRead::hashed(&bytes);
+                if let Some(hold) = hold {
+                    let s = r.stat();
+                    hold.keep(path, crate::content_store::FileStat { size: s.size, mtime_ns: s.mtime_ns, inode: s.ino }, bytes);
+                }
+                Some(hashed)
+            }
             DigestStep::Answered(_) => None,
         })
         .collect();

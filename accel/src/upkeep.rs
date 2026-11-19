@@ -224,7 +224,7 @@ fn record_finish(file: &std::path::Path, name: &str) {
 
 /// A maintenance job. `due` is called at every poll and must be cheap; `step` does a bounded part of the work.
 pub trait Job: Send {
-    /// Its name, unique among the jobs registered (an instance's, e.g. `sqlite content-v4.sqlite`). The kind is
+    /// Its name, unique among the jobs registered (an instance's, e.g. `sqlite content-v6.sqlite`). The kind is
     /// the part before the first space: what `RERAIL_UPKEEP_JOBS` names.
     fn name(&self) -> String;
     fn due(&mut self) -> Due;
@@ -384,7 +384,7 @@ pub struct Conditions {
     pub low_power: bool,
     /// `NSProcessInfoThermalState`: 0 nominal, 1 fair, 2 serious, 3 critical.
     pub thermal: u8,
-    /// The process's physical footprint, bytes.
+    /// The process's physical footprint, bytes (Linux: its resident memory).
     pub footprint: usize,
 }
 
@@ -396,7 +396,8 @@ pub fn allowed(c: &Conditions, idle_twice: bool, s: &Settings) -> (bool, bool) {
     (true, idle)
 }
 
-/// The CPU ticks of all cores so far: (busy, total).
+/// The CPU ticks of all cores so far: (busy, total). (0, 0) where they are not read, which `read_conditions`
+/// takes as busy.
 pub fn cpu_ticks() -> (u64, u64) {
     #[cfg(target_os = "macos")]
     unsafe {
@@ -420,7 +421,19 @@ pub fn cpu_ticks() -> (u64, u64) {
         libc::vm_deallocate(task, info as libc::vm_address_t, (count as usize * std::mem::size_of::<libc::integer_t>()) as libc::vm_size_t);
         (busy, total)
     }
-    #[cfg(not(target_os = "macos"))]
+    // /proc/stat's first line, every core's: user, nice, system, idle, iowait, irq, softirq, steal (guest time is
+    // in user's already). Busy is all but idle and iowait: a core waiting on I/O runs nothing.
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(stat) = std::fs::read_to_string("/proc/stat") else { return (0, 0) };
+        let t: Vec<u64> = stat.lines().next().unwrap_or("").split_whitespace().skip(1).take(8).filter_map(|v| v.parse().ok()).collect();
+        if t.len() < 5 {
+            return (0, 0);
+        }
+        let total: u64 = t.iter().sum();
+        (total - t[3] - t[4], total)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     (0, 0)
 }
 
@@ -500,7 +513,7 @@ pub fn heat() -> (bool, u8) {
     (false, 0)
 }
 
-/// The process's physical footprint, bytes.
+/// The process's physical footprint, bytes (Linux: its resident memory).
 pub fn footprint() -> usize {
     #[cfg(target_os = "macos")]
     unsafe {
@@ -510,7 +523,15 @@ pub fn footprint() -> usize {
         }
         0
     }
-    #[cfg(not(target_os = "macos"))]
+    // Linux has no footprint: its resident pages (/proc/self/statm's second figure) are the nearest.
+    #[cfg(target_os = "linux")]
+    {
+        let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
+        let pages: usize = statm.split_whitespace().nth(1).and_then(|v| v.parse().ok()).unwrap_or(0);
+        // SAFETY: sysconf reads a constant.
+        pages * unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(0) as usize
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     0
 }
 
@@ -639,6 +660,23 @@ pub fn register_for_process(job: Box<dyn Job>) {
     std::mem::forget(register(job));
 }
 
+/// Takes out every job over `file` (a store closed and about to be deleted while the process goes on: a test's own),
+/// a step under way waited for. A job's connection to the file closes with it: kept, it held the deleted file open
+/// until the job's next poll, and the process's jobs grew by one a store.
+pub fn forget_file(file: &std::path::Path) {
+    let canonical = std::fs::canonicalize(file).ok();
+    let over = |f: Option<std::path::PathBuf>| f.is_some_and(|f| f == file || canonical.as_ref().is_some_and(|c| std::fs::canonicalize(&f).is_ok_and(|g| g == *c)));
+    let _stepping = STEPPING.lock().unwrap_or_else(|p| p.into_inner());
+    let gone: Vec<Entry> = {
+        let mut jobs = JOBS.lock().unwrap_or_else(|p| p.into_inner());
+        let (gone, kept) = std::mem::take(&mut *jobs).into_iter().partition(|e| over(e.job.file()));
+        *jobs = kept;
+        gone
+    };
+    // Dropped outside the registry's lock: a job's drop closes its connections.
+    drop(gone);
+}
+
 /// Starts the scheduler's thread, once (when the settings have it on).
 pub fn start() {
     SCHEDULER.get_or_init(|| {
@@ -755,7 +793,9 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), pass: Pass) -> bool
             if STOP.load(Ordering::Acquire) || (!all && Instant::now() >= pass_end) {
                 return ran;
             }
-            let Some((step, file)) = step_job(id, s, pass != Pass::Utility, yields) else { break };
+            // `finish_soon` holds `STEPPING` through its pass.
+            let stepped = if pass == Pass::Utility { step_job_held(id, s, false, yields, None) } else { step_job(id, s, true, yields) };
+            let Some((step, file)) = stepped else { break };
             ran = true;
             if step != Step::More {
                 break;
@@ -776,6 +816,12 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), pass: Pass) -> bool
 /// `pause`). `None`: the job is gone, or failed.
 fn step_job(id: u64, s: &Settings, pause: bool, yields: bool) -> Option<(Step, Option<std::path::PathBuf>)> {
     let stepping = STEPPING.lock().unwrap_or_else(|p| p.into_inner());
+    step_job_held(id, s, pause, yields, Some(stepping))
+}
+
+/// `step_job`, `STEPPING` held by the caller (`finish_soon`, through its whole pass) or given to it (`stepping`,
+/// let go before the step's pause).
+fn step_job_held(id: u64, s: &Settings, pause: bool, yields: bool, stepping: Option<std::sync::MutexGuard<'_, ()>>) -> Option<(Step, Option<std::path::PathBuf>)> {
     let mut e = {
         let mut jobs = JOBS.lock().unwrap_or_else(|p| p.into_inner());
         let i = jobs.iter().position(|e| e.id == id)?;
@@ -856,6 +902,10 @@ pub fn finish_soon() {
     if !s.on {
         return;
     }
+    // A step the scheduler's thread is in has its job out of the list: wait for it, and hold the scheduler off
+    // through the pass, so a step it takes out next is not one this pass misses either. Not waited for, the process
+    // exited under the step, and its work was rolled back (ep2's frames sweep, 31 runs in a row).
+    let _stepping = STEPPING.lock().unwrap_or_else(|p| p.into_inner());
     let mut ticks = cpu_ticks();
     for _ in 0..100 {
         if !run_due(&s, true, &mut ticks, Pass::Utility) {
@@ -910,11 +960,27 @@ mod tests {
         }
     }
 
+    /// A store forgotten (`forget_file`) takes its jobs out, the process's own among them; another file's stay.
+    #[test]
+    fn a_forgotten_files_jobs_are_taken_out() {
+        let dir = std::env::temp_dir();
+        let (a, b) = (dir.join("rerail-upkeep-forget-a.sqlite"), dir.join("rerail-upkeep-forget-b.sqlite"));
+        let job = |name: &'static str, file: &std::path::Path| Box::new(OverFile(Counter { name, left: 0, due: Due::No, qos: Qos::Background }, file.to_path_buf()));
+        register_for_process(job("test-forget a", &a));
+        register_for_process(job("test-forget b", &b));
+        let names = || report().into_iter().map(|r| r.name).filter(|n| n.starts_with("test-forget")).collect::<Vec<_>>();
+        assert_eq!(names().len(), 2);
+        forget_file(&a);
+        assert_eq!(names(), ["test-forget b"]);
+        forget_file(&b);
+        assert!(names().is_empty());
+    }
+
     #[test]
     fn settings_parse_and_name_kinds() {
         let s = Settings { only: Some(vec!["sqlite".into()]), without: vec!["collect".into()], ..Default::default() };
-        assert!(s.runs("sqlite content-v4.sqlite"));
-        assert!(!s.runs("collect content-v4.sqlite"));
+        assert!(s.runs("sqlite content-v6.sqlite"));
+        assert!(!s.runs("collect content-v6.sqlite"));
         assert!(!s.runs("cost-model"));
         let all = Settings::default();
         assert!(all.runs("cost-model") && all.cpu > 0.0 && all.memory > 0);
@@ -1002,15 +1068,66 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The test jobs' kinds, the same in every test that configures: each test's `configure` keeps the others' jobs.
+    const TEST_JOBS: [&str; 7] = ["test-a", "test-b", "test-c", "test-d", "test-e", "test-f", "test-g"];
+
+    /// Held by the tests that step the process's jobs (`finish_soon`, `run_due`): one's pass would step the other's.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    /// Utility work whose step takes a while (a sweep of a big backlog).
+    struct Slow {
+        started: std::sync::Arc<AtomicBool>,
+        done: std::sync::Arc<AtomicBool>,
+    }
+
+    impl Job for Slow {
+        fn name(&self) -> String {
+            "test-g slow".into()
+        }
+        fn due(&mut self) -> Due {
+            if self.done.load(Ordering::Acquire) { Due::No } else { Due::Urgent }
+        }
+        fn qos(&self) -> Qos {
+            Qos::Utility
+        }
+        fn step(&mut self, _: &Slice) -> Result<Step, String> {
+            self.started.store(true, Ordering::Release);
+            std::thread::sleep(Duration::from_millis(300));
+            self.done.store(true, Ordering::Release);
+            Ok(Step::Done)
+        }
+    }
+
+    /// A step the scheduler's thread is in when the process ends is waited for (`STEPPING`): its job is out of the
+    /// list while it steps, and the process exiting under it rolled its work back. On ep2 the frames sweep of a big
+    /// backlog (10 s) was lost at every process's end, 31 runs in a row.
+    #[test]
+    fn the_process_end_waits_for_a_step_under_way() {
+        let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+        let (started, done) = (std::sync::Arc::new(AtomicBool::new(false)), std::sync::Arc::new(AtomicBool::new(false)));
+        let g = register(Box::new(Slow { started: std::sync::Arc::clone(&started), done: std::sync::Arc::clone(&done) }));
+        configure(Settings { only: Some(TEST_JOBS.map(String::from).to_vec()), ..Settings::default() });
+        let id = g.0;
+        // The scheduler's thread takes the job out and steps it.
+        let scheduler = std::thread::spawn(move || step_job(id, &settings(), false, true));
+        while !started.load(Ordering::Acquire) {
+            std::thread::yield_now();
+        }
+        finish_soon();
+        assert!(done.load(Ordering::Acquire), "the process's end waited for the step under way");
+        scheduler.join().unwrap();
+    }
+
     #[test]
     fn jobs_step_to_the_end_within_the_cpu_share() {
+        let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
         let idle = Due::Idle { starve: Duration::from_secs(3600) };
         let _a = register(Box::new(Counter { name: "test-a one", left: 3, due: idle, qos: Qos::Background }));
         let _b = register(Box::new(Counter { name: "test-b one", left: 2, due: Due::Urgent, qos: Qos::Background }));
         // Utility work runs at once though it says it can wait; `finish_soon` finishes it, and only it.
         let _c = register(Box::new(Counter { name: "test-c one", left: 2, due: idle, qos: Qos::Utility }));
         let _e = register(Box::new(Counter { name: "test-e one", left: 2, due: idle, qos: Qos::Background }));
-        configure(Settings { only: Some(["test-a", "test-b", "test-c", "test-d", "test-e", "test-f"].map(String::from).to_vec()), ..Settings::default() });
+        configure(Settings { only: Some(TEST_JOBS.map(String::from).to_vec()), ..Settings::default() });
         let mut ticks = cpu_ticks();
         // Not idle: only the urgent job runs.
         run_due(&settings(), false, &mut ticks, Pass::Scheduler);

@@ -68,9 +68,9 @@ impl Tree {
         }
         let f = &*p.facts;
         let fields = [dialect.operator, dialect.operators];
-        for (local, &id) in p.core.iter().enumerate() {
-            let n = p.global(local as u32);
-            let operators = f.children(id).iter().filter(|&&c| f.field[c as usize] != 0 && fields.contains(&Some(f.field[c as usize])));
+        for (_, id, n) in p.node_ids() {
+            let kids = f.children(id);
+            let operators = kids.iter().filter(|&&c| f.field(c) != 0 && fields.contains(&Some(f.field(c))));
             for (i, &c) in operators.enumerate() {
                 self.op_ats.push([n, i as i64, string(dialect.name(f, c)) as i64]);
             }
@@ -83,11 +83,10 @@ impl Tree {
         let Some(dialect) = dialect else { return };
         self.operators(p, dialect, string);
         if self.token_parts {
-            for (local, &id) in p.core.iter().enumerate() {
-                let n = p.global(local as u32);
+            for (_, id, n) in p.node_ids() {
                 for (i, &c) in f.children(id).iter().enumerate() {
-                    let (a, b) = (i64::from(f.start[c as usize]), i64::from(f.end[c as usize]));
-                    let at = p.local[c as usize];
+                    let (a, b) = (i64::from(f.start(c)), i64::from(f.end(c)));
+                    let at = p.local_of_node(c as u32);
                     if f.named(c) && at != NONE {
                         self.named_tokens.push([n, i as i64, p.global(at), a, b]);
                     } else {
@@ -99,19 +98,18 @@ impl Tree {
             }
         }
         if self.prev_token || self.token {
-            for (local, &id) in p.core.iter().enumerate() {
-                let n = p.global(local as u32);
+            for (_, id, n) in p.node_ids() {
                 let children = f.children(id);
                 // An anonymous token's text is its kind.
                 let text = |c: u32| if f.named(c) { f.text(c) } else { dialect.name(f, c) };
                 if self.token {
                     for (i, &c) in children.iter().enumerate() {
-                        self.tokens.push([n, i as i64, string(text(c)) as i64, i64::from(f.start[c as usize]), i64::from(f.end[c as usize])]);
+                        self.tokens.push([n, i as i64, string(text(c)) as i64, i64::from(f.start(c)), i64::from(f.end(c))]);
                     }
                 }
                 if self.prev_token {
                     for pair in children.windows(2) {
-                        let after = p.local[pair[1] as usize];
+                        let after = p.local_of_node(pair[1] as u32);
                         if after != NONE {
                             self.prev_tokens.push([p.global(after), string(text(pair[0])) as i64]);
                         }
@@ -119,7 +117,7 @@ impl Tree {
                 }
             }
         }
-        if self.visit_index && python && let Some(&root) = p.core.first() {
+        if self.visit_index && python && let Some(&root) = p.nodes().next().map(|(_, x)| x).as_ref() {
             Order { f, dialect, p, next: 0, out: &mut self.visit_indexes }.run(root);
         }
     }
@@ -127,9 +125,7 @@ impl Tree {
     /// The relations read, their strings as atoms (`atom` of a string index).
     pub(super) fn relations(self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
         let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
-            let mut r = Relation::new(columns);
-            rows.for_each(|row| r.push(&row));
-            r
+            Relation::from_rows(columns, rows)
         };
         let mut out = Vec::new();
         if self.op_at {
@@ -178,7 +174,7 @@ impl Order<'_> {
     }
 
     fn field(&self, id: u32) -> &'static str {
-        self.dialect.catalog.field_name(self.f.field[id as usize]).unwrap_or("")
+        self.dialect.catalog.field_name(self.f.field(id)).unwrap_or("")
     }
 
     fn run(&mut self, root: u32) {
@@ -188,7 +184,7 @@ impl Order<'_> {
                 Step::Visit(id, decorators) => (id, Some(decorators)),
                 Step::Number(id) => (id, None),
             };
-            let local = self.p.local[id as usize];
+            let local = self.p.local_of_node(id as u32);
             if local != NONE {
                 self.out.push([self.p.global(local), self.next]);
                 self.next += 1;
@@ -229,11 +225,11 @@ impl Order<'_> {
                 let (keywords, positional): (Vec<u32>, Vec<u32>) = children.iter().copied().partition(keyword);
                 positional.into_iter().chain(keywords).map(visit).collect()
             }
-            "parameters" | "lambda_parameters" => self.parameters(children),
+            "parameters" | "lambda_parameters" => self.parameters(&children),
             "dictionary" => {
-                let part = |c: u32, value: bool| self.f.children(c).iter().copied().filter(move |&k| (self.field(k) == "value") == value).map(visit);
+                let part = |c: u32, value: bool| self.f.children(c).into_iter().filter(move |&k| (self.field(k) == "value") == value).map(visit);
                 let mut out = Vec::new();
-                for &c in children {
+                for &c in &children {
                     match self.kind(c) {
                         "pair" => {
                             out.push(Step::Number(c));
@@ -243,7 +239,7 @@ impl Order<'_> {
                         _ => out.push(visit(c)),
                     }
                 }
-                for &c in children {
+                for &c in &children {
                     match self.kind(c) {
                         "pair" => out.extend(part(c, true)),
                         "dictionary_splat" => out.push(visit(c)),

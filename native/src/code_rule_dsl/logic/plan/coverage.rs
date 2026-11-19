@@ -25,12 +25,12 @@
 use super::*;
 use crate::content_store::ContentStore;
 use crate::code_rule_dsl::logic::front::AggOp;
-use crate::code_rule_dsl::logic::rr::parse;
 use crate::code_rule_dsl::logic::strings::functions::{Kind, all as functions};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-/// The facts every probe reads: symbols, numbers, pairs and edges (with a cycle).
+/// The facts every probe reads: symbols, numbers, pairs, edges (with a cycle) and labelled edges (`l`: routes of one
+/// length that differ in their bytes, and a route of fewer characters but more bytes).
 const FACTS: &str = r#".decl s(a: symbol)
 s("alpha"). s("Beta"). s("a.b"). s("x_1"). s("12").
 .decl t(a: symbol)
@@ -45,6 +45,8 @@ p("alpha", 1). p("alpha", 4). p("Beta", 2). p("a.b", -1).
 q("alpha", "z"). q("alpha", "y"). q("Beta", "w").
 .decl e(a: number, b: number)
 e(1, 2). e(2, 5). e(5, 1). e(0, -3).
+.decl l(a: number, b: number, c: symbol)
+l(1, 2, "b"). l(1, 3, "a"). l(2, 4, "a"). l(3, 4, "b"). l(4, 1, "c"). l(1, 6, "é"). l(1, 7, "a"). l(7, 6, "a").
 .lattice shortlex_min<symbol> { Lub -> @shortlex_min }
 "#;
 
@@ -190,7 +192,7 @@ fn probes() -> Vec<Probe> {
     // without anyone writing its probe.
     let probed: BTreeSet<String> = out.iter().flat_map(|p| p.ops.iter().cloned()).collect();
     let decls = functor_decls();
-    let tree = ["doc", "in", "place", "place_path", "place_line", "flat_bin", "id", "line", "depth", "within", "tree_digest"];
+    let tree = ["doc", "in", "place", "place_path", "place_line", "id", "line", "depth", "within", "tree_digest"];
     for op in census().0.keys() {
         let Some((name, arity)) = op.strip_prefix("arity ").and_then(|r| r.split_once(' ')) else { continue };
         let Ok(arity) = arity.parse::<usize>() else { continue };
@@ -227,9 +229,19 @@ fn probes() -> Vec<Probe> {
     out.push(probe("lattice relation (shortest)", &["lattice"], "a: number, d: min<>| widen 8", "{HEAD}(x, 0) :- n(x), x = 1.\n{HEAD}(y, d + 1) :- {HEAD}(x, d), e(x, y)."));
     // A lattice relation holds one row a key: a key's rows fold by its join, and its readers see the folded value only.
     out.push(probe("lattice relation (flat: a key's values differ)", &["lattice"], "a: symbol, v: flat<>", "{HEAD}(a, x) :- p(a, x)."));
+    // A flat lattice's `top` written by a head (`cv(n, top) :- …`): the integer SQL writes for it.
+    out.push(probe("lattice relation (flat: a head of top)", &["lattice"], "a: symbol, v: flat<>", "{HEAD}(a, top) :- s(a).\n{HEAD}(a, 1) :- s(a), a = \"alpha\"."));
     out.push(probe("lattice relation (max over a key)", &["lattice"], "a: symbol, v: max<>| widen 8", "{HEAD}(a, x) :- p(a, x)."));
     out.push(probe("lattice relation (shortlex_min over symbols)", &["lattice"], "a: number, r: shortlex_min<>| widen 8",
         "{HEAD}(x, \"\") :- n(x), x = 1.\n{HEAD}(y, r) :- {HEAD}(x, r0), e(x, y), r = cat(r0, \"z\")."));
+    out.push(probe("lattice relation (shortlex_min: characters, then bytes)", &["lattice"], "a: number, r: shortlex_min<>| widen 8",
+        "{HEAD}(x, \"\") :- n(x), x = 1.\n{HEAD}(y, r) :- {HEAD}(x, r0), l(x, y, c), r = cat(r0, c)."));
+    // The shapes of the four shortest-route recursions (O62): hierarchy's numbered steps, the sinks' delimited ids
+    // (`@to_string` in place of `@id`, a node's function).
+    out.push(probe("lattice relation (shortlex_min of printf steps)", &["lattice", "printf"], "a: number, r: shortlex_min<>| widen 8",
+        "{HEAD}(x, \"\") :- n(x), x = 1.\n{HEAD}(y, r) :- {HEAD}(x, r0), e(x, y), r = @concat(r0, @printf(\"%03d.\", y))."));
+    out.push(probe("lattice relation (shortlex_min of a three-part concat)", &["lattice", "to_string"], "a: number, r: shortlex_min<>| widen 8",
+        "{HEAD}(x, \"|\") :- n(x), x = 1.\n{HEAD}(y, r) :- {HEAD}(x, r0), e(x, y), r = @concat(r0, @to_string(y), \"|\")."));
     out.push(probe("lattice relation (a key improved after its first value)", &["lattice"], "a: number, d: min<>| widen 8",
         "{HEAD}(x, 0) :- n(x), x = 1.\n{HEAD}(x, 10) :- n(x), x = 5.\n{HEAD}(y, d + 1) :- {HEAD}(x, d), e(x, y)."));
     out.push(probe("lattice relation (max over a cycle, widened to its top)", &["lattice"], "a: number, d: max<>| widen 2",
@@ -276,15 +288,15 @@ fn sorted<T: Ord>(mut v: Vec<T>) -> Vec<T> {
 /// Runs `src` (whose probe relation is `rel`) on SQLite, the native engine and the device; the verdict, or why the
 /// probe did not run at all.
 fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
-    let p = parse(src).map_err(|e| format!("unparsed: {e}"))?;
+    let p = crate::code_rule_dsl::logic::rr::parse_version(src).map_err(|e| format!("unparsed: {e}"))?;
     let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<(Vec<Vec<String>>, bool, Vec<(String, placement::Ran)>), String> {
         let (_path, store, db) = fresh();
         // `shortlex_min<>` orders the run's symbols by their text: the store's atoms, as a run declares it.
         crate::code_rule_dsl::logic::native::declare("shortlex_min", std::sync::Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
-        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).map_err(|e| format!("unlowered: {e}"))?;
+        let lowered = lower::lowered(p.clone(), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).map_err(|e| format!("unlowered: {e}"))?;
         let was = placement::set_binding(binding);
-        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes);
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).map_err(|e| format!("stats: {e}"))?, BTreeSet::new(), modes);
         placement::set_binding(was);
         let got = got.map_err(|e| format!("error: {e}"))?;
         let ran = placement::recorded(rel);
@@ -401,7 +413,13 @@ fn every_operation_runs_on_every_executor() {
     let mut native_gaps = 0;
     let mut device_gaps = 0;
     let all = probes();
+    // `RERAIL_COVERAGE_ONLY=<text>`: the probes whose name has it, their verdicts printed whole, no ledger compared
+    // (a step being built, one probe at a time).
+    let only = std::env::var("RERAIL_COVERAGE_ONLY").ok();
     for (k, pr) in all.iter().enumerate() {
+        if only.as_deref().is_some_and(|o| !pr.name.contains(o)) {
+            continue;
+        }
         let rel = format!("cov_{k:03}_p");
         let rule = pr.rule.replace("{HEAD}", &rel);
         // `cols` may carry the declaration's tail after a `|` (a lattice's `widen k`).
@@ -418,12 +436,18 @@ fn every_operation_runs_on_every_executor() {
         device_gaps += usize::from(device != "device");
         // The rule as written with its head named `p`, and the cells without the probe's own name: a probe added
         // renumbers the others, and the ledger does not churn with it.
+        if only.is_some() {
+            eprintln!("{}:\n  native: {native}\n  device: {device}", pr.name);
+        }
         let shown = pr.rule.replace("{HEAD}", "p").replace('\n', " ");
         let unnamed = |c: &str| cell(c).replace(&rel, "p");
         let _ = writeln!(rows, "{}\t{}\t{}\t{shown}", pr.name, unnamed(&native), unnamed(&device));
     }
     eprintln!("{} probes: {native_gaps} not native, {device_gaps} not on the device", all.len());
     assert!(wrong.is_empty(), "an executor's rows differ from SQLite's:\n{}", wrong.join("\n"));
+    if only.is_some() {
+        return;
+    }
     let path = ledger();
     if std::env::var_os("RERAIL_BLESS_COVERAGE").is_some() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();

@@ -16,6 +16,7 @@
 # JSON reader's limit.
 
 lexer rr
+deprecated back_fill
 
 class quote     = '"'
 class backslash = '\\'

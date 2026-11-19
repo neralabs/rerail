@@ -205,7 +205,7 @@ mod tests {
 
 #[cfg(test)]
 mod lowering_time {
-    /// The token grammar's lowering, step by step (work queue Q34): run it with `--nocapture`.
+    /// The token grammar's lowering, step by step (work queue Q131): run it with `--nocapture`.
     #[test]
     #[ignore = "a measurement"]
     fn lowering_steps() {

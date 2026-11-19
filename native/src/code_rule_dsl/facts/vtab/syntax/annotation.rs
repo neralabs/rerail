@@ -81,7 +81,7 @@ pub(super) struct Annotations {
 }
 
 /// String nodes by their range in a text.
-type ByRange = HashMap<(u32, u32), i64>;
+type ByRange = rustc_hash::FxHashMap<(u32, u32), i64>;
 
 impl Annotations {
     pub(super) fn new(reads: &BTreeSet<String>) -> Self {
@@ -95,11 +95,9 @@ impl Annotations {
         // The string hosts of the projection, by range.
         let f = &*p.facts;
         let by_range: ByRange = p
-            .core
-            .iter()
-            .enumerate()
-            .filter(|&(_, &id)| HOSTS.contains(&dialect.name(f, id)))
-            .map(|(local, &id)| ((f.start[id as usize], f.end[id as usize]), p.global(local as u32)))
+            .node_ids()
+            .filter(|&(_, id, _)| HOSTS.contains(&dialect.name(f, id)))
+            .map(|(_, id, n)| ((f.start(id), f.end(id)), n))
             .collect();
         if let Some(g) = d.guest.as_deref() {
             if g.grammar == GRAMMAR {
@@ -191,6 +189,9 @@ impl super::Producer for Producer {
 }
 
 impl super::ProducerRun for Annotations {
+    fn name(&self) -> &'static str {
+        "string annotations"
+    }
     fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, own: bool, _: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         Annotations::document(self, p, d, dialect, own)
     }

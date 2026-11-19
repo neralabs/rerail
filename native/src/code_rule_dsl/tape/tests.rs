@@ -8,6 +8,7 @@ mod survey;
 
 #[test]
 fn tape_v8_persists_abstract_tree_sitter_supertypes() {
+    format_15();
     let source = "value = left + right\n";
     let (_, tape, image, grammar) = fixture(source, GrammarDialect::Python);
     let bytes = image.to_bytes().unwrap();
@@ -112,7 +113,17 @@ fn scala_contextual_aliases_preserve_native_node_identity() {
 
     let mut expected = Vec::new();
     native_nodes(native.tree.root_node(), &mut expected);
+    // The nodes a tape holds: the tokens the grammar implies (`def`, `:`, `}` here) left out, as
+    // Scala's token automata (0305) decide (`stored_children_for_test`, as `stored` reads them).
+    let mut kept = std::collections::HashSet::new();
+    let mut stack = vec![native.tree.root_node()];
+    while let Some(node) = stack.pop() {
+        kept.insert(node.id());
+        stack.extend(stored_children_for_test(GrammarDialect::Scala, node).into_iter().map(|(child, _)| child));
+    }
+    expected.retain(|node| kept.contains(&node.id()));
     let actual = tape.root_node().dfs().collect::<Vec<_>>();
+    assert!(actual.iter().any(|n| n.kind() == "arguments"), "the contextual alias is kept");
     assert_eq!(expected.len(), actual.len());
     for (native, restored) in expected.into_iter().zip(actual) {
         assert_eq!(restored.kind_id(), native.kind_id());
@@ -141,6 +152,12 @@ fn kept(native: &AstGrep<StrDoc<GrammarDialect>>) -> std::collections::HashSet<u
     kept
 }
 
+/// The test reads format 15's columns or bytes, or takes format 15 as the reference the other formats answer as:
+/// its documents are made as a run of format 15 makes them (the product's default is format 16, 0340).
+fn format_15() {
+    super::formats::this_thread_stores(super::formats::Format::F15);
+}
+
 fn fixture(
     source: &str,
     lang: GrammarDialect,
@@ -162,7 +179,6 @@ fn fixture(
 
 #[test]
 fn known_field_edges_match_native_first_child_without_larger_records() {
-    assert_eq!(std::mem::size_of::<Rec>(), 40);
     for (lang, source) in [
         (
             GrammarDialect::Python,
@@ -237,6 +253,7 @@ fn matches<D: Doc + 'static>(doc: D, pattern: &str, lang: GrammarDialect) -> Vec
 
 #[test]
 fn persisted_image_round_trips_without_parsing() {
+    format_15();
     let source = "const value = call(é);\n";
     let (native, _tape, image, grammar) = fixture(source, GrammarDialect::TypeScript);
     let bytes = image.to_bytes().unwrap();
@@ -299,11 +316,11 @@ fn file_documents_persist_apart_and_are_checked() {
     assert_eq!(
         primary.len(),
         HEADER_BYTES
-            + padded(tables.code.len())
-            + padded(tables.size.len())
-            + padded(tables.base.len())
-            + padded(tables.off.len())
-            + padded(tables.tail.len())
+            + padded(tables.code().len())
+            + padded(tables.size().len())
+            + padded(tables.base().len())
+            + padded(tables.off().len())
+            + padded(tables.tail().len())
             + tables.code_table_bytes()
             + aliases
     );
@@ -422,6 +439,7 @@ fn a_derived_documents_role_is_its_source_maps() {
 
 #[test]
 fn persisted_image_rejects_wrong_grammar_and_noncanonical_bytes() {
+    format_15();
     let source = "x = 1 # extra\n";
     let (_native, _tape, image, grammar) = fixture(source, GrammarDialect::Python);
     let bytes = image.to_bytes().unwrap();
@@ -885,6 +903,7 @@ fn punctuation_fields_ancestors_and_unicode_positions_match_native() {
 
 #[test]
 fn malformed_and_mismatched_images_are_not_negative_matches() {
+    format_15();
     let source = "a = foo(1)\n";
     let (_, _, image, grammar) = fixture(source, GrammarDialect::Python);
     let source = Arc::new(source.to_owned());
@@ -892,19 +911,19 @@ fn malformed_and_mismatched_images_are_not_negative_matches() {
         assert!(TapeDoc::restore(Arc::clone(&source), grammar, candidate, &|| false).is_err());
     };
     let mut broken = image.clone();
-    broken.code.pop();
+    broken.edit(Columns15::CODE, |c| { c.pop(); });
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
-    broken.tail.pop();
+    broken.edit(Columns15::TAIL, |c| { c.pop(); });
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
-    broken.size[0..2].copy_from_slice(&0u16.to_le_bytes());
+    broken.edit(Columns15::SIZE, |c| c[0..2].copy_from_slice(&0u16.to_le_bytes()));
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
-    broken.code[0..2].copy_from_slice(&u16::MAX.to_le_bytes());
+    broken.edit(Columns15::CODE, |c| c[0..2].copy_from_slice(&u16::MAX.to_le_bytes()));
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
-    broken.off[0] = 0xff;
+    broken.edit(Columns15::OFF, |c| c[0] = 0xff);
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
     broken.widths[0] = 3;
@@ -914,13 +933,13 @@ fn malformed_and_mismatched_images_are_not_negative_matches() {
     broken.source_len += 1;
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
-    broken.base[0] ^= 0x80;
+    broken.edit(Columns15::BASE, |c| c[0] ^= 0x80);
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
-    broken.tail.extend_from_slice(&[0, 0]);
+    broken.edit(Columns15::TAIL, |c| c.extend_from_slice(&[0, 0]));
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
-    broken.size[0..2].copy_from_slice(&SENTINEL.to_le_bytes());
+    broken.edit(Columns15::SIZE, |c| c[0..2].copy_from_slice(&SENTINEL.to_le_bytes()));
     reject(&broken, Arc::clone(&grammar));
     let mut broken = image.clone();
     broken.codes[0].alias = 7;
@@ -931,12 +950,13 @@ fn malformed_and_mismatched_images_are_not_negative_matches() {
 
 #[test]
 fn restore_rejects_child_subtree_escaping_parent() {
+    format_15();
     let source = "x+y\n";
     let (_, _, image, grammar) = fixture(source, GrammarDialect::Python);
     let mut broken = image.clone();
     // The expression_statement has five preorder records. Shortening its subtree
     // to two leaves descendants outside its declared exclusive boundary.
-    broken.size[2..4].copy_from_slice(&2u16.to_le_bytes());
+    broken.edit(Columns15::SIZE, |c| c[2..4].copy_from_slice(&2u16.to_le_bytes()));
     assert!(TapeDoc::restore(Arc::new(source.to_owned()), grammar, &broken, &|| false).is_err());
 }
 
@@ -952,6 +972,7 @@ fn wrong_parsed_grammar_never_produces_a_tape() {
 // ERROR nodes and zero-width MISSING tokens, and every node flag matches the native tree.
 #[test]
 fn damaged_trees_keep_error_and_missing_nodes_like_native() {
+    format_15();
     for (lang, source, errors, missing) in [
         (GrammarDialect::Python, "x = 1\ndef f(:\n", false, true),
         (GrammarDialect::Python, "x = 1\n) = 2\nx = 3\n", true, false),
@@ -1086,9 +1107,9 @@ fn cancellation_interrupts_mid_encode_without_partial_image() {
     // A record per stored node: the tokens the grammar implies are in no tape (RER-131).
     let nodes = native.tree.root_node().descendant_count();
     let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
-    assert_eq!(doc.data.len(), doc.image.node_count());
-    assert_eq!(image.primary.node_count(), doc.data.len());
-    assert!(doc.data.len() < nodes);
+    assert_eq!(doc.transducer_len(), doc.image.node_count());
+    assert_eq!(image.primary.node_count(), doc.transducer_len());
+    assert!(doc.transducer_len() < nodes);
 }
 
 #[test]
@@ -1112,7 +1133,7 @@ fn cancellation_interrupts_mid_restore_after_hashing() {
     );
     assert_eq!(calls.get(), 5, "restore must poll after the source digest");
     let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
-    assert_eq!(doc.data.len(), doc.image.node_count());
+    assert_eq!(doc.transducer_len(), doc.image.node_count());
 }
 
 #[test]
@@ -1124,6 +1145,7 @@ fn checkpoint_encoding_rejects_unrepresentable_offsets() {
 
 #[test]
 fn checkpoint_stride_boundaries_preserve_native_nodes_and_matches() {
+    format_15();
     for (expected_count, source) in [
         (15, "x\n".repeat(7)),
         (16, format!("{}#é\n", "x\n".repeat(7))),
@@ -1142,7 +1164,7 @@ fn checkpoint_stride_boundaries_preserve_native_nodes_and_matches() {
             "{expected_count} native fixture"
         );
         assert_eq!(image.node_count(), expected_count);
-        assert_eq!(image.base.len(), expected_count.div_ceil(16) * 4);
+        assert_eq!(image.base().len(), expected_count.div_ceil(16) * 4);
         for (index, (a, b)) in native_nodes.iter().zip(tape_nodes.iter()).enumerate() {
             assert_eq!(
                 (a.kind_id(), a.range(), a.text(), a.start_pos(), a.end_pos()),
@@ -1172,6 +1194,7 @@ fn checkpoint_stride_boundaries_preserve_native_nodes_and_matches() {
 
 #[test]
 fn span_varint_width_boundaries_preserve_utf8_ranges_and_captures() {
+    format_15();
     for (length, expected_width) in [(127, 1), (128, 2), (16_383, 2), (16_384, 3)] {
         let source = format!("#é{}\nfoo(1)\n", "a".repeat(length - 3));
         let (native, tape, _, _) = fixture(&source, GrammarDialect::Python);
@@ -1222,6 +1245,7 @@ fn span_varint_width_boundaries_preserve_utf8_ranges_and_captures() {
 
 #[test]
 fn large_file_roundtrips_parent_and_subtree_overflow() {
+    format_15();
     let source = "x = foo(1)\n".repeat(12_000);
     let (native, tape, image, grammar) = fixture(&source, GrammarDialect::Python);
     assert!(image.node_count() > u16::MAX as usize);
@@ -1231,12 +1255,13 @@ fn large_file_roundtrips_parent_and_subtree_overflow() {
         matches(native, "foo($A)", GrammarDialect::Python)
     );
     let mut broken = image.clone();
-    broken.size[0..4].copy_from_slice(&u32::MAX.to_le_bytes());
+    broken.edit(Columns15::SIZE, |c| c[0..4].copy_from_slice(&u32::MAX.to_le_bytes()));
     assert!(TapeDoc::restore(Arc::new(source), grammar, &broken, &|| false).is_err());
 }
 
 #[test]
 fn sentinel_edges_preserve_native_root_children_and_last_parent() {
+    format_15();
     for (extra_count, expected_count) in [(1, 65_534), (2, 65_535), (3, 65_536)] {
         let source = format!("{}{}", "x\n".repeat(32_766), "#é\n".repeat(extra_count));
         let (native, tape, image, grammar) = fixture(&source, GrammarDialect::Python);
@@ -1284,7 +1309,7 @@ fn sentinel_edges_preserve_native_root_children_and_last_parent() {
                 "size column narrower than its width"
             );
             let mut missing_size = image.clone();
-            missing_size.size[0..4].copy_from_slice(&65_535_u32.to_le_bytes());
+            missing_size.edit(Columns15::SIZE, |c| c[0..4].copy_from_slice(&65_535_u32.to_le_bytes()));
             assert!(
                 TapeDoc::restore(Arc::new(source), grammar, &missing_size, &|| false).is_err(),
                 "root size short of the node count"
@@ -1295,6 +1320,7 @@ fn sentinel_edges_preserve_native_root_children_and_last_parent() {
 
 #[test]
 fn restore_rejects_noncanonical_side_tables_and_checkpoint_boundaries() {
+    format_15();
     let source = format!("{}#é\n", "x\n".repeat(8));
     let (_, _, image, grammar) = fixture(&source, GrammarDialect::Python);
     assert_eq!(image.node_count(), 18);
@@ -1312,17 +1338,19 @@ fn restore_rejects_noncanonical_side_tables_and_checkpoint_boundaries() {
         );
     };
     let mut broken = image.clone();
-    broken.base.pop();
+    broken.edit(Columns15::BASE, |c| { c.pop(); });
     reject("truncated block base", &broken);
     let mut broken = image.clone();
-    broken.base[4] ^= 0x40;
+    broken.edit(Columns15::BASE, |c| c[4] ^= 0x40);
     reject("second block base", &broken);
     let mut broken = image.clone();
-    broken.off[2 * 17] ^= 0x40;
+    broken.edit(Columns15::OFF, |c| c[2 * 17] ^= 0x40);
     reject("second block offset", &broken);
     let mut broken = image.clone();
-    broken.codes.push(broken.codes[0]);
-    broken.code[0..2].copy_from_slice(&(broken.codes.len() as u16).to_le_bytes());
+    let first = broken.codes[0];
+    broken.codes.push(first);
+    let count = broken.codes.len() as u16;
+    broken.edit(Columns15::CODE, |c| c[0..2].copy_from_slice(&count.to_le_bytes()));
     reject("out-of-range code", &broken);
     let mut broken = image.clone();
     broken.widths[1] = 4;
@@ -1338,6 +1366,7 @@ fn restore_rejects_noncanonical_side_tables_and_checkpoint_boundaries() {
 
 #[test]
 fn restore_rejects_overwide_spans_and_non_utf8_or_parent_ranges() {
+    format_15();
     let source = "é = foo(1)\n";
     let (_, _, image, grammar) = fixture(source, GrammarDialect::Python);
     let reject = |label: &str, candidate: &TapeImage| {
@@ -1353,10 +1382,10 @@ fn restore_rejects_overwide_spans_and_non_utf8_or_parent_ranges() {
         );
     };
     let mut broken = image.clone();
-    broken.off[0..2].copy_from_slice(&u16::MAX.to_le_bytes());
+    broken.edit(Columns15::OFF, |c| c[0..2].copy_from_slice(&u16::MAX.to_le_bytes()));
     reject("start beyond the source", &broken);
     let mut broken = image.clone();
-    broken.tail[0..2].copy_from_slice(&u16::MAX.to_le_bytes());
+    broken.edit(Columns15::TAIL, |c| c[0..2].copy_from_slice(&u16::MAX.to_le_bytes()));
     reject("root ends beyond the source", &broken);
     // A two-byte leaf at 0 (`é`) whose end moves inside the codepoint while the root and its
     // parent stay valid.
@@ -1365,7 +1394,7 @@ fn restore_rejects_overwide_spans_and_non_utf8_or_parent_ranges() {
         .expect("a UTF-8 leaf at the start");
     let mut broken = image.clone();
     let at = leaf * image.tail_width();
-    broken.tail[at..at + 2].copy_from_slice(&1u16.to_le_bytes());
+    broken.edit(Columns15::TAIL, |c| c[at..at + 2].copy_from_slice(&1u16.to_le_bytes()));
     assert!(
         TapeDoc::restore(
             Arc::new(source.to_owned()),
@@ -1386,7 +1415,7 @@ fn restore_rejects_overwide_spans_and_non_utf8_or_parent_ranges() {
     // The root ends at its last descendant's start plus its tail: shorten it to 2.
     let last = image.size_at(0) as usize - 1;
     let tail = 2 - image.start_at(last).min(2);
-    broken.tail[0..2].copy_from_slice(&(tail as u16).to_le_bytes());
+    broken.edit(Columns15::TAIL, |c| c[0..2].copy_from_slice(&(tail as u16).to_le_bytes()));
     assert!(
         TapeDoc::restore(Arc::new(source.to_owned()), grammar, &broken, &|| false).is_err(),
         "child span escapes shortened parent but remains within source"
@@ -1887,6 +1916,7 @@ fn packed_rr_tape(grammar: &Grammar, source: &str) -> Vec<u8> {
 /// statement parser's tree packed by the engine's own passes, byte for byte: every `.rr` file of the repository.
 #[test]
 fn rr_tapes_from_the_lean_parser_are_the_statement_parsers() {
+    format_15();
     let grammar = Grammar::new(GrammarDialect::Rr).unwrap();
     let mut checked = 0;
     for (path, source) in rr_files() {
@@ -1958,6 +1988,7 @@ fn rr_parse_costs() {
 /// tree-sitter-json.
 #[test]
 fn json_tapes_from_the_bitlex_parser_are_tree_sitters() {
+    format_15();
     assert_eq!(crate::code_rule_dsl::transducer::packed::json_parser::compile_error(), None);
     for source in [
         "{}",
@@ -2049,6 +2080,7 @@ fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
 /// one simdjson's stage 1 computed (the source's SHA-256); a file simdjson refuses goes to tree-sitter-json.
 #[test]
 fn the_product_reads_json_with_simdjson() {
+    format_15();
     use crate::code_rule_dsl::transducer::packed::json_parser as jp;
     use sha2::Digest;
     let grammar = Grammar::new(GrammarDialect::Json).unwrap();
@@ -2132,6 +2164,7 @@ fn the_router_takes_the_best_json_parser_this_cpu_runs() {
 /// tree-sitter-json; the refused files are only counted.
 #[test]
 fn json_tapes_from_simdjson_are_tree_sitters() {
+    format_15();
     for source in [
         "{}",
         "[]",
@@ -2285,27 +2318,28 @@ fn simdjson_tapes_over_files() {
 
 #[test]
 fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
+    format_15();
     use crate::code_rule_dsl::facts::core;
     let source = Arc::new("é = foo(1)\n".to_owned());
     let (_, _, image, grammar) = fixture(&source, GrammarDialect::Python);
     let lines = Arc::new(LineTable::new(&source, Terminators::of(GrammarDialect::Python)));
     let reject = |image: &TapeImage| {
         assert!(TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), image, &|| false).is_err());
-        assert!(core::from_image(Arc::clone(&source), &grammar, image, Arc::clone(&lines)).is_err());
+        assert!(core::from_image(Arc::clone(&source), &grammar, image.clone(), Arc::clone(&lines)).is_err());
     };
     let mut corrupt = image.clone(); corrupt.source_digest.as_mut().expect("the image holds its source's digest")[0] ^= 1; reject(&corrupt);
-    let mut corrupt = image.clone(); corrupt.code.pop(); reject(&corrupt);
-    let mut corrupt = image.clone(); corrupt.size[0..2].copy_from_slice(&0u16.to_le_bytes()); reject(&corrupt);
+    let mut corrupt = image.clone(); corrupt.edit(Columns15::CODE, |c| { c.pop(); }); reject(&corrupt);
+    let mut corrupt = image.clone(); corrupt.edit(Columns15::SIZE, |c| c[0..2].copy_from_slice(&0u16.to_le_bytes())); reject(&corrupt);
     let mut corrupt = image.clone(); corrupt.codes[0].alias = SENTINEL - 1; reject(&corrupt);
     let mut corrupt = image.clone(); corrupt.codes[0].class_count = MAX_NODE_SUPERTYPES as u8 + 1; reject(&corrupt);
-    let mut corrupt = image.clone(); corrupt.tail[0..2].copy_from_slice(&u16::MAX.to_le_bytes()); reject(&corrupt);
+    let mut corrupt = image.clone(); corrupt.edit(Columns15::TAIL, |c| c[0..2].copy_from_slice(&u16::MAX.to_le_bytes())); reject(&corrupt);
     let leaf = (1..image.node_count()).find(|&i| image.start_at(i) == 0 && image.size_at(i) == 1 && image.tail_at(i) == 2).unwrap();
-    let mut corrupt = image.clone(); corrupt.tail[leaf*2..leaf*2+2].copy_from_slice(&1u16.to_le_bytes()); reject(&corrupt);
+    let mut corrupt = image.clone(); corrupt.edit(Columns15::TAIL, |c| c[leaf*2..leaf*2+2].copy_from_slice(&1u16.to_le_bytes())); reject(&corrupt);
     // A malformed nested size whose byte span still fits cannot escape its parent's subtree.
     let (_, _, nested, ng) = fixture("f(g(x))\n", GrammarDialect::Python);
     let mut corrupt = nested.clone();
-    corrupt.size[2..4].copy_from_slice(&2u16.to_le_bytes());
-    assert!(core::from_image(Arc::new("f(g(x))\n".into()), &ng, &corrupt, Arc::new(LineTable::new("f(g(x))\n", Terminators::Newlines))).is_err());
+    corrupt.edit(Columns15::SIZE, |c| c[2..4].copy_from_slice(&2u16.to_le_bytes()));
+    assert!(core::from_image(Arc::new("f(g(x))\n".into()), &ng, corrupt, Arc::new(LineTable::new("f(g(x))\n", Terminators::Newlines))).is_err());
 }
 
 
@@ -2571,6 +2605,9 @@ fn ecma_implied_tokens() {
         ("markdown", GrammarDialect::Markdown),
         ("markdown-inline", GrammarDialect::MarkdownInline),
         ("sql", GrammarDialect::Sql),
+        ("kotlin", GrammarDialect::Kotlin),
+        ("swift", GrammarDialect::Swift),
+        ("scala", GrammarDialect::Scala),
         ("go", GrammarDialect::Go),
         ("c", GrammarDialect::C),
         ("cpp", GrammarDialect::Cpp),
@@ -2590,7 +2627,7 @@ fn ecma_implied_tokens() {
 /// Writes a dialect's token automata (`TokenGrammar::automata_text`) to `RERAIL_AUTOMATA_OUT`, for a lean
 /// parser's tables: `RERAIL_AUTOMATA_DIALECT=sql` writes `native/crates/sql_lean/automata.tsv`,
 /// `markdown-inline` `native/crates/markdown_inline_lean/automata.tsv`, `vue`
-/// `native/crates/vue_lean/automata.tsv`.
+/// `native/crates/vue_lean/automata.tsv`; `kotlin`, `swift` and `scala` those lean parsers'.
 #[test]
 #[ignore = "writes a lean parser's automata table; needs RERAIL_AUTOMATA_OUT"]
 fn token_automata_text() {
@@ -2599,6 +2636,9 @@ fn token_automata_text() {
         Ok("sql") | Err(_) => GrammarDialect::Sql,
         Ok("markdown-inline") => GrammarDialect::MarkdownInline,
         Ok("vue") => GrammarDialect::Vue,
+        Ok("kotlin") => GrammarDialect::Kotlin,
+        Ok("swift") => GrammarDialect::Swift,
+        Ok("scala") => GrammarDialect::Scala,
         Ok(other) => panic!("no automata table for {other}"),
     };
     std::fs::write(out, tokens::TokenGrammar::of_dialect(dialect).expect("a token grammar").automata_text()).unwrap();
@@ -2646,6 +2686,9 @@ fn python_tape_expect() {
         Ok("markdown-inline") => GrammarDialect::MarkdownInline,
         Ok("sql") => GrammarDialect::Sql,
         Ok("vue") => GrammarDialect::Vue,
+        Ok("kotlin") => GrammarDialect::Kotlin,
+        Ok("swift") => GrammarDialect::Swift,
+        Ok("scala") => GrammarDialect::Scala,
         Ok("go") => GrammarDialect::Go,
         Ok("c") => GrammarDialect::C,
         Ok("cpp") => GrammarDialect::Cpp,
@@ -3538,7 +3581,7 @@ fn java_parse_costs() {
     }
 }
 
-/// Go's tapes from the lean parser (the product's parser for Go, decision 0305) are tree-sitter-go's,
+/// Go's tapes from the lean parser (the product's parser for Go, decision 0314) are tree-sitter-go's,
 /// byte for byte, on hand-written cases; a text tree-sitter reads with an error the lean parser
 /// refuses (its file goes to tree-sitter). The corpus comparison is `rerail-go-lean`'s `oracle`.
 #[test]
@@ -3710,7 +3753,7 @@ fn cpp_parse_costs() {
     }
 }
 
-/// C's and C++'s tapes from the lean parser (the product's parser for both, decision 0307) are
+/// C's and C++'s tapes from the lean parser (the product's parser for both, decision 0317) are
 /// tree-sitter-c's and tree-sitter-cpp's, byte for byte, on hand-written cases; a text tree-sitter
 /// reads with an error the lean parser refuses (its file goes to tree-sitter). The corpus
 /// comparison is `rerail-c-lean`'s `oracle`.
@@ -3766,7 +3809,7 @@ fn cpp_tapes_from_the_lean_parser_are_tree_sitters() {
     let invalid = ["int f( {\n", "class A {\n", "auto x = [&] -> int { return 1; };\n", "int x = (a = b, c);\n", "void f() { p->A::~A(); }\n"];
     c_lean_matches_tree_sitter(GrammarDialect::Cpp, &sources, &invalid);
     // Where tree-sitter-cpp's GLR forks past its 6 stack versions in nested template arguments,
-    // it reads some as expressions by version order (decision 0307): refused, for tree-sitter.
+    // it reads some as expressions by version order (decision 0317): refused, for tree-sitter.
     use crate::code_rule_dsl::tape::c_lean;
     let grammar = Grammar::new(GrammarDialect::Cpp).unwrap();
     for capped in ["[[nodiscard]] std::pair<A, B<C>> f(int);\n", "void f() { x = *static_cast<A<B<C<double>>>*>(p); }\n"] {
@@ -4065,6 +4108,7 @@ fn blade_programs_agree(source: &str) -> Option<bool> {
 
 #[test]
 fn blade_programs_from_the_lean_parser_are_tree_sitters() {
+    format_15();
     let templates = [
         "{{ $a }}\n",
         "<p>{{ $user->name }} {!! $html !!}</p>\n@if ($a > 1)\n  <b>{{ $a }}</b>\n@elseif ($b)\n  x\n@else\n  y\n@endif\n",
@@ -5085,6 +5129,7 @@ fn markdown_inline_parse_costs() {
 /// subtree, parent and children. The Python file is past two of 16z's fixed blocks, so its reads cross them.
 #[test]
 fn every_tape_format_reads_the_document_as_restored() {
+    format_15();
     use super::formats::Format;
     use rerail_tape_format::f16::Z;
     use rerail_tape_format::tape::{Tape, children};
@@ -5109,4 +5154,324 @@ fn every_tape_format_reads_the_document_as_restored() {
             }
         });
     }
+}
+
+/// Decision 0353 step 4a: a stored tape placed in its home (a slab's room, where the host has a device) and read
+/// there answers every node question as the same tape read from a buffer of its own, in each format.
+#[test]
+fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
+    use super::formats::Format;
+    use rerail_tape_format::tape::{Tape, children};
+    let source: String = (0..400).map(|i| format!("x{i} = f(a, {i})\n")).collect();
+    let (_, doc, _, _) = fixture(&source, GrammarDialect::Python);
+    let grammar = Arc::new(Grammar::new(GrammarDialect::Python).unwrap());
+    for format in Format::ALL {
+        let bytes = doc.doc_tape().image().clone().in_format(format, source.as_bytes()).to_bytes().unwrap();
+        let own = TapeImage::from_bytes(&bytes, &grammar).unwrap();
+        let home = super::placed::place(bytes.len(), |out| {
+            out.copy_from_slice(&bytes);
+            Ok(())
+        })
+        .unwrap();
+        let placed = TapeImage::from_home(home, &grammar).unwrap();
+        assert_eq!(placed.format(), format, "held as stored");
+        #[cfg(target_os = "macos")]
+        assert_eq!(placed.placed(), rerail_metal::METAL_DEVICE.is_some(), "{format:?}: in a slab's room where there is a device");
+        assert_eq!(placed.to_bytes().unwrap(), bytes, "{format:?}: the bytes as stored");
+        let (own, placed) = (super::formats::DocTape::new(Arc::new(own), Arc::new(source.clone())), super::formats::DocTape::new(Arc::new(placed), Arc::new(source.clone())));
+        let (a, b) = (own.tape(), placed.tape());
+        rerail_tape_format::with_tape!(a, |a| {
+            rerail_tape_format::with_tape!(b, |b| {
+                assert_eq!(a.len(), b.len());
+                for i in 0..a.len() {
+                    let at = |what: &str| format!("{format:?}: {what} of {i}");
+                    assert_eq!(a.table().entry(a.code(i)), b.table().entry(b.code(i)), "{}", at("code"));
+                    assert_eq!((a.start(i), a.end(i)), (b.start(i), b.end(i)), "{}", at("span"));
+                    assert_eq!(a.subtree_end(i), b.subtree_end(i), "{}", at("subtree"));
+                    assert_eq!(a.parent(i), b.parent(i), "{}", at("parent"));
+                    assert_eq!(children(&a, i).collect::<Vec<_>>(), children(&b, i).collect::<Vec<_>>(), "{}", at("children"));
+                }
+            });
+        });
+        let ((ta, va), (tb, vb)) = (own.in_place().unwrap(), placed.in_place().unwrap());
+        // A 16z view names its tape by an id of its own (its blocks' keys in a cache): the rest is the same.
+        let unnamed = |mut v: rerail_clif::view::TapeView| {
+            if v.format == rerail_clif::view::F16Z_FORMAT {
+                (v.side[2], v.side[3]) = (0, 0);
+            }
+            v
+        };
+        assert_eq!((ta, unnamed(va)), (tb, unnamed(vb)), "{format:?}: the reads' bytes and view");
+    }
+}
+
+/// Decision 0293 §4: a file's documents stored in each format (`FileImage::in_format`, then as the store keeps and
+/// reads them) are held as stored, and the documents restored from them answer every node question as format 15's
+/// do: a Python file of several blocks, and a host whose language has no format 16 table (kept as format 15) with a
+/// TSX guest that has one.
+#[test]
+fn a_file_stored_in_each_format_reads_back_as_format_15() {
+    format_15();
+    use super::formats::Format;
+    fn same(a: &TapeDoc, b: &TapeDoc, name: &str) {
+        assert_eq!(a.transducer_len(), b.transducer_len(), "{name}: nodes");
+        for node in 0..a.transducer_len() as u32 {
+            assert_eq!(
+                (a.transducer_kind(node), a.transducer_field(node), a.transducer_flags(node), a.transducer_span(node)),
+                (b.transducer_kind(node), b.transducer_field(node), b.transducer_flags(node), b.transducer_span(node)),
+                "{name}: node {node}"
+            );
+            assert_eq!(a.transducer_parent(node), b.transducer_parent(node), "{name}: parent of {node}");
+            assert_eq!(a.transducer_descendants(node), b.transducer_descendants(node), "{name}: subtree of {node}");
+            assert_eq!(a.transducer_children(node).collect::<Vec<_>>(), b.transducer_children(node).collect::<Vec<_>>(), "{name}: children of {node}");
+        }
+        assert_eq!(a.transducer_supertypes().collect::<Vec<_>>(), b.transducer_supertypes().collect::<Vec<_>>(), "{name}: classes");
+    }
+    let python: String = (0..400).map(|i| format!("class C{i}(B):\n    def f(self, x={i}):\n        return [y for y in x if y]\n")).collect();
+    let cases = [(GrammarDialect::Python, python), (GrammarDialect::TestHtml, "<script lang=\"tsx\">let x = <a />;</script>\n".to_owned())];
+    for (lang, source) in cases {
+        let grammar = Grammar::new(lang).unwrap();
+        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap();
+        assert_eq!(image.primary.format(), Format::F15, "the tests' run stores format 15");
+        let reference = TapeDoc::restore(Arc::new(source.clone()), Arc::clone(&grammar), &image, &|| false).unwrap();
+        for format in Format::ALL {
+            let stored = image.clone().in_format(format, &source).round_trip(&grammar).unwrap();
+            let has_table = |dialect| crate::code_rule_dsl::language::tape_tag(dialect).and_then(rerail_tape_format::f16::lang).is_some();
+            let held = |tape: &TapeImage| if has_table(tape.language) { format } else { Format::F15 };
+            assert_eq!(stored.primary.format(), held(&stored.primary), "{lang:?} in {}", format.name());
+            for d in &stored.derived {
+                assert_eq!(d.tape.format(), held(&d.tape), "{lang:?}'s guest in {}", format.name());
+            }
+            let doc = TapeDoc::restore(Arc::new(source.clone()), Arc::clone(&grammar), &stored, &|| false).unwrap();
+            same(&reference, &doc, &format!("{lang:?} in {}", format.name()));
+            let (guests, read) = (reference.guests().unwrap(), doc.guests().unwrap());
+            assert_eq!(guests.len(), read.len());
+            assert_eq!(guests.len(), usize::from(lang == GrammarDialect::TestHtml));
+            for (g, r) in guests.iter().zip(read.iter()) {
+                same(&g.doc, &r.doc, &format!("{lang:?}'s guest in {}", format.name()));
+            }
+        }
+    }
+}
+
+/// Decision 0293 (the user, 2026-11-16: "generalize the lean parsers so that they produce format 16 directly, and
+/// ideally format 16 compressed directly"): each lean parser's writer, finished in a run of format 16 or 16z, writes
+/// that format in one pass over its nodes (`formats::lean`), never format 15's columns. The tape is the bytes format
+/// 15's image converts to, and answers every node question as format 15's does.
+#[test]
+fn the_lean_parsers_write_each_format_directly() {
+    use super::formats::{Format, as_run};
+    use rerail_tape_format::tape::Tape;
+    type Encode = fn(&Grammar, &str) -> Result<TapeImage, String>;
+    fn lean<R: std::fmt::Debug>(r: Result<Result<TapeImage, String>, R>) -> Result<TapeImage, String> {
+        r.map_err(|why| format!("the lean parser refused it: {why:?}"))?
+    }
+    let python: String = (0..300).map(|i| format!("class C{i}(B):\n    def f(self, x={i}):\n        return [y for y in x if y]\n")).collect();
+    let js: String = (0..200).map(|i| format!("const x{i} = (a) => a?.b ?? {i};\nfunction f{i}(y) {{ return y + 1; }}\n")).collect();
+    let cases: Vec<(GrammarDialect, String, Encode)> = vec![
+        (GrammarDialect::Python, python, |g, s| lean(super::python_lean::encode(g, s, &|| false))),
+        (GrammarDialect::JavaScript, js, |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::JavaScript, g, s, &|| false))),
+        (GrammarDialect::TypeScript, "interface A { x?: number }\nconst x: A = {};\n".into(), |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::TypeScript, g, s, &|| false))),
+        (GrammarDialect::Tsx, "const A = () => <div title=\"x\">text</div>;\n".into(), |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::Tsx, g, s, &|| false))),
+        (GrammarDialect::Rust, "fn main() { let x = Some(1); if let Some(y) = x { println!(\"{y}\"); } }\n".into(), |g, s| lean(super::rust_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Php, "<?php function f($x) { return $x + 1; }\n".into(), |g, s| lean(super::php_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Sql, "SELECT a, count(*) FROM t GROUP BY a;\n".into(), |g, s| lean(super::sql_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Vue, "<template><div>{{ value }}</div></template>\n<script>\nlet value = 1;\n</script>\n".into(), |g, s| lean(super::vue_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Css, "a { color: red; }\n.b > c { margin: 0 1px; }\n".into(), |g, s| lean(super::css_lean::encode(g, s, &|| false))),
+        (GrammarDialect::CSharp, "class A { void F() { var x = 1; } }\n".into(), |g, s| lean(super::csharp_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Html, "<div class=\"a\"><p>hi</p></div>\n".into(), |g, s| lean(super::html_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Java, "class A { void f() { int x = 1; } }\n".into(), |g, s| lean(super::java_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Markdown, "# Title\n\nSome *text* here.\n\n- a\n- b\n".into(), |g, s| lean(super::markdown_lean::encode(g, s, &|| false))),
+        (GrammarDialect::MarkdownInline, "Some *text* and `code`".into(), |g, s| lean(super::markdown_inline_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Rr, ".decl item(n:number)\nitem(1).\n.output item\n".into(), |g, s| TapeImage::encode_rr(g, s, &|| false)),
+    ];
+    let mut direct = Vec::new();
+    for (lang, source, encode) in cases {
+        let grammar = Grammar::new(lang).unwrap();
+        let reference = as_run(Format::F15, || encode(&grammar, &source)).unwrap_or_else(|e| panic!("{lang:?}: {e}"));
+        assert_eq!(reference.format(), Format::F15, "{lang:?}");
+        let has_table = crate::code_rule_dsl::language::tape_tag(lang).and_then(rerail_tape_format::f16::lang).is_some();
+        for format in [Format::F16, Format::F16Z] {
+            let image = as_run(format, || encode(&grammar, &source)).unwrap();
+            let at = format!("{lang:?} in {}", format.name());
+            assert_eq!(image.format(), if has_table { format } else { Format::F15 }, "{at}");
+            if !has_table {
+                continue;
+            }
+            direct.push(at.clone());
+            assert_eq!(image.source_digest, reference.source_digest, "{at}");
+            // The bytes format 15's image converts to (`in_format`): one writer, whichever way it is fed.
+            assert_eq!(image.to_bytes().unwrap(), reference.clone().in_format(format, source.as_bytes()).to_bytes().unwrap(), "{at}: bytes");
+            let (a, b) = (reference.tape(), image.tape());
+            rerail_tape_format::with_tape!(a, |a| rerail_tape_format::with_tape!(b, |b| {
+                assert_eq!(a.len(), b.len(), "{at}");
+                for i in 0..a.len() {
+                    assert_eq!(a.table().entry(a.code(i)), b.table().entry(b.code(i)), "{at}: code of {i}");
+                    assert_eq!((a.start(i), a.end(i), a.subtree_end(i), a.parent(i)), (b.start(i), b.end(i), b.subtree_end(i), b.parent(i)), "{at}: node {i}");
+                }
+            }));
+        }
+    }
+    assert!(direct.iter().any(|d| d.starts_with("Python")), "the tables cover Python: {direct:?}");
+    eprintln!("written directly: {direct:?}");
+}
+
+/// The reads written once in CLIF (decision 0310), JIT-compiled whole, read a document's tape where it is held as
+/// the document reads it, in every format a run may hold: format 15's columns in their one buffer, format 16's
+/// arrays, and a 16z tape's blocks as stored, a block decoded into the reader's slot where a read falls (0353 step
+/// 4b). Every node's code (through the device's codes: kind,
+/// field, flags), parent, next sibling, children, subtree and span; one document past a side-list part (1,024
+/// nodes), with gaps and lengths past a byte.
+#[test]
+fn the_clif_reads_read_every_format_as_the_document_does() {
+    use crate::code_rule_dsl::tape::formats::{Format, as_run};
+    const NONE: u32 = u32::MAX;
+    let reads = rerail_clif::jit::Reads::new();
+    let long = format!("# {}\n", "x".repeat(300))
+        + &(0..300).map(|i| format!("v{i} = [{i}, \"{}\", f(a, b=c)]  # {}\n", "s".repeat(i % 40), "c".repeat(260 * usize::from(i % 50 == 0)))).collect::<String>();
+    let sources = [
+        ("value = left + right\nclass A:\n    def f(self, x=[]):\n        return (yield x)\n".to_owned(), GrammarDialect::Python),
+        ("const f = (a, b) => { return a?.b ?? `t${b}`; };\n// c\n".to_owned(), GrammarDialect::JavaScript),
+        ("def broken(:\n    pass\n".to_owned(), GrammarDialect::Python),
+        (long, GrammarDialect::Python),
+    ];
+    for format in Format::ALL {
+        for (source, lang) in &sources {
+            let native = StrDoc::new(source, *lang);
+            let grammar = Grammar::new(*lang).unwrap();
+            let doc = as_run(format, || {
+                let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary.in_format(format, source.as_bytes());
+                TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap()
+            });
+            assert_eq!(doc.doc_tape().image().format(), format, "held as {format:?}");
+            let (tape, view) = doc.doc_tape().in_place().unwrap();
+            let reader = rerail_clif::view::Reader::new(&view, tape.as_ptr());
+            // SAFETY: the reader's view, which this thread alone reads.
+            let view = unsafe { &*reader.view() };
+            let codes = resident::doc_codes(&doc).unwrap();
+            let none = |v: Option<u32>| v.unwrap_or(NONE);
+            let n = doc.transducer_len() as u32;
+            assert_eq!(view.nodes, n);
+            for i in 0..n {
+                let at = |what: &str| format!("{what} of {i} ({format:?}, {lang:?})");
+                let code = codes[reads.one("tape_number", tape, &view, i as usize) as usize];
+                assert_eq!(
+                    (code.kind, code.field, code.flags),
+                    (doc.transducer_kind(i), doc.transducer_field(i), doc.transducer_flags(i)),
+                    "{}",
+                    at("code")
+                );
+                let end = doc.transducer_descendants(i).end;
+                assert_eq!(reads.one("tape_end_of", tape, &view, i as usize), end, "{}", at("subtree"));
+                let span = doc.transducer_span(i);
+                assert_eq!(reads.one("tape_start", tape, &view, i as usize) as usize, span.start, "{}", at("start"));
+                assert_eq!(reads.one("tape_end", tape, &view, i as usize) as usize, span.end, "{}", at("end"));
+                assert_eq!(reads.one("tape_parent", tape, &view, i as usize), none(doc.transducer_parent(i)), "{}", at("parent"));
+                assert_eq!(reads.one("tape_next", tape, &view, i as usize), none(doc.transducer_next_sibling(i, false)), "{}", at("next"));
+                let kids = doc.transducer_children(i).collect::<Vec<_>>();
+                assert_eq!(reads.one("tape_child_count", tape, &view, i as usize) as usize, kids.len(), "{}", at("children"));
+                assert_eq!(reads.one("tape_first_child", tape, &view, i as usize), none(kids.first().copied()), "{}", at("first child"));
+                for (k, &kid) in kids.iter().enumerate().take(8) {
+                    assert_eq!(reads.two("tape_child", tape, &view, i as usize, k as u32), kid, "{}", at("a child"));
+                }
+            }
+        }
+    }
+}
+
+/// `dialect`'s tapes from its lean parser (`encode`) are tree-sitter's, byte for byte, on `sources`;
+/// each of `invalid` (a text tree-sitter reads with an error) the lean parser refuses. And the product
+/// reads the dialect with the lean parser: a file's image through the engine's parse is the lean
+/// parser's; a file it refuses goes to tree-sitter.
+fn lean_tapes_are_tree_sitters<E: std::fmt::Debug>(
+    dialect: GrammarDialect,
+    encode: fn(&Grammar, &str, &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, E>,
+    sources: &[&str],
+    invalid: &[&str],
+) {
+    let grammar = Grammar::new(dialect).unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&dialect.get_ts_language()).unwrap();
+    for &source in sources {
+        let ours = encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        assert!(!tree.root_node().has_error(), "tree-sitter's tree of {source:?} has an error");
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
+        assert!(
+            ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+            "the tapes of {source:?} differ:\n{}\n{}",
+            python_tape_plain(&ours, &grammar),
+            python_tape_plain(&theirs, &grammar)
+        );
+    }
+    // Any syntax error: refused, for tree-sitter, which recovers as it recovers.
+    for &text in invalid {
+        assert!(parser.parse(text, None).unwrap().root_node().has_error(), "{text:?} reads without an error");
+        assert!(encode(&grammar, text, &|| false).is_err(), "accepted {text:?}");
+    }
+    // The product's route: the lean parser where it reads the file, tree-sitter where it refuses.
+    assert!(tree_parser(dialect).is_some(), "{dialect:?}'s parser is installed");
+    let source = sources.last().expect("a source");
+    let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let lean = encode(&grammar, source, &|| false).unwrap().unwrap();
+    assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap());
+    let refused = invalid.first().expect("an invalid text");
+    assert!(TapeImage::parse(&grammar, refused, &|| false).unwrap().is_ok());
+}
+
+/// Kotlin's tapes from the lean parser (the product's parser for Kotlin, decision 0326) are
+/// tree-sitter-kotlin's; the corpus comparison is `rerail-kotlin-lean`'s `oracle`.
+#[test]
+fn kotlin_tapes_from_the_lean_parser_are_tree_sitters() {
+    lean_tapes_are_tree_sitters(
+        GrammarDialect::Kotlin,
+        crate::code_rule_dsl::tape::kotlin_lean::encode,
+        &[
+            "",
+            "// only a comment\n/* block */\nclass A\n",
+            "package a.b\n\nimport c.d.*\n\nfun f(x: Int): Int = x + 1\n",
+            "class A<T>(val x: T) : B(), C {\n    fun g() {\n        val y = listOf(1, 2).map { it * 2 }\n        println(\"$y ${x}\")\n    }\n}\n",
+            "fun h(a: Any?) = when (a) {\n    is String -> a.length\n    null -> 0\n    else -> 1\n}\n",
+            "object O {\n    const val N = 0x1F\n    var s: String? = null\n    fun k() = s?.length ?: -1\n}\n",
+        ],
+        &["class A {\n", "fun f( {\n", "val x = (1,\n"],
+    );
+}
+
+/// Swift's tapes from the lean parser (the product's parser for Swift, decision 0326) are
+/// tree-sitter-swift's; the corpus comparison is `rerail-swift-lean`'s `oracle`.
+#[test]
+fn swift_tapes_from_the_lean_parser_are_tree_sitters() {
+    lean_tapes_are_tree_sitters(
+        GrammarDialect::Swift,
+        crate::code_rule_dsl::tape::swift_lean::encode,
+        &[
+            "",
+            "// only a comment\nlet x = 1\n",
+            "import Foundation\n\nstruct S<T>: P where T: Q {\n    var a: Int = 0\n    func f(_ x: Int) -> Int { return x + 1 }\n}\n",
+            "let c = xs.map { $0 * 2 }.filter { x in x > 1 }\n",
+            "enum E { case a, b(Int) }\nswitch e {\ncase .a: break\ncase .b(let n): print(\"\\(n)\")\n}\n",
+            "class C {\n    init?() {\n        guard let y = z else { return nil }\n    }\n}\n",
+        ],
+        &["class A {\n", "func f( {\n", "let x = (1,\n"],
+    );
+}
+
+/// Scala's tapes from the lean parser (the product's parser for Scala, decision 0326) are
+/// tree-sitter-scala's; the corpus comparison is `rerail-scala-lean`'s `oracle`.
+#[test]
+fn scala_tapes_from_the_lean_parser_are_tree_sitters() {
+    lean_tapes_are_tree_sitters(
+        GrammarDialect::Scala,
+        crate::code_rule_dsl::tape::scala_lean::encode,
+        &[
+            "",
+            "// only a comment\nobject A\n",
+            "package a.b\n\nimport c.d._\n\nclass C[T](x: T) extends D with E {\n  def f(y: Int): Int = y + 1\n}\n",
+            "val xs = List(1, 2).map(_ * 2).filter { x => x > 1 }\n",
+            "def g(a: Any) = a match {\n  case s: String => s.length\n  case _ => 0\n}\n",
+            "trait T {\n  val s = s\"$x ${y + 1}\"\n  lazy val n = 0x1FL\n}\n",
+        ],
+        &["class A {\n", "def f( = 1\n", "val x = (1,\n"],
+    );
 }

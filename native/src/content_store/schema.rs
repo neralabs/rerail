@@ -23,14 +23,16 @@ use std::sync::LazyLock;
 // run against it. It is safe to delete by hand once no older binary runs; the CHANGELOG entry of
 // each floor raise names the file (with its -wal and -shm). STORE_FILE_FLOOR pins the pairing, so
 // raising SCHEMA_VERSION alone does not compile.
-pub(super) const SCHEMA_VERSION: i64 = 4;
+pub(super) const SCHEMA_VERSION: i64 = 6;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
-pub const STORE_FILE_NAME: &str = "content-v4.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at. 4: a corpus manifest's lane is a column of it
+pub const STORE_FILE_NAME: &str = "content-v6.sqlite";
+/// The floor `STORE_FILE_NAME` was introduced at. 6: the atoms are blocks in files beside the store (decision 0401:
+/// `atom_blocks`), which an older binary would read as a store with no atoms; 5: a frame's row points at its bytes in a segment beside the store
+/// (decision 0295 §4: `frames.seg`), which an older binary would read as an empty frame; 4: a corpus manifest's lane is a column of it
 /// (`corpus_manifests.lane`), not a table of its own (decision 0104); 3 was atoms stored as segments
 /// of the arena (decision 0049); 2 the prefilter vocabulary keyed by atom.
-const STORE_FILE_FLOOR: i64 = 4;
+const STORE_FILE_FLOOR: i64 = 6;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
     "raising the floor requires a new STORE_FILE_NAME"
@@ -67,7 +69,10 @@ CREATE TABLE IF NOT EXISTS source_objects (
     raw_length INTEGER NOT NULL,
     codec_id INTEGER NOT NULL,
     frame BLOB NOT NULL,
-    created_generation INTEGER NOT NULL
+    created_generation INTEGER NOT NULL,
+    seg INTEGER NOT NULL DEFAULT 0,
+    seg_at INTEGER NOT NULL DEFAULT 0,
+    seg_len INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 CREATE TABLE IF NOT EXISTS source_aliases (
     alias_hash_id INTEGER PRIMARY KEY REFERENCES hashes(hash_id),
@@ -85,8 +90,15 @@ CREATE TABLE IF NOT EXISTS tape_objects (
     raw_length INTEGER NOT NULL,
     frame BLOB NOT NULL,
     created_generation INTEGER NOT NULL,
+    seg INTEGER NOT NULL DEFAULT 0,
+    seg_at INTEGER NOT NULL DEFAULT 0,
+    seg_len INTEGER NOT NULL DEFAULT 0,
     UNIQUE (source_id, grammar_id, grammar_version, tape_format_version)
 ) STRICT;
+-- The segments sources and tapes are in (decision 0295 step 5: `<store>.objects/<seg>.seg`, mapped, uncompressed): a
+-- row of codec 0 names its range (`seg`, `seg_at`, `seg_len`) and holds no frame; `seg` 0 is a row whose bytes are its
+-- `frame` (zstd), and -1 one whose segment went missing (absent until stored again).
+CREATE TABLE IF NOT EXISTS object_segments(seg INTEGER PRIMARY KEY);
 CREATE INDEX IF NOT EXISTS tape_objects_by_hash ON tape_objects(canonical_hash_id);
 -- The documents a file derives from its own (an embedded program, a generated one), keyed by the
 -- primary document's tape: documents are a function of source, grammar version and tape format,
@@ -365,6 +377,9 @@ CREATE TABLE IF NOT EXISTS corpus_manifests (
     -- What the run was of (`record_corpus_run_lane`): a root's last runs are protected by lane. NULL: the root's one
     -- lane.
     lane BLOB CHECK(lane IS NULL OR length(lane) = 32),
+    -- The lane's policy set (`record_corpus_run_policy`, decision 0302): a set's newer lane supersedes its older. NULL:
+    -- a lane of no set. Additive (`ADDED_COLUMNS`): an older binary ignores it.
+    policy BLOB CHECK(policy IS NULL OR length(policy) = 32),
     UNIQUE (root_id, digest)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS corpus_manifests_by_run ON corpus_manifests(last_run);
@@ -434,16 +449,30 @@ CREATE TABLE IF NOT EXISTS corpus_swept (
 ) STRICT;
 INSERT OR IGNORE INTO corpus_swept(singleton, done) VALUES (1, 0);
 
--- The single interner (atoms.rs, decision 0049): dense, append-only; atom 0 is the empty string.
--- Each row is a run of consecutive atoms from `first`: their end offsets (u32, little-endian,
--- relative to the row's bytes) and their bytes. SQL reads atoms through the `atoms` virtual table
--- over the process's arena; a row that names an atom commits with or after its segment.
-CREATE TABLE IF NOT EXISTS atom_segment (
-    first INTEGER PRIMARY KEY CHECK(first >= 0),
-    ends BLOB NOT NULL,
-    bytes BLOB NOT NULL
+-- The single interner (atoms.rs, decisions 0049, 0401): dense, append-only; atom 0 is the empty string, and no
+-- block's. The atoms are a chain of blocks in `<store>.atoms/`, mapped by every process: each row is a block, its
+-- file's name there, its first id, the end the last commit reached in it, and the tag the block holds too (a block
+-- not the row's is refused: a store copied without its folder). SQL reads atoms through the `atoms`
+-- virtual table; a row that names an atom commits with or after the commit that reached it.
+CREATE TABLE IF NOT EXISTS atom_blocks (
+    seq INTEGER PRIMARY KEY CHECK(seq >= 1),
+    name TEXT NOT NULL UNIQUE,
+    first INTEGER NOT NULL UNIQUE CHECK(first >= 1),
+    upto INTEGER NOT NULL CHECK(upto >= first),
+    tag INTEGER NOT NULL
 ) STRICT;
-INSERT OR IGNORE INTO atom_segment(first,ends,bytes) VALUES (0,x'00000000',x'');
+
+-- A space's kept facts (decision 0401 F2): a base block and one cumulative delta in
+-- `<store>.facts/<space>/`, each with its maker's tag (a block not its row's is refused). Replaced
+-- in the transaction that commits a run's writes. Additive: an older binary reads the frames.
+CREATE TABLE IF NOT EXISTS facts_blocks (
+    space BLOB PRIMARY KEY CHECK(length(space) = 32),
+    base TEXT,
+    base_tag INTEGER,
+    delta TEXT,
+    delta_tag INTEGER,
+    CHECK((base IS NULL) = (base_tag IS NULL) AND (delta IS NULL) = (delta_tag IS NULL) AND (delta IS NULL OR base IS NOT NULL))
+) STRICT;
 
 -- The derivation graph (derivation.rs): fact names (atoms) bound to digests, and each
 -- derivation's inputs with the digest it read. A derivation's output is a name too, so an
@@ -701,7 +730,12 @@ END;
 -- A run's relations as stored frames (decision 0104, `frames`), by space, relation, identity and part.
 CREATE TABLE IF NOT EXISTS frames(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL,
     part INTEGER NOT NULL, digest INTEGER NOT NULL, reads BLOB NOT NULL, width INTEGER NOT NULL, rows INTEGER NOT NULL,
-    types BLOB NOT NULL, data BLOB NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
+    types BLOB NOT NULL, data BLOB NOT NULL, used INTEGER NOT NULL, seg INTEGER NOT NULL DEFAULT 0,
+    seg_at INTEGER NOT NULL DEFAULT 0, seg_len INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
+-- The segments frames are in (decision 0295 §4: `<store>.frames/<seg>.seg`, mapped): a frame's row names its range
+-- (`seg`, `seg_at`, `seg_len`) and holds no bytes; `seg` 0 is a frame whose bytes are its `data` (a forked process's,
+-- whose symbols the writer renumbers, or one written at once by `keep_frames`).
+CREATE TABLE IF NOT EXISTS frame_segments(seg INTEGER PRIMARY KEY);
 -- A memo frame's digest is its document's key, a function of its path (`memo::doc_keys`): a path's contents are found
 -- by it, without reading every frame of the relation (each a page, its rows inline).
 CREATE INDEX IF NOT EXISTS frames_by_digest ON frames(space, rel, digest);
@@ -727,18 +761,24 @@ CREATE TABLE IF NOT EXISTS frame_used(space BLOB NOT NULL, run INTEGER NOT NULL,
 -- (`frames::collect_unreachable_frames`); rows of a run (`run` > 0) are an older binary's, and go at the next collection.
 CREATE TABLE IF NOT EXISTS frame_program_used(space BLOB NOT NULL, program BLOB NOT NULL, run INTEGER NOT NULL,
     rels BLOB NOT NULL, PRIMARY KEY (space, program, run)) WITHOUT ROWID;
--- The per-file memo's entries (decision 0240 §4): where each one's bytes are in the packs beside the store
--- (`<store>.memo/<pack>.pack`), by its plan's space and its part (its content's and path's), with its path, its
--- content's SHA-256 and its document key. A path's contents are ordered by where they were appended. `over_*`: what a
--- later run kept over the entry, its identities (decision 0280), in the packs too; `over_len` 0 is nothing
--- (`ADDED_COLUMNS` adds them to an older store; an older binary ignores them and reads the entry as it was made).
+-- The per-file memo's entries (decision 0240 §4, 0295 §4): where each one's image is in the segments beside the
+-- store (`<store>.memo/<pack>.seg`, `framed` 1: offset and length in the segment's block), by its plan's space and
+-- its part (its content's and path's), with its path, its content's SHA-256 and its document key. A path's contents
+-- are ordered by where they were written. `over_*`: what a later run kept over the entry, its identities (decision
+-- 0280), in a segment too; `over_len` 0 is nothing. `framed` 0: an entry of the packs before (`<pack>.pack`,
+-- compressed), not read (`ADDED_COLUMNS` adds these columns to an older store; an older binary reads a segment's row
+-- as a pack's that is not there, a miss).
 CREATE TABLE IF NOT EXISTS memo_entries(space BLOB NOT NULL, part INTEGER NOT NULL, path TEXT NOT NULL,
     digest BLOB NOT NULL, doc INTEGER NOT NULL, pack INTEGER NOT NULL, at INTEGER NOT NULL, len INTEGER NOT NULL,
     raw INTEGER NOT NULL, over_pack INTEGER NOT NULL DEFAULT 0, over_at INTEGER NOT NULL DEFAULT 0,
-    over_len INTEGER NOT NULL DEFAULT 0, over_raw INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (space, part)) WITHOUT ROWID;
+    over_len INTEGER NOT NULL DEFAULT 0, over_raw INTEGER NOT NULL DEFAULT 0, framed INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (space, part)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS memo_entries_by_path ON memo_entries(space, path, pack, at);
--- The packs the entries are in: the newest is appended to.
+-- The segments (and packs before) the entries are in.
 CREATE TABLE IF NOT EXISTS memo_packs(pack INTEGER PRIMARY KEY);
+-- Each guest's key (decision 0391): one row per identity (a SHA-256 of its range and parts), its key unique, its host
+-- file (a value's first asker).
+CREATE TABLE IF NOT EXISTS guest_keys(identity BLOB PRIMARY KEY, key INTEGER NOT NULL UNIQUE, path TEXT NOT NULL) WITHOUT ROWID;
 "#;
 
 impl ContentStore {
@@ -835,10 +875,18 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
 /// Each has a default, so an older binary's inserts, which do not name it, still apply.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0"),
+    ("corpus_manifests", "policy", "BLOB CHECK(policy IS NULL OR length(policy) = 32)"),
     ("memo_entries", "over_pack", "INTEGER NOT NULL DEFAULT 0"),
     ("memo_entries", "over_at", "INTEGER NOT NULL DEFAULT 0"),
     ("memo_entries", "over_len", "INTEGER NOT NULL DEFAULT 0"),
     ("memo_entries", "over_raw", "INTEGER NOT NULL DEFAULT 0"),
+    ("memo_entries", "framed", "INTEGER NOT NULL DEFAULT 0"),
+    ("source_objects", "seg", "INTEGER NOT NULL DEFAULT 0"),
+    ("source_objects", "seg_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("source_objects", "seg_len", "INTEGER NOT NULL DEFAULT 0"),
+    ("tape_objects", "seg", "INTEGER NOT NULL DEFAULT 0"),
+    ("tape_objects", "seg_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("tape_objects", "seg_len", "INTEGER NOT NULL DEFAULT 0"),
 ];
 
 /// The `ADDED_COLUMNS` a store's tables lack (of the tables it has).

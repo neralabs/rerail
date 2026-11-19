@@ -310,7 +310,7 @@ impl Lower<'_, '_> {
 
     /// To `cases`' block whose key `x` is (the keys rising, small), else to `default`: a jump
     /// table. Cranelift's code has it as a tree of compares
-    /// (`native_cpu_codegen::tables_as_compares`, its jump tables' barrier); `clif_rust`'s keeps
+    /// (`native_cpu_codegen::switch_trees`, its jump tables' barrier); `clif_rust`'s keeps
     /// the table. Ends the current block.
     fn switch(&mut self, x: Value, cases: &[(u64, Block)], default: Block) {
         debug_assert!(cases.windows(2).all(|w| w[0].0 < w[1].0));
@@ -6635,7 +6635,7 @@ fn return_points(words: &[u32]) -> (Vec<u32>, Vec<usize>) {
 /// `brif(bor(a, b), T, F)` is `brif(a, T, m); m: brif(b, T, F)`, `band` the dual, a `not`
 /// (`bxor_imm x, 1`) swaps the targets, and a widened test is the test. The backend fuses a
 /// compare into the branch that tests it, but materializes a combination (`cset`, `orr`, `uxtb`,
-/// then `cbnz`): Q36's moves and selects. Only where every operand is a test (0 or 1), so
+/// then `cbnz`): Q184's moves and selects. Only where every operand is a test (0 or 1), so
 /// `band`'s split means what it did. The operands are computed before the first branch, as
 /// before: nothing moves past a branch.
 fn branch_on_tests(func: &mut cranelift_codegen::ir::Function) {
@@ -6838,7 +6838,7 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
             ir.push((fid.as_u32(), context.func.clone()));
             context.set_disasm(true);
         }
-        crate::native_cpu_codegen::tables_as_compares(&mut context.func);
+        crate::native_cpu_codegen::switch_trees(&mut context.func);
         module.define_function(fid, &mut context).map_err(|e| Error::RefusedShape(format!("word {pc}: {e:?}")))?;
         if keep {
             disasm.push(context.compiled_code().and_then(|c| c.vcode.clone()).unwrap_or_default());
@@ -6920,7 +6920,7 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
         ir.push((id.as_u32(), context.func.clone()));
         context.set_disasm(true);
     }
-    crate::native_cpu_codegen::tables_as_compares(&mut context.func);
+    crate::native_cpu_codegen::switch_trees(&mut context.func);
     module.define_function(id, &mut context).map_err(|e| Error::RefusedShape(format!("pp_run: {e:?}")))?;
     if keep {
         disasm.insert(0, context.compiled_code().and_then(|c| c.vcode.clone()).unwrap_or_default());

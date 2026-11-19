@@ -150,7 +150,8 @@ fn laid_out(pipeline: &metal::ComputePipelineState, jobs: &[Job<'_>], workers: u
     let ticket = crate::pool::zeroed::<u32>(1)?;
     let count = runnable.len() as u32;
     let queue = crate::queue()?;
-    let _guard = crate::runtime::metal_execution_guard()?;
+    // Its launch budget on this thread (0344: no process-wide lock; the buffers here are its own).
+    let _scope = crate::runtime::evaluation_scope();
     let gpu_seconds = metal::objc::rc::autoreleasepool(|| -> Result<f64, Error> {
         let command = queue.new_command_buffer();
         command.set_label("Rerail pp_batch");

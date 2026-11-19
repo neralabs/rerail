@@ -72,9 +72,7 @@ fn answers(program: &str, project: &Path, sources: &BTreeMap<String, String>) ->
     if let Ok(rels) = std::env::var("RERAIL_PYTHON_CROSS_MEMO") {
         src.push_str(&format!("\n.pragma \"cross-memo\" \"{rels}\"\n"));
     }
-    let report = corpus::run(&src, project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    println!("cross-file rounds {:?}", report.rounds);
-    assert!(report.rounds.converged || report.rounds.pending, "unconverged with no pending round: {:?}", report.rounds);
+    corpus::run(&src, project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let outputs = Outputs::open(&out).unwrap();
     // Each node's document and span, keyed by the node as shown.
     let at: BTreeMap<String, (String, usize, usize)> = outputs
@@ -159,16 +157,19 @@ fn calls_name() -> String {
 }
 
 /// The combined `calls` program, as a run lowers it, holds no two relations that are one relation and no rule twice
-/// (`corpus::same_relations`): guest hiding's copies whose rules were another's, and its clones repeated, were 40% of
+/// (`combining::same_relations`): guest hiding's copies whose rules were another's, and its clones repeated, were 40% of
 /// O125's cross-file rules and a quarter of a one-file edit's CPU.
 #[test]
 fn the_combined_program_has_no_relation_twice_and_no_rule_twice() {
     let text = program("calls");
-    let mut prog = crate::code_rule_dsl::logic::plan::corpus::combine_texts(&[text.as_str()]).unwrap();
-    let same = crate::code_rule_dsl::logic::simplify::identical_classes(&prog);
-    assert!(same.is_empty(), "{} classes of relations that are one, e.g. {:?}", same.len(), same.iter().take(4).collect::<Vec<_>>());
-    let repeated = crate::code_rule_dsl::logic::plan::corpus::drop_repeated_rules(&mut prog);
-    assert_eq!(repeated, 0, "rules that repeat another");
+    use crate::code_rule_dsl::logic::plan::corpus::preparation::{DropRepeated, MergeIdentical};
+    let v = crate::code_rule_dsl::logic::plan::corpus::combine_texts(&[text.as_str()]).unwrap();
+    let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("test", v);
+    let (mut merge, mut repeats) = (MergeIdentical::default(), DropRepeated::default());
+    p.program(&mut merge).program(&mut repeats);
+    p.current().unwrap();
+    assert_eq!(merge.merged, 0, "relations that are one");
+    assert_eq!(repeats.0, 0, "rules that repeat another");
 }
 
 fn program(name: &str) -> String {
@@ -1327,10 +1328,6 @@ fn benchmark_python_calls_program_corpus() {
         Err(_) => program(&calls_name()),
     };
     let mut text = format!("{source}\n{JEDI_SPANS}");
-    // `RERAIL_PYTHON_ROUNDS`: the rounds' bound k, for measuring what more rounds decide.
-    if let Ok(k) = std::env::var("RERAIL_PYTHON_ROUNDS") {
-        text = text.replace(".pragma \"cross-rounds\" \"4\"", &format!(".pragma \"cross-rounds\" \"{k}\""));
-    }
     // `RERAIL_PYTHON_CROSS_MEMO`: relations memoised per import component (decision 0076), as `.pragma "cross-memo"`.
     if let Ok(rels) = std::env::var("RERAIL_PYTHON_CROSS_MEMO") {
         text.push_str(&format!("\n.pragma \"cross-memo\" \"{rels}\"\n"));
@@ -1339,7 +1336,7 @@ fn benchmark_python_calls_program_corpus() {
     let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
     println!("cross-file memo: {} components found, {} derived", report.cross.0, report.cross.1);
     println!("phase 0: {}; {}", report.files_observed, report.phases.first().map_or("", |p| p.0));
-    println!("calls.rr over {} files: rounds {:?}; {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.rounds, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
+    println!("calls.rr over {} files: {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
     // The comparison below is the benchmark's, not the run's: its own span, for the memory sampler's peaks.
     let compare = crate::code_rule_dsl::logic::profile::span(|| "benchmark: compare with Jedi".to_owned());
     let outputs = Outputs::open(&out).unwrap();

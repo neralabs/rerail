@@ -3,25 +3,23 @@
 use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
 use crate::code_rule_dsl::fixtures::{document, temp};
-use crate::code_rule_dsl::residency::slabs::{self, DocTable, ChunkTape};
-use crate::code_rule_dsl::tape::{Grammar, TAPE_FORMAT_VERSION};
+use crate::code_rule_dsl::residency::slabs::{self, DocTable, DocView};
+use crate::code_rule_dsl::tape::{Grammar, TapeDoc};
 use crate::content_store::ContentStore;
 use sha2::{Digest as _, Sha256};
 // What the backend reads through its own imports, which its facade in the engine does not re-export.
 use crate::code_rule_dsl::transducer::packed::metal_backend::{MappedBuffer, pipeline_named};
-use crate::code_rule_dsl::transducer::packed::packed_batch::PackedBatch;
-use crate::code_rule_dsl::transducer::packed::Program;
 use metal::MTLSize;
 
-const TAPE: &str = include_str!("metal_tape.metal");
+const TAPE: &str = concat!(include_str!("metal_tape_reads.metal"), include_str!("metal_tape.metal"));
 const FIELDS: usize = 12;
 
 const KERNEL: &str = r#"
-inline uint tape_global(ChunkTape d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}
-kernel void tape_conformance(device const ChunkTape* docs [[buffer(0)]],device const uint* nodeDoc [[buffer(1)]],device uint* out [[buffer(2)]],device const uchar* chunk [[buffer(3)]],constant uint& count [[buffer(7)]],uint g [[thread_position_in_grid]]){
+inline uint tape_global(DocView d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}
+kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device const uint* nodeDoc [[buffer(1)]],device uint* out [[buffer(2)]],device const uchar* chunk [[buffer(3)]],constant uint& count [[buffer(7)]],uint g [[thread_position_in_grid]]){
  if(g>=count)return;
  device const uchar* s=chunk;
- ChunkTape d=docs[nodeDoc[g]];
+ DocView d=docs[nodeDoc[g]];
  uint i=g-d.node_base;
  device uint* o=out+g*12u;
  o[0]=tape_kind(s,d,i);o[1]=tape_field(s,d,i);o[2]=tape_flags(s,d,i);
@@ -51,19 +49,15 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
         let (tape, _stored) = document(source, lang);
         let bytes = tape.resident_parts(None).unwrap().0;
         let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
-        store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), 1, i64::from(TAPE_FORMAT_VERSION), &bytes).unwrap();
+        store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), 1, i64::from(crate::code_rule_dsl::tape::formats::stored_version()), &bytes).unwrap();
         digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
         tapes.push(tape);
     }
     let grammar = |id: i64| Grammar::new(u8::try_from(id).ok().and_then(language::from_tape_tag).ok_or("unknown grammar")?);
     let table = DocTable::new(slabs::admit(&store, &digests, &grammar).unwrap()).unwrap();
-    // The records the device read until now, for the same files.
-    let program = Program::new(vec![super::super::word(super::super::EMIT, 0, 0)], vec![b"tape".to_vec()], Vec::new(), vec![0], Vec::new()).unwrap();
-    let anchors = vec![vec![Vec::<u32>::new()]; tapes.len()];
-    let batch = PackedBatch::new(std::slice::from_ref(&program), &tapes, &anchors).unwrap();
-    assert_eq!(batch.nodes.len(), table.nodes);
+    assert_eq!(tapes.iter().map(TapeDoc::transducer_len).sum::<usize>(), table.nodes);
     let node_doc = table.views.iter().enumerate().flat_map(|(doc, view)| std::iter::repeat_n(doc as u32, view.nodes as usize)).collect::<Vec<_>>();
-    let docs = MappedBuffer::from_slice::<ChunkTape>(device, &table.views).unwrap();
+    let docs = MappedBuffer::from_slice::<DocView>(device, &table.views).unwrap();
     let node_doc = MappedBuffer::from_slice(device, &node_doc).unwrap();
     let out = MappedBuffer::zeroed::<u32>(device, table.nodes * FIELDS).unwrap();
     let source = format!("#include <metal_stdlib>\nusing namespace metal;\n{}{TAPE}{KERNEL}", slabs::msl());
@@ -84,28 +78,41 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     command.commit();
     command.wait_until_completed();
     let read = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u32>(), table.nodes * FIELDS) };
-    let classes = |node: u32| batch.supertypes.iter().filter(|pair| pair.node == node).count() as u32;
-    for (file, record) in batch.files.iter().enumerate() {
-        for local in 0..record.node_count {
-            let g = record.node_start + local;
-            let node = &batch.nodes[g as usize];
-            let first = if node.child_count > 0 { batch.children[node.child_start as usize] } else { u32::MAX };
+    // The tape's own answers, by its accessors, in the batch's numbering (each file's nodes past the files before).
+    let mut base = 0u32;
+    for (file, tape) in tapes.iter().enumerate() {
+        let count = tape.transducer_len();
+        let (mut parent, mut next_any, mut next_named) = (vec![u32::MAX; count], vec![u32::MAX; count], vec![u32::MAX; count]);
+        for node in 0..count as u32 {
+            let children = tape.transducer_children(node).collect::<Vec<_>>();
+            for (k, &child) in children.iter().enumerate() {
+                parent[child as usize] = base + node;
+                next_any[child as usize] = children.get(k + 1).map_or(u32::MAX, |&next| base + next);
+                next_named[child as usize] =
+                    children[k + 1..].iter().find(|&&next| tape.transducer_is_named(next)).map_or(u32::MAX, |&next| base + next);
+            }
+        }
+        for local in 0..count as u32 {
+            let g = base + local;
+            let children = tape.transducer_children(local).collect::<Vec<_>>();
+            let span = tape.transducer_span(local);
             let expected = [
-                node.kind,
-                node.field,
-                node.flags,
-                node.parent,
-                node.next_any,
-                node.next_named,
-                node.child_count,
-                node.descendant_end,
-                node.source_start - record.source_start,
-                node.source_end - record.source_start,
-                first,
-                classes(g),
+                u32::from(tape.transducer_kind(local)),
+                u32::from(tape.transducer_field(local)),
+                u32::from(tape.transducer_flags(local)),
+                parent[local as usize],
+                next_any[local as usize],
+                next_named[local as usize],
+                children.len() as u32,
+                base + tape.transducer_descendants(local).end,
+                span.start as u32,
+                span.end as u32,
+                children.first().map_or(u32::MAX, |&child| base + child),
+                tape.transducer_supertypes().filter(|&(node, _)| node == local).count() as u32,
             ];
             assert_eq!(&read[g as usize * FIELDS..][..FIELDS], &expected, "file {file} node {local}");
         }
+        base += count as u32;
     }
     drop(table);
     drop(store);
@@ -222,4 +229,103 @@ fn a_label_kernel_costs_footprint() {
     let before = mb();
     submit(&pipeline);
     eprintln!("KERNEL {name}: +{} MB", mb() as i64 - before as i64);
+}
+
+/// Every label kernel and the fact-only pattern kernel compile, for a mixed batch (0) and for each format's own
+/// (`tape_format`). A kernel that does not compile is fatal (decision 0382; before it, a run fell back to the CPU and
+/// gave the right rows, so the label tests alone passed with MSL that did not compile: t41, Q62); this compiles every
+/// format's kernels whether or not a run reaches them.
+/// Q181 probe: what the label kernels' cold compile spends. The source is made new to Metal's shader cache by a
+/// nonce, in a comment (`RERAIL_PROBE_NONCE=comment`: the front end's cache misses) or in code each kernel reads (the
+/// default: both miss); then the library (the front end), and per kernel and format its function (the constant's
+/// specialization) and pipeline (the back end), each timed.
+#[test]
+#[ignore = "a probe of the label kernels' compile"]
+fn label_kernels_compile_cost() {
+    use std::time::Instant;
+    let Ok(device) = rerail_metal::device() else { return };
+    let (source, kernels) = super::label_passes::label_source();
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as u32 | 1 << 20;
+    let source = match std::env::var("RERAIL_PROBE_NONCE").as_deref() {
+        Ok("comment") => format!("{source}\n// nonce {nonce}\n"),
+        _ => source.replace("#define clif_view(v,a) ((tape_format!=0u&&", &format!("#define clif_view(v,a) ((tape_format!=0u&&tape_format!={nonce}u&&")),
+    };
+    assert!(source.contains(&nonce.to_string()), "the nonce is in the source");
+    // `RERAIL_PROBE_NOINLINE=read,read`: those generated reads (`clif_tape_<read>`) compiled out of line;
+    // `RERAIL_PROBE_INLINE=read,read`: those inlined.
+    let mut source = source;
+    for (var, from, to) in [("RERAIL_PROBE_NOINLINE", "inline", "__attribute__((noinline))"), ("RERAIL_PROBE_INLINE", "__attribute__((noinline))", "inline")] {
+        for read in std::env::var(var).unwrap_or_default().split(',').filter(|r| !r.is_empty()) {
+            let before = source.clone();
+            for ty in ["uint", "ulong"] {
+                source = source.replace(&format!("{from} {ty} clif_tape_{read}("), &format!("{to} {ty} clif_tape_{read}("));
+            }
+            assert_ne!(source, before, "clif_tape_{read} is a read marked {from}");
+        }
+    }
+    eprintln!("source: {} bytes, {} lines", source.len(), source.lines().count());
+    let clock = Instant::now();
+    let library = device.new_library_with_source(&source, &metal::CompileOptions::new()).expect("the library");
+    eprintln!("library (front end): {:.2} s", clock.elapsed().as_secs_f64());
+    if std::env::var_os("RERAIL_PROBE_PARALLEL").is_some() {
+        // Every kernel of format 16 at once, a thread each: whether the compiler service runs them side by side.
+        let format = 16_u32;
+        let clock = Instant::now();
+        let times = std::thread::scope(|scope| {
+            let handles = kernels
+                .iter()
+                .map(|name| {
+                    let (library, device) = (&library, &device);
+                    scope.spawn(move || {
+                        let constants = metal::FunctionConstantValues::new();
+                        constants.set_constant_value_at_index((&format as *const u32).cast(), metal::MTLDataType::UInt, 0);
+                        let clock = Instant::now();
+                        let function = library.get_function(name, Some(constants)).expect("the function");
+                        let descriptor = metal::ComputePipelineDescriptor::new();
+                        descriptor.set_compute_function(Some(&function));
+                        let _pipeline = device.new_compute_pipeline_state(&descriptor).expect("the pipeline");
+                        clock.elapsed().as_secs_f64()
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles.into_iter().map(|handle| handle.join().unwrap()).collect::<Vec<_>>()
+        });
+        eprintln!("format 16 in parallel: {:.2} s wall, {:.2} s summed over the kernels' threads", clock.elapsed().as_secs_f64(), times.iter().sum::<f64>());
+        return;
+    }
+    let formats: Vec<u32> = std::env::var("RERAIL_PROBE_FORMATS").ok().map_or(vec![16, 15, 0], |f| f.split(',').map(|f| f.parse().unwrap()).collect());
+    for format in formats {
+        let (mut functions, mut pipelines) = (0.0, 0.0);
+        for name in kernels {
+            let constants = metal::FunctionConstantValues::new();
+            constants.set_constant_value_at_index((&format as *const u32).cast(), metal::MTLDataType::UInt, 0);
+            let clock = Instant::now();
+            let function = library.get_function(name, Some(constants)).expect("the function");
+            let function_s = clock.elapsed().as_secs_f64();
+            let descriptor = metal::ComputePipelineDescriptor::new();
+            descriptor.set_compute_function(Some(&function));
+            let clock = Instant::now();
+            let pipeline = device.new_compute_pipeline_state(&descriptor).expect("the pipeline");
+            let pipeline_s = clock.elapsed().as_secs_f64();
+            // The thread limit: under 1,024, the kernel's registers cap its occupancy (t41).
+            let threads = pipeline.max_total_threads_per_threadgroup();
+            eprintln!("  format {format:>2} {name:<18} function {function_s:>6.2} s  pipeline {pipeline_s:>6.2} s  max threads {threads}");
+            functions += function_s;
+            pipelines += pipeline_s;
+        }
+        eprintln!("format {format}: functions {functions:.2} s, pipelines {pipelines:.2} s");
+    }
+}
+
+#[test]
+fn the_label_kernels_compile_for_every_format() {
+    if METAL_DEVICE.is_none() {
+        return;
+    }
+    for format in [0, 15, 16] {
+        let compiled = super::label_passes::compile_label_kernels(format).unwrap_or_else(|_| panic!("the label kernels for format {format}"));
+        // 8: each walk's stack tiers are one kernel (work queue Q181), with decision 0365's `label_formula` and
+        // `label_leaves`.
+        assert_eq!(compiled, (8, 1), "format {format}: the label kernels, then the pattern kernel");
+    }
 }

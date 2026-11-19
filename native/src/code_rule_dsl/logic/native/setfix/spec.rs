@@ -48,6 +48,18 @@ pub enum Source {
     Full(usize),
     Native(String),
     Input(InputKey),
+    /// A lower stratum's native relation in one of its versions (decision 0364): `v:<o|n|m|p>:<hex table>`.
+    Version(String, Ver),
+}
+
+/// A relation's version a join reads (decision 0364): its rows at the run's start (`Old`), now (`New`), those of
+/// the start gone since (`Minus`) and those added since (`Plus`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Ver {
+    Old,
+    New,
+    Minus,
+    Plus,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -96,6 +108,12 @@ pub enum JoinItem {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct JoinSpec {
     pub items: Vec<JoinItem>,
+    /// Per item before the head, the planner's step it was made for (`plan_steps` for the head's computed terms),
+    /// and its steps: a literal can make several items (`$k = @sub(@strlen($d), 1)` makes two), so the engine's
+    /// steps are not the plan's. The engine reports counts, CPU and histograms by plan step through it
+    /// (`JoinRule::from`). Empty (a spec read from text): each item is its own step.
+    pub from: Vec<u32>,
+    pub plan_steps: u32,
 }
 
 /// How a relation starts: its table's rows, none, a query's rows, or a kept native relation less another's
@@ -138,6 +156,9 @@ pub enum Line {
     /// Its relations started from kept rows (`Start::Base`) hold them as no wave's delta: its first wave is driven by
     /// its inputs' changes (seeds that read them, `plan::reads_change`), not by its kept rows (decision 0122 §2).
     KeptOld,
+    /// The relations whose rows the run keeps past it (a chunk's exports): made in blocks of their own
+    /// (`Life::Kept`), apart from the run's other relations (`keptrows <rels>`).
+    KeptRows(Vec<usize>),
     /// Relation `rel` is a lattice's (decision 0124): its last column the value, joined by the lattice `name`'s join,
     /// the `keys` columns before it the key; after `widen` changes of a key, widened.
     Lattice { rel: usize, keys: usize, name: String, widen: Option<u32> },
@@ -156,6 +177,15 @@ pub enum Line {
     /// those gone and the kept rows shown (`levels <cand> <chk> <held> <gone> <live>`).
     Levels { cand: usize, chk: usize, held: usize, gone: usize, live: usize },
     Edge(EdgeSpec),
+    /// The maintain mode (decision 0364 stage 3): a removal join, its head rows the candidates of relation `head`,
+    /// read from its versions (`Source::Version`): run once, before the seeds (`remove <head> <hex join>`).
+    Remove { head: usize, join: Arc<JoinSpec> },
+    /// An add join whose rows are checked before they are added (one driven by a negated atom's rows gone, which
+    /// may be back): `addchecked <head> <hex join>`.
+    AddChecked { head: usize, join: Arc<JoinSpec> },
+    /// A rule of `head` over the relations now, run per candidate with its head's slots bound: a candidate with no
+    /// row from any of them is killed in place (`recheck <head> <hex join>`).
+    Recheck { head: usize, join: Arc<JoinSpec> },
 }
 
 /// A component: its name, then its lines in order (relations are numbered in order, probes are numbered in order).
@@ -233,6 +263,17 @@ fn source(t: &str) -> Result<Source, String> {
     if let Some(rest) = t.strip_prefix("r:") {
         return Ok(Source::Native(unhex(rest)?));
     }
+    if let Some(rest) = t.strip_prefix("v:") {
+        let (v, table) = rest.split_once(':').ok_or_else(|| format!("bad version source {t}"))?;
+        let ver = match v {
+            "o" => Ver::Old,
+            "n" => Ver::New,
+            "m" => Ver::Minus,
+            "p" => Ver::Plus,
+            _ => return Err(format!("bad version {v}")),
+        };
+        return Ok(Source::Version(unhex(table)?, ver));
+    }
     if let Some(rest) = t.strip_prefix("t:") {
         return Ok(Source::Input(InputKey::parse(rest)?));
     }
@@ -300,6 +341,7 @@ impl std::fmt::Display for Source {
             Source::Full(i) => write!(f, "c{i}"),
             Source::Native(t) => write!(f, "r:{}", hex(t)),
             Source::Input(k) => write!(f, "t:{k}"),
+            Source::Version(t, v) => write!(f, "v:{}:{}", match v { Ver::Old => "o", Ver::New => "n", Ver::Minus => "m", Ver::Plus => "p" }, hex(t)),
         }
     }
 }
@@ -410,7 +452,7 @@ impl JoinSpec {
                 other => return Err(format!("unknown join item {other}")),
             });
         }
-        Ok(JoinSpec { items })
+        Ok(JoinSpec { items, ..Default::default() })
     }
 }
 
@@ -430,11 +472,15 @@ impl std::fmt::Display for Line {
             Line::Device => f.write_str("device"),
             Line::Leveled(rels) => write!(f, "leveled {}", comma(rels)),
             Line::KeptOld => f.write_str("keptold"),
+            Line::KeptRows(rels) => write!(f, "keptrows {}", comma(rels)),
             Line::Lattice { rel, keys, name, widen } => write!(f, "lattice {rel} {keys} {} {}", hex(name), widen.map_or_else(|| "-".to_owned(), |w| w.to_string())),
             Line::Request(r) => write!(f, "request {r}"),
             Line::Produced(r) => write!(f, "produced {r}"),
             Line::Stats(r) => write!(f, "stats {r}"),
             Line::Seed { head, join } => write!(f, "seed {head} {}", hex(&join.to_text())),
+            Line::Remove { head, join } => write!(f, "remove {head} {}", hex(&join.to_text())),
+            Line::AddChecked { head, join } => write!(f, "addchecked {head} {}", hex(&join.to_text())),
+            Line::Recheck { head, join } => write!(f, "recheck {head} {}", hex(&join.to_text())),
             Line::Join { head, delta, join, whole } => {
                 write!(f, "join {head} {delta} {}", hex(&join.to_text()))?;
                 match whole {
@@ -518,6 +564,7 @@ impl ComponentSpec {
                 "device" => Line::Device,
                 "leveled" => Line::Leveled(t.get(1).map(|x| list(x)).transpose()?.unwrap_or_default()),
                 "keptold" => Line::KeptOld,
+                "keptrows" => Line::KeptRows(list(at(1)?)?),
                 "lattice" => Line::Lattice {
                     rel: num(at(1)?)?,
                     keys: num(at(2)?)?,
@@ -528,6 +575,9 @@ impl ComponentSpec {
                 "produced" => Line::Produced(num(at(1)?)?),
                 "stats" => Line::Stats(num(at(1)?)?),
                 "seed" => Line::Seed { head: num(at(1)?)?, join: join(at(2)?)? },
+                "remove" => Line::Remove { head: num(at(1)?)?, join: join(at(2)?)? },
+                "addchecked" => Line::AddChecked { head: num(at(1)?)?, join: join(at(2)?)? },
+                "recheck" => Line::Recheck { head: num(at(1)?)?, join: join(at(2)?)? },
                 "join" => Line::Join {
                     head: num(at(1)?)?,
                     delta: num(at(2)?)?,

@@ -101,6 +101,9 @@ struct TokDef {
 pub struct Ev<'a> {
     src: &'a [u8],
     n: usize,
+    /// With a prefix the file starts with (`Stmt::Prefix`), the stream's bytes: those after it.
+    /// Classes, `~`, `next` and `back_fill` are cut to it, so no value has the prefix's bytes.
+    stream: Option<Mask>,
     vars: HashMap<String, Val>,
     templates: HashMap<String, (Vec<String>, Vec<Stmt>)>,
     instances: HashMap<String, Vec<String>>,
@@ -123,6 +126,8 @@ pub struct Ev<'a> {
     unless: HashMap<usize, Vec<Vec<u8>>>,
     /// A mark's `else escape` reason (`Stmt::Mark`), by its index in `marks`.
     unplaced: HashMap<usize, String>,
+    /// A mark's `before` (`Stmt::Mark`), by its index in `marks`: what the token after must be.
+    next: HashMap<usize, Vec<TokenElem>>,
     tables: &'a HashMap<String, Vec<(u32, u32)>>,
     tree: Option<TreeDecl>,
     /// Each class's byte ranges, for `check`; and each `check`: a token kind and its grammar.
@@ -175,9 +180,11 @@ pub fn load_table(parser_c: &str, sym: &str) -> R<Vec<(u32, u32)>> {
 impl<'a> Ev<'a> {
     pub fn run(prog: &[Stmt], src: &'a [u8], tables: &'a HashMap<String, Vec<(u32, u32)>>) -> R<Output> {
         let n = src.len();
+        let stream = crate::syntax::prefix_of(prog)?.filter(|p| src.starts_with(p)).map(|p| Mask::from_fn(n, |i| i >= p.len()));
         let mut ev = Ev {
             src,
             n,
+            stream,
             vars: HashMap::new(),
             templates: HashMap::new(),
             instances: HashMap::new(),
@@ -192,6 +199,7 @@ impl<'a> Ev<'a> {
             skip: Mask::zeros(n),
             marks: vec![],
             token_marks: HashMap::new(),
+            next: HashMap::new(),
             unless: HashMap::new(),
             unplaced: HashMap::new(),
             tables,
@@ -224,6 +232,14 @@ impl<'a> Ev<'a> {
         Ok(())
     }
 
+    /// `m` cut to the stream (`stream`): as it is without a prefix.
+    fn cut(&self, m: Mask) -> Mask {
+        match &self.stream {
+            Some(s) => m.and(s),
+            None => m,
+        }
+    }
+
     fn err(&mut self, msg: &str, m: &Mask) {
         if let Some(i) = m.first() {
             self.errors.push(format!("{}{msg} (byte {i})", self.prefix));
@@ -243,6 +259,7 @@ impl<'a> Ev<'a> {
                     let b = self.src[i] as u32;
                     items.iter().any(|&(lo, hi)| lo <= b && b <= hi)
                 });
+                let m = self.cut(m);
                 self.vars.insert(name.clone(), Val::M(m));
             }
             Stmt::Mask(name, e) => {
@@ -388,6 +405,8 @@ impl<'a> Ev<'a> {
                 let m = self.mask(e)?;
                 self.skip = self.skip.or(&m);
             }
+            // Read at the start (`stream`).
+            Stmt::Prefix(_) => {}
             Stmt::Tree { body, .. } => {
                 self.tree.get_or_insert_with(TreeDecl::default);
                 self.exec(body)?;
@@ -420,8 +439,11 @@ impl<'a> Ev<'a> {
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
             // Applied by the parser (`A as IMPLIED` in the rule's body).
             Stmt::Implied { .. } => {}
-            Stmt::Mark { kind, at, end, unless, unplaced, checks } => {
+            Stmt::Mark { kind, at, end, unless, unplaced, checks, next, .. } => {
                 let m = self.mask(at)?;
+                if let Some(next) = next {
+                    self.next.insert(self.marks.len(), next.clone());
+                }
                 for c in checks {
                     let x = self.mask(&c.expr)?;
                     self.mark_checks.push((self.marks.len(), c.after, c.kind.clone(), c.test, x, c.least));
@@ -824,7 +846,7 @@ impl<'a> Ev<'a> {
                 }
                 out
             }
-            Expr::Not(a) => self.mask(a)?.not(),
+            Expr::Not(a) => self.cut(self.mask(a)?.not()),
             Expr::And(a, b) => self.mask(a)?.and(&self.mask(b)?),
             Expr::Or(a, b) => self.mask(a)?.or(&self.mask(b)?),
             Expr::Xor(a, b) => self.mask(a)?.xor(&self.mask(b)?),
@@ -930,7 +952,7 @@ impl<'a> Ev<'a> {
                         Mask::from_fn(n, |i| if strict { a[i] > b[i] } else { a[i] >= b[i] })
                     }
                     "prev" => self.seg_prev(&ea(0)?, na(1, 1)?),
-                    "next" => self.seg_next(&ea(0)?, na(1, 1)?),
+                    "next" => self.cut(self.seg_next(&ea(0)?, na(1, 1)?)),
                     "starts" => {
                         let a = ea(0)?;
                         a.andnot(&self.seg_prev(&a, 1))
@@ -983,7 +1005,7 @@ impl<'a> Ev<'a> {
                         if let Some(sg) = &self.seg {
                             e = e.or(&sg.last);
                         }
-                        Mask::back_fill(&s, &e)
+                        self.cut(Mask::back_fill(&s, &e))
                     }
                     // simdjson's escaped bytes; `after_odd_run` is the ones outside the run.
                     "after_odd_run" | "escaped" => {
@@ -1122,7 +1144,7 @@ impl<'a> Ev<'a> {
         if let Some(w) = toks.windows(2).find(|w| w[1].start < w[0].end) {
             self.errors.push(format!("token {} starts inside {} (byte {})", w[1].kind, w[0].kind, w[1].start));
         }
-        let gap = covered.or(&self.skip).not();
+        let gap = self.cut(covered.or(&self.skip).not());
         if let Some(i) = gap.first() {
             self.errors.push(format!("byte {i} is in no token"));
         }
@@ -1203,7 +1225,8 @@ impl<'a> Ev<'a> {
             for g in 0..grammar.len() {
                 let at = |i: usize| grammar.get(g + i).copied();
                 let run = seq.iter().enumerate().all(|(i, e)| is(at(i), e));
-                let after = pre.is_empty() || (g > 0 && is(Some(grammar[g - 1]), pre));
+                // `after ~E`: none of `E`'s before, or no token before (the file's first).
+                let after = pre.is_empty() || (g > 0 && is(Some(grammar[g - 1]), pre)) || (g == 0 && matches!(pre.as_slice(), [TokenElem::Not(_)]));
                 if run && after {
                     before[grammar[g]][k] = true;
                 }
@@ -1220,6 +1243,8 @@ impl<'a> Ev<'a> {
                     continue;
                 }
                 match grammar.get(g) {
+                    // `before`: the token after is one of its choices (`~`: none of them).
+                    Some(&t) if self.next.get(&k).is_some_and(|e| !is(Some(t), e)) => {}
                     Some(&t) => before[t][k] = true,
                     // `else escape`: no grammar token at or after the bit.
                     None => {

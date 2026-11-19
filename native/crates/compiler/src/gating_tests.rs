@@ -119,6 +119,7 @@ fn a_gated_region_equals_the_interpreter() {
 /// The gate after a `back_fill`, as `.rr`'s `uesc` is (a string's fill comes after one): the
 /// hex check, made from the bytes alone, must not be made in the first pass and stored.
 pub(super) const LATE: &str = "lexer t
+deprecated back_fill
 class bs  = '\\\\'
 class u   = 'u'
 class hex = '0'..'9' 'a'..'f'

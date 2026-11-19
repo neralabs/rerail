@@ -6,7 +6,7 @@ improve the speed where possible"). Numbered past the highest number in any work
 
 ## Intro
 
-The lean parsers for Go (0305) and for C and C++ (0307) write tree-sitter's tape directly. They
+The lean parsers for Go (0314) and for C and C++ (0317) write tree-sitter's tape directly. They
 cost a sixteenth of tree-sitter's cycles. This decision profiles them and changes what the
 profile shows. It also weighs them against the techniques the Parser-generators work wrote down
 (`docs/parser-generators`, pages 26, 31, 34 and 36):
@@ -130,7 +130,7 @@ The oracles are unchanged:
 
 | technique | here |
 |---|---|
-| Stage 1 by nibble tables, runs by trailing zeros | already there (0305, 0307) |
+| Stage 1 by nibble tables, runs by trailing zeros | already there (0314, 0317) |
 | Perfect hash over a masked 8-byte load for words | already there (`rerail_simd8::words`) |
 | A table for a token's first byte | **applied** for gaps and names; for punctuation it did not pay (above) |
 | Batches of tokens (16 a refill) | already there |

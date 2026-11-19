@@ -1,7 +1,7 @@
 #!/usr/bin/python3
-"""Relax's live test loop on another Mac (docs/final-shape/notes/t37, §3 "On another Mac").
+"""Relax's live test loop on another machine of the farm (docs/final-shape/notes/t37, §3 "On another Mac").
 
-    scripts/dev/live-test-remote [--host NAME] [--verbose] PACKAGE [--lib | --test NAME] [-- FILTER...]
+    scripts/dev/live-test-remote [--host NAME] [--os macos|linux|any] [--verbose] [--once] PACKAGE [--lib | --test NAME] [-- FILTER...]
 
 Runs `relax test --live PACKAGE ...` on a host of the build farm (scripts/build/farm: the first usable one by default) in this
 checkout's copy there (under the host's farm root), and
@@ -10,7 +10,10 @@ live mirror, where Relax's own watcher sees it written and patches the running t
 the live process and Relax's store are the host's, and this machine spends only the send.
 
 Relax is `$RELAX`, else the one `scripts/dev/relax/build` installs (with its std), else `relax` on
-PATH; its std is `$RELAX_STD` if set. Both are sent to the host's farm root. Ctrl-C stops the session on the host too.
+PATH; its std is `$RELAX_STD` if set. Both are sent to the host's farm root. A Mac host is taken
+first; a Linux host (aarch64) runs `bin/relax-linux` of the installed version (`$RELAX_LINUX`),
+which the build script makes once the farm's Linux sysroot is here: the result is a Linux run. Ctrl-C stops the session on the host too.
+`--once` stops it after the first verdict: a check that runs the named tests once, not a loop that waits for saves.
 """
 import ctypes
 import ctypes.util
@@ -91,35 +94,49 @@ def watch(root, on_files):
 
 
 def main(argv):
-    host, verbose = None, False
-    while argv and argv[0] in ("--host", "--verbose"):
+    host, verbose, once, oses = None, False, False, ("macos", "linux")
+    while argv and argv[0] in ("--host", "--verbose", "--once", "--os"):
         if argv[0] == "--host":
             host, argv = argv[1], argv[2:]
+        elif argv[0] == "--once":
+            once, argv = True, argv[1:]
+        elif argv[0] == "--os":
+            oses = ("macos", "linux") if argv[1] == "any" else (argv[1],)
+            argv = argv[2:]
         else:
             verbose, argv = True, argv[1:]
     if not argv:
         sys.exit(__doc__)
+    installed = os.path.expanduser("~/.local/share/rerail-relax")
+    linux_relax = os.environ.get("RELAX_LINUX") or os.path.join(installed, "bin/relax-linux")
+    if not os.path.exists(linux_relax):
+        oses = tuple(o for o in oses if o != "linux")
     if host is None:
-        hosts = farm.usable()
+        # The Macs first: a Linux host's run is another platform's.
+        hosts = sorted((h for h in farm.usable() if farm.host_os(h) in oses), key=lambda h: farm.host_os(h) != "macos")
         if not hosts:
             reasons = [f"{h['name']}: {farm.health(h).get('why')}" for h in farm.hosts() if h.get("enabled", True)]
             sys.exit("live-test-remote: no usable host" + (f" ({'; '.join(reasons)})" if reasons else "")
                      + "; run `relax test --live` here instead")
         host = hosts[0]["name"]
-    installed = os.path.expanduser("~/.local/share/rerail-relax")
-    relax = os.environ.get("RELAX") or (os.path.join(installed, "bin/relax") if os.path.exists(os.path.join(installed, "bin/relax"))
+    entry = next((h for h in farm.hosts() if h["name"] == host), {})
+    linux = farm.host_os(entry) == "linux"
+    if linux and not os.path.exists(linux_relax):
+        sys.exit(f"live-test-remote: {host} is a Linux host and there is no Linux Relax ({linux_relax}):"
+                 " scripts/build/farm/linux-sysroot HOST, then scripts/dev/relax/build")
+    relax = linux_relax if linux else os.environ.get("RELAX") or (os.path.join(installed, "bin/relax") if os.path.exists(os.path.join(installed, "bin/relax"))
                                         else subprocess.run(["which", "relax"], capture_output=True, text=True).stdout.strip())
     if not relax:
         sys.exit("live-test-remote: no Relax: run scripts/dev/relax/build, or set RELAX to Relax's binary")
     relax = os.path.realpath(relax)
     std = os.environ.get("RELAX_STD")
-    if std is None and relax == os.path.realpath(os.path.join(installed, "bin/relax")):
+    if std is None and relax in (os.path.realpath(os.path.join(installed, "bin/relax")), os.path.realpath(linux_relax)):
         std = os.path.join(installed, "src/libs/relax/compiler/std")
 
     started = time.time()
     roots = [(CHECKOUT, "checkout")] + ([(os.path.realpath(std), "tree")] if std else [])
     t = send(host, files=[relax], roots=roots, verify=True)
-    print(f"live-test-remote: {host}: checkout, Relax sent ({t.get('files')} files, {t.get('sync')} s)", flush=True)
+    print(f"live-test-remote: {host}{' (Linux: a Linux run)' if linux else ''}: checkout, Relax sent ({t.get('files')} files, {t.get('sync')} s)", flush=True)
 
     # As AGENTS.md runs Relax here: every checkout's runs on the host share one run dir, capped.
     # Relax's home is the farm's too, never the host's own ~/.relax: a path named here that the
@@ -131,13 +148,15 @@ def main(argv):
     # `exec` maps their paths there, and stops Relax when this connection's input ends.
     # (and this terminal's open-file limit: a command over ssh starts with 256, which the engine's
     # parallel tests run out of, as test-remote's do)
-    job = {"cwd": os.path.join(CHECKOUT, "native"), "argv": [relax, "test", "--live"] + argv, "env": env, "nice": 10,
+    job = {"cwd": os.path.join(CHECKOUT, "native"), "argv": [relax, "test", "--live"] + argv, "env": env, "nice": entry.get("nice", 10),
            "map": [CHECKOUT, relax, home] + ([os.path.realpath(std)] if std else []),
            "nofile": resource.getrlimit(resource.RLIMIT_NOFILE)[0]}
-    remote = farm.on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
+    remote = farm.agent_exec(job)
     proc = subprocess.Popen(farm.ssh(host, remote, "live"), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, bufsize=1)
     pushed = [None]
+    # `--once`: the verdict's outcome, the exit status (0 when every test it ran passed).
+    passed = [None]
 
     def show():
         for line in proc.stdout:
@@ -146,11 +165,16 @@ def main(argv):
                     f" ({time.time() - started:.0f} s after the start)"
                 print(line.rstrip() + since, flush=True)
                 pushed[0] = None
+                if once:
+                    passed[0] = " failed=0 " in line
+                    # As Ctrl-C does: the main thread stops the session on the host.
+                    os.kill(os.getpid(), signal.SIGTERM)
             elif verbose or "error" in line.split(":", 1)[0] or line.startswith(("relax: ", "relax live")) or "panicked" in line:
                 print(line.rstrip(), flush=True)
         print(f"live-test-remote: the session on {host} ended (a lost host ends it: start it again,"
               " on another host or here)", flush=True)
-        os._exit(proc.wait() or 0)
+        status = proc.wait() or 0
+        os._exit((0 if passed[0] else 1) if passed[0] is not None else status)
 
     threading.Thread(target=show, daemon=True).start()
 
@@ -179,6 +203,8 @@ def main(argv):
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
+    if passed[0] is not None:
+        sys.exit(0 if passed[0] else 1)
 
 
 if __name__ == "__main__":

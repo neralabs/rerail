@@ -81,6 +81,18 @@ pub const KIND_STRIDE: u32 = 1024;
 /// Tree-sitter's ERROR symbol, past every grammar's kinds and so past the stride.
 const ERROR_SYMBOL: u16 = u16::MAX;
 
+/// The codes a test of a document reads, as its table holds them.
+#[derive(Clone, Copy)]
+enum Codes {
+    /// A kind's (by its code): the table's codes of it with no ERROR flag; ERROR's slot also every ERROR code and
+    /// kind 0's.
+    Kind(u16),
+    /// A class's.
+    Class(u16),
+    /// The ERROR and MISSING codes.
+    Faults,
+}
+
 /// The atom of kind `code` in the dialect whose tape tag is `tag`. ERROR's atom takes code 0, the grammar's end
 /// symbol, which never labels a node (the tape's own `ERROR_CODE`), so every atom of a dialect stays in its stride:
 /// `tag * 1024 + 0xffff` would read as another dialect's kind.
@@ -106,150 +118,34 @@ pub fn facts_tag(f: &Facts) -> u8 {
     f.tag
 }
 
-/// A column the read-pattern count (E17) watches: a plain `Vec` unless the `tape-reads` feature is on.
-#[cfg(not(feature = "tape-reads"))]
-pub type Col<T> = Vec<T>;
-#[cfg(feature = "tape-reads")]
-pub use counted::Col;
-
-/// With `tape-reads`: a column whose reads by index are counted by where they lie (`tape::reads::at`), and
-/// whose reads whole (a slice, `iter`) are counted as in order. It is the `Vec` otherwise.
-#[cfg(feature = "tape-reads")]
-mod counted {
-    use crate::code_rule_dsl::tape::reads;
-    use std::ops::{Deref, DerefMut, Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo};
-
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    pub struct Col<T> {
-        v: Vec<T>,
-        /// The part's index in `reads::PATTERN_PARTS`, or `usize::MAX` for a column not watched.
-        part: usize,
-    }
-
-    impl<T> Col<T> {
-        pub fn watched(v: Vec<T>, name: &str) -> Self {
-            Col { v, part: reads::PATTERN_PARTS.iter().position(|p| *p == name).expect("a pattern part") }
-        }
-        pub fn iter(&self) -> std::slice::Iter<'_, T> {
-            if self.part != usize::MAX {
-                reads::bulk(self.part, self.v.len());
-            }
-            self.v.iter()
-        }
-        #[track_caller]
-        pub fn get(&self, i: usize) -> Option<&T> {
-            if self.part != usize::MAX && i < self.v.len() {
-                reads::at(self.part, i as u32);
-            }
-            self.v.get(i)
-        }
-    }
-    impl<T> Default for Col<T> {
-        fn default() -> Self {
-            Col { v: Vec::new(), part: usize::MAX }
-        }
-    }
-    impl<T> From<Vec<T>> for Col<T> {
-        fn from(v: Vec<T>) -> Self {
-            Col { v, part: usize::MAX }
-        }
-    }
-    impl<'a, T> IntoIterator for &'a Col<T> {
-        type Item = &'a T;
-        type IntoIter = std::slice::Iter<'a, T>;
-        fn into_iter(self) -> Self::IntoIter {
-            self.iter()
-        }
-    }
-    impl<T> Deref for Col<T> {
-        type Target = Vec<T>;
-        fn deref(&self) -> &Vec<T> {
-            &self.v
-        }
-    }
-    impl<T> DerefMut for Col<T> {
-        fn deref_mut(&mut self) -> &mut Vec<T> {
-            &mut self.v
-        }
-    }
-    impl<T> Index<usize> for Col<T> {
-        type Output = T;
-        #[inline]
-        #[track_caller]
-        fn index(&self, i: usize) -> &T {
-            if self.part != usize::MAX {
-                reads::at(self.part, i as u32);
-            }
-            &self.v[i]
-        }
-    }
-    impl<T> IndexMut<usize> for Col<T> {
-        fn index_mut(&mut self, i: usize) -> &mut T {
-            &mut self.v[i]
-        }
-    }
-    macro_rules! whole {
-        ($($r:ty),*) => {$(
-            impl<T> Index<$r> for Col<T> {
-                type Output = [T];
-                fn index(&self, r: $r) -> &[T] {
-                    let s = &self.v[r];
-                    if self.part != usize::MAX {
-                        reads::bulk(self.part, s.len());
-                    }
-                    s
-                }
-            }
-        )*};
-    }
-    whole!(Range<usize>, RangeFrom<usize>, RangeTo<usize>, RangeFull);
-}
-
-/// The watched columns, named for the count (E17); a no-op without `tape-reads`.
-fn watch(f: &mut Facts) {
-    #[cfg(feature = "tape-reads")]
-    {
-        for (col, name) in [(&mut f.parent, "facts parent"), (&mut f.start, "facts start"), (&mut f.end, "facts end"), (&mut f.subtree_end, "facts subtree_end")] {
-            *col = Col::watched(std::mem::take(&mut **col), name);
-        }
-    }
-    let _ = f;
-}
-
-/// One file's facts. Columns are indexed by node id.
+/// One file's facts, read off its tape where it lies (decision 0293, step 4): a node's kind, parent, span, subtree,
+/// flags, field and children are the tape's answers through the one API, in whichever format the store keeps, and
+/// the nodes of a kind or class are a scan of the tape's codes, 64 nodes at a time. Nothing is copied off the tape.
 pub struct Facts {
     /// The tape tag of the file's dialect, which every kind atom is of.
     pub tag: u8,
     pub source: Arc<String>,
     pub lines: Arc<LineTable>,
-    /// node(id, kind, parent, start, end) + subtree_end, flags, field.
-    pub kind: Vec<u32>,
-    pub parent: Col<u32>,
-    pub start: Col<u32>,
-    pub end: Col<u32>,
-    pub subtree_end: Col<u32>,
-    /// named | extra<<1 | missing<<2 | error<<3
-    pub flags: Vec<u8>,
-    /// Field (grammar field code, 0 = none) under which the node hangs from its parent.
-    pub field: Vec<u16>,
-    /// Children in order: CSR over parent ids.
-    pub child_offsets: Vec<u32>,
-    pub children: Vec<u32>,
-    /// Kind postings (CSR over kind atoms present in this file, sorted by atom).
-    pub kind_keys: Vec<u32>,
-    pub kind_offsets: Vec<u32>,
-    pub kind_nodes: Vec<u32>,
-    /// Abstract class postings (CSR over supertype kind atoms, sorted by atom).
-    pub class_keys: Vec<u32>,
-    pub class_offsets: Vec<u32>,
-    pub class_nodes: Vec<u32>,
-    pub syntax_errors: bool,
+    /// The tape, its ids the facts' (decision 0293); `None` for a text-only document, which has no nodes.
+    pub tape: Option<Arc<crate::code_rule_dsl::tape::formats::DocTape>>,
+    /// The dialect's grammar: whether a kind is named.
+    grammar: Option<Arc<crate::code_rule_dsl::tape::Grammar>>,
+    /// The ERROR and MISSING nodes, ascending, found on first ask (a scan of the codes): few, and most files have none.
+    errors: std::sync::OnceLock<Vec<u32>>,
+    /// The codes the document holds, ascending, found on the first kind or class test (a scan of the codes): a
+    /// summary of the document, not of its nodes. On format 16 the table is the language's, so a test of a kind the
+    /// document lacks is answered here without a scan, as format 15's table of the document's own codes answers it.
+    held: std::sync::OnceLock<Held>,
     /// Computed only for a demanded Python syntax verdict; shared by every projection of this tape. `Err`: `ast.parse`
     /// raises another exception than `SyntaxError` (`facts::vtab::syntax::python_syntax`).
     pub python_syntax: std::sync::OnceLock<Result<Option<(u32, String)>, String>>,
-    /// The tape these facts were read off, its ids theirs (decision 0293): what the kind-set axes read in place.
-    /// `None` for facts made otherwise (a text-only document, or read off no image), which the axes read as before.
-    pub tape: Option<Arc<crate::code_rule_dsl::tape::formats::DocTape>>,
+}
+
+/// What a document holds, ascending: its codes, the kinds of those with no ERROR flag, and their classes.
+struct Held {
+    codes: Box<[u32]>,
+    kinds: Box<[u16]>,
+    classes: Box<[u16]>,
 }
 
 /// An anonymous child: a token the tape stores ([`Facts::tokens`]).
@@ -272,6 +168,15 @@ pub fn build(file: &dyn SourceFile) -> Result<Built, String> {
     build_with_tape(file, false).map(|(built, _)| built)
 }
 
+/// The facts of `primary`: the kept document's tape where the matchers keep one (shared, not held twice), else the
+/// image's, checked and held.
+fn read_off(doc: Option<&TapeDoc>, file: &dyn SourceFile, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>, primary: crate::code_rule_dsl::tape::TapeImage, lines: Arc<LineTable>) -> Result<Facts, String> {
+    match doc {
+        Some(doc) => from_tape(doc, lines),
+        None => from_image(Arc::clone(file.source()), grammar, primary, lines),
+    }
+}
+
 /// The tape the facts were read off, restored from `primary` only when `keep` (a program's matchers run over it,
 /// decision 0106).
 fn kept_tape(keep: bool, file: &dyn SourceFile, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>, primary: &crate::code_rule_dsl::tape::TapeImage, lines: &Arc<LineTable>) -> Result<Option<TapeDoc>, String> {
@@ -287,16 +192,19 @@ fn kept_tape(keep: bool, file: &dyn SourceFile, grammar: &Arc<crate::code_rule_d
 pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Option<TapeDoc>), String> {
     use crate::code_rule_dsl::{lines::Terminators, tape::{Grammar, TapeImage}};
     let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
-    let grammar = Arc::new(Grammar::new(language)?);
+    let grammar = Grammar::embedded(language)?;
     let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
     let Some(image) = TapeImage::parse(&grammar, file.source(), &|| false) else { return Ok((Built::Unparsed, None)); };
     let image = image?;
     drop(parse);
-    let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
-    let doc = kept_tape(keep, file, &grammar, &image.primary, &lines)?;
+    // Where the device reads tapes, the parse's in a slab's room too (decision 0353 step 4a): a guest's, a run's
+    // without a store.
+    let primary = placed_where_read(image.primary, &grammar)?;
+    let lines = Arc::new(LineTable::placed(file.source(), Terminators::of(language)));
+    let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-    let facts = holding(from_image(Arc::clone(file.source()), &grammar, &image.primary, lines)?, image.primary);
-    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
+    let facts = read_off(doc.as_ref(), file, &grammar, primary, lines)?;
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.len() as u64);
     Ok((Built::Facts(facts), doc))
 }
 
@@ -318,22 +226,59 @@ fn queued_tape(source: &[u8; 32], tag: i64, gv: i64, fv: i64) -> crate::content_
     crate::content_store::write_back::Key::of(&[b"tape", source, &tag.to_le_bytes(), &gv.to_le_bytes(), &fv.to_le_bytes()])
 }
 
-/// The sources a run's tape writes store, filled by the store's writer as it writes them: the run's manifest, queued
-/// after them, names them.
-pub(crate) type Stored = std::sync::Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>;
+/// A parsed tape's stored bytes in their home and the image read there (decision 0353 step 4a): written straight
+/// into a slab's room, which the store's writer and every reader take. A host whose tape is not placed (no device,
+/// or the pool refused the room) keeps the parser's image, and the writer its bytes.
+// copy (0353 step 4a): the parsers write their columns into a vector of their own, which goes once its stored bytes
+// are in their room. It goes when a parser writes into the room (decision 0353).
+/// A tape still queued for the writer, read where it is: the room this process placed it in (decision 0353 step 4a),
+/// else its bytes read into a tape of its own.
+// copy (0353 step 4a): a queued tape not in a room (a frame of a gathered segment, decompressed) is read into a vector.
+fn queued_image(stored: &crate::content_store::ObjectBytes, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>) -> Result<crate::code_rule_dsl::tape::TapeImage, String> {
+    use crate::code_rule_dsl::tape::TapeImage;
+    if let crate::content_store::ObjectBytes::Tape(held) = stored
+        && let Ok(home) = (Arc::clone(held) as Arc<dyn std::any::Any + Send + Sync>).downcast::<rerail_tape_format::home::Home>()
+        && home.placed()
+    {
+        return TapeImage::from_home((*home).clone(), grammar);
+    }
+    crate::code_rule_dsl::prof::count("tape.queued_read_apart", 1);
+    TapeImage::from_bytes(stored, grammar)
+}
+
+/// A parse's tape in a slab's room where a device reads tapes (`placed_parse`), else as the parser made it.
+fn placed_where_read(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>) -> Result<crate::code_rule_dsl::tape::TapeImage, String> {
+    #[cfg(target_os = "macos")]
+    if crate::code_rule_dsl::tape::placed::device().is_some() {
+        return placed_parse(image, grammar).map(|(_, image)| image);
+    }
+    let _ = grammar;
+    Ok(image)
+}
+
+fn placed_parse(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>) -> Result<(crate::content_store::TapeBytes, crate::code_rule_dsl::tape::TapeImage), String> {
+    use crate::code_rule_dsl::tape::TapeImage;
+    let home = image.place_stored()?;
+    if !home.placed() {
+        return Ok((Arc::new(home), image));
+    }
+    let mut primary = TapeImage::from_home(home.clone(), grammar)?;
+    primary.source_digest = image.source_digest;
+    Ok((Arc::new(home), primary))
+}
 
 /// [`build`] in a run's waves (decision 0104): no SQL is read or written. The tape is `found` (read before the
 /// first wave), or one still queued by this process, else the file is parsed and its source and tape are handed to
-/// the store's writer, behind the run (the id it stores the source under goes to `stored`). `digest` is the source's
+/// the store's writer, behind the run (`named`: the run's manifest names the source it stores, decision 0306). `digest` is the source's
 /// SHA-256, when the caller has it.
 pub fn build_in_wave(
     file: &dyn SourceFile,
     cache: &crate::content_store::ContentStore,
     digest: Option<[u8; 32]>,
     found: Option<&crate::content_store::TapeFrame>,
-    stored: Option<&Stored>,
+    named: bool,
 ) -> Result<Built, String> {
-    build_in_wave_with_tape(file, cache, digest, found, stored, false).map(|(built, _)| built)
+    build_in_wave_with_tape(file, cache, digest, found, named, false).map(|(built, _)| built)
 }
 
 /// [`build_in_wave`], with the tape the facts were read off where `keep` (a program's matchers run over it, decision
@@ -343,17 +288,17 @@ pub fn build_in_wave_with_tape(
     cache: &crate::content_store::ContentStore,
     digest: Option<[u8; 32]>,
     found: Option<&crate::content_store::TapeFrame>,
-    stored: Option<&Stored>,
+    named: bool,
     keep: bool,
 ) -> Result<(Built, Option<TapeDoc>), String> {
     use crate::code_rule_dsl::lines::Terminators;
-    use crate::code_rule_dsl::tape::{self, TAPE_FORMAT_VERSION, TapeImage};
+    use crate::code_rule_dsl::tape::{self, TapeImage};
     use crate::code_rule_dsl::build_ids::grammar_version;
     use crate::content_store::HashKey;
     use sha2::Digest as _;
     let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
     let tag = i64::from(tape_tag(language).ok_or("the dialect has no tape tag")?);
-    let (gv, fv) = (grammar_version(), i64::from(TAPE_FORMAT_VERSION));
+    let (gv, fv) = (grammar_version(), i64::from(tape::formats::stored_version()));
     let bytes = file.source().as_bytes();
     let digest: [u8; 32] = match digest {
         Some(d) => d,
@@ -363,25 +308,34 @@ pub fn build_in_wave_with_tape(
         }
     };
     let key = queued_tape(&digest, tag, gv, fv);
-    let grammar = Arc::new(tape::Grammar::new(language)?);
-    let kept: Option<std::sync::Arc<Vec<u8>>> = match found {
+    let grammar = tape::Grammar::embedded(language)?;
+    // Stored: decompressed (or read from its segment) straight into its one home, a slab's room, and read there
+    // (decision 0353 step 4a).
+    let placed = match found {
         Some(frame) => {
             let _decode = crate::code_rule_dsl::logic::profile::span(|| "tape decompress".into());
-            Some(std::sync::Arc::new(frame.bytes().map_err(|e| e.to_string())?))
+            let len = frame.raw_len().map_err(|e| e.to_string())?;
+            Some(tape::placed::place(len, |out| frame.copy_into(out)).map_err(|e| e.to_string())?)
         }
-        // Still queued for the writer: its compressed frame, decompressed.
-        None => match cache.pending::<crate::content_store::SourceAndTapeFrames>(&key) {
-            Some(frames) => Some(std::sync::Arc::new(frames.tape_bytes().map_err(|e| e.to_string())?)),
-            None => None,
-        },
+        None => None,
     };
-    let primary = match kept {
-        Some(stored) => {
+    // Still queued for the writer: read where it is (gathered, placed, or a compressed frame).
+    let kept: Option<crate::content_store::ObjectBytes> = match placed {
+        Some(_) => None,
+        None => cache.queued_tape(&key).transpose().map_err(|e| e.to_string())?,
+    };
+    let primary = match (placed, kept) {
+        (Some(home), _) => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "hit".into());
             let _decode = crate::code_rule_dsl::logic::profile::span(|| "tape decode".into());
-            TapeImage::from_bytes(&stored, &grammar)?
+            TapeImage::from_home(home, &grammar)?
         }
-        None => {
+        (None, Some(stored)) => {
+            crate::code_rule_dsl::logic::profile::decision("input tape cache", || "hit".into());
+            let _decode = crate::code_rule_dsl::logic::profile::span(|| "tape decode".into());
+            queued_image(&stored, &grammar)?
+        }
+        (None, None) => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "miss".into());
             let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source().len() as u64);
@@ -390,36 +344,21 @@ pub fn build_in_wave_with_tape(
             };
             let image = image?;
             drop(parse);
-            let tape = std::sync::Arc::new(image.primary.to_bytes()?);
-            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, tape.len() as u64);
-            // Compressed here, on the parse's worker; the store's one writer only inserts the frames. The queue holds
-            // the frames and the tape (read from memory until written), not the source.
+            let (tape, primary) = placed_parse(image.primary, &grammar)?;
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, (*tape).as_ref().len() as u64);
+            // The run's gather takes the source and tape as they are (no copy), placed in a segment of the store's
+            // when it is full or the wave ends, and read there until written (decision 0295 step 5). No wave waits for
+            // the writer (decision 0104).
             let canonical = HashKey::from_sha256_digest(digest);
-            let frames = std::sync::Arc::new(cache.source_and_tape_frames(bytes, canonical, &tape).map_err(|e| e.to_string())?);
-            let (held, stored) = (std::sync::Arc::clone(&frames), stored.cloned());
-            // A cache's write: where the writer's queue is full it is dropped, not waited for, and the next run parses
-            // the file again (decision 0104: no wave waits for the writer).
-            cache.write_back_unless_full(
-                crate::content_store::write_back::Syms::None,
-                "a tape and its source",
-                frames.bytes(),
-                vec![(key, Some(frames as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
-                Box::new(move |store| {
-                    let (id, _) = store.put_source_and_tape_framed(canonical, tag, gv, fv, &held)?;
-                    if let Some(stored) = &stored {
-                        stored.lock().expect("the stored sources").push(id);
-                    }
-                    Ok(())
-                }),
-            );
-            image.primary
+            cache.queue_source_and_tape(key, canonical, tag, gv, fv, file.source(), tape, named).map_err(|e| e.to_string())?;
+            primary
         }
     };
-    let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
+    let lines = Arc::new(LineTable::placed(file.source(), Terminators::of(language)));
     let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-    let facts = holding(from_image(Arc::clone(file.source()), &grammar, &primary, lines)?, primary);
-    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
+    let facts = read_off(doc.as_ref(), file, &grammar, primary, lines)?;
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.len() as u64);
     Ok((Built::Facts(facts), doc))
 }
 
@@ -440,25 +379,25 @@ pub(crate) fn build_cached_with_tape(
     // A standalone cache build has the same lookup/parse/publication window as a corpus run.
     let _reading = cache.hold_collection().map_err(|e| e.to_string())?;
     use crate::code_rule_dsl::lines::Terminators;
-    use crate::code_rule_dsl::tape::{self, TAPE_FORMAT_VERSION, TapeImage};
+    use crate::code_rule_dsl::tape::{self, TapeImage};
     use crate::code_rule_dsl::build_ids::grammar_version;
     use crate::content_store::HashKey;
     let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
     let tag = i64::from(tape_tag(language).ok_or("the dialect has no tape tag")?);
-    let (gv, fv) = (grammar_version(), i64::from(TAPE_FORMAT_VERSION));
+    let (gv, fv) = (grammar_version(), i64::from(tape::formats::stored_version()));
     let e = |e: crate::content_store::StoreError| e.to_string();
     let bytes = file.source().as_bytes();
     // A tape this process queued is read from memory (`build_in_wave`): reads see writes.
     {
         use sha2::Digest as _;
         let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
-        if let Some(frames) = cache.pending::<crate::content_store::SourceAndTapeFrames>(&queued_tape(&digest, tag, gv, fv)) {
-            let held = frames.tape_bytes().map_err(|e| e.to_string())?;
-            let grammar = Arc::new(tape::Grammar::new(language)?);
-            let primary = TapeImage::from_bytes(&held, &grammar)?;
-            let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
+        if let Some(held) = cache.queued_tape(&queued_tape(&digest, tag, gv, fv)) {
+            let held = held.map_err(|e| e.to_string())?;
+            let grammar = tape::Grammar::embedded(language)?;
+            let primary = queued_image(&held, &grammar)?;
+            let lines = Arc::new(LineTable::placed(file.source(), Terminators::of(language)));
             let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
-            return Ok((Built::Facts(holding(from_image(Arc::clone(file.source()), &grammar, &primary, lines)?, primary)), known, doc));
+            return Ok((Built::Facts(read_off(doc.as_ref(), file, &grammar, primary, lines)?), known, doc));
         }
     }
     let lookup = crate::code_rule_dsl::logic::profile::span(|| "tape cache lookup".into());
@@ -470,17 +409,20 @@ pub(crate) fn build_cached_with_tape(
             cache.source_by_hash(HashKey::sha256(bytes)).map_err(e)?
         }
     };
+    // The stored tape's frame, decompressed (or read from its segment) straight into its home, a slab's room
+    // (decision 0353 step 4a).
     let stored = match source_id {
-        Some(id) => cache.tape_by_source(id, tag, gv, fv).map_err(e)?,
+        Some(id) => cache.tape_frames_for(&[id], tag, gv, fv).map_err(e)?.remove(0),
         None => None,
     };
     drop(lookup);
-    let grammar = Arc::new(tape::Grammar::new(language)?);
-    let primary = match stored.and_then(|id| cache.get_tapes_bulk(&[id]).ok()?.remove(&id)) {
-        Some((stored, _)) => {
+    let grammar = tape::Grammar::embedded(language)?;
+    let primary = match stored {
+        Some(frame) => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "hit".into());
             let _decode = crate::code_rule_dsl::logic::profile::span(|| "tape decode".into());
-            TapeImage::from_bytes(&stored, &grammar)?
+            let len = frame.raw_len().map_err(e)?;
+            TapeImage::from_home(tape::placed::place(len, |out| frame.copy_into(out)).map_err(|e| e.to_string())?, &grammar)?
         }
         None => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "miss".into());
@@ -492,133 +434,56 @@ pub(crate) fn build_cached_with_tape(
             };
             let image = image?;
             drop(parse);
-            let tape = std::sync::Arc::new(image.primary.to_bytes()?);
-            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, tape.len() as u64);
+            let (tape, primary) = placed_parse(image.primary, &grammar)?;
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, (*tape).as_ref().len() as u64);
             // Handed to the store's writer, behind the run (decision 0104), and read from memory until written
             // (`pending`, above): the source's id is the writer's, so none is returned for a source not stored yet.
             use sha2::Digest as _;
             let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
-            // Compressed here, on the parse's worker; the writer only inserts (as above).
+            // Queued as `build_in_wave` queues it: gathered in a run's waves, else compressed here and queued alone.
             let canonical = HashKey::from_sha256_digest(digest);
-            let frames = std::sync::Arc::new(cache.source_and_tape_frames(bytes, canonical, &tape).map_err(|e| e.to_string())?);
-            let held = std::sync::Arc::clone(&frames);
-            // A cache's write: where the writer's queue is full it is dropped, not waited for, and the next run parses
-            // the file again (decision 0104: no wave waits for the writer).
-            cache.write_back_unless_full(
-                crate::content_store::write_back::Syms::None,
-                "a tape and its source",
-                frames.bytes(),
-                vec![(queued_tape(&digest, tag, gv, fv), Some(frames as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
-                Box::new(move |store| store.put_source_and_tape_framed(canonical, tag, gv, fv, &held).map(|_| ())),
-            );
-            image.primary
+            cache.queue_source_and_tape(queued_tape(&digest, tag, gv, fv), canonical, tag, gv, fv, file.source(), tape, false).map_err(|e| e.to_string())?;
+            primary
         }
     };
-    let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
+    let lines = Arc::new(LineTable::placed(file.source(), Terminators::of(language)));
     let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-    let facts = holding(from_image(Arc::clone(file.source()), &grammar, &primary, lines)?, primary);
-    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.start.len() as u64);
+    let facts = read_off(doc.as_ref(), file, &grammar, primary, lines)?;
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.len() as u64);
     Ok((Built::Facts(facts), source_id, doc))
 }
 
-pub mod postings;
 
+/// The facts of a restored document: its tape, shared (`TapeDoc::doc_tape`).
 pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> {
-    #[cfg(feature = "tape-reads")]
-    let _paused = crate::code_rule_dsl::tape::reads::pause();
     let tag = tape_tag(doc.file_dialect()).ok_or("the tape's dialect has no tape tag")?;
-    let n = doc.transducer_len();
-    let mut f = empty(tag, Arc::clone(doc.document_source()), lines, n);
-    f.syntax_errors = !doc.syntax_error_ranges().is_empty();
-    let columns_span = crate::code_rule_dsl::logic::profile::span(|| "node columns".into());
-    for id in 0..n as u32 {
-        f.kind.push(kind_atom(tag, doc.transducer_kind(id)));
-        f.parent.push(doc.transducer_parent(id).unwrap_or(NONE));
-        let span = doc.transducer_span(id);
-        f.start.push(span.start as u32);
-        f.end.push(span.end as u32);
-        f.subtree_end.push(doc.transducer_descendants(id).end);
-        f.flags.push(doc.transducer_flags(id));
-        f.field.push(doc.transducer_field(id));
-    }
-    drop(columns_span);
-    index(&mut f);
-    let _classes = crate::code_rule_dsl::logic::profile::span(|| "class postings".into());
-    let classes = doc.transducer_supertypes().map(|(node, class)| (kind_atom(tag, class), node)).collect();
-    (f.class_keys, f.class_offsets, f.class_nodes) = postings(classes);
-    watch(&mut f);
-    f.tape = Some(Arc::clone(doc.doc_tape()));
-    Ok(f)
-}
-
-/// `facts` holding the image they were read off (`Facts::tape`), moved in: not copied.
-fn holding(mut facts: Facts, image: crate::code_rule_dsl::tape::TapeImage) -> Facts {
-    facts.tape = Some(Arc::new(crate::code_rule_dsl::tape::formats::DocTape::new(Arc::new(image))));
-    facts
-}
-
-/// Allocates only the core columns. Line numbers are lookups in the shared source line table.
-fn empty(tag: u8, source: Arc<String>, lines: Arc<LineTable>, n: usize) -> Facts {
-    Facts {
+    Ok(Facts {
         tag,
-        source,
+        source: Arc::clone(doc.document_source()),
         lines,
-        kind: Vec::with_capacity(n),
-        parent: Vec::with_capacity(n).into(),
-        start: Vec::with_capacity(n).into(),
-        end: Vec::with_capacity(n).into(),
-        subtree_end: Vec::with_capacity(n).into(),
-        flags: Vec::with_capacity(n),
-        field: Vec::with_capacity(n),
-        child_offsets: Vec::new(),
-        children: Vec::new(),
-        kind_keys: Vec::new(),
-        kind_offsets: Vec::new(),
-        kind_nodes: Vec::new(),
-        class_keys: Vec::new(),
-        class_offsets: Vec::new(),
-        class_nodes: Vec::new(),
-        syntax_errors: false,
+        tape: Some(Arc::clone(doc.doc_tape())),
+        grammar: Some(Arc::clone(doc.grammar())),
+        errors: Default::default(),
+        held: Default::default(),
         python_syntax: Default::default(),
-        tape: None,
-    }
-
+    })
 }
 
-/// Reads the admitted tape directly into columns. The matcher and this reader share validation.
-pub fn from_image(source: Arc<String>, grammar: &crate::code_rule_dsl::tape::Grammar,
-    image: &crate::code_rule_dsl::tape::TapeImage, lines: Arc<LineTable>) -> Result<Facts, String> {
-    #[cfg(feature = "tape-reads")]
-    let _paused = crate::code_rule_dsl::tape::reads::pause();
+/// The facts of an admitted image: checked against its source and grammar (the matcher's restore checks the same,
+/// `tape::validated`), then held, moved in, and read in place.
+pub fn from_image(source: Arc<String>, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>,
+    image: crate::code_rule_dsl::tape::TapeImage, lines: Arc<LineTable>) -> Result<Facts, String> {
     let tag = tape_tag(grammar.dialect()).ok_or("the tape's dialect has no tape tag")?;
-    let mut f = empty(tag, Arc::clone(&source), lines, 0);
-    let mut classes = Vec::new();
-    let decode = crate::code_rule_dsl::logic::profile::span(|| "validated tape columns".into());
-    #[cfg(feature = "tape-reads")]
-    {
-        use crate::code_rule_dsl::tape::reads;
-        reads::hit(reads::part("facts docs"), 1);
-        reads::hit(reads::part("facts nodes"), image.node_count() as u64);
-    }
-    crate::code_rule_dsl::tape::validated::visit(&source, grammar, image, &|| false, |node, memberships| {
-        if node.id == 0 { f = empty(tag, Arc::clone(&f.source), Arc::clone(&f.lines), image.node_count()); }
-        f.kind.push(kind_atom(tag, node.kind));
-        f.parent.push(node.parent);
-        f.start.push(node.start);
-        f.end.push(node.end);
-        f.subtree_end.push(node.id + node.size);
-        f.flags.push(node.flags);
-        f.field.push(node.field);
-        f.syntax_errors |= node.flags & 12 != 0;
-        classes.extend(memberships.iter().map(|&class| (kind_atom(tag, class), node.id)));
-    })?;
-    drop(decode);
-    index(&mut f);
-    let _classes = crate::code_rule_dsl::logic::profile::span(|| "class postings".into());
-    (f.class_keys, f.class_offsets, f.class_nodes) = postings(classes);
-    watch(&mut f);
-    Ok(f)
+    let check = crate::code_rule_dsl::logic::profile::span(|| "tape check".into());
+    crate::code_rule_dsl::tape::validated::visit(&source, grammar, &image, &|| false, |_, _| {})?;
+    drop(check);
+    Ok(holding(Arc::new(crate::code_rule_dsl::tape::formats::DocTape::new(Arc::new(image), Arc::clone(&source))), source, grammar, tag, lines))
+}
+
+/// The facts of `tape` (checked), of `source` in `grammar`'s dialect.
+fn holding(tape: Arc<crate::code_rule_dsl::tape::formats::DocTape>, source: Arc<String>, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>, tag: u8, lines: Arc<LineTable>) -> Facts {
+    Facts { tag, source, lines, tape: Some(tape), grammar: Some(Arc::clone(grammar)), errors: Default::default(), held: Default::default(), python_syntax: Default::default() }
 }
 
 /// The tape tag of a text-only document's facts (`text`): no dialect has it.
@@ -628,219 +493,349 @@ pub const TEXT: u8 = u8::MAX;
 /// for a file with no grammar (`Terminators::Eslint`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
 pub fn text(source: Arc<String>) -> Facts {
     let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Eslint));
-    let mut f = Facts {
-        tag: TEXT,
-        source,
-        lines,
-        kind: Vec::new(),
-        parent: Vec::new().into(),
-        start: Vec::new().into(),
-        end: Vec::new().into(),
-        subtree_end: Vec::new().into(),
-        flags: Vec::new(),
-        field: Vec::new(),
-        child_offsets: Vec::new(),
-        children: Vec::new(),
-        kind_keys: Vec::new(),
-        kind_offsets: Vec::new(),
-        kind_nodes: Vec::new(),
-        class_keys: Vec::new(),
-        class_offsets: Vec::new(),
-        class_nodes: Vec::new(),
-        syntax_errors: false,
-        python_syntax: Default::default(),
-        tape: None,
+    Facts { tag: TEXT, source, lines, tape: None, grammar: None, errors: std::sync::OnceLock::from(Vec::new()), held: Default::default(), python_syntax: Default::default() }
+}
+
+/// Counts a read of the facts' `$part` of node `$node` (E17, `tape::reads`); nothing without `tape-reads`.
+macro_rules! watched {
+    ($part:literal, $node:expr) => {
+        #[cfg(feature = "tape-reads")]
+        {
+            const PART: usize = crate::code_rule_dsl::tape::reads::pattern_part($part);
+            crate::code_rule_dsl::tape::reads::at(PART, $node);
+        }
     };
-    index(&mut f);
-    (f.class_keys, f.class_offsets, f.class_nodes) = postings(Vec::new());
-    f
 }
 
-/// The derived columns: the children CSR (preorder lists a parent's children in order) and the
-/// kind postings.
-fn index(f: &mut Facts) {
-    let children_span = crate::code_rule_dsl::logic::profile::span(|| "child CSR".into());
-    let n = f.len();
-    let mut counts = vec![0u32; n + 1];
-    for &p in &f.parent {
-        if p != NONE {
-            counts[p as usize + 1] += 1;
-        }
-    }
-    for i in 1..=n {
-        counts[i] += counts[i - 1];
-    }
-    let mut cursor = counts.clone();
-    let mut children = vec![0u32; counts[n] as usize];
-    for (id, &p) in f.parent.iter().enumerate() {
-        if p != NONE {
-            children[cursor[p as usize] as usize] = id as u32;
-            cursor[p as usize] += 1;
-        }
-    }
-    f.child_offsets = counts;
-    f.children = children;
-    drop(children_span);
-    let _kinds = crate::code_rule_dsl::logic::profile::span(|| "kind postings".into());
-    (f.kind_keys, f.kind_offsets, f.kind_nodes) = postings::by_kind(&f.kind);
+/// `$body` over the facts' tape `$t`, monomorphised per format.
+macro_rules! on_tape {
+    ($f:expr, |$t:ident| $body:expr) => {
+        rerail_tape_format::with_tape!($f.doc_tape().tape(), |$t| $body)
+    };
 }
 
-/// (key, node) pairs as a CSR: sorted keys, offsets (one past the last), nodes by key then id.
-fn postings(mut pairs: Vec<(u32, u32)>) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
-    let (mut keys, mut offsets, mut nodes) = (Vec::new(), Vec::new(), Vec::with_capacity(pairs.len()));
-    pairs.sort_unstable();
-    for (k, id) in pairs {
-        if keys.last() != Some(&k) {
-            keys.push(k);
-            offsets.push(nodes.len() as u32);
-        }
-        nodes.push(id);
-    }
-    offsets.push(nodes.len() as u32);
-    (keys, offsets, nodes)
-}
-
-fn posting<'a>(keys: &[u32], offsets: &[u32], nodes: &'a [u32], key: u32) -> &'a [u32] {
-    match keys.binary_search(&key) {
-        Ok(i) => &nodes[offsets[i] as usize..offsets[i + 1] as usize],
-        Err(_) => &[],
-    }
-}
+use rerail_tape_format::tape::Tape as _;
 
 impl Facts {
+    fn doc_tape(&self) -> &crate::code_rule_dsl::tape::formats::DocTape {
+        self.tape.as_deref().expect("a node read from facts with no tape (a text-only document has no nodes)")
+    }
+    /// The atom of a code's kind: ERROR's where it is one.
+    fn atom(&self, e: &rerail_tape_format::tape::Entry) -> u32 {
+        kind_atom(self.tag, if e.flags & rerail_tape_format::CODE_ERROR != 0 { ERROR_SYMBOL } else { e.kind })
+    }
     #[cfg_attr(feature = "tape-reads", track_caller)]
     pub fn start_line(&self, id: u32) -> u32 {
-        self.lines.line(self.start[id as usize] as usize) as u32 + 1
+        self.lines.line(self.start(id) as usize) as u32 + 1
     }
     pub fn len(&self) -> usize {
-        self.kind.len()
+        self.tape.as_ref().map_or(0, |t| t.image().node_count())
     }
-    /// The tree's depth: nodes on the longest root-to-leaf path (ids are preorder, so a parent's
-    /// id is below its children's).
-    pub fn depth(&self) -> u32 {
-        let mut at = vec![1u32; self.len()];
-        for i in 0..self.len() {
-            let p = self.parent[i] as usize;
-            if p < i {
-                at[i] = at[p] + 1;
-            }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// The tape's codes (its table's numbers, what `kind` and `field` read a node's of): none without a tape.
+    pub fn code_count(&self) -> usize {
+        if self.tape.is_none() {
+            return 0;
         }
-        at.into_iter().max().unwrap_or(0)
+        on_tape!(self, |t| t.table().len())
     }
-    pub fn children(&self, id: u32) -> &[u32] {
-        let a = self.child_offsets[id as usize] as usize;
-        let b = self.child_offsets[id as usize + 1] as usize;
-        &self.children[a..b]
+    /// Code `code`'s kind atom and field: what `kind` and `field` answer for a node of that code (the views' derived
+    /// table of the tape's codes, decision 0353 step 4c).
+    pub fn code_entry(&self, code: u32) -> (u32, u16) {
+        on_tape!(self, |t| {
+            let e = t.table().entry(code);
+            (self.atom(e), e.field)
+        })
+    }
+    /// The node's kind atom.
+    pub fn kind(&self, id: u32) -> u32 {
+        on_tape!(self, |t| self.atom(t.table().entry(t.code(id as usize))))
+    }
+    /// named | extra<<1 | missing<<2 | error<<3
+    pub fn flags(&self, id: u32) -> u8 {
+        use rerail_tape_format::{CODE_ERROR, CODE_EXTRA, CODE_MISSING};
+        on_tape!(self, |t| {
+            let e = t.table().entry(t.code(id as usize));
+            let error = e.flags & CODE_ERROR != 0;
+            let named = match &e.alias {
+                Some(alias) => alias.1,
+                None => self.grammar.as_ref().is_some_and(|g| g.kind_is_named(if error { ERROR_SYMBOL } else { e.kind })),
+            };
+            u8::from(named) | (u8::from(e.flags & CODE_EXTRA != 0) << 1) | (u8::from(e.flags & CODE_MISSING != 0) << 2) | (u8::from(error) << 3)
+        })
+    }
+    /// The field (grammar field code, 0 = none) under which the node hangs from its parent.
+    pub fn field(&self, id: u32) -> u16 {
+        on_tape!(self, |t| t.table().entry(t.code(id as usize)).field)
+    }
+    #[cfg_attr(feature = "tape-reads", track_caller)]
+    pub fn start(&self, id: u32) -> u32 {
+        watched!("facts start", id);
+        on_tape!(self, |t| t.start(id as usize) as u32)
+    }
+    #[cfg_attr(feature = "tape-reads", track_caller)]
+    pub fn end(&self, id: u32) -> u32 {
+        watched!("facts end", id);
+        on_tape!(self, |t| t.end(id as usize) as u32)
+    }
+    /// The node's span, its start and end read together.
+    pub fn span(&self, id: u32) -> (u32, u32) {
+        watched!("facts start", id);
+        watched!("facts end", id);
+        on_tape!(self, |t| {
+            let s = t.start(id as usize);
+            (s as u32, t.end_with_start(id as usize, s) as u32)
+        })
+    }
+    /// One past the node's subtree's last node.
+    #[cfg_attr(feature = "tape-reads", track_caller)]
+    pub fn subtree_end(&self, id: u32) -> u32 {
+        watched!("facts subtree_end", id);
+        on_tape!(self, |t| t.subtree_end(id as usize) as u32)
+    }
+    /// The tree's depth: nodes on the longest root-to-leaf path.
+    pub fn depth(&self) -> u32 {
+        if self.is_empty() {
+            return 0;
+        }
+        on_tape!(self, |t| {
+            let (mut open, mut deepest): (Vec<usize>, usize) = (Vec::new(), 0);
+            for i in 0..t.len() {
+                while open.last().is_some_and(|&end| end <= i) {
+                    open.pop();
+                }
+                open.push(t.subtree_end(i));
+                deepest = deepest.max(open.len());
+            }
+            deepest as u32
+        })
+    }
+    /// The node's children, in order.
+    pub fn children(&self, id: u32) -> Vec<u32> {
+        on_tape!(self, |t| rerail_tape_format::tape::children(&t, id as usize).map(|c| c as u32).collect())
+    }
+    /// `id`'s children in order, each handed to `f`, read off the tape with no list made (a probe's).
+    pub fn each_child(&self, id: u32, mut f: impl FnMut(u32)) {
+        on_tape!(self, |t| rerail_tape_format::tape::children(&t, id as usize).for_each(|c| f(c as u32)))
     }
     /// Whether `id` has no children.
     pub fn is_leaf(&self, id: u32) -> bool {
-        self.children(id).is_empty()
+        on_tape!(self, |t| t.subtree_end(id as usize) == id as usize + 1)
     }
     /// `id`'s anonymous children in source order: the tokens the tape stores (the grammar's implied
     /// ones are not, RER-131).
     pub fn tokens(&self, id: u32) -> Vec<Token> {
         self.children(id)
-            .iter()
-            .filter(|&&c| !self.named(c))
-            .map(|&c| Token { kind: self.kind[c as usize], field: self.field[c as usize], start: self.start[c as usize], end: self.end[c as usize] })
+            .into_iter()
+            .filter(|&c| !self.named(c))
+            .map(|c| {
+                let (start, end) = self.span(c);
+                Token { kind: self.kind(c), field: self.field(c), start, end }
+            })
             .collect()
     }
     /// A token's text.
     pub fn token_text(&self, token: &Token) -> &str {
         &self.source[token.start as usize..token.end as usize]
     }
-    pub fn of_kind(&self, kind: u32) -> &[u32] {
-        posting(&self.kind_keys, &self.kind_offsets, &self.kind_nodes, kind)
+    /// The nodes whose code is in the set `codes` makes of the tape's table, by id: a scan of the codes, 64 nodes at
+    /// a time. The set is a kind's or a class's numbers from the table's index (`CodeTable::of_kind`), not a test of
+    /// every entry: on format 16 the table is the language's (decision 0336 §7).
+    fn matching(&self, codes: Codes) -> Vec<u32> {
+        use rerail_tape_format::tape::CodeSet;
+        if self.is_empty() {
+            return Vec::new();
+        }
+        on_tape!(self, |t| {
+            let table = t.table();
+            // A kind's or a class's set is the table's own, borrowed (decision 0336 §7: on format 16 the table is the
+            // language's, so a set made per document would cost a table's index per probe).
+            let made;
+            let set: &CodeSet = match codes {
+                Codes::Kind(code) if code == ERROR_SYMBOL => {
+                    let numbers = |s: &CodeSet| s.numbers().unwrap_or_default().to_vec();
+                    made = CodeSet::of_numbers([table.of_kind(code), table.errors(), table.of_kind(0)].into_iter().flat_map(numbers));
+                    &made
+                }
+                Codes::Kind(code) => table.of_kind(code),
+                Codes::Class(code) => table.of_class(code),
+                Codes::Faults => table.faults(),
+            };
+            if set.is_empty() {
+                return Vec::new();
+            }
+            let held = self.held.get_or_init(|| {
+                let mut codes: Vec<u32> = (0..t.len()).map(|i| t.code(i)).collect();
+                codes.sort_unstable();
+                codes.dedup();
+                let (mut kinds, mut classes) = (Vec::new(), Vec::new());
+                for &c in &codes {
+                    let e = table.entry(c);
+                    if e.flags & rerail_tape_format::CODE_ERROR == 0 {
+                        kinds.push(e.kind);
+                    }
+                    classes.extend_from_slice(&e.classes);
+                }
+                for v in [&mut kinds, &mut classes] {
+                    v.sort_unstable();
+                    v.dedup();
+                }
+                Held { codes: codes.into_boxed_slice(), kinds: kinds.into_boxed_slice(), classes: classes.into_boxed_slice() }
+            });
+            let meets = match codes {
+                Codes::Kind(code) if code != ERROR_SYMBOL => held.kinds.binary_search(&code).is_ok(),
+                Codes::Class(code) => held.classes.binary_search(&code).is_ok(),
+                // From the smaller side: the set's numbers searched among the held, or each held code tested.
+                _ => match set.numbers() {
+                    Some(numbers) if numbers.len() < held.codes.len() => numbers.iter().any(|n| held.codes.binary_search(n).is_ok()),
+                    _ => held.codes.iter().any(|&c| set.contains(c)),
+                },
+            };
+            if !meets {
+                return Vec::new();
+            }
+            let mut out = Vec::new();
+            t.match_groups(set, |base, mut m| {
+                while m != 0 {
+                    out.push((base + m.trailing_zeros() as usize) as u32);
+                    m &= m - 1;
+                }
+            });
+            out
+        })
+    }
+    /// The nodes of kind `kind` (an atom), by id.
+    pub fn of_kind(&self, kind: u32) -> Vec<u32> {
+        if kind_tag(kind) != self.tag {
+            return Vec::new();
+        }
+        // `atom`'s inverse: the codes of the kind with no ERROR flag; for slot 0 (ERROR's atom, which kind 0's shares)
+        // also every ERROR code and kind 0's.
+        self.matching(Codes::Kind(kind_code(kind)))
     }
     /// Nodes of the abstract class `class` (a supertype's kind atom), by id.
-    pub fn of_class(&self, class: u32) -> &[u32] {
-        posting(&self.class_keys, &self.class_offsets, &self.class_nodes, class)
+    pub fn of_class(&self, class: u32) -> Vec<u32> {
+        if kind_tag(class) != self.tag {
+            return Vec::new();
+        }
+        self.matching(Codes::Class(kind_code(class)))
+    }
+    /// Each kind atom the document holds and its nodes, and each class atom and its nodes, each sorted by atom.
+    pub fn histogram(&self) -> (Vec<(u32, u32)>, Vec<(u32, u32)>) {
+        if self.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+        on_tape!(self, |t| {
+            // Counted by the codes the document holds, not a counter per code of the table: on format 16 the table is
+            // the language's (decision 0336 §7).
+            let mut count: rustc_hash::FxHashMap<u32, u32> = rustc_hash::FxHashMap::default();
+            for i in 0..t.len() {
+                *count.entry(t.code(i)).or_insert(0) += 1;
+            }
+            let (mut kinds, mut classes) = (std::collections::BTreeMap::new(), std::collections::BTreeMap::new());
+            for (&code, &n) in &count {
+                let e = t.table().entry(code);
+                *kinds.entry(self.atom(e)).or_insert(0u32) += n;
+                for &class in &e.classes {
+                    *classes.entry(kind_atom(self.tag, class)).or_insert(0u32) += n;
+                }
+            }
+            (kinds.into_iter().collect(), classes.into_iter().collect())
+        })
+    }
+    /// The kind atoms the document holds, ascending.
+    pub fn kinds(&self) -> Vec<u32> {
+        self.histogram().0.into_iter().map(|(k, _)| k).collect()
+    }
+    /// The ERROR and MISSING nodes, ascending.
+    pub fn errors(&self) -> &[u32] {
+        self.errors.get_or_init(|| self.matching(Codes::Faults))
+    }
+    /// Whether a node is an ERROR or MISSING.
+    pub fn syntax_errors(&self) -> bool {
+        !self.errors().is_empty()
+    }
+    /// Whether `id` or a node above it is an ERROR or MISSING.
+    pub fn under_error(&self, id: u32) -> bool {
+        self.errors().iter().take_while(|&&e| e <= id).any(|&e| id < self.subtree_end(e))
+    }
+    /// Whether `id`, a node above it or a node under it is an ERROR or MISSING.
+    pub fn touches_error(&self, id: u32) -> bool {
+        let end = self.subtree_end(id);
+        self.errors().iter().any(|&e| (id..end).contains(&e)) || self.under_error(id)
     }
     #[cfg_attr(feature = "tape-reads", track_caller)]
     pub fn text(&self, id: u32) -> &str {
-        &self.source[self.start[id as usize] as usize..self.end[id as usize] as usize]
+        let (start, end) = self.span(id);
+        &self.source[start as usize..end as usize]
     }
     pub fn named(&self, id: u32) -> bool {
-        self.flags[id as usize] & 1 != 0
+        self.flags(id) & 1 != 0
     }
     #[cfg_attr(feature = "tape-reads", track_caller)]
     pub fn parent(&self, id: u32) -> Option<u32> {
-        let p = self.parent[id as usize];
-        (p != NONE).then_some(p)
+        watched!("facts parent", id);
+        on_tape!(self, |t| t.parent(id as usize).map(|p| p as u32))
     }
-    /// Approximate resident bytes of the columns (excluding source).
+    /// The nodes `a..b` in preorder, each with its parent: from the subtrees open around it, read in the same pass,
+    /// where its parent is in the range; else read off the tape (on format 15, a search back). So a walk over a
+    /// subtree reads one parent off the tape, not one a node.
+    pub fn with_parents(&self, a: u32, b: u32) -> impl Iterator<Item = (u32, Option<u32>)> + '_ {
+        let mut open: Vec<(u32, u32)> = Vec::new();
+        (a..b).map(move |id| {
+            while open.last().is_some_and(|&(_, end)| end <= id) {
+                open.pop();
+            }
+            let parent = match open.last() {
+                Some(&(p, _)) => Some(p),
+                None => self.parent(id),
+            };
+            open.push((id, self.subtree_end(id)));
+            (id, parent)
+        })
+    }
+    /// The node's parent, `NONE` for the root.
+    /// `id`'s parent, `a` an ancestor of it the caller knows (`Tape::parent_within`: on format 15 the search starts
+    /// there).
+    pub fn parent_within(&self, id: u32, a: u32) -> Option<u32> {
+        on_tape!(self, |t| t.parent_within(id as usize, a as usize).map(|p| p as u32))
+    }
+    pub fn parent_or_none(&self, id: u32) -> u32 {
+        self.parent(id).unwrap_or(NONE)
+    }
+    /// Resident bytes the facts hold of their own: none past the struct, as they copy nothing off the tape.
     pub fn bytes(&self) -> usize {
-        let n = self.len();
-        n * (4 * 5 + 1 + 2)
-            + self.children.len() * 4
-            + self.child_offsets.len() * 4
-            + self.kind_nodes.len() * 4
-            + self.class_nodes.len() * 4
+        std::mem::size_of::<Self>()
     }
-    /// The resident bytes of the tape they were read off (`tape`), in each format made of it.
+    /// The resident bytes of the tape they read.
     pub fn tape_bytes(&self) -> usize {
         self.tape.as_ref().map_or(0, |t| t.bytes())
     }
 }
 
-/// The digest of a file's core facts: every column a reader can see, and the source their spans
-/// read text from, so equal digests mean equal facts (the core derivation's output, `families`).
-/// Cutoff on an edit happens in the narrower families that read these, not here.
+/// The digest of a file's core facts: the source their spans read text from and the tape they read, as stored, so
+/// equal digests mean equal facts (the core derivation's output, `families`). Cutoff on an edit happens in the
+/// narrower families that read these, not here.
 pub fn digest(f: &Facts) -> [u8; 32] {
     use sha2::{Digest as _, Sha256};
     let mut hash = Sha256::new();
-    hash.update(b"rerail.core-facts/v1\0");
+    hash.update(b"rerail.core-facts/v2\0");
     hash.update((f.source.len() as u64).to_le_bytes());
     hash.update(f.source.as_bytes());
-    hash.update((f.len() as u64).to_le_bytes());
-    // Each column as one run of little-endian bytes (what one `update` per value fed, at a fraction of the calls).
-    let mut bytes = f.source.len() + f.flags.len() + std::mem::size_of_val(&f.field[..]);
-    for column in [&f.kind, &f.parent, &f.start, &f.end, &f.class_keys, &f.class_offsets, &f.class_nodes] {
-        hash.update((column.len() as u64).to_le_bytes());
-        update_le(&mut hash, column);
-        bytes += std::mem::size_of_val(&column[..]);
-    }
-    hash.update(&f.flags);
-    update_le(&mut hash, &f.field);
-    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes as u64);
-    hash.update([u8::from(f.syntax_errors)]);
+    let tape = f.tape.as_ref().and_then(|t| t.image().to_bytes().ok()).unwrap_or_default();
+    hash.update((tape.len() as u64).to_le_bytes());
+    hash.update(&tape);
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, (f.source.len() + tape.len()) as u64);
     hash.finalize().into()
-}
-
-/// Feeds `values` to `hash` as their little-endian bytes, in order.
-fn update_le<T: Copy + LeBytes>(hash: &mut sha2::Sha256, values: &[T]) {
-    use sha2::Digest as _;
-    if cfg!(target_endian = "little") {
-        // SAFETY: `T` is a primitive integer (`LeBytes`), so `values` is `size_of_val(values)` initialized bytes with
-        // no padding, in memory order, which is little-endian here.
-        hash.update(unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(values)) });
-    } else {
-        for value in values {
-            value.feed(hash);
-        }
-    }
-}
-
-/// An integer type with no padding whose bytes `update_le` may read in place.
-trait LeBytes {
-    fn feed(&self, hash: &mut sha2::Sha256);
-}
-impl LeBytes for u32 {
-    fn feed(&self, hash: &mut sha2::Sha256) {
-        sha2::Digest::update(hash, self.to_le_bytes());
-    }
-}
-impl LeBytes for u16 {
-    fn feed(&self, hash: &mut sha2::Sha256) {
-        sha2::Digest::update(hash, self.to_le_bytes());
-    }
 }
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// The relations a program in `core.rr`'s shape declares (the engine's names, decision 0141, less those decision
 /// 0174's rewrite adds), as the rule language reads them; registered at load (`install_core_names`). Empty without one.
-pub(crate) fn core_names() -> &'static std::collections::BTreeSet<String> {
+pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     static EMPTY: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     CORE_NAMES.get().map_or(&EMPTY, |names| names())
 }

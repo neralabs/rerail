@@ -66,6 +66,44 @@ compiled. `--lib --tests` and `cargo test --workspace` (CI) also build the plain
 where feature unification turned the variant `AstMatcher::TestUnknown` on and its match arms off.
 The variant is now always there (e26cc1d5b).
 
+### One feature set (2026-11-16)
+
+The disk filled: the worktrees' target directories held 908 GB, 575 GB of it incremental state,
+406 GB of that unused for 2 hours. One worktree held 44 incremental directories for
+`rerail_logic` alone, 1–3 GB each. Each is a variant of the crate: a feature set, profile and
+dependency graph some command built it with. The cleaner kept each for a day (now 2 hours).
+
+The variants came mostly from feature unification. The engine's dev-dependencies turn on
+`test-hooks` in 16 workspace crates, 16 more grammars in `ast-grep-language`, and rusqlite's
+`array`. cargo applies dev-dependency features only to builds of test targets, so
+`cargo build --bin rerail-engine` built every dependency crate without them and
+`cargo nextest run --lib` built every one again with them: each edit compiled each crate above
+it twice, and kept two sets of incremental state. `cargo test -p <crate>` (the crate's
+`default`) and `--features metal-tests` add more.
+
+The engine's `test-hooks` feature now turns on everything the dev-dependencies add, and a
+development build of the CLI uses it (`AGENTS.md`). `cargo tree` then gives both builds the same
+features for every crate but the engine itself and the test-only `rerail-parser-tests`.
+`scripts/check/check-dev-features.py` (in the pre-commit hook) checks that the feature keeps
+up with the dev-dependencies, target-specific ones included, and the farm's wrapper tells a CLI
+build without it. Product and `profiling` builds are unchanged.
+
+A crate's own tests made variants too. `cargo test -p rerail-logic` gave logic its `default`, which
+the engine's builds did not (they take the crates without defaults), and it gave `rerail-metal` no
+hooks: the hooks reached it only through the engine's own dev-dependencies. Two manifest rules fix
+both, and the check enforces them: each crate's `default` turns on the `default` of the workspace
+crates it takes without defaults, and each crate's `test-hooks` turns on the `test-hooks` of every
+hooked workspace crate below it, its own test build turning on its own. `cargo tree` then gives
+every workspace crate the same features in the CLI build, the engine's tests and each crate's own
+tests (registry crates still differ in a crate's own tests, but they compile once into the cache,
+with no incremental state).
+
+What the rules miss, the farm's wrapper catches as it happens: it records the feature set of each
+workspace crate's compile per target and profile, and a new one within 2 hours of another is told
+in that build's output and at the checkout's builds for 3 hours, with the differing features, the
+earlier command and what to do. A new dependency graph with the same features (after a Cargo.toml
+change) is not told.
+
 ## 2. The test suite is the slow part
 
 One run of the engine's library tests took 762 s wall and 2,682 s CPU (45 CPU-minutes):
@@ -632,3 +670,9 @@ Still to do:
    - a slow-test timeout.
 5. **The farm for every worktree (§4), and the gates on the idle machines.**
 
+### No benchmark leases (2026-11-16)
+
+`quiet-run`'s leases (farm 9) are removed in farm 20. Its turns, drains, 10-minute cap and
+fairness refusals made agents wait for an idle machine rather than work; with several test slots per
+host (farm 19) the hosts are used for everything instead. `quiet-run` runs its command at once
+through `test-remote`; a benchmark reports the load it ran under.

@@ -22,9 +22,7 @@ use std::path::{Path, PathBuf};
 /// objects, and a run's relations held in SQLite.
 const FACT_STORE: &[&str] = &[
     "atoms",
-    "atom_segment",
-    "atom_key",
-    "atom_key_end",
+    "atom_blocks",
     "strings",
     "hashes",
     "paths",
@@ -49,6 +47,8 @@ const FACT_STORE: &[&str] = &[
     "tape",
     "node_type",
     "frames",
+    // A space's kept facts as blocks (decision 0401): which base and delta files it has.
+    "facts_blocks",
     "frame_spaces",
     // The frames' own bookkeeping (decision 0117 step 5): each space's confirmations, and each run's use of it.
     "frame_confirmed",
@@ -66,6 +66,12 @@ const FACT_STORE: &[&str] = &[
     // The kernels' forms per machine (decision 0202): each compiled or interpreted, its compile time, what it missed;
     // measurements of the machine, as `samples`, ranked for the upkeep job that compiles them.
     "kernel_forms",
+    // Each program's measured steps per unit of size, and its overruns (decision 0334): what a task's budgets are
+    // predicted from (`evaluation_costs`); measurements, as `samples`.
+    "program_steps",
+    // The join steps' estimates and what they made (decision 0354, `costs::join_steps`): the learned correction's
+    // data, measurements, as `samples`.
+    "join_steps",
     "{p}_out in code_rule_dsl/logic/native.rs",
     "{p}_out in code_rule_dsl/logic/native/extension.rs",
     "{} in code_rule_dsl/logic/plan.rs",
@@ -206,17 +212,13 @@ const STATE: &[(&str, &str)] = &[
     // Decision 0203's feedback as measured: each line's notes, exact pair statistics, proposals and trials, written
     // back with the kept plans (`joins::to_store`) and read from them; measurements, as the cost model's `FITTED`.
     ("code_rule_dsl/logic/plan/joins.rs", "MEMO"),
-    // Decision 0211: the RERAIL_WARM switch, read once; and a `RERAIL_WARM=list` run's tally of its faults, reported
-    // at its end. A switch and a report, no result kept.
-    ("code_rule_dsl/logic/profile.rs", "WARM"),
-    ("code_rule_dsl/logic/profile.rs", "WARM_FAULTS"),
-    // Decision 0227: the `frames` upkeep job's one registration per store a process opens, a registry of jobs.
-    ("content_store/upkeep.rs", "JOBS"),
     // The gate of the RERAIL_* switches (`corpus::switches`): its readers, writer and waiters, no value kept.
     ("code_rule_dsl/logic/plan/corpus/switches.rs", "STATE"),
     // The SQL executor's plan model, fitted from `sql_plan_observations`, and the observations queued for writing.
     ("code_rule_dsl/logic/costs/sql_plans.rs", "MODEL"),
     ("code_rule_dsl/logic/costs/sql_plans.rs", "QUEUE"),
+    // The join steps submitted at their lines' ends, queued for the cost statistics' writer (decision 0354).
+    ("code_rule_dsl/logic/costs/join_steps.rs", "QUEUE"),
     // The SQL lane's executor, and the work a thread's device wave runs when flushed (`lanes::wave`).
     ("code_rule_dsl/logic/lanes.rs", "SQL"),
     ("code_rule_dsl/logic/lanes.rs", "DEFERRED"),
@@ -311,7 +313,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "EXITED"),
     ("code_rule_dsl/logic/profile.rs", "EXITED_GAPS"),
     ("code_rule_dsl/logic/profile.rs", "ON"),
-    ("code_rule_dsl/logic/profile.rs", "SHARD"),
     // Each thread's profile records, merged into `STATE` as they are read: records, no reusable results.
     ("code_rule_dsl/logic/profile.rs", "SHARDS"),
     ("code_rule_dsl/logic/profile.rs", "STACK"),
@@ -322,6 +323,19 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile/roofline.rs", "ROOFS"),
     ("code_rule_dsl/logic/rr.rs", "CORE"),
     ("code_rule_dsl/logic/rr.rs", "READS"),
+    // `core_names` less 0174's on-request relations: a set of the engine's own, as `CORE`, the same for every run.
+    ("code_rule_dsl/logic/rr.rs", "SHAPE"),
+    // The library images shipped beside the executable (0264), read once: an input, as `CORE`'s core.rr, no result.
+    ("code_rule_dsl/logic/rr/images.rs", "SHIPPED"),
+    // The rule files' entries a thread read before its run (0275), taken by the run's manifest: a queue.
+    ("code_rule_dsl/logic/plan/corpus/combined.rs", "READ_BEFORE"),
+    // rerail's own files the process names to its observers (0284): a registry.
+    ("content_store/observe.rs", "OWN"),
+    // Profiling (0288): the command's clocks, the process's start, the run thread's phases, each step's decisions.
+    ("code_rule_dsl/logic/profile.rs", "COMMAND"),
+    ("code_rule_dsl/logic/profile.rs", "DECIDING"),
+    ("code_rule_dsl/logic/profile.rs", "RUN_PHASES"),
+    ("code_rule_dsl/logic/profile/life.rs", "ENTERED"),
     ("content_store/atoms.rs", "CANONICAL"),
     // Each database file's identity, read once a file: a registry, as CANONICAL is.
     ("content_store/atoms.rs", "IDENTITIES"),
@@ -391,7 +405,6 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     // The session a thread's runs use (decision 0204: the caller's `Handle`, bound for its runs; was `SESSION`, the
     // process's): what it keeps between runs is still a cache to move.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", "3"),
-    ("code_rule_dsl/logic/plan/corpus/recursive_spike.rs", "CARRY", "4"),
     ("code_rule_dsl/logic/plan.rs", "PLANS", "6"),
     ("code_rule_dsl/logic/plan.rs", "SESSION_PLANS", "6"),
     ("code_rule_dsl/logic/plan.rs", "KEPT", "6"),
@@ -493,7 +506,6 @@ fn maps() -> BTreeSet<(String, String)> {
 }
 
 #[test]
-#[ignore = "open (decision 0128): unrun since the crate split; tables and maps added since need a decision-0104 judgement each"]
 fn every_table_is_facts_or_listed() {
     let found = tables();
     let listed: BTreeSet<&str> = FACT_STORE.iter().chain(SCRATCH).copied().chain(NOT_YET_TABLES.iter().map(|t| t.0)).collect();
@@ -510,7 +522,6 @@ fn every_table_is_facts_or_listed() {
 }
 
 #[test]
-#[ignore = "open (decision 0128): unrun since the crate split; tables and maps added since need a decision-0104 judgement each"]
 fn every_kept_map_is_state_or_listed() {
     let found = maps();
     let listed: BTreeSet<(String, String)> =

@@ -1,0 +1,28 @@
+[package]
+name = "rerail-kotlin-aot"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Kotlin's Bitlex parser built ahead of time: the JIT's Cranelift IR as Rust, compiled by rustc, run on the JIT's harness, against the JIT and the lean parser."
+
+[features]
+# The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
+test-hooks = ["rerail-compiler/test-hooks", "rerail-kotlin-parser/test-hooks"]
+# The generated tiers: the build script writes the parser's code as Rust and this crate compiles
+# it. Off by default, so a workspace build or test leaves them out:
+# `cargo test -p rerail-kotlin-aot --features generated --profile profiling`.
+generated = ["dep:rerail-compiler", "dep:rerail-kotlin-parser"]
+
+[dependencies]
+rerail-compiler = { path = "../compiler" }
+rerail-kotlin-parser = { path = "../kotlin_parser" }
+rerail-kotlin-lean = { path = "../kotlin_lean" }
+
+[build-dependencies]
+rerail-compiler = { path = "../compiler", optional = true }
+rerail-kotlin-parser = { path = "../kotlin_parser", optional = true }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-kotlin-aot = { path = ".", features = ["test-hooks"] }
+libc = "0.2.189"

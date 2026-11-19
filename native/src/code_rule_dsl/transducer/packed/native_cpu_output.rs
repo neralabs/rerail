@@ -1,8 +1,9 @@
 use super::{
     metal_batch_abi::{
-        FinalCaptureRecord, LinkRecord, MetalNode, NONE, PropertyRecord, ResultRecord, TaskStatus,
+        FinalCaptureRecord, LinkRecord, NONE, PropertyRecord, ResultRecord, TaskStatus,
     },
     native_cpu::NativeTaskContext,
+    native_cpu_tape,
     native_cpu_output_sort, native_cpu_output_transform,
     native_ir::NativeModule,
     output::OutputInstruction,
@@ -11,6 +12,7 @@ use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, condcodes::IntCC, t
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Linkage, Module};
+use rerail_clif::inline::ReadIds;
 use std::mem;
 
 fn pointer(
@@ -111,7 +113,8 @@ fn capture_oldest(
     )
 }
 
-fn line_for(
+/// The line (from 0) source byte `byte` lies in (the batch's numbering): a search of the task's line starts.
+pub(super) fn line_for(
     function: &mut FunctionBuilder<'_>,
     task: cranelift_codegen::ir::Value,
     byte: cranelift_codegen::ir::Value,
@@ -302,28 +305,28 @@ fn byte_for(
     function.block_params(finish)[0]
 }
 
+/// Whether the JIT has code for every instruction of the output program (the caller asks before compiling).
+pub(super) fn lowered(native: &NativeModule) -> bool {
+    native.output_program.instructions.iter().all(|instruction| {
+        matches!(
+            instruction,
+            OutputInstruction::MatchProperty { .. }
+                | OutputInstruction::CaptureProperty { .. }
+                | OutputInstruction::Offset { .. }
+                | OutputInstruction::Downcase { .. }
+                | OutputInstruction::SelectAdjacent { .. }
+                | OutputInstruction::Strip { .. }
+                | OutputInstruction::LanguageFromMime { .. }
+        )
+    })
+}
+
 pub(super) fn define(
     module: &mut JITModule,
     native: &NativeModule,
     regex_find: Option<FuncId>,
 ) -> Result<FuncId, Box<cranelift_module::ModuleError>> {
-    if native
-        .output_program
-        .instructions
-        .iter()
-        .any(|instruction| {
-            !matches!(
-                instruction,
-                OutputInstruction::MatchProperty { .. }
-                    | OutputInstruction::CaptureProperty { .. }
-                    | OutputInstruction::Offset { .. }
-                    | OutputInstruction::Downcase { .. }
-                    | OutputInstruction::SelectAdjacent { .. }
-                    | OutputInstruction::Strip { .. }
-                    | OutputInstruction::LanguageFromMime { .. }
-            )
-        })
-    {
+    if !lowered(native) {
         return Err(Box::new(cranelift_module::ModuleError::Undeclared(
             "output instruction is not lowered".into(),
         )));
@@ -352,6 +355,7 @@ pub(super) fn define(
     signature.params.push(AbiParam::new(pointer_type));
     signature.returns.push(AbiParam::new(types::I32));
     let id = module.declare_function("tempo_apply_output", Linkage::Local, &signature)?;
+    let reads = ReadIds::declare(module)?;
     let mut context = module.make_context();
     context.func.signature = signature;
     let sort_captures = module.declare_func_in_func(sort_captures, &mut context.func);
@@ -579,24 +583,7 @@ pub(super) fn define(
             mem::offset_of!(ResultRecord, capture_count) as i32,
         );
         let (label, node_id) = capture_oldest(&mut function, task, values[4], count, values[3]);
-        let nodes = pointer(
-            &mut function,
-            task,
-            mem::offset_of!(NativeTaskContext, nodes),
-        );
-        let node = indexed::<MetalNode>(&mut function, nodes, node_id);
-        let start = function.ins().load(
-            types::I32,
-            MemFlags::trusted(),
-            node,
-            mem::offset_of!(MetalNode, source_start) as i32,
-        );
-        let end = function.ins().load(
-            types::I32,
-            MemFlags::trusted(),
-            node,
-            mem::offset_of!(MetalNode, source_end) as i32,
-        );
+        let (start, end) = native_cpu_tape::span(&mut function, &reads, task, node_id);
         let output = pointer(
             &mut function,
             task,
@@ -670,6 +657,7 @@ pub(super) fn define(
         let values = function.block_params(properties).to_vec();
         // Output operators share one budget for this complete candidate.
         // Neither a previous candidate nor its structural execution owns it.
+        super::native_cpu::fold_most_steps(&mut function, task);
         function.ins().store(
             MemFlags::trusted(),
             zero,

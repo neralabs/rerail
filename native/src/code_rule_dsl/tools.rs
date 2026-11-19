@@ -7,6 +7,7 @@ pub use super::logic::settings::{program_text, program_texts, settings};
 pub use super::logic::settings::process_counters;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::transducer::packed::rir;
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 
 /// The package CLI's SQL tool, sharing the standalone command's request and execution path.
 #[napi_derive::napi(catch_unwind)]
@@ -237,13 +238,14 @@ pub fn check_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
             Ok((program, _)) if let Err(error) = super::logic::plan::corpus::combine_read_program(&program)
                 .map_err(|e| e.to_string())
                 // Pruned first, as a run is: a library's relation the outputs do not read is not planned.
-                .and_then(|combined| super::logic::plan::lower::domains(&super::logic::front::prune(combined)).map(|_| ()).map_err(|e| e.to_string())) =>
+                .and_then(|combined| super::logic::plan::corpus::preparation::pruned(combined))
+                .and_then(|pruned| super::logic::plan::lower::domains_of(&pruned).map(|_| ()).map_err(|e| e.to_string())) =>
             {
                 serde_json::json!({"path": path, "status": "types-failed", "error": error})
             }
             Ok((program, files)) => serde_json::json!({
-                "path": path, "status": "reader-passed", "rules": program.rules.len(),
-                "outputs": program.outputs,
+                "path": path, "status": "reader-passed", "rules": program.rules().count(),
+                "outputs": program.output_names(),
                 "files": files.iter().map(|file| serde_json::json!({
                     "path": file.path,
                     "sha256": file.sha256.map(|hash| hash.iter().map(|b| format!("{b:02x}")).collect::<String>())
@@ -264,7 +266,7 @@ pub fn run_rr(
 ) -> Result<serde_json::Value, String> {
     use super::logic::rr;
     let (program, files) = rr::read_file(path).map_err(|e| e.to_string())?;
-    if !program.outputs.iter().any(|name| super::logic::rr::is_diagnostic(name)) {
+    if !program.output_names().iter().any(|name| super::logic::rr::is_diagnostic(name)) {
         return Err(format!("{}: no .violation declarations", path.display()));
     }
     run_program(program, &files, root, out, options)
@@ -319,7 +321,7 @@ fn diagnostic(row: &crate::code_rule_dsl::logic::plan::output::Row<'_>) -> Resul
 
 /// `run_rr` of a program already read: a file's, or a test's (decision 0130, `rr::testing`).
 pub fn run_program(
-    program: super::logic::front::Program,
+    program: std::sync::Arc<super::logic::program_image::Version>,
     files: &[super::logic::rr::LibraryFile],
     root: &std::path::Path,
     out: &std::path::Path,
@@ -329,12 +331,12 @@ pub fn run_program(
         logic::{plan::corpus, rr},
         typing::file_local::Binding,
     };
-    let metadata = rr::metadata(&program).map_err(|e| e.to_string())?;
+    let metadata = rr::metadata(&*program).map_err(|e| e.to_string())?;
     // A language of several dialects (`.language typescript` over `.ts`, `.tsx` and `.js` files) is a run per dialect
     // with files in scope: the first into `out`, each other into `out/<dialect>`, their findings together. A language
     // of one dialect, or none with files, runs as written. Each run holds the program read, its language the
     // dialect's (the `dialect` option, `corpus::added`): never printed and read again (decision 0249).
-    let dialects = corpus::run_dialects(root, &program, &with_reuse(options)).map_err(|e| e.to_string())?;
+    let dialects = corpus::run_dialects(root, &*program, &with_reuse(options)).map_err(|e| e.to_string())?;
     // One dialect with files may be another than the one named: a `.js`-scoped TypeScript pack reads JavaScript.
     let runs: Vec<(Option<&str>, std::path::PathBuf)> = if dialects.is_empty() {
         vec![(None, out.to_path_buf())]
@@ -344,12 +346,13 @@ pub fn run_program(
     let (mut rows, mut files_read, mut nodes, mut phases) = (Vec::new(), 0, 0, Vec::new());
     // The device as `logic --metal` places it: `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can).
     let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
+    let handed = program;
     for (dialect, dir) in &runs {
         let mut options = with_reuse(options);
         if let Some(dialect) = dialect {
             options["dialect"] = serde_json::json!(dialect);
         }
-        let report = corpus::run_read(&program, root, dir, "program", binding, 1 << 18, &Default::default(), &options).map_err(|e| e.to_string())?;
+        let report = corpus::run_read(&handed, root, dir, "program", binding, 1 << 18, &Default::default(), &options).map_err(|e| e.to_string())?;
         rows.extend(diagnostics(dir)?);
         files_read += report.files;
         nodes += report.nodes;
@@ -440,14 +443,15 @@ fn policy_groups(texts: &[String], root: &std::path::Path, options: &serde_json:
     for (k, text) in texts.iter().enumerate() {
         let own = rr::text_header(text).ok();
         let joined = own.and_then(|own| {
-            let named = own.settings.iter().find(|(k, _)| k == "language").map(|(_, v)| v.trim().trim_matches('"').to_owned());
+            let settings = ProgramFields::settings(&*own);
+            let named = settings.iter().find(|(k, _)| k == "language").map(|(_, v)| v.trim().trim_matches('"').to_owned());
             let one_dialect = named.as_deref().is_none_or(|name| {
                 crate::code_rule_dsl::language::CodeRuleLanguage::ALL.into_iter().find(|l| l.name() == name).is_some_and(|l| l.dialects().len() < 2)
             });
-            let language = corpus::run_language(root, &own, &with_reuse(options)).ok()?;
-            let id = own.settings.iter().find(|(k, _)| k == "policy").and_then(|(_, t)| t.split('"').nth(1)).unwrap_or_default().to_owned();
-            let findings = own.outputs.iter().any(|o| rr::is_diagnostic(o));
-            let metadata = rr::metadata(&own).ok()?;
+            let language = corpus::run_language(root, &*own, &with_reuse(options)).ok()?;
+            let id = settings.iter().find(|(k, _)| k == "policy").and_then(|(_, t)| t.split('"').nth(1)).unwrap_or_default().to_owned();
+            let findings = own.output_names().iter().any(|o| rr::is_diagnostic(o));
+            let metadata = rr::metadata(&*own).ok()?;
             (one_dialect && findings).then_some((language, id, metadata))
         });
         match joined {
@@ -783,7 +787,7 @@ mod settings_tests {
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine kernels [list | compile [--all] [--idle] | ship <dir> [--from <store dir>] [--air] | prune [--mb <n>]]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -796,18 +800,28 @@ pub fn cli(args: &[String]) -> Result<String, String> {
     crate::code_rule_dsl::logic::plan::joins::drain_at_end(true);
     // Decision 0288: the command's clocks, for its time before its run and after it.
     crate::code_rule_dsl::logic::profile::command_begins();
-    let out = cli_in(args, &mut Default::default());
-    let (age, after) = crate::code_rule_dsl::logic::profile::command_ends();
-    match (out, after) {
-        (Ok(mut text), Some(c)) => {
-            text += &format!(
-                "  after the run {:.2} s wall: the command's thread {:.2} s own, {:.2} s off a core; the other threads {:.2} s; ready with no core {:.2} s\n  before the command: {age:.2} s since the process started\n",
-                c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
-            );
-            Ok(text)
-        }
-        (out, _) => out,
+    // Decision 0395: a run never waits on a Metal compile of a kernel it has another form of; the kernels it went
+    // without are compiled by maintenance (below, upkeep, `kernels compile`).
+    #[cfg(target_os = "macos")]
+    if args.first().is_none_or(|c| c != "kernels") {
+        rerail_accel::gpu::kernels::set_mode(rerail_accel::gpu::kernels::Mode::Defer);
     }
+    let out = cli_in(args, &mut Default::default());
+    // The kernels this run went without, compiled after it by the engine in a process of its own, at the
+    // background priority (decision 0395; `RERAIL_METAL_MAINTENANCE=off`: not).
+    #[cfg(target_os = "macos")]
+    if let Ok(engine) = std::env::current_exe() {
+        rerail_accel::gpu::kernels::spawn_maintenance(&engine);
+    }
+    let (age, after) = crate::code_rule_dsl::logic::profile::command_ends();
+    // On stderr: a command's output is its own (`run-rr`'s, `sql`'s: JSON), and a line after it made that unreadable.
+    if let (Ok(_), Some(c)) = (&out, after) {
+        eprint!(
+            "  after the run {:.2} s wall: the command's thread {:.2} s own, {:.2} s off a core; the other threads {:.2} s; ready with no core {:.2} s\n  before the command: {age:.2} s since the process started\n",
+            c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
+        );
+    }
+    out
 }
 
 /// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
@@ -905,6 +919,8 @@ pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::cor
             }
             _ => Err(USAGE.into()),
         },
+        #[cfg(target_os = "macos")]
+        Some("kernels") => kernels_command(&args[1..]),
         #[cfg(feature = "tape-cache")]
         Some("gc") => gc_command(&args[1..]),
         #[cfg(feature = "tape-cache")]
@@ -1063,12 +1079,7 @@ fn translate_json_command(args: &[String]) -> Result<String, String> {
     Ok(format!("{} translated, {failed} failed", files.len() - failed))
 }
 
-/// A timeline's mark (dev, `RERAIL_TIMELINE`): where the process is, with its instructions retired so far.
-fn timeline_mark(what: &str) {
-    if std::env::var_os("RERAIL_TIMELINE").is_some() {
-        eprintln!("RERAIL_TIMELINE {what}: @{:.3} i={:.3}", crate::code_rule_dsl::logic::profile::timeline_clock(), crate::code_rule_dsl::logic::profile::retired_instructions() as f64 / 1e9);
-    }
-}
+use crate::code_rule_dsl::logic::profile::timeline_mark;
 
 fn logic_command(args: &[String]) -> Result<String, String> {
     timeline_mark("cli start");
@@ -1130,7 +1141,10 @@ fn logic_command(args: &[String]) -> Result<String, String> {
             })
             .collect();
         files.retain(|path| !path.file_name().is_some_and(|n| included.contains(n)));
-        crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?
+        timeline_mark("the program files listed");
+        let texts = crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?;
+        timeline_mark("the program texts read");
+        texts
     } else {
         vec![crate::tools::program_text(Path::new(program.as_str()))?]
     };
@@ -1228,6 +1242,89 @@ fn gc_command(args: &[String]) -> Result<String, String> {
 /// statistics' store and model. `--cpu` is the share of one core the jobs average (the setting's default, 25);
 /// `--jobs` is `RERAIL_UPKEEP_JOBS`'s list. Prints each job's steps, wall and CPU.
 #[cfg(feature = "tape-cache")]
+/// `rerail-engine kernels` (decision 0395): the store of compiled Metal kernels.
+///
+/// ```text
+/// kernels [list]                   the store, the shipped kernels, and the kernels runs went without
+/// kernels compile [--all] [--idle] compiles the last run's (--all: every run's) wanted kernels now, here
+///                                  (--idle: at the background priority, as after a run)
+/// kernels ship <dir> [--from <s>] [--air]
+///                                  the fixed kernels a run compiled (store <s>, else this machine's) as the
+///                                  engine's bundle: this device's archives; --air: AIR libraries too (Xcode's
+///                                  Metal Toolchain)
+/// kernels prune [--mb <n>]         the store within n MB (default RERAIL_METAL_KERNELS_MB, 2048)
+/// ```
+#[cfg(target_os = "macos")]
+fn kernels_command(args: &[String]) -> Result<String, String> {
+    use rerail_accel::gpu::kernels as k;
+    let mut out = String::new();
+    match args.first().map(String::as_str) {
+        None | Some("list") => {
+            let s = k::size();
+            out += &format!("store    {}\n", k::store_dir().map_or("off".to_owned(), |d| d.display().to_string()));
+            out += &format!("shipped  {}\n", k::shipped_dir().map_or("none".to_owned(), |d| d.display().to_string()));
+            if let Some(device) = rerail_accel::gpu::shared::get() {
+                out += &format!("device   {}\n", k::device_tag(&device.device));
+            }
+            out += &format!("archives {} ({:.1} MB), sources {} ({:.1} MB), wanted lists {}\n", s.archives, s.archive_bytes as f64 / 1e6, s.sources, s.source_bytes as f64 / 1e6, s.wanted_lists);
+            for (which, label) in [(k::Which::Last, "the last run"), (k::Which::All, "every run")] {
+                let pending = k::pending(which);
+                out += &format!("not compiled, wanted by {label}: {}\n", pending.len());
+                if which == k::Which::All {
+                    for w in pending.iter().take(40) {
+                        out += &format!("  {} {}\n", &w.pipeline[..16], w.name);
+                    }
+                }
+            }
+            Ok(out)
+        }
+        Some("compile") => {
+            let rest = &args[1..];
+            let which = if rest.iter().any(|a| a == "--all") { k::Which::All } else { k::Which::Last };
+            if rest.iter().any(|a| a == "--idle") {
+                rerail_accel::upkeep::lower_this_thread();
+            }
+            let started = std::time::Instant::now();
+            let done = k::compile_wanted(which, usize::MAX);
+            for c in &done {
+                out += &format!("{:<40.40} {} {:>8.2} s{}\n", c.name, &c.pipeline[..16], c.seconds, c.skipped.as_ref().map_or(String::new(), |s| format!("  skipped: {s}")));
+            }
+            let n = k::counts();
+            out += &format!(
+                "{} kernels in {:.2} s: front end {:.2} s, back end {:.2} s\n",
+                done.iter().filter(|c| c.skipped.is_none()).count(),
+                started.elapsed().as_secs_f64(),
+                n.front_end_s,
+                n.back_end_s
+            );
+            k::prune(k::max_bytes());
+            Ok(out)
+        }
+        Some("ship") => {
+            let dir = args.get(1).ok_or("kernels ship <dir> [--from <store dir>]")?;
+            let from = match args.iter().position(|a| a == "--from") {
+                Some(i) => std::path::PathBuf::from(args.get(i + 1).ok_or("--from requires a directory")?),
+                None => k::store_dir().ok_or("no store (RERAIL_METAL_KERNELS=off): name one with --from")?.to_path_buf(),
+            };
+            let started = std::time::Instant::now();
+            for line in k::ship(Path::new(dir), &from, args.iter().any(|a| a == "--air"))? {
+                out += &line;
+                out += "\n";
+            }
+            out += &format!("shipped into {dir} in {:.2} s\n", started.elapsed().as_secs_f64());
+            Ok(out)
+        }
+        Some("prune") => {
+            let mb = match args.iter().position(|a| a == "--mb") {
+                Some(i) => args.get(i + 1).and_then(|v| v.parse::<u64>().ok()).ok_or("--mb takes a number")? << 20,
+                None => k::max_bytes(),
+            };
+            Ok(format!("{} archives removed\n", k::prune(mb)))
+        }
+        Some(other) => Err(format!("kernels {other}: not a kernels command (list, compile, ship, prune)")),
+    }
+}
+
 fn upkeep_command(args: &[String]) -> Result<String, String> {
     use crate::content_store::ContentStore;
     use crate::content_store::upkeep::{Collect, SqliteFile, Tables};

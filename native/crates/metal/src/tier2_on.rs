@@ -58,7 +58,7 @@ fn image_with(parser: &Parser, t2: &CompiledStream, run: &Resident, i: usize) ->
     // slab, the program's padding at least; the tape is sized for the stream.
     let r = unsafe { t2.call(source.slab.host().add(source.offset), source.len, view, &mut tape) };
     if r != 0 {
-        return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse" });
+        return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse", at: None });
     }
     Ok(tape.image())
 }

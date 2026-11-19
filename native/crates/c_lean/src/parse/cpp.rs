@@ -1136,7 +1136,7 @@ impl<'a> P<'a> {
         // tree-sitter-cpp forks at every template argument (a type, dynamic precedence 3, or an
         // expression, 1) and keeps at most 6 stack versions: where nested lists fork past that,
         // it drops versions by their order, not their precedence, and an argument can read as an
-        // expression (`p<A, B<C>>`, `a<b<c<d>>>`; the tests in decision 0307). Such a file is left
+        // expression (`p<A, B<C>>`, `a<b<c<d>>>`; the tests in decision 0317). Such a file is left
         // to tree-sitter: a list inside a list's later argument, or lists four deep.
         if self.targ_later > 0 || self.targ_depth >= 3 {
             let at = self.tok().start;

@@ -63,7 +63,7 @@ fn run(root: &Path, out: &Path) -> (Value, Keys) {
             "crossStrata":report.cross_strata,"crossMaintained":report.cross_maintained,
             "crossChanged":report.cross_changed,"crossAgain":report.cross_again,
             "crossDeltaCounts":report.cross_delta_counts,
-            "rounds":{"run":report.rounds.run,"converged":report.rounds.converged,"pending":report.rounds.pending},"typing":format!("{:?}",report.typing),
+            "typing":format!("{:?}",report.typing),
             "typingRunNames":report.typing_runs.iter().map(|(name,_)|name).collect::<Vec<_>>(),
             "phaseRunCount":report.phase_runs.len(),
             "observed":{"stats":report.files_observed.stats,"hashed":report.files_observed.hashed,
@@ -150,7 +150,7 @@ fn async_demand_uses_semantic_batches_without_global_name_derivations() {
         let restored=crate::code_rule_dsl::logic::program_facts::program(&facts,"p").unwrap();
         assert_eq!(p.natives,restored.natives,"semantic producer metadata lost in prepared program");
         let needed = front::needed(&p, p.outputs.clone());
-        let local=crate::code_rule_dsl::typing::file_local::split(&p);
+        let local=crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0).unwrap().local.clone();
         for name in p.natives.keys().filter(|n|needed.contains(*n)) {
             assert!(local.contains(name),"{rule}: demanded operator escaped its syntax batch: {name}");
         }
@@ -173,7 +173,7 @@ wanted(n) :- node(_,n,_,_,_).
 targets(q) :- text(_,q).
 out(n,q) :- python_qualified(n,q,wanted,targets).
 "#).unwrap();
-    let local=crate::code_rule_dsl::typing::file_local::split(&p);
+    let local=crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0).unwrap().local.clone();
     assert!(p.natives.iter().filter(|(_,n)|matches!(n,front::Native::Python{..})).all(|(name,_)|!local.contains(name)));
 }
 
@@ -221,7 +221,7 @@ fn candidate_contract_lowers_before_projection_and_roundtrips() {
         assert!(p.natives.values().any(|n|matches!(n,front::Native::PythonCandidates{context,member,..} if context=="async_function"&&member=="open")));
         let needed=front::needed(&p,p.outputs.iter().cloned().collect());
         assert!(!needed.contains("text")&&!needed.contains("py_attribute")&&!needed.contains("py_exec_context"),"broad scalar dependencies remain for {name}");
-        let local=crate::code_rule_dsl::typing::file_local::split(&p);
+        let local=crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0).unwrap().local.clone();
         assert!(p.natives.iter().filter(|(_,n)|matches!(n,front::Native::PythonCandidates{..})).all(|(rel,_)|local.contains(rel)));
         let mut facts=std::collections::BTreeMap::new();program_facts::write(&mut facts,"p",&p);
         let restored=program_facts::program(&facts,"p").unwrap();assert_eq!(p.natives,restored.natives);
@@ -243,7 +243,7 @@ targets(q) :- text(_,q).
 out(c,f,r,o) :- python_candidates(c,f,r,o,docs,targets,"async_function","open").
 .output out
 "#).unwrap();
-    let local=crate::code_rule_dsl::typing::file_local::split(&p);
+    let local=crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0).unwrap().local.clone();
     assert!(p.natives.iter().filter(|(_,n)|matches!(n,front::Native::PythonCandidates{..})).all(|(rel,_)|!local.contains(rel)));
 }
 

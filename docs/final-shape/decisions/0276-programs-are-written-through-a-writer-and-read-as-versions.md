@@ -334,6 +334,48 @@ rules must equal the old pass's, compared by digest, as 0246 §1 does for loweri
    `rr/tests.rs`, the tape tests, dl1.
 6. **Delete `front::Program`,** its statements and its encoding. Add §6's guard.
 
+Progress (2026-11-18):
+
+- **Step 3's fields.** Every pass reads and edits a program's fields through `program_image::fields`
+  (`ProgramFields`, `FieldsMut`) on the version, a builder or an edit; `Builder::set_header` is gone, and so is
+  every header a pass decoded. Preparing by parts selects a part's fields over the version (`parts::Own`).
+- **`finish`'s checks** (work queue Q83) read the version: `front::finish_checks_on`, with `cycles::check` over
+  the rules' handles and its strata from `front::graph`. The tree's check ran beside it on every test program
+  bringing a program to `finish`, agreeing, and is deleted.
+- **Step 5, first part.** Every text lowers on versions: one module written in the walk, linked through the
+  lowering's tail (`rr::link_library_versions`); the tree's `lower`, `link`, `link_in`, `link_seeded` and `whole`
+  are gone. The run reads its programs as versions (`rr::parse_version`), and a program handed to it is one.
+- **Step 5, second part.** The tail's tree twins are gone, their tests checking the version passes. A module is its
+  version, rules and header: `seed` and the link read a module's header there, `relinked` renames it there, and an
+  image is that version with its `module_*` rows (no header decoded). The lowerer's header is a builder written
+  through the fields API, and the walk writes its rules onto it. Left of step 5: each clause still builds a
+  `front::Rule` that the builder encodes (`Builder::add`), and the walk reads `rr/from_tape.rs`'s statements.
+- **Step 6's order** (the user, 2026-11-18: step 6 first, then every intermediate form goes). Bottom-up, each
+  stage committed when its tests pass under Relax:
+  1. *The run's trees.* Policy combination (`corpus::combine*`, `scoping::guard`, `hiding`, `merge_and_drop_repeats`,
+     `drop_repeated_rules`) on versions; the dialect runs (`run_dialects*`); phases', the bridge's and `tools`'
+     handed trees (`handed_version` goes); `waves` (`policies`, `schedule`, `matches`, its `magic_sets`); typing's
+     split (`file_local`, `split_memo`, `export_demand`, `shape`); the SQL executor's and the vtab's readers; the
+     memo (`corpus/memo.rs`).
+  2. *The tree twins.* `simplify.rs`, `magic.rs`, `reach_form.rs`, `strings`' tree passes, `matchers`', `front`'s
+     passes (`prune`, `strata`, `declared`, `subsume_requests`, `finish`) and `lower::sources_on_request`: each one's
+     tests ported to its version pass, then the tree form deleted.
+  3. *The converters.* `json_rules/*`, `front/yaml.rs`, `convert.rs`, `program_text.rs` write through the builder.
+  4. *Tests* that build or read a `front::Program` load text (`Part::load`) or write through the builder, and
+     compare `show_rule` lines.
+  5. *The forms.* `front::Program`, `program_facts`' encoding of it (`Builder::of_program`, `set_program_header`,
+     `about_of`), the decoder (`program_image::Tree`, `Version::program`), `lower::Tree`; §6's guard.
+  6. *The intermediate forms* (step 7, the user's): `front::Rule`, `Literal`, `Atom`, `Term`; `rr/from_tape.rs`'s
+     statements. The clause lowering writes through the builder from the tape, form by form (§5).
+- **Step 6, stage 1 so far** (2026-11-18): the combine is on versions only (its tree path, the tree `link::Part`,
+  `scoping::guard` and the tree tail passes gone); phases and the bridge read and hand versions; the whole-run
+  cutoff's `Summary` reads the combined version's fields; the SQL emitter reads `Placed` (`emit_inputs`), and
+  `lower::lowered` lowers a version as the run reads it, for the tests and tools that run a program as written.
+  The tree simplify's 22 tests run on its version passes. Still on trees: `rr::read_file` (the tools' path), the
+  waves (their demand programs and the `json_rules` they join), the SQL extension's front (`sql/program.rs`), the
+  planner's tree entries (`body::alone`, `Stats::empty`, `Placed::of_program`), the lowering's tree form
+  (`lower_tree`, `Given`), and the tree twins of stage 2.
+
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 
 **The bounded cross-file rounds** (`typing::cross_rounds`, `.pragma "cross-rounds"`).
@@ -355,6 +397,10 @@ rules must equal the old pass's, compared by digest, as 0246 §1 does for loweri
   - the per-run `hops` check.
 
   The pragma becomes an error that cites 0065.
+
+  Done 2026-11-16 (0281 step 4): the module and its tests, the run's three branches, `run_rounds`, `rounds_loop`,
+  the report's `rounds` and the per-run `hops`. `.pragma "cross-rounds"` is refused by both readers. The cross
+  memo's `same_document` is now its own, over a version's rule, so nothing moved to `file_local`.
 - **What stays, moved to `file_local`:** `same_document`, which the cross memo uses, and the `@doc($a) = @doc($b)`
   join (`join_spec`, `select`), which is the split's, not the rounds'.
 
@@ -368,7 +414,8 @@ rules must equal the old pass's, compared by digest, as 0246 §1 does for loweri
 - **Why it is not needed.** The answer is built. Levels is in the engine (`setfix`'s `Levels`), used where the
   planner says `leveled`. Its results and pitfalls are recorded in 0090. Nothing calls the spike except its
   environment variable.
-- **What goes:** the module, its call in the cross part's run, and its row in `facts_only`'s list.
+- **What goes:** the module, its call in the cross part's run, and its row in `facts_only`'s list. Done
+  2026-11-16, with the rounds.
 
 ## Agreement with prior work
 

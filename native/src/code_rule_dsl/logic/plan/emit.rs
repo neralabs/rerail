@@ -22,6 +22,7 @@
 
 use super::*;
 use super::body::RuleKey;
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::waves::schedule;
 
 #[derive(Clone)]
@@ -97,7 +98,9 @@ pub fn emit(
         given: None,
         kept: BTreeSet::new(),
     };
-    let mut emitted = emit_inputs(&lowered.program,db,name,counts,inputs)?;
+    // The SQL emitter reads the lowered program's version, through its rules' handles (`Body`) and its fields, as
+    // `plan::run`'s kernel does.
+    let mut emitted = emit_inputs(lowered.placed()?,db,name,counts,inputs)?;
     // Lowering distinguishes grammar IDs from interned names even when both
     // columns were declared symbolic. Retain that domain after integer lowering.
     emitted.value_types = std::sync::Arc::new(lowered.domains.iter().map(|(r,ds)| {
@@ -117,19 +120,24 @@ pub fn emit(
 /// SQL reads the same integers as a series in the statement).
 const RDL_INT: &str = "CREATE TEMP TABLE rdl_int(i INTEGER PRIMARY KEY); INSERT INTO rdl_int WITH RECURSIVE i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM i WHERE i < 4096) SELECT i FROM i;";
 
-pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTreeMap<String,u64>>, inputs:Inputs)->Result<Emitted>{
+pub fn emit_inputs(placed: super::body::Placed, db:&Connection, name:&str, counts:Option<&BTreeMap<String,u64>>, inputs:Inputs)->Result<Emitted>{
     let atoms=inputs.atoms.is_some();
-    // The program's version (its image): its rules, read by the planner by their handles (t36 item 2), and its
-    // fields, which the planner reads (t36 item 7).
-    let placed = super::body::Placed::of_program(prog)?;
+    // The program's version: its rules, read by the planner by their handles (t36 item 2), and its fields, which the
+    // planner reads (t36 item 7).
     let mut model = make_plan(&placed, db, inputs)?;
-    let vs = super::body::Versions::with(prog, placed);
+    let sccs = placed.components()?;
+    let analysis = model.analysis_of(&placed)?;
+    let v = std::sync::Arc::clone(&placed.v);
+    let prog: &crate::code_rule_dsl::logic::program_image::Version = &v;
+    let rule_text: Vec<String> = placed.rules().map(|r| prog.show_rule(r)).collect();
+    let heads: Vec<String> = placed.rules().map(|r| prog.rel_name(r.head().rel()).to_owned()).collect();
+    let vs = super::body::Versions::of_placed(placed);
     let f = vs.fields(0).ok_or_else(|| Error::Plan("the program has no image: its fields are read from its version".into()))?;
-    let sccs = components_of(prog)?;
+    let input_names = prog.input_names();
     // Each relation's rules, by key: a stratum's rules are read by their handles.
     let mut keys_by: IndexMap<&str, Vec<RuleKey>> = IndexMap::new();
-    for (k, r) in prog.rules.iter().enumerate() {
-        keys_by.entry(r.head.rel.as_str()).or_default().push(RuleKey::program(k));
+    for (k, head) in heads.iter().enumerate() {
+        keys_by.entry(head.as_str()).or_default().push(RuleKey::program(k));
     }
     let mut setup = vec![RDL_INT.to_owned()];
     let planned_views = plan_views(f, &vs, &mut model, &keys_by)?;
@@ -138,16 +146,18 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
         setup.push(view_sql(rel, view));
         views.insert(rel.clone());
     }
-    let derived = |rel: &str| !prog.inputs.iter().any(|i| i == rel) && !views.contains(rel);
+    let derived = |rel: &str| !input_names.iter().any(|i| i == rel) && !views.contains(rel);
     for (rel, rows) in counts.into_iter().flatten() {
         if let Some(rel) = rel.strip_prefix("rows.")
             && derived(rel)
-            && prog.decls.contains_key(rel)
+            && prog.declares(rel)
         {
             model.stats.card.insert(rel.to_owned(), (*rows as f64).max(1.0));
         }
     }
-    let relations: Vec<(String, usize)> = prog.decls.iter().filter(|(rel, _)| derived(rel)).map(|(rel, cols)| (rel.to_string(), cols.len())).collect();
+    let decls: Vec<(String, Vec<(String, String)>)> = prog.declared_names().into_iter().map(|rel| { let cols = prog.columns_of(&rel).unwrap_or_default(); (rel, cols) }).collect();
+    let relations: Vec<(String, usize)> = decls.iter().filter(|(rel, _)| derived(rel)).map(|(rel, cols)| (rel.clone(), cols.len())).collect();
+    let facts: Vec<(String, Vec<crate::code_rule_dsl::logic::front::List<Value>>)> = prog.fact_names().into_iter().filter(|rel| derived(rel)).map(|rel| { let rows = prog.fact_rows(&rel); (rel, rows) }).filter(|(_, rows)| !rows.is_empty()).collect();
     // The derived relations a rule body reads, in order.
     let reads = |order: Order<'_, '_>, keep: &dyn Fn(&str) -> bool| -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
@@ -176,7 +186,7 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
     };
     // Constant rows first (stratum 0), each relation's in one statement: a relation of rows alone is
     // in no component.
-    for (rel, rows) in prog.facts.iter().filter(|(rel, rows)| derived(rel) && !rows.is_empty()) {
+    for (rel, rows) in &facts {
         let rows = rows
             .iter()
             .map(|row| {
@@ -207,7 +217,7 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
                 let number = rule.number();
                 super::super::profile::stratum(key,"SQL emission",||"compile-time search; runtime SQL counters are recorded separately".into());
                 super::super::profile::planned(key,kind,number,&x,took,0,None,None);
-                if let Some(number)=number { super::super::profile::note(format!("rule #{number:04}"),||prog.rules[number].to_string()); }
+                if let Some(number)=number { super::super::profile::note(format!("rule #{number:04}"),||rule_text[number].clone()); }
             }
         };
         let mut planned = Vec::new();
@@ -245,17 +255,18 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
             model.stats.solve(BTreeSet::new());
         }
     }
-    let lattices = prog.lattice.iter().filter(|(rel, _)| derived(rel)).map(|(rel, l)| (rel.clone(), l.keys, super::super::native::TOP)).collect();
+    let lattices = ProgramFields::lattice(prog).into_iter().filter(|(rel, _)| derived(rel)).map(|(rel, l)| (rel, l.keys, super::super::native::TOP)).collect();
+    let columns = |rel: &str| decls.iter().find(|(r, _)| r == rel).map_or(&[][..], |(_, c)| c.as_slice());
     Ok(Emitted {
-        constant_rows: std::sync::Arc::new(prog.facts.iter().filter(|(rel,rows)|derived(rel) && !rows.is_empty())
+        constant_rows: std::sync::Arc::new(facts.iter()
             .filter_map(|(rel,rows)|rows.iter().map(|row|row.iter().map(Value::integer).collect::<Option<Vec<_>>>()).collect::<Option<Vec<_>>>().map(|rows|(rel.clone(),rows))).collect()),
-        value_types: std::sync::Arc::new(prog.decls.iter().map(|(r,c)|(r.to_string(),c.iter().map(|(_,t)|t.clone()).map(String::from).collect())).collect()),
-        analysis: model.analysis(prog),
-        program: schedule::Program { name: name.to_owned(), column_types:relations.iter().map(|(rel,_)|(rel.clone(),prog.decls[rel.as_str()].iter().map(|(_,ty)|if !atoms && ty=="sym" {"TEXT".into()} else {"INTEGER".into()}).collect())).collect(), relations, steps, file_local: false, partitions: Vec::new(), lattices, lattice_operations:BTreeMap::new() },
+        value_types: std::sync::Arc::new(decls.iter().map(|(r,c)|(r.clone(),c.iter().map(|(_,t)|t.clone()).collect())).collect()),
+        analysis,
+        program: schedule::Program { name: name.to_owned(), column_types:relations.iter().map(|(rel,_)|(rel.clone(),columns(rel).iter().map(|(_,ty)|if !atoms && ty=="sym" {"TEXT".into()} else {"INTEGER".into()}).collect())).collect(), relations, steps, file_local: false, partitions: Vec::new(), lattices, lattice_operations:BTreeMap::new() },
         setup,
         queries,
         views: planned_views,
-        inputs: prog.inputs.clone(),
+        inputs: input_names,
     })
 }
 
@@ -267,17 +278,17 @@ pub fn emit_batch(
     batch: &HashMap<String, (Source, f64)>,
     intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>,
 ) -> Result<Emitted> {
-    emit_program(&crate::code_rule_dsl::logic::rr::parse(source)?, name, batch, intern)
+    emit_program(crate::code_rule_dsl::logic::rr::parse_version(source)?, name, batch, intern)
 }
 
-/// `emit_batch` of a program already parsed (or built, as a wave's demand program is).
+/// `emit_batch` of a program already read (or built, as a wave's demand program is).
 pub fn emit_program(
-    prog: &crate::code_rule_dsl::logic::front::Program,
+    prog: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     name: &str,
     batch: &HashMap<String, (Source, f64)>,
     intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>,
 ) -> Result<Emitted> {
-    let lowered = lower::lower(prog, crate::code_rule_dsl::language::GrammarDialect::Python, intern)?;
+    let lowered = lower::lowered(prog, crate::code_rule_dsl::language::GrammarDialect::Python, intern)?;
     emit(&lowered, &Connection::open_in_memory()?, "main", name, None, batch)
 }
 
@@ -381,8 +392,10 @@ pub fn outputs(
     lowered: &lower::Lowered,
     db: &Connection,
 ) -> Result<(BTreeMap<String, Vec<Vec<String>>>, BTreeMap<String, Vec<usize>>)> {
-    let prog = &lowered.program;
-    let outputs: Vec<&str> = prog.outputs.iter().map(String::as_str).collect();
-    let (outputs, nodes) = decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "main.", true, &BTreeSet::new(), &BTreeSet::new())?;
+    // Read from the program's version (its fields), as the run reads it.
+    let placed = lowered.placed()?;
+    let f = placed.fields()?;
+    let outputs: Vec<&str> = f.outputs().collect();
+    let (outputs, nodes) = decoded_outputs(&outputs, &|r| f.is_input(r), &|r| f.columns(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "main.", true, &BTreeSet::new(), &BTreeSet::new())?;
     Ok((outputs.into_iter().map(|(rel, rows)| (rel, rows.shown())).collect(), nodes))
 }

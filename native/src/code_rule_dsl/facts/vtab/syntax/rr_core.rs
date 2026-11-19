@@ -26,6 +26,6 @@ impl DialectFacts for RrFacts {
     }
     /// The error running the file gives (`logic::rr::syntax_error`).
     fn verdict(&self, f: &Facts) -> Option<Result<Option<(u32, String)>, String>> {
-        Some(Ok(f.syntax_errors.then(|| crate::code_rule_dsl::logic::rr::syntax_error(&f.source)).flatten().map(|(line, message)| (line as u32, message))))
+        Some(Ok(f.syntax_errors().then(|| crate::code_rule_dsl::logic::rr::syntax_error(&f.source)).flatten().map(|(line, message)| (line as u32, message))))
     }
 }

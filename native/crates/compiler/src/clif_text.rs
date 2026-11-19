@@ -4,7 +4,7 @@
 
 /// The CLIF blocks of the hot loop, each with its instruction lines: the full body (`block2`) and
 /// the blocks it reaches before it leaves for the head (`block4`) or loops back to itself, which
-/// are its extracts' flattening.
+/// are its extracts' flattening. None where the pass has no block loop.
 pub fn hot_loop(clif: &str) -> Vec<(String, Vec<String>)> {
     hot_loop_until(clif, &["block4".to_owned()])
 }
@@ -32,6 +32,10 @@ pub fn hot_loop_until(clif: &str, exits: &[String]) -> Vec<(String, Vec<String>)
             .flat_map(|l| l.split(|c: char| !c.is_alphanumeric()).filter(|w| w.starts_with("block")).map(str::to_owned).collect::<Vec<_>>())
             .collect()
     };
+    // A pass with no block loop (`bodiless_body`): its body's blocks were cut, and it has none.
+    if !blocks.iter().any(|(n, _)| n == "block2") {
+        return Vec::new();
+    }
     let (mut seen, mut work, mut out) = (vec!["block2".to_owned()], vec!["block2".to_owned()], Vec::new());
     while let Some(name) = work.pop() {
         let Some((_, lines)) = blocks.iter().find(|(n, _)| *n == name) else {
@@ -193,7 +197,8 @@ pub fn carried_words(p: &crate::block::BlockProgram) -> usize {
 /// `fill`, and for each value its `prev`s read, the top `k` bits of its previous word (`k` the
 /// farthest look-back). A `toggle`'s and a `fill`'s carry is its top bit, so a look-back on one
 /// costs `k - 1` more. Every executor carries these bits and no more: Cranelift packs them into
-/// words, never a word per bit.
+/// words, never a word per bit, but a chain's carry (a `toggle`'s, a `fill`'s, an `escaped`'s),
+/// in a word of its own as simdjson keeps them (0346).
 pub fn state_bits(p: &crate::block::BlockProgram) -> usize {
     use crate::block::BlockOp::*;
     let mut back: std::collections::BTreeMap<u16, u8> = std::collections::BTreeMap::new();

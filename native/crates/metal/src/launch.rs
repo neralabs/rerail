@@ -367,9 +367,9 @@ mod tests {
     #[test]
     fn gpu_launch_guard_counts_all_dispatch_apis_and_refuses_submission() {
         use crate::runtime::{
-            MappedBuffer, metal_execution_guard, pipeline_named,
+            MappedBuffer, evaluation_scope, pipeline_named,
         };
-        let _guard = metal_execution_guard().unwrap();
+        let _scope = evaluation_scope();
         let device = metal::Device::system_default().unwrap();
         let pipeline = pipeline_named(
             "#include <metal_stdlib>\nusing namespace metal; kernel void launch_guard_mark(device atomic_uint* count [[buffer(0)]]) { atomic_fetch_add_explicit(count, 1u, memory_order_relaxed); }",
@@ -427,9 +427,9 @@ mod tests {
     #[test]
     fn an_over_budget_command_does_not_run_its_allowed_prefix() {
         use crate::runtime::{
-            MappedBuffer, metal_execution_guard, pipeline_named,
+            MappedBuffer, evaluation_scope, pipeline_named,
         };
-        let _guard = metal_execution_guard().unwrap();
+        let _scope = evaluation_scope();
         let device = metal::Device::system_default().unwrap();
         let pipeline = pipeline_named(
             "#include <metal_stdlib>\nusing namespace metal; kernel void launch_guard_zero(device uint* count [[buffer(0)]]) { count[0] = 1u; }",
