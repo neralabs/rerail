@@ -1118,12 +1118,13 @@ export async function daemonEngineEndpoint(
 /**
  * Why the caller sends no event to the daemon it found of another package or of a release before the engine's proof
  * ({@link daemonServesPackage}). An off autostart may not replace that daemon, so the error names the setting as the
- * person set it. With autostart on, a start replaces it unless it was busy when the start looked and answered only
- * later, so the error names no setting.
+ * person set it, and the stop before the start: a start beside a running daemon answers that one already runs. With
+ * autostart on, a start replaces it unless it was busy when the start looked and answered only later, so the error
+ * names no setting.
  */
 function otherPackageDaemon(env: NodeJS.ProcessEnv): string {
   return autostartOff(env)
-    ? `RERAIL_AUTOSTART=${env.RERAIL_AUTOSTART} requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_ENGINE_SOCKET`
+    ? `RERAIL_AUTOSTART=${env.RERAIL_AUTOSTART} requires a daemon from the active Rerail package; run rerail daemon stop, then rerail daemon start, or set RERAIL_ENGINE_SOCKET`
     : "the running Rerail daemon is from another Rerail package; run rerail daemon stop, then rerail daemon start";
 }
 

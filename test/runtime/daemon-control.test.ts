@@ -1002,12 +1002,15 @@ describe("a state file Windows left behind", () => {
   });
 
   // With RERAIL_AUTOSTART=0 the person runs the daemon and a hook replaces none, so it sends that daemon nothing and
-  // says it is not the active package's, as for a daemon of another install. Its record stays for the stop.
+  // says it is not the active package's, as for a daemon of another install. Its record stays for the stop, which the
+  // message names first: `rerail daemon start` answers that a daemon already runs.
   it("sends no event of a session to a daemon whose engine has no proof while RERAIL_AUTOSTART=0 keeps it", async () => {
     const events: string[] = [];
     const older = await besideOlderDaemon(OLDER_STARTED_AT - 600, OWN_ROOT, events);
     const machine: DaemonMachine = { ...older, env: { RERAIL_HOME: home, RERAIL_AUTOSTART: "0" } };
-    await expect(runningDaemonEngineEndpoint(undefined, machine)).rejects.toThrow("RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package");
+    await expect(runningDaemonEngineEndpoint(undefined, machine)).rejects.toThrow(new Error(
+      "RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail daemon stop, then rerail daemon start, or set RERAIL_ENGINE_SOCKET",
+    ));
     expect(events.filter(event => event !== "/healthz")).toEqual([]);
     expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(true);
   });
