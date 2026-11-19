@@ -1,7 +1,7 @@
 //! Facts as stored: every relation of every fact space, as frames (decision 0104; docs/final-shape/notes/t33 K1).
 //!
 //! A frame is the rows of one relation of one fact space, or of one partition of it (a document, a granule; `0` is
-//! the whole relation), each column as zigzag varints of its differences (`cross_rows::encode`). It is keyed by:
+//! the whole relation), each column as zigzag varints of its differences (`delta_columns::encode`). It is keyed by:
 //!
 //! - **space**: the fact space, a digest of the corpus root and the space's name (a phase, a program's cross part);
 //! - **rel** and **ident**: the relation's name, and its identity. The identity is the digest of the rules it is
@@ -287,7 +287,7 @@ fn rows_of(data: &Data) -> StoreResult<Rows> {
         Data::Encoded { types, n, bytes, store } => {
             let width = types.len();
             let mut cols = vec![Vec::new(); width];
-            super::cross_rows::decode(width, *n, bytes, &mut cols)?;
+            super::delta_columns::decode(width, *n, bytes, &mut cols)?;
             let mut rows = Vec::with_capacity(width * n);
             for r in 0..if width == 0 { 0 } else { *n } {
                 rows.extend(cols.iter().map(|c| c[r]));
@@ -366,7 +366,7 @@ impl Admitted {
                         return Ok(());
                     }
                     let mut cols = vec![Vec::new(); types.len()];
-                    super::cross_rows::decode(types.len(), *n, bytes, &mut cols)?;
+                    super::delta_columns::decode(types.len(), *n, bytes, &mut cols)?;
                     for (c, col) in cols.into_iter().enumerate() {
                         if types[c] == b's' {
                             out.extend(col);
@@ -1394,7 +1394,7 @@ impl ContentStore {
                 map.remove(&confirm_key(rel, *part));
             }
         }
-        let blocks: Vec<Vec<u8>> = puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
+        let blocks: Vec<Vec<u8>> = puts.iter().map(|p| super::delta_columns::encode(p.rows.types.len(), &p.rows.rows)).collect();
         let stored: Vec<Stored> = puts.iter().map(|p| Stored { digest: p.digest, reads: p.reads.clone() }).collect();
         let rows: Vec<Framed> = puts
             .iter()
@@ -1793,7 +1793,7 @@ impl Put {
     /// Rows' bytes as `encoded` encodes them, for a frame made from them later (`encoded_as`): encoded where the
     /// rows are (a job of their own), and named where the frame's digest and reads are known.
     pub fn encode_rows(rows: &Rows) -> Vec<u8> {
-        super::cross_rows::encode(rows.types.len(), &rows.rows)
+        super::delta_columns::encode(rows.types.len(), &rows.rows)
     }
     /// A frame whose bytes a write's placer holds already (`FramePlacer::place_rows`): queued with that placer
     /// (`queue_placed_retagged`), its bytes are read where they were written.
@@ -1810,7 +1810,7 @@ impl Put {
         if width == 0 {
             return out;
         }
-        let _ = super::cross_rows::encode_windows(width, each, &mut Vec::new(), |len, fill| {
+        let _ = super::delta_columns::encode_windows(width, each, &mut Vec::new(), |len, fill| {
             out = vec![0u8; len];
             fill(&mut out);
             Ok::<(), std::convert::Infallible>(())
@@ -1847,7 +1847,7 @@ impl FramePlacer {
         let mut at = None;
         let mut cols = Vec::new();
         // copy: not block data (a frame's encoded bytes, built once, then written into their entry)
-        super::cross_rows::encode_windows(width, each, &mut cols, |len, fill| {
+        super::delta_columns::encode_windows(width, each, &mut cols, |len, fill| {
             let mut w = self.w.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             w.put(len, part, &[0; 32], |out| fill(out))?;
             at = Some(w.len() - 1);
@@ -1891,7 +1891,7 @@ impl Framed<'_> {
             return Ok(None);
         }
         let mut cols = vec![Vec::new(); w];
-        super::cross_rows::decode(w, self.n, self.bytes, &mut cols)?;
+        super::delta_columns::decode(w, self.n, self.bytes, &mut cols)?;
         for (c, col) in cols.iter_mut().enumerate() {
             if self.types[c] == b's' {
                 map(col)?;
@@ -1901,7 +1901,7 @@ impl Framed<'_> {
         for r in 0..self.n {
             rows.extend(cols.iter().map(|c| c[r]));
         }
-        Ok(Some(super::cross_rows::encode(w, &rows)))
+        Ok(Some(super::delta_columns::encode(w, &rows)))
     }
 }
 
@@ -2095,7 +2095,7 @@ mod tests {
             let store = ContentStore::open(&path).unwrap();
             let placer = store.frame_placer(2, 1 << 16);
             let placed = placer.place_rows(width, 0, &each).expect("placed");
-            assert_eq!(placer.placed_bytes(&placed).as_deref(), Some(&super::super::cross_rows::encode(width, &values)[..]), "encode's bytes");
+            assert_eq!(placer.placed_bytes(&placed).as_deref(), Some(&super::super::delta_columns::encode(width, &values)[..]), "encode's bytes");
             let frames = vec![
                 Put::placed_as(r.clone(), 0, 7, vec![("a".into(), 1)], vec![b'i'; width], n, placed),
                 Put { rel: s.clone(), part: 0, digest: 8, reads: vec![], rows: Rows { types: vec![b'i'; 2], rows: vec![1, 2, 3, 4], n: 2 } }.encoded(),
@@ -2233,7 +2233,7 @@ mod tests {
         let r = rel("span_within", 1);
         let values: Vec<i64> = (0..20_000i64).flat_map(|i| [(7 << 32) | (i + 1), (7 << 32) | (i / 4)]).collect();
         let put = || Put { rel: r.clone(), part: 3, digest: 9, reads: vec![], rows: Rows { types: vec![b'i', b'i'], rows: values.clone(), n: 20_000 } };
-        let encoded = super::super::cross_rows::encode(2, &values).len();
+        let encoded = super::super::delta_columns::encode(2, &values).len();
         {
             let store = ContentStore::open(&path).unwrap();
             let (release, blocked) = std::sync::mpsc::channel::<()>();

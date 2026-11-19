@@ -2,7 +2,7 @@
 
 Status: decided in part by the user (2026-11-19), items 1–4 of §1, and §2's two sessions and how a store session
 ends. §2's store session's shape is proposed, not agreed. §3 (the cross-file memo): its history traced; its removal
-proposed, not agreed. Follows 0295 (segments and the archive), 0053 (collection),
+decided by the user (2026-11-19, "go ahead with that split") and done. Follows 0295 (segments and the archive), 0053 (collection),
 0353 (blocks are never copied) and the store's floor 7 (0295 step 5: no source or tape in a row).
 
 ## Intro
@@ -113,15 +113,19 @@ keeps a store of its own (`session.sqlite`) or binds a store session in the shar
   `python/calls.rr` and `python/types.rr` include `points-to.rr`, which reads `rr_cx_reach` 29 times and
   `rr_cx_sees` 7 times.
 
-**Proposed:** remove the memo: its lookup, record and replay, the `__cross` inputs and `rr_cross_doc` guards, the
-pragma and `RERAIL_CROSS_MEMO`, and the three tables, dropped at open as 0439 drops the frames. Keep the import
-closure: `components.rr` and its relations, added to a program that reads them, in a module of its own. This
-supersedes 0094 §7's "kept from it: the `cross_rows` store" and 0083's "the mechanism stays for any program that
-declares it".
+**Decided (the user, 2026-11-19: "go ahead with that split"), and done.** The memo is removed: its lookup, record
+and replay (`cross_memo.rs`), the `__cross` inputs and `rr_cross_doc` guards, the store's methods and its three
+tables (`DROP TABLE IF EXISTS` in SCHEMA), `RERAIL_CROSS_MEMO`, `RERAIL_PYTHON_CROSS_MEMO` and `Report::cross`.
+`.pragma "cross-memo"` is refused, as `cross-rounds` is. The import closure stays: `components.rr` is added to a
+program that reads an `rr_cx_` relation (`import_closure.rs`). Its component key went with the memo
+(`rr_cx_component`, and `rr_cx_own`'s digest of each tape: it is now one row per document). The delta-column
+encoding the memo's blocks used is the frames' too, and stays (`content_store/delta_columns.rs`). The `components`
+native (SCCs with a Merkle key) stays a language feature with no shipped user. This supersedes 0094 §7's "kept from
+it: the `cross_rows` store" and 0083's "the mechanism stays for any program that declares it".
 
 ## Order of work
 
-1. Agree §2's store session and §3's removal.
+1. Agree §2's store session. (§3's removal: done.)
 2. The live tier for the zstd rows: results, call summaries and tree pages placed in segments, rows pointing at them
    (as sources and tapes, floor 7). The facts memo waits for §1 item 4.
 3. Sessions as the one owner, with the latest generation live and the LRU and age rule (0053 §3 generalized).

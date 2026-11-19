@@ -19,7 +19,7 @@ mod corpus_runs;
 pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex, live_fact_schema, stat_blob_key};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub use connection::sqlite_on_jemalloc;
-mod cross_rows;
+mod delta_columns;
 mod derivation;
 mod frames;
 pub mod kept_facts;
@@ -365,6 +365,10 @@ pub type StoreResult<T> = std::result::Result<T, StoreError>;
 pub struct SourceId(i64);
 
 impl SourceId {
+    /// The id as a number (a key's bytes, a test's check).
+    pub fn raw(self) -> i64 {
+        self.0
+    }
     /// An id a record of this store kept (`raw`; a kept statistics blob, decision 0096 §2). A source collected since reads as absent: a lookup finds nothing.
     pub fn from_raw(id: i64) -> Self {
         SourceId(id)

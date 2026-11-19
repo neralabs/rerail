@@ -585,7 +585,7 @@ fn atoms_another_process_stored_past_this_ones_end_are_mapped_after_a_fork() {
     let connection = rusqlite::Connection::open(&path).unwrap();
     let data: Vec<u8> = connection.query_row("SELECT data FROM frames WHERE rel = 'r'", [], |r| r.get(0)).unwrap();
     let mut cols = vec![Vec::new(); 2];
-    crate::content_store::cross_rows::decode(2, 3, &data, &mut cols).unwrap();
+    crate::content_store::delta_columns::decode(2, 3, &data, &mut cols).unwrap();
     assert_eq!(cols[0], [4, 3, 1], "the store's ids");
     assert_eq!(cols[1], [2, 3, 1], "an integer column is as it was");
     crate::content_store::forget_frames_snapshot(path.to_str().unwrap());

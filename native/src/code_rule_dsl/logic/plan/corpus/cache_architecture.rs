@@ -67,8 +67,8 @@ const NOT_YET_MOVED: &[&str] = &[
     "facts_results", "facts_plan_sets", "facts_completions", "compiled_plans", "compiled_plan_reads", "plan_feedback",
     // The whole run's record.
     "run_record",
-    // The cross part's memo, statistics, checks, completed trees.
-    "cross_blocks", "cross_components", "cross_rows", "stat_blob", "fact_stats", "fact_value_stats", "corpus_stats",
+    // The cross part's statistics, checks, completed trees.
+    "stat_blob", "fact_stats", "fact_value_stats", "corpus_stats",
     "local_check_results", "context_check_results", "candidate_catalogs", "candidate_checks", "completed_directory_reuse",
     "completed_workspace_revisions", "tree_result_segments", "completed_snapshot_trees", "accel_models",
     // The derivation graph: what it records is the keys of §7.

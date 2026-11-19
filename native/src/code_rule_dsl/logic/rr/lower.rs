@@ -518,9 +518,9 @@ fn lower_module_seeded_as(statements: Vec<Statement>, seeds: &Seeds, as_version:
                 [key, _] if key == crate::code_rule_dsl::logic::front::PRAGMA => {
                     return Err(at(Error::Syntax(format!(".pragma \"{key}\": bounded cross-file rounds are retired: a program's cross-file part is one fixpoint (decisions 0065, 0276 §9)"))));
                 }
-                // `.pragma "cross-memo" "r s"` (decision 0076): cross-file relations memoised per import component.
-                [key, rels] if key == "cross-memo" => {
-                    l.prog.settings.push(("pragma".to_owned(), format!("\"cross-memo\" \"{rels}\"")));
+                // `.pragma "cross-memo" "r s"` (decision 0076), refused: the cross-file memo is removed (decision 0450 §3).
+                [key, _] if key == "cross-memo" => {
+                    return Err(at(Error::Syntax(".pragma \"cross-memo\": the cross-file memo is removed (decision 0450 §3)".to_owned())));
                 }
                 _ => return not_yet(format!(".pragma {words:?}")).map_err(at),
             },
