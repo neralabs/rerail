@@ -448,6 +448,19 @@ Progress (2026-11-18):
     - *Done (A2).* The coverage census reads the shipped files' tapes (`RrFile`, `clause::Reads`), not the text
       parser's statements: 1733 files, none unread, 165 operations. Outside `rerail-rr-syntax`, the parser's
       `Item`/`Head`/`Lit`/`Term` are named only by the parity test, which compares with the parser.
+    - *A3's shape (decided 2026-11-18).* A rule is written while no other rule is open (the encoder writes one
+      rule's nodes at a time), and lowering a literal may write rules of its own (a context, a cover, an outlined
+      alternative, a negated conjunction's helper, a demand). So a clause is lowered in two walks over the same
+      positions, by one code path: each literal's lowering writes into a sink. The first walk's sink decides: no rule
+      is open, so it writes the helper rules and demands, and it records the fresh names in the order they are made.
+      The second walk's sink writes: for each combination of the disjunctions' alternatives it opens one rule
+      (`Builder::rule`) and writes the head, then runs each literal's lowering again. That run makes the same calls in
+      the same order, so its names are the recorded ones replayed; it writes only the chosen alternative's literals,
+      term by term, and its helper and demand writes are no-ops. An outlined literal's helper is written in the first
+      walk the same way: the literal's lowering runs once per alternative into a rule of the helper. Nothing between
+      the walks holds a body, only names in order. What reads written rules (the demand dedup, `helper_once`'s
+      template key, `.shape`'s check) reads them in the version (`RuleRef`), by the hash the encoder computes
+      (`end_rule`); a duplicate is abandoned before it ends (`RuleBuilder`'s drop).
   - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
     (`Tree::rule`) goes.
   - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,
