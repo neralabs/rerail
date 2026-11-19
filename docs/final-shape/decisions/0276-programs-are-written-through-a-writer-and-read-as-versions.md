@@ -515,6 +515,18 @@ Progress (2026-11-18):
       and column types (`once_key`). `helper_once` writes every helper; the walk's end merges each that equals one
       made before into it (`merge_helpers`, through `relinked`, as `link` merges across modules). `helpers_of`'s
       decode into trees and `rename_rules` go. New test: `equal_helpers_of_one_walk_are_one`.
+    - *Done (A3.4 stage 3, the sink of literals goes).* Every helper writes its rules by replay: contexts and covers,
+      an aggregate's helper (each rule's empty values found by a scan of its combination, `write_alternatives` with
+      `unset`), a negated node axis (`node_axis_put`, `decide`, `write_alternatives`), `within_stop_relation` (made
+      once a program; a replay skips what making it logged, `Logged::Skip`) and an outlined literal (`outline_put`:
+      each alternative scanned by replay, `scan_alternative`, for the variables it names and binds, `Scan::grounds`;
+      the choice logged, `Logged::Kept`). A clause's empty values come from a scan of its combination too. Rules of
+      fixed shape (`precedes_stop`, `climb`, `match_all`'s, the demands', `rr_core_<rel>`) are written term by term
+      (`fixed_rule`). Gone: `alts_of`, `body_of`, `put_alts`, `Sink::Trees`, `helper_once`'s rule lists, the tree
+      `type_of`, `grounds` and `unset` over bodies, `merge_negated_tests`. New test:
+      `many_within_stops_read_their_sets_relation`. Left of A: the walk's literals are still `front::Literal`
+      values handed to `emit` (S2: emit terms, `T`, straight into the open rule), and `negate`'s bodies and the
+      findings' rules (`findings_on`, which a version's edit places) are made as literals.
   - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
     (`Tree::rule`) goes.
   - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,
