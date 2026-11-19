@@ -4468,6 +4468,33 @@ after the phases went on the run path (0083).
     rules run in 60 s (profiled) instead of past 180 s. All 57 rules run over the 50 files.
   - `RERAIL_KEEPS_TRACE=<text>` prints the pricing's estimates for relations whose names hold the text.
 
+### Q287. 0458's corpus batch is made again on every warm run: ep2's warm edit 18.8 G and 197 MB to 57.5 G and 545 MB (open)
+
+- **Found** (2026-11-19, rr-align's roll-up of phased-facts 10158b23ccd, 0458 steps 1-4; ep2 on m3): rows 0
+  differing on every run, but each warm run (B101's constant edited, 1 of 300 files' rows unchanged in kind) makes
+  the whole corpus batch in its stats phase: 2.48 s of the run's 3.6 s. `the corpus batch (decision 0458)` parses
+  the files with tree-sitter (`tape parse`) and projects and interns every document's rows (`project and intern`:
+  relations 73 MB, document rows' digests 48 MB, extra document rows 39 MB, span prefilter 38 MB, node rows 30 MB).
+  a1 63.7 G and 550 MB, a2 60.5 G and 545 MB, two more 57.5 G and 545-547 MB; before the four commits (b40e2fa76 and
+  on) 18.8 G and 196-197 MB.
+- **Keep**: 0458's shape (the cross part reads its base relations off every file's tape; none kept); an unchanged
+  file costs nothing (0104, no reads of unchanged data).
+- **Done when**: a warm run reads its unchanged files' batch rows where they lie (or never makes them), parses no
+  unchanged file, and ep2's warm edit is back near 19 G and 200 MB.
+- **Record**: open; the phased-facts branch's (0458 Open), measured here.
+
+### Q286. A warm run on a Linux host writes the observer's journal cursor (`the_run_after_a_cold_one_writes_nothing`) (open)
+
+Found 2026-11-19, running the corpus tests on a Linux farm host while building 0458 steps 1–3.
+- **What happens.** `the_run_after_a_cold_one_writes_nothing` and its symlink twin fail there: the warm run's
+  process exits 3, "a SQLite write committed to a file in a warm run (`store.sqlite.files`: `INSERT OR REPLACE INTO
+  observer_meta VALUES (?1, ?2)`)", three times. Both pass on the M5 with the same tree.
+- **Where.** `observe.rs` writes a root's journal cursor in several places; the warm run allows one write, the aged
+  FSEvents cursor (`warm_job("the journal's aged cursor")`). Linux has no FSEvents journal, so the cursor written
+  there is another path's, not yet found.
+- **Done when:** the cause is found and fixed at its root, both tests pass on a Linux host, and whether the tree
+  before 0458 failed there too is stated.
+
 ### Q285. (Q244 here before the hub merge 535cc2c8b) A one-file edit of the data-layer pack costs 1.4–1.5 s: the cross part's fixed costs and the frames (open; the frames retired, 0439)
 
 Found 2026-11-18, the 57 data-layer rules over corpus0's first 50 files, the profiling build (6dd9b1466), load
@@ -4502,6 +4529,17 @@ Found 2026-11-18, the 57 data-layer rules over corpus0's first 50 files, the pro
 - **Next** (decided 2026-11-19, 0458): the cross part reads its base relations off every file's tape, and their
   three copies go (the gathered columns, the memo entries' base rows, the kept inputs' granules: about 5 MB of the
   chain's 17.9 MB of values, `chain_bytes_by_relation`); then the per-chunk fixed cost of a one-file chunk.
+- **0458 steps 1–3 built** (2026-11-19): the corpus batch (the evaluated chunks' documents handed on, a memo hit's
+  made from its stored tape with its guests from its entry's requests), bound in place of the gathered columns; the
+  kept route takes the base relations from it, their versions from the changed files' old and new documents. Tests
+  `cross_views_tests` R1–R3 and R5, the maintain, partial-hit and guest tests, and 273 of 275 corpus tests on a Linux
+  host (the two others are Q286, and pass on the M5). Next: step 4, the memo entries' base rows and the kept base
+  granules go.
+- **0458 step 4, the kept granules gone** (2026-11-19): a base relation kept as its documents' digest, with one
+  documents' table; the changed files' old documents made on every route; the old version read in place
+  (`input_delta::Before`). R4 passes for the chain; 275 of 277 corpus tests on a Linux host (Q286's two), and on
+  the M5 the warm-run, cycle, new-process and 0458 tests. Next: the memo entries' base rows (copy 2), then R4 over the
+  memo too.
 
 ### Q284. (Q243 here before the hub merge 535cc2c8b) A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (done)
 

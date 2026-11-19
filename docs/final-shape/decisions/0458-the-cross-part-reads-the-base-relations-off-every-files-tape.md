@@ -41,7 +41,9 @@ from its stored tape, as a chunk makes one. Nothing keeps a base relation's rows
   the memo has its guests' documents made from their stored tapes, not parsed again.
 - **An edit.** A base relation's change is the changed files' documents: its old rows are their old tapes' rows,
   its new rows their new tapes'. The maintain mode takes them as the given versions of the read (0364 R1, R2):
-  `Minus` over the old documents, `Plus` over the new, `Old` the batch before the edit. No rows are diffed.
+  `Minus` the old documents' rows their new ones do not hold, `Plus` the reverse, each picked where it lies in its
+  version (`InRel::picked`). Only the changed documents' rows are compared, one version against the other; no
+  unchanged document is read.
 - **What is kept of a base relation.** Its documents' digests, so the next run knows which changed, and its
   statistics (0120 §3). No rows, in the chain or in a memo entry.
 - **A session** (0077) holds its corpus batch from run to run, its changed files' documents replaced.
@@ -74,7 +76,34 @@ Each has its test before the code that meets it.
 4. The memo entries' base rows and the base inputs' granules go; copies 2 and 3 go. R4.
 5. Measured. R6.
 
+## Built
+
+- **Steps 1–3** (2026-11-19). The chunks keep their documents for the corpus batch (`Evaluated::documents`,
+  `keep_docs`); a hit's tape is read with the misses' before the first wave (`hit_tapes`) and its document made
+  once the chunks are done (`doc_of`, `with_guests`). The cross part binds the batch's sources; the chunks gather
+  no base rows. On the kept route the base relations are no kept inputs: each is the batch's, and its `Plus` and
+  `Minus` come from the changed files' new documents and their old ones, made from the old sources and tapes read
+  before the first wave (`old_inputs`). The kept route's base-relation patching (`patch_owners`' `holders`
+  `None`) went with it.
+- **Step 4, the kept granules** (2026-11-19). A base relation is kept as its documents' digest alone: a
+  digest-only entry (`#digest-only`, one row, no granules), and beside them one documents' table for the cross part
+  (`#base-documents`: each file's path atom, document key and content). Its digest is its documents' (their keys and
+  `core::digest`s), taken where the corpus batch is made, never its rows'. The next run compares the table with its
+  files before its first wave (contents not stored when it was written found by their digests, as the keeper's are),
+  reads each changed or gone file's old source, tape and entry there, and makes its old documents once the chunks are
+  done: on every route, not the kept route alone. Its old version, which the maintain mode reads beside `Minus` and
+  `Plus` (0364's `Old`), is `input_delta::Before`: the batch's rows but the changed documents' (found through the
+  batch's index of its first column), then the old documents' rows, read where they lie. The table is written with
+  the digests it is the documents of, when one changes. On the way: a gone file had no `Minus` on the kept route
+  (its old document was never made).
+- **Not yet:** the memo entries still keep base rows (copy 2, the rest of step 4); a session (0077) still digests a
+  base relation by its rows (`retain::kept_source`) and holds no corpus batch from run to run.
+
 ## Open
+
+- A run that lists its files inside another run's waves (a phase's, `phases::sources`) cannot read its changed
+  files' old sources there (0104): what reads a base relation in it runs again after an edit. A read of the old
+  tapes and sources that is no SQL (as the kept blocks are bound) would maintain it.
 
 - A run of many files holds every file's tape mapped for the cross part. Their bytes are the tape store's, mapped,
   not the heap's; the peak is measured in step 5.

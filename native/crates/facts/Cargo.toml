@@ -43,6 +43,8 @@ metal-tests = ["rerail-lang/metal-tests"]
 test-hooks = ["rerail-lang/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-rr-parser/test-hooks"]
 
 [dependencies]
+# Blocks (decision 0266): a batch's chunk block (decision 0289), and the `BlockVec`s every platform holds rows in.
+rerail-blocks = { path = "../blocks" }
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 ast-grep-core = "=0.51.0"
@@ -97,8 +99,6 @@ rerail-store = { path = "../store" }
 rerail-accel = { path = "../../../accel" }
 rerail-compiler = { path = "../compiler" }
 rerail-rr-parser = { path = "../rr_parser" }
-# A batch's chunk block (decision 0289) and the rows' blocks (`facts/rows.rs`), on every target.
-rerail-blocks = { path = "../blocks" }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }

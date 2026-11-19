@@ -522,5 +522,28 @@ pub fn copy_facts(from: &Path, to: &Path) -> std::io::Result<()> {
 
 pub(in crate::content_store) mod vtab;
 
+/// What the store `path`'s chain keeps, by relation and part kind ("rows" for part 0, "granule" for an input's
+/// granules, part > 0, "beside" for the parts beside them, part < 0): entries, rows and bytes, largest first.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn by_relation(path: &std::path::Path) -> StoreResult<Vec<((String, &'static str), (usize, usize, usize))>> {
+    let c = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    let spaces: Vec<Vec<u8>> = c.prepare("SELECT DISTINCT space FROM facts_chain").and_then(|mut q| q.query_map([], |r| r.get(0))?.collect()).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    let mut by: std::collections::HashMap<(String, &'static str), (usize, usize, usize)> = Default::default();
+    for s in &spaces {
+        let space: [u8; 32] = s.as_slice().try_into().map_err(|_| StoreError::Invalid("a space of another length".into()))?;
+        let kept = KeptSpace::open(path, &space, &chain_rows(&c, &space)?)?;
+        for k in kept.view().all() {
+            let bytes = (0..k.rows.arity as usize).map(|col| k.rows.col(col).bytes()).sum::<usize>() + k.rows.levels().map_or(0, |l| l.bytes());
+            let what = match k.key.part { 0 => "rows", p if p > 0 => "granule", _ => "beside" };
+            let e = by.entry((k.key.rel.to_owned(), what)).or_default();
+            (e.0, e.1, e.2) = (e.0 + 1, e.1 + k.rows.len(), e.2 + bytes);
+        }
+    }
+    let mut rows: Vec<_> = by.into_iter().collect();
+    rows.sort_by_key(|(_, (_, _, b))| std::cmp::Reverse(*b));
+    Ok(rows)
+}
+
+
 #[cfg(test)]
 mod tests;

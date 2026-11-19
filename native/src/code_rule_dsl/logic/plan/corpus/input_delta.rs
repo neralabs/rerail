@@ -244,3 +244,101 @@ pub mod tests {
         assert!(delta(&[(None, Some(strings))], "r", &[Some(0), Some(1)]).is_none());
     }
 }
+
+/// Rows of `now` that `docs` own, ascending: through `now`'s own index of its first column, a document key (`d`) or a
+/// node id (`key << 32 | …`), where it has one; else (`None`) the caller reads `now` through. Decision 0458: an
+/// edit reads its changed documents' rows, not every row.
+pub(super) fn rows_of_documents(now: &dyn crate::code_rule_dsl::facts::vtab::Source, docs: &std::collections::BTreeSet<i64>) -> Option<Vec<u32>> {
+    let first = now.columns().into_iter().next()?;
+    let mut rows: Vec<u32> = Vec::new();
+    if first == "d" {
+        if !now.indexed(0) {
+            return None;
+        }
+        rows.extend(now.lookup(0, &docs.iter().copied().collect::<Vec<_>>())?.into_iter().map(|r| r as u32));
+    } else {
+        if !now.range_indexed(0) {
+            return None;
+        }
+        for d in docs {
+            rows.extend(now.range_lookup(0, Some((d << 32, true)), Some(((d + 1) << 32, false)))?.into_iter().map(|r| r as u32));
+        }
+    }
+    rows.sort_unstable();
+    rows.dedup();
+    Some(rows)
+}
+
+/// A changed base relation's version before an edit (decision 0458, 0364's `Old`), read where its rows lie: its rows
+/// now but the changed documents' (`skip`, ascending), then the rows those documents had before the edit (`was`, a
+/// batch of their old documents). No row is copied.
+pub(super) struct Before {
+    now: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>,
+    skip: Vec<u32>,
+    was: Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>,
+    kept: usize,
+}
+
+impl Before {
+    pub(super) fn new(now: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, skip: Vec<u32>, was: Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>) -> Before {
+        let kept = now.len() - skip.len();
+        Before { now, skip, was, kept }
+    }
+
+    /// The id in `now` of its `r`-th row not skipped: `r` plus the skipped ids before it (`skip[j] - j` counts the rows
+    /// kept before `skip[j]`, and does not decrease).
+    fn now_row(&self, r: usize) -> usize {
+        let (mut lo, mut hi) = (0usize, self.skip.len());
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if self.skip[mid] as usize - mid <= r { lo = mid + 1 } else { hi = mid }
+        }
+        r + lo
+    }
+}
+
+impl crate::code_rule_dsl::facts::vtab::Source for Before {
+    fn columns(&self) -> Vec<String> {
+        self.now.columns()
+    }
+    fn len(&self) -> usize {
+        self.kept + self.was.as_ref().map_or(0, |w| w.len())
+    }
+    fn estimated_matches(&self, _column: usize, _batch: bool) -> usize {
+        self.len()
+    }
+    fn indexed(&self, _column: usize) -> bool {
+        false
+    }
+    fn lookup(&self, _column: usize, _values: &[i64]) -> Option<Vec<usize>> {
+        None
+    }
+    fn value(&self, row: usize, column: usize) -> i64 {
+        if row < self.kept {
+            self.now.value(self.now_row(row), column)
+        } else {
+            self.was.as_ref().expect("a row past the kept ones is an old document's").value(row - self.kept, column)
+        }
+    }
+}
+
+#[cfg(test)]
+mod before_tests {
+    use super::Before;
+    use crate::code_rule_dsl::facts::vtab::Source;
+    use std::sync::Arc;
+
+    /// The old version reads the rows now that the changed documents do not own, in order, then their old rows.
+    #[test]
+    fn before_reads_the_kept_rows_then_the_old_documents_rows() {
+        let col = |v: Vec<i64>| crate::code_rule_dsl::logic::native::component::columns_source(vec!["n".to_owned()], vec![Some(v)]);
+        let now = col(vec![10, 11, 12, 13, 14, 15]);
+        let was = col(vec![99, 98]);
+        let before = Before::new(now, vec![0, 2, 3], Some(was));
+        let rows: Vec<i64> = (0..before.len()).map(|r| before.value(r, 0)).collect();
+        assert_eq!(rows, vec![11, 14, 15, 99, 98]);
+        let none = Before::new(col(vec![1, 2]), vec![], None);
+        assert_eq!((0..none.len()).map(|r| none.value(r, 0)).collect::<Vec<_>>(), vec![1, 2]);
+        let _ = Arc::new(none);
+    }
+}

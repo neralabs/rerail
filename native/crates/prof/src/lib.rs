@@ -457,7 +457,11 @@ pub mod heap {
         pub(super) fn record(at: usize) {
             let Some(t) = table() else { return };
             let row = &t[at * DEPTH..(at + 1) * DEPTH];
+            // Filled by the frame walk on Apple arm64; empty elsewhere.
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             let mut got = [0usize; DEPTH + SKIP];
+            #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+            let got = [0usize; DEPTH + SKIP];
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             {
                 let mut fp: usize;
