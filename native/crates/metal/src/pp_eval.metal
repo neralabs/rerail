@@ -170,3 +170,103 @@ kernel void pp_nodes(device const PpFile* files [[buffer(0)]], device const ucha
     uint i = g - bases[f];
     out[g] = uint4(node_key(t, i), node_start(t, i), node_end(t, i), node_size(t, i));
 }
+
+// --- The directives: a file pass, a prefix sum, a file pass ------------------------------------
+//
+// One thread a file walks its tape's items in order: a text line (`code`) is passed by its
+// subtree's size, a directive is one row, and a group is entered (its chain's directives are its
+// children; its branches' items after each). The first walk counts each file's directives,
+// `pp_scan` gives each file its first row, and the second writes the rows: the spike's P0
+// tables (`rerail_c_pp::stream::parallel::tables`), made from the tape in place.
+
+constant uint K_CODE = 1u;
+constant uint K_GROUP = 2u;
+constant uint K_DIRECTIVES = 3u;
+constant uint K_IF = 12u, K_IFNDEF = 14u, K_ELSE = 18u, K_ENDIF = 19u;
+constant uint NO_CHAIN = 0xffffffffu;
+// The groups a walk holds open: deeper sends the unit to the CPU (bit 30 of `bad`).
+constant uint MAX_OPEN = 128u;
+
+// A directive's row: its node in its file's tape, its kind, the text tokens before it in the
+// file, the group it is read in and the group after it, and its chain (`NO_CHAIN`: none).
+struct PpDir { uint node, kind, text_before, group, after, chain; };
+
+// File `t`'s walk: each directive's row to `out` (where `out` is set) from row `at`; the number
+// of rows, and the file's groups in `groups`.
+inline uint walk_dirs(Tape t, device PpDir* out, uint at, thread uint& groups, device atomic_uint* bad) {
+    uint ends[MAX_OPEN], outer[MAX_OPEN], chain_of[MAX_OPEN];
+    uint depth = 0u, cur = 0u, chains = 0u, text = 0u, rows = 0u;
+    groups = 1u;
+    // Node 0 is the file's root (`pp`).
+    for (uint i = 1u; i < t.n;) {
+        while (depth > 0u && i >= ends[depth - 1u]) {
+            depth--;
+            cur = outer[depth];
+        }
+        uint k = node_kind(t, i), size = node_size(t, i);
+        if (k == K_CODE) {
+            // A line of text: its leaves are its tokens.
+            text += size - 1u;
+            i += size;
+            continue;
+        }
+        if (k == K_GROUP) {
+            if (depth == MAX_OPEN) {
+                atomic_fetch_or_explicit(bad, 1u << 30, memory_order_relaxed);
+                return rows;
+            }
+            ends[depth] = i + size;
+            outer[depth] = cur;
+            chain_of[depth] = chains++;
+            depth++;
+            i += 1u;
+            continue;
+        }
+        if (k >= K_DIRECTIVES && k < K_IDENTIFIER) {
+            PpDir d;
+            d.node = i;
+            d.kind = k;
+            d.text_before = text;
+            d.chain = NO_CHAIN;
+            // A group's child is its chain's: an arm opens (`#if…`, `#elif…`, `#else`), read in
+            // the group the chain opened in; or the `#endif` closes it.
+            if (depth > 0u && k >= K_IF && k <= K_ELSE) {
+                d.group = outer[depth - 1u];
+                d.after = groups++;
+                d.chain = chain_of[depth - 1u];
+                cur = d.after;
+            } else if (depth > 0u && k == K_ENDIF) {
+                cur = outer[depth - 1u];
+                d.group = cur;
+                d.after = cur;
+            } else {
+                d.group = cur;
+                d.after = cur;
+            }
+            if (out) out[at + rows] = d;
+            rows++;
+        }
+        i += size;
+    }
+    return rows;
+}
+
+// Each file's directives.
+kernel void pp_dir_counts(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
+                          device uint* counts [[buffer(2)]], device atomic_uint* bad [[buffer(3)]],
+                          constant uint& n_files [[buffer(4)]], uint f [[thread_position_in_grid]]) {
+    if (f >= n_files) return;
+    uint groups;
+    counts[f] = walk_dirs(tape_at(data, files[f].tape), (device PpDir*)nullptr, 0u, groups, bad);
+}
+
+// Each file's rows from its first (`pp_scan`'s), and its groups.
+kernel void pp_dirs(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
+                    device const uint* dir_bases [[buffer(2)]], device PpDir* rows [[buffer(3)]],
+                    device uint* groups [[buffer(4)]], device atomic_uint* bad [[buffer(5)]],
+                    constant uint& n_files [[buffer(6)]], uint f [[thread_position_in_grid]]) {
+    if (f >= n_files) return;
+    uint g;
+    walk_dirs(tape_at(data, files[f].tape), rows, dir_bases[f], g, bad);
+    groups[f] = g;
+}

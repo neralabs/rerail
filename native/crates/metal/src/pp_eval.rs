@@ -7,7 +7,8 @@
 //! the host to decide the next.
 //!
 //! Built so far: the unit's nodes (a count a file, their prefix sum, and from it the next
-//! dispatch's size) and the names (`names`: each identifier leaf's key).
+//! dispatch's size), the names (`names`: each identifier leaf's key), and the directives
+//! (`directives`: each file's P0 rows, a file pass, a prefix sum and a file pass).
 
 use crate::Error;
 use crate::launch::{CheckedComputeEncoder, commit_checked, wait_checked};
@@ -33,8 +34,11 @@ pub struct Unit {
     pub data: MappedBuffer,
     pub files: MappedBuffer,
     pub table: Vec<PpFile>,
-    /// At least the unit's nodes: a tape's code column is two bytes a node.
+    /// The unit's nodes: each tape's header says its own.
     pub node_bound: usize,
+    /// At least the unit's directives: a directive is a node over its `#`, so a file has at most
+    /// half its nodes.
+    pub dir_bound: usize,
 }
 
 /// Bytes past the last file, so that a word read at a source's last byte stays in the buffer.
@@ -62,8 +66,11 @@ impl Unit {
                 std::ptr::copy_nonoverlapping(tape.as_ptr(), data.host().add(f.tape as usize), tape.len());
             }
         }
-        let node_bound = files.iter().map(|f| f.1.len() / 2).sum::<usize>().max(1);
-        Ok(Unit { data, files: MappedBuffer::from_slice(&device, &table)?, table, node_bound })
+        // A tape's node count, from its header (`rerail_tape_format`: bytes 24..28).
+        let nodes = |t: &[u8]| t.get(24..28).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize);
+        let node_bound = files.iter().map(|f| nodes(f.1)).sum::<usize>().max(1);
+        let dir_bound = files.iter().map(|f| nodes(f.1) / 2).sum::<usize>().max(1);
+        Ok(Unit { data, files: MappedBuffer::from_slice(&device, &table)?, table, node_bound, dir_bound })
     }
 }
 
@@ -137,6 +144,82 @@ pub fn names(unit: &Unit, nodes: bool) -> Result<Names, Error> {
             keys: std::slice::from_raw_parts(keys.host().cast::<u64>(), total as usize).to_vec(),
             nodes: if nodes { std::slice::from_raw_parts(out.host().cast::<[u32; 4]>(), total as usize).to_vec() } else { Vec::new() },
         })
+    }
+}
+
+/// A directive's row (`PpDir` in the MSL): its node in its file's tape, its kind, the text tokens
+/// before it in the file, the group it is read in and the group after it, and its chain
+/// (`u32::MAX`: none).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PpDir {
+    pub node: u32,
+    pub kind: u32,
+    pub text_before: u32,
+    pub group: u32,
+    pub after: u32,
+    pub chain: u32,
+}
+
+/// The directives pass's results, read back for tests: each file's first row, the rows, and
+/// each file's groups.
+pub struct Dirs {
+    pub bases: Vec<u32>,
+    pub rows: Vec<PpDir>,
+    pub groups: Vec<u32>,
+}
+
+/// The unit's directives: `pp_dir_counts` (one thread a file walks its tape), `pp_scan`, then
+/// `pp_dirs` (the same walk, each file's rows from its first).
+pub fn directives(unit: &Unit) -> Result<Dirs, Error> {
+    let device = crate::device()?;
+    let n = unit.table.len();
+    let counts = MappedBuffer::zeroed::<u32>(&device, n.max(1))?;
+    let bases = MappedBuffer::zeroed::<u32>(&device, n.max(1))?;
+    let groups = MappedBuffer::zeroed::<u32>(&device, n.max(1))?;
+    let bad = MappedBuffer::zeroed::<u32>(&device, 1)?;
+    let total = MappedBuffer::zeroed::<u32>(&device, 1)?;
+    let args = MappedBuffer::zeroed::<u32>(&device, 4)?;
+    let rows = MappedBuffer::zeroed::<PpDir>(&device, unit.dir_bound)?;
+    let pipe = |name: &str| pipeline_named(SOURCE, name);
+    let (p_counts, p_scan, p_dirs) = (pipe("pp_dir_counts")?, pipe("pp_scan")?, pipe("pp_dirs")?);
+    let n32 = n as u32;
+    let files = MTLSize::new(n.max(1) as u64, 1, 1);
+    let _scope = crate::launch::LaunchScope::enter();
+    let queue = crate::pool::queue(&device)?;
+    let command = queue.new_command_buffer();
+    command.set_label("Rerail pp directives");
+    let e = command.new_compute_command_encoder();
+    e.set_compute_pipeline_state(&p_counts);
+    e.checked_set_buffers(command, &[&unit.files.buffer, &unit.data.buffer, &counts.buffer, &bad.buffer]);
+    e.set_bytes(4, 4, std::ptr::from_ref(&n32).cast());
+    e.checked_dispatch_threads(command, files, MTLSize::new(64, 1, 1));
+    e.end_encoding();
+    let e = command.new_compute_command_encoder();
+    e.set_compute_pipeline_state(&p_scan);
+    e.checked_set_buffers(command, &[&counts.buffer, &bases.buffer, &total.buffer, &args.buffer]);
+    e.set_bytes(4, 4, std::ptr::from_ref(&n32).cast());
+    e.checked_dispatch_thread_groups(command, MTLSize::new(1, 1, 1), MTLSize::new(1024, 1, 1));
+    e.end_encoding();
+    let e = command.new_compute_command_encoder();
+    e.set_compute_pipeline_state(&p_dirs);
+    e.checked_set_buffers(command, &[&unit.files.buffer, &unit.data.buffer, &bases.buffer, &rows.buffer, &groups.buffer, &bad.buffer]);
+    e.set_bytes(6, 4, std::ptr::from_ref(&n32).cast());
+    e.checked_dispatch_threads(command, files, MTLSize::new(64, 1, 1));
+    e.end_encoding();
+    if let Err(refused) = commit_checked(command) {
+        crate::launch::release_refused(command);
+        return Err(refused);
+    }
+    wait_checked(command)?;
+    // SAFETY: the device finished writing every buffer; each holds the counts read here.
+    unsafe {
+        if *bad.host().cast::<u32>() != 0 {
+            return Err(Error::BackendFailure);
+        }
+        let total = *total.host().cast::<u32>() as usize;
+        let read = |b: &MappedBuffer| std::slice::from_raw_parts(b.host().cast::<u32>(), n).to_vec();
+        Ok(Dirs { bases: read(&bases), rows: std::slice::from_raw_parts(rows.host().cast::<PpDir>(), total).to_vec(), groups: read(&groups) })
     }
 }
 

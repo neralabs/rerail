@@ -155,6 +155,41 @@ pub fn run(cfg: Config, io: &mut dyn Files, path: &str) -> (Outcome, Stats) {
     (out, stats)
 }
 
+/// A directive of a file's P0 tables (`files::tabulate`), as the evaluator's file pass makes it
+/// from the file's tape (decision 0436): its tape kind (`tape::kind_id`), the text tokens before
+/// it, the group it is read in, the group after it, and its chain (`u32::MAX`: none).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DirRow {
+    pub kind: u16,
+    pub text_before: u32,
+    pub group: u32,
+    pub after: u32,
+    pub chain: u32,
+}
+
+/// `src`'s P0 directives and its groups' number, read alone under `opts`: the cross-check of the
+/// evaluator's file pass.
+pub fn tables(opts: crate::Options, src: &[u8]) -> (Vec<DirRow>, u32) {
+    let mut io = crate::files::Search::new(Vec::new(), |_: &str| None);
+    let mut null = Null;
+    let mut pp = Pp::new(Config::new(opts), &mut io, &mut null);
+    let file = pp.add_file("<file>".into(), src.to_vec(), None);
+    let tab = files::tabulate(&mut pp, file);
+    let mut chain = vec![u32::MAX; tab.dirs.len()];
+    for (c, arms) in tab.chains.iter().enumerate() {
+        for &d in arms {
+            chain[d as usize] = c as u32;
+        }
+    }
+    let rows = tab
+        .dirs
+        .iter()
+        .enumerate()
+        .map(|(d, dir)| DirRow { kind: crate::tape::kind_id(dir.kind), text_before: dir.text_before, group: dir.group, after: dir.after, chain: chain[d] })
+        .collect();
+    (rows, tab.groups.len() as u32)
+}
+
 /// Runs `f` with `pp` read as at position `pos` of the instance whose files, outermost first,
 /// are `chain`: its sources the chain's files (never read: an isolated list above them stops
 /// every reading), its definitions those of `pos`.
