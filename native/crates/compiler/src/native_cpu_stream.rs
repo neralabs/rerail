@@ -2201,12 +2201,34 @@ fn emit_rule(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, ft: &Fetch, bw: &crat
         EndRule::Run(o) => {
             let ones = f.ins().iconst(types::I64, -1);
             let s1 = f.ins().iadd_imm(s, 1);
-            // The output's complement's first bit from `s + 1`: a word at a time.
+            // From the bytes: the 16 from `s + 1` first, one vector (`short_word`), as a lexer
+            // reads a short token's bytes and no more; past them, 64 at a time below.
+            let from = if bw.can(o) {
+                let consts = crate::native_cpu_block::Consts::make(f);
+                let file = crate::native_cpu_bytes::File { bytes: (e.ctx)(f, BYTES), len: (e.ctx)(f, LEN), nibble: consts.nibble, weights: consts.weights, even: consts.even };
+                let x = bw.short_word(f, &file, o, s1, heads);
+                let stride = i64::from(bw.short_stride(&[o]));
+                let lanes = if 16 * stride >= 64 { -1 } else { ((1u64 << (16 * stride)) - 1) as i64 };
+                let not = f.ins().bnot(x);
+                let not = f.ins().band_imm(not, lanes);
+                let (short, long) = (f.create_block(), f.create_block());
+                f.ins().brif(not, short, &[], long, &[]);
+                f.switch_to_block(short);
+                let tz = f.ins().ctz(not);
+                let k = if stride == 1 { tz } else { f.ins().udiv_imm(tz, stride) };
+                let l = f.ins().iadd(s, k);
+                f.ins().jump(join, &[l.into(), zero.into()]);
+                f.switch_to_block(long);
+                f.ins().iadd_imm(s1, 16)
+            } else {
+                s1
+            };
+            // The output's complement's first bit from `from`: a word at a time.
             let (scan, found) = (f.create_block(), f.create_block());
             f.append_block_param(scan, types::I64);
             f.append_block_param(scan, types::I64);
-            let q = f.ins().ushr_imm(s1, 6);
-            let sh = f.ins().band_imm(s1, 63);
+            let q = f.ins().ushr_imm(from, 6);
+            let sh = f.ins().band_imm(from, 63);
             let m = f.ins().ishl(ones, sh);
             f.ins().jump(scan, &[q.into(), m.into()]);
             f.switch_to_block(scan);

@@ -263,6 +263,13 @@ The compiler now finds which kinds' words the words after a `TOKEN` read, up to 
 read every token's). A part of another kind takes its first byte's kind alone: two loads and
 a compare (`ldrb`, `ldrb`, `cmp #2`, `b.ne`). An escape still takes the table.
 
+**A number's end from one window.** A run's end (`EndRule::Run`) whose output tier 2 can
+make from the bytes is read first from the 16 bytes after the token's first, one vector
+(`short_word`: a load, the nibble lookups, a compare, a narrowing to a mask, `ctz`): about 30
+instructions, as a lexer reads a short token's bytes and no more. Only a longer run takes the
+64-byte scan. simdjson's `parse_number` finds the end by parsing the digits; the number check
+here is still a pass of its own over the same bytes.
+
 Tests: the trees equal `14-json`'s on the 75 documents; the ladder, `tier2_tests`, the parser
 tests' JSON and block tests, rr_parser's JSON and CPU tests pass.
 
