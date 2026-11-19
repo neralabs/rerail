@@ -13,12 +13,12 @@
  *   session's: content no one approved in the Rerail home (`rerail rules approve`) runs in Log.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname, join, parse, posix, relative, resolve, sep } from "node:path";
 import { eq } from "drizzle-orm";
 import type { AuditInput, AuditRecorder, AuditResult, AuditRuleProvenance } from "../engine/audit/audit.js";
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
-import { textRealPath } from "../engine/catalog/checkout-control.js";
+import { textRealPath, withinCheckout } from "../engine/catalog/checkout-control.js";
 import { checkoutStatus, lookupCheckout, parentCheckouts, recordCheckout, standaloneRepository } from "../engine/catalog/repository-registry.js";
 import type { RrPolicySource, RuleCatalog } from "../engine/catalog/repository-model.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
@@ -428,6 +428,20 @@ function scanRoot(options: HeadlessScanOptions): { root: string; requested: stri
   return { root, requested };
 }
 
+/** Use the same directory-entry names as the inventory without following a selection through a symlink. */
+function worktreeSelection(root: string, path: string, directory: boolean): string | undefined {
+  const parts = path.split("/");
+  let candidate = root;
+  for (const [i, part] of parts.entries()) {
+    candidate = join(candidate, part);
+    const entry = lstatSync(candidate, { throwIfNoEntry: false });
+    if (entry?.isDirectory()) continue;
+    if (!entry?.isFile() || directory || i < parts.length - 1) return undefined;
+  }
+  const stored = textRealPath(candidate);
+  return withinCheckout(root, stored) ? relative(root, stored).split(sep).join("/") : undefined;
+}
+
 /** What the scan covers: the paths asked for, what differs from the base or HEAD, or null for the whole repository. */
 function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGitRevisionSource | undefined): Pick<ScanReport, "base" | "paths" | "requestedPaths" | "skippedPaths"> & { failures?: ScanFailure[] } {
   if (options.paths !== undefined) {
@@ -441,10 +455,17 @@ function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGi
       if (parse(requested).root || path === ".." || path.startsWith("../")) {
         throw new Error(`Expected a repository-relative scan path within the repository: ${requested}`);
       }
+      if (path === ".") {
+        selected.add(path);
+        continue;
+      }
       const directory = spelling.endsWith("/") || spelling.endsWith("/.") || spelling.endsWith("/..");
       const lookup = directory ? path + "/" : path;
       try {
-        if (path === "." || (source === undefined ? existsSync(join(root, lookup)) : source.containsPath(lookup))) selected.add(path);
+        const name = source === undefined
+          ? worktreeSelection(root, path, directory)
+          : (source.containsPath(lookup) ? path : undefined);
+        if (name !== undefined) selected.add(name);
         else skippedPaths.push(requested);
       } catch (error) {
         failures.push({

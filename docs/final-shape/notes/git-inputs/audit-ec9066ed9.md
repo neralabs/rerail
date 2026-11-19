@@ -2,7 +2,15 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Eleven of the 28 follow-up findings have verified repairs. Seventeen remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+Twelve of the 28 follow-up findings have verified repairs. Sixteen remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+
+## Working-tree path spelling
+
+For case 46, the CLI previously listed both `SRC/A.PY` and `src/a.py` as selected paths on a case-insensitive volume.
+After the repair, selecting either spelling returned one finding at `src/a.py`. The report preserved each supplied spelling in `requestedPaths`.
+On a case-sensitive APFS volume, the CLI reported separate findings for `src/A.py` and `src/a.py`. It skipped the absent `SRC/A.PY`.
+Revision scans required the exact Git tree spelling on both volumes. Selecting a working-tree symlink or a path below one skipped the selection.
+[Headless CLI regression](../../../../test/cli/headless-scan.test.ts)
 
 ## Declared outputs with constant rows
 
