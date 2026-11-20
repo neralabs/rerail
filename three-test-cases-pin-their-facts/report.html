@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 948 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #948</div>
+  <h1>Three test follow-ups: a wait, a clean-up, a limit</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>May the refused-watch case check the walk&#x27;s wait, the close case build its bridge with <code>createBridge</code>, and the limit case add a second linked secret?</p>
+  </div>
+  <p class="rec"><b>We recommend:</b> approve all three: the wait and limit cases fail when what they name breaks, a failing close case no longer fails the next one, and each passed 10 of 10 runs on Linux x64.</p>
+  <div class="big">
+    <div><b class="w">53 lines</b><span>in 3 files. 0 ship, 53 are the tests it changes, 0 are other tests and text.</span></div><div><b class="w">Fast review</b><span>Three test cases, no product code.</span></div><div><b class="w">Waits on Nothing</b><span>No CI run on GitHub yet: not pushed.</span></div><div><b class="w">1 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/948">GitHub</a> on 20 November 2026, at head 8a20e72f8.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr><td class="k"><span class="lb">A</span><b>Two orders of ending</b></td><td class="in" data-l="Intended">&quot;when a walk asks before the read after the refusal ends and %s ends first&quot;, one variant per read <span class="tagx">test name</span></td><td class="fo" data-l="Found">The walk asks no read while the read after the refusal runs, so no second read was held and both variants ran the same steps. <span class="tagx">code reading</span></td><td class="now" data-l="Now"><b>Closes the gap</b> and checks the wait as the walk asks: two reads, one held, then none of the walk&#x27;s own.</td></tr><tr><td class="k"><span class="lb">B</span><b>Clean-up after a failure</b></td><td class="in" data-l="Intended">&quot;A test that timed out never reached its own <code>finally</code>: no Git hangs in the tests after it&quot; <span class="tagx">code comment</span></td><td class="fo" data-l="Found">The case built its bridge with <code>new CodeRuleBridge</code>: a failure before its close left its stand-in Git running, so the clean-up and the next case failed. <span class="tagx">a failing copy</span></td><td class="now" data-l="Now"><b>Closes the gap</b> and builds the bridge with <code>createBridge</code>, so afterEach closes it, ending its Git, before it removes the folder.</td></tr><tr><td class="k"><span class="lb">C</span><b>The limit, both sides</b></td><td class="in" data-l="Intended">&quot;One answer resolves at most 256 distinct paths on disk&quot; and judges the rest by name: the case&#x27;s comment. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">The case&#x27;s one linked secret sat at each audit&#x27;s first path, so any limit from 1 to 256 passed it. <span class="tagx">a review of #881</span></td><td class="now" data-l="Now"><b>Closes the gap</b> and expects a second linked secret withheld at the 256th path, so a limit moved either way fails the case.</td></tr></tbody></table>
+<figcaption>Found on 19 and 20 November 2026 by the reviewers of #881, #909 and #935, as the one follow-up on each.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">A. Two orders of ending</td><td data-l="Where main states the intent"><code>test/engine/code-rule/worktree-walks/worktree-notices.test.ts</code> at cc7237f19, the case&#x27;s <code>it.each</code>.</td><td data-l="The cause, and what was measured"><code>#openSettled</code> waits for the read after the refusal before <code>#open</code> reads the path, which the variants did not count.</td></tr><tr><td class="k">B. Clean-up after a failure</td><td data-l="Where main states the intent"><code>test/engine/code-rule/code-rule-bridge.test.ts</code> at e3b4112ce, afterEach&#x27;s first comment, line 377; <code>createBridge</code>, line 352, adds each bridge to the list afterEach closes, line 402.</td><td data-l="The cause, and what was measured">afterEach closes only the bridges in <code>bridges</code>, then removes the folders. This case&#x27;s bridge was not there, so its held Git ran on: <code>removeFolder</code> refused the folder, naming that process, and the next case found no Git in its own folder. On Linux the stand-in ended at Git&#x27;s 10 s read limit, before the file did.</td></tr><tr><td class="k">C. The limit, both sides</td><td data-l="Where main states the intent"><code>test/api/api-mcp-caller.test.ts</code> at 622a9b11a, the comment above the case: &quot;One answer resolves at most 256 distinct paths on disk (CHECKOUT_PATH_RESOLUTIONS in src/engine/path-boundary.ts) across every folder its findings were recorded in, and judges the rest by name.&quot;</td><td data-l="The cause, and what was measured">The first audit withholds its first finding for any limit of 1 or more, and the second serves its first finding whole for any limit of 256 or less. Nothing checked the 256th path, so a lower limit, which would serve later secret findings whole to coding agents, still passed.</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 226" role="img" aria-label="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, One case checks the wait, low risk, 33 lines; B, A failed close case cleaned up, low risk, 2 lines; C, A second secret at the end, low risk, 18 lines. Read first: worktree-notices.test.ts, code-rule-bridge.test.ts, api-mcp-caller.test.ts. To skim: 0 lines of tests and 0 lines of no text changes.." class="dg map"><text x="4" y="14" class="t b">Code to read</text><text x="336" y="14" text-anchor="end" class="t s">bar: changed lines</text><rect x="4.5" y="24.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="38" text-anchor="middle" class="t b">A</text><rect x="30" y="29" width="14" height="10" rx="2" class="rk low"/><text x="49" y="38" class="t s">Low risk, 33 lines</text><text x="336" y="38" text-anchor="end" class="t s">the tests it changes</text><text x="128" y="59" text-anchor="end" class="t s">worktree-notices test</text><g><title>worktree-notices test: 33 changed lines, low risk</title><path d="M134 50h5.9a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-5.9z" class="rk low"/></g><text x="148.9" y="59" class="t n">33</text><text x="336" y="59" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="55" r="8.5" class="nc"/><text x="254" y="59" text-anchor="middle" class="t b inv">1</text><rect x="4.5" y="73.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="87" text-anchor="middle" class="t b">B</text><rect x="30" y="78" width="14" height="10" rx="2" class="rk low"/><text x="49" y="87" class="t s">Low risk, 2 lines</text><text x="336" y="87" text-anchor="end" class="t s">the tests it changes</text><text x="128" y="108" text-anchor="end" class="t s">code-rule-bridge test</text><g><title>code-rule-bridge test: 2 changed lines, low risk</title><path d="M134 99h0a2 2 0 0 1 2 2v7a2 2 0 0 1 -2 2h0z" class="rk low"/></g><text x="139.6" y="108" class="t n">2</text><text x="336" y="108" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="104" r="8.5" class="nc"/><text x="254" y="108" text-anchor="middle" class="t b inv">2</text><rect x="4.5" y="122.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="136" text-anchor="middle" class="t b">C</text><rect x="30" y="127" width="14" height="10" rx="2" class="rk low"/><text x="49" y="136" class="t s">Low risk, 18 lines</text><text x="336" y="136" text-anchor="end" class="t s">the tests it changes</text><text x="128" y="157" text-anchor="end" class="t s">api-mcp-caller test</text><g><title>api-mcp-caller test: 18 changed lines, low risk</title><path d="M134 148h1.4a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-1.4z" class="rk low"/></g><text x="144.4" y="157" class="t n">18</text><text x="336" y="157" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="153" r="8.5" class="nc"/><text x="254" y="157" text-anchor="middle" class="t b inv">3</text><line x1="4" y1="171" x2="336" y2="171" class="ar thin"/><text x="4" y="191" class="t b">Skim: tests and text</text><rect x="4" y="210" width="14" height="10" rx="2" class="rk high"/><text x="22" y="219" class="t s">High</text><rect x="62.8" y="210" width="14" height="10" rx="2" class="rk med"/><text x="80.8" y="219" class="t s">Medium</text><rect x="133" y="210" width="14" height="10" rx="2" class="rk low"/><text x="151" y="219" class="t s">Low risk</text><rect x="214.6" y="210" width="14" height="10" rx="2" class="rk skim"/><text x="232.6" y="219" class="t s">Skim</text></svg>
+<figcaption>Three test files and no product code: one case in each.</figcaption></figure>
+<div><ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>worktree-notices.test.ts</code>: the case &quot;when a walk asks before the read after the refusal ends&quot;</b><span class="min">2 min</span><span class="x">Do the read counts at the walk&#x27;s request show that it waits for the read after the refusal?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>code-rule-bridge.test.ts</code>: the case &quot;closes mid-walk with no Git it started still running&quot;</b><span class="min">1 min</span><span class="x">Does its bridge now enter the list afterEach closes?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>api-mcp-caller.test.ts</code>: the case &quot;resolves at most 256 paths per answer&quot;</b><span class="min">3 min</span><span class="x">Does a limit of 255 fail the first audit, one of 257 the second, and does the comment say why?</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">1 min</span><span class="x">The helper <code>refusedAfterRead</code> loses <code>stamped</code>, which only the second variant read.</span></div></div>
+</div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 223" role="img" aria-label="The changes by risk, high on top, against six checks. A, Wait checked, low risk: the first five checks hold. B, Clean-up, low risk: the first five checks hold. C, Second secret, low risk: the first five checks hold. CI at this head holds with a limit for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="114" rx="8" class="bx zone"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk low"/><text x="28" y="34" class="t s b">Low risk</text><rect x="8.5" y="42.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="56" text-anchor="middle" class="t b">A</text><text x="34" y="56" class="t b">Wait checked</text><g><title>Wait checked, fails without the fix: With `if (refusing !== undefined) await refusing;` taken out of `#openSettled`, the case failed 5 of 5 runs at its first check at 61e5823c2: the walk&#x27;s own read was asked.</title><circle cx="150" cy="52" r="8" class="mh"/><path d="M146 52l3 3l5 -6" class="mt"/></g><g><title>Wait checked, independent review: Linux x64 at this head: the case alone passed 10 of 10 runs and its file passed whole, 63 of 63; at 61e5823c2 the case alone passed 20 of 20.</title><circle cx="184" cy="52" r="8" class="mh"/><path d="M180 52l3 3l5 -6" class="mt"/></g><g><title>Wait checked, users lose nothing: Users lose nothing: no source file changes.</title><circle cx="218" cy="52" r="8" class="mh"/><path d="M214 52l3 3l5 -6" class="mt"/></g><g><title>Wait checked, rules scan: nothing new: `tsc --noEmit` passes at this head.</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Wait checked, Windows 11: no new failure: Windows 11 at this head: the whole file passed once, 62 passed and 1 skipped, the case that runs only off Windows; this case passed.</title><circle cx="286" cy="52" r="8" class="mh"/><path d="M282 52l3 3l5 -6" class="mt"/></g><g><title>Wait checked, CI at this head: No CI run at this head on GitHub yet: the branch is not pushed.</title><circle cx="320" cy="52" r="7.4" class="ml"/><path d="M320 44.6A7.4 7.4 0 0 0 320 59.4Z" class="mlf"/></g><line x1="8" y1="68" x2="332" y2="68" class="ar thin"/><rect x="8.5" y="74.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="88" text-anchor="middle" class="t b">B</text><text x="34" y="88" class="t b">Clean-up</text><g><title>Clean-up, fails without the fix: Linux x64, a copy of the file that fails the case before its close: at `main` e3b4112ce the clean-up then failed, naming the stand-in Git still running, and the next case failed too; at 1a536bc96 only the case failed.</title><circle cx="150" cy="84" r="8" class="mh"/><path d="M146 84l3 3l5 -6" class="mt"/></g><g><title>Clean-up, independent review: Linux x64 at this head: the case alone passed 10 of 10 runs and its file passed whole, 295 passed and 3 skipped; at 1a536bc96 20 of 20 alone and 20 of 20 in its file.</title><circle cx="184" cy="84" r="8" class="mh"/><path d="M180 84l3 3l5 -6" class="mt"/></g><g><title>Clean-up, users lose nothing: Users lose nothing: no source file changes.</title><circle cx="218" cy="84" r="8" class="mh"/><path d="M214 84l3 3l5 -6" class="mt"/></g><g><title>Clean-up, rules scan: nothing new: `tsc --noEmit` passes at this head.</title><circle cx="252" cy="84" r="8" class="mh"/><path d="M248 84l3 3l5 -6" class="mt"/></g><g><title>Clean-up, Windows 11: no new failure: Windows 11 at this head: the whole file passed once, 298 of 298, this case among them.</title><circle cx="286" cy="84" r="8" class="mh"/><path d="M282 84l3 3l5 -6" class="mt"/></g><g><title>Clean-up, CI at this head: No CI run at this head on GitHub yet: the branch is not pushed.</title><circle cx="320" cy="84" r="7.4" class="ml"/><path d="M320 76.6A7.4 7.4 0 0 0 320 91.4Z" class="mlf"/></g><line x1="8" y1="100" x2="332" y2="100" class="ar thin"/><rect x="8.5" y="106.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="120" text-anchor="middle" class="t b">C</text><text x="34" y="120" class="t b">Second secret</text><g><title>Second secret, fails without the fix: Linux x64: at `main` 622a9b11a the case passed with the limit set to 1 and to 255; at 16c8d911f it failed with the limit at 1, 255 and 257, and passed at 256.</title><circle cx="150" cy="116" r="8" class="mh"/><path d="M146 116l3 3l5 -6" class="mt"/></g><g><title>Second secret, independent review: With the limit&#x27;s clause taken out of the judge&#x27;s check in `src/api/operations.ts`, the case fails at 16c8d911f, as it does at `main`.</title><circle cx="184" cy="116" r="8" class="mh"/><path d="M180 116l3 3l5 -6" class="mt"/></g><g><title>Second secret, users lose nothing: Linux x64 at this head: the case alone passed 10 of 10 runs and its file passed whole, 24 passed and 2 skipped; at 16c8d911f 20 of 20.</title><circle cx="218" cy="116" r="8" class="mh"/><path d="M214 116l3 3l5 -6" class="mt"/></g><g><title>Second secret, rules scan: nothing new: No line of product source changes: the judge, the limit and every other case are as they were.</title><circle cx="252" cy="116" r="8" class="mh"/><path d="M248 116l3 3l5 -6" class="mt"/></g><g><title>Second secret, Windows 11: no new failure: Windows 11: the whole file passed once at this head, 26 of 26; at 16c8d911f the case passed 20 of 20 runs, its links made as junctions.</title><circle cx="286" cy="116" r="8" class="mh"/><path d="M282 116l3 3l5 -6" class="mt"/></g><g><title>Second secret, CI at this head: No CI run at this head on GitHub yet: the branch is not pushed.</title><circle cx="320" cy="116" r="7.4" class="ml"/><path d="M320 108.6A7.4 7.4 0 0 0 320 123.4Z" class="mlf"/></g><text x="8" y="153" class="t s">1  fails without the fix</text><text x="168" y="153" class="t s">2  independent review</text><text x="8" y="169" class="t s">3  users lose nothing</text><text x="168" y="169" class="t s">4  rules scan: nothing new</text><text x="8" y="185" class="t s">5  Windows 11: no new failure</text><text x="168" y="185" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="209" r="8" class="mh"/><path d="M10 209l3 3l5 -6" class="mt"/></g><text x="28" y="213" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="209" r="7.4" class="ml"/><path d="M92 201.6A7.4 7.4 0 0 0 92 216.4Z" class="mlf"/></g><text x="106" y="213" class="t s">holds with a limit</text></svg>
+<figcaption>Three changes, all low risk: one test case each; the product is as it was.</figcaption></figure>
+<details class="ev"><summary>Each half mark's limit</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>It holds with this limit</th></tr></thead><tbody><tr><td class="k">A to C</td><td data-l="Check">CI at this head</td><td data-l="It holds with this limit">No CI run at this head on GitHub yet: the branch is not pushed.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<p class="sub">Each line opens its card.</p>
+<details class="card"><summary><span class="lb">A</span><b>One case checks the wait</b><span class="chip low"><i></i>Low risk</span><span class="sx">Linux x64: without the wait, the case failed 5 of 5 runs at its first check.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>#909&#x27;s case ran as two variants, one per order in which two reads end, but both ran the same steps.</dd>
+<dt>Who meets it</dt><dd>Anyone reading or changing this case: every run of both variants took the same order.</dd>
+<dt>What it does</dt><dd>One case counts the reads as the walk asks: two, one held; once the held read finds the folder, the walk answers true and reads nothing.</dd>
+<dt>Risk</dt><dd>Low: one test case and its helper; the product is unchanged.</dd>
+<dt>Check</dt><dd>Do the read counts at the walk&#x27;s request show that it waits for the read after the refusal?</dd>
+</dl><figure><svg viewBox="0 0 340 70" role="img" aria-label="With the wait in #openSettled taken out, main&#x27;s two variants failed 0 of 5 runs at their first check, only at their last; the new case failed 5 of 5 runs at its first check, where the walk asks." class="dg pic"><text x="4" y="17" class="t b">fails at the walk&#x27;s ask</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>fails at the walk&#x27;s ask, main: 0 of 5</title><path d="M80 24h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk was"/></g><text x="88" y="34" class="t n">0 of 5</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>fails at the walk&#x27;s ask, this change: 5 of 5</title><path d="M80 41h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk now"/></g><text x="276" y="51" class="t n">5 of 5</text></svg><figcaption>Method: Linux x64: the case alone, 10 runs at this head and 20 at 61e5823c2; the same case and <code>main</code> cc7237f19&#x27;s two variants with the wait taken out of <code>#openSettled</code>, 5 runs each.</figcaption></figure></div></details><details class="card"><summary><span class="lb">B</span><b>A failed close case cleaned up</b><span class="chip low"><i></i>Low risk</span><span class="sx">A failing copy on Linux x64: <code>main</code> 2 cases failed and the clean-up; this change 1 case.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>When the case failed before its close, its bridge stayed open: the file&#x27;s clean-up failed on the stand-in Git still running in its folder, and the next case failed.</dd>
+<dt>Who meets it</dt><dd>Anyone whose change makes this case fail: the one failure shows as three, on every platform.</dd>
+<dt>What it does</dt><dd>The case builds its bridge with <code>createBridge</code>, as the file&#x27;s other cases do, so afterEach closes it, ending its Git, before it removes the folder.</dd>
+<dt>Risk</dt><dd>Low: one line of one test case; the product is unchanged.</dd>
+<dt>Check</dt><dd>Does the case&#x27;s bridge now enter the list afterEach closes, with its own close kept?</dd>
+</dl><figure><svg viewBox="0 0 340 70" role="img" aria-label="In a copy of the file whose close case fails before its close, main failed 2 cases and the clean-up named a stand-in Git still running; this change failed only the case." class="dg pic"><text x="4" y="17" class="t b">cases failed in a failing copy</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>cases failed in a failing copy, main: 2 cases</title><path d="M80 24h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk was"/></g><text x="276" y="34" class="t n">2 cases</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>cases failed in a failing copy, this change: 1 case</title><path d="M80 41h91a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-91z" class="rk now"/></g><text x="181" y="51" class="t n">1 case</text></svg><figcaption>Method: Linux x64: one run each of a copy of <code>code-rule-bridge.test.ts</code> at <code>main</code> e3b4112ce and at 1a536bc96, with a check that fails added before the case&#x27;s close, then a look for its stand-in Git.</figcaption></figure></div></details><details class="card"><summary><span class="lb">C</span><b>A second secret at the end</b><span class="chip low"><i></i>Low risk</span><span class="sx">Limit at 1, 255 or 257: the case now fails; at 256 it passes.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>#881&#x27;s case had its one linked secret at each audit&#x27;s first path, so any limit from 1 to 256 passed it.</dd>
+<dt>Who meets it</dt><dd>Anyone who changes the limit: at <code>main</code> the case passes with it at 1 and at 255.</dd>
+<dt>What it does</dt><dd>The case also puts a linked secret at the 256th path and expects it withheld, so a limit moved either way fails it.</dd>
+<dt>Risk</dt><dd>Low: a test&#x27;s data and expected values; the product is unchanged.</dd>
+<dt>Check</dt><dd>Does a limit of 255 fail the first audit, one of 257 the second, and does the comment say why?</dd>
+</dl><figure><svg viewBox="0 0 340 70" role="img" aria-label="With the limit set to 1, 255 and 257, main&#x27;s case passed at 1 and 255 and failed at 257; this change&#x27;s case failed at all three." class="dg pic"><text x="4" y="17" class="t b">wrong limits it passes</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>wrong limits it passes, main: 2 of 3</title><path d="M80 24h122.667a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-122.667z" class="rk was"/></g><text x="212.667" y="34" class="t n">2 of 3</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>wrong limits it passes, this change: 0 of 3</title><path d="M80 41h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk now"/></g><text x="88" y="51" class="t n">0 of 3</text></svg><figcaption>Method: Linux x64, throwaway checkouts at <code>main</code> 622a9b11a and 16c8d911f: the case once with <code>CHECKOUT_PATH_RESOLUTIONS</code> at 1, 255 and 257, and once with the judge&#x27;s limit clause taken out.</figcaption></figure></div></details>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>How does the case show that a walk waits for the read after a refusal?</h3>
+<p><b>We chose</b> it counts the reads as the walk asks and after the held read is answered.</p>
+<p><b>Would change our mind:</b> A maintainer who wants the order the second variant named, which the code no longer allows.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Count the reads as the walk asks <span class='tag new'>chosen</span></td><td data-l="What a user gets">A failure that names the read the walk asked too early.</td><td data-l="Cost">10 added and 23 removed lines in one test file.</td><td data-l="What it breaks">One case where there were two.</td></tr><tr><td class="k">Keep both variants</td><td data-l="What a user gets">Nothing more: the walk asks no read to hold.</td><td data-l="Cost">None.</td><td data-l="What it breaks">Two variants that run the same steps.</td></tr></tbody></table></div><p><b>Evidence.</b> On Linux x64 the case passed 20 of 20 runs alone at 61e5823c2 and failed 5 of 5 without the wait; the old variants failed 5 of 5 each without it, at their last check.</p></details></div>
+<div class="dblock"><h3>How does the close case&#x27;s bridge reach the file&#x27;s clean-up?</h3>
+<p><b>We chose</b> <code>createBridge</code>, as the file&#x27;s other cases build theirs, keeping the case&#x27;s own close.</p>
+<p><b>Would change our mind:</b> A maintainer who wants this case to own its clean-up, which a <code>finally</code> in the case would give.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Build it with <code>createBridge</code> <span class='tag new'>chosen</span></td><td data-l="What a user gets">The clean-up every other case gets, from the file&#x27;s one list.</td><td data-l="Cost">One changed line.</td><td data-l="What it breaks">The bridge is closed twice when the case passes; the second close returns at once.</td></tr><tr><td class="k">A <code>try</code> and <code>finally</code> in the case</td><td data-l="What a user gets">The same close, written in the case.</td><td data-l="Cost">Four more lines.</td><td data-l="What it breaks">A second way to close a bridge in a file that has one.</td></tr></tbody></table></div><p><b>Evidence.</b> In a copy of the file whose close case fails before its close, <code>main</code> failed 2 cases and its clean-up; this change failed only the case, on Linux x64.</p></details></div>
+<div class="dblock"><h3>Import the limit or keep the literal?</h3>
+<p><b>We chose</b> the literal, with a comment saying why: the boundary check refuses the import, and a new limit fails the case.</p>
+<p><b>Would change our mind:</b> A maintainer who wants the limit exported from the engine&#x27;s entry point for tests to read.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">The literal 256, with a comment <span class='tag new'>chosen</span></td><td data-l="What a user gets">The case pins 256 itself; nothing outside the test changes.</td><td data-l="Cost">Two places say 256.</td><td data-l="What it breaks">Nothing found.</td></tr><tr><td class="k">Export the limit from <code>src/engine/index.ts</code> and import it</td><td data-l="What a user gets">One place says 256.</td><td data-l="Cost">A product source change, and a name added to the engine&#x27;s entry point for one test.</td><td data-l="What it breaks">Nothing, but the case would follow any new limit without a second look.</td></tr><tr><td class="k">Import <code>src/engine/path-boundary.ts</code> directly</td><td data-l="What a user gets">One place says 256.</td><td data-l="Cost">None in code.</td><td data-l="What it breaks"><code>npm run check</code>: the boundary check&#x27;s entry-points rule refuses it from <code>test/api/</code>.</td></tr></tbody></table></div><p><b>Evidence.</b> <code>node scripts/check/check-boundaries.mjs</code> with the import: &quot;[entry-points] imports src/engine/path-boundary.ts; outside src/, import src/engine/index.ts&quot;, exit 1.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 130" role="img" aria-label="The pull request stands on main at 9b93ecd80, which merged into it with no merge conflict; nothing else has to merge first, and nothing waits on it." class="dg fit"><rect x="4" y="4" width="332" height="50" rx="8" class="bx good"/><text x="14" y="23" class="t b">main at 9b93ecd80</text><text x="14" y="38" class="t s">no merge conflict</text><line x1="170" y1="55" x2="170" y2="79" class="ar " marker-end="url(#ah)"/><text x="176" y="71" class="t s">based on</text><rect x="4" y="80" width="332" height="46" rx="8" class="bx acc"/><text x="170" y="100" text-anchor="middle" class="t b">Three test follow-ups</text><text x="170" y="116" text-anchor="middle" class="t s">one case in each file</text></svg></figure>
+<div><p>Nothing has to merge first: three commits and merges of <code>main</code>, the last 9b93ecd80, each with no merge conflict.</p>
+<p>It edits one case in each of <code>worktree-notices.test.ts</code>, <code>code-rule-bridge.test.ts</code> and <code>api-mcp-caller.test.ts</code>.</p>
+</div></div>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>macOS</b> never ran.</li>
+</ul>
+<details class="ev"><summary>Three limits that stay</summary>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>At <code>main</code> the old refused-watch variants also fail without the wait, so that change moves where the failure shows and adds no red run.</li>
+<li>On Linux <code>main</code>&#x27;s stand-in Git ended before the file did, at Git&#x27;s 10 s read limit: the close case&#x27;s gap shows inside the file, not after it.</li>
+<li>The runs without the wait, the failing copies and the limits at 1, 255 and 257 ran at each change&#x27;s own commit, not here; since then <code>main</code> changed only the close case&#x27;s file and source.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<p>We ask no ruling.</p>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description on GitHub is the record: &quot;How you tested it&quot; holds the runs here, at each change&#x27;s own commit and at <code>main</code>.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">Linux x64</td><td data-l="What ran">The three files whole once, each changed case alone 10 runs, and <code>tsc --noEmit</code>, at this head</td><td data-l="Result">382 passed and 5 skipped; 10 of 10 for each case; the type check passed.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The refused-watch case with the wait taken out of <code>#openSettled</code> at 61e5823c2, and <code>main</code> cc7237f19&#x27;s two variants the same way</td><td data-l="Result">The case failed 5 of 5 at its first check; each variant failed 5 of 5 at its last.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">A copy of <code>code-rule-bridge.test.ts</code> that fails the close case before its close, at <code>main</code> e3b4112ce and at 1a536bc96</td><td data-l="Result"><code>main</code>: 2 failed and the clean-up named the stand-in still running. 1a536bc96: 1 failed, 253 passed.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The limit case with the limit at 1, 255 and 257, and without the judge&#x27;s limit clause, at <code>main</code> 622a9b11a and at 16c8d911f</td><td data-l="Result"><code>main</code>: passed at 1 and 255, failed at 257 and without the clause. 16c8d911f: failed at all four.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">The three files whole once at this head, with the engine built for its native tree</td><td data-l="Result">386 passed and 1 skipped; each changed case passed.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">The limit case 20 times at 16c8d911f, with the engine built for that commit&#x27;s native tree</td><td data-l="Result">20 of 20 passed.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>Sources</summary><p>The branch at 8a20e72f8 and its diff against <code>main</code> 9b93ecd80, read on 20 November 2026; runs at 8a20e72f8, 61e5823c2, 1a536bc96, 16c8d911f and at <code>main</code> on Linux x64 machines and a Windows 11 virtual machine.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
