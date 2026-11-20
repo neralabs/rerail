@@ -981,6 +981,33 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     expect(response.failures).toContainEqual(expect.objectContaining({ clauseId: "catalog", code: "adapter-error", message: expect.stringContaining("not JSON representable") }));
   });
 
+  it("answers a walk by a worktree's last rules once they fail to load at an event that changed no rule, and records the failure once as that worktree's lane", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await mkdir(join(worktree, "api"), { recursive: true });
+    await writeFile(join(worktree, "api", "x.py"), "seed\n");
+    let broken = false;
+    failingCatalogOf(worktree, () => broken);
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    await auditor.openWorkspace("answered-fails-quiet");
+    const file = walked(session, worktree, "api/x.py");
+    expect(auditor.walkView().acceptsPath(file)).toBe(true);
+    // The session's first event reads every rule configuration; the next finds none changed, so only the walk's next
+    // question reads the worktree's rules again.
+    auditor.refreshCodeRules();
+
+    broken = true;
+    auditor.refreshCodeRules();
+    const view = auditor.walkView();
+    expect([view.acceptsPath(file), view.acceptsPath(file), view.acceptsPath(file)]).toEqual([true, true, true]);
+    const edits = [{ path: "api/x.py", language: "python" as const, generatedText: "seed\n" }];
+    const response = await auditor.auditGeneratedEdits("answered-fails-quiet", { revision: 1, checkpoints: ["edit"], edits });
+    await auditor.settleGeneratedEdits();
+    expect(response.failures.filter(failure => failure.clauseId === "catalog")).toEqual([
+      expect.objectContaining({ code: "adapter-error", message: expect.stringContaining("not JSON representable") }),
+    ]);
+  });
+
   it("refreshes every lane after a walk asked about a worktree whose rules could not be read at all", async () => {
     const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
     let broken = true;

@@ -136,9 +136,10 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * coverage reports its catalog after every event. Every other lane reads them at its next use (`#lane`), before it
    * answers or audits anything, so a tool call reads the rules of the lanes it uses, not of every lane open; a checkout
    * another lane answers for reads its catalog at its next question (`#laneWithRulesOf`). When a rule configuration or
-   * the session checkout's rules changed since the last refresh, every lane and every checkout answered for reads its
-   * rules now, so a rule the change leaves unrunnable in any of them is recorded as skipped at this event, not at that
-   * lane's next use: a cost paid once per change, not per event. A file written in another checkout's `.rerail/rules` changes
+   * the session checkout's rules changed since the last refresh, every lane reads its rules now, so a rule the change
+   * leaves unrunnable in a lane is recorded as skipped at this event, not at that lane's next use: a cost paid once per
+   * change, not per event. Each checkout answered for reads its catalog now too, so its next question answers by its
+   * current rules; only a lane records a rule as skipped. A file written in another checkout's `.rerail/rules` changes
    * neither, so its lane reads it at its next use (the walk of the other worktrees a boundary starts, a tool call there)
    * or when the session ends (`interrupt`): reading every lane's rules folder at each refresh would cost a few
    * milliseconds per refresh at a few hundred lanes on Windows.
@@ -284,15 +285,32 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * An open lane at the version of the rules `root`'s catalog holds; undefined for a checkout that may not run rules.
    * The catalog, which every session's lanes in `root` share, is read again at the first question after each
    * `refreshCodeRules`, as a lane's rules are (`#lane`, `#openLane`), so another session's earlier read never stands for
-   * a change since. Rules that cannot be read throw, as they did from a lane opened for the question, and leave `root`
-   * out of the checkouts answered for.
+   * a change since. Rules that fail to load again open `root`'s own lane (`#readAnsweredCatalog`), which answers from
+   * then on; a catalog that could never be made throws, as it did from a lane opened for the question.
    */
   #laneWithRulesOf(root: string): Lane | undefined {
-    if (this.#sessionId === undefined || this.#closing || !this.#mayRun(root)) return undefined;
+    const sessionId = this.#sessionId;
+    if (sessionId === undefined || this.#closing || !this.#mayRun(root)) return undefined;
     const catalog = this.#options.catalogs.catalog(root);
-    if (this.#answeredByOthers.get(root) !== this.#refreshes) catalog.refresh();
+    const own = this.#answeredByOthers.get(root) === this.#refreshes ? undefined : this.#readAnsweredCatalog(root, sessionId, catalog);
+    return own ?? this.#laneAt(catalog.status.version);
+  }
+
+  /**
+   * Reads `root`'s catalog again for the questions another lane answers. Rules that fail to load open `root`'s own lane
+   * over the rules the catalog held before, as a lane open there keeps answering by them, and return it: its read records
+   * the failure once in the session's responses, and later questions go to it instead of reading the rules again each.
+   */
+  #readAnsweredCatalog(root: string, sessionId: string, catalog: CheckoutCodeRuleCatalog): Lane | undefined {
+    try {
+      catalog.refresh();
+    } catch {
+      const lane = this.#addLane(root, sessionId, catalog);
+      this.#readRulesAgain(lane);
+      return lane;
+    }
     this.#answeredByOthers.set(root, this.#refreshes);
-    return this.#laneAt(catalog.status.version);
+    return undefined;
   }
 
   /** An open lane whose rules are at `version`. */
@@ -303,21 +321,15 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
 
   /**
    * Reads again now the rules of each checkout another lane answers for, as every lane reads its own once the rules
-   * changed (`refreshCodeRules`). Rules that fail to load open the checkout's own lane, whose read records the failure
-   * in the session's responses as a lane that answered for itself did; the other checkouts and every lane still read.
+   * changed (`refreshCodeRules`). Rules that fail to load open the checkout's own lane (`#readAnsweredCatalog`); the
+   * other checkouts and every lane still read.
    */
   #refreshAnsweredCatalogs(): void {
     const sessionId = this.#sessionId;
     if (sessionId === undefined) return;
     for (const root of [...this.#answeredByOthers.keys()]) {
       if (this.#lanes.has(root) || !this.#mayRun(root)) continue;
-      const catalog = this.#options.catalogs.catalog(root);
-      try {
-        catalog.refresh();
-        this.#answeredByOthers.set(root, this.#refreshes);
-      } catch {
-        this.#readRulesAgain(this.#addLane(root, sessionId, catalog));
-      }
+      this.#readAnsweredCatalog(root, sessionId, this.#options.catalogs.catalog(root));
     }
   }
 
