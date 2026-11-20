@@ -415,7 +415,10 @@ describe("Rerail daemon", () => {
     // `sessions_get` adds the transcript's gaps and declined steers, which the status line does not read.
     const { gaps, declined, ...head } = (await getJson<Record<string, unknown>>(daemon, "/api/sessions/large-run")).body;
     expect(compact.context?.session).toEqual(head);
-    expect(gaps).toEqual({ droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0 });
+    expect(gaps).toEqual({
+      droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0, discoveryGapsMore: false,
+      discoveryGapPlaces: [],
+    });
     expect(declined).toEqual({ violations: 0, notes: [] });
     expect(compact.context?.session?.audit).toEqual({
       workspaceRoot: root, scope: "repository", mode: "log", status: "failed", violationCount: 1, failureCount: 148,

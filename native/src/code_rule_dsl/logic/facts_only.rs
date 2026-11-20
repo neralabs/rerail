@@ -456,7 +456,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
 const NOT_YET_MAPS_PIN: usize = 23;
 
 fn src() -> PathBuf {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..").join("src")
 }
 
 /// The crate's source files, tests left out: a test may make what it likes.
