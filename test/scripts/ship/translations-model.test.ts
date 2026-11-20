@@ -254,11 +254,12 @@ describe("a pack's examples", () => {
     expect(skipped).toEqual(["b passes: no text"]);
   });
 
-  it("reads a translation's test calls, each named by its line, an input that is no JSON object skipped", () => {
+  it("reads a translation's test calls, each named by its line, in a fence of any length, an input that is no JSON object skipped", () => {
     const text = [
       ".test pushes",
       '    .tool_call "Bash" `{"command": "git commit -m \\"x; npm run fixtures:push\\""}`',
       '    .tool_call "Edit" `{"file_path": "notes.md", "new_string": "npm run fixtures:push"}`',
+      '    .tool_call "Bash" ``{"command": "echo `x`"}``',
       '    .tool_call "Bash" `["not", "an object"]`',
       "    .expect PACK_DATA_PUSHED",
       ".end",
@@ -267,8 +268,9 @@ describe("a pack's examples", () => {
       calls: [
         { id: "a a.rerail:2", tool: "Bash", input: { command: 'git commit -m "x; npm run fixtures:push"' } },
         { id: "a a.rerail:3", tool: "Edit", input: { file_path: "notes.md", new_string: "npm run fixtures:push" } },
+        { id: "a a.rerail:4", tool: "Bash", input: { command: "echo `x`" } },
       ],
-      skipped: ["a a.rerail:4: its input is not a JSON object"],
+      skipped: ["a a.rerail:5: its input is not a JSON object"],
     });
   });
 });
