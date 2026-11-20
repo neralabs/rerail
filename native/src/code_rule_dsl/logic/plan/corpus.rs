@@ -4601,6 +4601,7 @@ fn run_observed_within(
     let decodes = cross_run.outputs().any(|o| cross_run.text(o) == "finding");
     let mut stored: Vec<(String, Vec<String>)> = Vec::new();
     // The repository inputs (`facts::repository`) the program reads: made once, bound once beside every chunk's.
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the repository's relations".into()));
     let repository: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<(String, i64, i64, i64, i64)>)> = {
         let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).collect();
         let reads = |r: &str| read.contains(r) && head_inputs.iter().any(|i| i == r);
@@ -4615,6 +4616,7 @@ fn run_observed_within(
             })
             .collect()
     };
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the phases' exports".into()));
     // The phases' exports the program reads, as relations of atoms (`add_phased`).
     let repository = {
         let mut repository = repository;
@@ -4632,6 +4634,7 @@ fn run_observed_within(
         }
         repository
     };
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the base relations' columns".into()));
     for rel in split.base.iter().filter(|rel| !REFERENCE_RELATIONS.contains(&rel.as_str()) && !repository.iter().any(|(r, _, _)| r == *rel)) {
         let cols = projection.columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
         let decode: &[&str] = match rel.as_str() {
@@ -4663,6 +4666,7 @@ fn run_observed_within(
     // as they hand on a base relation a cross-file rule looks a node up in (`semijoin`, below): the rows of the nodes
     // the cross part holds, its exports' and its held base relations' (`held_nodes`). A candidate's node is one of
     // those (no rule makes a node), so its key is there, and each candidate is rechecked once, in order.
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the measures' keys".into()));
     let measure_keys: BTreeSet<String> = {
         use crate::code_rule_dsl::logic::plan::wellfounded::Order;
         let proofs = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::plan::wellfounded::Proofs>(&split.program).ok();
@@ -4696,6 +4700,7 @@ fn run_observed_within(
     }
     // Decide after projection planning: the split's base list can still contain unused inputs.
     // This changes the local frame's identity, not the cross-file program's semantic identity.
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the memo's program and digests".into()));
     let memo_tree_stats = !stored.is_empty() || cross_run.rules().flat_map(|r| r.body())
         .any(|l| matches!(l.view(), crate::code_rule_dsl::logic::program_image::Lit::Nearest { .. }));
     let memo_rules = memo_program;
@@ -4731,6 +4736,7 @@ fn run_observed_within(
     let memoised = memoised && references.is_none();
     // The base relations a chunk keeps only for the nodes its exports hold (`file_local::semijoin_bases`): read by
     // the cross part only as lookups of those nodes.
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the semijoin bases".into()));
     let semijoin: BTreeSet<String> = crate::code_rule_dsl::typing::file_local::semijoin_bases(&cross_run, &split.base)
         .unwrap_or_default()
         .into_iter()
