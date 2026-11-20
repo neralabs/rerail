@@ -53,6 +53,7 @@ if (process.env.GITHUB_STEP_SUMMARY !== undefined) {
   if (plan.unreadable.length > 0) lines.push("", `Could not be read from npm, so not promoted: ${plan.unreadable.map((pack) => pack.id).join(", ")}.`);
   appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n")}\n`);
 }
-const promotions = plan.promote.map(({ id: packId, version: packVersion, hold, release }) => ({ id: packId, version: packVersion, hold, release }));
+// A sweep's pack is checked for a hold again once approved: someone can put it back while the promotion waits.
+const promotions = plan.promote.map(({ id: packId, version: packVersion, hold }) => ({ id: packId, version: packVersion, hold, sweep: !request.named }));
 if (process.env.GITHUB_OUTPUT !== undefined) appendFileSync(process.env.GITHUB_OUTPUT, `promote=${promotions.length === 0 ? "" : JSON.stringify(promotions)}\n`);
 if (plan.unreadable.length > 0 || (request.named && plan.unreleased.length > 0)) process.exitCode = 1;

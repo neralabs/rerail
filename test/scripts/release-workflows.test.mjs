@@ -59,6 +59,12 @@ describe("release.yml", () => {
     expect(promoted.steps.find((step) => String(step.run ?? "").includes("github-release.mjs")).env.RELEASED).toContain(":latest");
   });
 
+  it("keys a publish retry's run by its version's tag, so its promotion waits in the tag's group, not main's, where put-backs run", () => {
+    const { concurrency } = workflow("release.yml");
+    expect(concurrency.group).toBe("release-${{ inputs.publish && format('refs/tags/v{0}', inputs.publish) || github.ref }}");
+    expect(concurrency["cancel-in-progress"]).toBe(false);
+  });
+
   it("moves latest only to a released plain version", () => {
     const steps = jobs.promote.steps;
     const guard = steps.findIndex((step) => String(step.run ?? "").includes("^[0-9]+\\.[0-9]+\\.[0-9]+$") && String(step.run ?? "").includes("git/ref/tags/v${VERSION}"));

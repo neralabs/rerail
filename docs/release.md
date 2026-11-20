@@ -110,7 +110,7 @@ tested. Approve core's first, then the packs':
    version and makes its GitHub Release the repository's latest.
 2. **Packs:** the **Release packs** run the release's publish started, job **Promote to latest**. Its first job lists
    the pack versions it will move: exactly those the release published, whatever `main` holds by then, less any pack
-   held where it was put back ([pack-format.md](pack-format.md#release)). It makes each one's GitHub Release a full
+   held where it was put back, which it reads again once approved ([pack-format.md](pack-format.md#release)). It makes each one's GitHub Release a full
    release.
 
 Each promotion is checked once approved, so a wait of days is safe:
@@ -228,7 +228,7 @@ updating past it.
 <summary>What a promotion or put-back also does</summary>
 
 It uses trusted publishing behind the same approval as a release, so no one needs an npm login to move core's
-`latest`. If `next` is older than that version, it raises `next` to it too. The run's **GitHub Release** job then makes
+`latest`. If `next` is older than that version, it raises `next` to it too. The run's **Promoted GitHub Release** job then makes
 that version's Release the repository's latest.
 
 </details>

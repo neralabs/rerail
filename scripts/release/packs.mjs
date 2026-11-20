@@ -387,47 +387,90 @@ export function planPromotions(packs, tags, distTagsOf, { named = false } = {}) 
   return plan;
 }
 
+/** Whether a sweep's pack is held where someone put it back (its `held` dist-tag is its `latest`), as `distTags` say. */
+const heldBySweep = ({ sweep = false }, distTags) => sweep && distTags[HOLD_TAG] !== undefined && distTags[HOLD_TAG] === distTags.latest;
+
+/** Throws when `latest` is at a newer version than `version`: an older release's promotion approved after a newer one's. */
+function assertNotSuperseded(version, latest) {
+  if (latest !== undefined && compareVersions(version, latest) < 0) throw new Error(`latest is ${latest}, newer, so this release is superseded`);
+}
+
 /**
- * Points `latest` at each `{ name, version }` in `promotions`, refusing a version this repository never released (no
- * tag); a `hold` also sets the `held` dist-tag there, and a `release` removes it. A promotion that is not a hold is
- * checked as it runs, after its approval, which can come days after its plan: it is refused when `latest` is at a
- * newer version already (an older release's promote approved after a newer one's), or when the core on `latest` can't
- * load the version (coreRangeProblem): promote core first. Then `next` is pointed at the version too unless it is
- * already at a newer one (raiseNext in dist-tags.mjs), so `next` never trails `latest`; a put-back to an older version
- * leaves it where it is. One failure does not stop the others. Returns each pack fully promoted, and each failure, so
- * the run reports them all and can be run again. `steps.promote(name, version)`, `steps.hold(name, version)`,
- * `steps.release(name)` and `steps.distTag(name, version, tag)` throw on failure; `steps.readNext(name)` and
- * `steps.readLatest(name)` resolve to that dist-tag or null, `steps.readCoreRange(name, version)` to the published
- * version's core range (undefined when it names none), and `steps.readCoreLatest()` to core's `latest`, read once and
- * only when a promotion needs it.
+ * Throws when the core on `latest` can't load `name`'s `version` (coreRangeProblem). The version's range is read first,
+ * then core's `latest` (`coreLatest()`, read once for the run), so a failed core read is always awaited at once and
+ * reported as this pack's failure.
+ */
+async function assertCoreLoads({ name, version }, steps, coreLatest) {
+  const range = await steps.readCoreRange(name, version);
+  const problem = coreRangeProblem(range, await coreLatest());
+  if (problem !== null) throw new Error(problem);
+}
+
+/**
+ * What approving `promotion` does, read as it runs, which can be days after its plan: `{ held }` for a sweep's pack held
+ * where someone put it back meanwhile, which it leaves alone, or `{ release }`, whether its `held` dist-tag is removed.
+ * A hold is never refused; any other promotion throws when superseded or when the core on `latest` can't load it.
+ */
+async function approvedPromotion(promotion, steps, coreLatest) {
+  if (promotion.hold === true) return { release: false };
+  const distTags = await steps.readDistTags(promotion.name);
+  if (heldBySweep(promotion, distTags)) return { held: distTags[HOLD_TAG] };
+  assertNotSuperseded(promotion.version, distTags.latest);
+  await assertCoreLoads(promotion, steps, coreLatest);
+  return { release: distTags[HOLD_TAG] !== undefined };
+}
+
+/** Moves `latest` (and `held`) for `promotion`, raises a trailing `next`, and logs what moved. */
+async function movePromotion({ name, version, hold = false }, release, steps) {
+  steps.promote(name, version);
+  if (hold) steps.hold(name, version);
+  if (release) steps.release(name);
+  const done = [hold ? `held there (${HOLD_TAG})` : "", release ? `${HOLD_TAG} released` : ""].filter((part) => part !== "");
+  steps.log(`promoted ${releaseTag(name, version)} to latest${done.map((part) => `, ${part}`).join("")}`);
+  steps.log(await raiseNext(name, version, steps));
+}
+
+/** `read()`, called once and its promise reused. */
+function once(read) {
+  let result;
+  return () => (result ??= read());
+}
+
+/**
+ * Points `latest` at each `{ name, version, hold, sweep }` in `promotions`, refusing a version this repository never
+ * released (no tag). A `hold` also sets the `held` dist-tag there. Anything else is checked as it runs, after its
+ * approval, which can come days after its plan (approvedPromotion): a sweep's pack someone put back and held meanwhile
+ * is left alone and listed as `held`; one whose `latest` is already newer, or that the core on `latest` can't load,
+ * fails; and a promotion past a hold removes the `held` dist-tag. Then `next` is pointed at the version too unless it
+ * is already at a newer one (raiseNext in dist-tags.mjs), so `next` never trails `latest`; a put-back to an older
+ * version leaves it where it is. One failure does not stop the others. Returns `{ promoted, held, failures }`, so the
+ * run reports them all and can be run again. `steps.promote(name, version)`, `steps.hold(name, version)`,
+ * `steps.release(name)` and `steps.distTag(name, version, tag)` throw on failure; `steps.readNext(name)` resolves to
+ * `next` or null, `steps.readDistTags(name)` to the pack's dist-tags (`{}` for none), `steps.readCoreRange(name,
+ * version)` to the published version's core range (undefined when it names none), and `steps.readCoreLatest()` to
+ * core's `latest`, read once and only when a promotion needs it.
  */
 export async function promotePacks(promotions, tags, steps) {
   const existing = new Set(tags);
-  const promoted = [];
-  const failures = [];
-  let coreLatest;
-  for (const { name, version, hold = false, release = false } of promotions) {
-    const tag = releaseTag(name, version);
+  const coreLatest = once(steps.readCoreLatest);
+  const result = { promoted: [], held: [], failures: [] };
+  for (const promotion of promotions) {
+    const { name, version } = promotion;
     try {
-      if (!existing.has(tag)) throw new Error("it was never released from this repository (no such git tag)");
-      if (!hold) {
-        const latest = await steps.readLatest(name);
-        if (latest !== null && compareVersions(version, latest) < 0) throw new Error(`latest is ${latest}, newer, so this release is superseded`);
-        coreLatest ??= steps.readCoreLatest();
-        const problem = coreRangeProblem(await steps.readCoreRange(name, version), await coreLatest);
-        if (problem !== null) throw new Error(problem);
+      if (!existing.has(releaseTag(name, version))) throw new Error("it was never released from this repository (no such git tag)");
+      const approved = await approvedPromotion(promotion, steps, coreLatest);
+      if (approved.held !== undefined) {
+        steps.log(`left ${releaseTag(name, version)} unpromoted: ${name} is held at ${approved.held}, put back on purpose`);
+        result.held.push({ name, version, at: approved.held });
+        continue;
       }
-      steps.promote(name, version);
-      if (hold) steps.hold(name, version);
-      if (release) steps.release(name);
-      steps.log(`promoted ${tag} to latest${hold ? `, held there (${HOLD_TAG})` : ""}${release ? `, ${HOLD_TAG} released` : ""}`);
-      steps.log(await raiseNext(name, version, steps));
-      promoted.push({ name, version });
+      await movePromotion(promotion, approved.release, steps);
+      result.promoted.push({ name, version });
     } catch (error) {
-      failures.push(`${tag}: ${error instanceof Error ? error.message : String(error)}`);
+      result.failures.push(`${releaseTag(name, version)}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return { promoted, failures };
+  return result;
 }
 
 /**

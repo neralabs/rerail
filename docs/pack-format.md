@@ -905,8 +905,8 @@ Packs publish one by one, and a failed publish leaves its tags and Releases stan
 tagged and on npm: every run's plan reads npm for each tagged version and publishes again one npm doesn't have, with a
 warning naming it. So re-running the run (all jobs or only the failed ones) or the next push to `main` finishes it,
 with no time limit, and a run whose plan can't read npm fails rather than call the version released. One the registry
-already has counts as published. A version older than the pack's `latest` (an old run re-run after a newer one
-shipped) is never published, since that would put `next` behind `latest`; the run fails naming it. The
+already has counts as published. A version older than the pack's `latest` or `next` (an old run re-run after a newer one
+shipped) is never published, since that would put `next` behind `latest` or move it back; the run fails naming it. The
 **Published dist-tags** job lists each published pack's dist-tags in the run summary, read with no npm login. It fails
 if a pack can't be read that way (it isn't public), if `next` is not the version just published, or if `next` is older
 than `latest`. It gates nothing. A pull request touching packs runs the gate and
@@ -923,7 +923,8 @@ release.
 
 - A release's own promotion (the `released` input, set by its **Start the promotion to latest** job) moves exactly the
   versions that release published, less any held. Its run is in a concurrency group of its own, so waiting for
-  approval holds back no later release or put-back.
+  approval holds back no later release or put-back. Whether a pack is held is read again once approved, so a pack put
+  back while it waited stays where it was put.
 - Run by hand with no inputs, the workflow points `latest` at every published pack's released version not yet
   `latest`, less any held.
 - Once approved, a promotion that is not a put-back is refused for a pack whose `latest` is already newer, so an older

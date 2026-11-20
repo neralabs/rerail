@@ -371,7 +371,7 @@ describe("promotePacks", () => {
     const calls = [];
     const nexts = { "@neralabs/rerail-pack-a": "0.1.2", "@neralabs/rerail-pack-c": "0.1.4", "@neralabs/rerail-pack-e": null };
     const { promoted, failures } = await promotePacks(
-      [promotion("a", "0.1.3"), promotion("b", "0.1.3"), promotion("c", "0.1.2", { hold: true }), promotion("e", "0.1.4", { release: true }), promotion("d", "9.9.9")],
+      [promotion("a", "0.1.3"), promotion("b", "0.1.3"), promotion("c", "0.1.2", { hold: true }), promotion("e", "0.1.4"), promotion("d", "9.9.9")],
       ["a@0.1.3", "b@0.1.3", "c@0.1.2", "e@0.1.4"].map((tag) => `@neralabs/rerail-pack-${tag}`),
       {
         promote: (name, version) => {
@@ -381,7 +381,8 @@ describe("promotePacks", () => {
         hold: (name, version) => void calls.push(`held ${name}@${version}`),
         release: (name) => void calls.push(`release ${name}`),
         readNext: async (name) => nexts[name],
-        readLatest: async () => null,
+        // e was put back to 0.1.2 and held there, then a newer latest passed it: promoting it releases the stale hold.
+        readDistTags: async (name) => (name.endsWith("-e") ? { latest: "0.1.3", held: "0.1.2" } : {}),
         readCoreRange: async () => ">=0.1.0-0",
         readCoreLatest: async () => "0.1.5",
         distTag: (name, version, tag) => void calls.push(`${tag} ${name}@${version}`),
@@ -410,8 +411,8 @@ describe("promotePacks, when the approval comes", () => {
   const promotion = (id, version, flags = {}) => ({ name: `@neralabs/rerail-pack-${id}`, version, ...flags });
   const tags = ["a@0.2.0", "b@0.2.0", "c@0.1.0", "d@0.2.0"].map((tag) => `@neralabs/rerail-pack-${tag}`);
 
-  /** Steps where `latest` and `ranges` map a pack id to its `latest` and to its version's core range. */
-  function steps(latest = {}, ranges = {}, coreLatest = "0.1.5") {
+  /** Steps where `distTags` and `ranges` map a pack id to its dist-tags and to its version's core range. */
+  function steps(distTags = {}, ranges = {}, coreLatest = "0.1.5") {
     const calls = [];
     const id = (name) => name.replace("@neralabs/rerail-pack-", "");
     return {
@@ -419,11 +420,11 @@ describe("promotePacks, when the approval comes", () => {
       steps: {
         promote: (name, version) => void calls.push(`latest ${name}@${version}`),
         hold: (name, version) => void calls.push(`held ${name}@${version}`),
-        release: () => {},
+        release: (name) => void calls.push(`release ${name}`),
         readNext: async () => null,
-        readLatest: async (name) => latest[id(name)] ?? null,
+        readDistTags: async (name) => distTags[id(name)] ?? {},
         readCoreRange: async (name) => (Object.hasOwn(ranges, id(name)) ? ranges[id(name)] : ">=0.1.0-0"),
-        readCoreLatest: async () => coreLatest,
+        readCoreLatest: typeof coreLatest === "function" ? coreLatest : async () => coreLatest,
         distTag: () => {},
         log: () => {},
       },
@@ -448,7 +449,7 @@ describe("promotePacks, when the approval comes", () => {
   });
 
   it("never moves latest back past a newer release, as approving an older release's promote last would", async () => {
-    const { calls, steps: run } = steps({ a: "0.2.1" });
+    const { calls, steps: run } = steps({ a: { latest: "0.2.1" } });
     const { promoted, failures } = await promotePacks([promotion("a", "0.2.0")], tags, run);
     expect(promoted).toEqual([]);
     expect(failures).toEqual(["@neralabs/rerail-pack-a@0.2.0: latest is 0.2.1, newer, so this release is superseded"]);
@@ -456,11 +457,68 @@ describe("promotePacks, when the approval comes", () => {
   });
 
   it("puts a pack back whatever latest and core hold, since that is what a hold is for", async () => {
-    const { calls, steps: run } = steps({ c: "0.2.0" }, { c: ">=9.0.0-0" });
+    const { calls, steps: run } = steps({ c: { latest: "0.2.0" } }, { c: ">=9.0.0-0" });
     const { promoted, failures } = await promotePacks([promotion("c", "0.1.0", { hold: true })], tags, run);
     expect(failures).toEqual([]);
     expect(promoted.map(({ version }) => version)).toEqual(["0.1.0"]);
     expect(calls).toEqual(["latest @neralabs/rerail-pack-c@0.1.0", "held @neralabs/rerail-pack-c@0.1.0"]);
+  });
+});
+
+describe("promotePacks, a hold set while a promotion waits", () => {
+  const promotion = (id, version, flags = {}) => ({ name: `@neralabs/rerail-pack-${id}`, version, ...flags });
+  const tags = ["a@0.1.3", "b@0.1.3"].map((tag) => `@neralabs/rerail-pack-${tag}`);
+  const recording = (distTags) => {
+    const calls = [];
+    return {
+      calls,
+      steps: {
+        promote: (name, version) => void calls.push(`latest ${name}@${version}`),
+        hold: () => {},
+        release: (name) => void calls.push(`release ${name}`),
+        readNext: async () => null,
+        readDistTags: async (name) => distTags[name.replace("@neralabs/rerail-pack-", "")] ?? {},
+        readCoreRange: async () => ">=0.1.0-0",
+        readCoreLatest: async () => "0.1.5",
+        distTag: () => {},
+        log: () => {},
+      },
+    };
+  };
+
+  it("leaves a pack someone put back and held while a sweep waited, and promotes the rest", async () => {
+    const { calls, steps } = recording({ a: { latest: "0.1.1", held: "0.1.1", next: "0.1.3" } });
+    const { promoted, held, failures } = await promotePacks([promotion("a", "0.1.3", { sweep: true }), promotion("b", "0.1.3", { sweep: true })], tags, steps);
+    expect(held).toEqual([{ name: "@neralabs/rerail-pack-a", version: "0.1.3", at: "0.1.1" }]);
+    expect(failures).toEqual([]);
+    expect(promoted.map(({ name }) => name)).toEqual(["@neralabs/rerail-pack-b"]);
+    expect(calls).toEqual(["latest @neralabs/rerail-pack-b@0.1.3"]);
+  });
+
+  it("releases a hold a newer latest already passed, as the sweep would have, read when approved", async () => {
+    const { calls, steps } = recording({ a: { latest: "0.1.2", held: "0.1.1" } });
+    const { promoted } = await promotePacks([promotion("a", "0.1.3", { sweep: true })], tags, steps);
+    expect(promoted.map(({ version }) => version)).toEqual(["0.1.3"]);
+    expect(calls).toEqual(["latest @neralabs/rerail-pack-a@0.1.3", "release @neralabs/rerail-pack-a"]);
+  });
+
+  it("promotes a pack named by hand past its hold, and releases the hold", async () => {
+    const { calls, steps } = recording({ a: { latest: "0.1.1", held: "0.1.1" } });
+    const { promoted } = await promotePacks([promotion("a", "0.1.3")], tags, steps);
+    expect(promoted.map(({ version }) => version)).toEqual(["0.1.3"]);
+    expect(calls).toEqual(["latest @neralabs/rerail-pack-a@0.1.3", "release @neralabs/rerail-pack-a"]);
+  });
+
+  it("reports a failed read of core's latest as each pack's failure, even while a core range is still being read", async () => {
+    const { steps } = recording({});
+    // The first pack's range answers after core's read has failed: a read started before it would reject unhandled.
+    steps.readCoreRange = (name) => new Promise((resolve) => setTimeout(() => resolve(">=0.1.0-0"), name.endsWith("-a") ? 20 : 0));
+    steps.readCoreLatest = async () => {
+      throw new Error("npm answered 503");
+    };
+    const { promoted, failures } = await promotePacks([promotion("a", "0.1.3"), promotion("b", "0.1.3")], tags, steps);
+    expect(promoted).toEqual([]);
+    expect(failures).toEqual(["@neralabs/rerail-pack-a@0.1.3: npm answered 503", "@neralabs/rerail-pack-b@0.1.3: npm answered 503"]);
   });
 });
 

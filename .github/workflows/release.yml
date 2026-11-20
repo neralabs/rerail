@@ -52,8 +52,10 @@ on:
 permissions:
   contents: read
 
+# One group per release: a tag's run, or a publish retry of that tag's version from main, which ends with the same
+# promotion waiting for its approval. Runs by hand with `latest` (put-backs) share main's group, which nothing waits in.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.publish && format('refs/tags/v{0}', inputs.publish) || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -320,8 +322,8 @@ jobs:
 
   # Promotes core to `latest`, or puts it back. A release run of a plain version ends here: once the release is tested
   # on `next`, a person approves the `release` environment and this job points `latest` at it (docs/release.md,
-  # "Promoting"). The run waits for that approval, up to GitHub's 30 days; its group is its tag's, so the wait holds
-  # back no other release. Run by hand with `latest`, it points `latest` at a released plain version, newer to promote
+  # "Promoting"). The run waits for that approval, up to GitHub's 30 days; its group is its tag's (a publish retry's
+  # too), so the wait holds back no other release and no put-back. Run by hand with `latest`, it points `latest` at a released plain version, newer to promote
   # it or older to put core back. It moves only a plain version this repository released (its tag exists) and npm has,
   # and `next` there too should `next` be older, so it never trails `latest`. A release run's promotion approved after a
   # newer version reached `latest` is refused, so it never moves `latest` back. Trusted publishing, as for publish:

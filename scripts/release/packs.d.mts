@@ -60,20 +60,20 @@ export function planPromotions(
 export function releasedRequest(packs: readonly ReleasePack[], released: string): { packs: PromotionCandidate[]; named: boolean };
 export function coreRangeProblem(range: string | undefined, coreLatest: string): string | null;
 export function promotePacks(
-  promotions: readonly { name: string; version: string; hold?: boolean; release?: boolean }[],
+  promotions: readonly { name: string; version: string; hold?: boolean; sweep?: boolean }[],
   tags: readonly string[],
   steps: {
     promote(name: string, version: string): void;
     hold(name: string, version: string): void;
     release(name: string): void;
     readNext(name: string): Promise<string | null>;
-    readLatest(name: string): Promise<string | null>;
+    readDistTags(name: string): Promise<Record<string, string>>;
     readCoreRange(name: string, version: string): Promise<string | undefined>;
     readCoreLatest(): Promise<string>;
     distTag(name: string, version: string, tag: string): void;
     log(line: string): void;
   },
-): Promise<{ promoted: { name: string; version: string }[]; failures: string[] }>;
+): Promise<{ promoted: { name: string; version: string }[]; held: { name: string; version: string; at: string }[]; failures: string[] }>;
 export function syncPackLockfile<Lock extends { packages: Record<string, { version?: string }> }>(lock: Lock, packs: readonly ReleasePack[]): Lock;
 export function gateFailures(report: GateReport, ids: readonly string[], checkCount: number): string[];
 export function packIds(args: readonly string[], packs?: readonly ReleasePack[]): string[];
