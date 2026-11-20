@@ -234,7 +234,9 @@ impl<'v> Body<'v> {
                     || rel.strip_prefix("rr_pair_cache_").and_then(|s| s.strip_suffix("_small")).is_some_and(|base|
                         super::super::front::shape_base(head).strip_prefix("rr_pair_cache_")
                             .and_then(|s| s.strip_suffix("_pairs")) == Some(base))
-                    || ["demand_", super::corpus::product_demand::PREFIX].iter().any(|&p| rel.strip_prefix(p) == Some(head))
+                    // A demanded relation's own demand (`demand_x`) is not one: its rule may be led by an atom a
+                    // constant restricts (Q59, `demand_bounds_lead`, which `plan_inner` keeps).
+                    || rel.strip_prefix(super::corpus::product_demand::PREFIX) == Some(head)
                     // Maintenance gives each witness rule a support head (wide__sup0). It needs the same
                     // driving request as wide itself. An explicitly driving delta still takes precedence.
                     || rel.strip_prefix(super::corpus::product_demand::DEFERRED_PAIRS)

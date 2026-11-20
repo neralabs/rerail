@@ -477,6 +477,9 @@ pub struct Stats {
     /// (derived rel, col) → its keys (decision 0477: the native relation's sketch's few values, or its filter), read
     /// where the engine keeps them: the keys two columns share price a probe's hits (`atom_rows`).
     pub keys: ColMap<super::bloom::Keys>,
+    /// (derived rel, col) → its counts for join sizes (decision 0477: the native relation's sketch's counters,
+    /// `join_size`): a probe by one atom's column is priced by the rows the two columns join (`atom_rows`).
+    pub counts: ColMap<std::sync::Arc<super::join_size::JoinCounts>>,
     /// rel → the engine's relation as its heavy values were made or last merged over (`InRel::mark`): its change
     /// since is merged into them, not counted again (O172).
     pub heavy_mark: table::RelMap<std::sync::Arc<super::native::component::RelMark>>,
@@ -618,6 +621,7 @@ impl Stats {
             dfreq: Default::default(),
             heavy: Default::default(),
             keys: Default::default(),
+            counts: Default::default(),
             heavy_mark: Default::default(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
@@ -834,6 +838,7 @@ impl Stats {
             dfreq: Default::default(),
             heavy: Default::default(),
             keys: Default::default(),
+            counts: Default::default(),
             heavy_mark: Default::default(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
@@ -1018,6 +1023,7 @@ impl Model {
             dfreq: Default::default(),
             heavy: Default::default(),
             keys: Default::default(),
+            counts: Default::default(),
             heavy_mark: Default::default(),
             obs: rules.iter().filter_map(|r| Some((*r, st.obs.get(r)?.clone()))).collect(),
             solving: BTreeSet::new(),
@@ -1048,6 +1054,7 @@ impl Model {
             stats.dfreq.share_from(&st.dfreq, r, w);
             stats.heavy.share_from(&st.heavy, r, w);
             stats.keys.share_from(&st.keys, r, w);
+            stats.counts.share_from(&st.counts, r, w);
         }
         stats.solve(BTreeSet::new());
         let analysis = std::sync::OnceLock::new();
@@ -1084,6 +1091,7 @@ impl Model {
             self.stats.fan.take_from(&mut fork.stats.fan, r, w);
             self.stats.dfreq.take_from(&mut fork.stats.dfreq, r, w);
             self.stats.keys.take_from(&mut fork.stats.keys, r, w);
+            self.stats.counts.take_from(&mut fork.stats.counts, r, w);
             if fork.stats.prior_later.contains(r) { self.stats.prior_later.insert(r.clone()); } else { self.stats.prior_later.remove(r); }
         }
         for rule in rules {
@@ -3705,6 +3713,9 @@ impl Model {
             let a = b.atom(i).expect("an atom");
             let (rel, args) = (b.rel(a), b.args(i));
             basis_hit.set(1.0);
+            // The columns whose postings count the bindings that miss (heavy values, a join's size): the share of
+            // the bindings that hit is not taken of them again.
+            let misses_counted = std::cell::Cell::new(0u64);
             // An atom that shares no bound variable, read after bindings exist, is a cross product: its fanout
             // observed in one wave or chunk is the relation's size then (none before a guest round makes the rows),
             // not a property of the join, so it is priced from the relation's own estimate (below). What was
@@ -3876,31 +3887,43 @@ impl Model {
                     // values, the binding is drawn value by value through those atoms, so a value common in all is
                     // drawn as often as it is. A fanout (sq / rows) is that for one atom placed; a three-way
                     // self-join on a skewed key wants the third moment (0.51 of its size from sq on the fixture).
+                    // The placed atoms' columns that hold `v`, the bindings drawn through them; `all`: each draws
+                    // `v` by its own rows. Its rows reach `v` weighted by their own counts only where no other of
+                    // its variables joins another atom: one reached through another column (`kind($m, return)`,
+                    // then `inf($f, $m)`) draws `v` by that join, a few returns a function whatever its size, which
+                    // only measured pairs see (0203 §3).
+                    let mut by_cols: Vec<(&str, usize)> = Vec::new();
+                    let mut all = true;
+                    for (d, vars, _) in &binding_domains {
+                        if *d == i || !vars.is_subset(bound) { continue; }
+                        let dr = b.rel(b.atom(*d).expect("an atom"));
+                        let joined_else = b.args(*d).iter().any(|t| matches!(t, TermRef::Var(x) if *x != v
+                            && binding_domains.iter().any(|(e, evars, _)| *e != *d && evars.contains(*x))));
+                        if joined_else { all = false; }
+                        by_cols.extend(b.args(*d).iter().enumerate().filter(|(_, t)| matches!(t, TermRef::Var(x) if *x == v)).map(|(dc, _)| (dr, dc)));
+                    }
                     // Each column priced with its kept keys (decision 0477), read where the engine keeps them.
                     let priced = |r: &str, c: usize| self.heavy_of(r, c).map(|h| table::PricedCol::new(h, self.stats.keys.at(r, c)));
-                    if let Some(here) = priced(rel, c) {
-                        let mut by = Vec::new();
-                        let mut all = true;
-                        for (d, vars, _) in &binding_domains {
-                            if *d == i || !vars.is_subset(bound) { continue; }
-                            let dr = b.rel(b.atom(*d).expect("an atom"));
-                            // Its rows reach `v` weighted by their own counts only where no other of its variables
-                            // joins another atom: one reached through another column (`kind($m, return)`, then
-                            // `inf($f, $m)`) draws `v` by that join, a few returns a function whatever its size,
-                            // which only measured pairs see (0203 §3).
-                            let joined_else = b.args(*d).iter().any(|t| matches!(t, TermRef::Var(x) if *x != v
-                                && binding_domains.iter().any(|(e, evars, _)| *e != *d && evars.contains(*x))));
-                            if joined_else { all = false; }
-                            for (dc, t) in b.args(*d).iter().enumerate() {
-                                if matches!(t, TermRef::Var(x) if *x == v) {
-                                    match priced(dr, dc) { Some(h) => by.push(h), None => all = false }
-                                }
-                            }
-                        }
-                        if all && !by.is_empty() && let Some(f) = table::heavy_fan(here, &by) {
-                            basis.set("heavy values");
-                            return f.max(0.01);
-                        }
+                    if all && !by_cols.is_empty() && let Some(here) = priced(rel, c)
+                        && let Some(by) = by_cols.iter().map(|&(dr, dc)| priced(dr, dc)).collect::<Option<Vec<_>>>()
+                        && let Some(f) = table::heavy_fan(here, &by)
+                    {
+                        basis.set("heavy values");
+                        misses_counted.set(misses_counted.get() | 1 << c.min(63));
+                        return f.max(0.01);
+                    }
+                    // Decision 0477: drawn through one atom's column, the rows the two columns join (their sketches'
+                    // counters, `join_size`) over that column's rows are this column's rows a binding, the bindings
+                    // that miss counted in. Only where the counters tell the join's size.
+                    if all && let [(dr, dc)] = by_cols[..]
+                        && let (Some(mine), Some(theirs)) = (self.stats.counts.at(rel, c), self.stats.counts.at(dr, dc))
+                        && theirs.rows >= 1.0
+                        && let joined = mine.join(theirs)
+                        && joined.tells()
+                    {
+                        basis.set("join sketch");
+                        misses_counted.set(misses_counted.get() | 1 << c.min(63));
+                        return (joined.rows / theirs.rows).max(0.01);
                     }
                 }
                 t.col(c, b, i, self).fan
@@ -3949,6 +3972,7 @@ impl Model {
                 let mut hit = 1.0f64;
                 for &c in &cols {
                     let TermRef::Var(v) = args[c] else { continue };
+                    if c == first && misses_counted.get() >> c.min(63) & 1 != 0 { continue }
                     let Some(here) = t.col(c, b, i, self).ndv else { continue };
                     let (from, at) = binding_domains
                         .iter()
@@ -6260,6 +6284,7 @@ impl<'a> Run<'a, '_> {
                 sq: stats.iter().map(|s| s.3).collect(),
                 freq: Vec::new(),
                 keys: Vec::new(),
+                counts: Vec::new(),
             });
             super::profile::decision("native fact result", || format!("{rel}: retained rows={}", source.len()));
             return Ok(source.len());
@@ -6310,6 +6335,7 @@ impl<'a> Run<'a, '_> {
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
             keys: Vec::new(),
+            counts: Vec::new(),
         });
         Ok(Some(source.len()))
     }
@@ -6371,6 +6397,7 @@ impl<'a> Run<'a, '_> {
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
             keys: Vec::new(),
+            counts: Vec::new(),
         });
         Ok(Some(source.len()))
     }
@@ -6430,6 +6457,7 @@ impl<'a> Run<'a, '_> {
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
             keys: Vec::new(),
+            counts: Vec::new(),
         });
         Ok(Some(source.len()))
     }
@@ -6456,7 +6484,7 @@ impl<'a> Run<'a, '_> {
             }
         }
         super::native::component::hold_view_in_place(self.db, rel, Arc::clone(src), cols.to_vec(), types);
-        Some(LiveRel { n, delta: n, ndv, sq, freq, keys: Vec::new() })
+        Some(LiveRel { n, delta: n, ndv, sq, freq, keys: Vec::new(), counts: Vec::new() })
     }
 
     /// The reach index (decision 0119, `front::Native::Reach` and `ReachThrough`) over relations the engine holds:
@@ -6510,6 +6538,7 @@ impl<'a> Run<'a, '_> {
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
             keys: Vec::new(),
+            counts: Vec::new(),
         });
         super::profile::note(format!("{rel} index bytes"), || bytes.to_string());
         Ok(Some((n, why)))
@@ -6667,6 +6696,7 @@ impl<'a> Run<'a, '_> {
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
             keys: Vec::new(),
+            counts: Vec::new(),
         });
         Ok(Some(source.len()))
     }
@@ -6801,6 +6831,7 @@ impl<'a> Run<'a, '_> {
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
             keys: Vec::new(),
+            counts: Vec::new(),
         });
         Ok(Some(made.len()))
     }
@@ -7080,11 +7111,13 @@ pub struct LiveRel {
     pub freq: Vec<(usize, HashMap<Constant, i64>)>,
     /// Each column's keys, where the native engine keeps them (decision 0477), else none.
     pub keys: Vec<super::bloom::Keys>,
+    /// Each column's counts for join sizes, where the native engine keeps them (`join_size`), else none.
+    pub counts: Vec<std::sync::Arc<super::join_size::JoinCounts>>,
 }
 impl LiveRel {
     /// The native engine's (`setfix::live`): its values are integers.
     fn of_native(l: super::native::component::Live) -> LiveRel {
-        LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect(), keys: l.keys }
+        LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect(), keys: l.keys, counts: l.counts }
     }
     /// From T's extension's text line (`set_fixpoint_stats`); `text(c)`: column `c` holds symbols as text.
     fn parse(line: &str, text: &dyn Fn(usize) -> bool) -> LiveRel {
@@ -7109,7 +7142,7 @@ impl LiveRel {
                 Some((c, freq))
             })
             .collect();
-        LiveRel { n, delta: n, ndv: rest[..k].to_vec(), sq: rest[k..].to_vec(), freq, keys: Vec::new() }
+        LiveRel { n, delta: n, ndv: rest[..k].to_vec(), sq: rest[k..].to_vec(), freq, keys: Vec::new(), counts: Vec::new() }
     }
 }
 
@@ -7165,6 +7198,9 @@ pub fn live_stats(model: &mut Model, r: &str, live: LiveRel) -> Vec<usize> {
     // Its keys change with its rows, as its distinct values do: a change of them alone replans nothing.
     for (c, keys) in live.keys.into_iter().enumerate().filter(|_| super::bloom::kept_keys_read()) {
         model.stats.keys.insert((r.to_owned(), c), keys);
+    }
+    for (c, counts) in live.counts.into_iter().enumerate().filter(|_| super::bloom::kept_keys_read()) {
+        model.stats.counts.insert((r.to_owned(), c), counts);
     }
     for (c, (&ndv, &sq)) in live.ndv.iter().zip(&live.sq).enumerate() {
         let key = (r.to_owned(), c);

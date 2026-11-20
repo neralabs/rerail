@@ -90,8 +90,8 @@ impl Sketch {
         if rho > self.registers[r] {
             self.registers[r] = rho;
         }
-        let c = ((h >> 8) & 0xff) as usize;
-        self.counters[c] += if h & 1 == 0 { 1 } else { -1 };
+        let (c, sign) = crate::code_rule_dsl::logic::join_size::bucket(h);
+        self.counters[c] += sign;
         self.rows += 1;
         if let Some(keys) = &mut self.keys {
             if !self.own_keys {
@@ -221,6 +221,11 @@ impl Sketch {
             (None, Some(k)) => Keys::Filter(Arc::new(Reading::new(Arc::clone(k), self.sample.hashes()))),
             (None, None) => unreachable!("a sketch past its few values keeps their filter"),
         }
+    }
+
+    /// Its counts for the planner's join sizes (`logic::join_size`): its counters, and its few values' counts.
+    pub(super) fn counts(&self) -> crate::code_rule_dsl::logic::join_size::JoinCounts {
+        crate::code_rule_dsl::logic::join_size::JoinCounts::new(&self.counters, self.small.as_deref(), self.rows, self.sq())
     }
 
     /// Its keys' filter, where it keeps one (past its few values); else its few values are its keys.

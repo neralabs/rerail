@@ -3172,8 +3172,9 @@ pub fn keep_trial_rows(conn: impl Scoped, name: &str) -> Result<u64> {
 
 /// A relation's live statistics (`stats`): rows, then per column its distinct values and sum of squared postings,
 /// and each value's postings when a bounded exact histogram is available.
-/// `keys`: each column's keys (`Sketch::keys`, decision 0477), read where they are kept.
-pub struct Live { pub n: i64, pub delta: i64, pub ndv: Vec<i64>, pub sq: Vec<i64>, pub freq: Vec<(usize, Vec<(i64, i64)>)>, pub keys: Vec<crate::code_rule_dsl::logic::bloom::Keys> }
+/// `keys`: each column's keys (`Sketch::keys`, decision 0477), read where they are kept; `counts`, its counts for
+/// join sizes (`Sketch::counts`).
+pub struct Live { pub n: i64, pub delta: i64, pub ndv: Vec<i64>, pub sq: Vec<i64>, pub freq: Vec<(usize, Vec<(i64, i64)>)>, pub keys: Vec<crate::code_rule_dsl::logic::bloom::Keys>, pub counts: Vec<std::sync::Arc<crate::code_rule_dsl::logic::join_size::JoinCounts>> }
 pub fn live(conn: impl Scoped, name: &str) -> Result<Vec<Live>> {
     let conn = conn.db();
     let comp = component(conn, name)?;
@@ -3214,6 +3215,7 @@ fn live_from(n: usize, delta: usize, cols: &[Sketch]) -> Live {
         sq: cols.iter().map(|sk| sk.sq() as i64).collect(),
         freq,
         keys: cols.iter().map(Sketch::keys).collect(),
+        counts: cols.iter().map(|s| std::sync::Arc::new(s.counts())).collect(),
     }
 }
 

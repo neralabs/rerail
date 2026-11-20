@@ -2632,7 +2632,7 @@ fn a_probe_on_several_columns_reads_a_combinations_rows() {
 fn live_statistics_invalidate_only_changed_distribution_slots() {
     let p=parse(".decl a(x:number,y:number)\n").unwrap();
     let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Default::default()};
-    let sample=|key| LiveRel {n:10,delta:2,ndv:vec![10,1],sq:vec![10,100],freq:vec![(1,HashMap::from([(Constant::Int(key),10)]))],keys:Vec::new()};
+    let sample=|key| LiveRel {n:10,delta:2,ndv:vec![10,1],sq:vec![10,100],freq:vec![(1,HashMap::from([(Constant::Int(key),10)]))],keys:Vec::new(),counts:Vec::new()};
     assert_eq!(live_stats(&mut model,"a",sample(1)),vec![0,1,2]);
     assert!(live_stats(&mut model,"a",sample(1)).is_empty());
     assert_eq!(live_stats(&mut model,"a",sample(2)),vec![2],"equal counts and fanouts with new keys must invalidate");
@@ -3435,4 +3435,38 @@ fn kept_keys_price_a_probe_by_the_keys_two_columns_share() {
     let apart = work(Some((Keys::of(0..1_000), Keys::of(5_000..6_000))));
     assert!((same / containment - 1.0).abs() < 0.1, "the same keys price as containment does: {same} against {containment}");
     assert!(apart < 0.5 * containment, "keys two columns do not share are probes that miss: {apart} against {containment}");
+}
+
+/// Decision 0477: a join of two columns skewed on the same few keys, priced by their sketches' counters (`join_size`):
+/// the rows the two columns join, whichever is probed. Their fanouts and distinct values price a probe of `b` by `a`'s
+/// rows at a tenth of what it makes (the keys both hold heavy are 1% of `a`'s distinct values, and most of its rows).
+#[test]
+fn join_counts_price_a_join_of_two_skewed_columns_by_its_rows() {
+    use crate::code_rule_dsl::logic::join_size::JoinCounts;
+    let p = parse(".decl a(x:number,y:number)\n.decl b(y:number,z:number)\n.decl out(x:number,z:number)\nout(x,z) :- a(x,y), b(y,z).\n.output out\n").unwrap();
+    let derived: HashSet<String> = ["a", "b", "out"].into_iter().map(str::to_owned).collect();
+    // `a.y`: 1,000 rows of each of 5 keys and 5,000 of one each; `b.y`: 100 of each of the 5, and 500 others.
+    let ay: Vec<i64> = (0..5_000).map(|i| i % 5).chain(1_000..6_000).collect();
+    let by: Vec<i64> = (0..500).map(|i| i % 5).chain(10_000..10_500).collect();
+    let joined = 5.0 * 1_000.0 * 100.0;
+    let last = |counts: bool| {
+        let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: derived.clone().into()};
+        for (rel, ys, y) in [("a", &ay, 1), ("b", &by, 0)] {
+            let c = JoinCounts::of(ys.iter().copied());
+            model.stats.card.insert(rel, c.rows);
+            model.ndv.insert((rel, y), 5.0 + (ys.len() / 2) as f64);
+            model.stats.fan.insert((rel, y), c.f2 / c.rows);
+            model.ndv.insert((rel, 1 - y), c.rows);
+            model.stats.fan.insert((rel, 1 - y), 1.0);
+            if counts {
+                model.stats.counts.insert((rel, y), std::sync::Arc::new(c));
+            }
+        }
+        let pf = body::Placed::of_program(&p).unwrap();
+        let v = body::alone(&p.rules[0]).unwrap();
+        *model.plan_rule_step_rows(pf.fields().unwrap(), &body::nth(&v, 0), None).unwrap().1.last().unwrap()
+    };
+    let (with, without) = (last(true), last(false));
+    assert!((with / joined - 1.0).abs() < 0.25, "priced by the counters: {with} rows against {joined}");
+    eprintln!("a join of skewed columns: {with} rows priced by the counters, {without} without, {joined} made");
 }

@@ -178,7 +178,7 @@ spread under load.
   a key it refuses has no pairs. The fused small path (a sort of at most 2,048 rows, searched in a few cached steps)
   is not screened.
 - **Its hash is the device's**, not the host format's (`SCREEN_HASH`: 32-bit multiplies, murmur3's finish over the
-  key's halves). The filter never leaves the device, and the host format's two 64-bit multiplies are emulated on
+  key's halves). *Superseded below (one filter): that hash is now the only one, the host's too.* The filter never leaves the device, and the host format's two 64-bit multiplies are emulated on
   Apple GPUs: with them the probe paid more than the search it spared (200,000 right rows: 1,047 against 872 us).
   The statistics' filter (`col_bloom`) keeps the host's format: it is compared with the host's.
 - Measured (`a_screened_probe_finds_the_hosts_pairs`, 2,000,000 left keys, 1% present, the misses between the right's
@@ -193,16 +193,74 @@ spread under load.
   Misses past the right's greatest key (the first version of the test) all search one path, in cache: there the
   filter only added its hash. A 1 MiB cap at 4 M rows (2 bits a key) was 4% slower; hence 4 MiB and the bound.
 
+## One filter, one hash, read where it lies by the CPU and the GPU (2026-11-20)
+
+The CPU and the GPU had two formats and two hashes, and the device's filters were made or copied apart from the
+host's. Now there is one of each, in one memory:
+
+- **The format is a block structure** (`rerail_blocks::bloom::Bloom`: a 64-byte descriptor and its words, a power of
+  two, as two chunks of the block). A column's kept filter (`logic::bloom::Kept`) lies in a block of the run's
+  relations (`facts::rows::FactsBloom`); the device binds that block and reads the filter at its offset. Nothing is
+  uploaded or copied (0353).
+- **The hash, the mask and the test are reads written once in CLIF** (`bloom_hash`, `bloom_mask`, `bloom_may`, 0310),
+  generated as the host's Rust and the kernels' MSL. The hash is 32-bit multiplies (the device's native ones): murmur3's
+  finish over the key's folded halves, and a second multiply for the word. The sketches (the HLL's registers, the
+  counters, the sample) hash by it too, so a filter, a sketch and a kernel see a key alike. `SCREEN_HASH` and the
+  host-format hash the device emulated are gone.
+- **Every reader tests the same words.** The CPU screen and the planner read `Kept`; a device sort's own screen is a
+  `Bloom` made from its runs; a staged join stage (join, semi, anti, aggregate, witness) of a relation whose sketches
+  count every row binds that relation's kept filter (`screen_of`, the CPU screen's rule), and `candidates` tests the key
+  with `clif_bloom_may` before it reads the index group; the fused probe dispatch (`probe_all`) tests any screen its
+  sort has, its own or a kept one bound in place (`Keyed::screen_by`).
+- **The CPU screen is batched** (`Screening::select`): before a scan's walk, its candidates are screened 64 keys at
+  a time (`Bloom::may_hold_each`: the block's hashes in one loop with no loads, then one test each), with the
+  per-morsel back-off; the walk reads only the rows that pass.
+- **No statistics filter is made.** The heavy values (`HeavyCol`) keep none: `heavy_fan` prices each column with its
+  kept keys (`PricedCol`, `bloom::Keys` read from the statistics), and the device's statistics batch makes none
+  (`col_bloom` is gone). `bloom::Filter` is gone: a screen's own filter of a probe side too small to keep one is a
+  `Kept` as well.
+
+Tests: the device's screen is word for word the host's filter; probes alone and fused give the host join's pairs
+with a sort's own screen and with a host filter bound in its block; screened staged join, anti-join and semi-join
+stages make the unscreened rows, and an empty filter refuses every binding; a block's test is each key's; the
+selection pass keeps exactly the rows the screen passes.
+
+corpus0 x B-now, one thread, profiling build, the M3 at load 40: findings 463 `d067ec2ebf6f`, 1,006.0 and 986.1 G
+instructions (as before), the screens 3.0 M rows tested and 2.8 M (93%) refused.
+
+## Join sizes from the counters (2026-11-20)
+
+Every column's sketch keeps 256 signed counters (0096): a key's counter is `(h >> 8) & 255` of the one hash, its sign
+`h & 1`. Since the hash is shared, two columns' counters estimate the rows of their equi-join (AMS, the "tug of war"):
+
+```text
+J = sum over keys v of a_v b_v  ~  sum over b of A[b] B[b]         (unbiased)
+Var <= (F2(A) F2(B) + J^2) / 256
+```
+
+`logic::join_size::JoinCounts` holds a column's counters, rows, F2, and its values' exact counts while it has at most
+64: two such give J exactly, one is point-queried on the other's counters. The live statistics carry them
+(`Live::counts`, `Stats::counts`), and a probe drawn through one atom's column is priced at `J / rows` of that atom a
+binding (basis `join sketch`), where the estimate tells (its error under half of it). That price counts the bindings
+that miss, as the heavy values' (`heavy_fan`) does, so neither takes the containment's share of hits again: before,
+a probe priced by heavy values took it twice.
+
+They cost nothing extra: the counters were kept already, and a reading copies 1 KiB a column of a relation whose rows
+moved. Two columns skewed on the same 5 keys (`join_counts_price_a_join_of_two_skewed_columns_by_its_rows`): 499,520
+rows priced, 500,000 made; by fanouts and distinct values, 50,954. With skew in one column only, 256 counters do not
+tell (the error passes half of J), and the price falls back as before.
+
+Also fixed on the way: the Release-debugging port had added `demand_` to `Body::demand_first`, forcing every demanded
+rule onto its demand and undoing Q59's narrowing (an atom a constant restricts may lead; its test failed).
+
 ## Open
 
-- **A morsel screen on the CPU**: hash a block of keys and test them at once. The CPU screen costs a hash a row only
-  while it pays (the back-off); a block's hashes would cut that hash's latency where it does.
-- **The device's fused small path and its staged stages** (`metal_join`) are not screened.
+- **The device's fused small sorts (at most 2,048 rows) make no screen of their own**: their probes test one where
+  a kept filter is bound, else search. Below 4,096 rows a screen did not pay for itself (measured before the shared
+  hash).
 - **Walks driven by a key** (the first step a probe): a screen there belongs to the caller's loop, the scan that
   drives the walks.
-- **The heavy values' filters (`HeavyCol::keys`, 2,048 words) are made apart from the columns' kept ones.** A derived
-  relation's column has one kept now: the heavy values could take it, and compare by `Keys::shared` at any sizes.
-- **The AMS counters (0096)** share one hash across columns, so two columns' counters estimate a join's size
-  (Σₖ L[k]·R[k]). They are not used yet.
+- **Join sizes through several atoms**: the counters price a probe drawn through one atom's column; a binding drawn
+  through several (a three-way join) needs the counters of their joined rows, which nothing keeps.
 - **The deferred step decodes the tree** for every program it runs on (Q186).
 - Whole-pack timing and findings on `scripts/ship/corpora.json` were never compared in Release-debugging.
