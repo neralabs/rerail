@@ -4,6 +4,20 @@ Every notable change to this rule pack, latest first. Each release says how many
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
 
+## 0.1.10 (2026-11-20)
+
+121 rules, 36 of them on by default.
+
+### Changed
+
+- This version needs Rerail 0.2.0 or newer, where rules that test punctuation such as `,`, `=>` or `[` run again; 0.2.0 skips the previous version's. They report what they did, except that `eslint-no-with` now spans the whole `with` statement, not only its keyword.
+
+### Fixed
+
+- `eslint-curly` with the `multi` or `multi-or-nest` option no longer reports or removes the braces around a lone `using` or `await using` declaration, such as `if (foo) { using bar = f(); }`: the declaration cannot stand without them.
+- `eslint-no-case-declarations` reports a `using` or `await using` declaration directly in a `case`, in JavaScript and TypeScript files, as ESLint does.
+- `eslint-one-var` checks `using` and `await using` declarations in TypeScript files too, as it does in JavaScript files.
+
 ## 0.1.9 (2026-11-17)
 
 121 rules, 36 of them on by default.

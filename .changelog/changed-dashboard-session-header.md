@@ -1,1 +1,0 @@
-History by session's header is three quiet lines: the session's title with its Resume or Find button; when it started and ended, or that it is still open; and its counts of events, violations, steered and declined. The session id moves to the resume box: in its command, or its Copy id button.

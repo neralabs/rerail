@@ -1,1 +1,0 @@
-The dashboard describes rule packs the way set-up does: ready-made rules, mostly the same ones linters use, suggested for what a repo is built with. No page, and no set-up line, says a pack "fits" or is "recommended" any more, and Settings says switching a repo off stops Rerail there.

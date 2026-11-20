@@ -1,1 +1,0 @@
-The line you see when Rerail steers your coding agent (`◆ Rerail · <rule>  steered  ·  why?`) names the rule by its title, the one you gave a rule of yours or its rule pack lists, rather than by its id. The coding agent's own message still names the id.
