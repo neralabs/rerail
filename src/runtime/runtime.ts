@@ -166,6 +166,37 @@ async function settledWithin(work: Promise<void>, ms: number): Promise<boolean> 
   }
 }
 
+/**
+ * The edit checks a boundary stopped waiting for, until they drain, by what it waited for: `all`, every edit (a turn
+ * end, a yield), or `steering`, the edits that may steer (a tool result).
+ */
+type OverdueEditChecks = { all?: Promise<void>; steering?: Promise<void> };
+
+/**
+ * Whether a wait for the edit checks `only` names would sit behind checks an earlier boundary stopped waiting for. A
+ * wait for every edit waits for those too. A `steering` wait does only behind an overdue `steering` wait: the evaluator
+ * checks an edit that may steer before a walk's `log` edits queued ahead of it, or with them in one engine call, so a
+ * `log` backlog an overdue wait for every edit stopped on holds it back no more than it held the earlier one. Where a
+ * `steering` wait waits for those edits too, an overdue wait for every edit holds it back as well (`overdueKinds`).
+ */
+function waitsBehind(overdue: OverdueEditChecks, only: "steering" | undefined): boolean {
+  return overdue.steering !== undefined || (only === undefined && overdue.all !== undefined);
+}
+
+/**
+ * The kinds of wait an overdue wait for `only` holds back: its own, and a `steering` one behind a wait for every edit
+ * where a `steering` wait waits for a walk's `log` edits too (`CodeRuleBridge.steeringWaitsForLog`).
+ */
+function overdueKinds(only: "steering" | undefined, steeringWaitsForLog: boolean): ReadonlyArray<keyof OverdueEditChecks> {
+  if (only !== undefined) return [only];
+  return steeringWaitsForLog ? ["all", "steering"] : ["all"];
+}
+
+/** Whether a boundary stopped waiting for edit checks that still drain. */
+function anyOverdue(overdue: OverdueEditChecks): boolean {
+  return overdue.all !== undefined || overdue.steering !== undefined;
+}
+
 /** The strategy a session steers with: the saved one only while the experimental switch is on, else `message`. */
 function effectiveSteerStrategy(settings: Pick<CheckoutAuditSettings, "steerStrategy">): SteerStrategy {
   return steerStrategiesEnabled() ? settings.steerStrategy : "message";
@@ -599,6 +630,14 @@ interface MissedFinding {
  */
 type Kept<T extends PendingSteer | MissedFinding> = T & { digests: FileDigests };
 
+/**
+ * The steer an answer's delivery came from, and its session: one of the session's pending steers, or one the session
+ * owed as it opened (`owed`), which goes back there if no client heard the answer (`returnUndelivered`).
+ */
+type HandedOut =
+  | { state: RuntimeSessionState; pending: PendingSteer; owed?: undefined }
+  | { state: RuntimeSessionState; pending: Kept<PendingSteer>; owed: true };
+
 /** What a closing session owes its agent: what it took back from its ledger (`kept`), and what this opening found. */
 interface Owing {
   kept: { steers: Kept<PendingSteer>[]; findings: Kept<MissedFinding>[] };
@@ -692,8 +731,8 @@ interface RuntimeSessionState {
    * (a permission prompt, a long command). The turn's end settles them all: a call the user refused gets no result.
    */
   callsAwaitingResult: Set<string>;
-  /** The edit checks a boundary stopped waiting for, until they drain; no later boundary waits for them again. */
-  overdueEditChecks: Promise<void> | undefined;
+  /** The edit checks a boundary stopped waiting for, until they drain, by what it waited for (`OverdueEditChecks`). */
+  overdueEditChecks: OverdueEditChecks;
   /**
    * The boundaries of this session waiting for its edit checks right now: a generated-edit steer that arrives while
    * one waits rides that boundary's answer, and one that arrives while none does is held for the yield digest.
@@ -1089,7 +1128,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #audits: SqliteAuditStore;
   readonly #steersInFlight = new Set<Promise<AdapterDelivery | undefined>>();
   /** The steer each answer's delivery came from, and its session, until the answer reaches its asker or comes back (`returnUndelivered`). */
-  readonly #handedOut = new WeakMap<AdapterDelivery, { state: RuntimeSessionState; pending: PendingSteer }>();
+  readonly #handedOut = new WeakMap<AdapterDelivery, HandedOut>();
   /** Evaluator opens still running, each with its own release: disposal waits for them before the stores close under them. */
   readonly #evaluatorOpens = new Set<Promise<CodeRuleBridge | undefined>>();
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
@@ -1358,7 +1397,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         await this.#waitingForEditChecks(state, false, async () => {
           await this.#finishCall(state, bridge, event);
           await this.#append(state, { type: "policy-result", toolCallId: call!.id });
-          await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[state.descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS);
+          // The call's own edit may steer; a walk's `log` edits queued around it steer no one, so the result waits for none.
+          await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[state.descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS, "steering");
         });
       } finally {
         if (window !== undefined) {
@@ -1405,18 +1445,19 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * A boundary's wait for the session's edit checks, capped at `capMs`. Checks run in order, so while a backlog an
-   * earlier boundary stopped waiting for is still draining, a later edit's check is behind it too: the boundary answers
-   * at once rather than spend the cap again, and those steers wait for the yield digest.
+   * A boundary's wait for the session's edit checks, capped at `capMs`; with `steering`, for those that may steer only.
+   * While checks an earlier boundary stopped waiting for still drain, a wait that would sit behind them answers at once
+   * rather than spend the cap again (`waitsBehind`), and those steers wait for the yield digest.
    */
-  async #awaitEditChecks(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, capMs: number): Promise<void> {
-    if (bridge === undefined || state.overdueEditChecks !== undefined) return;
-    const settled = bridge.settleGeneratedEdits();
+  async #awaitEditChecks(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, capMs: number, only?: "steering"): Promise<void> {
+    if (bridge === undefined || waitsBehind(state.overdueEditChecks, only)) return;
+    const settled = bridge.settleGeneratedEdits(only);
     if (await settledWithin(settled, capMs)) return;
+    const kinds = overdueKinds(only, bridge.steeringWaitsForLog());
     const overdue: Promise<void> = settled.catch(() => undefined).finally(() => {
-      if (state.overdueEditChecks === overdue) state.overdueEditChecks = undefined;
+      for (const kind of kinds) if (state.overdueEditChecks[kind] === overdue) delete state.overdueEditChecks[kind];
     });
-    state.overdueEditChecks = overdue;
+    for (const kind of kinds) state.overdueEditChecks[kind] = overdue;
   }
 
   /** A turn end that waits long holds the session's request lane: the daemon log says how long and on what; fast ones say nothing. */
@@ -1605,10 +1646,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /**
    * Gives the session back the steers `deliveries` took when their answer never reached its asker: a hook past its own
    * time limit closes its connection while the daemon still runs its event, and the answer goes nowhere. Each goes back
-   * in front of the session's pending steers, in its order, so the session's next answer carries it; that answer drops
-   * one a newer revision has overtaken, as it drops any (`#performSteer`). The ledger already holds its delivery, so it
-   * is not recorded again, nor after a restart: a close that keeps it owed says so (`recorded`); and a Merge Assist note
-   * was marked given as the answer took it, so it is not marked again. A session closed or opened again since keeps
+   * where the answer took it from (`#giveBack`), so the session's next answer carries it; that answer drops one a newer
+   * revision has overtaken, as it drops any (`#performSteer`, `#stillOwed`). The ledger already holds its delivery, so
+   * it is not recorded again, nor after a restart: a close that keeps it owed says so (`recorded`); and a Merge Assist
+   * note was marked given as the answer took it, so it is not marked again. A session closed or opened again since keeps
    * none: its close counted them as delivered.
    * Never fails: a failure is reported, and the steers stay as the answer left them.
    */
@@ -1618,12 +1659,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         const state = this.#sessions.get(sessionId);
         const returned = deliveries.flatMap(delivery => this.#takeHandedOut(delivery, state));
         if (state === undefined || returned.length === 0) return;
-        for (const pending of returned) {
+        for (const { pending } of returned) {
           pending.recorded = true;
           // It settled as the answer took it.
           delete pending.settled;
         }
-        state.pendingSteers.unshift(...returned);
+        this.#giveBack(state, returned);
       } catch (error) {
         process.stderr.write(`rerail: could not keep the steers of an answer session ${sessionId} never got: ${error instanceof Error ? error.message : String(error)}\n`);
       }
@@ -1631,10 +1672,23 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /** The steer `delivery` came from when an answer of `state`'s took it, no longer counted as handed out; else none. */
-  #takeHandedOut(delivery: AdapterDelivery, state: RuntimeSessionState | undefined): PendingSteer[] {
+  #takeHandedOut(delivery: AdapterDelivery, state: RuntimeSessionState | undefined): HandedOut[] {
     const handed = this.#handedOut.get(delivery);
     this.#handedOut.delete(delivery);
-    return handed === undefined || handed.state !== state ? [] : [handed.pending];
+    return handed === undefined || handed.state !== state ? [] : [handed];
+  }
+
+  /**
+   * Puts each steer of `returned` back in front of the list it came from, in its order: one the session owed as it
+   * opened with what it still owes (`#takeOwed`), which the session's next answer takes whether or not its evaluator has
+   * opened, so an evaluator still opening does not hold it and one that fails to open does not drop it; any other with
+   * the session's pending steers.
+   */
+  #giveBack(state: RuntimeSessionState, returned: readonly HandedOut[]): void {
+    const owed = returned.flatMap(handed => (handed.owed === true ? [handed.pending] : []));
+    const pending = returned.flatMap(handed => (handed.owed === true ? [] : [handed.pending]));
+    state.owed.steers.unshift(...owed);
+    state.pendingSteers.unshift(...pending);
   }
 
   /**
@@ -1658,7 +1712,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       // One an answer no client heard took before the session closed is in the ledger already.
       const delivery = steer.recorded === true ? steer.delivery : await this.#recordedDelivery(steer.delivery);
       deliveries.push(delivery);
-      this.#handedOut.set(delivery, { state, pending: steer });
+      this.#handedOut.set(delivery, { state, pending: steer, owed: true });
     }
     return deliveries;
   }
@@ -2278,7 +2332,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         id: call.toolCallId, toolName: call.toolName, ...(call.agentId === undefined ? {} : { agentId: call.agentId }),
       })),
       callsAwaitingResult: new Set(),
-      overdueEditChecks: undefined,
+      overdueEditChecks: {},
       editCheckWaits: 0,
       yieldWaits: 0,
       missedFindings: [],
@@ -2486,7 +2540,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * end in a host that does not wait: a session left in memory checks it at once.
    */
   #owesAgent(state: RuntimeSessionState): boolean {
-    return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined
+    return state.callsAwaitingResult.size > 0 || anyOverdue(state.overdueEditChecks)
       || ownSteers(state.pendingSteers).length > 0 || state.missedFindings.length > 0 || owedNow(state) > 0 || this.#owesScan(state);
   }
 
@@ -2997,9 +3051,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
-  /** Whether the boundary that waited for this edit has already answered, so a steer now would reach the agent at some later step. */
+  /**
+   * Whether the boundary that waited for this edit has already answered, so a steer now would reach the agent at some
+   * later step: none waits, or the one that does skipped its wait behind an overdue `steering` wait (`waitsBehind`).
+   */
   #boundaryPassed(state: RuntimeSessionState): boolean {
-    return state.editCheckWaits === 0 || (state.overdueEditChecks !== undefined && state.yieldWaits === 0);
+    return state.editCheckWaits === 0 || (state.overdueEditChecks.steering !== undefined && state.yieldWaits === 0);
   }
 
   /**
@@ -3132,7 +3189,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const known = recordCheckout(this.#catalogs.database, cwd);
     if (known !== undefined && !known.git) this.#owners.addPlainRoot(known.checkoutPath);
     const start = startingCheckout(this.#owners, cwd);
-    this.#catalogs.refresh(start.checkoutRoot);
+    // The session's rule coverage reads the checkout's catalog before its evaluator opens. Other sessions' lanes in the
+    // checkout share that catalog and read it again only at their own use, so its rules are read here.
+    if (this.#catalogs.refresh(start.checkoutRoot) !== "unrecorded") this.#catalogs.catalog(start.checkoutRoot).refresh();
     return { root: start.checkoutRoot, folder: start.path, cwd };
   }
 

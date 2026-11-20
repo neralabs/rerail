@@ -30,7 +30,7 @@ import type {
   IgnoredEditMatch,
   WalkView,
 } from "./code-rule.js";
-import type { CheckoutCatalogs, CheckoutEligibility } from "./code-rule-dsl-catalog.js";
+import type { CheckoutCatalogs, CheckoutCodeRuleCatalog, CheckoutEligibility } from "./code-rule-dsl-catalog.js";
 import type { AuditRecorder, AuditMode } from "../audit/audit.js";
 import type { SteerShell } from "./rerail-steer.js";
 import { DEFAULT_AUDIT_SETTINGS } from "../audit/audit-control-schema.js";
@@ -60,6 +60,8 @@ interface Lane {
   readonly root: string;
   readonly enforcer: NativeCodeRuleEnforcer;
   readonly opening: Promise<void>;
+  /** The count of `refreshCodeRules` calls when its rules were last read; it reads them again at its next use after another. */
+  refreshed: number;
 }
 
 function merged(revision: number, responses: readonly CodeRuleResponse[]): CodeRuleResponse {
@@ -94,8 +96,15 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * out, an open refused, a question that failed) under one owner.
    */
   readonly #gitIgnoreReported = new Set<string>();
-  /** The checkouts another lane answered for: their catalogs are read again when the lanes' are (`refreshCodeRules`). */
-  readonly #answeredByOthers = new Set<string>();
+  /**
+   * The checkouts another lane answered for, each with the count of `refreshCodeRules` calls when its catalog was last
+   * read: as a lane's rules, it is read again at its next question after another (`#laneWithRulesOf`).
+   */
+  readonly #answeredByOthers = new Map<string, number>();
+  /** How many times `refreshCodeRules` ran; a lane whose `refreshed` is lower reads its rules again at its next use. */
+  #refreshes = 0;
+  /** The session checkout's rule signature and every repository's rule configuration, as the last refresh read them. */
+  #rulesSeen: string | undefined;
   #settings: Required<AuditSettings>;
   #sessionId: string | undefined;
   #closing = false;
@@ -120,17 +129,32 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   }
 
   /**
-   * Re-read every known checkout's eligibility. A lane whose checkout may no longer run rules (stopped, not set up, or
-   * the session's own checkout stopped) is closed, so its last result stops reaching later responses; it opens again
-   * if the checkout becomes eligible.
+   * Re-read every known checkout's eligibility, in one statement however many the session knows: its walks come to
+   * know every worktree of its repository. A lane whose checkout may no longer run rules (stopped, not set up, or the
+   * session's own checkout stopped) is closed, so its last result stops reaching later responses; it opens again if
+   * the checkout becomes eligible. The session's own checkout reads its rules again now, since the session's rule
+   * coverage reports its catalog after every event. Every other lane reads them at its next use (`#lane`), before it
+   * answers or audits anything, so a tool call reads the rules of the lanes it uses, not of every lane open; a checkout
+   * another lane answers for reads its catalog at its next question (`#laneWithRulesOf`). When a rule configuration or
+   * the session checkout's rules changed since the last refresh, every lane and every checkout answered for reads its
+   * rules now, so a rule the change leaves unrunnable in any of them is recorded as skipped at this event, not at that
+   * lane's next use: a cost paid once per change, not per event. A file written in another checkout's `.rerail/rules` changes
+   * neither, so its lane reads it at its next use (the walk of the other worktrees a boundary starts, a tool call there)
+   * or when the session ends (`interrupt`): reading every lane's rules folder at each refresh would cost a few
+   * milliseconds per refresh at a few hundred lanes on Windows.
    */
   refreshCodeRules(): void {
     if (this.#closing) return;
     const ran = new Map([...this.#gitIgnore.keys()].map(root => [root, this.#mayRun(root)]));
-    for (const root of this.#eligibility.keys()) this.#eligibility.set(root, this.#options.catalogs.refresh(root));
+    for (const [root, eligibility] of this.#options.catalogs.refreshAll([...this.#eligibility.keys()])) this.#eligibility.set(root, eligibility);
+    this.#refreshes += 1;
     this.#forgetGitIgnoreOfChanged(ran);
+    this.#closeLanesThatMayNotRun();
+    const own = this.#lanes.get(this.#options.startingCheckout);
+    if (own !== undefined) this.#readRulesAgain(own);
+    if (!this.#rulesChanged(own)) return;
     this.#refreshAnsweredCatalogs();
-    this.#refreshLanes();
+    for (const lane of [...this.#lanes.values()]) this.#lane(lane.root);
   }
 
   /**
@@ -151,17 +175,27 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     this.#gitIgnoreMatchers.releaseRoot(this, root);
   }
 
-  /** Each lane reads its rules again; one whose checkout may no longer run rules closes. */
-  #refreshLanes(): void {
+  /** Closes each lane whose checkout may no longer run rules, so its last result stops reaching later responses. */
+  #closeLanesThatMayNotRun(): void {
     for (const lane of [...this.#lanes.values()]) {
-      if (this.#mayRun(lane.root)) {
-        lane.enforcer.refreshCodeRules();
-        continue;
-      }
+      if (this.#mayRun(lane.root)) continue;
       this.#lanes.delete(lane.root);
       lane.enforcer.interrupt();
       void lane.opening.catch(() => undefined).then(() => lane.enforcer.close()).catch(() => undefined);
     }
+  }
+
+  /**
+   * Whether the session checkout's rule signature (its installed packs, its own rules, its repository's configuration)
+   * or any repository's rule configuration (`CheckoutCatalogs.configurationVersion`, one statement) differs from what
+   * the last refresh read: then another lane's rules may read differently too.
+   */
+  #rulesChanged(own: Lane | undefined): boolean {
+    const signature = own === undefined ? "" : this.#options.catalogs.catalog(own.root).status.sourceSignature;
+    const seen = `${signature}\0${this.#options.catalogs.configurationVersion()}`;
+    const changed = seen !== this.#rulesSeen;
+    this.#rulesSeen = seen;
+    return changed;
   }
 
   /**
@@ -228,7 +262,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   #accepts(owner: CheckoutOwner | undefined): boolean {
     if (owner === undefined) return false;
     const root = owner.checkoutRoot;
-    const lane = this.#lanes.get(root) ?? this.#laneWithRulesOf(root) ?? this.#lane(root);
+    // A lane of its own reads its rules again first at its first use after an event (`#lane`).
+    const lane = this.#lanes.has(root) ? this.#lane(root) : this.#laneWithRulesOf(root) ?? this.#lane(root);
     return lane !== undefined && this.#readsIn(lane, owner);
   }
 
@@ -247,14 +282,17 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
 
   /**
    * An open lane at the version of the rules `root`'s catalog holds; undefined for a checkout that may not run rules.
-   * Rules that cannot be read throw, as they did from a lane opened for the question, and leave `root` out of the
-   * checkouts answered for.
+   * The catalog, which every session's lanes in `root` share, is read again at the first question after each
+   * `refreshCodeRules`, as a lane's rules are (`#lane`, `#openLane`), so another session's earlier read never stands for
+   * a change since. Rules that cannot be read throw, as they did from a lane opened for the question, and leave `root`
+   * out of the checkouts answered for.
    */
   #laneWithRulesOf(root: string): Lane | undefined {
     if (this.#sessionId === undefined || this.#closing || !this.#mayRun(root)) return undefined;
-    const version = this.#options.catalogs.catalog(root).status.version;
-    this.#answeredByOthers.add(root);
-    return this.#laneAt(version);
+    const catalog = this.#options.catalogs.catalog(root);
+    if (this.#answeredByOthers.get(root) !== this.#refreshes) catalog.refresh();
+    this.#answeredByOthers.set(root, this.#refreshes);
+    return this.#laneAt(catalog.status.version);
   }
 
   /** An open lane whose rules are at `version`. */
@@ -264,17 +302,21 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   }
 
   /**
-   * Reads again the rules of each checkout another lane answers for, as each lane reads its own (`refreshCodeRules`).
-   * Rules that fail to load open the checkout's own lane, whose refresh records the failure in the session's responses
-   * as a lane that answered for itself did; the other checkouts and every lane still refresh.
+   * Reads again now the rules of each checkout another lane answers for, as every lane reads its own once the rules
+   * changed (`refreshCodeRules`). Rules that fail to load open the checkout's own lane, whose read records the failure
+   * in the session's responses as a lane that answered for itself did; the other checkouts and every lane still read.
    */
   #refreshAnsweredCatalogs(): void {
-    for (const root of this.#answeredByOthers) {
+    const sessionId = this.#sessionId;
+    if (sessionId === undefined) return;
+    for (const root of [...this.#answeredByOthers.keys()]) {
       if (this.#lanes.has(root) || !this.#mayRun(root)) continue;
+      const catalog = this.#options.catalogs.catalog(root);
       try {
-        this.#options.catalogs.catalog(root).refresh();
+        catalog.refresh();
+        this.#answeredByOthers.set(root, this.#refreshes);
       } catch {
-        this.#lane(root);
+        this.#readRulesAgain(this.#addLane(root, sessionId, catalog));
       }
     }
   }
@@ -430,8 +472,13 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return merged(batch.revision, responses);
   }
 
-  async settleGeneratedEdits(): Promise<void> {
-    await this.#settleLanes(lane => lane.enforcer.settleGeneratedEdits());
+  async settleGeneratedEdits(only?: "steering"): Promise<void> {
+    await this.#settleLanes(lane => lane.enforcer.settleGeneratedEdits(only));
+  }
+
+  /** Every lane checks in the router's scope: in repository scope a steering wait waits for a walk's audits too. */
+  steeringWaitsForLog(): boolean {
+    return this.#settings.scope === "repository";
   }
 
   async settle(): Promise<void> {
@@ -470,8 +517,14 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return partitioned;
   }
 
+  /**
+   * Stops every lane. A lane no walk or tool call used since the last refresh reads its rules once more first: a rule a
+   * file written in its checkout's `.rerail/rules` leaves unrunnable there is recorded as skipped when the session ends,
+   * if not before.
+   */
   interrupt(options?: AuditorCloseOptions): void {
     if (this.#closing) return;
+    for (const lane of [...this.#lanes.values()]) if (lane.refreshed !== this.#refreshes) this.#readRulesAgain(lane);
     this.#closing = true;
     for (const lane of this.#lanes.values()) lane.enforcer.interrupt(options);
   }
@@ -580,35 +633,56 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   }
 
   /**
-   * The lane of an eligible checkout, opened on first use; undefined while the checkout may not run rules, and for
-   * every checkout while the session's own checkout is stopped (the gate stays on the starting checkout).
+   * The lane of an eligible checkout, opened on first use with its rules read then, and reading them again on its first
+   * use after each `refreshCodeRules`; undefined while the checkout may not run rules, and for every checkout while the
+   * session's own checkout is stopped (the gate stays on the starting checkout).
    */
   #lane(root: string): Lane | undefined {
     const sessionId = this.#sessionId;
     if (sessionId === undefined || this.#closing || !this.#mayRun(root)) return undefined;
-    let lane = this.#lanes.get(root);
-    if (lane === undefined) {
-      const enforcer = new NativeCodeRuleEnforcer(this.#options.catalogs.catalog(root), {
-        workspaceRoot: root,
-        steerDelivery: this.#options.steerDelivery,
-        audits: this.#options.audits,
-        ...this.#settings,
-        ...(this.#options.timingLog === undefined ? {} : { timingLog: this.#options.timingLog }),
-        followGitignore: this.#options.followGitignore ?? false,
-        // Asked as the lane first reads Git's ignore rules: the matcher a walk's questions opened for the checkout while
-        // its sources are unchanged, so the checkout holds one index, else one opened now. A failed open throws to the
-        // lane: one refused stays none for the lane, and one that timed out opens again after GIT_OPEN_AGAIN_MS.
-        openGitIgnore: () => this.#takeGitIgnore(root),
-        steerShell: this.#options.steerShell,
-        presentPath: path => relative(this.#sessionRoot, join(root, path)).split(sep).join("/"),
-        nestedCheckouts: () => this.#nestedCheckoutsOf(root),
-      });
-      // The enforcer registers its code rules synchronously, so the new lane answers `acceptsPath` at once.
-      lane = { root, enforcer, opening: enforcer.openWorkspace(sessionId) };
-      lane.opening.catch(() => undefined);
-      this.#lanes.set(root, lane);
-    }
+    const lane = this.#lanes.get(root);
+    if (lane === undefined) return this.#openLane(root, sessionId);
+    if (lane.refreshed !== this.#refreshes) this.#readRulesAgain(lane);
     return lane;
+  }
+
+  /** The lane of `root`, opened now with its checkout's rules read first. */
+  #openLane(root: string, sessionId: string): Lane {
+    // Every lane in this checkout, this session's earlier ones and other sessions', shares the catalog, and each reads
+    // it again only at its own next use: it may hold rules from before the last event.
+    const catalog = this.#options.catalogs.catalog(root);
+    catalog.refresh();
+    return this.#addLane(root, sessionId, catalog);
+  }
+
+  /** The lane of `root` over `catalog`, opened now with the rules the catalog holds. */
+  #addLane(root: string, sessionId: string, catalog: CheckoutCodeRuleCatalog): Lane {
+    const enforcer = new NativeCodeRuleEnforcer(catalog, {
+      workspaceRoot: root,
+      steerDelivery: this.#options.steerDelivery,
+      audits: this.#options.audits,
+      ...this.#settings,
+      ...(this.#options.timingLog === undefined ? {} : { timingLog: this.#options.timingLog }),
+      followGitignore: this.#options.followGitignore ?? false,
+      // Asked as the lane first reads Git's ignore rules: the matcher a walk's questions opened for the checkout while
+      // its sources are unchanged, so the checkout holds one index, else one opened now. A failed open throws to the
+      // lane: one refused stays none for the lane, and one that timed out opens again after GIT_OPEN_AGAIN_MS.
+      openGitIgnore: () => this.#takeGitIgnore(root),
+      steerShell: this.#options.steerShell,
+      presentPath: path => relative(this.#sessionRoot, join(root, path)).split(sep).join("/"),
+      nestedCheckouts: () => this.#nestedCheckoutsOf(root),
+    });
+    // The enforcer registers its code rules synchronously, so the new lane answers `acceptsPath` at once.
+    const lane: Lane = { root, enforcer, opening: enforcer.openWorkspace(sessionId), refreshed: this.#refreshes };
+    lane.opening.catch(() => undefined);
+    this.#lanes.set(root, lane);
+    return lane;
+  }
+
+  /** `lane`'s first use since the last `refreshCodeRules`: it reads its checkout's rules again before it answers. */
+  #readRulesAgain(lane: Lane): void {
+    lane.refreshed = this.#refreshes;
+    lane.enforcer.refreshCodeRules();
   }
 
   /** Whether `root` may run rules in this session: it is eligible, and the session's own checkout is not stopped. */

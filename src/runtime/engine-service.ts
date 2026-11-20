@@ -944,12 +944,27 @@ export interface HeldPipeListening {
 }
 
 /**
- * Where to listen when `pipe` is already held (`cause`, EACCES or EADDRINUSE): on the fallback pipe when the holder is not this
- * home's engine service, which a second daemon must never start beside. Returns the pipe it listens on.
+ * The codes a listen on a Windows pipe name fails with when another process holds the name. libuv creates a pipe's first
+ * instance alone, and reports a name whose holder may make more instances as EACCES or EADDRINUSE, and one whose holder
+ * capped its instances and has made them all as EBUSY.
+ */
+const HELD_PIPE_CODES: ReadonlySet<string | undefined> = new Set(["EACCES", "EADDRINUSE", "EBUSY"]);
+
+/** The code of the error a listen failed with. */
+function listenCode(cause: unknown): string | undefined {
+  return (cause as NodeJS.ErrnoException | undefined)?.code;
+}
+
+/**
+ * Where to listen when the listen on `pipe` failed with `cause`: on the fallback pipe when another process holds the name
+ * ({@link HELD_PIPE_CODES}) and is not this home's engine service, which a second daemon must never start beside. Any
+ * other failure, and a held name with no fallback, is the start's own. Returns the pipe it listens on. A holder that
+ * capped the name's instances (EBUSY) is not asked for the proof: a Node pipe server, as every Rerail engine is, never
+ * caps them, and the ask would take the holder's one free instance or wait for one it never frees.
  */
 export async function listenBesideHeldPipe(pipe: string, cause: unknown, listening: HeldPipeListening): Promise<string> {
-  if (listening.fallback === undefined) throw cause;
-  if (await listening.ownEngineAnswers(pipe)) {
+  if (listening.fallback === undefined || !HELD_PIPE_CODES.has(listenCode(cause))) throw cause;
+  if (listenCode(cause) !== "EBUSY" && await listening.ownEngineAnswers(pipe)) {
     throw new Error(`Rerail's engine pipe ${pipe} is in use by a running daemon; stop it with \`rerail daemon stop\` before starting another.`, { cause });
   }
   const fallback = listening.fallback();
@@ -973,8 +988,7 @@ async function listenOnSocket(
     return socketPath;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    // libuv creates a pipe's first instance alone, and reports a name another process holds as EACCES or EADDRINUSE.
-    if (isNamedPipe(socketPath) && (code === "EACCES" || code === "EADDRINUSE")) {
+    if (isNamedPipe(socketPath)) {
       return await listenBesideHeldPipe(socketPath, error, {
         listen: async path => await listen(server, path),
         ownEngineAnswers: async path => await ownEngineAnswers(path, options.accessToken),
