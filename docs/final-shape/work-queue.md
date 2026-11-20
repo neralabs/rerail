@@ -5440,5 +5440,6 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
   `synchronous`, and every block writer takes it from the connection. The engine's test binary sets `none`. A synced
   block msyncs its used pages only. The test derives every pack's include graphs in one phase 0 run (`rr::modules_of`)
   takes 140.6 s → 22.3 s wall, 1.00 T → 262 G instructions (M3, debug, alone; 24.6 s beside other tests on the M1
-  Max), so it stays in the slow tier, without its 8-period override.
+  Max); on a DGX Spark 217 s → 19.8 s (`none`) and 19.3 s (`synced`). It stays in the slow tier, without its 8-period
+  override.
 

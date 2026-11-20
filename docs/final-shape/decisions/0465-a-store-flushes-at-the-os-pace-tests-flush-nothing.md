@@ -61,7 +61,8 @@ safe against a power loss.
   for nothing, yet opens frozen with its bytes.
 - `test_flush::tests::a_tests_store_flushes_nothing`: a test's store opens with `Flush::None`, and its connections
   say so.
-- The blocks, store and logic crates' tests (737) pass with their writers' new argument.
+- The blocks, store and logic crates' tests pass with their writers' new argument: 737 on the farm's Macs, 721 on a
+  DGX Spark (Linux).
 
 ## Measured
 
@@ -72,6 +73,14 @@ safe against a power loss.
 | before, `synced` (load 7–34) | 140.6 s | 74.1 + 27.7 s | 1.00 T |
 | `none` alone (load 7–34) | 140.8 s | 86.2 + 27.3 s | 1.00 T |
 | `none`, every pack's graphs in one phase 0 run (load 8–17) | 22.3 s | 19.9 + 1.1 s | 262 G |
+
+On a DGX Spark (Linux, debug, load 1.1), where the msync was the wait:
+
+| | wall | CPU (user + sys) |
+|---|---|---|
+| before (Q294, at f9c3bd713) | 217 s | 87 s user, 40 s sys |
+| this decision, `none` | 19.8 s | 22.7 + 0.7 s |
+| this decision, `synced` (used pages only) | 19.3 s | 21.8 + 0.6 s |
 
 On the M3, the flush alone saved nothing: macOS's msync of clean pages is cheap, and that test's time was in its phase
 0 runs, one per program. The test now derives every pack's include graphs in one phase 0 run (`rr::modules_of`,
