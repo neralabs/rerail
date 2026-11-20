@@ -651,7 +651,7 @@ describe("the transcript boundary for coding agents", () => {
     expect(tally.changes).toEqual(process.platform === "win32"
       ? { [AS_ON_MAIN]: 218_514, [DRIVE_PATH]: 29_724, [URL_HOST]: 43_482, [NET_URL]: 0 }
       : { [AS_ON_MAIN]: 287_097, [DRIVE_PATH]: 0, [URL_HOST]: 0, [NET_URL]: 4_623 });
-    // 291,720 spellings take 2 to 6 s; the bound leaves room on a loaded machine.
+    // 291,720 spellings take seconds, more on a loaded machine: the bound leaves room for that.
   }, 30_000);
 
   it.runIf(process.platform === "win32")("looks up a device path or a loopback share right after a `:` as `main` does, and skips only a share on another machine there", () => {
