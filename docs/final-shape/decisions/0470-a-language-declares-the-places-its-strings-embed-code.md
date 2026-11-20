@@ -153,6 +153,9 @@ a part of a language may name a fragment (0466) in a later step. No place does y
 PostHog cold on the CPU, on the M3 (load average 50 from other jobs): 29,747 findings, fa0efeaed6ff, unchanged.
 2,417 G instructions, against 2,421 G at 0431 step 5.
 
+At step 2 (no `.embedded` setting, so the run's files are as before): 29,747 findings, fa0efeaed6ff, unchanged.
+2,395 G instructions, 197 s CPU, 47.6 s wall, peak 2.4 GB, on the M3 at load 41–56.
+
 ## Tests
 
 - R1: `build_languages`'s `an_embed_lists_the_places_its_strings_hold_code`, `a_place_names_a_qualified_callee`,
