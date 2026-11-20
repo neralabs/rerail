@@ -252,12 +252,12 @@ impl ProgramPass for RequestsFileLocal {
         let v = cx.v();
         let request = |of: &Version, r: RuleRef<'_>| self.requests.contains(&of.rel_name(r.head().rel()));
         for id in last.delta.removed.iter() {
-            if last.input.rule(id).is_none_or(|r| request(&**last.input, r)) {
+            if last.input.rule(id).is_none_or(|r| request(last.input, r)) {
                 return Ok(false);
             }
         }
         for &id in &last.delta.added {
-            if v.rule(id).is_none_or(|r| request(&**v, r)) {
+            if v.rule(id).is_none_or(|r| request(v, r)) {
                 return Ok(false);
             }
         }
@@ -283,7 +283,7 @@ impl ProgramPass for RequestsFileLocal {
             }
         }
         let head_of = |of: &Version, r: RuleRef<'_>| of.rel_name(r.head().rel()).to_owned();
-        if last.delta.removed.iter().filter_map(|id| last.input.rule(id)).map(|r| head_of(&**last.input, r)).chain(last.delta.added.iter().filter_map(|&id| v.rule(id)).map(|r| head_of(&**v, r))).any(|h| down.contains(&h)) {
+        if last.delta.removed.iter().filter_map(|id| last.input.rule(id)).map(|r| head_of(last.input, r)).chain(last.delta.added.iter().filter_map(|&id| v.rule(id)).map(|r| head_of(v, r))).any(|h| down.contains(&h)) {
             return Ok(false);
         }
         edit_as_is(cx, last, w)

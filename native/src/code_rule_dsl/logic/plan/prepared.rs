@@ -173,7 +173,7 @@ fn model_of(v: &Version, f: super::fields::Fields<'_>, shapes: &Shapes, layouts:
         let node_col = |c: usize| v.decl_of(name).and_then(|d| d.cols().nth(c)).is_some_and(|(_, t)| matches!(v.text(t), "node" | "loc"));
         let facts: Vec<LayoutFact> = facts.iter().map(|(f, _)| f.clone()).collect();
         let Some(rows) = rows_of(&facts, &node_col) else { continue };
-        stats.card.insert(name.to_owned(), rows);
+        stats.card.insert(name, rows);
         let width = v.decl_of(name).map_or(0, |d| d.cols().count());
         for c in 0..width {
             if let Some(n) = shapes.ndv(name, c, rows, counts) {
@@ -270,7 +270,7 @@ impl Analysis for Prepared {
                     use std::io::Write as _;
                     let _ = writeln!(log.lock(), "estimate\t{name}\t{}\t{}", rows / NOMINAL_NODES, u8::from(recursion));
                 }
-                model.stats.card.insert(name.to_owned(), rows);
+                model.stats.card.insert(name, rows);
                 for c in 0..width {
                     let n = (e.ndv.get(c).copied().unwrap_or(e.rows) * times).clamp(1.0, rows);
                     model.ndv.insert((name.to_owned(), c), n);

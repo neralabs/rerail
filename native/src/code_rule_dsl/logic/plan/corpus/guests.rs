@@ -90,7 +90,7 @@ pub(super) const SHARED: [&str; 4] = [DEMAND, PARSE, SPLICE, crate::code_rule_ds
 /// What a guest request gave (`Guests::guest`).
 pub(super) enum Got {
     /// A document made.
-    New(Document),
+    New(Box<Document>),
     /// A place more of tape value `key`, made before.
     Placed(u32, syntax::TapePlace),
     /// None: no text, no grammar, not parsed, or not seen.
@@ -450,7 +450,7 @@ impl Guests {
             self.guest(&by_key, at, grammar, parses)?
         };
         match &got {
-            Got::New(d) => docs.push(d.clone()),
+            Got::New(d) => docs.push(Document::clone(d)),
             Got::Placed(key, place) => {
                 if let Some(Made::Tape { places }) = docs.iter_mut().find(|d| d.key == *key).and_then(|d| d.guest.as_mut()).map(|g| &mut Arc::make_mut(g).made)
                     && !places.contains(place)
@@ -478,7 +478,7 @@ impl Guests {
             }
             let made = match r {
                 Request::Guest { at, grammar } => match self.guest(&by_key, at, &grammar, parses)? {
-                    Got::New(d) => Some(d),
+                    Got::New(d) => Some(*d),
                     Got::Placed(key, place) => {
                         places.push((key, place));
                         continue;
@@ -523,7 +523,7 @@ impl Guests {
         let host_key = (at >> 32) as u32;
         let Some(host) = by_key.get(&host_key).copied() else { return Ok(Got::Not) };
         if let Some(via) = embedding(host, grammar_name) {
-            return Ok(self.program(host, at, via, "program")?.map_or(Got::Not, Got::New));
+            return Ok(self.program(host, at, via, "program")?.map_or(Got::Not, |d| Got::New(Box::new(d))));
         }
         let Some((label, fragment)) = grammar(grammar_name) else { return Ok(Got::Not) };
         // A tape value is never code to rules that do not name it: its nodes are no file's, so a finding on one has no
@@ -559,7 +559,7 @@ impl Guests {
         self.values.insert((grammar_name.to_owned(), identity), i64::from(key));
         self.files.insert(i64::from(key), files);
         let none = Placement::At([0, 0]);
-        Ok(Got::New(Document {
+        Ok(Got::New(Box::new(Document {
             key,
             path: host.path.clone(),
             core: format!("#tape:{grammar_name}:{key}"),
@@ -570,7 +570,7 @@ impl Guests {
             module: None,
             unpackaged: false,
             tape: None,
-        }))
+        })))
     }
 
     /// The program host file `host` embeds through `via` (decision 0222): the embedder main registered for it

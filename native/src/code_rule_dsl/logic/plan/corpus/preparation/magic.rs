@@ -1244,8 +1244,8 @@ fn gate_negations<'v>(
     }
     let names: BTreeSet<String> = gates.iter().map(|(n, _)| n.clone()).collect();
     let mut done = Vec::new();
-    for i in 0..gates.len() {
-        let (name, g) = gates[i].clone();
+    for gate in &mut gates {
+        let (name, g) = gate.clone();
         // The gate's own rule: `done_N_ad` copies `magic_N_ad`, and `done_N(0)` holds once `N` has a row.
         if let Some(src) = &g.src {
             let cols = decls.iter().find(|(n, _)| n == src).map(|(_, c)| c.clone()).ok_or_else(|| Error::Syntax(format!("{src} is not declared")))?;
@@ -1284,8 +1284,8 @@ fn gate_negations<'v>(
             .filter(|rel| names.contains(*rel) && **rel != name)
             .map(str::to_owned)
             .collect();
-        gates[i].1.quiet = quiet.into_iter().collect();
-        gates[i].1.deps = deps.into_iter().collect();
+        gate.1.quiet = quiet.into_iter().collect();
+        gate.1.deps = deps.into_iter().collect();
     }
     Ok(Trial { made: rules, gates, done })
 }

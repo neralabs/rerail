@@ -106,7 +106,7 @@ pub(super) fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<Str
         super::super::profile::decision("inline or store (decision 0099)", || "no relation may be inlined (each `.decl … no_inline` or a session's piece): nothing estimated".to_owned());
         return Ok(None);
     }
-    let Ok(strata) = super::super::program_image::analyses::strata(v, &f.about) else { return Ok(None) };
+    let Ok(strata) = super::super::program_image::analyses::strata(v, f.about) else { return Ok(None) };
     let sccs: Vec<BTreeSet<String>> = strata.sccs.iter().map(|s| s.iter().map(|&r| v.rel_name(r).to_owned()).collect()).collect();
     let reasons = refusals(&f, base, n, &ids_of, &sccs);
     // The rules as the planner reads them, rule `k` the program's rule `k`.
@@ -673,7 +673,7 @@ fn bounds(f: &Fields<'_>, base: &Placed, n: usize, model: &Model, rules_of: &BTr
                 continue;
             }
             let Some(&n) = model.stats.card.get(rel) else { continue };
-            let cols = (0..a.arity()).map(|c| model.ndv.at(&rel, c).map_or(n, |d| d.min(n))).collect();
+            let cols = (0..a.arity()).map(|c| model.ndv.at(rel, c).map_or(n, |d| d.min(n))).collect();
             counted.insert(rel, cols);
         }
     }
@@ -1390,9 +1390,9 @@ fn overlay<'a>(f: Fields<'_>, model: &mut Model, rels: impl Iterator<Item = &'a 
         let Some(rows) = observed_rows(rel, nodes) else { continue };
         let width = f.arity(rel).unwrap_or(0);
         let cols = observed_cols(rel, nodes, rows);
-        let before = (0..width).map(|c| (model.ndv.at(&rel, c).copied(), model.stats.fan.at(&rel, c).copied())).collect();
+        let before = (0..width).map(|c| (model.ndv.at(rel, c).copied(), model.stats.fan.at(rel, c).copied())).collect();
         saved.push((rel.to_owned(), model.stats.card.get(rel).copied(), before));
-        model.stats.card.insert(rel.to_owned(), rows.max(1.0));
+        model.stats.card.insert(rel, rows.max(1.0));
         for (c, (ndv, fan)) in cols.into_iter().enumerate().take(width) {
             if let Some(d) = ndv {
                 model.ndv.insert((rel.to_owned(), c), d);
@@ -1527,12 +1527,12 @@ fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTreeMa
                 for c in 0..width {
                     let (seen_ndv, seen_fan) = seen.get(c).copied().unwrap_or((None, None));
                     if let Some(f) = seen_fan
-                        && model.stats.fan.at(&rel, c).is_none()
+                        && model.stats.fan.at(rel, c).is_none()
                     {
                         model.stats.fan.insert((rel.clone(), c), f);
                         inserted.fan.push((rel.clone(), c));
                     }
-                    if model.ndv.at(&rel, c).is_some() {
+                    if model.ndv.at(rel, c).is_some() {
                         continue;
                     }
                     if let Some(d) = seen_ndv {
@@ -1559,7 +1559,7 @@ fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTreeMa
                                     {
                                         if a.rel() == r.head().rel() && at == c {
                                             passed = true;
-                                        } else if let Some(&d) = model.ndv.at(&v.rel_name(a.rel()), at) {
+                                        } else if let Some(&d) = model.ndv.at(v.rel_name(a.rel()), at) {
                                             bound = bound.min(d);
                                         }
                                     }
@@ -1764,7 +1764,7 @@ pub mod tests {
         let def_v = Placed::whole(parse_version(&format!("{DECLS}{CTX}")).unwrap());
         let priced = |model: &mut Model| {
             let f = base.fields().unwrap();
-            let strata = super::super::super::program_image::analyses::strata(&base.v, &f.about).unwrap();
+            let strata = super::super::super::program_image::analyses::strata(&base.v, f.about).unwrap();
             let sccs: Vec<BTreeSet<String>> = strata.sccs.iter().map(|s| s.iter().map(|&r| base.v.rel_name(r).to_owned()).collect()).collect();
             let ids = BTreeMap::from([("ctx", vec![0])]);
             let (e, ins) = estimate(base.fields().unwrap(), model, (&def_v, &ids), &sccs, &BTreeSet::from(["ctx"]), &BTreeSet::from(["ctx"]));
@@ -1919,7 +1919,7 @@ pub mod tests {
         let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats, ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: given.into(), derived: derived.into() };
         model.stats.nodes = 1_000_000.0;
         for &(rel, rows, ndv) in inputs {
-            model.stats.card.insert(rel.to_owned(), rows);
+            model.stats.card.insert(rel, rows);
             for (c, &n) in ndv.iter().enumerate() {
                 model.ndv.insert((rel.to_owned(), c), n);
                 model.stats.fan.insert((rel.to_owned(), c), rows / n);
@@ -1952,7 +1952,7 @@ pub mod tests {
         for k in 0..base.len() {
             ids_of.entry(base.v.rel_name(base.rule(k).head().rel())).or_default().push(k);
         }
-        let strata = super::super::super::program_image::analyses::strata(&base.v, &f.about).unwrap();
+        let strata = super::super::super::program_image::analyses::strata(&base.v, f.about).unwrap();
         let sccs: Vec<BTreeSet<String>> = strata.sccs.iter().map(|s| s.iter().map(|&r| base.v.rel_name(r).to_owned()).collect()).collect();
         let b = bounds(&f, &base, base.len(), &model, &ids_of, &sccs);
         // r: x at most b's 10 distinct firsts.
@@ -1961,7 +1961,7 @@ pub mod tests {
         assert_eq!(b["s"], (55.0, vec![15.0, 6.0]));
         // u: x in b's first column (10) and c's first (1,000): 10.
         assert_eq!(b["u"].0, 10.0);
-        assert!(b.get("p").is_none(), "a recursion is unbounded");
+        assert!(!b.contains_key("p"), "a recursion is unbounded");
         // t: x is one value for each row of a (a comparison binds it): a's 5 rows bound it, its column not.
         assert_eq!(b["t"], (5.0, vec![5.0]));
         assert!(b["w"].0.is_infinite(), "an `ast` match makes many rows a row of a: {:?}", b["w"]);
@@ -2010,7 +2010,7 @@ pub mod tests {
         for k in 0..base.len() {
             ids_of.entry(base.v.rel_name(base.rule(k).head().rel())).or_default().push(k);
         }
-        let strata = super::super::super::program_image::analyses::strata(&base.v, &f.about).unwrap();
+        let strata = super::super::super::program_image::analyses::strata(&base.v, f.about).unwrap();
         let sccs: Vec<BTreeSet<String>> = strata.sccs.iter().map(|s| s.iter().map(|&r| base.v.rel_name(r).to_owned()).collect()).collect();
         let need: BTreeSet<&str> = ["n", "p", "o"].into_iter().collect();
         let _ = estimate(f, &mut model, (&base, &ids_of), &sccs, &need, &BTreeSet::new());

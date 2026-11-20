@@ -320,7 +320,7 @@ fn text_ids(v: &Value) -> Result<Vec<u32>, String> {
     if s.is_empty() {
         return Ok(Vec::new());
     }
-    s.split(',').map(|x| x.parse::<u32>().map_err(|e| bad(e))).collect()
+    s.split(',').map(|x| x.parse::<u32>().map_err(bad)).collect()
 }
 
 /// A run as a store keeps it (`store_run`).
@@ -469,7 +469,7 @@ pub fn run_sources(store: &ContentStore, key: &[u8; 32]) -> Result<Option<Vec<So
     }
     // Its analyses' rows, a source of their own (decision 0385), which the run that kept it named with the rest.
     if let Some(r) = facts.get("pipeline_run_rows").and_then(|r| r.first()) {
-        let Some(Value::Str(digest)) = r.get(0) else { return Err(bad("a stored run's rows are not a digest")) };
+        let Some(Value::Str(digest)) = r.first() else { return Err(bad("a stored run's rows are not a digest")) };
         let digest = unhex32(digest).ok_or_else(|| bad("a stored run's rows are not a digest"))?;
         let Some(rows_id) = store.source_by_alias(rows_alias(&digest)).map_err(e)? else { return Ok(None) };
         ids.push(rows_id);
@@ -614,8 +614,8 @@ impl StoredRuns<'_> {
         // (decision 0385), not here.
         let mut analyses: std::collections::BTreeMap<i64, std::collections::HashMap<(String, u32), (usize, usize)>> = Default::default();
         for r in rows("pipeline_run_analysis_at") {
-            let (at, name, tag) = (int(&r[0])?, text(&r[1])?, u32::try_from(int(&r[2])?).map_err(|e| bad(e))?);
-            let (from, len) = (usize::try_from(int(&r[3])?).map_err(|e| bad(e))?, usize::try_from(int(&r[4])?).map_err(|e| bad(e))?);
+            let (at, name, tag) = (int(&r[0])?, text(&r[1])?, u32::try_from(int(&r[2])?).map_err(bad)?);
+            let (from, len) = (usize::try_from(int(&r[3])?).map_err(bad)?, usize::try_from(int(&r[4])?).map_err(bad)?);
             analyses.entry(at).or_default().insert((name, tag), (from, len));
         }
         let all_rows: std::sync::Arc<crate::content_store::ObjectBytes> = std::sync::Arc::new(match rows_digest {
@@ -655,12 +655,12 @@ impl StoredRuns<'_> {
             let rule = (kind >= 0).then(|| -> Result<StoredRule, String> {
                 let asked = text(&r[7])?;
                 Ok(StoredRule {
-                    select: (u8::try_from(kind).map_err(|e| bad(e))?, text_ids(&r[6])?),
+                    select: (u8::try_from(kind).map_err(bad)?, text_ids(&r[6])?),
                     asked: if asked.is_empty() { Vec::new() } else { asked.split(',').map(str::to_owned).collect() },
-                    own_end: u32::try_from(int(&r[8])?).map_err(|e| bad(e))?,
+                    own_end: u32::try_from(int(&r[8])?).map_err(bad)?,
                 })
             });
-            let form = Form::of_code(u8::try_from(int(&r[4])?).map_err(|e| bad(e))?).ok_or_else(|| bad("a stored step's form is not one"))?;
+            let form = Form::of_code(u8::try_from(int(&r[4])?).map_err(bad)?).ok_or_else(|| bad("a stored step's form is not one"))?;
             steps.push((int(&r[0])?, StoredStep { pass: text(&r[1])?, input: int(&r[2])? as usize, output: int(&r[3])? as usize, form, rule: rule.transpose()?, plan: Vec::new(), said: Vec::new(), asked: None }));
         }
         steps.sort_by_key(|(j, _)| *j);
@@ -673,7 +673,7 @@ impl StoredRuns<'_> {
         for r in rows("pipeline_run_step_said") {
             let j = int(&r[0])?;
             if let Ok(at) = steps.binary_search_by_key(&j, |(k, _)| *k) {
-                steps[at].1.said.push(((text(&r[1])?, text(&r[2])?), u64::try_from(int(&r[3])?).map_err(|e| bad(e))?));
+                steps[at].1.said.push(((text(&r[1])?, text(&r[2])?), u64::try_from(int(&r[3])?).map_err(bad)?));
             }
         }
         for r in rows("pipeline_run_step_req") {
@@ -686,7 +686,7 @@ impl StoredRuns<'_> {
             let j = int(&r[0])?;
             let Ok(at) = steps.binary_search_by_key(&j, |(k, _)| *k) else { continue };
             let a = steps[at].1.asked.as_mut().ok_or_else(|| bad("a stored step's request record has readers and no requests"))?;
-            let id = u32::try_from(int(&r[1])?).map_err(|e| bad(e))?;
+            let id = u32::try_from(int(&r[1])?).map_err(bad)?;
             match a.by.iter_mut().find(|(at, _)| *at == id) {
                 Some((_, rs)) => rs.push(text(&r[2])?),
                 None => a.by.push((id, vec![text(&r[2])?])),

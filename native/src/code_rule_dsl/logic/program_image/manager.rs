@@ -1627,7 +1627,8 @@ impl<'s> Pipeline<'s> {
                 // What it said when it ran whole stands with its decisions (decision 0385).
                 crate::code_rule_dsl::logic::profile::restate(&k.said);
                 self.record(P::NAME, out, Ran::Delta, form, visited, &k.output, None, carry)?;
-                return Ok(self.planned(pass.plan(), k.said.clone()));
+                self.planned(pass.plan(), k.said.clone());
+                return Ok(());
             }
         }
         let deciding = crate::code_rule_dsl::logic::profile::Deciding::open();
@@ -1656,11 +1657,13 @@ impl<'s> Pipeline<'s> {
             };
             if let Some(carry) = carry {
                 self.record(P::NAME, r, Ran::Whole, Form::Overlay, visited, &k.output, None, carry)?;
-                return Ok(self.planned(pass.plan(), said));
+                self.planned(pass.plan(), said);
+                return Ok(());
             }
         }
         self.record(P::NAME, out, Ran::Whole, form, visited, &v, None, Carry::Step)?;
-        Ok(self.planned(pass.plan(), said))
+        self.planned(pass.plan(), said);
+        Ok(())
     }
 
     /// The plan of the step just recorded, and the profile's decisions it made, kept with it.

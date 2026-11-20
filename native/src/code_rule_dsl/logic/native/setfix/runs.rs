@@ -304,7 +304,7 @@ impl Sorted {
     /// The ranges written in `part`'s relation's block (decision 0478 step 5c), and read there from now on: true when
     /// they are (they were already, or there are none), false when its block keeps others or has no room (they then
     /// stay as they were).
-    pub(super) fn into_block(&mut self, part: &crate::code_rule_dsl::facts::rows::Part) -> bool {
+    pub(super) fn move_into_block(&mut self, part: &crate::code_rule_dsl::facts::rows::Part) -> bool {
         if self.own.is_empty() && self.base.as_ref().is_some_and(|b| std::ptr::eq(b.rel(), part.rel())) {
             return true;
         }
@@ -532,15 +532,15 @@ impl GivenRun {
 }
 
 impl Run {
-    /// Its arrays handed on to `facts`' block, where they lie (decision 0478 step 5b), or itself when any lies
-    /// elsewhere or is not its own.
-    pub(super) fn give(self, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<GivenRun, Run> {
+    /// Its arrays handed on to `facts`' block, where they lie (decision 0478 step 5b), or itself (boxed: it is the
+    /// larger) when any lies elsewhere or is not its own.
+    pub(super) fn give(self, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<GivenRun, Box<Run>> {
         let ids_ok = match &self.ids {
             Ids::List(v) => v.can_give(facts),
             Ids::Rows(..) => true,
         };
         if !(ids_ok && self.fences.can_give(facts) && self.tags.can_give(facts) && self.prints.can_give(facts)) {
-            return Err(self);
+            return Err(Box::new(self));
         }
         fn take<T: rerail_blocks::Pod>(v: BlockVec<T>, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> rerail_blocks::relation::Given {
             v.into_chunk(facts).unwrap_or_else(|_| unreachable!("checked"))

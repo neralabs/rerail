@@ -545,15 +545,14 @@ pub(super) fn rewrite(program: &mut Program<'_>, narrow_readers: bool) -> Result
         let products = rewrite_products(&mut strict, products.clone()).map_err(named)?;
         let mut trial = program.clone();
         let mut readers = upstream::start(&mut trial, &products)?;
-        if !readers.is_empty() {
-            if let Ok(products) = rewrite_products(&mut trial, products.clone()) {
+        if !readers.is_empty()
+            && let Ok(products) = rewrite_products(&mut trial, products.clone()) {
                 upstream::propagate(&mut trial, &products, &mut readers)?;
                 let order_witnesses = upstream::restore_order_witnesses(&mut trial, &readers)?;
                 let present_witnesses = nullable::restore(&mut trial)?;
                 *program = trial;
                 return Ok(Rewritten { products, readers, order_witnesses, present_witnesses });
             }
-        }
         *program = strict;
         return Ok(Rewritten { products, readers: BTreeSet::new(), order_witnesses: 0, present_witnesses: 0 });
     }

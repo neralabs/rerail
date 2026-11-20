@@ -95,11 +95,10 @@ impl ProgramPass for WidenCyclicContexts {
                 let mut types: BTreeMap<Slot, &str> = BTreeMap::new();
                 let mut head_vars: BTreeMap<String, Slot> = BTreeMap::new();
                 for (k, t) in rule.head().args().enumerate() {
-                    if let Some(s) = t.var() {
-                        if let Some((_, ty)) = cols.as_ref().and_then(|c| c.get(k)) {
+                    if let Some(s) = t.var()
+                        && let Some((_, ty)) = cols.as_ref().and_then(|c| c.get(k)) {
                             types.insert(s, ty.as_str());
                         }
-                    }
                     let mut vs = VarSet::new();
                     crate::code_rule_dsl::logic::plan::body::term_vars(t, &mut vs);
                     for s in vs.iter() {
@@ -1027,6 +1026,7 @@ impl ProgramPass for ScopeGlobs {
 /// - `rr_anc_<s>(n, a)`, every strict ancestor a of n in s (`inside`): the chain of nearest ones;
 /// - `rr_desc_<s>(n, a)`, n in s and a any strict ancestor of it (`has`): up from each member;
 /// - `rr_above_<s>(a)`, a has a member strictly below it (`has(a, _, s)`).
+///
 /// (A set of nodes is read as climbs where it is given, `node_axis`.)
 pub struct KindSets {
     pub sets: BTreeSet<String>,

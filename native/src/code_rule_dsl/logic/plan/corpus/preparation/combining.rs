@@ -148,7 +148,7 @@ impl ProgramPass for FactSpaces<'_> {
         let locations = &split.locations;
         let derived: BTreeSet<String> =
             v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).chain(f.natives().iter().map(|n| v.rel_name(n.rel).to_owned())).filter(|r| !f.is_input(r)).collect();
-        let place = |rel: &str| place_of(f, &locations, derived.contains(rel), rel);
+        let place = |rel: &str| place_of(f, locations, derived.contains(rel), rel);
         // Each relation's places, asked once.
         let s_places = crate::code_rule_dsl::logic::profile::span(|| "fact spaces: the places".into());
         let mut places: BTreeMap<String, (Vec<usize>, Vec<usize>, Vec<usize>)> = BTreeMap::new();
@@ -249,7 +249,7 @@ impl ProgramPass for FactSpaces<'_> {
         }
         let derived_in = |of: &Version, rel: &str| of.rel(rel).is_some_and(|id| of.heads(id).next().is_some());
         let natives: BTreeSet<&str> = f.natives().iter().map(|n| v.rel_name(n.rel)).collect();
-        if heads.iter().any(|h| derived_in(&**v, h) != derived_in(&**last.input, h)) {
+        if heads.iter().any(|h| derived_in(v, h) != derived_in(last.input, h)) {
             return Ok(false);
         }
         let split = {
@@ -273,7 +273,7 @@ impl ProgramPass for FactSpaces<'_> {
                 groups_of.entry(h.clone()).or_default().push(k);
             }
         }
-        let is_derived = |rel: &str| (derived_in(&**v, rel) || natives.contains(rel)) && !f.is_input(rel);
+        let is_derived = |rel: &str| (derived_in(v, rel) || natives.contains(rel)) && !f.is_input(rel);
         let mut places: BTreeMap<String, (Vec<usize>, Vec<usize>, Vec<usize>)> = BTreeMap::new();
         let mut derived: BTreeSet<String> = BTreeSet::new();
         let mut note = |rel: &str| {
@@ -282,7 +282,7 @@ impl ProgramPass for FactSpaces<'_> {
                 if dv {
                     derived.insert(rel.to_owned());
                 }
-                places.insert(rel.to_owned(), place_of(f, &locations, dv, rel));
+                places.insert(rel.to_owned(), place_of(f, locations, dv, rel));
             }
         };
         note("docof");
@@ -302,7 +302,7 @@ impl ProgramPass for FactSpaces<'_> {
         for id in last.delta.removed.iter() {
             let (Some(src), Some(made)) = (last.input.rule(id), last.output.derived(id).next()) else { return Ok(false) };
             for (k, o) in outside.iter().enumerate() {
-                counts[k] = counts[k].saturating_sub(guards_in(&**last.output, made, o).saturating_sub(guards_in(&**last.input, src, o)));
+                counts[k] = counts[k].saturating_sub(guards_in(last.output, made, o).saturating_sub(guards_in(last.input, src, o)));
             }
         }
         let mut guards = Guards { policies, groups: &groups, groups_of, places, derived, added: vec![0; groups.len()] };

@@ -143,7 +143,7 @@ fn entry_read(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<([u8; 
         read.push(file);
     }
     let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(|r| r.as_slice()) else { return Ok(None) };
-    let Some(digest) = unhex(&digest) else { return Ok(None) };
+    let Some(digest) = unhex(digest) else { return Ok(None) };
     Ok(Some((digest, read)))
 }
 

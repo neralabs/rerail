@@ -569,11 +569,10 @@ impl Compiled {
                 )?;
                 }
                 out.kept.insert(rel.clone());
-                if let Some(hand) = hooks.hand_off.as_deref_mut().filter(|_|self.kept.contains(&rel)) {
-                    if hand(&rel)? {
+                if let Some(hand) = hooks.hand_off.as_deref_mut().filter(|_|self.kept.contains(&rel))
+                    && hand(&rel)? {
                         out.handed.insert(rel.clone());
                     }
-                }
                 if self.kept.contains(&rel) { continue; }
             }
             let domains = lowered.and_then(|l| l.domains.get(&rel));

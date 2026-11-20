@@ -90,7 +90,7 @@ mod tests {
     /// A count of earlier rows of a group, over relations of any names: made by rank, its reader a sum over the rank.
     #[test]
     fn a_count_below_a_bound_is_a_rank_whatever_its_relations() {
-        let (n, p) = found(&concat!(
+        let (n, p) = found(concat!(
             ".decl edge(p: number, c: number, i: number)\n.decl flag(n: number)\n.decl top(b: number)\n.input edge, flag, top\n",
             ".decl place(b: number, s: number, i: number)\n.output place\n",
             "place(b, s, i) :- top(b), edge(b, s, _), !flag(s), i = count : { edge(b, s2, _), !flag(s2), s2 < s }.\n",
@@ -100,7 +100,7 @@ mod tests {
         let Native::Rank { group, op, .. } = &native else { unreachable!() };
         assert_eq!((*group, op.as_str()), (1, "<"), "grouped by b, counting below");
         let place = reader(&p, "place");
-        assert!(place.contains(&format!("sum")) && place.contains(rel.as_str()), "{place}");
+        assert!(place.contains(&"sum".to_string()) && place.contains(rel.as_str()), "{place}");
     }
 
     /// Written the other way round (`x > y`), and counting above (`y > x`): the op as the counted key sees it.
@@ -122,7 +122,7 @@ mod tests {
     /// own, counted as exactly as before.
     #[test]
     fn a_count_tied_beyond_its_comparison_groups_by_what_ties_it() {
-        let (n, p) = found(&concat!(
+        let (n, p) = found(concat!(
             ".decl edge(p: number, c: number, i: number)\n.decl near(a: number, b: number)\n.decl top(b: number)\n.input edge, near, top\n",
             ".decl place(b: number, s: number, i: number)\n.output place\n",
             "place(b, s, i) :- top(b), edge(b, s, _), i = count : { edge(b, s2, _), near(s2, s), s2 < s }.\n",
@@ -136,7 +136,7 @@ mod tests {
     /// asked rows.
     #[test]
     fn a_comparison_within_the_counted_rows_is_left_as_rows() {
-        let (n, p) = found(&concat!(
+        let (n, p) = found(concat!(
             ".decl edge(p: number, c: number, i: number)\n.decl top(b: number)\n.input edge, top\n",
             ".decl place(b: number, i: number)\n.output place\n",
             "place(b, i) :- top(b), i = count : { edge(b, s2, j), j < s2 }.\n",

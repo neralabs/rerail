@@ -71,7 +71,7 @@ pub fn lower_version(v: Arc<Version>, dialect: GrammarDialect, intern: &mut dyn 
 }
 
 /// A term as it is, for a rule written from `r`.
-fn as_is(v: &Version, r: RuleRef<'_>, t: TermRef<'_>) -> T<'static> {
+fn as_is(r: RuleRef<'_>, t: TermRef<'_>) -> T<'static> {
     match t {
         TermRef::Var(s) => T::VarAtom(r.var(s)),
         TermRef::Wild => T::Wild,
@@ -79,7 +79,7 @@ fn as_is(v: &Version, r: RuleRef<'_>, t: TermRef<'_>) -> T<'static> {
         TermRef::Int(i) => T::Int(i),
         TermRef::Str(a) => T::StrAtom(a),
         TermRef::Branded(b) => T::Branded(b),
-        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| as_is(v, r, a)).collect()),
+        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| as_is(r, a)).collect()),
     }
 }
 
@@ -91,7 +91,7 @@ fn membership<'v>(v: &Version, l: LitRef<'v>) -> Option<(Slot, Vec<TermRef<'v>>,
     }
     let args: Vec<TermRef<'v>> = args.collect();
     match args.as_slice() {
-        [TermRef::Var(x), TermRef::Call(set, items)] if v.text(*set) == SET => Some((*x, items.clone().collect(), b == 1)),
+        [TermRef::Var(x), TermRef::Call(set, items)] if v.text(*set) == SET => Some((*x, (*items).collect(), b == 1)),
         _ => None,
     }
 }
@@ -170,7 +170,7 @@ impl RulePass for Memberships {
             for p in body {
                 w = match p {
                     Piece::Lit(l) => w.lit(v, r, l),
-                    Piece::Cmp(x, op, item) => w.cmp(T::VarAtom(r.var(x)), op, as_is(v, r, item)),
+                    Piece::Cmp(x, op, item) => w.cmp(T::VarAtom(r.var(x)), op, as_is(r, item)),
                 };
             }
             w.finish()?;
@@ -251,7 +251,7 @@ impl Rw<'_, '_> {
                 let (ds, _) = functor_domains(self.v.text(f), args.len());
                 T::CallAtom(f, args.iter().zip(ds.into_iter().chain(std::iter::repeat(None))).map(|(&a, d)| self.lowered(a, d)).collect())
             }
-            t => as_is(self.v, self.r, t),
+            t => as_is(self.r, t),
         }
     }
     fn of(&self, t: TermRef<'_>) -> Option<Domain> {
@@ -282,7 +282,7 @@ impl Rw<'_, '_> {
                 TermRef::Call(g, items) if v.text(g) == SET => T::CallAtom(g, items.map(|i| self.lowered(i, Some(d))).collect()),
                 one => self.lowered(one, Some(d)),
             };
-            return (T::Call("in", vec![as_is(v, self.r, *x), set]), as_is(v, self.r, r));
+            return (T::Call("in", vec![as_is(self.r, *x), set]), as_is(self.r, r));
         }
         let (dl, dr) = (self.of(r), self.of(l));
         (self.lowered(l, dl), self.lowered(r, dr))
@@ -302,11 +302,10 @@ impl Rewrite for Rw<'_, '_> {
                 Some(self.lowered(t, d))
             }
             Site::Cmp(l) => {
-                if let Some((n, right)) = self.right.take() {
-                    if n == l.node() {
+                if let Some((n, right)) = self.right.take()
+                    && n == l.node() {
                         return Some(right);
                     }
-                }
                 let Lit::Cmp { l: lt, op, r: rt } = l.view() else { return None };
                 let (left, right) = self.cmp(lt, op, rt);
                 self.right = Some((l.node(), right));
@@ -379,7 +378,7 @@ impl ProgramPass for FactsAndSets<'_> {
             }
             let mut row = row;
             if let Some(Cell::Str(a)) = row.get(3).copied() {
-                let id = self.k.of(&b.text(a).to_owned(), Domain::Kind).map_err(|e| e.to_string())?;
+                let id = self.k.of(b.text(a), Domain::Kind).map_err(|e| e.to_string())?;
                 row[3] = Cell::Str(b.atom(&id.to_string()));
             }
             out.push(row);
