@@ -1,8 +1,8 @@
 # Executor gaps by the shipped programs that meet them (plan/coverage.rs, from matrix.tsv; RERAIL_BLESS_COVERAGE=1 writes this).
 # programs	probe	gap	programs by pack
 704	text test match: a bound pattern	not on the device: refused: a cat's text read by rx has no device form	python-main 462, lib 64, python 50, data-layer 30, javascript 30, typescript 18, next 8, django 6, node 6, react 6, vue 6, php 4, sql 4, engine 3, blade 2, rule-syntax 2, rust 2, rr 1
-454	text test glob: a bound pattern	not on the device: refused: the text test @glob of a pattern that is not a constant has no device form	python-main 396, data-layer 23, lib 15, rust 4, next 3, react 3, javascript 2, python 2, sql 2, data-layer (engine) 1, django 1, php 1, rule-syntax 1
-94	text test contains: a bound pattern	not on the device: refused: the text test @contains of a pattern that is not a constant has no device form	lib 26, data-layer 25, python-main 13, python 11, django 3, next 3, rust 3, sql 3, engine 2, vue 2, node 1, react 1, typescript 1
+454	text test glob: a bound pattern	not on the device: refused: the text test @glob of a pattern that is not a constant has no device form	python-main 396, data-layer 23, lib 14, rust 4, next 3, react 3, django 2, javascript 2, python 2, sql 2, data-layer (engine) 1, php 1, rule-syntax 1
+94	text test contains: a bound pattern	not on the device: refused: the text test @contains of a pattern that is not a constant has no device form	data-layer 25, lib 25, python-main 13, python 11, django 4, next 3, rust 3, sql 3, engine 2, vue 2, node 1, react 1, typescript 1
 93	function @replace_all/3	not on the device: no computed term	lib 27, python-main 20, python 13, javascript 9, data-layer 6, typescript 5, react 3, engine 2, next 2, node 2, django 1, rust 1, sql 1, vue 1
 93	functor @replace_all/3	not on the device: no computed term	lib 27, python-main 20, python 13, javascript 9, data-layer 6, typescript 5, react 3, engine 2, next 2, node 2, django 1, rust 1, sql 1, vue 1
 37	builtin to_number/1	not on the device: no computed term	lib 13, python-main 10, python 7, javascript 4, data-layer 2, typescript 1

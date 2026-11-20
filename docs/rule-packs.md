@@ -44,6 +44,7 @@ Packs that port a linter are [linter-equivalent](#linter-equivalent) to it.
 | Node.js | framework | eslint-plugin-n 18.4.1 | 37 (11) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
 | Vue | framework | eslint-plugin-vue 10.11.1 | 23 (21) | `*.vue` files |
 | React | framework | eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1 | 51 (32) | a `react` dependency, or `*.jsx` files |
+| Django | framework | none: Rerail's own rules | 27 (27) | a `django` dependency in `requirements*.txt` or `pyproject.toml`, or a `manage.py` |
 
 - **A project's own pack** is a `repository` pack you install from its folder with `rerail packs add <folder>`. It counts as a third party's pack.
 - **Starting values** are a pack's `mode` and `on`: what its rules start with in a repository that adds it. Repository or checkout settings override them.
