@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { appendFileSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +11,7 @@ import { DatabaseApiStores, type DatabaseApiStoresOptions } from "../../src/api/
 import { openRerailDatabase, recordCheckout, type RerailDatabase } from "../../src/engine/index.js";
 import { createMergeAssistService, SqliteSessionStore, type MergeAssistService } from "../../src/runtime/index.js";
 import { FakeGithub } from "../support/merge-assist/workspace.js";
-import { installPack, uninstallPack } from "../support/installed-packs.js";
+import { installPack, installPackDirectory, thirdPartyPack, uninstallPack } from "../support/installed-packs.js";
 import { gitRepository } from "../support/repository-setup.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { startDatabaseWriter } from "../support/processes/database-writer.js";
@@ -261,6 +261,21 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     await stream.stop();
   });
 
+  it("sends a new token at the beat after a pack linked from a folder changed its pack.json, which no watch hears", async () => {
+    const copy = thirdPartyPack(join(root, "copies"), "@acme/rerail-pack-lint", "lint");
+    installPackDirectory(copy, "@acme/rerail-pack-lint");
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const stream = await open();
+    const first = await stream.next();
+
+    const pack = JSON.parse(readFileSync(join(copy, "pack.json"), "utf8")) as Record<string, unknown>;
+    writeFileSync(join(copy, "pack.json"), JSON.stringify({ ...pack, name: "Lint, renamed" }));
+    await vi.advanceTimersByTimeAsync(BEAT_MS);
+
+    expect((await stream.next()).data).not.toBe(first.data);
+    await stream.stop();
+  });
+
   it("sends a new token at the beat after origin's default branch moved, which Merge Assist names as the base", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     const checkout = gitRepository(join(realpathSync(root), "web"));
@@ -364,6 +379,18 @@ describe("the daemon's change stream (GET /api/changes)", () => {
 
     expect(await movedFrom(stream, first.data)).toBeDefined();
     await stream.stop();
+  });
+
+  it("starts a stream naming another spelling of a recorded checkout from what the last read of that checkout found", async () => {
+    const checkout = gitRepository(join(realpathSync(root), "web"));
+    recordCheckout(database, checkout);
+    const stream = await open(`?${new URLSearchParams({ checkout })}`);
+    const read = await filesRead(stream);
+    await stream.stop();
+
+    const again = await open(`?${new URLSearchParams({ checkout: `${checkout}/` })}`);
+    expect((await again.next()).data).toBe(read.data);
+    await again.stop();
   });
 
   describe("while Merge Assist is on", () => {

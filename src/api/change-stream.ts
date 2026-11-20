@@ -58,8 +58,9 @@ const FILE_READS: Readonly<Record<string, (stores: RerailApiStores, checkout: Ch
 
 /**
  * What the last read of each part of each scoped checkout found (`FILE_READS`), so a new stream's first token starts
- * from it and waits for no read; one entry per part and per `checkout` a stream named, recorded or not, kept for the
- * daemon's life.
+ * from it and waits for no read, whatever spelling of the checkout's path it names; one entry per part and per checkout
+ * Rerail recorded that a stream named, kept for the daemon's life. A stream naming a path Rerail did not record keeps
+ * what it reads to itself.
  */
 const lastRead = new Map<string, string>();
 
@@ -100,14 +101,17 @@ interface StreamToken {
 
 /**
  * The token a page compares, for one stream scoped to `checkout`: it moves when the database commits (`historyVersion`,
- * which creates no database), the installed packs' catalog changes (read again only at a `files` notice: their folders
- * are watched), or a part of `FILE_READS` changes: the checkout's own files, or `gh`'s sign-in while Merge Assist is on
- * there (each read again by `refresh`, one read at a time, at the stream's start and at each beat). `salt` is the
- * daemon's, so a restarted daemon never repeats a token.
+ * which creates no database), the installed packs' catalog changes (read again at a `files` notice, from the watches of
+ * their folders, and at each beat, for what reaches no watch: a pack linked from a folder, the active core behind its
+ * link, a prefix made after the watch began; the catalog's own stamp makes that read a few stats), or a part of
+ * `FILE_READS` changes: the checkout's own files, or `gh`'s sign-in while Merge Assist is on there (each read again by
+ * `refresh`, one read at a time, at the stream's start and at each beat). `salt` is the daemon's, so a restarted daemon
+ * never repeats a token.
  */
 function streamToken(stores: RerailApiStores, salt: string, checkout: string | undefined): StreamToken {
   let installed: RuleCatalog | undefined;
-  const parts = Object.entries(FILE_READS).map(([name, read]) => ({ read, part: readPart(checkout === undefined ? undefined : `${name}\u0000${checkout}`) }));
+  const recorded = recordedCheckout(stores, checkout)?.checkoutPath;
+  const parts = Object.entries(FILE_READS).map(([name, read]) => ({ read, part: readPart(recorded === undefined ? undefined : `${name}\u0000${recorded}`) }));
   /** The digest of the catalog and the parts, and what it was taken of: hashed again only when that moved. */
   let hashed = { of: "", digest: "" };
   const digestOf = (input: string): string => {
@@ -116,7 +120,7 @@ function streamToken(stores: RerailApiStores, salt: string, checkout: string | u
   };
   return {
     now(notice) {
-      if (installed === undefined || notice === "files") installed = stores.ruleCatalog();
+      if (installed === undefined || notice === "files" || notice === "beat") installed = stores.ruleCatalog();
       const input = [installed.digest, ...parts.map(({ part }) => part.value())].join("\u0000");
       return `${salt}.${stores.historyVersion() ?? "none"}.${digestOf(input)}`;
     },
