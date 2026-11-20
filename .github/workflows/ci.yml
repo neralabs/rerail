@@ -639,7 +639,7 @@ jobs:
   # `dump-cli`), since code gated on those features compiles only there. wasi-sdk brings the clang, llvm-ar, wasi-libc
   # and libc++ that native/wasm/env.sh takes from Homebrew on macOS. Gated as rust-windows is, when the change reaches
   # the engine (`rust-engine`). A job of its own with no compile cache: its failure, or a failed download for it, leaves
-  # what rust-clippy saves as it was. Cold, it took 3 minutes on a 4-core machine.
+  # what rust-clippy saves as it was. Cold, at 4 jobs, the check takes 2.5 to 7 minutes.
   rust-wasm:
     name: Rust engine (browser build)
     needs: changes
