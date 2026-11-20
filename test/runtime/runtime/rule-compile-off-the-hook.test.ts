@@ -67,10 +67,10 @@ const queuedWorkRan = () => new Promise<void>(resolve => setImmediate(resolve));
 
 const temporaryDirectory = temporaryDirectories("rerail-rule-compile-");
 
-/** A steer rule that flags `NEEDLE` in any Python file, reporting `code` with `message`. */
+/** A steer rule that flags `NEEDLE` in any Python file, reporting `code` with `message`, its title. */
 function needle(id: string, code: string, message: string): unknown {
   return {
-    format: "rerail.policy/v1", id, revision: 1, mode: "steer", description: `Keep NEEDLE out of Python files (${code}).`,
+    format: "rerail.policy/v1", id, revision: 1, mode: "steer", title: message, description: `Keep NEEDLE out of Python files (${code}).`,
     scope: { include: ["**/*.py"], exclude: [] },
     clauses: [{ id: "needle", violation: { code, anchor: "witness.span", message }, forbid: { regex: { pattern: "NEEDLE", source: "file.content" } } }],
   };
@@ -230,6 +230,35 @@ describe("a session's first edit in a repository after the daemon restarts", () 
       await runtime.dispose();
     }
   }, 60_000);
+
+  it("names the rule by its own title in the person's line, whether it was compiled ahead or at that edit", async () => {
+    for (const ahead of [true, false]) {
+      const pack = ahead ? "rctitleahead" : "rctitlecall";
+      const daemon = await restartedDaemon(ahead, pack);
+      const { runtime, first } = daemon;
+      try {
+        compiles.offThreadIds.length = 0;
+        const opening = daemon.call(runtime, first, join(daemon.folder, "README.md"));
+        await opening.call();
+        await opening.result();
+        await runtime.codeRulesOpened(first.sessionId);
+        await runtime.rulesBuiltAhead(first.sessionId);
+        expect(compiles.offThreadIds.includes(`${pack}-needle`)).toBe(ahead);
+        compiles.onThread = 0;
+
+        const edit = daemon.call(runtime, first, join(daemon.sibling, "api", "x.py"), "NEEDLE = 1\n");
+        await edit.call();
+        expect(compiles.offThreadIds).toContain(`${pack}-needle`);
+        const result = await edit.result();
+        const rules = result.flatMap(delivery => delivery.rules ?? []);
+        expect(rules, `${JSON.stringify(result)} ${daemon.checks()}`)
+          .toContainEqual(expect.objectContaining({ id: `${pack}-needle`, title: "No NEEDLE in the sibling, still" }));
+        expect(compiles.onThread).toBe(0);
+      } finally {
+        await runtime.dispose();
+      }
+    }
+  }, 120_000);
 
   it("compiles them on the daemon's thread with an engine built before it could compile off it, and steers that edit as before", async () => {
     const daemon = await restartedDaemon(true, "rcolder");
