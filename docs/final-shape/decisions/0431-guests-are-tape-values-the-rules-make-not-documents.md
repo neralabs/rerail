@@ -237,13 +237,14 @@ code may be named by which rules asked for it, or in what order.
 | R2 | `guest_of(n, s)` names the string a tape value's node was parsed at | `guest_of_names_the_string_a_node_was_parsed_from` |
 | R3 | One text is one tape and one set of nodes at every place; a tape value's node is no file's | `one_tape_at_two_places_is_one_set_of_nodes` |
 | R4 | No string is parsed unless a rule asks for it | `a_string_no_rule_asks_for_is_not_parsed` |
-| R5 | The batch is built once a chunk and grows by the rest (§6; `Report::batch_grown` counts the documents added): a file's programs, and the rows read are a rebuilt batch's. A tape value no longer grows it (§8, R10, which supersedes `tape_values_build_no_second_batch`) | `a_files_programs_build_no_second_batch` |
+| R5 | The batch is built once a chunk and grows by the rest (§6; since step 7 it grows only by what the fixpoint admits, and `Report::batch_grown` is gone with the rounds): a file's programs, and the rows read are a rebuilt batch's. A tape value no longer grows it (§8, R10, which supersedes `tape_values_build_no_second_batch`) | `a_files_programs_build_no_second_batch` |
 | R6 | A text a run parsed is not parsed again: after an edit elsewhere in its file, in a new file, after a rule's edit (`Report::guest_parses`) | `an_edit_elsewhere_parses_no_text_the_last_run_parsed`, `a_new_file_with_a_text_parsed_before_parses_nothing`, `an_edited_rule_parses_no_text_the_last_run_parsed`; guard `equal_texts_are_parsed_once_a_run` |
 | R7 | A file read from the memo has its programs and tape values for a cross-file rule: a value's rows are base rows of each file that asked for it (`owners`, `askers`), kept in its entry and restored with it | `a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule` |
 | R8 | CPU and Metal give the same rows, the device reading the same tapes: a value's rows read where they lie, none uploaded (but Q266's filtered inputs) | `cpu_and_metal_read_the_same_tape_values`, with both kinds |
 | R9 | A finding placed at a tape value's node is refused: the lowering derives `rr_unplaced(clause)`, and the run fails naming the clauses | `a_finding_at_a_tape_values_node_is_refused` |
 | R10 | A string a rule parses is parsed in the program's fixpoint (§8): no slice and no round runs for it, the batch never grows by a value, each value is admitted once at its first lookup (`Report::values_admitted`), a string inside a value too; no scan lists a hidden value's nodes, and a shown one's are read after the request (§8, as built) | `tape_values_are_read_in_the_fixpoint` |
 | R11 | A file's programs are made once, at its parse, and kept with its tape (§7, step 6): the batch makes a program's document from the file's record, running no embedder and parsing nothing (`Report::programs`: read from a record, made by an embedder); a run that finds the file's tape in the store finds its programs with it; a tape the store holds with no record (stored before step 6) has its programs made in the batch, as before. The rows are the same each way | `a_files_programs_are_kept_with_its_tape` |
+| R12 | A value a rule makes (`@parse`, `@splice`) is asked in the program's fixpoint, as a string a rule parses is (§8, step 7): no slice and no round runs before it, and a relation that depends on such an answer is never cut by the demand split (decision 0048), whose `pre_<i>` would read the value's nodes before it is admitted | `parse_splice_and_unparse_make_value_documents`, `value_documents_are_memoised_with_the_files_that_asked` |
 
 The tests for R1–R4 are in `logic/rr/tests.rs`, R6's in `logic/plan/corpus/tests.rs`, ignored until their step lands (`#[ignore = "0431 …"]`). 0055's tests
 keep their meaning, rewritten for `guest_of` and the file's programs where they read `guest(g, …)`.
@@ -302,6 +303,28 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
    - Left: a tape still queued for the writer (read before it is written, in the same run) gives no record, so its
      file's programs are made in the batch. The matcher path's own publication (`publication.rs`) writes `at` but
      records no count: its tapes read as not known, as before.
+
+7. (Q268 item 2, 2026-11-20.) No round outside the fixpoint (§1; R12). `rr_parse_req` and `rr_splice_req` are
+   answered inside the file-local part's fixpoint as `rr_embed_req` is (decision 0065 §2a): `guests::answering`
+   gives each request the program derives what it answers, `parse_of` and `splice_of` (one request each, as
+   `answers::gate` takes them), and the chunk's answer admits each value (`Guests::admit_value`) with its rows a
+   part of every source the chunk binds (`Values::add`). Its `tape_of`, `unparse_of`, nodes and text are those
+   parts, read through the value's tape, which only its request's answer gives.
+   - Removed: the embed slice (`embed_slice`), its rounds (`guests::DEPTH`, the maintained slice runs, the batch
+     grown by a round, `Grower::grow`), its requests' identities and the entries' replay of them (`memo::GUESTS`),
+     the guest relations' postings measured after the rounds, and `Report::slice_runs` and `batch_grown`.
+   - Found on the way: the demand split (decision 0048) cut a relation above `parse_of` (`exists_0`) and gave its
+     readers a `pre_<i>` of their bodies less it: `node(d, n, "object_reference", …)`, a value's nodes, read before
+     the answer admitted the value, so the demand was empty and so were its readers. A relation that depends on an
+     answer whose produced relation is an input (one the chunk's sources hold parts of: `parsed`, `parse_of`) is no
+     candidate now (`demand::split_negations`). A load's answer (`loaded`) is no input and keeps its demand.
+   - Measured: below.
+
+## Measured (step 6)
+
+PostHog cold on the CPU, on the M3 (load average 46 from other jobs): 29,747 findings, fa0efeaed6ff, unchanged.
+2,405 G instructions against 2,395 G at decision 0470 step 2 (the Python call-argument embedder runs at parse now,
+and the writer stores each file's programs), 206 s CPU, 60.6 s wall, peak 2.4 GB.
 
 ## Measured (step 5)
 

@@ -28,24 +28,54 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use crate::code_rule_dsl::logic::program_image::Version;
 
-/// Rounds of the slice per chunk: values of values, to this depth. A guard, not a limit anyone should reach.
-pub(super) const DEPTH: usize = 4;
 /// The guest relations the request `DEMAND` answers in the fixpoint (decision 0431 §8): a value's nodes are reached
 /// only through them, so a reader of any is ordered after the strings are asked.
 pub(super) const ANSWERED: [&str; 5] = ["parsed", "sub_tape", "guest_of", "guest_place", "host_node"];
 /// Of those, the ones the answer gives as rows, not only as the value's part.
 const GIVEN: [&str; 2] = ["parsed", "sub_tape"];
 
-/// What `DEMAND` answers in program `v`'s fixpoint (decision 0431 §8), and of that what its answer gives as rows. It
-/// produces each guest relation `v` reads (`ANSWERED`), and each relation `DEMAND`'s own rules read that a producer
-/// makes off a value's tape, directly or through the relations they derive (`syntax::taped`: a string nested in a value is a string annotation once its outer one is
-/// parsed, and is asked in a later wave). It gives as rows `GIVEN`'s and the producers'; the others are read on the
-/// values' parts, and a view's (`kind`, `node`) is never given.
-pub(super) fn answered(v: &Version) -> (Vec<String>, Vec<String>) {
+/// What request `req` (`DEMANDS`) answers, and of that what its answer gives as rows: a string's guest relations
+/// (`DEMAND`); `@parse`'s and `@splice`'s value, reached through `parse_of` and `splice_of` alone (decision 0058 §4:
+/// its `tape_of`, `unparse_of` and nodes are the value's part, bound when it is admitted, and every reader reaches
+/// them through the value's tape).
+fn answered_by(req: &str) -> (&'static [&'static str], &'static [&'static str]) {
+    match req {
+        DEMAND => (&ANSWERED, &GIVEN),
+        PARSE => (&["parse_of"], &["parse_of"]),
+        SPLICE => (&["splice_of"], &["splice_of"]),
+        _ => (&[], &[]),
+    }
+}
+
+/// The requests program `v` derives that its fixpoint answers (decision 0431 §8, Q268): each of `DEMANDS` a rule
+/// derives, with what it answers (`answered`), where that is read. A relation is one request's answer (`answers::gate`):
+/// a producer's that two requests' rules read is the first's.
+pub(super) fn answering(v: &Version) -> BTreeMap<String, (Vec<String>, Vec<String>)> {
+    let mut claimed: BTreeSet<String> = BTreeSet::new();
+    let mut out = BTreeMap::new();
     let read = |r: &str| v.inputs().any(|a| v.text(a) == r);
-    let demand = v.rel(DEMAND);
-    let mut produced: Vec<String> = ANSWERED.into_iter().filter(|r| read(r)).map(str::to_owned).collect();
-    let mut given: Vec<String> = GIVEN.into_iter().filter(|r| read(r)).map(str::to_owned).collect();
+    for r in DEMANDS.into_iter().filter(|r| v.rel(r).is_some_and(|id| v.heads(id).next().is_some()) && answered_by(r).0.iter().any(|a| read(a))) {
+        let (mut produced, mut given) = answered(v, r);
+        produced.retain(|p| claimed.insert(p.clone()));
+        given.retain(|g| produced.contains(g));
+        if !produced.is_empty() {
+            out.insert(r.to_owned(), (produced, given));
+        }
+    }
+    out
+}
+
+/// What request `req` answers in program `v`'s fixpoint (decision 0431 §8), and of that what its answer gives as rows.
+/// It produces each relation of `answered_by` that `v` reads, and each relation `req`'s own rules read that a producer
+/// makes off a value's tape, directly or through the relations they derive (`syntax::taped`: a string nested in a value is a string annotation once its outer one is
+/// parsed, and is asked in a later wave). It gives as rows `answered_by`'s and the producers'; the others are read on the
+/// values' parts, and a view's (`kind`, `node`) is never given.
+pub(super) fn answered(v: &Version, req: &str) -> (Vec<String>, Vec<String>) {
+    let read = |r: &str| v.inputs().any(|a| v.text(a) == r);
+    let demand = v.rel(req);
+    let (answers, gives) = answered_by(req);
+    let mut produced: Vec<String> = answers.iter().filter(|r| read(r)).map(|r| (*r).to_owned()).collect();
+    let mut given: Vec<String> = gives.iter().filter(|r| read(r)).map(|r| (*r).to_owned()).collect();
     // The relations the request reads, through the rules that derive them (a context relation's, `rr_ctx`).
     let mut seen: BTreeSet<crate::code_rule_dsl::logic::program_image::RelId> = demand.into_iter().collect();
     let mut todo: Vec<_> = seen.iter().copied().collect();
@@ -94,58 +124,14 @@ pub(super) enum Got {
     Not,
 }
 
-/// One document asked for.
+/// A value a rule makes (decision 0058 §4), asked inside the fixpoint (`Guests::admit_value`). A string a rule parses
+/// is asked as its place and grammar (`Guests::admit`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(super) enum Request {
-    /// The string at host node `at` a rule parses as `grammar` (`parsed`, `sub_tape`): a tape value (decision 0431),
-    /// or the program its file holds there (made with the batch).
-    Guest { at: i64, grammar: String },
     /// `@parse(grammar, text)`, asked at location `at` (the asking document's).
     Parse { at: i64, grammar: String, text: String },
     /// `@splice(_, node, with)`: node's tape, with node's text replaced by tape `with`'s.
     Splice { node: i64, with: String },
-}
-
-/// The location a slice's output line asks at (`requests`): a demand's first column. Whose request it is: that
-/// location's file's (decision 0225 §2).
-pub(super) fn asked_at(rel: &str, rows: &crate::code_rule_dsl::logic::plan::output::Rows, i: usize) -> Option<i64> {
-    let col = match rel {
-        DEMAND | PARSE | SPLICE => 0,
-        _ => return None,
-    };
-    match rows.cell(i, col) {
-        crate::code_rule_dsl::logic::plan::output::Cell::Int(at) if col < rows.width() => Some(at),
-        _ => None,
-    }
-}
-
-/// The requests of a slice run's outputs, in order.
-pub(super) fn requests(outputs: &BTreeMap<String, std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>>) -> Vec<Request> {
-    use crate::code_rule_dsl::logic::plan::output::Cell;
-    let mut out = Vec::new();
-    // Each request relation's rows of `n` values, as the run handed them (typed: nothing read from text).
-    let rows = |rel: &str, n: usize| {
-        outputs.get(rel).filter(|r| r.width() == n).into_iter().flat_map(move |r| (0..r.len()).map(move |i| (0..n).map(|c| r.cell(i, c)).collect::<Vec<Cell<'_>>>()))
-    };
-    for c in rows(DEMAND, 2) {
-        if let [Cell::Int(at), Cell::Text(g)] = c[..] {
-            out.push(Request::Guest { at, grammar: g.to_owned() });
-        }
-    }
-    // `at`, the location that asked, says whose the value is; equal texts are one value (`Guests::value`).
-    for c in rows(PARSE, 3) {
-        if let [Cell::Int(at), Cell::Text(g), Cell::Text(x)] = c[..] {
-            out.push(Request::Parse { at, grammar: g.to_owned(), text: x.to_owned() });
-        }
-    }
-    for c in rows(SPLICE, 2) {
-        if let [Cell::Int(node), Cell::Text(t2)] = c[..] {
-            out.push(Request::Splice { node, with: t2.to_owned() });
-        }
-    }
-    out.sort();
-    out.dedup();
-    out
 }
 
 /// The embedding a grammar name names for `host` (decision 0222): one its dialect embeds programs through
@@ -435,31 +421,6 @@ impl Guests {
         }
     }
 
-    /// The documents `requests` ask for that are not made yet, added to `docs` (which holds their hosts), and the
-    /// tape values made before that gained a place (decision 0431): the keys of both, which changed.
-    pub(super) fn make(&mut self, requests: Vec<Request>, docs: &mut Vec<Document>, parses: &Parses<'_>) -> Result<Vec<u32>, String> {
-        let mut places: Vec<(u32, syntax::TapePlace)> = Vec::new();
-        let mut out = {
-            let docs: &[Document] = docs;
-            self.made_from(requests, docs, parses, &mut places)?
-        };
-        let mut changed: Vec<u32> = out.iter().map(|d| d.key).collect();
-        for (key, place) in places {
-            let Some(d) = docs.iter_mut().chain(out.iter_mut()).find(|d| d.key == key) else { continue };
-            let Some(g) = d.guest.as_mut() else { continue };
-            if let Made::Tape { places } = &mut Arc::make_mut(g).made
-                && !places.contains(&place)
-            {
-                places.push(place);
-                changed.push(key);
-            }
-        }
-        docs.append(&mut out);
-        changed.sort_unstable();
-        changed.dedup();
-        Ok(changed)
-    }
-
     /// A string a rule parses, asked inside the chunk's fixpoint (decision 0431 §8: `rr_embed_req(at, grammar)`'s
     /// answer): its tape value made (`Got::New`, added to `docs`), or a place more of one made before (`Got::Placed`,
     /// its document in `docs` given the place); `Got::Not` for a place asked before, or one with no tape.
@@ -485,57 +446,44 @@ impl Guests {
         Ok(got)
     }
 
-    /// The documents `requests` ask for that are not made yet; a tape value's further places, in `places`.
-    fn made_from(&mut self, requests: Vec<Request>, docs: &[Document], parses: &Parses<'_>, places: &mut Vec<(u32, syntax::TapePlace)>) -> Result<Vec<Document>, String> {
-        let by_key: HashMap<u32, &Document> = docs.iter().map(|d| (d.key, d)).collect();
-        let mut out: Vec<Document> = Vec::new();
-        for r in requests {
-            // A guest is one per place and grammar, whatever its role.
-            let first = match &r {
-                Request::Guest { at, grammar, .. } => self.made.insert((*at, grammar.clone())),
-                _ => self.asked.insert(r.clone()),
-            };
-            if !first {
-                continue;
-            }
-            let made = match r {
-                Request::Guest { at, grammar } => match self.guest(&by_key, at, &grammar, parses)? {
-                    Got::New(d) => Some(d),
-                    Got::Placed(key, place) => {
-                        places.push((key, place));
-                        continue;
-                    }
-                    Got::Not => None,
-                },
-                // A value is never shown (`Range::Hidden`): a program that sees no hidden guest makes none.
-                Request::Parse { .. } | Request::Splice { .. } if !self.seen.sees(Range::Hidden) => {
-                    self.unseen += 1;
-                    continue;
-                }
+    /// `@parse`'s or `@splice`'s value (`request`), asked inside the chunk's fixpoint (decision 0431 §8, Q268): made and
+    /// added to `docs`, or `None` where it was asked before, made before (its askers then grow), or makes no value.
+    pub(super) fn admit_value(&mut self, docs: &mut Vec<Document>, request: Request, parses: &Parses<'_>) -> Result<Option<Document>, String> {
+        if !self.asked.insert(request.clone()) {
+            return Ok(None);
+        }
+        // A value is never shown (`Range::Hidden`): a program that sees no hidden guest makes none.
+        if !self.seen.sees(Range::Hidden) {
+            self.unseen += 1;
+            return Ok(None);
+        }
+        let made = {
+            let by_key: HashMap<u32, &Document> = docs.iter().map(|d| (d.key, d)).collect();
+            match request {
                 Request::Parse { at, grammar, text } => {
                     let asker = super::memo::document_of(at);
                     if self.known(&grammar, &format!("parse:{text}"), asker) {
-                        continue;
+                        return Ok(None);
                     }
                     self.value(&by_key, asker, &grammar, text.clone(), Made::Parse { text }, parses)?
                 }
                 Request::Splice { node, with } => {
                     let asker = super::memo::document_of(node);
                     if self.known("", &format!("splice:{node}:{with}"), asker) {
-                        continue;
+                        return Ok(None);
                     }
                     match self.splice(&by_key, docs, node, &with)? {
                         Some((grammar, text, tape, _)) => self.value(&by_key, asker, &grammar, text, Made::Splice { tape, node, with }, parses)?,
                         None => None,
                     }
                 }
-            };
-            match made {
-                Some(d) => out.push(d),
-                None => self.refused += 1,
             }
+        };
+        match &made {
+            Some(d) => docs.push(d.clone()),
+            None => self.refused += 1,
         }
-        Ok(out)
+        Ok(made)
     }
 
     /// The guest at host node `at` a rule parses as `grammar_name`: the program its host holds through an embedding

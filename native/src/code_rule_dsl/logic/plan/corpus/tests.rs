@@ -1968,14 +1968,13 @@ fn batch_run_on(name: &str, files: &[(&str, &str)], program: &str, output: &str,
 #[test]
 fn a_files_programs_build_no_second_batch() {
     let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n";
-    let (report, calls) = batch_run("r5-programs", &[("a.html", html)], r#"
+    let (_, calls) = batch_run("r5-programs", &[("a.html", html)], r#"
 .language html
 #include "html/embeds.rr"
 .decl calls(x: symbol)
 calls(x) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x).
 .output calls
 "#, "calls");
-    assert_eq!((report.slice_runs, report.batch_grown), (0, 0), "no slice round, no batch grown");
     assert_eq!(calls, [["f(1)"], ["g(2)"]].map(|r| r.map(str::to_owned).to_vec()).to_vec(), "both scripts' calls");
 }
 
@@ -1998,7 +1997,6 @@ flat(x) :- kind(m, "identifier"), text(m, x).
 "#;
     let files = [("a.py", "x: \"List[int]\" = []\ndef f(a: \"Optional['Foo']\"): pass\n")];
     let (report, names) = batch_run("r10-names", &files, program, "names");
-    assert_eq!((report.slice_runs, report.batch_grown), (0, 0), "no slice round, no batch grown");
     assert_eq!(report.values_admitted, 3, "the two annotations' values and 'Foo''s, each admitted once");
     assert_eq!(report.guest_parses, 3, "each value parsed once");
     let set = |rows: Vec<Vec<String>>| rows.into_iter().map(|r| r.join("\t")).collect::<std::collections::BTreeSet<String>>();
@@ -2050,7 +2048,7 @@ flat(x) :- kind(m, "identifier"), text(m, x).
         assert!(bytes <= base + q266(3), "{output}: the values' rows are read where they lie ({bytes} bytes uploaded, {base} with no values)");
         assert!(!on_cpu.is_empty(), "{output}: rows");
         assert_eq!(on_metal, on_cpu, "{output}: the device's rows are the CPU's");
-        assert_eq!((metal.values_admitted, metal.guest_parses, metal.slice_runs), (cpu.values_admitted, cpu.guest_parses, cpu.slice_runs), "{output}: the same values, read alike");
+        assert_eq!((metal.values_admitted, metal.guest_parses), (cpu.values_admitted, cpu.guest_parses), "{output}: the same values, read alike");
     }
     let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n";
     let programs = r#"

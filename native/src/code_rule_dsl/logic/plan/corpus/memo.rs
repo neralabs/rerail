@@ -40,31 +40,6 @@ pub(super) fn outputs_alone(rel: &str) -> bool {
     rel.starts_with("own:")
 }
 
-/// The prefix of an entry's `lines` keys that hold its guests' requests (decision 0225 §2): the embed slice's output
-/// lines of each round that ask at a location of the file (`guests::asked_at`), under `guests:<round>:<relation>`. A
-/// chunk of partial hits whose entries hold them under the slice's identities makes its guests from them, without
-/// running the slice. Not an output: they are no relation of the file-local part.
-pub(super) const GUESTS: &str = "guests:";
-
-/// An entry's `outputs` key for round `round`'s lines of slice relation `rel`.
-pub(super) fn guest_key(round: usize, rel: &str) -> String {
-    format!("{GUESTS}{round}:{rel}")
-}
-
-/// The round and slice relation of a `guest_key`, `None` for an output's key.
-pub(super) fn guest_round(key: &str) -> Option<(usize, &str)> {
-    let (round, rel) = key.strip_prefix(GUESTS)?.split_once(':')?;
-    Some((round.parse().ok()?, rel))
-}
-
-/// Whether `a` and `b` hold the same guests' requests (`GUESTS`).
-pub(super) fn same_guests(a: &Entry, b: &Entry) -> bool {
-    let of = |e: &Entry| -> Vec<(String, Vec<Vec<String>>)> {
-        e.outputs.iter().filter(|(k, _)| k.starts_with(GUESTS)).map(|(k, (_, r))| (k.clone(), r.shown())).filter(|(_, l)| !l.is_empty()).collect()
-    };
-    of(a) == of(b)
-}
-
 /// The words `identity` is held by in `COVERED`.
 pub(super) fn covered_words(identity: &[u8; 32]) -> [i64; 2] {
     [i64::from_le_bytes(identity[..8].try_into().expect("8 bytes")), i64::from_le_bytes(identity[8..16].try_into().expect("8 bytes"))]

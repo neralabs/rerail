@@ -4904,19 +4904,6 @@ impl Grower {
         Ok((out, grower))
     }
 
-    /// The sources with `documents` added: a round's, past every document the batch holds.
-    pub fn grow(
-        &mut self,
-        store: &ContentStore,
-        documents: Vec<Document>,
-        sets: &[(String, Vec<i64>)],
-        tests: &crate::code_rule_dsl::logic::strings::Vocabulary,
-        binding: crate::code_rule_dsl::facts::nearest::Binding,
-        projection: &Projection,
-    ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
-        self.sources(store, documents, sets, None, tests, binding, projection, true)
-    }
-
     /// The sources of tape value `document` alone, admitted inside the chunk's fixpoint (decision 0431 §8): projected
     /// into the chunk's block, its hosts' lines and its strings the growth's, its rows its own, a part of each of the
     /// chunk's sources (`values::Layered`). A document the batch holds (a value given a place more) has the rows of

@@ -5591,6 +5591,12 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Programs kept with the tape, done** (2026-11-20, 0431 step 6, R11): a file's programs are made at its parse,
   carried in its facts, stored with its tape and read back with it; the batch runs an embedder only for a tape whose
   record is not known (stored before step 6). Test: `a_files_programs_are_kept_with_its_tape`.
+- **No round outside the fixpoint, done** (2026-11-20, 0431 step 7, R12): `@parse` and `@splice` values are asked
+  inside the fixpoint; the embed slice and its rounds are gone. The demand split no longer cuts a relation above a
+  value's answer.
+- **Seen on the way**: `value::eslint_rules::no_dupe_keys_through_key_nodes` (3 of 16 lines found) and
+  `typing::oracle_tests::a_loop_target_is_its_iterators_next_value_and_a_with_alias_the_value_entered` ("unbounded
+  node Cartesian product in `base`") fail at 11d32e9f0 too, before step 7 (Q263's kind for the second).
 
 ### Q272. The store crate's tests: five fail on a farm host, one flakes
 
