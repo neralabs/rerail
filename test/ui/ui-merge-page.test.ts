@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { patchProblem } from "../../ui/views/merge.js";
+import { patchProblem, stripSignature } from "../../ui/views/merge.js";
+import { sampleStatus } from "../support/merge-assist/status.js";
 
 /** An element as `patchProblem` patches it, noting each text change made while it was hidden. */
 class StubElement {
@@ -44,5 +45,25 @@ describe("the Settings form's problem", () => {
     expect(problem).toMatchObject({ hidden: false, textContent: "" });
     expect(timeout.hasAttribute("aria-invalid")).toBe(false);
     expect(problem.textWhileHidden).toEqual([]);
+  });
+});
+
+describe("the status strip", () => {
+  const github = (fields: object) => sampleStatus("/work/a", { readiness: { github: { ...sampleStatus("/work/a").readiness.github, ...fields } } });
+
+  it("is not rebuilt by a status whose gh reading differs only in when it was read and when it is read again", () => {
+    const shown = stripSignature(github({ readAgainInMs: 240_000 }));
+
+    // Scan now and Turn off keep their focus, and a click across the read still lands.
+    expect(stripSignature(github({ readAgainInMs: 239_000 }))).toBe(shown);
+    expect(stripSignature(github({ readAt: "2026-11-03T14:10:00Z", readAgainInMs: 300_000 }))).toBe(shown);
+  });
+
+  it("is rebuilt when what it draws of gh's reading changes", () => {
+    const shown = stripSignature(github({}));
+
+    expect(stripSignature(github({ state: "signed-out" }))).not.toBe(shown);
+    expect(stripSignature(github({ login: "jbarnes" }))).not.toBe(shown);
+    expect(stripSignature(github({ readAt: null }))).not.toBe(shown);
   });
 });

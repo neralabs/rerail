@@ -416,6 +416,17 @@ function patchStripButtons(status) {
   setText(page.offButton, switching ? "Turning off…" : "Turn off");
 }
 
+/**
+ * What the strip draws, which rebuilds it when it changes. Of gh's reading only its state, login, repository and whether
+ * gh was read: the time it was read is patched in place (`patchStripTimes`), and the time until it is read again moves
+ * at every status.
+ */
+export function stripSignature(status) {
+  const { state, login, repository, readAt } = status.readiness.github;
+  const github = { state, login, repository, read: readAt !== null };
+  return JSON.stringify([status.branch, status.baseBranch, { ...status.readiness, github }, status.lastScan]);
+}
+
 /** The status strip while on: its cells, Scan now and Turn off, and the last scan's problems. */
 function renderStrip(status) {
   if (status === null || !status.enabled) {
@@ -424,8 +435,7 @@ function renderStrip(status) {
     return;
   }
   const scan = status.lastScan;
-  const sig = JSON.stringify([status.branch, status.baseBranch, status.readiness, scan]);
-  setContent(page.strip, sig, () => {
+  setContent(page.strip, stripSignature(status), () => {
     page.stripWhen = scan === null ? null : h("span.when");
     page.githubWhen = status.readiness.github.readAt === null ? null : h("span.when");
     page.scanButton = h("button.btn.sm.solid.mscan", { "data-act": "mascan" });

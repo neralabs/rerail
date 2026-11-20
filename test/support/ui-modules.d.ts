@@ -340,6 +340,7 @@ declare module "*/ui/render/rule-sheet-model.js" {
 declare module "*/ui/views/merge.js" {
   interface Patched { hidden: boolean; textContent: string; getAttribute(name: string): string | null; hasAttribute(name: string): boolean; setAttribute(name: string, value: string): void; removeAttribute(name: string): void }
   export function patchProblem(form: { querySelector(selector: string): Patched | null }, fields: { problem: string | null; field: "command" | "timeout" | null }): void;
+  export function stripSignature(status: import("../../src/engine/index.js").MergeAssistStatus): string;
 }
 
 declare module "*/ui/views/create.js" {
