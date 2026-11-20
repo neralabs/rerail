@@ -5250,7 +5250,15 @@ fn run_observed_within(
         };
         // The stat index (git's): a file whose stat is the one recorded when its source was last read is that
         // source, and on a memo hit is neither read nor hashed.
-        let stats: Vec<Option<crate::content_store::FileStat>> = window.par_iter().map(|(_, path, _)| stat(path)).collect();
+        // Each job in the run (`run_state::Carry`, decision 0442): `stat` counts its work into the run's records.
+        let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
+        let stats: Vec<Option<crate::content_store::FileStat>> = window
+            .par_iter()
+            .map(|(_, path, _)| {
+                let _in = carry.enter();
+                stat(path)
+            })
+            .collect();
         let mut known: Vec<Option<crate::content_store::SourceId>> = window.iter().zip(&stats).map(|((_, path, _), stat)| stat.and_then(|now| stat_index.source(world::store_path(path), now))).collect();
         // An immutable Git source is identified by its blob, without statting or reading a checkout file.
         // A previously seen blob's SHA-256 lets the existing content memo answer before its bytes are fetched.
@@ -5307,9 +5315,12 @@ fn run_observed_within(
         }
         // The others are read and hashed, whatever the index said: a file may have changed since its stat.
         let rest: Vec<usize> = (0..window.len()).filter(|i| found[*i].is_none()).collect();
+        // In the run too (`carry`): a profiled run counts each read's bytes into its own records, which a pool thread
+        // holding no run panicked reading.
         let read: Vec<Option<String>> = rest
             .par_iter()
             .map(|i| {
+                let _in = carry.enter();
                 let path = &window[*i].1;
                 let _read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
                 // Held from the run's digests (decision 0300): taken here only where this window's texts are kept.
