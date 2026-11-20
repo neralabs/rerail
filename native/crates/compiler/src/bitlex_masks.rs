@@ -4200,7 +4200,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     }
     for b in 0..256 {
         let mut sig: Vec<u16> = lowered.switches.iter().filter(|s| s.offset == 0).map(|s| s.targets[b]).collect();
-        sig.extend(mark_kind_names.iter().map(|n| u16::from(starts_kind(n, b))));
+        // A moved row's tokens have their own kind (decision 0509): its first bytes are not its
+        // column's, so a `0` is one class with `1`..`9`, as the lean lexer's one `Int`.
+        sig.extend(mark_kind_names.iter().map(|n| u16::from((0..rows.len()).any(|r| token_rows[r].0 == *n && !moved.iter().any(|&(m, _)| m == r) && rows[r].first[b / 64] >> (b % 64) & 1 == 1))));
         let n = classes.len();
         let k = *classes.entry(sig.clone()).or_insert(n as u8);
         if usize::from(k) == sigs.len() {
@@ -4709,7 +4711,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         let o = mask_of_val(token_rows[r].1, &mut mark_masks);
         let marks = extra_marks(&token_rows[r].0);
         let part = low.inside.get(r).copied().unwrap_or(false);
-        retags.push(crate::records::Retag { o, kind: kinds[usize::from(f)], marks, part });
+        retags.push(crate::records::Retag { o, kind: kinds[usize::from(f)], marks, part, first: rows[r].first });
     }
     // A region read in parts whose bytes past its opener, through its closer, hold no mask mark
     // and no retag (proved, with the regions' fixed point): its walk's codes need no marks
@@ -4902,11 +4904,23 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }
     }
     // A reader's or a part's own kind (`records::Retag`): its row's name.
+    let mut closer_kinds = Vec::new();
     for &(r, f) in &moved {
         let k = records.kinds[usize::from(f)];
         if !token_named[usize::from(k)] {
             token_named[usize::from(k)] = true;
             names.tokens.push((k, token_rows[r].0.clone()));
+            if closer_rows.iter().any(|c| c.1 == r) {
+                closer_kinds.push(k);
+            }
+        }
+    }
+    // A closer's whose name is another kind's too: the name and `_close` (a template's `"`,
+    // `QUOTE_CLOSE`, apart from a string's opener `QUOTE`).
+    let named_tokens = names.tokens.clone();
+    for (k, n) in &mut names.tokens {
+        if closer_kinds.contains(k) && named_tokens.iter().any(|(j, m)| j != k && m == n) {
+            *n = format!("{n}_close");
         }
     }
     names.tokens.sort();

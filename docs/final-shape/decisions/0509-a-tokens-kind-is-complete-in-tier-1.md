@@ -50,13 +50,35 @@ Tier 1 gives each token its row's kind, so the kind alone tells tier 2 which tok
 - The tests: kotlin_aot 4/4 (tapes the JIT's on every file, 465 taken); Kotlin 46; compiler 140;
   parser_tests 92.
 
+## The arm says the kind (2026-11-20)
+
+The user: "complete item 1". What was left:
+
+5. **Each arm says its token's kind**, as the lean lexer's `token_at` returns `(T, end)`. The
+   generated token loop's arm gives `(l, Kind)`: `Kind::First` (its first byte's), `Kind::Part`
+   (a region's piece, word kept), `Kind::Tag` (a reader's, no word). A token's own kind is
+   tested only in the arm of its row's first bytes (`Retag::first`): the `0` arm asks
+   `hex_literal_starts` and `bin_literal_starts`, the `.` arm `real_literal_starts`. The
+   reader functions return the opener's tag; the region walk gives each piece its kind (the
+   content's, a part's, a closer's by its byte). `token()` takes the kind. Before, it ran
+   about 50 `bit(&m.*_tag, s)` tests on every token; now there are none.
+6. **One number kind.** A moved row's first bytes no longer count in the token marks' columns,
+   so `0` is one class with `1`..`9`: `INTEGER_LITERAL_8` is gone, as the lean lexer has one
+   `Int`.
+7. **A closer by its byte.** A region's closers can share a class (a template's `${` and `}`),
+   so the walk tests the closer's byte (generated: `match src[c]`; the JIT: the byte loaded),
+   not its class. A closer's own kind whose name is another kind's is named `_CLOSE`
+   (`QUOTE_CLOSE`, `TICK_CLOSE`), not by number (`QUOTE_19`).
+
+Kotlin's `t::` is now `INTEGER_LITERAL`, `HEX_LITERAL`, `BIN_LITERAL`, `REAL_LITERAL`,
+`STRING_CONTENT`, `QUOTE`/`QUOTE_CLOSE`, … with no numbered kind. Tests: kotlin_aot 4/4, Kotlin
+46, compiler 140, parser_tests 92.
+
 ## Still apart from `T`
 
 - **One string token.** The lean lexer gives a string as one `Str` token, and its parser reads the
-  pieces. Ours gives each piece a record (0323's lowering A). The pieces' kinds are now complete,
-  so that is a choice of granularity, not a test tier 2 makes.
-- **The `0` byte's two classes.** `INTEGER_LITERAL` and `INTEGER_LITERAL_8` are one kind in the
-  grammar, but two classes of first byte: the token marks' columns split them (decision 0129).
-- **The JIT's own-kind read** is a call for a token at a first byte the mask may hold at (a `.`,
-  a `0`): the lean lexer's number arm knows from the bytes it read. Next: the row's end rule gives
-  the kind where it reads those bytes anyway.
+  pieces. Ours gives each piece a record (0323's lowering A). Each piece's kind is complete, so
+  this is a choice of granularity, not a test tier 2 makes.
+- **Stage-1 masks, not bytes.** The `0` arm asks a mask whether a `0x` starts here, where the
+  lean lexer compares the next byte. That is Bitlex's shape (the masks are made for the block
+  anyway), not a test the token pays twice.

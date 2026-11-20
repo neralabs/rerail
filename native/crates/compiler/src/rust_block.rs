@@ -176,6 +176,26 @@ impl<'a> Gen<'a> {
     }
 
     /// A token's name by the first bytes whose end rule is `rule`.
+    /// A kind's name in the code: its number and the token's name.
+    fn kind_name(&self, k: u8) -> String {
+        self.tokens.get(&k).map_or(k.to_string(), |n| format!("{k} /* {n} */"))
+    }
+
+    /// A tag's `Kind` (`Reader::retag`): its kind and marks, no word.
+    fn tag_kind(&self, tag: Option<(u8, u32)>) -> String {
+        tag.map_or("Kind::First".to_owned(), |(k, marks)| format!("Kind::Tag({}, 0x{marks:x})", self.kind_name(k)))
+    }
+
+    /// The kind rule `rule`'s arm gives (decision 0509): a token's own kind where its row's start
+    /// holds (a `0x` in the `0` arm, a `.5` in the `.` arm), tested only in the arm of its first
+    /// bytes, as the lean lexer's number arm reads `0x`; else `dflt`.
+    fn own_kinds(&self, rule: usize, dflt: &str) -> String {
+        let r = self.r;
+        let at_rule = |t: &crate::records::Retag| (0..256).any(|b| t.first[b / 64] >> (b % 64) & 1 == 1 && usize::from(r.ends.get(b).copied().unwrap_or(crate::records::NO_RULE)) == rule);
+        let own: Vec<String> = r.retags.iter().filter(|t| crate::records::own_retag(r, t) && at_rule(t)).map(|t| format!("if bit(&{}, s) {{ Kind::Tag({}, 0x{:x}) }}", self.mask(t.o), self.kind_name(t.kind), t.marks)).collect();
+        if own.is_empty() { dflt.to_owned() } else { format!("{} else {{ {dflt} }}", own.join(" else ")) }
+    }
+
     fn rule_token(&self, rule: usize) -> String {
         let b = (0..256).find(|&b| usize::from(self.r.ends.get(b).copied().unwrap_or(crate::records::NO_RULE)) == rule);
         b.and_then(|b| self.tokens.get(&self.r.kinds[b]).cloned()).unwrap_or_else(|| format!("rule{rule}"))
@@ -222,9 +242,11 @@ impl<'a> Gen<'a> {
                 }
             }
         }
-        for t in &r.retags {
+        // A token's own kind, tested by the arm of its first bytes (decision 0509). A reader's and a
+        // part's the reader says.
+        for t in r.retags.iter().filter(|t| crate::records::own_retag(r, t)) {
             let n = self.tokens.get(&t.kind).cloned().unwrap_or_else(|| format!("kind{}", t.kind));
-            add(usize::from(t.o), format!("{n}_tag"));
+            add(usize::from(t.o), format!("{n}_starts"));
         }
         for (k, &(o, _)) in r.marks.iter().enumerate() {
             if o != WORD_ALONE {
@@ -603,14 +625,15 @@ impl<'a> Gen<'a> {
         let untaken = if r.untaken.is_empty() { "false" } else { "t.untaken" };
         out.push_str("    let refused = refused(&m, &t, src.len());\n    Lexed { masks: m, starts: t.starts, lasts: t.lasts, codes: t.codes, refused }\n}\n\n");
         let _ = writeln!(out, "/// Whether the file goes to the fallback: a total, or a token the loop refused.\nfn refused(m: &Masks, t: &Tokens, n: usize) -> bool {{\n    {any_total} || {untaken} || t.read || t.checked || t.bad || t.unplaced(m, n)\n}}\n");
+        out.push_str("/// A token's kind as the arm that read it says it (decision 0509), as the lean lexer's `T`: its\n/// first byte's (`First`); a part's own, its word kept (`Part`); a tag, its marks and no word\n/// (`Tag`).\n#[derive(Clone, Copy, PartialEq, Eq)]\nenum Kind {\n    First,\n    Part(u32),\n    Tag(u32, u32),\n}\n\n");
         // The loop's state.
         out.push_str(
             "/// The token loop's state: the records so far, the refusals, and what the gap marks carry\n\
-             /// from token to token (`records::gap_marks`).\nstruct Tokens {\n    starts: Vec<u32>,\n    lasts: Vec<u32>,\n    codes: Vec<u32>,\n    /// The byte after the last token's.\n    after: usize,\n    untaken: bool,\n    read: bool,\n    checked: bool,\n    bad: bool,\n    /// The byte after the last grammar token's first, its word, and the marks' tests' hits\n    /// carried to the next grammar token.\n    from: usize,\n    word_before: u32,\n    pending: u32,\n    /// The byte after the last record's first: an extra's own gap starts there.\n    from_record: usize,\n    /// A region's tokens, read before they are written.\n    parts: Vec<(usize, usize)>,\n    /// Where the loop goes on (`run` a batch at a time, decision 0496), and whether it has ended.\n    at: usize,\n    done: bool,\n}\n\n\
+             /// from token to token (`records::gap_marks`).\nstruct Tokens {\n    starts: Vec<u32>,\n    lasts: Vec<u32>,\n    codes: Vec<u32>,\n    /// The byte after the last token's.\n    after: usize,\n    untaken: bool,\n    read: bool,\n    checked: bool,\n    bad: bool,\n    /// The byte after the last grammar token's first, its word, and the marks' tests' hits\n    /// carried to the next grammar token.\n    from: usize,\n    word_before: u32,\n    pending: u32,\n    /// The byte after the last record's first: an extra's own gap starts there.\n    from_record: usize,\n    /// A region's tokens and their kinds, read before they are written.\n    parts: Vec<(usize, usize, Kind)>,\n    /// Where the loop goes on (`run` a batch at a time, decision 0496), and whether it has ended.\n    at: usize,\n    done: bool,\n}\n\n\
              impl Tokens {\n    fn new(n: usize) -> Self {\n        let room = n / 4 + 16;\n        Tokens { starts: Vec::with_capacity(room), lasts: Vec::with_capacity(room), codes: Vec::with_capacity(room), after: 0, untaken: false, read: false, checked: false, bad: false, from: 0, word_before: 0, pending: 0, from_record: 0, parts: Vec::new(), at: 0, done: false }\n    }\n\n",
         );
         // The loop.
-        let _ = writeln!(out, "    /// The tokens, as the lean lexer's loop: each at the first byte past the blanks, to its last\n    /// by its first byte's end rule (`records::walk`). A token the file is refused at ends the\n    /// loop before its record, as a lexer's error does (the CPU's tier 1 stops there too).\n    /// From where the last run stopped, to `batch` records more at least (the lean lexer's\n    /// `lex_run`, decision 0496), or to the end (`done`).\n    fn run(&mut self, src: &[u8], m: &Masks, batch: usize) {{\n        let n = src.len();\n        let mut at = self.at;\n        let goal = self.starts.len().saturating_add(batch);\n        while at < n && !self.stops() {{\n            if self.starts.len() >= goal {{\n                self.at = at;\n                return;\n            }}\n            let Some(s) = next_clear(&{}, at, n) else {{ break }};\n            let rule = END[usize::from(src[s])];\n            let l = match rule {{", self.mask(r.skip.expect("checked")));
+        let _ = writeln!(out, "    /// The tokens, as the lean lexer's loop: each at the first byte past the blanks, to its last\n    /// by its first byte's end rule (`records::walk`). A token the file is refused at ends the\n    /// loop before its record, as a lexer's error does (the CPU's tier 1 stops there too).\n    /// From where the last run stopped, to `batch` records more at least (the lean lexer's\n    /// `lex_run`, decision 0496), or to the end (`done`).\n    fn run(&mut self, src: &[u8], m: &Masks, batch: usize) {{\n        let n = src.len();\n        let mut at = self.at;\n        let goal = self.starts.len().saturating_add(batch);\n        while at < n && !self.stops() {{\n            if self.starts.len() >= goal {{\n                self.at = at;\n                return;\n            }}\n            let Some(s) = next_clear(&{}, at, n) else {{ break }};\n            let rule = END[usize::from(src[s])];\n            let (l, kind) = match rule {{", self.mask(r.skip.expect("checked")));
         for (k, rule) in r.rules.iter().enumerate() {
             let name = self.rule_token(k);
             let checks = r.checks.iter().any(|c| c.rule as usize == k && c.then == CheckThen::Escape);
@@ -624,37 +647,33 @@ impl<'a> Gen<'a> {
                         let a = &rd.arms[0];
                         let _ = write!(
                             out,
-                            "\n                    if bit(&{}, s) {{\n                        let mut parts = std::mem::take(&mut self.parts);\n                        match read_{name}_parts(m, s, &mut parts) {{\n                            Ok(()) => {{\n                                let l = parts.last().map_or(s, |p| p.1);\n                                for &(a, b) in &parts {{\n                                    self.token(src, m, a, b);\n                                }}\n                                at = l + 1;\n                            }}\n                            Err(()) => {{\n                                self.read = true;\n                                break;\n                            }}\n                        }}\n                        self.parts = parts;\n                        continue;\n                    }}",
+                            "\n                    if bit(&{}, s) {{\n                        let mut parts = std::mem::take(&mut self.parts);\n                        match read_{name}_parts(src, m, s, &mut parts) {{\n                            Ok(()) => {{\n                                let l = parts.last().map_or(s, |p| p.1);\n                                for &(a, b, kind) in &parts {{\n                                    self.token(src, m, a, b, kind);\n                                }}\n                                at = l + 1;\n                            }}\n                            Err(()) => {{\n                                self.read = true;\n                                break;\n                            }}\n                        }}\n                        self.parts = parts;\n                        continue;\n                    }}",
                             self.mask(a.opener)
                         );
                     }
-                    let _ = write!(out, "\n                    let l = match read_{name}(src, m, s) {{\n                        Ok(l) => l.max(s),\n                        Err(()) => {{\n                            self.read = true;\n                            s\n                        }}\n                    }};{check}\n                    l\n                }}");
+                    let own = self.own_kinds(k, "kind");
+                    let own = if own == "kind" { String::new() } else { format!("\n                    let kind = match kind {{\n                        Kind::First => {own},\n                        kind => kind,\n                    }};") };
+                    let _ = write!(out, "\n                    let (l, kind) = match read_{name}(src, m, s) {{\n                        Ok((l, kind)) => (l.max(s), kind),\n                        Err(()) => {{\n                            self.read = true;\n                            (s, Kind::First)\n                        }}\n                    }};{own}{check}\n                    (l, kind)\n                }}");
                 }
                 EndRule::Run(o) => {
-                    let _ = write!(out, "\n                // {name}\n                {k} => {{\n                    let l = run_end(&{}, s).max(s);{check}\n                    l\n                }}", self.mask(o));
+                    let _ = write!(out, "\n                // {name}\n                {k} => {{\n                    let l = run_end(&{}, s).max(s);{check}\n                    (l, {})\n                }}", self.mask(o), self.own_kinds(k, "Kind::First"));
                 }
                 EndRule::Pair(o) => {
-                    let _ = write!(out, "\n                // {name}\n                {k} => {{\n                    let l = s + usize::from(bit(&{}, s));{check}\n                    l\n                }}", self.mask(o));
+                    let _ = write!(out, "\n                // {name}\n                {k} => {{\n                    let l = s + usize::from(bit(&{}, s));{check}\n                    (l, {})\n                }}", self.mask(o), self.own_kinds(k, "Kind::First"));
                 }
                 EndRule::Last(o) => {
-                    let _ = write!(out, "\n                // {name}\n                {k} => {{\n                    let l = first_bit(&{}, s).unwrap_or(s).max(s);{check}\n                    l\n                }}", self.mask(o));
+                    let _ = write!(out, "\n                // {name}\n                {k} => {{\n                    let l = first_bit(&{}, s).unwrap_or(s).max(s);{check}\n                    (l, {})\n                }}", self.mask(o), self.own_kinds(k, "Kind::First"));
                 }
                 EndRule::Next(i) => {
-                    let _ = write!(out, "\n                // {name}\n                {k} => {{\n                    let l = next{i}(src, s, n);{check}\n                    l\n                }}");
+                    let _ = write!(out, "\n                // {name}\n                {k} => {{\n                    let l = next{i}(src, s, n);{check}\n                    (l, {})\n                }}", self.own_kinds(k, "Kind::First"));
                 }
             }
         }
-        out.push_str("\n                _ => {\n                    self.untaken = true;\n                    s\n                }\n            };\n            if self.stops() {\n                break;\n            }\n            self.token(src, m, s, l);\n            at = l + 1;\n        }\n        self.at = at;\n        self.done = true;\n    }\n\n");
+        out.push_str("\n                _ => {\n                    self.untaken = true;\n                    (s, Kind::First)\n                }\n            };\n            if self.stops() {\n                break;\n            }\n            self.token(src, m, s, l, kind);\n            at = l + 1;\n        }\n        self.at = at;\n        self.done = true;\n    }\n\n");
         let untaken = if r.untaken.is_empty() { "" } else { "self.untaken || " };
         let _ = writeln!(out, "    /// Whether a token read so far refuses the file: a byte no token begins with (where the\n    /// grammar's errors say so), a region with no closer, a token test's escape.\n    fn stops(&self) -> bool {{\n        {untaken}self.read || self.checked\n    }}\n");
         // A token's record.
-        out.push_str("    /// Token `s..=l`'s record (`records::pass`): its first byte's kind or a reader's, its word,\n    /// and its marks, the gap marks from the bytes since the grammar token before.\n    fn token(&mut self, src: &[u8], m: &Masks, s: usize, l: usize) {\n        self.bad |= l < s || s < self.after;\n        self.after = l + 1;\n        let mut kind = u32::from(KIND[usize::from(src[s])]);\n        let mut word = word(src, s, (l + 1).saturating_sub(s));\n        let mut marks = 0u32;\n");
-        for t in &r.retags {
-            let word = if t.part { String::new() } else { " word = 0;".into() };
-            let kind = self.tokens.get(&t.kind).map_or(t.kind.to_string(), |n| format!("{} /* {n} */", t.kind));
-            let marks = if t.marks == 0 { String::new() } else { format!(" marks |= 0x{:x};", t.marks) };
-            let _ = writeln!(out, "        if bit(&{}, s) {{\n            kind = {kind};{marks}{word}\n        }}", self.mask(t.o));
-        }
+        out.push_str("    /// Token `s..=l`'s record (`records::pass`): its kind as the arm that read it says it (`Kind`),\n    /// its word, and its marks, the gap marks from the bytes since the grammar token before.\n    fn token(&mut self, src: &[u8], m: &Masks, s: usize, l: usize, kind: Kind) {\n        self.bad |= l < s || s < self.after;\n        self.after = l + 1;\n        let (kind, word, mut marks) = match kind {\n            Kind::First => (u32::from(KIND[usize::from(src[s])]), word(src, s, (l + 1).saturating_sub(s)), 0u32),\n            Kind::Part(k) => (k, word(src, s, (l + 1).saturating_sub(s)), 0),\n            Kind::Tag(k, marks) => (k, 0, marks),\n        };\n");
         let retagged: u32 = r.retags.iter().fold(0, |a, t| a | t.marks);
         for (k, &(o, w)) in r.marks.iter().enumerate().filter(|&(k, _)| retagged >> k & 1 == 0) {
             let mut terms = Vec::new();
@@ -735,48 +754,57 @@ impl<'a> Gen<'a> {
         let r = self.r;
         for (i, rd) in r.readers.iter().enumerate() {
             let name = self.reader_names[i].clone();
-            let _ = writeln!(out, "/// A {name} token's last byte from its first, `s`: its region's, by the first arm whose opener\n/// holds there (`records::read_last`).\nfn read_{name}(src: &[u8], m: &Masks, s: usize) -> Result<usize, ()> {{\n    let n = src.len();\n    let _ = n;");
+            let _ = writeln!(out, "/// A {name} token's last byte from its first, `s`: its region's, by the first arm whose opener\n/// holds there (`records::read_last`).\nfn read_{name}(src: &[u8], m: &Masks, s: usize) -> Result<(usize, Kind), ()> {{\n    let n = src.len();\n    let _ = n;");
             for a in &rd.arms {
+                let kind = self.tag_kind(a.retag.or(rd.retag));
                 let none = match a.none {
                     ReadNone::Refuse => "Err(())".to_owned(),
-                    ReadNone::End => "Ok(n.saturating_sub(1))".to_owned(),
-                    ReadNone::Bytes(b) => format!("Ok(s + {b} - 1)"),
+                    ReadNone::End => format!("Ok((n.saturating_sub(1), {kind}))"),
+                    ReadNone::Bytes(b) => format!("Ok((s + {b} - 1, {kind}))"),
                 };
-                let _ = writeln!(out, "    if bit(&{}, s) {{\n        return match first_bit(&{}, s + 1) {{\n            Some(c) => Ok(c.wrapping_add_signed({})),\n            None => {none},\n        }};\n    }}", self.mask(a.opener), self.mask(a.closer), a.off);
+                let _ = writeln!(out, "    if bit(&{}, s) {{\n        return match first_bit(&{}, s + 1) {{\n            Some(c) => Ok((c.wrapping_add_signed({}), {kind})),\n            None => {none},\n        }};\n    }}", self.mask(a.opener), self.mask(a.closer), a.off);
             }
             let other = match r.rules.get(usize::from(rd.other)) {
                 Some(EndRule::Read(_)) | None => "Err(())".to_owned(),
-                Some(EndRule::Run(o)) => format!("Ok(run_end(&{}, s))", self.mask(*o)),
-                Some(EndRule::Pair(o)) => format!("Ok(s + usize::from(bit(&{}, s)))", self.mask(*o)),
-                Some(EndRule::Last(o)) => format!("Ok(first_bit(&{}, s).unwrap_or(s))", self.mask(*o)),
-                Some(EndRule::Next(j)) => format!("Ok(next{j}(src, s, n))"),
+                Some(EndRule::Run(o)) => format!("Ok((run_end(&{}, s), Kind::First))", self.mask(*o)),
+                Some(EndRule::Pair(o)) => format!("Ok((s + usize::from(bit(&{}, s)), Kind::First))", self.mask(*o)),
+                Some(EndRule::Last(o)) => format!("Ok((first_bit(&{}, s).unwrap_or(s), Kind::First))", self.mask(*o)),
+                Some(EndRule::Next(j)) => format!("Ok((next{j}(src, s, n), Kind::First))"),
             };
             let _ = writeln!(out, "    {other}\n}}\n");
             if !rd.parts_in_tier1() {
                 continue;
             }
             let a = &rd.arms[0];
+            // Each token's kind as the walk reads it (decision 0509): the opener the reader's tag, the
+            // content its own kind, a part its own, a closer its own where its byte begins a token
+            // outside.
+            let opener = self.tag_kind(a.retag.or(rd.retag));
+            let content = rd.content.map_or("Kind::First".to_owned(), |k| format!("Kind::Part({})", self.kind_name(k)));
+            let closer = rd.closers.iter().map(|&(b, k)| format!("{b:#04x} => Kind::Part({}), ", self.kind_name(k))).collect::<String>();
+            let closer = if rd.closers.is_empty() { "Kind::First".to_owned() } else { format!("match src[c] {{ {closer}_ => Kind::First }}") };
             let _ = writeln!(
                 out,
-                "/// A {name} region read in parts from its opener at `s` (`records::read_parts`), as the lean\n/// lexer's string reader: the opener's byte; then the nearer of the closer and each part, the\n/// bytes before it a token of the content's, a part its bytes; to the closer.\nfn read_{name}_parts(m: &Masks, s: usize, out: &mut Vec<(usize, usize)>) -> Result<(), ()> {{\n    out.clear();\n    out.push((s, s));\n    let mut at = s + 1;\n    loop {{\n        let c = first_bit(&{}, at).ok_or(())?;\n        // The nearest part before the closer, by its start, its bytes and its mask.\n        let mut part: Option<(usize, u8, u16, usize)> = None;",
+                "/// A {name} region read in parts from its opener at `s` (`records::read_parts`), as the lean\n/// lexer's string reader: the opener's byte; then the nearer of the closer and each part, the\n/// bytes before it a token of the content's, a part its bytes; to the closer. Each with its kind.\nfn read_{name}_parts(src: &[u8], m: &Masks, s: usize, out: &mut Vec<(usize, usize, Kind)>) -> Result<(), ()> {{\n    let _ = src;\n    out.clear();\n    out.push((s, s, {opener}));\n    let mut at = s + 1;\n    loop {{\n        let c = first_bit(&{}, at).ok_or(())?;\n        // The nearest part before the closer, by its start, its bytes and its mask.\n        let mut part: Option<(usize, u8, u16, usize)> = None;",
                 self.mask(a.closer)
             );
             for (j, pt) in rd.parts.iter().enumerate() {
                 let _ = writeln!(out, "        if let Some(e) = first_bit(&{}, at).filter(|&e| e < c) {{\n            if part.is_none_or(|p| (e, {}u8, {}u16) < (p.0, p.1, p.2)) {{\n                part = Some((e, {}, {}, {j}));\n            }}\n        }}", self.mask(pt.start), pt.bytes, pt.start, pt.bytes, pt.start);
             }
-            out.push_str("        let to = part.map_or(c, |p| p.0);\n        if to > at {\n            out.push((at, to - 1));\n        }\n        match part {\n            Some((e, _, _, j)) => {\n                let l = match j {\n");
+            out.push_str(&"        let to = part.map_or(c, |p| p.0);\n        if to > at {\n            out.push((at, to - 1, CONTENT));\n        }\n        match part {\n            Some((e, _, _, j)) => {\n                let (l, kind) = match j {\n".replace("CONTENT", &content));
             for (j, pt) in rd.parts.iter().enumerate() {
                 let l = match pt.last {
                     Some(o) => format!("first_bit(&{}, e).ok_or(())?", self.mask(o)),
                     None => format!("e + {} - 1", pt.bytes),
                 };
-                let _ = writeln!(out, "                    {j} => {l},");
+                let kind = pt.kind.map_or("Kind::First".to_owned(), |k| format!("Kind::Part({})", self.kind_name(k)));
+                let _ = writeln!(out, "                    {j} => ({l}, {kind}),");
             }
             let last = match a.last {
                 Some(o) => format!("first_bit(&{}, c).ok_or(())?", self.mask(o)),
                 None => format!("c.wrapping_add_signed({})", a.off),
             };
-            let _ = writeln!(out, "                    _ => unreachable!(\"a part\"),\n                }};\n                out.push((e, l));\n                at = l + 1;\n            }}\n            None => {{\n                let l = {last};\n                out.push((c, l));\n                return Ok(());\n            }}\n        }}\n    }}\n}}\n");
+            let _ = writeln!(out, "                    _ => unreachable!(\"a part\"),\n                }};\n                out.push((e, l, kind));\n                at = l + 1;\n            }}\n            None => {{\n                let l = {last};\n                out.push((c, l, {closer}));\n                return Ok(());\n            }}\n        }}\n    }}\n}}\n");
         }
     }
 

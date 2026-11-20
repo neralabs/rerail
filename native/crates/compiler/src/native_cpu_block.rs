@@ -4586,11 +4586,13 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         }
         None => code,
     };
-    // A closer's own kind (`Reader::closers`), by its first byte's: its word kept.
-    let closer_own = |f: &mut FunctionBuilder<'_>, mut code: Value| {
+    // A closer's own kind (`Reader::closers`), by its first byte (its class can be another
+    // closer's: a `${` and a `}`), as the lean lexer's reader reads the byte: its word kept.
+    let closer_own = |f: &mut FunctionBuilder<'_>, mut code: Value, at: Value| {
+        let from = f.ins().iadd(c.bytes, at);
+        let byte = f.ins().uload8(types::I64, MemFlags::trusted(), from, 0);
         for &(b, k) in &reader.closers {
-            let kind = f.ins().band_imm(code, 0xff);
-            let is = f.ins().icmp_imm(IntCC::Equal, kind, i64::from(r.kinds[usize::from(b)]));
+            let is = f.ins().icmp_imm(IntCC::Equal, byte, i64::from(b));
             let rest = f.ins().band_imm(code, !0xff);
             let tagged = f.ins().bor_imm(rest, i64::from(k));
             code = f.ins().select(is, tagged, code);
@@ -4641,7 +4643,7 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let len = f.ins().iadd_imm(len, 1);
             let code = code_at(f, pos, len);
             let code = own(f, code, kind);
-            let code = if part.is_none() { closer_own(f, code) } else { code };
+            let code = if part.is_none() && !reader.closers.is_empty() { closer_own(f, code, pos) } else { code };
             write_record(f, c, stores, kc, Some(pos), Some(l), code);
             let k2 = c.step(f, kc);
             let at2 = f.ins().iadd_imm(l, 1);
@@ -4656,7 +4658,7 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let len = f.ins().iconst(types::I64, off + 1);
         let code = code_at(f, pos, len);
         let code = own(f, code, kind);
-        let code = if part.is_none() { closer_own(f, code) } else { code };
+        let code = if part.is_none() && !reader.closers.is_empty() { closer_own(f, code, pos) } else { code };
         write_record(f, c, stores, kc, Some(pos), Some(l), code);
         let k2 = c.step(f, kc);
         match part {

@@ -1898,9 +1898,11 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                 }
             }
         }
-        // `block N recretag O KIND MARKS [part]`: a reader's or a part's kind and marks by its start mask.
+        // `block N recretag O KIND MARKS [part] [first W0 W1 W2 W3]`: a reader's or a part's kind and
+        // marks by its start mask, and its row's first bytes.
         for t in &r.retags {
-            let _ = writeln!(out, "  block {at} recretag {} {} {}{}", t.o, t.kind, t.marks, if t.part { " part" } else { "" });
+            let first = if t.first == [0; 4] { String::new() } else { format!(" first {:x} {:x} {:x} {:x}", t.first[0], t.first[1], t.first[2], t.first[3]) };
+            let _ = writeln!(out, "  block {at} recretag {} {} {}{}{first}", t.o, t.kind, t.marks, if t.part { " part" } else { "" });
         }
         // `block N recgaps G` the gap marks' bits, `block N recextra K` an extra's mark.
         if r.gaps != 0 {

@@ -175,6 +175,8 @@ pub(crate) fn rust_name_of(name: &str, upper: bool) -> String {
     let mut out = String::new();
     for c in name.chars() {
         let part = match c {
+            // A symbol's name ends in `_` already (`quote_`): one `_` after it.
+            '_' if out.ends_with('_') => continue,
             c if c.is_ascii_alphanumeric() || c == '_' => {
                 out.push(if upper { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() });
                 continue;

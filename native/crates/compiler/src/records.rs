@@ -457,6 +457,9 @@ pub struct Retag {
     /// tokens begins with its byte: its word stays (a `$name`'s), and on the CPU the reader's walk
     /// says it, as the lean lexer's string reader says what it read.
     pub part: bool,
+    /// The bytes its row's tokens begin with (its own, before its kind's byte was moved): where a
+    /// token loop's arm reads it (decision 0509).
+    pub first: [u64; 4],
 }
 
 /// A region a reader reads (`Reader`): its opener's and closer's outputs; the last byte at

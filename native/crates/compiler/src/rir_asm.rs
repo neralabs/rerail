@@ -782,8 +782,19 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             } else if first == "recretag" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recretag before its records"))?;
                 let (o, kind, marks): (u16, u8, u32) = (line.number("")?, line.number("")?, line.number("")?);
-                let part = matches!(line.word(), Ok(w) if w == "part");
-                r.retags.push(crate::records::Retag { o, kind, marks, part });
+                let (mut part, mut first) = (false, [0u64; 4]);
+                while let Ok(w) = line.word() {
+                    match w.as_str() {
+                        "part" => part = true,
+                        "first" => {
+                            for x in &mut first {
+                                *x = u64::from_str_radix(&line.word()?, 16).map_err(|e| format!("block {at} recretag first: {e}"))?;
+                            }
+                        }
+                        w => return Err(format!("block {at} recretag: `part` or `first`, not {w}")),
+                    }
+                }
+                r.retags.push(crate::records::Retag { o, kind, marks, part, first });
             } else if first == "recarm" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recarm before its records"))?;
                 let k: usize = line.number("")?;
