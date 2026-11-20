@@ -288,7 +288,7 @@ pub struct TextDemand {
     pub any: Vec<(usize, usize)>,
     /// The negated text atoms of a node of any kind that is not compared with a constant within the bound: no twin
     /// stands in for a negation, so every node's text is made at any length.
-    negated_any: usize,
+    pub negated_any: usize,
     /// The nodes whose text (within the bound) is read; `None` every node.
     pub read: Option<TextNodes>,
     /// Where `read` is every node: the first rule that reads the text of a node it does not narrow.
