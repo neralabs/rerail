@@ -4703,27 +4703,77 @@ impl CodeRuleDslRuntime {
         format: String,
         capabilities_json: String,
     ) -> Result<CompiledCodeRuleDsl> {
-        let capabilities = parse_capabilities(&capabilities_json)?;
-        let document = parse_document(&source, &format)?;
-        let canonical_value = canonicalize_value(document);
-        let canonical = serde_json::to_string(&canonical_value).map_err(json_error)?;
-        let digest = format!("sha256:{}", hex_digest(canonical.as_bytes()));
-        // The regexes only validation took, or a rejected document's, go as this ends (`regexes`).
-        let _compiling = regexes::compiling();
-        let (id, rule_mode, scope, clauses, required, report_count_gt) =
-            compile_document(&canonical_value, &capabilities)?;
+        compile_rule(&source, &format, &capabilities_json).map(|rule| CompiledCodeRuleDsl {
+            inner: Arc::new(rule),
+        })
+    }
+
+    /// `compile`, run on a thread of the host's worker pool: the promise settles with the
+    /// compiled rule, or fails as `compile` throws. A rule can take seconds to compile (the Node
+    /// pack's builtins rule), and the host's own thread stays free meanwhile.
+    #[napi]
+    pub fn compile_async(
+        source: String,
+        format: String,
+        capabilities_json: String,
+    ) -> napi::bindgen_prelude::AsyncTask<CompileTask> {
+        napi::bindgen_prelude::AsyncTask::new(CompileTask {
+            source,
+            format,
+            capabilities_json,
+        })
+    }
+}
+
+/// One code rule document compiled against the capability manifest `capabilities_json`.
+fn compile_rule(source: &str, format: &str, capabilities_json: &str) -> Result<CompiledCodeRule> {
+    let capabilities = parse_capabilities(capabilities_json)?;
+    let document = parse_document(source, format)?;
+    let canonical_value = canonicalize_value(document);
+    let canonical = serde_json::to_string(&canonical_value).map_err(json_error)?;
+    let digest = format!("sha256:{}", hex_digest(canonical.as_bytes()));
+    // The regexes only validation took, or a rejected document's, go as this ends (`regexes`).
+    let _compiling = regexes::compiling();
+    let (id, rule_mode, scope, clauses, required, report_count_gt) =
+        compile_document(&canonical_value, &capabilities)?;
+    Ok(CompiledCodeRule {
+        id,
+        report_count_gt,
+        rule_mode,
+        canonical,
+        digest,
+        required_capabilities: serde_json::to_string(&required).map_err(json_error)?,
+        clauses,
+        scope,
+        capabilities,
+    })
+}
+
+/// `CodeRuleDslRuntime::compile_async`'s work: the whole compile runs on the one pool thread
+/// that computes it, so `regexes::compiling` keeps what it lets go of until it ends.
+pub struct CompileTask {
+    source: String,
+    format: String,
+    capabilities_json: String,
+}
+
+impl napi::Task for CompileTask {
+    type Output = CompiledCodeRule;
+    type JsValue = CompiledCodeRuleDsl;
+
+    fn compute(&mut self) -> Result<CompiledCodeRule> {
+        crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            compile_rule(&self.source, &self.format, &self.capabilities_json)
+        })
+    }
+
+    fn resolve(
+        &mut self,
+        _env: napi::Env,
+        output: CompiledCodeRule,
+    ) -> Result<CompiledCodeRuleDsl> {
         Ok(CompiledCodeRuleDsl {
-            inner: Arc::new(CompiledCodeRule {
-                id,
-                report_count_gt,
-                rule_mode,
-                canonical,
-                digest,
-                required_capabilities: serde_json::to_string(&required).map_err(json_error)?,
-                clauses,
-                scope,
-                capabilities,
-            }),
+            inner: Arc::new(output),
         })
     }
 }

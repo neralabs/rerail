@@ -1979,6 +1979,15 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     await this.#sessions.get(sessionId)?.codeRuleWorkspace.catch(() => undefined);
   }
 
+  /**
+   * Settles once the session's evaluator is open and has built the rules it builds ahead of any call: those of the
+   * repositories the session's earlier checks ran in.
+   */
+  async rulesBuiltAhead(sessionId: string): Promise<void> {
+    const bridge = await this.#sessions.get(sessionId)?.codeRuleWorkspace.catch(() => undefined);
+    await bridge?.rulesBuiltAhead();
+  }
+
   async dispose(): Promise<void> {
     clearInterval(this.#controlTimer);
     // No conflict change is offered to a session that is closing.

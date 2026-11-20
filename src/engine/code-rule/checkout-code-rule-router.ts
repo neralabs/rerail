@@ -92,6 +92,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   #settings: Required<AuditSettings>;
   #sessionId: string | undefined;
   #closing = false;
+  /** The build of the rules `openWorkspace` builds ahead. */
+  #builtAhead: Promise<void> = Promise.resolve();
 
   constructor(options: CheckoutCodeRuleRouterOptions) {
     this.#options = options;
@@ -99,7 +101,12 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     this.#settings = { scope: options.scope ?? DEFAULT_AUDIT_SETTINGS.scope, mode: options.mode ?? DEFAULT_AUDIT_SETTINGS.mode };
   }
 
-  /** Interrupts the session's earlier runs once, then opens the starting checkout's lane. */
+  /**
+   * Interrupts the session's earlier runs once, then opens the starting checkout's lane, its rules compiled off the
+   * daemon's thread. Then, without holding the open, builds ahead the rules of the repositories the session's earlier
+   * checks ran in (`rulesBuiltAhead` settles once they are built), so its first edit there after a daemon restart finds
+   * them compiled.
+   */
   async openWorkspace(sessionId: string): Promise<void> {
     if (this.#sessionId !== undefined || this.#closing) throw new Error("Checkout code-rule router cannot be reopened");
     this.#sessionId = sessionId;
@@ -108,7 +115,50 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     } catch (error) {
       process.stderr.write(`rerail: policy execution recording failed: ${error instanceof Error ? error.message : String(error)}\n`);
     }
+    await this.#prepare(this.#options.startingCheckout, false);
     await this.#lane(this.#options.startingCheckout)?.opening;
+    this.#builtAhead = this.#buildAhead(sessionId);
+  }
+
+  /**
+   * Builds the rules of each checkout that owns one of `paths` (a tool call's files) and has no lane yet, compiling off
+   * the daemon's thread each rule no live catalog holds; settles once they are built. The call waits for its own rules
+   * as before, while every other session's events run. A build that fails here is left to the lane's own open, which
+   * reports it as before.
+   */
+  async prepareRules(paths: readonly string[]): Promise<void> {
+    if (this.#closing) return;
+    const roots = new Set(paths.flatMap(path => this.#owner(resolve(this.#sessionRoot, path))?.checkoutRoot ?? []));
+    await Promise.all([...roots].map(async root => await this.#prepare(root, false)));
+  }
+
+  /** Settles once the rules `openWorkspace` builds ahead are built, or their build ended. */
+  async rulesBuiltAhead(): Promise<void> {
+    await this.#builtAhead;
+  }
+
+  /** One repository at a time, so the daemon's thread reads one rule set between other sessions' events. */
+  async #buildAhead(sessionId: string): Promise<void> {
+    let roots: string[];
+    try {
+      roots = this.#options.catalogs.checkoutsEditedBy(sessionId);
+    } catch {
+      return;
+    }
+    for (const root of roots) {
+      if (this.#closing) return;
+      await this.#prepare(root, true);
+    }
+  }
+
+  /** `root`'s catalog built off the thread, while it may run rules and has no lane; a failure is left to its lane's open. */
+  async #prepare(root: string, ahead: boolean): Promise<void> {
+    try {
+      if (this.#closing || this.#lanes.has(root) || !this.#mayRun(root)) return;
+      await this.#options.catalogs.prepare(root, ahead);
+    } catch {
+      // The lane's open builds the catalog on the thread as before, and reports what fails there.
+    }
   }
 
   /**

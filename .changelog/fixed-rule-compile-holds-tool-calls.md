@@ -1,0 +1,1 @@
+After the daemon starts, a session's first edit in a repository whose rules no other repository uses no longer holds every other session's hooks while those rules compile, and a session that opens again has the rules of the repositories it edited compiled before its next edit there.

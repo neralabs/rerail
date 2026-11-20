@@ -1600,6 +1600,11 @@ export class CodeRuleBridge {
     }
   }
 
+  /** Settles once the rules the auditor builds ahead of any call as the session opens are built (`rulesBuiltAhead`). */
+  async rulesBuiltAhead(): Promise<void> {
+    await this.#auditor.rulesBuiltAhead?.();
+  }
+
   /**
    * Settles once the first `openWorkspace` has read back the text of the sources the session held before its runtime
    * suspended it (`#restoreHeldTexts`), which waits for no rule to compile; at once for a session opened fresh, and at
@@ -1685,6 +1690,8 @@ export class CodeRuleBridge {
     this.refreshCodeRules();
     const paths = generatedEditPaths(toolName, input);
     this.#auditor.refreshOwners?.(paths);
+    // The rules of a checkout no lane opened yet compile off the daemon's thread, before the capture asks for them.
+    if (paths.length > 0) await this.#auditor.prepareRules?.(paths);
     // What the ignore files a tool is about to write hold now is the baseline its edit is compared with.
     await this.#rememberIgnoreFiles(paths);
     if (paths.length === 0) {

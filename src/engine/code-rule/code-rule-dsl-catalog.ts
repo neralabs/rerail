@@ -6,7 +6,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { and, eq, inArray, or } from "drizzle-orm";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { loadRuleCatalog } from "../catalog/rule-catalog.js";
 import { conversationRulesEnabled } from "../experimental-features.js";
 import { worktreeRuleCatalog } from "../catalog/worktree-pack.js";
@@ -33,7 +33,7 @@ import { checkoutStatus, followsGitignore, parentCheckouts, recordedCheckoutsVer
 import { loadCheckoutRuleSet, ruleConfigurationSignature } from "../catalog/rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "../catalog/rule-library.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
-import { checkouts, ruleAttachments, ruleSettings } from "../storage/schema.js";
+import { audits, checkouts, ruleAttachments, ruleSettings } from "../storage/schema.js";
 import { compareDeterministicStrings, stableJsonText } from "../stable-json.js";
 
 export { bundledCodeRuleDslDirectory };
@@ -57,7 +57,7 @@ export function loadCodeRuleCapabilities(path: string = resolve(bundledCodeRuleD
   return { path: resolve(path), json, digest: digest(json) };
 }
 
-type CompileOutcome = { readonly ok: true; readonly executable: NativeCompiledCodeRuleDsl } | { readonly ok: false; readonly reason: string };
+export type CompileOutcome = { readonly ok: true; readonly executable: NativeCompiledCodeRuleDsl } | { readonly ok: false; readonly reason: string };
 
 /** A compiled outcome as the cache keeps it: a failure whole, an executable only while a catalog still holds it. */
 type HeldOutcome = { readonly ok: true; readonly executable: WeakRef<NativeCompiledCodeRuleDsl> } | { readonly ok: false; readonly reason: string };
@@ -74,6 +74,12 @@ type HeldOutcome = { readonly ok: true; readonly executable: WeakRef<NativeCompi
  */
 export class CompiledRuleCache {
   readonly #outcomes = new Map<string, { readonly sourceDigest: string; readonly outcome: HeldOutcome }>();
+  /** The compiles asked of `compileOffThread` that have not ended, by key, each for the source it was asked for. */
+  readonly #compiling = new Map<string, { readonly sourceDigest: string; readonly outcome: Promise<CompileOutcome>; readonly job: CompileJob }>();
+  /** Compiles a tool call waits for. */
+  readonly #now = new CompileLine();
+  /** Compiles of rules built before any call asks for them: never ahead of one a call waits for. */
+  readonly #ahead = new CompileLine();
 
   /** Rules (per capabilities and config) with a compiled version known. */
   get size(): number {
@@ -82,13 +88,104 @@ export class CompiledRuleCache {
 
   /** `config` is the stable JSON of the rule's option values (`null` for none): it names the variant. */
   compile(capabilities: CodeRuleCapabilities, policyId: string, sourceText: string, sourceDigest: string, config: string): CompileOutcome {
-    const key = `${capabilities.digest}\0${policyId}\0${config}`;
-    const cached = this.#outcomes.get(key);
-    const held = cached?.sourceDigest === sourceDigest ? liveOutcome(cached.outcome) : undefined;
+    const key = compileKey(capabilities, policyId, config);
+    const held = this.#held(key, sourceDigest);
     if (held !== undefined) return held;
     const outcome = compileOutcome(capabilities, policyId, sourceText);
-    this.#outcomes.set(key, { sourceDigest, outcome: outcome.ok ? { ok: true, executable: new WeakRef(outcome.executable) } : outcome });
+    this.#keep(key, sourceDigest, outcome);
     return outcome;
+  }
+
+  /**
+   * `compile`, with the engine's compile run on a thread of Node's worker pool: the JS thread, which answers every
+   * session's hooks, runs other work meanwhile. One rule compiles at a time on each line, so the pool keeps threads for
+   * file reads; `ahead` puts the rule on the line of rules built before any call asks, and a later ask that is not
+   * `ahead` moves it to the other line if it has not started. A rule asked for twice compiles once.
+   */
+  async compileOffThread(
+    capabilities: CodeRuleCapabilities,
+    rule: { readonly policyId: string; readonly sourceText: string; readonly sourceDigest: string; readonly config: string },
+    ahead = false,
+  ): Promise<CompileOutcome> {
+    const key = compileKey(capabilities, rule.policyId, rule.config);
+    const held = this.#held(key, rule.sourceDigest);
+    if (held !== undefined) return held;
+    const running = this.#compiling.get(key);
+    if (running?.sourceDigest === rule.sourceDigest) {
+      if (!ahead && this.#ahead.take(running.job)) this.#now.add(running.job);
+      return await running.outcome;
+    }
+    const compiled = Promise.withResolvers<CompileOutcome>();
+    const job: CompileJob = async () => compiled.resolve(await this.#compileNow(key, capabilities, rule));
+    const entry = { sourceDigest: rule.sourceDigest, outcome: compiled.promise, job };
+    this.#compiling.set(key, entry);
+    (ahead ? this.#ahead : this.#now).add(job);
+    try {
+      return await compiled.promise;
+    } finally {
+      if (this.#compiling.get(key) === entry) this.#compiling.delete(key);
+    }
+  }
+
+  /** The rule's outcome once its line reaches it: one compiled meanwhile on the JS thread is the one kept. */
+  async #compileNow(
+    key: string,
+    capabilities: CodeRuleCapabilities,
+    rule: { readonly policyId: string; readonly sourceText: string; readonly sourceDigest: string },
+  ): Promise<CompileOutcome> {
+    const before = this.#held(key, rule.sourceDigest);
+    if (before !== undefined) return before;
+    const outcome = await compileOutcomeOffThread(capabilities, rule.policyId, rule.sourceText);
+    const meanwhile = this.#held(key, rule.sourceDigest);
+    if (meanwhile !== undefined) return meanwhile;
+    this.#keep(key, rule.sourceDigest, outcome);
+    return outcome;
+  }
+
+  #held(key: string, sourceDigest: string): CompileOutcome | undefined {
+    const cached = this.#outcomes.get(key);
+    return cached?.sourceDigest === sourceDigest ? liveOutcome(cached.outcome) : undefined;
+  }
+
+  #keep(key: string, sourceDigest: string, outcome: CompileOutcome): void {
+    this.#outcomes.set(key, { sourceDigest, outcome: outcome.ok ? { ok: true, executable: new WeakRef(outcome.executable) } : outcome });
+  }
+}
+
+function compileKey(capabilities: CodeRuleCapabilities, policyId: string, config: string): string {
+  return `${capabilities.digest}\0${policyId}\0${config}`;
+}
+
+/** One compile waiting for its line; it never rejects. */
+type CompileJob = () => Promise<void>;
+
+/** Compile jobs run one at a time, in the order they were added. */
+class CompileLine {
+  readonly #waiting: CompileJob[] = [];
+  #busy = false;
+
+  add(job: CompileJob): void {
+    this.#waiting.push(job);
+    this.#next();
+  }
+
+  /** Takes `job` out of this line; false once it has started, or if it was never here. */
+  take(job: CompileJob): boolean {
+    const at = this.#waiting.indexOf(job);
+    if (at < 0) return false;
+    this.#waiting.splice(at, 1);
+    return true;
+  }
+
+  #next(): void {
+    if (this.#busy) return;
+    const job = this.#waiting.shift();
+    if (job === undefined) return;
+    this.#busy = true;
+    void job().finally(() => {
+      this.#busy = false;
+      this.#next();
+    });
   }
 }
 
@@ -101,17 +198,35 @@ function liveOutcome(held: HeldOutcome): CompileOutcome | undefined {
 
 function compileOutcome(capabilities: CodeRuleCapabilities, policyId: string, sourceText: string): CompileOutcome {
   try {
-    const executable = loadNativeBinding().CodeRuleDslRuntime.compile(sourceText, "json", capabilities.json);
-    const canonical = JSON.parse(executable.canonicalJson()) as { id?: unknown };
-    return canonical.id === policyId
-      ? { ok: true, executable }
-      : { ok: false, reason: `Compiled policy ID does not match rule document: ${policyId}` };
+    return checkedOutcome(loadNativeBinding().CodeRuleDslRuntime.compile(sourceText, "json", capabilities.json), policyId);
   } catch (error) {
-    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    return failedOutcome(error);
   }
 }
 
+async function compileOutcomeOffThread(capabilities: CodeRuleCapabilities, policyId: string, sourceText: string): Promise<CompileOutcome> {
+  try {
+    return checkedOutcome(await loadNativeBinding().CodeRuleDslRuntime.compileAsync(sourceText, "json", capabilities.json), policyId);
+  } catch (error) {
+    return failedOutcome(error);
+  }
+}
+
+function checkedOutcome(executable: NativeCompiledCodeRuleDsl, policyId: string): CompileOutcome {
+  const canonical = JSON.parse(executable.canonicalJson()) as { id?: unknown };
+  return canonical.id === policyId
+    ? { ok: true, executable }
+    : { ok: false, reason: `Compiled policy ID does not match rule document: ${policyId}` };
+}
+
+function failedOutcome(error: unknown): CompileOutcome {
+  return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+}
+
 const compiledRules = new CompiledRuleCache();
+
+/** How many of a session's newest rule checks `checkoutsEditedBy` reads for the checkouts they ran in. */
+const EDITED_AUDITS_READ = 500;
 
 export interface CompiledCodeRuleDslEntry {
   readonly id: string;
@@ -219,6 +334,62 @@ interface CatalogState {
   readonly quarantined: readonly QuarantinedRule[];
 }
 
+/** A code rule a catalog places, as its executable is keyed: its id, source and option values. */
+export interface PlannedRule {
+  readonly policyId: string;
+  readonly rule: EffectiveRule;
+  readonly decisions: RulePlacementDecision[];
+  readonly placement: CodeRulePlacement;
+  readonly sourceText: string;
+  readonly sourceDigest: string;
+  readonly config: string;
+}
+
+/** One load's code rules in id order: each one to compile, or left out with the reason. */
+export type PlanEntry = { readonly compile: PlannedRule } | { readonly skip: QuarantinedRule };
+
+/** What a catalog builds from one load: the configuration, and every code rule placed somewhere, in id order. */
+export interface CatalogPlan {
+  readonly ruleSet: CheckoutRuleSet | undefined;
+  readonly quarantined: readonly QuarantinedRule[];
+  readonly entries: readonly PlanEntry[];
+}
+
+/** A plan with the outcome of each rule it compiles, in its order, at the source signature it was loaded at. */
+export interface CompiledPlan {
+  readonly plan: CatalogPlan;
+  readonly outcomes: readonly (CompileOutcome | undefined)[];
+  readonly sourceSignature: string;
+}
+
+function catalogPlan(loaded: LoadedCheckoutRules): CatalogPlan {
+  const ruleSet = loaded.ruleSet;
+  const placed = ruleSet === undefined ? new Map<string, PlacedRule>() : placedRules(ruleSet, loaded.folders);
+  const entries: PlanEntry[] = [];
+  for (const policyId of [...placed.keys()].sort(compareDeterministicStrings)) {
+    const { rule, decisions } = placed.get(policyId)!;
+    const placement = placementOf(decisions, loaded.folders);
+    if (placement.length === 0) continue;
+    if (rule.configError !== null) {
+      entries.push({ skip: { ruleId: policyId, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` } });
+      continue;
+    }
+    const relationalOff = rule.document.kind === "code" ? relationalRulesOff(rule.document.rule) : undefined;
+    if (relationalOff !== undefined) {
+      entries.push({ skip: { ruleId: policyId, kind: "code", owner: ownerOf(rule), reason: relationalOff } });
+      continue;
+    }
+    const sourceText = stableJsonText(rule.document.rule);
+    if (sourceText === undefined) throw new Error(`Policy ${policyId} is not JSON representable`);
+    entries.push({ compile: { policyId, rule, decisions, placement, sourceText, sourceDigest: digest(sourceText), config: stableJsonText(rule.config) ?? "" } });
+  }
+  return { ruleSet, quarantined: loaded.quarantined, entries };
+}
+
+function ownerOf(rule: EffectiveRule): string {
+  return rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER;
+}
+
 /**
  * One checkout's code rules, compiled into resident executables and placed per folder. `refresh()` reloads only
  * when the source signature changes; an unchanged rule is never recompiled.
@@ -228,11 +399,30 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
   readonly #capabilities: CodeRuleCapabilities;
   #state: CatalogState;
 
-  constructor(source: CheckoutRuleSource, capabilities: CodeRuleCapabilities = loadCodeRuleCapabilities()) {
+  /** With `compiled` (from `built`), its rules as compiled there; without it, each rule no live catalog holds compiles here. */
+  constructor(source: CheckoutRuleSource, capabilities: CodeRuleCapabilities = loadCodeRuleCapabilities(), compiled?: CompiledPlan) {
     this.#source = source;
     this.#capabilities = capabilities;
+    if (compiled !== undefined) {
+      this.#state = this.#stateOf(compiled);
+      return;
+    }
+    // The signature is taken before the load, so a change made meanwhile shows at the next refresh.
     const sourceSignature = source.signature();
     this.#state = this.#build(source.load(), sourceSignature);
+  }
+
+  /**
+   * `source`'s catalog as the constructor builds it, with each rule no live catalog holds compiled off the JS thread
+   * (`CompiledRuleCache.compileOffThread`), so the daemon answers other sessions while they compile. `ahead`: built
+   * before any tool call asks for it.
+   */
+  static async built(source: CheckoutRuleSource, capabilities: CodeRuleCapabilities, ahead = false): Promise<CheckoutCodeRuleCatalog> {
+    const sourceSignature = source.signature();
+    const plan = catalogPlan(source.load());
+    const outcomes = await Promise.all(plan.entries.map(async entry =>
+      "compile" in entry ? await compiledRules.compileOffThread(capabilities, entry.compile, ahead) : undefined));
+    return new CheckoutCodeRuleCatalog(source, capabilities, { plan, outcomes, sourceSignature });
   }
 
   get status(): CodeRuleDslCatalogStatus {
@@ -260,38 +450,35 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
   }
 
   #build(loaded: LoadedCheckoutRules, sourceSignature: string): CatalogState {
-    const quarantined = [...loaded.quarantined];
+    const plan = catalogPlan(loaded);
+    const outcomes = plan.entries.map(entry => ("compile" in entry
+      ? compiledRules.compile(this.#capabilities, entry.compile.policyId, entry.compile.sourceText, entry.compile.sourceDigest, entry.compile.config)
+      : undefined));
+    return this.#stateOf({ plan, outcomes, sourceSignature });
+  }
+
+  /** The catalog of a plan whose rules have compiled: each placed rule that compiled, and each left out with why. */
+  #stateOf({ plan, outcomes, sourceSignature }: CompiledPlan): CatalogState {
+    const quarantined = [...plan.quarantined];
     const codeRules: CompiledCodeRuleDslEntry[] = [];
     const provenance: RepositoryAuditRuleProvenance[] = [];
     const versioned: unknown[] = [];
-    const ruleSet = loaded.ruleSet;
-    const placed = ruleSet === undefined ? new Map<string, PlacedRule>() : placedRules(ruleSet, loaded.folders);
-    for (const id of [...placed.keys()].sort(compareDeterministicStrings)) {
-      const { rule, decisions } = placed.get(id)!;
-      const placement = placementOf(decisions, loaded.folders);
-      if (placement.length === 0) continue;
-      if (rule.configError !== null) {
-        quarantined.push({ ruleId: id, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` });
-        continue;
+    plan.entries.forEach((entry, index) => {
+      if ("skip" in entry) {
+        quarantined.push(entry.skip);
+        return;
       }
-      const relationalOff = rule.document.kind === "code" ? relationalRulesOff(rule.document.rule) : undefined;
-      if (relationalOff !== undefined) {
-        quarantined.push({ ruleId: id, kind: "code", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER, reason: relationalOff });
-        continue;
-      }
-      const sourceText = stableJsonText(rule.document.rule);
-      if (sourceText === undefined) throw new Error(`Policy ${id} is not JSON representable`);
-      const sourceDigest = digest(sourceText);
-      const outcome = compiledRules.compile(this.#capabilities, id, sourceText, sourceDigest, stableJsonText(rule.config) ?? "");
+      const { policyId: id, rule, decisions, placement, sourceDigest } = entry.compile;
+      const outcome = outcomes[index]!;
       if (!outcome.ok) {
         // A rule naming a language the engine does not read yet is inactive by design: quarantined with that code, not reported.
         const unsupported = languageNotSupportedOf(outcome.reason);
         quarantined.push({
-          ruleId: id, kind: "code", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER,
+          ruleId: id, kind: "code", owner: ownerOf(rule),
           reason: unsupported?.reason ?? outcome.reason,
           ...(unsupported === undefined ? {} : { code: unsupported.code }),
         });
-        continue;
+        return;
       }
       codeRules.push({ id, executable: outcome.executable, placement });
       provenance.push({
@@ -299,12 +486,12 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
         revision: rule.revision,
         payloadHash: rule.payloadHash,
         source: { ...rule.source },
-        repositoryKey: ruleSet!.checkout.repositoryKey,
-        checkoutPath: ruleSet!.checkout.checkoutPath,
+        repositoryKey: plan.ruleSet!.checkout.repositoryKey,
+        checkoutPath: plan.ruleSet!.checkout.checkoutPath,
         placement: decisions,
       });
       versioned.push({ id, sourceDigest, placement, source: rule.source });
-    }
+    });
     for (const entry of quarantined) if (entry.code === undefined) reportQuarantinedRule(this.#source.label, entry);
     const canonical = stableJsonText({ capabilitiesDigest: this.#capabilities.digest, format: "rerail.policy-dsl-catalog/v3", policies: versioned });
     if (canonical === undefined) throw new Error("Policy catalog version is not JSON representable");
@@ -349,6 +536,7 @@ export class CheckoutCatalogs {
   readonly #capabilities: CodeRuleCapabilities;
   readonly #entries = new Map<string, CheckoutEntry>();
   readonly #recordedCheckoutsVersion: () => string;
+  #closed = false;
 
   /**
    * `options.ruleCatalog` fixes the installed packs; without it each read follows them (`loadRuleCatalog`). Either way a
@@ -413,12 +601,46 @@ export class CheckoutCatalogs {
   /** The compiled code rules of `root`; its `refresh()` re-reads eligibility and configuration. */
   catalog(root: string): CheckoutCodeRuleCatalog {
     const entry = this.#entry(root);
-    entry.catalog ??= new CheckoutCodeRuleCatalog({
-      label: this.databasePath,
-      signature: () => this.#signature(entry),
-      load: () => this.#load(entry),
-    }, this.#capabilities);
+    entry.catalog ??= new CheckoutCodeRuleCatalog(this.#sourceOf(entry), this.#capabilities);
     return entry.catalog;
+  }
+
+  /**
+   * Builds `root`'s catalog, the one `catalog` then gives, with each rule no live catalog holds compiled off the JS
+   * thread (`CheckoutCodeRuleCatalog.built`); settles once it is built, at once when it already was. `ahead`: built
+   * before any tool call asks for it, so a call's own rules never wait behind it.
+   */
+  async prepare(root: string, ahead = false): Promise<void> {
+    if (this.#closed) return;
+    const entry = this.#entry(root);
+    if (entry.catalog !== undefined) return;
+    const built = await CheckoutCodeRuleCatalog.built(this.#sourceOf(entry), this.#capabilities, ahead);
+    // Another ask may have built it meanwhile: the first one built stays, the one every lane of the checkout holds.
+    entry.catalog ??= built;
+  }
+
+  /**
+   * The checkouts a session's rule checks ran in, newest first, one per repository and at most `limit`: where it edited
+   * before it closed or its daemon stopped, and so whose rules its next edits most likely need. A checkout's other
+   * worktrees share its repository's rules, so one checkout per repository builds them.
+   */
+  checkoutsEditedBy(sessionId: string, limit = 8): string[] {
+    const roots = this.database.select({ root: audits.workspaceRoot }).from(audits)
+      .where(eq(audits.sessionId, sessionId)).orderBy(desc(audits.startedAt)).limit(EDITED_AUDITS_READ).all()
+      .map(row => row.root);
+    if (roots.length === 0) return [];
+    const repositories = new Map<string, string>();
+    const keys = new Map(this.database.select({ root: checkouts.checkoutPath, key: checkouts.repositoryKey }).from(checkouts)
+      .where(inArray(checkouts.checkoutPath, [...new Set(roots)])).all().map(row => [row.root, row.key]));
+    for (const root of roots) {
+      const key = keys.get(root);
+      if (key !== undefined && !repositories.has(key) && repositories.size < limit) repositories.set(key, root);
+    }
+    return [...repositories.values()];
+  }
+
+  #sourceOf(entry: CheckoutEntry): CheckoutRuleSource {
+    return { label: this.databasePath, signature: () => this.#signature(entry), load: () => this.#load(entry) };
   }
 
   /**
@@ -440,6 +662,7 @@ export class CheckoutCatalogs {
   }
 
   close(): void {
+    this.#closed = true;
     this.#entries.clear();
     this.database.$client.close();
   }
