@@ -150,14 +150,17 @@ describe("engine service answers a hook no longer waits for", () => {
 
   it("keeps the steer a session owed when it opened again through its next close and a restart, recorded once, when the hook whose answer took it gave up", async () => {
     const reopening = Promise.withResolvers<void>();
-    // Its runtime retires as the session closes, so the runtimes left open say whether a close let it go.
-    const first = await owingService(reopening, { idleRuntimeMs: 0 });
+    const first = await owingService(reopening);
     await unheardReopen(first);
     // Quiet past the limit again: the close keeps the steer it was given back, which its ledger already counts.
     await first.closeQuiet();
-    // The idle close let the session go while its rules still opened, so that close kept the steer, not the service's.
+    // The idle close let the session go while its rules still opened, so that close kept the steer, not the service's:
+    // its runtime is among those no session uses, kept for the checkout's next session, and closing those takes it out
+    // at once. Its close settles once its rules stop opening, which the service's close makes them.
+    const closing = first.closeUnusedRuntimes();
     expect(first.openRuntimes()).toBe(0);
     await first.close();
+    await closing;
     const second = await checkingService({ root: first.root });
     expect(contents(await ingestEngineEvent(second.engine, prompt("prompt-3", SESSION, second.root)))).toEqual([STEER]);
     expect(await ingestEngineEvent(second.engine, prompt("prompt-4"))).toEqual([]);
@@ -405,15 +408,15 @@ type CheckingService = Awaited<ReturnType<typeof checkingService>>;
 
 /**
  * A service whose session `gone` went quiet while it owed `owed` (`STEER` unless given) and closed, its ledger keeping
- * the steer owed. The session's rules open again as `reopening` says; `idleRuntimeMs` is the service's. `closeQuiet` has
- * the session go quiet past the limit again and closes it.
+ * the steer owed. The session's rules open again as `reopening` says. `closeQuiet` has the session go quiet past the
+ * limit again and closes it.
  */
 async function owingService(
-  reopening: PromiseWithResolvers<void>, options: { owed?: string; idleRuntimeMs?: number } = {},
+  reopening: PromiseWithResolvers<void>, options: { owed?: string } = {},
 ): Promise<CheckingService & { closeQuiet: () => Promise<void> }> {
-  const { owed = STEER, ...serviceOptions } = options;
+  const { owed = STEER } = options;
   let clock = 1_000;
-  const service = await checkingService({ now: () => clock, idleSessionMs: 1_000, reopening, ...serviceOptions });
+  const service = await checkingService({ now: () => clock, idleSessionMs: 1_000, reopening });
   // Quiet past the limit for a session that owes a steer: it closes all the same.
   const closeQuiet = async (): Promise<void> => {
     clock += 2 * 24 * 60 * 60_000;
