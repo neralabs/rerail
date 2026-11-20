@@ -1,0 +1,86 @@
+.policy "django-practice-fk-id-not-relation" revision 1
+.description "Read a foreign key's value from <field>_id instead of loading the related object to take its id or pk."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. `<obj>.<fk>.id` or `<obj>.<fk>.pk` loads the related row (one query, unless it is
+// cached) only to read the key the row already holds in `<obj>.<fk>_id`. The rule reports it where it knows <obj>'s
+// model, and the model declares <fk> (itself or through a base class of the run) as a ForeignKey or OneToOneField
+// without `to_field=` (where `<fk>_id` holds that field, not the key):
+//   - `self` in a method of the model;
+//   - a name whose latest assignment in its scope is `M.objects.get(...)` (or first, last, latest, earliest, create),
+//     with M a model class of the run, when nothing else in that scope binds the name (a `for` or comprehension
+//     target, `with ... as`, a tuple target, `except ... as`, a walrus or `+=` may hold another object there);
+//   - the target of `for x in M.objects...:`, in the loop's body, when the body binds x in no other way.
+// A key read only for its truth or compared with None (`if not self.author.pk:`) asks whether the related object is
+// saved yet, which `<fk>_id` does not follow (it stays None until the row itself is saved); that is left alone, as is
+// a key assigned to (`x.author.pk = None`).
+//   class Book(models.Model):
+//       author = models.ForeignKey(Author, ...)
+//       def key(self): return self.author.pk           reported
+//       def key(self): return self.author_id           not reported
+//       def name(self): return self.author.name        not reported: needs the row
+//       if not self.author.pk: ...                     not reported: is the author saved yet?
+//   book = Book.objects.get(pk=1); book.author.id      reported
+//   def f(book): return book.author.id                 not reported: the parameter's class is not known
+
+#include "python/django.rerail"
+
+.violation FkIdNotRelation(at: node, obj: symbol, fk: symbol, key: symbol) "{obj}.{fk}.{key} loads the related object only to read its key; use {obj}.{fk}_id, which the row already holds and needs no query."
+
+// fir_has_fk(c, x): model c has x as a ForeignKey or OneToOneField to the target's primary key, declared in its body
+// or in a base class of the run.
+.decl fir_has_fk(c: node, x: symbol)
+fir_has_fk(c, x) :- dj_has_field(c, x, call, t), dj_fk_class(t), !call_arg(call, _, "to_field", _).
+// fir_row(o, c): expression o (a name) is a row of model c.
+.decl fir_row(o: node, c: node)
+fir_row(s, c) :- kind(s, "identifier"), text(s, "self"), dj_model_method(c, f, _), param(f, "self", 0), within(s, f).
+fir_row(s, c) :- kind(s, "identifier"), latest_assign(s, x, a), field(a, "right", r), unparen(r, g),
+    dj_qs_call(g, m), dj_row_method(m), field(g, "function", gf), attr_of(gf, q, _), dj_qs_model(q, c),
+    scope_node(s, sc), !fir_other_bind(sc, x).
+fir_row(s, c) :- kind(st, "for_statement"), field(st, "left", l), kind(l, "identifier"), text(l, x),
+    field(st, "right", r), unparen(r, q), dj_qs(q), dj_qs_model(q, c), field(st, "body", b), within(s, b),
+    kind(s, "identifier"), text(s, x), !fir_rebound(b, x).
+// fir_bind(t, x): identifier t binds name x: an assignment, for, comprehension, with, except, walrus or pattern
+// target, a parameter, or an augmented assignment's target.
+.decl fir_bind(t: node, x: symbol)
+fir_bind(t, x) :- bind_only(t), kind(t, "identifier"), text(t, x).
+fir_bind(t, x) :- kind(p, "augmented_assignment"), field(p, "left", t), kind(t, "identifier"), text(t, x).
+// fir_plain(t): t is the whole left side of a plain assignment `x = v` (latest_assign follows those).
+.decl fir_plain(t: node)
+fir_plain(t) :- kind(p, "assignment"), field(p, "left", t), kind(t, "identifier").
+// fir_other_bind(sc, x): scope sc (comprehensions included, which have no scope of their own here) binds x other
+// than by a plain assignment.
+.decl fir_other_bind(sc: node, x: symbol)
+fir_other_bind(sc, x) :- fir_bind(t, x), !fir_plain(t), !fir_param(t), scope_node(t, sc).
+// fir_param(t): t is a parameter's name; it binds before any statement of the def, so latest_assign overrides it.
+.decl fir_param(t: node)
+fir_param(t) :- field(f, "parameters", ps), child(ps, p, _), (t = p ; child(p, t, 0)), kind(t, "identifier").
+// fir_rebound(b, x): block b binds name x again, in any way.
+.decl fir_rebound(b: node, x: symbol)
+fir_rebound(b, x) :- fir_bind(t, x), within(t, b).
+
+FkIdNotRelation(a, v, x, k) :- attr_of(a, o, k), (k = "id" ; k = "pk"), attr_of(o, s, x), fir_row(s, c),
+    fir_has_fk(c, x), text(s, v), !fir_saved_test(a), !expr_ctx(a, "store"), docof(a, d), !dj_test_doc(d).
+// fir_saved_test(e): e is read only for its truth (py_truth), or compared with None.
+.decl fir_saved_test(e: node)
+fir_saved_test(m) :- py_truth(m).
+fir_saved_test(m) :- cmp_pair(_, _, _, l, r), unparen(l, m), kind(r, "none").
+fir_saved_test(m) :- cmp_pair(_, _, _, l, r), unparen(r, m), kind(l, "none").
+
+// The cases, `cases/django-practice-fk-id-not-relation/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "shop/base.py" from "cases/django-practice-fk-id-not-relation/shop/base.py"
+    .fixture "shop/models.py" from "cases/django-practice-fk-id-not-relation/shop/models.py"
+    .fixture "shop/tests/test_models.py" from "cases/django-practice-fk-id-not-relation/shop/tests/test_models.py"
+    .fixture "shop/views.py" from "cases/django-practice-fk-id-not-relation/shop/views.py"
+    .expect _ at "shop/models.py":18
+    .expect _ at "shop/models.py":22
+    .expect _ at "shop/models.py":26
+    .expect _ at "shop/models.py":30
+    .expect _ at "shop/views.py":7
+    .expect _ at "shop/views.py":9
+    .expect _ at "shop/views.py":11
+    .expect _ at "shop/views.py":40
+.end
