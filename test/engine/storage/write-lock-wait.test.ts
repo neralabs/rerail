@@ -38,11 +38,25 @@ function holding(path: string): Database.Database {
   return holder;
 }
 
+/** Now, in ms, on the clock the wait's `since` is read on. */
+function now(): number {
+  return performance.timeOrigin + performance.now();
+}
+
+/** The pauses of SQLite's default busy handler (`sqliteDefaultBusyCallback`), in ms; the last one repeats. */
+const SQLITE_BUSY_PAUSES_MS = [1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100];
+
+/** When SQLite's busy handler makes try `tries` (0, the first, at once), in ms from the first. */
+function sqliteTryAtMs(tries: number): number {
+  const pauses = Array.from({ length: tries }, (_, index) => SQLITE_BUSY_PAUSES_MS[index] ?? 100);
+  return pauses.reduce((sum, pause) => sum + pause, 0);
+}
+
 /**
- * Gives `holder`'s lock back once `epochNow` reaches `at`, having written a row first when `writes`, as a holder that
+ * Gives `holder`'s lock back once `now` reaches `at`, having written a row first when `writes`, as a holder that
  * changes the database does (`rerail reset`, a migration); resolves to when it gave it back.
  */
-async function releaseAt(holder: Database.Database, at: number, now: () => number, writes: boolean): Promise<number> {
+async function releaseAt(holder: Database.Database, at: number, writes: boolean): Promise<number> {
   await new Promise(resolve => setTimeout(resolve, Math.max(0, at - now())));
   if (writes) holder.prepare("INSERT INTO held (at) VALUES (?)").run(at);
   holder.exec("COMMIT");
@@ -75,14 +89,14 @@ describe("waiting for the write lock", () => {
   // A holder that changed the database adds its pages to the write-ahead log as it commits, a moment before it gives the
   // lock back: the wait tries then, not at the next of SQLite's 100 ms pauses.
   it("answers within moments of a release whose commit changed the database, between two of SQLite's tries", async () => {
-    const { busyTryAtMs, epochNow, waitForWriteLock } = await import("../../../src/engine/storage/write-lock-wait.js");
+    const { waitForWriteLock } = await import("../../../src/engine/storage/write-lock-wait.js");
     const path = await databaseFile();
     const holder = holding(path);
     try {
-      const since = epochNow();
-      const answered = waitForWriteLock(path, undefined, since).then(() => epochNow());
+      const since = now();
+      const answered = waitForWriteLock(path, undefined, since).then(now);
       // 15 ms after one of the tries SQLite's busy handler makes from `since`, 85 ms before the next.
-      const released = await releaseAt(holder, since + busyTryAtMs(15) + 15, epochNow, true);
+      const released = await releaseAt(holder, since + sqliteTryAtMs(15) + 15, true);
       expect(await answered - released).toBeLessThan(50);
     } finally {
       holder.close();
@@ -92,26 +106,27 @@ describe("waiting for the write lock", () => {
   // As the caller's own statement would have, waiting in SQLite's busy handler from the moment it met the lock: a wait
   // whose tries counted from its own start, which comes milliseconds later, would find a release that much later.
   it("tries no later than SQLite's busy handler would, counted from when its caller met the lock, not from its own start", async () => {
-    const { busyTryAtMs, epochNow, waitForWriteLock } = await import("../../../src/engine/storage/write-lock-wait.js");
+    const { waitForWriteLock } = await import("../../../src/engine/storage/write-lock-wait.js");
     for (let round = 0; round < 3; round += 1) {
-      // How long a wait takes to start and answer: tries counted from its start would fall that much after the call.
-      const free = epochNow();
+      // How long a wait takes to start and answer: tries counted from its start would fall at most that much after the
+      // call.
+      const free = now();
       await waitForWriteLock(await databaseFile());
-      const start = epochNow() - free;
+      const start = now() - free;
       const path = await databaseFile();
       const holder = holding(path);
       try {
-        const calledAt = epochNow();
-        // Midway between two of the tries counted from the wait's start, and 10 ms before one of the busy handler's
-        // counted from a caller that met the lock half a second before the call.
-        const release = calledAt + start + busyTryAtMs(15) + 50;
-        const since = release + 10 - busyTryAtMs(18);
-        const answered = waitForWriteLock(path, undefined, since).then(() => epochNow());
-        const released = await releaseAt(holder, release, epochNow, false);
+        const calledAt = now();
+        // 25 ms after the first try past the busy handler's short pauses counted from the wait's start, 75 ms before the
+        // next; 10 ms before one of the handler's tries counted from a caller that met the lock half a second before.
+        const release = calledAt + start + sqliteTryAtMs(11) + 25;
+        const since = release + 10 - sqliteTryAtMs(18);
+        const answered = waitForWriteLock(path, undefined, since).then(now);
+        const released = await releaseAt(holder, release, false);
         let next = 0;
-        while (since + busyTryAtMs(next) < released) next += 1;
+        while (since + sqliteTryAtMs(next) < released) next += 1;
         // Up to 20 ms for the answer's way back and a timer's step.
-        expect(await answered).toBeLessThanOrEqual(since + busyTryAtMs(next) + 20);
+        expect(await answered).toBeLessThanOrEqual(since + sqliteTryAtMs(next) + 20);
       } finally {
         holder.close();
       }
