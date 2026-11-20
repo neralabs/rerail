@@ -205,11 +205,7 @@ impl<'t> Extractor<'t> {
         }
         Summary {
             module,
-            names: self
-                .names
-                .iter()
-                .map(|name| Name::new(family, name))
-                .collect(),
+            names: Name::new_all(family, self.names.iter().map(|name| &**name)),
             defs: self.defs,
             edges: self.edges,
             references: self.references,

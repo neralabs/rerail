@@ -3151,28 +3151,12 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         let parent = self.up();
         (parent != NONE).then(|| self.at(parent, UNKNOWN))
     }
-    /// The parent, then (where asked further) the rest of the path, from one descent from the root
-    /// (`Tape::path`): each ancestor with its own parent known, so a climb reads no parent.
+    /// The parent, then its parent, and so on: a parent read each, at most `K - 1` sibling steps in format 16. A
+    /// climb mostly stops a few levels up (the nearest function or class), where a descent from the root
+    /// (`Tape::path`) read every sibling before the path at each level: in a module of hundreds of statements, the
+    /// reference graph's climbs from its parameters were a sixth of its time (0465, Q284).
     fn ancestors(&self, _root: Self) -> impl Iterator<Item = Self> {
-        let first = self.parent();
-        let me = *self;
-        let mut path: Option<Vec<usize>> = None;
-        let mut given = 0usize;
-        std::iter::from_fn(move || {
-            if given == 0 {
-                given = 1;
-                return first;
-            }
-            let path = path.get_or_insert_with(|| {
-                read!("parent");
-                let mut path = Vec::new();
-                me.tape.path(me.index as usize, &mut path);
-                path
-            });
-            let at = path.len().checked_sub(1 + given)?;
-            given += 1;
-            Some(me.at(path[at] as u32, if at == 0 { NONE } else { path[at - 1] as u32 }))
-        })
+        std::iter::successors(self.parent(), Self::parent)
     }
     fn children(&self) -> impl ExactSizeIterator<Item = Self> {
         let (tape, index) = (self.tape, self.index as usize);
