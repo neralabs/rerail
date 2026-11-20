@@ -135,7 +135,7 @@ pub(super) struct Board<'a> {
     /// its retire).
     trace: Option<Trace>,
     /// The strata below it had their inputs bound (`load_through`).
-    loaded: std::cell::Cell<usize>,
+    loaded: usize,
 }
 
 struct Trace {
@@ -199,7 +199,7 @@ impl<'a> Board<'a> {
             // Always kept (a few words a stratum): the run's measured critical path reads it (decision 0208), and
             // `RERAIL_STRATA_TRACE` writes it.
             trace: Some(Trace { t0: Instant::now(), at: None, by_component: false, rows: vec![None; sccs.len()], submitted: vec![-1.0; sccs.len()], why: std::cell::RefCell::new(vec![""; sccs.len()]), spent: Default::default() }),
-            loaded: std::cell::Cell::new(0),
+            loaded: 0,
         }
     }
 
@@ -490,7 +490,7 @@ impl<'a> Board<'a> {
     /// Whether `j` may be issued with the relations `held` (its component's earlier members') taken as held: the
     /// relations its strand holds (`Run::strand_reads`).
     #[allow(clippy::too_many_arguments)]
-    fn eligible(&self, j: usize, run: &Run<'a, '_>, sccs: &[BTreeSet<String>], rules_of: &dyn Fn(usize) -> Vec<RuleKey>, load: &mut dyn FnMut(usize) -> Result<()>, held: &BTreeSet<String>) -> Result<Option<BTreeSet<String>>> {
+    fn eligible(&mut self, j: usize, run: &Run<'a, '_>, sccs: &[BTreeSet<String>], rules_of: &dyn Fn(usize) -> Vec<RuleKey>, load: &mut dyn FnMut(usize) -> Result<()>, held: &BTreeSet<String>) -> Result<Option<BTreeSet<String>>> {
         if sccs[j].iter().all(|r| run.views.contains(r)) {
             if let Some(t) = &self.trace {
                 t.why.borrow_mut()[j] = "views only";
@@ -513,8 +513,9 @@ impl<'a> Board<'a> {
     /// of), those not bound yet. A stratum issued ahead may read an input whose first reader the loop has not reached
     /// and that is not issued with it; until then the input's binding is the run's placeholder (a cross-file run's
     /// export is bound empty), and the stratum's job read that.
-    fn load_through(&self, j: usize, load: &mut dyn FnMut(usize) -> Result<()>) -> Result<()> {
-        let from = self.loaded.replace(self.loaded.get().max(j + 1));
+    fn load_through(&mut self, j: usize, load: &mut dyn FnMut(usize) -> Result<()>) -> Result<()> {
+        let from = self.loaded;
+        self.loaded = from.max(j + 1);
         (from..=j).try_for_each(load)
     }
 
