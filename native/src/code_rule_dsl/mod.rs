@@ -4711,6 +4711,9 @@ impl CodeRuleDslRuntime {
     /// `compile`, run on a thread of the host's worker pool: the promise settles with the
     /// compiled rule, or fails as `compile` throws. A rule can take seconds to compile (the Node
     /// pack's builtins rule), and the host's own thread stays free meanwhile.
+    /// Not in a `headless` build, where `#[napi]` derives nothing (napi-derive `noop`), so
+    /// `CompiledCodeRuleDsl` cannot be handed to a host.
+    #[cfg(not(feature = "headless"))]
     #[napi]
     pub fn compile_async(
         source: String,
@@ -4750,13 +4753,16 @@ fn compile_rule(source: &str, format: &str, capabilities_json: &str) -> Result<C
 }
 
 /// `CodeRuleDslRuntime::compile_async`'s work: the whole compile runs on the one pool thread
-/// that computes it, so `regexes::compiling` keeps what it lets go of until it ends.
+/// that computes it, so `regexes::compiling` keeps what it lets go of until it ends. Not in a
+/// `headless` build, as `compile_async`.
+#[cfg(not(feature = "headless"))]
 pub struct CompileTask {
     source: String,
     format: String,
     capabilities_json: String,
 }
 
+#[cfg(not(feature = "headless"))]
 impl napi::Task for CompileTask {
     type Output = CompiledCodeRule;
     type JsValue = CompiledCodeRuleDsl;
