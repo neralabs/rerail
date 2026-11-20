@@ -3038,6 +3038,13 @@ submitted" now hold device memory at once.
   refusal are the tape residency's slab, relations' rows in `Device::May` slabs (`hold_rows`, the vtab's `from_rows`),
   and a stratum's own leases while it encodes. Next for (c): `has` (0353 step 5's last part), then what admission
   counts (relations' rows in spare slabs are in no reservation).
+  `has` built (6fdbc1eb2): probed by one column it is walked on the tape on the device, uploaded only for a whole
+  read or a read by both columns; its measurement waited on strict runs, which every `logic` run failed at its start
+  after the merge: the CLI batch's analysis scope wrote its acquisition before the first wave. Decision 0494 moved
+  the scope onto a lease (a run's start only reads; a deletion that would revoke a running scan fails, retried
+  after it). Open from 0494: the workspace API's owner (`begin_analysis_scope_at`) still acquires as it begins.
+  Seen while testing 0494: `scope::sql::tests::reproduces_sqlfluff_rf01_and_al05` failed once in a group run on the
+  M3 and passed alone on the M1 Max; not looked into.
   (d) a derived relation's frame is still
   encoded into the segments while it is in the chain (`held_placed`, 0.05 s on 300 files), as item 4 was.
 - **Record**: —

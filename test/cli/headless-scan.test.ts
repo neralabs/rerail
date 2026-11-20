@@ -2153,22 +2153,21 @@ process.stdout.write(JSON.stringify(visited));`,
     expect(existsSync(unrelated)).toBe(false);
   }, 30_000);
 
-  it("reports a release between evaluation and publication and preserves the findings", async () => {
+  // Decision 0494: a release of a scope a scan holds fails until the scan has finished; retried, it removes the run.
+  it("refuses a release between evaluation and publication, and the retried release removes the published run", async () => {
     const root = checkout(), home = root + "-home", databasePath = join(home, "rerail.sqlite"), store = join(home, "scope.sqlite");
     const engine = loadNativeBinding(), prototype = engine.AnalysisScopeRun.prototype, finish = prototype.finish;
     vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
     const stop = vi.spyOn(prototype, "finish").mockImplementationOnce(function(this: InstanceType<typeof engine.AnalysisScopeRun>, success) {
-      engine.deleteAnalysisScope(store, "release-during-scan", false);
-      const warning = finish.call(this, success);
-      expect(warning).toMatch(/released before publication/u);
-      return warning;
+      expect(() => engine.deleteAnalysisScope(store, "release-during-scan", false)).toThrow(/analysis scope in use/u);
+      return finish.call(this, success);
     });
     try {
       const report = await scan(root, { revision: "HEAD", analysisScope: "release-during-scan", databasePath });
       expect(report.status).toBe("completed");
       expect(report.violations.map(v => v.path)).toEqual(["a.py"]);
-      expect(report.cache).toEqual({ publication: "released", collection: "completed" });
-      expect(describeScan(report)).toContain("released before publication");
+      expect(report.cache).toEqual({ publication: "published", collection: "completed" });
+      engine.deleteAnalysisScope(store, "release-during-scan", false);
       expect(queryContentStore(store, "SELECT scope FROM analysis_scope_run")).toEqual([]);
       expect(queryContentStore(store, "SELECT scope FROM analysis_scope_manifest")).toEqual([]);
     } finally { stop.mockRestore(); vi.unstubAllEnvs(); }

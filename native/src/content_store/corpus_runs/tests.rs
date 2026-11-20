@@ -115,14 +115,17 @@ fn a_numbered_parent_stop_compacts_only_fully_covered_directory_generations() {
     let mut future = begin(&active, "home", "future", 21);
     let mut overtaken = begin(&active, "home", "older-on-same-path", 9);
     let mut elsewhere = begin(&child, "other", "other-home", 10);
+    // Decision 0494: a stop that would revoke a running writer (its control generation at most the cutoff) fails
+    // until that writer has finished.
+    assert!(matches!(store.delete_directory_analysis_scopes(&parent, Some("20:stop:home")), Err(crate::content_store::StoreError::InUse(_))));
+    delayed.finish(true).unwrap();
+    overtaken.finish(true).unwrap();
+    assert_eq!(delayed.publication, Some(Publication::Published));
+    assert_eq!(overtaken.publication, Some(Publication::Published));
     store.delete_directory_analysis_scopes(&parent, Some("20:stop:home")).unwrap();
     assert_eq!(count("analysis_scope_generation"), 2);
     assert_eq!(count("analysis_scope_run"), 0);
     assert_eq!(count("analysis_directory_acquisition"), 2);
-    delayed.finish(true).unwrap();
-    overtaken.finish(true).unwrap();
-    assert_eq!(delayed.publication, Some(Publication::Released));
-    assert_eq!(overtaken.publication, Some(Publication::Released));
     let mut late = begin(&child, "home", "late", 20);
     late.finish(true).unwrap();
     assert_eq!(late.publication, Some(Publication::Released));
@@ -293,7 +296,9 @@ fn a_publication_error_rolls_back_history_and_its_ancestor_index_before_retry() 
     store.connection.lock().unwrap().execute_batch("CREATE TRIGGER fail_fixture BEFORE INSERT ON analysis_scope_run
         BEGIN SELECT RAISE(ABORT,'interrupted fixture'); END;").unwrap();
     assert!(run.finish(true).is_err());
-    assert_eq!(counts(), (1, 0, 0, false));
+    // A run keeps no pending row (decision 0494): its lease, kept by the failed publication, is its pending state.
+    assert_eq!(counts(), (0, 0, 0, false));
+    assert!(run.is_open());
     store.connection.lock().unwrap().execute_batch("DROP TRIGGER fail_fixture").unwrap();
     run.finish(true).unwrap();
     assert_eq!(counts(), (0, 1, 1, true));
@@ -360,7 +365,7 @@ fn analysis_scope_rejects_finished_and_foreign_run_owners() {
 }
 
 #[test]
-fn named_scope_release_requires_the_registered_store_and_revokes_an_unfinished_run() {
+fn named_scope_release_requires_the_registered_store_and_fails_while_a_run_is_unfinished() {
     use crate::content_store::analysis_scope::{AnalysisRun, RunSource, release_named_scope};
     let (first_path, first) = store("scope-release-first");
     let (second_path, second) = store("scope-release-replacement");
@@ -371,9 +376,11 @@ fn named_scope_release_requires_the_registered_store_and_revokes_an_unfinished_r
     published.finish(true).unwrap();
     assert!(release_named_scope(&second_path, "test", &[first.identity()]).is_err());
     assert_eq!(second.completed_analysis_runs().unwrap().len(), 1);
-    assert_eq!(release_named_scope(&first_path, "test", &[first.identity()]).unwrap(), (first.identity(), false));
+    // Decision 0494: a release of a scope a run holds fails until the run has finished, and is retried then.
+    assert!(matches!(release_named_scope(&first_path, "test", &[first.identity()]), Err(crate::content_store::StoreError::InUse(_))));
     unfinished.finish(true).unwrap();
-    assert_eq!(unfinished.publication.unwrap().as_str(), "released");
+    assert_eq!(unfinished.publication.unwrap().as_str(), "published");
+    assert_eq!(release_named_scope(&first_path, "test", &[first.identity()]).unwrap(), (first.identity(), true));
     assert!(first.completed_analysis_runs().unwrap().is_empty());
     assert_eq!(release_named_scope(&second_path, "test", &[second.identity()]).unwrap(), (second.identity(), true));
     assert_eq!(release_named_scope(&second_path, "test", &[]).unwrap(), (second.identity(), false));
@@ -409,8 +416,10 @@ fn completed_analysis_runs_survive_restart_and_scope_deletion_preserves_shared_s
     assert!(!warned.owner.warn("later warning".into()));
     assert_eq!(warned.publication_warning().as_deref(), Some("could not retain"));
     let mut stale = begin("named:stale");
-    store.delete_analysis_scope("named:stale").unwrap();
+    // Decision 0494: a deletion of a scope a run holds fails until the run has finished.
+    assert!(matches!(store.delete_analysis_scope("named:stale"), Err(crate::content_store::StoreError::InUse(_))));
     stale.finish(true).unwrap();
+    store.delete_analysis_scope("named:stale").unwrap();
     let fresh = ContentStore::open(&path).unwrap();
     let rows = fresh.completed_analysis_runs().unwrap();
     assert_eq!(rows.iter().map(|r| r.scope.as_str()).collect::<Vec<_>>(), ["named:a", "named:a", "named:b"]);
@@ -674,10 +683,14 @@ fn a_numbered_home_stop_revokes_older_unqualified_directory_writers_once() {
     let mut newer = begin(None, 11, "higher-generation");
     let mut other = begin(Some("other"), 5, "other-home");
     let mut qualified = begin(Some("home"), 5, "qualified");
+    // Decision 0494: the stop would revoke `old` (unqualified) and `qualified`: it fails until both have finished.
+    assert!(matches!(store.delete_directory_analysis_scopes(parent, Some("10:stop:home")), Err(crate::content_store::StoreError::InUse(_))));
+    old.finish(true).unwrap();
+    qualified.finish(true).unwrap();
     store.delete_directory_analysis_scopes(parent, Some("10:stop:home")).unwrap();
     let mut fresh = begin(None, 0, "after-delivery");
     store.delete_directory_analysis_scopes(parent, Some("10:stop:home")).unwrap();
-    for r in [&mut old, &mut newer, &mut other, &mut qualified, &mut fresh] { r.finish(true).unwrap(); }
+    for r in [&mut newer, &mut other, &mut fresh] { r.finish(true).unwrap(); }
     let mut scans: Vec<_> = store.completed_analysis_runs().unwrap().into_iter().map(|r| r.scan_id).collect();
     scans.sort();
     assert_eq!(scans, ["after-delivery", "higher-generation", "other-home"]);
@@ -1371,4 +1384,76 @@ fn a_store_mostly_free_is_left_to_the_whole_vacuum() {
     store.collect(1_000, 64).unwrap();
     // The collector's own vacuum left them: each of its pages walks a free list this long.
     assert_eq!(count("freelist_count"), free);
+}
+
+/// Decision 0494: a run's start only reads. Its lease, a file beside the store, is what other processes see; the
+/// store gets its acquisition with its first write, which the writer applies behind the run.
+#[test]
+fn a_runs_start_commits_nothing_to_the_store() {
+    use crate::content_store::analysis_scope::AnalysisRun;
+    let (path, _store) = store("scope-start-reads-only");
+    let watcher = rusqlite::Connection::open(&path).unwrap();
+    let version = || watcher.query_row("PRAGMA data_version", [], |r| r.get::<_, i64>(0)).unwrap();
+    let before = version();
+    let mut run = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:reads-only", "scan").unwrap();
+    assert_eq!(version(), before, "a run's start committed to the store");
+    assert!(crate::content_store::scope_lease::live(&path, Some(run.acquisition())), "a run's lease names it");
+    run.finish(true).unwrap();
+    assert_eq!(run.publication.map(|p| p.as_str()), Some("published"));
+    assert!(!crate::content_store::scope_lease::live(&path, Some(run.acquisition())), "a finished run's lease is gone");
+}
+
+/// Decision 0494: a deletion, or a stop, of a scope a run holds fails until the run has finished; retried then, it
+/// removes the run's publication. A stop below a later writer's control generation leaves that writer alone.
+#[test]
+fn a_deletion_of_a_running_scope_fails_until_the_run_has_finished() {
+    use crate::content_store::{StoreError, analysis_scope::{self, AnalysisRun, RunSource}};
+    let (path, store) = store("scope-deletion-waits");
+    let mut run = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:held", "scan").unwrap();
+    run.select_source(RunSource::directory(std::path::Path::new("/repo"))).unwrap();
+    let other = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:elsewhere", "scan").unwrap();
+    assert!(matches!(store.delete_analysis_scope("named:held"), Err(StoreError::InUse(_))));
+    run.finish(true).unwrap();
+    assert_eq!(run.publication.map(|p| p.as_str()), Some("published"));
+    assert_eq!(store.completed_analysis_runs().unwrap().len(), 1);
+    store.delete_analysis_scope("named:held").unwrap();
+    assert!(store.completed_analysis_runs().unwrap().is_empty());
+    drop(other);
+    let dir = path.parent().unwrap().canonicalize().unwrap().join("work");
+    let begin = |control| AnalysisRun::begin_at(ContentStore::open(&path).unwrap(), &analysis_scope::directory_in(&dir, Some("home")), "watch", control).unwrap();
+    let mut later = begin(30);
+    store.delete_directory_analysis_scopes(&dir, Some("20:stop:home")).unwrap();
+    let mut covered = begin(10);
+    later.finish(true).unwrap();
+    covered.finish(true).unwrap();
+    assert_eq!(later.publication.map(|p| p.as_str()), Some("published"));
+    assert_eq!(covered.publication.map(|p| p.as_str()), Some("released"), "a run below a delivered stop's cutoff");
+}
+
+/// Decision 0494: two runs that each find no generation for their scope create the same one, so both publish.
+#[test]
+fn runs_that_start_a_new_scope_together_share_its_generation() {
+    use crate::content_store::analysis_scope::AnalysisRun;
+    let (path, store) = store("scope-shared-generation");
+    let mut first = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:new", "a").unwrap();
+    let mut second = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:new", "b").unwrap();
+    second.finish(true).unwrap();
+    first.finish(true).unwrap();
+    assert_eq!((first.publication.map(|p| p.as_str()), second.publication.map(|p| p.as_str())), (Some("published"), Some("published")));
+    let generation: i64 = store.connection.lock().unwrap()
+        .query_row("SELECT generation FROM analysis_scope_generation WHERE scope='named:new'", [], |r| r.get(0)).unwrap();
+    assert_eq!(generation, first.acquisition(), "the scope's generation is the first creator's acquisition");
+    assert!(second.acquisition() > first.acquisition());
+}
+
+/// Decision 0494: a lease its run left behind (a process that died) has no lock: it neither keeps a deletion out
+/// nor survives one.
+#[test]
+fn a_dead_runs_lease_neither_blocks_a_deletion_nor_survives_it() {
+    let (path, store) = store("scope-dead-lease");
+    let dir = std::path::PathBuf::from(format!("{}.scopes", path.canonicalize().unwrap().display()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("41"), "named:dead\n0\n0\n0\n").unwrap();
+    store.delete_analysis_scope("named:dead").unwrap();
+    assert!(!dir.join("41").exists());
 }

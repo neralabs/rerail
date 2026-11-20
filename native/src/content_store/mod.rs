@@ -51,6 +51,7 @@ mod read_cache;
 mod archive;
 pub use archive::{ARCHIVED, place_archived_tape_at};
 mod reclamation;
+pub(crate) mod scope_lease;
 pub use reclamation::Ageing;
 pub mod record;
 mod relationships;
@@ -323,6 +324,9 @@ pub enum StoreError {
     /// A row a publication had resolved vanished before the publication used it, under a
     /// concurrent collection. Never a reason to proceed without the store.
     Vanished(&'static str),
+    /// A deletion or stop of an analysis scope that a running analysis holds (`scope_lease`, decision 0494): retry
+    /// once that run has finished.
+    InUse(String),
 }
 
 impl fmt::Display for StoreError {
@@ -333,6 +337,7 @@ impl fmt::Display for StoreError {
             Self::Invalid(message) => write!(formatter, "invalid content store input: {message}"),
             Self::Corrupt(message) => write!(formatter, "corrupt content store: {message}"),
             Self::Busy => formatter.write_str("content store writer is busy"),
+            Self::InUse(message) => write!(formatter, "analysis scope in use: {message}"),
             Self::Vanished(row) => write!(
                 formatter,
                 "content store {row} vanished under a concurrent collection"
