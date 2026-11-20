@@ -1,4 +1,4 @@
-# 0459. A formula's group is as wide as its file's words need
+# 0464. A formula's group is as wide as its file's words need
 
 Status: accepted (2026-11-19). Follows 0449 and 0440 (merged). The first measure of the plan for the label DAG on
 the work queue (0027).

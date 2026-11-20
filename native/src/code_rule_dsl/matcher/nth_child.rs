@@ -365,7 +365,7 @@ impl Positions {
 pub struct SiblingPositions {
     positions: std::sync::Mutex<std::collections::HashMap<Option<String>, std::sync::Arc<Positions>>>,
     answers: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<Vec<u64>>>>,
-    /// The answers written in a batch's fact block (`Fact::found`, Q251): each one's byte offset there.
+    /// The answers written in a batch's fact block (`Fact::found`, Q289): each one's byte offset there.
     placed: std::sync::Mutex<std::collections::HashMap<String, usize>>,
 }
 

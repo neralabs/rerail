@@ -1968,15 +1968,15 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   @qualname($f)` has no native step; function @qualname". Without strict it would fall back to SQLite.
 - **Done when**: `@qualname` has a native step, and the program runs strict at s1000.
 
-### Q271. (Q187 where written, Q218 until the first hub merge, Q250 until the second; the hub's Q187 is `parser_tests`) The label kernels' time follows `label_formula`'s (file, formula) pairs
+### Q288. (Q187 where written, Q218 until the first hub merge, Q250 until the second; the hub's Q187 is `parser_tests`) The label kernels' time follows `label_formula`'s (file, formula) pairs
 
-- **Found** (2026-11-18, 0424): the label passes' walk steps fell from 65.8 M to 19.8 M (internal_dead_code)
+- **Found** (2026-11-18, 0459): the label passes' walk steps fell from 65.8 M to 19.8 M (internal_dead_code)
   and 19.3 M to 7.4 M (public_api_triples). `label_micro_8` + `label_micro` went from 80.9 to 66.7 ms and from
   61.1 to 68.2 ms. Each seeded `all` adds a level its readers wait for (public_api_triples' `label_micro_8`
   dispatches 96 → 144), and a pass still visits every 64-node group to read its root mask.
 - **Done when**: a pass launches over only the groups its domain has members in, and the levels seeds add are
   merged where their readers allow, with the kernels' time measured pinned before and after.
-- **Done** (2026-11-18, decision 0425), in part:
+- **Done** (2026-11-18, decision 0460), in part:
   - The levels seeds added are gone. Demand is a formula a pass's anchor reads (`Domain::Within`), not a seed
     label. Formula groups fell 28,622 → 20,786–22,520 (internal_dead_code) and 16,874–17,616 → 12,109
     (public_api_triples). Formula images fell 584–624 → 280–320 and 244–376 → 96–136. Rows are the same.
@@ -1992,14 +1992,14 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   from 71–79 to 105–112 ms. The groups of one file's formulas overlap their latency, and the shared tests are shared
   already (`label_leaves`, identical formulas once). The time was latency: the step formulas, with a chain's reach as
   the long pole (now read by blocks: 96.8 → 54.6 ms), and every level once per chunk (now a chunk below the credible
-  growth makes the next 4×: 82–98 → 77–84 ms, 89–94 → 67–82 ms). 0425's times were taken under the default memory
+  growth makes the next 4×: 82–98 → 77–84 ms, 89–94 → 67–82 ms). 0460's times were taken under the default memory
   line (14–17 chunks).
 - **Closed** (2026-11-18, 0419's follow-up): with the line lifted, fewer or larger chunks did not lower the label GPU
   time beyond noise (one chunk at a time with a 1M-node cap: 84–107 ms against 70–130 ms). A chunk's measured growth
   is noise (16–113 MB whatever its nodes), so no finer sizing rule was adopted. Gathering concurrent chunks' label runs
   is not built, since its prize is fewer runs and 0386 keeps each job's wave its own.
 
-### Q281. `label_leaves` is most of the label passes' GPU time (done)
+### Q323. `label_leaves` is most of the label passes' GPU time (done)
 
 - **Found** (2026-11-19, 0447): with `label_formula`'s floor gone, `label_leaves` takes 32.2 ms of internal_dead_code's
   50.7 ms of GPU time at s1000 (`RERAIL_GPU_ENCODER_TIMES`): 12 encoders of about 2.7 ms each, against 16.8 ms for
@@ -2010,7 +2010,7 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   leaves passes went from 31.5–39.6 to 7.8–8.0 ms, and the GPU total from 55.5–59.5 to 42.0–45.3 ms, with the rows
   the same.
 
-### Q270. The children of members read a chain of child reads on one thread per member
+### Q322. The children of members read a chain of child reads on one thread per member
 
 - **Found** (2026-11-18, 0437): with a chain's reach at the dispatch floor, op 9 (the children of members,
   `tape_first_child` then `tape_next` per member) is `label_formula`'s largest step in one-formula mode: 103 ms over
@@ -2024,7 +2024,7 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   hop. The walks take the parent's end once and hop by `tape_next_in`. The op-9 formulas went from 431–846 µs to
   133–212 µs, at the leaf-only floor, with the rows the same as native.
 
-### Q252. (Q220 until the hub merge) A chain's reach climbs a node at a time in each (file, formula) group
+### Q321. (Q220 until the hub merge) A chain's reach climbs a node at a time in each (file, formula) group
 
 - **Found** (2026-11-18, 0419): `label_formula`'s time is its steps (64–70 ms of 65–79 ms at s1000). A chain's reach
   (`REACH_CHAIN`) takes about 1.1 ms a pass, against 23–68 µs for the other steps. Each thread decides 32 nodes in a
@@ -2040,10 +2040,10 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   think this is mostly fixed by using an accessor"). The reach is descendant images, a level each time a member sits
   below a blocker. A chain's pass went from 0.8–6.8 ms to 22–225 µs, with the rows the same as native.
 
-### Q251. (Q219 until the hub merge) A level's fact constraints are uploaded rows (done)
+### Q289. (Q219 until the hub merge) A level's fact constraints are uploaded rows (done)
 
-- **Found** (2026-11-18, Q271's measurements): `Runner::level` uploaded the facts' `(node, label)` pairs once per
-  pattern kernel group, the same buffer each time: 32 MB (8.1 M words) on 15 fixtures. Fixed: once a level (0425).
+- **Found** (2026-11-18, Q288's measurements): `Runner::level` uploaded the facts' `(node, label)` pairs once per
+  pattern kernel group, the same buffer each time: 32 MB (8.1 M words) on 15 fixtures. Fixed: once a level (0460).
 - **Left**: the upload itself is a copy of the facts' rows (AGENTS.md, 0353).
 - **Done when**: `Pass::Fact` reads the fact's relation in its block, and the upload is gone.
 - **Done** (2026-11-19, 0446): the findings are written once into the batch's fact block (`FactRows::block`), and
@@ -5595,9 +5595,9 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Done when**: the four pass, or an assertion is shown to state a behaviour the observer no longer has on
   purpose, and is changed with the reason.
 
-### Q283. A level's formulas as phases: the pushes' chains are the time (0461)
+### Q324. A level's formulas as phases: the pushes' chains are the time (0465)
 
-- **Found** (2026-11-19, 0461): `label_phase` runs a level's word steps and one-hop pushes in one dispatch a phase
+- **Found** (2026-11-19, 0465): `label_phase` runs a level's word steps and one-hop pushes in one dispatch a phase
   for the whole batch. Its word steps cost about 32 µs a dispatch, but its pushes are chains within a thread: up to 7
   dependent hops for a format 16 parent, and one hop for each child. On s1000 it does not beat `label_formula`, so it
   stays behind `RERAIL_FORMULA_PHASES=1`.
@@ -5606,4 +5606,4 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
      s1000;
   2. range steps (descendants, following, reaches: ops 8, 10, 11, 15, 16, 23–25) as scans between blocks, so a
      level runs on one kernel;
-  3. then compare a level's phases with 0459's size classes, and remove the loser.
+  3. then compare a level's phases with 0464's size classes, and remove the loser.

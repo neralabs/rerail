@@ -1,12 +1,12 @@
-# 0461. A level's formulas as phases, a thread a word (a measure)
+# 0465. A level's formulas as phases, a thread a word (a measure)
 
-Status: accepted as a measure (2026-11-19), behind `RERAIL_FORMULA_PHASES=1`, off by default. Follows 0459. Its
+Status: accepted as a measure (2026-11-19), behind `RERAIL_FORMULA_PHASES=1`, off by default. Follows 0464. Its
 epilogue's rule test at set bits only (§3) is on for `label_formula` too.
 
 ## Intro
 
 `label_formula` runs each formula as a group per (file, formula). The group runs the formula's steps one after
-another, with device barriers between them. After 0459 a dispatch's time is still the largest file's group running
+another, with device barriers between them. After 0464 a dispatch's time is still the largest file's group running
 that chain of steps. The user asked: "there should be a better way of doing this. Take a step back and tell me what
 the optimal launch shape is and how we could do a fair amount of work per thread whilst using the full parllelism and
 avoiding the overhead of too many launches".
@@ -82,7 +82,7 @@ On big1 the phased formulas take 2.6 ms where they took about 3.3 ms. On s1000 t
    What is left is the one-hop pushes. Each is a chain within one thread: up to 7 dependent hops a parent, and one
    hop a child.
 3. **`label_formula`'s epilogue reads its rule only at the set bits** (`root_mask_among` in `device_tape.h`;
-   `root_mask_in` is a call of it). On s1000 the default path's formula encoders were lower than 0459's engine in
+   `root_mask_in` is a call of it). On s1000 the default path's formula encoders were lower than 0464's engine in
    10 of 12 alternating pairs (load 34–71). The GPU's clock moves with the load, so the range is wide:
    internal_dead_code 29.0–37.2 → 6.4–30.9 ms, and public_api_triples 14.4–30.0 → 5.9–26.3 ms. The rows were the
    same.

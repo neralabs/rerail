@@ -60,7 +60,7 @@ pub(in crate::code_rule_dsl) enum Pass<'a> {
         constraints: Vec<(String, u32)>,
     },
     /// The roots a semantic predicate's producer reported (O24, decision 0030) whose slots' targets each have their
-    /// label (`labels`, a slot each). The findings are where the host wrote them, in the batch's fact block (Q251):
+    /// label (`labels`, a slot each). The findings are where the host wrote them, in the batch's fact block (Q289):
     /// per file, its rows (node, then a target per slot, file-local) or its nodes as bits. The pattern kernel's fact
     /// case (`patterns::FACT`) reads them there and tests them, so a fact settles from scratch as a pattern does.
     Fact {
@@ -331,7 +331,7 @@ fn formula_leaf(word: u32) -> bool {
 ///
 /// A label `unknown` names (a recursive group's own, Q133) is read as every node, as on the CPU (`anchor_bits`).
 ///
-/// A pass that starts within a demand's set (`Domain::Within`, decision 0425) has it in its anchor, as on the CPU.
+/// A pass that starts within a demand's set (`Domain::Within`, decision 0460) has it in its anchor, as on the CPU.
 pub(in crate::code_rule_dsl) fn device_anchor(program: &Program, demand: Option<&compile_sets::Set>, unknown: &dyn Fn(u16) -> bool) -> Option<std::sync::Arc<DeviceFormula>> {
     let walk = Micro::of(program)?;
     let anchor = compile_sets::Set::anchor(&walk.words, &|_| true);
@@ -682,7 +682,7 @@ struct Shape {
     /// A walk's frames, its stack in `stacks` (`label_micro`, `label_group`, `root_records`: the tier's).
     frames: u32,
     /// `label_formula`'s size class (`formula_classes`): 0 every file; else `words << 1 | 1` the files of at least
-    /// `words` words, `words << 1` those of fewer (decision 0459).
+    /// `words` words, `words << 1` those of fewer (decision 0464).
     wide: u32,
 }
 
@@ -965,7 +965,7 @@ const KERNELS: [&str; 9] = ["label_sink", "label_settle", "label_round", "label_
 /// `label_formula` and `label_leaves` in `KERNELS` (decision 0365).
 const FORMULA_KERNEL: usize = 6;
 const LEAVES_KERNEL: usize = 7;
-/// `label_phase` (decision 0461): a level's formulas a thread a (word, formula), in phases.
+/// `label_phase` (decision 0465): a level's formulas a thread a (word, formula), in phases.
 const PHASE_KERNEL: usize = 8;
 /// `RERAIL_GPU_ENCODER_TIMES=1` (a measurement switch): each compute encoder's own time on the GPU, from timestamps the
 /// GPU takes at its start and end inside its command buffer (stage-boundary counters), and the gaps between one
@@ -1123,13 +1123,13 @@ fn formula_width() -> u64 {
 /// `label_formula`'s threads a (file, formula).
 const FORMULA_WIDTH: u64 = 128;
 
-/// `RERAIL_FORMULA_PHASES=1` (decision 0461, a measure): the formulas `phase_program` takes run on `label_phase`.
+/// `RERAIL_FORMULA_PHASES=1` (decision 0465, a measure): the formulas `phase_program` takes run on `label_phase`.
 fn formula_phases() -> bool {
     static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_FORMULA_PHASES").is_ok_and(|v| v == "1"));
     *ON
 }
 
-/// A formula compiled for `label_phase` (decision 0461): its instructions (`[code, dst, src, extra]`, the kernel's
+/// A formula compiled for `label_phase` (decision 0465): its instructions (`[code, dst, src, extra]`, the kernel's
 /// `PHASE_*`), its phases, the slot of its set, and its slots.
 #[derive(Debug, PartialEq)]
 struct PhaseProgram {
@@ -1253,7 +1253,7 @@ fn phase_program(words: &[u32]) -> Option<PhaseProgram> {
     code.extend(b.code);
     Some(PhaseProgram { code, phases: b.phase + 1, result: result.slot, slots: b.slots })
 }
-/// A file of at least this many words a thread of `FORMULA_WIDTH` gets a wide group (0459, `formula_classes`).
+/// A file of at least this many words a thread of `FORMULA_WIDTH` gets a wide group (0464, `formula_classes`).
 const FORMULA_WIDE_WORDS_A_THREAD: usize = 4;
 
 /// `label_formula`'s dispatches for a batch whose files have `words` words each: `(Shape::wide, width)` each. One
@@ -1279,7 +1279,7 @@ fn formula_classes(words: impl Iterator<Item = usize>, narrow: u64, most: u64) -
     }
     vec![((threshold as u32) << 1 | 1, wide), ((threshold as u32) << 1, narrow)]
 }
-/// `RERAIL_FORMULA_FUSED=N` (a measurement switch, Q271): `label_formula` dispatches a level's formulas at once, as many as
+/// `RERAIL_FORMULA_FUSED=N` (a measurement switch, Q288): `label_formula` dispatches a level's formulas at once, as many as
 /// its scratch allows, with N groups a file (1: one group evaluates every formula of the file in turn), not one a (file,
 /// formula).
 fn formula_fused() -> Option<usize> {
@@ -1619,7 +1619,7 @@ struct Runner<'a> {
     /// Every pass's roots as rules (`RootTable`), one buffer for the run (`root_words`).
     root_table: RootTable,
     root_words: Option<MappedBuffer>,
-    /// The batch's fact block (`Pass::Fact`, Q251), bound to the pattern kernels where the facts are read: its
+    /// The batch's fact block (`Pass::Fact`, Q289), bound to the pattern kernels where the facts are read: its
     /// address, and its device buffer.
     facts: Option<(usize, Buffer)>,
     /// `RERAIL_GPU_ENCODER_TIMES`: each encoder's own GPU time, from timestamps inside its command buffer.
@@ -1636,7 +1636,7 @@ struct Runner<'a> {
     /// each level counted toward the segment as an upload, so two levels of formulas ended the command buffer
     /// (`SEGMENT_BYTES`; `the_wave_is_one_evaluation_on_metal`: 3 of them, 50 s against 0.9 s).
     formula_scratch: Option<MappedBuffer>,
-    /// `label_phase`'s slots (0461).
+    /// `label_phase`'s slots (0465).
     phase_scratch: Option<MappedBuffer>,
     /// The loop tier's stacks (`MICRO_POOL` of them), committed only as walks use them.
     stacks: Option<MappedBuffer>,
@@ -1701,7 +1701,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
             Pass::Formula { .. } => true,
             _ => false,
         });
-        // Formulas: their leaves, and a dispatch a size class (two, 0459).
+        // Formulas: their leaves, and a dispatch a size class (two, 0464).
         2 * usize::from(programs) + usize::from(patterns) + 1 + 3 * usize::from(formulas)
     };
     let fixed = plan
@@ -3003,7 +3003,7 @@ impl Runner<'_> {
                 }
             }
         }
-        // The formulas that run as phases (0461, `RERAIL_FORMULA_PHASES=1`) first, the rest after them on `label_formula`.
+        // The formulas that run as phases (0465, `RERAIL_FORMULA_PHASES=1`) first, the rest after them on `label_formula`.
         let mut phased = unique.iter().map(|(words, ..)| if formula_phases() { phase_program(words) } else { None }).collect::<Vec<_>>();
         let mut order = (0..unique.len()).collect::<Vec<_>>();
         order.sort_by_key(|&index| phased[index].is_none());
@@ -3036,7 +3036,7 @@ impl Runner<'_> {
         let leaves = leaves.cloned().unwrap_or_else(|| own.as_ref().expect("the group's leaves").buffer.clone());
         let stride = depth as usize * region;
         // A dispatch's formulas, and its groups a file (`rows`): one a formula, or `formula_fused()`, each evaluating
-        // its share in turn in its own slots (Q271).
+        // its share in turn in its own slots (Q288).
         let fused = formula_fused();
         let rows_most = (FORMULA_SCRATCH_BYTES / 4 / stride).clamp(1, count);
         let per = if formula_trace().is_some() && std::env::var_os("RERAIL_FORMULA_ONE").is_some() { 1 } else if fused.is_some() { count } else { rows_most };
@@ -3058,7 +3058,7 @@ impl Runner<'_> {
         // Profiling (`RERAIL_PROF`): each step kind's members, the parent and child reads, the (file, formula)s.
         let profile = crate::code_rule_dsl::prof::on();
         let stats = MappedBuffer::zeroed::<u32>(self.device, if profile { FORMULA_STATS } else { 1 })?;
-        // A group's width by its file's size (0459): a file's group runs the formula's steps one after another, a pass
+        // A group's width by its file's size (0464): a file's group runs the formula's steps one after another, a pass
         // over its words each, so a large file's group sets the dispatch's time unless it has the threads to read its
         // words at once; a small file's group would leave them idle. A batch with both is two dispatches in one
         // encoder, concurrent: they read and write apart (a file's own scratch region; its rows' words by atomics).
@@ -3117,7 +3117,7 @@ impl Runner<'_> {
         Ok(())
     }
 
-    /// `label_phase` (0461): `programs`' formulas (the first of the group's headers), a dispatch a phase, a thread a
+    /// `label_phase` (0465): `programs`' formulas (the first of the group's headers), a dispatch a phase, a thread a
     /// (word of the region, formula). Their slots in a scratch of their own, as many formulas at once as it holds.
     #[allow(clippy::too_many_arguments)]
     fn phase_dispatches(&mut self, programs: &[Option<PhaseProgram>], region: usize, inputs: &[&Buffer; 5], leaves: &Buffer, targets: &Buffer, rules: &Buffer, texts: Option<&Buffer>) -> Result<(), Error> {
@@ -3284,7 +3284,7 @@ impl Runner<'_> {
         let (scratch, counts) = ((&state, self.tapes.scratch_at), (&state, self.tapes.counts_at));
         // The level's constraints, once for its pattern kernels (each group's binds them): the patterns' (variable,
         // label) pairs and each fact item's file and slots' labels. copy: not block data (the level's task
-        // description). The facts' findings are read in their block (`facts`, Q251).
+        // description). The facts' findings are read in their block (`facts`, Q289).
         let constraints = if matches.iter().any(|matches| !matches.is_empty()) { Some(self.upload(&constraints)?) } else { None };
         for (group, (matches, pattern_threads)) in matches.iter().zip(pattern_threads).enumerate() {
             if matches.is_empty() {
@@ -4049,7 +4049,7 @@ fn programs_of<'p>(passes: &'p [Pass<'_>], rows: bool) -> Vec<(&'p Program, &'p 
 mod formula_class_tests {
     use super::formula_classes;
 
-    /// 0459: small files alone are one narrow dispatch, large alone one wide, both two (the large first), and a
+    /// 0464: small files alone are one narrow dispatch, large alone one wide, both two (the large first), and a
     /// pipeline no wider than the narrow width one narrow.
     #[test]
     fn a_batch_is_dispatched_by_its_files_size_classes() {
@@ -4061,7 +4061,7 @@ mod formula_class_tests {
         assert_eq!(formula_classes([10, threshold].into_iter(), 128, 128), vec![(0, 128)]);
     }
 
-    /// 0461: a one-hop step pushes into a slot cleared before phase 0, so it starts in phase 1 and is read in the
+    /// 0465: a one-hop step pushes into a slot cleared before phase 0, so it starts in phase 1 and is read in the
     /// next; `CHILD_IN` takes its candidates when read; a step the phases do not hold leaves the formula to
     /// `label_formula`.
     #[test]

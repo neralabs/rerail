@@ -313,7 +313,7 @@ fn a_recursive_utility_inside_another_settles() {
     assert_eq!(program.roots(&tape).unwrap(), expected);
 }
 
-/// The lowerings of t45's plan (decisions 0424, 0425), each a clause: a bare `$X` is the named-node test, not a
+/// The lowerings of t45's plan (decisions 0459, 0460), each a clause: a bare `$X` is the named-node test, not a
 /// pattern label; a clause that is one `inside … end` copies its label; the labels made inside an `all` that tests a
 /// neighbor (`inside` or `has`, by a field or not) start within the set of the nodes it holds at, a formula, not a
 /// seed label. Each finds W's roots.
@@ -331,7 +331,7 @@ fn seeded_clauses() -> (crate::code_rule_dsl::CompiledCodeRuleDsl, TapeDoc) {
         clause("function-name", r#"{"kind": "identifier", "inside": {"kind": "function_definition", "field": "name", "stopBy": "neighbor"}}"#),
         clause("lone", r#"{"not": {"inside": {"kind": "argument_list", "stopBy": "neighbor"}}}"#),
         // A neighbor tested by text (ruff F541's shape): its set has no text test, since a text slot is its own
-        // program's (0425).
+        // program's (0460).
         clause(
             "fstring",
             r#"{"kind": "string", "has": {"kind": "string_start", "regex": "^[fF]", "stopBy": "neighbor"}, "not": {"has": {"kind": "interpolation", "stopBy": "neighbor"}}}"#,
@@ -362,7 +362,7 @@ fn seeded_and_copied_labels_find_ws_roots() {
         assert_eq!(program.roots(&tape).unwrap(), expected, "{clause}");
         let census = program.census();
         let patterns = census.iter().filter(|(kind, _)| *kind == "pattern").count();
-        // A neighbor's set is a formula a pass's anchor reads (0425), not a targets label of its own (0424's seed). A
+        // A neighbor's set is a formula a pass's anchor reads (0460), not a targets label of its own (0459's seed). A
         // reach (`inside … stopBy end`) is a targets label: the nodes below a match, which `in-function` copies.
         let targets = census.iter().filter(|(kind, _)| *kind == "targets").count();
         assert_eq!(targets, usize::from(clause == "in-function"), "{clause}: no seed label");
@@ -380,7 +380,7 @@ fn seeded_and_copied_labels_find_ws_roots() {
 }
 
 /// The same clauses on Metal: a label-domain pass starts only at the label's members, read from its row on the
-/// device (`root_mask_label`), and a clause that copies a label reads its row (decision 0424).
+/// device (`root_mask_label`), and a clause that copies a label reads its row (decision 0459).
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
 #[test]
 fn seeded_and_copied_labels_match_on_metal() {
@@ -395,7 +395,7 @@ fn seeded_and_copied_labels_match_on_metal() {
     }
 }
 
-/// Facts on Metal read their findings where the host wrote them, in the batch's fact block (Q251): rows with a slot
+/// Facts on Metal read their findings where the host wrote them, in the batch's fact block (Q289): rows with a slot
 /// (a node and its target), rows with none, and a node set as bits (`nthChild`). Each finds W's roots, and the
 /// device's are the CPU's.
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
@@ -413,7 +413,7 @@ fn facts_on_metal_are_read_in_their_block() {
         clause("bits", r#"{"kind": "identifier", "nthChild": 1}"#),
     ];
     let policy = format!(
-        r#"{{"format": "rerail.policy/v1", "id": "facts", "revision": 1, "mode": "steer", "description": "Q251's facts.",
+        r#"{{"format": "rerail.policy/v1", "id": "facts", "revision": 1, "mode": "steer", "description": "Q289's facts.",
             "scope": {{"include": ["**/*"], "exclude": []}}, "clauses": [{}]}}"#,
         clauses.join(", ")
     );
