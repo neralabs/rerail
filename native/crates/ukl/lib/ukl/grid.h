@@ -11,8 +11,12 @@
 // work. The host then runs the work again with fewer groups (G/2): a choice made for the next run, never between
 // phases.
 //
-// `UklGrid.ctl`: three words, zero before the dispatch: 0 the groups arrived at the current barrier; 1 its
-// generation, twice over, with the failure bit (bit 0); 2 the failure word, for a phase's quick test. A barrier's
+// `UklGrid.ctl`: three words, zero before the dispatch: 0 the groups' arrivals at every barrier so far, never reset
+// (barrier `n`, counting from 0, is complete when it reaches `G * (n + 1)`, modulo 2^32); 1 the generation, twice
+// the barriers passed, with the failure bit (bit 0); 2 the failure word, for a phase's quick test. The count is never
+// reset: a reset is a second write of the last arrival's besides the generation's step, and a GPU that showed the
+// step first would let a group pass, arrive at the next barrier, and have its arrival wiped, so that barrier never
+// fills. A barrier's
 // outcome is one for every group: the last to arrive steps the generation only by a compare-and-swap that finds no
 // failure bit, and a group past its bound sets the bit only by a compare-and-swap that finds the generation it waited
 // on. So either every group passes a barrier or none does. One form on every backend (CUDA's too, until the device
@@ -51,8 +55,8 @@ UKL_INLINE bool ukl_grid_barrier(UklGrid g, UKL_LOCAL uint32_t* flag)
         uint32_t failed = gen & 1u;
         if (failed == 0u) {
             ukl_fence_device();
-            if (ukl_atomic_add(&g.ctl[0], 1u) + 1u == g.groups) {
-                ukl_atomic_store(&g.ctl[0], 0u);
+            // This barrier's last arrival makes the count `G` times the barriers passed with it (`gen / 2 + 1`).
+            if (ukl_atomic_add(&g.ctl[0], 1u) + 1u == g.groups * ((gen >> 1) + 1u)) {
                 ukl_fence_device();
                 failed = ukl_atomic_cas(&g.ctl[1], gen, gen + 2u) == gen ? 0u : 1u;
             } else {

@@ -167,7 +167,7 @@ fn the_source_compiles() {
     }
 }
 
-/// §5 of decision 0460: the evaluator's source is UKL for every backend, not Metal's alone: for
+/// §5 of decision 0468: the evaluator's source is UKL for every backend, not Metal's alone: for
 /// OpenCL (its SIMD group emulated, width 32) it is OpenCL C 1.2 that clang's front end accepts,
 /// so it holds no C++ and every function that reaches a SIMD-group operation takes its state
 /// (`__UKL_PARAMS`). The OpenCL gate of decision 0440 §3.5.
@@ -189,7 +189,7 @@ fn the_source_is_opencl_c_1_2() {
     assert!(o.status.success(), "the evaluator is not OpenCL C 1.2 ({}):\n{errors}", file.display());
 }
 
-/// §4 of decision 0460: the grid is the device's resident count at the grid kernels' threadgroup
+/// §4 of decision 0468: the grid is the device's resident count at the grid kernels' threadgroup
 /// memory (`Device::resident_groups`), at most `GROUPS_MOST`, and `GROUPS_UNKNOWN` on a device
 /// that gives no cores.
 #[test]

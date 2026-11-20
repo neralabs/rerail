@@ -1,4 +1,6 @@
-# 0475: The text in P1's iterations: `_Pragma` rows, and `__COUNTER__` in directives
+# 0500: The text in P1's iterations: `_Pragma` rows, and `__COUNTER__` in directives
+
+Numbered 0475 where it was written (Go-C-and-C-support); renumbered past the highest in any worktree (0499) at its merge into CUDA-support, as 0475 is another record on the hub.
 
 Status: accepted (the user, 2026-11-19: "please implement these two": "A `_Pragma` that changes
 macro state (`once`, `push_macro`, `pop_macro`, or one whose operand is a macro)", and
@@ -49,7 +51,7 @@ so iterating both to a common fixpoint gives the serial reading.
   iterations: the text pass's output is the round's. A changed one is a change, and the
   iterations go on from the facts. The iterations' bound (`P1_ITERS`) covers both.
 - The uses' key counts only where a directive's line has uses: otherwise nothing reads them.
-- `px_expand` goes: a round is 2 launches, `pp_setup` and `pp_check` (0460 §4's fixed count,
+- `px_expand` goes: a round is 2 launches, `pp_setup` and `pp_check` (0468 §4's fixed count,
   smaller).
 - A text pass that does not end the iterations drops its refusals: they are of facts the next
   pass changes. The lines' refusals are those before the last text pass; the text's are the
@@ -119,6 +121,6 @@ so iterating both to a common fixpoint gives the serial reading.
 
 ## Built
 
-- Commit "0475: the text in P1's iterations, `_Pragma`'s rows, `__COUNTER__` in directives".
+- Commit "0500: the text in P1's iterations, `_Pragma`'s rows, `__COUNTER__` in directives".
   Every test of R1–R5 passes under Relax. The corpus slices give 3,135 units equal to the serial
   pass, none refused, 2 launches a round.

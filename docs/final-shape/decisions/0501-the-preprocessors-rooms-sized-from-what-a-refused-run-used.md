@@ -1,6 +1,8 @@
-# 0478: the preprocessor's rooms sized from what a refused run used
+# 0501: the preprocessor's rooms sized from what a refused run used
 
-The user, 2026-11-19, after 0475: "test on boost::preprocessor and ensure that we are accurate on
+Numbered 0478 where it was written (Go-C-and-C-support); renumbered past the highest in any worktree (0499) at its merge into CUDA-support, as 0478 is another record on the hub.
+
+The user, 2026-11-19, after 0500: "test on boost::preprocessor and ensure that we are accurate on
 those files. Also profile on them and address any inefficiencies."
 
 ## Intro
@@ -57,7 +59,7 @@ On Boost.Preprocessor's tests that does not work:
    Before, every round climbed the definitions' rungs and P1's rooms again from the first: 3
    Boost `control` units took 82 runs for their rounds and 9 for their expansions; now 41 and 6.
 
-7. **The rounds are the batch's, and the last round's run is the expansion.** Since 0475 a run
+7. **The rounds are the batch's, and the last round's run is the expansion.** Since 0500 a run
    that makes no requests has done the text pass inside P1's iterations: it is the expansion.
    Each unit's rounds ran alone (`lookups`), and then the batch's run (`expand_many`) did every
    unit's last round again. Now `rounds::run_many` runs a batch's units' rounds together:

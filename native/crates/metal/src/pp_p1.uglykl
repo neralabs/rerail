@@ -217,7 +217,7 @@ UKL_INLINE void p1_tests(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32
     if (v) ukl_atomic_min(&taken[grp_first[i] + d.chain], w - insts[i].dir_first);
 }
 
-// Whether directive word `w`'s line is read (decision 0475 §3): an `#elif` (or `#elifdef`,
+// Whether directive word `w`'s line is read (decision 0500 §3): an `#elif` (or `#elifdef`,
 // `#elifndef`) after its chain's taken arm, the last iteration's, is not; every other is.
 UKL_INLINE void p1_line_read(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows,
                              UKL_GLOBAL const uint32_t* grp_first, UKL_GLOBAL const uint32_t* taken, UKL_GLOBAL uint32_t* read, uint32_t w) {
@@ -350,7 +350,7 @@ UKL_INLINE void p1_words_init(UKL_GLOBAL uint32_t* made, UKL_GLOBAL uint32_t* ma
     enter[w] = PP_NONE;
 }
 
-// --- The batch's units' outputs (decision 0460, batching) ----------------------------------------
+// --- The batch's units' outputs (decision 0468, batching) ----------------------------------------
 // Each unit's first output token: at its first stretch in the unit's order (the sorted stretches'
 // first of its unit; a dead instance's stretches, at slot `PP_NONE`, sorted last, have none).
 UKL_INLINE void p1_unit_firsts(UKL_GLOBAL const uint32_t* sslot, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* floors, uint32_t n_units, UKL_GLOBAL uint32_t* first_gap, uint32_t p) {

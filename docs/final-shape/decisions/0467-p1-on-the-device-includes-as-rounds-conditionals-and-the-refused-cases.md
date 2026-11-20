@@ -19,7 +19,7 @@ and 3". The items:
 ## Intro
 
 The device runs the evaluation's later passes already: the names, the definitions' table, the
-text's calls, their expansion and the output (0436 passes 1, 3, 5 to 7; 0448; 0460). What it
+text's calls, their expansion and the output (0436 passes 1, 3, 5 to 7; 0448; 0468). What it
 reads from the host is P1's answer, the unit's layout (`pp_expand::Layout`): which file
 instances the unit has, in what order, at which slots, and which of their directives and
 stretches are active. This decision moves P1 itself onto the device.
@@ -34,7 +34,7 @@ stretches are active. This decision moves P1 itself onto the device.
 - The user, the same day: "#includes, which are a recursion"; "you can do a Metal include pass
   first if you want, this will need to be interleaved with CPU work to actually memory map or
   load the files".
-- 0421, P1: a round reads the state the last one left (the include tree, each instance's active
+- 0482, P1: a round reads the state the last one left (the include tree, each instance's active
   groups, the pragmas its text made) and lays the unit out (sizes bottom-up, first positions
   top-down), sorts the active definitions by (name, position) with `push_macro` and `pop_macro`
   as rows, evaluates each test at its position, each alone, takes each chain's first true arm,
@@ -62,7 +62,7 @@ stretches are active. This decision moves P1 itself onto the device.
   reads the file, gets its tape (kept by content, or parsed now), admits both to the residency,
   and adds a row to the file table (a row that finds nothing too). Then it runs the evaluation
   again, as a new round. The host reads no other answer, and decides nothing.
-- A round is the same fixed handful of launches (0460 §4). The rounds are the include tree's
+- A round is the same fixed handful of launches (0468 §4). The rounds are the include tree's
   depth at most, and fewer where one round's requests reach several levels.
 
 ### 2. The instance tree and its layout
@@ -131,7 +131,7 @@ row.
 - **`__INCLUDE_LEVEL__`**: the instance's depth. **`__FILE_NAME__`**: its file's last path
   component, as a literal. **`__BASE_FILE__`**: the main file's literal.
 - **`_Pragma`**: in text, its string destringized into a pragma; a `push_macro`, `pop_macro` or
-  `once` it makes is a row of P1's next iteration, as 0421's events are.
+  `once` it makes is a row of P1's next iteration, as 0482's events are.
 - **The `__has_*` tests in text**: answered as in §4.
 
 ## Requirements, each held by a test
