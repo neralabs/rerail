@@ -7,9 +7,9 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { z } from "zod";
-import type { RrDescription } from "../rr/rr-runner.js";
+import type { RrDescription } from "../../rr/rr-runner.js";
 import { describeRerailRules, type RerailDescriber, type RerailDescription, type RerailRuleFile } from "./rerail-rule.js";
-import { RULE_MODES } from "./rule-mode.js";
+import { RULE_MODES } from "../rule-mode.js";
 
 /** A kept reading, as the engine gave it for a rule it accepts. */
 export const keptDescriptionSchema = z.object({
@@ -63,7 +63,7 @@ export function keptRerailDescriber(
       return description !== undefined && description.files.every(unchanged) ? [[path, description] as const] : [];
     }));
     const missing = paths.filter(path => !found.has(path));
-    describe(missing).forEach((row, at) => found.set(missing[at]!, row));
+    if (missing.length > 0) describe(missing).forEach((row, at) => found.set(missing[at]!, row));
     return paths.map(path => {
       const row = found.get(path)!;
       if (row.ok) keep(path, row);

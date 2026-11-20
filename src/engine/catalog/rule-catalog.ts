@@ -11,7 +11,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import semver from "semver";
 import { CodeRuleCompileError, EngineUnavailableError, readsLeftOutToken, relationalRulesOff, storableCodeRule } from "../code-rule/code-rule-compile.js";
 import type { CodeRule } from "../code-rule/code-rule-schema.js";
-import { describeRerailRules } from "./rerail-rule.js";
+import { describeRerailRules } from "./rerail-rules/rerail-rule.js";
 import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
 import { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
 import { CURRENT_LINK, defaultRerailHome } from "../storage/rerail-home.js";

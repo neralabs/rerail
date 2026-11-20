@@ -743,7 +743,7 @@ describe("validatePack", () => {
       [
         "a .rerail file in rules/ that no rule lists or includes",
         directory => writeFileSync(join(directory, "rules", "lib", "unused.rerail"), "// read by no rule\n"),
-        { rules: ["rules/lib/unused.rerail is not listed in pack.json, and no listed rule includes it"] },
+        { rules: ["rules/lib/unused.rerail is not listed in pack.json"] },
       ],
       [
         "a rule the engine refuses",

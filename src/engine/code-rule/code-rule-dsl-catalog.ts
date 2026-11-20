@@ -33,7 +33,7 @@ import { checkoutStatus, followsGitignore, parentCheckouts, recordedCheckoutsVer
 import { loadCheckoutRuleSet, ruleConfigurationSignature } from "../catalog/rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "../catalog/rule-library.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
-import type { RerailRule } from "../catalog/rerail-rule.js";
+import type { RerailRule } from "../catalog/rerail-rules/rerail-rule.js";
 import { checkouts, ruleAttachments, ruleSettings } from "../storage/schema.js";
 import { compareDeterministicStrings, stableJsonText } from "../stable-json.js";
 
@@ -129,6 +129,10 @@ export interface RerailRuleEntry {
   readonly id: string;
   /** The rule's file, installed in its pack. */
   readonly path: string;
+  /** The files the rule reads, as its `.scope` says: some include glob (every file when none), and no exclude glob. */
+  readonly scope: { readonly include: readonly string[]; readonly exclude: readonly string[] };
+  /** The language its `.language` names, or null. */
+  readonly language: string | null;
   readonly placement: CodeRulePlacement;
   readonly provenance: RepositoryAuditRuleProvenance;
 }
@@ -298,7 +302,7 @@ function addCompiledRule(parts: CatalogParts, ruleSet: CheckoutRuleSet, placed: 
 /** A placed rule written in `.rerail`, kept with its placement for the `.rerail` runner; its digest is its content's. */
 function addRerailRule(parts: CatalogParts, ruleSet: CheckoutRuleSet, placed: PlacedEntry, rule: RerailRule): void {
   const { id, placement } = placed;
-  parts.rerailRules.push({ id, path: rule.path, placement, provenance: provenanceOf(ruleSet, placed) });
+  parts.rerailRules.push({ id, path: rule.path, scope: rule.scope, language: rule.language, placement, provenance: provenanceOf(ruleSet, placed) });
   parts.versioned.push({ id, kind: "rerail", sourceDigest: placed.rule.payloadHash, placement, source: placed.rule.source });
 }
 

@@ -12,7 +12,7 @@ import { conversationRuleSchema } from "../engine/catalog/rule-schema.js";
 import { engineRegexIssues, type RegexIssue } from "../engine/catalog/rule-regexes.js";
 import { EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
 import { RULE_APPROVAL_SUBJECTS, RULE_KINDS } from "../engine/storage/schema.js";
-import type { RerailRule } from "../engine/catalog/rerail-rule.js";
+import type { RerailRule } from "../engine/catalog/rerail-rules/rerail-rule.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
 
 const START_STATES = ["started", "stopped", "not-set-up"] as const;

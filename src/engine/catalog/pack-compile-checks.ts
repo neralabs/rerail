@@ -14,8 +14,8 @@ import { z } from "zod";
 import { bundledCodeRuleDslDirectory } from "../code-rule/code-rule-compile.js";
 import { replaceFileSync } from "../file-replace.js";
 import { resolveNativeBindingPath } from "../native/native.js";
-import { keptDescriptionSchema, keptRerailDescriber } from "./kept-rerail-descriptions.js";
-import { describeRerailRules, type RerailDescriber, type RerailDescription } from "./rerail-rule.js";
+import { keptDescriptionSchema, keptRerailDescriber } from "./rerail-rules/kept-rerail-descriptions.js";
+import { describeRerailRules, type RerailDescriber, type RerailDescription } from "./rerail-rules/rerail-rule.js";
 
 /** In the Rerail home: the verdicts of the last catalog read, per engine build. */
 export const PACK_COMPILE_CHECKS_FILE = "pack-compile-checks.json";
