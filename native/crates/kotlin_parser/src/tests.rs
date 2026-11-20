@@ -52,10 +52,11 @@ fn tier2_rust_is_current() {
     assert!(std::fs::read_to_string(path).is_ok_and(|have| have == rust), "kotlin_aot's tier2.rs is not the compiler's: RERAIL_BLESS=1");
 }
 
-/// `text`'s tape from tier 2 as Rust (`rerail_kotlin_aot`) over the JIT's tier 1 records, as text.
+/// `text`'s tape from tier 2 as Rust (`rerail_kotlin_aot`) over tier 1's records and outputs, as text.
 fn aot_text(c: &Compiled, text: &str) -> Result<String, u32> {
-    let run = c.parser.tier1.extract(text.as_bytes());
-    let tape = rerail_kotlin_aot::parse(text.as_bytes(), &run.positions[0], &run.positions[1], &run.codes)?;
+    // Tier 1's records and outputs (the masks a string's parts are found by), the interpreter's.
+    let run = c.program.block_programs[0].run(text.as_bytes());
+    let tape = rerail_kotlin_aot::parse(text.as_bytes(), &run.positions[0], &run.positions[1], &run.codes, &run.outputs)?;
     Ok(lean::tape_text(&tape))
 }
 

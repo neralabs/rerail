@@ -417,6 +417,16 @@ pub struct Lowering {
     pub costs: Vec<(String, usize, usize)>,
     /// Tier 2 as Rust (`Compiled::rust`).
     pub rust: Option<Result<String, String>>,
+    /// The tree section's tables tier 2 as Rust reads (`bitlex_rust`).
+    pub rust_tables: Option<RustTables>,
+}
+
+/// The tables `tree_section` finds for tier 2 as Rust (`bitlex_rust::Input`): each record kind's
+/// name, each mark's bit in the code and the word it needs, and the bits that tell an extra.
+pub struct RustTables {
+    pub tokens: Vec<(u8, String)>,
+    pub mark_bits: Vec<(Option<u8>, u16)>,
+    pub extra_bits: Vec<(u8, String)>,
 }
 
 
@@ -537,6 +547,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         soft: Vec::new(),
         costs: Vec::new(),
         rust: None,
+        rust_tables: None,
     };
     // Every class's products first: the tables come before the operations.
     for stmt in stmts {
@@ -719,6 +730,33 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         }
         words = lowered;
         machine = text;
+        // Tier 2 as Rust, from the tree rules and the tables (`bitlex_rust`), the records' outputs the program's now.
+        if let (Some(t), Some(r), Some(symbols)) = (&low.rust_tables, &low.program.records, symbols) {
+            let marks = (0..low.marks.len())
+                .map(|i| {
+                    let (name, _, end) = &low.marks[i];
+                    crate::bitlex_rust::Mark {
+                        name: name.clone(),
+                        bit: t.mark_bits[i].0,
+                        word: t.mark_bits[i].1,
+                        end: *end,
+                        tokens: low.token_marks.get(&i).map(|(b, s)| (b.as_slice(), s.as_slice())),
+                        next: low.mark_next.get(&i).map_or(&[][..], |v| v.as_slice()),
+                        unless_after: low.unless.get(&i).map_or(&[][..], |v| v.as_slice()),
+                        ends: low.ends.contains(&i),
+                        settles: low.settles.contains(&i),
+                        hidden: low.hidden.contains(name),
+                        drops: low.drops.get(&i).map_or(&[][..], |v| v.as_slice()),
+                        loses: low.loses.get(&i).map_or(&[][..], |v| v.as_slice()),
+                        refuses: low.refuses.get(&i).map_or(&[][..], |v| v.as_slice()),
+                        refuses_taken: low.refuses_taken.get(&i).map_or(&[][..], |v| v.as_slice()),
+                    }
+                })
+                .collect();
+            let x = crate::bitlex_rust::Input { tree: &low.tree, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), readers: &r.readers, kinds: &r.kinds };
+            let rust = crate::bitlex_rust::tier2(&x);
+            low.rust = Some(rust);
+        }
     }
     low.program.delay = delay;
     low.cost("the tree section's checks and the outputs".into(), from);
@@ -4942,27 +4980,15 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             names.marks.push((j as u8, n));
         }
     }
-    // Tier 2 as Rust, from the tree rules and these tables (`bitlex_rust`).
-    let rust_marks: Vec<crate::bitlex_rust::Mark<'_>> = (0..low.marks.len())
+    // The tables tier 2 as Rust reads (`bitlex_rust`), written once the records' outputs are the program's.
+    let mark_bits = (0..low.marks.len())
         .map(|i| {
-            let (name, _, end) = &low.marks[i];
             let bit = (0..records.marks.len()).find(|&j| marks.get(j).is_some_and(|m: &bitlex_tier2::Mark| usize::from(m.mask) == i && m.tokens.is_none()));
-            crate::bitlex_rust::Mark {
-                name: name.clone(),
-                bit: bit.map(|j| j as u8),
-                word: bit.map_or(0, |j| records.marks[j].1),
-                end: *end,
-                tokens: low.token_marks.get(&i).map(|(b, s)| (b.as_slice(), s.as_slice())),
-                next: low.mark_next.get(&i).map_or(&[][..], |v| v.as_slice()),
-                unless_after: low.unless.get(&i).map_or(&[][..], |v| v.as_slice()),
-                ends: low.ends.contains(&i),
-                settles: low.settles.contains(&i),
-                hidden: low.hidden.contains(name),
-            }
+            (bit.map(|j| j as u8), bit.map_or(0, |j| records.marks[j].1))
         })
         .collect();
-    let rust = crate::bitlex_rust::tier2(&crate::bitlex_rust::Input { tree: &low.tree, kind: symbols.kind, field: symbols.field, tokens: &names.tokens, words: &records.words, keywords: &low.keywords, marks: rust_marks, extras: &low.extra, extra_bits: extra_mark.map(|e| std::iter::once((e, low.extra[0].clone())).chain(extra_kind_bits.iter().map(|(k, b)| (*b, k.clone()))).collect()).unwrap_or_default() });
-    low.rust = Some(rust);
+    let extra_bits = extra_mark.map(|e| std::iter::once((e, low.extra[0].clone())).chain(extra_kind_bits.iter().map(|(k, b)| (*b, k.clone()))).collect()).unwrap_or_default();
+    low.rust_tables = Some(RustTables { tokens: names.tokens.clone(), mark_bits, extra_bits });
     let mut text = lowered.text;
     crate::rir_text::name_rows(&mut text, &names);
     Ok((grammar::text(&states, &arms), text, takes_last, mark_masks, records))
