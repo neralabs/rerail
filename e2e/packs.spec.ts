@@ -20,15 +20,18 @@ async function installedPacks(rerail: RerailScenarios, url: string): Promise<Pac
 }
 
 const onCount = (rules: readonly EffectiveRule[]): number => rules.filter(entry => entry.on).length;
-/** The page's whole-pack switch for `name`. */
-const packSwitch = (page: Page, name: string) => page.getByRole("switch", { name: new RegExp(`^Turn all \\d+ ${name.replace(/[.()]/gu, "\\$&")} rules`, "u") });
+/**
+ * The page's whole-pack switch for `name`: a switch, announced as a checkbox while it is halfway (some rules on).
+ */
+const packSwitch = (page: Page, name: string) => page.locator("#content .packall .sw")
+  .and(page.getByLabel(new RegExp(`^Turn all \\d+ ${name.replace(/[.()]/gu, "\\$&")} rules`, "u")));
 const ruleSwitches = (page: Page) => page.locator("#content [role=switch][data-act=toggle]");
 
 test.describe("rule pack pages and the catalog over mature", () => {
   // One seeded daemon per worker: the writes of one test are the next one's starting point.
   test.describe.configure({ mode: "serial" });
 
-  test("a pack page counts its rules on, and its whole-pack switch reads off while some are off", async ({ page, rerail }) => {
+  test("a pack page counts its rules by enforcement, and its whole-pack switch is halfway while some are off", async ({ page, rerail }) => {
     const url = await rerail.dashboard("mature", { hash: "pack/typescript" });
     const rules = await packRulesAt(rerail, url, "typescript");
     const on = onCount(rules);
@@ -38,10 +41,12 @@ test.describe("rule pack pages and the catalog over mature", () => {
     await page.goto(url);
 
     await expect(page.getByRole("heading", { name: "TypeScript", exact: true })).toBeVisible();
-    await expect(page.locator("#content")).toContainText(`${on} of ${rules.length} on`);
+    await expect(page.locator("#content .ppage .n2")).toContainText(`${rules.length - on} off`);
     await expect(ruleSwitches(page)).toHaveCount(rules.length);
-    await expect(packSwitch(page, "TypeScript")).toHaveAttribute("aria-checked", "false");
-    await expect(page.locator("#content .packall")).toHaveText("All");
+    await expect(page.locator("#content .rtable .enftag")).toHaveCount(rules.length);
+    await expect(packSwitch(page, "TypeScript")).toHaveAttribute("aria-checked", "mixed");
+    await expect(packSwitch(page, "TypeScript")).toHaveAttribute("role", "checkbox");
+    await expect(page.locator("#content .packall")).toHaveText(`All · ${on} of ${rules.length} on`);
 
     await page.getByLabel("Filter rules").selectOption("off");
     await expect(ruleSwitches(page)).toHaveCount(rules.length - on);
@@ -52,7 +57,7 @@ test.describe("rule pack pages and the catalog over mature", () => {
   test("the whole-pack switch turns the rest of a partly-on pack on, then all off, and both survive a reload", async ({ page, rerail }) => {
     const url = await rerail.dashboard("mature", { hash: "pack/typescript" });
     await page.goto(url);
-    await expect(packSwitch(page, "TypeScript")).toHaveAttribute("aria-checked", "false");
+    await expect(packSwitch(page, "TypeScript")).toHaveAttribute("aria-checked", "mixed");
 
     await packSwitch(page, "TypeScript").click();
     await expect.poll(async () => { const rules = await packRulesAt(rerail, url, "typescript"); return onCount(rules) === rules.length; }).toBe(true);
@@ -68,7 +73,7 @@ test.describe("rule pack pages and the catalog over mature", () => {
     await expect(page.locator('#content [data-act=toggle][aria-checked="true"]')).toHaveCount(0);
   });
 
-  test("one rule's switch turns that rule alone on; the pack switch is on only once every rule is", async ({ page, rerail }) => {
+  test("one rule's switch turns that rule alone on; the pack switch is on only once every rule is, halfway before", async ({ page, rerail }) => {
     const url = await rerail.dashboard("mature", { hash: "pack/typescript" });
     await page.goto(url);
     const off = page.locator('#content [data-act=toggle][aria-checked="false"]').first();
@@ -83,7 +88,7 @@ test.describe("rule pack pages and the catalog over mature", () => {
     await page.reload();
     await expect(page.locator(`#content [data-act=toggle][data-i="${id}"]`)).toHaveAttribute("aria-checked", "true");
     const total = (await packRulesAt(rerail, url, "typescript")).length;
-    await expect(packSwitch(page, "TypeScript")).toHaveAttribute("aria-checked", before + 1 === total ? "true" : "false");
+    await expect(packSwitch(page, "TypeScript")).toHaveAttribute("aria-checked", before + 1 === total ? "true" : "mixed");
   });
 
   test("Remove pack asks first, then removes the whole pack", async ({ page, rerail }) => {
@@ -130,9 +135,12 @@ test.describe("rule pack pages and the catalog over mature", () => {
     await expect(page.locator("#sidenav")).toContainText("Python");
     await expect(row.getByRole("button", { name: "Remove pack" })).toBeVisible();
 
+    // Python starts some rules on and its opt-in rules off, so its whole-pack switch is halfway.
+    expect(startsOn.length).toBeGreaterThan(0);
+    expect(startsOn.length).toBeLessThan(python.rules.length);
     await page.goto(await rerail.dashboard("mature", { hash: "pack/python" }));
-    await expect(page.locator("#content")).toContainText(`${startsOn.length} of ${python.rules.length} on`);
-    await expect(packSwitch(page, "Python")).toHaveAttribute("aria-checked", startsOn.length === python.rules.length ? "true" : "false");
+    await expect(page.locator("#content .packall")).toHaveText(`All · ${startsOn.length} of ${python.rules.length} on`);
+    await expect(packSwitch(page, "Python")).toHaveAttribute("aria-checked", "mixed");
 
     await page.goto(url);
     await row.locator("b", { hasText: /^Python$/u }).click();
@@ -182,7 +190,7 @@ test("multi-repo: the whole-pack switch writes to the repository the page shows,
   expect(onCount(billingRules)).toBeLessThan(billingRules.length);
 
   await page.goto(billingUrl);
-  await expect(page.locator("#content")).toContainText(`${onCount(billingRules)} of ${billingRules.length} on`);
+  await expect(page.locator("#content .packall")).toHaveText(`All · ${onCount(billingRules)} of ${billingRules.length} on`);
   await packSwitch(page, "TypeScript").click();
 
   await expect.poll(async () => onCount(await packRulesAt(rerail, billingUrl, "typescript"))).toBe(billingRules.length);

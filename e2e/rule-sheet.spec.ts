@@ -84,15 +84,16 @@ test("the switch in the sheet saves the rule's on, across a reload", async ({ pa
   await expect(sheetSwitch(page)).toHaveAttribute("aria-checked", was ?? "true");
 });
 
-test("Block mode is experimental: the sheet offers no Block button, but shows it pressed for a rule already on Block", async ({ page, rerail }) => {
-  const block = sheet(page).locator('.modes button[data-v="block"]');
+test("the sheet shows the rule's enforcement read-only; Block, still experimental, shows as Steer and says so", async ({ page, rerail }) => {
+  const tag = sheet(page).locator(".enf .enftag");
   await page.goto(await rerail.dashboard("mature", { hash: `rule/${STEER_LIBRARY_RULE}` }));
-  await expect(sheet(page).locator('.modes button[data-v="steer"]')).toHaveAttribute("aria-pressed", "true");
-  await expect(block).toBeHidden();
+  await expect(tag).toHaveText("Steer");
+  await expect(tag).toHaveAttribute("title", /Use Edit with coding agent to change this\./u);
+  await expect(sheet(page).locator(".enf button")).toHaveCount(0);
 
   await page.goto(await rerail.dashboard("mature", { hash: `rule/${BLOCK_LIBRARY_RULE}` }));
-  await expect(block).toBeVisible();
-  await expect(block).toHaveAttribute("aria-pressed", "true");
+  await expect(tag).toHaveText("Steer");
+  await expect(tag).toHaveAttribute("title", /^Set to Block, which steers for now\./u);
 });
 
 test("Source shows when a rule created by you was added, with the year", async ({ page, rerail }) => {
