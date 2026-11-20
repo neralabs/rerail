@@ -426,7 +426,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <tr><td><code>forbid</code></td><td>a <a href="#queries">query</a>: <code>ast</code>, <code>regex</code>, <code>file</code>, or <code>select_when</code></td><td>one violation per witness (per binding with <a href="#violation-each"><code>each</code></a>)</td></tr>
 <tr><td><code>require_each</code></td><td>two <a href="#g-Evidence">evidence relations</a>, <code>subject</code> and <code>evidence</code></td><td>each projected subject without evidence</td></tr>
 <tr><td><code>budget</code></td><td>an evidence relation, <code>group_by</code> keys and <code>count.lte</code></td><td>groups over the budget</td></tr>
-<tr><td><a href="#relational-clause"><code>relational</code></a></td><td><a href="#g-Evidence">evidence relations</a> as tables, optional parser-node and reference tables, and ordered SQL stages</td><td>each row the final query returns</td></tr>
+<tr><td><a href="#relational-clause"><code>relational</code></a> (internal testing)</td><td><a href="#g-Evidence">evidence relations</a> as tables, optional parser-node and reference tables, and ordered SQL stages</td><td>each row the final query returns</td></tr>
 <tr><td><code>llm</code></td><td>anything (the schema reads <code>unknown</code>)</td><td>reserved</td></tr>
 <tr><td><code>define</code></td><td>shared <code>utils</code>, <code>options</code> and <code>config</code>, and a document-wide <a href="#report_when"><code>report_when</code></a></td><td>nothing: it has no <code>violation</code>; a document needs a clause beside it</td></tr>
 </tbody></table></div>
@@ -868,7 +868,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <li><span class="key"><a class="kl" href="#budget"><b class="sk">distinct</b></a><span class="q">?</span></span><span class="t">list of Str</span><span class="d">Counts distinct values of these operands instead of rows</span></li>
 </ul></li>
 </ul></li>
-<li><span class="key"><a class="kl" href="#relational-clause"><b class="k">relational</b></a><span class="q">?</span></span><span class="t"></span><span class="d">Joins evidence tables with ordered SQL stages and reports each final row</span><ul class="keys" style="--kw:21ch">
+<li><span class="key"><a class="kl" href="#relational-clause"><b class="k">relational</b></a><span class="q">?</span></span><span class="t"></span><span class="d">Joins evidence tables with ordered SQL stages and reports each final row (internal testing)</span><ul class="keys" style="--kw:21ch">
 <li><span class="key"><a class="kl" href="#relational-clause"><b class="sk">inputs</b></a></span><span class="t">map of TableName to <a class="nt" href="#g-Evidence">Evidence</a>, 1 to 32</span><span class="d">The named evidence relations; each row also carries __path, __start and __end</span></li>
 <li><span class="key"><a class="kl" href="#relational-clause"><b class="sk">stages</b></a><span class="q">?</span></span><span class="t">list of up to 64:</span><span class="d">Tables computed in order, each reading the inputs and earlier stages</span><ul class="keys" style="--kw:14ch">
 <li><span class="key"><a class="kl" href="#relational-clause"><b class="sk">name</b></a></span><span class="t">Str</span><span class="d">The table the stage materializes</span></li>
@@ -1601,6 +1601,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <section class="card" id="relational-clause">
 <h3><span class="keys">relational</span> <a class="anchor" href="#relational-clause">#</a></h3>
 <p>Joins projected AST facts across files with read-only SQLite queries, and reports each row its final query returns.</p>
+<div class="note"><p><b>Internal testing.</b> Off unless <code>RERAIL_EXPERIMENTAL_RELATIONAL_RULES=1</code> (or <code>RERAIL_EXPERIMENTAL=1</code>) is set for the process (<a href="https://neralabs.github.io/rerail/internal-testing.html">Internal testing</a>). While it is off, <code>rerail rules add</code> and <code>library_rules_upsert</code> refuse a rule with this clause and a stored one does not run; <code>rerail rules test</code> does not check the variable: it tries the draft as it tries any other, and stores nothing.</p></div>
 <p class="card-grammar">In the grammar: <a class="nt" href="#g-Clause">Clause</a>, <a class="nt" href="#g-Evidence">Evidence</a></p><div class="semantics"><ul>
 <li><code>inputs</code>: 1–32 named evidence relations, each a table of its projected fields plus <code>__path</code>, <code>__start</code> and <code>__end</code>. Filter with SQL and recursive stages, not evidence <code>where</code> or <code>closure</code>.</li>
 <li><code>stages</code>: up to 64 tables computed in order, each a SELECT or a batched <code>reachability</code> over the inputs and earlier stages.</li>

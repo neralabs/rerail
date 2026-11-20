@@ -822,6 +822,7 @@ A draft is `{ kind, rule, folder?, cases: { caught: [...], passed: [...] } }`. `
 - The pass lists files the rule couldn't check and counts in-scope binary files, which no rule reads.
 - Text output shows the first five matches and files; `--json` shows all. Path and `file`-query matches have no line.
 - A bare rule document, such as `.rerail/rules/<name>.json`, gets validation and the repository pass only.
+- A `.rerail` rule file, in the new rule language: `rules test` runs the tests it carries (`.test ... .end`) and reports each as passed or failed (`--json`: every test with its failures and findings). Those tests read programs the package does not ship, so it runs only from a Rerail checkout, or with `RERAIL_SOURCE_ROOT` naming one; elsewhere it refuses.
 
 `rerail rules add` sets the repository up with only that rule if needed. A rule already added here stays where it is when the draft names no `folder`; `"folder": ""` widens it to the whole repository. It never replaces a rule shipped by Rerail. Your copy of one takes no `folder`. It is refused where the repository does not add the original, and where your copy of it is already added; `rules show` names that copy, the one to change. Your copy made for another repository is refused where its original runs and the copy is not added, since both would steer. `rerail rules approve` with no names lists everything awaiting approval and its source.
 

@@ -128,7 +128,8 @@ The installed `rerail` command is `rerail.cmd`, which the policy does not block.
 
 ### Set-up prints nothing for a while
 
-The first `npx @neralabs/rerail setup` downloads and installs about 300 MB; npx prints nothing for 20 to 60 seconds.
+The first `npx @neralabs/rerail setup` downloads about 240 MB and installs it; npx prints nothing meanwhile, for a
+minute or more on a slow connection.
 Set-up then prints `Downloading @neralabs/rerail@<version> from npm…`, and npm installs it again under `~/.rerail`.
 From there each step prints a line as it starts, and a step still running prints `still running after 30 s`, then
 again every 30 seconds.

@@ -155,6 +155,10 @@ rerail rules export --output rules.json # your rules, to read or edit one
 rerail rules show <id> > draft.json     # one rule as a draft, a By Rerail one too; adding it back stores your copy
 ```
 
+A `.rerail` file is a rule in Rerail's new rule language. `rules test` runs its tests only from a Rerail checkout, or
+with `RERAIL_SOURCE_ROOT` naming one, since the package does not ship the programs they read; elsewhere it refuses.
+Sessions, scans and rule packs do not run `.rerail` rules yet, and `rules add` takes only a JSON draft.
+
 <details>
 <summary>What the report shows and skips</summary>
 
