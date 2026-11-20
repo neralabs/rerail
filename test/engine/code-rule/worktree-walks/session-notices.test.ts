@@ -2,7 +2,7 @@ import { type Dir, writeFileSync } from "node:fs";
 import { link, mkdir, mkdtemp, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BOUNDARY_DISCOVERY_WAIT_MS, CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
@@ -402,10 +402,11 @@ describe("a shell command's result reads the session folder by its change notice
     looked.on = true;
     await command(bridge, "shell-1", async () => undefined);
     expect(listed.folders).toEqual([]);
-    // The pass also reads the checkout's HEAD from Git's own files (`readGitHead`), which looks at its `.git` entry
-    // before opening it where the system has no `O_NOFOLLOW` (Windows): Git's look, not the walk's.
+    // The pass also looks for the checkout's `.git` entry to read its HEAD (`readGitHead`), and where the system has no
+    // `O_NOFOLLOW` (Windows) it looks at the entry before opening it: Git's look, not the walk's. This folder holds no
+    // Git repository, so the look finds nothing there and the pass reads no HEAD.
     const gitEntry = join(root, ".git");
-    const walkLooks = looked.paths.filter(path => path.startsWith(root) && path !== gitEntry && !path.startsWith(gitEntry + sep));
+    const walkLooks = looked.paths.filter(path => path.startsWith(root) && path !== gitEntry);
     // Its spelling is the walk's own, which no look at the folder needs to confirm.
     expect(walkLooks).toEqual([file]);
     expect(looked.spelled).not.toContain(file);

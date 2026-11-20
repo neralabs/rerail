@@ -57,11 +57,15 @@ async function eventFiles(rerailHome: string): Promise<string[]> {
 const eventName = (arrivedAt: number): string => `${String(arrivedAt).padStart(13, "0")}-7-1-${arrivedAt}-5.json`;
 
 /**
- * A program other than Rerail holding `path` open, as Windows lets one: `share` is what it lets others do meanwhile
- * ("Read" lets the daemon read it but no one remove it; "None" lets no one do either). Ends when `release` is awaited.
+ * A program other than Rerail holding `path` open, as Windows lets one: `share` is what it lets others do meanwhile.
+ * "Read" lets the daemon read it but no one remove it. "None" lets no one remove it, and the program locks the file's
+ * bytes too, so no one reads it either: sharing None alone keeps out no token whose backup privilege is on (an elevated
+ * administrator's in Git Bash, as GitHub's Windows runner runs the tests, reads the file anyway), and a lock keeps out
+ * every reader. Ends when `release` is awaited.
  */
 async function heldOpen(path: string, share: "Read" | "None"): Promise<{ release: () => Promise<void> }> {
-  const script = `$f = [System.IO.File]::Open('${path}', 'Open', 'Read', '${share}'); [Console]::Out.WriteLine('held'); [void][Console]::In.ReadLine(); $f.Close()`;
+  const lock = share === "None" ? " $f.Lock(0, $f.Length);" : "";
+  const script = `$f = [System.IO.File]::Open('${path}', 'Open', 'Read', '${share}');${lock} [Console]::Out.WriteLine('held'); [void][Console]::In.ReadLine(); $f.Close()`;
   const holder = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { stdio: ["pipe", "pipe", "inherit"], windowsHide: true });
   const exited = once(holder, "exit");
   for await (const chunk of holder.stdout) if (String(chunk).includes("held")) break;
@@ -288,9 +292,12 @@ describe("the home's untaken events", () => {
   });
 
   // Windows lets a program hold a file so that no one can remove it, or read it either; other systems have no such hold.
-  it.runIf(process.platform === "win32").each(["Read", "None"] as const)(
-    "count for no hook, and remove at a later pass, a file another program holds sharing %s, handed on at most once",
-    async share => {
+  it.runIf(process.platform === "win32").each([
+    { share: "Read", hold: "sharing Read" },
+    { share: "None", hold: "sharing None, its bytes locked" },
+  ] as const)(
+    "count for no hook, and remove at a later pass, a file another program holds $hold, handed on at most once",
+    async ({ share }) => {
       const rerailHome = await home();
       await leaveUntaken(rerailHome, 7, "held", 1_000);
       const [name] = await eventFiles(rerailHome);

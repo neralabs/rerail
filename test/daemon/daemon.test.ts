@@ -581,8 +581,11 @@ describe("Rerail daemon", () => {
 
   /** Turns the repository's one rule off once the daemon's runtime there has loaded its rules for an earlier session. */
   async function turnRuleOffAfterLoad(daemon: RerailDaemon, root: string, repositoryKey: string): Promise<void> {
+    // 0: the one rule's setting names a rule this daemon's catalog does not hold (the test home installs no pack), so
+    // the count stays 0 through the turn-off, and the later note shows its start read the changed configuration again
+    // by giving a count at all.
     expect(await postEvent(daemon, sessionStart(root, "earlier-session"), READS_FACTS))
-      .toMatchObject({ sessionNote: { setUp: true, ruleCount: expect.any(Number) } });
+      .toMatchObject({ sessionNote: { setUp: true, ruleCount: 0 } });
     const database = openRerailDatabase(join(root, "rerail.sqlite"));
     try {
       setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: ONE_RULE, on: false, mode: null });
@@ -604,7 +607,7 @@ describe("Rerail daemon", () => {
     { state: "set up", prepare: setUpOneRule, note: { setUp: true, ruleCount: expect.any(Number) } },
     { state: "not set up", prepare: root => startTestRepository(root, join(root, "rerail.sqlite")), note: { setUp: false } },
     // A session's start reads its checkout's rules again, so the note counts them as the configuration has them now,
-    // as the footer does: none of the one rule turned off, not the count the earlier session loaded.
+    // as the footer does, where rules loaded before the change would give no count.
     { state: "whose rule was turned off after its runtime loaded it", prepare: setUpOneRule, change: turnRuleOffAfterLoad, note: { setUp: true, ruleCount: 0 } },
   ])("answers a hook's session start in a repository $state with the dashboard and rules its HTTP API gives, and an older hook without them", async ({ prepare, change, note }) => {
     root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));

@@ -2,7 +2,7 @@ import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import type { AdapterEvent } from "../../../src/engine/index.js";
+import { openRerailDatabase, setRuleSetting, type AdapterEvent } from "../../../src/engine/index.js";
 import { RerailRuntime } from "../../../src/runtime/runtime.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -35,7 +35,7 @@ async function startedSession(model: boolean) {
     await removeFolder(root);
   });
   const databasePath = join(root, "rerail.sqlite");
-  setUpTestRepository(root, { rerailRules: [RULE] }, databasePath);
+  const repositoryKey = setUpTestRepository(root, { rerailRules: [RULE] }, databasePath);
   const runtime = new RerailRuntime({
     autostart: false,
     workspaceRoot: root,
@@ -55,7 +55,17 @@ async function startedSession(model: boolean) {
   });
   const start: AdapterEvent = { kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId: "held", cwd: root } };
   await runtime.ingest(start);
-  return { runtime, start };
+  return { runtime, start, databasePath, repositoryKey };
+}
+
+/** Turns the repository's one rule off in its configuration, as the dashboard does, without the runtime loading it. */
+function turnRuleOff(databasePath: string, repositoryKey: string): void {
+  const database = openRerailDatabase(databasePath);
+  try {
+    setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: RULE, on: false, mode: null });
+  } finally {
+    database.$client.close();
+  }
 }
 
 describe("what a runtime holds of a session at its start", () => {
@@ -72,5 +82,13 @@ describe("what a runtime holds of a session at its start", () => {
     const before = signatureReads.count;
     expect(runtime.heldSession(start)?.sessionNote).toEqual({ setUp: true, ruleCount: expect.any(Number) });
     expect(signatureReads.count).toBe(before + 1);
+  });
+
+  it("gives no count once the configuration changed after the session's start loaded its rules, as the footer gives none", async () => {
+    const { runtime, start, databasePath, repositoryKey } = await startedSession(false);
+    turnRuleOff(databasePath, repositoryKey);
+    // The rules the start loaded were read from a configuration that has changed since, so their count need not say
+    // what is on now.
+    expect(runtime.heldSession(start)?.sessionNote).toEqual({ setUp: true, ruleCount: null });
   });
 });
