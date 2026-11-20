@@ -89,7 +89,11 @@ impl Semantic {
             Self::Embedded(test) => test.rules().any(|rule| super::reads_values(rule, seen)),
             // PHP's run-time fallback of a function or constant name may be unknown.
             Self::Resolves(resolves) => flow(resolves.language),
-            Self::Capture(_) | Self::Layout(_) | Self::Gap(_) | Self::FilePath(_) | Self::Term(_) => false,
+            Self::Capture(_)
+            | Self::Layout(_)
+            | Self::Gap(_)
+            | Self::FilePath(_)
+            | Self::Term(_) => false,
             // PHP's flow may leave a read's binding, `latest` and `outer` unknown.
             Self::Binding(test) => {
                 test.filter.reads_usage()
@@ -146,6 +150,8 @@ impl Semantic {
 /// Whether `language`'s family reads the file's flow, which may leave a read unknown
 /// (`ScopeRules::FLOW`).
 pub(super) fn flow(language: crate::code_rule_dsl::language::GrammarDialect) -> bool {
-    
-    { let pack = language_pack::pack(crate::code_rule_dsl::language::Family::of(language)); pack.scope_flow() }
+    {
+        let pack = language_pack::pack(crate::code_rule_dsl::language::Family::of(language));
+        pack.scope_flow()
+    }
 }

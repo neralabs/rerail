@@ -32,7 +32,7 @@ by any caller in the process, so two callers of different trust could not be kep
 3. **What may stay static:** constants; code a crate above registers at load (a function pointer, a device); a
    value computed once from the engine's own files (a regex of a literal, core.rr's declarations). A thread's own
    scratch stays a thread-local (`run_state::STATE`, class Thread).
-4. **The guard.** `scripts/check/check-no-global-state.py` (pre-commit) lists every non-constant static in the
+4. **The guard.** `scripts/check/check_no_global_state.py` (pre-commit) lists every non-constant static in the
    engine's source against `scripts/check/global-state.txt`, each by its class: `stays`, `run`, `connection`,
    `shared`, or `review` (not yet classified by hand). A static not listed is refused; one gone must be cut. Every
    class but `stays` only shrinks.
@@ -195,7 +195,7 @@ by any caller in the process, so two callers of different trust could not be kep
     call that starts work goes through the machine's entry points: `on_cores(|| …)` (on a pool's thread it runs
     there; else on the caller's machine's pool, in the caller's run and context, while the caller waits),
     `cores_spawn`, `cores_spawn_fifo`, `cores_scope`, `cores_threads`. 110 loops in 51 files were put inside them,
-    forest's included (its prediction ran on the caller's thread). `scripts/check/check-machine-pool.py`
+    forest's included (its prediction ran on the caller's thread). `scripts/check/check_machine_pool.py`
     (pre-commit) refuses a loop or call outside them, `build_global`, and a pool made where its list says no reason.
   - A program's main thread is one of its machine's pool's (`Machine::here`): the CLI's `main` makes its machine so
     and hands it to the command (`tools::cli`), and Node's main environment makes its machine so on its first

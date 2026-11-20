@@ -515,7 +515,10 @@ fn source_and_tape_objects_deduplicate_and_round_trip() {
     let other = store.put_source(b"print('world')\n", &[]).unwrap();
     let other_tape = store.put_tape(other, 1, 45, 1, b"compact tape").unwrap();
     assert_ne!(other_tape, tape);
-    assert_eq!(store.tape_by_source(other, 1, 45, 1).unwrap(), Some(other_tape));
+    assert_eq!(
+        store.tape_by_source(other, 1, 45, 1).unwrap(),
+        Some(other_tape)
+    );
     {
         let connection = store.connection.lock().unwrap();
         // No row holds an object's bytes: each names its range in a segment, raw (floor 7).

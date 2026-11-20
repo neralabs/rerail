@@ -156,7 +156,7 @@ into notes once the queue is done).
     `RERAIL_DUMP_PROGRAMS` and `RERAIL_TIMELINE` change nothing. `keeps.rs` is the plan's, not preparation's (Q14).
     `native_stratum_`: nothing found.
   - *Review 5* (0442f34dd; by me, the user stopped subagents): (1) `RERAIL_SHOWN_COPIES` changes the rules
-    (`hiding::fold_own`, corpus.rs 2630, before the prepared key) and keyed nothing; (2) the `.rr` lowering
+    (`hiding::fold_own`, corpus.rs 2630, before the prepared key) and keyed nothing; (2) the `.rerail` lowering
     `combine_read`'s `rr::parse` runs reads `RERAIL_NODE_SOURCES` (`sources_on_request`), `RERAIL_ORDER_RAW` and,
     through `syntax::definition_ids`, `RERAIL_NODE_IDS` (`front::finish`'s `order_nodes`), and `combine_read`
     itself `RERAIL_SAME` (`same_relations`): all change the combined program, kept in memory and in the store
@@ -288,7 +288,7 @@ into notes once the queue is done).
 
 ### Q4. The `.rdl` comparison checks the on-request step independently
 
-- **Keep**: the `.rdl` ↔ `.rr` comparison as an independent check of lowering, 0174's requests.
+- **Keep**: the `.rdl` ↔ `.rerail` comparison as an independent check of lowering, 0174's requests.
 - **Done when**: `normalized` no longer runs the lowering's own `sources_on_request`; the expected requests are
   derived independently, or the comparison is of the pre-request programs plus a separate check of the requests;
   either `difference` compares inputs in order, or evidence shows input order carries no meaning anywhere
@@ -390,7 +390,7 @@ into notes once the queue is done).
 
 ### Q10. The merge audit checks hunks
 
-- **Keep**: merge-audit.py's reports (dropped lines, undone removals, lost files, decision numbers).
+- **Keep**: merge_audit.py's reports (dropped lines, undone removals, lost files, decision numbers).
 - **Done when**: it also reports each side's hunk the result does not hold (tmp/merge-hunks.py's test), with renames
   and both-sides deletions not reported as lost.
 - **Record**: —
@@ -1095,11 +1095,11 @@ pass.
   still fails: python-main's programs meeting "a cat's text read by rx has no device form" are 462, the ledger says
   432, with the pack's files unchanged since 692cc9772 (so it is the lowering's, not traced; not re-blessed).
 - **`every_operation_runs_on_every_executor` traced and re-blessed** (2026-11-16). The packs ledger counts a
-  program toward a gap by the operations its `.rr` syntax names (`census`, no lowering), so the 30 are files, not
+  program toward a gap by the operations its `.rerail` syntax names (`census`, no lowering), so the 30 are files, not
   the lowering. The pack's files were unchanged since 692cc9772, but they changed before it: 27b616adc (2026-11-14,
   "ast-grep any/field/compare semantics in the translator") regenerated python-main, and the files naming `match(`
   went from 388 to 418 (token tests such as `b307_tok_has_1(n) :- op(n, t2), match("eval", t2)` in
-  `bandit-b307-eval.rr`, `ruff-b905-…`, `ruff-dtz001-…`). The ledger counts a file toward every probe of an
+  `bandit-b307-eval.rerail`, `ruff-b905-…`, `ruff-dtz001-…`). The ledger counts a file toward every probe of an
   operation it names, so all 30 land on the bound-pattern row, the one `match` probe not on the device. The
   ledger was last blessed at a9291fadd, before that commit. Re-blessed: `packs.tsv`'s one line moves (668 to 698,
   python-main 432 to 462), `matrix.tsv` is unchanged, and no new kind of gap appears. Passes.
@@ -1208,7 +1208,7 @@ pass.
 - **Waits for**: the deferrable tier (0295 path step 2), built on final-rerail-shape-phased-facts.
 - **Done when**: Typing-support's version tests pass on blocks, and dl1's trace validation costs no more
   instructions than 0173's.
-- **Built** (2026-11-19, decision 0480): the image is written once in place (`Layout`/`Placing`), a record carries
+- **Built** (2026-11-19, decision 0464): the image is written once in place (`Layout`/`Placing`), a record carries
   it as its version's `Arc` (record pieces), stored images are placed in segments and opened over the mapping (an
   older store's inline rows loaded at 16 bytes), and the bundle is read in place. An open checks bounds, references
   and strings, not node trees (`Depth::Held`), except for foreign bytes and in debug builds. One fold rule (0456 K4's
@@ -1216,7 +1216,7 @@ pass.
   store and logic tests pass (Linux: 204 of the engine's; M1 Max: 703 of the three crates').
 - **Done** (2026-11-19, a282371e9, the M3 at load 35–53): dl1's 44-policy batch, images required, gives 48
   findings cold and warm. It retires 79.9 G instructions cold (a26e71b5d: 81.7 G) and 3.7 G then 3.3 G warm (5.7 G
-  then 3.3 G). Decision 0480, "Measured".
+  then 3.3 G). Decision 0464, "Measured".
 
 ### Q27. `value_types_are_ws_value_types` reads only the string-typed values
 
@@ -1256,7 +1256,7 @@ pass.
 - **Found** (2026-11-16, at the hub merge 709a47b26): `cache_architecture::every_stored_table_is_a_relations_the_
   stores_own_or_a_cache_not_yet_moved` refuses `memo_entries` and `memo_packs` (0240's tables; schema.rs and the
   test are the hub's unchanged); `rr::tape_tests::a_policy_refused_its_kept_inputs_runs_again_over_its_store`
-  fails with "@rr_node_text without the run's long-text nodes bound" (0268) on `public-api-triples.rr`, with the
+  fails with "@rr_node_text without the run's long-text nodes bound" (0268) on `public-api-triples.rerail`, with the
   hub's `rr/lower.rs` and `simplify.rs` too (so not 0291).
 - **Found** (2026-11-16, while validating 0297; all five fail at 880f2a0de without 0297's change):
   `plan::corpus::base_tests::base_relations_read_are_inputs` and `plan::corpus::phases::tests::a_phase_hands_on_
@@ -1431,7 +1431,7 @@ pass.
 
 ### Q37. (Q28, then Q31, on Native-and-GPU-strata) A rule that copies a view's columns is a stratum
 
-- **Found** (2026-11-16, Native-and-GPU-strata): `kind(n, k) :- node(_, n, k, _, _).` (`typing/programs/calls.rr`)
+- **Found** (2026-11-16, Native-and-GPU-strata): `kind(n, k) :- node(_, n, k, _, _).` (`typing/programs/calls.rerail`)
   copies the `node` view: 3.5 M rows, 0.28–0.41 s of CPU a cold run of hogql, the costliest stratum with an exact
   estimate. A rule whose body is one view atom, binding distinct variables, is that view's columns.
 - **Whose**: lowering (a request and what its readers read, 0291), where cost-classifier works now. Not taken here.
@@ -1815,7 +1815,7 @@ pass.
 - **Done when**: the faults' detail lines from a failing run name what the observer recorded, and the cause is fixed.
   The m3 was short of disk (38 GB free, the farm's floor 40) when this was written, so it is not reproduced yet.
 - **Record** (2026-11-16, the m3 with 133 GB free): reproduced, and named. The warm run straight after the cold one
-  re-records all 317 rule files (detail: "317 paths, first …/rules/bandit-b101-assert-used.rr"); warm runs 5 s and 20 s
+  re-records all 317 rule files (detail: "317 paths, first …/rules/bandit-b101-assert-used.rerail"); warm runs 5 s and 20 s
   later record nothing. The check copies the rules in just before the cold run, which reads them inside the racy
   window (`RACY_NS`, 2 s: an answer is trusted only when recorded that long after the path changed, git's rule). The
   answer was kept untrusted, so the next run read each file again and recorded it: a write. The m1max is slower to
@@ -2044,7 +2044,7 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   is noise (16–113 MB whatever its nodes), so no finer sizing rule was adopted. Gathering concurrent chunks' label runs
   is not built, since its prize is fewer runs and 0386 keeps each job's wave its own.
 
-### Q323. `label_leaves` is most of the label passes' GPU time (done)
+### Q281. `label_leaves` is most of the label passes' GPU time (done)
 
 - **Found** (2026-11-19, 0447): with `label_formula`'s floor gone, `label_leaves` takes 32.2 ms of internal_dead_code's
   50.7 ms of GPU time at s1000 (`RERAIL_GPU_ENCODER_TIMES`): 12 encoders of about 2.7 ms each, against 16.8 ms for
@@ -2055,7 +2055,7 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   leaves passes went from 31.5–39.6 to 7.8–8.0 ms, and the GPU total from 55.5–59.5 to 42.0–45.3 ms, with the rows
   the same.
 
-### Q322. The children of members read a chain of child reads on one thread per member
+### Q332. (Q270 on final-rerail-shape) The children of members read a chain of child reads on one thread per member
 
 - **Found** (2026-11-18, 0437): with a chain's reach at the dispatch floor, op 9 (the children of members,
   `tape_first_child` then `tape_next` per member) is `label_formula`'s largest step in one-formula mode: 103 ms over
@@ -2069,7 +2069,7 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   hop. The walks take the parent's end once and hop by `tape_next_in`. The op-9 formulas went from 431–846 µs to
   133–212 µs, at the leaf-only floor, with the rows the same as native.
 
-### Q321. (Q220 until the hub merge) A chain's reach climbs a node at a time in each (file, formula) group
+### Q331. (Q252 on final-rerail-shape, Q220 until the hub merge) A chain's reach climbs a node at a time in each (file, formula) group
 
 - **Found** (2026-11-18, 0419): `label_formula`'s time is its steps (64–70 ms of 65–79 ms at s1000). A chain's reach
   (`REACH_CHAIN`) takes about 1.1 ms a pass, against 23–68 µs for the other steps. Each thread decides 32 nodes in a
@@ -2562,7 +2562,7 @@ precompile the libraries (a `.metallib` built with the engine).
 - **Left**: `label_group` (1.5 s) and the reads' own expansion (`tape_next` computes `size` four times), which
   would be a change of the reads in CLIF; a measure of the compile by the compiler service's CPU, not wall.
 
-### Q69. The `.rr` ladder's field ids lose 64 in the interpreters and the compiled parser
+### Q69. The `.rerail` ladder's field ids lose 64 in the interpreters and the compiled parser
 
 Found 2026-11-17 (0366, running `rr_tests::rr_steps_parse_as_the_reference_and_the_engine`). 33 steps
 differ from the reference. In every one the nodes are the same but for a field: the interpreters
@@ -2586,9 +2586,9 @@ code. 0366's change is tier 1's alone and leaves both sides' trees as they were.
   read atoms and natives only; and the lowering's inlined variables (`{v}_rr_d{k}_{i}`, numbered by definitions
   met) were not masked. 6 of 8 pass now. Two parts stay red (`_script_packs`, `_other_packs`), each a difference
   of the programs, not of the test:
-  - `packs/javascript/eslint-class-methods-use-this.rr`: `rr_value_req_by_static_string_0`'s rule is kept only in
+  - `packs/javascript/eslint-class-methods-use-this.rerail`: `rr_value_req_by_static_string_0`'s rule is kept only in
     the whole program (its reader unreached in the dropped one);
-  - `packs/rust/clippy-double-parens.rr`: `rr_token_req_by_sole_group_0`'s rules differ.
+  - `packs/rust/clippy-double-parens.rerail`: `rr_token_req_by_sole_group_0`'s rules differ.
 - **Done when**: the 8 tests pass, each remaining difference fixed in the lowering or explained.
 
 ### Q31. A tape past 2-byte columns is parsed again at wider ones in the compiler's `Parser`
@@ -2604,7 +2604,7 @@ code. 0366's change is tier 1's alone and leaves both sides' trees as they were.
   narrower; each width set compiled on first use from the structure and cut the parser keeps.
   `Parser::image`, `parse` and `tier2_on::image_on` use it; `Parser::from_parts` (a timing probe)
   has none. Tests: `a_tape_past_two_byte_columns_is_read_at_four` (every ladder step, the image
-  the writer's), `.rr`'s `corpus_images_are_the_lean_tapes` (two large files now taken, equal),
+  the writer's), `.rerail`'s `corpus_images_are_the_lean_tapes` (two large files now taken, equal),
   C's `a_file_past_64_kib_is_read_at_wide_columns` on every backend. Fixed with it: an offset was
   flagged wide at any width (`native_cpu_tape::blocks_from`, `rust_stream`'s `blocks`). Reviewed
   against reviewer-brief.md: no narrow-path change (the retry runs after a refusal only).
@@ -2681,7 +2681,7 @@ code. 0366's change is tier 1's alone and leaves both sides' trees as they were.
 ### Q119. (Q50 on benchmarks-on-integration at 9a9b270ce) `dropping_unreached_clauses_prunes_to_the_same_program` red on this branch: `value` an input of one side only
 
 Seen 2026-11-17 on the M3 (Benchmarks-and-parity after the hub merge fd32d4d27, and the same with the request
-record's carry, 7a356124d, reversed): all seven tests of the family fail. `bandit-b112-try-except-continue.rr`
+record's carry, 7a356124d, reversed): all seven tests of the family fail. `bandit-b112-try-except-continue.rerail`
 (python pack 0): the rules, declarations, natives, outputs and facts are equal; the inputs the rules read are 12
 with the unreached clauses dropped and 11 whole, the extra one `value`. Lowered whole, `value` is answered on
 request (no longer an input); lowered without the unreached clauses it stays an input, though the pruned rules
@@ -2802,7 +2802,7 @@ regenerated since keep the wider condition. The profiling build has none (Q13).
 
 ### Q187. (Q39 on Go-C-and-C-support) `parser_tests`' three other red tests
 
-- **Keep**: each test's claim, the `.rr` ladder's above all: every step, every generated
+- **Keep**: each test's claim, the `.rerail` ladder's above all: every step, every generated
   document, the reference, the interpreters, Cranelift, the tape and the engine agree.
 - **Done** (2026-11-18), each by its cause:
   - `only_the_compiler_reads_tier2s_states`: false hits of `.arms` on a token reader's arms
@@ -3224,10 +3224,10 @@ with the default line takes the slow pass.
   (profiled: 82.3 s against 74.6, of which 7.4 s is the 317 programs lowered against a fresh image store, "a
   program's version in scope: its image, or lowered", in `combine`; cold48's second run reused the images at the
   same wall). The wall is the `wait` phase (the main thread waiting for chunks evaluated). A low-load profile of t41
-  beside t48 needs t41's library (the hub's `core.rr` no longer lets `load` be extended): rebuild it from t41's
+  beside t48 needs t41's library (the hub's `core.rerail` no longer lets `load` be extended): rebuild it from t41's
   commit's `docs/rule-syntax` and profile both at one load. Tried (`pair41.sh`): with baec290d3's library t41 still
   stops, as it reads the typing programs from the checkout by its build's `CARGO_MANIFEST_DIR` (the hub's
-  `sources.rr` includes `c/includes.rr`). The pair needs t41 built from a worktree at its own commit, its own
+  `sources.rerail` includes `c/includes.rerail`). The pair needs t41 built from a worktree at its own commit, its own
   target (no shared target across worktrees), or a t48 built with the hub's chunk changes taken out one at a time
   (47785e475 first).
 - **Hot spots, found without t41 beside** (t41's, t48's and t50's profiles side by side, and a `sample` of t48's
@@ -3452,7 +3452,7 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
 - **Waits on the user:** stage M (the pass-through mask, which would also shorten the CPU's
   path), and whether the device keeps expansion at all. Question 3 below.
 
-### Q328. (Q289 on Go-C-and-C-support; Q42 there until 2026-11-19: Q42 is the store test's) The preprocessor as parallel passes (0466): a spike of the shape
+### Q366. (Q328 on final-rerail-shape-rr-align) (Q289 on Go-C-and-C-support; Q42 there until 2026-11-19: Q42 is the store test's) The preprocessor as parallel passes (0482): a spike of the shape
 
 - **Done** (2026-11-18): `rerail_c_pp::stream::parallel`, P0–P4 as passes over arrays, the serial
   pass's own expansion for each invocation alone. Both corpora under clang's profile: 3,132 of
@@ -3465,7 +3465,17 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
   Relax run; a cargo check on the farm when a host is free.
 - **Waits on the user:** the placement (question 4).
 
-### Q332. (done) (Q249 until 2026-11-19; the hub's Q249 is the typing oracles') A rerun over an edit that adds a request rule states one more about part than a run from scratch
+### Q348. (Q282 on Swift-Kotlin-Scala-support) At the merge with Go-C-and-C++: 0480's kind bit onto the row kinds, 0413 in `rust_block`
+
+- **What**: 0451 decided a kind that shares a first byte is the record's own kind (F step 2),
+  not 0480's code bit (`Records::kind_rows`). 0413 adds `run R once D` and `CheckThen::Cut`,
+  which `rust_block` does not write; its field-by-field match fails the build until it does.
+  Numbered past Go-C-and-C++'s Q281. Their Q278 is this branch's Q346 (the reference's `, ends`).
+- **Done when**: after the merge, a keyword row's kind is its own in the token loop; token marks
+  test it; `kind_rows` and its masks are gone; 0480's test and the preprocessor's cases pass on
+  every executor; `rust_block` writes `once` and `Cut`; `aot_tapes_are_the_jits` passes.
+
+### Q358. (done) (Q249 until 2026-11-19; the hub's Q249 is the typing oracles') A rerun over an edit that adds a request rule states one more about part than a run from scratch
 
 - **Found**: merging the hub (65e368a0b) into Typing-support. The hub's new
   `program_image::tests::a_request_record_over_an_edit_is_a_run_from_scratchs` failed at its third edit. That edit
@@ -3542,11 +3552,11 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
    than 100× slower than one core: a thread's chain of dependent loads, about 9 µs a token.
    Open: (a) stop the device path for expansion here, keeping 0408's code as the measured basis;
    (b) build stage M (the pass-through mask) for the CPU's path only; (c) both.
-4. **Q328: where the parallel preprocessor's passes live.** The spike (0466) shows the shape holds
+4. **Q366: where the parallel preprocessor's passes live.** The spike (0482) shows the shape holds
    on both corpora. Options: (a) the passes as a transducer side program (column operations:
    scans, sorts by key, searches, gathers, scatters), the directives' fixpoint in the same ops;
    (b) the directives' level (definitions by position, tests, activity, the include tree) as
-   `.rr` rules on the engine's device joins and sorts, and the text's passes as side programs;
+   `.rerail` rules on the engine's device joins and sorts, and the text's passes as side programs;
    (c) build the device passes first as hand-written Metal kernels over the spike's arrays, and
    place them after measuring. Recommended: (a), one format with the transducer's executors,
    as page 12 of `docs/parser-generators` asks.
@@ -3662,9 +3672,9 @@ block is given back only with its last part (0325, step 2's open item).
     the tape node of a node probed by its id.
   - The Metal binding's side-by-side runs.
   - The full data-layer repo (9,010 files), which is past the 2-minute cap per run.
-  - `.rr`'s format 16 table.
+  - `.rerail`'s format 16 table.
 - **Done when**: each workload runs on 15, 16 and 16z with the same finding keys (the loose findings contract) and
-  its costs recorded per format; every difference is fixed; `.rr` has a format 16 table. Then format 15 is retired
+  its costs recorded per format; every difference is fixed; `.rerail` has a format 16 table. Then format 15 is retired
   for documents, and not before: the user (2026-11-17), "I don't want to do it right now, as we still haven't proven
   that format 16 dominates it in all of our required ways".
 
@@ -3709,7 +3719,7 @@ data"; blocks never get copied into other data structures for convenience. Decis
 (a view is a read of the tape, node ids computed in place from a granule table, derived facts written once), the
 inventory of today's copies (12 sites, marked `copy (0353 step N)`) and the plan.
 
-1. Step 1 is done: the record, `AGENTS.md`, the guard (`scripts/check/check-no-block-copies.py`, in pre-commit) and
+1. Step 1 is done: the record, `AGENTS.md`, the guard (`scripts/check/check_no_block_copies.py`, in pre-commit) and
    the marks, and the profile's `copies (decision 0353)` counter (2026-11-18; hogql 16z: 792.4 MB, 0.90 s CPU).
 2. Step 2 in progress. The granule table and its rank index answer every id equal to `DefIds::low`'s, in all three
    formats, and are measured: a point read is 171 instructions, a scan 59 an id (0353, "Node identity").
@@ -4155,7 +4165,7 @@ Q36's pricing (`field($l, "left", $t)` priced at one row a line) is lost again. 
 - **Still open** (2026-11-19, read at 049b9aaa6): neither a step's `apply` (stored) nor `find` (a hit) names the
   image's and the step facts' sources in the run's manifest (`Apply::name`). Built with Q26, which moves a stored
   image into a block: the sources named are its new home's.
-- **Done** (2026-11-19, decision 0480 §7): `keep`'s apply names the image and the facts it stores or finds, and
+- **Done** (2026-11-19, decision 0464 §7): `keep`'s apply names the image and the facts it stores or finds, and
   `find` names both through an item of the run's record. `a_found_step_names_its_sources_as_its_keeper_did`: the
   run that finds the steps names the sources the keeping run named.
 
@@ -4621,7 +4631,7 @@ tests, `read_derived`/`rows_of` (tests and outputs) and the session deltas.
 
 ### Q155. (Q82 on Typing-support) Relations declare their shapes; plans come from them (0361)
 
-The user (2026-11-17): a directive giving relations enough data in the `.rr` files for good default shapes, so runs
+The user (2026-11-17): a directive giving relations enough data in the `.rerail` files for good default shapes, so runs
 pay for planning only in exceptional circumstances. Designed with the user in 0361 (`.layout` lines; classes with
 optional numbers; a broken fact replans and is reported; algorithms found from the facts, with a rare override).
 Build steps 1-7 in 0361. Step 7's running aggregate is the `rr_agg56` planner fix, so that fix waits for steps 1-2.
@@ -5081,6 +5091,41 @@ after the phases went on the run path (0083).
 - **Done when**: a warm run reads its unchanged files' batch rows where they lie (or never makes them), parses no
   unchanged file, and ep2's warm edit is back near 19 G and 200 MB.
 - **Record**: open; the phased-facts branch's (0458 Open), measured here.
+- **Taken by** 0504 (phased-facts, the user 2026-11-19: "B: lazy Batch everywhere"): a batch makes a document when
+  first read, its row space from kept counts; steps 1-4 there, ep2's numbers by its step 5.
+
+### Q354. (Q288 on phased-facts) `the_view_reads_are_the_hosts_rows` timed out: its kernel's pipeline did not compile in 240 s (done)
+
+Found 2026-11-19 while running `syntax::tests` for 0504 (on the M3 and the M1 Max, the same each run).
+- **What.** The test's `view_probe` kernel calls 16 view reads. `new_library_with_source` returned;
+  `new_compute_pipeline_state_with_function` (the backend's compile) had not returned at 240 s.
+- **Why.** One read at a time, cold (Metal caches a pipeline by its source): `view_node` 2 ms, `view_core` 13 ms,
+  `view_line` 0.27 s, `view_child` 32 s, `view_field` 26 s. The last two call `clif_tape_parent`, which calls
+  `clif_tape_slot` in a loop and `clif_tape_size` in two more, and each reaches the 16z block decode
+  (`clif_tape_z_block`, about 3,000 lines of MSL): every copy inlined, in loops. The reads were written again from
+  the merged CLIF in 377364723 (2026-11-18), the decode's pieces with them.
+- **Done.** `rerail_clif::msl` emits a read of more than `MOST_INLINED` (1,024) instructions
+  `__attribute__((noinline))`: the decode alone, written again (`RERAIL_WRITE_READS=1`). Cold: `view_child` 2.0 s,
+  `view_field` 2.0 s; the test passes in 5.7 s. The decode runs on a block cache miss (0353 step 4b), so its calls
+  are a miss's, not a read's. Checked: the reads' generated-source tests, the test, and 45 `metal-tests` of
+  `rerail-logic` and `rerail-device-metal` (views made on the device, the tape reads).
+- **Superseded** (2026-11-19, the merge of rr-align 08e2de78c): 9eb867011b writes the reads as UKL, and every read
+  past `Z_APART` (the 16z decode's) is `UKL_COLD` (`noinline` on Metal) by its id, as the JIT treats it. The size
+  bound and `metal_tape_reads_z.metal` are gone with it.
+
+### Q353. (Q287 on phased-facts) An edit keeps the rows of the cross part's `kind`, a view of `node` (open)
+
+Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one-file edit).
+- **What.** The data-layer prelude's `kind(n, k) :- node(_, n, k, _, _)` is a view of an input's columns (Q37). The
+  split derives it in the cross part (`on_version::crossing`'s `projected`), and a cold run holds it as a view
+  (`input_view`: held in place, or read into flat rows, `viewed`), which the writer skips. Yet the chain keeps it as
+  rows: 2 entries, 255,598 rows, 0.55 MB, as before 0458 (255,610 then): a view's rows made into a relation (0353).
+- **Likely why.** The edit's maintain mode derives `kind` from `node`'s versions as a maintained relation, not as a
+  view, and `retain::after` keeps a derived relation that is neither `view` nor `viewed`. `Retained::views` and the
+  `maintain::held_views` its comment names are gone: nothing records the views any more.
+- **Next.** Confirm on the 50 files which run writes the entries (`RERAIL_PROFILE`'s "the kept part" decisions);
+  then hold a view of a base relation as a view in the maintain mode too (its `Old`, `Minus` and `Plus` its input's
+  versions read through its columns), and a guard in `retain::after` that refuses to keep an input view's rows.
 
 ### Q286. A warm run on a Linux host writes the observer's journal cursor (`the_run_after_a_cold_one_writes_nothing`) (open)
 
@@ -5139,6 +5184,21 @@ Found 2026-11-18, the 57 data-layer rules over corpus0's first 50 files, the pro
   (`input_delta::Before`). R4 passes for the chain; 275 of 277 corpus tests on a Linux host (Q286's two), and on
   the M5 the warm-run, cycle, new-process and 0458 tests. Next: the memo entries' base rows (copy 2), then R4 over the
   memo too.
+- **0458 step 4, the memo entries' base rows gone** (2026-11-19): no entry keeps a base relation's rows (a guard in
+  the memo writer's path fails a run whose entry would); the keeper counts the exports alone. A base relation's
+  statistics are kept beside its documents' table, read before the first wave, and patched by the changed documents'
+  old and new rows, read where they lie (`RelStats::documents_read`). Tests: `cross_views_tests` R1–R5 and the
+  statistics' (counted cold, kept warm, patched by an edit), the warm-run, maintain and keeper tests; all 140 corpus
+  tests on the M3. Next: step 5, R6 measured over the 50 files.
+- **0458 step 5, measured** (2026-11-19, M5 at load 40–70, profiling build; against the 0439 runs, `tmp/r50-q285`):
+  589 outputs equal across the edit, the warm run after it and the edited tree's cold run. Chain values 17.9 MB to
+  10.6 MB (granules 13.9 to 6.3 MB): no base relation's granule is left. Instructions: cold 198.9 G to 212.3 G (the
+  edited tree's cold 197.2 G to 195.2 G), the edit 37.3 G to 35.2 G, warm 0.8 G both; peak memory cold 888 to 724
+  MB, the edit 525 to 472 MB. On the way, two costs found and fixed: the base relations' old version answered no
+  lookup (every stratum hashed all its rows: the edit's cross part 46.1 G, now 8.8 G), and the corpus batch made
+  what the cross part does not read (tree digests). Left: the edit still makes every document of the corpus batch
+  (0.45 s, most of `stats`' 9.6 G against 1.6 G before): 0458's "a document is made when first read" is not built.
+  Next: that; Q353 (`kind`'s rows kept after an edit).
 
 ### Q284. (Q243 here before the hub merge 535cc2c8b) A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (done)
 
@@ -5464,7 +5524,7 @@ place of the views: copies of tape answers. The views already cover the whole so
   and have `View::Loc` read them past its own positions (`local_of` maps a span id there through
   `granules::span_of`); then `Extra` makes no place rows, and `made` binds no place relation.
 - **Check**: the view's rows equal the rows made today, for a program reading each span relation.
-- **Done when**: no place row is made for a node or token in core.rr's shape.
+- **Done when**: no place row is made for a node or token in core.rerail's shape.
 
 
 ### Q264. (Q124 on Native-and-GPU-strata until 2026-11-18; Q185 on oscar until 2026-11-18) The device's `str_cmp` of made texts loses rows under load — done 2026-11-18
@@ -5614,7 +5674,7 @@ change taken out):
 
 Not yet checked on the M3. **Done when**: each passes, or is fixed at its root.
 - **Done** (2026-11-18), each by its cause:
-  - `only_the_compiler_reads_tier2s_states`, both `.rr` ladder tests: fixed on Go-C-and-C-support (dd6dcc161, its
+  - `only_the_compiler_reads_tier2s_states`, both `.rerail` ladder tests: fixed on Go-C-and-C-support (dd6dcc161, its
     Q39, Q187 here), taken by merging Go-C to that commit. Two hub-only causes besides: `Reader`'s own methods read
     `self.arms` (0332, Kotlin), which the guard now takes as a reader's; and a refused file's tier 1 leaves the loop
     at the refusal (0177), so the ladder compares its positions as a prefix of the interpreter's and its codes up to
@@ -5667,7 +5727,7 @@ holds for an output that is not zero outside the stream.
   it; a small lexer with the same masks does not. The ladder uses an undelayed stop (`prev(by_w, 2)`).
 - **Done when**: the CPU's records equal the interpreter's with the delayed stop, and a test holds it.
 
-### Q199. (Q196 on Swift-Kotlin-Scala-support) Tier 1 on the CPU differs from its interpreter on short files: `aligned` by a pattern, and `.rr` step 22
+### Q199. (Q196 on Swift-Kotlin-Scala-support) Tier 1 on the CPU differs from its interpreter on short files: `aligned` by a pattern, and `.rerail` step 22
 
 - **Found** (2026-11-18, at the merge of Go-C-and-C-support into Swift-Kotlin-Scala-support):
   `corpus_cranelift_equals_the_interpreter`: 14 generated grammars, every one with an `aligned(…)`
@@ -5687,7 +5747,7 @@ holds for an output that is not zero outside the stream.
 ### Q200. The CPU's tier 1 of the rr grammar leaves the loop at a 19-digit number the interpreter reads on
 
 Found 2026-11-18 at the roll-up's Swift-Kotlin-Scala merge: `rr_parser`'s `the_marks_tests_are_the_masks` samples every
-fifth corpus file, and the files this merge adds moved `docs/rule-syntax/lib/rust/syntax-literals.rr` into the sample.
+fifth corpus file, and the files this merge adds moved `docs/rule-syntax/lib/rust/syntax-literals.rerail` into the sample.
 On it the CPU's codes stop at token 2213 of 2808 (positions 12289 and 12307, `hex_pow(15, 1152921504606846976)`):
 tier 1 leaves the loop there (0177's exit), and the interpreter goes on (codes `2, b00, 48000d00`). With the file put
 in the test's inputs, it fails the same at Parser-generators' 612201517 (before 0383), ee0041caa, and the hub's
@@ -5892,9 +5952,9 @@ native join it falls back to the planner's whole-rule order.
   swapped) and passes with it. The library test passed 10 runs of 10. `differences` now prints a request relation's
   readers by rule where the rows agree as sets.
 
-### Q210. (Q176 on cost-classifier-metal-rf) `rule_syntax_files_pass_check_rr` fails on `c/includes.rr`: a negation in a cycle (Go-C-and-C-support's)
+### Q210. (Q176 on cost-classifier-metal-rf) `rule_syntax_files_pass_check_rr` fails on `c/includes.rerail`: a negation in a cycle (Go-C-and-C-support's)
 
-- **Found** (2026-11-18, cost-classifier at f9bfb6e05, with no change of its own; the slow tier's test): `lib/c/includes.rr`
+- **Found** (2026-11-18, cost-classifier at f9bfb6e05, with no change of its own; the slow tier's test): `lib/c/includes.rerail`
   line 54, `c_inc_from depends on c_found_by through ! or an aggregate in a cycle`, and line 70, `c_resolved depends on
   c_inc_before` the same. The cycle is the include search: `c_found_by` ← `c_resolved` ← `c_inc_found` ← `c_inc_try`
   ← `c_inc_from` ← `!c_found_by` (an `#include_next` starts past the entry its file was found by). The file came with
@@ -5960,19 +6020,6 @@ Found 2026-11-18, measuring 0364 over the O125 replay (`maintain-measure.sh cold
 - **Fixed**: `maintain-measure.sh` takes `MM_ROOT` for its outputs, and the replay's host script keeps its inputs,
   outputs and engine under the host's `$TMPDIR`, outside the checkout.
 - **Record**: this entry.
-
-### Q216. (Q123 on Native-and-GPU-strata at 903627c46) Spans' places read by the `Loc` views (0353 step 3, row 7)
-
-Where `Extra` makes spans (`source`, `src_line`, `src_line_lf`, `tape_line`, a regex's matches, comments, `rx_span`),
-it also makes `line`, `end_line`, `col` and `docof` rows for every node and token, and `Batch::made` binds those in
-place of the views: copies of tape answers. The views already cover the whole source and its lines
-(`Locs::positions`, `ExtraSpan::Line`).
-- **Do**: write the other spans' byte ranges once into the batch's block where `Extra` makes them (a derived fact),
-  and have `View::Loc` read them past its own positions (`local_of` maps a span id there through
-  `granules::span_of`); then `Extra` makes no place rows, and `made` binds no place relation.
-- **Check**: the view's rows equal the rows made today, for a program reading each span relation.
-- **Done when**: no place row is made for a node or token in core.rr's shape.
-
 
 ### Q217. (Q124 on Native-and-GPU-strata until 2026-11-18) The device's `str_cmp` of made texts loses rows under load — done 2026-11-18
 
@@ -6126,6 +6173,11 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   word; its first bytes compared there), `metal_read` returns the device's error, and the corpus test fails on
   it: 3,075 files the same, 60 refused, Metal differs on 0. Every ladder step runs on Metal (0 refused, was 14
   and 15). `parser_tests`' `a_files_start_on_metal_is_the_interpreters`.
+- **Done on Native-GPU-strata too** (2026-11-19, the same classification): none is a cache. `frame_segments`, `object_segments` (segment files), `guest_keys` (0391)
+  and `observed_changes` (0400 §4, the observer's journal) are the store's own; the 14 maps are state (open things,
+  registries, switches, profiling, a test's log). Entries gone are cut: `WAVE`, guests.rs's `KEPT` (moved to the run
+  by 7c273bdd8; the maps' pin 24 to 22, one move before it had left the pin over), run_state's `WAVES`, `TICKETS`
+  and `TOGETHER`. The three guards and `run_state`'s pass.
 
 ### Q234. (Q213 on Swift-Kotlin-Scala-support) The engine keeps the grammars' proof answers as it keeps images (0414)
 
@@ -6152,7 +6204,7 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   in the interpreter and Cranelift. Kotlin's grammar is checked against the lean parser's tapes,
   which agree with the compiled side, so nothing caught it.
 - **Done when**: the reference places a settling mark's extras as tier 2 does, and the test's
-  grammar says `settles` again. `, drops W` (0406) is the same: the reference keeps the extra the
+  grammar says `settles` again. `, drops W` (0416) is the same: the reference keeps the extra the
   compiled side drops; it drops it too.
 - **Done** (2026-11-18): each settling mark token carries its least bit and whether its `drops`
   holds at its token (`eval::Token::settle`). Where the grammar takes it (`tree::Parser::settled`,
@@ -6183,6 +6235,9 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   `logical_line_predicates_and_aliases_use_the_vocabulary_batch` (the strings' relations numbered in another order
   than the tests expect, after 0281 step 6c named them by content). None reads `finish` or a version's fields.
 - **Done when**: each list names what it lists once, and the strings tests assert by content, not number.
+- **Done** (2026-11-19, with 0478 step 2e's CPU texts): the strings tests name each test by what it matches; the
+  lists' other entries had been cut meanwhile, and `device.rs`'s `AUTOMATA` and `TESTS` (gone with 0478 steps 2c and
+  2d) are cut from `facts_only::STATE` and `run_state::STATE`. All five pass.
 - **Record**: done (2026-11-19, Typing-support at 049b9aaa6, a Linux farm host): all five pass.
 
 ### Q238. (Q106 on Typing-support-final-shape at 4ea96a066) Relax's JIT refuses `sha2`'s `sha512h` inline asm
@@ -6206,6 +6261,178 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   the edited include (decision 0105's flush) and the store's queued entry being found before its write settles.
 - **Seen again** (2026-11-19, Typing-support at 049b9aaa6, a Linux farm host): passes cold under cargo. The one failure was the first Relax run after an edit; open
   until it fails again with its message.
+
+### Q350. (Q311 on investigate-bend-vs-datalog; Q241 there before the merge of rr-align 62618b2e0a) Four observer tests fail in `rerail-store`'s own test target
+
+- **Found** (2026-11-19, beside 0364's kept-facts gather): `cargo nextest run -p rerail-store --lib --features
+  test-hooks` did not compile. `rerail-clif`'s `view_reads` needed its `ir` feature, and two journal tests called
+  `since` without `settle`. Both are fixed, and the merge in 718434dca had dropped the caller's bound (Q184) from
+  `fsevents::since_within`, which is restored: `the_journal_names_what_changed_since_its_cursor` passes.
+- Four `observe::tests` fail with and without that restore, on the M1 Max:
+  `an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing`,
+  `a_directory_that_cannot_be_listed_names_what_it_held`, `a_small_root_is_checked_by_listings_not_stats`,
+  `a_listing_names_an_edited_file_and_no_other`. Their stats run past what they expect (for example 7 stats where
+  none are wanted).
+- **To do:** run them on this Mac to tell a host's journal from the code. Then bisect from 718434dca, the last
+  merge into `journal.rs` and `observe.rs`.
+- **Done** (2026-11-19). The same four fail on this Mac, so the cause was the code. Two merged rules met:
+  - Q189's settle window (`settling`: an answer recorded in the last 120 s is checked by `stat`, since the
+    journal's silence may hide a merged event) was applied under roots checked by their listings (0400) too. No
+    silence of the journal's vouches for an answer there; its own listing check does, racy rule and all
+    (`listed_holds`). So 0400's tests, which run twice within seconds, statted every path. The window now applies
+    only where the journal vouches (`Observer::listed_root`).
+  - The settle test hid its edit by storing `current_id()` as the root's cursor. Since 718434dca a replay answers
+    by arrival: a cursor that is no sync's is told everything the stream saw, so nothing was hidden. Its small
+    root was also checked by listings, which read the edit anyway. It now asks the journal (`list_max = 0`) and
+    stores the cursor of a sync taken after the edit, which is what a merged event amounts to.
+  - All 34 `observe` and journal tests pass on this Mac, twice. On the M3 at load 35, four more failed on timing:
+    a run there sees the journal late.
+
+- **Seen again** (2026-11-19, the merge of rr-align 62618b2e0a, targeted `observe`/`journal` tests): on the M3 four
+  journal-trust tests fail on timing (`a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change`,
+  `a_watched_root_is_not_statted_where_the_journal_says_nothing_changed`, `an_inner_root_is_answered_by_the_root_above_it`,
+  `rerails_own_files_are_outside_the_observer`: nothing trusted by the journal); all four pass on the M1 Max. There,
+  `journal::tests::the_journal_names_what_changed_since_its_cursor` fails 1 run in 3 at "an access time set is no
+  change" (`kept.py` named after its times are set): the metadata-only filter (4d9fad6fe9) predates the merge.
+  **Open:** whether a replay's coalesced flags carry the file's earlier write (`ItemModified`) onto the times event.
+
+### Q351. (Q312 on investigate-bend-vs-datalog; Q242 there before the merge of rr-align 62618b2e0a) The data layer's 9,010-file ladder (0364 Scale)
+
+- **Corrected** (2026-11-19): the ladder measured here (`tmp/dl-mid`, `tmp/dl-whole`, made by `dl-history.sh`) is
+  one policy, `conditional-architecture`, with its `.scope` lines dropped, over trees of every file. It is not the
+  data layer's workload, and its times (515 s of CPU at 2,410 files, "35-40 min" at 9,618) say nothing about it.
+  The workload is the data layer's 50 policies (`docs/rule-syntax/data-layer/*.rr`, scoped) together over the
+  repository at 2b1504adc (9,010 `.py` files), against the data layer's own linters, which take about a minute of
+  wall on the whole repository (t3, "PR full repo 70.6 s wall"). The target is seconds. Q354 is that work.
+- **The maintain-mode ladder** stays a test of 0364 at size: run it with the policies' scopes kept.
+
+### Q354. (Q315 on investigate-bend-vs-datalog; Q245 there before the merge of rr-align 62618b2e0a) The data layer's 50 policies together: four structural regressions (2026-11-19)
+
+- **The run** (`tmp/dl9010`, not in git: the tree at 2b1504adc, `run.sh`, `each.sh`, samples `s100` of 91
+  `.py` files and `s10` of 901, each with the root's other files). On the 91 files, each policy alone took 26 s of
+  CPU summed (profiling build), and all 50 together passed 120 s (killed): the program of 50 policies made strata
+  no single policy makes. The 2026-11-17 engine was as slow (its warm run 116 s on the same files).
+- **1. A negation split's `pre_<i>` that was every pair of nodes in a def** (`demand/over.rs`). `reached` took
+  every derived relation as a small anchor, so `pre_292(a, c, f) :- mf_def(c, f), mf_def(a, f)` (52,314 rows,
+  420 a def) was a split's kept body. Also, the pass's `nearest_` tests were dead since the lowering names those
+  relations `rr_nearest_…`: a `nearest` frame read as a derived relation. Now: `front::is_transduced` for both, and
+  a derived relation of a row per node (`per_node_relations`: its key read only at a per-node read's key, through
+  other such relations) is no anchor. 2 policies: 10.98 → 4.05 s CPU; 4: 9.07 → 4.41.
+- **2. An aggregate's demand inlined into the aggregate** (`keeps::refusals`). Priced on the up-front estimates
+  (`p49_need` 9.5×10⁹ rows), the 805-row demand `p49_rr_demand_agg_rr_agg1` was unfolded into `p49_rr_agg1`,
+  which then read the demand's own join (`need ⋈ docof ⋈ reset ⋈ docof ⋈ reset`): 25M rows priced, 14-45 s of one
+  stratum. An aggregate's demand (`Body::demand_first`) is now stored always, as decision 0099 lists demanded
+  relations.
+- **3. The aggregate's cover inlined the same way** (`rr/lower.rs`): `rr_cover<i>` is declared `no_inline` where
+  lowering makes it. After 2 and 3 the 50 policies end: 20.6 s wall, 25.9 s CPU, 53 findings (the 2026-11-17
+  engine's warm run: 53).
+- **4. The factorized store's key of a part that is a join** (`typing/file_local/passes/factorize.rs`): each part's
+  key relation was made from its unreduced body, so `fzk…_vmi_known(a) :- mf_def(c, f), mf_def(a, f)` was every
+  pair in a def again. The keys are chained now, fewest atoms first, each part's keys within the previous key, and
+  each part is reduced by the last (the keys every part holds, as before). `vmi_known`'s strata 3.2 s → 0.004 s;
+  the pair 5.29 → 1.78 s CPU, findings equal to `RERAIL_FACTORIZE=off`.
+- **5. A zero count over a range** (`bounded-composed-graph-paths`' `bcgp_decorated`, `count : { bcgp_line(p, l, _),
+  l > a, l < b, !bcgp_at_line(p, l) } = 0`: 8.2 s of the policy's 9.9 s alone). Four parts, each needed:
+  - `preparation/simplify.rs` (`file_local_reads`): the read is `!rr_agg15($a, $b, $p, _)`, but the projection kept
+    the line's span as a location column, so the helper was a row per line between each pair. A location is kept only
+    where every relation the rules read is a file's; `rr_ctx16` (the pairs) is none.
+  - `plan.rs`, the search: past the bound head a step passes on one binding (`setfix::tail`), as the greedy order
+    priced it; the step's reads stay priced (priced at one row, a pair-led order read every line of its file: 28.6 s).
+  - `setfix::ranges`, `Found::within`, `InRel::index_then`, and `range_pass` in the search: a probe whose new column
+    later comparisons bound by values bound before reads a range of an order on its key then that column, which a
+    held input (`Stats::held`: the cross part's held bases and exports) or a derived relation has. The comparisons
+    stay as filters.
+  - `setfix`, a fused step (`rowcode`) past the head: it stopped at no witness, so every line in range reached the
+    head (25.4 M for 25,426 pairs). It now ends at the first, gathering 8 rows first, then 8 times more.
+  - `rr_agg15`: 8.15 s → 0.036 s, 201,542 lines read; the policy 9.9 → 0.85 s CPU, 154 G → 8.3 G instructions; the
+    50 policies 320 G → 261.5 G instructions, 0.80 GB peak, 53 findings, the same as before.
+- **Fixed on the way:** `retain/frame_tests.rs` called `KeptInput::load` without its `news` argument since t43
+  step 19, so `rerail-logic`'s test target did not build.
+- **Open, in order:**
+  - 11,500 strata for 50 policies, about 1 ms each, on 91 files: fixed costs that do not shrink with the files.
+  - The peak: 2.4 GB on 91 files before 5, 0.80 GB after.
+  - The rest by policy (`each.sh`), then the 901-file sample, once the per-file cost is known from the 91.
+
+### Q355. (Q316 on investigate-bend-vs-datalog; Q246 there before the merge of rr-align 62618b2e0a) The 50 policies at 901 files: what a file costs, and what ended the runs (2026-11-19)
+
+- **The samples' root files**: `s100` and `s10` hold their `.py` files alone, the root's other 25 files moved to
+  `rootfiles/` (with them, `bounded-composed-graph-paths` ran 13 strata and found BCGP001s none of the earlier
+  measurements had). The real repository has them: a measurement of it is not comparable with these.
+- **A chunk of a block failed under two threads** (`facts/rows.rs`, `open_chunk`). `BlockVec::realloc` checked the
+  open block's room under its lock and took the chunk after letting it go: another thread's chunk took the room
+  between, or the free list's room was not one piece, and the run panicked ("an open block with room holds 2540944
+  bytes", the 901 files, 17 s in). The check and the take are one step under the lock now, a new open block when
+  that one has no such chunk.
+- **The chunks the memory line makes** (`RUN_MB`, 1,024 MB): the footprint near 1 GB leaves each chunk the 8,192-node
+  floor, 116 chunks for the 901 files, each running the whole program: 364,000 strata, killed at 240 s. With
+  `RERAIL_RUN_MB=4000`, 13 chunks: 43,900 strata, 377 s of strata CPU, still killed at 240 s. The cost is per file and
+  linear (91 files: 37 s of strata; 901: about 10 times), spread over every rule (the largest, `unparen`, 11 s in 40
+  runs): about 0.3-0.4 s of CPU a file, an hour for the 9,010.
+- **A segment file per input's frames** (`retain.rs`, `write_input_frames`): each input's job made its own
+  `FramePlacer`, so a segment file each (leased, mapped, named, written back): 1,317 files in the frames directory on
+  91 files, 1,111 of them under 8 KB, 12-15% of the run's CPU in `Deferrable::create` and the writes (`sample`). One
+  placer serves every input's job now (its writer under its lock; the encoding outside it), its frames queued once
+  in the inputs' order, none when none was placed: 48 files; 261.5 → 248.3 G instructions, 5.7 → 2.2 s system,
+  findings the same (53).
+- **The program normalized on every chunk** (`body::Placed::normalized`): `passes::normalize` (and `stated_apart`)
+  ran in a pipeline of no store, once a chunk: 84 times on 901 files, 2.5 s of `leg-083-typed`'s CPU. Both are now
+  analyses held by the version they are of (`NormalForm`, `ApartForm`; decision 0281 §2): made once. The policy on
+  901 files: 580 → 541 G instructions, 52.3 → 48.0 s user, its findings the same.
+- **What a chunk of 901 files costs, `leg-083-typed` alone** (84 chunks of about 23,000 nodes; 48 s user against
+  4.2 s on 91 files): joins 9.9 s; per chunk, the statistics (`make_plan`, 58 ms) and `views and tables` (45 ms);
+  the memo's base rows 3.4 s; the inputs' frames 2.8 s. The typing program measured up to 30,622 bytes a node (a
+  10,000-node chunk added 257 MB) over a run already at 740 MB: the chunks stay at the floor, and every per-chunk
+  cost is paid 84 times.
+- **Fixed on the way** (`cache_architecture`, failing since 0399 step 1 and decision 0323 added their tables):
+  `guest_keys` (names) and `observed_changes` (the observer's journal) are on `NOT_CACHES`. And (Linux, the farm's hosts): a listed root's cursor (decision 0400) is kept under no volume
+  where the system names none, but was read by the volume alone, so every warm run wrote it again; and a root under a
+  stored one was folded into it only by the volumes' ids, which Linux has none of (with the journal off, a Mac
+  neither): by the device now. `the_run_after_a_cold_one_writes_nothing` passes on Linux. The journal test
+  `a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change` is the Mac's alone, as the other journal
+  tests are.
+- **Open, in order:**
+  - The per-file cost: the joins are 43% of the CPU (`run_seed`), spread over the rules; a stratum's fixed costs on
+    each chunk the rest. Next: the strata a chunk runs that no file of it needs, and the per-chunk planning.
+  - The memory line that cuts chunks to the floor: what holds the 1 GB before the first chunk.
+  - `an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing` fails 4 of 5 on the M3
+    at load 35-107 (`0 trusted by the journal`: the run's own question timed out, and the answer was checked by
+    `stat`), as Q223's test does: the journal's timing at load.
+  - ~~The typing program's bytes a node (30 KB at most), and the 740 MB before the first chunk~~ (done 2026-11-19, with
+    the merge of Native-and-GPU-strata 84f7a8649a and decision 0469). Neither was the chunk's: the 30 KB was the
+    footprint's rise over a chunk, and the 740 MB the footprint, which `RUN_MB` cut by. Measured by 0435's count and
+    0469's measure, a typing chunk is 932-1,043 bytes a node (about 120 in its blocks, the rest its scopes' heap
+    peaks), and the run is at 144-297 MB when the chunks begin. `leg-083-typed` on the 901 files: 8 chunks at the
+    caller's most (262,144 nodes), was 80 at the floor; statistics 4.95 to 0.02 s, views and tables 3.73 to 0.02 s,
+    order probes 1.6 s to 0; findings the same; peak 1,342 to 1,124 MB; user 48.0 to 47.0 s, 541 to 591 G instructions
+    (the merge's other changes: its spans' own CPU 51.4 to 43.2 s), 34.6 s wall at load 27-43.
+  - **Next, by its share of the 43.2 s** (spans' own CPU, the run above): the chunks' strata 15.3 s (the joins 11.3);
+    the export to the cross part 8.8 s, of it the memo entries' base rows 4.3 s and 1.28 GB allocated (decision
+    0458's copy 2, its step 4 not yet done); the cross part 6.6 s; the corpus batch 3.8 s, which projects every
+    document's node rows and string annotations and runs the matchers again beside the chunks (0458: "made when
+    first read"; 0353 copy 7 and step 3); the windows of files resolved 2.3 s.
+
+### Q352. (Q313 on investigate-bend-vs-datalog; Q243 there before the merge of rr-align 62618b2e0a) At 2,410 files the mode is priced above a derive for deltas of 0.1% of the rows read
+
+- **Found** (2026-11-19, t43 step 20): at steps 02-03, `rr_agg37` (mode 98,707 against a derive's 70,337) and
+  `rr_demand_agg_rr_agg37` (252,165 against 247,433) are derived again by §4's second clause, 16 s of a 46 s edit,
+  with deltas of 9,576-15,534 rows of 10-17 million read. `ca_alias_at`'s lines are priced at 217,777,417 against
+  793,332, which no 14,000-row delta should cost.
+- **To do:** print the mode's lines for `ca_alias_at` (`RERAIL_MODE_TRACE`, the plans `mode_costs` prices) and see
+  which line's estimate is past its rows; a delta-led line should cost in proportion to its delta (R4).
+
+### Q353. (Q314 on investigate-bend-vs-datalog; Q244 there before the merge of rr-align 62618b2e0a) 0364's open items not taken up on 2026-11-19, and why
+
+- **Levels as a column of the relation's block** (0328 decision 1; now a `Vec<u32>` beside the rows): the kept
+  blocks' format is being aligned on the phased-facts and rr-align branches (0401 step 7, 0402). Levels go into the
+  block with that format, once it is in.
+- **The static check's string length and tree helpers** (`plan/wellfounded.rs`): no running program's component
+  fails the check for them now; take it when one does, with that program as its test.
+- **The dump artifact** (210 `dotted_expr` rows at the data layer's first state): to look at with the 9,010-file
+  runs (Q351), which split into chunks the same way.
+- **A cross-file recursive `min` lattice:** only if the least-route item is closed with one; no program has one.
+- **Inputs found by hashing** (`doc_key`, `observer__source_file`): 2 of a session edit's inputs, a few hundred
+  rows; no measurable cost at 2,410 files.
+
 
 ### Q241. (PR #508, t47) A library's relations in a pack: kind sets, stated facts, value cycles, spans, `nearest`
 
@@ -6276,6 +6503,9 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - **Waits on** (2026-11-18): main's #735 (39b59e9d7: the grammars' Patches 18 and 30, `language.rs`, the packs'
   rules), which the hub has not merged. Tim's 7410a263b writes format 16's tables 2, 3 and 6 and the lean parser's
   implied tokens again for those grammars, so it follows #735 into the hub with the main merge, not before.
+- **Done** (2026-11-19, branch `pr508-fixes-as-tests`, 6b96395da): #735 came with `main` under #508's squash
+  (9f68e3703), and 7410a263b's tables 2, 3 and 6, `kinds.tsv` and the lean parser's kinds with #508's tip. The test
+  passes on Linux, with format 15's pinned digest (Tim's, 5e9b8dc4…) and the lean parsers' format tests.
 
 ### Q246. (PR #508, t47) The end of children meets implied tokens (RER-131)
 
@@ -6325,6 +6555,10 @@ Open:
   upstream fixtures, which are not in Git and no checkout holds whole: `npm run fixtures:pull` (AWS CLI, signed in)
   fetches them, then send them with the job (`--tree`).
 - Windows, Linux and x86-64 (12 commits, t47's portability class) come last, with the Windows work.
+- Linux's warnings in the hub's own code (2026-11-19, the first Linux build of the hub's library tests): parser_tests'
+  executors and block tests (an unused `Error`, `native` unread, `mut`s), c_directives' and prof's `mut`s,
+  json_lean's `vmull_p64` without its target feature, matcher_tests' `sibling_shape`, file_local's `cpu`. Each is a
+  use under a macOS `cfg`; Tim's clippy commits fixed his copies (t47: n/a).
 
 ### Q249. The typing oracles' node products are unbounded at the hub tip
 
@@ -6332,6 +6566,21 @@ Open:
   "bound node products by their readers: unbounded node Cartesian product in `base`" (18) and "in `res`: the read in
   `res` has no connected demand" (1). Not PR #508's: the same with Q241's and Q244's ports and without them.
 - **Done when**: the 30 pass, the product bound at its producer (no relation computed in full to be filtered).
+- **Done** (2026-11-19). The products the pass refused are bounded by declared fan-outs:
+  - `pv(o, "cls", c) :- attr_of(_, o, _), builtin_ref(o, "object"), qv("builtins.object", "cls", c)` (calls.rerail) pairs
+    each reference to `object` with the few class nodes of one qualified name.
+  - `res(p, "mod", r) :- kind(p, "crate"), modn(r, "crate")` (calls_rust.rerail) pairs each `crate` path with the
+    crate's root.
+  `product_demand::fixed_vars` counts a variable as fixed when it is reached from constants (and fixed variables)
+  through a relation's declared key or a fan-out of one, few or at most 16 rows (`.layout`, 0361), as a variable
+  set to a constant already was. calls.rerail declares `.layout qv fanout(q, k -> v, few)`, and calls_rust.rerail
+  declares `.layout modn fanout(q -> m, few)` (the program models one crate: a qualified name is one module).
+  A refusal now names its product rules and the read it could not key. The 30 oracle tests pass on the M1 Max, with
+  the pass's 11 tests (one new), the RIR dumps, the production contracts and the file-local typing tests.
+- **At the merge of investigate-bend-vs-datalog** (c61fae98f, 2026-11-20): that branch fixes a variable every positive
+  read of which is a lookup on constants (`qv("builtins.object", "cls", $c)`), without a layout, the user's choice there
+  (356f1b5164, a day before this item's fan-outs). Both are taken: the lookup on constants after `fixed_vars`. This
+  item's test asserted the rule without its layout refused, which the user's rule fixes: that half now asserts it fixed.
 - **Also seen** (Q263 on django-bugs, 2026-11-19): the same refusal in `base` on the M1 Max and the M3, in
   `quoted_annotations_are_read_as_their_code`,
   `a_protocols_subclass_is_a_class_and_a_methods_self_annotation_declares_an_attribute`,
@@ -6339,21 +6588,9 @@ Open:
   `imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order`. The planner refuses the typing
   program (`typing/programs/calls.rr`'s `base`, which reads no guest relation) before any batch is built, so it is
   not decision 0431's.
-- **Also seen** (Q263 on django-bugs, 2026-11-19, with 0431 step 3 in the tree): `python_calls_program_agrees_with_the_runtime`
-  and `rules_read_the_python_program_through_lib_calls` fail with it (`in res`: "the read in `res` has no connected
-  demand"), with or without step 3's widened hiding. `res` is the product the Done below bounds.
-- **Done** (2026-11-19). The products the pass refused are bounded by declared fan-outs:
-  - `pv(o, "cls", c) :- attr_of(_, o, _), builtin_ref(o, "object"), qv("builtins.object", "cls", c)` (calls.rr) pairs
-    each reference to `object` with the few class nodes of one qualified name.
-  - `res(p, "mod", r) :- kind(p, "crate"), modn(r, "crate")` (calls_rust.rr) pairs each `crate` path with the
-    crate's root.
-  `product_demand::fixed_vars` counts a variable as fixed when it is reached from constants (and fixed variables)
-  through a relation's declared key or a fan-out of one, few or at most 16 rows (`.layout`, 0361), as a variable
-  set to a constant already was. (At roll-up 12 this sits beside rr-align's own fix, a variable bound only by lookups
-  on constants, Q329.) calls.rr declares `.layout qv fanout(q, k -> v, few)`, and calls_rust.rr
-  declares `.layout modn fanout(q -> m, few)` (the program models one crate: a qualified name is one module).
-  A refusal now names its product rules and the read it could not key. The 30 oracle tests pass on the M1 Max, with
-  the pass's 11 tests (one new), the RIR dumps, the production contracts and the file-local typing tests.
+- **Also** (Q263 on django-bugs, 2026-11-19, with 0431 step 3 in the tree): `python_calls_program_agrees_with_the_runtime`
+  and `rules_read_the_python_program_through_lib_calls` failed there ("the read in `res` has no connected demand").
+  Both pass on the hub at roll-up 4 (rr-align's merge, the M3).
 - **Record**: done (2026-11-19, Typing-support at 049b9aaa6, a Linux farm host): every `typing::oracle_tests` test not ignored passes (30). The ignored ones
   (benchmarks, spikes, a probe) need their inputs set.
 
@@ -6367,11 +6604,6 @@ Open:
     asserted.
   All four are decision 0400's listing checks, and 27 of the 31 observer tests pass. Not PR #508's.
 - **Done when**: all four pass.
-- **Also seen** (Q262 on CUDA-support, 2026-11-19): the same three listing tests and the settle-window test
-  (Q293's) fail there, hidden while `rerail-store`'s tests did not compile. A merge had left two of the journal
-  test's `since` calls without `settle`, and the replay's wait took `WAIT.max(settle)` in place of the caller's
-  bound; both fixed on CUDA-support, as here.
-
 - **Seen** (2026-11-19, the M3, with the journal's wait bound restored: `journal.rs`'s `sync` takes the caller's
   `wait` again, else `WAIT.max(settle)`): the same four fail, and `the_journal_names_what_changed_since_its_cursor`
   passes again (it asserts a zero bound answers `Lost`, "slower"). Four more journal-observer tests
@@ -6389,14 +6621,157 @@ Open:
     edit's events.
   All 31 observer tests pass on the M1 Max, twice, with the engine's warm-run tests (4 of 4).
 
-- **Fixed** (2026-11-19, Typing-support): Q189's settle window (`JOURNAL_SETTLE_NS`, 120 s) was applied to every
-  root, also one checked by its listings, whose answers the listing check compared by `stat` that run and which
-  never goes by the journal's silence. Every answer recorded in the last 120 s was then `stat`ed again (the tests'
-  7 and 9 stats). `trusted` and `missing` now skip the window under a listed root. All four pass on the M3, in every
-  run since.
-- **Record**: done (2026-11-19, Typing-support): as **Fixed** above. The journal tests that still failed on a
-  loaded host are Q223's (fseventsd delivering late), done: 22 of 22 runs on the M3.
+### Q318. (Q251 on the hub until 2026-11-19) (PR #508, t47) The compile-time work of 819e672b6 and 80e74acd2
 
+- **Seen**: packs whose rules compile in a millisecond or two (complexity, sql) compiled 1.2–1.6 times main's on
+  Tim's measure, most of it once a process per dialect (Tim's commits; not measured here).
+- **Keep**: the hub's token tests, which hold the census's names as `String`s and read the automata whole.
+- **Not taken** (2026-11-19, 6b96395da): the census read in place (`&'static str`), `token_tests::Reach` once per
+  process, the automata a kind at a time (`token_automata::Index`), `RequiredText`'s literals once a pattern. Their
+  `required_text.rs`, `language.rs`, `probes.rs` and `lib.rs` hunks came with the merge; token_census.rs,
+  token_automata.rs, tokens.rs and tokens_tests.rs are the hub's.
+- **Done when**: the four are ported onto the hub's token tests, or measured on the hub and judged not worth it.
+- **Done** (2026-11-19): ported, without their process-wide memo maps (decision 0104: a repeat is fixed by flow).
+  - Taken: the census read in place (`decode_census`'s `&'static str`, `Lang::distinct`); the automata indexed and a
+    kind's read when a walk first needs it (`token_automata::index`, `tokens::Kind`); the token-test walk reading
+    the document in place, recording each relation and asking `gap_test` only where a token test reads it
+    (`Walk::lowered`), utilities keyed by their context; a test's whole-token regex compiled only where it reaches a
+    token, its gaps read from the set it reached (`Reach`, `Lang::implied_where`).
+  - Not as memos: `rule_pattern`'s process table became `language::Patterns`, one compilation of a query's
+    (`compile_query_as`, through `UtilScope::pattern`), gone with it; `Reach` is found per test; `TextProbe::compile`
+    and `regex_clause` derive again where asked, as before #508. The repeat those two met is the shared utilities
+    compiled again for each grammar and `languageOptions` (`compile::shared`), to fix there.
+  - The three memos had come in with the merge (clean hunks outside the check's directories):
+    `check_no_new_caches.py` now reads all of `code_rule_dsl/`.
+  - Hub-side answers kept: `lowered` is `gap_test` alone (Tim's also counts `gap_split` and the token's own
+    `follows`/`precedes`, RER-131 work the hub has not taken).
+  - Tests (Linux): the token, census, automata, pattern, compile, prefilter and anchors filter, 520 of 528, the same 8
+    failing at c2365d280 without the port (Q254).
+
+### Q319. (Q252 on the hub until 2026-11-19) Two Metal parity tests fail at the hub's tip on the M3
+
+- **Seen** (2026-11-19, the M3, both at the pre-merge hub 5fbc02057 and after #508's merge, so not the merge's):
+  - `rr_parser::tests::a_refused_files_records_stop_on_metal`: `"x = 1.2.3."` is not refused on both (Metal and
+    the CPU disagree on the refusal); `"\u{1}"` and `` "````a````." `` code 0 tokens on Metal, 5 on the CPU.
+  - `parser_tests::metal_tests::every_step_on_metal_equals_the_interpreter`: 182 of 2,206 files differ over the 13
+    steps Metal runs (step `01-vrai`'s mutations first: `"vra^"`, `"\nvra="`), where Q183 left none.
+- **Done when**: both pass on a Mac with Metal.
+- **Read** (2026-11-19, from the source; not yet run, the M3 at load 84–118 with no cores to spare):
+  - Both pass at 572ff69db (a hub commit after Q183), so the change is the hub's, after it.
+  - `a_refused_files_…`: its third input reads now. Q40 (98c9f82ab, decision 0413) has tier 1 read `1.2.3` as `1.2`,
+    `.`, `3`; a clause's chain is refused by tier 2, so neither tier 1's totals refuses it. The token the record pass
+    still refuses is an integer of 19 digits or more (0413's `all(E) at least N`): the input to test with.
+  - `every_step_on_metal_…`: the 182 files are step 01's mutations (`vra^`), files the step refuses; the candidates
+    are 0411 (the CPU's record pass makes the outputs in `records_made`, and tier 1's runs are compared `without`
+    them) and Q200 (a refused file's records stop at the refusal). Check which by one run of the test, then compare
+    as `compile_tests` does.
+- **Done** (2026-11-19): both pass on the M3 (one nextest run with Q320's set).
+  - `a_refused_files_…`: its token refusal is a 19-digit integer (0413: a float chain is read now).
+  - `every_step_on_metal_…`: where the interpreter makes a token's records itself (the loop's starts and lasts,
+    0177 stage 2a; the lasts by the gaps, 0411), a refused file's starts and lasts extracts are excused, as those
+    decisions prove them only where the file is taken. Every other output and extract is compared, a difference
+    named by its index with the file's refusal; the excused differences are counted and printed.
+
+### Q320. (Q253 on the hub until 2026-11-19) The journal's wait bound (Q221) is gone, and the FSEvents tests disturb each other
+
+- **Seen** (2026-11-19): `fsevents::since_within` takes the caller's `wait` and never reads it (a warning on macOS):
+  89f4abfec waited `wait.unwrap_or(WAIT)` and answered `Late::Slower` as a `Lost` keeping the stream; 718434dca
+  (rr-align, after a hub merge) made it `WAIT.max(settle)`. Putting the bound back (`min` of the two) fails 4 observer
+  tests on the M3 one at a time (`a_canonical_path_…`, `a_watched_root_…`, `an_inner_root_…`,
+  `rerails_own_files_…`), which expect the journal's answer within the bound's 2 ms floor.
+- **Also seen**: run in one nextest process set, the 20 `tree_watch` tests (main's, new to the hub) and the 31
+  observer tests fail each other's notices on the M3 (11 failed); each set alone passes, the observer's at `-j 1`
+  (at `-j 4` one to three of its own fail, a different set each run, also at 5fbc02057).
+- **Done when**: Q221's bound reads `wait` again with the observer tests passing, and the FSEvents tests pass
+  together (a test group of their own, or streams that do not share `fseventsd`'s latency).
+- **Done** (2026-11-19) but one, on the M3: the store's journal and observer tests and the engine's `tree_watch`
+  tests in one run, the group one at a time: 54 of 56. A symlinked root's test passed alone. The cap's
+  (`more_entries_than_the_cap_lose_the_root`, 16,385 files written) fails alone too: FSEvents told 665 of them in its
+  20 s (33 a second; the assertion counts them now), with `fseventsd` at 100% of a core and 18.5 GB resident after
+  172 days up. The host's daemon, not the adapter (the cap's own test, over `Notices`, passes); after the host's owner
+  restarted `fseventsd` (2026-11-19), both pass on the M3, the cap's in 2.0 s. The changes:
+  - `fsevents::since_within` waits the caller's bound again, else `WAIT` (or a journal test's settle):
+    `wait.unwrap_or(WAIT.max(settle))`.
+  - `journal_observer` asks for the journal's answer within the same 5 s it lets the replay settle (it asked 2 s,
+    under a busy host's cookie): the four observer tests.
+  - `.config/nextest.toml`: the store's journal and observer tests and the engine's `tree_watch` tests are a test
+    group, one at a time, on macOS (`show-config test-groups` reads it; Linux matches none).
+- **Since** (roll-up 4, rr-align's merge, 2026-11-19): the bound is rr-align's again, the caller's `wait` within
+  the settle window (`wait.map_or(WAIT.max(settle), |w| w.min(WAIT.max(settle)))`, Q293–Q295 there). Its observer
+  tests ask for 30 s, so the `min` leaves them the window; `journal_observer`'s 5 s is rr-align's 30 s. The
+  nextest group stays.
+
+### Q254. Eight token and anchor tests fail at the hub's tip on Linux
+
+- **Seen** (2026-11-19, spark, c2365d280 and with Q318's port alike): `anchors::tests::all_catalog_ast_rules_select_
+  identically_on_native_and_restored_tape`, `compare::tests::tokens_compare_reads_the_tokens_a_tape_leaves_out`,
+  `prefilter::lab::a_capture_replays_to_the_candidates_of_its_statement` (a replay store without its atoms blocks),
+  `compile_matcher_tests::ast_pattern_captures_are_pinned` and `…verdicts_reuse_their_bindings` (`pyflakes/F601.py`:
+  pack test data), `violations::tests::a_token_neighbour_is_not_the_stored_node_past_an_implied_token`,
+  `…gap_test_groups_anchor_at_the_implied_token`, `token_readers::no_rule_reads_a_token_the_tape_may_leave_out`.
+- **Done when**: each passes.
+- **Done** (2026-11-19), six of eight; the two `compile_matcher_tests` read ruff's fixtures, which no checkout here
+  holds at their lock (`npm run fixtures:pull`).
+  - The four RER-131 tests and the two pack rules (`ruff-fast001`'s lone trailing comma, `ruff-sim118`'s `in`) needed
+    t47's pending 48bf01694/241c19955 and c00a1d9f0, which stage 2 left out with the hub's token files. Ported onto
+    the hub's gap index, not Tim's per-call item sequence: `gap_split` with a `Stored` token condition; a gap test's
+    token conditions on a node's own tokens (`has`); a neighbour walk's `stored` test (no implied token between it and
+    the stored node) and a capture's span (`GapTest::token`), read from the parent's cached gaps by Tim's sequence
+    (`found_items`), the hub's `holds` and `implied_count` unchanged; `comparison.implied` set for `tokens`.
+  - The replay lab copied a capture's database without its atoms blocks (0401): it copies them now.
+  - Linux: the token, gap, matcher, violations, compare, compile, prefilter and anchors tests 1,102 of 1,104.
+  - The two `compile_matcher_tests` (2026-11-19): the farm never sends gitignored files (its mirror lists
+    `git ls-files --cached --others --exclude-standard`), so the fixtures stay here. The six files they read are
+    upstream ruff copies, byte-equal at 236fc98d2~1 and in the hub's worktree (#191 added Rerail's own fixtures,
+    not these): placed from git history, sent with `--tree packs/python/upstream/ruff/fixtures`, both pass on Linux.
+- **Also seen** (Q262 on CUDA-support, 2026-11-19): the same three listing tests and the settle-window test
+  (Q293's) fail there, hidden while `rerail-store`'s tests did not compile. A merge had left two of the journal
+  test's `since` calls without `settle`, and the replay's wait took `WAIT.max(settle)` in place of the caller's
+  bound; both fixed on CUDA-support, as here.
+
+### Q321. The hub's statics pinned at rr-align's merge (decision 0442): four to move onto `Shared`
+
+- **Seen** (2026-11-19, roll-up 4): rr-align's guard (`scripts/check/check_no_global_state.py`, 0442) refused 15
+  statics of the hub's own (main's merges and the hub's work since rr-align's base). The merge pins them in
+  `global-state.txt` by class: 9 `stays` (code registered at load, test counters and hooks, the process's lock
+  claims and child handles), and 4 `shared`: `owner.rs::SLOTS`, `regexes::TABLE`, `git_access/pool.rs::ROOTS`,
+  `model.rs::SHARED_MODELS`. (A tenth, `placement.rs::OFF`, went in the merge: rr-align reads the setting from the
+  run.)
+- **Done when**: the four `shared` ones are on the `Shared` object a caller passes (as 0442 step 4 moved rr-align's),
+  and cut from the list.
+
+### Q322. python/typing does not stratify with the guests answered in the fixpoint (roll-up 4, rr-align's merge)
+
+- **Seen** (2026-11-20, M3 and M1 Max): `corpus::tests::a_parse_request_asks_only_for_the_strings_its_rule_reads`
+  and `a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies` fail: "not stratifiable:
+  ask_annotated_meta_bb depends negatively on typing_sym in its own component". Both pass at the hub's a85f74caf
+  and at rr-align's 08e2de78c; the merge alone fails. Ignored with this item.
+- **Cause** (`RERAIL_STRATA_COUNTS=1`): one component of 28 holds rr-align's guest request (`rr_embed_req`,
+  `parsed`, `string_annotation`, 0431 §8), the names (`walk`, `look`, `qn`) and python/typing (`type_ctx`,
+  `type_root`, `type_stop`, `annotated_meta`, `typing_subscript`, `typing_sym`, `pyi_sym`).
+  `type_ctx(r) :- type_ctx(s), str_node(s), parsed(s, "annotation", r)` asks for a string's parse from a type
+  context. `type_ctx` negates `type_stop` and `type_root` negates `typing_sym`, which reads `look` over the parsed
+  nodes. rr-align has the same path (its `typing_sym` reads `sym_of`, `sym_of` reads `look`), but `sym_of`'s
+  re-export step (`resolve_export`) makes `typing_sym` cross-file, so the cycle is not in the file-local part. The
+  hub's 402f846d1a (`pyi_sym`: the PYI rules resolve names in their own file, so each runs file by file) makes it
+  file-local, and the file-local part holds the request.
+- **Choice** (the user's): `typing_sym` by `sym_of` again (rr-align's form; the PYI rules cross-file again); or
+  guests stratified by their nesting (a string's names never decide whether its host is a type context); or
+  `type_ctx` asks for every string in an annotation place, without its negations, and filters after the parse.
+- **Done when**: both tests pass, unignored.
+
+### Q323. Five tests red at rr-align's pin on macOS (roll-up 4)
+
+- **Seen** (2026-11-20, M3): at rr-align's 08e2de78c itself, and the same in the merge:
+  - `corpus::tests::the_maintain_mode_keeps_aggregates_by_their_groups_and_computed_heads` ("the maintain mode
+    maintained strata") and `a_maintained_strata_pieces_run_as_one_component`: the maintain mode maintains none.
+  - `the_run_after_a_cold_one_writes_nothing` and its symlink twin: the warm run records a new manifest (35
+    sources), commits a SQLite write and recomputes twice (Q286 is the Linux form).
+  - `plan::coverage::every_operation_runs_on_every_executor`: the packs ledger. Re-blessed in the merge (programs
+    from `engine` to `lib` as the typing bridge's program is points-to's, one `@sha256` program fewer).
+  The hub's a85f74caf passes all five. The four corpus tests are ignored with this item.
+- **Do**: rr-align's owners fix them where they arise; the hub takes the fixes at the next roll-up.
+- **Done when**: all four pass, unignored.
 
 ### Q293. (Q262 on benchmarks-on-integration) The settle-window test's first leg can no longer miss an edit
 
@@ -6494,11 +6869,11 @@ Open:
   or hash a branded name by its text (as `relocate` maps names by their strings), helpers' names included.
 - **Done when**: two fresh stores give the same rules one identity, and a test lowers them on two numberings and
   finds the same keys.
-- **Decided** (2026-11-19, decision 0486): plans do not move across stores. The kept and prepared plans are rows in
+- **Decided** (2026-11-19, decision 0472): plans do not move across stores. The kept and prepared plans are rows in
   the project's store, so a new store has none to read whatever the identity; sharing them would carry one project's
   corpus data to another outside 0442's explicit `Shared`; planning is 1-3% of a cold run's CPU; and every hash over a
   lowered rule would be re-based on text. A seeded store (an explicit export and import keyed by the rules' text) is
-  0486's open item, not built. Closed.
+  0472's open item, not built. Closed.
 
 ### Q292. (Q186 on cost-classifier-metal-rf) The node-product rewrite on the version (0461)
 
@@ -6687,7 +7062,7 @@ Open:
 - **Design** (the user, 2026-11-18): strings the rules parse are tape values, their nodes named by the tape ("do
   a"); programs the grammar holds are part of their file ("okay, I agree with that"); format 16 unchanged.
 - **Steps**: 0431's five. Step 1 (the record and the R1–R4 tests, ignored, each failing for its reason) is done.
-  Steps 2 to 5 done (2026-11-19); leftovers in Q338.
+  Steps 2 to 5 done (2026-11-19); leftovers in Q268.
 - **Measured after** (PostHog cold, M3, step 5): guests 0.16 s (CPU binding) and 0.33 s (Metal); instructions 2,421 G
   and 1,800 G (1ca497070: 2,476 G and 2,071 G); findings 29,747, fa0efeaed6ff (0431, "Measured (step 5)").
 - **Done when**: R1–R8 hold, their tests pass unignored, no guest document, key range, embed slice or batch rebuild
@@ -6810,10 +7185,50 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Done** (decision 0435, 2026-11-18): 1 and 3. A `Device::May` block is host memory, the Metal checks weigh only
   the device's own buffers, one count (`rerail_accel::budget::written`) against one limit, chunks sized by
   `plan/corpus/sizing.rs`. hogql: Metal 79-82 B to 72-73 B (16-19 chunks, no stop), the CPU unchanged at 87 B.
-- **Open**: why a 4,096-node first chunk makes 20-30 negation-split strata (`pre_k`) where 65,536 makes 11, and
-  1-5 B more on the CPU (the two first-chunk runs at one size also differ, 127 against 154 strata); 2 (row blocks
-  reserved large and grown in place, tails released); the Metal peak footprint at big chunks
-  (1.36-1.47 GB, the count's most 1.15 GB), whose largest rise t49 found in the guests' `ann_ctx` stratum.
+- **Found** (2026-11-19): the noise in hogql's measures had three causes. (a) The builder cut chunks by the size
+  last stored while it worked ahead, so runs cut different chunks (16 against 20) and Q88's plans followed: fixed by
+  0435 §6 (every warm run now cuts the same 12). (b) The joins' memo (0203, 0208): lines noted by wall time, in one
+  memo every chunk reads as it runs; with `RERAIL_JOINS=off` runs plan alike and retire 78.6-79.1 B against 87-89 B.
+  (c) Threads' coordination: 3-7 B more than one thread's 80.1-80.3 B, rising with load. The first-chunk `pre_k`
+  difference was (a).
+- **Done** (decision 0444, 2026-11-19): (b). The joins' memo and the planning choices (inline or store, demand:
+  found with the memo off, one run in three inlined differently, the first chunk to plan a program choosing for all)
+  follow the chunks' order as Q88's plans do; lines are noted by work; exploration draws from a fixed seed. hogql
+  CPU: 81.9-83.1 B, the same inline choices in 6 of 6 runs; Metal 76.6-81.1 B, 3 of 3.
+- **Done** (decision 0445, 2026-11-19): 2. Row blocks reserve 16 GiB of address space and grow in place, so no
+  tail moves (WASI keeps sized blocks); the device's wrap still grows with the used extent (0266 §12); the count
+  and a chunk's held bytes leave out free lists. hogql Metal 70.9-72.6 B (one 75.5 B), device refusals 2-6 stratum
+  runs a run, against 76.6-81.1 B and 14-49.
+- **Explained** (2026-11-19): a new binary's first run is the build's image store cold (decision 0264, `rr::images::
+  store`, one store a build): the first run prepares the rules' images, phase 0 over the rules (the cone's rounds,
+  chunks of 675, 1,400 and 6,898 nodes, the relation `kind` inlined), and later runs read them. With a store of its
+  own a run (`RERAIL_IMAGE_STORE=project`) every run is that first run: the same 15 chunks and inline choices in 3
+  of 3, the corpus's own choices as a warm run's. Measurements set it (the harness did not).
+- **Found** (2026-11-19, the django-bugs merge abaecb14a): three warnings. `content_store/journal.rs`
+  `since_within` takes a `wait` it never reads (an unfinished option?); `phases.rs:380` reads `sources.rr` into a
+  `src` it never uses; `rr/testing.rs:371` imports `ProgramFields` unused in a build without test-hooks. Left to
+  that track's owner to say which are unfinished. The merge also left `the_journal_names_what_changed_since_its_cursor`
+  not compiling: two of its calls lacked the `settle` argument the other side added; given `SETTLE`, as the calls
+  beside them (0478 step 2a's commit). It and `an_answer_recorded_within_the_settle_window_is_checked_though_the_
+  journal_names_nothing` then fail: each expects `since_within`'s `wait` bound to act, and nothing reads it.
+- **Found** (2026-11-19, 0478 step 2d's device runs): one hogql Metal run in five of that build stopped with
+  `the ast matcher wave failed on Metal: BackendCapacity` (0382 §6 stops the run; peak 1,539 MB against 1,474-1,497 MB
+  in the others); none in five interleaved runs of step 2c's build. The ast wave does not run text tests; the verdict
+  stage's device memory is a few KB a stage (a directory block, wraps of blocks the run holds). Not yet known whether
+  it is the change or the device's room at that moment; next: run the two builds ten times each and read the wave's
+  refusal (what it asked, what the count held). That build also wrote a zero into slot 0 after each verdict stage
+  (fixed in the same commit); five runs after the fix, at load 57-69, had no stop.
+- **Partly done** (fa53bc6a6): a chunk's held bytes leave out a device run's own blocks, and the chunk drops the
+  device's copies of its dead relations on its thread as it ends; `FLUSHED` no longer keeps every wave.
+- **Open**: on Metal, a chunk's held bytes still differ between runs (one chunk 19-50 MB): a chunk's device strata
+  run in pool jobs on ~18 threads, and each thread's `RESIDENT` entry of a relation read in place holds its `Part`
+  until that thread's next device stratum. The user asked (2026-11-19) why the device caches relations at all, and
+  set the rule: decision 0478 (one block structure for the CPU and the GPU, no pointer-chasing Rust structure).
+  Step 1 done: the held bytes are the same in every run. Still differing: a chunk's bytes written on Metal
+  (`GROWTH`, 0478 step 7; refusals by device room). (c), the threads'
+  coordination; the Metal peak footprint at big chunks (1.36-1.47 GB, the count's
+  most 1.15 GB), whose largest rise t49 found in the guests' `ann_ctx` stratum.
+
 
 ### Q315. Roll-up 8 (CUDA-support's 0440 onto rr-align): what the merge chose, and what stays open
 
@@ -6878,90 +7293,166 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
     value each call, so the IR was not kept ("tier 1: no entry"). `aot`'s flags now end with its run, and the
     restore of `bit_test` is gone.
 
-### Q318. (Q251 on Typing-support-final-shape) 0364 R7 is red: after a use is added, two recheck lines are unpriced
+### Q324. (Q267 on django-bugs) `docof` lowered as `node`'s projection gives a program's own key
 
-Seen 2026-11-19 on an M-series farm host, at this branch's a9c6b3b62 and on the hub (django-bugs' 2e9d16bc8 names it
-failing at 24740af51): `maintain_tests::r7_the_recheck_order_is_priced` fails at maintain_tests.rs:327, "R7: after a
-use added, every recheck line is priced" (left 2, right 0). R7 is an agreed requirement (0364 R1-R10), so this is a
-regression of the maintain mode's plans (0328 §4), not a stale test.
+- **Seen** (2026-11-19, 0431 step 3): core.rr's `docof(n, d)` of a program's node is its file (`Projected::file`,
+  `ViewDoc::file`, `ChunkDoc::file`), but `node(d, n, …)`'s `d` stays the program's own key, which `doc_role`,
+  `doc_root` and `guest` name it by. Where a program's `docof` is `node`'s projection (T's programs over nodes,
+  `rr::lower::projections`; `whole::Projected` in a combined part), a program's node has its own key for `docof`.
+- **Decided** (2026-11-19, the user: "pick a for the decision"): the guest relations name a program by its file and
+  place (`parsed(at, grammar, root)`), so `node`'s `d` is the file (0431 §4).
+- **Done when**: `docof` of a program's node is its file in a T program too, with a test.
 
-- **Done when**: the two lines are priced as the others are, and R7 passes.
-- **Record** (2026-11-19, Typing-support): fixed. The planner priced each recheck's order with its head bound
-  (`Body::with_head_bound`, Q208), but its native join spec was written from the rule with nothing bound, so an
-  order whose first step reads a bound variable one way (`docof` from its node) could not be written, and the line
-  fell back to the rule's own order, unpriced. The spec writer now starts a head-bound body with the head's
-  variables in their slots (`join_spec_made`; the executor binds them from the candidate, `join_rule_bound`), the
-  recheck's spec is written from the head-bound body, and the spec's cache key says which it is. R7 passes; the 139
-  maintain, session, recheck and plan tests pass.
+### Q325. (Q268 on django-bugs) 0431's leftovers after step 3
 
-### Q319. (Q252 on Typing-support-final-shape) CPython ran on the product's path: `value::python_ast` started `python3.13` for each demand batch
+- **Seen** (2026-11-19, 0431 step 3 done):
+  - `@parse(g, x)` and `@splice` values are still made by the slice's rounds (`embed_slice`, `guests::DEPTH`), which
+    grow the batch: 0431 §1 has no rounds outside the engine. A string a rule parses is already asked in the
+    fixpoint (§8, R10); a computed text's value is to be one too.
+  - The rule-file language declares no embeds (`rr/embeds.rr`): its patterns need the pattern grammars, its `match`
+    regexes the regex grammar, and no embedder reads a JSON object. Before, the library's rules made nothing either
+    (no grammar registered), and no program included them.
+  - A fresh host parse builds its programs (`TapeImage::encode` → `FileImage::embedding`) and `build_with_tape`
+    drops them; `Guests::programs` runs the embedders again from the tape (a stored host's has no programs). The
+    programs are to be kept with the file's tape (0431 §7) and read there.
+  - `.guests off` hides the run language's code guests: under 0431 a tape value is never code and a program is code
+    only in a run of its own grammar's label, so the setting has nearly nothing left to hide
+    (`combined_programs_see_guests_by_their_own_policy`).
+- **Done when**: no round outside the fixpoint; a file's programs read from its stored tape; the setting's meaning
+  decided.
 
-Seen 2026-11-19 (Typing-support), on a Linux farm host without CPython 3.13: 9 of `rerail-lang-python`'s tests
-failed, "Canonical Python AST facts require CPython 3.13". The relational producer
-(`residency::admission::relational::python_ast`, installed as the AST producer) ran W's `pythonAst` worker in a
-Python process for every batch, though `code_rule_dsl::cpython` computes the same facts natively and the SQL path
-(`facts/vtab/syntax/cpython.rs`) reads them from there.
+### Q326. (Q269 on django-bugs) A fragment is parsed from a node kind (decision 0466)
 
-- **Fixed**: `batch_with_metrics` computes every field the producer asks (`FIELDS`) and the text fields natively, a
-  node found as the worker found it (`printed::located`, `of_kind`, `by_start`), with the worker's counts of parses
-  and walks and its failures. `dumps_and_signed_fingerprints_match_cpython_3_13` (30 cases recorded from CPython)
-  and the other python_ast tests pass on Linux; 117 of the python AST consumers' tests pass.
-- **Still open**: a module's `syntax_error` field, the whole `SyntaxError` (`offset`, `text`, `end_lineno`,
-  `end_offset` besides `msg` and `lineno`), which only the gate's conformance replay asks for
-  (`batch-nine.ts`, `pythonAstBatch`), still runs the worker: the native verdict is the line and message alone,
-  and CPython's offsets differ by the kind of error. Its test is ignored with that reason.
-- **Done when**: `cpython::syntax` gives the error's span as CPython 3.13 does, checked by `parity` against CPython
-  on a box, and the worker is deleted.
-- **Record**: —
+- **Asked** (2026-11-19, the user): "we need to allow a parse to start from a given node type ... a Python annotation
+  is not a module. It's a type. A JSX document doesn't start with a <html> tag"; tree-sitter-only dialects: "Hand-written
+  parsers only". Before 0431's language-declared embeds at known places (the user's choice 2 for HTML in a string).
+- **Steps**: R1–R7's tests; the parsers' `STARTS` and `parse_from` (Python `type`, TSX `jsx_element`, HTML
+  `element`); the registry's fragment start and tag; the engine's fragment parse (no wrapper, no `wrapped_root`); the
+  libraries' rules over a `type` root; PostHog's findings.
+- **Done when**: R1–R7 hold and PostHog's findings are unchanged or each change is named.
+- **Done** (2026-11-19). R1–R7 hold (0466 "Tests"). The three parsers start at `type`, `jsx_element` /
+  `jsx_self_closing_element` and `element`. A refused text is one `ERROR` node, so `.on guest_error` still sees it.
+  The libraries' rules needed no change: `annotation`, `parsed_in` and `ann_strip` already read a `type` root.
+  PostHog on the CPU is unchanged: 29,747 findings, fa0efeaed6ff.
 
-### Q320. Roll-up 10 (Typing-support-final-shape onto rr-align): what the merge chose, and what stays open
+### Q327. (Q270 on django-bugs) A language declares the places its strings embed code (decision 0470)
 
-Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 are Q318 and Q319 here.
-- **Chosen**:
-  - Theirs' 0276: the tree forms are gone (`front::Program`, `rr::parse`, `rr::print`, `Placed::of_program`,
-    `Builder::of_program`, `tree_text`). Ours' code that still read them reads versions now:
-    - `import_closure::add_to` reads `components.rr` as a version. `taken` returns the heads it takes.
-    - The cover's taped literals (decision 0431 §8, `rr::lower`) are `LitAt`s.
-    - Ours' tests moved to `parse_version`, `Placed::whole` and `matcher_relations`.
-  - Ours' 0450: `cross_memo` and `bridge` stay removed, and theirs' edits to them are dropped.
-  - Ours' 0456: kept facts stay. Theirs' 09dc8acfd5 names the kept facts a run reads in its manifest. Here,
-    `strata_kept` adds them to the run's late sources.
-  - The observer: both sides fixed Q250 and Q223, each its own way. Ours stays (`trusting_root`, `dir_named`'s
-    `stale`), with theirs' test budget for the settle-window test. Theirs' `budget`, which made the settle window
-    the least a replay waits, is dropped. Ours' caller bound holds (Q221, Q293).
-  - The tree-decode counter (`decoded`, `Record.trees_decoded`) is removed: nothing decodes a tree now.
-- **Fixed**: tests found red after the merge. Each cause was on ours' side. At 08e2de78c4 (before the merge),
-  `a_copy_of_an_inputs_columns_is_a_view_of_it` and R8 failed the same way.
-  - Counts read outside any run, where `local()` is fresh on every call (0442): the maintain mode's strata
-    (2 tests) and the input views. Each test now holds its run's scope.
-  - `NORMALIZED` was a process static. It is now the run's count (`PlanCounts::normalized`).
-  - 0364's shape counts lived on the shared object, so tests running beside one another counted each other's runs.
-    R1 and R8 failed under 4 threads and passed under 1. They are now the run's own counts.
-  - A part was a view, then Q180's restated record as an overlay, then its fields' overlay. `part` now runs in
-    `Pipeline::stating_record`, since its last step states the record.
-  - The stored-run test still expected an image held inline. Since store floor 7, every source is in a segment
-    from its write.
-  - `every_switch_lowering_reads_is_classified` now ends its region where theirs does.
-  - `check_rr` knows the import closure's relations (`rr_cx_*`). That removes 800 of its 802 problems.
-- **Open** (red at 08e2de78c4 too; none comes from this merge):
-  - `rdl_programs_translate_to_the_same_program`: `typing/programs/calls.rr` and `calls_rust.rr` are no longer
-    their `.rdl`'s translation.
-  - `a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone`: `ruff-c408` places its findings at a tape value's
-    node (decision 0431's refusal).
-  - `rule_syntax_files_pass_check_rr`: 2 problems remain, in `lib/c/includes.rr` (`c_inc_from` and `c_resolved`
-    each depend on a relation through `!` in a cycle).
-  - `fresh_and_restored_programs_have_identical_relation_identities` failed once in three 4-thread runs. Its restored
-    child held a prepared program that the fresh one did not. It passes alone.
-- **Checked** (M3): the workspace's tests and bins check with no warnings. These pass:
-  - the corpus modules (102, plus `corpus::tests`' 128);
-  - the image and manager tests (55);
-  - the kept tests, the import closure and the cross views;
-  - the store's observer and journal tests (35);
-  - the rr tests other than the open three.
+- **Asked** (2026-11-19, the user): choice 2 for "a string we know is HTML": a language declares the embeds at known
+  places. After 0466.
+- **Steps**: R1–R6's tests; the registry's `places` (schema, checks, generated table); the `call-argument` embedder
+  over the batch's tape document (scope table, plain strings, segments); Python's places; an HTML rule over a
+  program; PostHog's findings.
+- **Done when**: R1–R6 hold and PostHog's findings are unchanged or each change is named.
+- **Step 1 done** (2026-11-19): R1–R4, R5 for a Python rule, R6 (PostHog unchanged, 29,747). Open, step 2: a run of
+  the embedded language reads the files holding its programs (0470 "Steps"); an HTML run sees no Python file's
+  program, nor a JavaScript run an HTML file's `<script>`.
+- **Step 2 done** (2026-11-19, the user: "possible but not happen by default"): `.embedded on` makes a run read the
+  files that hold its language's programs, their own nodes hidden (0470 "Steps", 2; R7). Also fixed: a cross-file
+  part's base relation with no rows anywhere (`rr_program` in a run holding no program) is bound empty.
 
-### Q324. A level's formulas as phases: the pushes' chains are the time (0465; done in 0483)
+### Q373. (Q341 on final-rerail-shape-rr-align) Roll-up 15 (django-bugs onto rr-align): what the merge chose, and what stays open
 
-- **Found** (2026-11-19, 0465): `label_phase` runs a level's word steps and one-hop pushes in one dispatch a phase
+- **Merged** (2026-11-20): django-bugs at 0c8f63e70f0, base ed639096f4. Only theirs' added lines were renumbered:
+  - decision 0482 → 0466, its file and README row noting the old number. 0470 keeps its number: none is used here.
+  - work queue Q267–Q270 → Q324–Q327. Theirs' citations of its own Q261 and Q266 are Q306 and Q310 here (roll-up 7).
+  - 0431's header cited format 16 as 0426 (0434 here) and the work queue as Q261 (Q306 here).
+- **Taken from theirs**:
+  - 0431 steps 3–5: a file's programs are its grammar's, named by their file and place (`rr_program(d, file,
+    grammar)` replaces `guest`, `doc_root` and `doc_role`), and the slice makes the tape operations' values alone.
+  - 0466: fragments parsed from a node kind by the hand-written parsers.
+  - 0470: a language's declared embed places, and `.embedded on`.
+  - The `node` view's document column is a program's file (`ViewDoc::file`).
+- **Kept from ours**, theirs' change adapted to it:
+  - The views' reads are UKL (`<ukl/reads/view.h>`, generated). Theirs' change to the deleted `view_reads.metal` is
+    made by generating the header again (`the_view_kernels_reads_are_these`). The one line that differs reads the
+    file's column at 116, as theirs' Metal did.
+  - Findings lower to the version (ours' `self.b`). Theirs' `rr_program` reads are written in that builder: a file's
+    own syntax error is not a program's, and `.on guest_error` reads `rr_program` with its grammar.
+  - A chunk keeps its documents where theirs says (slice, parses, guests the rules see, `.embedded on`), and where
+    ours' cross part reads base relations (0458). The no-slice arm returns ours' documents and sets theirs'
+    `host_of`.
+  - `guests::READS` takes theirs' list, at ours' visibility.
+  - The device test over a file's programs takes theirs' bound (the uploads against a file with no script, plus
+    `parsed`'s rows).
+  - Theirs' Q263 note (`res` with no connected demand) goes into Q249 here, the typing oracles' products, whose
+    Done bounds `res`.
+- **Checked** on the m1max:
+  - the workspace's tests and bins check with no warnings;
+  - `rerail-clif` (with the views' reads test), `rerail-python-lean`, `rerail-ecma-lean` and `rerail-html-lean`
+    (43, 4 ignored);
+  - the engine's fragment, embed, call-argument and place tests, `.embedded on`, the guest tests, the syntax-error
+    and guest-error findings, and `cpu_and_metal_read_the_same_tape_values` (72, 1 ignored).
+- **Open**: nothing new.
+
+### Q374. (Q342 on final-rerail-shape-rr-align) Roll-up 17 (benchmarks-on-integration onto rr-align): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): benchmarks-on-integration at 6f84b5d5961, directly: none of theirs' new numbers
+  collide here.
+- **Kept from ours**: 0353 step 5. Ours' c3e855c096 makes the same step as theirs' (the vtab, the syntax views,
+  the device chunks, `within`, the set fixpoint's device path and the Metal join). Ours' files are kept, with
+  their tests.
+- **Taken from theirs**:
+  - The set fixpoint's `Symbols` arena and its test. Ours' `OnConn` and `DatabaseSymbols` hold
+    `Arc<Symbols>` where they held `Arc<RwLock<Interner>>`.
+  - Q203's refusal hook (`shared.rs::REFUSAL_HOOK`, `set_refusal_hook`), beside ours' `leased`, which reads
+    `dev().live`.
+  - Q219's tests: a root spelled with a dot, or watched through one, is told of an edit under it.
+  - global-state.txt lists `REFUSAL_HOOK` and the memory profile's `TOLD` as `stays`: both are set once, for
+    the process.
+- **Checked** on the m1max:
+  - the workspace check is clean;
+  - the store's two Q219 tests;
+  - the engine's `scope_tests` (5), with `a_loaders_cursor_is_made_while_the_symbols_are_written`.
+- **Open**: nothing new.
+
+### Q328. `logic/native/setfix/device.rs` and its `device/tests.rs` are compiled by no crate (closed: they are)
+
+- **Found** (2026-11-20, roll-up 4's CUDA-support merge): the crate split (2a116f7478, `tools/cratify/moves.tsv`
+  row 9) moved `setfix::device` to `logic/device.rs`, and no `mod` names the old file since. Merges still carry edits
+  into both files (CUDA-support's to `device/tests.rs`), and `facts_only.rs` and `run_state.rs` list statics by the old
+  path. `views_made_on_the_device_are_the_hosts_rows` and the file's other tests run nowhere.
+- **Closed** (2026-11-20, roll-up 4's final-rerail-shape merge): wrong. `rerail-device-metal` mounts both files
+  (`native/crates/device_metal/src/lib.rs`, `#[path = "setfix"] ... pub mod device;`), and its tests run there; the
+  search behind the finding looked in `rerail-logic` alone. Two of them failed on the hub, found running them: the
+  crate's `test_languages` registered no embedder, and Python's tape reads `CallArgument`'s since 0470 step 1 (it
+  registers it now); and `views_made_on_the_device_are_the_hosts_rows` found a guest's places by its document key in
+  `docof`, which is the place's file since 0431 §4 (the guest's rows are now file 7's rows that the batch without
+  it lacks). The crate's 30 `setfix::device` tests pass.
+
+### Q329. (Q187 on cost-classifier-metal-rf) The test binaries' unwind info is past what the compact unwind table can address
+- **Found** (2026-11-19, a tidy-up of 0442's work): every large test binary's link warns `__eh_frame section too
+  large (max 16MB) to encode dwarf unwind offsets in compact unwind table` (the engine's, `rerail-logic`'s and
+  `rerail-device-metal`'s lib tests, dev profile). The engine's on an M1 Max: `__text` 188 MB, `__eh_frame` 41.7 MB,
+  `__unwind_info` 5.8 MB. A function whose unwinding the compact table cannot point to is unwound from its DWARF
+  entry by a search: a panic in such a test is slower to unwind; nothing else changes.
+- **Next**: find why 41.7 MB of DWARF unwind entries are kept. A frame-pointer function on arm64 has a compact
+  encoding, and ld drops the DWARF entry of a function that has one, so the entries kept are of functions it could
+  not encode, or they are kept for all. Count the kept entries against the functions (`dwarfdump --eh-frame` on the
+  binary), and look at what the compiler and linker are told (`-C force-unwind-tables`, ld's
+  `-no_keep_dwarf_unwind`). If the binary is simply this large, the cause is its size at opt-level 0.
+- **Done when**: the link gives no warning, or the cause is shown to be the binary's size and the choice (a smaller
+  test binary, or the warning accepted with its reason) is the user's.
+### Q330. (Q188 on cost-classifier-metal-rf) A key a derived relation declares is checked where its rows are written (0361 step 6)
+
+- **Found** (2026-11-19, 0361 step 6): the step's checks are built at the probes (`Model::layout_broken`): a key or
+  fan-out a probe is bounded by, against the executors' counts. A key is also to be checked where the rows are
+  written, as the decision says: dedup probes the whole row, and a key needs one more probe. No program has a subject
+  for it: core.rr declares keys only of base relations (tape views, never written), and an inferred key is proved
+  from the facts of what its rules read.
+- **Next**: when a program first declares a key of a derived relation (`.layout r key(...)` where `r` has rules),
+  probe the key's columns in that relation's block index as each row is written, in every executor that writes it
+  (setfix's CPU levels, its closures, the device's): a second row for a key breaks it (`shapes::Broken`).
+- **Done when**: a test declares a key of a derived relation whose rules break it, and the run names it broken and
+  plans the relation from statistics.
+- **Done** (roll-up 19): rr-align had built it (2b9841b58b): setfix's writer counts a key's second row
+  (`setfix::key_breaks`), and the run breaks the fact (`plan::break_fact`, now noting it in `shapes::Broken`).
+  Test: `a_run_finds_a_key_its_rows_break_where_they_are_written`. Open: the device's writer and setfix's closures
+  do not count it yet.
+
+
+### Q333. (Q283 on final-rerail-shape) A level's formulas as phases: the pushes' chains are the time (0474; done in 0475)
+
+- **Found** (2026-11-19, 0474): `label_phase` runs a level's word steps and one-hop pushes in one dispatch a phase
   for the whole batch. Its word steps cost about 32 µs a dispatch, but its pushes are chains within a thread: up to 7
   dependent hops for a format 16 parent, and one hop for each child. On s1000 it does not beat `label_formula`, so it
   stays behind `RERAIL_FORMULA_PHASES=1`.
@@ -6970,26 +7461,26 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
      s1000;
   2. range steps (descendants, following, reaches: ops 8, 10, 11, 15, 16, 23–25) as scans between blocks, so a
      level runs on one kernel;
-  3. then compare a level's phases with 0464's size classes, and remove the loser.
-- **Done** (2026-11-19, 0483): the parents once a batch (`label_parents`), the range steps as scans and the climbs, so
-  every formula runs on `label_phase`; `label_formula` and 0464's size classes are removed. The SIMD spread was not
+  3. then compare a level's phases with 0473's size classes, and remove the loser.
+- **Done** (2026-11-19, 0475): the parents once a batch (`label_parents`), the range steps as scans and the climbs, so
+  every formula runs on `label_phase`; `label_formula` and 0473's size classes are removed. The SIMD spread was not
   built: the pushes are under 1 ms once a parent is one load. Left: `label_leaves` (7.4–11 ms on s1000), the
   epilogue (2–3 ms), and a descendant scan in one dispatch (decoupled look-back).
 
-### Q325. Roll-up 11 (final-rerail-shape onto rr-align): what the merge chose, and what stays open
+### Q369. (Q325 on final-rerail-shape-rr-align) Roll-up 11 (final-rerail-shape onto rr-align): what the merge chose, and what stays open
 
 - **Merged** (2026-11-20): final-rerail-shape at 36cf51b43ef, base d58680b1d6. Only theirs' added lines were
   renumbered, past every number here:
-  - decisions 0424 → 0459 and 0425 → 0460 (the same decisions as ours), 0459 → 0464, 0461 → 0465;
-  - work queue Q271 → Q288 and Q251 → Q289 (ours), Q252 → Q321, Q270 → Q322, Q281 → Q323, Q283 → Q324.
+  - decisions 0424 → 0459 and 0425 → 0460 (the same decisions as ours), 0459 → 0473, 0461 → 0474;
+  - work queue Q271 → Q288 and Q251 → Q289 (ours), Q252 → Q331, Q270 → Q332, Q281 → Q281, Q283 → Q333.
 
   The renumbering skipped `.uglykl` files; `label_passes.uglykl`'s five citations were fixed by hand.
 - **Label passes' host**: ours' device layer (`lane`, 0440 step C), with theirs' features ported onto it:
   - the fact block (0446), bound by `Block::device_buffer` at the pattern kernel's slot 7, the shape at 8; the UKL
     pattern kernel has theirs' fact case (a row's targets, or a word of bits);
   - leaf rows a thread a word (0449);
-  - size classes (0464), as two launches in a row: the lane has no concurrent dispatch;
-  - `label_phase` (0465) and `phase_dispatches`, a launch a phase;
+  - size classes (0473), as two launches in a row: the lane has no concurrent dispatch;
+  - `label_phase` (0474) and `phase_dispatches`, a launch a phase;
   - `RERAIL_FORMULA_FUSED`, `RERAIL_FORMULA_WIDTH`, `RERAIL_FORMULA_WIDE`, `RERAIL_FORMULA_TRACE` (Q288).
 
   Theirs' switches were process statics; they are run settings now (0442). The trace file is opened for each line.
@@ -7026,10 +7517,10 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
 - **Open**:
   1. `RERAIL_FORMULA_PHASES=1` on the 491-clause wave: its 192 `label_phase` launches pass the 200-launch limit
      (`BackendLaunchLimit`). This happens on theirs too, whose dispatches the same ledger counts, and the plan's
-     launch count has no phases. Q324's comparison decides whether phases stay. If they do, the plan counts them,
+     launch count has no phases. Q333's comparison decides whether phases stay. If they do, the plan counts them,
      or a phase loop runs inside one launch (fixed launch count).
   2. Per-launch device timestamps in the lane (0447's measure), and whether the size classes need to run
-     concurrently (0464).
+     concurrently (0473).
   3. `ruff-pyi041-redundant-numeric-union` runs past 500 s on the CPU interpreter, over the gate's 60 fixtures. It
      did so before the merge too (813282f599), so the full parity gate no longer ends in 10 minutes. A sample puts
      the time in `LoweredMatcher::label`: each round, each label makes the views again, and `Arc::make_mut` then
@@ -7040,7 +7531,134 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   5. `RERAIL_FORMULA_FUSED=2` on the 491-clause wave ran past 120 s. The fused switch runs each group's formulas
      one after another; measure it before Q288 relies on it.
 
-### Q326. (Q287 on Go-C-and-C-support; Q222 on Swift-Kotlin-Scala-support, Q271 until its merge of final-rerail-shape) A run of tokens that counts a depth, as `type_args_end` does
+### Q334. (Q284 on final-rerail-shape) After 0465: the parse workers, the serial phases, and small label runs
+
+- **Found** (2026-11-19, 0465), on all (3,089 files, 9.6 M nodes; about 20 s on an M1 Max):
+  - the parse workers take 13.4 s of CPU (4.3 ms a file);
+  - the run uses 3.3–3.6 of 10 cores, with 13–48 s of its threads ready and no core;
+  - the run's thread spends 8–10 s in serial phases: cross 2.7–5.1 s, stats 2.1–2.5 s (400,000–800,000
+    involuntary switches), combine 2.2–3.0 s;
+  - the large program's label runs are 283 runs with a median of 6 files, where s1000's were 6 runs with a median of
+    36. Each run pays its fixed costs.
+- **Next**, in order:
+  1. Why the pool oversubscribes its cores, and the parse workers' CPU a file.
+     **Answered** (0477): it does not. The waits were locks (the scalar pool, the residency, the grammars) and the
+     machine's load, and the measured binary was renamed, which leaves the main thread out of the pool (the
+     load-time constructor's name test). The parse workers' phase is 7.4 s on all (8.1–8.5 s): W's reference graph
+     5.9 s of it. Open: the summary as a tape pass; the interner's waits; the store writer's one lock.
+  2. `stats`' switches, `cross`' `public_best_*` waits, `combine`'s fixpoint waits.
+     **Done** (0477): `public_best_*` were the pool's threads waiting on the scalar pool's one lock; sharded, `cross`
+     6.2 → 3.0–3.3 s, `stats` 1.0 s. `combine`'s waits are the chunks' parse and evaluation on the workers.
+  3. Trace where the small label runs come from, then batch them to a chunk's size.
+     **Done** (0471): they were a wave halved until its files shared a slab (`gather` found no room). A batch now
+     reads each document in its own slab; 78 runs on all, one a wave. The cold run's exit was the device joins'
+     caches, capped per thread: now one cap for every thread's.
+  4. A cold first Metal run of all exited 1 (its log was lost). Reproduce it with a fresh binary path.
+     **Done** (0471): the panic of a one-file wave the budget had no room for, the device joins' caches holding
+     127 MB; two cold runs of a new binary passed.
+
+### Q375. (Q344 on final-rerail-shape-rr-align) Roll-up 18 (final-rerail-shape onto rr-align): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): final-rerail-shape at 1e61e440295, renumbered on a commit of its own first:
+  - its decisions 0463, 0474 and 0482 are 0475, 0465 and 0476 here (0459 → 0473 and 0461 → 0474 as at
+    roll-up 11). 0471, 0477 and 0483 keep their numbers.
+  - its Q271, Q283 and Q284 are Q288, Q333 and Q334.
+- **Taken from theirs**:
+  - 0475: the label passes' phases are the only path (`label_parents`, 64-word phases, chain levels run
+    again on `Error::ChainLevels`). `label_formula` and its size classes are gone.
+  - 0471: a batch reads its tapes in every slab they lie in. `DocTable::new` sets each view's offset by its
+    slab's address; the slabs are made resident on each launch; `gather` and `Resident::copied` are gone.
+    The preprocessor's evaluator reads its units the same way (`Unit::of`, `run_over`).
+  - 0477: the tape room's slab, sharded names and the sharded scalar pool.
+  - 0483: references.rerail, `unpackaged` documents, and the refusal of a min or max over a symbol.
+- **Kept from ours**:
+  - the lane API: launches name their slots, buffers and uses, with no Metal encoders.
+  - 0442: theirs' `TAPE_SLAB` static is a field of `Residency`. The names table is a shared object.
+    `HELD` (the set fixpoint's device bytes held) is a machine object, which each `Resident` subtracts from
+    when dropped.
+  - `TapeView` holds both ours' `presence` and theirs' `at_high`: 128 bytes. The generated reads
+    (`ukl/reads/view.h`) are regenerated.
+- **Made to fit**:
+  - The refusal reads a column's declared type as stored (`sym`), not only `symbol`. Before that it never fired.
+  - Five rules took a min over a symbol to pick "any one" of a node's types (`type_first` in calls.rerail,
+    calls_cx.rerail, calls.rdl, the docs' calls.rerail, and `pt_type_first` in points-to.rerail). Candidates are now
+    every type's supertypes. `type_miss` and `proven_type` read `type_of` for them, which gives the same
+    `proven_type`, and the oracle tests agree. make_cx.py's patterns follow.
+  - Two tests had a min over a symbol and now use a number or a node: `native_aggregates_and_text_functions_run`
+    and the R4 maintain test.
+- **Checked** on the m1max:
+  - the workspace check is clean;
+  - c-directives, clif, and the device-metal phase programs;
+  - the engine's label kernels, a batch over several slabs, every format on the device, `unpackaged`, and
+    the reference-edge fixtures;
+  - the lowering report: 201 programs, none refused;
+  - the typing oracle tests, and the rows, front and maintain tests named above.
+- **Open**: `a_unit_past_its_room_runs_again_larger` (c-directives) fails before this roll-up too, alone. It is
+  ignored under Q367.
+### Q335. `RERAIL_GPU_ENCODER_TIMES` (0447) has no form on the device layer's launches
+
+- **Found** (2026-11-20, roll-up 4's final-rerail-shape merge): final-rerail-shape's 0447 timed each compute encoder
+  of the label passes from stage-boundary counter samples (`EncoderTimes`, `encoder_us.<label>`, `encoder_gap_us`),
+  on raw Metal encoders. The hub's label passes launch through `lane::Command` (0440 C/D), which opens its own
+  encoders, so the measurement went with the port; `RERAIL_GPU_KERNEL_TIMES` (a command buffer a kernel) still times
+  each kernel, with its command buffer's cost in the number.
+- **Steps**: a launch's counter-sample slot on `lane::Command` (Metal: a sample buffer with stage-boundary samples;
+  other backends: none), read at the command's end into `encoder_us.<label>` and the gaps.
+- **Done when**: `RERAIL_GPU_ENCODER_TIMES=1` on a label-pass run prints the same counters 0447 measured with.
+
+### Q336. A chain's reruns (0475) spend the evaluation's 200 launches: two ruf028 cases refused on Metal
+
+- **Found** (2026-11-20, roll-up 4's final-rerail-shape merge, M3, `metal-tests`):
+  `lowered_clauses_find_the_same_roots_on_metal` has 490 of 492 clauses equal. The two that differ are
+  `ruff-ruf028-invalid-formatter-suppression-comment`'s `in-non-statement` and `skip-or-on-misplaced` (once `log001`
+  in their place): `cpu None, metal Some(BackendLaunchLimit)`. With `RERAIL_LAUNCHES=1` the refused evaluation
+  shows three runs (`label_parents` 3) and about 130 of its launches on `label_phase`.
+- **Cause**: a chain's reach with more levels than the run's phases hold is found after the run (flags bit 512),
+  and the run goes again with twice the levels (1, 2, 4, ... up to `PHASE_CHAIN_MOST`; the merge dropped a further
+  rerun on the interpreter, which runs `label_phase` the same way and so overflowed again). Each rerun is a whole
+  encoding, about 70 launches here. The ledger (`KERNEL_LAUNCH_LIMIT`, 200) counts them all, but the plan-time
+  bound counts only successful runs (`used`), and `formula_phase_count` counts phases at `PHASE_CHAIN_LEVELS`.
+  So the plan passes, and the ledger refuses the third run. The loop's other retries (widened, deep, released)
+  leave `used` the same way; the chain's are the ones that run several times.
+- **Choice (the user's)**: the run's first levels from the batch's chains, measured on the host as the plan
+  measures a group's nesting; or the kernel writes the levels it needed, so one rerun suffices; or the retries
+  count into `used` and the plan bound reads the ledger, so the batch is split before it runs.
+- **Done when**: both cases are equal on Metal, and the retry loop's plan bound is the ledger's.
+
+### Q337. (Q262 on Native-GPU-strata) On Metal a hogql run can lose a whole chunk's findings
+
+- **Seen** (2026-11-19, decision 0478 5b-5e): a cold hogql run under the Metal binding, profiling build, format 15,
+  sometimes gives fewer than its 1,629 findings (1,358, 1,375 and 1,487 seen), with no error and exit 0. The files
+  that lose findings lose all of them, and they are a different set each time (one chunk's). Step 7's build
+  (d8f645ce4), made before 5b, did it too: 1 of 4 runs at load 20 (1,487). Before that its build gave 12 of 12 at
+  load 31-38. The CPU binding has given 1,629 in every run.
+- **Suspect, not shown:** the stages run again after an overflow. Their number differs between runs (96-103, R6 of
+  0478), so a rerun that drops or overwrites rows would lose output by timing.
+- **Do:** find the stratum whose rows differ in a bad run (a per-chunk count of each head's rows, compared with a
+  good run's), then the cause; a test that hits it; the fix.
+- **Done when:** 20 Metal runs of hogql give 1,629 each.
+
+- **Lead** (2026-11-19, step 6b's runs: one good, one at 1,358): comparing each stratum's rows, host plus device
+  (`prof/native.tsv`'s last step, `prof/placement.tsv`'s `gpu_rows_made`), only 11 strata differ. In the bad run each
+  of them has one stratum run fewer on the device (`on_gpu` 5 of 6, 11 of 12), so that chunk's run went to the host.
+  For all but one, the host made the rows the device did not, and the totals match. The exception is
+  `xd_fz3398261162_..._rr_diagnostic`: 53,226 rows against 65,468, and 53,226 is exactly what its sibling
+  `xd_fz2220395310_..._violation` made on the device in that run. The diagnostic's host run read an input that the
+  refused chunk had not finished writing. **Next:** in the chunk that fell back, check which input the diagnostic's
+  host run read, and when that input was filled.
+
+### Q338. (Q263 on Native-GPU-strata) A relation's statistics kept by delta are on the heap (0478 R5) — done (0478 step 6f)
+
+- **Seen** (2026-11-19, closing 0478 step 6): `InRel::stats` and `Rel::stats` (`KeptStats`, decision 0096,
+  `plan::statkeep::RelStats`) keep, per column, an exact map of value to count (`FxHashMap`, at most 256 values) and
+  the planner's sketches (`plan::sketch::Sketch`: an AMS array and levels). They were not in 0478's inventory, so
+  steps 5-6 left them on the heap.
+- **Do:** their arrays in blocks, as step 6c did for setfix's sketches: the exact map as open addressing in a block,
+  the sketch's arrays as block arrays. Their numbers stay the same (the statkeep tests).
+- **Done when:** `RelStats` keeps no heap collection, its tests pass, and hogql gives its 1,629 findings at the same
+  instructions.
+
+### Q339. (Q222 on Swift-Kotlin-Scala-support) A run of tokens that counts a depth, as `type_args_end` does
 
 - **What**: a token run (`(A | B)*`, 0416) ends at the first place its rest holds. The lean
   parser's `type_args_end` counts `<` and `>` (and `(`, `)`), and ends where the depth closes.
@@ -7053,7 +7671,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   `type_args_end` and `lambda_params_end` do. Tests: `a_run_counts_its_depths` (eval, ladder),
   `depths_are_the_lean_parsers`. Corpus unchanged; AOT tapes the JIT's. Reviewer not yet run.
 
-### Q272. (Q223 on Swift-Kotlin-Scala-support) A token run cannot stop at a line break
+### Q340. (Q223 on Swift-Kotlin-Scala-support) A token run cannot stop at a line break
 
 - **What**: line breaks are no tokens, so a run passes them. Kotlin's annotation before `if` /
   `when` ran to a line break before (`@A(x)` then `if` on the next line was no annotated `if`).
@@ -7063,9 +7681,9 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
 - **Done** (2026-11-18): no difference is left. `@A(x)` and `if` on the next line, and a declaration
   on the line after, give the lean parser's tape (the run passes line breaks as the lean parser
   passes them: it reads tokens): `annotated_expressions_are_the_lean_parsers`. What the run cannot
-  say is refused, to the lean parser: Q274.
+  say is refused, to the lean parser: Q342.
 
-### Q274. (Q225 on Swift-Kotlin-Scala-support) Kotlin: an annotated expression where the lean parser's `declaration_ahead` decides
+### Q342. (Q225 on Swift-Kotlin-Scala-support) Kotlin: an annotated expression where the lean parser's `declaration_ahead` decides
 
 - **What**: in a statement, the lean parser skips annotations (`skip_annotation`) and modifiers
   and asks for a declaration's keyword (`declaration_ahead`); where there is none, the `@` is an
@@ -7081,7 +7699,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   parser's tapes (`annotated_expressions_are_the_lean_parsers`); corpus 431 / 60 / 0 (was 429 /
   62); `a_run_ends_on_a_token` on every executor; `aot_tapes_are_the_jits`. Reviewer not yet run.
 
-### Q275. (Q226 on Swift-Kotlin-Scala-support) Metal's step 13 differs from the interpreter (`every_step_on_metal_equals_the_interpreter`)
+### Q343. (Q226 on Swift-Kotlin-Scala-support) Metal's step 13 differs from the interpreter (`every_step_on_metal_equals_the_interpreter`)
 
 - **What**: `parser_tests`' `every_step_on_metal_equals_the_interpreter` fails: 48 files of the
   compiler ladder's step 13 (block comments) differ on Metal. Seen 2026-11-18 at 9e3876507 and
@@ -7089,7 +7707,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   ladder's first step, which every test reads.
 - **Done when**: the cause is named and Metal's records equal the interpreter's on step 13.
 
-### Q273. (Q224 on Swift-Kotlin-Scala-support) `deprecated back_fill` leaves the language
+### Q341. (Q224 on Swift-Kotlin-Scala-support) `deprecated back_fill` leaves the language
 
 - **What**: Kotlin's step 36 has no back fill (0416). Kotlin's step 35, the `.rr` ladder's steps 15
   to 21, and the tests of the IR's backward pass still say `deprecated back_fill`.
@@ -7100,7 +7718,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   steps 1–35 are an uncompiled record (0416); `deprecated back_fill` is refused; the IR's tests
   make their back fill with `syntax::backward`. Reviewer not yet run.
 
-### Q276. (Q227 on Swift-Kotlin-Scala-support) Kotlin: context over tokens in the token loop (0429)
+### Q344. (Q227 on Swift-Kotlin-Scala-support) Kotlin: context over tokens in the token loop (0429)
 
 - **What**: tier 1's CPU body is 1,500 operations a block (144 machine instructions a byte); about
   420 are keyword tests, and the fills and marks over them add more. 0429 answers them once a
@@ -7109,7 +7727,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
 - **Done when**: the CPU body holds no token-level mask (`tier1_cones` lists none left), with the
   tapes unchanged.
 
-### Q277. (Q228 on Swift-Kotlin-Scala-support) A hidden mark taken before another live hidden mark: the compiled tier 2 refuses where the reference parses
+### Q345. (Q228 on Swift-Kotlin-Scala-support) A hidden mark taken before another live hidden mark: the compiled tier 2 refuses where the reference parses
 
 - **What**: tried for 0429's class header. Kotlin's grammar had one `semi` (no `class_head`
   split) and a hidden `mark head_ctor = lf_end, before "constructor"`, declared before `semi`
@@ -7128,7 +7746,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   rule on the interpreter and Cranelift (it fails without it), and Kotlin's
   `constructor_lines_are_the_lean_parsers` the class header.
 
-### Q278. (Q229 on Swift-Kotlin-Scala-support) Bitlex's reference does not implement a mark's `, ends`
+### Q346. (Q229 on Swift-Kotlin-Scala-support) Bitlex's reference does not implement a mark's `, ends`
 
 - **What**: `, ends` (a hidden mark where a nested level that may end and does not take it
   ends) is parsed but read nowhere in `tools/bitlex/src/tree.rs`. The reference's nested levels
@@ -7138,7 +7756,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
 - **Done when**: the reference ends a nested level at an `ends` mark as the compiled side does
   (0430 step 1b's rule included), and Kotlin's refused texts are refused by the reference too.
 
-### Q279. (Q230 on Swift-Kotlin-Scala-support) Gap marks set in the token loop while the extra's mark is set after it
+### Q347. (Q230 on Swift-Kotlin-Scala-support) Gap marks set in the token loop while the extra's mark is set after it
 
 - **What**: the token loop's merge (`record_tokens`) tells an extra by its mark's bit in the
   code. A gap mark the loop sets itself (`loop_marks`' lifted marks, from bytewise masks) is
@@ -7171,10 +7789,10 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
 - **Done here** (roll-up 12, 2026-11-20): rr-align generates the prefix on Metal (5670277876, Q215: opcode 18,
   `block_program`'s `Prefix`), so `missing_form` no longer names it. The serial path (`block_serial::run_kept`) does
   not yet and refuses it (`starts_late`). At the roll-up `every_step_on_metal_equals_the_interpreter` refuses no step
-  (580 files over 3 steps), and is red for Q275 alone: 48 files of step 13 and 39 of 15-jsonc differ, as at
+  (580 files over 3 steps), and is red for Q343 alone: 48 files of step 13 and 39 of 15-jsonc differ, as at
   2c696e3b74 before the merge (221 of 2,584 over its 15 steps).
 
-### Q327. (Q288 on Go-C-and-C-support, Q281 until its merge of final-rerail-shape) The journal's wait bound (Q184) was dropped by a merge: `since_within` ignores `wait`
+### Q365. (Q327 on final-rerail-shape-rr-align) (Q288 on Go-C-and-C-support, Q281 until its merge of final-rerail-shape) The journal's wait bound (Q184) was dropped by a merge: `since_within` ignores `wait`
 
 - **What**: 89f4abfec (Q184) made `journal::fsevents::since_within` answer `Lost` once the
   journal took longer than the caller's `wait` (the observer's bound, at least 2 ms a root),
@@ -7188,20 +7806,20 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
 - **Done when**: both hold in `since_within`, the warning is gone, and the store's journal and
   observer tests pass, with Q184's warm-run measurement repeated.
 - **Done here** (roll-up 12, 2026-11-20): rr-align's `fsevents::since_within` takes the caller's bound as the sync's
-  wait (`wait.min(WAIT.max(settle))`, Q221, Q293), beside `settle`'s retry; no warning. Closed with Q320's observer record.
+  wait (`wait.min(WAIT.max(settle))`, Q221, Q293), beside `settle`'s retry; no warning. Closed with Q368's observer record.
 
-### Q329. Roll-up 12 (Go-C-and-C-support onto rr-align): what the merge chose, and what stays open
+### Q370. (Q329 on final-rerail-shape-rr-align) Roll-up 12 (Go-C-and-C-support onto rr-align): what the merge chose, and what stays open
 
 - **Merged** (2026-11-20): Go-C-and-C-support at ce2c4019c83, base 7d8d2afa85. Only theirs' added lines were
   renumbered, past every number here:
-  - decisions 0421 → 0466, 0431 → 0467, 0460 → 0468 (each file notes its old number), and theirs' citations of
-    final-rerail-shape's 0459 → 0464, as at roll-up 11;
-  - work queue Q287 → Q326 (the same item as theirs' Q271, roll-up 11's Q288 here), Q288 → Q327, Q289 → Q328.
-    Theirs' Q272–Q280 keep their numbers: none is used here.
+  - decisions 0421 → 0482, 0431 → 0479, 0460 → 0468 (each file notes its old number), and theirs' citations of
+    final-rerail-shape's 0459 → 0473, as at roll-up 11;
+  - work queue Q287 → Q339 (the same item as theirs' Q271, roll-up 11's Q288 here), Q288 → Q365, Q289 → Q366.
+    Theirs' Q340–Q280 keep their numbers: none is used here.
 
-  README rows added: 0422, 0429, 0430, 0436, 0445, 0448, 0466, 0467, 0468.
+  README rows added: 0422, 0429, 0430, 0436, 0480, 0448, 0482, 0479, 0468.
 - **Taken from theirs**: the C preprocessor and directives crates (0436, 0448, 0468), the parallel passes' spike
-  (0466), Bitlex's `nest` runs (Q326) and `ending`, Kotlin's grammar steps, the ladders kept to their last step (0422),
+  (0482), Bitlex's `nest` runs (Q339) and `ending`, Kotlin's grammar steps, the ladders kept to their last step (0422),
   0429 and 0430, UKL's `grid.h`, and `c_pp::stream`'s `define` / `parse_define` split.
 - **Kept from ours**, theirs' change adapted to it:
   - Metal's prefix (0335): ours generates it in `run_batch` (opcode 18; `early` is 17). Theirs' refusal in
@@ -7212,9 +7830,9 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
     key or few-row fan-out, sits beside ours' rule for a variable bound only by lookups on constants (356f1b516). So a
     program either side accepted is accepted. Theirs' refusals name their product rules (`Version::show_rule`).
     Theirs' test is now a lookup on a fixed variable, which ours' rule alone does not fix.
-  - The observer: ours' Q250 / Q223 fix (afaaadd548) stays; theirs' `listed_over` and its test are dropped. Q327 is
+  - The observer: ours' Q250 / Q223 fix (afaaadd548) stays; theirs' `listed_over` and its test are dropped. Q365 is
     done here.
-  - `phases.rs`: ours' check that `sources.rr` is a builtin stays.
+  - `phases.rs`: ours' check that `sources.rerail` is a builtin stays.
   - The lexer's `next_token` (ours' rename of `PpLexer::next` and `Pp::next`): theirs' calls renamed.
   - `metal_images` returns the device's error (ours); theirs' tests fail on it now, not skip.
 - **State (0442)**: theirs' `GAPS_MADE` is in test builds only (`test-hooks`) and listed as `stays`: a run's count
@@ -7231,12 +7849,12 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   - `bitlex` (11), the compiler's depths test, Kotlin's lean-parser tests (39);
   - `rerail-logic`'s product bound and `plan::corpus::` (149);
   - the typing oracles and file-local typing (31).
-- **Open**: Q330; Q275 (above: `every_step_on_metal_equals_the_interpreter`, red before the merge).
+- **Open**: Q367; Q343 (above: `every_step_on_metal_equals_the_interpreter`, red before the merge).
 
-### Q330. Go-C-and-C-support's device passes are red on the M1 Max at its own commits
+### Q367. (Q330 on final-rerail-shape-rr-align; done) Go-C-and-C-support's device passes are red on the M1 Max at its own commits
 
-Seen 2026-11-20, roll-up 12, on an M1 Max (Apple G13). Each test also fails at Go-C-and-C-support's own commits there,
-with the encoder's label set (Q329's fix). They are ignored with this item as the reason, to be run with `--ignored`
+Seen 2026-11-20, roll-up 12, on the m1max (Apple G13). Each test also fails at Go-C-and-C-support's own commits there,
+with the encoder's label set (Q370's fix). They are ignored with this item as the reason, to be run with `--ignored`
 on an M3 or M5:
 - **The device's expansion (0448)** differs from the serial passes, at 0cc2adf6d2 (before that branch's merges) and
   at ce2c4019c83: `calls_past_an_end_`, `calls_with_arguments_`, `line_and_file_`, `object_like_expansion_`,
@@ -7289,12 +7907,12 @@ on an M3 or M5:
     backend (24 each), rerail-clif (18), and the compiler's translator tests (23). The corpus and Boost slices are
     not run: their data is not on that host.
 
-### Q331. Roll-up 13 (Parser-generators-final-shape onto rr-align): what the merge chose, and what stays open
+### Q371. (Q331 on final-rerail-shape-rr-align) Roll-up 13 (Parser-generators-final-shape onto rr-align): what the merge chose, and what stays open
 
 - **Merged** (2026-11-20): Parser-generators-final-shape at 91405fc095a, base 6da4cd4692. Theirs' one decision
-  keeps its number (0479: none is used here). Its "follows 0453" now cites 0412, the same decision here. Theirs'
+  keeps its number (0484: none is used here). Its "follows 0453" now cites 0412, the same decision here. Theirs'
   README rows 0452–0455 are 0411, 0412, 0402 and 0403 here, so they are dropped.
-- **Taken from theirs**: 0479's walk lemmas. A walk's regions never overlap, and every prover is told so through
+- **Taken from theirs**: 0484's walk lemmas. A walk's regions never overlap, and every prover is told so through
   `Lowering::induction`. Also taken: dead rows (`row_modes`), the compile's step times (`RERAIL_STEP_TIMES`),
   Kotlin's steps compiled as its parser is (`ladder::compile_step_as`, `Parser::with_cut`), and the AOT test's
   Kotlin ladder and probes.
@@ -7317,10 +7935,138 @@ on an M3 or M5:
   - theirs' `a_step_compiles_to_one_program_and_walk_lemmas_keep_its_tapes` passes, run by name (250 s).
 - **Open**: that test ran on Kotlin's step 09, which 0422 deleted. On step 36 it compiles three times, about 85 s
   each on the M1 Max, so it is ignored with this item as the reason.
-  - **Done when**: a Kotlin step 36 compile takes seconds (0479's aim), or the test has a small grammar with a walk,
+  - **Done when**: a Kotlin step 36 compile takes seconds (0484's aim), or the test has a small grammar with a walk,
     and it is not ignored.
 
-### Q335. (done) Linking every pack's library waits minutes on the store's msync of kept facts (Linux)
+### Q349. Cranelift refuses corpus program `0565-mix-seed_205` by 0423's check
+
+- **Found** (2026-11-20, at the roll-up's Swift-Kotlin-Scala-support merge):
+  `corpus_tests::corpus_cranelift_equals_the_interpreter` fails at compile, before any run:
+  `0565-mix-seed_205.bitlex: cranelift: RefusedShape("region 0's value %48 on the vectors made
+  outside its branch (decision 0423)")`. The hub's own code fails the same (its compiler, Bitlex,
+  metal and parser_tests crates at 80c563a99 on the M3, `RERAIL_CORPUS_FILES=0565-mix-seed_205`),
+  so it predates the merge. The program is masks alone: `next(next(digit, 1), 5)`,
+  `span(after_odd_run(x), 20) & after(high) & starts(ws)` and `after_odd_run(prev(bs & alpha, 54))`.
+- **Done when**: the program's gated region keeps its vectors inside its branch (or the gate is
+  not taken for it), and the corpus test passes whole.
+
+### Q356. (Q331 on investigate-bend-vs-datalog) Native-and-GPU-strata's process-global state, merged before 0442 reached it (d719a840ef, 2026-11-19)
+
+- **Seen**: the merge of Native-and-GPU-strata d719a840ef brought statics written before decision 0442 reached that
+  branch. `check-no-global-state.py` lists them in `global-state.txt` by where they go, and the list is to shrink:
+  `text/automata.rs::AUTOMATA` (shared: the automata block, decision 0478 step 2e; its `Automaton::bytes` reads are
+  `&'static`, so the move gives the reads the shared object's lifetime), `facts/rows.rs::MOVED` and
+  `setfix.rs::ORDERS_KEPT` (run: a profile's counts, onto `run_counts()`), `accel/src/budget.rs::MOST` and
+  `accel/src/gpu/join.rs::SAID` (machine). `joins.rs`' `SEED` moved to a run's setting in the merge itself.
+- **Do**: move each where its class says, and cut its line.
+- **Done when**: none of the five is in `global-state.txt`.
+- **Done** (2026-11-20, at the hub's merge of investigate-bend-vs-datalog c61fae98f): the hub's own merge of Native-GPU-strata had
+  moved them already (`moved()` and `run_counts()`'s fields, the automata on the shared object, `budget`'s and
+  `join`'s onto the machine); the merge took none of the five lines into `global-state.txt`.
+
+### Q357. Engine tests of one process disturb each other: maintain, session and the normalization count
+
+- **Seen** (2026-11-20, the merge of investigate-bend-vs-datalog, on the M3): `cargo test -p rerail-engine --lib --
+  maintain_tests session::tests kept_tests corpus::tests` fails `r8_a_session_edit_reads_no_kept_frame`,
+  `a_runs_chunks_normalize_the_program_once` ("11 normalizations for 8 chunks, 13 for 2") and one or two more of
+  `r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows`, `r2_a_new_process_hashes_only_the_changed_documents_rows_of_its_inputs`,
+  `a_session_maintains_a_cross_file_aggregate`; each passes alone. The hub before the merge (59135cb7ca) fails the
+  same way. `plan::body::NORMALIZED` is a process count the test reads around its runs, so another test's
+  normalizations land in it; the maintain and session tests' cause is not read yet.
+- **Do**: each count a test reads is its run's (`run_counts()`, decision 0442), or the test's own shared object
+  (`profile::within`); find what the maintain and session tests share.
+- **Done when**: the group passes run together, three times.
+
+- **Fixed** (2026-11-19, Typing-support): Q189's settle window (`JOURNAL_SETTLE_NS`, 120 s) was applied to every
+  root, also one checked by its listings, whose answers the listing check compared by `stat` that run and which
+  never goes by the journal's silence. Every answer recorded in the last 120 s was then `stat`ed again (the tests'
+  7 and 9 stats). `trusted` and `missing` now skip the window under a listed root. All four pass on the M3, in every
+  run since.
+- **Record**: done (2026-11-19, Typing-support): as **Fixed** above. The journal tests that still failed on a
+  loaded host are Q223's (fseventsd delivering late), done: 22 of 22 runs on the M3.
+
+### Q359. (Q251 until 2026-11-19; the hub's Q251 is a level's fact constraints) 0364 R7 is red: after a use is added, two recheck lines are unpriced
+
+Seen 2026-11-19 on an M-series farm host, at this branch's a9c6b3b62 and on the hub (django-bugs' 2e9d16bc8 names it
+failing at 24740af51): `maintain_tests::r7_the_recheck_order_is_priced` fails at maintain_tests.rs:327, "R7: after a
+use added, every recheck line is priced" (left 2, right 0). R7 is an agreed requirement (0364 R1-R10), so this is a
+regression of the maintain mode's plans (0328 §4), not a stale test.
+
+- **Done when**: the two lines are priced as the others are, and R7 passes.
+- **Record** (2026-11-19, Typing-support): fixed. The planner priced each recheck's order with its head bound
+  (`Body::with_head_bound`, Q208), but its native join spec was written from the rule with nothing bound, so an
+  order whose first step reads a bound variable one way (`docof` from its node) could not be written, and the line
+  fell back to the rule's own order, unpriced. The spec writer now starts a head-bound body with the head's
+  variables in their slots (`join_spec_made`; the executor binds them from the candidate, `join_rule_bound`), the
+  recheck's spec is written from the head-bound body, and the spec's cache key says which it is. R7 passes; the 139
+  maintain, session, recheck and plan tests pass.
+
+### Q360. (Q252 until 2026-11-19; the hub's Q252 is a chain's reach) CPython ran on the product's path: `value::python_ast` started `python3.13` for each demand batch
+
+Seen 2026-11-19 (Typing-support), on a Linux farm host without CPython 3.13: 9 of `rerail-lang-python`'s tests
+failed, "Canonical Python AST facts require CPython 3.13". The relational producer
+(`residency::admission::relational::python_ast`, installed as the AST producer) ran W's `pythonAst` worker in a
+Python process for every batch, though `code_rule_dsl::cpython` computes the same facts natively and the SQL path
+(`facts/vtab/syntax/cpython.rs`) reads them from there.
+
+- **Fixed**: `batch_with_metrics` computes every field the producer asks (`FIELDS`) and the text fields natively, a
+  node found as the worker found it (`printed::located`, `of_kind`, `by_start`), with the worker's counts of parses
+  and walks and its failures. `dumps_and_signed_fingerprints_match_cpython_3_13` (30 cases recorded from CPython)
+  and the other python_ast tests pass on Linux; 117 of the python AST consumers' tests pass.
+- **Still open**: a module's `syntax_error` field, the whole `SyntaxError` (`offset`, `text`, `end_lineno`,
+  `end_offset` besides `msg` and `lineno`), which only the gate's conformance replay asks for
+  (`batch-nine.ts`, `pythonAstBatch`), still runs the worker: the native verdict is the line and message alone,
+  and CPython's offsets differ by the kind of error. Its test is ignored with that reason.
+- **Done when**: `cpython::syntax` gives the error's span as CPython 3.13 does, checked by `parity` against CPython
+  on a box, and the worker is deleted.
+- **Record**: —
+
+### Q368. (Q320 on final-rerail-shape-rr-align) Roll-up 10 (Typing-support-final-shape onto rr-align): what the merge chose, and what stays open
+
+Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 are Q359 and Q360 here.
+- **Chosen**:
+  - Theirs' 0276: the tree forms are gone (`front::Program`, `rr::parse`, `rr::print`, `Placed::of_program`,
+    `Builder::of_program`, `tree_text`). Ours' code that still read them reads versions now:
+    - `import_closure::add_to` reads `components.rerail` as a version. `taken` returns the heads it takes.
+    - The cover's taped literals (decision 0431 §8, `rr::lower`) are `LitAt`s.
+    - Ours' tests moved to `parse_version`, `Placed::whole` and `matcher_relations`.
+  - Ours' 0450: `cross_memo` and `bridge` stay removed, and theirs' edits to them are dropped.
+  - Ours' 0456: kept facts stay. Theirs' 09dc8acfd5 names the kept facts a run reads in its manifest. Here,
+    `strata_kept` adds them to the run's late sources.
+  - The observer: both sides fixed Q250 and Q223, each its own way. Ours stays (`trusting_root`, `dir_named`'s
+    `stale`), with theirs' test budget for the settle-window test. Theirs' `budget`, which made the settle window
+    the least a replay waits, is dropped. Ours' caller bound holds (Q221, Q293).
+  - The tree-decode counter (`decoded`, `Record.trees_decoded`) is removed: nothing decodes a tree now.
+- **Fixed**: tests found red after the merge. Each cause was on ours' side. At 08e2de78c4 (before the merge),
+  `a_copy_of_an_inputs_columns_is_a_view_of_it` and R8 failed the same way.
+  - Counts read outside any run, where `local()` is fresh on every call (0442): the maintain mode's strata
+    (2 tests) and the input views. Each test now holds its run's scope.
+  - `NORMALIZED` was a process static. It is now the run's count (`PlanCounts::normalized`).
+  - 0364's shape counts lived on the shared object, so tests running beside one another counted each other's runs.
+    R1 and R8 failed under 4 threads and passed under 1. They are now the run's own counts.
+  - A part was a view, then Q180's restated record as an overlay, then its fields' overlay. `part` now runs in
+    `Pipeline::stating_record`, since its last step states the record.
+  - The stored-run test still expected an image held inline. Since store floor 7, every source is in a segment
+    from its write.
+  - `every_switch_lowering_reads_is_classified` now ends its region where theirs does.
+  - `check_rr` knows the import closure's relations (`rr_cx_*`). That removes 800 of its 802 problems.
+- **Open** (red at 08e2de78c4 too; none comes from this merge):
+  - `rdl_programs_translate_to_the_same_program`: `typing/programs/calls.rerail` and `calls_rust.rerail` are no longer
+    their `.rdl`'s translation.
+  - `a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone`: `ruff-c408` places its findings at a tape value's
+    node (decision 0431's refusal).
+  - `rule_syntax_files_pass_check_rr`: 2 problems remain, in `lib/c/includes.rerail` (`c_inc_from` and `c_resolved`
+    each depend on a relation through `!` in a cycle).
+  - `fresh_and_restored_programs_have_identical_relation_identities` failed once in three 4-thread runs. Its restored
+    child held a prepared program that the fresh one did not. It passes alone.
+- **Checked** (M3): the workspace's tests and bins check with no warnings. These pass:
+  - the corpus modules (102, plus `corpus::tests`' 128);
+  - the image and manager tests (55);
+  - the kept tests, the import closure and the cross views;
+  - the store's observer and journal tests (35);
+  - the rr tests other than the open three.
+
+### Q361. (done) Linking every pack's library waits minutes on the store's msync of kept facts (Linux)
 
 - **Found** (2026-11-19, Q26): `rr::tests::library_modules_link_to_the_lowering_of_them_together` takes 217 s at
   f9c3bd713 and 251 s with Q26 on a DGX Spark (debug), of which 87 s user and 40 s sys. Stack samples show the test
@@ -7336,24 +8082,23 @@ on an M3 or M5:
   Max); on a DGX Spark 217 s → 19.8 s (`none`) and 19.3 s (`synced`). It stays in the slow tier, without its 8-period
   override.
 
-
-### Q336. Roll-up 14 (Typing-support-final-shape onto rr-align): what the merge chose, and what stays open
+### Q372. (Q336 on final-rerail-shape-rr-align) Roll-up 14 (Typing-support-final-shape onto rr-align): what the merge chose, and what stays open
 
 - **Merged** (2026-11-20): Typing-support-final-shape at 39c6f43cea9, base 7070b2ecad. Only theirs' added lines were
   renumbered, past every number here:
-  - decisions 0464 → 0480 and 0465 → 0481, each file and README row noting its old number;
-  - work queue Q294 → Q335. Theirs' Q292 and Q293 are roll-up 10's Q318 and Q319 here, so theirs' text cites those.
-    Theirs' Q291, the rerun item that was a second Q249 here, keeps the number its renumber gave it: Q332.
+  - decisions 0473 → 0464 and 0474 → 0481, each file and README row noting its old number;
+  - work queue Q294 → Q361. Theirs' Q292 and Q293 are roll-up 10's Q359 and Q360 here, so theirs' text cites those.
+    Theirs' Q291, the rerun item that was a second Q249 here, keeps the number its renumber gave it: Q358.
   - 0481 cited "0440 (the deferrable tier)", a number theirs' tree does not hold. It cites 0295 here, the deferrable
     tier's decision.
 - **Taken from theirs**:
-  - 0480: a program image written once, read where it is held (`read_image`, `shipped_image`), with the record's
+  - 0464: a program image written once, read where it is held (`read_image`, `shipped_image`), with the record's
     items' bytes held as their makers hold them (`record::Bytes`).
   - 0481: a store's flush mode (`Flush`, `RERAIL_FLUSH`), its connections' `synchronous`, and every block writer
     taking it from the connection. The test binary flushes nothing (`test_flush`).
   - 0361 step 6: declared keys checked as rows are written (`KeyCheck`), and a broken layout fact plans its
     relation from statistics.
-  - Q332's request record, Q223's journal tests, and the R7 recheck pricing (Q318).
+  - Q358's request record, Q223's journal tests, and the R7 recheck pricing (Q359).
 - **Kept from ours**, theirs' change adapted to it:
   - Kept facts (0456): ours' chain of packed files, not theirs' base and delta. `KeptW::finish` takes theirs' flush
     mode, and the kept writer passes the connection's. Theirs' old-format kept tests are dropped; ours' finish with
@@ -7379,219 +8124,62 @@ on an M3 or M5:
     test binary's flush mode, and `library_modules_link_to_the_lowering_of_them_together` (8, 22 s).
 - **Open**: nothing new.
 
-### Q337. `docof` lowered as `node`'s projection gives a program's own key
 
-- **Seen** (2026-11-19, 0431 step 3): core.rr's `docof(n, d)` of a program's node is its file (`Projected::file`,
-  `ViewDoc::file`, `ChunkDoc::file`), but `node(d, n, …)`'s `d` stays the program's own key, which `doc_role`,
-  `doc_root` and `guest` name it by. Where a program's `docof` is `node`'s projection (T's programs over nodes,
-  `rr::lower::projections`; `whole::Projected` in a combined part), a program's node has its own key for `docof`.
-- **Decided** (2026-11-19, the user: "pick a for the decision"): the guest relations name a program by its file and
-  place (`parsed(at, grammar, root)`), so `node`'s `d` is the file (0431 §4).
-- **Done when**: `docof` of a program's node is its file in a T program too, with a test.
+### Q376. (done) A broken fan-out is found only where a line's counts are kept (0361 step 6)
 
-### Q338. 0431's leftovers after step 3
+- **Found** (2026-11-20, at the merge of final-rerail-shape-rr-align 972dc90902): both sides built step 6. The
+  hub's check (`Model::layout_broken`, `Shapes::broken_at`: 64 probes at least, 8 times the fact's bound) reads a
+  line's counts where the run keeps them (`keys`, `counted`: a prepared plan's checked lines). rr-align's check
+  (`check_fanout` in `observe`: 32 probes, 4 times) read the observed fan-outs of every run, and the merge took the
+  hub's. rr-align's end-to-end test `a_run_finds_a_fanout_its_rows_break_and_finds_the_same` (2 files, 40
+  statements a module under a `fanout(a -> b, one)`) makes no check at all on the hub (`run_broken().1` is 0), so
+  it is ignored with this item. The key side (`key_breaks`, where rows are written) passes.
+- **Next**: find why this run's lines carry no counts (a policy run's first, unprepared plans), and check them where
+  every run counts its probes, as `observe` did, or count them for the step-6 check alone.
+- **Done when**: the test passes un-ignored, and the hub's unit test
+  `a_fan_out_the_rows_break_leaves_its_relation_to_the_statistics` still does.
+- **Done** (2026-11-20): the check ran only inside the replanning paths: a probe line with a plan key while the
+  joins are on (`joins::on`, `keys`), or a led seed at its cut. An ordinary run's lines reach neither. Every line's
+  counts are now checked as they are added each chunk (`layout_broke`, plan.rs), a seed's against `orders`, a
+  probe's against `probes` (a line's counts are taken from it when its order is replaced, so they are always its
+  running order's), and the replanning paths read what broke there. The test passes un-ignored, with the hub's unit
+  test and the key test; the plan, joins and shapes tests are as before (three were red before: Q378).
 
-- **Seen** (2026-11-19, 0431 step 3 done):
-  - `@parse(g, x)` and `@splice` values are still made by the slice's rounds (`embed_slice`, `guests::DEPTH`), which
-    grow the batch: 0431 §1 has no rounds outside the engine. A string a rule parses is already asked in the
-    fixpoint (§8, R10); a computed text's value is to be one too.
-  - The rule-file language declares no embeds (`rr/embeds.rr`): its patterns need the pattern grammars, its `match`
-    regexes the regex grammar, and no embedder reads a JSON object. Before, the library's rules made nothing either
-    (no grammar registered), and no program included them.
-  - A fresh host parse builds its programs (`TapeImage::encode` → `FileImage::embedding`) and `build_with_tape`
-    drops them; `Guests::programs` runs the embedders again from the tape (a stored host's has no programs). The
-    programs are to be kept with the file's tape (0431 §7) and read there.
-  - `.guests off` hides the run language's code guests: under 0431 a tape value is never code and a program is code
-    only in a run of its own grammar's label, so the setting has nearly nothing left to hide
-    (`combined_programs_see_guests_by_their_own_policy`).
-- **Done when**: no round outside the fixpoint; a file's programs read from its stored tape; the setting's meaning
-  decided.
+### Q377. (done) A test's store keeps one object segment open after its test
 
-### Q339. A fragment is parsed from a node kind (decision 0482)
+- **Found** (2026-11-20, at the merge of final-rerail-shape-rr-align 972dc90902):
+  `a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test` failed on the m3 with four files of a probe's
+  store held. Three were the observer's store of a job's thread (`store.sqlite.files.thread<N>`): a job handed the
+  test's store (`test_store::carried`) opened an observer of its own, under its thread's name, that the store's
+  drop never forgot. Fixed in the merge: `test_store::is_own` is true for a handed store too, so the job shares the
+  test's observer and `Store`'s drop forgets it.
+- **Open**: the fourth, `store.sqlite.objects/<n>.seg`, a segment's mapping (`segments::SegmentMaps`,
+  `journal::open`), stays held by something that outlives the run. The test is ignored with this item.
+- **Next**: find the holder of that segment's `Frozen` block after the run (a shared cache of tapes or images),
+  and either drop it with the store (`ContentStore::forget`) or key it to the store's life.
+- **Done when**: the test passes un-ignored three runs in a row on the m3.
+- **Done** (2026-11-20): two holders, neither a cache of the store.
+  - The segment held the lowered program's image (0464), opened by `prepared::lookup`. The version never dropped:
+    a cycle. A part of it (a view, then an overlay of its fields) held its normal form as an analysis, in its slot
+    (0281 §2: "held by the version it is of, dropped with it"). The normal form is an edit of the part, so its
+    parent is the part: part → analyses → normal form → parent part, and the same for the stated-apart form over
+    the normal form. Nothing outside held any of them, and no drop ends a cycle. That is not the test's alone: every
+    version a run normalized stayed in memory, with all its analyses, for the life of the process.
+  - The fix: an analysis that makes a version over its own version makes it over the version's twin
+    (`Version::twin`, `manager::twin`). A twin has the same layer (image or delta, parent, ranges, digest) and
+    adopts the version's analyses, so nothing is computed again. The cache no longer points back at its holder.
+    `a_version_with_its_normal_and_apart_forms_drops_with_its_last_holder` locks it.
+  - The store's database files were held too, by pool threads. A thread's copy of a run's values (`SEEN`) was
+    dropped on leaving the run only if the run had already ended. A job that ended first left its copy, with the
+    run's locals and its shared and machine values, until the thread next entered a run. `left_run` now drops the
+    copy whenever the thread leaves the run the copy is of.
+  - Found by tracking which blocks were mapped and their versions; nothing in the shared object, the machine, the
+    tests' object or any pool thread's copy held the image. The test passes un-ignored, three runs in a row on the
+    m3. The program-image, prepared-program, normalization, run, profile, observer, workspace, lane and plan tests
+    pass, except the three plan tests that were red before (Q378).
+### Q379. (Q347 on final-rerail-shape-rr-align) (Q189 on cost-classifier-metal-rf) A loop's stolen halves lose their run where two runs share a pool
 
-- **Asked** (2026-11-19, the user): "we need to allow a parse to start from a given node type ... a Python annotation
-  is not a module. It's a type. A JSX document doesn't start with a <html> tag"; tree-sitter-only dialects: "Hand-written
-  parsers only". Before 0431's language-declared embeds at known places (the user's choice 2 for HTML in a string).
-- **Steps**: R1–R7's tests; the parsers' `STARTS` and `parse_from` (Python `type`, TSX `jsx_element`, HTML
-  `element`); the registry's fragment start and tag; the engine's fragment parse (no wrapper, no `wrapped_root`); the
-  libraries' rules over a `type` root; PostHog's findings.
-- **Done when**: R1–R7 hold and PostHog's findings are unchanged or each change is named.
-- **Done** (2026-11-19). R1–R7 hold (0482 "Tests"). The three parsers start at `type`, `jsx_element` /
-  `jsx_self_closing_element` and `element`. A refused text is one `ERROR` node, so `.on guest_error` still sees it.
-  The libraries' rules needed no change: `annotation`, `parsed_in` and `ann_strip` already read a `type` root.
-  PostHog on the CPU is unchanged: 29,747 findings, fa0efeaed6ff.
-
-### Q340. A language declares the places its strings embed code (decision 0470)
-
-- **Asked** (2026-11-19, the user): choice 2 for "a string we know is HTML": a language declares the embeds at known
-  places. After 0482.
-- **Steps**: R1–R6's tests; the registry's `places` (schema, checks, generated table); the `call-argument` embedder
-  over the batch's tape document (scope table, plain strings, segments); Python's places; an HTML rule over a
-  program; PostHog's findings.
-- **Done when**: R1–R6 hold and PostHog's findings are unchanged or each change is named.
-- **Step 1 done** (2026-11-19): R1–R4, R5 for a Python rule, R6 (PostHog unchanged, 29,747). Open, step 2: a run of
-  the embedded language reads the files holding its programs (0470 "Steps"); an HTML run sees no Python file's
-  program, nor a JavaScript run an HTML file's `<script>`.
-- **Step 2 done** (2026-11-19, the user: "possible but not happen by default"): `.embedded on` makes a run read the
-  files that hold its language's programs, their own nodes hidden (0470 "Steps", 2; R7). Also fixed: a cross-file
-  part's base relation with no rows anywhere (`rr_program` in a run holding no program) is bound empty.
-
-
-### Q341. Roll-up 15 (django-bugs onto rr-align): what the merge chose, and what stays open
-
-- **Merged** (2026-11-20): django-bugs at 0c8f63e70f0, base ed639096f4. Only theirs' added lines were renumbered:
-  - decision 0466 → 0482, its file and README row noting the old number. 0470 keeps its number: none is used here.
-  - work queue Q267–Q270 → Q337–Q340. Theirs' citations of its own Q261 and Q266 are Q306 and Q310 here (roll-up 7).
-  - 0431's header cited format 16 as 0426 (0434 here) and the work queue as Q261 (Q306 here).
-- **Taken from theirs**:
-  - 0431 steps 3–5: a file's programs are its grammar's, named by their file and place (`rr_program(d, file,
-    grammar)` replaces `guest`, `doc_root` and `doc_role`), and the slice makes the tape operations' values alone.
-  - 0482: fragments parsed from a node kind by the hand-written parsers.
-  - 0470: a language's declared embed places, and `.embedded on`.
-  - The `node` view's document column is a program's file (`ViewDoc::file`).
-- **Kept from ours**, theirs' change adapted to it:
-  - The views' reads are UKL (`<ukl/reads/view.h>`, generated). Theirs' change to the deleted `view_reads.metal` is
-    made by generating the header again (`the_view_kernels_reads_are_these`). The one line that differs reads the
-    file's column at 116, as theirs' Metal did.
-  - Findings lower to the version (ours' `self.b`). Theirs' `rr_program` reads are written in that builder: a file's
-    own syntax error is not a program's, and `.on guest_error` reads `rr_program` with its grammar.
-  - A chunk keeps its documents where theirs says (slice, parses, guests the rules see, `.embedded on`), and where
-    ours' cross part reads base relations (0458). The no-slice arm returns ours' documents and sets theirs'
-    `host_of`.
-  - `guests::READS` takes theirs' list, at ours' visibility.
-  - The device test over a file's programs takes theirs' bound (the uploads against a file with no script, plus
-    `parsed`'s rows).
-  - Theirs' Q263 note (`res` with no connected demand) goes into Q249 here, the typing oracles' products, whose
-    Done bounds `res`.
-- **Checked** on the m1max:
-  - the workspace's tests and bins check with no warnings;
-  - `rerail-clif` (with the views' reads test), `rerail-python-lean`, `rerail-ecma-lean` and `rerail-html-lean`
-    (43, 4 ignored);
-  - the engine's fragment, embed, call-argument and place tests, `.embedded on`, the guest tests, the syntax-error
-    and guest-error findings, and `cpu_and_metal_read_the_same_tape_values` (72, 1 ignored).
-- **Open**: nothing new.
-
-### Q342. Roll-up 17 (benchmarks-on-integration onto rr-align): what the merge chose, and what stays open
-
-- **Merged** (2026-11-20): benchmarks-on-integration at 6f84b5d5961, directly: none of theirs' new numbers
-  collide here.
-- **Kept from ours**: 0353 step 5. Ours' c3e855c096 makes the same step as theirs' (the vtab, the syntax views,
-  the device chunks, `within`, the set fixpoint's device path and the Metal join). Ours' files are kept, with
-  their tests.
-- **Taken from theirs**:
-  - The set fixpoint's `Symbols` arena and its test. Ours' `OnConn` and `DatabaseSymbols` hold
-    `Arc<Symbols>` where they held `Arc<RwLock<Interner>>`.
-  - Q203's refusal hook (`shared.rs::REFUSAL_HOOK`, `set_refusal_hook`), beside ours' `leased`, which reads
-    `dev().live`.
-  - Q219's tests: a root spelled with a dot, or watched through one, is told of an edit under it.
-  - global-state.txt lists `REFUSAL_HOOK` and the memory profile's `TOLD` as `stays`: both are set once, for
-    the process.
-- **Checked** on the m1max:
-  - the workspace check is clean;
-  - the store's two Q219 tests;
-  - the engine's `scope_tests` (5), with `a_loaders_cursor_is_made_while_the_symbols_are_written`.
-- **Open**: nothing new.
-
-### Q343. After 0484: the parse workers, the serial phases, and small label runs
-
-- **Found** (2026-11-19, 0484), on all (3,089 files, 9.6 M nodes; about 20 s on an M1 Max):
-  - the parse workers take 13.4 s of CPU (4.3 ms a file);
-  - the run uses 3.3–3.6 of 10 cores, with 13–48 s of its threads ready and no core;
-  - the run's thread spends 8–10 s in serial phases: cross 2.7–5.1 s, stats 2.1–2.5 s (400,000–800,000
-    involuntary switches), combine 2.2–3.0 s;
-  - the large program's label runs are 283 runs with a median of 6 files, where s1000's were 6 runs with a median of
-    36. Each run pays its fixed costs.
-- **Next**, in order:
-  1. Why the pool oversubscribes its cores, and the parse workers' CPU a file.
-     **Answered** (0472): it does not. The waits were locks (the scalar pool, the residency, the grammars) and the
-     machine's load, and the measured binary was renamed, which leaves the main thread out of the pool (the
-     load-time constructor's name test). The parse workers' phase is 7.4 s on all (8.1–8.5 s): W's reference graph
-     5.9 s of it. Open: the summary as a tape pass; the interner's waits; the store writer's one lock.
-  2. `stats`' switches, `cross`' `public_best_*` waits, `combine`'s fixpoint waits.
-     **Done** (0472): `public_best_*` were the pool's threads waiting on the scalar pool's one lock; sharded, `cross`
-     6.2 → 3.0–3.3 s, `stats` 1.0 s. `combine`'s waits are the chunks' parse and evaluation on the workers.
-  3. Trace where the small label runs come from, then batch them to a chunk's size.
-     **Done** (0471): they were a wave halved until its files shared a slab (`gather` found no room). A batch now
-     reads each document in its own slab; 78 runs on all, one a wave. The cold run's exit was the device joins'
-     caches, capped per thread: now one cap for every thread's.
-  4. A cold first Metal run of all exited 1 (its log was lost). Reproduce it with a fresh binary path.
-     **Done** (0471): the panic of a one-file wave the budget had no room for, the device joins' caches holding
-     127 MB; two cold runs of a new binary passed.
-
-### Q344. Roll-up 18 (final-rerail-shape onto rr-align): what the merge chose, and what stays open
-
-- **Merged** (2026-11-20): final-rerail-shape at 1e61e440295, renumbered on a commit of its own first:
-  - its decisions 0463, 0465 and 0466 are 0483, 0484 and 0485 here (0459 → 0464 and 0461 → 0465 as at
-    roll-up 11). 0471, 0472 and 0476 keep their numbers.
-  - its Q271, Q283 and Q284 are Q288, Q324 and Q343.
-- **Taken from theirs**:
-  - 0483: the label passes' phases are the only path (`label_parents`, 64-word phases, chain levels run
-    again on `Error::ChainLevels`). `label_formula` and its size classes are gone.
-  - 0471: a batch reads its tapes in every slab they lie in. `DocTable::new` sets each view's offset by its
-    slab's address; the slabs are made resident on each launch; `gather` and `Resident::copied` are gone.
-    The preprocessor's evaluator reads its units the same way (`Unit::of`, `run_over`).
-  - 0472: the tape room's slab, sharded names and the sharded scalar pool.
-  - 0476: references.rr, `unpackaged` documents, and the refusal of a min or max over a symbol.
-- **Kept from ours**:
-  - the lane API: launches name their slots, buffers and uses, with no Metal encoders.
-  - 0442: theirs' `TAPE_SLAB` static is a field of `Residency`. The names table is a shared object.
-    `HELD` (the set fixpoint's device bytes held) is a machine object, which each `Resident` subtracts from
-    when dropped.
-  - `TapeView` holds both ours' `presence` and theirs' `at_high`: 128 bytes. The generated reads
-    (`ukl/reads/view.h`) are regenerated.
-- **Made to fit**:
-  - The refusal reads a column's declared type as stored (`sym`), not only `symbol`. Before that it never fired.
-  - Five rules took a min over a symbol to pick "any one" of a node's types (`type_first` in calls.rr,
-    calls_cx.rr, calls.rdl, the docs' calls.rr, and `pt_type_first` in points-to.rr). Candidates are now
-    every type's supertypes. `type_miss` and `proven_type` read `type_of` for them, which gives the same
-    `proven_type`, and the oracle tests agree. make_cx.py's patterns follow.
-  - Two tests had a min over a symbol and now use a number or a node: `native_aggregates_and_text_functions_run`
-    and the R4 maintain test.
-- **Checked** on the m1max:
-  - the workspace check is clean;
-  - c-directives, clif, and the device-metal phase programs;
-  - the engine's label kernels, a batch over several slabs, every format on the device, `unpackaged`, and
-    the reference-edge fixtures;
-  - the lowering report: 201 programs, none refused;
-  - the typing oracle tests, and the rows, front and maintain tests named above.
-- **Open**: `a_unit_past_its_room_runs_again_larger` (c-directives) fails before this roll-up too, alone. It is
-  ignored under Q330.
-### Q345. (Q187 on cost-classifier-metal-rf) The test binaries' unwind info is past what the compact unwind table can address
-
-- **Found** (2026-11-19, a tidy-up of 0442's work): every large test binary's link warns `__eh_frame section too
-  large (max 16MB) to encode dwarf unwind offsets in compact unwind table` (the engine's, `rerail-logic`'s and
-  `rerail-device-metal`'s lib tests, dev profile). The engine's on an M1 Max: `__text` 188 MB, `__eh_frame` 41.7 MB,
-  `__unwind_info` 5.8 MB. A function whose unwinding the compact table cannot point to is unwound from its DWARF
-  entry by a search: a panic in such a test is slower to unwind; nothing else changes.
-- **Next**: find why 41.7 MB of DWARF unwind entries are kept. A frame-pointer function on arm64 has a compact
-  encoding, and ld drops the DWARF entry of a function that has one, so the entries kept are of functions it could
-  not encode, or they are kept for all. Count the kept entries against the functions (`dwarfdump --eh-frame` on the
-  binary), and look at what the compiler and linker are told (`-C force-unwind-tables`, ld's
-  `-no_keep_dwarf_unwind`). If the binary is simply this large, the cause is its size at opt-level 0.
-- **Done when**: the link gives no warning, or the cause is shown to be the binary's size and the choice (a smaller
-  test binary, or the warning accepted with its reason) is the user's.
-
-### Q346. (Q188 on cost-classifier-metal-rf) (done on setfix's CPU levels, roll-up 19) A key a derived relation declares is checked where its rows are written (0361 step 6)
-
-- **Found** (2026-11-19, 0361 step 6): the step's checks are built at the probes (`Model::layout_broken`): a key or
-  fan-out a probe is bounded by, against the executors' counts. A key is also to be checked where the rows are
-  written, as the decision says: dedup probes the whole row, and a key needs one more probe. No program has a subject
-  for it: core.rr declares keys only of base relations (tape views, never written), and an inferred key is proved
-  from the facts of what its rules read.
-- **Next**: when a program first declares a key of a derived relation (`.layout r key(...)` where `r` has rules),
-  probe the key's columns in that relation's block index as each row is written, in every executor that writes it
-  (setfix's CPU levels, its closures, the device's): a second row for a key breaks it (`shapes::Broken`).
-- **Done when**: a test declares a key of a derived relation whose rules break it, and the run names it broken and
-  plans the relation from statistics.
-- **Done** (roll-up 19): rr-align had built it (2b9841b58b): setfix's writer counts a key's second row
-  (`setfix::key_breaks`), and the run breaks the fact (`plan::break_fact`, now noting it in `shapes::Broken`).
-  Test: `a_run_finds_a_key_its_rows_break_where_they_are_written`. Open: the device's writer and setfix's closures
-  do not count it yet.
-
-
-### Q347. (Q189 on cost-classifier-metal-rf) A loop's stolen halves lose their run where two runs share a pool
-
-- **Found** (2026-11-19, porting 0477): a parallel loop inside `on_cores` splits by rayon's `join`, and a half
+- **Found** (2026-11-19, porting 0513): a parallel loop inside `on_cores` splits by rayon's `join`, and a half
   another of the machine's pool threads steals runs with nothing of its caller's: no run and no bindings. With
   `RERAIL_PROFILE` the first file-stat loop (`profile::work`) is refused at once. Before 0442 step 5 the loops ran on
   rayon's global pool, whose threads were not marked as the engine's: the same reads silently took values of their
@@ -7606,7 +8194,88 @@ on an M3 or M5:
 - **Done when**: a test with two runs' loops in one pool at once reads each run's own value in every item, and a
   profiled corpus0 x B-now run completes.
 
-### Q350. Roll-up 21 (Go-C-and-C-support onto rr-align): what the merge chose, and what stays open
+### Q380. (Q348 on final-rerail-shape-rr-align) Roll-up 19 (cost-classifier-metal-rf onto rr-align): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): cost-classifier-metal-rf at 6a9a5fb6231, renumbered on a commit of its own first
+  (f82db3d0a94):
+  - its decisions 0393, 0394 and 0472 are 0461, 0462 and 0486 here. 0477 keeps its number.
+  - its Q180, Q182-Q189 are Q226, Q227, Q228, Q290, Q291, Q292, Q345, Q346 and Q347. Q190 keeps its number.
+- **Taken from theirs**:
+  - 0442 step 5: the run's context (`rerail_context::bind`, `bound`, `with_bound`, `job_run`, `on_cores`) in place
+    of the carried thread-locals. Every parallel loop runs inside `on_cores` (check-machine-pool.py): rr.rs's
+    `modules_of` and the packed batch's per-file loop are wrapped here. `Carry` stays for a job's own pieces; the
+    rows' chunk is one of them (`chunk_carried`), for Q203's accounting.
+  - 0361 step 6's mechanism: `shapes::Broken`, `Shapes::for_run`/`broken_at`/`probe_limit`, `Model::layout_broken`.
+  - 0477 (b), the probe screens and the blocked Bloom filter, and the join statistics' filters.
+- **Kept from ours**:
+  - the version path (0277): 0477 (a) is ported onto it, not replayed from the tree (0477's "Onto rr-align").
+  - the write-time key check (Q346, `setfix::key_breaks`), now routed through theirs' `Broken` (`plan::break_fact`).
+  - the executors' fan-out check, at `observe`, by theirs' test (`fanout_broken`, see 0361 "At the writes").
+  - sessions that maintain strata from their deltas: a maintained stratum's kept rows are held without counting
+    them as this run's (`hold_maintained`).
+  - prepared plans skip a line with a constant a `values` fact answers (VERSION 3): theirs' derived-estimates test
+    reads `kind2(b, _)` in `z`, and `o` is planned at run time.
+- **Made to fit**:
+  - the run's nesting count is theirs' binding (`RunsUnderWay`); `RunToken`/`RUNS_STARTED` went unused.
+  - `plan::in_view` binds the chunk's view (`KeptPlans`) for its job's extent, so reads in it see the view.
+  - two warm-up jobs (`gpu::join::prewarm`, the label kernels') entered their run inside `as_job`, which notes the
+    job's wall on the machine after the closure returns: outside the run, refused. The run is entered around it.
+  - rr.rs's guest asks read `LIBRARY_DERIVED[..2]` (the embeds), a panic since 0431 step 3 removed them: gone.
+  - lists: `ZEROED_HERE` (gone from block.rs) cut from `run_state::STATE`; `author_joins::Held` listed as run
+    state; a bound `Option<&'static str>` is a flag (`DeferredJoins`).
+  - test-hooks forwards the dev-features check asked for (c_pp, kotlin_aot, metal, parser_tests, transducer, w,
+    ukl), and the lock's union of both sides.
+- **Checked** on the m1max: the engine's lib and tests compile with no warning; rerail-engine's 0361, derived
+  estimate, session, maintain and prewarm tests (24); rerail-logic's product_demand (deferred included), magic,
+  run_state, facts_only, file_local factorize and chunk tests (35); rerail-context, rerail-blocks, and accel's
+  shared, exec and prewarm tests.
+- **Open**: Q346's device writer and setfix's closures; Q347; Q190; Q292's `trees_decoded` test.
+
+### Q381. (Q349 on final-rerail-shape-rr-align) Roll-up 20 (CUDA-support onto rr-align): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): CUDA-support at b28525e9c3b. It brings no new decision or Q number: only 0440 changed.
+- **Taken from theirs** (0440):
+  - every launch is a lane command (`lane::Command`), and every kernel is UKL. These are gone: Metal's checked
+    encoder, `pipeline_named*`, `MappedBuffer`, `PrivateInputUpload` and the `.metal` block programs.
+  - the device crates build on Linux too: the device paths' `cfg`s are macOS or Linux.
+  - the moved MSL: `chunk_views.uglykl` and `join_stages.uglykl` replace `metal_join.rs`'s inline sources.
+- **Kept from ours, ported onto theirs**:
+  - 0442 objects in place of theirs' new statics: the block interpreter's source, `poll_rmw`, the serial kernels,
+    the join pipes and the pool's hooks are machine objects.
+  - block program ops 14, 17 (early) and 18 (prefix), in `block_program.uglykl` and the generated arms.
+  - 0408 L2: the context's slots are rows of the batch's table (`PpBatch.cs`, `clif_ukl`'s `place`).
+  - 0477 (b): `col_bloom`, in `join_sort.uglykl`.
+  - 0431 §4 and §8 in the chunk views: `docof` and `node`'s file column are the file's key (`d->file`), and an
+    axis over several chunks writes one relation, each chunk from its first row (`p5`).
+  - the device runners' explicit errors (`metal_read`, `metal_images`: `Result`), and the batch of TUs a round
+    (`on_device_batch`, 0408 L3).
+  - Q203's evictor.
+  - the view probe's thread per (local, slot). Theirs unrolled the slots, which the comment says compiled for
+    minutes on an M3.
+- **Made to fit**:
+  - `pp_blocks::Enc` encodes into one `lane::Command`: slots for the MSL buffer indices, `uses` for the unit's
+    slabs. `pp_eval::run_reading` commits that one command, so 0448 R9 holds. The pp passes are MSL, so their
+    modules are macOS only until 0468 §5.
+  - `UklGridSortLocal` has theirs' `digits` scratch. `view.h` keeps ours' layout (192 bytes, `file`), with
+    theirs' `UKL_OFFSETOF`.
+  - 0427 is 0463 here, in theirs' text too.
+  - `rerail-blocks` was listed twice in the facts and device_metal manifests.
+  - the slab test reads `device_address()`.
+- **Fixed on the way**:
+  - a lattice's rows were noted twice as written (`self.writes`).
+  - the device_metal crate's tests had no Python embedder since 0470 step 1 (`test_languages` registers it).
+  - `views_made_on_the_device_are_the_hosts_rows` still expected a guest's `docof` to be its own key: since 0431
+    §4 it is its host file's.
+- **Checked** on an M1 Max:
+  - The engine, metal, accel, c_directives, parser_tests, rr_parser, device_metal, facts and compiler libs and
+    tests compile with no warning.
+  - Tests that pass: clif_ukl (2); metal's pp_blocks, including R9 (5); accel's column statistics (2);
+    c_directives' device words, eval and tokens (8); rr_parser's numbers (1); device_metal's fork, chunk views,
+    in-place stats and in-block rows (4); rerail-engine's view reads, placed tape, supertype backends and slab
+    batch (4); parser_tests' executors, totals and extract (4).
+- **Open**: Q330's device expansion on the M1 Max (still ignored then; resolved since, see Q330).
+
+### Q382. (Q350 on final-rerail-shape-rr-align) Roll-up 21 (Go-C-and-C-support onto rr-align): what the merge chose, and what stays open
 
 - **Merged** (2026-11-20): Go-C-and-C-support at 2b778cd5218 (base ce2c4019c83), renumbered on a commit of its own
   first (3997fd0a25):
@@ -7651,90 +8320,9 @@ on an M3 or M5:
     tests. (Resolved since, at the root, with every ignore removed: see Q330.)
   - not run on an M3 or M5 (the M3 was at a load average of 174).
 
-### Q349. Roll-up 20 (CUDA-support onto rr-align): what the merge chose, and what stays open
+### Q190. The deferred joins are priced (0513)
 
-- **Merged** (2026-11-20): CUDA-support at b28525e9c3b. It brings no new decision or Q number: only 0440 changed.
-- **Taken from theirs** (0440):
-  - every launch is a lane command (`lane::Command`), and every kernel is UKL. These are gone: Metal's checked
-    encoder, `pipeline_named*`, `MappedBuffer`, `PrivateInputUpload` and the `.metal` block programs.
-  - the device crates build on Linux too: the device paths' `cfg`s are macOS or Linux.
-  - the moved MSL: `chunk_views.uglykl` and `join_stages.uglykl` replace `metal_join.rs`'s inline sources.
-- **Kept from ours, ported onto theirs**:
-  - 0442 objects in place of theirs' new statics: the block interpreter's source, `poll_rmw`, the serial kernels,
-    the join pipes and the pool's hooks are machine objects.
-  - block program ops 14, 17 (early) and 18 (prefix), in `block_program.uglykl` and the generated arms.
-  - 0408 L2: the context's slots are rows of the batch's table (`PpBatch.cs`, `clif_ukl`'s `place`).
-  - 0477 (b): `col_bloom`, in `join_sort.uglykl`.
-  - 0431 §4 and §8 in the chunk views: `docof` and `node`'s file column are the file's key (`d->file`), and an
-    axis over several chunks writes one relation, each chunk from its first row (`p5`).
-  - the device runners' explicit errors (`metal_read`, `metal_images`: `Result`), and the batch of TUs a round
-    (`on_device_batch`, 0408 L3).
-  - Q203's evictor.
-  - the view probe's thread per (local, slot). Theirs unrolled the slots, which the comment says compiled for
-    minutes on an M3.
-- **Made to fit**:
-  - `pp_blocks::Enc` encodes into one `lane::Command`: slots for the MSL buffer indices, `uses` for the unit's
-    slabs. `pp_eval::run_reading` commits that one command, so 0448 R9 holds. The pp passes are MSL, so their
-    modules are macOS only until 0468 §5.
-  - `UklGridSortLocal` has theirs' `digits` scratch. `view.h` keeps ours' layout (192 bytes, `file`), with
-    theirs' `UKL_OFFSETOF`.
-  - 0427 is 0463 here, in theirs' text too.
-  - `rerail-blocks` was listed twice in the facts and device_metal manifests.
-  - the slab test reads `device_address()`.
-- **Fixed on the way**:
-  - a lattice's rows were noted twice as written (`self.writes`).
-  - the device_metal crate's tests had no Python embedder since 0470 step 1 (`test_languages` registers it).
-  - `views_made_on_the_device_are_the_hosts_rows` still expected a guest's `docof` to be its own key: since 0431
-    §4 it is its host file's.
-- **Checked** on an M1 Max:
-  - The engine, metal, accel, c_directives, parser_tests, rr_parser, device_metal, facts and compiler libs and
-    tests compile with no warning.
-  - Tests that pass: clif_ukl (2); metal's pp_blocks, including R9 (5); accel's column statistics (2);
-    c_directives' device words, eval and tokens (8); rr_parser's numbers (1); device_metal's fork, chunk views,
-    in-place stats and in-block rows (4); rerail-engine's view reads, placed tape, supertype backends and slab
-    batch (4); parser_tests' executors, totals and extract (4).
-- **Open**: Q330's device expansion on the M1 Max (still ignored then; resolved since, see Q330).
-
-### Q348. Roll-up 19 (cost-classifier-metal-rf onto rr-align): what the merge chose, and what stays open
-
-- **Merged** (2026-11-20): cost-classifier-metal-rf at 6a9a5fb6231, renumbered on a commit of its own first
-  (f82db3d0a94):
-  - its decisions 0393, 0394 and 0472 are 0461, 0462 and 0486 here. 0477 keeps its number.
-  - its Q180, Q182-Q189 are Q226, Q227, Q228, Q290, Q291, Q292, Q345, Q346 and Q347. Q190 keeps its number.
-- **Taken from theirs**:
-  - 0442 step 5: the run's context (`rerail_context::bind`, `bound`, `with_bound`, `job_run`, `on_cores`) in place
-    of the carried thread-locals. Every parallel loop runs inside `on_cores` (check-machine-pool.py): rr.rs's
-    `modules_of` and the packed batch's per-file loop are wrapped here. `Carry` stays for a job's own pieces; the
-    rows' chunk is one of them (`chunk_carried`), for Q203's accounting.
-  - 0361 step 6's mechanism: `shapes::Broken`, `Shapes::for_run`/`broken_at`/`probe_limit`, `Model::layout_broken`.
-  - 0477 (b), the probe screens and the blocked Bloom filter, and the join statistics' filters.
-- **Kept from ours**:
-  - the version path (0277): 0477 (a) is ported onto it, not replayed from the tree (0477's "Onto rr-align").
-  - the write-time key check (Q346, `setfix::key_breaks`), now routed through theirs' `Broken` (`plan::break_fact`).
-  - the executors' fan-out check, at `observe`, by theirs' test (`fanout_broken`, see 0361 "At the writes").
-  - sessions that maintain strata from their deltas: a maintained stratum's kept rows are held without counting
-    them as this run's (`hold_maintained`).
-  - prepared plans skip a line with a constant a `values` fact answers (VERSION 3): theirs' derived-estimates test
-    reads `kind2(b, _)` in `z`, and `o` is planned at run time.
-- **Made to fit**:
-  - the run's nesting count is theirs' binding (`RunsUnderWay`); `RunToken`/`RUNS_STARTED` went unused.
-  - `plan::in_view` binds the chunk's view (`KeptPlans`) for its job's extent, so reads in it see the view.
-  - two warm-up jobs (`gpu::join::prewarm`, the label kernels') entered their run inside `as_job`, which notes the
-    job's wall on the machine after the closure returns: outside the run, refused. The run is entered around it.
-  - rr.rs's guest asks read `LIBRARY_DERIVED[..2]` (the embeds), a panic since 0431 step 3 removed them: gone.
-  - lists: `ZEROED_HERE` (gone from block.rs) cut from `run_state::STATE`; `author_joins::Held` listed as run
-    state; a bound `Option<&'static str>` is a flag (`DeferredJoins`).
-  - test-hooks forwards the dev-features check asked for (c_pp, kotlin_aot, metal, parser_tests, transducer, w,
-    ukl), and the lock's union of both sides.
-- **Checked** on the m1max: the engine's lib and tests compile with no warning; rerail-engine's 0361, derived
-  estimate, session, maintain and prewarm tests (24); rerail-logic's product_demand (deferred included), magic,
-  run_state, facts_only, file_local factorize and chunk tests (35); rerail-context, rerail-blocks, and accel's
-  shared, exec and prewarm tests.
-- **Open**: Q346's device writer and setfix's closures; Q347; Q190; Q292's `trees_decoded` test.
-
-### Q190. The deferred joins are priced (0477)
-
-- **Found** (2026-11-19, 0477): `RERAIL_DEFERRED_JOINS=auto` took 7-12% more instructions on corpus0 x B-now for the
+- **Found** (2026-11-19, 0513): `RERAIL_DEFERRED_JOINS=auto` took 7-12% more instructions on corpus0 x B-now for the
   same findings, so it is off by default. It rewrote pair demand into many rules (`c4_elt`, `c4_comp`, `exc_call`,
   ...), each a few more strata, where the joins were cheap as written.
 - **Next**: offer each rewrite as an alternative the pricer scores against the join as written, from the readers'
@@ -7742,3 +8330,50 @@ on an M3 or M5:
   the classifier belongs"), and keep it only where it wins.
 - **Done when**: the rewrite is on by default and corpus0 x B-now takes no more instructions than with it off, with
   SLF001 on PostHog bounded as Release-debugging measured.
+
+### Q383. Roll-up 22 (final-rerail-shape-phased-facts onto rr-align): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): final-rerail-shape-phased-facts at 4b093e78ea, its own lazy batch (0504) and its merge of
+  the hub (6868107a33). The hub carries older commits of cost-classifier and CUDA-support than rr-align has, so
+  rr-align's side was taken in their files (the pp batch, the Metal runtime, the plan's checks, the deferred joins).
+- **Numbers.** The hub had renumbered rr-align's decisions and items; the merged tree takes the hub's numbers:
+  - decisions (rr-align's → here): 0464 → 0473, 0465 → 0474, 0466 → 0482, 0467 → 0479, 0472 → 0477,
+    0476 → 0483, 0479 → 0484, 0480 → 0464, 0482 → 0466, 0483 → 0475, 0484 → 0465, 0485 → 0476, 0486 → 0472.
+    rr-align's 0477 (joins deferred to their readers) collides with the hub's 0477 (the serial phases' locks) and is
+    0513, past the highest number on any branch (0512). 0487-0489 keep theirs.
+  - items: rr-align's Q329, Q330, Q345 and Q346 are Q370, Q367, Q329 and Q330 here (the hub's), and rr-align's own
+    Q347-Q350 are Q379-Q382 (the hub uses Q347-Q350). Q190 keeps its number. The roll-up records Q380-Q382 keep the
+    numbers of their time; this list maps them.
+  - our side's citations in code and docs were rewritten by these maps: only lines of ours alone (in rr-align's file,
+    not in theirs), and never a number named as another branch's ("0466 on X", "was 0466").
+  - rule files are `.rerail` (theirs' rename): our tests and the deferred-joins scripts name them so.
+- **Resolved by hand**: the chunk scope is theirs' (`ChunkScope`, `InChunk`, `setfix::carried`; rr-align's
+  `RunChunk` gone); `factorize::round` keeps rr-align's form with theirs' key chaining; metal_join's `row_stage`
+  takes the test's id at P[5] and the library scan's n + 1 counts; the label passes' `whole` check reads the
+  backend-neutral `ComputeFunction::max_threads_per_group`; `idle_room` reads its own memory's reservations;
+  `shape_base` is gone with theirs' maintenance forms, so the deferred pairs match their head as written; 0361's
+  step 6 is rr-align's text once (the merge had left theirs' older copy after it).
+- **Found and fixed** (red at the merge, and at theirs' own tip on the m1max):
+  - `every_verdict_the_device_keeps_is_the_cpus` lost 11-35 of 1,157 verdicts in 2 runs of 4 here, and in every run
+    at 4b093e78ea. The kernel's lanes looked their rows' verdicts up at once; lanes whose symbols share an entry (64
+    symbols of a test) waited on another lane of their own SIMD group making it, which does not progress while they
+    spin, so they ran out of spins and each took a second entry of the key, and the verdicts ORed into the copies
+    were split between them. Now one lane an entry looks first and the group's others after it (`join_stages`'s
+    verdict stage, a SIMD-group barrier between).
+  - `parity_random_mixed` gave a `sql_upper` text with 26 zero bytes past its own: a kept text read with plain loads
+    of another group's writes (Q367's second cause). The kept texts are read and written through `UKL_COHERENT`.
+  - On Linux (all roll-up 19-21's widenings): `blocks_compare_tests` uses macOS's malloc zones and is macOS's again;
+    two accel tests used Metal's `get()` for the portable `layer()`; the blocks examples' and c_directives' gates.
+  - `run_state::STATE` listed six thread-locals no file declares (test_pool's `MEASURED`, `WORKING_SET`; setfix
+    device's `AUTOMATA`, `GROWTH`, `RESIDENT`, `TESTS`): cut.
+- **Tested**: Linux, the engine and the merged crates checked with every target, no warnings; rerail-logic's run
+  state, plan, factorize, deferred, product demand, shapes and bloom tests (291 pass, 3 ignored as before);
+  rerail-store's kept facts (8); rerail-device-metal on the CPU backend (70). macOS: the same check on the m3; on the
+  m1max rerail-c-directives (47; the 16 ignored are corpus, data and measurement tests), rerail-metal (22), and
+  rerail-device-metal (71) in 16 full runs after the fixes, 7 more on the m3.
+- **Open**:
+  - one of those 23 runs (the m1max's first after a rebuild) lost verdicts again; its message was not kept. A
+    second entry of a key can still come of a writer in another group outlasting `SPIN`, or of a promotion's copy
+    (`verdict_reads`: a copy may miss a verdict). Next: keep the message of a failing run, and give an accumulating
+    entry no duplicate (wait, or the dead entry) where a decoded block's may have one.
+  - theirs' queue numbers Q353 and Q354 twice each (the hub's too): left for the hub's numbering.

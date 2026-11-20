@@ -123,7 +123,7 @@ pub struct Front {
 
 /// How the deferred joins pass (`product_demand::deferred`) runs for one prepared program. `RERAIL_DEFERRED_JOINS`:
 /// `off` (the default) leaves the joins as written; `auto` and `adaptive` share a frequently requested endpoint's work
-/// and admit small pair caches; `on` makes the static rewrites alone. Off by default (decision 0477): on corpus0 x
+/// and admit small pair caches; `on` makes the static rewrites alone. Off by default (decision 0513): on corpus0 x
 /// B-now `auto` took 7-12% more instructions for the same findings, and nothing prices the rewrite yet. A run that loads (`world::wanted`) keeps them:
 /// a load hands exports back by location, which a new factor has none of.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -202,7 +202,7 @@ pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
 /// and the base relations as inputs, a prune, `simplify` and a prune again, the reach form, the demand for negated
 /// tests, the program's own demand (`RERAIL_DEMAND=off` computes the listed relations in full) and a prune after
 /// it, the reaches in cycles made rows again, the counts below a bound made by rank, then the text passes. Their decisions reach the run's profile.
-/// `deferral`: how the deferred joins pass runs (decision 0477).
+/// `deferral`: how the deferred joins pass runs (decision 0513).
 pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, deferral: &Deferral, last: Option<Run>) -> Result<(Arc<Version>, Front, Run), String> {
     front_of(version, dialect, deferral, last, true)
 }
@@ -225,7 +225,7 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
     if whole {
         p.program(&mut super::product_demand::BoundProducts::Whole);
     }
-    // Joins deferred to what their readers request (`product_demand::deferred`, decision 0477): the requested pairs or
+    // Joins deferred to what their readers request (`product_demand::deferred`, decision 0513): the requested pairs or
     // endpoints drive the producer, or the two factors meet in each reader. A part prepared alone lacks its readers.
     if deferral.on && whole {
         if !deferral.undone.is_empty() {

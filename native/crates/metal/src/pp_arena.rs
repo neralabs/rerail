@@ -171,7 +171,7 @@ pub fn source() -> &'static str {
 /// The passes' space for the stores they write (`PP_GLOBAL`): a phase reads what other groups wrote before the grid's
 /// barrier, so on a GPU it is coherent memory (`UKL_COHERENT`, `ukl/grid.h`'s rule). On an M1 Max a plain device read
 /// of another group's write came back stale every time once the grid spanned more than 8 groups, and a coherent one
-/// never did (Q330). The CPU's caches are coherent, so there it is a plain pointer. CUDA's
+/// never did (Q367). The CPU's caches are coherent, so there it is a plain pointer. CUDA's
 /// `UKL_COHERENT` is `volatile`, from which C++ copies no struct, and the passes copy theirs: a plain pointer there
 /// too (not run on CUDA yet).
 const PP_GLOBAL: &str = "#if defined(UKL_METAL) || defined(UKL_OPENCL)\n#define PP_GLOBAL UKL_COHERENT\n#else\n#define PP_GLOBAL UKL_GLOBAL\n#endif\n";

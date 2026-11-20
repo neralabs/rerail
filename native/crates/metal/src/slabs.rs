@@ -157,7 +157,7 @@ pub struct Resident {
     pub slab: Arc<Slab>,
     /// Its view, `at` its range's start in `slab`, `node_base` 0.
     pub view: DocView,
-    /// Its range in the slab, every part inside it: what `gather` copies.
+    /// Its range in the slab, every part inside it.
     pub at: usize,
     pub len: usize,
     /// Bytes per pool: `tape.resident`, `source.resident`, `tape.derived`.
@@ -330,7 +330,7 @@ impl DocTable {
     /// The table of `documents`, in order, read where they lie: in the first one's slab (the block), or in another
     /// slab of the batch, reached by the slabs' GPU addresses (decision 0353 step 4, 0471). Nothing is copied. Before,
     /// a batch over several slabs was copied into one (`gather`); with the residency full of tapes' homes that copy
-    /// found no room, and each wave was halved until its files shared a slab (0485's small label runs). `None` for a
+    /// found no room, and each wave was halved until its files shared a slab (0476's small label runs). `None` for a
     /// batch past the u32 numbering.
     pub fn new(documents: Vec<Arc<Resident>>) -> Option<Self> {
         let block = documents.first().map(|document| Arc::clone(&document.slab));
@@ -340,9 +340,10 @@ impl DocTable {
                 slabs.push(Arc::clone(&document.slab));
             }
         }
-        // A kernel's reads take a document at the block's address plus its offset (`tape_doc`). A device with no
-        // buffer addresses reads one slab only.
+        // A kernel's reads take a document at the block's address plus its offset (`tape_doc`): its `at` in the
+        // block's own slab, else the slabs' device addresses apart (`None` for a device that gives no addresses).
         let address = block.as_ref().map_or(Some(0), |b| b.device_buffer().device_address());
+        let block_id = block.as_ref().map(|block| block.id);
         let mut views = Vec::with_capacity(documents.len());
         let mut nodes = 0usize;
         let (mut source, mut lines) = (0usize, 0usize);
@@ -353,10 +354,10 @@ impl DocTable {
                 line_base: u32::try_from(lines).ok()?,
                 ..document.view
             };
-            let first = match (address, document.slab.device_buffer().device_address()) {
-                (Some(block), Some(at)) => (at as i64).wrapping_sub(block as i64).wrapping_add(i64::from(document.view.at)),
-                _ if Some(document.slab.id) == block.as_ref().map(|block| block.id) => i64::from(document.view.at),
-                _ => return None,
+            let first = if Some(document.slab.id) == block_id {
+                i64::from(document.view.at)
+            } else {
+                (document.slab.device_buffer().device_address()? as i64).wrapping_sub(address? as i64).wrapping_add(i64::from(document.view.at))
             };
             view.set_offset(first);
             views.push(view);
@@ -396,11 +397,11 @@ struct State {
 #[derive(Default)]
 struct Residency {
     state: Mutex<State>,
-    wake: Condvar,
-    dropper: std::sync::OnceLock<()>,
     /// The slab `tape_room` places tapes in now: the residency's newest when its last tape was placed. `None` before
     /// the first and after `clear`.
     tape_slab: std::sync::RwLock<Option<Arc<Slab>>>,
+    wake: Condvar,
+    dropper: std::sync::OnceLock<()>,
 }
 
 fn residency() -> std::sync::Arc<Residency> {
@@ -600,7 +601,7 @@ pub type Placement<'a> = ([u8; 32], usize, Option<Table>, Box<dyn FnOnce(&Arc<Sl
 ///
 /// A room is a bump of the slab's block (a compare-and-swap), so a tape is placed in the slab tapes go to now
 /// (`Residency::tape_slab`) under a read lock; the residency's lock is taken only to begin the next slab. Every parse
-/// worker places its tapes and line tables here, and with the residency's lock each time they waited on it (0472).
+/// worker places its tapes and line tables here, and with the residency's lock each time they waited on it (0477).
 pub fn tape_room(bytes: usize) -> Result<(Arc<Slab>, usize), Error> {
     let residency = residency();
     if let Some(slab) = residency.tape_slab.read().ok().and_then(|slab| slab.clone())

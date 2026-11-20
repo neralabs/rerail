@@ -143,7 +143,7 @@ host never reads a length or a verdict to decide the next step. Its passes, in o
    scatter; it stops when nothing expands.
 7. **Output:** count, prefix sum, scatter.
 
-The 0466 spike (`rerail_c_pp::stream::parallel`, host Rust) stays as a cross-check of the
+The 0482 spike (`rerail_c_pp::stream::parallel`, host Rust) stays as a cross-check of the
 passes' arrays (user, 2026-11-18). The serial pass is the reference for the output.
 
 ## Requirements, each held by a test
@@ -180,7 +180,7 @@ passes' arrays (user, 2026-11-18). The serial pass is the reference for the outp
   conditional directive is a mark at its `#` with its word after it on its line (`dir_hash,
   before hash "if" | … without cline`), and a directive is its word, its optional tail, then its
   line's end. (This grammar first worked around three limits of the tier-2 compiler: a 16-byte
-  bound on a conditional's word, and tails that took their line's end and a token first. 0445
+  bound on a conditional's word, and tails that took their line's end and a token first. 0480
   fixed the compiler and removed them.)
   - **R4 on the corpora** (`the_corpus_pp_tapes`, ignored; 62 s under Relax): 3,073 of 3,135
     files give the lean writer's tape byte for byte on Cranelift, and Metal's tapes (tier 1 on

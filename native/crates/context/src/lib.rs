@@ -279,8 +279,8 @@ pub fn is_main_thread() -> bool {
     }
     #[cfg(target_os = "linux")]
     {
-        // SAFETY: no arguments.
-        unsafe { libc::gettid() == libc::getpid() }
+        // SAFETY: no arguments. The system call, not glibc's `gettid` (2.30): the Linux engine links against 2.17.
+        unsafe { libc::syscall(libc::SYS_gettid) == libc::c_long::from(libc::getpid()) }
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
@@ -504,6 +504,15 @@ pub fn enter(run: Option<std::sync::Arc<dyn RunOwn>>) -> impl Drop {
     Back(Some(was_run), was_context)
 }
 
+/// Runs `f` in `run` (a job's handle, `job_run`) on this thread, and ends it there: `f` and everything it captured
+/// are dropped before the run leaves the thread. A job written `move || { let _in = enter(run); … }` drops its
+/// captures after its body, when the run has left: a capture's drop that reads the run (a device lease's going back
+/// to its pool reads the machine's) then reads outside any run (Q337).
+pub fn in_run<R>(run: Option<std::sync::Arc<dyn RunOwn>>, f: impl FnOnce() -> R) -> R {
+    let _in = enter(run);
+    f()
+}
+
 /// Whether this thread holds `job`'s run and context already (a pool's item run inline on its caller's thread).
 pub fn holds(job: &Option<std::sync::Arc<dyn RunOwn>>) -> bool {
     let (run, context) = match job.as_ref().map(|j| (j, j.with_context())) {
@@ -519,15 +528,17 @@ pub fn holds(job: &Option<std::sync::Arc<dyn RunOwn>>) -> bool {
     same_run && context.is_none_or(|c| CONTEXT.with(|x| x.borrow().same(c)))
 }
 
-/// A run has left this thread (a guard that put it there dropped, `RUN` back as it was): if it has ended (nothing
-/// holds it), this thread's copy of its values (`SEEN`) is dropped now, outside the copy's borrow (a value's drop may
-/// read a run). Kept, they would live until the thread next enters a run or exits, where a value's drop can find the
-/// thread's other locals gone.
+/// A run has left this thread (a guard that put it there dropped, `RUN` back as it was): unless the run back on the
+/// thread is the one it copied, this thread's copy of the run's values (`SEEN`) is dropped now, outside the copy's
+/// borrow (a value's drop may read a run). The copy lives while the thread is in the run, never after: kept, a pool
+/// thread whose job ended before its run did would hold the run's locals and its shared and machine values until it
+/// next entered a run (Q377: a test's store's connections, its database files open after the test), or until it
+/// exited, where a value's drop can find the thread's other locals gone.
 pub fn left_run() {
     let dead = SEEN
         .try_with(|seen| {
             let mut seen = seen.borrow_mut();
-            seen.run.as_ref().is_some_and(|w| w.strong_count() == 0).then(|| std::mem::take(&mut *seen))
+            (seen.run.is_some() && !seen.is_current()).then(|| std::mem::take(&mut *seen))
         })
         .ok()
         .flatten();
@@ -619,7 +630,7 @@ impl Context {
         Context(Some(std::sync::Arc::new(Link { key: std::any::TypeId::of::<T>(), value: Box::new(value), up: self.clone(), here })))
     }
 
-    /// The nearest link a guard made, past those `bind_here` made above it.
+    /// The nearest link a guard made, past those `bind_here` made above it: a test build's check of the guards' order.
     #[cfg(feature = "test-hooks")]
     fn guarded(&self) -> Option<&std::sync::Arc<Link>> {
         let mut at = self.0.as_ref();
@@ -648,15 +659,22 @@ pub fn with_bound<T: Default + Send + Sync + 'static, R>(f: impl FnOnce(&T) -> R
 /// Binds `value` in the run's context on this thread, and in every job taken here, until the guard drops; then the
 /// context is as it was.
 pub fn bind<T: Send + Sync + 'static>(value: T) -> Bound {
-    let was = CONTEXT.try_with(|c| {
+    let mut bound = Bound {
+        was: None,
+        #[cfg(feature = "test-hooks")]
+        made: 0,
+        on_thread: std::marker::PhantomData,
+    };
+    // No context on this thread (it is being torn down): the guard puts nothing back.
+    let _ = CONTEXT.try_with(|c| {
         let next = c.borrow().with(value, false);
-        let made = next.0.as_ref().map_or(0, |l| std::sync::Arc::as_ptr(l) as usize);
-        (c.replace(next), made)
+        #[cfg(feature = "test-hooks")]
+        {
+            bound.made = next.0.as_ref().map_or(0, |l| std::sync::Arc::as_ptr(l) as usize);
+        }
+        bound.was = Some(c.replace(next));
     });
-    match was {
-        Ok((was, made)) => Bound { was: Some(was), #[cfg(feature = "test-hooks")] made, #[cfg(not(feature = "test-hooks"))] made: { let _ = made; }, not_send: std::marker::PhantomData },
-        Err(_) => Bound { was: None, #[cfg(feature = "test-hooks")] made: 0, #[cfg(not(feature = "test-hooks"))] made: (), not_send: std::marker::PhantomData },
-    }
+    bound
 }
 
 /// Binds `value` for the rest of the extent under way on this thread (an extent's guard dropping takes it with it): a
@@ -681,14 +699,12 @@ pub fn bind_here<T: Send + Sync + 'static>(value: T) {
 /// `Send`): dropped on another, it would set that thread's context.
 #[must_use = "the binding ends when the guard drops"]
 pub struct Bound {
-    /// The context before it: put back when it drops.
+    /// The context it replaced, put back when it drops.
     was: Option<Context>,
-    /// Its own link, which a test build checks is the nearest a guard made when it drops.
+    /// The link it made, by address: a test build checks it is the nearest a guard made when it drops.
     #[cfg(feature = "test-hooks")]
     made: usize,
-    #[cfg(not(feature = "test-hooks"))]
-    made: (),
-    not_send: std::marker::PhantomData<*const ()>,
+    on_thread: std::marker::PhantomData<*const ()>,
 }
 
 impl Drop for Bound {
@@ -700,7 +716,6 @@ impl Drop for Bound {
             let nearest = CONTEXT.try_with(|c| c.borrow().guarded().map_or(0, |l| std::sync::Arc::as_ptr(l) as usize)).unwrap_or(self.made);
             assert_eq!(nearest, self.made, "rerail: a binding of the run's context dropped out of order (decision 0442): guards drop in the reverse of their order");
         }
-        let _ = (self.made, self.not_send);
         let left = self.was.take().and_then(|was| CONTEXT.try_with(|c| c.replace(was)).ok());
         drop(left);
     }
@@ -898,6 +913,37 @@ pub fn test_run() -> impl Drop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Q337: a job's captures end inside its run (`in_run`); with the run's guard in the job's body, a capture's drop
+    /// comes after the guard's and is outside the run.
+    #[test]
+    fn a_jobs_captures_are_dropped_inside_its_run() {
+        struct Says(std::sync::Arc<std::sync::Mutex<Option<bool>>>);
+        impl Drop for Says {
+            fn drop(&mut self) {
+                *self.0.lock().unwrap() = Some(run_own().is_some());
+            }
+        }
+        let _t = test_run();
+        let job = |seen: &std::sync::Arc<std::sync::Mutex<Option<bool>>>, carried: bool| {
+            let (says, run) = (Says(seen.clone()), job_run());
+            std::thread::spawn(move || {
+                if carried {
+                    in_run(run, move || drop(&says));
+                } else {
+                    let _in = enter(run);
+                    let _ = &says;
+                }
+            })
+            .join()
+            .unwrap();
+        };
+        let (bare, carried) = (std::sync::Arc::new(std::sync::Mutex::new(None)), std::sync::Arc::new(std::sync::Mutex::new(None)));
+        job(&bare, false);
+        assert_eq!(*bare.lock().unwrap(), Some(false), "the guard's pattern: the capture outlives the run");
+        job(&carried, true);
+        assert_eq!(*carried.lock().unwrap(), Some(true), "in_run: the capture ends inside the run");
+    }
 
     #[derive(Clone, Default, PartialEq, Debug)]
     struct Depth(usize);

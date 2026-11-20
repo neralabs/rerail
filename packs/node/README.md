@@ -1,11 +1,12 @@
 # Rerail rule pack: Node.js
 
+**Linter-equivalent to eslint-plugin-n 18.4.1.** Each rule flags what the original flags, bar declared differences. [What this means](../../docs/rule-packs.md#linter-equivalent).
+
 42 ports of eslint-plugin-n 18.4.1 rules with its default options. A port is in `rules/` and `pack.json` when it passes
 the pack's conformance check, gates included (`upstream/eslint-plugin-n/gates.yaml`), and in `candidates/rules/`
 until then ([conformance/README.md](../../conformance/README.md)). Each port is scored through the engine's production workspace
 path, with every disagreement declared in `divergences.json` (`n-prefer-promises-fs` does not report `fs.watch`;
-`n-callback-return` does not report a final `callback?.()`; `n-no-unsupported-features-es-syntax` cannot read a tagged
-template with an invalid escape), against:
+`n-no-unsupported-features-es-syntax` cannot read a tagged template with an invalid escape), against:
 
 - **the plugin's own findings on its rule tests** (`fixtures`);
 - **the tool-pack's real-code samples** (`samples.lock`, `SAMPLES.md`): files from fastify and prettier labelled with
@@ -127,7 +128,7 @@ What each rule matches beyond its one-line description: exact matching, edge cas
 
 ### `n-callback-return`
 
-Default callback names: callback, cb, next. A call of one of those is allowed when its nearest block/return/arrow ancestor is a return or an arrow function, when it is the last statement of a function body (or the right side of a binary/logical expression statement there), or when it is the statement just before a block's final return. Calls with a template-string argument are not matched. An optional call (`callback?.()`) gets the same exemptions; upstream reports one in those positions, because ESTree's ChainExpression around it defeats its `parentNode.expression === node` check (declared in `divergences.json`).
+Default callback names: callback, cb, next. A call of one of those is allowed when its nearest block/return/arrow ancestor is a return or an arrow function, when it is the last statement of a function body (or the right side of a binary/logical expression statement there), or when it is the statement just before a block's final return. Calls with a template-string argument are not matched. An optional call (`callback?.()`) gets neither statement-position exemption, matching upstream: its `parentNode.expression === node` check fails on the ChainExpression ESTree wraps around the call.
 
 ### `n-global-require`
 
@@ -151,7 +152,7 @@ Default options, grouping off. A declarator counts as a require when initialised
 
 ### `n-no-path-concat`
 
-Flags `__dirname`/`__filename` or `import.meta.dirname|filename|url` as the left of `+` or a template substitution when the next part's first character is `/` (path.sep on the recorder's POSIX host): a string starting with /, a constant (followed binding), `path.sep` of the path module, or recursively the left of a binary, either side of ||/&&/??, either branch of ?:, an assignment's right side, or a template's first part.
+Flags `__dirname`/`__filename` or `import.meta.dirname|filename|url` as the left of `+` or a template substitution when the next part's first character is `/` (path.sep on the recorder's POSIX host): a string starting with /, a constant (followed binding), `path.sep` of the path module, or recursively the left of a binary, either side of ||/&&/??, either branch of ?:, an assignment's right side, or a template's first part. Like upstream's ReferenceTracker (isModifiedGlobal), it skips `__dirname` or `__filename` in a file that writes that global anywhere (`__dirname = '.'`, `+=`, `++`, a destructuring or for-in/of target).
 
 ### `n-no-process-env` / `n-no-process-exit` / `n-no-new-require`
 

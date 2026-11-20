@@ -9,7 +9,7 @@ for f in sorted(os.listdir(d)):
     log = open(os.path.join(d, n + '.log')).read()
     if 'rerail-engine:' in log:
         checks[n] = None; continue
-    src = open(os.path.join(R, n + '.rr')).read()
+    src = open(os.path.join(R, n + '.rerail')).read()
     own = set(re.findall(r'^\.(?:decl|violation|metric|output)\s+(\w+)', src, re.M))
     rows = [l.rstrip('\n').split('\t', 4) for l in open(os.path.join(d, f)) if l.strip()]
     rels = {}

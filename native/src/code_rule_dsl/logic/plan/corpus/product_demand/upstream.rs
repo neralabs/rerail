@@ -140,7 +140,7 @@ fn install(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTre
     install_named(program, rel, cols, products, require_anchor, PREFIX)
 }
 
-/// `install` under another prefix: the deferred joins' pair relations (`DEFERRED_PAIRS`, decision 0477).
+/// `install` under another prefix: the deferred joins' pair relations (`DEFERRED_PAIRS`, decision 0513).
 pub(super) fn install_named(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTreeSet<String>, require_anchor: bool, prefix: &str) -> Result<bool, String> {
     let name = format!("{prefix}{rel}");
     if program.columns(&name).is_some() {

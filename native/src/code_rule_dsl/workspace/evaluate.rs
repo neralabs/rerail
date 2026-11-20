@@ -21,9 +21,9 @@ use crate::code_rule_dsl::eval::{
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::matcher::{FileGates, FileScopeSlot, GrammarMatcher, UtilLimit};
 #[cfg(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")))]
 use crate::code_rule_dsl::matcher::{AnchorPlan, FileAnchorIndex, Selection};
+use crate::code_rule_dsl::matcher::{FileGates, FileScopeSlot, GrammarMatcher, UtilLimit};
 use crate::code_rule_dsl::model::{
     ClauseKind, CompiledCodeRule, FILE_BUDGET_EXCEEDED, FileInput, INPUT_LIMIT, Metrics, Query,
     RegexSource, WITNESS_LIMIT,
@@ -64,7 +64,10 @@ pub(super) fn candidate_grammar<'a>(
 
 /// A file prepared before the workers run: its document, line table and the budget and metrics of
 /// its preparation. Only the `p-anchor-corpus` path prepares files (open item O20).
-#[cfg_attr(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")), allow(dead_code))]
+#[cfg_attr(
+    not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")),
+    allow(dead_code)
+)]
 pub(super) struct PreparedAst {
     doc: Option<tape::TapeDoc>,
     lines: Arc<LineTable>,
@@ -227,16 +230,14 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
     } else {
         // Each job in the run under way here (a pool thread that takes one holds none: decision 0442).
         let carry = crate::code_rule_dsl::logic::profile::carry();
-        (|| {
-            crate::code_rule_dsl::logic::profile::on_cores(|| {
-                jobs.into_par_iter()
-                    .map_init(BTreeMap::new, |grammars, job| {
-                        let _in = carry.enter("evaluate job");
-                        work(job, grammars)
-                    })
-                    .collect()
-            })
-        })()
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            jobs.into_par_iter()
+                .map_init(BTreeMap::new, |grammars, job| {
+                    let _in = carry.enter("evaluate job");
+                    work(job, grammars)
+                })
+                .collect()
+        })
     })
 }
 
@@ -305,7 +306,14 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
         #[cfg(feature = "code-rule-profile")]
         let _storage_read_timer = profile::PhaseTimer::start(profile::Phase::StoreRead);
         if let Some(storage) = context.storage {
-            restore_job(&job.path, &mut job.file, &mut BTreeMap::new(), context, storage, &prefetched)?;
+            restore_job(
+                &job.path,
+                &mut job.file,
+                &mut BTreeMap::new(),
+                context,
+                storage,
+                &prefetched,
+            )?;
         }
         #[cfg(feature = "code-rule-profile")]
         drop(_storage_read_timer);
@@ -342,17 +350,15 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
     } else {
         // Each job in the run under way here (a pool thread that takes one holds none: decision 0442).
         let carry = crate::code_rule_dsl::logic::profile::carry();
-        (|| {
-            crate::code_rule_dsl::logic::profile::on_cores(|| {
-                jobs.into_par_iter()
-                    .zip(storage_times.into_par_iter())
-                    .map_init(BTreeMap::new, |grammars, job| {
-                        let _in = carry.enter("evaluate job");
-                        work(job, grammars)
-                    })
-                    .collect()
-            })
-        })()
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            jobs.into_par_iter()
+                .zip(storage_times.into_par_iter())
+                .map_init(BTreeMap::new, |grammars, job| {
+                    let _in = carry.enter("evaluate job");
+                    work(job, grammars)
+                })
+                .collect()
+        })
     })
 }
 
@@ -1073,7 +1079,14 @@ fn evaluate_document(
     let root = Root::doc(doc.clone());
     // The gates' file facts are read once for the document, whichever candidate reads them.
     let gates = FileGates::new(&file.input, root.root());
-    fail_incomplete_candidates(&mut file.failures, &file.candidates.ast, slots, &gates, &errors, file_errors);
+    fail_incomplete_candidates(
+        &mut file.failures,
+        &file.candidates.ast,
+        slots,
+        &gates,
+        &errors,
+        file_errors,
+    );
     #[cfg(any(test, feature = "test-hooks"))]
     pause_at_test_phase("restored-doc", &file.input.source);
     // A document's node and utility visits grow with it (`Limits::visits_for`).
@@ -1329,15 +1342,16 @@ pub(super) fn encode_tape(
     // A dialect its language parses itself (Blade's Forte), or reads with a parser standing in for tree-sitter's
     // (JSON's Bitlex parser): a file that parser leaves to tree-sitter is read below, as the dialect's others are.
     let own = tape::tree_parser(language);
-    let own_image = match own.map(|parser| encode_own_image(file, grammar, parser, &interrupted, metrics)) {
-        Some(Err(failure)) => return Ok(Err(failure)),
-        Some(Ok(image)) => image,
-        None => None,
-    };
+    let own_image =
+        match own.map(|parser| encode_own_image(file, grammar, parser, &interrupted, metrics)) {
+            Some(Err(failure)) => return Ok(Err(failure)),
+            Some(Ok(image)) => image,
+            None => None,
+        };
     let image = if let Some(image) = own_image {
         Some(image)
     } else if language == GrammarDialect::Rr {
-        // A `.rr` file: the rule engine's own parser (decision 0061).
+        // A `.rerail` file: the rule engine's own parser (decision 0061).
         tape::TapeImage::parse(grammar, &file.input.source, &interrupted)
     } else {
         encode_tree_sitter_image(file, language, grammar, &interrupted, metrics)?

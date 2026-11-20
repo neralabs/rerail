@@ -221,7 +221,7 @@ impl Grammar {
     /// The grammar of a dialect, built once per process and shared by every document of it: built per document, a
     /// run over 300 files held 61 MB of grammars at its peak (Q74), and built each one's kind table again.
     pub fn embedded(lang: GrammarDialect) -> Result<Arc<Self>, String> {
-        // Read-locked for a grammar built already: every parse worker asks it for each document (0472).
+        // Read-locked for a grammar built already: every parse worker asks it for each document (0477).
         static GRAMMARS: std::sync::LazyLock<
             std::sync::RwLock<std::collections::HashMap<GrammarDialect, Arc<Grammar>>>,
         > = std::sync::LazyLock::new(Default::default);
@@ -281,7 +281,7 @@ pub trait TreeParser: Send + Sync {
         false
     }
 
-    /// The node kinds it parses a text from besides a whole file (decision 0482): a fragment's start.
+    /// The node kinds it parses a text from besides a whole file (decision 0466): a fragment's start.
     fn starts(&self) -> &'static [&'static str] {
         &[]
     }
@@ -370,7 +370,7 @@ pub fn tree_parser(dialect: GrammarDialect) -> Option<&'static dyn TreeParser> {
     router.chosen.iter().find(|(lang, _)| *lang == dialect).map(|&(_, i)| router.registered[i].parser)
 }
 
-/// The node kinds `dialect`'s hand-written parser parses a fragment from (decision 0482): none for a dialect only
+/// The node kinds `dialect`'s hand-written parser parses a fragment from (decision 0466): none for a dialect only
 /// tree-sitter parses.
 pub fn starts(dialect: GrammarDialect) -> &'static [&'static str] {
     tree_parser(dialect).map_or(&[], |p| p.starts())
@@ -1566,7 +1566,7 @@ impl TapeImage {
                 Err(TemplateError::Encode(error)) => Some(Err(error)),
             };
         }
-        // A `.rr` file: the rule engine's own parser builds its tree (decision 0061).
+        // A `.rerail` file: the rule engine's own parser builds its tree (decision 0061).
         if grammar.lang == GrammarDialect::Rr {
             return Some(Self::encode_rr(grammar, source, budget).map(|image| FileImage::single(image, source)));
         }
@@ -1599,7 +1599,7 @@ impl TapeImage {
         Some(Self::encode(tree.root_node(), grammar, source, budget))
     }
 
-    /// `source` parsed from the node kind `start` by `grammar`'s hand-written parser (decision 0482): `None` where its
+    /// `source` parsed from the node kind `start` by `grammar`'s hand-written parser (decision 0466): `None` where its
     /// dialect has no parser that starts there. A text the parser refuses is one `ERROR` node over it (`refused`):
     /// no tree is made up for it, and a rule's `.on guest_error` sees it where it stands.
     pub fn parse_from(grammar: &Grammar, source: &str, start: &str, budget: &impl Fn() -> bool) -> Option<Result<FileImage, String>> {
@@ -1608,7 +1608,7 @@ impl TapeImage {
         Some(image.map(|image| FileImage::single(image, source)))
     }
 
-    /// A refused fragment's tape (decision 0482): one `ERROR` node over the text less the blanks at its ends.
+    /// A refused fragment's tape (decision 0466): one `ERROR` node over the text less the blanks at its ends.
     pub fn refused(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
         let start = source.len() - source.trim_start().len();
         let end = source.trim_end().len().max(start);
@@ -1657,13 +1657,13 @@ impl TapeImage {
         Self::walked(grammar, source, root.descendant_count(), budget, |out| encode_tree(out, root, language, filter.as_deref(), omitted, budget))
     }
 
-    /// The tape of a `.rr` file: the tree `logic::rr::syntax` builds as it reads the statements, its comments as
+    /// The tape of a `.rerail` file: the tree `logic::rr::syntax` builds as it reads the statements, its comments as
     /// extras and each statement that does not parse an ERROR leaf (decision 0061). The lean parser writes it as
     /// the image's bytes as it parses (decision 0140), so nothing here packs a node: the image is read as stored.
     pub fn encode_rr(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
         checked(budget)?;
         if grammar.lang != GrammarDialect::Rr {
-            return Err("only a .rr file is encoded from its rule tree".into());
+            return Err("only a .rerail file is encoded from its rule tree".into());
         }
         if source.len() > u32::MAX as usize {
             return Err("source exceeds tape range".into());
@@ -2429,7 +2429,7 @@ pub struct HostLink {
 /// The tape stores no implied token (RER-131, `tokens`): `echo` and `;` a Blade echo is written as,
 /// the `;` marker Vue's script and template programs start with. Their text is in the gaps a node's
 /// stored children leave in its span, the source `structural_before` and `structural_after` hold
-/// (core.rr): comments are nodes, so a gap is implied tokens and white space only, and each run of
+/// (core.rerail): comments are nodes, so a gap is implied tokens and white space only, and each run of
 /// it that is not white space (`implied`) is read as a leaf. Which tokens a run holds does not
 /// matter here (`TokenGrammar::gaps` would say): only whether its bytes stand for the file's.
 fn node_extents(doc: &TapeDoc, segments: &SegmentMap) -> Vec<(u32, u32)> {
@@ -3296,7 +3296,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     /// The parent, then its parent, and so on: a parent read each, at most `K - 1` sibling steps in format 16. A
     /// climb mostly stops a few levels up (the nearest function or class), where a descent from the root
     /// (`Tape::path`) read every sibling before the path at each level: in a module of hundreds of statements, the
-    /// reference graph's climbs from its parameters were a sixth of its time (0484, Q343).
+    /// reference graph's climbs from its parameters were a sixth of its time (0465, Q334).
     fn ancestors(&self, _root: Self) -> impl Iterator<Item = Self> {
         std::iter::successors(self.parent(), Self::parent)
     }

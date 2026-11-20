@@ -3,7 +3,7 @@
 //! A small write (the files' stats, the manifest, a pin, a kept plan) is an **item** of the run's record: a kind, its
 //! body (owned data) and the keys a `queued` or `settle` asks about. Items wait beside the run's waves until the run
 //! ends (or a `settle` of one of their keys), then the record is encoded as **one string**, with its items' bytes
-//! beside it, each held as its maker holds it (decision 0480: an image where its writer wrote it), never copied into
+//! beside it, each held as its maker holds it (decision 0464: an image where its writer wrote it), never copied into
 //! the record, and queued as the last job of the run's last wave. The writer decodes it and applies its items in
 //! order, each by the function its kind registered: the queue holds data, the registry code.
 //!
@@ -68,7 +68,7 @@ pub mod codec {
 }
 
 /// Bytes an item carries to the writer, held as their maker holds them (an image where its writer wrote it, a vector
-/// made for the item), never copied into the record (decision 0480).
+/// made for the item), never copied into the record (decision 0464).
 pub type Bytes = std::sync::Arc<dyn AsRef<[u8]> + Send + Sync>;
 
 /// What an item's apply is given: the store, its bytes (its first piece; empty for none), all its pieces, and the
@@ -180,7 +180,7 @@ impl ContentStore {
         self.record_held(kind, keys, body, one(bytes), f)
     }
 
-    /// `record`, its item's bytes `pieces` as their makers hold them (decision 0480).
+    /// `record`, its item's bytes `pieces` as their makers hold them (decision 0464).
     pub fn record_held<T: serde::Serialize>(&self, kind: &'static str, keys: Vec<Key>, body: &T, bytes: Vec<Bytes>, f: ApplyFn) {
         register(kind, f);
         let body = codec::body(body);
@@ -197,7 +197,7 @@ impl ContentStore {
         self.queue_item(Syms::None, kind, keys, body, bytes, false);
     }
 
-    /// `queue_record`, its item's bytes `pieces` as their makers hold them (decision 0480).
+    /// `queue_record`, its item's bytes `pieces` as their makers hold them (decision 0464).
     #[allow(clippy::too_many_arguments)]
     pub fn queue_record_held<T: serde::Serialize>(&self, syms: Syms, kind: &'static str, keys: Vec<Key>, body: &T, bytes: Vec<Bytes>, f: ApplyFn, droppable: bool) -> bool {
         register(kind, f);

@@ -5,7 +5,7 @@
 //!
 //! The table is `SHARDS` shards, a name's by the hash of its family and text, each behind its own
 //! lock: the parse workers summarize their files at once, and behind one lock their interning was
-//! a third of the summaries' time, waiting (0484's next steps, Q343). A name's parent is interned
+//! a third of the summaries' time, waiting (0465's next steps, Q334). A name's parent is interned
 //! before its own shard is locked, so no thread holds two shards' locks.
 
 use crate::code_rule_dsl::language::Family;
@@ -32,7 +32,7 @@ pub struct Name(Arc<Entry>);
 impl Name {
     /// Interns `text` in `family`'s namespace, along with its dotted prefixes.
     pub fn new(family: Family, text: &str) -> Self {
-        let names = names();
+        let names = crate::code_rule_dsl::logic::profile::shared::<Names>();
         let shard = names.shard(family, text);
         if let Some(name) = shard.read().get(family, text) {
             return name;
@@ -51,10 +51,10 @@ impl Name {
     /// names at once (a summary's), each shard's lock taken once a prefix depth (a read for the names it has, a
     /// write for the rest), not once a name. Most of a file's names are its own, new to the table, so one by one
     /// each took a write lock, and the parse workers summarizing their files at once waited on each other's
-    /// (0484, Q343). The names come back in `texts`' order.
+    /// (0465, Q334). The names come back in `texts`' order.
     pub fn new_all<'t>(family: Family, texts: impl IntoIterator<Item = &'t str>) -> Vec<Self> {
+        let names = crate::code_rule_dsl::logic::profile::shared::<Names>();
         let texts = texts.into_iter().collect::<Vec<_>>();
-        let names = names();
         // Every text and dotted prefix, once, by depth (its dots): a prefix's name is made before the names under it.
         let mut wanted: HashMap<&str, Option<Name>> = HashMap::default();
         let mut depths: Vec<Vec<&str>> = Vec::new();
@@ -250,7 +250,7 @@ const SHARDS: usize = 256;
 /// A shard is swept once it holds twice this many names, or twice what its last sweep left.
 const SWEEP_AT: usize = (1 << 16) / SHARDS;
 
-/// The shared object's table (decision 0442), in its shards: its names are its own, and equal only to its own.
+/// The shared object's table (decision 0442): its names are its own, and equal only to its own.
 struct Names([RwLock<Table>; SHARDS]);
 
 impl Default for Names {
@@ -264,10 +264,6 @@ impl Names {
     fn shard(&self, family: Family, text: &str) -> &RwLock<Table> {
         &self.0[shard_index(family, text)]
     }
-}
-
-fn names() -> Arc<Names> {
-    crate::code_rule_dsl::logic::profile::shared::<Names>()
 }
 
 fn shard_index(family: Family, text: &str) -> usize {

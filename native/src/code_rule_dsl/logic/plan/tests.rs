@@ -128,7 +128,7 @@ fn rules_of_one_body_and_two_heads_both_run_their_whole_plan() {
 fn a_relation_past_the_width_cap_stops_the_run_or_is_cut() {
     use super::super::native::width;
     let facts: String = (1..=100).map(|i| format!("l({i}).\nr({i}).\n")).collect();
-    let p = parse(&format!(".decl l(x:number)\n.decl r(x:number)\n{facts}.decl pairs(x:number,y:number)\npairs(x, y) :- l(x), r(y).\n.output pairs\n")).unwrap();
+    let p = parse_version(&format!(".decl l(x:number)\n.decl r(x:number)\n{facts}.decl pairs(x:number,y:number)\npairs(x, y) :- l(x), r(y).\n.output pairs\n")).unwrap();
     let run = || {
         let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
@@ -288,8 +288,17 @@ fn closures_of_a_level_wider_than_a_component_launch_in_one_wave() {
 /// Decision 0123 §9: a probe with no kept plan is planned when its delta first has rows. In `{r, s, t}`, `s` never
 /// has a row (`g` is empty, though not to the program's prune: no edge is a loop), so `r`'s probe by `s` is never
 /// planned; the probes by `r` are planned when the first wave returns, and the run derives what the SQL run does.
+/// The probes' counts are the process's (`lazy_probes_counted`), read by difference around the run: in a process of
+/// the test's own (`test_support::alone`), since another test's run plans probes it left before the run began, and in
+/// the shared process `planned` grew past `left` within the run's window.
 #[test]
 fn a_probe_is_planned_when_its_delta_first_has_rows() {
+    crate::code_rule_dsl::test_support::alone("code_rule_dsl::logic::plan::tests::a_probe_is_planned_when_its_delta_first_has_rows_child");
+}
+
+#[test]
+#[ignore = "child process of a_probe_is_planned_when_its_delta_first_has_rows"]
+fn a_probe_is_planned_when_its_delta_first_has_rows_child() {
     let src = ".decl e(a: number, b: number)\ne(1, 2).\ne(2, 3).\ne(3, 4).\ne(4, 1).\n\
                .decl g(a: number)\ng(a) :- e(a, a).\n.decl h(a: number)\nh(3).\n\
                .decl r(a: number, b: number)\n.decl s(a: number, b: number)\n.decl t(a: number, b: number)\n\
@@ -315,7 +324,7 @@ fn a_probe_is_planned_when_its_delta_first_has_rows() {
         if !modes.is_empty() {
             assert!(got.native.iter().any(|c| c.split('/').any(|r| r == "r")), "r's component runs natively: {:?}", got.native);
             // The probes searched: r by r, r by s, s by r, t by r (`r(a, b) :- t(b, a)` is a copy, with no order to
-            // find). Other tests' runs only add to both counts, and never plan more probes than they left.
+            // find). The process is the test's own, so the counts moved by this run's alone.
             let (left, planned) = (after.0 - before.0, after.1 - before.1);
             assert!(left >= 4 && planned >= 3, "left {left}, planned {planned}; native {:?}, inlined {:?}", got.native, got.inlined);
             assert!(left - planned >= 1, "r's probe by s is never planned: left {left}, planned {planned}");
@@ -356,7 +365,7 @@ fn facts() -> std::path::PathBuf {
 
 /// T's program `name` through T's `rdl.py sql` front (`front_of`).
 fn program(name: &str) -> Arc<Version> {
-    let src = std::fs::read_to_string(root().join(format!("plan/golden/programs/{name}.rr"))).unwrap();
+    let src = std::fs::read_to_string(root().join(format!("plan/golden/programs/{name}.rerail"))).unwrap();
     front_of(parse_version(&src).unwrap())
 }
 
@@ -810,13 +819,13 @@ fn t_programs_run_natively_over_atoms_like_t() {
 /// T's outputs on T's facts, through the same front (prune, magic sets, prune). Their plans may differ from
 /// T's; their outputs may not.
 #[test]
-#[ignore = "O95: T's facts predate relations calls.rr now reads (`value`, `str`, …); the facts need them, empty or rebuilt"]
+#[ignore = "O95: T's facts predate relations calls.rerail now reads (`value`, `str`, …); the facts need them, empty or rebuilt"]
 fn product_programs_derive_t_outputs() {
     let facts = facts();
-    // T's facts predate `strprefix` (which calls.rr's type relations read, decision 0047): empty here, so every
+    // T's facts predate `strprefix` (which calls.rerail's type relations read, decision 0047): empty here, so every
     // string is str. Likewise the guests (`parsed`, `host_node`, decision 0055): no string is parsed. No T output
-    // reads them. Nor do they have `name`, `str`, `value` and `op_at` (core.rr), which calls.rr reads through
-    // python/conditions.rr (Typing's B6, B10): empty here, so no `sys.version_info` or `sys.platform` test is
+    // reads them. Nor do they have `name`, `str`, `value` and `op_at` (core.rerail), which calls.rerail reads through
+    // python/conditions.rerail (Typing's B6, B10): empty here, so no `sys.version_info` or `sys.platform` test is
     // decided and every branch is taken, as T assumed.
     Connection::open(&facts).unwrap().execute_batch(
         "CREATE TABLE strprefix(n INTEGER, s TEXT); INSERT INTO stat_meta VALUES ('rows.strprefix', 0);
@@ -836,7 +845,7 @@ fn product_programs_derive_t_outputs() {
     ).unwrap();
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
-        let src = crate::code_rule_dsl::logic::settings::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
+        let src = crate::code_rule_dsl::logic::settings::program_text(&root().join(format!("../typing/programs/{name}.rerail"))).unwrap();
         let p = parse_version(&src).unwrap();
         // T has no library stage (decision 0059): with no `stage` fact, the rules it opens are dead, and their
         // unbound reads of demanded relations (`need_attr(c, a) :- stage("library"), found(c, a, _)`) are not asked.
@@ -852,7 +861,7 @@ fn product_programs_derive_t_outputs() {
         }
         let golden = root().join(format!("plan/golden/{name}"));
         let got = run_sql(p, &facts).unwrap_or_else(|e| panic!("{name}: {e}"));
-        // The product's own outputs (calls.rr's type relations, decision 0047) are not T's: they have no golden.
+        // The product's own outputs (calls.rerail's type relations, decision 0047) are not T's: they have no golden.
         for (rel, rows) in got.shown().iter().filter(|(rel, _)| golden.join(format!("{rel}.csv")).exists()) {
             let expected = golden_rows(&golden, rel);
             let expected: Vec<&str> = expected.iter().map(String::as_str).collect();
@@ -900,7 +909,7 @@ fn own_ingestion_derives_what_t_facts_do() {
     };
     let read = |out: &std::path::Path| output::Outputs::open(out).unwrap_or_else(|e| panic!("{}: {e}", out.display()));
     for name in ["workload", "calls"] {
-        let src = crate::code_rule_dsl::logic::settings::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
+        let src = crate::code_rule_dsl::logic::settings::program_text(&root().join(format!("../typing/programs/{name}.rerail"))).unwrap();
         let with_t = dir.join(format!("out-{name}-t"));
         let report = corpus::run(&src, &dir, Some(&facts), &with_t, "program", Binding::Cpu, 1 << 18).unwrap();
         assert!(report.rows.values().any(|&n| n > 0), "{name}: no outputs");
@@ -941,7 +950,7 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     write("decl/make.pyi", "# rerail.types/v1\n# module: vendor.core\ndef make() -> str: ...\n");
     write("app/main.py", "from vendor import version\nfrom vendor.core import make\nimport other\na = version()\nb = make()\nc = other.thing()\n");
     write("decl/other.pyi", "# rerail.types/v1\n# module: other\ndef thing() -> bytes | None: ...\n");
-    let src = std::fs::read_to_string(root().join("../typing/programs/workload.rr")).unwrap();
+    let src = std::fs::read_to_string(root().join("../typing/programs/workload.rerail")).unwrap();
     let cache = dir.join("cache");
 
     let summarize = Typing { summarize: Some(cache.clone()), declarations: vec![dir.join("decl/make.pyi")], ..Default::default() };
@@ -1004,7 +1013,7 @@ name(s) :- node(_, n, "identifier", _, _), text(n, s).
         super::corpus::closes_done();
         assert_eq!(crate::content_store::holding(&store), (0, 0), "run {i} left store handles or connections open (handles, connections)");
         // The kernel names files by their real path (macOS's /var is /private/var).
-        let real = out.canonicalize().unwrap().join(store.file_name().unwrap());
+        let real = dunce::canonicalize(&out).unwrap().join(store.file_name().unwrap());
         let held: Vec<_> = open_files().into_iter().filter(|file| file.to_string_lossy().starts_with(&*real.to_string_lossy())).collect();
         assert!(held.is_empty(), "run {i} left its store open: {held:?}");
     }
@@ -1043,12 +1052,12 @@ fn open_files() -> Vec<std::path::PathBuf> {
 fn a_second_corpus_run_deletes_and_creates_its_store_again() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("restore");
     std::fs::create_dir_all(&dir).unwrap();
-    let status = std::process::Command::new(std::env::current_exe().unwrap())
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
         .args(["--ignored", "--exact", "code_rule_dsl::logic::plan::tests::corpus_store_child", "--nocapture", "--test-threads=1"])
         .env(CORPUS_STORE_CHILD, &dir)
-        .env("RERAIL_TAPE_CACHE", "off")
-        .output()
-        .unwrap();
+        .env("RERAIL_TAPE_CACHE", "off");
+    let status = super::corpus::switches::started(|| child.output()).unwrap();
     // The child's own output, shown when it fails: a failure beside other tests says nothing without it (Q42).
     assert!(
         status.status.success() && dir.join("done").exists(),
@@ -1097,7 +1106,7 @@ async_in_fts(s) :- doc(d, p, _), glob("impl/*/fts/**", p), node(d, n, "identifie
 }
 
 /// The tree axes (decision 0036): `inside(n, a, set)` holds every ancestor of `n` whose kind is in the set, not
-/// only the nearest; `has(a, n, set)` every descendant of `a` whose kind is in the set (`core.rr`: the set tests the
+/// only the nearest; `has(a, n, set)` every descendant of `a` whose kind is in the set (`core.rerail`: the set tests the
 /// descendant); both negate.
 #[test]
 fn rules_read_inside_and_has_as_tape_relations() {
@@ -1318,7 +1327,7 @@ low(@lower(cat(a, " ", b))) :- w(a, b).
     assert_eq!(got["low"], [["x y"], ["àé i\u{307} ας"]]);
 }
 
-/// `@dot("", b)` is `b` (`core.rr`), built and split: a split of a bound whole gives `""` and the whole, and each
+/// `@dot("", b)` is `b` (`core.rerail`), built and split: a split of a bound whole gives `""` and the whole, and each
 /// cut at a "." with a part before it; with a bound part, the other. Recursive (the native set engine) and not.
 #[test]
 fn dot_of_the_empty_name_is_the_name() {
@@ -1402,8 +1411,8 @@ found(x, i, a, b, c) :- s(x), match_all("(?<c>x+)", x, i, a, b).
     assert!(found(["é xx xx", "1", "5", "7", "xx"]) && found(["x", "0", "0", "1", "x"]), "{:?}", got["found"]);
 }
 
-/// A head's `@dot` with a computed part (`walk_qualname(f, @dot(p, @nfkc(x)))`, data-layer `purity-ast.rr`), and an
-/// ordered comparison with an extremum's value (`k < v`, `v = min l : {…}`, `post-op-side-effects.rr`), on both
+/// A head's `@dot` with a computed part (`walk_qualname(f, @dot(p, @nfkc(x)))`, data-layer `purity-ast.rerail`), and an
+/// ordered comparison with an extremum's value (`k < v`, `v = min l : {…}`, `post-op-side-effects.rerail`), on both
 /// paths. The native engine declined both: the head's part was not a slot, and `v` had no type.
 #[test]
 fn a_heads_computed_part_and_an_extremums_comparison_run_natively() {
@@ -1431,7 +1440,7 @@ late(f, k) :- r(f, k), v = max x : { l(f, x) }, k >= v.
 
 // ---- violations ----
 
-/// A `.violation` at a `loc` (`core.rr`): a node's finding is at its document's path and line; a `@place(path,
+/// A `.violation` at a `loc` (`core.rerail`): a node's finding is at its document's path and line; a `@place(path,
 /// line)`'s at that path and line, line 0 for the file itself and a path that need not exist; a place passed through
 /// another relation keeps its path and line.
 #[test]
@@ -1839,7 +1848,7 @@ chained(a, top) :- child(a, b, _), child(b, top, _).
     assert_eq!(got[3], got[2]);
 }
 
-/// `s` as a `.rr` string literal (`rr::syntax`'s escapes: `\"`, `\\`, `\n`, `\t`, `\r`, `\u{…}`).
+/// `s` as a `.rerail` string literal (`rr::syntax`'s escapes: `\"`, `\\`, `\n`, `\t`, `\r`, `\u{…}`).
 fn rr_str(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
@@ -2117,7 +2126,7 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
         ("fgp", 100.0, vec![50.0, 5.0, 50.0, 10.0, 20.0]),
         ("fbind", 1.0, vec![1.0; 4]),
     ] {
-        model.stats.card.insert(rel.to_owned(), rows);
+        model.stats.card.insert(rel, rows);
         for (c, n) in ndv.into_iter().enumerate() {
             model.ndv.insert((rel.to_owned(), c), n);
             model.stats.fan.insert((rel.to_owned(), c), rows / n);
@@ -2250,7 +2259,7 @@ fn a_hot_constant_is_priced_by_its_share_of_the_rows() {
         ("fv", 695.0, vec![(60.0, 46.9), (153.0, 19.2), (3.0, 489.6), (201.0, 8.0)]),
         ("ifn", 1.0, vec![(1.0, 1.0); 2]),
     ] {
-        model.stats.card.insert(rel.to_owned(), rows);
+        model.stats.card.insert(rel, rows);
         for (c, (n, fan)) in cols.into_iter().enumerate() {
             model.ndv.insert((rel.to_owned(), c), n);
             model.stats.fan.insert((rel.to_owned(), c), fan);
@@ -2301,7 +2310,7 @@ fn an_equality_binds_its_right_side_before_the_next_join() {
 }
 
 /// A concatenation given its inverse and a function made a join key (`simplify::ConcatInverses`, `FunctionKeys`)
-/// derive the rows the rule did: a module's stub file found from its head (`modules.rr`'s `py_try` "stubs"), and
+/// derive the rows the rule did: a module's stub file found from its head (`modules.rerail`'s `py_try` "stubs"), and
 /// the rest of a name by `substr`, which runs natively.
 #[test]
 fn join_keys_from_functions_derive_the_rules_rows() {
@@ -2376,7 +2385,7 @@ fn a_gate_is_joined_once_its_key_is_bound() {
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
     let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
     for (rel, rows) in [("dir", 400.0), ("done_n_b", 1.0), ("n", 10.0), ("k", 10_000.0)] {
-        model.stats.card.insert(rel.to_owned(), rows);
+        model.stats.card.insert(rel, rows);
     }
     let r = 0usize;
     let ((order, _, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), Some(0)).unwrap();
@@ -2385,14 +2394,14 @@ fn a_gate_is_joined_once_its_key_is_bound() {
     assert_eq!(atoms, ["dir", "k", "done_n_b"], "{:?}", order.iter().map(|s| lit_at(&p, r, s.at)).collect::<Vec<_>>());
 }
 
-/// Maintenance must drive from measured changed scopes, including when the recursive delta is walk.
+/// A kept plan notices an exact constant frequency: zero postings of the constant make it start from them.
 #[test]
 fn changed_scope_demands_precede_walk_and_seed_caches_notice_constant_frequencies() {
-    let p = parse_version(".decl walk(n:number,x:number,s:number)\n.decl bound(s:number,x:number)\n.decl changed__plus(s:number,k:number)\n.decl out(n:number,x:number,s:number)\nout(n,x,s) :- walk(n,x,s), !bound(s,x), changed__plus(s,1).\n.output out\n").unwrap();
+    let p = parse_version(".decl walk(n:number,x:number,s:number)\n.decl bound(s:number,x:number)\n.decl changed(s:number,k:number)\n.decl out(n:number,x:number,s:number)\nout(n,x,s) :- walk(n,x,s), !bound(s,x), changed(s,1).\n.output out\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
     let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
-    for (rel, rows, ndv) in [("walk",71976.0,vec![50000.0,10000.0,1000.0]),("bound",40000.0,vec![1000.0,10000.0]),("changed__plus",7000.0,vec![7000.0,20.0])] {
+    for (rel, rows, ndv) in [("walk",71976.0,vec![50000.0,10000.0,1000.0]),("bound",40000.0,vec![1000.0,10000.0]),("changed",7000.0,vec![7000.0,20.0])] {
         model.stats.card.insert(rel,rows);
         for (c,n) in ndv.into_iter().enumerate() {
             model.ndv.insert((rel,c),n);
@@ -2405,22 +2414,17 @@ fn changed_scope_demands_precede_walk_and_seed_caches_notice_constant_frequencie
     let r = 0usize;
     let _plans=KeepPlans::start(None);
     // Unknown delta distribution first, then an exact zero for the constant, at identical row counts.
-    let _ = model.plan_rule_reused(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),None).unwrap();
-    model.stats.memo.insert("changed__plus".into(),HashMap::from([(("c1".into(),Constant::Int(1)),0)]));
+    let ((_,before,_),_) = model.plan_rule_reused(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),None).unwrap();
+    model.stats.memo.insert("changed".into(),HashMap::from([((super::sql_col("changed",1),Constant::Int(1)),0)]));
     let ((order,work,_),_)=model.plan_rule_reused(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),None).unwrap();
-    assert_eq!(rel_at(&p, r, order[0].at).unwrap(),"changed__plus", "the seed must not retain the old full-walk scan");
-    assert!(work < 10.0, "zero constant postings precede all walk/binding work: {work}");
-    model.stats.solve(["walk","out"].into_iter().map(str::to_owned).collect());
-    model.stats.memo.get_mut("changed__plus").unwrap().insert(("c1".into(),Constant::Int(1)),12);
-    let ((order,work,_),_)=model.plan_rule_live(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),Some(0)).unwrap();
-    assert_eq!(rel_at(&p, r, order[0].at).unwrap(),"changed__plus", "a changed-input demand can precede a delta read");
-    assert!(order.iter().position(|s|s.at==0).unwrap()>0);
-    assert!(work<5000.0,"probe walk by the demanded scopes: {work}");
-    // The same rule later has one new walk row. Rescanning the full changed-input demand each wave is worse.
-    model.stats.delta_rows.insert("walk",1.0);
-    let ((small,_,_),_)=model.plan_rule_live(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),Some(0)).unwrap();
-    assert_eq!(small[0].at,0,"a one-row delta drives its own probe");
-
+    assert_eq!(rel_at(&p, r, order[0].at).unwrap(),"changed", "the seed must not retain the old full-walk scan");
+    // Zero postings make the plan cheaper than the one made before they were known. (It was under 10 when a
+    // relation named `__plus` was priced as a delta by its distinct demand; that pricing went with the forms, 0364
+    // R1, and `changed` is priced as the input it is, probed by its constant.)
+    assert!(work < before, "zero constant postings precede all walk/binding work: {work} against {before}");
+    // Its second half, a changed-input demand (`changed__plus`) led before the run's delta (`walk`), went with the
+    // planner's maintenance names (0364 R1: `reads_change`, `changes_with_the_delta`): no relation is a changed
+    // input by its name, and a delta leads its own rule.
 }
 
 /// Smoking gun 2 (t34, 2026-11-13): a relation empty when its rule is planned (annotation demand's `rel_base`
@@ -2880,7 +2884,7 @@ fn o148_plans_and_their_work() {
     use std::sync::Mutex;
     static COSTS: Mutex<Vec<(String, u64, u64)>> = Mutex::new(Vec::new());
     unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, x: *mut std::ffi::c_void) -> std::ffi::c_int {
-        if event == ffi::SQLITE_TRACE_PROFILE as u32 {
+        if event == ffi::SQLITE_TRACE_PROFILE {
             let stmt = p.cast::<ffi::sqlite3_stmt>();
             // SAFETY: for SQLITE_TRACE_PROFILE, P is the statement and X its time in nanoseconds.
             let (ns, vm, text) = unsafe {
@@ -2899,7 +2903,7 @@ fn o148_plans_and_their_work() {
         db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())]).unwrap();
         db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;").unwrap();
         // SAFETY: the connection outlives the run; the callback reads only its arguments.
-        unsafe { ffi::sqlite3_trace_v2(db.handle(), ffi::SQLITE_TRACE_PROFILE as u32, Some(trace), std::ptr::null_mut()) };
+        unsafe { ffi::sqlite3_trace_v2(db.handle(), ffi::SQLITE_TRACE_PROFILE, Some(trace), std::ptr::null_mut()) };
         COSTS.lock().unwrap().clear();
         let got = super::run(&body::Placed::whole(program(name)), &db, Inputs::file(), None, Hooks::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
         for c in &got.chosen {
@@ -2945,10 +2949,10 @@ fn kept_distributions_are_near_in_proportion_to_the_nodes() {
 
 /// O-join-shape-directives: `pv__ins`'s shape at O125 in small. With `retparam` tiny, the planner crosses `pv` with
 /// it (no shared variable) before `posarg`; `.shape retparam bound f` holds it back until `cfn` binds `f`, in the rule
-/// as written and in a delta's form of it (`pv__ins`). With `posarg` sized by no statistic of its own, the guard takes
+/// as written. With `posarg` sized by no statistic of its own, the guard takes
 /// no cross product against it.
 #[test]
-fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
+fn a_join_shape_directive_holds_a_join_back_in_its_rule() {
     let rule = ".decl pv(a:number,k:number,v:number)\n.decl posarg(c:number,i:number,a:number)\n.decl cfn(c:number,e:number,f:number)\n\
         .decl retparam(f:number,i:number,x:number)\n.input pv, posarg, cfn, retparam\n.decl out(c:number,k:number,v:number)\n.output out\n\
         out(c, k, v) :- pv(a, k, v), posarg(c, i, a), cfn(c, _, f), retparam(f, i, _).\n";
@@ -2983,10 +2987,9 @@ fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
     let free = order_of(rule, &sizes, None, None);
     assert!(at(&free, "retparam") < at(&free, "cfn"), "without the directive the planner crosses retparam in early: {free:?}");
     let shaped = format!("{rule}.shape retparam bound f\n");
-    for head in [None, Some("out__ins")] {
-        let o = order_of(&shaped, &sizes, head, None);
-        assert!(at(&o, "retparam") > at(&o, "cfn"), "retparam waits for f ({head:?}): {o:?}");
-    }
+    // (A delta's form of the rule, `out__ins`, was held back by the same directive; the forms are gone, 0364.)
+    let o = order_of(&shaped, &sizes, None, None);
+    assert!(at(&o, "retparam") > at(&o, "cfn"), "retparam waits for f: {o:?}");
     // Profiled, a directive the planner's own order already keeps is reported as no longer needed; one that changed
     // the order is reported with both estimates.
     {
@@ -3002,10 +3005,9 @@ fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
         let _off = Off;
         crate::code_rule_dsl::logic::profile::set(true);
         crate::code_rule_dsl::logic::profile::reset();
-        // EXPLAIN says which directive shaped the delta form's plan.
+        // EXPLAIN says which directive shaped the rule's plan.
         {
-            let mut p = parse_version(&shaped).unwrap();
-            p = renamed_head(&p, "out__ins");
+            let p = parse_version(&shaped).unwrap();
             let model = model_for(&p, &sizes);
             let _plans = KeepPlans::start(None);
             let r = 0usize;
@@ -3279,7 +3281,7 @@ fn a_base_relations_answered_columns_are_not_counted() {
     assert_eq!((got[1].3, got[1].4), (6, 6));
 }
 
-/// The program of the prepared-plan tests (decision 0361 step 5): `child2` and `kind2` shaped as core.rr's `child` and
+/// The program of the prepared-plan tests (decision 0361 step 5): `child2` and `kind2` shaped as core.rerail's `child` and
 /// `kind`; `part` with no size; `up` declared, recursive.
 fn prepared_program() -> Arc<Version> {
     parse(".decl child2(p: node, c: node, i: number)\n.input child2\n.layout child2 key(c) fanout(p -> c, few) order(i dense in p)\n\
@@ -3453,7 +3455,7 @@ fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
     std::fs::write(root.join("a.py"), "f()\n").unwrap();
     std::fs::write(root.join("b.py"), "def g():\n    f()\n").unwrap();
     std::fs::write(root.join("c.py"), "x = 1\ng()\n").unwrap();
-    let policy = root.with_extension("policy.rr");
+    let policy = root.with_extension("policy.rerail");
     std::fs::write(
         &policy,
         ".language python\n.violation hit(at: node) code \"X1\" \"a statement at a module's top\"\n\
@@ -3488,8 +3490,9 @@ fn a_version_with_no_prepared_plan_is_read_back() {
 }
 
 /// Decision 0361 step 6, end to end: a policy's derived relation declares `fanout(a -> b, one)`, and its rows break it
-/// (a module's statements, 40 of them, under each module; recursive, so it is not inlined into its reader). The run reads the executors' counts, finds the fact broken,
-/// plans the relation from statistics from then on, and goes on: its findings are what the rules say.
+/// (a module's statements, 40 of them, under each module; recursive, so it is not inlined into its reader). The run
+/// reads the executors' counts, finds the fact broken, plans the relation from statistics from then on, and goes on:
+/// its findings are what the rules say.
 #[test]
 fn a_run_finds_a_fanout_its_rows_break_and_finds_the_same() {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("broken-fanout");
@@ -3498,7 +3501,7 @@ fn a_run_finds_a_fanout_its_rows_break_and_finds_the_same() {
     std::fs::write(root.join("a.py"), &statements).unwrap();
     std::fs::write(root.join("b.py"), &statements).unwrap();
     std::fs::write(root.join("c.py"), "x = 1\n").unwrap();
-    let policy = root.with_extension("policy.rr");
+    let policy = root.with_extension("policy.rerail");
     std::fs::write(
         &policy,
         ".language python\n\
@@ -3513,6 +3516,8 @@ fn a_run_finds_a_fanout_its_rows_break_and_finds_the_same() {
     let run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
     let broken = shapes::run_broken().facts().len();
+    // The probes checked against a fact: none means no line priced by it was counted.
+    let checked = shapes::run_broken().1.load(std::sync::atomic::Ordering::Relaxed);
     drop(run);
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_file(&policy);
@@ -3525,7 +3530,7 @@ fn a_run_finds_a_fanout_its_rows_break_and_finds_the_same() {
     hits.sort();
     let want: Vec<(String, i64)> = ["a.py", "b.py"].iter().flat_map(|f| (1..=40).map(move |l| (f.to_string(), l))).collect();
     assert_eq!(hits, want, "{report:#}");
-    assert_eq!(broken, 1, "the run found `under`'s fan-out broken");
+    assert_eq!(broken, 1, "the run found `under`'s fan-out broken ({checked} probes checked against a fact)");
 }
 
 /// Decision 0361 step 6, a key checked where the rows are written: `under` declares `key(a)`, and a module has 40
@@ -3538,7 +3543,7 @@ fn a_run_finds_a_key_its_rows_break_where_they_are_written() {
     let statements: String = (0..40).map(|k| format!("f{k}()\n")).collect();
     std::fs::write(root.join("a.py"), &statements).unwrap();
     std::fs::write(root.join("c.py"), "x = 1\n").unwrap();
-    let policy = root.with_extension("policy.rr");
+    let policy = root.with_extension("policy.rerail");
     std::fs::write(
         &policy,
         ".language python\n\
@@ -3596,6 +3601,38 @@ fn a_later_run_reads_the_prepared_plans_an_earlier_one_made() {
     assert_eq!(Some(&*read), held.values().next().map(|p| &**p));
     assert!(super::prepared_to_store().is_none(), "nothing new to store");
     assert!(std::sync::Arc::ptr_eq(&read, &prepared::Prepared::of_version(&v)), "held by the version");
+}
+
+/// A probe whose new variable later comparisons bound reads a range (`setfix::ranges`), and past the head's variables
+/// a step passes on one witness a binding (`setfix::tail`). A zero count's helper, `h(a, b, p) :- ctx(a, b, p),
+/// line(p, l, _), !at(p, l), l > a, l < b` (`bounded-composed-graph-paths`' `rr_agg15`; 91 files: 25,425 pairs, 6,027
+/// lines of 9 files), was searched from `line` (46.7 M work), each line probing its file's pairs; from `ctx`, each
+/// pair reads its lines between its ends and stops at the first.
+#[test]
+fn a_probe_bounded_by_comparisons_reads_a_range() {
+    let p = parse(".decl ctx(a:number,b:number,p:number)\n.decl src(p:number,l:number,s:number)\n.decl at(p:number,l:number)\n.input ctx, src, at\n.decl line(p:number,l:number,s:number)\nline(p,l,s) :- src(p,l,s).\n.decl h(a:number,b:number,p:number)\nh(a,b,p) :- ctx(a,b,p), line(p,l,_), !at(p,l), l > a, l < b.\n.output h\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    for (rel, rows, ndv) in [
+        ("ctx", 25_425.0, vec![212.0, 330.0, 2.0]),
+        ("line", 6_027.0, vec![9.0, 3_535.0, 6_027.0]),
+        ("at", 700.0, vec![9.0, 700.0]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), rows / n);
+        }
+    }
+    model.stats.solve(["h"].into_iter().map(str::to_owned).collect());
+    let r = p.rules().position(|r| p.rel_name(r.head().rel()) == "h").unwrap();
+    let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
+    let b = body::nth(&p, r);
+    let order: Vec<&str> = order.iter().filter_map(|s| b.atom(s.at)).filter(|a| !a.neg()).map(|a| b.rel(a)).collect();
+    assert_eq!(order, ["ctx", "line"], "{order:?}, work={work}");
+    // A pair's lines between its ends, a ninth of its file's as the comparisons are priced (a third each).
+    assert!(work < 5e6, "a range a pair: {work}");
 }
 
 /// Decision 0361 step 5, derived relations: one the facts do not size is sized from its rules' plans, in dependency

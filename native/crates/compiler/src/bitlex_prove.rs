@@ -594,7 +594,7 @@ pub fn question(ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)
 }
 
 /// `question`, asked of a prover given `given` (`Induction::given`): the lemmas whose values all lie in the cone, as
-/// the cone numbers them, are in the key too, as the answer may use them (a walk's kinds apart, decision 0479, which
+/// the cone numbers them, are in the key too, as the answer may use them (a walk's kinds apart, decision 0484, which
 /// the equations do not show). A lemma with a value outside the cone is never applied (the window is the cone's).
 pub fn question_given(ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)>], v: u16, d: u8, asker: &str, given: &[Lemma]) -> Vec<u8> {
     use std::fmt::Write;
@@ -934,11 +934,11 @@ impl Induction {
             let window = {
                 let (_, plain) = cone(ops, v);
                 let reach = plain.keys().copied().max().unwrap_or(0).max(u32::from(d)) + self.horizon;
-                // The root at its lag, and its values at every lag of the window, where they are made there: their
-                // readers too, so each byte an operation reads has its groups (one walk of them all).
+                // The root at its lag, and the hypothesis' values at every lag of the window where they are made there
+                // (`whole`): their readers too, so each byte `op` reads has its groups; one walk from every root.
                 let mut roots = vec![(v, 0u32)];
-                for &(at, l, _) in whole.into_iter().flatten().filter(|&&(at, _, _)| at != STREAM) {
-                    roots.extend((1..=reach).map(|lag| (at, lag + l)));
+                for lag in 1..=reach {
+                    roots.extend(whole.into_iter().flatten().filter(|&&(at, _, _)| at != STREAM).map(|&(at, l, _)| (at, lag + l)));
                 }
                 let (readers, far) = unrolled_readers(ops, nexts, &roots, reach);
                 let mut u = Unrolled { ops, tables, nexts, d: u32::from(d), reach, clauses: Clauses::default(), vars: 1, memo: HashMap::default(), before: HashMap::default(), past: HashMap::default(), groups: HashMap::default(), readers: HashMap::default() };

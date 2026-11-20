@@ -40,7 +40,8 @@ use super::model::{
 };
 use super::soundness::sound_under_errors;
 use super::violations;
-use crate::code_rule_dsl::language::{GrammarDialect, PatternSource, rule_pattern};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
+use crate::code_rule_dsl::language::{GrammarDialect, PatternSource};
 pub use ast_rule::compile_ast_rule;
 use ast_rule::validate_ast_rule;
 use compare::{binding_site_index, bound_elsewhere, compare_sites, frame_scope};
@@ -57,7 +58,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 pub use utils::UtilScope;
 use utils::{UtilDef, UtilIds, reachable, reject_util_cycles, rule_map, util_map};
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Parses a code-rule document. An object with two equal keys is an error: a plain `Value` keeps the
 /// last one, so the first term would vanish silently (ast-grep 0.45.3 rejects such a rule).
@@ -270,10 +270,7 @@ type CompiledDocument = (
 );
 
 /// The code rule's id, scope, clauses, required capabilities, and aggregate reporting gate.
-pub fn compile_document(
-    document: &Value,
-    capabilities: &Capabilities,
-) -> Result<CompiledDocument> {
+pub fn compile_document(document: &Value, capabilities: &Capabilities) -> Result<CompiledDocument> {
     let (resolved, options) = config::resolve(document)?;
     let document = &resolved;
     // A token test nothing answers on a named-only tape is refused (t31).
@@ -286,6 +283,7 @@ pub fn compile_document(
             "id",
             "revision",
             "mode",
+            "title",
             "description",
             "scope",
             "clauses",
@@ -400,7 +398,15 @@ fn compile_clause(
     let clause = object(value, path)?;
     reject_unknown(
         clause,
-        &["id", "forbid", "require_each", "budget", "relational", "llm", "violation"],
+        &[
+            "id",
+            "forbid",
+            "require_each",
+            "budget",
+            "relational",
+            "llm",
+            "violation",
+        ],
         path,
     )?;
     let id = required_str(value, "id", path)?.to_owned();
@@ -726,6 +732,8 @@ fn compile_query_as(
     seed: bool,
 ) -> Result<Query> {
     let query = object(value, path)?;
+    // Each pattern compiled once for this query, whoever asks (`language::Patterns`).
+    let patterns = crate::code_rule_dsl::language::Patterns::default();
     reject_unknown(query, &["regex", "ast", "select_when", "file"], path)?;
     let forms = ["regex", "ast", "select_when", "file"]
         .into_iter()
@@ -863,33 +871,42 @@ fn compile_query_as(
             let (options, python) = match ast.get("languageOptions") {
                 None => (None, None),
                 Some(value) => {
-                    gate(
-                        &format!("{path}/ast/languageOptions"),
-                        { let pack = language_pack::pack(family); pack.syntax_feature(SyntaxFeature::LanguageOptions) },
-                    )?;
-                    { let pack = language_pack::pack(family); pack.syntax_compile_language_options(
-                        value,
-                        &format!("{path}/ast"),
-                    ) }?
+                    gate(&format!("{path}/ast/languageOptions"), {
+                        let pack = language_pack::pack(family);
+                        pack.syntax_feature(SyntaxFeature::LanguageOptions)
+                    })?;
+                    {
+                        let pack = language_pack::pack(family);
+                        pack.syntax_compile_language_options(value, &format!("{path}/ast"))
+                    }?
                 }
             };
             let (applies, source_types) = ast
                 .get("when")
                 .map(|when| {
-                    { let pack = language_pack::pack(family); pack.syntax_compile_when(
+                    let pack = language_pack::pack(family);
+                    pack.syntax_compile_when(
                         when,
                         &format!("{path}/ast"),
                         options.as_deref(),
                         python.as_deref(),
                         &defines.options,
-                    ) }
+                    )
                 })
                 .transpose()?
                 .unwrap_or((true, None));
             let file = ast
                 .get("file")
                 .map(|file| {
-                    let (packages, declarations, manifests, jsx_runtimes) = { let pack = language_pack::pack(family); (pack.packages(), pack.declaration_files(), pack.package_manifests(), pack.jsx_runtimes()) };
+                    let (packages, declarations, manifests, jsx_runtimes) = {
+                        let pack = language_pack::pack(family);
+                        (
+                            pack.packages(),
+                            pack.declaration_files(),
+                            pack.package_manifests(),
+                            pack.jsx_runtimes(),
+                        )
+                    };
                     options::compile_file_condition(
                         file,
                         &format!("{path}/ast"),
@@ -974,8 +991,14 @@ fn compile_query_as(
                 .get("transform")
                 .map(|value| {
                     let reading = Reading::new(grammars[0].1, options.clone(), python.clone());
-                    transform::compile_transform(value, &transform_path, limits, &reading)
-                        .map(Arc::new)
+                    transform::compile_transform(
+                        value,
+                        &transform_path,
+                        limits,
+                        &reading,
+                        code_rule_language,
+                    )
+                    .map(Arc::new)
                 })
                 .transpose()?;
             // A transform variable needs a name no capture of the query uses; said before any
@@ -983,13 +1006,13 @@ fn compile_query_as(
             if let Some(transform) = &transform {
                 let languages = all_dialects.clone();
                 let mut declared = Vec::new();
-                declared_captures(rule, &rule_path, &languages, &mut declared);
+                declared_captures(rule, &rule_path, &languages, &patterns, &mut declared);
                 for util in utils.values().filter(|util| util.params.is_empty()) {
-                    declared_captures(util.rule, &util.rule_path, &languages, &mut declared);
+                    declared_captures(util.rule, &util.rule_path, &languages, &patterns, &mut declared);
                 }
                 for (name, constraint) in &constraints {
                     let constraint_path = format!("{constraints_path}/{name}");
-                    declared_captures(constraint, &constraint_path, &languages, &mut declared);
+                    declared_captures(constraint, &constraint_path, &languages, &patterns, &mut declared);
                 }
                 for name in transform.names() {
                     if let Some((_, at)) = declared.iter().find(|(known, _)| known == name) {
@@ -1027,7 +1050,11 @@ fn compile_query_as(
                 use sha2::{Digest as _, Sha256};
                 let mut digest = Sha256::new();
                 digest.update(salt.as_bytes());
-                digest.update(serde_json::to_string(ast).map_err(|error| invalid(error.to_string()))?.as_bytes());
+                digest.update(
+                    serde_json::to_string(ast)
+                        .map_err(|error| invalid(error.to_string()))?
+                        .as_bytes(),
+                );
                 digest.finalize().into()
             };
             let calls = crate::code_rule_dsl::calls::CallsCollector::new(
@@ -1120,6 +1147,7 @@ fn compile_query_as(
                     documents: documents.as_ref(),
                     instances: reach.as_ref().map(|reach| &reach.instances),
                     side,
+                    patterns: Some(&patterns),
                 };
                 let other_scopes = others
                     .iter()
@@ -1386,7 +1414,7 @@ fn compile_query_as(
                                     .unwrap_or_default(),
                             },
                         };
-                        rule_pattern(source, *language).ok().map(|compiled| {
+                        patterns.get(source, *language).ok().map(|compiled| {
                             compiled
                                 .defined_vars()
                                 .into_iter()
@@ -1689,6 +1717,7 @@ fn parse_violation(value: &Value, path: &str) -> Result<ViolationSpec> {
         fix: None,
         fix_template: None,
         node_regexes: Vec::new(),
+        gap_tests: Vec::new(),
         each: violation
             .get("each")
             .map(|each| non_empty_str(Some(each), &format!("{path}/each")).map(str::to_owned))
@@ -1712,6 +1741,7 @@ fn declared_captures(
     value: &Value,
     path: &str,
     languages: &[GrammarDialect],
+    patterns: &crate::code_rule_dsl::language::Patterns,
     found: &mut Vec<(String, String)>,
 ) {
     match value {
@@ -1734,7 +1764,7 @@ fn declared_captures(
                                         .unwrap_or_default(),
                                 },
                             };
-                            rule_pattern(source, *language).ok().map(|compiled| {
+                            patterns.get(source, *language).ok().map(|compiled| {
                                 compiled
                                     .defined_vars()
                                     .into_iter()
@@ -1753,7 +1783,7 @@ fn declared_captures(
                         if let Some(Value::String(name)) = count.get("as") {
                             found.push((name.clone(), format!("{at}/as")));
                         }
-                        declared_captures(item, &at, languages, found);
+                        declared_captures(item, &at, languages, patterns, found);
                     }
                     ("matches", Value::Object(calls)) => {
                         for (util, arguments) in calls {
@@ -1770,13 +1800,13 @@ fn declared_captures(
                             }
                         }
                     }
-                    _ => declared_captures(item, &at, languages, found),
+                    _ => declared_captures(item, &at, languages, patterns, found),
                 }
             }
         }
         Value::Array(items) => {
             for (index, item) in items.iter().enumerate() {
-                declared_captures(item, &format!("{path}/{index}"), languages, found);
+                declared_captures(item, &format!("{path}/{index}"), languages, patterns, found);
             }
         }
         _ => {}
@@ -1878,7 +1908,12 @@ pub fn refuse_unavailable_semantics(
 
 /// The error for `predicate` at `at` when `language`'s registry entry does not support its
 /// capability.
-pub fn unsupported_semantic(support: Support, at: &str, predicate: &str, language: &str) -> Result<()> {
+pub fn unsupported_semantic(
+    support: Support,
+    at: &str,
+    predicate: &str,
+    language: &str,
+) -> Result<()> {
     gate(
         at,
         match support {

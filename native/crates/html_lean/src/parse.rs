@@ -50,7 +50,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     parse_from(src, Start::Document, finish)
 }
 
-/// The node kind a parse starts at (decision 0482): a whole document, or one element alone, its root (a fragment).
+/// The node kind a parse starts at (decision 0466): a whole document, or one element alone, its root (a fragment).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
     Document,
@@ -193,7 +193,7 @@ impl<'a> P<'a> {
         Ok(())
     }
 
-    /// One element alone, the root (decision 0482): read as inside a document, its end where the scanner ends it, with
+    /// One element alone, the root (decision 0466): read as inside a document, its end where the scanner ends it, with
     /// no `html`, `head` or `body` implied around it. A text after it (another element, a comment) is refused: a
     /// fragment's tape has one root. An element open at the end ends there where it may (a void element, `p`, …), at
     /// the text's end less blanks.

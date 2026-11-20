@@ -19,7 +19,7 @@ use rerail_c_lean::T;
 use rerail_c_lean::pp::{Options, P, Phase2, PpLexer, PpTok};
 use std::collections::HashMap;
 
-/// A configuration (`c/env.rr`'s rows): the dialect, the predefined macros, the answers of the
+/// A configuration (`c/env.rerail`'s rows): the dialect, the predefined macros, the answers of the
 /// `__has_*` family, and the fixed date and time.
 #[derive(Clone, Debug)]
 pub struct Config {

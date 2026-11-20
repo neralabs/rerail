@@ -44,6 +44,9 @@ pub struct Token {
     /// whether its `drops` mask holds at the token's start (Q235). The extras before the bit
     /// are the nodes' that it is taken in; where it drops, the extra before the token goes.
     pub settle: Option<(usize, bool)>,
+    /// The marks whose `loses` mask holds at this token's start: where a level asks for one
+    /// of them here, the extra before the token is of no width, at its start (`tree`).
+    pub lose: Vec<String>,
 }
 
 /// A `tree` section's grammar (docs/parser-generators/18-tree-as-grammar.md).
@@ -128,8 +131,11 @@ pub struct Ev<'a> {
     token_marks: HashMap<usize, (Vec<TokenElem>, Vec<Vec<TokenElem>>)>,
     /// A mark's `unless after` words (`Stmt::Mark`), by its index in `marks`.
     unless: HashMap<usize, Vec<Vec<u8>>>,
-    /// A settling mark's `drops` mask, where it has one (`Stmt::Mark`), by its index in `marks`.
-    settles: HashMap<usize, Option<Mask>>,
+    /// A settling mark's `drops` questions (`Stmt::Mark`, `GapPattern`), by its index in
+    /// `marks`: none, where it has none.
+    settles: HashMap<usize, Vec<crate::syntax::GapPattern>>,
+    /// Each mark's `loses` questions, by its index in `marks`.
+    loses: HashMap<usize, Vec<crate::syntax::GapPattern>>,
     /// A mark's `else escape` reason (`Stmt::Mark`), by its index in `marks`.
     unplaced: HashMap<usize, String>,
     /// A mark's `before`s and `unless before`s (`Stmt::Mark`), by its index in `marks`: the
@@ -210,6 +216,7 @@ impl<'a> Ev<'a> {
             unless: HashMap::new(),
             unplaced: HashMap::new(),
             settles: HashMap::new(),
+            loses: HashMap::new(),
             tables,
             tree: None,
             byte_classes: HashMap::new(),
@@ -447,14 +454,13 @@ impl<'a> Ev<'a> {
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
             // Applied by the parser (`A as IMPLIED` in the rule's body).
             Stmt::Implied { .. } => {}
-            Stmt::Mark { kind, at, end, unless, unplaced, checks, next, settles, drops, .. } => {
+            Stmt::Mark { kind, at, end, unless, unplaced, checks, next, settles, drops, loses, .. } => {
                 let m = self.mask(at)?;
+                if !loses.is_empty() {
+                    self.loses.insert(self.marks.len(), loses.clone());
+                }
                 if *settles {
-                    let d = match drops {
-                        Some(d) => Some(self.mask(d)?),
-                        None => None,
-                    };
-                    self.settles.insert(self.marks.len(), d);
+                    self.settles.insert(self.marks.len(), drops.clone());
                 }
                 if !next.is_empty() {
                     self.next.insert(self.marks.len(), next.clone());
@@ -471,8 +477,11 @@ impl<'a> Ev<'a> {
                 }
                 self.marks.push((kind.clone(), m, *end));
             }
-            Stmt::TokenMark { kind, before, seq } => {
+            Stmt::TokenMark { kind, before, seq, next } => {
                 self.token_marks.insert(self.marks.len(), (before.clone(), seq.clone()));
+                if !next.is_empty() {
+                    self.next.insert(self.marks.len(), next.clone());
+                }
                 self.marks.push((kind.clone(), Mask::zeros(self.n), false));
             }
             Stmt::Error(msg, e) | Stmt::TokenError(msg, e) => {
@@ -1153,7 +1162,7 @@ impl<'a> Ev<'a> {
             for j in i..end {
                 covered.set(j)
             }
-            toks.push(Token { kind: kinds[k].clone(), start: i, end, soft: None, mark: false, settle: None });
+            toks.push(Token { kind: kinds[k].clone(), start: i, end, soft: None, mark: false, settle: None, lose: vec![] });
         }
         // A token that starts inside the one before (tier 2 refuses it too).
         if let Some(w) = toks.windows(2).find(|w| w[1].start < w[0].end) {
@@ -1231,7 +1240,7 @@ impl<'a> Ev<'a> {
         let one = |i: usize, c: &TokenElem| match c {
             TokenElem::Kind(k) => &toks[i].kind == k || &lexed[i] == k,
             TokenElem::Word(w) => toks[i].kind.as_bytes() == w.as_slice() || toks[i].soft.as_deref().is_some_and(|s| s.as_bytes() == w.as_slice()),
-            TokenElem::Not(_) | TokenElem::End | TokenElem::Many(..) | TokenElem::Without(_) => false,
+            TokenElem::Not(_) | TokenElem::End | TokenElem::Many(..) | TokenElem::Without(_) | TokenElem::With(_) | TokenElem::Starting(_) => false,
         };
         // Each mark's bit at each grammar token, as its record holds it (`TokenElem::Without`):
         // its mask's bits (and its tests') lifted to the next grammar token, its `unless after`
@@ -1252,6 +1261,8 @@ impl<'a> Ev<'a> {
         let names: Vec<&String> = self.marks.iter().map(|(kind, _, _)| kind).collect();
         let without = |t: usize, e: &[TokenElem]| e.iter().all(|c| match c {
             TokenElem::Without(m) => !names.iter().position(|n| *n == m).is_some_and(|k| coded[t][k]),
+            TokenElem::With(m) => names.iter().position(|n| *n == m).is_some_and(|k| coded[t][k]),
+            TokenElem::Starting(b) => b.contains(&self.src[toks[t].start]),
             _ => true,
         });
         let is = |t: Option<usize>, e: &[TokenElem]| match (e, t) {
@@ -1270,7 +1281,9 @@ impl<'a> Ev<'a> {
                 let run = follows(g, seq);
                 // `after ~E`: none of `E`'s before, or no token before (the file's first).
                 let after = pre.is_empty() || (g > 0 && is(Some(grammar[g - 1]), pre)) || (g == 0 && matches!(pre.as_slice(), [TokenElem::Not(_)]));
-                if run && after {
+                // `unless before`: none where one of its runs follows.
+                let kept = self.next.get(&k).is_none_or(|n| nexts_hold(n, &|seq| follows(g, seq)));
+                if run && after && kept {
                     before[grammar[g]][k] = true;
                     least[grammar[g]][k] = toks[grammar[g]].start;
                 }
@@ -1304,12 +1317,52 @@ impl<'a> Ev<'a> {
             }
         }
         self.errors.extend(escapes);
-        let settle = |k: usize, bit: usize, at: usize| self.settles.get(&k).map(|d| (bit, d.as_ref().is_some_and(|d| at < self.n && d.get(at))));
+        // The `drops` and `loses` questions (`GapPattern`, decision 0451), at each grammar
+        // token: over the records as the lexer wrote them, extras included. An extra's marks are
+        // those of its own gap, from the byte after the start of the record before to its start
+        // (`Records::extra`); a grammar token's, as its record holds them (`coded`).
+        let is_extra = |i: usize| extra.contains(&toks[i].kind);
+        let raw_bit = |i: usize, k: usize| {
+            if is_extra(i) {
+                let from = if i == 0 { 0 } else { toks[i - 1].start + 1 };
+                (from..=toks[i].start.min(self.n.saturating_sub(1))).any(|b| b < self.n && self.marks[k].1.get(b))
+            } else {
+                coded[i][k]
+            }
+        };
+        let raw_is = |i: Option<usize>, e: &[TokenElem]| match (e, i) {
+            // `~E` before the first record holds, as a token mark's `after ~E`.
+            ([TokenElem::Not(_)], None) => true,
+            ([TokenElem::Not(inner)], Some(i)) => !inner.iter().any(|c| one(i, c)),
+            (_, None) => false,
+            (_, Some(i)) => {
+                let chosen = !e.iter().any(|c| matches!(c, TokenElem::Kind(_) | TokenElem::Word(_)));
+                (chosen || e.iter().any(|c| one(i, c)))
+                    && e.iter().all(|c| match c {
+                        TokenElem::With(m) => names.iter().position(|n| n == &m).is_some_and(|k| raw_bit(i, k)),
+                        TokenElem::Without(m) => !names.iter().position(|n| n == &m).is_some_and(|k| raw_bit(i, k)),
+                        TokenElem::Starting(b) => b.contains(&self.src[toks[i].start]),
+                        _ => true,
+                    })
+            }
+        };
+        let pattern_holds = |p: &crate::syntax::GapPattern, t: usize| {
+            let a = p.after.len();
+            p.after.iter().enumerate().all(|(j, e)| raw_is((t + j).checked_sub(a), e)) && p.before.iter().enumerate().all(|(j, e)| raw_is(Some(t + j).filter(|&i| i < toks.len()), e))
+        };
+        // None of the `unless` entries, and one of the others.
+        let asks = |ps: &[crate::syntax::GapPattern], t: usize| !ps.is_empty() && !ps.iter().any(|p| p.unless && pattern_holds(p, t)) && ps.iter().any(|p| !p.unless && pattern_holds(p, t));
+        let drop_at: Vec<Vec<bool>> = (0..toks.len()).map(|t| (0..self.marks.len()).map(|k| !is_extra(t) && self.settles.get(&k).is_some_and(|d| asks(d, t))).collect()).collect();
+        let lose_at: Vec<Vec<bool>> = (0..toks.len()).map(|t| (0..self.marks.len()).map(|k| !is_extra(t) && self.loses.get(&k).is_some_and(|l| asks(l, t))).collect()).collect();
+        let settle = |k: usize, bit: usize, at: Option<usize>| self.settles.get(&k).map(|_| (bit, at.is_some_and(|t| drop_at[t][k])));
         let mut out = Vec::with_capacity(toks.len());
-        for (t, tok) in toks.into_iter().enumerate() {
+        for (t, mut tok) in toks.into_iter().enumerate() {
             for (k, (kind, _, _)) in self.marks.iter().enumerate() {
                 if before[t][k] {
-                    out.push(Token { kind: kind.clone(), start: tok.start, end: tok.start, soft: None, mark: true, settle: settle(k, least[t][k].min(tok.start), tok.start) });
+                    out.push(Token { kind: kind.clone(), start: tok.start, end: tok.start, soft: None, mark: true, settle: settle(k, least[t][k].min(tok.start), Some(t)), lose: vec![] });
+                }
+                if lose_at[t][k] {
+                    tok.lose.push(kind.clone());
                 }
             }
             out.push(tok);
@@ -1317,7 +1370,7 @@ impl<'a> Ev<'a> {
         // A bit after the last grammar token's start puts no mark; `, end` puts one at the end.
         for (k, (kind, _, end)) in self.marks.iter().enumerate() {
             if *end {
-                out.push(Token { kind: kind.clone(), start: self.n, end: self.n, soft: None, mark: true, settle: settle(k, least_end[k], self.n) });
+                out.push(Token { kind: kind.clone(), start: self.n, end: self.n, soft: None, mark: true, settle: settle(k, least_end[k], None), lose: vec![] });
             }
         }
         Ok(out)
@@ -1443,7 +1496,7 @@ fn byte_ends(g: &Gram, text: &[u8], at: usize, classes: &HashMap<String, Vec<(u3
 mod run_tests {
     use super::*;
 
-    /// A run that counts depths (Q326), as `type_args_end` does: the rest only where `<` and `(`
+    /// A run that counts depths (Q339), as `type_args_end` does: the rest only where `<` and `(`
     /// are closed, and a closer at depth 0 ends the run.
     #[test]
     fn a_run_counts_its_depths() {

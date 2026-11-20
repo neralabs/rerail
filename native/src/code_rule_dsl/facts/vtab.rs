@@ -60,6 +60,9 @@ pub struct DeviceView<'a> {
     /// Where a stage reads the view in place (decision 0353 step 4d), when it can: nothing makes its rows.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub in_place: Option<ViewInPlace>,
+    /// With `in_place`, the view's relation of no columns, whose block its probes' indexes go in (decision 0478 step
+    /// 3, R4): made once by the source, which holds it (its batch's life), so every stratum on any thread finds them.
+    pub home: Option<crate::code_rule_dsl::facts::rows::Part>,
 }
 
 /// A view a stage reads in place (decision 0353 step 4d): its batch's directory's GPU address, the view's number in
@@ -207,6 +210,11 @@ pub trait Source: Send + Sync {
     fn lookup_all(&self, _equal: &[(usize, i64)]) -> Option<Vec<usize>> {
         None
     }
+    /// The rows of the documents `docs` (by key), ascending, where the source knows where they lie (decision 0504: a
+    /// batch's, by group or by offset); `None` where it does not, and they are found by a read of its rows.
+    fn rows_of_documents(&self, _docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
+        None
+    }
     /// The column holding a row's document, where a lookup can be kept to one document (`lookup_in`).
     fn doc_column(&self) -> Option<usize> {
         None
@@ -232,8 +240,9 @@ pub trait Source: Send + Sync {
         None
     }
     /// Its rows as one relation of `rerail_blocks` in one block, every source column at its own place, which the
-    /// device reads where they lie (decision 0325 step 3) and a probe reads through the relation's own index (on every
-    /// target). `None`: the device copies them (`device_view`, `row_at`).
+    /// device reads where they lie (decision 0325 step 3), a probe reads through the relation's own index, and the CPU's
+    /// index of a whole source finds or builds in its block (setfix), on every target. `None`: the device copies them
+    /// (`device_view`, `row_at`).
     fn in_block(&self) -> Option<super::rows::InBlock> {
         None
     }
@@ -1224,11 +1233,10 @@ struct Cursor {
 impl Cursor {
     fn start_stream(&mut self) {
         if !self.cache_rows||self.direct.is_some() {return;}
-        if let Some(rows)=&self.selected {
-            if rows.len()>128&&rows.windows(2).all(|w|w[1]==w[0]+1) {
+        if let Some(rows)=&self.selected
+            && rows.len()>128&&rows.windows(2).all(|w|w[1]==w[0]+1) {
                 self.range=rows[0]..rows[rows.len()-1]+1;self.selected=None;
             }
-        }
         if self.selected.is_none()&&self.range.len()>128 {
             self.stream=self.source.row_stream(self.range.clone(),self.reverse);
             if let Some(stream)=&mut self.stream {self.stream_row=stream.next();}

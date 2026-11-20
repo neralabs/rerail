@@ -524,7 +524,7 @@ pub fn tape_into<T>(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<T>) ->
     }
 }
 
-/// The node kinds a parse may start at (decision 0482), by name: a file's `module`, and a `type`.
+/// The node kinds a parse may start at (decision 0466), by name: a file's `module`, and a `type`.
 pub const STARTS: &[&str] = &["module", "type"];
 
 /// The tape of `src` parsed from the node kind `start` (one of [`STARTS`]): its root a node of that kind, with no
@@ -634,7 +634,7 @@ mod tests {
         out.join("\n") + "\n"
     }
 
-    /// Decision 0482 R1: a `type` fragment's tape has one root, a `type` spanning the text less its blanks, and no
+    /// Decision 0466 R1: a `type` fragment's tape has one root, a `type` spanning the text less its blanks, and no
     /// node above it.
     #[test]
     fn a_type_fragment_is_rooted_at_its_type() {

@@ -40,7 +40,7 @@ fn a_declared_key_checks_the_rows_held_and_a_dead_rows_key_is_free() {
     let mut rel = Rel::new("t", b"ii");
     rel.set_key(vec![1]).unwrap();
     assert!(rel.push(&[1, 10]));
-    rel.dead = vec![1];
+    rel.dead = rows::BlockVec::from_iter_in(None, [1u64]);
     rel.ndead = 1;
     assert!(rel.push(&[2, 10]));
     assert!(rel.broke.is_empty(), "the key's row died: the new row takes it");

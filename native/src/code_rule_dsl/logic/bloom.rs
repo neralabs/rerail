@@ -1,4 +1,4 @@
-//! A blocked Bloom filter of a column's keys (decision 0477): the probe screen's (`native::setfix::join_filter`) and
+//! A blocked Bloom filter of a column's keys (decision 0513): the probe screen's (`native::setfix::join_filter`) and
 //! the statistics' (a column's membership and the keys two columns share).
 //!
 //! ```text

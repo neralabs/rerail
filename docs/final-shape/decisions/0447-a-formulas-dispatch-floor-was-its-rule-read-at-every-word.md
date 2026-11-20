@@ -1,7 +1,8 @@
 # 0447. A formula's dispatch floor was its rule, read at every word
 
 Status: accepted (2026-11-19). Follows 0457. Answers its "What is left" (the floor of a dispatch), and keeps the
-parent reads of ops 7 and 8.
+parent reads of ops 7 and 8. Its measurement switch (`RERAIL_GPU_ENCODER_TIMES`) is not on the hub's device-layer
+launches since the roll-up (work queue Q335).
 
 ## Intro
 
@@ -69,12 +70,12 @@ took 16.0 and 16.4 ms, 1,024 took 19.7 and 22.4 ms.
 ## What is left
 
 - **`label_leaves` is now most of the GPU time:** 32.2 ms of internal_dead_code's 50.7 ms, in 12 encoders of about
-  2.7 ms each (Q323).
+  2.7 ms each (Q281).
 
-## On rr-align (roll-up 11, Q325)
+## On rr-align (roll-up 11, Q369)
 
 The fix here (a formula writes into its rule's row only where it holds, at the word's 32 nodes) is in the kernel,
 and it is kept. The measuring switch is not: `RERAIL_GPU_ENCODER_TIMES` samples Metal counters on each compute
 encoder, and this branch's label passes launch through the device layer (`lane`, 0440 step C), which has no encoders
 of its own to sample. `RERAIL_GPU_KERNEL_TIMES` (a command buffer a kernel) still times each kernel. Timestamps per
-launch in the lane are an open item (Q325).
+launch in the lane are an open item (Q369).

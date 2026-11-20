@@ -554,6 +554,11 @@
             ["f((1,", "f(-1,", "f([1,", "f(f'{x}',"]
         );
         assert_eq!(pairs("structure", "ne", source), ["f(1,", "f(1,"]);
+        // An f-string's debug text (`=`) is its source from after the `{`, which the tape does not
+        // store: `{00=}` and `{000=}` print `00=0` and `000=0` (Ruff's PYI016 fixture, field50).
+        let debug = "f(f'{00=}', f'{000=}')\nf(f'{0x0=}', f'{0o0=}')\nf(f'{x=}', f'{x=}')\nf(f'{00}', f'{000}')\nf(f'{x=}', f'{x}')\n";
+        assert_eq!(pairs("structure", "eq", debug), ["f(f'{x=}',", "f(f'{00}',"]);
+        assert_eq!(pairs("structure", "ne", debug), ["f(f'{00=}',", "f(f'{0x0=}',", "f(f'{x=}',"]);
         // A capture whose structure is not known (an unknown `\N{...}` name) compares neither
         // equal nor unequal.
         let unknown = "f('\\N{NOT A NAME}', 'a')\nf('b', 'a')\n";
@@ -621,6 +626,19 @@
             ));
             assert_eq!(reason, expected);
         }
+    }
+
+    /// A tape leaves out the tokens its grammar implies (RER-131): `tokens` reads them back from the
+    /// text between leaves and from a leaf whose kind has children, as a full tree's leaves.
+    #[test]
+    fn tokens_compare_reads_the_tokens_a_tape_leaves_out() {
+        let rule = compiled(json!({ "rule": {
+            "pattern": "f($A, $B)",
+            "compare": { "left": "A", "op": "eq", "right": "B", "text": "tokens" },
+        } }));
+        let source = "f([ ], []);\nf(g(\na // c\n).p, g(a)\n.p);\nf(g(a).p, g(a.p));\n";
+        let result = evaluate_file(&rule, "typescript", "a.ts", source);
+        assert_eq!(matched_texts(&result, source).iter().map(|text| text.lines().next().unwrap_or_default()).collect::<Vec<_>>(), ["f([ ], []) A=[ ] B=[]", "f(g("]);
     }
 
     /// `node` tells two captures apart by identity: the same node, not the same text.

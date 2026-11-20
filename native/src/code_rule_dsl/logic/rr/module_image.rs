@@ -9,7 +9,7 @@ use crate::code_rule_dsl::logic::program_facts::Facts;
 use crate::code_rule_dsl::logic::program_image::{Builder, Cell, Image, SharedBytes, Version};
 use std::collections::BTreeMap;
 
-/// The image of module `m`, written once where it lives (decision 0480).
+/// The image of module `m`, written once where it lives (decision 0464).
 pub fn encode(m: &Module) -> Result<Image, String> {
     let p = m.parts();
     let v = m.version();
@@ -73,7 +73,7 @@ pub fn encode(m: &Module) -> Result<Image, String> {
     b.image()
 }
 
-/// The module image `bytes` holds, read where they are (decision 0480).
+/// The module image `bytes` holds, read where they are (decision 0464).
 pub fn decode(bytes: SharedBytes) -> Result<Module, String> {
     let v = Version::open_shared(bytes)?;
     // Its program, rules and header, stays in the image, read as the module's version.

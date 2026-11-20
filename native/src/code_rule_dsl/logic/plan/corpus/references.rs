@@ -79,7 +79,7 @@ pub(in crate::code_rule_dsl) struct Files {
     config: Config,
     /// The directories the corpus marks as packages (`__init__.py`), from which each file's module follows.
     packages: HashSet<String>,
-    /// Whether the run's shape is core.rr's (the program declares every relation core.rr does, `Projection::of`):
+    /// Whether the run's shape is core.rerail's (the program declares every relation core.rerail does, `Projection::of`):
     /// the shape its node ids are ranks in.
     core: bool,
     files: Mutex<Vec<File>>,

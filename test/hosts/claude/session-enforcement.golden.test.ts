@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { sessionStartNote } from "../../../src/engine/index.js";
 import { claudeHookOutput } from "../../../src/hosts/claude/claude-hook-adapter.js";
-import { drawn, goldenJson, NO_EXPLICIT_ANY, TWO_RULES, SCENE_DASHBOARD, SCENE_MARK, SCENE_SESSION } from "../../support/session-enforcement-scenes.js";
+import { drawn, goldenJson, NO_EXPLICIT_ANY, TWO_RULES, SCENE_DASHBOARD, SCENE_MARK, SCENE_PLATFORM, SCENE_SESSION } from "../../support/session-enforcement-scenes.js";
 import { fixturesPath } from "../../support/oracles.js";
 
 const GOLDEN = fixturesPath("host", "session-enforcement", "claude-code");
@@ -9,7 +9,7 @@ const GOLDEN = fixturesPath("host", "session-enforcement", "claude-code");
 /** Claude Code's output in each scene of the session enforcement design; review a change to these files with Minh. */
 describe("Claude Code session enforcement golden output", () => {
   it("N1: the note only the coding agent reads", async () => {
-    await expect(sessionStartNote(SCENE_DASHBOARD, "claude-code", SCENE_SESSION, { setUp: true, ruleCount: 26 }))
+    await expect(sessionStartNote(SCENE_DASHBOARD, "claude-code", SCENE_SESSION, { setUp: true, ruleCount: 26 }, SCENE_PLATFORM))
       .toMatchFileSnapshot(`${GOLDEN}/n1-session-note.txt`);
   });
 

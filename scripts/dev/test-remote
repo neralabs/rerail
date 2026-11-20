@@ -2,7 +2,7 @@
 """Runs a test command on another Mac of the build farm, in this checkout's copy there; here when none
 is usable (docs/final-shape/notes/t37, §2; scripts/build/farm/README.md).
 
-    scripts/dev/test-remote [--host NAME] [--os macos|linux|any] [--dir native] [--remote-only] [--tree DIR]... -- COMMAND...
+    scripts/dev/test-remote [--host NAME] [--os macos|linux|windows|any] [--dir native] [--remote-only] [--tree DIR]... -- COMMAND...
 
 e.g. `scripts/dev/test-remote -- cargo nextest run --lib --profile gate` for the full suite, or
 `scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'`.
@@ -27,6 +27,12 @@ build and run, as CI's. The Macs go first; a Linux host takes a command when eve
 taken, and never one that needs macOS: one naming Metal (`metal-tests`, `rerail-device-metal`) or
 sending a `--tree` (a program built here is a macOS one). `--os linux` sends it to a Linux host
 only, `--os any` lets any host take it, `--os macos` keeps it off Linux.
+
+A Windows host (`"os": "windows"`: a Windows PC's or VM's Windows side, through its WSL) takes a
+command only with `--os windows` (or `--host`): COMMAND runs there as a Windows build (Windows'
+cargo and MSVC, at a low priority; a leading `nice -n N` sets it), in a copy of the checkout on
+its drive. One machine's Linux and Windows sides share its test slots: what is queued decides how
+many of each run.
 
 `--tree DIR` also sends DIR whole (untracked files too, at the same path under the host's farm
 root): a run's inputs and a program built here, e.g. `--tree tmp/bench --tree tmp/engines` for a
@@ -140,7 +146,8 @@ def choose(named, oses, roots):
             if got:
                 # This checkout's copy there: idle, or running from this very tree; else another
                 # command of this checkout runs there from other files, which this one would change.
-                use = farm.CopyUse(host["name"], CHECKOUT, tree)
+                # (a Windows host's copy is its machine's Linux one: `shared_base`)
+                use = farm.CopyUse(farm.shared_base(host)["name"], CHECKOUT, tree)
                 if not use.held:
                     other_tree.append(host["name"])
                     got.release()
@@ -188,8 +195,8 @@ def parse(argv):
             trees.append(os.path.realpath(argv[1]))
             argv = argv[2:]
         elif a == "--os":
-            if len(argv) < 2 or argv[1] not in ("macos", "linux", "any"):
-                usage("--os takes macos, linux or any")
+            if len(argv) < 2 or argv[1] not in ("macos", "linux", "windows", "any"):
+                usage("--os takes macos, linux, windows or any")
             os_choice, argv = argv[1], argv[2:]
         elif a in ("--host", "--dir"):
             if len(argv) < 2 or argv[1].startswith("-"):
@@ -243,6 +250,8 @@ def main(argv):
             "scripts/build/farm/setup installs it; running the installed one")
 
     started = time.time()
+    if os_choice is None and named and farm.host_os(farm.entry(named)) == "windows":
+        os_choice = "windows"
     if os_choice is None:
         os_choice = "macos" if needs_macos(argv, trees) else "any"
     oses = ("macos", "linux") if os_choice == "any" else (os_choice,)
@@ -252,6 +261,8 @@ def main(argv):
         here(argv, directory, why, remote_only)
     name = host["name"]
     linux = farm.host_os(host) == "linux"
+    windows = farm.host_os(host) == "windows"
+    kind = " (Linux: a Linux build and run)" if linux else " (Windows: a Windows build and run)" if windows else ""
     short = farm.health(host).get("short")
     if short:
         say(f"{name}: {short}")
@@ -264,9 +275,9 @@ def main(argv):
             here(argv, directory, f"the checkout could not be sent to {name}: {(reply or {}).get('why') or 'no mirror daemon'}", remote_only)
         use.sent()
         t = reply.get("times", {})
-        say(f"{name}{' (Linux: a Linux build and run)' if linux else ''}: checkout sent ({t.get('files')} files, {t.get('sync')} s)")
+        say(f"{name}{kind}: checkout sent ({t.get('files')} files, {t.get('sync')} s)")
     else:
-        say(f"{name}{' (Linux: a Linux build and run)' if linux else ''}: nothing sent: this checkout's copy there is "
+        say(f"{name}{kind}: nothing sent: this checkout's copy there is "
             "this very tree, and another command of it runs from it")
 
     # The farm's wrapper is this machine's; the host's cargo builds as it would alone, in a target
@@ -276,6 +287,8 @@ def main(argv):
            "nofile": resource.getrlimit(resource.RLIMIT_NOFILE)[0],
            "min_free_gb": farm.config().get("min_free_gb", 40),
            "max_target_gb": host.get("max_target_gb", farm.config()["max_target_gb"])}
+    if windows:
+        job["windows"] = True
     remote = farm.agent_exec(job)
     proc = subprocess.Popen(farm.ssh(name, remote, "test"), stdin=subprocess.PIPE)
     try:

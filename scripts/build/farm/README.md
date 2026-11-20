@@ -233,7 +233,7 @@ hosts, and everything compiles and tests here, as without the farm.
 | `floor_free_gb` | the free disk left to the host's own work: under it the host is not used (default 20) |
 | `max_target_gb` | the most a host's test target directories hold together (default 150 GB; per host too) |
 | `max_rtt_ms` | the slowest round trip a host may have (default 150), for a host without `link` |
-| `min_mbps` | the least throughput to it, MB/s (default 8), for a host without `link`: with one, the link check catches a fall back to WiFi, and both are only reported. Both are measured through ssh: the round trip is the least of three (each starts an ssh process, which a loaded Mac delays), and the throughput is 32 MB written through a plain pipe (Python's `run(input=)` writes 512 bytes at a time and read 57 MB/s on a Thunderbolt link that does 270 through ssh and 800 raw). They still fall when either Mac is busy: a low figure is no proof of a slow link |
+| `min_mbps` | the least throughput to it, MB/s (default 8; a host's entry may set its own, for a slow link still worth using), for a host without `link`: with one, the link check catches a fall back to WiFi, and both are only reported. Both are measured through ssh: the round trip is the least of three (each starts an ssh process, which a loaded Mac delays), and the throughput is 32 MB written through a plain pipe (Python's `run(input=)` writes 512 bytes at a time and read 57 MB/s on a Thunderbolt link that does 270 through ssh and 800 raw). They still fall when either Mac is busy: a low figure is no proof of a slow link |
 | `tcp` | `false` keeps the live mirror's data on ssh (default `true`; also `RERAIL_FARM_TCP=0`) |
 
 A host takes a compile per core while nobody has touched its keyboard or mouse for 5 minutes, and
@@ -267,6 +267,77 @@ attended. `setup` installs the pinned toolchain with the host's rustup; rustup i
 
     curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain none --profile minimal
     curl -LsSf https://get.nexte.st/<version>/linux-arm | tar zxf - -C ~/.cargo/bin
+
+(`linux` in place of `linux-arm` on an x86_64 host.)
+
+An x86_64 Linux host takes test commands, but not this Mac's compiles (`"mac_compiles": false`):
+its rustc, compiling for `aarch64-apple-darwin`, gave 12 of `test-mac-compiles`' 42 outputs other
+bytes than this Mac's (proc-macro2, regex-automata, libc; 2026-11-19). The agent uses the host's
+own triple for its rustc and its proc-macro builds (farm 39), so the test can be run there again.
+
+### Windows PCs, through WSL
+
+A Windows PC joins as a Linux host: its WSL2 Ubuntu 24.04, reached by ssh directly, as the other
+Linux hosts are. Nothing of the farm runs on Windows itself. Set up once, as an administrator:
+
+- Windows' OpenSSH server (`Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0`, the
+  service automatic, PowerShell its shell), and a local administrator account for the farm,
+  this Mac's key in `C:\ProgramData\ssh\administrators_authorized_keys` (icacls: Administrators
+  and SYSTEM only). An Azure AD account cannot log in by key (sshd resets the connection), and
+  a local account keeps the farm's files apart from the PC's user's.
+- WSL (the features by `dism /online /enable-feature`, `Microsoft-Windows-Subsystem-Linux` and
+  `VirtualMachinePlatform`, then Microsoft's WSL release MSI: the inbox `wsl --install` refuses
+  over ssh), a restart, `wsl --install Ubuntu-24.04 --no-launch`.
+- In the account's `.wslconfig`: `networkingMode=mirrored` (WSL has the PC's address), `memory`,
+  `processors`, `vmIdleTimeout=-1`, and `instanceIdleTimeout=-1` under `[general]`. The Hyper-V
+  firewall lets WSL's VMs take connections in (`Set-NetFirewallHyperVVMSetting` for WSL's creator
+  id, a rule for the port), and a task at startup, as the account (S4U), runs
+  `wsl.exe -d Ubuntu-24.04 -u root -- sleep infinity`, so WSL runs from boot with no one signed in.
+- In Ubuntu: systemd (`/etc/wsl.conf`), the packages a Linux host has (build-essential, cmake,
+  clang, libclang-dev, libssl-dev, pkg-config, git, zstd, python3, docker.io), a `farm` user in
+  `docker` with this Mac's key, and sshd on a port of its own (Windows' sshd has 22), password
+  logins off. Then rustup and cargo-nextest as above, the host in `farm.json` as `"os": "linux"`
+  (with its `link`, WSL's `eth0`), and `setup`.
+- A laptop: on AC power, no sleep and no action on closing the lid (`powercfg`).
+
+### A Linux VM on a Mac
+
+A Mac host can run a Linux host beside itself: an Ubuntu 24.04 ARM VM made with Lima (Apple's
+Virtualization framework, no licence; Parallels needs a valid one to start a VM), reached by ssh
+through the Mac (`ProxyJump`, Lima's forwarded ssh port). Its configuration: `cpus`, `memory`,
+`disk` (sparse), no mounts, a provision script with the Linux host's packages and a `farm` user in
+`docker` holding the build machine's key; `limactl start-at-login` starts it with the Mac. Then
+rustup and cargo-nextest as above, its entry in `farm.json`, `setup`. An ARM VM gave
+`test-mac-compiles`' 42 outputs as this Mac's bytes (2026-11-19), so it takes this Mac's compiles
+too. Its CPU is the Mac's when it idles: a VM's vCPUs take nothing while no command runs.
+
+### Windows hosts
+
+The same PC's Windows side is a host of its own (`"os": "windows"`), for Windows builds and runs
+of the tests: `scripts/dev/test-remote --os windows -- cargo nextest run ...` (or `--host`). Its
+entry names the machine's Linux entry (`"shares"`) and its farm directory on the Windows drive as
+WSL mounts it (`"windows_dir": "/mnt/c/rf"`); ssh reaches it through the same WSL (a second ssh
+name for it). Then:
+
+- One copy of a checkout per machine: the mirror sends to the Linux side's (WSL's own disk), and
+  before a Windows command the agent brings the Windows drive's copy up to it: the files changed
+  since the last time (size or time, from a manifest) in one tar stream to Windows' own `tar`,
+  the files gone removed (`windows_sync`). Through WSL's mount of the drive the mirror wrote 13
+  files a second; the stream wrote a checkout's 11,600 files in 14 s, and a repeat run's whole
+  overhead is about 2 s (2026-11-19).
+- The command runs natively: a batch file, run by Windows' `cmd` through WSL's interop at
+  `BELOWNORMAL` priority (`LOW` for `nice -n 19`, which is taken off the command), its children
+  inheriting it, with its target directory on the drive. A stopped run's Windows processes are
+  ended by their command line (`taskkill /T`).
+- Linux and Windows share the machine's test slots, so what is queued decides how many of each
+  run; the CPU is the scheduler's, and WSL hands memory back as it idles (`autoMemoryReclaim`).
+  The dashboard shows Windows' view of the whole machine on the machine's card.
+
+On Windows, once, as an administrator: Visual Studio Build Tools 2022 (the C++ workload, x64 and
+ARM64 tools, the Windows 11 SDK, CMake, Clang), long paths on (`LongPathsEnabled`), the farm's
+directory left out of Defender's scanning (`Add-MpPreference -ExclusionPath`), and in the farm's
+account rustup with the pinned toolchain (`x86_64-pc-windows-msvc`, and the ARM64 target) and
+cargo-nextest's Windows build in `%USERPROFILE%\.cargo\bin`.
 
 ### Mac compiles on a Linux host
 

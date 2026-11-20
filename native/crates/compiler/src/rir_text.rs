@@ -71,9 +71,18 @@ pub fn extra_rows(out: &mut String, extras: &[(u8, u16)]) {
 }
 
 pub fn token_mark_rows(out: &mut String, marks: &[crate::program::TokenMark]) {
+    mark_rows(out, "tokenmark", marks);
+}
+
+/// The gap patterns (`Words::gap_patterns`), as the token marks' rows.
+pub fn gap_pattern_rows(out: &mut String, patterns: &[crate::program::TokenMark]) {
+    mark_rows(out, "gappattern", patterns);
+}
+
+fn mark_rows(out: &mut String, row: &str, marks: &[crate::program::TokenMark]) {
     use std::fmt::Write as _;
     for m in marks {
-        let _ = write!(out, "  tokenmark {}{}{}", m.order, if m.refuses { " refuses" } else { "" }, if m.unless { " unless" } else { "" });
+        let _ = write!(out, "  {row} {}{}{}", m.order, if m.refuses { " refuses" } else { "" }, if m.unless { " unless" } else { "" });
         for e in &m.elems {
             let _ = write!(out, " o{} k{:x}", e.offset, e.kinds);
             if e.rows != 0 {
@@ -97,7 +106,14 @@ pub fn token_mark_rows(out: &mut String, marks: &[crate::program::TokenMark]) {
             if e.without != 0 {
                 let _ = write!(out, " w{:x}", e.without);
             }
-            // A run's `ending` (Q274): its kinds, words and keywords.
+            if e.with != 0 {
+                let _ = write!(out, " h{:x}", e.with);
+            }
+            // `starting "B"`: the first bytes' set, four words.
+            if e.first != [0; 4] {
+                let _ = write!(out, " f{:x}.{:x}.{:x}.{:x}", e.first[0], e.first[1], e.first[2], e.first[3]);
+            }
+            // A run's `ending` (Q342): its kinds, words and keywords.
             if let Some(x) = &e.ending {
                 let _ = write!(out, " ending k{:x}", x.kinds);
                 if x.rows != 0 {
@@ -110,7 +126,7 @@ pub fn token_mark_rows(out: &mut String, marks: &[crate::program::TokenMark]) {
                     let _ = write!(out, " x{s}");
                 }
             }
-            // A run's depths (Q326): each side's counter, then its kinds, words and keywords.
+            // A run's depths (Q339): each side's counter, then its kinds, words and keywords.
             for n in &e.nests {
                 let _ = write!(out, " {}{} k{:x}", if n.open { "open" } else { "close" }, n.counter, n.test.kinds);
                 if n.test.rows != 0 {
@@ -174,6 +190,24 @@ pub fn local_check_text(c: &crate::program::LocalCheck) -> String {
         }
     }
     out
+}
+
+/// The grammar's names (`Words::names`): `name rule R "N"`, `name kind #K "N"`, `name token K "N"`,
+/// `name mark K "N"`.
+pub fn name_rows(out: &mut String, names: &crate::program::Names) {
+    use std::fmt::Write as _;
+    for (r, n) in &names.rules {
+        let _ = writeln!(out, "  name rule {r} {}", quote(n.as_bytes()));
+    }
+    for (k, n) in &names.kinds {
+        let _ = writeln!(out, "  name kind #{k} {}", quote(n.as_bytes()));
+    }
+    for (k, n) in &names.tokens {
+        let _ = writeln!(out, "  name token {k} {}", quote(n.as_bytes()));
+    }
+    for (k, n) in &names.marks {
+        let _ = writeln!(out, "  name mark {k} {}", quote(n.as_bytes()));
+    }
 }
 
 pub fn rule_rows(out: &mut String, rules: &[u16]) {

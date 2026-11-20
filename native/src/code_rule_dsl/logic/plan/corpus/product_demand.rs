@@ -33,7 +33,7 @@ pub(super) struct Fields {
     pub(super) layouts: BTreeMap<String, Vec<crate::code_rule_dsl::logic::front::LayoutFact>>,
 }
 
-/// The prefix of the pair relations a deferred join's reader reads (decision 0477).
+/// The prefix of the pair relations a deferred join's reader reads (decision 0513).
 pub(in crate::code_rule_dsl::logic::plan) const DEFERRED_PAIRS: &str = "rr_deferred_pairs_";
 
 impl Fields {
@@ -405,7 +405,7 @@ fn fixed_vars(rule: RuleRef<'_>, program: &Program<'_>) -> BTreeSet<Slot> {
         .collect();
     // A variable bound only by lookups on constants (`qv("builtins.object", "cls", $c)`): every positive atom that
     // reads it reads no other variable and no wildcard, and at least one does. Fixed as `$c = constant` is: a
-    // product of it is one side times that lookup's rows (356f1b516, `calls.rr`).
+    // product of it is one side times that lookup's rows (356f1b516, `calls.rerail`).
     let positive: Vec<AtomRef<'_>> = rule.body().filter_map(|l| match l.view() {
         Lit::Atom(a) if !a.neg() => Some(a),
         _ => None,
@@ -764,7 +764,7 @@ mod tests {
         assert!(rules.contains("missing($x, $y) :- edge($x, $y), !relay($x, $y)"));
     }
 
-    /// A node bound only by a lookup on constants (`qv("builtins.object", "cls", c)`, in `calls.rr`) is fixed, as
+    /// A node bound only by a lookup on constants (`qv("builtins.object", "cls", c)`, in `calls.rerail`) is fixed, as
     /// `c = constant` is: the product is one side times that lookup's few rows, and an output may hold it. A lookup
     /// with a wildcard in its key reads every row: still a product, refused as an output.
     #[test]

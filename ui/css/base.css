@@ -117,6 +117,8 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .mono{font-family:var(--font-mono);font-size:12px}
 .num{font-variant-numeric:tabular-nums}
 .dim,.muted{color:var(--muted-foreground)}
+/* Text read only by a screen reader: the menu toggle's name, and Merge Assist's "into", Ready / Note and side names. */
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 code{font-family:var(--font-mono);font-size:12px;background:var(--subtle);padding:1px 6px;border-radius:var(--radius-md);color:var(--foreground)}
 .ico{flex:none}
 
@@ -142,7 +144,6 @@ body[data-scrolled="1"] .topbar{box-shadow:var(--bar-shadow)}
  * and the toggle hangs in it, so the wordmark sits on the content edge like everything below it. */
 .navtoggle{display:inline-flex;align-items:center;justify-content:center;flex:none;width:32px;height:32px;margin:0 -2px 0 -8px;border-radius:50%;color:var(--muted-foreground)}
 .navtoggle:hover{background:var(--subtle);color:var(--foreground)}
-.navtoggle .lbl{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 @media (min-width:1100px){ .navtoggle{margin-left:calc(8px - var(--gutter));margin-right:calc(var(--gutter) - 58px)} }
 html[data-nav="hidden"] .cwrap{display:block}
 html[data-nav="hidden"] #sidenav{display:none!important}
@@ -169,6 +170,7 @@ button.repopill:hover,.repopill[aria-expanded="true"]{background:var(--subtle);c
 .repomenu .sub{margin:3px 0 0;padding:8px 10px 6px;border-top:1px solid var(--border);font-size:12px;line-height:1.5;color:var(--muted-foreground)}
 .status{margin-left:auto;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;color:var(--muted-foreground);font-size:12px;text-align:right}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--success);flex:none}
+.status .ver{margin-right:6px}
 .status.warn{color:var(--warning-foreground)} .status.warn .dot{background:var(--warning-foreground)}
 .status.down{color:var(--danger-foreground)} .status.down .dot{background:var(--danger-foreground)}
 
@@ -237,6 +239,9 @@ body[data-panel="open"] .panel{display:flex}
 .sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--switch-thumb);box-shadow:var(--lift);transition:transform .15s}
 .sw[aria-checked="true"]{background:var(--brand);border-color:var(--brand)}
 .sw[aria-checked="true"]::after{transform:translateX(14px);background:var(--primary-foreground)}
+/* The whole-pack switch while some of its rules are on: the knob halfway, on a pale brand track. */
+.sw[aria-checked="mixed"]{background:var(--brand-subtle);border-color:var(--brand)}
+.sw[aria-checked="mixed"]::after{transform:translateX(7px);background:var(--brand)}
 .badge{display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:var(--radius-md);font-size:11px;font-weight:500;background:var(--subtle);color:var(--muted-foreground);white-space:nowrap}
 /* A rule pack's logo: the sidebar, the catalog and the sheet. */
 .picon{flex:none;width:36px;height:36px;border-radius:50%;background:var(--picon-bg);color:var(--brand-foreground);display:grid;place-items:center}
@@ -256,6 +261,18 @@ body[data-panel="open"] .panel{display:flex}
 .welcome .x:hover{background:var(--subtle)}
 .welcome.warn{background:var(--warning-subtle);color:var(--warning-foreground)}
 .welcome.warn p{color:var(--warning-foreground)}
+/* One recipe for every banner: its colour stays on its surface and its icon; the title, the text, a command, a button
+ * that goes somewhere and the dismiss read in the page's own colours. A button that changes something (Start Rerail,
+ * Approve) keeps the solid brand colour; one that goes somewhere has a soft fill, the text colour at low strength, so
+ * it darkens a light banner and lightens a dark one. */
+.welcome,.welcome.warn{color:var(--foreground)}
+.welcome p,.welcome.warn p{color:var(--foreground);opacity:1}
+.welcome > .ico{color:var(--info-foreground)}
+.welcome.warn > .ico{color:var(--warning-foreground)}
+.welcome .mono{background:var(--subtle);padding:1px 6px;border-radius:var(--radius-md);color:var(--foreground);-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.welcome .btn:not(.solid){border-color:transparent;background:color-mix(in srgb,var(--foreground) 9%,transparent);color:var(--foreground)}
+.welcome .btn:not(.solid):hover{background:color-mix(in srgb,var(--foreground) 14%,transparent)}
+.welcome .x{color:var(--muted-foreground)}
 
 /* ---- sections and lists ---- */
 section.group{margin-bottom:24px}
@@ -289,10 +306,16 @@ section.group{margin-bottom:24px}
 .row.off .rtitle button.t{color:var(--muted-foreground)}
 .rmeta{grid-column:1;display:flex;flex-wrap:wrap;gap:4px 10px;font-size:12px;color:var(--muted-foreground);align-items:center}
 .rmeta > .mono + span::before{content:"·";margin-right:10px}
-/* The count and switch tracks; the column labels above (.colhead) declare the same ones, so a label and its numbers
- * end on one right edge: 96px count, 34px switch, 48px apart; under 1100px or beside a sheet the count shrinks to its
- * figure and the gap to 14px. */
-.rside{grid-column:2;grid-row:1 / span 2;display:grid;grid-template-columns:96px 34px;gap:0 48px;align-items:center;justify-self:end}
+/* The count, enforcement and switch tracks; the column labels above (.colhead) declare the same ones, so a label and
+ * its column share an edge: 96px count, 92px enforcement tag, 34px switch, 32px apart; under 1100px or beside a sheet
+ * the count shrinks to its figure and the gaps to 14px. */
+.rside{grid-column:2;grid-row:1 / span 2;display:grid;grid-template-columns:96px 92px 34px;gap:0 32px;align-items:center;justify-self:end}
+/* A rule's enforcement, read-only (render/enforcement.js): its mode's outcome colours and icon, as History shows them;
+ * faded with the row when the rule is off. */
+.enftag{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:var(--radius-md);font-size:12px;font-weight:500;white-space:nowrap;justify-self:start;cursor:default}
+.enftag.steer{background:var(--steer-bg);color:var(--steer-fg)}
+.enftag.log{background:var(--log-bg);color:var(--log-fg)}
+.row.off .enftag{opacity:.5}
 .count{font-size:13px;color:var(--muted-foreground);white-space:nowrap;text-align:right}
 .count b{color:var(--foreground);font-weight:600;font-size:14px}
 .count b.zero{color:var(--muted-foreground);font-weight:500}
@@ -306,15 +329,17 @@ section.group{margin-bottom:24px}
 .colhead{display:grid;grid-template-columns:minmax(0,1fr) 96px 34px;gap:0 48px;white-space:nowrap;padding:0 15px 12px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground);text-align:right}
 .colhead > span:first-child{text-align:left}
 .colhead > span:last-child{display:flex;justify-content:center;width:34px}
+.colhead.enfcols{grid-template-columns:minmax(0,1fr) 96px 92px 34px;gap:0 32px}
+.colhead.enfcols > span:nth-child(3){text-align:left}
 /* Under 1100px, or beside an open sheet: the count track shrinks to its figure, the gap to 14px, and the meta line
  * clips instead of wrapping. */
-body[data-panel="open"] .rside{grid-template-columns:minmax(40px,max-content) 34px;gap:0 14px}
-body[data-panel="open"] .colhead{grid-template-columns:minmax(0,1fr) minmax(40px,max-content) 34px;gap:0 14px}
+body[data-panel="open"] .rside{grid-template-columns:minmax(40px,max-content) 92px 34px;gap:0 14px}
+body[data-panel="open"] .colhead.enfcols{grid-template-columns:minmax(0,1fr) minmax(40px,max-content) 92px 34px;gap:0 14px}
 body[data-panel="open"] .rmeta{flex-wrap:nowrap;overflow:hidden;min-width:0}
 body[data-panel="open"] .rmeta > span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
 @media (max-width:1100px){
-  .rside{grid-template-columns:minmax(40px,max-content) 34px;gap:0 14px}
-  .colhead{grid-template-columns:minmax(0,1fr) minmax(40px,max-content) 34px;gap:0 14px}
+  .rside{grid-template-columns:minmax(40px,max-content) 92px 34px;gap:0 14px}
+  .colhead.enfcols{grid-template-columns:minmax(0,1fr) minmax(40px,max-content) 92px 34px;gap:0 14px}
 }
 
 /* ---- disclosures and code ---- */

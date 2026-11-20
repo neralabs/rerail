@@ -563,7 +563,7 @@ impl<'p> Builder<'p> {
         // The program's own row, which every field's reader asks for, is held by every version that states an about
         // row, whichever edit stated the first: a version from a tree has it (`about_of`), and one a pass's field or
         // a record (`set_asked`) gave about rows has it too. Stated by one edit only, two runs of one program differed
-        // by it (Q332).
+        // by it (Q358).
         if name != "program" && !rows.is_empty() {
             let program = self.enc.atom("program");
             if !self.parts.facts.contains_key(&(program | ABOUT_BIT)) {
@@ -769,7 +769,7 @@ impl<'p> Builder<'p> {
 
     // -- the version --
 
-    /// The image written so far, once, in place (decision 0480): a base's, or a delta's over the parent. The builder
+    /// The image written so far, once, in place (decision 0464): a base's, or a delta's over the parent. The builder
     /// is left as it is, to write on: nothing is cloned to write it.
     pub fn image(&self) -> Result<super::Image, String> {
         if self.removed.windows(2).all(|w| w[0] < w[1]) {

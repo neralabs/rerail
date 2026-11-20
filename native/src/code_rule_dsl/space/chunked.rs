@@ -148,13 +148,13 @@ impl View<'_> {
 /// Members in `words`. Four accumulators, so the counts vectorize.
 fn count(words: &[u64]) -> usize {
     let mut acc = [0u64; 4];
-    let mut chunks = words.chunks_exact(4);
-    for c in &mut chunks {
+    let (chunks, rest) = words.as_chunks::<4>();
+    for c in chunks {
         for i in 0..4 {
             acc[i] += u64::from(c[i].count_ones());
         }
     }
-    (acc.iter().sum::<u64>() + chunks.remainder().iter().map(|w| u64::from(w.count_ones())).sum::<u64>()) as usize
+    (acc.iter().sum::<u64>() + rest.iter().map(|w| u64::from(w.count_ones())).sum::<u64>()) as usize
 }
 
 /// `out &= other` (equal lengths), returning the members left.
@@ -1295,7 +1295,7 @@ impl Builder {
                     }
                     _ => {
                         le_u16s(payload, &mut u16s);
-                        for pair in u16s.chunks_exact(2) {
+                        for pair in u16s.as_chunks::<2>().0 {
                             let (s, l) = (pair[0], pair[1]);
                             let top = from | u32::from(l);
                             if s > l || top >= count {
@@ -1451,8 +1451,8 @@ pub mod tests {
         let space = space();
         let mut b = Builder::default();
         let mut model = BTreeSet::new();
-        for file in 0..4usize {
-            let (span, base) = (SPANS[file], space.base(file));
+        for (file, &span) in SPANS.iter().enumerate() {
+            let base = space.base(file);
             if shape % 3 == 2 {
                 let mut at = g.next() % 50;
                 while at < span {
@@ -1465,8 +1465,8 @@ pub mod tests {
                     at = end + 1 + g.next() % 30_000;
                 }
             } else {
-                let density = if shape % 3 == 0 { 50 } else { 2 };
-                for p in (0..span).filter(|_| g.next() % density == 0) {
+                let density = if shape.is_multiple_of(3) { 50 } else { 2 };
+                for p in (0..span).filter(|_| g.next().is_multiple_of(density)) {
                     model.insert(base + p);
                     b.node(base + p);
                 }
@@ -1514,6 +1514,7 @@ pub mod tests {
     }
 
     #[test]
+    #[allow(clippy::single_range_in_vec_init)]
     fn files_of_a_chunk_append_in_order() {
         // Files of one chunk inserted one by one: the shared chunk is merged, not rebuilt.
         let space = NodeSpace::new(vec![10, 10, 10]);

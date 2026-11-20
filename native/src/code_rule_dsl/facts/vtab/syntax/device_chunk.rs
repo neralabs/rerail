@@ -9,7 +9,7 @@
 //! - `up`, the projection's parent of each local id (`Projected::up`, `NONE` above the root and an anchor);
 //! - each node's `start`, `end`, `kind` (the tape's atom) and `field`, by local id, read off the tape through its API
 //!   (0293) when the chunk is made: an interim, until the device's kernels read the tape in the chunk (0293 step 5);
-//! - `core.rr`'s places (`Shape::Core`'s `Loc` views: `line`, `end_line`, `col`, `docof`), added on a `Loc` view's
+//! - `core.rerail`'s places (`Shape::Core`'s `Loc` views: `line`, `end_line`, `col`, `docof`), added on a `Loc` view's
 //!   first device read (`fill_locs`): the document's first row in them, its spans past its nodes (tokens, the whole
 //!   text, lines and end points, as `Projected::span` gives them) and its line starts (`core_rr::Lines`).
 //!
@@ -89,7 +89,7 @@ pub const VIEW_FIELD: u32 = 2;
 pub const VIEW_CORE: u32 = 3;
 // 4 was a kind-set axis read whole, its pairs copied into the chunk and made ids here. Its solve writes a relation of
 // ids of its own now (decision 0353 step 5), read where it lies; the number stays unused, so the others keep theirs.
-/// `core.rr`'s places of nodes and spans (`View::Loc`): their first line, last line, start column and document.
+/// `core.rerail`'s places of nodes and spans (`View::Loc`): their first line, last line, start column and document.
 pub const VIEW_LOC_LINE: u32 = 5;
 pub const VIEW_LOC_END: u32 = 6;
 pub const VIEW_LOC_COL: u32 = 7;
@@ -157,7 +157,7 @@ pub struct ViewsInPlace {
     pub buffers: Vec<rerail_device::device::Buffer>,
     /// Whether every document's lines are in a slab (`LineTable::placed`), so the `line` view is read in place too.
     pub lines: bool,
-    /// Whether every document's `Loc` rows are the views' reads' (`ViewEntry::locs`: a file's own tree, core.rr's
+    /// Whether every document's `Loc` rows are the views' reads' (`ViewEntry::locs`: a file's own tree, core.rerail's
     /// lines in the batch's block), so the `Loc` views are read in place too.
     pub locs: bool,
     /// The cache a 16z document's reads decode its blocks into (decision 0353 step 4b, `view::cache`), which every
@@ -196,7 +196,7 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
 /// One document of a views' directory: its projection, its dialect, and its first row in each view (`VIEWS`).
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 struct DirDoc<'a> {
-    p: &'a Arc<super::Projected>,
+    p: &'a super::Projected,
     dialect: &'a super::Dialect,
     rows: [u32; 9],
 }
@@ -452,9 +452,9 @@ fn build_in(batch: &Batch) -> Chunk {
             (*d).file = p.file;
             (*d).tag = u32::from(p.tag);
             (*d).nodes = p.len();
-            (*d).node_row = batch.nodes[i] as u32;
-            (*d).child_row = batch.children[i] as u32;
-            (*d).field_row = batch.fields[i] as u32;
+            (*d).node_row = batch.nodes()[i] as u32;
+            (*d).child_row = batch.offsets(View::Child)[i] as u32;
+            (*d).field_row = batch.offsets(View::Field)[i] as u32;
             (*d).nfielded = p.fielded();
             (*d).preorder = u32::from(p.defs.is_none());
             // The tape node and the parent of each local id, made from the rank index and the tape (the host reads
@@ -496,9 +496,9 @@ fn build_in(batch: &Batch) -> Chunk {
     // SAFETY: the root, just allocated; its spans point into `b`.
     unsafe {
         (*root).ndocs = batch.docs.len() as u32;
-        (*root).nodes = *batch.nodes.last().unwrap_or(&0) as u32;
-        (*root).children = *batch.children.last().unwrap_or(&0) as u32;
-        (*root).fields = *batch.fields.last().unwrap_or(&0) as u32;
+        (*root).nodes = *batch.nodes().last().unwrap_or(&0) as u32;
+        (*root).children = *batch.offsets(View::Child).last().unwrap_or(&0) as u32;
+        (*root).fields = *batch.offsets(View::Field).last().unwrap_or(&0) as u32;
         Span::set(&raw const (*root).docs, docs, batch.docs.len());
     }
     let at = b.offset_of(root);
@@ -543,7 +543,7 @@ pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
 
 /// Puts the `Loc` views' arrays into `batch`'s chunk, once: each document's first row in them, its spans past its
 /// nodes and its line starts; a guest's places too (decision 0055: its host's lines, through its placement), as the
-/// host finds them. False when a document has no places (no `core.rr` extra) or the block cannot hold them: the views
+/// host finds them. False when a document has no places (no `core.rerail` extra) or the block cannot hold them: the views
 /// are then made on the host. A batch with a guest was refused, and its views read on the host for an upload (28 MB
 /// on posthog/hogql).
 // copy (0353 step 4): the line starts and the spans past the nodes copied into the chunk for the `Loc` views. It goes:
@@ -551,7 +551,7 @@ pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
 pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
     const LOCS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the Loc views' lines and spans put into the chunk (fill_locs)");
     *chunk.locs.get_or_init(|| LOCS.time(|| in_block(&chunk.block, || {
-        let _span = crate::code_rule_dsl::logic::profile::span(|| "core.rr's places in the chunk block".into());
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "core.rerail's places in the chunk block".into());
         if batch.docs.iter().any(|p| p.extra.is_none()) {
             return false;
         }

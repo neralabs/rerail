@@ -275,12 +275,18 @@ pub struct LateBy {
     pub late_max: f64,
 }
 
+/// Every site's wait stats, and by job the waits it made late.
+type WaitTables = (BTreeMap<&'static str, WaitStats>, BTreeMap<&'static str, LateBy>);
+
 /// The run's waits, by site, and the jobs that made them late (decision 0442: the profile's, so the run's).
 #[derive(Default)]
-struct Waits(std::sync::Mutex<(BTreeMap<&'static str, WaitStats>, BTreeMap<&'static str, LateBy>)>);
+struct Waits(std::sync::Mutex<WaitTables>);
+
+/// [`waits`]: every site's waits, and the jobs that made them late.
+pub type SiteWaits = (Vec<(&'static str, WaitStats)>, Vec<(&'static str, LateBy)>);
 
 /// Every site's waits so far in the run under way, and the jobs that made them late: for the profile.
-pub fn waits() -> (Vec<(&'static str, WaitStats)>, Vec<(&'static str, LateBy)>) {
+pub fn waits() -> SiteWaits {
     let waits = rerail_context::local::<Waits>();
     let w = waits.0.lock().unwrap_or_else(|p| p.into_inner());
     (w.0.iter().map(|(k, v)| (*k, v.clone())).collect(), w.1.iter().map(|(k, v)| (*k, v.clone())).collect())
@@ -470,10 +476,10 @@ impl Bell {
 pub fn cores_slowdown() -> f64 {
     let pools = pools();
     let mut last = pools.load.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some((at, v)) = *last {
-        if at.elapsed().as_secs_f64() < 0.1 {
-            return v;
-        }
+    if let Some((at, v)) = *last
+        && at.elapsed().as_secs_f64() < 0.1
+    {
+        return v;
     }
     let ncpu = std::thread::available_parallelism().map_or(1, |n| n.get()) as f64;
     #[cfg(unix)]
@@ -1196,6 +1202,10 @@ impl<R> Job<R> {
     }
 }
 
+/// A batch's placement ([`Executor::place`]): per launch, its lane, its cost there and the fastest lane's; and the
+/// load it was weighed against.
+pub type Placement = (Vec<(Lane, Cost, Cost)>, Load);
+
 impl Executor {
     /// The executor's scoreboard, shared: a host stream ([`crate::stream`]) scores its jobs on it.
     pub fn board(&self) -> Arc<Scoreboard> {
@@ -1341,7 +1351,7 @@ impl Executor {
 
     /// Places each launch of a batch of kind `tag`, largest first, by host CPU (`Prices::choose_host`): per launch,
     /// in the batch's order, its lane, its cost there and the fastest lane's; and the load it was weighed against.
-    pub fn place(&self, tag: &'static str, batch: &Batch) -> Result<(Vec<(Lane, Cost, Cost)>, Load), String> {
+    pub fn place(&self, tag: &'static str, batch: &Batch) -> Result<Placement, String> {
         let predicted = self.predict(batch, &self.load(tag));
         self.place_predicted(tag, batch, &predicted)
     }
@@ -1354,7 +1364,7 @@ impl Executor {
     }
 
     /// [`Executor::place`] with the model's costs (`predicted`, per launch by lane).
-    pub fn place_predicted(&self, tag: &'static str, batch: &Batch, predicted: &[[Option<crate::cost_model::Predicted>; Lane::COUNT]]) -> Result<(Vec<(Lane, Cost, Cost)>, Load), String> {
+    pub fn place_predicted(&self, tag: &'static str, batch: &Batch, predicted: &[[Option<crate::cost_model::Predicted>; Lane::COUNT]]) -> Result<Placement, String> {
         let mut order: Vec<usize> = (0..batch.0.len()).collect();
         order.sort_by(|&a, &b| batch.0[b].kernel.units().total_cmp(&batch.0[a].kernel.units()));
         let prices = self.measured_prices();
@@ -1487,9 +1497,10 @@ impl Executor {
                         let (claims, backend) = (Arc::clone(&claims), Arc::clone(b));
                         // The launches run in their submitter's run, on whichever pool thread takes them.
                         let run = rerail_context::job_run();
+                        // `in_run`: the claims (the batch's kernels, their columns and device leases) may be the last
+                        // holder's, and a lease goes back to its pool in the run (Q337).
                         rerail_context::cores_spawn_fifo(move || {
-                            let _run = rerail_context::enter(run);
-                            as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend))
+                            rerail_context::in_run(run, move || as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend)))
                         });
                     }
                 }
@@ -1513,23 +1524,31 @@ impl Executor {
         let (reply, take) = std::sync::mpsc::sync_channel(1);
         let board = Arc::clone(&self.board);
         // Declined in a wait with a deadline ([`declines`]): queued again, for a thread that is not waiting.
-        fn queue(job: Box<dyn FnOnce() -> bool + Send>, name: &'static str, estimate: f64) {
+        // The check reads the job's expected wall, which is its run's: it is made in the run (decision 0442).
+        fn queue(job: Box<dyn FnOnce() -> bool + Send>, name: &'static str, estimate: f64, run: Option<Arc<dyn rerail_context::RunOwn>>) {
             rerail_context::cores_spawn_fifo(move || {
-                if declines(name, estimate) {
-                    return queue(job, name, estimate);
+                let declined = {
+                    let _run = rerail_context::enter(run.clone());
+                    declines(name, estimate)
+                };
+                if declined {
+                    return queue(job, name, estimate, run);
                 }
                 job();
             });
         }
         // The job is its caller's run's (decision 0442), on whichever pool thread takes it.
         let run = rerail_context::job_run();
-        queue(Box::new(move || {
-            let _run = rerail_context::enter(run);
-            board.start(&mut ticket);
-            let r = as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
-            board.finish(ticket, r.is_ok());
-            reply.send((r, Instant::now())).is_ok()
-        }), name, estimate);
+        queue(Box::new({
+            let run = run.clone();
+            move || {
+                let _run = rerail_context::enter(run);
+                board.start(&mut ticket);
+                let r = as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
+                board.finish(ticket, r.is_ok());
+                reply.send((r, Instant::now())).is_ok()
+            }
+        }), name, estimate, run);
         Job { name, take }
     }
 }
@@ -1648,10 +1667,10 @@ impl Running {
             moved += u64::from(lane != claims.plan[i]);
             report.launches[lane.index()] += 1;
             report.lost += (c.wall - fastest.wall).max(0.0);
-            if !lane.is_pool() {
-                if let Some(cc) = claims.costs[i][Lane::Cpu.index()] {
-                    report.cpu_freed += cc.wall;
-                }
+            if !lane.is_pool()
+                && let Some(cc) = claims.costs[i][Lane::Cpu.index()]
+            {
+                report.cpu_freed += cc.wall;
             }
             done.push(Done { out, lane, estimate: c.wall, fastest: fastest.wall, host: c.host });
         }
@@ -1849,10 +1868,10 @@ impl Backend for CpuBackend {
         Ok((ran.into_iter().map(|r| r.0).collect(), Phases { worker_cpu, ..Phases::default() }))
     }
     fn forget(&self, id: u64) {
-        if let Ok(mut s) = self.space.lock() {
-            if let Some((rows, k)) = s.sorted.remove(&id) {
-                s.bytes -= rows * 12 + k.runs.len() * 16;
-            }
+        if let Ok(mut s) = self.space.lock()
+            && let Some((rows, k)) = s.sorted.remove(&id)
+        {
+            s.bytes -= rows * 12 + k.runs.len() * 16;
         }
     }
     fn clear(&self) {

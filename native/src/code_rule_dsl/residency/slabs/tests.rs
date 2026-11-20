@@ -160,10 +160,9 @@ fn a_batch_over_several_slabs_reads_each_document_where_it_lies() {
         let rest = admit_docs(&docs[1..]).unwrap();
         assert_ne!(first[0].slab.id, rest[0].slab.id, "the documents are in two slabs");
         let documents: Vec<Arc<Resident>> = first.iter().chain(&rest).cloned().collect();
-        // A 16z batch needs its cache's address in each view, and a batch over two slabs their addresses: refused
-        // where buffers have none (OpenCL 1.2).
-        if !rerail_metal::lane::device().unwrap().has_addresses() {
-            assert!(DocTable::new(documents).is_none(), "{format:?}: a batch over two slabs refused without device addresses");
+        // A 16z batch needs its cache's address in each view: refused where buffers have none (OpenCL 1.2).
+        if format == Format::F16Z && !rerail_metal::lane::device().unwrap().has_addresses() {
+            assert!(DocTable::new(documents).is_none(), "a 16z batch refused without device addresses");
             drop(held_big);
             continue;
         }
@@ -295,7 +294,7 @@ DEFINE_KERNEL2(slab_tests, tape_conformance,
         };
         // A 16z batch needs its cache's address in each view, and a batch over two slabs their addresses: refused
         // where buffers have none (OpenCL 1.2).
-        if (split || format == Format::F16Z) && !rerail_metal::lane::device().unwrap().has_addresses() {
+        if (format == Format::F16Z || split) && !rerail_metal::lane::device().unwrap().has_addresses() {
             assert!(DocTable::new(documents).is_none(), "{format:?}: refused without device addresses");
             continue;
         }

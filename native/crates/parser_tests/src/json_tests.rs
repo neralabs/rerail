@@ -262,7 +262,9 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     let (jit, mut aot) = (simdjson_form(), simdjson_form());
     let native = rerail_compiler::native_ir::lower(&aot.program, 0, 0).expect("lowers");
     let (widths, tag) = aot.parser.tier2.widths_tag();
-    let src = rerail_compiler::rust_stream::rust_source_at(&native, widths, tag).expect("tier 2 as Rust");
+    let rust = rerail_compiler::rust_stream::rust_source_at(&native, widths, tag).expect("tier 2 as Rust");
+    // The shape is read with each line's indent dropped (the writer indents by braces).
+    let src: String = rust.lines().map(str::trim_start).collect::<Vec<_>>().join("\n");
     // A number is read once, as `parse_number` reads it: each arm of a number's first bytes makes
     // its end and its check from one read of its bytes (`run_R_check_C`).
     let arms: Vec<&str> = src.split("0x2d | 0x30..=0x39 => {\n").skip(1).collect();
@@ -277,7 +279,8 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // One function, as `walk_document`: the nesting on a stack of its own (`s.ret`, as
     // `is_array[depth]`), not the machine's; the loops a value is entered at from an array, an
     // object and the document are dispatched (`match d`), as simdjson's `goto`s into them.
-    assert!(src.matches("\nfn r").count() == 1 && src.contains("match ret {"), "one function, an explicit stack");
+    // A rule's function is named by its rule (`rust_stream`'s `function`): counted by its signature.
+    assert!(src.matches("/// The rule entered at word ").count() == 1 && src.contains("match ret {"), "one function, an explicit stack");
     // One stack, the nodes': a call's number kept in its container's row (`keep_ret`), read back
     // by the `CLOSE` before its `RETURN`; no call stack of its own, and no `CLOSE` tests for a
     // node open (`OneFn::stacked`). The depth counts as simdjson's, for its limit alone.
@@ -296,6 +299,8 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // the escape `\u`; every other escape goes past them.
     let words = &aot.program.block_programs[0].records.as_ref().expect("records").words;
     let u = words.iter().position(|w| w.as_slice() == b"\\u").expect("the escape \\u") + 1;
+    // The word by its name (`mod w`), else its number.
+    let u = src.lines().skip_while(|l| *l != "mod w {").find_map(|l| l.strip_prefix("pub const ").and_then(|r| r.strip_suffix(&format!(": u32 = {u};")))).map_or_else(|| u.to_string(), |n| format!("w::{n}"));
     let calls = src.matches("s.check_1()?;").count();
     assert!(calls > 0 && src.matches(&format!("{u} => {{ s.check_1()?;")).count() == calls, "the \\u checks in the \\u arm alone");
     // The end tested only where it is taken: `TOKEN` gives the file's length as the start past
@@ -321,7 +326,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     assert!(resets.is_empty(), "a dispatch's arm only re-sets d: {resets:?}");
     // No room check a token: the harness sizes the tape from the input once, as simdjson's.
     assert!(!aot.parser.tier2.room_checked() && !src.contains("room()?"), "no room check a token");
-    let entry = aot_entry(&src);
+    let entry = aot_entry(&rust);
     // SAFETY: the source is this program's tier 2 (from its own native IR), reading and writing
     // `Ctx` as the JIT's does; it counts its calls open itself.
     unsafe { aot.parser.tier2.set_entry(entry, 4) };
@@ -353,7 +358,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // nodes (a call's number in each) and the ops.
     let rule16 = src16.split("\nfn r0(").nth(1).expect("the rule");
     assert!(!rule16.contains("s.row(") && !rule16.contains("s.open(") && !rule16.contains("s.leaf::<") && !rule16.contains("s.node_super("), "no row in a format 16 run");
-    assert!(made16 == made && src16.contains("mod w {") && !src16.contains("self.finish(") && !src16.contains("s.code_now("), "each node to the ops as it is made, no image");
+    assert!(made16 == made && src16.contains("mod ops {") && !src16.contains("self.finish(") && !src16.contains("s.code_now("), "each node to the ops as it is made, no image");
     if let Ok(dir) = std::env::var("RERAIL_DUMP_TIER2") {
         std::fs::write(std::path::Path::new(&dir).join("simdjson16.rs"), &src16).expect("writes the source");
     }
@@ -858,12 +863,12 @@ fn jsonc_comments_equal_tree_sitter() {
         let Some(tree) = tree_sitter_json_with(&bytes, true) else { continue };
         let mut parent: Vec<usize> = vec![usize::MAX; tree.len()];
         let mut open: Vec<usize> = Vec::new();
-        for i in 0..tree.len() {
+        for (i, p) in parent.iter_mut().enumerate() {
             while open.last().is_some_and(|&o| i >= o + tree[o].4) {
                 open.pop();
             }
             if let Some(&o) = open.last() {
-                parent[i] = o;
+                *p = o;
             }
             open.push(i);
         }
@@ -1027,7 +1032,7 @@ fn json_tier1_vectors_equal_the_interpreter() {
             let len = 1 + rng.below(300) as usize;
             while f.len() < len {
                 // Mostly ASCII, so that some blocks are all ASCII and others not.
-                let p = if rng.below(4) == 0 { *rng.pick(&pieces) } else { &pieces[..2][rng.below(2) as usize] };
+                let p = if rng.below(4) == 0 { *rng.pick(&pieces) } else { pieces[..2][rng.below(2) as usize] };
                 f.extend_from_slice(p);
             }
             files.push(f);

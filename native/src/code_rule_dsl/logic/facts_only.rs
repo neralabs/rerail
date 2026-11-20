@@ -225,7 +225,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/lanes.rs", "DONE"),
     ("code_rule_dsl/logic/lanes.rs", "QUEUED"),
     // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
-    ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
     // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114 §4): which
     // pending atoms no committed row may hold yet, not a result kept.
     ("content_store/atoms.rs", "RESERVING"),
@@ -235,8 +234,7 @@ const STATE: &[(&str, &str)] = &[
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
     ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
-    ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
-    // core.rr's declarations (RER-131), read once from the engine's own library text: not a result kept.
+    // core.rerail's declarations (RER-131), read once from the engine's own library text: not a result kept.
     ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
     // This thread's zstd decompression context (RER-131): an open thing, not a result.
     ("content_store/compression.rs", "DECODER"),
@@ -251,13 +249,17 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "PATH"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "SAID"),
+    // The stores this process owns or was refused, with their held locks, and the slot it took of each base store
+    // (`corpus::owner`): which files are this process's, not results.
+    ("code_rule_dsl/logic/plan/corpus/owner.rs", "CLAIMS"),
+    ("code_rule_dsl/logic/plan/corpus/owner.rs", "SLOTS"),
     // Profiling totals, consumed and cleared by each report; no reusable results.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HandedDown"),
     // Phase 1's exports while the run that ran it is under way: the run's own facts, gone when it ends.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HeldPhaseOne"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "Phases"),
     ("code_rule_dsl/logic/profile.rs", "Dir"),
-    // The invocation's rule sources (decision 0477's report of authored joins), bound while a run profiles them.
+    // The invocation's rule sources (decision 0513's report of authored joins), bound while a run profiles them.
     ("code_rule_dsl/logic/profile/author_joins.rs", "Held"),
     // Ended threads' CPU accounts and their CPU outside spans, summed for the report; no reusable results.
     ("code_rule_dsl/logic/profile.rs", "EXITED"),
@@ -267,6 +269,9 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "SHARD"),
     ("code_rule_dsl/logic/profile.rs", "STACK"),
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
+    // The accounts and gaps of threads that have ended, read by the report: profiling, as `THREADS`.
+    ("code_rule_dsl/logic/profile.rs", "EXITED"),
+    ("code_rule_dsl/logic/profile.rs", "EXITED_GAPS"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
     // The world's rows (`rr::lower::World`), made once the languages are installed: a registry of what is
@@ -276,7 +281,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/rr.rs", "READS"),
     // `core_names` less 0174's on-request relations: a set of the engine's own, as `CORE`, the same for every run.
     ("code_rule_dsl/logic/rr.rs", "SHAPE"),
-    // The library images shipped beside the executable (0264), read once: an input, as `CORE`'s core.rr, no result.
+    // The library images shipped beside the executable (0264), read once: an input, as `CORE`'s core.rerail, no result.
     ("code_rule_dsl/logic/rr/images.rs", "SHIPPED"),
     // The rule files' entries a thread read before its run (0275), taken by the run's manifest: a queue.
     ("code_rule_dsl/logic/plan/corpus/combined.rs", "READ_BEFORE"),
@@ -296,10 +301,6 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "OPERATION_WAITED"),
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
-    // The device's automata and test tables for regex and text stages, held while the thread runs (a command buffer
-    // may read them).
-    ("code_rule_dsl/logic/native/setfix/device.rs", "AUTOMATA"),
-    ("code_rule_dsl/logic/native/setfix/device.rs", "TESTS"),
     // A switch: testing mode's store (decision 0130).
     ("code_rule_dsl/logic/plan/corpus.rs", "UseStore"),
     // Phase 1's runs within one batch of policies over one tree, dropped with it: nothing kept past the batch.

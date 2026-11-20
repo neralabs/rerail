@@ -140,7 +140,7 @@ UKL_INLINE uint64_t join_bloom_hash(uint64_t x)
   return x ^ (x >> 31);
 }
 
-// The column's distinct values into a blocked Bloom filter (`logic::bloom`, decision 0477): a thread a run (one a
+// The column's distinct values into a blocked Bloom filter (`logic::bloom`, decision 0513): a thread a run (one a
 // distinct value), its key plus the base back to the value, five bits of one 64-bit word, set as the word's two
 // 32-bit halves with atomics (the same bytes as the host's words). `words` zeroed. p: the rows, the filter's 64-bit
 // words (a power of two), whether the base is the span's (`span[0]`); b0: the host's base.

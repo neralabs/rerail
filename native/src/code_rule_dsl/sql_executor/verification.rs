@@ -215,8 +215,7 @@ impl CodeRuleSqlExecutor {
                     .lattice_operations
                     .get(rel)
                     .is_some_and(|o| o.after.is_some() && o.widen.is_some())
-                {
-                    if let Some(columns) = types.get(rel) {
+                    && let Some(columns) = types.get(rel) {
                         let columns = columns
                             .iter()
                             .take(*keys)
@@ -225,7 +224,6 @@ impl CodeRuleSqlExecutor {
                             .collect();
                         types.insert(format!("__sql_changes_{rel}"), columns);
                     }
-                }
             }
         }
         types

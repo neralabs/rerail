@@ -8,7 +8,7 @@ use super::*;
 
 fn load(path: &std::path::Path) -> Vec<i64> {
     let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    bytes.chunks_exact(8).map(|b| i64::from_le_bytes(b.try_into().unwrap())).collect()
+    bytes.as_chunks::<8>().0.iter().map(|b| i64::from_le_bytes(*b)).collect()
 }
 
 #[test]

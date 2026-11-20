@@ -1,4 +1,4 @@
-//! The token reads a `.rr` program may not make (t31, RER-131). A named-only tape stores no token its grammar
+//! The token reads a `.rerail` program may not make (t31, RER-131). A named-only tape stores no token its grammar
 //! implies (the `(` of a call, the `return` of a return statement), and no relation holds one: `op`, `op_at`,
 //! `prev_token` and `token` give a node's stored children, `first_token`, `last_token`, `token_before` and
 //! `token_after` its stored leaves. A clause that asks one of them for a token the grammar may leave out, by its
@@ -418,7 +418,7 @@ mod tests {
     fn a_parent_kind_derived_through_rules_is_named() {
         let refused = |src: &str| {
             let statements = super::super::from_tape::RrFile::read(src).unwrap().statements();
-            super::refuse(&[(std::path::PathBuf::from("t.rr"), statements)]).unwrap_err().to_string()
+            super::refuse(&[(std::path::PathBuf::from("t.rerail"), statements)]).unwrap_err().to_string()
         };
         let direct = refused(".language python\nr(n) :- kind(n, \"if_statement\"), op(n, \":\").\n");
         let derived = refused(".language python\nifs(n) :- kind(n, \"if_statement\").\nother(n) :- kind(n, \"call\").\nr(n) :- ifs(n), op(n, \":\").\n");

@@ -11,7 +11,7 @@ import corpus
 
 
 POLICY = (
-    corpus.ROOT / "docs/rule-syntax/packs/python/ruff-try401-verbose-log-message.rr"
+    corpus.ROOT / "docs/rule-syntax/packs/python/ruff-try401-verbose-log-message.rerail"
 )
 SAMPLE_DIGEST = "b7821c1a80078968c0fb5ae5b66b17f9d636a68fae6a3638befb16676ad73a5c"
 DIAGNOSTIC_DIGEST = "6cf0d92b4063e6197bd8e1ebd72bad7a40efb1b024cc733f198886fbd5bd7eb6"

@@ -121,7 +121,7 @@ pub(super) struct Findings<'a, 'p> {
 
 type Open = crate::code_rule_dsl::logic::program_image::Open;
 
-/// The `.on syntax_error report CODE [at line 1]` and `.on input_error report CODE` settings (`core.rr`): what, its
+/// The `.on syntax_error report CODE [at line 1]` and `.on input_error report CODE` settings (`core.rerail`): what, its
 /// code, and whether at line 1.
 fn on_reports(settings: &[(String, String)]) -> Vec<(String, String, bool)> {
     settings
@@ -151,7 +151,7 @@ fn guest_settings(settings: &[(String, String)]) -> (Vec<(String, String)>, Vec<
             }
             continue;
         }
-        // `.scope embedded false` keeps the policy to primary documents: `.guests off` (`core.rr`).
+        // `.scope embedded false` keeps the policy to primary documents: `.guests off` (`core.rerail`).
         if key == "scope" {
             if let ["embedded", v @ ("true" | "false")] = words.as_slice() {
                 facts.push(("library".to_owned(), if *v == "true" { "on" } else { "off" }.to_owned()));
@@ -255,11 +255,11 @@ impl<'p> Findings<'_, 'p> {
 
     /// The findings of the `.violation`s: `violation(policy, V, code, path, line)` for each row of V, at its first
     /// column's line (the engine's findings relation, as the converter's programs give it). A node's document is
-    /// `node`'s column; a span's is `docof` (`core.rr`), and so is its line. A `@place(path, line)` row is read from
+    /// `node`'s column; a span's is `docof` (`core.rerail`), and so is its line. A `@place(path, line)` row is read from
     /// V's place relation; a span or loc `at` that holds a `@place` value made elsewhere (`PLACE`) is found at its
     /// path and line. Whether it wrote them (then it wrote a rule at least).
     fn findings(&mut self, mut violations: Vec<Violation>, seen: RulesSeen) -> Result<bool, Error> {
-        // `.on syntax_error report CODE [at line 1]` and `.on input_error report CODE` (`core.rr`).
+        // `.on syntax_error report CODE [at line 1]` and `.on input_error report CODE` (`core.rerail`).
         let on = on_reports(&self.b.settings());
         let guest_errors = self.guest_policy(seen.reads_guest_policy);
         if violations.is_empty() && on.is_empty() && guest_errors.is_empty() {
@@ -433,7 +433,7 @@ impl<'p> Findings<'_, 'p> {
         Ok(true)
     }
 
-    /// The `.scope` settings as a test of a finding's path `$rr_p` (`core.rr`): a document's path is in scope in one
+    /// The `.scope` settings as a test of a finding's path `$rr_p` (`core.rerail`): a document's path is in scope in one
     /// of `dirs` (each a directory or a glob of one, at the root) or `include`'s globs when there are any, in none
     /// of `exclude`'s, and with `tests false` under no `test` or `tests` path part. Findings in other documents are
     /// dropped; one at a path that is no document (a budget file) is kept. Facts still come from every file. A
@@ -738,8 +738,90 @@ pub fn findings_write(prog: &(impl crate::code_rule_dsl::logic::program_image::f
 
 /// The findings (`Findings`) of `pending` written onto `b`: its fields, and its rules after those it holds (where
 /// `findings_write`). Whether they wrote the findings (then the caller widens the program's own `violation` heads of
-/// five columns, `lowering_tail`).
+/// five columns, `lowering_tail`). A `.scope tool_calls` policy's are lowered first (`tool_call_findings`, main's
+/// #866).
 pub fn findings_on(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, pending: &PendingFindings, seen: RulesSeen) -> Result<bool, Error> {
     let mut f = Findings { b, next: pending.next, made: Vec::new() };
-    f.findings(pending.violations.clone(), seen)
+    let files = f.tool_call_findings(pending.violations.clone(), &seen)?;
+    // A tool-call policy's findings were written there (it leaves none in files).
+    let at_calls = files.len() < pending.violations.len();
+    Ok(f.findings(files, seen)? || at_calls)
+}
+
+/// A `.scope tool_calls` policy's findings (`docs/rule-syntax/tool-calls.md`): each at a tool call, its `at` the call's
+/// id (`at: symbol`), with no path and line 0. `findings` lowers the rest, those in files.
+impl Findings<'_, '_> {
+    /// Refuses a policy that reads tool calls without `.scope tool_calls` (as `rules.rs` refuses a JSON rule that reads
+    /// `input` and samples no tool call), and lowers a tool-call policy's findings. Gives the findings left, those in
+    /// files.
+    fn tool_call_findings(&mut self, violations: Vec<Violation>, seen: &RulesSeen) -> Result<Vec<Violation>, Error> {
+        let settings = self.b.settings();
+        let scoped = reads_tool_calls(&settings);
+        refuse_misread_tool_calls(&settings, seen.reads_tool_call, &violations)?;
+        if !scoped {
+            return Ok(violations);
+        }
+        let policy = settings.iter().find(|(k, _)| k == "policy").and_then(|(_, text)| text.split('"').nth(1)).unwrap_or_default().to_owned();
+        for f in &violations {
+            self.call_finding(&policy, f)?;
+        }
+        Ok(Vec::new())
+    }
+
+    /// The finding of a `.violation` at a tool call: its row (`diagnostic_rule`) at no path and line 0, its `at` the
+    /// call's id, and its `violation` row. The message names the call's id as `{at}`: a call has no line or name.
+    fn call_finding(&mut self, policy: &str, f: &Violation) -> Result<(), Error> {
+        let (_, keys) = message_parts(&f.message).map_err(|e| Error::Syntax(format!(".violation {} message: {e}", f.name)))?;
+        if let Some(key) = keys.iter().find(|k| k.strip_prefix(f.columns[0].0.as_str()).is_some_and(|p| p.starts_with('.'))) {
+            return Err(Error::Syntax(format!(".violation {} message: {{{key}}}: a tool call has only its id", f.name)));
+        }
+        let cols: Vec<Tm> = (0..f.arity).map(|i| self.v(&format!("rr_v{i}"))).collect();
+        let at = cols[0].clone();
+        let at_call = |me: &mut Self, o: &mut Open| {
+            me.put(o, &f.name, &cols, false);
+            me.put(o, TOOL_CALLS[0], &[cols[0].clone(), Tm::Wild], false);
+        };
+        self.diagnostic_rule(policy, f, &cols, at, false, &|me, o| {
+            at_call(me, o);
+            let (p, l, empty) = (me.v("rr_p"), me.v("rr_l"), me.s(""));
+            me.put_cmp(o, p, "=", empty);
+            me.put_cmp(o, l, "=", Tm::Int(0));
+        })?;
+        // The `violation(rule, clause, code, path, line, col)` index, an output, as `findings` declares it for those in
+        // files.
+        self.b.fields().declare("violation", &[("rule", "sym"), ("clause", "sym"), ("code", "sym"), ("path", "sym"), ("line", "int"), ("col", "int")]);
+        self.b.fields().add_output("violation");
+        let code = match &f.code {
+            FindingCode::Name => self.s(&f.name),
+            FindingCode::Column(i) => self.v(&format!("rr_v{i}")),
+            FindingCode::Constant(c) => self.s(c),
+        };
+        let head = [self.s(policy), self.s(&f.name), code, self.s(""), Tm::Int(0), Tm::Int(0)];
+        let mut o = self.open("violation", &head);
+        at_call(self, &mut o);
+        self.close(o)
+    }
+}
+
+/// A tool call's relations read without `.scope tool_calls` (`read`, `RulesSeen::reads_tool_call`), another `.scope`
+/// beside it (it reads no file), or a finding at a tool call (`at: symbol`) in one policy and not the other.
+fn refuse_misread_tool_calls(settings: &[(String, String)], read: Option<&str>, violations: &[Violation]) -> Result<(), Error> {
+    let scoped = reads_tool_calls(settings);
+    let other_scope = settings.iter().find(|(k, t)| k == "scope" && t.trim() != "tool_calls");
+    match (read, other_scope, violations.iter().find(|v| v.call() != scoped)) {
+        (Some(rel), _, _) if !scoped => Err(Error::Syntax(format!("{rel} is a tool call's relation: a policy that reads tool calls says `.scope tool_calls`"))),
+        (_, Some((_, other)), _) if scoped => Err(Error::Syntax(format!("`.scope tool_calls` reads no file: no `.scope {}` beside it", other.trim()))),
+        (_, _, Some(v)) => Err(Error::Syntax(format!(".violation {}: {}", v.name, call_at(scoped)))),
+        _ => Ok(()),
+    }
+}
+
+/// Why a `.violation`'s `at` does not fit its policy: a tool call's in a `.scope tool_calls` policy, a node, span or loc
+/// in any other.
+fn call_at(scoped: bool) -> &'static str {
+    if scoped {
+        "a `.scope tool_calls` policy's findings are at a tool call, `at: symbol`"
+    } else {
+        "`at` is a tool call (a symbol) only in a `.scope tool_calls` policy"
+    }
 }

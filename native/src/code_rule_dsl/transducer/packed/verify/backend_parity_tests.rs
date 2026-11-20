@@ -38,11 +38,10 @@ fn the_verifier_and_the_metal_interpreter_share_one_opcode_set() {
     // runs them in phase 6 (doc 17); until then they are the one known gap of F1, named here.
     let tier2: std::collections::BTreeSet<u8> = admitted.iter().copied().filter(|&o| stream::is_stream(o)).collect();
     // 0x53 was the token's `CHECK`, gone: a token's check is tier 1's masks (doc 18 §4). `COUNT` and the string's
-    // `CHECK` (0x65, 0x66: a string's escapes checked at the string, 5da312927) end the range, and `SETTLE` (0x84, a
-    // settling mark's arm, decision 0332) stands past the preprocessing words' range.
-    let mut words: std::collections::BTreeSet<u8> = (TOKEN..=CHECK).filter(|&o| o != 0x53).collect();
-    words.insert(rerail_compiler::program::SETTLE);
-    assert_eq!(tier2, words, "tier 2's words");
+    // `CHECK` (0x65, 0x66: a string's escapes checked at the string, 5da312927) end the range; a settling mark's
+    // `SETTLE` (0x84, 0332) stands apart, after the preprocessing words' numbers.
+    let expected: std::collections::BTreeSet<u8> = (TOKEN..=CHECK).filter(|&o| o != 0x53).chain([SETTLE]).collect();
+    assert_eq!(tier2, expected, "tier 2's words");
     let walker: std::collections::BTreeSet<u8> = admitted.difference(&tier2).copied().collect();
     assert_eq!(walker, OPCODES.into_iter().collect());
     assert_eq!(metal, walker, "an opcode the verifier admits that Metal cannot run, or the reverse");

@@ -40,7 +40,18 @@ failure-output = "final"
 filter = "package(rerail-c-directives)"
 slow-timeout = { period = "60s", terminate-after = 8 }
 
-# The Rust backend on every ladder step: each `.rr` step compiles through Cranelift twice (formats 15 and 16), and
+# The FSEvents tests (the store's journal and observer, the engine's tree watch): each waits on the journal's cookies,
+# which `fseventsd` tells every stream of the machine in turn. Run at once, they push one another's notices past their
+# waits (Q320: 11 of 51 failed together on an M3, none alone): one at a time, beside everything else.
+[test-groups]
+fsevents = { max-threads = 1 }
+
+[[profile.default.overrides]]
+platform = "cfg(target_os = \"macos\")"
+filter = "test(/^(content_store::(observe|journal)|tree_watch)::/)"
+test-group = "fsevents"
+
+# The Rust backend on every ladder step: each `.rerail` step compiles through Cranelift twice (formats 15 and 16), and
 # rustc builds each ladder's Rust (2–3 min in a debug build on an M3 Max).
 [[profile.default.overrides]]
 filter = "package(rerail-parser-tests) & test(=aot_tests::ladder_steps_rust_tapes_are_the_jits)"

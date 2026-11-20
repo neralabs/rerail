@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -6,12 +6,13 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { PackConformance } from "../../../scripts/samples/conformance.js";
 import { phpTestSetSamples } from "../../../scripts/samples/convert-php-test-set.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const COMMIT = "0".repeat(40);
 
 const temporary: string[] = [];
 afterEach(() => {
-  for (const directory of temporary.splice(0)) rmSync(directory, { recursive: true, force: true });
+  for (const directory of temporary.splice(0)) removeFolderSync(directory);
 });
 
 const conformance: PackConformance = {

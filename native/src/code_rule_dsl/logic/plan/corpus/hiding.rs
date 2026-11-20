@@ -43,7 +43,7 @@ pub(super) const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] =
 /// Views of base relations the lowering writes as rules.
 pub(super) const VIEWS: [&str; 3] = ["kind", "docof", "precedes"];
 
-/// The grammar a guest's kinds are named in: a dialect label (a fragment's is its dialect's, decision 0482).
+/// The grammar a guest's kinds are named in: a dialect label (a fragment's is its dialect's, decision 0466).
 pub(super) fn dialect_label(grammar: &str) -> &str {
     crate::code_rule_dsl::language::kinds_label(grammar)
 }

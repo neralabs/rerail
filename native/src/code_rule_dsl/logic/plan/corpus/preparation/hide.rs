@@ -209,7 +209,7 @@ impl ProgramPass for Hide {
                 let grammar_of = |s: Slot| facts.get(&s).filter(|f| f.scoped && f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty());
                 // A kind read off a guest's node is its grammar's (decision 0222): `kind(f, k), fn_scope(k)` over a view's
                 // node reads the kind set named in the view's grammar, and `k = "arrow_function"` names that grammar's
-                // kind. Unqualified, both are the run language's, and a library over another grammar (tsx/names.rr
+                // kind. Unqualified, both are the run language's, and a library over another grammar (tsx/names.rerail
                 // read over a Vue component's view) finds none of its kinds.
                 let kind_of: BTreeMap<Slot, String> = rule
                     .body
@@ -1409,7 +1409,7 @@ mod tests {
         assert!(out.iter().any(|r| r.contains("rr_in_sql_0_sql_1_pair(")), "{out:?}");
     }
 
-    /// O110: a column filled by host and guest nodes alike (`calls.rr`'s `tv`) is not a guest's column. A rule reading
+    /// O110: a column filled by host and guest nodes alike (`calls.rerail`'s `tv`) is not a guest's column. A rule reading
     /// a relation with a variable from it keeps reading the relation for the host's nodes, and a clone reads the
     /// guest's copy; before, the rule read only the copy, and `tbv` lost every host assignment.
     #[test]
@@ -1507,6 +1507,42 @@ mod tests {
         let narrow = (i64::from(ANNOTATION_KEYS) << 32).to_string();
         assert!(rules.iter().any(|r| r.starts_with("asg(") && r.contains(&wide)), "{rules:#?}");
         assert!(rules.iter().any(|r| r.starts_with("out(") && r.contains(&narrow)) || rules.iter().filter(|r| r.starts_with("out(")).all(|r| !r.contains(&wide)), "{rules:#?}");
+    }
+
+    /// A tree axis read over a node that may be an annotation's is the clone's copy of the axis, over a copy of its kind
+    /// set (`rr_inside_rr_in_annotation_<set>`). Folding the copied set folds the axis too: before, the set went and
+    /// the axis stayed, naming no set, so the transducer made it with no rows, and the clone's `!inside(t, _, S)` held
+    /// for every node, below S too (the Django rules' `within_stop` over a block found through `sym_of`; main's #862).
+    #[test]
+    fn an_axis_over_a_folded_kind_set_reads_the_original_set() {
+        use crate::code_rule_dsl::facts::vtab::syntax::ANNOTATION_KEYS;
+        use crate::code_rule_dsl::logic::front::{axis, is_axis};
+        let v = hidden(
+            concat!(
+                ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
+                ".decl body(b: node)\nbody(b) :- e(b).\nbody(r) :- parsed(_, \"annotation\", r).\n",
+                ".decl attempt(t: node)\nattempt(t) :- e(t).\n",
+                ".decl out(t: node)\n.output out\n",
+                "out(t) :- attempt(t), body(b), within(t, b), !inside(t, _, \"function_definition\").\n",
+            ),
+            ANNOTATION_KEYS,
+        );
+        let axes = |v: &Version| -> Vec<String> { v.rules().flat_map(|r| v.show_rule(r).split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| is_axis(w)).map(str::to_owned).collect::<Vec<_>>()).collect() };
+        assert!(axes(&v).iter().any(|r| r.contains("rr_in_annotation_")), "the clone reads the annotation's axis: {:?}", axes(&v));
+        let mut p = Pipeline::new("test", v);
+        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0 };
+        let (mut merge, mut repeats) = (super::super::merge::MergeIdentical::default(), super::super::merge::DropRepeated::default());
+        p.program(&mut fold).program(&mut repeats).program(&mut merge).program(&mut repeats);
+        let (v, _) = p.finish().unwrap();
+        assert!(fold.folded > 0);
+        let sets = ProgramFields::kindsets(&*v);
+        let inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).filter(|r| is_axis(r)).collect();
+        for rel in axes(&v).iter().chain(&inputs) {
+            let (set, _) = axis(rel).unwrap();
+            assert!(sets.contains_key(set), "{rel} names no kind set of the program: {sets:?}");
+        }
+        let outs = rules_of(&v, "out");
+        assert!(!outs.is_empty() && outs.iter().all(|r| r.contains("!rr_inside_rr_kind_function_definition(") && !r.contains("rr_in_")), "{outs:#?}");
     }
 }
 

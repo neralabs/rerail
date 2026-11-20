@@ -1237,8 +1237,26 @@ impl Observer {
     fn outermost(&mut self, root: &Path) -> PathBuf {
         let mut above: Vec<PathBuf> = self.stored_roots.iter().filter(|r| under(&root, r) && r.as_path() != root).cloned().collect();
         above.sort_by_key(|r| r.as_os_str().len());
-        let here = self.volume(root).unwrap_or([0; 16]);
-        above.into_iter().find(|r| self.volume(r).unwrap_or([0; 16]) == here).unwrap_or_else(|| root.to_path_buf())
+        let here = self.volume(root);
+        // With no journal there is no volume's id (Linux, no Watchman): the same device holds both. Folded by the
+        // id alone, a root under another stored one was never folded there, and kept a listing cursor of its own.
+        let dev = |p: &Path| {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt as _;
+                std::fs::metadata(p).ok().map(|m| m.dev())
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = p;
+                None::<u64>
+            }
+        };
+        let here_dev = if here.is_none() { dev(root) } else { None };
+        above.into_iter().find(|r| match here {
+            Some(_) => self.volume(r) == here,
+            None => here_dev.is_some() && self.volume(r).is_none() && dev(r) == here_dev,
+        }).unwrap_or_else(|| root.to_path_buf())
     }
 
     /// `root`'s volume, asked once a process.
@@ -2400,8 +2418,8 @@ mod tests {
         // by its `stat`s. What the tests check is the journal's answer.
         o.journal_settle = JOURNAL_TEST_BUDGET;
         // Trust at once: these runs follow each other within the settle window, as no test can wait it out; and the
-        // journal's answer whatever it costs: waited for as long as its settle budget, since a cookie on a loaded
-        // host comes later than a run's 2 s (718434dca).
+        // journal's answer whatever it costs: the cookie waited for as long as the replay may settle (a busy host's
+        // `fseventsd` takes seconds, Q221).
         o.settle_ns = 0;
         o.wait_least_ns = 30_000_000_000;
         o
@@ -2721,7 +2739,7 @@ mod tests {
             base.join("root")
         })
         .unwrap();
-        let file = root.join("lib/a.rr");
+        let file = root.join("lib/a.rerail");
         std::fs::write(&file, "x.\n").unwrap();
         aged(&file);
         let store = base.join("store.files");
@@ -2785,11 +2803,11 @@ mod tests {
             base.join("root")
         })
         .unwrap();
-        let file = root.join("lib/a.rr");
+        let file = root.join("lib/a.rerail");
         std::fs::write(&file, "x.\n").unwrap();
         aged(&file);
         let store = base.join("store.files");
-        let other = root.join("b.rr");
+        let other = root.join("b.rerail");
         std::fs::write(&other, "y.\n").unwrap();
         aged(&other);
         let mut o = journal_observer(&store);
@@ -2826,7 +2844,7 @@ mod tests {
             base.join("root")
         })
         .unwrap();
-        let file = root.join("lib/a.rr");
+        let file = root.join("lib/a.rerail");
         std::fs::write(&file, "x.\n").unwrap();
         aged(&file);
         let store = base.join("store.files");
@@ -2850,10 +2868,10 @@ mod tests {
     }
 
     /// A path's canonical form is resolved once: under a root the journal says is unchanged, the next run answers it
-    /// with no `realpath`, and a symlink retargeted under the root is resolved again. The journal is
-    /// FSEvents's: elsewhere nothing is trusted.
-    #[cfg(target_os = "macos")]
+    /// with no `realpath`, and a symlink retargeted under the root is resolved again. The journal's (FSEvents), as
+    /// the other journal tests: with none (Linux, no Watchman), nothing is trusted by it.
     #[test]
+    #[cfg(target_os = "macos")]
     fn a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change() {
         let base = std::env::temp_dir().join(format!("rerail-canonical-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
@@ -3062,16 +3080,16 @@ mod tests {
         git(&repo, &["config", "user.email", "t@example.com"]);
         git(&repo, &["config", "user.name", "t"]);
         std::fs::write(repo.join("a.py"), "x = 1\n").unwrap();
-        std::fs::write(repo.join("pkg/b.rr"), "r(1).\n").unwrap();
+        std::fs::write(repo.join("pkg/b.rerail"), "r(1).\n").unwrap();
         std::fs::write(repo.join("gone.py"), "").unwrap();
         std::fs::write(repo.join(".gitignore"), "*.log\n").unwrap();
-        git(&repo, &["add", "--", "a.py", "pkg/b.rr", "gone.py", ".gitignore"]);
+        git(&repo, &["add", "--", "a.py", "pkg/b.rerail", "gone.py", ".gitignore"]);
         git(&repo, &["commit", "-m", "one"]);
         std::fs::remove_file(repo.join("gone.py")).unwrap();
         std::fs::write(repo.join("new.py"), "").unwrap();
         std::fs::write(repo.join("noise.log"), "").unwrap();
         let g = crate::git_workspace::discover(&repo).unwrap();
-        assert_eq!(g.worktree_files(), vec![".gitignore", "a.py", "new.py", "pkg/b.rr"]);
+        assert_eq!(g.worktree_files(), vec![".gitignore", "a.py", "new.py", "pkg/b.rerail"]);
 
         // A clone whose index stats are settled (mtimes before the index): its clean files are proven by stat.
         let clone = dir.path().join("clone");
@@ -3321,9 +3339,9 @@ mod tests {
         let cutoff = |key: &str, flat: &[&str]| db.execute("INSERT INTO run_record VALUES (?1, ?2, x'')", params![key, encode_lists(&[flat])]).unwrap();
         record(&format!("{CANONICAL}{}", s(&root.join("a.py"))), "");
         record(&format!("{CANONICAL}{}", s(&real.join("elsewhere"))), "");
-        cutoff("cutoff:kept", &["rule", "x.rr", "ab", "plan", "", &hex(&dead), "plan", "", &hex(&live)]);
+        cutoff("cutoff:kept", &["rule", "x.rerail", "ab", "plan", "", &hex(&dead), "plan", "", &hex(&live)]);
         cutoff("cutoff:dead", &["plan", "", &hex(&dead)]);
-        cutoff(&"ab".repeat(32), &["rule", "x.rr", "ab"]);
+        cutoff(&"ab".repeat(32), &["rule", "x.rerail", "ab"]);
         // The constants' and the cone's rounds' records go with their plans too; one naming none is from before.
         cutoff("constants:k", &[]);
         cutoff("constants:live", &["doc", "a.py", "ab", "plan", "", &hex(&live)]);

@@ -171,6 +171,7 @@ UKL_DEFINE_WORD_STORES(uint64_t)
     UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_load_at(UKL_GLOBAL const uint8_t* t, A a) { return ukl_atomic_load(ukl_word_at(t, a)); } \
     UKL_INLINE UKL_OVERLOAD void ukl_atomic_store_at(UKL_GLOBAL const uint8_t* t, A a, uint32_t x) { ukl_atomic_store(ukl_word_at(t, a), x); } \
     UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_add_at(UKL_GLOBAL const uint8_t* t, A a, uint32_t x) { return ukl_atomic_add(ukl_word_at(t, a), x); } \
+    UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_or_at(UKL_GLOBAL const uint8_t* t, A a, uint32_t x) { return ukl_atomic_or(ukl_word_at(t, a), x); } \
     UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_cas_at(UKL_GLOBAL const uint8_t* t, A a, uint32_t e, uint32_t n) { return ukl_atomic_cas(ukl_word_at(t, a), e, n); }
 
 UKL_DEFINE_ATOMICS_AT(uint32_t)

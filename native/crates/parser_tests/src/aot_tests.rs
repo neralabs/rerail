@@ -1,5 +1,5 @@
 //! Tier 2's Rust (`rerail_compiler::rust_stream`, the ahead-of-time backend) against the JIT on every step of two
-//! Bitlex ladders, JSON's (`compiler/bitlex_ladder`) and `.rr`'s (`rr_syntax/bitlex_ladder`), and a probe whose words
+//! Bitlex ladders, JSON's (`compiler/bitlex_ladder`) and `.rerail`'s (`rr_syntax/bitlex_ladder`), and a probe whose words
 //! edit a node the writer's ops already have (`RETAGGED_ROOT`), and Kotlin's (`kotlin_parser/bitlex_ladder`). Each
 //! step's Rust, in
 //! format 15 and in format 16 (decision 0434), is built by rustc with the rest of its ladder into one library, each

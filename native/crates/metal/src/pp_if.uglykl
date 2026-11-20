@@ -407,7 +407,7 @@ UKL_INLINE bool sy_end(UKL_PRIVATE IfSy* y) {
 
 // A token's phase-2 bytes into `b` (its line splices left out): their count, `IF_TOKB + 1` past
 // the buffer.
-// The loop counts the bytes written, and each is written at that count: Q330, on an M1 Max (macOS
+// The loop counts the bytes written, and each is written at that count: Q367, on an M1 Max (macOS
 // 26.2) bytes stored at a second counter (`b[n++] = p[i++]`) read back wrong.
 UKL_INLINE uint32_t if_bytes(Span r, UKL_PRIVATE uint8_t* b) {
     uint32_t i = 0u;
@@ -439,7 +439,7 @@ UKL_INLINE uint32_t if_digit(uint8_t c) {
 
 // A constant's value, as the readers below return it: its bits and flags, and whether it is one.
 // The readers read the token in place, its digit separators skipped as they come, rather than
-// through a copy stored at a second counter (`if_bytes`'s Q330).
+// through a copy stored at a second counter (`if_bytes`'s Q367).
 typedef struct IfVal { uint64_t bits; uint32_t f; bool ok; } IfVal;
 
 UKL_INLINE IfVal if_val(bool ok, uint64_t bits, uint32_t f) {

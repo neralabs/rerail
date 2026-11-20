@@ -1,19 +1,27 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("node:fs", { spy: true });
 import { runAuditCommand, SCAN_VIOLATIONS_EXIT } from "../../src/cli/audit-cli.js";
 import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import { runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("HEADLESS_SCAN", "REMOTE_SINK");
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  vi.mocked(fs.symlinkSync).mockRestore();
+  for (const root of roots.splice(0)) removeFolderSync(root);
 });
 
 function git(cwd: string, ...args: string[]): string {
@@ -166,6 +174,22 @@ describe("headless rerail scan", () => {
     expect(report.status).toBe("completed");
   });
 
+  it("leaves out a symlink entry at --rules-ref, as a checkout's loader does, on a Windows that makes no symlinks", async () => {
+    const root = checkout();
+    const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: root, input: "needle.json", encoding: "utf8" }).trim();
+    git(root, "update-index", "--add", "--cacheinfo", `120000,${blob},.rerail/rules/link.json`);
+    git(root, "commit", "--quiet", "-m", "a link");
+    vi.mocked(fs.symlinkSync).mockImplementation(() => {
+      throw Object.assign(new Error("EPERM: operation not permitted, symlink"), { code: "EPERM" });
+    });
+    const report = await scan(root, { rulesRef: "HEAD" });
+    expect(report.rules.map(rule => rule.ruleId)).toEqual(["needle"]);
+    expect(report.failures).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "rule-left-out", path: "HEAD:.rerail/rules/link.json", message: expect.stringContaining("not a regular file") }),
+    ]));
+    expect(report.status).toBe("completed");
+  });
+
   it("refuses a --pack that is not installed rather than scanning without it", async () => {
     const root = checkout();
     await expect(scan(root, { packs: ["@neralabs/rerail-pack-nope"] })).rejects.toThrow("--pack @neralabs/rerail-pack-nope is not installed");
@@ -245,6 +269,49 @@ describe("headless rerail scan", () => {
     expect({ status: report.status, rulesSource: report.rulesSource, failures: report.failures }).toEqual({ status: "completed", rulesSource: { kind: "home" }, failures: [] });
     expect(report.violations).toHaveLength(1);
   });
+
+  it("uses the Rerail home's configuration in a copy of a started checkout that no session has recorded", async () => {
+    const root = checkout();
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    roots.push(home);
+    const databasePath = join(home, "rerail.sqlite");
+    setUpTestRepository(root, {}, databasePath);
+    // A copy with its `.git` keeps the clone id, so the home reads it as started, but Git's registry does not list it
+    // and no session recorded it. The scan records it, as a session started in it would.
+    const copy = `${root}-copy`;
+    roots.push(copy);
+    cpSync(root, copy, { recursive: true });
+    const report = await scan(copy, { databasePath });
+    expect({ status: report.status, rulesSource: report.rulesSource, failures: report.failures }).toEqual({ status: "completed", rulesSource: { kind: "home" }, failures: [] });
+    expect(report.violations).toHaveLength(1);
+  });
+
+  it.each(["worktree", "home"] as const)(
+    "names the submodule, not the checkout around it, when the only paths asked for are in a submodule Rerail has no record of (%s configuration)",
+    async configuration => {
+      const root = checkout();
+      const submodule = checkout();
+      git(root, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", submodule, "sub");
+      git(root, "commit", "--quiet", "-m", "Add the submodule");
+      let options: Partial<Parameters<typeof runHeadlessScan>[0]> = { paths: ["sub/a.py"] };
+      if (configuration === "home") {
+        const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+        roots.push(home);
+        const databasePath = join(home, "rerail.sqlite");
+        setUpTestRepository(root, {}, databasePath);
+        options = { ...options, databasePath };
+      }
+      const report = await scan(root, options);
+      // Checkout paths are matched by their ends: on Windows they may come back with forward slashes or short (8.3) names.
+      expect({ status: report.status, rulesSource: report.rulesSource, rules: report.rules, failures: report.failures }).toEqual({
+        status: "failed",
+        rulesSource: null,
+        rules: [],
+        failures: [{ code: "checkout-not-audited", message: expect.stringMatching(/[\\/]sub was not audited, so no rules ran: Rerail has no record of .+[\\/]sub$/u), path: null, ruleId: null }],
+      });
+      expect(report.summary).toEqual({ violations: 0, failures: 1 });
+    },
+  );
 
   it("prints JSON and exits 3 on violations only with --fail-on-violations", async () => {
     const root = checkout();

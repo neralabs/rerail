@@ -1,11 +1,11 @@
 //! `importTarget`: an ECMA rule's condition on the import or require target a specifier node
 //! names (`import_target`).
 
+use crate::code_rule_dsl::import_target::term::ImportTargetTest;
 use crate::code_rule_dsl::import_target::{ModuleType, Style};
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::language::adapter::has_import_targets;
-use crate::code_rule_dsl::import_target::term::ImportTargetTest;
 use crate::code_rule_dsl::matcher::{AstMatcher, Reading, Semantic, TermCompiler};
 use crate::code_rule_dsl::scope::options::LanguageOptions;
 use napi::Result;

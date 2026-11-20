@@ -78,7 +78,7 @@ pub fn tape_into<T>(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<T>) ->
     parse::parse_into(src, finish)
 }
 
-/// The node kinds a parse may start at (decision 0482): a whole document, or one element alone ([`tape_from_into`]).
+/// The node kinds a parse may start at (decision 0466): a whole document, or one element alone ([`tape_from_into`]).
 pub const STARTS: &[&str] = &["document", "element"];
 
 /// [`tape_into`] from the node kind `start` (one of [`STARTS`]): its tape's root is one node of that kind over `src`,
@@ -150,7 +150,7 @@ mod tests {
         tape_from_into(src.as_bytes(), "element", &mut rerail_tape_format::Writer::<rerail_tape_format::Widths>::finish_columns).unwrap()
     }
 
-    /// Decision 0482 R1: an element alone is one `element` root over the text less blanks, nothing above it, and the
+    /// Decision 0466 R1: an element alone is one `element` root over the text less blanks, nothing above it, and the
     /// same nodes as the document's element of the same text (no `html`, `head` or `body` implied around it).
     #[test]
     fn an_element_fragment_is_rooted_at_its_element() {

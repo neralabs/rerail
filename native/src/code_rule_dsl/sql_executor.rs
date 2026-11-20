@@ -238,17 +238,16 @@ impl CodeRuleSqlExecutor {
             let input: Input = serde_json::from_str(&relation_json).map_err(error)?;
             let logical_arity = input.columns.len();
             let logical_types = input.types.clone();
-            if let Some(types) = &input.types {
-                if types.len() != input.columns.len()
+            if let Some(types) = &input.types
+                && (types.len() != input.columns.len()
                     || types
                         .iter()
-                        .any(|t| !matches!(t.as_str(), "number" | "symbol" | "node" | "loc"))
+                        .any(|t| !matches!(t.as_str(), "number" | "symbol" | "node" | "loc")))
                 {
                     return Err(error(
                         "fact types must match columns and be number, symbol, node, or loc",
                     ));
                 }
-            }
             let boolean = input.columns.is_empty();
             if boolean && input.rows.iter().any(|row| !row.is_empty()) {
                 return Err(error("Boolean fact rows must have zero columns"));
@@ -365,7 +364,7 @@ impl CodeRuleSqlExecutor {
 
     #[cfg(target_pointer_width = "64")]
     fn bind_corpus_64(&mut self, root: String, relations: Option<Vec<String>>) -> Result<String> {
-        let canonical = std::fs::canonicalize(&root).map_or(root.clone(), |p| p.to_string_lossy().into_owned());
+        let canonical = dunce::canonicalize(&root).map_or(root.clone(), |p| p.to_string_lossy().into_owned());
         let (recorded, frames) = plan::corpus::memo::read_run(&self.store, &canonical)
             .map_err(error)?
             .ok_or_else(|| error(format!("{root}: no corpus run is recorded for this root")))?;
@@ -468,7 +467,7 @@ impl CodeRuleSqlExecutor {
         })
     }
 
-    /// Lower an inline `.rr` program to SQL without running it. Its `.input` declarations read
+    /// Lower an inline `.rerail` program to SQL without running it. Its `.input` declarations read
     /// the session's bound facts, previous outputs, or existing database tables.
     #[napi]
     pub fn lower(&mut self, program: String, dialect: String) -> Result<String> {
@@ -505,14 +504,14 @@ impl CodeRuleSqlExecutor {
     ) -> Result<String> {
         self.profiled("run", |this| {
             this.run_program(
-                producers::prune(rr::parse_version(&program).map_err(error)?)?,
+                session_program(rr::parse_version(&program).map_err(error)?)?,
                 &dialect,
                 max_waves.unwrap_or(1024),
             )
         })
     }
 
-    /// As `run`, with `core.rr` and the file's includes read by the normal rule front end.
+    /// As `run`, with `core.rerail` and the file's includes read by the normal rule front end.
     #[napi]
     pub fn run_file(
         &mut self,
@@ -522,7 +521,7 @@ impl CodeRuleSqlExecutor {
     ) -> Result<String> {
         self.profiled("run_file", |this| {
             this.run_program(
-                producers::prune(rr::parse_file_version(Path::new(&path)).map_err(error)?)?,
+                session_program(rr::parse_file_version(Path::new(&path)).map_err(error)?)?,
                 &dialect,
                 max_waves.unwrap_or(1024),
             )
@@ -619,6 +618,14 @@ impl CodeRuleSqlExecutor {
                 "submissions":result.submissions,"vmSteps":result.vm_steps})).map_err(error)
         })
     }
+}
+
+/// A program as a session runs it: its node attributes (`value`, `node_text`, `token`) the inputs the snapshot binds
+/// for every node, not answered on request (decision 0174's rewrite undone, `lower::undo_on_request`). Answered, each
+/// is a relation of the program beside the session's input of that name, though no rule reads it ("value: SQL output
+/// already exists"). Then pruned (`producers::prune`).
+fn session_program(program: std::sync::Arc<Version>) -> Result<std::sync::Arc<Version>> {
+    producers::prune(rr::lower::undone_on_request(&program).map_err(error)?)
 }
 
 fn reserved(name: &str) -> bool {

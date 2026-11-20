@@ -668,18 +668,12 @@ impl P<'_> {
         }
         if self.kw(K::KeywordIn)?.is_some() {
             // `_lock_mode`.
-            if self.kw(K::KeywordAccess)?.is_some() {
-                if self.kw(K::KeywordShare)?.is_none() {
-                    self.expect(K::KeywordExclusive)?;
-                }
-            } else if self.kw(K::KeywordRow)?.is_some() {
+            if self.kw(K::KeywordAccess)?.is_some() || self.kw(K::KeywordRow)?.is_some() {
                 if self.kw(K::KeywordShare)?.is_none() {
                     self.expect(K::KeywordExclusive)?;
                 }
             } else if self.kw(K::KeywordShare)?.is_some() {
-                if self.kw(K::KeywordUpdate)?.is_some() {
-                    self.expect(K::KeywordExclusive)?;
-                } else if self.kw(K::KeywordRow)?.is_some() {
+                if self.kw(K::KeywordUpdate)?.is_some() || self.kw(K::KeywordRow)?.is_some() {
                     self.expect(K::KeywordExclusive)?;
                 }
             } else {

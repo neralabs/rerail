@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -10,6 +10,7 @@ import { loadRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { runRulesCommand, MOCK_CODE_RULES } from "../../../src/cli/index.js";
 import { getLibraryRule, removeLibraryRule, upsertLibraryRule } from "../../../src/engine/catalog/rule-library.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 describe("findDuplicateJsonKeys", () => {
   it("finds repeated keys at any depth with their JSON Pointer", () => {
@@ -60,7 +61,7 @@ describe("rule documents with repeated keys are rejected on write", () => {
     stores.close();
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   const stored = (): boolean => getLibraryRule(stores.database(), codeRule.id) !== undefined;

@@ -15,6 +15,9 @@
 //!   64-bit word), so every access is a byte or an aligned 64-bit word (`ukl_ldw_*`, `ukl_stw_*`): no direct access
 //!   of another width the compiler's type-based alias rules could reorder, and none unaligned. The IR's `aligned` flag
 //!   is the CPU's, and is not used.
+//! - **The context** (each function's first parameter) is a column of the batch's table: a field is its 8-byte slot's
+//!   row (0408, L2), `cs` bytes a row, so a SIMD group's lanes read one field as adjacent words. The context is only
+//!   ever a field's base (`context_uses`).
 //! - **Control:** `clif_rust::Shape`'s structure, printed as C without labels (`Shape::c`).
 //! - **Calls:** each function `UKL_CALLED`, called directly, the compiler inlining as it chooses; the graph has no
 //!   recursion (no GPU language has it), which the translation checks.
@@ -189,8 +192,8 @@ fn context(f: &ir::Function) -> Option<ir::Value> {
     f.layout.entry_block().and_then(|e| f.dfg.block_params(e).first().copied())
 }
 
-/// The values that are the context plus a constant (the context itself, and `iadd_imm`s of
-/// them), each with its constant.
+/// The values that are the context plus a constant (the context itself, and `iadd_imm`s of them), each with its
+/// constant.
 type Fields = std::collections::HashMap<ir::Value, i64>;
 
 fn context_fields(f: &ir::Function) -> Fields {
@@ -215,10 +218,9 @@ fn context_fields(f: &ir::Function) -> Fields {
     }
 }
 
-/// The context is used only as a load's or a store's base, at a field within one 8-byte slot,
-/// as a callee's context (its first argument), or plus a constant (`context_fields`) for the
-/// same uses: the device's table holds a context by slots, so any other use, an address made
-/// from it any other way or the context as a value, is refused.
+/// The context is used only as a load's or a store's base, at a field within one 8-byte slot, as a callee's context
+/// (its first argument), or plus a constant (`context_fields`) for the same uses: the device's table holds a context
+/// by slots, so any other use, an address made from it any other way or the context as a value, is refused.
 fn context_uses(f: &ir::Function, fields: &Fields) -> Result<(), String> {
     let dfg = &f.dfg;
     for b in f.layout.blocks() {
@@ -226,10 +228,12 @@ fn context_uses(f: &ir::Function, fields: &Fields) -> Result<(), String> {
             let data = &dfg.insts[inst];
             for (i, &v) in dfg.inst_args(inst).iter().enumerate() {
                 let Some(&at) = fields.get(&dfg.resolve_aliases(v)) else { continue };
-                let field = |n: u32| data.load_store_offset().is_some_and(|o| {
-                    let o = at + i64::from(o);
-                    o >= 0 && o % i64::from(n) == 0 && o % 8 + i64::from(n) <= 8
-                });
+                let field = |n: u32| {
+                    data.load_store_offset().is_some_and(|o| {
+                        let o = at + i64::from(o);
+                        o >= 0 && o % i64::from(n) == 0 && o % 8 + i64::from(n) <= 8
+                    })
+                };
                 let ok = match data.opcode() {
                     Opcode::Uload8 | Opcode::Sload8 if i == 0 => field(1),
                     Opcode::Uload16 | Opcode::Sload16 if i == 0 => field(2),
@@ -523,8 +527,8 @@ mod tests {
         f
     }
 
-    /// A context field, directly or through the context plus a constant, is its slot's row of
-    /// the batch's table (0408, L2): 8 bytes on and 4 bytes into it is row 1 and byte 4.
+    /// A context field, directly or through the context plus a constant, is its slot's row of the batch's table
+    /// (0408, L2): 8 bytes on and 4 bytes into it is row 1 and byte 4.
     #[test]
     fn a_context_field_is_its_slots_row() {
         let f = of_context(|b, c| {
@@ -538,8 +542,8 @@ mod tests {
         assert!(msl.contains("(((uint64_t)(v0)) + 2ul * cs + 0ul - hb)"), "{msl}");
     }
 
-    /// Any other use of the context is refused: an address made from it by a value, the context
-    /// as a value, or a field across two slots.
+    /// Any other use of the context is refused: an address made from it by a value, the context as a value, or a
+    /// field across two slots.
     #[test]
     fn the_context_as_a_value_is_refused() {
         let made = of_context(|b, c| {

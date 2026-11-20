@@ -170,9 +170,9 @@ pub fn prepare_anchor_scan_with_eligibility(
     }
     use crate::code_rule_dsl::residency::slabs::{DocTable, DocView, admit_docs};
     use rerail_metal::lane;
-    // The files resident, read where they lie by the kernel (decision 0353 step 4, 0471): the first one's slab bound,
-    // the others reached from it by the slabs' addresses. A batch over several slabs, or of 16z, is refused where
-    // buffers have no kernels' address (OpenCL 1.2), as every reader of the block is.
+    // The files where they are resident, read there by the kernel from the bound block (decisions 0353, 0471): a
+    // 16z batch, or one over several slabs, is refused where buffers have no kernels' address (OpenCL 1.2), as every
+    // reader of the block is.
     let table = DocTable::new(admit_docs(files)?).ok_or(Error::BackendCapacity)?;
     if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
         return Err(Error::BackendFailure);

@@ -117,7 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         unsafe {
             ffi::sqlite3_trace_v2(
                 handle,
-                ffi::SQLITE_TRACE_PROFILE as u32,
+                ffi::SQLITE_TRACE_PROFILE,
                 Some(trace),
                 std::ptr::from_ref(&*trace_state).cast_mut().cast(),
             );

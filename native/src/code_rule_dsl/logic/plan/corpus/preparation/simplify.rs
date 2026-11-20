@@ -552,7 +552,7 @@ impl ProgramPass for GroundRules {
                         };
                         let (a, b) = (args.next()?, args.next()?);
                         match (part(a)?, part(b)?) {
-                            // `@dot("", y)` is `y` (`core.rr`).
+                            // `@dot("", y)` is `y` (`core.rerail`).
                             (Value::Str(m), Value::Str(x)) => Some(Value::Str(if m.is_empty() { x } else { format!("{m}.{x}") })),
                             _ => None,
                         }
@@ -1132,7 +1132,7 @@ enum FLit<'v> {
 /// A rule is a filter when every literal is a functional lookup or a test of what its head (and earlier
 /// lookups) bind.
 ///
-/// `core.rr`'s relations (`kind`, `precedes`) are the engine's, read by name (kind views, kind sets).
+/// `core.rerail`'s relations (`kind`, `precedes`) are the engine's, read by name (kind views, kind sets).
 ///
 /// A computed view is inlined only where its reader reads its domain already (each of its atoms implied by one of
 /// the reader's), so the copy adds the function and nothing else.
@@ -2759,6 +2759,23 @@ fn location_column(v: &Version, f: &Fields<'_>, rel: &str, rules: &[RuleRef<'_>]
         })
 }
 
+/// Whether every rule of derived relation `rel` reads only relations a split can hold per file: inputs, natives, and
+/// derived relations with a location column (`location_column`). Only then does a projection keep a location its
+/// readers do not read: the split partitions such a relation's rows by it. A rule that also joins a relation of no
+/// location is no file's, and a location kept there only multiplies its rows: `bcgp_decorated`'s zero count read
+/// `!rr_agg15($a, $b, $p, _)`, whose helper over `rr_ctx16($a, $b, $p)` (pairs of a decorator and a later def, no
+/// location) kept each line's span, a row per line between every pair (3.6-10 M rows priced for 25,425 pairs).
+/// `rules` are the relation's, and `by_head` every derived relation's, indexed once (`ProjectAll`).
+fn file_local_reads(v: &Version, f: &Fields<'_>, by_head: &BTreeMap<&str, Vec<RuleRef<'_>>>, rules: &[RuleRef<'_>]) -> bool {
+    rules.iter().all(|r| {
+        let rel = v.rel_name(r.head().rel());
+        r.body().filter_map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }).filter(|a| !a.neg()).all(|a| {
+            let name = v.rel_name(a.rel());
+            name == rel || by_head.get(name).is_none_or(|of| (0..a.args().count()).any(|c| location_column(v, f, name, of, c)))
+        })
+    })
+}
+
 /// The columns each relation's readers read (`project_unread_columns`' first step): `None` where something reads it
 /// whole.
 fn columns_read(v: &Version) -> HashMap<String, Option<BTreeSet<usize>>> {
@@ -2833,6 +2850,7 @@ impl ProgramPass for ProjectAll {
             // and a load hands on a document's rows by it (`py_docmod(d, p, q)`, read as `py_docmod(_, p, q)`). One
             // is enough: the first, when no column read is one.
             if !keep.iter().any(|&c| location_column(v, &f, rel, rules, c))
+                && file_local_reads(v, &f, &by_head, rules)
                 && let Some(c) = (0..n).find(|&c| location_column(v, &f, rel, rules, c))
             {
                 keep.push(c);
@@ -3094,7 +3112,7 @@ impl ProgramPass for BaseInputs {
     }
 }
 
-/// core.rr's functors only CPython gives, each of a node, and the relations the batches bind them as
+/// core.rerail's functors only CPython gives, each of a node, and the relations the batches bind them as
 /// (`facts::vtab::syntax::cpython`): `@py_unparse(n)` is the `s` of `cpython_unparse(n, s)`. `@unparse` is decision
 /// 0058's, a tape's text (`rr::lower`, `unparse_of`), not intercepted here.
 const CPYTHON_FUNCTORS: [(&str, &str); 2] = [("py_unparse", crate::code_rule_dsl::facts::core::cpython_relations::UNPARSE), ("ast_dump", crate::code_rule_dsl::facts::core::cpython_relations::AST_DUMP)];

@@ -519,6 +519,16 @@ impl Store {
 }
 
 /// Analysis `A` of `v`, held by `v` (`Version::analyses`): for a reader outside a pipeline (a run's `Placed`).
+/// `v`'s twin (`Version::twin`) holding `v`'s analyses: what an analysis of `v` makes over `v` it makes over this,
+/// so the analysis, held by `v`, does not hold `v` (a cycle, which no drop ends: Q377). The analyses are shared, as
+/// they are of the same rules under the same ids (`Store::adopt`), so none is computed again; none adopted is a
+/// version made over `v` (each is made over a twin), so the twin holds none of `v` either.
+pub fn twin(v: &Arc<Version>) -> Arc<Version> {
+    let t = v.twin();
+    t.analyses().adopt(v.analyses());
+    t
+}
+
 pub fn analysis<A: Analysis>(v: &Arc<Version>) -> Result<Arc<A>> {
     let decided = RefCell::new(Vec::new());
     Cx { v, store: v.analyses(), pass: "reader", decided: &decided, asked: None }.get::<A>()
@@ -1808,7 +1818,7 @@ impl<'s> Pipeline<'s> {
 
 /// A version of a stored run, over the versions before it in the run's table (decision 0333 §2).
 pub enum StoredVersion<'r> {
-    /// A base: its image, as the version holds it (a record's piece takes it so, uncopied: decision 0480).
+    /// A base: its image, as the version holds it (a record's piece takes it so, uncopied: decision 0464).
     Base(&'r Arc<super::Image>),
     /// An overlay of version `parent`: its delta's image.
     Overlay { parent: usize, delta: &'r Arc<super::Image> },

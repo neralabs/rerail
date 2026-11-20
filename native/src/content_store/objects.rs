@@ -13,6 +13,8 @@ use super::{
     StoreError, StoreResult, StoredDocument, StoredPathObjects, StoredSourceObjects, TapeId,
     TapePayload,
 };
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use rusqlite::Connection;
 use rusqlite::{OptionalExtension, params};
 use std::collections::{BTreeSet, HashMap};
@@ -40,12 +42,22 @@ impl ContentStore {
                 .enumerate()
                 .map(|(at, digest)| {
                     let key = HashKey::from_sha256_digest(*digest);
-                    serde_json::json!([at, key.algorithm, key.lanes[0], key.lanes[1], key.lanes[2], key.lanes[3]])
+                    serde_json::json!([
+                        at,
+                        key.algorithm,
+                        key.lanes[0],
+                        key.lanes[1],
+                        key.lanes[2],
+                        key.lanes[3]
+                    ])
                 })
                 .collect::<Vec<_>>(),
         )
         .map_err(|error| StoreError::Invalid(error.to_string()))?;
-        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
         let mut statement = connection.prepare_cached(
             "WITH input AS (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) at, \
              CAST(json_extract(value,'$[1]') AS INTEGER) algorithm, CAST(json_extract(value,'$[2]') AS INTEGER) lane0, \
@@ -62,7 +74,10 @@ impl ContentStore {
         type Row = ((i64, i64, usize, usize, [u8; 32], [i64; 3], [i64; 3]), [i64; 2]);
         let rows: Vec<Row> = statement
             .query_map([encoded], |row| {
-                let length = |at: usize| row.get::<_, i64>(at).map(|length| usize::try_from(length).unwrap_or(usize::MAX));
+                let length = |at: usize| {
+                    row.get::<_, i64>(at)
+                        .map(|length| usize::try_from(length).unwrap_or(usize::MAX))
+                };
                 Ok((
                     (
                         row.get::<_, i64>(0)?,
@@ -87,7 +102,14 @@ impl ContentStore {
         for ((at, grammar_id, tape_length, source_length, source_sha256, t, s), _) in rows {
             let (Some(tape_frame), Some(source_frame)) = (row_frame(&mut maps, t[0], t[1], t[2]), row_frame(&mut maps, s[0], s[1], s[2])) else { continue };
             if let Some(slot) = usize::try_from(at).ok().and_then(|at| out.get_mut(at)) {
-                *slot = Some(ResidentFrames { grammar_id, tape_length, tape_frame, source_length, source_frame, source_sha256 });
+                *slot = Some(ResidentFrames {
+                    grammar_id,
+                    tape_length,
+                    tape_frame,
+                    source_length,
+                    source_frame,
+                    source_sha256,
+                });
             }
         }
         Ok(out)
@@ -124,8 +146,12 @@ impl ContentStore {
         if sources.is_empty() {
             return Ok(out);
         }
-        let list = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>()).expect("integers");
-        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let list = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>())
+            .expect("integers");
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
         let mut statement = connection.prepare_cached(
             "SELECT j.key, t.raw_length, t.seg, t.seg_at, t.seg_len, t.tape_id FROM json_each(?1) j JOIN tape_objects t \
              ON t.source_id=j.value AND t.grammar_id=?2 AND t.grammar_version=?3 AND t.tape_format_version=?4",
@@ -407,7 +433,7 @@ impl ContentStore {
             ));
         }
         let mut digest = [0_u8; 32];
-        for (chunk, lane) in digest.chunks_exact_mut(8).zip(key.lanes) {
+        for (chunk, lane) in digest.as_chunks_mut::<8>().0.iter_mut().zip(key.lanes) {
             chunk.copy_from_slice(&lane.to_be_bytes());
         }
         Ok(digest)
@@ -419,14 +445,24 @@ impl ContentStore {
         if sources.is_empty() {
             return Ok(out);
         }
-        let ids = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>()).expect("integers");
-        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let ids = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>())
+            .expect("integers");
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
         let mut statement = connection.prepare_cached(
             "SELECT j.key, h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3 FROM json_each(?1) j \
              CROSS JOIN source_objects s ON s.source_id = j.value JOIN hashes h ON h.hash_id = s.canonical_hash_id",
         )?;
         let rows = statement.query_map([ids], |row| {
-            Ok((row.get::<_, i64>(0)?, HashKey { algorithm: row.get(1)?, lanes: [row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?] }))
+            Ok((
+                row.get::<_, i64>(0)?,
+                HashKey {
+                    algorithm: row.get(1)?,
+                    lanes: [row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?],
+                },
+            ))
         })?;
         for row in rows {
             let (at, key) = row?;
@@ -1017,7 +1053,12 @@ pub(super) fn put_tape_tx(
         "SELECT h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 FROM source_objects s \
          JOIN hashes h ON h.hash_id=s.canonical_hash_id WHERE s.source_id=?1",
         [source_id.0],
-        |row| Ok(HashKey { algorithm: row.get(0)?, lanes: [row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?] }),
+        |row| {
+            Ok(HashKey {
+                algorithm: row.get(0)?,
+                lanes: [row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?],
+            })
+        },
     )?;
     let tape_id = put_tape_prepared_tx(
         transaction,
@@ -1135,7 +1176,10 @@ fn put_tape_prepared_tx(
     Ok(TapeId(tape_id))
 }
 
-pub(super) fn source_id_by_hash(connection: &Connection, key: HashKey) -> StoreResult<Option<SourceId>> {
+pub(super) fn source_id_by_hash(
+    connection: &Connection,
+    key: HashKey,
+) -> StoreResult<Option<SourceId>> {
     connection
         .query_row_cached(
             "SELECT s.source_id FROM source_objects s JOIN hashes h ON h.hash_id=s.canonical_hash_id \
@@ -1155,6 +1199,11 @@ pub struct TapeFrame {
 }
 
 impl TapeFrame {
+    /// A tape of `raw_length` bytes in `frame` (`document_places`: a place its documents' table keeps).
+    pub(super) fn new(raw_length: i64, frame: ObjectFrame) -> Self {
+        Self { raw_length, frame }
+    }
+
     /// The tape's stored bytes, read in place in its segment.
     pub fn in_place(&self) -> &[u8] {
         self.frame.segment().bytes()
@@ -1168,6 +1217,7 @@ impl TapeFrame {
     }
 
     /// The frame's size, as stored.
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.frame.len()
     }

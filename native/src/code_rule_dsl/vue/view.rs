@@ -160,7 +160,9 @@ impl View {
     pub fn root(&self) -> Node<'_> {
         let tree = self.tree.get_or_init(|| match &self.parse {
             embed::Parse::Tree(tree) => tree.clone(),
-            embed::Parse::Tape(_) => embed::Parse::tree_sitter(self.dialect, &self.text).expect("tree-sitter parses"),
+            embed::Parse::Tape(_) => {
+                embed::Parse::tree_sitter(self.dialect, &self.text).expect("tree-sitter parses")
+            }
         });
         tree.root_node()
     }

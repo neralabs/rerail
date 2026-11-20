@@ -56,7 +56,7 @@ impl Corpus {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let marker = format!("# {name} {:?}\n", std::time::SystemTime::now());
-        let rule = dir.join("program.rr");
+        let rule = dir.join("program.rerail");
         std::fs::write(&rule, PROGRAM).unwrap();
         let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
         let c = Corpus { dir, marker, program, runs: 0 };
@@ -160,7 +160,8 @@ fn r3_an_edit_reads_the_changed_files_old_and_new_rows() {
 }
 
 /// R4: no base relation's rows are kept, after a cold run and an edit's run. What 0458 keeps of one is its
-/// documents' digest (its documents' entry: one row, no granules) and its statistics beside it.
+/// documents' digest (its documents' entry: one row, no granules) and its statistics beside it. The memo writer's
+/// guard fails a run whose entries keep a base relation's rows, so the runs here passing is the memo's half.
 #[test]
 fn r4_no_base_relation_is_kept() {
     let mut c = Corpus::new("r4");
@@ -174,6 +175,39 @@ fn r4_no_base_relation_is_kept() {
         _ => true,
     }).collect();
     assert!(rows.is_empty(), "the chain keeps the base relations' rows {rows:?}");
+}
+
+/// With R4: a base relation's statistics are kept beside its documents' table, not counted from every row each run.
+/// A cold run counts them, the run after it takes them as kept, and an edit's run patches them by the changed file's
+/// old and new documents. A run inside another's waves (a phase's) cannot read its changed files' old documents there
+/// and counts them again after an edit (0458's Open item); it says so.
+#[test]
+fn r4_a_base_relations_statistics_are_kept_and_patched_by_an_edit() {
+    use crate::code_rule_dsl::logic::profile;
+    let mut c = Corpus::new("r4-stats");
+    // The run resets the profile as it starts; the test's scope keeps its records after (decision 0442).
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    profile::set(true);
+    let mut inside = false;
+    let mut how = |c: &mut Corpus| {
+        profile::take_decisions();
+        c.run();
+        let made = profile::take_decisions();
+        inside = made.keys().any(|(t, x)| t == "the base relations' old documents (decision 0458)" && x.contains("listed inside the waves"));
+        made.into_keys().filter(|(t, _)| t == "the base relations' statistics (decision 0458)").map(|(_, x)| x).collect::<BTreeSet<String>>()
+    };
+    // Each relation's statistics, as the run took them: all the same way, `how`.
+    let all = |made: &BTreeSet<String>, how: &str| !made.is_empty() && made.iter().all(|x| x.ends_with(&format!(": {how}")));
+    let cold = how(&mut c);
+    let warm = how(&mut c);
+    c.write("d.py", "from c import h\nfrom a import f\n\ndef i():\n    h()\n");
+    let edit = how(&mut c);
+    profile::set(false);
+    let patched = |x: &String| x.ends_with(": patched by the changed documents");
+    assert!(all(&cold, "counted"), "a cold run counts them: {cold:?}");
+    assert!(all(&warm, "kept"), "the run after it takes them as kept: {warm:?}");
+    assert!(edit.iter().any(patched), "an edit patches them: {edit:?}");
+    assert!(edit.iter().all(patched) || inside, "counted again after an edit only inside another run's waves: {edit:?}");
 }
 
 /// R5: the runs pass in strict mode (`RERAIL_SQL_STRICT`): no SQL inside the waves (decision 0104), for the memo
@@ -190,7 +224,7 @@ fn r5_the_runs_read_no_sql_inside_the_waves() {
             .env("RERAIL_TAPE_CACHE", &store)
             .env("RERAIL_CHILD_RUN", c.dir.join("src"))
             .env("RERAIL_CHILD_OUT", c.dir.join(format!("out{n}")))
-            .env("RERAIL_CHILD_PROGRAM", c.dir.join("program.rr"))
+            .env("RERAIL_CHILD_PROGRAM", c.dir.join("program.rerail"))
             .env("RERAIL_COSTS", c.dir.join("costs.sqlite"))
             .env("RERAIL_IMAGE_STORE", c.dir.join("images"))
             .env("RERAIL_SQL_STRICT", "1");

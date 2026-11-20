@@ -7,7 +7,7 @@ the facts that the program produces and not changed next time it's run?". On a g
 parsed string is named by its tape ("do a"); and the split below ("okay, I agree with that"). Supersedes 0055's guest
 documents (§4, "What was built" 3–4) and 0391 (guest keys) but for a file's programs (§4). On a program's node ids,
 §4's second choice, a key of its own from 0391's registry (2026-11-19, the user: "okay, let's try b"). On how a
-rule names a program, by its file and place (§4, Q337's first choice; 2026-11-19, the user: "pick a for the decision").
+rule names a program, by its file and place (§4, Q324's first choice; 2026-11-19, the user: "pick a for the decision").
 Step 3 done (2026-11-19). Step 5 done (2026-11-19): guests 32.1 s and 34.4 s to 0.16 s and 0.33 s, instructions
 2,476 to 2,421 G (CPU) and 2,071 to 1,800 G (Metal), findings unchanged. Keeps 0055's model of a tape as content, 0058 (hiding,
 normalized strings, `@parse`), 0104 (no SQL in the waves), 0353 (blocks never copied), 0434 (format 16, unchanged).
@@ -83,8 +83,8 @@ code may be named by which rules asked for it, or in what order.
    `doc_root`, `guest`) name a program by it, and a batch's lookups keep to one document by it (0329's `lookup_in`).
    Made the file's, every rule reaching a program through `guest(g, …), node(g, …)` lost it. core.rr's `docof` reads
    the places' view, the file's; where a program lowers `docof` as `node`'s projection (T's, `rr::lower::projections`),
-   a program's node has its own key there (Q337).
-   **A program is named by its file and place** (decided 2026-11-19, the user: "pick a for the decision", Q337's
+   a program's node has its own key there (Q324).
+   **A program is named by its file and place** (decided 2026-11-19, the user: "pick a for the decision", Q324's
    first choice). The guest relations that named a program by its key go (`guest`, `doc_role`, `doc_root`): a rule
    reaches a program as it reaches a parsed string, `parsed(at, grammar, root)` at the host node it stands at, then
    `within`, `child` and the views; `node`'s document column is its file's, as `docof` is, and a lookup by document
@@ -225,8 +225,19 @@ code may be named by which rules asked for it, or in what order.
    - A source that grew is bound again: the device's resident copy of a source is reused only while its rows are the
      same (or the source is made on lookup).
    - Left: an input a constant filters (`parsed(s, "annotation", r)`, and the `child` and `node` filters in
-     `html/embeds.rr`) is uploaded, the batch's and a value's alike (Q310). R8's test allows exactly `parsed`'s rows
+     `html/embeds.rerail`) is uploaded, the batch's and a value's alike (Q310). R8's test allows exactly `parsed`'s rows
      for it.
+
+   As built (a memo hit's values, 2026-11-20): a file read from the memo parses nothing, yet the corpus batch and the
+   manifest are what the run that parsed its strings made.
+   - The fixpoint's answer records each request it answers with a value, its string node and grammar, in order. A
+     chunk's entries keep them (`memo::VALUES`), each by the files that own its string (a value's string, by the
+     value's askers). A request at another chunk's document leaves the chunk unmemoised, as an unattributable row does.
+   - A hit hands its requests to the corpus batch. `with_guests` admits them in order through `Guests::admit`, as the
+     fixpoint did, after the guests' rounds (`memo::GUESTS`). A string inside a value waits for that value. Each tape
+     is found by its text among the root's last runs' tapes and its source named, as a parse names it (R6).
+   - Without this, a warm run's batch held no value: the base relations looked changed, and the cross part ran again
+     and wrote its plans.
 
 ## Requirements, each with its test
 
@@ -238,7 +249,7 @@ code may be named by which rules asked for it, or in what order.
 | R4 | No string is parsed unless a rule asks for it | `a_string_no_rule_asks_for_is_not_parsed` |
 | R5 | The batch is built once a chunk and grows by the rest (§6; `Report::batch_grown` counts the documents added): a file's programs, and the rows read are a rebuilt batch's. A tape value no longer grows it (§8, R10, which supersedes `tape_values_build_no_second_batch`) | `a_files_programs_build_no_second_batch` |
 | R6 | A text a run parsed is not parsed again: after an edit elsewhere in its file, in a new file, after a rule's edit (`Report::guest_parses`) | `an_edit_elsewhere_parses_no_text_the_last_run_parsed`, `a_new_file_with_a_text_parsed_before_parses_nothing`, `an_edited_rule_parses_no_text_the_last_run_parsed`; guard `equal_texts_are_parsed_once_a_run` |
-| R7 | A file read from the memo has its programs and tape values for a cross-file rule: a value's rows are base rows of each file that asked for it (`owners`, `askers`), kept in its entry and restored with it | `a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule` |
+| R7 | A file read from the memo has its programs and tape values for a cross-file rule: a value's rows are base rows of each file that asked for it (`owners`, `askers`), kept in its entry and restored with it; its values are in the corpus batch and its manifest as the run that parsed them made them (§8, a memo hit's values), so a warm run writes nothing | `a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule`, `the_run_after_a_cold_one_with_tape_values_writes_nothing` |
 | R8 | CPU and Metal give the same rows, the device reading the same tapes: a value's rows read where they lie, none uploaded (but Q310's filtered inputs) | `cpu_and_metal_read_the_same_tape_values`, with both kinds |
 | R9 | A finding placed at a tape value's node is refused: the lowering derives `rr_unplaced(clause)`, and the run fails naming the clauses | `a_finding_at_a_tape_values_node_is_refused` |
 | R10 | A string a rule parses is parsed in the program's fixpoint (§8): no slice and no round runs for it, the batch never grows by a value, each value is admitted once at its first lookup (`Report::values_admitted`), a string inside a value too; no scan lists a hidden value's nodes, and a shown one's are read after the request (§8, as built) | `tape_values_are_read_in_the_fixpoint` |
@@ -255,7 +266,7 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
 3. Programs as the file's, done (2026-11-19): HTML, Vue, Blade and Markdown declare their programs, made from the
    file's tape at its load, the batch built once a chunk (`with_matchers`, or the grower where a value may come), a
    program named by its file and place, `node`'s document the file's, the guest relations and `embed` gone (§4, as
-   built; R1, R5, R8). Left (Q338): `@parse` and `@splice` values still made by the slice's rounds; the rule-file
+   built; R1, R5, R8). Left (Q325): `@parse` and `@splice` values still made by the slice's rounds; the rule-file
    language's embeds; the host's parse building the programs it drops.
 4. (Before 3's rest.) 4a, done: a tape value is found by its text's sha and grammar among the tapes the root's last
    runs named, read before the first wave (the run's grammar's with the files', the others' by the tags the program's

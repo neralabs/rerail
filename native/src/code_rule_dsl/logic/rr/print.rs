@@ -1,4 +1,4 @@
-//! A program's version as `.rr` text, which `rr::parse_version` reads back as the same program: for programs the
+//! A program's version as `.rerail` text, which `rr::parse_version` reads back as the same program: for programs the
 //! engine builds (a wave's rules, the converter's output) and passes on as text. Read by the version's handles
 //! (0276 §6): nothing decodes it to a tree.
 
@@ -34,7 +34,7 @@ pub(super) fn glob_literal(s: &str) -> String {
     out
 }
 
-/// A regex test's `.rr` pattern: `match` is whole-string, the engine's `rx` a search. A `match("X", s)` lowers to
+/// A regex test's `.rerail` pattern: `match` is whole-string, the engine's `rx` a search. A `match("X", s)` lowers to
 /// `rx` of `^(?:X)$` and prints back as written; another `rx` is the search `(?s:.*)(?:P)(?s:.*)`, its flag on the
 /// dots only (a leading `(?s)` would give P's own `.` newlines), `irx` that under `(?i:…)`.
 pub fn search(op: &str, p: &str) -> String {
@@ -92,9 +92,9 @@ impl<'v> Printer<'v> {
             TermRef::Str(a) => quote(self.v.text(a)),
             TermRef::Top => "top".to_owned(),
             // A lowered program's atom (decision 0270) is the store's: a lowered program is kept as its image.
-            TermRef::Branded(b) => return Err(Error::Syntax(format!("the atom {b}: no .rr form"))),
+            TermRef::Branded(b) => return Err(Error::Syntax(format!("the atom {b}: no .rerail form"))),
             TermRef::Call(f, _) if is_test(self.v.text(f)) || self.v.text(f) == SET => {
-                return Err(Error::Syntax(format!("@{} as a value: no .rr form", self.v.text(f))));
+                return Err(Error::Syntax(format!("@{} as a value: no .rerail form", self.v.text(f))));
             }
             TermRef::Call(f, args) => {
                 let f = self.v.text(f);
@@ -146,7 +146,7 @@ impl<'v> Printer<'v> {
         let one = |p: &Pattern<'_>| -> Result<String, Error> {
             let p = match p {
                 Pattern::Str(p) => p,
-                Pattern::Set(_) => return Err(Error::Syntax("a set inside a set: no .rr form".into())),
+                Pattern::Set(_) => return Err(Error::Syntax("a set inside a set: no .rerail form".into())),
                 Pattern::Term(t) => {
                     // A regex the rule computes: `match`, whose lowering anchored it (`lower::anchored`).
                     if op == "rx" && let Some(re) = self.unanchored(*t) {
@@ -179,7 +179,7 @@ impl<'v> Printer<'v> {
     }
 
     /// An atom. `match_all("re", sp, m)` and `match_group("re", sp, m, g, gsp)` are the built-ins where the program
-    /// declares no relation of that name (a `.rr` program cannot): they print as themselves, where a relation of a
+    /// declares no relation of that name (a `.rerail` program cannot): they print as themselves, where a relation of a
     /// reserved name gets a trailing `_` (`translate::relation`).
     fn atom(&self, r: RuleRef<'_>, a: AtomRef<'_>) -> Result<String, Error> {
         let bang = if a.neg() { "!" } else { "" };
@@ -303,7 +303,7 @@ impl<'v> Printer<'v> {
 /// The built-in constraints that read like relations (`atom`).
 const BUILTINS: [&str; 2] = ["match_all", "match_group"];
 
-/// The program's `.rr` text: as written, its node attributes inputs again where the lowering answered them on request
+/// The program's `.rerail` text: as written, its node attributes inputs again where the lowering answered them on request
 /// (decision 0174, `lower::undone_on_request`), which reading the text makes again.
 pub fn print_version(v: &Arc<Version>) -> Result<String, Error> {
     if super::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| v.declares(a.req)) {
@@ -356,7 +356,7 @@ fn print_written(v: &Version) -> Result<String, Error> {
                     };
                     printed.push(format!("{c}: {column}"));
                 }
-                // `core.rr`'s `docof` over nodes and spans stays an input (`lower::projections`).
+                // `core.rerail`'s `docof` over nodes and spans stays an input (`lower::projections`).
                 _ if i == 0 && name == "docof" && inputs.iter().any(|r| r == "docof") => printed.push(format!("{c}: loc")),
                 _ if tapes.get(&name).is_some_and(|cols| cols.contains(&i)) => printed.push(format!("{c}: tape")),
                 _ => printed.push(format!("{c}: {}", ty(t))),
@@ -389,7 +389,7 @@ fn print_written(v: &Version) -> Result<String, Error> {
             let values = row.iter().filter(|_| !nullary).map(|value| match value {
                 Value::Int(n) => Ok(n.to_string()),
                 Value::Str(s) => Ok(quote(s)),
-                Value::Branded(b) => Err(Error::Syntax(format!("the atom {b}: no .rr form"))),
+                Value::Branded(b) => Err(Error::Syntax(format!("the atom {b}: no .rerail form"))),
             });
             writeln!(out, "{}({}).", relation(&rel), values.collect::<Result<Vec<_>, _>>()?.join(", ")).expect("a string");
         }

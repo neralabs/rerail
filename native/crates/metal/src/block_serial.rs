@@ -1657,7 +1657,7 @@ fn records_source(programs: &[&BlockNative]) -> String {
             })),
             // A reader's kind and marks by its start mask (`Records::retags`).
             // A token a reader says is no word (`records::pass`).
-            unword = r.retags.iter().map(|t| format!(" if (record_bit(out, f, {}u, s)) word = 0u;", t.o)).collect::<String>(),
+            unword = r.retags.iter().filter(|t| !t.part).map(|t| format!(" if (record_bit(out, f, {}u, s)) word = 0u;", t.o)).collect::<String>(),
             retags = r
                 .retags
                 .iter()
@@ -1764,8 +1764,15 @@ fn records_source(programs: &[&BlockNative]) -> String {
                     })
                     .collect();
                 let wb = if r.unless.is_empty() { String::new() } else { format!(" const uint32_t wb = j >= 0 ? record_word_{p}(bytes, f, starts[j], lasts[j] + 1u - starts[j]) : 0u;") };
+                // An extra keeps the marks of its own gap (`Records::own`), from the record
+                // before.
+                let own: String = (0..r.marks.len())
+                    .filter(|&m| r.own >> m & 1 == 1 && r.gaps >> m & 1 == 1 && r.tested_only >> m & 1 == 0)
+                    .map(|m| format!(" if (record_any(out, f, {}u, from, s)) marks |= {}u;", r.marks[m].0, 1u32 << m))
+                    .collect();
+                let own = if own.is_empty() { String::new() } else { format!(" else {{ const uint32_t from = k > 0u ? starts[k - 1u] + 1u : 0u;{own} }}") };
                 format!(
-                    " marks &= ~{gaps}u; if (!{here}) {{ int32_t j = I32(k) - 1; while (j >= 0 && {before}) j--; const uint32_t from = j >= 0 ? starts[j] + 1u : 0u;{pend}{wb}{tests} }}",
+                    " marks &= ~{gaps}u; if (!{here}) {{ int32_t j = I32(k) - 1; while (j >= 0 && {before}) j--; const uint32_t from = j >= 0 ? starts[j] + 1u : 0u;{pend}{wb}{tests} }}{own}",
                     pend = pend(),
                     gaps = r.gaps,
                     here = is_extra("s"),
@@ -2079,7 +2086,7 @@ fn blocks_of(len: usize, delay: u8) -> usize {
 /// as made; each backward pass's fills from the files' last blocks to their first
 /// (`back_kernels`). The slots stay in the device's buffer from pass to pass. One program a
 /// batch.
-/// A program's passes (`BlockNative::passes`), made once a program: in a debug build `.rr`'s
+/// A program's passes (`BlockNative::passes`), made once a program: in a debug build `.rerail`'s
 /// took most of a second, at every run.
 fn passes_of(program: &BlockNative) -> std::sync::Arc<rerail_compiler::block_native::Passes> {
     use std::hash::{Hash, Hasher};

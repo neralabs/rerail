@@ -36,7 +36,7 @@ impl CodeRuleSqlExecutor {
                 }
             }
         }
-        // The file front end includes all of core.rr. An extension needs bindings only for
+        // The file front end includes all of core.rerail. An extension needs bindings only for
         // inputs its retained rules or outputs actually read, not every possible core family.
         let read: BTreeSet<String> = program
             .rules()

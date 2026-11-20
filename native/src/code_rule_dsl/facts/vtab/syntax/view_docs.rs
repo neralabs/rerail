@@ -50,7 +50,7 @@ impl ViewEntry {
             Run::set(&raw mut (*d).fields, fields.as_ptr(), fields.len());
             let places = p.places_column();
             Run::set(&raw mut (*d).places, places.as_ptr(), places.len());
-            // core.rr's positions (`Locs`), for the `Loc` views: a file's own tree's, its lines in this block.
+            // core.rerail's positions (`Locs`), for the `Loc` views: a file's own tree's, its lines in this block.
             if let Some(x) = Self::locs(block, p) {
                 (*d).tokens = x.tokens;
                 (*d).own_text = u32::from(x.own_text);
@@ -82,7 +82,7 @@ impl ViewEntry {
         ViewEntry { desc, _kinds: kinds, _fields: fields }
     }
 
-    /// `p`'s positions where the views' reads answer its `Loc` rows: core.rr's, its lines in `block`; a guest's
+    /// `p`'s positions where the views' reads answer its `Loc` rows: core.rerail's, its lines in `block`; a guest's
     /// through its host's lines, where its placement is a copied stretch or a point (a string's normalized pieces
     /// and an embedder's segments are read apart from any block: its places are made).
     pub fn locs<'p>(block: &Arc<Block>, p: &'p Projected) -> Option<&'p super::Locs> {

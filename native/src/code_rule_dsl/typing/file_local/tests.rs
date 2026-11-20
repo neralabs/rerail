@@ -207,7 +207,8 @@ fn nearest_costs(cap: usize) {
         }
     }
     let one_pass = t.elapsed();
-    std::hint::black_box(&one);
+    // Both timed results held (the device's runs, macOS only, are compared with `cpu`).
+    std::hint::black_box((&cpu, &one));
     println!("NEAREST {n} nodes, max depth {depth}, {} copies; CPU worklist {:.2} ms, one preorder pass {:.3} ms", sys.copies.len(), cpu_worklist.as_secs_f64() * 1e3, one_pass.as_secs_f64() * 1e3);
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     use crate::code_rule_dsl::transducer::packed::metal_nearest;
@@ -413,7 +414,7 @@ fn a_climb_over_the_tapes_parent_column_is_file_local() {
     assert!(split.locations["up"].contains(&0), "{:?}", split.locations);
 }
 
-/// `boot-python.rr`'s `deco_word`: a disjunction's branch `(e0 = d ; …)` leaves `e0 = d` between two per-file pieces.
+/// `boot-python.rerail`'s `deco_word`: a disjunction's branch `(e0 = d ; …)` leaves `e0 = d` between two per-file pieces.
 /// The equality names one value, so the pieces are one join, pushed into the chunks whole; apart, the split pushed each
 /// and left their join to the cross-file part (decision 0093 §4, O140).
 #[test]

@@ -259,7 +259,7 @@ impl SqlExpression {
             }
             Self::Qualified { alias, column } => format!("{alias}.{column}"),
             Self::Call { name, arguments } => {
-                // A function named as a keyword (`.rr`'s `@join`) is quoted: SQLite reads `join(…)` as a join.
+                // A function named as a keyword (`.rerail`'s `@join`) is quoted: SQLite reads `join(…)` as a join.
                 let name = if KEYWORDS.contains(&name.to_ascii_uppercase().as_str()) { quote_identifier(name) } else { name.to_string() };
                 format!("{name}({})", arguments.iter().map(Self::render).collect::<Vec<_>>().join(", "))
             }

@@ -10,7 +10,7 @@ prof	rerail-prof
 phase_clock	rerail-prof
 logic::profile	rerail-prof
 
-# The .rr language's syntax and AST (front's types are cut into logic/front/ast.rs, below the parser)
+# The .rerail language's syntax and AST (front's types are cut into logic/front/ast.rs, below the parser)
 logic::front::ast	rerail-rr-syntax
 
 # The registry, tapes and what every crate reads
@@ -23,6 +23,7 @@ lines	rerail-lang
 json	rerail-lang
 budget	rerail-lang
 value::text_regex	rerail-lang
+regexes	rerail-lang
 
 # Facts
 facts	rerail-facts
@@ -32,7 +33,7 @@ logic::strings	rerail-facts
 sql_profile	rerail-facts
 logic::plan::sketch	rerail-facts
 
-# The .rr lowering
+# The .rerail lowering
 logic::front	rerail-rr
 logic::magic	rerail-rr
 logic::rr	rerail-rr
@@ -173,6 +174,9 @@ language::adapter::sql	rerail-lang-sql
 
 language::adapter::json	rerail-lang-json
 transducer::packed::json_parser	rerail-lang-json
+
+# Java reads syntax alone (no semantic concern yet): its adapter is the engine's until a capability needs a crate
+language::adapter::java	rerail-engine
 
 # The engine: napi, CLI, boot and the composition glue
 crate	rerail-engine

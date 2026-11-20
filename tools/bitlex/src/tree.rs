@@ -16,9 +16,17 @@
 //!
 //! - **A settling mark** (`mark … , settles`) taken: the extras before its bit, since the token
 //!   before, are the nodes' it is taken in (they end at them, and hold them), as a leaf taken
-//!   after them would; with `drops W`, where `W` holds at its token, the extra before that token
-//!   goes into the mark, as the lean lexer's semicolon swallows it: no node, and the nodes end at
+//!   after them would; with `drops …`, where its question holds at its token (`GapPattern`: the
+//!   records around it, extras included), the extra before that token goes into the mark, as the lean lexer's semicolon swallows it: no node, and the nodes end at
 //!   the token after it, where the semicolon of no width is (decision 0416, Q235, 0429).
+//!
+//! - **A mark that loses** (`mark … , loses …`): where the grammar asks for it after a token,
+//!   and its question holds at the next token, the extra before that token is lost: of no width at the
+//!   token's start, and after it (the lean lexer's `asi` read the comment through and found the
+//!   line goes on; decision 0451). A level asks for it where it may take it next (the follow), or
+//!   where it may end there and its level is the mark's: a nested level's is where its call
+//!   returns to a place that takes the mark, or to one that may end and is the mark's itself
+//!   (tier 2's flag, the lean parser's `stmt`).
 //!
 //! - **A whole root** (`node K whole`) spans the file from byte 0 to its end, and may hold no
 //!   token: an empty file, or one of extras alone, is its root.
@@ -111,7 +119,13 @@ struct Parser<'a> {
     nested: usize,
     /// The furthest token a match has tested: where a grammar with one way through it stops.
     far: usize,
+    /// The marks that lose (`Token::lose`) whose level this nested level is (`ask`): the
+    /// lean parser's `stmt`, for each.
+    asked: u128,
 }
+
+/// In `follow`: the nested level may end here (its rule's rest matches nothing).
+const END: u128 = 1 << 127;
 
 impl<'a> Parser<'a> {
     /// A rule, a choice or a token, by name (`Gram::Sym`).
@@ -123,7 +137,13 @@ impl<'a> Parser<'a> {
         // last token are its caller's (`rewound`).
         let nested = decl.rules.iter().any(|r| &r.0 == name && r.1) || decl.nested.contains(name);
         let outer = follow;
-        let follow = if nested { 0 } else { follow };
+        let follow = if nested { END } else { follow };
+        // A nested level is the mark's where it returns to a place that takes it, or to one
+        // that may end and is the mark's.
+        let caller_asked = self.asked;
+        if nested {
+            self.asked = outer & !END | if outer & END != 0 { caller_asked } else { 0 };
+        }
 
         let rewound = |p: &Self, next: usize| -> Option<usize> {
             if !nested {
@@ -139,6 +159,7 @@ impl<'a> Parser<'a> {
             self.nested += usize::from(nested);
             let next = self.matches(body, at, follow);
             self.nested -= usize::from(nested);
+            self.asked = caller_asked;
             self.open.pop();
             let next = next?;
             // Its span is its tokens', marks left out: a rule of marks alone has none.
@@ -166,6 +187,7 @@ impl<'a> Parser<'a> {
             self.nested += usize::from(nested);
             let next = self.matches(body, at, follow);
             self.nested -= usize::from(nested);
+            self.asked = caller_asked;
             let next = next?;
             let first = (at..next).find(|&i| !self.tokens[i].mark);
             let last = (at..next).rev().find(|&i| !self.tokens[i].mark);
@@ -454,6 +476,7 @@ impl<'a> Parser<'a> {
                 let extra = self.decl.extra.contains(&t.kind);
                 let (kind, start, end) = (t.kind.clone(), t.start, t.end);
                 self.out.push(Node { kind, field: None, supertypes: vec![], extra, start, end, size: 1, leaf: true });
+                self.ask(at + 1, follow);
                 self.past_marks(at + 1, follow)
             }
             Gram::Balanced { kind, open, close } => {
@@ -476,6 +499,7 @@ impl<'a> Parser<'a> {
                         let end = t.end;
                         self.out[me].kind = kind.clone();
                         self.out[me].end = end;
+                        self.ask(p, follow);
                         return self.past_marks(p, follow);
                     }
                 }
@@ -671,7 +695,21 @@ impl<'a> Parser<'a> {
         } else if t.settle.is_some() {
             self.settled.push(at);
         }
+        self.ask(at + 1, follow);
         self.past_marks(at + 1, follow)
+    }
+
+    /// After a token, the grammar asks for the marks `follow` holds, and where the level may end
+    /// (`END`), for those whose level it is (`asked`): where one of them loses at the next token
+    /// (`Token::lose`), that token goes in `settled`, as a mark taken does, and the extra before
+    /// it is lost (`parse`).
+    fn ask(&mut self, at: usize, follow: u128) {
+        let Some(j) = (at..self.tokens.len()).find(|&i| !self.tokens[i].mark) else { return };
+        let here = follow & !END | if follow & END != 0 { self.asked } else { 0 };
+        let asked = self.tokens[j].lose.iter().any(|k| here & self.look_bit(k) != 0);
+        if asked && self.settled.last() != Some(&j) {
+            self.settled.push(j);
+        }
     }
 
     /// From `at`, past the marks the grammar can not take here (`follow`): hidden ones are
@@ -778,12 +816,12 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
     // The extras, each with the number of other tokens before it.
     // The extras, each with the number of other tokens before it (marks left out: they make no
     // leaf).
-    let mut extras: Vec<(usize, &Token)> = Vec::new();
+    let mut extras: Vec<(usize, Token)> = Vec::new();
     let mut plain: Vec<Token> = Vec::new();
     let mut real = 0;
     for t in tokens {
         if decl.extra.contains(&t.kind) {
-            extras.push((real, t));
+            extras.push((real, t.clone()));
         } else {
             real += usize::from(!t.mark);
             plain.push(t.clone());
@@ -794,8 +832,8 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
     }
     let hidden = decl.marks.iter().enumerate().filter(|(_, m)| decl.hidden.contains(m)).fold(0u128, |h, (k, _)| h | 1 << k);
     let looks: Vec<String> = decl.marks.iter().chain(&decl.soft).cloned().collect();
-    if looks.len() > 128 {
-        return Err("more than 128 marks and soft keywords".into());
+    if looks.len() > 127 {
+        return Err("more than 127 marks and soft keywords".into());
     }
     let extra_at = extras.iter().map(|e| e.1.start).collect();
     // A settling mark's extras (`Token::settle`): those since the token before it that start
@@ -819,7 +857,7 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
             }
         }
     }
-    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), looks, hidden, named: HashMap::new(), named_starts: HashMap::new(), open: Vec::new(), extras: extra_at, keeps, settled: Vec::new(), dissolved: None, fatal: None, word: None, flags: Vec::new(), nested: 0, far: 0 };
+    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), looks, hidden, named: HashMap::new(), named_starts: HashMap::new(), open: Vec::new(), extras: extra_at, keeps, settled: Vec::new(), dissolved: None, fatal: None, word: None, flags: Vec::new(), nested: 0, far: 0, asked: 0 };
     first_of(&mut p);
     // A whole root is opened at byte 0 and matched by its content, which may be empty. Marks
     // before the first token are kept where the root can start with them.
@@ -841,6 +879,24 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
     }
     // The extras the settling marks taken drop: no node.
     let dropped: Vec<usize> = p.settled.iter().filter_map(|i| drops.get(i).copied()).collect();
+    // The extras a mark asked for loses (`ask`): the last before its token, of no width at the
+    // token's start and after it, as the lean lexer's `asi` leaves it.
+    let mut lost = vec![false; extras.len()];
+    for &j in p.settled.iter().filter(|&&j| !plain[j].mark) {
+        let real = plain[..j].iter().filter(|t| !t.mark).count();
+        let at = plain[j].start;
+        if let Some(e) = (0..extras.len()).rev().find(|&e| extras[e].0 == real && !lost[e]) {
+            (extras[e].1.start, extras[e].1.end) = (at, at);
+            extras[e].0 = real + 1;
+            lost[e] = true;
+        }
+    }
+    // Moved past the token: the extras stay in order.
+    let mut order: Vec<usize> = (0..extras.len()).collect();
+    order.sort_by_key(|&e| (extras[e].0, usize::from(!lost[e])));
+    let extras: Vec<(usize, Token)> = order.iter().map(|&e| extras[e].clone()).collect();
+    let lost: Vec<bool> = order.iter().map(|&e| lost[e]).collect();
+    let dropped: Vec<usize> = dropped.iter().map(|d| order.iter().position(|e| e == d).expect("an extra")).collect();
     let mut out = match matched {
         Some(next) if next == plain.len() => p.out,
         Some(next) => return Err(format!("the token at byte {} is past the grammar's end", plain[next].start)),
@@ -893,13 +949,16 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
     // The deepest node holding token `k - 1` and extra `t` (by spans: a token the grammar implies
     // has no leaf, but its node holds it): one holding token `k` too, or one a settling mark
     // ended past `t`; and where among its children `t` goes: before the first that starts after it.
-    let between = |k: usize, t: &Token| -> (usize, usize) {
+    // A lost extra (of no width at token `k - 1`'s start, after it): the deepest node holding
+    // that token and the next.
+    let between = |k: usize, t: &Token, lost: bool| -> (usize, usize) {
         let a = real_tokens[k - 1];
+        let reach = if lost { real_tokens.get(k).map_or(t.end, |b| b.start + 1) } else { t.end };
         let mut o = 0;
         'down: loop {
             let mut j = o + 1;
             while j < o + out[o].size {
-                if out[j].start <= a.start && t.end <= out[j].end {
+                if out[j].start <= a.start && reach <= out[j].end {
                     o = j;
                     continue 'down;
                 }
@@ -908,7 +967,7 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
             break;
         }
         let mut at = o + 1;
-        while at < o + out[o].size && out[at].start < t.start {
+        while at < o + out[o].size && (out[at].start < t.start || lost && out[at].start == t.start) {
             at += out[at].size.max(1);
         }
         (at, o)
@@ -924,21 +983,21 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
     // Where each goes, in the tree as parsed: (index to insert at, the node it is in).
     // An extra inside a leaf is part of its text: no node (`usize::MAX`).
     let mut places: Vec<(usize, usize)> = Vec::new();
-    for (e, &(k, t)) in extras.iter().enumerate() {
+    for (e, (k, t)) in extras.iter().enumerate() {
+        let k = *k;
         places.push(if dropped.contains(&e) {
             (usize::MAX, 0)
         } else if k == 0 {
             (1, 0)
         } else {
             // Inside a leaf (a merged one): part of its text.
-            let (at, within) = between(k, t);
+            let (at, within) = between(k, t, lost[e]);
             if out[within].leaf { (usize::MAX, 0) } else { (at, within) }
         });
     }
     // Inserted from the last, so that each place is still the tree's as parsed; extras at one
     // place keep their order.
-    for (&(k, t), &(at, within)) in extras.iter().zip(&places).rev() {
-        let _ = k;
+    for ((_, t), &(at, within)) in extras.iter().zip(&places).rev() {
         if at == usize::MAX {
             continue;
         }

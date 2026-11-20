@@ -1,4 +1,4 @@
-//! rrlab-facts: Soufflé facts for core.rr's tape relations, from tree-sitter trees.
+//! rrlab-facts: Soufflé facts for core.rerail's tape relations, from tree-sitter trees.
 //!
 //!   rrlab-facts facts OUTDIR [--root DIR] [--lang LANG] FILE...   one document per FILE, ids 1.. in order
 //!   rrlab-facts tree LANG < code                                  the parse tree as JSON (for pattern compiling)
@@ -409,7 +409,7 @@ impl<'a> Doc<'a> {
         match (lang, k) {
             (_, "string" | "string_literal" | "raw_string_literal" | "encapsed_string" | "interpreted_string_literal") => {
                 // A literal with interpolations (a Python f-string with `{x}`, a PHP "…$x…") has no str or value:
-                // its text is not one constant (core.rr; the engine's str is the same).
+                // its text is not one constant (core.rerail; the engine's str is the same).
                 let mut cursor = n.walk();
                 let interpolated = n.named_children(&mut cursor).any(|c| match (lang, k) {
                     ("python", _) => c.kind() == "interpolation",

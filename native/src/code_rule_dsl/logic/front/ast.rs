@@ -98,9 +98,8 @@ pub enum Value {
 }
 
 /// A join shape directive written after a rule (`.shape posarg after pv`, `.shape retparam bound f`): in the rules of
-/// `head`, and in every form made from them (their deltas' and maintenance's, `shape_base`), the literal of `lit` is
-/// joined only once `wait` holds. A rule's driving delta is never held back. The planner searches within it, so a
-/// directive narrows the search; it does not fix an order.
+/// `head`, the literal of `lit` is joined only once `wait` holds. A rule's driving delta is never held back. The
+/// planner searches within it, so a directive narrows the search; it does not fix an order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Shape {
     pub head: String,
@@ -116,17 +115,6 @@ pub enum ShapeWait {
     After(String),
     /// Once these variables are bound.
     Bound(Vec<String>),
-}
-
-/// The relation a form's relation was made from, for matching directives (`Shape`): `pv__ins` and `pv__old` are
-/// `pv`'s.
-pub fn shape_base(rel: &str) -> &str {
-    const SUFFIXES: [&str; 12] = ["__ins", "__del", "__plus", "__minus", "__old", "__redo", "__held", "__gone", "__cand", "__chk", "__live", "__prev"];
-    let mut r = rel;
-    while let Some(s) = SUFFIXES.iter().find_map(|s| r.strip_suffix(s)) {
-        r = s;
-    }
-    r
 }
 
 impl Shape {
@@ -649,7 +637,7 @@ pub const RESERVED: &str = "rr_";
 pub const AXIS: &str = "rr_inside_";
 
 /// The prefix of the descendant axis's relation: `rr_has_<set>(n, a)`, n of a kind in the set and a any strict
-/// ancestor of n (`core.rr`'s `has(a, n, set)`: the set tests the descendant).
+/// ancestor of n (`core.rerail`'s `has(a, n, set)`: the set tests the descendant).
 pub const DESCENDANTS: &str = "rr_has_";
 
 /// The prefix of a `nearest(n, a, set)` literal's relation: `rr_nearest_<set>(n, a)` (`plan::lower`).
@@ -689,7 +677,7 @@ pub fn axis(rel: &str) -> Option<(&str, bool)> {
     rel.strip_prefix(DESCENDANTS).map(|set| (set, true)).or_else(|| rel.strip_prefix(AXIS).map(|set| (set, false)))
 }
 
-/// A kind set's one member meaning every kind of the dialect: core.rr's `within(n, a)` is the tree axis over it
+/// A kind set's one member meaning every kind of the dialect: core.rerail's `within(n, a)` is the tree axis over it
 /// (`rr::lower::core`); lowering for a dialect makes it the dialect's kinds (`plan::lower`).
 pub const EVERY_KIND: &str = "*";
 

@@ -167,6 +167,33 @@ fn a_rolled_back_write_is_not_the_spaces() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
+/// A wave's kept puts, queued through the store (`queue_kept`) under a run's waves, are gathered and written as one
+/// file per space when the wave is sealed: queued as a job each, every input's puts wrote a write of its own (O125
+/// step 05: 112 a run; t43 step 16). A key put twice in the wave is written once, its later put what the space keeps.
+#[test]
+fn a_waves_kept_puts_are_one_block_per_space() {
+    let (path, _) = store("wave-queue");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    store.queue_kept(SPACE, vec![put("base", 0, 1, flat(&(0..40_000).collect::<Vec<i64>>()))]);
+    store.written().unwrap();
+    let before = files(&path);
+    {
+        let _waves = crate::content_store::write_back::run_waves();
+        for (i, rel) in ["a", "b", "c", "d"].into_iter().enumerate() {
+            store.queue_kept(SPACE, vec![put(rel, 0, 10 + i as u64, flat(&[i as i64, 1]))]);
+        }
+        store.queue_kept(SPACE, vec![put("a", 0, 20, flat(&[7, 7]))]);
+    }
+    store.written().unwrap();
+    let c = Connection::open(&path).unwrap();
+    let got: Vec<(String, u64, Vec<Vec<i64>>)> = read(&path, &c).into_iter().map(|(r, _, d, rows)| (r, d, rows)).filter(|(r, _, _)| r != "base").collect();
+    assert_eq!(got, [("a".into(), 20, vec![vec![7, 7]]), ("b".into(), 11, vec![vec![1, 1]]), ("c".into(), 12, vec![vec![2, 1]]), ("d".into(), 13, vec![vec![3, 1]])]);
+    // The wave's five puts in one appended file of the chain (decision 0456), where five jobs wrote five.
+    let made = files(&path).into_iter().filter(|f| !before.contains(f)).count();
+    assert_eq!(made, 1, "one file made in the wave: {:?} after {before:?}", files(&path));
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
 /// A wave's puts are gathered by space and appended as one file each: a later put of a key replaces an earlier one, a
 /// retag keeps the rows the wave gave its key with its own reads, and a gone entry stays gone. Two spaces, one
 /// write each.

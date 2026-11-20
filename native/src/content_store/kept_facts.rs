@@ -44,6 +44,10 @@ pub enum KeptWhat {
     /// (decision 0090) where its relation has them. `given`: kept in the order given, every row (an input's granule
     /// or documents' table, read by position); else in canonical order, as a relation's.
     Flat { widths: Vec<u32>, rows: Vec<i64>, n: usize, levels: Option<Vec<u32>>, given: bool },
+    /// A documents' table (`document_places`): `n` rows as the run gives them (`DOCUMENT_WORDS` each), kept in that
+    /// order with each document's places, which the writer finds as it writes them (decision 0504 step 4 part 2).
+    /// `tape`: the grammar its tapes are found in (grammar id, grammar version, tape format version).
+    Documents { rows: Vec<i64>, n: usize, tape: Option<[i64; 3]> },
     /// The kept entry's rows as they are, with these reads (a frame's retag).
     Reads,
     /// No longer kept.
@@ -176,6 +180,7 @@ fn columns(what: &KeptWhat, types: &[u8], map: Option<MapIds>) -> StoreResult<Co
             (cols, *n, a, levels.clone().filter(|l| l.len() == *n))
         }
         KeptWhat::Reads | KeptWhat::Gone => unreachable!("a put with rows"),
+        KeptWhat::Documents { .. } => unreachable!("a documents' table is resolved first (`write_space`)"),
     };
     if let Some(map) = map {
         for (c, _) in types.iter().enumerate().filter(|(_, t)| **t == b's').take_while(|(c, _)| *c < a) {
@@ -193,6 +198,7 @@ fn room_of(what: &KeptWhat) -> usize {
             (rel.len_all() as usize) * (rel.arity as usize * 8 + 8) + (rel.arity as usize + 2) * 256
         }
         KeptWhat::Flat { widths, n, .. } => n * widths.len() * 8 + (widths.len() + 2) * 256,
+        KeptWhat::Documents { n, .. } => n * super::PLACED_WORDS * 8 + (super::PLACED_WORDS + 2) * 256,
         KeptWhat::Reads | KeptWhat::Gone => 0,
     }
 }
@@ -207,6 +213,7 @@ fn expected_bytes(what: &KeptWhat) -> usize {
     match what {
         KeptWhat::Rows(r) => r.relation().len_all() as usize * r.relation().arity as usize * 3,
         KeptWhat::Flat { widths, n, .. } => n * widths.len() * 3,
+        KeptWhat::Documents { n, .. } => n * super::PLACED_WORDS * 3,
         KeptWhat::Reads | KeptWhat::Gone => 0,
     }
 }
@@ -219,12 +226,25 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
     if puts.is_empty() {
         return Ok(None);
     }
+    // A documents' table's places, found in this transaction: its rows as kept.
+    let puts = puts
+        .into_iter()
+        .map(|mut p| {
+            if let KeptWhat::Documents { rows, n, tape } = &p.what {
+                let rows = super::document_places::resolve(t, rows, *n, *tape)?;
+                p.what = KeptWhat::Flat { widths: vec![8; super::PLACED_WORDS], rows, n: *n, levels: None, given: true };
+            }
+            Ok(p)
+        })
+        .collect::<StoreResult<Vec<_>>>()?;
     let io = |e: std::io::Error| StoreError::Io(e);
     let dir = space_dir(store, space);
     private_dir(&dir).map_err(io)?;
+    let opened = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: the space's files opened".into());
     let rows = chain_rows(t, space)?;
     sweep(&dir, &rows);
     let old = KeptSpace::open(store, space, &rows)?;
+    drop(opened);
     let chain = old.view();
     let put_keys: HashSet<FactKey<'_>> = puts.iter().map(KeptPut::key).collect();
     // The files merged into this one: the newest ones, each weighing no more than twice the bytes joining it.
@@ -255,6 +275,7 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
     let name = format!("c{seq}-{tag:016x}.blk");
     let making = dir.join(format!("{name}.new"));
     let mut w = KeptW::create(&making, tag, reserve).map_err(io)?;
+    let carrying = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: the merged files' entries carried".into());
     // What the merged files held: rows copied whole; a gone or reads-only entry kept while an older file holds the key.
     for (key, n) in &carried {
         match n {
@@ -272,6 +293,8 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
             }
         }
     }
+    drop(carrying);
+    let putting = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: the puts written".into());
     for p in &puts {
         let reads: Vec<(&str, u64)> = p.reads.iter().map(|(r, d)| (r.as_str(), *d)).collect();
         let meta = Meta { key: p.key(), digest: p.digest, reads: &reads, types: &p.types };
@@ -281,6 +304,7 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
                 let given = if matches!(p.what, KeptWhat::Flat { given: true, .. }) { rerail_blocks::packed::Order::AsGiven } else { rerail_blocks::packed::Order::Canonical };
                 w.put_cols(meta, &cols, n, a, levels.as_deref(), given).map_err(io)?;
             }
+            KeptWhat::Documents { .. } => unreachable!("a documents' table is resolved first (above)"),
             KeptWhat::Reads => {
                 if let Some(k) = chain.get(&p.key()) {
                     // Its rows' digest and types are the entry's: a retag changes the reads alone (its put has
@@ -297,11 +321,14 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
             }
         }
     }
+    drop(putting);
+    let finishing = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: the block finished and synced".into());
     // Written back as the store's flush mode says (decision 0481): by default the OS writes it at its own pace.
     let flush = crate::content_store::connection::flush_of(t);
     w.finish(flush).map_err(io)?;
     std::fs::rename(&making, dir.join(&name)).map_err(io)?;
     sync_dir(&dir, flush).map_err(io)?;
+    drop(finishing);
     if from < rows.len() {
         t.prepare_cached("DELETE FROM main.facts_chain WHERE space = ?1 AND seq >= ?2")?.execute(rusqlite::params![&space[..], rows[from].0])?;
     }
@@ -354,7 +381,7 @@ struct KeptGather {
 /// The bytes a put holds until written: a flat put's rows, and a little for the rest (a relation is lent, not held).
 fn held_bytes(p: &KeptPut) -> usize {
     64 + match &p.what {
-        KeptWhat::Flat { rows, .. } => rows.len() * 8,
+        KeptWhat::Flat { rows, .. } | KeptWhat::Documents { rows, .. } => rows.len() * 8,
         _ => 0,
     }
 }

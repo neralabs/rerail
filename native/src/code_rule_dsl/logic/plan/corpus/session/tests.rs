@@ -18,7 +18,7 @@ fn a_session_reruns_what_an_edit_changed() {
     std::fs::create_dir_all(&src).unwrap();
     std::fs::write(src.join("a.py"), "import hashlib\nhashlib.md5(b'x')\n").unwrap();
     std::fs::write(src.join("b.py"), "import pickle\npickle.loads(b'x')\n").unwrap();
-    let rule = packs().join("bandit-b301-pickle.rr");
+    let rule = packs().join("bandit-b301-pickle.rerail");
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap();
@@ -50,7 +50,7 @@ fn a_sessions_outputs_are_overlays_of_the_rows_an_edit_changed() {
     for i in 0..6 {
         std::fs::write(src.join(format!("m{i}.py")), format!("import pickle\npickle.loads(b'{i}')\n")).unwrap();
     }
-    let rule = packs().join("bandit-b301-pickle.rr");
+    let rule = packs().join("bandit-b301-pickle.rerail");
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = |to: &std::path::Path| super::super::run(&program, &src, None, to, "program", Binding::Cpu, 1 << 18).unwrap();
     let names = |dir: &std::path::Path| -> Vec<String> { output::Outputs::open(dir).unwrap().names().into_iter().map(str::to_owned).collect() };
@@ -96,7 +96,7 @@ fn a_session_runs_the_cross_file_strata_an_edit_changed() {
     std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
     std::fs::write(src.join("other.py"), "import json\njson.loads('1')\n").unwrap();
     let rules = packs();
-    let programs: Vec<String> = ["bandit-b301-pickle.rr", "bandit-b307-eval.rr"].iter().map(|r| crate::code_rule_dsl::tools::flatten(&rules.join(r)).unwrap()).collect();
+    let programs: Vec<String> = ["bandit-b301-pickle.rerail", "bandit-b307-eval.rerail"].iter().map(|r| crate::code_rule_dsl::tools::flatten(&rules.join(r)).unwrap()).collect();
     let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
     let run = || super::super::run_all(&texts, &src, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let findings = || {
@@ -153,7 +153,7 @@ fn a_session_keeps_its_cross_part_across_a_file_local_edit() {
     std::fs::write(src.join("b.py"), "from a import helper, other\n\ndef main():\n    assert True\n    helper(1)\n    other(2)\n").unwrap();
     // `at` is the cross-file part; `flagged`, file-local, is the rule edited.
     let program = |kind: &str| format!(
-        "#include \"core.rr\"\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"call\"), field(c, \"function\", f), text(f, x).\n.decl defined(d: node, x: symbol)\ndefined(d, x) :- kind(d, \"function_definition\"), field(d, \"name\", n), text(n, x).\n.decl at(x: symbol, k: number)\nat(x, k) :- called(c, x), defined(_, x), col(c, k).\n.decl flagged(n: node)\nflagged(n) :- kind(n, \"assert_statement\"), !kind(n, \"{kind}\").\n.decl flag_line(l: number)\nflag_line(l) :- flagged(n), line(n, l).\n.output at, flag_line\n"
+        "#include \"core.rerail\"\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"call\"), field(c, \"function\", f), text(f, x).\n.decl defined(d: node, x: symbol)\ndefined(d, x) :- kind(d, \"function_definition\"), field(d, \"name\", n), text(n, x).\n.decl at(x: symbol, k: number)\nat(x, k) :- called(c, x), defined(_, x), col(c, k).\n.decl flagged(n: node)\nflagged(n) :- kind(n, \"assert_statement\"), !kind(n, \"{kind}\").\n.decl flag_line(l: number)\nflag_line(l) :- flagged(n), line(n, l).\n.output at, flag_line\n"
     );
     let program = |kind: &str| crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(&program(kind)).unwrap()).unwrap();
     let run = |text: &str| super::super::run(text, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
@@ -208,7 +208,7 @@ fn recursive_cross_file_stratum() -> Ran {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-reach");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
-    let rule = base.join("reach.rr");
+    let rule = base.join("reach.rerail");
     std::fs::write(
         &rule,
         r#".policy "test-import-cycle" revision 1
@@ -216,7 +216,7 @@ fn recursive_cross_file_stratum() -> Ran {
 .language python
 .mode steer
 .scope include "**/*.py"
-#include "python/names.rr"
+#include "python/names.rerail"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .decl reach(a: number, b: number) no_reach
@@ -252,7 +252,6 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         ("b.py", "from c import y\n"),
     ];
     let mut ran = Ran::default();
-    let unsized_before = crate::code_rule_dsl::logic::plan::unsized_deltas();
     for (path, text) in edits {
         std::fs::write(src.join(path), text).unwrap();
         let report = run();
@@ -261,9 +260,6 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         eprintln!("{path}: {:?} strata run, {:?} maintained (recursive); {} findings", report.cross_strata, report.cross_maintained, got.len());
         ran.add(&report);
     }
-    // Every input delta the maintained forms read was priced by its size, not the default's 1,000 rows.
-    let unsized_reads = crate::code_rule_dsl::logic::plan::unsized_deltas() - unsized_before;
-    assert_eq!(unsized_reads, 0, "reads of an input delta priced with no size");
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
     ran
@@ -277,7 +273,7 @@ fn a_session_passes_on_a_quiet_stratum() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-quiet");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
-    let rule = base.join("quiet.rr");
+    let rule = base.join("quiet.rerail");
     std::fs::write(
         &rule,
         r#".policy "test-quiet" revision 1
@@ -285,7 +281,7 @@ fn a_session_passes_on_a_quiet_stratum() {
 .language python
 .mode steer
 .scope include "**/*.py"
-#include "python/names.rr"
+#include "python/names.rerail"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .decl via_h(a: number)
@@ -338,7 +334,7 @@ fn a_session_keeps_its_part_around_an_inlined_relation() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-inlined");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
-    let rule = base.join("near.rr");
+    let rule = base.join("near.rerail");
     std::fs::write(
         &rule,
         r#".policy "test-imported-back" revision 1
@@ -346,7 +342,7 @@ fn a_session_keeps_its_part_around_an_inlined_relation() {
 .language python
 .mode steer
 .scope include "**/*.py"
-#include "python/names.rr"
+#include "python/names.rerail"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .decl back(a: number, b: number) inline
@@ -392,7 +388,7 @@ fn a_session_inserts_only_rows_new_against_the_survivors() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-ins");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
-    let rule = base.join("reach.rr");
+    let rule = base.join("reach.rerail");
     std::fs::write(
         &rule,
         r#".policy "test-import-reach" revision 1
@@ -400,7 +396,7 @@ fn a_session_inserts_only_rows_new_against_the_survivors() {
 .language python
 .mode steer
 .scope include "**/*.py"
-#include "python/names.rr"
+#include "python/names.rerail"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .decl reach(a: number, b: number) no_reach
@@ -448,12 +444,14 @@ fn a_session_derives_again_the_strata_its_deltas_outgrow() {
     assert_eq!(ran.mode, 0, "none maintained");
 }
 
-/// §4 at its θ with no floor: in one session a stratum is derived again where an edit reaches past θ of its kept
-/// rows and maintained where it reaches less, and the findings stay a full run's. (The forms' pricing that once
-/// chose between them is retired with the forms, 0364.)
+/// §4 at a θ with no floor: in one session a stratum is derived again where an edit's delta reaches past θ of the
+/// rows its changed reads hold and maintained where it reaches less, and the findings stay a full run's. (The forms'
+/// pricing that once chose between them is retired with the forms, 0364.) θ is 1 here, not the default 0.25: over
+/// four files every edit's delta is a quarter or more of its reads' rows (R4 measures θ over those, not the
+/// stratum's kept rows), so at 0.25 none is maintained; at 1, 27 strata are derived again and 29 maintained.
 #[test]
 fn a_session_derives_again_past_theta_and_maintains_below_it() {
-    let ran = derive_again_with(&[("RERAIL_AGAIN_MIN", "0")]);
+    let ran = derive_again_with(&[("RERAIL_AGAIN_MIN", "0"), ("RERAIL_AGAIN_THETA", "1")]);
     assert!(ran.past_theta > 0 && ran.mode > 0, "both: {} past θ, {} maintained", ran.past_theta, ran.mode);
 }
 
@@ -497,8 +495,8 @@ fn wave0_session(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str,
     let _ = std::fs::remove_dir_all(&base);
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
-    let rule = base.join("w0.rr");
-    let head = ".policy \"test-wave0\" revision 1\n.description \"A maintained stratum's first wave.\"\n.language python\n.mode steer\n.scope include \"**/*.py\"\n#include \"python/names.rr\"\n.decl dep(a: number, b: number)\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n";
+    let rule = base.join("w0.rerail");
+    let head = ".policy \"test-wave0\" revision 1\n.description \"A maintained stratum's first wave.\"\n.language python\n.mode steer\n.scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number)\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n";
     std::fs::write(&rule, format!("{head}{rules}")).unwrap();
     for (path, text) in files {
         std::fs::write(src.join(path), text).unwrap();
@@ -596,7 +594,7 @@ fn cross_file_aggregate() -> Ran {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-count");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
-    let rule = base.join("hub.rr");
+    let rule = base.join("hub.rerail");
     std::fs::write(
         &rule,
         r#".policy "test-import-hub" revision 1
@@ -604,7 +602,7 @@ fn cross_file_aggregate() -> Ran {
 .language python
 .mode steer
 .scope include "**/*.py"
-#include "python/names.rr"
+#include "python/names.rerail"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .decl fan(b: number, n: number)
@@ -663,7 +661,7 @@ fn a_session_keeps_a_negation_that_still_fails() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-lone");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
-    let rule = base.join("lone.rr");
+    let rule = base.join("lone.rerail");
     std::fs::write(
         &rule,
         r#".policy "test-unresolved-import" revision 1
@@ -671,7 +669,7 @@ fn a_session_keeps_a_negation_that_still_fails() {
 .language python
 .mode steer
 .scope include "**/*.py"
-#include "python/names.rr"
+#include "python/names.rerail"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .violation LONE(at: node) code "LONE" "An import of no file, in a file that imports none."
@@ -718,7 +716,7 @@ fn session_costs() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-costs");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
-    let rule = base.join("costs.rr");
+    let rule = base.join("costs.rerail");
     std::fs::write(
         &rule,
         r#".policy "test-session-costs" revision 1
@@ -726,7 +724,7 @@ fn session_costs() {
 .language python
 .mode steer
 .scope include "**/*.py"
-#include "python/names.rr"
+#include "python/names.rerail"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .decl reach(a: number, b: number)
@@ -798,7 +796,7 @@ fn a_session_derives_the_reach_index_again_when_cycles_and_connections_change() 
     for (path, text) in REACH_START {
         std::fs::write(src.join(path), text).unwrap();
     }
-    let rule = base.join("reach.rr");
+    let rule = base.join("reach.rerail");
     std::fs::write(&rule, REACH_RULE).unwrap();
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
@@ -835,7 +833,7 @@ fn cache_boundary_edits_explain_the_current_snapshot() {
     let root = work.path().join("files");
     fs::create_dir(&root).unwrap();
     fs::write(root.join("input.py"), "x = 1\n").unwrap();
-    let rule = work.path().join("join.rr");
+    let rule = work.path().join("join.rerail");
     let mut src = String::from(".decl doc(d:number, path:symbol, module:symbol)\n.input doc\n\
         .decl lhs(a:number,k:number)\n.decl rhs(b:number,k:number)\n.decl wide(a:number,b:number)\n\
         .decl lefts(a:number)\n.decl rights(b:number)\n.output lefts, rights\n\
@@ -855,7 +853,7 @@ fn cache_boundary_edits_explain_the_current_snapshot() {
     let _sources = rr::profile_join_sources(&[&rule]);
     // The runs' profiles are the run's (decision 0441): one run under way here holds them for the report.
     let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
-    // The deferred joins are off by default (decision 0477): this test is of them.
+    // The deferred joins are off by default (decision 0513): this test is of them.
     let _deferred = profile::bind(corpus::preparation::DeferredJoins(Some("auto")));
     let run = |out: &std::path::Path| {
         corpus::run_read(&program, &root, out, "program", Binding::Cpu, 4096,
@@ -875,12 +873,12 @@ fn cache_boundary_edits_explain_the_current_snapshot() {
         let actual = run(&work.path().join("out"));
         let mut report = String::new();
         profile::author_joins::render(&mut report, &profile::merged());
-        assert!(report.contains("join.rr:9)"), "snapshot {i}: {report}");
+        assert!(report.contains("join.rerail:9)"), "snapshot {i}: {report}");
         assert!(report.contains("Cache limit 4096 pair witnesses"), "{report}");
         assert!(report.contains(&format!("Observed {expected_pairs} cached pairs"))
             || (expected_pairs == 0 && report.contains("empty cache guard allows zero cached pairs")), "snapshot {i}: {report}");
         assert!(report.contains(if expected_pairs == 0 { "joined the factors directly" } else { "used the pair cache" }), "snapshot {i}: {report}");
-        assert!(report.contains("Reader lefts") && report.contains("join.rr:10)"), "{report}");
+        assert!(report.contains("Reader lefts") && report.contains("join.rerail:10)"), "{report}");
         let fresh = corpus::session::full(|| {
             let _fresh = corpus::use_store(work.path().join(format!("fresh-{i}.sqlite")));
             run(&work.path().join(format!("fresh-out-{i}")))

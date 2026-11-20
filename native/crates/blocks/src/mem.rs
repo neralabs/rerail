@@ -1,7 +1,9 @@
 //! The memory a block or a scratch region reserves for itself, by platform. On Unix, an anonymous mapping: address
-//! space only, nothing resident until written, read-only once frozen, pages given back to the OS. Elsewhere (WASI,
-//! where the engine also runs) there is no mapping: a zeroed, page-aligned heap allocation of the whole reservation,
-//! never protected, its pages kept. Only the reservation's cost differs; what a block holds and how it reads do not.
+//! space only, nothing resident until written, read-only once frozen, pages given back to the OS. On Windows, the
+//! same with Windows' calls (`windows`): reserved and committed address space, `VirtualProtect`ed once frozen, its
+//! pages reset when given back. Elsewhere (WASI, where the engine also runs) there is no mapping: a zeroed,
+//! page-aligned heap allocation of the whole reservation, never protected, its pages kept. Only the reservation's
+//! cost differs; what a block holds and how it reads do not.
 
 use crate::block::PAGE;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
@@ -21,17 +23,19 @@ pub fn reserve(len: usize) -> *mut u8 {
     RESERVED.fetch_add(len, Relaxed);
     #[cfg(unix)]
     {
-        // Address space only: on Linux without the overcommit check, which refuses a reservation past memory and swap
-        // (a block's 64 GiB on a 20 GiB machine) though nothing of it is resident until written.
-        #[cfg(target_os = "linux")]
-        let flags = libc::MAP_ANON | libc::MAP_PRIVATE | libc::MAP_NORESERVE;
-        #[cfg(not(target_os = "linux"))]
-        let flags = libc::MAP_ANON | libc::MAP_PRIVATE;
-        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, flags, -1, 0) };
+        // Address space, not a commitment (`RESERVE_ONLY`): Linux's overcommit accounting would refuse a large
+        // reservation (a block of relations reserves 16 GiB, decision 0445) that is never written whole.
+        let p = unsafe {
+            libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE | crate::RESERVE_ONLY, -1, 0)
+        };
         assert!(p != libc::MAP_FAILED, "mmap of {len} bytes failed");
         p.cast()
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        crate::windows::anon(len).unwrap_or_else(|e| panic!("VirtualAlloc of {len} bytes failed: {e}"))
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let layout = std::alloc::Layout::from_size_align(len, PAGE).expect("a page-aligned reservation");
         let p = unsafe { std::alloc::alloc_zeroed(layout) };
@@ -55,13 +59,18 @@ pub unsafe fn release(p: *mut u8, len: usize) {
     unsafe {
         libc::munmap(p.cast(), len);
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        let _ = len;
+        crate::windows::release(p);
+    }
+    #[cfg(not(any(unix, windows)))]
     unsafe {
         std::alloc::dealloc(p, std::alloc::Layout::from_size_align(len, PAGE).expect("a page-aligned reservation"));
     }
 }
 
-/// Makes a reservation read-only, so a write after freeze faults (Unix); elsewhere nothing.
+/// Makes a reservation read-only, so a write after freeze faults (Unix, Windows); elsewhere nothing.
 ///
 /// # Safety
 /// `p` and `len` are a reservation's.
@@ -71,7 +80,9 @@ pub unsafe fn protect_read(p: *mut u8, len: usize) {
         let r = unsafe { libc::mprotect(p.cast(), len, libc::PROT_READ) };
         assert_eq!(r, 0, "mprotect");
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    crate::windows::read_only(p, len).expect("VirtualProtect");
+    #[cfg(not(any(unix, windows)))]
     let _ = (p, len);
 }
 
@@ -127,6 +138,8 @@ pub unsafe fn free_pages(p: *mut u8, len: usize) {
     unsafe {
         libc::madvise(p.cast(), len, libc::MADV_FREE);
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    crate::windows::reset(p, len);
+    #[cfg(not(any(unix, windows)))]
     let _ = (p, len);
 }

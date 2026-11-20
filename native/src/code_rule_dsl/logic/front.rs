@@ -25,7 +25,7 @@ pub use name::{List, Lists, Name};
 pub mod cycles;
 pub mod graph;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
-pub use ast::{AXIS, AggOp, Algo, Branded, Class, DESCENDANTS, EVERY_KIND, FEW, Fan, GLOBAL, LIBRARY, LatticeDecl, LayoutFact, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, Shape, ShapeWait, Size as LayoutSize, SpanIn, Value, Values as LayoutValues, add_layout, axis, carried_record, globals, is_axis, is_transduced, layout_facts, readers_of_heads, record_copy, shape_base};
+pub use ast::{AXIS, AggOp, Algo, Branded, Class, DESCENDANTS, EVERY_KIND, FEW, Fan, GLOBAL, LIBRARY, LatticeDecl, LayoutFact, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, Shape, ShapeWait, Size as LayoutSize, SpanIn, Value, Values as LayoutValues, add_layout, axis, carried_record, globals, is_axis, is_transduced, layout_facts, readers_of_heads, record_copy};
 
 use ast::PUNCT;
 
@@ -74,11 +74,11 @@ pub enum Error {
     /// A component creates values (`@cat`, …) the data does not bound (`cycles`): `rule` is one it could not
     /// bound.
     UnboundedValueCycle { component: BTreeSet<String>, rule: String },
-    /// `.input r` where no `.decl` gives `r`'s columns (nor core.rr's, for `.rr`).
+    /// `.input r` where no `.decl` gives `r`'s columns (nor core.rerail's, for `.rerail`).
     UndeclaredInput { relation: String },
 }
 
-/// The `.rr` parser's error (`rerail_rr_syntax`) is a syntax error.
+/// The `.rerail` parser's error (`rerail_rr_syntax`) is a syntax error.
 impl From<rerail_rr_syntax::Error> for Error {
     fn from(e: rerail_rr_syntax::Error) -> Self {
         match e {

@@ -13,9 +13,24 @@ const MAX_ID_LENGTH = 128;
 const MAX_REFERENCE_LENGTH = 32_768;
 const MAX_ACTION_LENGTH = 16_384;
 const MAX_MINIMUM_TOKENS = 8_192;
+const MAX_TITLE_LENGTH = 200;
 
 const nonEmptyString = (maxLength: number) =>
   z.string().refine(value => value.trim().length > 0, "must be a non-empty string").max(maxLength, `must contain at most ${maxLength} characters`);
+
+/**
+ * A rule's title, of either kind: the rule in a person's own words, which the dashboard leads its row and panel with.
+ * The coding agent never reads it. A document may lack one when it is read (a pack rule takes its title from
+ * `pack.json`, and a rule stored before titles shows its first message), but every rule a person or a coding agent
+ * writes carries one ({@link untitledRuleRefusal}).
+ */
+export const ruleTitleSchema = nonEmptyString(MAX_TITLE_LENGTH);
+
+/** Why writing `rule` is refused for want of a title; undefined when it has one. */
+export function untitledRuleRefusal(rule: { readonly title?: string | undefined }): string | undefined {
+  if (rule.title !== undefined) return undefined;
+  return "rule.title is required: the rule in plain words, as a person reads it in the dashboard (\"No shadows except the sheet's\")";
+}
 
 export const sampleSourceSchema = z.union(
   [z.literal("user-input"), z.literal("assistant-text"), z.templateLiteral(["tool:", z.string().min(1)])],
@@ -107,6 +122,7 @@ export const conversationRuleSchema = z
   .object({
     id: nonEmptyString(MAX_ID_LENGTH),
     mode: z.enum(RULE_MODES),
+    title: ruleTitleSchema.optional(),
     /** Required by a similarity match and rejected by a structural one. */
     reference: nonEmptyString(MAX_REFERENCE_LENGTH).optional(),
     match: z.union([similarityMatchSchema, matchConditionSchema]),

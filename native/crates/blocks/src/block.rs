@@ -706,7 +706,7 @@ impl Block {
             return Ok(());
         }
         // The pages written: nothing past `used` is (a kept file's reservation is hundreds of MB, its facts a few;
-        // asked of the whole, the kernel walked every page of it, Q335).
+        // asked of the whole, the kernel walked every page of it, Q361).
         let written = self.used().next_multiple_of(PAGE).min(self.reserved);
         // SAFETY: the block's own mapping, its first `written` bytes.
         if unsafe { libc::msync(self.base.cast(), written, libc::MS_SYNC) } != 0 {

@@ -78,8 +78,7 @@ impl Memory {
     /// the live leases and the admissions' reservations. Never the driver's count, which counts every no-copy wrap
     /// of host memory again (decision 0435 §2).
     fn idle_room(&self, budgets: &crate::budget::Budgets, need: usize) -> usize {
-        let held = other() + self.live.load(std::sync::atomic::Ordering::Relaxed) + self.reserved.load(std::sync::atomic::Ordering::Relaxed);
-        budgets.metal().saturating_sub(held + need)
+        budgets.metal().saturating_sub(other() + self.live.load(std::sync::atomic::Ordering::Relaxed) + self.reserved.load(std::sync::atomic::Ordering::Relaxed) + need)
     }
 
     /// Releases idle buffers until they fit what `budgets` leave with `need` more leased (`Pool::trim`).
@@ -897,7 +896,7 @@ mod tests {
     /// budget; and its leases are drawn from it.
     #[test]
     fn a_stratum_waits_for_room_others_hold_and_only_that() {
-        if get().is_none() {
+        if layer().is_none() {
             return;
         }
         let _big = big_leases();
@@ -941,7 +940,7 @@ mod tests {
     /// from the reservation, counted once.
     #[test]
     fn two_works_past_the_budget_together_both_run_on_the_device_in_turn() {
-        if get().is_none() {
+        if layer().is_none() {
             return;
         }
         let _big = big_leases();

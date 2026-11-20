@@ -127,7 +127,8 @@ fn split_par(keys: &mut [u64], ids: &mut [u32], bits: u32, tk: &mut [u64], ti: &
         })
     });
     // Each bucket by its low bits, with its place in `keys` as room, then home.
-    let mut parts: Vec<(&mut [u64], &mut [u32], &mut [u64], &mut [u32])> = Vec::with_capacity(nb);
+    type Part<'a> = (&'a mut [u64], &'a mut [u32], &'a mut [u64], &'a mut [u32]);
+    let mut parts: Vec<Part> = Vec::with_capacity(nb);
     let (mut k, mut i, mut rk, mut ri) = (&mut keys[..], &mut ids[..], &mut tk[..], &mut ti[..]);
     for w in starts.windows(2) {
         let len = w[1] - w[0];

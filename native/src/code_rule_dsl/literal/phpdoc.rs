@@ -253,11 +253,13 @@ pub(crate) fn parse_comment<D: ast_grep_core::Doc>(
     if !spend(root.size()) {
         return None;
     }
-    Some(super::Parsed::Tree(std::sync::Arc::new(super::SubTree::new(
-        GRAMMAR,
-        text.into_owned(),
-        0,
-        root,
-        super::HostMap::Exact(node.range().start as isize),
-    ))))
+    Some(super::Parsed::Tree(std::sync::Arc::new(
+        super::SubTree::new(
+            GRAMMAR,
+            text.into_owned(),
+            0,
+            root,
+            super::HostMap::Exact(node.range().start as isize),
+        ),
+    )))
 }

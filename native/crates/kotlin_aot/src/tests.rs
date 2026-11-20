@@ -29,20 +29,40 @@ fn both() -> (&'static rerail_kotlin_parser::Compiled, rerail_kotlin_parser::Com
     (jit, aot)
 }
 
-/// Every corpus file: the ahead-of-time tier 1 writes the JIT's masks, positions and counts;
-/// both tiers ahead of time write the JIT's tape, and refuse where it does.
+/// Every corpus file: the ahead-of-time tier 1 writes the JIT's records, counts, and the masks
+/// tier 2 reads from its words (`BlockNative::masks`, but those tier 2 reads from the bytes:
+/// `records_made`); both tiers ahead of time write the JIT's tape, and refuse where it does. The
+/// JIT's body writes other masks too, which nothing reads; the generated tier 1 makes none of
+/// them (decision 0451).
 #[test]
 #[ignore = "reads RERAIL_KOTLIN_CORPUS: run by name"]
 fn aot_tapes_are_the_jits() {
     let (jit, aot) = both();
-    let files = corpus();
+    // The corpus has no lost comment (`SETTLE m=2`): the texts that have one too.
+    let files: Vec<String> = corpus().into_iter().chain(rerail_kotlin_parser::lost_comment_texts()).collect();
+    let native = rerail_compiler::block_native::BlockNative::lower(&jit.program.block_programs[0]);
+    let unmade = native.records_made();
+    let read: Vec<usize> = native.masks.iter().copied().filter(|o| !unmade.contains(o)).collect();
+    let n = jit.parser.tier1.outputs;
+    let extracts = jit.parser.tier1.extracts.len();
+    assert_eq!(jit.parser.tier1.records.as_ref().map(|t| t.layout), Some(rerail_compiler::records::RecordLayout::Rows), "the records a row a token, from the file's first position");
     let (mut differ, mut tier1_differ, mut taken) = (Vec::new(), Vec::new(), 0);
     for (i, f) in files.iter().enumerate() {
         let mut a = rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[f.as_bytes()]);
         let mut j = rerail_compiler::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()]);
         a.call(&aot.parser.tier1);
         j.call(&jit.parser.tier1);
-        if a.out != j.out || a.positions != j.positions || a.counts != j.counts {
+        let masks = (0..a.out.len()).all(|k| !read.contains(&(k % n)) || a.out[k] == j.out[k]);
+        // A file tier 1 refuses (its flag, the count after the extracts'): its records up to the
+        // count, as the JIT's loop stops at the refusal and nothing reads past it.
+        let refused = j.counts.get(extracts).is_some_and(|&t| t != 0);
+        let positions = if refused {
+            let records = 3 * j.counts[0] as usize;
+            a.positions[..records] == j.positions[..records]
+        } else {
+            a.positions == j.positions
+        };
+        if !masks || !positions || a.counts != j.counts {
             tier1_differ.push(i);
         }
         match (aot.parser.image(f.as_bytes()), jit.parser.image(f.as_bytes())) {

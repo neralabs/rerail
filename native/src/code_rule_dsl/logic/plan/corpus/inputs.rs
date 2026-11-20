@@ -203,7 +203,7 @@ fn unreadable(detail: impl std::fmt::Display) -> Failure { Failure { kind: "unre
 /// The tree of `rev` in the repository that holds `root`, and `root`'s path inside it.
 fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::ObjectId, PathBuf)> {
     let repo = gix::discover(root).map_err(|e| unreadable(format!("no repository holds {}: {e}", root.display())))?;
-    // `git_rev("base", …)`: the merge base of HEAD and `rev`, as core.rr defines it.
+    // `git_rev("base", …)`: the merge base of HEAD and `rev`, as core.rerail defines it.
     let (revs, _) = crate::code_rule_dsl::logic::strings::git::revisions(root, Some(rev)).map_err(unreadable)?;
     let base = revs.iter().find(|(n, _)| n == "base").map(|(_, id)| id.clone()).unwrap_or_default();
     let resolve = || -> std::result::Result<gix::ObjectId, Box<dyn std::error::Error + Send + Sync>> {
@@ -212,7 +212,7 @@ fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::Object
     };
     let tree = resolve().map_err(|e| unreadable(format!("base revision {rev}: {e}")))?;
     let workdir = repo.workdir().ok_or_else(|| unreadable("the repository has no work tree"))?;
-    let canonical = |p: &Path| p.canonicalize().map_err(|e| unreadable(format!("{}: {e}", p.display())));
+    let canonical = |p: &Path| dunce::canonicalize(p).map_err(|e| unreadable(format!("{}: {e}", p.display())));
     let prefix = canonical(root)?.strip_prefix(canonical(workdir)?).map(Path::to_path_buf).map_err(unreadable)?;
     Ok((repo, tree, prefix))
 }
@@ -337,7 +337,7 @@ pub(in crate::code_rule_dsl) fn inputs_digest(root: &Path, globs: &[String]) -> 
         hash.update(path.as_bytes());
         hash.update([0]);
         hash.update(blob_id(&bytes).as_bytes());
-        hash.update([b'\n']);
+        hash.update(*b"\n");
     }
     Ok(format!("sha256:{}", hash.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>()))
 }
@@ -427,7 +427,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn of_result(result: &ReadResult<String>) -> String {
-    match result { Ok(text) => sha256_hex(text.as_bytes()), Err(f) => format!("{}", f.kind) }
+    match result { Ok(text) => sha256_hex(text.as_bytes()), Err(f) => f.kind.to_string() }
 }
 
 fn read_repository_file(root: &Path, name: &str) -> ReadResult<String> {
@@ -503,7 +503,6 @@ fn git_revisions(program: &mut Edit<'_>, shape: &super::shape::Shape, root: &Pat
             consulted.push(("git_rev".to_owned(), key, rows.iter().map(|(n, id)| format!("{n}={id}")).collect::<Vec<_>>().join(",")));
             program.b.fields().add_facts("git_rev", &rows.into_iter().map(|(n, id)| [Value::Str(n.into()), Value::Str(id.into())].into()).collect::<Vec<_>>());
             if base.is_none() {
-                return;
             }
         }
         Err(detail) => {

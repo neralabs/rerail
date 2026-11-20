@@ -1,0 +1,111 @@
+.policy "django-practice-function-decorator-on-method" revision 1
+.description "Apply Django's view decorators to a class's methods through @method_decorator(...), not directly."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Django's view decorators take the request as their first argument; on a method they
+// get `self`, so most fail on requests (AttributeError on `self.user` or `self.method`, or the TypeError Django
+// raises to say "use @method_decorator"). It matches one of them, bare or called, on a method (first parameter
+// `self`) defined directly in a class body. csrf_exempt, login_not_required and no_append_slash only mark the
+// function, which works on a bound method passed as a view (`admin_view(self.upload)`), but as_view() copies the marks
+// from dispatch() alone, so these three are matched only on a class-based view's methods other than dispatch(). On a
+// Django REST framework view, csrf_exempt is reported as redundant: DRF's as_view() already exempts the view, and its
+// CSRF check comes from SessionAuthentication.
+//   class Hook(View):
+//       @csrf_exempt
+//       def post(self, request): ...                       reported: CSRF is still enforced
+//       @method_decorator(csrf_exempt)
+//       def post(self, request): ...                       not reported
+//       @csrf_exempt
+//       def dispatch(self, *args, **kwargs): ...           not reported: as_view() copies dispatch's marks
+//       @cache_page(60)
+//       def get(self, request): ...                        reported: fails on every request
+//       @vary_on_cookie
+//       def get(self, request): ...                        not reported: it touches only the response
+// Gaps: project decorators that wrap these, and decorators re-exported from a module outside the run.
+
+#include "python/django.rerail"
+
+.violation FunctionDecoratorOnMethod(at: node, dec: symbol, effect: symbol, fix: symbol) "`@{dec}` is a function decorator applied to a method: {effect}. {fix}"
+
+// fdm_decorator(q, effect): view decorator q and what it does on a method of a Django view.
+.decl fdm_decorator(q: symbol, effect: symbol)
+fdm_decorator("django.views.decorators.csrf.csrf_exempt", "it only marks the function, and as_view() reads the mark from dispatch() alone, so CSRF is still enforced on this view").
+fdm_decorator("django.contrib.auth.decorators.login_not_required", "it only marks the function, and as_view() reads the mark from dispatch() alone, so LoginRequiredMiddleware still sends this view's users to the login page").
+fdm_decorator("django.views.decorators.common.no_append_slash", "it only marks the function, and as_view() reads the mark from dispatch() alone, so CommonMiddleware still redirects this view's URL to the one with a trailing slash").
+fdm_decorator(q, "it takes `self` for the request, so the view fails with AttributeError on every request") :-
+    (q = "django.contrib.auth.decorators.login_required" ; q = "django.contrib.auth.decorators.permission_required" ;
+     q = "django.contrib.auth.decorators.user_passes_test" ;
+     q = "django.contrib.admin.views.decorators.staff_member_required").
+fdm_decorator(@dot("django.views.decorators.http", x), "it takes `self` for the request, so the view fails with AttributeError on every request") :-
+    (x = "require_http_methods" ; x = "require_GET" ; x = "require_POST" ; x = "require_safe" ; x = "condition" ;
+     x = "etag" ; x = "last_modified").
+fdm_decorator(@dot("django.views.decorators.csrf", x), "it takes `self` for the request, so the view fails with AttributeError on every request") :-
+    (x = "csrf_protect" ; x = "ensure_csrf_cookie" ; x = "requires_csrf_token").
+fdm_decorator("django.views.decorators.cache.cache_page", "it takes `self` for the request, so the view fails with AttributeError on every request").
+// GZipMiddleware leaves responses under 200 bytes, or already encoded, before it reads the request.
+fdm_decorator("django.views.decorators.gzip.gzip_page", "it takes `self` for the request, so the view fails with AttributeError on every response it would compress").
+fdm_decorator(q, "it takes `self` for the request, so the view fails with TypeError on every request") :-
+    (q = "django.views.decorators.cache.never_cache" ; q = "django.views.decorators.cache.cache_control" ;
+     q = "django.views.decorators.debug.sensitive_post_parameters").
+// fdm_mark(q): decorators that only set an attribute on the function.
+.decl fdm_mark(q: symbol)
+fdm_mark("django.views.decorators.csrf.csrf_exempt"). fdm_mark("django.contrib.auth.decorators.login_not_required").
+fdm_mark("django.views.decorators.common.no_append_slash").
+// fdm_decorates(f, e, q): decorator expression e on f is view decorator q, bare (`@never_cache`) or called
+// (`@cache_page(60)`).
+.decl fdm_decorates(f: node, e: node, q: symbol)
+fdm_decorates(f, e, q) :- decorator(f, e), sym_of(e, q), fdm_decorator(q, _).
+fdm_decorates(f, e, q) :- decorator(f, e), kind(e, "call"), field(e, "function", g), sym_of(g, q), fdm_decorator(q, _).
+// fdm_drf(c): class c derives from a Django REST framework view (the library's linear closure, DRF's views only).
+.decl fdm_drf_q(q: symbol)
+fdm_drf_q(q) :- dj_view_lib(q), prefix("rest_framework.", q).
+fdm_drf_q(q) :- class_def(c, q), class_base(c, b), fdm_drf_q(b).
+.decl fdm_drf(c: node)
+fdm_drf(c) :- class_def(c, q), class_base(c, b), fdm_drf_q(b).
+// fdm_case(f, q, effect, how): q does not work on method f, with this effect; how is "wrap" (method_decorator fixes
+// it) or "drop" (nothing to wrap: the decorator is redundant). Any decorator but a mark; a mark on a class-based view's
+// method other than dispatch(); csrf_exempt on a DRF view's method, which is redundant.
+.decl fdm_case(f: node, q: symbol, effect: symbol, how: symbol)
+fdm_case(f, q, effect, "wrap") :- fdm_decorates(f, _, q), nearest(f, c, scope), kind(c, "class_definition"),
+    !fdm_mark(q), fdm_decorator(q, effect).
+fdm_case(f, q, effect, "wrap") :- fdm_decorates(f, _, q), nearest(f, c, scope), fdm_mark(q), dj_view_class(c),
+    !def_name(f, "dispatch"), !fdm_drf_csrf(c, q), fdm_decorator(q, effect).
+fdm_case(f, q, "it does nothing here, since Django REST framework's as_view() already exempts every view from CsrfViewMiddleware, and DRF's own CSRF check comes from SessionAuthentication, which this mark does not change", "drop") :-
+    fdm_decorates(f, _, q), nearest(f, c, scope), fdm_drf_csrf(c, q), !def_name(f, "dispatch").
+.decl fdm_drf_csrf(c: node, q: symbol)
+fdm_drf_csrf(c, "django.views.decorators.csrf.csrf_exempt") :- fdm_drf(c).
+
+FunctionDecoratorOnMethod(e, dec, effect, fix) :- fdm_decorates(f, e, q), fdm_case(f, q, effect, how),
+    param(f, "self", 0), text(e, dec), docof(f, d), !dj_test_doc(d),
+    (how = "wrap", fix = cat("Wrap it: `@method_decorator(", dec, ")` on the method, or `@method_decorator(", dec,
+        ", name='dispatch')` on the class.") ;
+     how = "drop", fix = "Remove it; to drop the CSRF check for this view, give it authentication classes without SessionAuthentication.").
+
+// The cases, `cases/django-practice-function-decorator-on-method/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "hooks/__init__.py" from "cases/django-practice-function-decorator-on-method/hooks/__init__.py"
+    .fixture "hooks/more.py" from "cases/django-practice-function-decorator-on-method/hooks/more.py"
+    .fixture "hooks/tests/test_views.py" from "cases/django-practice-function-decorator-on-method/hooks/tests/test_views.py"
+    .fixture "hooks/views.py" from "cases/django-practice-function-decorator-on-method/hooks/views.py"
+    .expect _ at "hooks/more.py":11
+    .expect _ at "hooks/more.py":16
+    .expect _ at "hooks/more.py":23
+    .expect _ at "hooks/more.py":36
+    .expect _ at "hooks/more.py":42
+    .expect _ at "hooks/views.py":15
+    .expect _ at "hooks/views.py":19
+    .expect _ at "hooks/views.py":23
+    .expect _ at "hooks/views.py":27
+    .expect _ at "hooks/views.py":31
+    .expect _ at "hooks/views.py":37
+    .expect _ at "hooks/views.py":41
+    .expect _ at "hooks/views.py":45
+    .expect _ at "hooks/views.py":49
+    .expect _ at "hooks/views.py":55
+    .expect _ at "hooks/views.py":61
+    .expect _ at "hooks/views.py":68
+    .expect _ at "hooks/views.py":112
+    .expect _ at "hooks/views.py":144
+.end

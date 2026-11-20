@@ -96,13 +96,15 @@ pub const COUNT: u8 = 0x65;
 /// the check holds at a bit of its mask among the token's bytes, as the lean lexer checks a
 /// string's `\u` escapes where it notes one.
 pub const CHECK: u8 = 0x66;
-/// The pending extras that start where mask `operand` (`Words::block_programs`' masks) does not
-/// hold, from the first on, are no longer pending: the nodes closed next keep them, as a leaf
-/// taken after them would. A settling mark's arm (`mark … , settles`): the extras before its
-/// line break are the statement's. (0x84: 0x67 became the preprocessing words' `READ`.)
-/// `m=1` (`mark … , drops W`): where mask `operand` holds at the token's start, the extra
-/// pending last is dropped: no node of the tape (decision 0416, the lean lexer's swallowed
-/// comment).
+/// The pending extras before the first whose code has mark `operand`'s bit (the marks of its
+/// own gap, `records::Records::own`) are no longer pending: the nodes closed next keep them, as
+/// a leaf taken after them would. A settling mark's arm (`mark … , settles`): the extras before its
+/// line break are the statement's.
+/// `m=1` (`mark … , drops …`): where gap pattern `operand` holds at the token
+/// (`Words::gap_patterns`, its first entry), the extra pending last is dropped: no node of the
+/// tape (decision 0416, the lean lexer's swallowed comment). `m=2`, and `m=3+F` where flag `F`
+/// is set (`mark … , loses …`): where gap pattern `operand` holds, the extra pending last is
+/// lost: of no width, after the token (decision 0451, the lean lexer's `asi`).
 pub const SETTLE: u8 = 0x84;
 
 // The preprocessing words (decision 0348, `pp_words`): tier 2's words over a stack of token
@@ -240,6 +242,18 @@ pub fn split(word: u32) -> (u8, u8, u16) {
     (word as u8, (word >> 8) as u8, (word >> 16) as u16)
 }
 
+/// The grammar's names for a program's numbers (`name rule R "N"`, `name kind #K "N"`, `name
+/// token K "N"`, `name mark K "N"`): each rule's (by its place among `Words::rules`), each node
+/// kind's, each record kind's (the token kinds tier 1's records give), and each mark's in the
+/// records' code (`Records::marks`, by its bit).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Names {
+    pub rules: Vec<(u16, String)>,
+    pub kinds: Vec<(u16, String)>,
+    pub tokens: Vec<(u8, String)>,
+    pub marks: Vec<(u8, String)>,
+}
+
 /// A program's words and the tables they index.
 #[derive(Clone, Default)]
 pub struct Words {
@@ -265,6 +279,9 @@ pub struct Words {
     /// rule's), its calls (`PUSH`) native calls: only a call's `GOTO`, the word after its
     /// `PUSH`, goes to another rule (`stream::validate_rules`). Empty: one state machine.
     pub rules: Vec<u16>,
+    /// The grammar's names (`name …` rows), for code that reads as the grammar does: none changes
+    /// what the program does.
+    pub names: Names,
     /// Tier 2's marks that hold only at a token of one word (`markword K sW`): mark `K` (its
     /// order) holds where its mask does and the token's record names string `W`, as a parser
     /// tests the next token's word. Rising by mark.
@@ -281,6 +298,12 @@ pub struct Words {
     /// record's bit does and its tokens follow, each element one record (the extras between
     /// skipped). Rising by mark.
     pub token_marks: Vec<TokenMark>,
+    /// The questions a mark's `drops` and `loses` ask (decision 0451; `gappattern P oO kK …`):
+    /// entries of one pattern share its order `P`, which `SETTLE` names by its first entry
+    /// (`patterns_hold`). Each element is a record as the lexer wrote it, extras included, at
+    /// its offset from the token (`gap_pattern_holds`): the lean lexer's `asi`, which reads on
+    /// past a comment after a line break. Rising by pattern.
+    pub gap_patterns: Vec<TokenMark>,
     /// The counts of tokens (`COUNT`; `tokencount N max M`): each one's most.
     pub counts: Vec<u16>,
     /// Checks of a few bytes at each bit of a sparse mask (`localcheck`): tier 1's escape or
@@ -493,17 +516,23 @@ pub struct TokenElem {
     /// A run (decision 0416): any number of records the element takes, then the elements after
     /// it from any of them on (one run at most, after offset 0, never last).
     pub run: bool,
-    /// A run's depths (Q326, Bitlex's `nest`): each side of one, the run's records it takes go
+    /// A run's depths (Q339, Bitlex's `nest`): each side of one, the run's records it takes go
     /// one deeper (`open`) or one out. The elements after the run are tried only where every
     /// depth is 0; a closer where its depth is 0 ends the run.
     pub nests: Vec<Nest>,
-    /// A run's `ending` (Q274): the elements after it are tried only where its last record (the
+    /// A run's `ending` (Q342): the elements after it are tried only where its last record (the
     /// one before it, where it took none) is one this test takes.
     pub ending: Option<Box<TokenElem>>,
     /// The marks (bits of the records' marks) whose bit the record must not hold (`without M`),
     /// as the lean parser asks `!peek_at(j).nl`: the element holds only where the code has none
     /// of them.
     pub without: u32,
+    /// The marks whose bit the record must hold (`with M`), as the lean parser asks
+    /// `peek_at(j).nl`: the element holds only where the code has all of them.
+    pub with: u32,
+    /// The bytes the record's token may begin with (`starting "B"`, a gap pattern's only): a
+    /// set of 256 bits, none for no test. The lean lexer's `asi` reads the byte after a comment.
+    pub first: [u64; 4],
     /// The marks (bits of the records' marks) that take a record as one of the kinds: a kind
     /// whose first byte another token's starts too has its rows' starts as a mark bit of the
     /// code, read as tier 2's `ROW` reads a row's start, and `kinds` holds only the classes of
@@ -524,7 +553,7 @@ pub struct Nest {
 pub const NESTS: usize = 4;
 
 /// A run's depths after it takes a record (`code`): `None` where a closer's depth is 0, which
-/// ends the run (Q326).
+/// ends the run (Q339).
 pub fn nest_step(nests: &[Nest], depth: [u32; NESTS], code: u32) -> Option<[u32; NESTS]> {
     let mut d = depth;
     for n in nests.iter().filter(|n| n.test.takes(code)) {
@@ -550,11 +579,16 @@ impl TokenElem {
         ((kind < 64 && self.kinds >> kind & 1 == 1 || row) && !keyword) || (word > 0 && self.words.contains(&((word - 1) as u16)))
     }
 
+    /// Whether the record's first byte is one the element takes (`TokenElem::first`).
+    pub fn first_holds(&self, byte: u8) -> bool {
+        self.first == [0; 4] || self.first[usize::from(byte / 64)] >> (byte % 64) & 1 == 1
+    }
+
     /// Whether the element holds at a record's code (`None`: no record left, the file's end).
     pub fn holds(&self, code: Option<u32>) -> bool {
         match code {
             None => self.end,
-            Some(c) => self.takes(c) != self.not && c >> crate::records::MARK_SHIFT & self.without == 0,
+            Some(c) => self.takes(c) != self.not && c >> crate::records::MARK_SHIFT & self.without == 0 && c >> crate::records::MARK_SHIFT & self.with == self.with,
         }
     }
 }

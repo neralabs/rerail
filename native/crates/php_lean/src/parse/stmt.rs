@@ -77,7 +77,7 @@ impl<'a> P<'a> {
             w::ABSTRACT | w::FINAL | w::READONLY | w::CLASS if self.class_ahead() => self.class_declaration(s),
             w::INTERFACE if next == T::Name => self.interface_declaration(s),
             w::TRAIT if next == T::Name => self.trait_declaration(s),
-            w::ENUM if next == T::Name && matches!(self.kind_at(2), T::LBrace | T::Colon) || (next == T::Name && self.is_word_at(2, w::IMPLEMENTS)) => {
+            w::ENUM if next == T::Name && (matches!(self.kind_at(2), T::LBrace | T::Colon) || self.is_word_at(2, w::IMPLEMENTS)) => {
                 self.enum_declaration(s)
             }
             w::NAMESPACE if next != T::Backslash => self.namespace_definition(s),

@@ -1,0 +1,28 @@
+.policy "ruff-c408-unnecessary-collection-call" revision 3
+.description "Use a literal instead of calling dict(), list() or tuple() with no arguments, or dict() with only named keyword arguments; the literal is clearer and skips a call."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C408 (flake8-comprehensions): a call of the builtin dict, list or tuple (by name or as
+// `builtins.dict`) with no positional argument: `dict()`, `list()`, `tuple()`, and `dict(a=1)` with only
+// named keywords (no `**kw`). Option `flake8-comprehensions.allow-dict-calls-with-keyword-arguments`
+// (default "false"), as Ruff's: "true" keeps `dict(a=1)`. Ruff's fixes are unsafe; none here.
+//   dict()    list()    dict(a=1, b=2)     ← C408: {}, [], {"a": 1, "b": 2}
+//   dict(**kw)    list(x)    dict(a=1, **kw)    not reported
+#include "python/comprehensions.rerail"
+//   c4_builtin(c, x), call_nargs(c, n), call_nkwargs(c, 0)
+
+.violation C408(at: node, kind: symbol) code "C408"
+    "Replace the call with a literal: `{{}}` for `dict()`, `{{\"a\": 1}}` for `dict(a=1)`, `[]` for `list()`, `()` for `tuple()`."
+    suppress ruff "C408"
+// A call in a file is reported at the call; a call in a string a rule parses (a string annotation, a tape value
+// of decision 0431, whose nodes are no file's) at the string, through guest_of.
+C408(c, k) :- c408_call(c, k), node(d, c, _, _, _), doc(d, _, _).
+C408(s, k) :- c408_call(c, k), guest_of(c, s), node(d, c, _, _, _), !doc(d, _, _).
+
+// c408_call(c, k): c is a call of builtin k that a literal replaces.
+.decl c408_call(c: node, k: symbol)
+c408_call(c, k) :- c4_builtin(c, k), (k = "dict" ; k = "list" ; k = "tuple"), call_nargs(c, 0), call_nkwargs(c, 0).
+c408_call(c, "dict") :- c4_builtin(c, "dict"), call_nargs(c, 0), !call_nkwargs(c, 0), !call_kwsplat(c),
+    !option("flake8-comprehensions.allow-dict-calls-with-keyword-arguments", "true").

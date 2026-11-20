@@ -296,7 +296,7 @@ const LISTED: &[(&str, &str)] = &[
 ];
 
 /// A cross-file rule over a directory's entries (`dir_entry`, answered on request) and every file's exports. The
-/// directory is computed (`cat`, as the libraries' `env.rr` computes theirs), or a constant (a request fact).
+/// directory is computed (`cat`, as the libraries' `env.rerail` computes theirs), or a constant (a request fact).
 fn listing_program(dir: &str) -> String {
     format!(
         r#"

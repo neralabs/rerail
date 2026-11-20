@@ -1,15 +1,15 @@
-//! Rules in `.rr`, the engine's rule language: Soufflé Datalog with the additions of
-//! `docs/rule-syntax/lib/core.rr` (decision 0043). Every rule the engine runs is read here.
+//! Rules in `.rerail`, the engine's rule language: Soufflé Datalog with the additions of
+//! `docs/rule-syntax/lib/core.rerail` (decision 0043). Every rule the engine runs is read here.
 //!
 //! - `syntax`: tokens and statements as written;
 //! - `lower`: statements to a program version (decision 0276), the form the planner, magic sets and the backends take;
-//! - `print`: a version as `.rr` text, read back as the same program;
+//! - `print`: a version as `.rerail` text, read back as the same program;
 //! - `check`: the checks of `docs/rule-syntax/site/check_rr.py` (grounded, declared once, stratified);
-//! - `translate`: the earlier `.rdl` dialect's text in `.rr`, comments kept, for the move and for the converter.
+//! - `translate`: the earlier `.rdl` dialect's text in `.rerail`, comments kept, for the move and for the converter.
 //!
-//! `#include "x.rr"` reads `docs/rule-syntax/lib/x.rr`, or else `x.rr` beside the including file; each file once.
-//! A file read with `parse_file_version` has `core.rr` before it, included or not. An included file's `.output`s are its own,
-//! not the program's: they are left out (`python/calls.rr`'s).
+//! `#include "x.rerail"` reads `docs/rule-syntax/lib/x.rerail`, or else `x.rerail` beside the including file; each file once.
+//! A file read with `parse_file_version` has `core.rerail` before it, included or not. An included file's `.output`s are its own,
+//! not the program's: they are left out (`python/calls.rerail`'s).
 
 pub use rerail_rr::code_rule_dsl::logic::rr::check;
 // Its files are its test modules alone.
@@ -27,10 +27,10 @@ pub use from_tape::{code_body, string_value, syntax_error};
 pub mod images;
 pub mod module_image;
 pub use rerail_rr::code_rule_dsl::logic::rr::lower;
-/// The text tests `.rr` names, and the engine's test each lowers to (the coverage gate probes each).
+/// The text tests `.rerail` names, and the engine's test each lowers to (the coverage gate probes each).
 pub use rerail_rr::code_rule_dsl::logic::rr::lower::TESTS as RR_TESTS;
 pub use rerail_rr::code_rule_dsl::logic::rr::print::{self};
-// The parser and the tape's tree, the `.rr` parser crate's (`rerail_rr_syntax`).
+// The parser and the tape's tree, the `.rerail` parser crate's (`rerail_rr_syntax`).
 use rerail_rr_syntax::syntax;
 pub use rerail_rr_syntax::tape;
 use from_tape::{RrFile, S, Stmt};
@@ -133,16 +133,16 @@ pub use print::print_version;
 pub use syntax::quote;
 pub use translate::translate;
 
-/// The relations `core.rr` declares: the engine's names (decision 0141). Empty when `core.rr` does not read.
+/// The relations `core.rerail` declares: the engine's names (decision 0141). Empty when `core.rerail` does not read.
 pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     static CORE: std::sync::OnceLock<std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
     CORE.get_or_init(|| {
-        std::fs::read_to_string(library().join("core.rr")).ok().and_then(|src| parse_version(&src).ok()).map(|v| v.declared_names().into_iter().collect()).unwrap_or_default()
+        std::fs::read_to_string(library().join("core.rerail")).ok().and_then(|src| parse_version(&src).ok()).map(|v| v.declared_names().into_iter().collect()).unwrap_or_default()
     })
 }
 
 /// `core_names` less the relations decision 0174's rewrite adds (`lower::made_on_request`): what a program in
-/// `core.rr`'s shape declares whichever attributes it answers on request (a round may be undone, `lower::undo_round`).
+/// `core.rerail`'s shape declares whichever attributes it answers on request (a round may be undone, `lower::undo_round`).
 pub fn core_shape() -> &'static std::collections::BTreeSet<String> {
     static SHAPE: std::sync::OnceLock<std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
     SHAPE.get_or_init(|| core_names().iter().filter(|r| !lower::made_on_request(r)).cloned().collect())
@@ -158,14 +158,14 @@ pub fn library() -> PathBuf {
         .unwrap_or_else(|| rerail_store::source_tree::root().map_or_else(|| PathBuf::from("docs/rule-syntax/lib"), |root| root.join("docs/rule-syntax/lib")))
 }
 
-/// A program's `.rr` text. Its `#include`s name library files (decision 0089), read as `parse_file_version` reads
-/// them: `core.rr` first unless the text is in T's shape, each file once, includes first. A text that includes nothing
-/// is read as it is, without `core.rr`.
+/// A program's `.rerail` text. Its `#include`s name library files (decision 0089), read as `parse_file_version` reads
+/// them: `core.rerail` first unless the text is in T's shape, each file once, includes first. A text that includes nothing
+/// is read as it is, without `core.rerail`.
 pub fn parse_version(src: &str) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     read_text(src)?.lower_version(true)
 }
 
-/// A program's `.rr` text as `parse_version` reads it, but with only its libraries' declarations, not their clauses:
+/// A program's `.rerail` text as `parse_version` reads it, but with only its libraries' declarations, not their clauses:
 /// what a run that holds the libraries once (decision 0089 §5) needs of a program that adds to no library relation.
 /// Its own rules are lowered against the library's names; the library's rules are the run's, lowered once.
 pub fn parse_own_version(src: &str) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
@@ -277,7 +277,7 @@ impl Text {
     fn lowered_own(self, scoped: &Scoped, library: Option<&Library>) -> Result<Option<Own>, Error> {
         let Read::Modular { files, own } = self.0 else { return Ok(None) };
         let checked: Vec<Stmt> = own.iter().filter(|s| !(matches!(s.what(), Some(S::Clause)) && !s.has_body())).cloned().collect();
-        let reads_core = files.first().is_some_and(|(path, _, _)| path.ends_with("core.rr"));
+        let reads_core = files.first().is_some_and(|(path, _, _)| path.ends_with("core.rerail"));
         check_names(&vec![(PathBuf::from("<program>"), checked)], reads_core)?;
         closed_program(&files, &own)?;
         let own: Vec<Stmt> = own.into_iter().filter(|s| !is_include(s)).collect();
@@ -336,7 +336,7 @@ impl Text {
                 images::read_image(store, key)
             }
         };
-        // Read where it is held (decision 0480): the bundle's mapping, a segment's, or its row loaded at 16 bytes.
+        // Read where it is held (decision 0464): the bundle's mapping, a segment's, or its row loaded at 16 bytes.
         if let Some((bytes, id)) = found
             && let Ok(version) = super::program_image::Version::open_shared(bytes)
         {
@@ -362,8 +362,8 @@ impl Text {
         };
         // The text's own rules and declarations; its facts may be the runner's (`env`, decision 0089 §1).
         let checked: Vec<Stmt> = own.iter().filter(|s| !(matches!(s.what(), Some(S::Clause)) && !s.has_body())).cloned().collect();
-        // `core.rr`'s names, unless the text is in T's shape and reads no `core.rr` (`resolve`).
-        let reads_core = files.first().is_some_and(|(path, _, _)| path.ends_with("core.rr"));
+        // `core.rerail`'s names, unless the text is in T's shape and reads no `core.rerail` (`resolve`).
+        let reads_core = files.first().is_some_and(|(path, _, _)| path.ends_with("core.rerail"));
         check_names(&vec![(PathBuf::from("<program>"), checked)], reads_core)?;
         closed_program(&files, &own)?;
         // Lowering reads one kind of clause statically: a kind set's (`fscope("module")`, `lfscope(k) :- fscope(k)`),
@@ -581,8 +581,8 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
 
 /// Library files (canonical paths, includes first, with their statements less their includes) lowered one module
 /// at a time, each against the modules it reaches (decision 0246 §1), to be linked (`link_library_versions`). A
-/// module is a file, or files that include each other (`python/names.rr` and `python/imports.rr`: one unit, read
-/// together). `core.rr` is in every other file's scope, as `parse_version` reads a file with it first.
+/// module is a file, or files that include each other (`python/names.rerail` and `python/imports.rerail`: one unit, read
+/// together). `core.rerail` is in every other file's scope, as `parse_version` reads a file with it first.
 /// `RERAIL_LIBRARY_LOWERING=whole` lowers them as one (`lower_library`), as before, to compare.
 pub fn library_modules(paths: &[PathBuf], files: Files) -> Result<Vec<lower::Module>, Error> {
     let store = image_store();
@@ -633,7 +633,7 @@ fn closed_program(files: &SharedFiles, own: &[Stmt]) -> Result<(), Error> {
 #[allow(clippy::type_complexity)]
 fn library_modules_with_files(paths: &[PathBuf], files: Files, store: Option<&crate::content_store::ContentStore>) -> Result<(Vec<lower::Module>, Vec<Vec<PathBuf>>, Vec<crate::content_store::HashKey>), Error> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| format!("lower the library one module at a time ({} files)", paths.len()));
-    let core = library().join("core.rr").canonicalize().ok();
+    let core = library().join("core.rerail").canonicalize().ok();
     let at = |p: &Path| paths.iter().position(|q| q == p);
     let n = paths.len();
     // Each file's direct includes, by position: the library's file, else the one beside it (`#include`).
@@ -766,7 +766,7 @@ fn keep_image(store: Option<&crate::content_store::ContentStore>, what: &'static
     images::export(key, (*bytes).as_ref());
     let Some(store) = store else { return false };
     // A record of its own (decision 0306), dropped where the queue is full: the image its piece, as its maker holds
-    // it, placed in a segment by the writer and read there (decision 0480).
+    // it, placed in a segment by the writer and read there (decision 0464).
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
         let key: crate::content_store::HashKey = crate::content_store::record::codec::from_body("an image", body)?;
         let hash = crate::content_store::HashKey::sha256(cx.bytes);
@@ -1002,7 +1002,7 @@ fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::progr
     let lower::Linked { lowered, stated, own_stated, .. } = linked;
     let v = lowering_tail_on(scoped.version()?, vec![(own_v, stated, own_stated)], true, lowered, library)?;
     let mut b = Builder::on(&v);
-    lower::unseed(&mut b.fields(), seeds, core);
+    lower::unseed(&mut b.fields(), seeds, core, library.map(|l| &*l.version));
     b.finish().map(|(v, _)| v).map_err(Error::Syntax)
 }
 
@@ -1126,7 +1126,7 @@ pub struct TextRead {
     pub(in crate::code_rule_dsl) statements: Vec<Stmt>,
 }
 
-/// What [`TextRead::resolved`] reads off a text: its library files (includes resolved, `core.rr` first unless the
+/// What [`TextRead::resolved`] reads off a text: its library files (includes resolved, `core.rerail` first unless the
 /// text is in T's shape, and the engine's own library programs), the relations it and its includes declare, and the
 /// phase it names itself (`.phase`).
 pub struct TextNames {
@@ -1191,10 +1191,10 @@ pub fn declared_names(src: &str) -> Result<(Vec<String>, Option<String>), Error>
     Ok((t.names, t.phase))
 }
 
-/// `statements`' `#include`s resolved in the library: its files (`core.rr` first unless the statements are in T's
+/// `statements`' `#include`s resolved in the library: its files (`core.rerail` first unless the statements are in T's
 /// shape, each once, includes first) and the statements without the includes.
 ///
-/// Phase 0 resolves them (`plan::corpus::phase0`): `bootstrap.rr`'s run loads each file as a document, and the
+/// Phase 0 resolves them (`plan::corpus::phase0`): `bootstrap.rerail`'s run loads each file as a document, and the
 /// files are read here off their stored tapes, in the graph's order.
 fn resolve(statements: Vec<Stmt>) -> Result<(Files, Vec<Stmt>), Error> {
     let (files, own) = resolve_shared(statements)?;
@@ -1301,10 +1301,10 @@ pub(in crate::code_rule_dsl) fn graph_digest(src: &str) -> Result<Option<[u8; 32
     }
 }
 
-/// The resolution phase 0's own program (`bootstrap.rr`) is read with: the library, then beside the includer.
+/// The resolution phase 0's own program (`bootstrap.rerail`) is read with: the library, then beside the includer.
 fn builtin_resolve(statements: Vec<Stmt>) -> Result<(Files, Vec<Stmt>), Error> {
     let (includes, own): (Vec<_>, Vec<_>) = statements.into_iter().partition(is_include);
-    let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
+    let core = library().join("core.rerail").canonicalize().map_err(|e| Error::Syntax(format!("core.rerail: {e}")))?;
     let (mut out, mut read_files, mut seen) = (Vec::new(), Vec::new(), Vec::new());
     if t_shape(&own) {
         seen.push(core);
@@ -1367,7 +1367,7 @@ pub fn files_given(v: &std::sync::Arc<super::program_image::Version>) -> Result<
     Ok(b.finish().map_err(Error::Syntax)?.0)
 }
 
-/// A program's `.rr` file, with what it includes.
+/// A program's `.rerail` file, with what it includes.
 pub fn parse_file_version(path: &Path) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     read_file(path).map(|(program, _)| program)
 }
@@ -1397,16 +1397,16 @@ impl LibraryFile {
     }
 }
 
-/// The program of a `.rr` file and the library files it read or probed, in reading order (core.rr, then
+/// The program of a `.rerail` file and the library files it read or probed, in reading order (core.rerail, then
 /// each file before what it includes).
 ///
 /// The lowered program is a derivation of those files (0044 §4): it is kept for the process and
 /// reused while every file it read hashes the same, so only an edit to a file it read (or a
 /// file appearing where an include looked) reads and lowers it again.
-/// The relations `core.rr` declares for libraries to derive for the engine to read: the documents they load (t21 E2).
+/// The relations `core.rerail` declares for libraries to derive for the engine to read: the documents they load (t21 E2).
 pub const LIBRARY_DERIVED: [&str; 1] = ["load"];
 /// The library's programs the engine adds to a run itself (decision 0076's import components).
-const ENGINE_FILES: [&str; 1] = ["components.rr"];
+const ENGINE_FILES: [&str; 1] = ["components.rerail"];
 
 pub fn read_file(path: &Path) -> Result<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
@@ -1547,7 +1547,7 @@ pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Resul
     token_reads::refuse(&statements)?;
     // The relations an included file declares are the library's: canonical, one copy however many policies of a
     // combined run include it (decision 0091). Printed as `.global library …`, so a program's text keeps that.
-    let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
+    let core = library().join("core.rerail").canonicalize().map_err(|e| Error::Syntax(format!("core.rerail: {e}")))?;
     let library: Vec<String> = statements
         .iter()
         .filter(|(file, _)| *file != core && *file != key)
@@ -1566,7 +1566,7 @@ pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Resul
 /// `statements` less the included files' clauses that nothing in the program reaches. Of the 44 data-layer
 /// policies' rules, 76% were lowered (with the libraries' whole) and then pruned (`preparation::Prune`): reading a policy
 /// was the largest part of a batch's setup (`lower_files`, 16% of the main thread). Kept whole: the file itself,
-/// `core.rr` and the engine's files (lowering reads their relations by name), and every item but a clause. A clause
+/// `core.rerail` and the engine's files (lowering reads their relations by name), and every item but a clause. A clause
 /// of another file is kept when one of its heads is reached: named by the file itself (each identifier of each of
 /// its items, so none is missed), by another file's output, violation or setting, by the engine (`LIBRARY_DERIVED`),
 /// by its own body when that makes a request (`asks`), or read by a kept clause. Every clause for a relation is kept with any, so a library relation is the same in each
@@ -1599,7 +1599,7 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&Stmt>)]) -> File
             t.names_in(c, out);
         }
     }
-    let whole: Vec<PathBuf> = ["core.rr"].iter().chain(ENGINE_FILES.iter()).filter_map(|f| library().join(f).canonicalize().ok()).chain(std::iter::once(own.to_owned())).collect();
+    let whole: Vec<PathBuf> = ["core.rerail"].iter().chain(ENGINE_FILES.iter()).filter_map(|f| library().join(f).canonicalize().ok()).chain(std::iter::once(own.to_owned())).collect();
     // The relations a library derives for the engine to read (`LIBRARY_DERIVED`: loads) are reached: no rule
     // reads them, and the corpus run makes them outputs (`corpus::run_observed`'s requests). Dropped, a library's
     // `load(…)` asked for no document, and no import was resolved.
@@ -1614,7 +1614,7 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&Stmt>)]) -> File
                     let heads = st.heads();
                     heads.iter().for_each(|h| by_head.entry(h).or_default().push((f, s)));
                     // A clause whose reads make requests (`asks`) is reached though nothing reads its heads: the engine
-                    // answers its request for every reader (`python/modules.rr`'s `py_listed` lists the directories the
+                    // answers its request for every reader (`python/modules.rerail`'s `py_listed` lists the directories the
                     // other rules read entries of).
                     let mut read = BTreeSet::new();
                     reads(st, false, &mut read);
@@ -1703,6 +1703,8 @@ pub fn guest_asks(src: &str) -> Result<GuestAsks, Error> {
         }
         out
     };
+    // A clause asks the run when it reads what the run answers (not the world's own). A head of the engine's to read
+    // asked too while it named an embed; the embeds are gone (0450 §3), and `LIBRARY_DERIVED`'s loads ask nothing.
     let asking = |read: &BTreeSet<String>| read.iter().any(|r| asks(r) && !WORLD.iter().any(|(w, _)| w == r));
     let reads_guest = |read: &BTreeSet<String>| read.iter().any(|r| READS.contains(&r.as_str()) || r == "parse" || r == "splice");
     let mut by_head: std::collections::HashMap<&str, Vec<BTreeSet<String>>> = std::collections::HashMap::new();
@@ -1737,12 +1739,12 @@ pub fn guest_asks(src: &str) -> Result<GuestAsks, Error> {
     Ok(GuestAsks { settings, files: reads.then_some(asking_files), own: reads && own_asks })
 }
 
-/// The names a program's files may not declare or derive: `core.rr`'s, but in `core.rr` (decision 0141), and names
+/// The names a program's files may not declare or derive: `core.rerail`'s, but in `core.rerail` (decision 0141), and names
 /// starting `rr_`, but in the engine's own library programs.
 fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
-    // `core.rr`'s relations are the engine's (decision 0141): no other file declares or derives one.
-    let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
-    // From `core.rr` among the files, else (`core_unlisted`: the program reads it) as `core_names` reads it.
+    // `core.rerail`'s relations are the engine's (decision 0141): no other file declares or derives one.
+    let core = library().join("core.rerail").canonicalize().map_err(|e| Error::Syntax(format!("core.rerail: {e}")))?;
+    // From `core.rerail` among the files, else (`core_unlisted`: the program reads it) as `core_names` reads it.
     let listed = statements.iter().any(|(file, _)| *file == core);
     let engine: std::collections::BTreeSet<&str> = statements
         .iter()
@@ -1760,7 +1762,7 @@ fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
                 _ => Vec::new(),
             };
             if let Some(name) = names.into_iter().find(|n| engine.contains(n)) {
-                return Err(Error::Syntax(format!("{}:{}: {name} is core.rr's: a program reads it and cannot declare or derive it", file.display(), s.line())));
+                return Err(Error::Syntax(format!("{}:{}: {name} is core.rerail's: a program reads it and cannot declare or derive it", file.display(), s.line())));
             }
         }
     }
@@ -1932,7 +1934,7 @@ fn program_order(path: &Path) -> Result<(Vec<PathBuf>, Vec<LibraryFile>), Error>
     g.order(&path.to_string_lossy(), &mut order)?;
     order.retain(|p| *p != path);
     order.push(path.clone());
-    // The files in reading order, as `LibraryFile`s check them: `core.rr` (an include at offset -1), then the
+    // The files in reading order, as `LibraryFile`s check them: `core.rerail` (an include at offset -1), then the
     // file, then each include, its library probe first where it was found beside the file.
     let library = library();
     let mut files = Vec::new();
@@ -1993,12 +1995,12 @@ pub fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
 
 /// The modules of a program (`program_order`), each its statements as the process holds them (`read_shared`) and
 /// those a program reads of them: without its includes, and an included file without its `.output`s (its own, not
-/// the program's; `core.rr` is the prelude, read as the file is).
+/// the program's; `core.rerail` is the prelude, read as the file is).
 struct Shared(Vec<(PathBuf, Vec<Stmt>)>);
 
 impl Shared {
     fn iter(&self) -> impl Iterator<Item = (&PathBuf, Vec<&Stmt>)> {
-        let core = library().join("core.rr").canonicalize().ok();
+        let core = library().join("core.rerail").canonicalize().ok();
         let own = self.0.last().map(|(p, _)| p.clone());
         self.0.iter().map(move |(p, statements)| {
             let included = Some(p) != own.as_ref() && Some(p) != core.as_ref();
@@ -2020,9 +2022,9 @@ fn program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error> {
     Ok((Shared(modules), files))
 }
 
-/// A JSON policy (`rerail.policy/v1`, decision 0175), read as the `.rr` file it translates to: its text translated
+/// A JSON policy (`rerail.policy/v1`, decision 0175), read as the `.rerail` file it translates to: its text translated
 /// as it is read (`json_rules`), its `#include`s (library files only) resolved as a text's are (`resolve_shared`).
-/// The modules and the files read are in `program_shared`'s order: includes first and the file last; `core.rr`, the
+/// The modules and the files read are in `program_shared`'s order: includes first and the file last; `core.rerail`, the
 /// file (its JSON bytes' digest, so an edit reads it again), then the rest.
 fn json_program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error> {
     let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
@@ -2034,7 +2036,7 @@ fn json_program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error>
     let src = super::json_rules::Translator::new().translate_text(&json, &id).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let statements = RrFile::read(src).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?.statements();
     let (modules, own) = resolve_shared(statements)?;
-    let core = library().join("core.rr").canonicalize().ok();
+    let core = library().join("core.rerail").canonicalize().ok();
     let (first, rest): (Vec<_>, Vec<_>) = modules.iter().partition(|(p, _, _)| Some(p) == core.as_ref());
     let mut files: Vec<LibraryFile> = first.iter().map(|(p, d, _)| LibraryFile { path: p.clone(), sha256: Some(*d) }).collect();
     files.push(file);
@@ -2068,7 +2070,7 @@ fn probe(library: &Path, name: &str, target: &Path, files: &mut Vec<LibraryFile>
 /// `program` for phase 0's own reads.
 fn builtin_program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
     let (mut out, mut read_files) = (Vec::new(), Vec::new());
-    // `core.rr` is every program's prelude (the base relations and built-ins), included or not; except a program in
+    // `core.rerail` is every program's prelude (the base relations and built-ins), included or not; except a program in
     // T's shape (decision 0046), which declares its base relations itself (`doc` among them), and whose libraries
     // read only the relations both shapes have.
     let t_shape = read(&path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?)?
@@ -2076,9 +2078,9 @@ fn builtin_program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
         .iter()
         .any(|s| s.what() == Some(S::Decl("doc")));
     if !t_shape {
-        visit(&library().join("core.rr"), &mut out, &mut read_files, &mut Vec::new(), false)?;
+        visit(&library().join("core.rerail"), &mut out, &mut read_files, &mut Vec::new(), false)?;
     }
-    let mut seen = vec![library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?];
+    let mut seen = vec![library().join("core.rerail").canonicalize().map_err(|e| Error::Syntax(format!("core.rerail: {e}")))?];
     visit(path, &mut out, &mut read_files, &mut seen, false)?;
     Ok((out, read_files))
 }

@@ -76,7 +76,7 @@ def W(name,clauses,utils=None,options=None,roots=None,mode='block',exclude=None)
  definition={'options':{'oracleAnalyzer':{'type':'boolean','default':False},'sourceGate':{'type':'boolean','default':True},**(options or {})}}
  if utils:definition.update(language='python',utils=utils)
  document={'format':'rerail.policy/v1','id':'data-layer-'+name.replace('_','-'),'revision':1,'mode':mode,
-   'description':f'Candidate port of nera-data-layer {name} at {PIN}.',
+   'description':f"Candidate port of the data-layer repository's {name} at {PIN}.",
    'scope':{'include':roots or ['**/*.py'],'exclude':exclude if exclude is not None else ['**/.git/**','**/.venv/**','**/tmp/**','**/__pycache__/**','**/tests/**']},
    'clauses':[{'id':'shared','define':definition},*clauses]}
  triggers=next((getattr(v,'source_triggers',()) for v in vars(modules[name]).values()

@@ -1,11 +1,11 @@
 # 0471. A batch reads its tapes in every slab they lie in, and the device joins' caches share one cap
 
-Status: accepted (2026-11-19). Follows 0484 §3 and 0485 (Q343's third item).
+Status: accepted (2026-11-19). Follows 0465 §3 and 0476 (Q334's third item).
 
 ## Intro
 
-0484 found the large program's label runs on all (3,089 files, 9.6 M nodes) to be 283 runs with a median of 6 files,
-where s1000's were 6 runs with a median of 36. Each run pays a run's fixed costs. 0484 also saw a cold Metal run of
+0465 found the large program's label runs on all (3,089 files, 9.6 M nodes) to be 283 runs with a median of 6 files,
+where s1000's were 6 runs with a median of 36. Each run pays a run's fixed costs. 0465 also saw a cold Metal run of
 all exit 1. The user: "please do all 3. Our parsing should be lightning fast".
 
 Two causes, both of the Metal budget's holders:
@@ -65,7 +65,7 @@ run.
 | instructions | 429–453 G | 403 G |
 | wall | 18.4 s at load 11; 23–36 s at load 18–38 | 16.6 s at load 5 |
 
-- Two cold runs of the new binary passed (rc=0) once the caches shared their cap. Before it, 0484's cold run and this
+- Two cold runs of the new binary passed (rc=0) once the caches shared their cap. Before it, 0465's cold run and this
   session's first pinned runs on all exited at the panic above.
 - Tests: `the_device_reads_every_format_as_the_document_does` runs every format twice, as admitted and over two slabs
   (a source past a slab's size admitted between the first document and the rest), and compares every node's 14 reads
@@ -75,4 +75,4 @@ run.
 
 ## What is next
 
-Q343's first two items: the parse workers' CPU (W's reference graph, 0485's next steps) and the run's serial phases.
+Q334's first two items: the parse workers' CPU (W's reference graph, 0476's next steps) and the run's serial phases.

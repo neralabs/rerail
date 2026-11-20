@@ -252,7 +252,7 @@ impl ProgramPass for GateFields<'_, '_> {
         let names: BTreeSet<String> = g.made.iter().map(|(d, ..)| d.clone()).collect();
         let mut reads: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for r in w_.rules() {
-            for a in r.reads().filter(|a| !(a.neg() && a.gated()) && !names.contains(w_.rel_name(a.rel()))) {
+            for a in r.reads().filter(|a| !((a.neg() && a.gated()) || names.contains(w_.rel_name(a.rel())))) {
                 reads.entry(w_.rel_name(r.head().rel()).to_owned()).or_default().insert(w_.rel_name(a.rel()).to_owned());
             }
         }

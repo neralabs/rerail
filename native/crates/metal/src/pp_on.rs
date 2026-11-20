@@ -53,6 +53,7 @@ const NO_ADDRESS: u64 = 1 << 40;
 #[derive(Clone, Copy)]
 struct PpBatch {
     hb: u64,
+    /// The contexts' table's row bytes: a context's slot `j` is `j` rows on (0408, L2).
     cs: u64,
     count: u32,
     pad: u32,

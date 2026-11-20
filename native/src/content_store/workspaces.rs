@@ -1,6 +1,5 @@
 //! Workspace registry, overlays, promotion to snapshots, and workspace leases.
 
-use crate::content_store::connection::Cached as _;
 #[cfg(any(test, feature = "test-hooks"))]
 use super::StoredFile;
 use super::rows::{intern_path, intern_string, validate_relative_path};
@@ -9,6 +8,7 @@ use super::{
     STRING_REPOSITORY, SnapshotId, SourceId, StoreError, StoreResult, StoredPathObjects,
     StoredSourceObjects, TapeId, WorkspaceId, WorkspaceRegistration,
 };
+use crate::content_store::connection::Cached as _;
 #[cfg(any(test, feature = "test-hooks"))]
 use rusqlite::OptionalExtension;
 use rusqlite::{Connection, TransactionBehavior, params};
@@ -107,7 +107,8 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let path_id = intern_path(&transaction, path)?;
         transaction.execute_cached(
             "INSERT INTO workspace_overlay(workspace_id,path_id,state_id,source_id,tape_id) VALUES (?1,?2,?3,?4,?5)\
@@ -210,7 +211,8 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let path_id = transaction
             .query_row_cached(
                 "SELECT p.path_id FROM paths p JOIN strings s ON s.string_id=p.string_id \

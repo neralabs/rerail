@@ -1,14 +1,16 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   agentTranscriptPayload, callNamesDeniedPath, callNamesSecretPath, WITHHELD_INPUT, WITHHELD_OUTPUT, WITHHELD_PAYLOAD,
 } from "../../src/engine/transcript-boundary.js";
+import { linkFolder, symlinkOrSkip } from "../support/platform/links.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeFolderSync(root);
 });
 
 describe("the transcript boundary for coding agents", () => {
@@ -90,20 +92,20 @@ describe("the transcript boundary for coding agents", () => {
     expect(agentTranscriptPayload("ignore-rules-changed", { path: ".git/info/exclude", via: "observed" })).toEqual(WITHHELD_PAYLOAD);
   });
 
-  it("withholds a call that names a file linked to a secret in the session's checkout", () => {
+  it("withholds a call that names a file linked to a secret in the session's checkout", context => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-transcript-boundary-")));
     roots.push(root);
     writeFileSync(join(root, ".env"), "API_KEY=x\n");
     mkdirSync(join(root, "docs"));
     writeFileSync(join(root, "docs", "guide.md"), "# Guide\n");
-    symlinkSync("../.env", join(root, "docs", "a.md"));
+    symlinkOrSkip(context, "../.env", join(root, "docs", "a.md"));
     const linked = { toolName: "Bash", input: { command: "cat docs/a.md" } };
     expect(agentTranscriptPayload("call", linked)).toBe(linked);
     expect(agentTranscriptPayload("call", linked, root)).toEqual({ toolName: "Bash", input: WITHHELD_INPUT });
     expect(callNamesDeniedPath({ file_path: join(root, "docs", "a.md") }, root)).toBe(true);
     expect(callNamesSecretPath({ command: "cat ./docs/a.md" }, root)).toBe(true);
     // A link at the checkout's root is resolved when it is named like a file, and a bare word is judged by its name.
-    symlinkSync(".env", join(root, "notes.txt"));
+    symlinkOrSkip(context, ".env", join(root, "notes.txt"));
     expect(callNamesSecretPath({ command: "cat notes.txt" }, root)).toBe(true);
     expect(callNamesSecretPath({ command: "cat token" }, root)).toBe(true);
     const plain = { toolName: "Read", input: { file_path: join(root, "docs", "guide.md") } };
@@ -117,7 +119,7 @@ describe("the transcript boundary for coding agents", () => {
     const store = join(root, "node_modules", ".pnpm", "left-pad@1.3.0", "node_modules", "left-pad");
     mkdirSync(store, { recursive: true });
     writeFileSync(join(store, "index.js"), "module.exports = pad;\n");
-    symlinkSync(join(".pnpm", "left-pad@1.3.0", "node_modules", "left-pad"), join(root, "node_modules", "left-pad"));
+    linkFolder(join(".pnpm", "left-pad@1.3.0", "node_modules", "left-pad"), join(root, "node_modules", "left-pad"));
     const read = { toolName: "Bash", input: { command: "cat node_modules/left-pad/index.js" } };
     expect(agentTranscriptPayload("call", read, root)).toBe(read);
     // The hidden path itself, named, is still outside.

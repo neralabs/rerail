@@ -1,5 +1,5 @@
 //! `clang -E`'s profile, shared by the oracle (`examples/pp_oracle.rs`) and the parallel spike's
-//! corpus test (decision 0327, "Correctness"; 0466). The profile is clang's own: its predefined
+//! corpus test (decision 0327, "Correctness"; 0482). The profile is clang's own: its predefined
 //! macros (`clang -dM -E`), its search path (`clang -E -v`), and its answers to the `__has_*` tests
 //! the pass asks (probed, and kept for the run).
 //!

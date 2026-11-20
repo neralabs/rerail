@@ -1,4 +1,4 @@
-"""Checks that ruff-air301-airflow3-removal.names.rr round-trips: per name clause, the table's old names are the
+"""Checks that ruff-air301-airflow3-removal.names.rerail round-trips: per name clause, the table's old names are the
 clause's `old-name` list (with its prefix flag), its messages are the clause's message with `$N` and `$L` filled in, and the guard's module and name are the ones the clause's `new-import` util matches."""
 import importlib.util, json, re
 spec = importlib.util.spec_from_file_location("gen", __file__.replace("check-", "gen-"))

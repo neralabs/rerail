@@ -170,13 +170,13 @@ tokens share a mask (`dotted`, `generic`).
 
 The forward scans differed from the lean parser's in two places:
 - A run stopped at the first place its rest held, not where a depth closes (`type_args_end`
-  counts `<` and `>`). Now it counts them (`nest`, below, Q326).
+  counts `<` and `>`). Now it counts them (`nest`, below, Q339).
 - A run passes line breaks: they are no tokens. The annotation before `if` / `when` ran to
   a line break before. The lean parser reads tokens too, and passes them: on a line break
-  before the `if`, and a declaration after, the tapes are the same (Q272). An annotation before
-  any other expression is now told as `declaration_ahead` tells it (`ending`, below, Q274).
+  before the `if`, and a declaration after, the tapes are the same (Q340). An annotation before
+  any other expression is now told as `declaration_ahead` tells it (`ending`, below, Q342).
 
-## A run's depths: `nest` (Q326)
+## A run's depths: `nest` (Q339)
 
 The lean parser's forward scans count brackets. `type_args_end` keeps a depth of `<` and one of
 `(`: it ends at the `>` that closes the first `<`, and gives up at a `)` with no `(`.
@@ -206,7 +206,7 @@ run now starts at the token after the `{`, as `lambda_params_end` does, so it ho
 may now have a type (`{ (a, b): Pair<A, B> -> a }`), as the lean parser reads it. The corpus is
 unchanged (429 the same, 62 refused, 0 differ), and the generated Rust's tapes are the JIT's.
 
-## A run's last token: `ending` (Q274)
+## A run's last token: `ending` (Q342)
 
 In a statement, the lean parser's `declaration_ahead` skips annotations and modifiers and looks
 for a declaration's keyword; where there is none, the `@` is an annotation over any expression.
@@ -226,7 +226,7 @@ modifier and no declaration's word: then `prefix_expression` takes `ann_expr ann
 expression`, as the lean parser's `unary` takes `@`. Where it does not hold, the `@` starts a
 declaration's modifiers. The mark is hidden: an `@` where no expression can start (a parameter's,
 a type's) skips it. The run passes no `:`, so `@file:` and `@field:` are a declaration's.
-This replaces the run to a `)` before `if` / `when` (Q272) and `args_annotation`.
+This replaces the run to a `)` before `if` / `when` (Q340) and `args_annotation`.
 
 The program gives the run its ending's test (`program::TokenElem::ending`; `ending k… s…` in the
 text). Bitlex's reference (`eval::seq_holds`), the interpreter (`stream::token_follows`, which

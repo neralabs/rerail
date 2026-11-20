@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +10,7 @@ import {
 } from "../../../src/engine/catalog/rule-configuration.js";
 import type { RuleCatalog } from "../../../src/engine/catalog/repository-model.js";
 import { exportRulesDump, importRulesDump } from "../../../src/engine/catalog/rule-bootstrap.js";
+import { PACK_COMPILE_CHECKS_FILE } from "../../../src/engine/catalog/pack-compile-checks.js";
 import { activeCoreVersion, installedPackDirectories, installedPacksPrefix, loadRuleCatalog, readRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import { copyRerailRuleToLibrary, getLibraryRule } from "../../../src/engine/catalog/rule-library.js";
 import { approve, ruleSubject } from "../../../src/engine/catalog/rule-approval.js";
@@ -26,6 +28,10 @@ import {
   temporaryDatabase,
   temporaryDirectory,
 } from "../../support/rule-configuration-builders.js";
+import { CheckoutCatalogs } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
+import { setUpTestRepository } from "../../support/repository-rules.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
+import { experimentOffMessage } from "../../../src/engine/experimental-features.js";
 
 // The exemplar is a language only tests plan: the registry module lists it for this file, and the engine refuses it as a
 // planned language (test/engine/support/exemplar-registry.ts, exemplar-engine.ts). Every other rule compiles in the
@@ -129,6 +135,29 @@ describe("the installed-pack catalog", () => {
         reason: /pack\.json: category /u,
       },
       {
+        name: "a rule document the schema refuses, named with its first issue and not as the schema's JSON",
+        breakPack: directory => editJson(directory, `rules/${PYTHON_RULE}.json`, rule => JSON.parse(JSON.stringify(rule).replaceAll('"language":"python"', '"language":"kotlin"')) as Record<string, unknown>),
+        reason: new RegExp(`^Rule pack complexity: rules/${PYTHON_RULE}\\.json \\S*language Invalid option: expected one of "python"\\|`, "u"),
+      },
+      // A pack made for a newer Rerail holds what this one cannot read. Its core range says so, and that is the reason
+      // given: this Rerail's refusal of a field or a language it does not know tells the person nothing.
+      {
+        name: "a pack.json this core cannot read, in a pack whose core range leaves this core out",
+        breakPack: directory => {
+          editJson(directory, "package.json", manifest => ({ ...manifest, peerDependencies: { "@neralabs/rerail": ">=9.0.0" } }));
+          editJson(directory, "pack.json", pack => ({ ...pack, category: "toolkit" }));
+        },
+        reason: /^it needs a newer Rerail \(>=9\.0\.0\) than this one \(.*\); `rerail update` installs the newest$/u,
+      },
+      {
+        name: "a rule document this core cannot read, in a pack whose core range leaves this core out",
+        breakPack: directory => {
+          editJson(directory, "package.json", manifest => ({ ...manifest, peerDependencies: { "@neralabs/rerail": ">=9.0.0" } }));
+          editJson(directory, `rules/${PYTHON_RULE}.json`, rule => JSON.parse(JSON.stringify(rule).replaceAll('"language":"python"', '"language":"kotlin"')) as Record<string, unknown>);
+        },
+        reason: /^it needs a newer Rerail \(>=9\.0\.0\) than this one \(.*\); `rerail update` installs the newest$/u,
+      },
+      {
         name: "a pack.json without match",
         breakPack: directory => editJson(directory, "pack.json", ({ match: _match, ...pack }) => pack),
         reason: /pack\.json: match /u,
@@ -215,6 +244,78 @@ describe("the installed-pack catalog", () => {
         { path: installed, reason: "Rule pack complexity: package.json name must be rerail-pack-<id> or @<scope>/rerail-pack-<id>" },
       ]);
     });
+  });
+
+  it("loads a pack whose rule reads a token a tape may leave out, an older pack's form: the checkout catalog skips that rule alone and reports it with the engine's reason", async () => {
+    // Python 2's `print >>f, x` as a published pack once asked for it: the `print` token, which a print statement implies.
+    const directory = await copyPack(COMPLEXITY);
+    writeJson(join(directory, "rules", `${PYTHON_RULE}.json`), {
+      ...codeRule(PYTHON_RULE),
+      clauses: [{
+        id: "print-token",
+        violation: { anchor: "witness.start", code: "PRINT", message: "never" },
+        forbid: { ast: { language: "python", rule: { regex: "^print$", inside: { kind: "print_statement" } } } },
+      }],
+    });
+    installPackDirectory(directory, "complexity");
+
+    const catalog = loadRuleCatalog();
+
+    expect(summary(catalog)).toEqual({ packs: ["complexity"], skipped: [] });
+    expect(catalog.documents.has(PYTHON_RULE)).toBe(true);
+
+    const root = await temporaryDirectory();
+    execFileSync("git", ["init", "--quiet"], { cwd: root });
+    const databasePath = join(root, ".rerail", "rerail.sqlite");
+    setUpTestRepository(root, { packs: ["complexity"] }, databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath);
+    try {
+      const checkoutCatalog = catalogs.catalog(root);
+      const others = [...catalog.packOf.keys()].filter(id => id !== PYTHON_RULE).sort();
+      expect(checkoutCatalog.snapshot().codeRules.map(({ id }) => id)).toEqual(others);
+      expect(checkoutCatalog.quarantined()).toEqual([
+        { ruleId: PYTHON_RULE, kind: "code", owner: "rerail", reason: expect.stringMatching(/^a token test reads a token the tape may leave out, which nothing answers: \/clauses\/0\/rule \(`\^print\$`, root\)/u) },
+      ]);
+    } finally {
+      catalogs.close();
+    }
+  });
+
+  it("loads a pack with a relational rule while relational rules are off: the checkout catalog skips that rule alone, saying so", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_RELATIONAL_RULES", "0");
+    const directory = await copyPack(COMPLEXITY);
+    writeJson(join(directory, "rules", `${PYTHON_RULE}.json`), {
+      ...codeRule(PYTHON_RULE),
+      clauses: [{
+        id: "rows",
+        relational: {
+          inputs: { files: { evidence: { as: "file", query: { ast: { language: "python", rule: { kind: "module" } } }, project: { path: "file.path" } } } },
+          query: "SELECT __path path,__start start_byte,__end end_byte FROM files",
+          key: ["path"],
+        },
+        violation: { anchor: "witness.span", code: "ROWS", message: "Rows" },
+      }],
+    });
+    installPackDirectory(directory, "complexity");
+
+    const catalog = loadRuleCatalog();
+
+    expect(summary(catalog)).toEqual({ packs: ["complexity"], skipped: [] });
+    const root = await temporaryDirectory();
+    execFileSync("git", ["init", "--quiet"], { cwd: root });
+    const databasePath = join(root, ".rerail", "rerail.sqlite");
+    setUpTestRepository(root, { packs: ["complexity"] }, databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath);
+    try {
+      const checkoutCatalog = catalogs.catalog(root);
+      const others = [...catalog.packOf.keys()].filter(id => id !== PYTHON_RULE).sort();
+      expect(checkoutCatalog.snapshot().codeRules.map(({ id }) => id)).toEqual(others);
+      expect(checkoutCatalog.quarantined()).toEqual([
+        { ruleId: PYTHON_RULE, kind: "code", owner: "rerail", reason: experimentOffMessage("RELATIONAL_RULES") },
+      ]);
+    } finally {
+      catalogs.close();
+    }
   });
 
   describe("third parties' packs", () => {
@@ -354,19 +455,47 @@ describe("the installed-pack catalog", () => {
     expect([...loadRuleCatalog().packs.keys()]).toEqual(["valid"]);
   });
 
+  // Checking a pack compiles each of its rules: 14 s of CPU and 1.7 GB for the five packs a TypeScript repository adds,
+  // in every command that reads the catalog and at every daemon start.
+  it("keeps the engine's verdict on each pack in the home, so another process compiles only a pack whose content changed", async () => {
+    type Kept = Array<{ build: string; verdicts: Record<string, string | null> }>;
+    const readKept = (home: string): Kept => JSON.parse(readFileSync(join(home, PACK_COMPILE_CHECKS_FILE), "utf8")) as Kept;
+    installPackDirectory(COMPLEXITY, "complexity");
+    loadRuleCatalog();
+    const [kept] = readKept(process.env.RERAIL_HOME!);
+    expect(Object.values(kept!.verdicts)).toEqual([null]);
+
+    // Another process, as the daemon after a restart, finds the same pack and the kept verdicts. A kept verdict is taken
+    // as it is, so one that says the pack fails proves its rules were not compiled again. Another engine build's
+    // verdicts, a Git checkout's beside the managed installation, stay.
+    const other = await temporaryDirectory();
+    const copy = await copyPack(COMPLEXITY);
+    installPackDirectory(copy, "complexity", other);
+    const failing = Object.fromEntries(Object.keys(kept!.verdicts).map(key => [key, "the kept verdict"]));
+    const otherBuild = { build: "another build", verdicts: { "0.0.1 sha256:0": null } };
+    writeJson(join(other, PACK_COMPILE_CHECKS_FILE), [{ build: kept!.build, verdicts: failing }, otherBuild]);
+    expect(summary(loadRuleCatalog(other)).skipped.map(({ reason }) => reason)).toEqual(["the kept verdict"]);
+
+    // Once the pack's content changes the engine is asked again, and the verdict it gives replaces the kept one.
+    editJson(copy, "pack.json", pack => ({ ...pack, covers: `${String(pack.covers)} Edited.` }));
+    expect(summary(loadRuleCatalog(other))).toEqual({ packs: ["complexity"], skipped: [] });
+    const [current, kept2] = readKept(other);
+    expect([Object.values(current!.verdicts), kept2]).toEqual([[null], otherBuild]);
+  });
+
   it("reads the packs again when the active core changes, checking their range against the new one", () => {
     installPackDirectory(VALID, "valid");
     expect([...loadRuleCatalog().packs.keys()]).toEqual(["valid"]);
-    // `rerail update` makes a core active whose version is outside the pack's range; the packs themselves are unchanged.
+    // `rerail update rollback` makes a core active that is older than the pack fits; the packs themselves are unchanged.
     const current = join(process.env.RERAIL_HOME!, "current");
     mkdirSync(current, { recursive: true });
-    writeFileSync(join(current, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "9.0.0" }));
+    writeFileSync(join(current, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.0.9" }));
     try {
       const catalog = loadRuleCatalog();
       expect(catalog.packs.size).toBe(0);
       expect(catalog.skipped.map(skipped => skipped.packageName)).toEqual(["@neralabs/rerail-pack-valid"]);
     } finally {
-      rmSync(current, { recursive: true, force: true });
+      removeFolderSync(current);
     }
   });
 
@@ -398,7 +527,7 @@ async function tinyPack(version: string, rules: readonly TinyRule[]): Promise<st
     version,
     license: "Apache-2.0",
     files: ["pack.json", "rules"],
-    peerDependencies: { "@neralabs/rerail": ">=0.1.0-0 <0.2.0" },
+    peerDependencies: { "@neralabs/rerail": ">=0.1.0-0" },
   });
   writeJson(join(directory, "pack.json"), {
     format: "rerail.rule-pack/v1",

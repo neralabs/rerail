@@ -2879,6 +2879,8 @@ pub struct RecordTables {
     pub pairs: Vec<(usize, usize)>,
     /// Each pair table holds no pair (`pair empty`, 0355): its tokens are one byte, no row read.
     pub pairless: Vec<bool>,
+    /// Each pair table's triples (`PairTable::thirds`): a pair and the byte after, three bytes.
+    pub thirds: Vec<Vec<[u8; 3]>>,
     /// Where each first byte's entry is, eight bytes each (`TOKEN_*`): its kind, its end rule,
     /// whether a word starts with it, its pair row. A token's one load, as the lean lexer's
     /// `TOKEN`. Where the codes are in the entries (`punct_in_entry`), 512 of them, as the lean
@@ -2980,7 +2982,8 @@ impl RecordTables {
             let tested = r.rules.iter().enumerate().any(|(k, e)| matches!(e, crate::records::EndRule::Read(i) if r.readers[usize::from(*i)].parts_in_tier1()) && r.checks.iter().any(|c| usize::from(c.rule) == k));
             // A quiet region (`Reader::quiet`): no mark or retag holds in it, so its parts' codes
             // are plain whatever the grammar's marks.
-            let marked = parted.iter().any(|rd| !rd.quiet) && (!r.marks.is_empty() || !r.retags.is_empty() || r.gaps != 0);
+            // A part's own kind (`Retag::part`) is the walk's, not a retag it would need.
+            let marked = parted.iter().any(|rd| !rd.quiet) && (!r.marks.is_empty() || r.retags.iter().any(|t| !t.part) || r.gaps != 0);
             if parted.iter().any(|rd| rd.arms.len() != 1) || marked || tested {
                 return Err(Error::UnsupportedFeature("a region read in parts, on the CPU, with this grammar's marks or tests"));
             }
@@ -3093,7 +3096,10 @@ impl RecordTables {
                 let one = lookup(&[b as u8]);
                 let twos: Vec<u64> = (0..=255u8).filter(|&c| pt.holds(b as u8, c)).map(|c| lookup(&[b as u8, c])).collect();
                 let two = twos.first().copied().unwrap_or(0);
-                if one >> 32 == 0 && two >> 32 == 0 && twos.iter().all(|&x| x == two) {
+                // A byte that starts a triple (`===` after `==`): its codes not by its length
+                // alone, so looked up.
+                let triple = pt.thirds.iter().any(|t| t[0] == b as u8);
+                if one >> 32 == 0 && two >> 32 == 0 && twos.iter().all(|&x| x == two) && !triple {
                     *e = (one, two, true);
                 }
             }
@@ -3149,7 +3155,13 @@ impl RecordTables {
             let (b, two) = (at & 255, at >= 256);
             let rule = r.ends.get(b).copied().unwrap_or(crate::records::NO_RULE);
             let wordy = r.words.iter().any(|w| w.first() == Some(&(b as u8)));
-            let row = match r.rules.get(usize::from(rule)) {
+            // The row of the byte's pair rule: its own, or the rule its reader goes on to
+            // (`Reader::other`: `/` alone or `/=`, of the comments' reader), as `pair_of` above.
+            let pair_rule = match r.rules.get(usize::from(rule)) {
+                Some(&crate::records::EndRule::Read(i)) => r.readers.get(usize::from(i)).map_or(usize::from(rule), |rd| usize::from(rd.other)),
+                _ => usize::from(rule),
+            };
+            let row = match r.rules.get(pair_rule) {
                 Some(&crate::records::EndRule::Next(i)) => r.nexts[usize::from(i)].row.get(b).copied().unwrap_or(0),
                 _ => 0,
             };
@@ -3176,7 +3188,7 @@ impl RecordTables {
         let punct = 8 * words.len();
         words.extend(punct_codes.iter().map(|&(one, two, _)| one | two << 32));
         let rare_unpaired = rare.is_some_and(|n| (0..256).all(|b| n[0][b & 15] & n[1][b >> 4] == 0 || entries[b] == entries[b | 256]));
-        Ok(RecordTables { words, slots, tails, rest, rare, ends: ends_of, rare_unpaired, table, starts: r.starts, lasts: r.lasts, pairs, pairless, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry, lean })
+        Ok(RecordTables { words, slots, tails, rest, rare, ends: ends_of, rare_unpaired, table, starts: r.starts, lasts: r.lasts, pairs, pairless, thirds: r.nexts.iter().map(|t| t.thirds.clone()).collect(), token, filters, layout: crate::records::RecordLayout::Columns, fused, punct, punct_in_entry, lean })
     }
 }
 
@@ -4499,10 +4511,18 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let kc = f.block_params(after)[0];
     // Each: its bits, its last's offset (or the output its last is the first bit of), and its
     // bytes where it is a part.
-    let mut checks: Vec<(Value, i64, Option<i64>, Option<u16>)> = vec![(xc, i64::from(a.off), None, a.last)];
-    checks.extend(parts.iter().zip(&xp).map(|(pt, &x)| (x, i64::from(pt.bytes) - 1, Some(i64::from(pt.bytes)), pt.last)));
+    let mut checks: Vec<(Value, i64, Option<i64>, Option<u16>, Option<u8>)> = vec![(xc, i64::from(a.off), None, a.last, None)];
+    checks.extend(parts.iter().zip(&xp).map(|(pt, &x)| (x, i64::from(pt.bytes) - 1, Some(i64::from(pt.bytes)), pt.last, pt.kind)));
     let n = checks.len();
-    for (j, (x, off, part, to_last)) in checks.into_iter().enumerate() {
+    // A part's code: its own kind where it has one (`ReadPart::kind`), its word kept.
+    let own = |f: &mut FunctionBuilder<'_>, code: Value, kind: Option<u8>| match kind {
+        Some(k) => {
+            let rest = f.ins().band_imm(code, !0xff);
+            f.ins().bor_imm(rest, i64::from(k))
+        }
+        None => code,
+    };
+    for (j, (x, off, part, to_last, kind)) in checks.into_iter().enumerate() {
         let (this, other) = (f.create_block(), if j + 1 < n { Some(f.create_block()) } else { None });
         match other {
             Some(o) => {
@@ -4545,6 +4565,7 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let len = f.ins().isub(l, pos);
             let len = f.ins().iadd_imm(len, 1);
             let code = code_at(f, pos, len);
+            let code = own(f, code, kind);
             write_record(f, c, stores, kc, Some(pos), Some(l), code);
             let k2 = c.step(f, kc);
             let at2 = f.ins().iadd_imm(l, 1);
@@ -4558,6 +4579,7 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let l = f.ins().iadd_imm(pos, off);
         let len = f.ins().iconst(types::I64, off + 1);
         let code = code_at(f, pos, len);
+        let code = own(f, code, kind);
         write_record(f, c, stores, kc, Some(pos), Some(l), code);
         let k2 = c.step(f, kc);
         match part {
@@ -4644,7 +4666,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     // register (`Run`), each the rule most first bytes take of its form, where their tests
     // are all by first-byte bits (`TOKEN_TESTS`, each on its rule's bytes alone). Both lasts
     // straight-line and one `select`, no branch between them: a run past its block's word
-    // goes to its rule's block. Most tokens are of the two (`.rr`: punctuation and words).
+    // goes to its rule's block. Most tokens are of the two (`.rerail`: punctuation and words).
     let reg_of = |o: u16| regs.and_then(|g| g.runs.iter().find(|&&(k, _)| k == o).map(|&(_, v)| v));
     // The fused rules' exit of their own (`fdone`, as `done`'s): their tokens are never a
     // reader's or an extra, so the loop's tail for them knows it (the lean lexer's run loop).
@@ -4742,7 +4764,8 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 Some(w) => {
                     let bit = f.ins().ushr(w, sh);
                     let bit = f.ins().band_imm(bit, 1);
-                    f.ins().iadd(s, bit)
+                    let l = f.ins().iadd(s, bit);
+                    third_last(f, t, c, s, raw, l, pi)
                 }
                 None => next_last(f, t, c, s, raw, entry, pi),
             };
@@ -5660,7 +5683,9 @@ fn fused_of(r: &crate::records::Records, filters: &[Option<i64>], native: Option
 pub fn lean_starts(r: &crate::records::Records, native: &crate::block_native::BlockNative, skip: u16, kn: usize, kr: usize) -> Option<bool> {
     use crate::records::EndRule;
     let (EndRule::Next(pi), EndRule::Run(o)) = (r.rules[kn], r.rules[kr]) else { return None };
-    let pt = r.nexts.get(usize::from(pi))?;
+    // A triple (`PairTable::thirds`) ends a byte past its pair's second: the pair word's starts
+    // do not say where the token after it starts.
+    let pt = r.nexts.get(usize::from(pi)).filter(|t| t.thirds.is_empty())?;
     let alone = |o: u16| crate::native_cpu_bytes::needs(native, o).filter(|n| n.lo == 0 && n.hi == 0);
     let (word, space) = (alone(o)?, alone(skip)?);
     // A cut (`run R once D`) ends a token before a byte of `D`: one the starts must hold, so no
@@ -5931,7 +5956,30 @@ fn next_last(f: &mut FunctionBuilder<'_>, t: &RecordTables, c: &FileCols, s: Val
     let bit = f.ins().band_imm(bit, 1);
     let inside = f.ins().uextend(types::I64, inside);
     let bit = f.ins().band(bit, inside);
-    f.ins().iadd(s, bit)
+    let l = f.ins().iadd(s, bit);
+    third_last(f, t, c, s, raw, l, i)
+}
+
+/// A pair's last `l` on by one where the token's three bytes are one of table `i`'s triples
+/// (`PairTable::thirds`) inside the file, as the lean lexer reads `===` after `==`: its three
+/// bytes compared with each triple's, from the token's first eight (`raw`).
+fn third_last(f: &mut FunctionBuilder<'_>, t: &RecordTables, c: &FileCols, s: Value, raw: Value, l: Value, i: u16) -> Value {
+    let Some(thirds) = t.thirds.get(usize::from(i)).filter(|x| !x.is_empty()) else { return l };
+    let three = f.ins().band_imm(raw, 0xff_ffff);
+    let mut any = None;
+    for &[a, b, x] in thirds {
+        let k = i64::from(a) | i64::from(b) << 8 | i64::from(x) << 16;
+        let eq = f.ins().icmp_imm(IntCC::Equal, three, k);
+        any = Some(match any {
+            Some(y) => f.ins().bor(y, eq),
+            None => eq,
+        });
+    }
+    let i2 = f.ins().iadd_imm(s, 2);
+    let inside = f.ins().icmp(IntCC::UnsignedLessThan, i2, c.len);
+    let hit = f.ins().band(any.expect("a triple"), inside);
+    let hit = f.ins().uextend(types::I64, hit);
+    f.ins().iadd(l, hit)
 }
 
 /// A reader's arm with no closer after its opener (`ReadNone`): its last on to `ended`, its
@@ -6769,7 +6817,7 @@ pub fn blank_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) 
     r.blanks.iter().copied().filter(|&(_, o)| bytewise(o)).collect()
 }
 
-/// Whether the token loop knows an extra at its token (Q279): it tells one by the extra's mark
+/// Whether the token loop knows an extra at its token (Q347): it tells one by the extra's mark
 /// in the code, so the mark must be the loop's there (a reader's, or its first byte's), not
 /// set after the tokens (`late_marks`). The gap marks the loop sets (`loop_marks`' lifted,
 /// `blank_marks`) go past an extra to the grammar token after it only so.
@@ -7143,7 +7191,11 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             // The next start, the first of the block's left (`cand`); none left, the cursor's
             // block loaded (`refill`): its starts from the cursor, its runs.
             let refill_limit = if rd.bytewise(o) && outs.iter().all(|&k| rd.bytewise(k)) { None } else { limit };
-            folded = !lift.is_empty() && refill_limit.is_none();
+            // An extra keeps the marks of its own gap (`Records::own`): a lifted one's
+            // bits folded past blocks would go to the grammar token after it alone, so a blank
+            // mark among the lifted ones, with extras, folds none.
+            let blank_lifted = r.extra.is_some() && lift.iter().any(|&(k, _)| r.own >> k & 1 == 1);
+            folded = !lift.is_empty() && refill_limit.is_none() && !blank_lifted;
             skips = (folded || lift.is_empty()) && refill_limit.is_none() && lean.is_some();
             // Two loops, as the lean lexer's: over blocks (`head`, its refill), and over a
             // block's starts (`from_word`). The block's words are the refill's, which the
@@ -7940,7 +7992,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // The marks' tests' bits and the gap marks' (`records::gap_marks`): a grammar token has its
     // own `At` bits, those the tokens before left, and the gap marks' bits from the byte after
     // the grammar token before's first to its own, but where the word before says none
-    // (`unless after`); an extra's token leaves all of its own to the next.
+    // (`unless after`); an extra's token leaves all of its own to the next, and keeps the
+    // marks of its own gap (`Records::own`).
     let tests = r.checks.iter().any(|c| c.then.marks());
     if tests || !lift.is_empty() || !blanks.is_empty() {
         let h = cv[STATE_WORDS + 1];
@@ -8000,6 +8053,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         if let Some(b) = blank {
             mine = f.ins().bor(mine, b);
         }
+        let mut lifted = None;
         if gapped {
             // Folded, the bits not yet taken start past the token before's first byte, in the
             // token's block (the refill took those before it).
@@ -8011,6 +8065,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             };
             let bits = marks_in(f, &rd, c, &lift, from_eff, s, in_regs, folded, heads);
             mine = f.ins().bor(mine, bits);
+            lifted = Some(bits);
         }
         let held = if kept_word {
             let mut none = zero;
@@ -8034,7 +8089,18 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 let is_extra = f.ins().ushr_imm(code, i64::from(crate::records::MARK_SHIFT) + i64::from(e));
                 let is_extra = f.ins().band_imm(is_extra, 1);
                 let left = f.ins().bor(mine, after_bits_kept);
-                code = f.ins().select(is_extra, code, marked);
+                // An extra keeps the marks of its own gap (`Records::own`): the loop's
+                // from its blank run, or the lifted ones' bits from the record before (not
+                // folded: `blank_lift_exact`).
+                let blank_lift: u32 = lift.iter().filter(|&&(k, _)| r.own >> k & 1 == 1).fold(0, |a, &(k, _)| a | 1 << k);
+                let mut own_bits = blank.unwrap_or(zero);
+                if let Some(bits) = lifted.filter(|_| blank_lift != 0) {
+                    let b = f.ins().band_imm(bits, i64::from(blank_lift));
+                    own_bits = f.ins().bor(own_bits, b);
+                }
+                let own_bits = f.ins().ishl_imm(own_bits, i64::from(crate::records::MARK_SHIFT));
+                let own = f.ins().bor(code, own_bits);
+                code = f.ins().select(is_extra, own, marked);
                 pending = f.ins().select(is_extra, left, after_bits_kept);
             }
             None => {
@@ -8371,6 +8437,38 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
         }
         heads.push((over, Step::Token));
         let _ = (sv, place, k);
+        // The first record at or after the bit, an extra: it keeps the bits there of the marks
+        // it keeps of its own gap (`Records::own`).
+        let blank_late: Vec<(usize, u16)> = late.iter().copied().filter(|&(m, _)| r.extra.is_some() && r.own >> m & 1 == 1).collect();
+        if !blank_late.is_empty() {
+            let (own, on) = (f.create_block(), f.create_block());
+            f.ins().brif(inside, own, &[], on, &[]);
+            f.switch_to_block(own);
+            let (ca, co) = c.field(f, crate::records::FIELD_CODE, q[3]);
+            let code = f.ins().uload32(fl, ca, co);
+            let e = i64::from(crate::records::MARK_SHIFT) + i64::from(r.extra.unwrap_or(0));
+            let is_extra = f.ins().ushr_imm(code, e);
+            let is_extra = f.ins().band_imm(is_extra, 1);
+            let off = f.ins().imul_imm(q[0], 8 * outputs as i64);
+            let at = f.ins().iadd(c.out, off);
+            let b = f.ins().ctz(q[2]);
+            let mut bits = zero;
+            for &(m, o) in &blank_late {
+                let w = f.ins().load(types::I64, fl, at, 8 * i32::from(o));
+                let x = f.ins().ushr(w, b);
+                let x = f.ins().band(x, is_extra);
+                let x = f.ins().band_imm(x, 1);
+                let x = f.ins().ishl_imm(x, i64::from(crate::records::MARK_SHIFT) + m as i64);
+                bits = f.ins().bor(bits, x);
+            }
+            let code = f.ins().bor(code, bits);
+            f.ins().istore32(stores, code, ca, co);
+            f.ins().jump(on, &[]);
+            f.switch_to_block(on);
+        }
+        // The cursor at the record found: the next bit's first record is it or one after (an
+        // extra's own gap, past an extra before it).
+        let qa: Vec<BlockArg> = if blank_late.is_empty() { qa } else { vec![q[0].into(), q[3].into(), q[2].into(), q[3].into()] };
         f.ins().jump(over, &qa);
         f.switch_to_block(over);
         let q = f.block_params(over).to_vec();
@@ -8477,12 +8575,15 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
     f.ins().istore32(stores, code, ca, co);
     f.ins().jump(next, &[q[0].into(), q[1].into(), q[2].into(), q[3].into()]);
 
-    // The bit done: the next, from this token on.
+    // The bit done: the next, from this token on (from the record found, where an extra keeps
+    // its own blank marks: the cursor the search left).
     f.switch_to_block(next);
     let q = f.block_params(next).to_vec();
     let less = f.ins().iadd_imm(q[2], -1);
     let rest = f.ins().band(q[2], less);
-    f.ins().jump(bits, &[q[0].into(), q[3].into(), rest.into()]);
+    let own_kept = lift && r.extra.is_some() && late.iter().any(|&(m, _)| r.own >> m & 1 == 1);
+    let cursor = if own_kept { q[1] } else { q[3] };
+    f.ins().jump(bits, &[q[0].into(), cursor.into(), rest.into()]);
 }
 
 /// A backward pass (`native_ir::Pass::Back`): per file, its blocks last to first, each

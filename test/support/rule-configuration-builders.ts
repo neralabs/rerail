@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach } from "vitest";
@@ -16,13 +16,14 @@ import {
   type RuleDocument,
   repositories,
 } from "../../src/engine/index.js";
+import { removeFolder } from "./platform/remove-folder.js";
 
 const directories: string[] = [];
 const databases: RerailDatabase[] = [];
 
 afterEach(async () => {
   for (const database of databases.splice(0)) database.$client.close();
-  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(path => removeFolder(path)));
 });
 
 export async function temporaryDirectory(): Promise<string> {

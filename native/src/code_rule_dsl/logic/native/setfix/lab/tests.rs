@@ -111,8 +111,8 @@
                         device.strata_cpu += cpu;
                         device.strata_gpu += r.gpu_seconds * 1e3;
                         device.strata_submissions += r.submissions as usize;
-                        println!("    device: {} ({cpu:.1} ms process CPU, GPU {:.2} ms, {} submissions, {} rules, {} stages, uploads {}, resident {})",
-                            if ok { "same" } else { "DIFF" }, r.gpu_seconds * 1e3, r.submissions, r.rules, r.stages, r.uploads, r.resident_hits);
+                        println!("    device: {} ({cpu:.1} ms process CPU, GPU {:.2} ms, {} submissions, {} rules, {} stages, uploads {}, read in place {})",
+                            if ok { "same" } else { "DIFF" }, r.gpu_seconds * 1e3, r.submissions, r.rules, r.stages, r.uploads, r.in_place);
                     }
                     Some(r) => {
                         device.strata_refused += 1;

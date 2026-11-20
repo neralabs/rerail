@@ -134,7 +134,7 @@ pub(super) fn source(patterns: &[&PackedPattern], first: usize, format: u32) -> 
   if(tid<shape.itemCount&&ukl_atomic_load(&flags[2])==0u){{
   uint32_t low=0u,high=shape.taskCount;while(high-low>1u){{uint32_t middle=(low+high)/2u;if(items[middle].threadStart<=tid)low=middle;else high=middle;}}
   Item item=items[low];at=low;
-  if(item.pattern=={FACT}u){{uint32_t rel=tid-item.threadStart;Pair head=constraints[item.constraintStart];file=head.x;base=docs[file].node_base;if(head.y!=0u){{mask=(uint64_t)(facts[item.root+2u*rel])|((uint64_t)(facts[item.root+2u*rel+1u])<<32u);base+=rel*64u;}}else{{row=rel;base+=facts[item.root+rel*(item.constraintCount+1u)];mask=1ul;}}}}
+  if(item.pattern=={FACT}u){{uint32_t rel=tid-item.threadStart;Pair first=constraints[item.constraintStart];file=first.x;base=docs[file].node_base;if(first.y!=0u){{mask=(uint64_t)facts[item.root+2u*rel]|((uint64_t)facts[item.root+2u*rel+1u]<<32u);base+=rel*64u;}}else{{row=rel;base+=facts[item.root+rel*(item.constraintCount+1u)];mask=1ul;}}}}
   else{{uint32_t rel=tid-item.threadStart,part=rel%{lanes}u;group=rel/{lanes}u;file=roots_file(roots,group);group-=roots_first_group(roots,file);mask=root_mask_in(chunk,docs[file],roots,item.root,file,group,part*{per}u,(part+1u)*{per}u);base=docs[file].node_base;}}
   }}
   SimdRoots r=simd_roots(mask,lane __UKL_ARGS);

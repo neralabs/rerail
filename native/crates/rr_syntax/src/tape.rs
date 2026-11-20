@@ -1,4 +1,4 @@
-//! A `.rr` file's tree, as its tape holds it (decision 0061): the kinds and fields an `rr` tape numbers
+//! A `.rerail` file's tree, as its tape holds it (decision 0061): the kinds and fields an `rr` tape numbers
 //! (`language::KindCatalog` reads `KIND_NAMES`, `FIRST_ANONYMOUS` and `FIELD_NAMES`), and the tree `syntax::Parser`
 //! builds while it reads the statements, flattened in preorder with the comments merged in (`nodes`).
 //!
@@ -317,7 +317,7 @@ impl Tree {
     }
 }
 
-/// A node of a `.rr` tape, in preorder: its kind (`ERROR` for a bad statement), field, span and parent, and whether
+/// A node of a `.rerail` tape, in preorder: its kind (`ERROR` for a bad statement), field, span and parent, and whether
 /// it is an extra (a comment).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Node {
@@ -353,7 +353,7 @@ pub fn kind_field(key: u32) -> (u16, u16) {
 }
 
 /// The engine's tape of `nodes` (this parser's, in preorder) over `src`: its bytes, as the
-/// engine encodes a `.rr` file (`code_rule_dsl::tape`). Each node given to the writer in order and
+/// engine encodes a `.rerail` file (`code_rule_dsl::tape`). Each node given to the writer in order and
 /// closed where the next is not inside it. The lean parser's tape is checked against it.
 pub fn image(nodes: &[Node], src: &str) -> Vec<u8> {
     use rerail_tape_format::{Redo, Widths, Writer};
@@ -427,7 +427,7 @@ pub fn flatten(tree: &Tree, comments: &[(usize, usize)]) -> Vec<Node> {
     walk.out
 }
 
-/// The nodes of a `.rr` image (`image`, or the lean parser's `lean::tape`): `image`'s inverse.
+/// The nodes of a `.rerail` image (`image`, or the lean parser's `lean::tape`): `image`'s inverse.
 pub fn nodes(bytes: &[u8]) -> Result<Vec<Node>, String> {
     Ok(rerail_tape_format::decode(bytes)?
         .into_iter()

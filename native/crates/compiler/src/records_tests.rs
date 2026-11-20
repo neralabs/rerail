@@ -35,7 +35,7 @@ const DOCUMENTS: &[&str] = &[
 
 #[test]
 fn records_are_each_tokens_bytes_and_code() {
-    let mut steps: Vec<_> = std::fs::read_dir(crate::ladder::DIR).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
+    let mut steps: Vec<_> = std::fs::read_dir(crate::ladder::dir()).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
     steps.sort();
     let (mut with, mut tokens, mut worded) = (0, 0, 0);
     for path in steps {

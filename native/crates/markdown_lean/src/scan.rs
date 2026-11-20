@@ -394,9 +394,7 @@ impl<'s> Scanner<'s> {
             extra = extra.wrapping_add(self.v.indentation);
             self.v.indentation = 0;
         } else {
-            let temp = self.v.indentation;
-            self.v.indentation = extra;
-            extra = temp;
+            std::mem::swap(&mut self.v.indentation, &mut extra);
         }
         if !self.simulate {
             self.push_block(LIST_ITEM.wrapping_add(extra).wrapping_add(digits));
@@ -1113,12 +1111,11 @@ impl<'s> Scanner<'s> {
                 return true;
             }
             match self.la() {
-                b'\r' | b'\n' => {
-                    if has(valid, BLANK_LINE_START) {
+                b'\r' | b'\n'
+                    if has(valid, BLANK_LINE_START) => {
                         self.result = BLANK_LINE_START;
                         return true;
                     }
-                }
                 b'`' => return self.parse_fenced_code_block(b'`', valid),
                 b'~' => return self.parse_fenced_code_block(b'~', valid),
                 b'*' => return self.parse_star(valid),

@@ -1,4 +1,4 @@
-//! rrlab's regex functors, on the regex crate: Rust-regex semantics, as Ruff's and core.rr's DFA dialect (Unicode
+//! rrlab's regex functors, on the regex crate: Rust-regex semantics, as Ruff's and core.rerail's DFA dialect (Unicode
 //! classes `\p{L}`, scoped flags `(?is:…)`, `(?P<x>…)` and `(?<x>…)`; no look-around, no back-references).
 //! Linked as a static library into functors.cpp's shared library and loaded by souffle -l rrlabfn.
 //!
@@ -112,7 +112,7 @@ pub extern "C" fn count_matches(re: *const c_char, s: *const c_char) -> i32 {
     with(format!("find\0{re}"), || dialect(&re), |r| r.find_iter(&arg(s)).count() as i32, 0)
 }
 
-// ---- globs (core.rr's text tests) ---------------------------------------------------------------------------------
+// ---- globs (core.rerail's text tests) ---------------------------------------------------------------------------------
 
 /// `*` any run without `/`, `**` any run, `?` one character but `/`, `[…]` a class, `{a,b}` alternatives, `\` escapes.
 fn glob_regex(p: &str) -> String {

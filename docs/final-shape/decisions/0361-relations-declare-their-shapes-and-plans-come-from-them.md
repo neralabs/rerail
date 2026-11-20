@@ -1,6 +1,6 @@
 # 0361. Relations declare their shapes, and plans come from them
 
-Status: decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built (2026-11-18), step 6 at the probes (2026-11-19; at the writes: Q346). The user: "a directive which allows us to add enough data to the
+Status: decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built (2026-11-18), step 6 at the probes (2026-11-19; at the writes: Q330). The user: "a directive which allows us to add enough data to the
 relations in the .rr files that we can provide good default shapes for them (or at least name an algorithm or
 something) so that we don't need to pay for planning, or only in exceptional circumstances."
 
@@ -507,7 +507,7 @@ For the rest of the run the relation is planned from statistics:
 - A line that ran a prepared order priced by the fact is searched now (`prepared_heavy`).
 - A base relation left out has its columns measured at the next chunk (`sampled_statistics_unanswered`).
 
-**At the writes** (Q346; built on rr-align as 2b9841b58b, joined to these checks at roll-up 19). A key the rules
+**At the writes** (Q330; built on rr-align as 2b9841b58b, joined to these checks at roll-up 19). A key the rules
 infer is proved from the facts of the relations they read, and the base relations are tape views whose rows are never
 written; but a derived relation may declare a key (`.layout under key(a)`), and a reader may probe it by other columns,
 so no probe's counts cover it. The rows' writer (`setfix`'s `key_breaks`) finds a key's second row, and the run breaks
@@ -539,4 +539,3 @@ even from the same corpus's own run, the run costs more: 1,203 G instructions ag
 because more lines take a plan priced by the facts' distributions, not by the run's statistics. So derived relations
 are sized by an estimate only under `RERAIL_DERIVED_ESTIMATES=on`, a measurement aid. A rule over a derived relation
 that facts do not size is planned at run time. Rules over relations whose facts size them are prepared as before.
-

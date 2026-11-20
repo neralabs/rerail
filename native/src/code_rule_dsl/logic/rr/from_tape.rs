@@ -1,4 +1,4 @@
-//! A `.rr` file's statements, read off its tape (decision 0062). The tape is the lean parser's image
+//! A `.rerail` file's statements, read off its tape (decision 0062). The tape is the lean parser's image
 //! (`rerail_rr_syntax::tape`, decision 0140) and what the content store keeps; lowering reads the statements this
 //! module gives, so a rule file's program is a function of its stored tape. The image is read where it is
 //! (`tape_format::View`): each node's kind, field and span from its columns, its children by their subtree sizes,
@@ -15,14 +15,14 @@ use super::syntax::Lines;
 use super::tape::{ERROR, Field, Kind};
 use rerail_rr_syntax::tape_format::{CODE_EXTRA, View};
 
-/// A `.rr` tape read in place: its source and its image's columns.
+/// A `.rerail` tape read in place: its source and its image's columns.
 pub struct Tape<'a> {
     src: &'a str,
     lines: &'a Lines,
     v: View<'a>,
 }
 
-/// A `.rr` file as a run holds it: its text and its tape, the lean parser's image of it (decision 0140), checked
+/// A `.rerail` file as a run holds it: its text and its tape, the lean parser's image of it (decision 0140), checked
 /// once when read; and the text's line starts. A statement of it is a node of the tape (`Stmt`), read in place.
 pub struct RrFile {
     src: std::sync::Arc<str>,
@@ -408,7 +408,7 @@ impl<'a> Tape<'a> {
     }
 }
 
-/// The first error a `.rr` file's parse gives, as running it would report it: its line and message
+/// The first error a `.rerail` file's parse gives, as running it would report it: its line and message
 /// (`syntax_error/3`). `None` when it parses.
 pub fn syntax_error(src: &str) -> Option<(usize, String)> {
     let error = match syntax::Parser::new(src).and_then(|mut parser| parser.statements()) {
@@ -422,7 +422,7 @@ pub fn syntax_error(src: &str) -> Option<(usize, String)> {
     Some((syntax::line_of(src, at), message))
 }
 
-/// A `.rr` string literal's value, as the rule engine reads it (`"a\nb"` is `a`, newline, `b`); `None` for text
+/// A `.rerail` string literal's value, as the rule engine reads it (`"a\nb"` is `a`, newline, `b`); `None` for text
 /// that is no whole string literal.
 pub fn string_value(text: &str) -> Option<String> {
     match syntax::tokens(text).ok()?.as_slice() {

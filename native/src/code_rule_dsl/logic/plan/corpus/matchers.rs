@@ -141,5 +141,4 @@ fn filled_by_roots(
     found
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: its tests (`matchers/tests.rs`) are rerail-engine's, which mounts them: they run what this crate is below.

@@ -817,7 +817,7 @@ macro_rules! writer_ops {
 writer_ops!(Writer);
 #[cfg(any(test, feature = "reference"))]
 writer_ops!(reference::Writer<'_>);
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 writer_ops!(ops::device::DeviceOps);
 
 pub fn write(lang: &Lang, n: usize, source: &[u8], tag: u8, z: bool, node: impl FnMut(usize) -> Node) -> Result<Written, String> {

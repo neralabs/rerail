@@ -6,9 +6,11 @@
 //! (`p4_outer(f, x) :- p4_read(_, x, f, _), fz_a(f, p), fz_b(p, x)`): their join is the cross part's ordinary join,
 //! per key, from the columns they bind.
 //!
-//! - **Each part** keeps its own comparisons and negations (`keeps::factors_of`), and is reduced by the others' keys
-//!   (`fz_a(f, p) :- …, fzk_b(p)`, `fzk_b(p) :- bound_in(p, x)`): every row stored then joins, so a part never holds
-//!   more rows than the product it replaces.
+//! - **Each part** keeps its own comparisons and negations (`keeps::factors_of`), and is reduced by the keys every part
+//!   holds (`fz_a(f, p) :- …, fzk_b(p)`): every row stored then joins, so a part never holds more rows than the
+//!   product it replaces. The keys are chained, the parts of fewest atoms first: `fzk_a(p) :- …`, then
+//!   `fzk_b(p) :- bound_in(p, x), fzk_a(p)`, so a part that is itself a join is made only for the keys the parts
+//!   before it hold, and the last key is every part's.
 //! - **When:** decided from the program alone, before the first chunk: the per-file memo's key is a digest of the
 //!   file-local part (`corpus::memo::program_digest`), which names the exports, so the choice must not depend on a
 //!   chunk's rows. A changed choice (another engine, `RERAIL_FACTORIZE=off`) is another key, a memo miss.
@@ -174,12 +176,12 @@ fn relation_keys(v: &Version, f: Fields<'_>) -> Keys {
 /// Per relation handed on as parts, per rule: its key and its parts (literal places).
 type Plan = BTreeMap<String, Vec<(String, Vec<Vec<usize>>)>>;
 
-/// Per relation factorized as an intermediate (decision 0477): its pair cache, where one was made (its guard, its
+/// Per relation factorized as an intermediate (decision 0513): its pair cache, where one was made (its guard, its
 /// pairs, the witness allowance), else none.
 pub type FactorCaches = BTreeMap<String, Option<(String, String, usize)>>;
 
 /// Which relations are handed on as parts: the exports (file-local relations the cross-file part reads, `local`), or
-/// the intermediates named (decision 0477's deferred joins: two factors that meet in each reader, in its own part).
+/// the intermediates named (decision 0513's deferred joins: two factors that meet in each reader, in its own part).
 #[derive(Clone, Copy)]
 enum Scope<'a> {
     Exports(&'a BTreeSet<String>),
@@ -287,7 +289,7 @@ fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys) -> (
     (rules, reads, rules_of, chosen)
 }
 
-/// The witness allowance across a program's pair caches (decision 0477): `RERAIL_JOIN_CACHE_ROWS`, 4096 by default.
+/// The witness allowance across a program's pair caches (decision 0513): `RERAIL_JOIN_CACHE_ROWS`, 4096 by default.
 fn pair_allowance() -> usize {
     std::env::var_os("RERAIL_JOIN_CACHE_ROWS").map_or(4096, |s| s.to_str().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0)).min(i64::MAX as usize)
 }
@@ -370,6 +372,12 @@ fn round<'v>(
             let mut atoms: Vec<(String, Vec<String>)> = Vec::new();
             let mut knames: Vec<String> = Vec::new();
             let mut bodies: Vec<Vec<LitRef<'_>>> = Vec::new();
+            // The parts in the order their keys are chained (below): the fewest positive atoms first, so a part that
+            // is itself a join (`mf_def($c, $f), mf_def($a, $f)`) has its keys found within the keys of the parts
+            // before it, never on its own.
+            let positive = |part: &Vec<usize>| part.iter().filter(|&&i| matches!(lits[i].view(), L::Atom(a) if !a.neg())).count();
+            let mut parts: Vec<&Vec<usize>> = parts.iter().collect();
+            parts.sort_by_key(|p| positive(p));
             for part in parts {
                 let part: Vec<LitRef<'_>> = part.iter().map(|&i| lits[i]).collect();
                 let mut vars = BTreeSet::new();
@@ -409,9 +417,18 @@ fn round<'v>(
             let var = |x: &String| NOwned::V(x.clone());
             for (i, ((pname, iface), body)) in atoms.iter().zip(&bodies).enumerate() {
                 let orig: Vec<BodyItem<'_>> = body.iter().map(|l| BodyItem::Orig(*l)).collect();
-                program.push(Made { src: rule, head: Some((knames[i].clone(), vec![var(key)])), body: orig.clone(), kept: false });
+                // The keys chained: a part's keys are those it holds among the keys of the parts before it, so the
+                // last is the keys every part holds. Each made apart from its own part alone, a part that is a join
+                // was made whole for its keys: every pair of nodes in a def, 4 s of one stratum over 91 files, where
+                // the product it replaced held a few rows.
+                let mut keyed = orig.clone();
+                if i > 0 {
+                    keyed.push(BodyItem::New(knames[i - 1].clone(), vec![var(key)]));
+                }
+                program.push(Made { src: rule, head: Some((knames[i].clone(), vec![var(key)])), body: keyed, kept: false });
+                // Reduced by the keys every part holds: the others' keys, as before, and its own.
                 let mut reduced = orig;
-                reduced.extend(knames.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, k)| BodyItem::New(k.clone(), vec![var(key)])));
+                reduced.push(BodyItem::New(knames.last().expect("a part").clone(), vec![var(key)]));
                 program.push(Made { src: rule, head: Some((pname.clone(), iface.iter().map(var).collect())), body: reduced, kept: false });
                 made.entry(rel.clone()).or_default().extend([pname.clone(), knames[i].clone()]);
             }
@@ -537,7 +554,7 @@ fn made_vars(v: &Version, m: &Made<'_>) -> BTreeSet<String> {
     out
 }
 
-/// A pair cache of `rule`'s two parts (`atoms`, its factors), read by `readers` rules (decision 0477): its guard
+/// A pair cache of `rule`'s two parts (`atoms`, its factors), read by `readers` rules (decision 0513): its guard
 /// `small()` holds while the exact sizes of both factors fit `limit` (`rr_admit_pairs`, which an edit may cross
 /// either way), and its pairs are the factors' join under the guard. The two rules join `program`; their relations
 /// are declared. The guard is written in the physical unit encoding (a nullary relation's `rr_unit` column), as the
@@ -572,7 +589,7 @@ fn cache<'v>(
 }
 
 /// The intermediates `names` of the version `v` (a derivation when not `first`) handed on as parts, each read in its
-/// readers' own part (decision 0477, the deferred joins' factors), with pair caches where `cache_reused`: the version
+/// readers' own part (decision 0513, the deferred joins' factors), with pair caches where `cache_reused`: the version
 /// made, a line per relation, and the caches; none where no relation splits so.
 pub fn factorize_intermediates(v: &std::sync::Arc<Version>, first: bool, names: &BTreeSet<String>, cache_reused: bool) -> Result<Option<(std::sync::Arc<Version>, Vec<String>, FactorCaches)>, String> {
     if names.is_empty() {

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""E32: what a pack run evaluated, from its profile. analyze.py <run dir> <core.rr> [out.md]
+"""E32: what a pack run evaluated, from its profile. analyze.py <run dir> <core.rerail> [out.md]
 
 Reads <run dir>/profile/{native.tsv,spans.tsv,placement.tsv,profile.txt}, <run dir>/strata.tsv and the out dir's
 per-rule CSV names (p<i>_<CODE>.csv). Every native join of the run is one row of native.tsv: its stratum, its work,
 each step's rows in -> out, and the plan's literals in order. Each literal is classed:
 
-  base       a relation core.rr declares .input: the tape's (kind, field, child, text, within, nearest, …)
+  base       a relation core.rerail declares .input: the tape's (kind, field, child, text, within, nearest, …)
   derived    a relation the program derives (a rule's own, a library's, a request cone's q<k>_, a split part's)
   neg        a negated atom (base or derived)
   bound      a node-id range test `$n < 5764607523034234880` (the documents' id range, 0091's fact spaces)

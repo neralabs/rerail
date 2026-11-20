@@ -1,4 +1,4 @@
-//! Tests of this module that read what the engine registers as it loads (the languages, their `.rr` libraries,
+//! Tests of this module that read what the engine registers as it loads (the languages, their `.rerail` libraries,
 //! the ECMA crate's functions): the engine's facade of the module mounts them.
 
 #[test]
@@ -6,7 +6,7 @@ fn native_metadata_reads_pin_inputs_and_targets_through_their_consumers() {
     use crate::code_rule_dsl::logic::{plan, rr};
     use std::collections::HashSet;
     let p = rr::parse_version(r#"
-#include "core.rr"
+#include "core.rerail"
 .decl demand(d:number)
 .input demand
 .decl target_seed(q:symbol)

@@ -416,6 +416,223 @@
         assert_eq!(got[1].1, got[0].1, "the device's counts per step are the CPU's");
     }
 
+    /// Decision 0478 R3: a text test on the device reads and keeps its verdicts in the store's one rolling cache, the
+    /// CPU's too. A verdict the CPU put there before the run (that `zzz` passes `@prefix(_, "foo")`) is the one the
+    /// device takes; each other symbol's verdict the device made is there for the CPU after, a long name's (past a
+    /// chunk of 32 bytes) among them.
+    #[test]
+    fn a_text_test_on_the_device_shares_its_verdicts_with_the_cpu() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let long = format!("foo{}", "x".repeat(70));
+        db.execute_batch(&format!("CREATE TEMP TABLE n (c0, c1); INSERT INTO n VALUES ('foo1', 1), ('{long}', 2), ('bar', 3), ('zzz', 4);")).unwrap();
+        let syms = super::super::symbols(&db).unwrap();
+        let sym = |s: &str| u32::try_from(syms.write().unwrap().id(s)).unwrap();
+        let (foo1, longs, bar, zzz) = (sym("foo1"), sym(&long), sym("bar"), sym("zzz"));
+        let m = crate::code_rule_dsl::logic::strings::Matcher::new("prefix", &["foo".to_owned()]).unwrap();
+        let test = crate::code_rule_dsl::text::table::test_id(&m.plans).unwrap();
+        let atoms = std::sync::Arc::clone(syms.read().unwrap().atoms());
+        let verdicts = atoms.kept();
+        assert!(verdicts.put(test, zzz, true));
+        let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
+        let rule = format!("pos {n} v0 v1\ntest prefix v0 x:{} 1\nhead v0 v1", hex("foo"));
+        db.execute_batch("CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+        let spec = ["name dev_verdict".to_owned(), "device".into(), "rel h0 si empty".into(), format!("seed 0 {}", hex(&rule))].join("\n");
+        super::super::open(&db, &spec).unwrap();
+        super::super::run(&db, "dev_verdict", 0).unwrap();
+        let report = super::take_report();
+        assert!(report.as_ref().is_some_and(|r| r.refused.is_none()), "the stratum ran on the device: {report:?}");
+        super::super::close(&db, "dev_verdict").unwrap();
+        let mut got: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+        got.sort_unstable_by_key(|g| g.1);
+        assert_eq!(got, [(i64::from(foo1), 1), (i64::from(longs), 2), (i64::from(zzz), 4)], "foo1, the long name, and zzz by the verdict the CPU kept, their symbols kept");
+        use crate::content_store::atoms::{FAILS, PASSES};
+        assert_eq!((verdicts.get(test, foo1), verdicts.get(test, longs), verdicts.get(test, bar)), (PASSES, PASSES, FAILS), "the device's verdicts, kept for the CPU");
+    }
+
+    /// A text function of a symbol keeps its text in the one rolling cache by (functions, symbol), a chain of them by
+    /// its source symbol (decision 0478 step 2e): after a run every name's text is there, the CPU's own, and a run
+    /// again reads them back with the same rows.
+    #[test]
+    fn text_functions_keep_their_texts_in_the_one_cache() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE n (c0, c1);").unwrap();
+        let names: Vec<String> = (0..600).map(|k| format!("pkg{}/mod_{k}/file{}.py", k % 7, k % 13)).collect();
+        for (k, name) in names.iter().enumerate() {
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![name, k as i64]).unwrap();
+        }
+        let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
+        let rules = [
+            format!("pos {n} v0 v1\nfunc dir v2 v0\nhead v2 v1"),
+            format!("pos {n} v0 v1\nfunc rr_substr v2 v0 i:0 i:9\nfunc sql_upper v3 v2\nhead v3 v1"),
+        ];
+        let run = |device: bool| {
+            db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+            let mut spec = vec!["name dev_keep".to_owned()];
+            if device {
+                spec.push("device".into());
+            }
+            spec.push("rel h0 si empty".into());
+            spec.extend(rules.iter().map(|r| format!("seed 0 {}", hex(r))));
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, "dev_keep", 0).unwrap();
+            let report = super::take_report();
+            if device {
+                assert!(report.as_ref().is_some_and(|r| r.refused.is_none()), "on the device: {report:?}");
+            }
+            super::super::close(&db, "dev_keep").unwrap();
+            let mut rows: Vec<(String, i64)> = db.prepare("SELECT sym_text(c0), c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            rows.sort_unstable();
+            rows
+        };
+        let cpu = run(false);
+        let first = run(true);
+        assert_eq!(first, cpu, "the device's texts are the CPU's");
+        // Every name's texts are kept, by its symbol: `dir`'s, and the chain's by its source.
+        let syms = super::super::symbols(&db).unwrap();
+        let atoms = std::sync::Arc::clone(syms.read().unwrap().atoms());
+        let kept = atoms.kept();
+        let dir = super::text_fns_id("/dir[]").unwrap();
+        let chain = super::text_fns_id("/rr_substr[0, 9]/sql_upper[]").unwrap();
+        let read = |fns: u32, sym: u32| -> Option<String> {
+            // SAFETY: the store's cache, in its live block; an entry found is complete.
+            unsafe {
+                let r = rerail_blocks::generated_reads::text_find(kept.cache(), fns, sym);
+                (r & 3 == 0).then(|| {
+                    let e = (r & !3) as *const u8;
+                    let len = e.add(12).cast::<u32>().read() as usize - 16;
+                    String::from_utf8(std::slice::from_raw_parts(e.add(16), len).to_vec()).unwrap()
+                })
+            }
+        };
+        for name in &names {
+            let sym = u32::try_from(syms.write().unwrap().id(name)).unwrap();
+            let d = name.rsplit_once('/').map_or("", |(d, _)| d);
+            assert_eq!(read(dir, sym).as_deref(), Some(d), "{name}: dir kept");
+            assert_eq!(read(chain, sym), Some(name.chars().take(9).collect::<String>().to_ascii_uppercase()), "{name}: the chain kept by its source");
+        }
+        // Run again: the texts read back from the cache, the same rows.
+        assert_eq!(run(true), cpu, "the kept texts read back are the CPU's");
+    }
+
+    /// A literal test of a bound pattern, its symbols read in place (decision 0478 step 2e): a pattern holding the set
+    /// separator is no set, so the stratum runs on the host, named, and its rows are the CPU's.
+    #[test]
+    fn a_bound_pattern_holding_the_set_separator_runs_on_the_host() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE m (c0); INSERT INTO m VALUES ('fo'), ('ba' || char(31) || 'zz'); \
+                          CREATE TEMP TABLE n (c0, c1); INSERT INTO n VALUES ('foo', 1), ('bar', 2), ('zzz', 3), ('qq', 4);").unwrap();
+        let m = format!("t:x:{}:{}:s", hex("temp.m"), hex("c0"));
+        let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
+        let rule = format!("pos {m} v0\npos {n} v1 v2\ntest prefix v1 v0 1\nhead v1 v2");
+        let mut got = Vec::new();
+        for device in [true, false] {
+            db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+            let mut spec = vec!["name dev_sep".to_owned()];
+            if device {
+                spec.push("device".into());
+            }
+            spec.extend(["rel h0 si empty".to_owned(), format!("seed 0 {}", hex(&rule))]);
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, "dev_sep", 0).unwrap();
+            let report = super::take_report();
+            if device {
+                let why = report.as_ref().and_then(|r| r.refused.clone()).unwrap_or_default();
+                assert!(why.contains("separator"), "the stratum ran on the host, named: {report:?}");
+            }
+            super::super::close(&db, "dev_sep").unwrap();
+            got.push(stratum_rows(&db, "h0"));
+        }
+        assert_eq!(got[0], got[1], "the host's rows");
+        assert_eq!(got[1].iter().map(|r| r.1).collect::<Vec<_>>(), [1, 2, 3], "foo by fo; bar by ba, zzz by zz (a set)");
+    }
+
+    /// Every symbol's verdict the device keeps is the CPU's matcher's, for 2,000 names read through SQL (the atoms
+    /// in more than one block): a symbol it got wrong is named with the run and the block that hold it.
+    #[test]
+    fn every_verdict_the_device_keeps_is_the_cpus() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let parts = ["foo", "bar", "Src", "_", ".ts", "x9", "a_b", "/"];
+        let mut x = 7u64;
+        let mut next = |m: u64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (x >> 33) % m
+        };
+        db.execute_batch("CREATE TEMP TABLE n (c0, c1);").unwrap();
+        let mut names = Vec::new();
+        for k in 0..2000 {
+            let len = 1 + next(if k % 50 == 0 { 30 } else { 5 });
+            let name: String = (0..len).map(|_| parts[next(parts.len() as u64) as usize]).collect();
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![name, k]).unwrap();
+            names.push(name);
+        }
+        let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
+        let rule = format!("pos {n} v0 v1\ntest prefix v0 x:{} 1\nhead v0 v1", hex("foo"));
+        db.execute_batch("CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+        let spec = ["name dev_verdicts".to_owned(), "device".into(), "rel h0 si empty".into(), format!("seed 0 {}", hex(&rule))].join("\n");
+        super::super::open(&db, &spec).unwrap();
+        super::super::run(&db, "dev_verdicts", 0).unwrap();
+        let report = super::take_report();
+        assert!(report.as_ref().is_some_and(|r| r.refused.is_none()), "the stratum ran on the device: {report:?}");
+        super::super::close(&db, "dev_verdicts").unwrap();
+        let m = crate::code_rule_dsl::logic::strings::Matcher::new("prefix", &["foo".to_owned()]).unwrap();
+        let test = crate::code_rule_dsl::text::table::test_id(&m.plans).unwrap();
+        let syms = super::super::symbols(&db).unwrap();
+        let atoms = std::sync::Arc::clone(syms.read().unwrap().atoms());
+        let runs = atoms.runs();
+        let verdicts = atoms.kept();
+        use crate::content_store::atoms::{FAILS, PASSES, UNKNOWN};
+        let mut wrong = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for name in &names {
+            let id = u32::try_from(syms.write().unwrap().id(name)).unwrap();
+            if !seen.insert(id) {
+                continue;
+            }
+            let want = if m.is_match(name) { PASSES } else { FAILS };
+            let got = verdicts.get(test, id);
+            if got != want {
+                let run = runs.iter().position(|(r, _)| r.first <= id && id < r.end);
+                let block = run.map(|k| (runs[k].0.first, runs[k].0.end, runs[k].0.from, runs[k].1.reserved(), runs[k].1.in_slab(), runs[k].1.mapped_file().is_some()));
+                wrong.push(format!("{name:?} id {id} got {got} (UNKNOWN {UNKNOWN}) want {want}, run {run:?} {block:?}"));
+            }
+        }
+        // The rows that pass keep their symbol (a test binds nothing): the head's symbols are the matching rows'.
+        let mut heads: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+        heads.sort_unstable_by_key(|h| h.1);
+        let want: Vec<(i64, i64)> = names.iter().enumerate().filter(|(_, s)| m.is_match(s)).map(|(k, s)| (syms.write().unwrap().id(s), k as i64)).collect();
+        assert_eq!(heads, want, "the rows that pass, their names kept");
+        let all: Vec<_> = runs.iter().map(|(r, b)| (r.first, r.end, r.from, b.reserved(), b.in_slab(), b.mapped_file().is_some())).collect();
+        assert!(wrong.is_empty(), "{} of {} symbols wrong; runs {all:?}; first: {:#?}", wrong.len(), seen.len(), &wrong[..wrong.len().min(12)]);
+    }
+
     /// Strata placed on the device, when their driver can wait, go out in one wave: each encodes its joins into the
     /// level's one command buffer and returns `3`; one flush commits it; each then finishes, with the rows it makes
     /// on its own.
@@ -441,6 +658,7 @@
             ("wave_c", "h2", format!("pos {n} v0 v1\ncat v2 v0 x:{}\nhead v2 v1", hex("w"))),
         ];
         let mut got = Vec::new();
+        let mut in_place = 0;
         for waves in [false, true] {
             for (name, h, rule) in &strata {
                 db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{h}; CREATE TEMP TABLE {h} (c0, c1);")).unwrap();
@@ -462,7 +680,9 @@
                     assert!(!status.ends_with(" 3"), "{name} finished: {status}");
                     let report = super::take_report().expect("a device report");
                     assert!(report.refused.is_none() && report.waved == 1, "{report:?}");
+                    in_place += report.in_place;
                 }
+                assert_eq!(super::waves_kept(), 0, "the wave's completion goes with its last stratum (Q314: kept for ever, before)");
             } else {
                 for (name, _, _) in &strata {
                     super::super::run(&db, name, 0).unwrap();
@@ -480,6 +700,7 @@
             got.push(rows);
         }
         assert_eq!(got[1], got[0], "the strata's rows after the wave are their own runs'");
+        assert!(in_place > 0, "the strata read their input in place");
     }
 
     /// Decision 0386, the queue's bound: a stratum that waits for its wave leaves no command buffer open on its
@@ -643,7 +864,7 @@
         let status = super::super::run(&db, "beside", 0).unwrap();
         assert!(!status.ends_with(" 3"), "it ran apart: {status}");
         let report = super::take_report().expect("a device report");
-        assert!(report.refused.is_none() && report.waved == 0 && report.resident_hits + report.sort_hits > 0, "it read the resident copy: {report:?}");
+        assert!(report.refused.is_none() && report.waved == 0 && report.sort_hits > 0, "it read the index the wave built: {report:?}");
         super::super::close(&db, "beside").unwrap();
         wave::flush(1).unwrap();
         super::super::run(&db, "in_wave", 0).unwrap();
@@ -732,7 +953,9 @@
                     assert_eq!(r.refused.is_none(), on_device, "{case}: {r:?}");
                     if on_device {
                         assert!(r.made > 2000 && r.arena_reruns >= 1, "{case}: texts made in an arena that filled once: {r:?}");
-                        assert!(r.per_symbol >= 12, "{case}: text functions made once per distinct name, chunked: {r:?}");
+                        // Symbols' texts read in place through the atoms directory (decision 0478 step 2e): no names
+                        // uploaded, no per-symbol table made.
+                        assert_eq!((r.per_symbol, r.upload_by[super::profile::UPLOAD_NAMES].0), (0, 0), "{case}: symbols read in place: {r:?}");
                     }
                 }
                 let counts = super::super::step_counts(&db, "dev_fn").unwrap();
@@ -791,10 +1014,10 @@
         }
     }
 
-    /// Decision 0261: the device's column statistics read a relation it holds in place (its resident upload), and
-    /// are the same as over the values gathered on the host; a relation it does not hold is gathered.
+    /// Decision 0261, with 0478 step 1: the device's column statistics read a relation in its block where it lies,
+    /// keeping nothing of it, and are the same as over the values gathered on the host.
     #[test]
-    fn column_statistics_read_a_resident_relation_in_place() {
+    fn column_statistics_read_a_relation_in_its_block_in_place() {
         use crate::code_rule_dsl::logic::device::StatColumn;
         use crate::code_rule_dsl::logic::native::setfix::InRel;
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
@@ -810,21 +1033,19 @@
             rows.push(if next(2) == 0 { -(1i64 << 40) } else { 1i64 << 40 } + next(9) as i64);
         }
         let rel = InRel::from_flat(rows.clone(), n, vec![b'i'; 2]);
+        assert!(rel.in_block().is_some(), "a flat relation's rows lie in a block");
         let cols = [StatColumn::Rel(&rel, 0), StatColumn::Rel(&rel, 1)];
-        let (gathered, in_place) = super::column_stats(&cols, 16, 64).expect("the device");
-        assert_eq!(in_place, 0);
-        let mut batch = crate::code_rule_dsl::transducer::packed::metal_join::Batch::new().expect("the device");
-        let mut rep = super::Report::default();
-        // Both columns uploaded: a copy holds only the columns asked for (decision 0277).
-        super::resident(&rel, &[0, 1], &[], &mut batch, &mut rep).expect("resident");
+        // Decision 0478 step 1: a relation in its block is read where it lies, with nothing made resident first.
         let (read, in_place) = super::column_stats(&cols, 16, 64).expect("the device");
         assert_eq!(in_place, 2);
-        assert_eq!(read, gathered);
-        let values: Vec<i64> = rows.iter().step_by(2).copied().collect();
-        let (of_values, _) = super::column_stats(&[StatColumn::Values(&values)], 16, 64).expect("the device");
-        assert_eq!(of_values[0], read[0]);
+        assert_eq!(std::sync::Arc::strong_count(&rel), 1, "the read keeps no handle to the relation (decision 0478 R1)");
+        // The same statistics as the columns' values gathered on the host.
+        let (c0, c1): (Vec<i64>, Vec<i64>) = (rows.iter().step_by(2).copied().collect(), rows.iter().skip(1).step_by(2).copied().collect());
+        let (of_values, in_place) = super::column_stats(&[StatColumn::Values(&c0), StatColumn::Values(&c1)], 16, 64).expect("the device");
+        assert_eq!(in_place, 0);
+        assert_eq!(read, of_values);
         assert_eq!(read[1].ndv, 18);
-        // Each column's filter (decision 0477), the second's base the span's on the device, 64 bits wide: the
+        // Each column's filter (decision 0513), the second's base the span's on the device, 64 bits wide: the
         // host's filter of the same values, word for word.
         for (c, got) in read.iter().enumerate() {
             let mut cpu = crate::code_rule_dsl::logic::bloom::Filter::new(64);
@@ -855,7 +1076,7 @@
             let counts_of = |h: &table::HeavyCol| { let mut c: Vec<u64> = h.top.iter().map(|t| t.1 as u64).collect(); c.sort_unstable(); c };
             assert_eq!(counts_of(&g), counts_of(&cpu));
             assert!((table::heavy_fan(&g, &[&g, &g]).unwrap() / table::heavy_fan(&cpu, &[&cpu, &cpu]).unwrap() - 1.0).abs() < 1e-6);
-            // The device's filter is the host's, word for word (decision 0477).
+            // The device's filter is the host's, word for word (decision 0513).
             assert_eq!(g.keys, cpu.keys, "the column's filter");
         }
     }
@@ -960,7 +1181,7 @@
     /// next stratum makes it again and reads the host's rows, not a relation nothing wrote (the lost findings of a
     /// refused `attr_of`, 2026-11-17).
     #[test]
-    fn a_view_made_in_a_refused_batch_is_made_again() {
+    fn a_view_made_on_the_device_is_made_at_each_stratum() {
         use crate::code_rule_dsl::facts::core;
         use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
         use crate::code_rule_dsl::logic::native::setfix::InRel;
@@ -989,23 +1210,67 @@
         let src = Arc::clone(&all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).expect("node").1);
         assert!(src.device_view().is_some_and(|d| d.in_place.is_none()), "made on the device");
         let rel = InRel::over_source(Arc::clone(&src), vec![b'i'; src.columns().len()]);
-        // Encoded into a batch the refusal drops uncommitted: nothing ran it.
+        // Encoded into a batch a refusal drops uncommitted: nothing ran it, and nothing of it is kept (decision 0478
+        // step 3: a copy is made at each stratum, never cached).
         let mut refused = mj::Batch::new().expect("the device");
         let mut rep = super::Report::default();
         super::resident(&rel, &[0, 1], &[], &mut refused, &mut rep).expect("resident");
         assert_eq!(rep.uploads, 1, "made: {rep:?}");
         drop(refused);
-        let _ = super::unrun::<()>(Err("refused at run time".to_owned()));
         let mut batch = mj::Batch::new().expect("the device");
         let mut rep = super::Report::default();
         let (dev, _, place) = super::resident(&rel, &[0, 1], &[], &mut batch, &mut rep).expect("resident");
-        assert_eq!((rep.uploads, rep.resident_hits), (1, 0), "made again, not found: {rep:?}");
+        assert_eq!(rep.uploads, 1, "made again: {rep:?}");
         batch.finish().unwrap();
         let n = src.len();
         for c in [0, 1] {
             let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
             assert_eq!(dev.column(place[c] as usize), host, "column {c}");
         }
+        let _ = std::fs::remove_file(&store_path);
+    }
+
+    /// Decision 0478 step 3 (R4): a view read in place keeps its indexes in a block of its own, which the view's
+    /// source holds (its chunk's life), not in a thread's cache: a stratum on another thread, in another batch, finds
+    /// the index the first built, and builds none.
+    #[test]
+    fn a_views_index_is_in_its_block_for_every_thread() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
+        use crate::code_rule_dsl::logic::native::setfix::InRel;
+        use crate::code_rule_dsl::model::FileInput;
+        use crate::code_rule_dsl::transducer::packed::metal_join as mj;
+        use std::sync::Arc;
+        if !mj::available() {
+            return;
+        }
+        crate::test_languages();
+        let texts = ["import os\nx = f(1, y=2)\n", "class C(B):\n    def m(self, a):\n        return a\n"];
+        let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
+            let path = format!("v{at}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key: (3 + 2 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
+        }).collect();
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let store_path = std::env::temp_dir().join(format!("rerail-view-index-{}-{nonce}.sqlite", std::process::id()));
+        let store = crate::content_store::ContentStore::open(&store_path).unwrap();
+        let all = sources(&store, docs).unwrap();
+        let src = Arc::clone(&all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).expect("node").1);
+        assert!(src.device_view().is_some_and(|d| d.in_place.is_some()), "read in place");
+        let rel = InRel::over_source(Arc::clone(&src), vec![b'i'; src.columns().len()]);
+        let probe = |rel: &Arc<InRel>| {
+            let mut batch = mj::Batch::new().expect("the device");
+            let mut rep = super::Report::default();
+            let (dev, ix, _) = super::resident(rel, &[], &[2], &mut batch, &mut rep).expect("resident");
+            batch.finish().unwrap();
+            assert!(dev.view.is_some() && ix.is_some(), "a view read in place, by its index");
+            (rep.sorts, rep.sort_hits, rep.uploads)
+        };
+        assert_eq!(probe(&rel), (1, 0, 0), "the first stratum builds the index");
+        let again = Arc::clone(&rel);
+        let other = std::thread::spawn(move || probe(&again)).join().unwrap();
+        assert_eq!(other, (0, 1, 0), "another thread's stratum finds it in the view's block");
         let _ = std::fs::remove_file(&store_path);
     }
 
@@ -1082,7 +1347,7 @@
         // its allocations may, Intel's unified shared memory), which the made branch above checked.
         let read_in_place = if device.has_addresses() { 10 } else { 0 };
         assert_eq!(in_place, read_in_place, "node, child, field, core_node and line read in place");
-        // core.rr's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
+        // core.rerail's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
             use crate::code_rule_dsl::facts::vtab::syntax::{Guest, Made, Placement, Projection, shaped};
             // With a guest (decision 0055): its places are its host's lines, through its placement, found on the
@@ -1100,15 +1365,18 @@
             {
                 let view = |name: &str| core_views.iter().find(|(n, _)| *n == name).unwrap().1.clone();
                 let (docof, line) = (view("docof"), view("line"));
-                // A place's id holds its document's key (`Projected::global`); its file is its host's (decision 0431
-                // §4: a guest made on the host is part of the host's file).
-                let guest: Vec<usize> = (0..docof.len()).filter(|&r| docof.value(r, 0) >> 32 == 100).collect();
+                // `docof` is a place's file (decision 0431 §4): the guest's is its host's, 7. Its rows are those of
+                // file 7 that the batch without it does not have.
+                let without = shaped(&store, make(), &Projection::core()).unwrap();
+                let host = without.iter().find(|(n, _)| *n == "docof").unwrap().1.clone();
+                let host: std::collections::HashSet<i64> = (0..host.len()).filter(|&r| host.value(r, 1) == 7).map(|r| host.value(r, 0)).collect();
+                let guest: Vec<usize> = (0..docof.len()).filter(|&r| docof.value(r, 1) == 7 && !host.contains(&docof.value(r, 0))).collect();
                 assert!(!guest.is_empty(), "the guest's places are rows");
                 assert!(guest.iter().all(|&r| docof.value(r, 1) == 7), "the guest's places are its host's file's");
                 assert!(guest.iter().all(|&r| line.value(r, 1) == 2), "the guest's places are its host's lines");
             }
             // Each document's places read in place (decision 0353 step 4d): the views' reads over the batch's
-            // directory, its tapes and core.rr's lines in the batch's block; a guest's (a copied stretch) through its
+            // directory, its tapes and core.rerail's lines in the batch's block; a guest's (a copied stretch) through its
             // host's lines and its placement. With the guest and without. Made where the device's buffers have no
             // addresses, which the directory is of (OpenCL 1.2's, decision 0440 step C).
             let own_views = shaped(&store, make(), &Projection::core()).unwrap();

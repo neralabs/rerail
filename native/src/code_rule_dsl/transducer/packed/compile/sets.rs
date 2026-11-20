@@ -62,7 +62,7 @@ pub enum Set {
     Reached { step: Step, named: bool, from: Box<Set> },
 }
 
-/// A walk's anchor as the device evaluates it (`label_phase`, decisions 0365, 0483): `Set` in postfix over a stack of node
+/// A walk's anchor as the device evaluates it (`label_phase`, decisions 0365, 0475): `Set` in postfix over a stack of node
 /// sets, a word an operation (`op | arg << 8`), `depth` the stack's slots (an axis step's output a slot past its
 /// input), and the labels it reads (by index, past `DERIVED_CLASS_BASE`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -889,7 +889,7 @@ impl Reader<'_> {
         match set {
             Set::All => {
                 let mut bits = vec![u64::MAX; words];
-                if len % 64 != 0
+                if !len.is_multiple_of(64)
                     && let Some(last) = bits.last_mut()
                 {
                     *last = (1 << (len % 64)) - 1;

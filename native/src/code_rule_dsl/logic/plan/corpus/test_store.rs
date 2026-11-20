@@ -5,7 +5,7 @@
 //! test's thread ends. No test sees what another left behind, and none waits on another's leases (O146).
 //!
 //! The template holds what every test would otherwise make first: the rule library's phase 0 (each module's tape and
-//! its loads, `bootstrap.rr`'s plan) and the core program's plan. It is made once per build (keyed by the build's
+//! its loads, `bootstrap.rerail`'s plan) and the core program's plan. It is made once per build (keyed by the build's
 //! identities, `build_ids`), by the first test process that wants it, under a file lock; the processes after it find
 //! it ready (`<key>.ready`). It is written to a staging store, drained (atoms, queued writes), and published with
 //! `VACUUM INTO` and a rename, so a reader never sees half of one. A binary that registers no language (a lower
@@ -133,13 +133,13 @@ fn make(path: &Path) {
 fn fill(store: &Path) -> std::result::Result<(), String> {
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
     let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
-    let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rr".to_owned())], phases: Vec::new() }];
+    let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rerail".to_owned())], phases: Vec::new() }];
     let mut modules = Vec::new();
     rule_files(&lib, &mut modules);
     modules.sort();
     seeds.extend(modules.into_iter().map(super::phase0::Seed::File));
     super::phase0::graphs(&seeds).map_err(|e| e.to_string())?;
-    let program = "#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
+    let program = "#include \"core.rerail\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
     let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(program).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     let corpus = templates().join("corpus");
     std::fs::create_dir_all(&corpus).map_err(|e| e.to_string())?;
@@ -159,7 +159,7 @@ fn rule_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             rule_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rr") {
+        } else if path.extension().is_some_and(|e| e == "rerail") {
             out.push(path);
         }
     }
@@ -276,9 +276,11 @@ pub(super) fn own() -> Option<PathBuf> {
     Some(OWN.with(|own| own.get_or_init(copy).path.clone()))
 }
 
-/// Whether `path` is the store of the test on this thread (its own, not one shared with other threads).
+/// Whether `path` is the store of the test on this thread (its own, not one shared with other threads), or the one a
+/// job was handed by its test (`carried`): the same test's store, whose observer goes with it (`Store`'s drop forgets
+/// the store's one observer; a job's own would hold its files open past the test).
 pub(super) fn is_own(path: &Path) -> bool {
-    OWN.with(|own| own.get().is_some_and(|s| s.path == path))
+    OWN.with(|own| own.get().is_some_and(|s| s.path == path)) || handed().is_some_and(|h| h == path)
 }
 
 /// Removes the directories of test processes that have exited.
@@ -351,6 +353,9 @@ fn clone_dir(from: &Path, to: &Path) -> std::io::Result<()> {
         if kind.is_file() {
             clone_file(&e.path(), &to.join(e.file_name()))?;
         } else if kind.is_dir() {
+            // A folder's own folders too: the kept facts' blocks are in one per space (`kept_facts::space_dir`,
+            // decision 0401). Copied flat, a copy's rows named blocks it did not have, and its first run failed:
+            // "a space's kept facts: No such file or directory".
             clone_dir(&e.path(), &to.join(e.file_name()))?;
         }
     }

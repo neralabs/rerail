@@ -90,6 +90,8 @@ fn statements_and_expressions_are_the_lean_parsers() {
     same(&[
         "fun f() {\n    val a = 1 + 2 * 3\n    b.c(d, e)\n    f[g] = h\n    if (a) b else c\n    x?.y ?: z\n    !a && b || c\n    for (i in 0..10) {}\n    while (true) {}\n}\n",
         "fun f() {\n    x = 1\n    x += y\n    a.b.c = d\n    a[1][2] = 3\n    a.b().c = 4\n}\n",
+        // `/=` at the comments' reader's byte: the pair its other rule reads (the JIT read `/` alone).
+        "fun f() {\n    w /= scale\n    h = a / b // c\n    d /= 2 /* e */\n}\n",
         "fun f() {\n    if (a < b && c >= d) return\n    else throw e\n}\n",
         "fun f() {\n    a\n        .b()\n        ?.c\n    -d\n    e !in f\n    g is H\n    i++\n    j!!\n}\n",
         "fun f() = g(a = 1, b)\n",
@@ -97,6 +99,16 @@ fn statements_and_expressions_are_the_lean_parsers() {
         "fun f() {\n    do { x-- } while (x > 0)\n    a to b\n    break\n    continue\n    this.x = null\n}\n",
         "fun f() {\n    // lead\n    a() // after a\n    /* b */ b()\n    c(/* in */ 1) // after c\n}\n",
     ]);
+}
+
+/// A block comment that starts a line before a token that goes on the line before (`.`, `?:`,
+/// `as`, `+`…): where the lean parser asks for a semicolon there (`asi`, at a statement's level),
+/// the comment is lost, of no width after the token; inside brackets it is any comment
+/// (`semi`'s `loses`, decision 0451).
+#[test]
+fn lost_comments_are_the_lean_parsers() {
+    let texts = crate::lost_comment_texts();
+    same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
 /// Step 3: strings, with `$name` templates.
@@ -273,6 +285,8 @@ fn receivers_are_the_lean_parsers() {
     same(&[
         "fun String.faint(): String = this\nfun List<T>.g() {}\nval A.B.c: Int get() = 2\n",
         "class A {\n    val String.x\n        get() = 1\n    fun f() {\n        val y = a.b\n        var z: A.B = c\n    }\n}\n",
+        // Nested type arguments in the type parameters: `receiver_end` reads past them.
+        "fun <T : Comparable<T>> B.f() {}\n",
     ]);
 }
 
@@ -312,7 +326,7 @@ fn type_arguments_are_the_lean_parsers() {
     ]);
 }
 
-/// Runs that count their depths (Q326), as `type_args_end` and `lambda_params_end` do: type
+/// Runs that count their depths (Q339), as `type_args_end` and `lambda_params_end` do: type
 /// arguments to the `>` that closes the `<`, a function type inside them, a lambda's parameters
 /// with brackets and an inner `->`; `a<b>c>(d)`, whose first `>` closes, is no call.
 #[test]
@@ -501,10 +515,10 @@ fn annotated_expressions_are_the_lean_parsers() {
         "fun f() {\n    @Suppress(\"D\", \"E\")\n    when (a) {\n        1 -> b()\n    }\n}\n",
         "val x = when (a) {\n    B,\n    C,\n    -> d\n    else -> e\n}\n",
         "val x = when (a) {\n    B, C, -> d\n    in r -> e\n    else -> f\n}\n",
-        // The run to the `)` passes line breaks (Q272): a declaration after is still one.
+        // The run to the `)` passes line breaks (Q340): a declaration after is still one.
         "fun f() {\n    @A(x) if (y) z\n    val q = 1\n}\n",
         // An annotation before any expression, as the lean parser's `declaration_ahead` finds no
-        // declaration (Q274); and before a declaration's modifiers and keyword.
+        // declaration (Q342); and before a declaration's modifiers and keyword.
         "fun f() {\n    @A if (y) z\n}\n",
         "fun f() {\n    @A(x) foo()\n}\n",
         "fun f() {\n    @A foo()\n    val q = 1\n}\n",
@@ -615,7 +629,6 @@ fn what_step_23_does_not_read_is_refused() {
 fn what_step_22_does_not_read_is_refused() {
     refused(&[
         "fun f() {\n    val d = x as java.util.List<Int>\n    g(d)\n}\n",
-        "fun <T : Comparable<T>> B.f() {}\n",
         "val <T : Any> List<T>.second: T get() = this[1]\n",
     ]);
 }
@@ -656,7 +669,8 @@ fn what_step_20_does_not_read_is_refused() {
         "fun f() {\n    loop@ for (i in a) break@loop\n}\n",
         "val a = b as java.util.List<Int>\n",
         "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",
-        "fun f() {\n    a\n    /* c */ .b()\n}\n",
+        // A comment lost before `catch`, `finally` or `else` (not `else ->`): not read yet.
+        "fun f() {\n    try { a() }\n    /* c */ catch (e: E) {}\n}\n",
     ]);
 }
 
@@ -932,6 +946,17 @@ fn tier1_records() {
         let cpu = c.parser.tier1.extract(&src);
         let same = run.positions == cpu.positions && run.codes == cpu.codes && run.totals == cpu.totals;
         eprintln!("== {p}: {}", if same { "the same" } else { "DIFFERS" });
+        // `RERAIL_KOTLIN_RECORDS`: the CPU's records, each start, last, code and text, and the
+        // records' marks (`Records::marks`) and blank marks (`Records::blanks`).
+        if std::env::var_os("RERAIL_KOTLIN_RECORDS").is_some() {
+            if let Some(r) = &c.program.block_programs[0].records {
+                eprintln!("marks {:?} blanks {:?} names {:?}", r.marks, r.blanks, c.program.names.marks);
+            }
+            for (i, &code) in cpu.codes.iter().enumerate() {
+                let (s, l) = (cpu.positions[0][i] as usize, cpu.positions[1][i] as usize);
+                eprintln!("record {i}: {s}..={l} code {code:#x} marks {:#x} {:?}", code >> rerail_compiler::records::MARK_SHIFT, String::from_utf8_lossy(&src[s..=l.min(src.len() - 1)]));
+            }
+        }
         if !same {
             // The first record where they part, with the ones around it: start, last, code.
             let rec = |r: &rerail_compiler::block::BlockRun, i: usize| (r.positions[0].get(i).copied(), r.positions.get(1).and_then(|l| l.get(i)).copied(), r.codes.get(i).map(|c| format!("{c:#x}")));
@@ -1064,7 +1089,9 @@ fn token_level_probe() {
     use ::bitlex::syntax::{Arg, Expr, Stmt};
     use rerail_compiler::bitlex_masks as bitlex_compile;
     use std::collections::{HashMap, HashSet};
-    let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
+    // The crate's grammar, or `RERAIL_KOTLIN_GRAMMAR`'s file (a variant measured without a build).
+    let text = std::env::var("RERAIL_KOTLIN_GRAMMAR").map_or_else(|_| crate::GRAMMAR.to_owned(), |p| std::fs::read_to_string(p).expect("the grammar file"));
+    let stmts = ::bitlex::syntax::parse(&text).expect("parses");
     let mut defs: HashMap<String, Expr> = HashMap::new();
     let mut classes: HashSet<String> = HashSet::new();
     fn walk(s: &[Stmt], defs: &mut HashMap<String, Expr>, classes: &mut HashSet<String>) {
@@ -1323,7 +1350,7 @@ fn lazy_probe() {
 /// step whose walk they speak of reads each text as without them, the same tape or the same refusal. The step is
 /// the ladder's last, the one it keeps (0422).
 #[test]
-#[ignore = "slow: compiles step 36 three times, ~85 s each on an M1 Max (0422 kept no smaller step); Q331"]
+#[ignore = "slow: compiles step 36 three times, ~85 s each on an M1 Max (0422 kept no smaller step); Q371"]
 fn a_step_compiles_to_one_program_and_walk_lemmas_keep_its_tapes() {
     let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_ladder/36-no-back-fills.bitlex")).expect("step 36");
     let with = compile_text(&source).expect("step 36 compiles");

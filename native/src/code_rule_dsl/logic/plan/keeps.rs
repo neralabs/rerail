@@ -25,7 +25,7 @@
 //! read, and each rule's steps' rows.
 //!
 //! Stored always: outputs, inputs, lattices, relations with facts, natives and what they read,
-//! demanded relations, gates, answers, recursive relations, relations read inside an aggregate (a count, a sum or a
+//! demanded relations, an aggregate's demand (the keys it enumerates from), gates, answers, recursive relations, relations read inside an aggregate (a count, a sum or a
 //! string join reads the distinct rows), and relations read by a negation whose unfolding is not a negation of plain
 //! literals (below).
 //!
@@ -556,7 +556,7 @@ fn weigh(own: &[(f64, Option<f64>)], copies: &[(f64, Option<f64>)], build: (f64,
 /// `base`'s, `rules_of` by head); a relation absent may be inlined.
 /// Whether `ks` are the lowering's projection of an input: `kind(n, k) :- node(_, n, k, _, _)`, and `docof` over nodes
 /// (decision 0141). One rule of one positive input atom, each head variable once in it: priced as any candidate, not
-/// refused as core.rr's. Inlined, a reader reads the input in place (`node`'s view, by kind). Inlined unpriced in every
+/// refused as core.rerail's. Inlined, a reader reads the input in place (`node`'s view, by kind). Inlined unpriced in every
 /// module of a cold PostHog run, instructions went 2,558 -> 4,734 G (a reader probing `node` by node, not `kind`'s
 /// hash index), so the pricing and its copies' bound decide.
 fn input_projection(f: &Fields<'_>, base: &Placed, ks: &[usize]) -> bool {
@@ -597,7 +597,7 @@ fn refusals(f: &Fields<'_>, base: &Placed, n: usize, rules_of: &BTreeMap<&str, V
         } else if f.answer(rel) || f.nullary(rel) {
             Some("an answer or nullary")
         } else if super::corpus::guests::REQUESTS.contains(&rel) || (core.contains(rel) && !input_projection(f, base, ks)) || rel.contains("__") {
-            Some("the engine's (a request, core.rr's, or a session's copy)")
+            Some("the engine's (a request, core.rerail's, or a session's copy)")
         } else if recursive.contains(rel) || rules().any(|r| reads(r).contains(&rel)) {
             Some("recursive")
         } else if rules().any(|r| r.body().any(|l| !matches!(l.view(), Lit::Atom(_) | Lit::Cmp { .. } | Lit::Nearest { .. }))) {
@@ -614,6 +614,18 @@ fn refusals(f: &Fields<'_>, base: &Placed, n: usize, rules_of: &BTreeMap<&str, V
     for rel in rules_of.keys() {
         if rel.starts_with(super::super::strings::RELATION) || rel.starts_with("magic_") || rel.starts_with("done_") {
             why.insert((*rel).to_owned(), "the engine's (a text test or demand's own)");
+        }
+    }
+    // A demand-restricted aggregate's demand (`Body::demand_first`): its rows are the keys the aggregate enumerates
+    // witnesses from, the boundary its planning keeps first. Inlined, the aggregate reads the demand's own join in
+    // their place (`need` and `reset` of every name in a document, unbounded: 25M rows priced for 805 keys, 45 s
+    // of one stratum over 91 files of the data layer's 50 policies).
+    for k in 0..n {
+        let b = base.body(k);
+        if let Some(i) = b.demand_first()
+            && let Some(a) = b.atom(i)
+        {
+            why.insert(b.rel(a).to_owned(), "an aggregate's demand");
         }
     }
     // Read inside an aggregate, by a gated negation, or by an atom with a computed argument.
@@ -796,7 +808,7 @@ pub(in crate::code_rule_dsl) fn factors_of(v: &Version, r: super::super::program
     factors_without(v, r, None)
 }
 
-/// `factors_of` rule `r` without its literal `skip` (a requests guard the split leaves out, decision 0477): the parts
+/// `factors_of` rule `r` without its literal `skip` (a requests guard the split leaves out, decision 0513): the parts
 /// by the rule's own places.
 pub(in crate::code_rule_dsl) fn factors_without(v: &Version, r: super::super::program_image::RuleRef<'_>, skip: Option<usize>) -> Option<(String, Vec<Vec<usize>>)> {
     use super::super::program_image::Lit;
@@ -1887,6 +1899,30 @@ pub mod tests {
         assert!(!done.is_empty(), "nothing inlined: the case does not choose");
     }
 
+    /// An aggregate's demand, read first by the aggregate it restricts (`Body::demand_first`), is stored: inlined,
+    /// the aggregate would enumerate the demand's own join in place of its keys. A relation of the same shape read
+    /// otherwise stays a candidate.
+    #[test]
+    fn an_aggregates_demand_is_stored() {
+        let prog = super::super::super::rr::parse_version(
+            ".decl b(x: number, y: number)\n.decl c(x: number)\n.input b\n.input c\n\
+             .decl rr_demand_agg_g(x: number)\nrr_demand_agg_g(x) :- b(x, _), c(x).\n\
+             .decl g(x: number, y: number)\ng(x, y) :- rr_demand_agg_g(x), b(x, y).\n\
+             .decl s(x: number)\ns(x) :- b(x, _), c(x).\n\
+             .decl o(x: number, y: number)\no(x, y) :- s(x), g(x, y).\n.output o\n",
+        )
+        .unwrap();
+        let placed = Placed::whole(prog);
+        let f = Fields::of(&placed).unwrap();
+        let mut rules_of: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for k in 0..placed.len() {
+            rules_of.entry(placed.v.rel_name(placed.rule(k).head().rel())).or_default().push(k);
+        }
+        let why = refusals(&f, &placed, placed.len(), &rules_of, &[]);
+        assert_eq!(why.get("rr_demand_agg_g").copied(), Some("an aggregate's demand"), "{why:?}");
+        assert!(!why.contains_key("s"), "{why:?}");
+    }
+
     /// A model of `prog` whose inputs have the rows and distinct values by column given.
     fn model_with(prog: &Arc<Version>, inputs: &[(&str, f64, &[f64])]) -> Model {
         use super::super::{Inputs, Stats};
@@ -1974,7 +2010,7 @@ pub mod tests {
     /// where 1,727 were made.
     #[test]
     fn a_columns_values_are_its_rules_together() {
-        let prog = parse_version(
+        let prog = super::super::super::rr::parse_version(
             ".decl a(x: number)\n.decl b(x: number, y: number)\n.input a\n.input b\n\
              .decl n(x: number)\nn(x) :- a(x).\nn(x) :- b(x, _).\nn(7) :- a(_).\n\
              .decl p(x: number, y: number)\np(x, x) :- a(x).\np(x, y) :- p(x, z), b(z, y).\n\
@@ -1982,7 +2018,7 @@ pub mod tests {
         )
         .unwrap();
         let mut model = model_with(&prog, &[("a", 5.0, &[5.0]), ("b", 100_000.0, &[1_000.0, 2_000.0])]);
-        let base = Placed::whole(Arc::clone(&prog));
+        let base = Placed::whole(prog.clone());
         let f = Fields::of(&base).unwrap();
         let mut ids_of: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
         for k in 0..base.len() {
@@ -2002,10 +2038,10 @@ pub mod tests {
     /// read as 0, a relation built on it had a column of one value, and every join on it was priced as a product.
     #[test]
     fn a_rules_rows_are_its_steps_not_a_prepared_plans() {
-        let prog = parse_version(".decl b(x: number, y: number)\n.input b\n.decl r(x: number)\nr(x) :- b(x, _).\n.output r\n").unwrap();
+        let prog = super::super::super::rr::parse_version(".decl b(x: number, y: number)\n.input b\n.decl r(x: number)\nr(x) :- b(x, _).\n.output r\n").unwrap();
         let mut model = model_with(&prog, &[("b", 100_000.0, &[1_000.0, 2_000.0])]);
         let body = super::super::body::nth(&prog, 0);
-        let f = Placed::whole(Arc::clone(&prog));
+        let f = Placed::whole(prog.clone());
         let f = f.fields().unwrap();
         let (_, planned) = calibrated_rows(f, &model, &body).unwrap();
         let ((order, _, _), _) = model.plan_rule_step_rows(f, &body, None).unwrap();

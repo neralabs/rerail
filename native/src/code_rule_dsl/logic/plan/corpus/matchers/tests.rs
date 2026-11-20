@@ -177,7 +177,7 @@ c(n, x) :- ast(d, n, {"language": "python", "rule": {"pattern": "f($X)"}}, X: x)
         std::fs::create_dir_all(root.join("b")).unwrap();
         std::fs::write(root.join("a/x.py"), "f()\n").unwrap();
         std::fs::write(root.join("b/y.py"), "f()\nzz()\n").unwrap();
-        let policy = root.with_extension("policy.rr");
+        let policy = root.with_extension("policy.rerail");
         let rule = r#"{"language": "python", "rule": {"all": [{"kind": "call"}, {"any": [{"filePath": {"regex": "^a/"}}, {"has": {"field": "function", "regex": "^zz"}}]}]}}"#;
         std::fs::write(&policy, format!(".language python\n.violation hit(at: node) code \"X1\" \"hit\"\nhit(n) :- ast(d, n, {rule}).\n")).unwrap();
         let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();

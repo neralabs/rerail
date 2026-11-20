@@ -142,13 +142,15 @@ fn slots(cap: u64) -> u64 {
     (cap * 2).next_power_of_two().max(16)
 }
 
-/// An open atoms block in a file: its one writer (the store's atoms lease holder).
+/// An open atoms block: its one writer. In a file, the store's atoms lease holder's; in anonymous memory, a process's
+/// pending atoms (decision 0478 step 2a), never written to a file.
 pub struct AtomsW {
-    block: Block,
+    block: std::sync::Arc<Block>,
     raw: Raw,
-    /// Where it writes back without a shared mapping (WASI): the block lives in memory there.
+    /// Where it writes back without a shared mapping (WASI): the block lives in memory there. `None` for a block in
+    /// anonymous memory.
     #[cfg(not(unix))]
-    file: std::fs::File,
+    file: Option<std::fs::File>,
     /// How its write-backs reach the disk (`sync`, decision 0481).
     flush: Flush,
 }
@@ -160,13 +162,46 @@ unsafe impl Sync for AtomsW {}
 impl AtomsW {
     /// A new block at `path` for ids from `first`, with room for `cap` atoms and `bytes_cap` bytes of strings.
     pub fn create(path: &Path, first: u32, tag: u64, cap: u32, bytes_cap: u64, flush: Flush) -> io::Result<AtomsW> {
-        let cap64 = u64::from(cap.max(1));
-        let n = slots(cap64);
-        let need = 4 * PAGE + (cap64 * 16 + n * 8 + bytes_cap) as usize;
+        let need = Self::need(cap, bytes_cap);
         #[cfg(unix)]
         let block = Block::file(path, kind::ATOMS, need)?;
         #[cfg(not(unix))]
         let block = Block::anon(kind::ATOMS, need);
+        let w = AtomsW {
+            raw: Self::lay_out(&block, first, tag, cap, bytes_cap),
+            block: std::sync::Arc::new(block),
+            #[cfg(not(unix))]
+            file: Some(std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?),
+            flush,
+        };
+        w.sync()?;
+        Ok(w)
+    }
+
+    /// A new block in anonymous memory for ids from `first`, with room for `cap` atoms and `bytes_cap` bytes of
+    /// strings: a process's pending atoms (decision 0478 step 2a). Its pages are taken as atoms are appended.
+    pub fn anon(first: u32, cap: u32, bytes_cap: u64) -> AtomsW {
+        let block = Block::anon(kind::ATOMS, Self::need(cap, bytes_cap));
+        AtomsW {
+            raw: Self::lay_out(&block, first, 0, cap, bytes_cap),
+            block: std::sync::Arc::new(block),
+            #[cfg(not(unix))]
+            file: None,
+            // Never written to a file: nothing to wait for.
+            flush: Flush::None,
+        }
+    }
+
+    /// The bytes a block of `cap` atoms and `bytes_cap` string bytes reserves.
+    fn need(cap: u32, bytes_cap: u64) -> usize {
+        let cap64 = u64::from(cap.max(1));
+        4 * PAGE + (cap64 * 16 + slots(cap64) * 8 + bytes_cap) as usize
+    }
+
+    /// `block`'s regions laid out for ids from `first`: its root, set as the block's.
+    fn lay_out(block: &Block, first: u32, tag: u64, cap: u32, bytes_cap: u64) -> Raw {
+        let cap64 = u64::from(cap.max(1));
+        let n = slots(cap64);
         let root: *mut AtomsRoot = block.alloc_t(1);
         let ends: *mut u64 = block.alloc_t(cap64 as usize);
         let hashes: *mut u64 = block.alloc_t(cap64 as usize);
@@ -187,16 +222,7 @@ impl AtomsW {
             Span::set(&r.strings, strings, bytes_cap as usize);
         }
         block.set_root(root);
-        let raw = Raw::of(&block);
-        let w = AtomsW {
-            block,
-            raw,
-            #[cfg(not(unix))]
-            file: std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?,
-            flush,
-        };
-        w.sync()?;
-        Ok(w)
+        Raw::of(block)
     }
 
     /// The open block at `path`, for its next writer, which continues from `end` (the end the store's last commit
@@ -208,10 +234,10 @@ impl AtomsW {
         }
         let raw = Raw::of(&block);
         let mut w = AtomsW {
-            block,
+            block: std::sync::Arc::new(block),
             raw,
             #[cfg(not(unix))]
-            file: std::fs::OpenOptions::new().read(true).write(true).open(path)?,
+            file: Some(std::fs::OpenOptions::new().read(true).write(true).open(path)?),
             flush,
         };
         w.resume(end)?;
@@ -296,6 +322,31 @@ impl AtomsW {
         Some(id)
     }
 
+    /// The bytes its block has written (its pages taken).
+    pub fn used(&self) -> usize {
+        self.block.used()
+    }
+
+    /// The string bytes of ids `from..to` (within its atoms appended).
+    pub fn bytes_of(&self, from: u32, to: u32) -> u64 {
+        let end = self.end();
+        let (from, to) = (from.clamp(self.raw.first, end), to.clamp(self.raw.first, end));
+        if from >= to {
+            return 0;
+        }
+        let at = |id: u32| {
+            let i = (id - self.raw.first) as usize;
+            // SAFETY: `i` is below the count appended.
+            if i == 0 { 0 } else { unsafe { *self.raw.ends.add(i - 1) } }
+        };
+        at(to) - at(from)
+    }
+
+    /// Its block's memory: its first byte and its reservation's end.
+    pub fn region(&self) -> (usize, usize) {
+        (self.block.base_ptr() as usize, self.block.base_ptr() as usize + self.block.reserved())
+    }
+
     /// One past the last id appended.
     pub fn end(&self) -> u32 {
         self.raw.first + self.block.root::<AtomsRoot>().count.load(Acquire) as u32
@@ -310,7 +361,7 @@ impl AtomsW {
         #[cfg(not(unix))]
         {
             use std::io::{Seek, Write};
-            let mut f = &self.file;
+            let Some(mut f) = self.file.as_ref() else { return Ok(()) };
             f.seek(io::SeekFrom::Start(0))?;
             f.write_all(self.block.bytes(0, self.block.used()))?;
             if self.flush.waits() { f.sync_data() } else { Ok(()) }
@@ -336,7 +387,9 @@ impl AtomsW {
             f.set_len(len)?;
         }
         #[cfg(not(unix))]
-        self.file.set_len(len)?;
+        if let Some(f) = &self.file {
+            f.set_len(len)?;
+        }
         Ok(())
     }
 }
@@ -358,7 +411,7 @@ impl AtomRead for AtomsW {
 
 /// An atoms block mapped read-only, read up to an end it is told (the store's committed end within it).
 pub struct AtomsV {
-    _block: Block,
+    _block: std::sync::Arc<Block>,
     raw: Raw,
     end: u32,
 }
@@ -372,7 +425,7 @@ impl AtomsV {
     pub fn open(path: &Path, end: u32) -> io::Result<AtomsV> {
         let block = Block::map_file(path, kind::ATOMS, false)?;
         let raw = Raw::of(&block);
-        let mut v = AtomsV { _block: block, raw, end: raw.first };
+        let mut v = AtomsV { _block: std::sync::Arc::new(block), raw, end: raw.first };
         v.extend(end)?;
         Ok(v)
     }
@@ -424,8 +477,198 @@ impl AtomRead for AtomsV {
     }
 }
 
+/// A run of atoms where a block holds it, as a directory lists it (decision 0478 step 2b): ids `first..end` are read
+/// in it; its atom `id`'s string ends at `ends[id - from]`, and begins where the one before ends (`0` for `from`'s).
+#[derive(Clone, Copy, Debug)]
+pub struct Run {
+    pub first: u32,
+    pub end: u32,
+    /// The block's first id, which its `ends` count from.
+    pub from: u32,
+    pub ends: *const u64,
+    pub strings: *const u8,
+    /// How many atoms and string bytes the block has room for (its spans' lengths).
+    pub cap: u32,
+    pub bytes_cap: u64,
+}
+
+impl Raw {
+    fn run(&self, first: u32, end: u32) -> Run {
+        Run { first, end, from: self.first, ends: self.ends, strings: self.strings, cap: self.cap, bytes_cap: self.bytes_cap }
+    }
+}
+
+impl AtomsW {
+    /// Its atoms from `first` (at least its own first) as a directory's run: those appended until now.
+    pub fn run_from(&self, first: u32) -> Run {
+        self.raw.run(first.max(self.raw.first), self.end())
+    }
+    /// Its block, shared (a command buffer that reads it keeps it).
+    pub fn block(&self) -> &std::sync::Arc<Block> {
+        &self.block
+    }
+}
+
+impl AtomsV {
+    /// Its atoms below `end` (at most what it is read up to) as a directory's run.
+    pub fn run_upto(&self, end: u32) -> Run {
+        self.raw.run(self.raw.first, end.min(self.end))
+    }
+    /// Its block, shared (a command buffer that reads it keeps it).
+    pub fn block(&self) -> &std::sync::Arc<Block> {
+        &self._block
+    }
+}
+
+structure! {
+    /// A directory's entry (decision 0478 step 2b): a run of atoms, `first..end`, its block's first id (`from`), and
+    /// spans to the block's `ends` and `strings` whose offsets are in the reader's address space: the host's, or the
+    /// device's (its buffers' GPU addresses).
+    pub struct DirEntry {
+        pub first: u32,
+        pub end: u32,
+        pub from: u32,
+        pub pad: u32,
+        pub ends: Span<u64>,
+        pub strings: Span<u8>,
+    }
+}
+
+structure! {
+    /// A directory of runs of atoms (decision 0478 step 2b), sorted by first id and not overlapping: the store's chain
+    /// below the process's pending atoms, then theirs. The atoms reads (`atoms_at`, `atoms_len`, in CLIF) take its
+    /// address and find an id's run by a binary search.
+    pub struct AtomsDirRoot {
+        pub n: u64,
+        pub entries: Span<DirEntry>,
+    }
+}
+
+/// A directory of runs of atoms in a block of its own (decision 0478 step 2b), its spans written for one address
+/// space.
+pub struct AtomsDir {
+    block: Block,
+}
+
+// SAFETY: written once when made, before any reader is given it; read-only after.
+unsafe impl Send for AtomsDir {}
+unsafe impl Sync for AtomsDir {}
+
+impl AtomsDir {
+    /// `runs` (sorted by first id, not overlapping) as a directory, for the host. Its spans' offsets are host
+    /// addresses' differences.
+    pub fn host(runs: &[Run]) -> AtomsDir {
+        AtomsDir::new(runs, &|p| p as u64, &|b| b.base_ptr() as u64)
+    }
+
+    /// `runs` (sorted by first id, not overlapping) as a directory. `at` gives a run's host address's value in the
+    /// reader's address space: the identity for the host, its block's GPU address plus the offset for the device.
+    /// `own` gives the directory's block's first byte's, once the block is made.
+    pub fn new(runs: &[Run], at: &dyn Fn(*const u8) -> u64, own: &dyn Fn(&Block) -> u64) -> AtomsDir {
+        assert!(runs.windows(2).all(|w| w[0].end <= w[1].first), "a directory's runs sorted and apart");
+        let block = Block::anon(kind::ATOMS, 4 * PAGE + std::mem::size_of_val(runs) * 2 + 256);
+        let root: *mut AtomsDirRoot = block.alloc_t(1);
+        let entries: *mut DirEntry = block.alloc_t(runs.len().max(1));
+        let (base, base_at) = (block.base_ptr() as u64, own(&block));
+        let here = |p: *const u8| (p as u64).wrapping_sub(base).wrapping_add(base_at);
+        // A span's offset: from the span's own address to its target's, both in the reader's space.
+        let set = |span: *const u8, off: &AtomicI64Ref, len: &AtomicU64Ref, target: u64, n: u64| {
+            off.store((target as i64).wrapping_sub(here(span) as i64), Relaxed);
+            len.store(n, Relaxed);
+        };
+        // SAFETY: the pointers are into this block, which no reader has yet.
+        unsafe {
+            let r = &mut *root;
+            r.n = runs.len() as u64;
+            set(std::ptr::from_ref(&r.entries).cast(), &r.entries.off, &r.entries.len, here(entries.cast()), runs.len() as u64);
+            for (k, run) in runs.iter().enumerate() {
+                let e = &mut *entries.add(k);
+                e.first = run.first;
+                e.end = run.end;
+                e.from = run.from;
+                e.pad = 0;
+                set(std::ptr::from_ref(&e.ends).cast(), &e.ends.off, &e.ends.len, at(run.ends.cast()), u64::from(run.cap));
+                set(std::ptr::from_ref(&e.strings).cast(), &e.strings.off, &e.strings.len, at(run.strings), run.bytes_cap);
+            }
+        }
+        block.set_root(root);
+        AtomsDir { block }
+    }
+
+    /// The directory's address on the host: what the atoms reads take.
+    pub fn root(&self) -> *const u8 {
+        std::ptr::from_ref(self.block.root::<AtomsDirRoot>()).cast()
+    }
+
+    /// Its block (a device binds its wrap at `root`'s offset).
+    pub fn block(&self) -> &Block {
+        &self.block
+    }
+
+    /// The root's offset in its block.
+    pub fn root_at(&self) -> usize {
+        self.block.offset_of(self.root())
+    }
+}
+
+type AtomicI64Ref = std::sync::atomic::AtomicI64;
+type AtomicU64Ref = std::sync::atomic::AtomicU64;
+
+/// The string of `id` in the directory at `dir` (host addresses), through the reads written once in CLIF
+/// (`atoms_at`, `atoms_len`): `None` for an id none of its runs holds.
+///
+/// # Safety
+/// `dir` is a directory made for the host (`AtomsDir::new` with host addresses), whose blocks are mapped.
+pub unsafe fn str_in<'a>(dir: *const u8, id: u32) -> Option<&'a [u8]> {
+    // SAFETY: the caller's.
+    unsafe {
+        let len = crate::generated_reads::atoms_len(dir, id);
+        if len == u32::MAX {
+            return None;
+        }
+        let at = crate::generated_reads::atoms_at(dir, id) as *const u8;
+        Some(std::slice::from_raw_parts(at, len as usize))
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// Decision 0478 step 2b: an id's string read through the directory, by the reads written once in CLIF (their
+    /// generated Rust), is the block's own, in every run: a run that begins past its block's first id (a pending
+    /// block whose first atoms were stored since) too. Id 0 is the empty string; an id no run holds has none.
+    #[test]
+    fn the_directorys_reads_find_every_atom_where_its_block_holds_it() {
+        use super::{AtomRead, AtomsDir, AtomsW, str_in};
+        let a = AtomsW::anon(1, 8, 256);
+        let mut a = a;
+        let words: Vec<String> = (0..20).map(|k| format!("w{k}{}", "z".repeat(k))).collect();
+        for w in &words[..8] {
+            a.append(w, k_hash(w)).unwrap();
+        }
+        let mut b = AtomsW::anon(9, 16, 1024);
+        for w in &words[8..] {
+            b.append(w, k_hash(w)).unwrap();
+        }
+        // The second block's first three atoms stored since: its run begins at 12, the store's run covers them.
+        let runs = [a.run_from(1), b.run_from(12)];
+        let dir = AtomsDir::host(&runs);
+        for id in 1..=20u32 {
+            // SAFETY: a host directory over blocks that live here.
+            let got = unsafe { str_in(dir.root(), id) };
+            let want = if (9..12).contains(&id) { None } else { [&a, &b].iter().find_map(|w| w.str(id)).map(str::as_bytes) };
+            assert_eq!(got, want, "id {id}");
+        }
+        // SAFETY: as above.
+        unsafe {
+            assert_eq!(str_in(dir.root(), 0), Some(&b""[..]), "id 0, the empty string");
+            assert_eq!(str_in(dir.root(), 21), None, "past every run");
+        }
+    }
+
+    fn k_hash(s: &str) -> u64 {
+        s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, c| (h ^ u64::from(c)).wrapping_mul(0x100_0000_01b3))
+    }
+
     use super::*;
 
     fn h(s: &str) -> u64 {

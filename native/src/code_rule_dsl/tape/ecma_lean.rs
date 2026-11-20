@@ -57,7 +57,7 @@ pub fn encode(dialect: Dialect, grammar: &Grammar, source: &str, budget: &dyn Fn
     encode_from(dialect, grammar, source, "program", budget).expect("a program is a start")
 }
 
-/// [`encode`] from the node kind `start` (decision 0482): `None` for a kind the parser does not start at.
+/// [`encode`] from the node kind `start` (decision 0466): `None` for a kind the parser does not start at.
 pub fn encode_from(dialect: Dialect, grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn() -> bool) -> Option<Result<Result<TapeImage, String>, rerail_ecma_lean::Refusal>> {
     let ids = ids(dialect);
     let lacks = move |what: &str, i: usize| format!("{dialect:?}'s grammar lacks the lean parser's {what} {i}");
@@ -83,7 +83,7 @@ pub static TYPESCRIPT: Lean = Lean(Dialect::TypeScript);
 pub static TSX: Lean = Lean(Dialect::Tsx);
 
 impl TreeParser for Lean {
-    /// A JSX element (decision 0482), in the dialects that read JSX: not TypeScript's.
+    /// A JSX element (decision 0466), in the dialects that read JSX: not TypeScript's.
     fn starts(&self) -> &'static [&'static str] {
         if self.0 == Dialect::TypeScript { &[] } else { rerail_ecma_lean::STARTS }
     }

@@ -250,17 +250,6 @@ impl Sealed {
 #[cfg(target_os = "macos")]
 const LET_GO: Duration = Duration::from_secs(10);
 
-/// With `Synced`, `msync`s the range with `MS_SYNC`: elsewhere than macOS no page is wired for a GPU, and one `msync`
-/// writes the range back (Linux's `mincore` tells only whether a page is resident, not whether it is dirty). Otherwise
-/// the OS writes it.
-#[cfg(not(target_os = "macos"))]
-fn written_back(base: *mut u8, len: usize, flush: Flush) -> io::Result<()> {
-    if !flush.waits() {
-        return Ok(());
-    }
-    msync(base, len, libc::MS_SYNC)
-}
-
 /// `msync`s the range with `MS_SYNC` until no page of it is dirty (`mincore`): a page still wired for the GPU is
 /// skipped by each `msync` until the driver lets go of it.
 #[cfg(target_os = "macos")]
@@ -284,6 +273,17 @@ fn written_back(base: *mut u8, len: usize, _: Flush) -> io::Result<()> {
         std::thread::sleep(wait);
         wait = (wait * 2).min(Duration::from_millis(20));
     }
+}
+
+/// With `Synced`, `msync`s the range with `MS_SYNC`; otherwise the OS writes it (decision 0481). Off macOS no device
+/// wraps a slab's pages (no Metal), so none is wired and one `msync` writes every dirty page back; and Linux's
+/// `mincore` reports a page's residency only, never whether it is dirty.
+#[cfg(not(target_os = "macos"))]
+fn written_back(base: *mut u8, len: usize, flush: Flush) -> io::Result<()> {
+    if !flush.waits() {
+        return Ok(());
+    }
+    msync(base, len, libc::MS_SYNC)
 }
 
 fn msync(base: *mut u8, len: usize, flags: i32) -> io::Result<()> {

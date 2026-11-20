@@ -45,11 +45,12 @@ is the primary one in every scenario.
 | --- | --- |
 | `no-packs` | Set up 30 minutes ago with nothing added; started; no sessions; no file a pack matches, so no recommendations. |
 | `packs-no-session` | Set up an hour ago with `typescript` and `javascript`; started; no sessions. |
-| `mature` | Set up 5 weeks ago with `typescript`, `javascript`, `complexity` and two rules created by you; 30 sessions (Claude Code, Codex, Cursor), the last still open; violations in Log, Steer and Block spread over the 5 weeks, steered sessions have steer receipts. |
+| `mature` | Set up 5 weeks ago with `typescript`, `javascript`, `complexity` and two rules created by you; 30 sessions (Claude Code, Codex, Cursor), the last still open; violations in Log, Steer and Block spread over the 5 weeks, steered sessions have steer receipts; the open session's agent declined its `typescript-eslint-no-non-null-assertion` steer and recorded why, and called an MCP tool (`mcp__github__get_pull_request`). |
 | `multi-repo` | storefront (3 weeks of history, 10 sessions, one open), `acme/billing` (set up, no sessions), `acme/docs-site` (known, never set up or started). |
 | `not-set-up` | Started 20 minutes ago, never set up: nothing runs. |
 | `stopped` | Set up 10 days ago with `typescript` and `javascript`, two sessions, stopped 2 days ago. |
-| `awaiting-approval` | Set up an hour ago with `typescript`, started, no sessions; a rule a coding agent added to the library and a rule in the checkout's own `.rerail/rules`, neither approved, so both run in Log. |
+| `awaiting-approval` | Set up an hour ago with `typescript`, started, no sessions; three rules a coding agent added to the library (as `/rerail-create` adds the rules it finds) and a rule in the checkout's own `.rerail/rules`, none approved, so all run in Log. |
+| `merge-assist` | storefront set up 6 hours ago with `typescript`, started, no sessions, Merge Assist turned on with `gh` signed out: an open conflict with PR #398 (Tim) in `src/cart/cart.ts`, a quiet one in `package-lock.json` with a branch whose link points at another repository, a quiet one in `CHANGELOG.md` with PR #402 whose link is a `javascript:` URL, and one dismissed whose other side has a hostile label, author and `javascript:` URL; their summary, hunk and the dismissed title carry markup as text. `acme/billing` set up with Merge Assist off. Its processes run with `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1`, every other scenario's without (Merge Assist's page then says it is experimental and off), and get a `gh` that exits 1 and no GitHub environment. |
 
 Pick the smallest scenario that shows the state under test. Add one only for a state none of these has: a new
 `case` in `plansFor`, its name in `SCENARIO_NAMES` (`support/scenario-manifest.ts`) and a row here.

@@ -69,7 +69,10 @@ pub(super) fn answered(v: &Version) -> (Vec<String>, Vec<String>) {
         }
     }
     (produced, given)
-}pub(super) const DEMAND: &str = "rr_embed_req";
+}
+
+/// `embed`'s demand: a string made a tape value and parsed (decision 0431 §8), answered in the fixpoint.
+pub(super) const DEMAND: &str = "rr_embed_req";
 /// `@parse(g, x)`'s and `@splice(t, n, t2)`'s demands (decision 0058 §4, `rr::lower`).
 pub(super) const PARSE: &str = "rr_parse_req";
 pub(super) const SPLICE: &str = "rr_splice_req";
@@ -155,7 +158,7 @@ fn embedding(host: &Document, name: &str) -> Option<crate::code_rule_dsl::langua
     dialect.embeds().iter().map(|&(via, _)| via).find(|via| via.id() == name)
 }
 
-/// A grammar name's dialect label, and the fragment it parses (decision 0482: from a node kind, its tapes under its
+/// A grammar name's dialect label, and the fragment it parses (decision 0466: from a node kind, its tapes under its
 /// own tag): a fragment the registry declares (decision 0082), or a dialect's label, a whole text.
 fn grammar(name: &str) -> Option<(&'static str, Option<core::Fragment>)> {
     if let Some((dialect, _)) = crate::code_rule_dsl::language::fragment(name) {
@@ -337,15 +340,20 @@ pub(super) fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Versi
     Some(tags)
 }
 
+/// Whether `t` is a document bound `combining::FoldOwn` widened to take the annotations in (above `ANNOTATION_KEYS`):
+/// a rule compared with it reads the annotations' documents, which only their requests (`DEMAND`) make.
+pub(super) fn widened(t: crate::code_rule_dsl::logic::program_image::TermRef<'_>) -> bool {
+    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
+    matches!(t, crate::code_rule_dsl::logic::program_image::TermRef::Int(n) if n > i64::from(ANNOTATION_KEYS) && (n <= i64::from(HIDDEN_KEYS) || n > i64::from(ANNOTATION_KEYS) << 32))
+}
+
 /// The guests `v`'s rules can see. A variable reaches a guest's document only from a guest relation (scoped,
 /// `hiding`): every other base read is bounded below `ANNOTATION_KEYS`, or below `HIDDEN_KEYS` where an annotation's
 /// copies were folded in. So a program that reads no guest relation sees annotations only where a comparison is
 /// against the widened bound, and the other guests (other grammars, values) never.
 pub(super) fn guests_seen(v: &crate::code_rule_dsl::logic::program_image::Version) -> Seen {
-    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
-    use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
+    use crate::code_rule_dsl::logic::program_image::Lit;
     let entry = |rel: &str| READS.contains(&rel) || super::hiding::ENTRIES.iter().any(|(r, ..)| *r == rel);
-    let widened = |t: TermRef<'_>| matches!(t, TermRef::Int(n) if n > i64::from(ANNOTATION_KEYS) && (n <= i64::from(HIDDEN_KEYS) || n > i64::from(ANNOTATION_KEYS) << 32));
     let mut seen = Seen::Code;
     for r in v.rules() {
         for l in r.body() {
@@ -763,7 +771,7 @@ fn embedded(host: &Document, build: &mut dyn FnMut(crate::code_rule_dsl::embed::
     build(root, host.facts.source.as_str())
 }
 
-/// A guest's or value's tree: its facts, its root (0: a fragment's tape is rooted at its start node, decision 0482),
+/// A guest's or value's tree: its facts, its root (0: a fragment's tape is rooted at its start node, decision 0466),
 /// and the facts' digest.
 type Parsed = (Arc<core::Facts>, u32, [u8; 32]);
 

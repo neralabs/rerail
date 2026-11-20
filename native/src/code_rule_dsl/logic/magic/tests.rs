@@ -7,7 +7,7 @@ use crate::code_rule_dsl::logic::rr::parse_version;
 use std::sync::Arc;
 
 fn root() -> std::path::PathBuf {
-    std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/logic")
+    rerail_store::source_tree::native().join("src/code_rule_dsl/logic")
 }
 
 fn strings(items: &[String]) -> String {
@@ -105,11 +105,11 @@ fn t_programs_transform_like_t() {
     let mut failures = Vec::new();
     let renamed = regex::Regex::new(r"(^|[^A-Za-z0-9])glob(_[bf]+\b|\b)").unwrap();
     for name in ["calls", "calls_rust", "workload", "workload_demand", "workload_perdoc"] {
-        let src = std::fs::read_to_string(root().join(format!("plan/golden/programs/{name}.rr"))).unwrap();
+        let src = std::fs::read_to_string(root().join(format!("plan/golden/programs/{name}.rerail"))).unwrap();
         for mode in ["demand", "adorn", "gate"] {
             let got = golden_text(&transformed(&src, mode).unwrap_or_else(|e| panic!("{name} {mode}: {e}")));
             let expected = std::fs::read_to_string(root().join(format!("magic/golden/{name}.{mode}.txt"))).unwrap();
-            // `glob` is a `.rr` built-in, so the program's relation of that name reads as `glob_` (the goldens are
+            // `glob` is a `.rerail` built-in, so the program's relation of that name reads as `glob_` (the goldens are
             // copies, kept as written).
             let expected = renamed.replace_all(&expected, |c: &regex::Captures| format!("{}glob_{}", &c[1], &c[2])).into_owned();
             // T declares the gates of every trial its greedy search made, a rejected one's too (`done_islocal` in

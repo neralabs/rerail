@@ -274,9 +274,21 @@ impl StopBy {
                 .is_some();
         }
         if forward {
-            self.reaches(node, || node.next(), || charged(node, true, node.next_all()), related, env)
+            self.reaches(
+                node,
+                || node.next(),
+                || charged(node, true, node.next_all()),
+                related,
+                env,
+            )
         } else {
-            self.reaches(node, || node.prev(), || charged(node, false, node.prev_all()), related, env)
+            self.reaches(
+                node,
+                || node.prev(),
+                || charged(node, false, node.prev_all()),
+                related,
+                env,
+            )
         }
     }
 }
@@ -285,7 +297,11 @@ impl StopBy {
 /// token it passes (`gap::ImpliedPassed`), as a walk over the full tree tests each of them as a candidate: a work
 /// budget buys a named-only tape's walk what it buys a full tree's, and a clause runs out where it did before RER-131.
 /// The walk ends where the budget does, as a candidate's test then would.
-fn charged<'t, D: Doc>(node: &Node<'t, D>, forward: bool, all: impl Iterator<Item = Node<'t, D>>) -> impl Iterator<Item = Node<'t, D>> {
+fn charged<'t, D: Doc>(
+    node: &Node<'t, D>,
+    forward: bool,
+    all: impl Iterator<Item = Node<'t, D>>,
+) -> impl Iterator<Item = Node<'t, D>> {
     let passed = super::gap::ImpliedPassed::of(node);
     let mut from = Some(node.node_id());
     let mut all = all.fuse();
@@ -789,17 +805,21 @@ fn lone_capture(term: &AstMatcher) -> Option<&str> {
 }
 
 /// Whether matching `matcher` reads nothing but the node's tree and values, and spends no utility
-/// step but those decoding a value: patterns, kinds, regexes and `value`, through composites,
-/// relations, constraints and `nthChild` without `ofRule`. A value reads the node and the file's
-/// bindings, never the environment.
+/// step but those decoding a value: patterns, kinds, regexes, gap tests and `value`, through
+/// composites, relations, constraints and `nthChild` without `ofRule`. A value reads the node and
+/// the file's bindings, never the environment; a gap test reads the stored children of the node or
+/// its parent and the grammar's automata (`gap::GapTest`), what a relation to the token reads on a
+/// full tree, and its walk's stop rule.
 fn node_local(matcher: &AstMatcher) -> bool {
     let stop_local = |stop: &StopBy| stop_rule(stop).is_none_or(node_local);
     match matcher {
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
+        | AstMatcher::Kind(_)
+        | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Never
         | AstMatcher::Semantic(Semantic::Value(_)) => true,
+        AstMatcher::Semantic(Semantic::Gap(test)) => test.past.as_deref().is_none_or(node_local),
         AstMatcher::All(items) | AstMatcher::Any(items) => items.iter().all(node_local),
         AstMatcher::Not(inner) => node_local(inner),
         AstMatcher::Inside(related, stop)

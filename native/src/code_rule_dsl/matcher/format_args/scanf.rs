@@ -24,7 +24,11 @@ pub(super) fn prepare<'t, D: Doc>(
     let Some(string) = env.get_match(string) else {
         return Prepared::NoMatch;
     };
-    let tree = match format_tree(string.clone(), crate::code_rule_dsl::literal::scanf::GRAMMAR, reading) {
+    let tree = match format_tree(
+        string.clone(),
+        crate::code_rule_dsl::literal::scanf::GRAMMAR,
+        reading,
+    ) {
         Ok(tree) => tree,
         Err(prepared) => return prepared,
     };
@@ -83,19 +87,37 @@ pub(super) fn prepare<'t, D: Doc>(
 pub struct Scanf;
 
 impl super::FormatPreparer for Scanf {
-    fn prepare_tape<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::tape::TapeDoc>) -> Prepared<'t, crate::code_rule_dsl::tape::TapeDoc> {
+    fn prepare_tape<'t>(
+        &self,
+        format: &super::FormatArgs,
+        env: &MetaVarEnv<'t, crate::code_rule_dsl::tape::TapeDoc>,
+    ) -> Prepared<'t, crate::code_rule_dsl::tape::TapeDoc> {
         match &format.reading {
             Some(reading) => prepare(&format.string, &format.args, reading, env),
             None => Prepared::Unknown,
         }
     }
-    fn prepare_sub<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::literal::SubDoc>) -> Prepared<'t, crate::code_rule_dsl::literal::SubDoc> {
+    fn prepare_sub<'t>(
+        &self,
+        format: &super::FormatArgs,
+        env: &MetaVarEnv<'t, crate::code_rule_dsl::literal::SubDoc>,
+    ) -> Prepared<'t, crate::code_rule_dsl::literal::SubDoc> {
         match &format.reading {
             Some(reading) => prepare(&format.string, &format.args, reading, env),
             None => Prepared::Unknown,
         }
     }
-    fn prepare_str<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>) -> Prepared<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>> {
+    fn prepare_str<'t>(
+        &self,
+        format: &super::FormatArgs,
+        env: &MetaVarEnv<
+            't,
+            ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>,
+        >,
+    ) -> Prepared<
+        't,
+        ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>,
+    > {
         match &format.reading {
             Some(reading) => prepare(&format.string, &format.args, reading, env),
             None => Prepared::Unknown,

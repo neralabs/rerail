@@ -90,7 +90,7 @@ fn the_if_evaluator_is_the_serial_passes() {
 
 /// The `#if` evaluator from its tokens' text, read as `p1_if_eval` reads numbers and character
 /// constants (`if_number`, `if_char`): each expression's truth and 64-bit value as the serial
-/// pass gives them. Q330: on an M1 Max (macOS 26.2), a thread's bytes stored at a counter other
+/// pass gives them. Q367: on an M1 Max (macOS 26.2), a thread's bytes stored at a counter other
 /// than the loop's (`b[n++] = p[i++]`, as `if_bytes` and `if_number` copied a token) read back
 /// wrong, so every decimal number and character constant was refused or misread.
 #[test]

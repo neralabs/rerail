@@ -155,7 +155,7 @@ pub enum Relex {
 /// Line ends a text may join before it is refused.
 pub const MAX_JOINS: usize = 64;
 
-/// A node kind a parse may start at (decision 0482): a file's `module`, or a `type` (a string annotation's text, read
+/// A node kind a parse may start at (decision 0466): a file's `module`, or a `type` (a string annotation's text, read
 /// as if in parentheses).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
@@ -740,6 +740,7 @@ impl<'a> P<'a> {
         Ok(n)
     }
 
+    #[allow(clippy::wrong_self_convention, reason = "named for the grammar rule it parses")]
     fn from_import(&mut self) -> R<()> {
         if self.is_name(1, b"__future__") {
             let n = self.open(K::FutureImportStatement, f::NONE, C_NONE);
@@ -910,11 +911,10 @@ impl<'a> P<'a> {
             match self.toks[k].kind {
                 T::LParen | T::LBracket if after(&[T::Name, T::RParen, T::RBracket, T::StrEnd]) => open.push(CALL),
                 T::LParen | T::LBracket | T::LBrace => open.push(0),
-                T::RParen | T::RBracket | T::RBrace => {
-                    if open.pop() == Some(SPLAT | COMMA) {
+                T::RParen | T::RBracket | T::RBrace
+                    if open.pop() == Some(SPLAT | COMMA) => {
                         return true;
                     }
-                }
                 T::Star if after(&[T::LParen, T::LBracket, T::Comma]) => {
                     if let Some(b) = open.last_mut().filter(|b| **b & CALL == 0) {
                         *b |= SPLAT;
@@ -970,6 +970,7 @@ impl<'a> P<'a> {
     }
 
     /// The expression at `at` made a pattern (an assignment's target), in `field`.
+    #[allow(clippy::wrong_self_convention, reason = "makes the expression at `at` a pattern in the tape, not `self` into one")]
     fn to_pattern(&mut self, at: usize, field: u8) -> R<()> {
         let kind = self.kind_at(at);
         let pat = |k: K| key(k, field, C_PAT, false);
@@ -2643,7 +2644,7 @@ impl<'a> P<'a> {
 
     // ---- Types.
 
-    /// A `type` alone, the root (decision 0482): what follows `x:` in an annotated assignment, as tree-sitter reads it
+    /// A `type` alone, the root (decision 0466): what follows `x:` in an annotated assignment, as tree-sitter reads it
     /// there (the annotation's rule: a generic's union a `union_type`, any other `|` an expression's). No extra lies
     /// outside the root: a fragment's tape has one root.
     fn type_fragment(&mut self) -> R<()> {

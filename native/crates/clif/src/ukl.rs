@@ -754,8 +754,12 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::AtomicLoad => set(format!("ukl_atomic_load_at(t,{})", wide_addr(&args[0]))),
         Opcode::AtomicStore => format!("ukl_atomic_store_at(t,{},((uint32_t)({})));", wide_addr(&args[1]), args[0]),
         Opcode::AtomicRmw => {
-            let InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Add, .. } = data else { return Err("an atomic other than an add".into()) };
-            set(format!("ukl_atomic_add_at(t,{},((uint32_t)({})))", wide_addr(&args[0]), args[1]))
+            let how = match data {
+                InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Add, .. } => "ukl_atomic_add_at",
+                InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Or, .. } => "ukl_atomic_or_at",
+                _ => return Err("an atomic other than an add or an or".into()),
+            };
+            set(format!("{how}(t,{},((uint32_t)({})))", wide_addr(&args[0]), args[1]))
         }
         Opcode::AtomicCas => set(format!("ukl_atomic_cas_at(t,{},((uint32_t)({})),((uint32_t)({})))", wide_addr(&args[0]), args[1], args[2])),
         Opcode::Fence => "ukl_fence_device();".to_owned(),

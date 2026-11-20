@@ -1,4 +1,4 @@
-//! The preprocessor as parallel passes: a spike of the shape (decision 0466).
+//! The preprocessor as parallel passes: a spike of the shape (decision 0482).
 //!
 //! The serial pass (`Pp::run`) reads a translation unit as one machine, from its first token
 //! to its last. Here the same unit is read as passes over arrays, each of them a map, a scan, a

@@ -593,7 +593,7 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
-## Step 33, done: Kotlin's steps compile in seconds, not minutes (decision 0479)
+## Step 33, done: Kotlin's steps compile in seconds, not minutes (decision 0484)
 
 Step 29 ran Kotlin's ladder, but each step took 5 to 7 minutes to compile, almost all of it in
 the Bitlex compiler's proofs. Those steps were then run on farm hosts over about 3 hours, instead
@@ -608,7 +608,7 @@ The cause was Kotlin's walk. Its strings, characters and comments are regions th
 but the provers did not know this. They searched for a byte inside two regions at once, which no
 stream has.
 
-Decision 0479 makes these changes:
+Decision 0484 makes these changes:
 - each pair of a walk's kinds is a lemma to the fixed-point prover;
 - a row whose start never holds is dead;
 - the lowering and the provers hash with a fixed seed, so one grammar compiles to one program;

@@ -71,7 +71,7 @@ fn every_part() -> Arc<Version> {
 
 fn pack_files() -> Vec<std::path::PathBuf> {
     let packs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs");
-    let mut files: Vec<_> = std::fs::read_dir(&packs).unwrap().flatten().filter(|d| d.path().is_dir()).flat_map(|d| std::fs::read_dir(d.path()).unwrap().flatten().map(|f| f.path())).filter(|p| p.extension().is_some_and(|e| e == "rr")).collect();
+    let mut files: Vec<_> = std::fs::read_dir(&packs).unwrap().flatten().filter(|d| d.path().is_dir()).flat_map(|d| std::fs::read_dir(d.path()).unwrap().flatten().map(|f| f.path())).filter(|p| p.extension().is_some_and(|e| e == "rerail")).collect();
     files.sort();
     files
 }
@@ -353,7 +353,7 @@ fn a_part_is_a_view_with_its_fields_overlaid() {
     let keep = |rel: &str| mine.contains(rel);
     let inputs: Vec<String> = v0.input_names().into_iter().take(2).chain(["exported".to_owned()]).collect();
     let outputs: Vec<String> = heads.iter().step_by(4).cloned().collect();
-    let part = v0.part(&keep, &inputs, &outputs, super::PartFields { natives: &keep, lattice: &keep, gates: &keep }).unwrap();
+    let part = v0.part(keep, &inputs, &outputs, super::PartFields { natives: &keep, lattice: &keep, gates: &keep }).unwrap();
     let fields_of = |b: &mut Builder<'_>| {
         b.fields().set_field(Field::Natives(&natives.iter().filter(|(r, _)| keep(r)).map(|(r, n)| (r.clone(), n.clone())).collect()));
         b.fields().set_field(Field::Lattice(&lattice.iter().filter(|(r, _)| keep(r)).map(|(r, l)| (r.clone(), l.clone())).collect()));
@@ -707,6 +707,28 @@ fn the_planners_passes_over_a_version_hold() {
         b.finish().unwrap().0
     };
     assert!(super::passes::normalize(&two).is_err());
+}
+
+/// A version's analyses are dropped with it (decision 0281 §2), the forms made over it among them: its normal form and
+/// that form's stated-apart form are made over twins (`manager::twin`), so neither holds the version it is held by, and
+/// the version, with the image it reads in place, goes with its last holder (Q377).
+#[test]
+fn a_version_with_its_normal_and_apart_forms_drops_with_its_last_holder() {
+    use super::manager::analysis;
+    use super::passes::{ApartForm, NormalForm};
+    let p = crate::code_rule_dsl::logic::rr::parse_version(
+        ".decl e(x: number)\n.input e\n.decl a(x: number)\n.decl b()\na(x) :- e(x).\nb() :- a(_).\na(1).\n.output a, b\n",
+    )
+    .unwrap();
+    let (normal, apart) = {
+        let n = analysis::<NormalForm>(&p).unwrap();
+        let a = analysis::<ApartForm>(&n.v).unwrap();
+        (Arc::downgrade(&n.v), Arc::downgrade(&a.v))
+    };
+    let held = Arc::downgrade(&p);
+    assert!(analysis::<NormalForm>(&p).is_ok_and(|n| Arc::ptr_eq(&n.v, &normal.upgrade().unwrap())), "the form is held, made once");
+    drop(p);
+    assert_eq!((held.strong_count(), normal.strong_count(), apart.strong_count()), (0, 0, 0), "the version and its forms are gone");
 }
 
 /// A rule rewritten as it is copied keeps what the rewrite does not change, records its source, and takes more
@@ -1469,7 +1491,7 @@ fn a_new_process_reruns_only_the_passes_after_a_stored_step() {
 }
 
 /// A run that keeps a pipeline's steps, and a later run that finds them, each name the steps' sources in its manifest
-/// (Q146, decision 0480 §7): the step facts and each step's image, the same sources both times, so a collection between
+/// (Q146, decision 0464 §7): the step facts and each step's image, the same sources both times, so a collection between
 /// the two runs keeps them. Read as the run's manifest reads them, by an item at the record's end.
 #[test]
 fn a_found_step_names_its_sources_as_its_keeper_did() {
@@ -1862,15 +1884,16 @@ fn a_request_record_a_step_misaligns_is_stated_again_at_once() {
             w.keep(|r| r.id() != first)
         }
     }
-    let decls = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl c(x: number)\n.input c\n.decl q(x: number)\n.output q\n";
+    let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl c(x: number)\n.input c\n.decl q(x: number)\n.output q\n\
+                q(x) :- a(x).\nq(x) :- b(x).\nq(x) :- c(x).\n";
     let by = |r: &str| BTreeSet::from([r.to_owned()]);
-    let v = asked_base(&format!("{decls}q(x) :- a(x).\nq(x) :- b(x).\nq(x) :- c(x).\n"), &[("q", vec![by("r1"), by("r2"), by("r3")])]);
+    let v = asked_base(text, &[("q", vec![by("r1"), by("r2"), by("r3")])]);
     let mut pipe = super::manager::Pipeline::new("test", v);
     pipe.program(&mut DropFirstQ);
     let now = pipe.current().unwrap().clone();
     assert_eq!(now.asked().get("q"), Some(&vec![by("r2"), by("r3")]), "stated by rule after the step");
-    // As the program states it without that rule: the rule dropped, its entry with it.
-    let want = asked_base(&format!("{decls}q(x) :- b(x).\nq(x) :- c(x).\n"), &[("q", vec![by("r2"), by("r3")])]);
+    // As a lowering states it: the rule dropped, its entry with it.
+    let want = asked_base(&text.replacen("q(x) :- a(x).\n", "", 1), &[("q", vec![by("r2"), by("r3")])]);
     assert!(super::same_program(&want, &now), "{}", super::differences(&want, &now));
 }
 
@@ -1951,11 +1974,11 @@ mod layouts {
         assert_eq!(facts(&v, &l, "w"), []);
     }
 
-    /// Over a Python policy's program (python/ast.rr's library and core.rr): the library's derived relations take
-    /// facts from core.rr's base ones. The counts are printed for decision 0361's record.
+    /// Over a Python policy's program (python/ast.rerail's library and core.rerail): the library's derived relations take
+    /// facts from core.rerail's base ones. The counts are printed for decision 0361's record.
     #[test]
     fn the_python_library_infers_facts_of_its_derived_relations() {
-        let text = ".policy \"t:a\" revision 1\n.language python\n#include \"python/ast.rr\"\n.violation Fn(at: node) \"a call\"\nFn(c) :- call_name(c, _).\n";
+        let text = ".policy \"t:a\" revision 1\n.language python\n#include \"python/ast.rerail\"\n.violation Fn(at: node) \"a call\"\nFn(c) :- call_name(c, _).\n";
         let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
         let l = crate::code_rule_dsl::logic::program_image::manager::analysis::<Layouts>(&v).unwrap();
         let by = |o: fn(&Origin) -> bool| l.0.values().filter(|fs| fs.iter().any(|(_, x)| o(x))).count();
@@ -1976,28 +1999,6 @@ mod layouts {
         assert!(shown.contains("f: key(c) (by rule #"), "{shown}");
         assert!(shown.contains("tree(p -> c) (by rule #"), "{shown}");
     }
-}
-
-/// A relation's facts are a set (decision 0456 K3): the same facts in another order are the same program, its digest
-/// and each relation's identity unchanged. A phase's export maintained from kept rows comes in their canonical order,
-/// one derived anew in another; the cone's rounds' space is named by the program's digest, and its kept relations by
-/// their identities, so an order-sensitive digest lost every kept round when a library file went.
-#[test]
-fn facts_in_another_order_are_the_same_program() {
-    use crate::code_rule_dsl::logic::plan::{body::Placed, fields::Fields, leaf_identity};
-    let text = |rows: &[i64]| {
-        let facts: String = rows.iter().map(|r| format!("k({r}).\n")).collect();
-        format!(".decl k(x: number)\n.input k\n.decl r(x: number)\n.output r\n{facts}r(x) :- k(x).\n")
-    };
-    let of = |rows: &[i64]| {
-        let p = Placed::whole(crate::code_rule_dsl::logic::rr::parse_version(&text(rows)).unwrap());
-        (p.digest(), leaf_identity(Fields::of(&p).unwrap(), "k"))
-    };
-    let (a, b) = (of(&[1, 2, 3]), of(&[3, 1, 2]));
-    assert_eq!(a.0, b.0, "the program's digest");
-    assert_eq!(a.1, b.1, "the relation's identity");
-    // Other rows are another program.
-    assert_ne!(of(&[1, 2]).0, a.0);
 }
 
 /// A rule written literal by literal on an open rule (`Builder::open_rule`, the lowering's writer, decision 0276 A3)
@@ -2054,4 +2055,31 @@ fn a_run_of_kept_rules_is_the_rules_kept_one_by_one() {
     assert!(one.rules().map(|r| (r.hash(), r.source())).eq(run.rules().map(|r| (r.hash(), r.source()))));
     assert!(run.rules().all(|r| r.source().is_some()));
     same(&Version::open(run.fold().unwrap().base_bytes().unwrap()).unwrap(), &run);
+}
+
+/// A relation's facts are a set (decision 0456 K3): the same facts in another order are the same program, its digest
+/// and each relation's identity unchanged. A phase's export maintained from kept rows comes in their canonical order,
+/// one derived anew in another; the cone's rounds' space is named by the program's digest, and its kept relations by
+/// their identities, so an order-sensitive digest lost every kept round when a library file went.
+#[test]
+fn facts_in_another_order_are_the_same_program() {
+    use crate::code_rule_dsl::logic::plan::{body::{Placed, Versions}, leaf_identity};
+    let prog = every_part();
+    let with_k = |rows: &[crate::code_rule_dsl::logic::front::List<Value>]| {
+        let mut b = Builder::on(&prog);
+        b.fields().set_facts("k", rows);
+        b.finish().unwrap().0
+    };
+    let rows = ProgramFields::fact_rows(&*prog, "k");
+    let mut back = rows.clone();
+    back.reverse();
+    assert_ne!(rows, back, "the rows in another order");
+    let reordered = with_k(&back);
+    let (a, b) = (Placed::whole(prog.clone()), Placed::whole(reordered));
+    assert_eq!(a.digest(), b.digest(), "the program's digest");
+    let (va, vb) = (Versions::of_placed(a), Versions::of_placed(b));
+    assert_eq!(leaf_identity(va.fields(0).unwrap(), "k"), leaf_identity(vb.fields(0).unwrap(), "k"), "the relation's identity");
+    // Other rows are another program.
+    let other = with_k(&rows[..rows.len() - 1]);
+    assert_ne!(Placed::whole(prog.clone()).digest(), Placed::whole(other).digest());
 }

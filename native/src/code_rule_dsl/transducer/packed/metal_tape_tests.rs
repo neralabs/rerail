@@ -376,7 +376,7 @@ fn the_label_kernels_compile_for_every_format() {
     for format in [0, 15, 16] {
         let compiled = super::label_passes::compile_label_kernels(format).unwrap_or_else(|_| panic!("the label kernels for format {format}"));
         // 9: each walk's stack tiers are one kernel (work queue Q181), with decision 0365's `label_leaves` and
-        // 0483's `label_phase` and `label_parents`.
+        // 0475's `label_phase` and `label_parents`.
         assert_eq!(compiled, (9, 1), "format {format}: the label kernels, then the pattern kernel");
     }
 }

@@ -33,6 +33,15 @@ export const packOriginName = pack => (isRerailPack(pack) || isWorktreePack(pack
 /** Whether a rule (or a pack, from `GET /api/rule-packs`) waits for a person's approval, and runs in Log until then. */
 export const awaitingApproval = item => item.approval?.approved === false;
 
+/**
+ * Whether a rule is one created by you (the library) that waits for your approval: `/rerail-create` adds the rules it
+ * finds there, unapproved, so they run in Log until you approve them. A worktree's own rules and packs Rerail did not
+ * publish are not: someone else wrote those, and each is read on its own page before it is approved. Nor is your edited
+ * copy of a rule Rerail ships: approving it turns the original off where the copy is added, which its page says.
+ */
+export const awaitingYourApproval = stored => awaitingApproval(stored) && !isFromPack(stored) && stored.approval.subject.kind === "rule"
+  && !stored.copiedFromRuleId;
+
 /** The origin of a rule that came in a rule pack this page does not know (its pack was removed): no publisher is claimed. */
 export const UNKNOWN_PACK_ORIGIN = "From a rule pack";
 
@@ -62,13 +71,13 @@ export const categoryLabel = category => CATEGORY_LABEL[category] ?? "";
 export const isRunning = stored => stored.enabled && !stored.configError;
 
 const titles = new WeakMap();
-/** Sentence the row leads with: conversation rule → reference; file rule → first clause's message, else its id. */
+/** Sentence the row leads with: the rule's title; else a conversation rule's reference, a file rule's first clause's message, else its id. */
 export function ruleTitle(stored) {
   let title = titles.get(stored);
   if (title === undefined) {
     const rule = stored.rule;
     const clause = stored.kind === "conversation" ? undefined : rule.clauses[0];
-    title = collapse(stored.kind === "conversation" ? rule.reference : clause?.violation?.message) || rule.id;
+    title = collapse(rule.title) || collapse(stored.kind === "conversation" ? rule.reference : clause?.violation?.message) || rule.id;
     titles.set(stored, title);
   }
   return title;
@@ -96,8 +105,8 @@ export const violationOutcome = finding => (finding.logged ? "logged" : "steered
 
 /** One sentence per mode, as the rule panel explains it. */
 export const MODE_PLAIN = {
-  log: "Rerail records the violation for you. Your coding agent isn’t told.",
-  steer: "Rerail tells the coding agent as it works.",
+  log: "Rerail only records it, for you to review. Your coding agent isn’t told.",
+  steer: "Rerail tells your coding agent as it works, so it fixes it.",
   block: "Block is not in this release. Rerail steers instead.",
 };
 
@@ -230,6 +239,8 @@ function storedRule(entry) {
     addedAt: entry.addedAt ?? null,
     // Present for a rule Rerail did not publish: until `approved`, it runs in Log (`mode` says so).
     approval: entry.approval ?? null,
+    // Your edited copy of a rule Rerail ships (`<id>-copy`): the rule it was copied from.
+    copiedFromRuleId: entry.copiedFromRuleId ?? null,
     updatedAt: entry.updatedAt ?? null,
   };
 }
@@ -244,3 +255,18 @@ const folderState = entry => ({
   folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions, suppressionsSource: entry.suppressionsSource,
   source: entry.source,
 });
+
+/**
+ * A rule's distinct violations in a range (one `rules_activity` entry), each in exactly one outcome: Log only (recorded
+ * on Log, so the coding agent was not told), Declined (a steer the agent declined with `rerail feedback`, even when
+ * another audit recorded it on Log), or Steered (sent to the agent, and not declined). History by rule's chips and
+ * Overview's Violations steered both read it. An answer without the declined counts reads none declined.
+ * @param {{ distinctViolations: number, loggedViolations?: number, declinedViolations?: number, declinedLoggedViolations?: number }} a
+ * @returns {{ all: number, logged: number, steered: number, declined: number }}
+ */
+export function violationOutcomes(a) {
+  const all = a.distinctViolations;
+  const declined = Math.min(a.declinedViolations ?? 0, all);
+  const logged = Math.max(0, Math.min((a.loggedViolations ?? 0) - (a.declinedLoggedViolations ?? 0), all - declined));
+  return { all, logged, steered: all - logged - declined, declined };
+}

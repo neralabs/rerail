@@ -84,7 +84,7 @@ it twice, and kept two sets of incremental state. `cargo test -p <crate>` (the c
 The engine's `test-hooks` feature now turns on everything the dev-dependencies add, and a
 development build of the CLI uses it (`AGENTS.md`). `cargo tree` then gives both builds the same
 features for every crate but the engine itself and the test-only `rerail-parser-tests`.
-`scripts/check/check-dev-features.py` (in the pre-commit hook) checks that the feature keeps
+`scripts/check/check_dev_features.py` (in the pre-commit hook) checks that the feature keeps
 up with the dev-dependencies, target-specific ones included, and the farm's wrapper tells a CLI
 build without it. Product and `profiling` builds are unchanged.
 

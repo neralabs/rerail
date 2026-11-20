@@ -22,7 +22,7 @@ enum Tok {
 /// it from any of them on (as a forward scan for the first place they hold), the only choice of
 /// its element, one a run and never its last. A run's `nest` counts depths (`Nest`); its `ending
 /// (C)` (the third field) tries the elements after it only where its last token, or the token
-/// before it where it took none, is one of `C` (Q274).
+/// before it where it took none, is one of `C` (Q342).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TokenElem {
     Kind(String),
@@ -35,9 +35,29 @@ pub enum TokenElem {
     /// after` applied: the bit a token's record holds), as the lean parser asks
     /// `!peek_at(j).nl`.
     Without(String),
+    /// `E with M`: the element holds only at a token with mark `M`'s bit, as the lean parser
+    /// asks `peek_at(j).nl`.
+    With(String),
+    /// `E starting "B"`, or `starting "B"` alone (any token): the element holds only at a
+    /// token whose first byte is one of `B`'s, as the lean lexer's `asi` reads the byte after a
+    /// comment. A gap pattern's only (`GapPattern`).
+    Starting(Vec<u8>),
 }
 
-/// A depth a run counts (`(C)* nest (O to C) …`, Q326), as the lean parsers' forward scans count
+/// A mark's `drops` or `loses` question (decision 0451): `, drops [unless] [after A …] before
+/// B …`, over the records as the lexer wrote them, extras included. `after`'s elements are the
+/// records before the token, the last the extra pending last (its `with M`: the marks of its
+/// own gap, `Records::extra`); `before`'s run from the token on. The question holds where none
+/// of its `unless` entries does and one of the others does, as the lean lexer's `asi` decides
+/// from the bytes after a line break.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GapPattern {
+    pub unless: bool,
+    pub after: Vec<Vec<TokenElem>>,
+    pub before: Vec<Vec<TokenElem>>,
+}
+
+/// A depth a run counts (`(C)* nest (O to C) …`, Q339), as the lean parsers' forward scans count
 /// one (`type_args_end`, `lambda_params_end`): a token of the run among `open`'s choices goes one
 /// deeper, one among `close`'s one out. The elements after the run are tried only where every
 /// depth is 0, and a closer where its depth is 0 ends the run: it fails there unless they hold.
@@ -91,9 +111,11 @@ pub enum TokenRule {
     RunOnce(Expr, Expr),
     /// One byte, or two where the mask holds at its first.
     Pair(Expr),
-    /// `pair P`, `P` a `pairs P = "AB" …`: one byte, or two where its first and the next are
-    /// one of the pairs, as a lexer reads its next byte; `P` its mask.
-    Pairs { pairs: Vec<[u8; 2]>, mask: Expr },
+    /// `pair P`, `P` a `pairs P = "AB" … "ABC" …`: one byte, or two where its first and the
+    /// next are one of the pairs, or three where those and the byte after are one of the
+    /// triples, as a lexer reads its next bytes; `P` its mask, `three` its triples' starts
+    /// (`P_three`), where it has triples.
+    Pairs { pairs: Vec<Vec<u8>>, mask: Expr, three: Option<Expr> },
     /// `read K | …`: a region's token, read from its opener to its closer (decision 0177): the
     /// region whose opener holds at its first byte, then its closer's first byte after it; its
     /// last byte the closer's last (`outside`: the byte before it). A lexer's reader of a
@@ -292,7 +314,13 @@ impl TokenRule {
                 let t = and(t, not(cut));
                 and(t.clone(), not(call("next", vec![and(t, not(s.clone()))])))
             }
-            TokenRule::Pair(p) | TokenRule::Pairs { mask: p, .. } => or(and(s.clone(), not(p.clone())), call("prev", vec![and(s.clone(), p.clone())])),
+            TokenRule::Pair(p) | TokenRule::Pairs { mask: p, three: None, .. } => or(and(s.clone(), not(p.clone())), call("prev", vec![and(s.clone(), p.clone())])),
+            // A triple's last: two after its start; a pair's, one.
+            TokenRule::Pairs { mask: p, three: Some(t), .. } => {
+                let two = call("prev", vec![and(and(s.clone(), p.clone()), not(t.clone()))]);
+                let three = Expr::Call("prev".into(), vec![Arg::E(and(s.clone(), t.clone())), Arg::N(2)]);
+                or(and(s.clone(), not(p.clone())), or(two, three))
+            }
             // Each region's last byte, from its fill (`Regions::body`): the closer's last, or
             // the byte before an `outside` closer; with `else E bytes M`, `E`'s `M`th byte.
             TokenRule::Read(regions) => {
@@ -719,16 +747,23 @@ pub enum Stmt {
     /// at. `next` holds them, each with whether it is an `unless`: the mark holds where no
     /// `unless before` does and, if it has a `before`, one of them does.
     ///
-    /// `, drops W` (with `settles`): where its arm runs at a token where `W` holds, the extra
-    /// pending last is dropped, as the lean lexer's `asi` loses the comment it swallows into the
-    /// semicolon (decision 0416). `W` holds at the token right after such an extra.
-    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool, next: Vec<(bool, Vec<Vec<TokenElem>>)>, drops: Option<Expr> },
+    /// `, drops [unless] after A … before B …` (with `settles`; `GapPattern`): where its arm runs
+    /// at a token where the question holds, the extra pending last is dropped, as the lean
+    /// lexer's `asi` loses the comment it swallows into the semicolon (decision 0416).
+    ///
+    /// `, loses [unless] after A … before B …`: where a level asks for the mark at a token where
+    /// the question holds, the extra pending last is of no width, at the token's start: the lean
+    /// lexer's `asi` reads a block comment that starts the line through, finds that the line goes
+    /// on, and tree-sitter loses the comment's bytes (its `lost`; decision 0451). It holds only
+    /// where the mark does not. Each clause is one entry; a mark's entries together decide.
+    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool, next: Vec<(bool, Vec<Vec<TokenElem>>)>, drops: Vec<GapPattern>, loses: Vec<GapPattern> },
     /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
     /// `before`'s, or (`after ~E`) none of them, or no token at all. The mark is at the first
-    /// element's token.
-    TokenMark { kind: String, before: Vec<TokenElem>, seq: Vec<Vec<TokenElem>> },
+    /// element's token. `, unless before E …`: none where one of these runs is the tokens from
+    /// the mark's on, as a mark's (`Mark::next`, the unless ones).
+    TokenMark { kind: String, before: Vec<TokenElem>, seq: Vec<Vec<TokenElem>>, next: Vec<(bool, Vec<Vec<TokenElem>>)> },
     /// `hidden KIND …` (in a tree): marks taken where the grammar can take them and skipped
     /// elsewhere. A mark not hidden, where the grammar can not take it, refuses the file.
     Hidden(Vec<String>),
@@ -940,7 +975,7 @@ struct P {
     after: Vec<Stmt>,
     classed: Vec<u8>,
     /// The `pairs` read so far, by name, for a token's `pair` (`TokenRule::Pairs`).
-    pair_sets: Vec<(String, Vec<[u8; 2]>)>,
+    pair_sets: Vec<(String, Vec<Vec<u8>>, bool)>,
 }
 
 type R<T> = Result<T, String>;
@@ -971,8 +1006,8 @@ pub fn backward(mut stmts: Vec<Stmt>, names: &[&str]) -> Result<Vec<Stmt>, Strin
     Ok(stmts)
 }
 
-/// Why `back_fill` is refused, and what to write instead (decision 0406).
-pub const BACK_FILL_REMOVED: &str = "`back_fill` is removed from Bitlex (decision 0406). A value at a byte that is made from the \
+/// Why `back_fill` is refused, and what to write instead (decision 0416).
+pub const BACK_FILL_REMOVED: &str = "`back_fill` is removed from Bitlex (decision 0416). A value at a byte that is made from the \
 bytes after it needs a pass backward over the whole file, and the lean parsers never make one: they look ahead from \
 where they stand, and only where they need to. Write what the back fill asks, at the token:
   - the next token, or a run of tokens from here: a token mark, `mark K = tokens [after E] A B ...`, \
@@ -1163,19 +1198,74 @@ impl P {
             }
         }
     }
+    /// An element's `with M` and `without M`, after its choices of kinds and words.
+    fn with_marks(&mut self, mut c: Vec<TokenElem>) -> R<Vec<TokenElem>> {
+        loop {
+            let with = if self.eat_kw("without") {
+                false
+            } else if self.eat_kw("with") {
+                true
+            } else {
+                return Ok(c);
+            };
+            if !c.iter().all(|x| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::Without(_) | TokenElem::With(_))) {
+                return self.err("`with` or `without` after an element of kinds and words");
+            }
+            let m = self.ident()?;
+            c.push(if with { TokenElem::With(m) } else { TokenElem::Without(m) });
+        }
+    }
+    /// A `drops` or `loses` question (`GapPattern`): `[unless] [after A …] before B …`, each
+    /// element of kinds and words (or a `~` of them), its `with M`, `without M` and `starting
+    /// "B"`, or `starting "B"` alone.
+    fn gap_pattern(&mut self) -> R<GapPattern> {
+        let unless = self.eat_kw("unless");
+        let mut after = vec![];
+        if self.eat_kw("after") {
+            while !self.is_kw("before") {
+                after.push(self.gap_elem()?);
+            }
+        }
+        self.want_kw("before")?;
+        let mut before = vec![self.gap_elem()?];
+        while matches!(self.peek(), Some(Tok::Str(_) | Tok::P("~"))) || matches!(self.peek(), Some(Tok::Ident(_))) && !self.is_kw("end") {
+            before.push(self.gap_elem()?);
+        }
+        Ok(GapPattern { unless, after, before })
+    }
+    /// One element of a gap pattern (`gap_pattern`).
+    fn gap_elem(&mut self) -> R<Vec<TokenElem>> {
+        let mut c = if self.is_kw("starting") { vec![] } else { self.token_choices()? };
+        if matches!(c.as_slice(), [TokenElem::Many(..)]) || c.contains(&TokenElem::End) {
+            return self.err("a gap pattern's element of kinds and words, or a `~` of them");
+        }
+        loop {
+            if self.eat_kw("starting") {
+                let b = self.string()?;
+                if b.is_empty() || c.iter().any(|x| matches!(x, TokenElem::Not(_))) {
+                    return self.err("`starting` and a byte or more, not on a `~`");
+                }
+                c.push(TokenElem::Starting(b));
+                continue;
+            }
+            let with = if self.eat_kw("without") {
+                false
+            } else if self.eat_kw("with") {
+                true
+            } else {
+                return Ok(c);
+            };
+            let m = self.ident()?;
+            c.push(if with { TokenElem::With(m) } else { TokenElem::Without(m) });
+        }
+    }
     /// A run of elements, as a token mark's (`tokens`) or a mark's `before`: each an element of
     /// choices, a `~` or a run; one run at most, never first or last; an `end` only last.
     fn token_seq(&mut self) -> R<Vec<Vec<TokenElem>>> {
         let mut seq = vec![];
         while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_) | Tok::P("~") | Tok::P("("))) {
-            let mut c = self.token_choices()?;
-            // `without M`: of an element of kinds and words.
-            if self.eat_kw("without") {
-                if !c.iter().all(|x| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_))) {
-                    return self.err("`without` after an element of kinds and words");
-                }
-                c.push(TokenElem::Without(self.ident()?));
-            }
+            let c = self.token_choices()?;
+            let c = self.with_marks(c)?;
             seq.push(c);
         }
         let run = |c: &[TokenElem]| matches!(c, [TokenElem::Many(..)]);
@@ -1565,17 +1655,23 @@ impl P {
         }
         Ok(out)
     }
-    /// `pairs P = "AB" …`: the mask of the pairs' first bytes, a run's every other from the
-    /// left (`two & ~escaped(two)`, `two` each pair's first byte where its second is next), of
-    /// hidden classes one a byte; the list kept for a token's `pair P` (`TokenRule::Pairs`).
+    /// `pairs P = "AB" … "ABC" …`: the mask of the pairs' first bytes, a run's every other from
+    /// the left (`two & ~escaped(two)`, `two` each pair's first byte where its second is next), of
+    /// hidden classes one a byte; with triples, `P_three` too: where `P` holds and a triple's
+    /// three bytes are, its token three bytes. Each triple's first two bytes are a pair, as a
+    /// lexer reads its next byte, then the one after. The list kept for a token's `pair P`
+    /// (`TokenRule::Pairs`).
     fn pairs(&mut self, name_of: String) -> R<Stmt> {
-        let mut pairs: Vec<[u8; 2]> = vec![];
+        let mut pairs: Vec<Vec<u8>> = vec![];
         while let Some(Tok::Str(_)) = self.peek() {
             let w = self.string()?;
-            let [a, b] = w[..] else {
-                return self.err("a pair of two bytes");
-            };
-            pairs.push([a, b]);
+            if w.len() != 2 && w.len() != 3 {
+                return self.err("a pair of two bytes, or a triple of three");
+            }
+            pairs.push(w);
+        }
+        if pairs.iter().any(|t| t.len() == 3 && !pairs.iter().any(|p| p[..] == t[..2])) {
+            return self.err("a triple whose first two bytes are no pair");
         }
         let name = |b: u8| format!("pair_byte_{b:02x}");
         for &b in pairs.iter().flatten() {
@@ -1586,9 +1682,18 @@ impl P {
         }
         let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
         let next = |e: Expr| Expr::Call("next".into(), vec![Arg::E(e)]);
-        let two = pairs.iter().map(|&[a, b]| and(Expr::Name(name(a)), next(Expr::Name(name(b))))).reduce(|x, y| Expr::Or(Box::new(x), Box::new(y))).ok_or("a pair")?;
+        let or = |x: Expr, y: Expr| Expr::Or(Box::new(x), Box::new(y));
+        let two = pairs.iter().filter(|p| p.len() == 2).map(|p| and(Expr::Name(name(p[0])), next(Expr::Name(name(p[1]))))).reduce(or).ok_or("a pair")?;
+        let two_of = two.clone();
         let mask = and(two.clone(), Expr::Not(Box::new(Expr::Call("escaped".into(), vec![Arg::E(two)]))));
-        self.pair_sets.push((name_of.clone(), pairs));
+        let next2 = |e: Expr| Expr::Call("next".into(), vec![Arg::E(e), Arg::N(2)]);
+        let three = pairs.iter().filter(|p| p.len() == 3).map(|p| and(and(Expr::Name(name(p[0])), next(Expr::Name(name(p[1])))), next2(Expr::Name(name(p[2]))))).reduce(or);
+        let has_three = three.is_some();
+        if let Some(t) = three {
+            self.after.push(Stmt::Mask(format!("{name_of}_three"), and(t, Expr::Name(name_of.clone()))));
+            self.after.push(Stmt::Mask(format!("{name_of}_two"), two_of));
+        }
+        self.pair_sets.push((name_of.clone(), pairs, has_three));
         Ok(Stmt::Mask(name_of, mask))
     }
     /// `munch K over O { "L" [-> KIND] … }`: operator tokens by longest match over each run of
@@ -2038,7 +2143,12 @@ impl P {
                 let kind = self.kind()?;
                 self.want_p("=")?;
                 if self.eat_kw("tokens") {
-                    let before = if self.eat_kw("after") { self.token_choices()? } else { vec![] };
+                    let before = if self.eat_kw("after") {
+                        let c = self.token_choices()?;
+                        self.with_marks(c)?
+                    } else {
+                        vec![]
+                    };
                     let seq = self.token_seq()?;
                     // The mark's token is a token of the choices: no `~`, no `end`; an `end` only in
                     // the last element. The one before (`after`) has no `end`; a `~` there holds
@@ -2048,7 +2158,18 @@ impl P {
                     if special(&seq[0]) || ends(&before) || seq[..seq.len() - 1].iter().any(|c| ends(c)) {
                         return self.err("a mark's token of kinds and words, and `end` only last");
                     }
-                    let s = Stmt::TokenMark { kind, before, seq };
+                    let mut next = Vec::new();
+                    while self.eat_p(",") {
+                        self.nls();
+                        self.want_kw("unless")?;
+                        self.want_kw("before")?;
+                        let seq = self.token_seq()?;
+                        if seq[0].iter().any(|c| !matches!(c, TokenElem::Kind(_) | TokenElem::Word(_))) {
+                            return self.err("an `unless before`'s first token of kinds and words");
+                        }
+                        next.push((true, seq));
+                    }
+                    let s = Stmt::TokenMark { kind, before, seq, next };
                     self.end_stmt()?;
                     return Ok(s);
                 }
@@ -2063,7 +2184,7 @@ impl P {
                         }
                     }
                 }
-                let (mut end, mut unplaced, mut checks, mut settles, mut ends, mut drops) = (false, None, vec![], false, false, None);
+                let (mut end, mut unplaced, mut checks, mut settles, mut ends, mut drops, mut loses) = (false, None, vec![], false, false, vec![], vec![]);
                 let mut next: Vec<(bool, Vec<Vec<TokenElem>>)> = Vec::new();
                 while self.eat_p(",") {
                     self.nls();
@@ -2079,7 +2200,9 @@ impl P {
                     } else if self.eat_kw("settles") {
                         settles = true;
                     } else if self.eat_kw("drops") {
-                        drops = Some(self.expr()?);
+                        drops.push(self.gap_pattern()?);
+                    } else if self.eat_kw("loses") {
+                        loses.push(self.gap_pattern()?);
                     } else if self.eat_kw("ends") {
                         ends = true;
                     } else if self.eat_kw("else") {
@@ -2099,10 +2222,10 @@ impl P {
                         end = true;
                     }
                 }
-                if drops.is_some() && !settles {
+                if !drops.is_empty() && !settles {
                     return self.err("`drops` on a mark that settles");
                 }
-                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops }
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses }
             }
             "token" => {
                 let kind = self.kind()?;
@@ -2119,8 +2242,8 @@ impl P {
                 } else if self.eat_kw("pair") {
                     let e = self.expr()?;
                     match &e {
-                        Expr::Name(n) => match self.pair_sets.iter().find(|(m, _)| m == n) {
-                            Some((_, pairs)) => Some(TokenRule::Pairs { pairs: pairs.clone(), mask: e.clone() }),
+                        Expr::Name(n) => match self.pair_sets.iter().find(|(m, _, _)| m == n) {
+                            Some((_, pairs, three)) => Some(TokenRule::Pairs { pairs: pairs.clone(), mask: e.clone(), three: three.then(|| Expr::Name(format!("{n}_three"))) }),
                             None => Some(TokenRule::Pair(e)),
                         },
                         _ => Some(TokenRule::Pair(e)),
@@ -2197,6 +2320,15 @@ impl P {
                 };
                 if let Some(r) = &rule {
                     last = Some(r.last(&start));
+                }
+                // A triple whose last byte starts a pair with the byte after (`!===`, `====`):
+                // the mask's every other byte of a run (`P`) is then not the left-to-right
+                // reading the token loop makes, a pair after the triple. No such text is a
+                // language's, so it is an error, the same on every target.
+                if let Some(TokenRule::Pairs { mask: Expr::Name(n), three: Some(t), .. }) = &rule {
+                    let after = Expr::Call("next".into(), vec![Arg::E(Expr::Name(format!("{n}_two"))), Arg::N(2)]);
+                    let at = Expr::And(Box::new(Expr::And(Box::new(start.clone()), Box::new(t.clone()))), Box::new(after));
+                    self.after.push(Stmt::Error(format!("{kind}: a triple's last byte starts a pair"), at));
                 }
                 // A region read in parts: its other rows after it (`Parts::rows`).
                 if let Some(TokenRule::ReadParts(rs, parts)) = &rule {
@@ -2421,7 +2553,7 @@ mod tier2_tests {
             Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![TokenElem::Not(vec![name.clone(), word(",")])], vec![], vec![])], vec![word("->")]])], false))
         );
         assert!(parse("lexer t\nmark k = tokens \"{\" (name | \",\")* \"->\"\n").is_ok());
-        // A run that counts depths (Q326): each `(O to C)` one; none, a token both, a `~`: refused.
+        // A run that counts depths (Q339): each `(O to C)` one; none, a token both, a `~`: refused.
         let angle = Nest { open: vec![word("<")], close: vec![word(">")] };
         let paren = Nest { open: vec![word("(")], close: vec![word(")")] };
         assert_eq!(
@@ -2431,7 +2563,7 @@ mod tier2_tests {
         assert!(mark("mark k = lf, before \"<\" (name)* nest \">\"").is_err());
         assert!(mark("mark k = lf, before \"<\" (name)* nest (\"<\" to \"<\") \">\"").is_err());
         assert!(mark("mark k = lf, before \"<\" (name)* nest (~\"<\" to \">\") \">\"").is_err());
-        // `ending (C)`: the run's last token (Q274).
+        // `ending (C)`: the run's last token (Q342).
         assert_eq!(
             mark("mark k = lf, before \"@\" (~\"{\")* nest (\"(\" to \")\") ending (name | \")\") ~\".\""),
             Ok((vec![(false, vec![vec![word("@")], vec![TokenElem::Many(vec![TokenElem::Not(vec![word("{")])], vec![paren.clone()], vec![name.clone(), word(")")])], vec![TokenElem::Not(vec![word(".")])]])], false))
@@ -2439,12 +2571,23 @@ mod tier2_tests {
         assert!(mark("mark k = lf, before \"@\" (name)* ending (~name) \".\"").is_err());
     }
 
-    /// A settling mark's `drops W` (decision 0416): parsed with `settles`, refused without.
+    /// A settling mark's `drops` (decision 0416, its questions 0451): parsed with `settles`,
+    /// refused without; the records before the token, and those from it.
     #[test]
     fn a_settling_mark_drops_an_extra() {
-        let mark = |m: &str| parse(&format!("lexer t\nclass lf = '\\n'\n{m}\n")).map(|s| matches!(s.last(), Some(Stmt::Mark { drops: Some(_), .. })));
-        assert_eq!(mark("mark k = lf, settles, drops lf"), Ok(true));
-        assert!(mark("mark k = lf, drops lf").is_err());
+        let mark = |m: &str| parse(&format!("lexer t\nclass lf = '\\n'\n{m}\n")).map(|s| match s.last() {
+            Some(Stmt::Mark { drops, .. }) => drops.clone(),
+            _ => vec![],
+        });
+        let kind = |k: &str| TokenElem::Kind(k.into());
+        assert_eq!(
+            mark("mark k = lf, settles, drops after ~\";\" c with k before starting \"ae\", drops unless after c before \"as\" x"),
+            Ok(vec![
+                GapPattern { unless: false, after: vec![vec![TokenElem::Not(vec![TokenElem::Word(b";".to_vec())])], vec![kind("c"), TokenElem::With("k".into())]], before: vec![vec![TokenElem::Starting(b"ae".to_vec())]] },
+                GapPattern { unless: true, after: vec![vec![kind("c")]], before: vec![vec![TokenElem::Word(b"as".to_vec())], vec![kind("x")]] },
+            ])
+        );
+        assert!(mark("mark k = lf, drops before \"a\"").is_err());
     }
 
     /// The tier-2 forms of decision 0071, as JSON's tree section writes them.

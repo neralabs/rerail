@@ -1,4 +1,4 @@
-//! Joins deferred to their readers' requests (decision 0477). A binary positive join over a key its head projects
+//! Joins deferred to their readers' requests (decision 0513). A binary positive join over a key its head projects
 //! away (`wide(a, b) :- lhs(a, k), rhs(b, k)`) is driven by what its readers request: the pairs, or one endpoint
 //! (`DEFERRED_PAIRS`, a demand relation as `upstream`'s), or else kept as its two factors, which meet in each reader
 //! (`file_local::factorize_intermediates`), with a pair cache where the factors are small. A frequently requested
@@ -358,7 +358,7 @@ fn share(p: &mut Program<'_>, rel: &str, n: usize) -> Result<Option<String>, Str
     Ok(Some(label))
 }
 
-/// The deferred joins pass (decision 0477) under a deferral (`preparation::Deferral`): its decisions, and the report
+/// The deferred joins pass (decision 0513) under a deferral (`preparation::Deferral`): its decisions, and the report
 /// of each join (`profile::author_joins::TOPIC`, which `preparation::front` reads back for the pair caches).
 pub(in crate::code_rule_dsl::logic::plan::corpus) struct DeferJoins {
     deferral: Deferral,

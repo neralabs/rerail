@@ -314,7 +314,7 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         "label": "rr",
         "variant": "Rr",
         "suffixes": [
-          ".rr"
+          ".rerail"
         ],
         "parser": "rr",
         "grammar": "native:rr",

@@ -8,7 +8,7 @@ use crate::ladder::*;
 /// and why the reference refused each sentence it refused.
 #[test]
 fn every_step_parses_as_the_reference() {
-    let differ = check_ladder(&steps_in(DIR), b"<>();=#^ \nav9~,eE-{}", &[], &[], &|_, _, _, _| None);
+    let differ = check_ladder(&steps_in(&dir()), b"<>();=#^ \nav9~,eE-{}", &[], &[], &|_, _, _, _| None);
     assert!(differ.is_empty(), "{} steps differ:\n{}", differ.len(), differ.join("\n"));
 }
 
@@ -85,7 +85,6 @@ class star      = '*'
 class word      = 'a'..'z' 'A'..'Z' '0'..'9' '_'
 class alpha     = 'a'..'z' 'A'..'Z' '_'
 class punct     = '.' '*'
-class ichar     = 'i'
 mask line_open  = slash & next(slash)
 regions hidden {
   line  = line_open .. lf outside
@@ -93,7 +92,6 @@ regions hidden {
 mask code       = ~hidden & ~o_line
 mask w          = code & word
 mask name       = fill(w & alpha, ~w)
-mask swallow    = code & ichar & ~prev(word)
 error "a byte no token takes" by tokens when code & ~ws & ~name & ~punct
 token comment = start slash & o_line read line
 token simple_identifier = start alpha & name & ~prev(name) run word
@@ -101,7 +99,7 @@ token punct     = start code & punct
 keywords simple_identifier { } soft { "package" "import" "as" }
 keywords punct { "." "*" } required
 skip ws
-mark line       = lf & code, unless before "." simple_identifier, unless before "." "*", end, settles, drops swallow
+mark line       = lf & code, unless before "." simple_identifier, unless before "." "*", end, settles, drops before starting "i"
 mark more       = lf & code, before "." simple_identifier
 mark wild       = tokens "." "*"
 mark alias      = tokens after "import" simple_identifier (simple_identifier | ".")* "as"
@@ -124,7 +122,106 @@ tree kotlin {
     assert_eq!(check_documents("drops", &c, b"pai.*\n/ ", &[], &fixed, &|_, _, _, _| None), None);
 }
 
-/// A token mark's run that counts depths (Q326), as the lean parser's `type_args_end` does: a
+/// A mark that loses (`, loses W`, decision 0451): where a level asks for the line break and
+/// the next line goes on after a block comment that starts it (`W`), the comment is lost: of no
+/// width at the token after it, and placed after that token, as the lean lexer's `asi` loses it.
+/// A level asks where it takes the mark, or where it may end and its call returns to one that
+/// does (tier 2's flag, the lean parser's `stmt`): in a statement's call chain, not inside `(`.
+/// Bitlex's reference and every executor.
+#[test]
+fn a_mark_that_loses_in_the_reference() {
+    let source = r#"lexer t
+class ws        = ' ' '\t' '\n'
+class lf        = '\n'
+class slash     = '/'
+class star      = '*'
+class word      = 'a'..'z' '0'..'9' '_'
+class alpha     = 'a'..'z' '_'
+class punct     = '.' '(' ')' ','
+mask block_open = slash & next(star)
+mask block_end  = slash & prev(star)
+regions hidden {
+  block = block_open .. block_end
+}
+mask code       = ~hidden & ~o_block
+mask w          = code & word
+mask name       = fill(w & alpha, ~w)
+error "a byte no token takes" by tokens when code & ~ws & ~name & ~punct
+mask last_byte  = ~next(~empty)
+error "a block comment open at the end" by tokens when f_block & last_byte
+token comment = start slash & o_block read block
+token simple_identifier = start alpha & name & ~prev(name) run word
+token punct     = start code & punct
+keywords punct { "." "(" ")" "," } required
+skip ws
+mark line       = lf & code, unless before ".", end, settles, ends, loses after comment with line before "."
+tree t {
+  node source_file whole = [line] [statements]
+  node statements nested = (call line)+
+  node call nested = simple_identifier ('.' simple_identifier | args)*
+  node args = '(' [call (',' call)*] ')'
+  hidden line
+  extra comment
+}
+"#;
+    let c = compile_step("loses", source);
+    let fixed = [
+        "a\n/* c */.b\n",
+        "a\n  /* c */ .b(x)\n/* d */ .e\nf\n",
+        "a(b\n/* c */.d)\n",
+        "a(b\n/* c */.d)\n/* e */.f\n",
+        "a /* c */\n.b\n",
+        "a\n/* c */\nb\n",
+        "a\n/* c */ /* d */.b\n",
+    ];
+    // The comment before a line's `.` is lost in a statement's chain, of no width at the `.`;
+    // inside `(` it keeps its bytes.
+    let widths = |d: &str| reference(&c, d.as_bytes()).expect("parses").iter().filter(|n| n.0 == c.ids.of("comment")).map(|n| n.4 - n.3).collect::<Vec<_>>();
+    assert_eq!(widths(fixed[0]), [0]);
+    assert_eq!(widths(fixed[2]), [7]);
+    assert_eq!(widths(fixed[3]), [7, 0]);
+    assert_eq!(check_documents("loses", &c, b"ab.(),/* \n", &[], &fixed, &|_, _, _, _| None), None);
+}
+
+/// A pair table's triples (`pairs P = "AB" … "ABC"`, decision 0451): a token of one byte, a
+/// pair, or a pair and the byte after, as the lean lexer reads `===` after `==`. Bitlex's
+/// reference and every executor.
+#[test]
+fn a_pair_table_with_triples() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class word      = 'a'..'z'
+class punct     = '=' '!' '.' '<'
+mask name       = fill(word, ~word)
+error "a byte no token takes" by tokens when ~ws & ~name & ~punct
+token simple_identifier = start name & ~prev(name) run word
+pairs op        = "==" "!=" ".." "===" "!==" "..<"
+mask second     = prev(op) | prev(op_three, 2)
+token punct     = start punct & ~second pair op
+keywords punct { "=" "!" "." "<" "==" "!=" ".." "===" "!==" "..<" } required
+skip ws
+tree t {
+  node source_file whole = (item)*
+  choice item           = simple_identifier | strict | loose | range | '=' | '!' | '.' | '<' | '!=' | '..' | '!=='
+  node strict           = '==='
+  node loose            = '=='
+  node range            = '..<'
+}
+"#;
+    let c = compile_step("triples", source);
+    let fixed = ["a === b", "a !== b", "a ..< b", "a == b", "a != b", "a .. b", "a==b===c", "a..<b..c", "a = ! . <", "a=== b", "a !=== b", "!!== ===!"];
+    let count = |d: &str, k: &str| reference(&c, d.as_bytes()).expect("parses").iter().filter(|n| n.0 == c.ids.of(k)).count();
+    assert_eq!(fixed[..10].iter().map(|d| count(d, "strict")).collect::<Vec<_>>(), [1, 0, 0, 0, 0, 0, 1, 0, 0, 1]);
+    assert_eq!(fixed[..10].iter().map(|d| count(d, "range")).collect::<Vec<_>>(), [0, 0, 1, 0, 0, 0, 0, 1, 0, 0]);
+    // A triple whose last byte starts a pair with the next is an error (the token loop reads
+    // `!==` `=`, the mask a run's every other byte).
+    for d in ["a !=== b", "a ==== b", "a!===b"] {
+        assert!(reference(&c, d.as_bytes()).is_none(), "{d}");
+    }
+    assert_eq!(check_documents("triples", &c, b"ab=!.< ", &[], &fixed, &|_, _, _, _| None), None);
+}
+
+/// A token mark's run that counts depths (Q339), as the lean parser's `type_args_end` does: a
 /// `<` opens type arguments where its `>` closes the depth and a `(` follows, with `<` `>` and
 /// `(` `)` counted between. The reference's nodes equal the interpreter's and Cranelift's.
 #[test]
@@ -158,10 +255,10 @@ tree t {
 }
 
 /// A level that took a mark at a token does not end there at a hidden `ends` mark (0430 step
-/// 1b, Q277): the line break's one decision is made, as the lean parser asks `asi` once. `goes`,
+/// 1b, Q345): the line break's one decision is made, as the lean parser asks `asi` once. `goes`,
 /// declared before `semi`, says a line that starts with `c` goes on a declaration; after it is
 /// taken, `semi` (live at the same token) ends no level, and `c()` is the declaration's. Elsewhere
-/// `semi` ends the declaration. Bitlex's reference does not implement `ends` (Q278): the
+/// `semi` ends the declaration. Bitlex's reference does not implement `ends` (Q346): the
 /// interpreter's nodes are the expected ones, and every executor's equal them.
 #[test]
 fn a_taken_mark_is_the_line_breaks_decision() {
@@ -215,45 +312,7 @@ tree t {
 /// included.
 #[test]
 fn a_gap_mark_read_from_the_blanks() {
-    let source = r#"lexer t
-class ws        = ' ' '\n'
-class lf        = '\n'
-class slash     = '/'
-class star      = '*'
-class dq        = '"'
-class word      = 'a'..'z'
-class punct     = '(' ')' ';'
-mask line_open  = slash & next(slash)
-mask block_open = slash & next(star)
-mask block_end  = slash & prev(star)
-regions hidden {
-  line  = line_open .. lf outside
-  block = block_open .. block_end
-  str   = dq .. dq
-}
-mask code       = ~hidden & ~o_line & ~o_block & ~o_str
-mask last_byte  = ~next(~empty)
-error "a comment or a string open at the end of the file" by tokens when (f_block | f_str) & last_byte
-mask w          = code & word
-mask name       = fill(w, ~w)
-error "a byte no token takes" by tokens when code & ~ws & ~name & ~punct
-token line_comment = start slash & o_line read line
-token multiline_comment = start slash & o_block read block
-token string    = start o_str read str
-token simple_identifier = start name & ~prev(name) run word
-token punct     = start code & punct
-keywords simple_identifier { "k" }
-keywords punct { "(" ")" ";" } required
-skip ws
-mark semi       = lf & code unless after ";", end, ends
-tree t {
-  node source_file whole = (statement (semi | ';'))*
-  choice statement nested = call | simple_identifier | string
-  node call             = 'k' '(' [simple_identifier | string] ')'
-  hidden semi
-  extra line_comment multiline_comment
-}
-"#;
+    let source = BLANKS_STEP;
     let c = compile_step("blanks", source);
     let r = c.program.block_programs[0].records.as_ref().expect("records");
     assert_eq!(r.blanks.iter().map(|b| b.0).collect::<Vec<_>>(), vec![0], "semi is read from the blanks");
@@ -264,10 +323,20 @@ tree t {
     assert_eq!(crate::native_cpu_block::blank_bits(r, &|o| bw.can(o)), 1);
     let samples: [(&str, &[&str]); 2] = [("line_comment", &["// x", "//", "// \"y", "// /* z"]), ("multiline_comment", &["/* x */", "/*\n*/", "/* \" \n */", "/**/"])];
     assert_eq!(check_documents("blanks", &c, b"abk(); \n/*\"x", &samples, &fixed, &|_, _, _, _| None), None);
+    // An extra keeps the blank marks of its own gap (`Records::extra`), as the lean lexer's
+    // `skip` knows a line end before each comment: the comments after a line break, one after
+    // another too, have semi's bit; one on its token's line has none. The interpreter's and
+    // the CPU's records alike.
+    let text = BLANKS_TEXT;
+    let run = c.program.block_programs[0].run(text);
+    let cpu = c.parser.tier1.extract(text);
+    let semi = |codes: &[u32]| codes.iter().map(|&k| k >> crate::records::MARK_SHIFT & 1).collect::<Vec<_>>();
+    assert_eq!(semi(&run.codes), [0, 0, 1, 1, 0, 1]);
+    assert_eq!(semi(&cpu.codes), semi(&run.codes));
 }
 
 /// A gap mark the token loop sets from the bytes, where the extra's mark is set after the
-/// tokens (Q279): the loop cannot tell a comment from a grammar token, so the mark is set after
+/// tokens (Q347): the loop cannot tell a comment from a grammar token, so the mark is set after
 /// the tokens too, and a comment never takes its bit. One comment kind read by one reader of
 /// two regions.
 #[test]
@@ -345,7 +414,44 @@ tree t {
     assert_eq!(check_documents("without", &c, b"ab() \n", &[], &fixed, &|_, _, _, _| None), None);
 }
 
-/// A run's `ending (C)` (Q274): the rest is tried only where the run's last token, or the token
+/// `with M` and a token mark's `unless before` (0451): an element holds only at a token whose
+/// record has mark `M`'s bit, as the lean parser asks `peek_at(j).nl`; and a token mark holds
+/// nowhere one of its `unless before` runs follows. A `get` after a line break, or on the line of
+/// a `pub` after one, is an accessor unless a `.` follows it. Bitlex's reference and every
+/// executor.
+#[test]
+fn a_token_with_a_mark() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class word      = 'a'..'z'
+class punct     = '(' ')' '.'
+mask name       = fill(word, ~word)
+error "a byte no token takes" by tokens when ~ws & ~name & ~punct
+token simple_identifier = start name & ~prev(name) run word
+token punct     = start punct
+keywords simple_identifier { } soft { "get" "pub" }
+keywords punct { "(" ")" "." } required
+skip ws
+mark brk        = lf
+mark acc        = tokens "get" with brk, unless before "get" "."
+mark acc        = tokens after "pub" with brk "get" without brk, unless before "get" "."
+tree t {
+  node source_file whole = (item)*
+  choice item           = accessor | simple_identifier | '(' | ')' | '.'
+  node accessor         = acc 'get'
+  hidden brk
+}
+"#;
+    let c = compile_step("with", source);
+    let fixed = ["a\nget", "a get", "a\npub get", "a pub get", "a\nget.b", "a\npub get.b", "get", "a\n\nget(x)\npub\nget"];
+    let accessor = c.ids.of("accessor");
+    let n: Vec<usize> = fixed.iter().map(|d| reference(&c, d.as_bytes()).unwrap_or_else(|| panic!("{d:?} parses")).iter().filter(|x| x.0 == accessor).count()).collect();
+    assert_eq!(n, [1, 0, 1, 0, 0, 0, 0, 2]);
+    assert_eq!(check_documents("with", &c, b"agetpub(). \n", &[], &fixed, &|_, _, _, _| None), None);
+}
+
+/// A run's `ending (C)` (Q342): the rest is tried only where the run's last token, or the token
 /// before it where it took none, is one of `C`, in Bitlex's reference and every executor.
 #[test]
 fn a_run_ends_on_a_token() {
