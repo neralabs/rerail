@@ -28,7 +28,7 @@ lang-rust = ["ast-grep-language/tree-sitter-rust", "rerail-facts/lang-rust", "re
 lang-sql = ["rerail-facts/lang-sql", "rerail-lang/lang-sql"]
 lang-typescript = ["rerail-facts/lang-typescript", "rerail-lang/lang-typescript"]
 lang-vue = ["rerail-facts/lang-vue", "rerail-lang/lang-vue"]
-headless = ["napi-derive/noop", "rerail-facts/headless", "rerail-lang/headless"]
+headless = ["napi-derive/noop", "rerail-tree-watch/headless", "rerail-facts/headless", "rerail-lang/headless"]
 dump-cli = ["rerail-facts/dump-cli", "rerail-lang/dump-cli"]
 python-syntax-error = ["rerail-facts/python-syntax-error", "rerail-lang/python-syntax-error"]
 tape-cache = ["rerail-facts/tape-cache", "rerail-lang/tape-cache"]
@@ -39,6 +39,8 @@ metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests"]
 test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-rr-parser/test-hooks"]
 
 [dependencies]
+# The panic boundary (`panic_boundary`), mounted by the tree watch's crate, which needs nothing else of W's.
+rerail-tree-watch = { path = "../tree_watch" }
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
 dunce = "=1.0.5"
 base64 = "=0.22.1"

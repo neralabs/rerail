@@ -3398,6 +3398,7 @@ dependencies = [
  "rerail-store",
  "rerail-tape-format",
  "rerail-transducer",
+ "rerail-tree-watch",
  "rerail-vue-lean",
  "rerail-w",
  "roaring",
@@ -4644,6 +4645,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-tree-watch"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "libc",
+ "napi",
+ "napi-derive",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "rerail-vue-lean"
 version = "0.1.0"
 dependencies = [
@@ -4699,6 +4711,7 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-store",
+ "rerail-tree-watch",
  "rerail-w",
  "ruff_python_ast",
  "ruff_python_parser",

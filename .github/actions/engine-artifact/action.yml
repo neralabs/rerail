@@ -1,0 +1,81 @@
+name: Engine artifact
+description: >-
+  Lets an engine build job skip cargo when an earlier run built the same engine. `find` hashes the engine's inputs
+  (scripts/check/ci/engine-inputs.mjs: the committed blobs of everything the release engine is built from) and looks for
+  an unexpired artifact `engine-<target>-<hash>` from a run on `ref` (main, unless a manual run names another branch)
+  or on this run's own branch (a pull request's earlier push), of this repository; on a hit it downloads the engine
+  into native/ and sets `hit`. A lookup or download that fails is a miss: the job builds. `upload`, after a build,
+  uploads the engine under that name for later runs. The job needs `actions: read`.
+
+inputs:
+  target:
+    description: The Rust target triple the engine is built for.
+    required: true
+  mode:
+    description: '"find" before the build, "upload" after it.'
+    required: true
+  ref:
+    description: The branch whose runs' engines `find` reads besides this run's own branch.
+    default: main
+
+outputs:
+  hit:
+    description: '"true" when `find` downloaded an engine built from these inputs.'
+    value: ${{ steps.download.outcome == 'success' }}
+  name:
+    description: The artifact's name, `engine-<target>-<hash>`.
+    value: ${{ steps.hash.outputs.name }}
+
+runs:
+  using: composite
+  steps:
+    - id: hash
+      name: Hash the engine's inputs
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+      run: |
+        hash="$(node scripts/check/ci/engine-inputs.mjs)"
+        echo "name=engine-$TARGET-$hash" >> "$GITHUB_OUTPUT"
+
+    - id: find
+      name: Find an engine built from these inputs
+      if: inputs.mode == 'find'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        NAME: ${{ steps.hash.outputs.name }}
+        REF: ${{ inputs.ref }}
+        OWN: ${{ github.head_ref || github.ref_name }}
+      # A push, schedule or dispatch on `ref` of a commit in its history, or any earlier run of this pull request's own
+      # branch, in this repository (scripts/check/ci/trusted-artifact.mjs); never a pull request whose head branch, or a
+      # tag, is named `ref`.
+      run: |
+        read -r _ run_id <<< "$(node scripts/check/ci/trusted-artifact.mjs "$NAME" "$REF" "$OWN")" || true
+        if [ -n "$run_id" ]; then echo "$NAME from run $run_id"; else echo "No $NAME on $REF or $OWN: building"; fi
+        echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+
+    - id: download
+      name: Download the engine
+      if: inputs.mode == 'find' && steps.find.outputs.run-id != ''
+      continue-on-error: true
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: ${{ steps.hash.outputs.name }}
+        path: native
+        run-id: ${{ steps.find.outputs.run-id }}
+        github-token: ${{ github.token }}
+
+    # A week on main, where later pull requests read it; three days elsewhere, for the branch's next pushes.
+    - name: Upload the engine for later runs
+      if: inputs.mode == 'upload'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ steps.hash.outputs.name }}
+        path: |
+          native/*.node
+          native/index.js
+          native/index.d.ts
+        if-no-files-found: error
+        overwrite: true
+        retention-days: ${{ github.ref == 'refs/heads/main' && 7 || 3 }}
