@@ -3267,10 +3267,18 @@ impl Lower<'_, '_> {
         let keep = self.f.create_block();
         self.f.ins().brif(room, keep, &[], head, &[n1.into()]);
         self.f.switch_to_block(keep);
-        let base = self.f.ins().iadd_imm(ctx, i64::from(pt));
-        let slot = elem(self.f, base, n, TOK);
-        copy_tok(self.f, ctx, at!(t), slot, 0);
-        self.f.ins().jump(head, &[n1.into()]);
+        // `pragma_toks[n]`, each `n` its own field's offset: the context is only ever a field's
+        // base (the device holds it by fields, 0408).
+        let (first, rest, second, third) = (self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block());
+        self.f.ins().brif(n, rest, &[], first, &[]);
+        for (blk, k) in [(first, 0), (second, 1), (third, 2)] {
+            self.f.switch_to_block(blk);
+            copy_tok(self.f, ctx, at!(t), ctx, pt + k * TOK as i32);
+            self.f.ins().jump(head, &[n1.into()]);
+        }
+        self.f.switch_to_block(rest);
+        let is1 = self.f.ins().icmp_imm(IntCC::Equal, n, 1);
+        self.f.ins().brif(is1, second, &[], third, &[]);
         self.f.switch_to_block(done);
         let n = self.f.block_params(done)[0];
         self.pragma_of(pc, file, n, next);
@@ -3466,11 +3474,10 @@ impl Lower<'_, '_> {
         self.like_tok(LITERAL, start, end);
     }
 
-    /// `Machine::line_of` of the token at `tok`: its physical line, moved by its file's `#line`.
-    fn line_of(&mut self, tok: Value) -> Value {
+    /// `Machine::line_of` of a token's `buf` and `start`: its physical line, moved by its file's
+    /// `#line`.
+    fn line_of_at(&mut self, buf: Value, start: Value) -> Value {
         let ctx = self.ctx;
-        let buf = ldu(self.f, types::I32, tok, offset_of!(Tok, buf) as i32);
-        let start = ldu(self.f, types::I32, tok, offset_of!(Tok, start) as i32);
         let nf = ld(self.f, types::I64, ctx, at!(nfiles));
         let join = self.f.create_block();
         self.f.append_block_param(join, types::I64);
@@ -3597,24 +3604,30 @@ impl Lower<'_, '_> {
             match c {
                 B_LINE => {
                     // The outermost call's end: the expansions' ends followed (`Step::Item`).
+                    // The walk carries the token's `exp`, `buf` and `start`, not its address:
+                    // the first is `like`, a field of the context, which is never an address (0408).
                     let head = self.f.create_block();
-                    self.f.append_block_param(head, types::I64);
+                    for _ in 0..3 {
+                        self.f.append_block_param(head, types::I64);
+                    }
                     self.heads.push((head, Step::Item));
-                    let at = self.f.ins().iadd_imm(ctx, i64::from(at!(like)));
-                    self.f.ins().jump(head, &[at.into()]);
+                    let read = |l: &mut Self, tok: Value, off: i32| -> [Value; 3] {
+                        [offset_of!(Tok, exp), offset_of!(Tok, buf), offset_of!(Tok, start)].map(|o| ldu(l.f, types::I32, tok, off + o as i32))
+                    };
+                    let first = read(self, ctx, at!(like));
+                    self.f.ins().jump(head, &first.map(Into::into));
                     self.f.switch_to_block(head);
-                    let r = self.f.block_params(head)[0];
-                    let exp = ldu(self.f, types::I32, r, offset_of!(Tok, exp) as i32);
+                    let [exp, buf, start] = [0, 1, 2].map(|i| self.f.block_params(head)[i]);
                     let up = self.f.create_block();
                     let found = self.f.create_block();
                     self.f.ins().brif(exp, up, &[], found, &[]);
                     self.f.switch_to_block(up);
                     let k = self.f.ins().iadd_imm(exp, -1);
                     let e = self.vat(EXPS, k);
-                    let e1 = self.f.ins().iadd_imm(e, EXP.2 as i64);
-                    self.f.ins().jump(head, &[e1.into()]);
+                    let next = read(self, e, EXP.2 as i32);
+                    self.f.ins().jump(head, &next.map(Into::into));
                     self.f.switch_to_block(found);
-                    let line = self.line_of(r);
+                    let line = self.line_of_at(buf, start);
                     self.number_tok(pc, line);
                 }
                 B_FILE | B_FILE_NAME | B_BASE_FILE => {
@@ -4063,11 +4076,10 @@ impl Lower<'_, '_> {
         let kept = ld(self.f, types::I64, ctx, at!(kept));
         let n = self.f.ins().isub(hi, lo);
         let lo_p = elem(self.f, kept, lo, TOK);
-        let marker = self.f.ins().iadd_imm(ctx, i64::from(at!(marker)));
         // first: the marker, else kept[lo] (where n > 0); second: kept[lo] (marker, n > 0), else
-        // kept[lo + 1] (n > 1).
+        // kept[lo + 1] (n > 1). The first is chosen word by word, not by address: the marker is
+        // a field of the context, which is never an address (0408).
         let lo1_p = self.f.ins().iadd_imm(lo_p, TOK);
-        let first = self.f.ins().select(mk, marker, lo_p);
         let one = self.f.ins().iconst(types::I8, 1);
         let n1 = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, n, 0);
         let n2 = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, n, 1);
@@ -4076,7 +4088,12 @@ impl Lower<'_, '_> {
         let has_second = self.f.ins().select(mk, n1, n2);
         // Copied aside before kept is cut (the copies' tokens are read after).
         let pt = at!(pragma_toks);
-        copy_tok(self.f, first, 0, ctx, pt);
+        for w in 0..(TOK as i32 / 4) {
+            let m = self.f.ins().load(types::I32, flags(), ctx, at!(marker) + 4 * w);
+            let k = self.f.ins().load(types::I32, flags(), lo_p, 4 * w);
+            let x = self.f.ins().select(mk, m, k);
+            self.f.ins().store(flags(), x, ctx, pt + 4 * w);
+        }
         copy_tok(self.f, second, 0, ctx, pt + TOK as i32);
         self.vset_len(KEPT, lo);
         let s = self.file_src(pc);

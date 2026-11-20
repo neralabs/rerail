@@ -7,6 +7,9 @@
 //!   arena's pointer at the address's offset (`AT`). An integer cast to a pointer is never
 //!   accessed: the device compiler took two such pointers to one byte as different objects and
 //!   read a byte back from before its store (`!(1/0)` was true; 0348, stage 5).
+//! - **The context** (each function's first parameter) is a column of the batch's table: a
+//!   field is its 8-byte slot's row (0408, L2), so a SIMD group's lanes read one line. The
+//!   context is only ever a field's base (`context_uses`).
 //! - **Alignment:** a byte, or a context field at its size's multiple, is one access. Any other
 //!   access is a helper over the aligned words around it, so no access is unaligned. The IR's
 //!   `aligned` flag is the CPU's, and is not used.
@@ -118,11 +121,11 @@ pub fn translate(funcs: &[(u32, ir::Function)], entries: &[(u32, &str)]) -> Resu
         writeln!(
             out,
             "// The entry over a batch: each worker takes contexts by ticket until none is left.\n\
-             kernel void {n}(device ulong* ctxs [[buffer(0)]], device ulong* results [[buffer(1)]], device atomic_uint* ticket [[buffer(2)]], constant uint& count [[buffer(3)]], device uchar* heap [[buffer(4)]], constant ulong& hb [[buffer(5)]]) {{\n\
+             kernel void {n}(device ulong* ctxs [[buffer(0)]], device ulong* results [[buffer(1)]], device atomic_uint* ticket [[buffer(2)]], constant uint& count [[buffer(3)]], device uchar* heap [[buffer(4)]], constant ulong& hb [[buffer(5)]], constant ulong& cs [[buffer(6)]]) {{\n\
              \x20 for (uint k = 0u; k < count; k++) {{\n\
              \x20   const uint t = atomic_fetch_add_explicit(ticket, 1u, memory_order_relaxed);\n\
              \x20   if (t >= count) return;\n\
-             \x20   results[t] = f{entry}(0ul, heap, hb, ctxs[t]);\n\
+             \x20   results[t] = f{entry}(0ul, heap, hb, cs, ctxs[t]);\n\
              \x20 }}\n\
              }}\n"
         )
@@ -142,10 +145,12 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<(), String> {
         1 => ty(f.signature.returns[0].value_type)?.0,
         _ => return Err("more than one result".into()),
     };
+    let fields = context_fields(f);
+    context_uses(f, &fields)?;
     let name = |v: ir::Value| format!("v{}", dfg.resolve_aliases(v).as_u32());
     let entry = f.layout.entry_block().ok_or("no entry block")?;
     let params: Vec<String> = dfg.block_params(entry).iter().map(|&v| Ok(format!("{} a{}", ty(dfg.value_type(v))?.0, v.as_u32()))).collect::<Result<_, String>>()?;
-    writeln!(out, "static {ret_ty} f{id}(ulong pin, device uchar* heap, ulong hb{}{}) {{", if params.is_empty() { "" } else { ", " }, params.join(", ")).unwrap();
+    writeln!(out, "static {ret_ty} f{id}(ulong pin, device uchar* heap, ulong hb, ulong cs{}{}) {{", if params.is_empty() { "" } else { ", " }, params.join(", ")).unwrap();
     let absorbed = absorbed(f);
     if !absorbed.is_empty() {
         return Err("a vector test".into());
@@ -178,7 +183,7 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<(), String> {
             let emit = |node: usize, jump: &dyn Fn(usize) -> Result<String, String>| -> Result<String, String> {
                 let mut s = String::new();
                 for inst in f.layout.block_insts(blocks[node]) {
-                    s.push_str(&instruction(f, inst, &name, &|k, _| jump(k))?);
+                    s.push_str(&instruction(f, inst, &fields, &name, &|k, _| jump(k))?);
                     s.push('\n');
                 }
                 Ok(s)
@@ -193,12 +198,85 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<(), String> {
             for blk in f.layout.blocks() {
                 writeln!(out, "  case {}u: {{", blk.as_u32()).unwrap();
                 for inst in f.layout.block_insts(blk) {
-                    out.push_str(&instruction(f, inst, &name, &|_, to: ir::Block| Ok(format!("b = {}u; continue;", to.as_u32())))?);
+                    out.push_str(&instruction(f, inst, &fields, &name, &|_, to: ir::Block| Ok(format!("b = {}u; continue;", to.as_u32())))?);
                     out.push('\n');
                 }
                 out.push_str("  } break;\n");
             }
             writeln!(out, "  default: return {};\n  }}\n  }}\n}}\n", if ret_ty == "void" { "" } else { "0" }).unwrap();
+        }
+    }
+    Ok(())
+}
+
+/// A function's context: its first parameter.
+fn context(f: &ir::Function) -> Option<ir::Value> {
+    f.layout.entry_block().and_then(|e| f.dfg.block_params(e).first().copied())
+}
+
+/// The values that are the context plus a constant (the context itself, and `iadd_imm`s of
+/// them), each with its constant.
+type Fields = std::collections::HashMap<ir::Value, i64>;
+
+fn context_fields(f: &ir::Function) -> Fields {
+    let dfg = &f.dfg;
+    let mut fields = Fields::new();
+    let Some(c) = context(f) else { return fields };
+    fields.insert(c, 0);
+    loop {
+        let before = fields.len();
+        for b in f.layout.blocks() {
+            for inst in f.layout.block_insts(b) {
+                if let InstructionData::BinaryImm64 { opcode: Opcode::IaddImm, arg, imm } = dfg.insts[inst]
+                    && let Some(&o) = fields.get(&dfg.resolve_aliases(arg))
+                {
+                    fields.insert(dfg.first_result(inst), o + imm.bits());
+                }
+            }
+        }
+        if fields.len() == before {
+            return fields;
+        }
+    }
+}
+
+/// The context is used only as a load's or a store's base, at a field within one 8-byte slot,
+/// as a callee's context (its first argument), or plus a constant (`context_fields`) for the
+/// same uses: the device's table holds a context by slots, so any other use, an address made
+/// from it any other way or the context as a value, is refused.
+fn context_uses(f: &ir::Function, fields: &Fields) -> Result<(), String> {
+    let dfg = &f.dfg;
+    for b in f.layout.blocks() {
+        for inst in f.layout.block_insts(b) {
+            let data = &dfg.insts[inst];
+            for (i, &v) in dfg.inst_args(inst).iter().enumerate() {
+                let Some(&at) = fields.get(&dfg.resolve_aliases(v)) else { continue };
+                let field = |n: u32| data.load_store_offset().is_some_and(|o| {
+                    let o = at + i64::from(o);
+                    o >= 0 && o % i64::from(n) == 0 && o % 8 + i64::from(n) <= 8
+                });
+                let ok = match data.opcode() {
+                    Opcode::Uload8 | Opcode::Sload8 if i == 0 => field(1),
+                    Opcode::Uload16 | Opcode::Sload16 if i == 0 => field(2),
+                    Opcode::Uload32 | Opcode::Sload32 if i == 0 => field(4),
+                    Opcode::Load if i == 0 => dfg.inst_results(inst).first().is_some_and(|&r| field(dfg.value_type(r).bytes())),
+                    Opcode::Store | Opcode::Istore8 | Opcode::Istore16 | Opcode::Istore32 if i == 1 => {
+                        let n = match data.opcode() {
+                            Opcode::Istore8 => 1,
+                            Opcode::Istore16 => 2,
+                            Opcode::Istore32 => 4,
+                            _ => dfg.value_type(dfg.inst_args(inst)[0]).bytes(),
+                        };
+                        field(n)
+                    }
+                    Opcode::Call => i == 0 && at == 0,
+                    Opcode::IaddImm => fields.contains_key(&dfg.first_result(inst)),
+                    _ => false,
+                };
+                if !ok {
+                    return Err(format!("the context used other than as a field's base: {}", dfg.display_inst(inst)));
+                }
+            }
         }
     }
     Ok(())
@@ -237,7 +315,7 @@ fn konst(c: i64, u: &str) -> String {
     format!("{u}({:#x}ul)", c as u64)
 }
 
-fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> String, jump: &dyn Fn(usize, ir::Block) -> Result<String, String>) -> Result<String, String> {
+fn instruction(f: &ir::Function, inst: ir::Inst, fields: &Fields, name: &dyn Fn(ir::Value) -> String, jump: &dyn Fn(usize, ir::Block) -> Result<String, String>) -> Result<String, String> {
     let dfg = &f.dfg;
     let data = &dfg.insts[inst];
     let op = data.opcode();
@@ -266,23 +344,33 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         let off = data.load_store_offset().unwrap_or(0);
         if off == 0 { format!("ulong({p})") } else { format!("(ulong({p}) + {})", konst(i64::from(off), "ulong")) }
     };
-    // An access known aligned: a byte, or a field of the context (the function's first
-    // parameter, which the host places at 16 bytes) at its size's multiple. The IR's own
-    // `aligned` flag is the CPU's, where a 64-bit access at a 4-byte boundary is one access.
-    let known = |base: ir::Value, n: u32| -> bool {
-        let entry_ctx = f.layout.entry_block().and_then(|e| dfg.block_params(e).first().copied());
-        n == 1 || (Some(dfg.resolve_aliases(base)) == entry_ctx && data.load_store_offset().is_some_and(|o| o % n as i32 == 0))
+    // A field of the context (the function's first parameter, or it plus a constant): its
+    // 8-byte slot's row of the batch's table (0408, L2), `cs` bytes a row, from the context's
+    // column; `context_uses` checked it lies in one slot.
+    let ctx = |base: ir::Value| fields.contains_key(&dfg.resolve_aliases(base));
+    let slot = |_: &str| {
+        let base = dfg.inst_args(inst)[if data.opcode().can_store() { 1 } else { 0 }];
+        let off = fields[&dfg.resolve_aliases(base)] + i64::from(data.load_store_offset().unwrap_or(0));
+        format!("(ulong({}) + {}ul * cs + {}ul)", name(context(f).expect("a context")), off / 8, off % 8)
     };
+    // Any other access is one where it is a byte; else the aligned-word helpers, because the
+    // IR's `aligned` flag is the CPU's, where a 64-bit access at a 4-byte boundary is one access.
     let load = |t: &str, n: u32| -> String {
         let base = dfg.inst_args(inst)[0];
-        if known(base, n) {
+        if ctx(base) {
+            return format!("*AT({t}_a, {})", slot(&args[0]));
+        }
+        if n == 1 {
             return format!("*AT({t}_a, {})", addr(&args[0]));
         }
         format!("{t}(ld{}(heap, hb, {}))", n * 8, addr(&args[0]))
     };
     let store = |t: &str, n: u32, x: &str| -> String {
         let base = dfg.inst_args(inst)[1];
-        if known(base, n) {
+        if ctx(base) {
+            return format!("*AT({t}_a, {}) = {t}({x});", slot(&args[1]));
+        }
+        if n == 1 {
             return format!("*AT({t}_a, {}) = {t}({x});", addr(&args[1]));
         }
         let wide = match n { 2 => "ushort", 4 => "uint", _ => "ulong" };
@@ -379,7 +467,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 ir::ExternalName::User(r) => f.params.user_named_funcs()[*r].index,
                 n => return Err(format!("a call of {n:?}")),
             };
-            let call = format!("f{callee}(pin, heap, hb{}{})", if args.is_empty() { "" } else { ", " }, args.join(", "));
+            let call = format!("f{callee}(pin, heap, hb, cs{}{})", if args.is_empty() { "" } else { ", " }, args.join(", "));
             if returned_call(f, inst) {
                 return Ok(format!("return {call};"));
             }
@@ -432,4 +520,61 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         }
         op => return Err(format!("the opcode {op}")),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use cranelift_codegen::ir::{AbiParam, Function, InstBuilder, MemFlags, Signature, UserFuncName, types::I64};
+    use cranelift_codegen::isa::CallConv;
+    use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+
+    /// A function of the context: `body` given the builder and the context, returning a value.
+    fn of_context(body: impl FnOnce(&mut FunctionBuilder<'_>, cranelift_codegen::ir::Value) -> cranelift_codegen::ir::Value) -> Function {
+        let mut sig = Signature::new(CallConv::Tail);
+        sig.params.push(AbiParam::new(I64));
+        sig.returns.push(AbiParam::new(I64));
+        let mut f = Function::with_name_signature(UserFuncName::user(0, 0), sig);
+        let mut ctx = FunctionBuilderContext::new();
+        let mut b = FunctionBuilder::new(&mut f, &mut ctx);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        let c = b.block_params(entry)[0];
+        let r = body(&mut b, c);
+        b.ins().return_(&[r]);
+        b.seal_all_blocks();
+        b.finalize();
+        f
+    }
+
+    /// A context field, directly or through the context plus a constant, is its slot's row of
+    /// the batch's table (0408, L2): 8 bytes on and 4 bytes into it is row 1 and byte 4.
+    #[test]
+    fn a_context_field_is_its_slots_row() {
+        let f = of_context(|b, c| {
+            let at = b.ins().iadd_imm(c, 8);
+            let x = b.ins().uload32(MemFlags::trusted(), at, 4);
+            let y = b.ins().load(I64, MemFlags::trusted(), c, 16);
+            b.ins().iadd(x, y)
+        });
+        let msl = super::translate(&[(0, f)], &[(0, "k")]).unwrap();
+        assert!(msl.contains("(ulong(v0) + 1ul * cs + 4ul)"), "{msl}");
+        assert!(msl.contains("(ulong(v0) + 2ul * cs + 0ul)"), "{msl}");
+    }
+
+    /// Any other use of the context is refused: an address made from it by a value, the context
+    /// as a value, or a field across two slots.
+    #[test]
+    fn the_context_as_a_value_is_refused() {
+        let made = of_context(|b, c| {
+            let at = b.ins().iadd(c, c);
+            b.ins().load(I64, MemFlags::trusted(), at, 0)
+        });
+        let returned = of_context(|_, c| c);
+        let across = of_context(|b, c| b.ins().load(I64, MemFlags::trusted(), c, 4));
+        for f in [made, returned, across] {
+            let e = super::translate(&[(0, f)], &[(0, "k")]).unwrap_err();
+            assert!(e.contains("the context used other than as a field's base"), "{e}");
+        }
+    }
 }

@@ -110,6 +110,8 @@ static bool interpret_file(device const uint4* bytes, FileRow f, uint g, uint l,
         break;
       }
       case 13u: v = M(within_lane<M>(f.len + s.imm, gl * W) & ~within_lane<M>(s.imm, gl * W)); break;
+      // `early`: a file's first bits read ahead, in the word.
+      case 14u: v = M(a >> s.imm); break;
       case 15u: {
         // `phase`: k and r in a, the period's bits in b and imm.
         const uint k = s.a & 0xffu, r = s.a >> 8u;

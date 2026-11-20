@@ -73,9 +73,12 @@ pub fn extra_rows(out: &mut String, extras: &[(u8, u16)]) {
 pub fn token_mark_rows(out: &mut String, marks: &[crate::program::TokenMark]) {
     use std::fmt::Write as _;
     for m in marks {
-        let _ = write!(out, "  tokenmark {}{}", m.order, if m.refuses { " refuses" } else { "" });
+        let _ = write!(out, "  tokenmark {}{}{}", m.order, if m.refuses { " refuses" } else { "" }, if m.unless { " unless" } else { "" });
         for e in &m.elems {
             let _ = write!(out, " o{} k{:x}", e.offset, e.kinds);
+            if e.rows != 0 {
+                let _ = write!(out, " r{:x}", e.rows);
+            }
             for s in &e.words {
                 let _ = write!(out, " s{s}");
             }
@@ -87,6 +90,38 @@ pub fn token_mark_rows(out: &mut String, marks: &[crate::program::TokenMark]) {
             }
             if e.end {
                 out.push_str(" end");
+            }
+            if e.run {
+                out.push_str(" run");
+            }
+            if e.without != 0 {
+                let _ = write!(out, " w{:x}", e.without);
+            }
+            // A run's `ending` (Q274): its kinds, words and keywords.
+            if let Some(x) = &e.ending {
+                let _ = write!(out, " ending k{:x}", x.kinds);
+                if x.rows != 0 {
+                    let _ = write!(out, " r{:x}", x.rows);
+                }
+                for s in &x.words {
+                    let _ = write!(out, " s{s}");
+                }
+                for s in &x.except {
+                    let _ = write!(out, " x{s}");
+                }
+            }
+            // A run's depths (Q326): each side's counter, then its kinds, words and keywords.
+            for n in &e.nests {
+                let _ = write!(out, " {}{} k{:x}", if n.open { "open" } else { "close" }, n.counter, n.test.kinds);
+                if n.test.rows != 0 {
+                    let _ = write!(out, " r{:x}", n.test.rows);
+                }
+                for s in &n.test.words {
+                    let _ = write!(out, " s{s}");
+                }
+                for s in &n.test.except {
+                    let _ = write!(out, " x{s}");
+                }
             }
         }
         out.push('\n');

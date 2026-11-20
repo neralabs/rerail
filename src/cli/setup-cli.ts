@@ -20,7 +20,7 @@ import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
 import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
-import { contentStoreOverride, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
+import { contentStoreFiles, contentStoreOverride, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import {
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
@@ -271,7 +271,8 @@ function planDataDeletion(home: string): { remove: Array<{ path: string; what: s
   // A store inside the machine-wide cache folder goes with that folder in `removeInstallation`, under its guard.
   if (store !== undefined && (fromMainCache === ".." || fromMainCache.startsWith(`..${sep}`) || isAbsolute(fromMainCache))) {
     const holder = cacheHolder(dirname(store));
-    const files = ["", "-wal", "-shm", "-journal"].map(suffix => `${store}${suffix}`).filter(pathExists);
+    // The store and everything the engine keeps beside it: its segments' folders and its locks too (PR #508's ed1872a09).
+    const files = contentStoreFiles(store).filter(pathExists);
     if (holder !== undefined && files.length > 0) notes.push(`Kept ${store} (the content cache): another Rerail daemon, pid ${holder}, still uses it.`);
     else for (const path of files) remove.push({ path, what: "the content cache" });
   }

@@ -831,6 +831,9 @@ export const codeRuleAstRuleSchema: z.ZodType<CodeRuleDslAstRule> = z.lazy(() =>
       pattern: z.union([nonEmptyString, z.object({ context: nonEmptyString, selector: nonEmptyString }).strict()]).optional(),
       kind: nonEmptyString.optional(),
       regex: nonEmptyString.optional(),
+      // Why the token `regex` tests is stored where the rule looks, which the engine's compiler asks of a token the
+      // grammar may leave out there (`compile::token_tests`, RER-131): a note on the test, not a matcher.
+      stored: nonEmptyString.optional(),
       nthChild: codeRuleNthChildSchema.optional(),
       all: z.array(codeRuleAstRuleSchema).min(1).optional(),
       any: z.array(codeRuleAstRuleSchema).min(1).optional(),
@@ -859,7 +862,8 @@ export const codeRuleAstRuleSchema: z.ZodType<CodeRuleDslAstRule> = z.lazy(() =>
       }),
     })
     .strict()
-    .refine(rule => AST_RULE_KEYS.some(key => rule[key] !== undefined), "An ast rule must contain at least one matcher.") as unknown as z.ZodType<CodeRuleDslAstRule>,
+    .refine(rule => AST_RULE_KEYS.some(key => rule[key] !== undefined), "An ast rule must contain at least one matcher.")
+    .refine(rule => rule.stored === undefined || rule.regex !== undefined, "stored says why a token a regex tests is stored: it needs a regex.") as unknown as z.ZodType<CodeRuleDslAstRule>,
 );
 export const codeRuleAstRelationSchema: z.ZodType<CodeRuleDslAstRelation> = z.lazy(() =>
   z
@@ -869,6 +873,9 @@ export const codeRuleAstRelationSchema: z.ZodType<CodeRuleDslAstRelation> = z.la
       pattern: z.union([nonEmptyString, z.object({ context: nonEmptyString, selector: nonEmptyString }).strict()]).optional(),
       kind: nonEmptyString.optional(),
       regex: nonEmptyString.optional(),
+      // Why the token `regex` tests is stored where the rule looks, which the engine's compiler asks of a token the
+      // grammar may leave out there (`compile::token_tests`, RER-131): a note on the test, not a matcher.
+      stored: nonEmptyString.optional(),
       nthChild: codeRuleNthChildSchema.optional(),
       all: z.array(codeRuleAstRuleSchema).min(1).optional(),
       any: z.array(codeRuleAstRuleSchema).min(1).optional(),
@@ -897,7 +904,8 @@ export const codeRuleAstRelationSchema: z.ZodType<CodeRuleDslAstRelation> = z.la
       }),
     })
     .strict()
-    .refine(rule => AST_RULE_KEYS.some(key => rule[key] !== undefined), "An ast relation must contain at least one matcher.") as unknown as z.ZodType<CodeRuleDslAstRelation>,
+    .refine(rule => AST_RULE_KEYS.some(key => rule[key] !== undefined), "An ast relation must contain at least one matcher.")
+    .refine(rule => rule.stored === undefined || rule.regex !== undefined, "stored says why a token a regex tests is stored: it needs a regex.") as unknown as z.ZodType<CodeRuleDslAstRelation>,
 );
 /** `calls`: its inner rule's keys, and how chains pass and what they bind. */
 export const codeRuleCallsSchema: z.ZodType<CodeRuleDslCalls> = z.lazy(
@@ -944,6 +952,9 @@ export const codeRuleParseSchema: z.ZodType<CodeRuleDslParse> = z.lazy(() =>
       pattern: z.union([nonEmptyString, z.object({ context: nonEmptyString, selector: nonEmptyString }).strict()]).optional(),
       kind: nonEmptyString.optional(),
       regex: nonEmptyString.optional(),
+      // Why the token `regex` tests is stored where the rule looks, which the engine's compiler asks of a token the
+      // grammar may leave out there (`compile::token_tests`, RER-131): a note on the test, not a matcher.
+      stored: nonEmptyString.optional(),
       nthChild: codeRuleNthChildSchema.optional(),
       all: z.array(codeRuleAstRuleSchema).min(1).optional(),
       any: z.array(codeRuleAstRuleSchema).min(1).optional(),
@@ -977,7 +988,8 @@ export const codeRuleParseSchema: z.ZodType<CodeRuleDslParse> = z.lazy(() =>
       path: ["grammar"],
     })
     .refine(rule => rule.interpolation === undefined || rule.grammar === "pythonFString", "interpolation requires pythonFString.")
-    .refine(rule => AST_RULE_KEYS.some(key => key !== "filePath" && rule[key] !== undefined), "parse must hold a rule over the parsed tree.") as unknown as z.ZodType<CodeRuleDslParse>,
+    .refine(rule => AST_RULE_KEYS.some(key => key !== "filePath" && rule[key] !== undefined), "parse must hold a rule over the parsed tree.")
+    .refine(rule => rule.stored === undefined || rule.regex !== undefined, "stored says why a token a regex tests is stored: it needs a regex.") as unknown as z.ZodType<CodeRuleDslParse>,
 );
 export const codeRuleAstCountSchema: z.ZodType<CodeRuleDslAstCount> = z.lazy(() =>
   z

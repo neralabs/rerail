@@ -44,7 +44,13 @@ pub(in crate::code_rule_dsl) struct ParentGaps {
 
 const NONE: u32 = u32::MAX;
 
+/// The parents' gaps made (`parent_gaps`), on any thread, for tests: a scope makes each parent's once.
+#[cfg(any(test, feature = "test-hooks"))]
+pub static GAPS_MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn parent_gaps<D: Doc>(grammar: &'static TokenGrammar, parent: &Node<'_, D>) -> Option<ParentGaps> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    GAPS_MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let (children, gaps) = stored_gaps(grammar, parent)?;
     Some(ParentGaps {
         ids: children.iter().map(Node::node_id).collect(),
@@ -108,12 +114,29 @@ impl Drop for GapScope {
     }
 }
 
-/// `parent`'s gaps: the scope's, made the first time they are asked, else made here.
+/// The parents' gaps of the file being matched (`resolve::file_index`), outside a tape's `GapScope`: a sibling walk
+/// reads its parent's (`relation::charged`) on every path that matches a file, and a parent of n children made once a
+/// walk cost n² (Q134's shape: 6,125 makings of one 20,000-element list's in one clause). Keyed by the tape (its
+/// source), its dialect and the parent: a file's embedded languages are tapes of their own.
+type FileGaps = RefCell<std::collections::HashMap<(usize, GrammarDialect, usize), Option<Rc<ParentGaps>>>>;
+
+/// `parent`'s gaps: the tape scope's or the file's, made the first time they are asked, else made here.
 fn gaps_of<D: Doc>(dialect: GrammarDialect, grammar: &'static TokenGrammar, parent: &Node<'_, D>) -> Option<Rc<ParentGaps>> {
     let id = parent.node_id();
     TAPE_GAPS.with(|gaps| {
         let mut gaps = gaps.borrow_mut();
-        let Some(tape) = gaps.as_mut().filter(|tape| id < tape.nodes) else { return parent_gaps(grammar, parent).map(Rc::new) };
+        let Some(tape) = gaps.as_mut().filter(|tape| id < tape.nodes) else {
+            drop(gaps);
+            let Some(doc) = crate::code_rule_dsl::tape::tape_doc(parent) else { return parent_gaps(grammar, parent).map(Rc::new) };
+            let key = (std::sync::Arc::as_ptr(doc.document_source()) as usize, dialect, id);
+            let file = super::resolve::file_index(FileGaps::default);
+            if let Some(made) = file.borrow().get(&key) {
+                return made.clone();
+            }
+            let made = parent_gaps(grammar, parent).map(Rc::new);
+            file.borrow_mut().insert(key, made.clone());
+            return made;
+        };
         let at = match tape.by.iter().position(|(made, _)| *made == dialect) {
             Some(at) => at,
             None => {
@@ -123,6 +146,49 @@ fn gaps_of<D: Doc>(dialect: GrammarDialect, grammar: &'static TokenGrammar, pare
         };
         tape.by[at].1[id].get_or_insert_with(|| parent_gaps(grammar, parent).map(Rc::new)).clone()
     })
+}
+
+/// The implied tokens a sibling walk passes between stored children of one parent, counted as the tree-sitter tree
+/// holds them: the candidates a walk over a full tree tests between two of the tape's (RER-131, PR #508's 7529228ce).
+/// A named-only tape leaves them out, so its walk tests fewer candidates for the same siblings, and its work budget,
+/// spent per candidate, bought more work than a full tree's: the walk charges these (`relation::charged`). Read from
+/// the parent's gaps (`gaps_of`, made once a parent within a tape's call); none for a document that is not a tape,
+/// and where the parent's kind has no automaton or its gaps cannot be read (its tokens are then stored, and walked).
+pub(super) struct ImpliedPassed(Option<Rc<ParentGaps>>);
+
+impl ImpliedPassed {
+    /// The gaps of `node`'s parent.
+    pub(super) fn of<D: Doc>(node: &Node<'_, D>) -> Self {
+        let read = crate::code_rule_dsl::tape::tape_doc(node).and_then(|doc| {
+            let dialect = *doc.get_lang();
+            let grammar = TokenGrammar::of_dialect_static(dialect)?;
+            gaps_of(dialect, grammar, &node.parent()?)
+        });
+        Self(read)
+    }
+
+    /// The implied tokens from the child `from` to the child `to` (node ids), walking `forward` or back; `to`
+    /// `None`: on to the parent's end, or back to its start. A gap's tokens lie before the child they are kept with
+    /// (`Gaps::before`), the last child's after it (`Gaps::end`).
+    pub(super) fn between(&self, from: usize, to: Option<usize>, forward: bool) -> usize {
+        let Some(read) = &self.0 else { return 0 };
+        let Ok(at) = read.ids.binary_search(&from) else { return 0 };
+        let before = |k: usize| read.gaps.before.get(k).map_or(0, Vec::len);
+        let to = match to {
+            Some(to) => match read.ids.binary_search(&to) {
+                Ok(end) => Some(end),
+                Err(_) => return 0,
+            },
+            None => None,
+        };
+        match (forward, to) {
+            (true, Some(end)) if end > at => (at + 1..=end).map(before).sum(),
+            (true, None) => (at + 1..read.ids.len()).map(before).sum::<usize>() + read.gaps.end.len(),
+            (false, Some(end)) if end < at => (end + 1..=at).map(before).sum(),
+            (false, None) => (0..=at).map(before).sum(),
+            _ => 0,
+        }
+    }
 }
 
 /// Where, relative to the node, the token is looked for.
@@ -153,6 +219,20 @@ pub struct GapTest {
     /// regex), so the walk passes them. `None`: a plain neighbour, where an extra
     /// beside the node is the neighbour.
     pub(in crate::code_rule_dsl) past: Option<Box<AstMatcher>>,
+    /// What the target says of the token beside its text, each a relation from the token found to a bare token regex
+    /// (`follows: {regex: "^,$", not: {follows: {stopBy: end, regex: "^,$"}}}`: the comma right before the node is its
+    /// parent's first). Asked of the parent's tokens, its gaps' and its stored children's (by their text): a `Before`
+    /// or `After` test's alone.
+    pub(in crate::code_rule_dsl) token: Vec<TokenCondition>,
+}
+
+/// One condition on the token a gap test found (`GapTest::token`): whether a token `regex` matches is at `place` from
+/// it (`Before`, `After`, `Earlier` or `Later` along the parent's tokens), or with `negated` is not.
+#[derive(Clone)]
+pub(in crate::code_rule_dsl) struct TokenCondition {
+    pub(in crate::code_rule_dsl) negated: bool,
+    pub(in crate::code_rule_dsl) place: Place,
+    pub(in crate::code_rule_dsl) regex: Regex,
 }
 
 impl std::fmt::Debug for GapTest {
@@ -212,8 +292,8 @@ impl GapTest {
                     Place::Before => {
                         let mut k = at;
                         loop {
-                            if let Some(token) = gaps.before[k].iter().rev().find(|token| !skipped(token.0)) {
-                                return matches(token);
+                            if let Some(i) = gaps.before[k].iter().rposition(|token| !skipped(token.0)) {
+                                return matches(&gaps.before[k][i]) && self.token_holds(gaps, &parent, k, i);
                             }
                             if k == 0 || !passed(k - 1) {
                                 return false;
@@ -232,9 +312,9 @@ impl GapTest {
                     _ => {
                         let mut k = at + 1;
                         loop {
-                            let word = if k < children.len() { &gaps.before[k] } else { &gaps.end };
-                            if let Some(token) = word.iter().find(|token| !skipped(token.0)) {
-                                return matches(token);
+                            let word = if k < parent_gaps.ids.len() { &gaps.before[k] } else { &gaps.end };
+                            if let Some(i) = word.iter().position(|token| !skipped(token.0)) {
+                                return matches(&word[i]) && self.token_holds(gaps, &parent, k.min(parent_gaps.ids.len()), i);
                             }
                             if k >= children.len() || !passed(k) {
                                 return false;
@@ -249,6 +329,57 @@ impl GapTest {
 }
 
 impl GapTest {
+    /// Whether the token at `i` of gap `k` (the end where `k` is the stored children's count) of `parent` meets every
+    /// condition of `token`: its parent's tokens in order are each gap's, then the stored child after it.
+    fn token_holds<D: Doc>(&self, gaps: &Gaps<'static>, parent: &Node<'_, D>, k: usize, i: usize) -> bool {
+        if self.token.is_empty() {
+            return true;
+        }
+        let children: Vec<Node<'_, D>> = parent.children().collect();
+        let n = children.len();
+        let word = |k: usize| if k < n { gaps.before[k].as_slice() } else { gaps.end.as_slice() };
+        let child = |k: usize, regex: &Regex| regex.is_match(&children[k].text());
+        self.token.iter().all(|condition| {
+            let regex = &condition.regex;
+            let found = match condition.place {
+                // The token right before: earlier in its gap, else the stored child before the gap.
+                Place::Before => if i > 0 { regex.is_match(word(k)[i - 1].0) } else { k > 0 && child(k - 1, regex) },
+                // Right after: later in its gap, else the stored child after it.
+                Place::After => match word(k).get(i + 1) {
+                    Some(token) => regex.is_match(token.0),
+                    None => k < n && child(k, regex),
+                },
+                Place::Earlier => {
+                    word(k)[..i].iter().any(|token| regex.is_match(token.0))
+                        || (0..k).any(|j| child(j, regex) || gaps.before[j].iter().any(|token| regex.is_match(token.0)))
+                }
+                Place::Later => {
+                    word(k)[i + 1..].iter().any(|token| regex.is_match(token.0))
+                        || (k..n).any(|j| child(j, regex) || word(j + 1).iter().any(|token| regex.is_match(token.0)))
+                }
+                Place::Own | Place::Field(_) => return false,
+            };
+            found != condition.negated
+        })
+    }
+
+    /// The implied tokens `regex` matches at an `Earlier` or `Later` test's place from `node`, which `count` adds to the
+    /// stored nodes it counts (`count.rs`): the tape leaves them out, and no gap holds a stored token. `None` where the
+    /// parent's gaps cannot be read (its tokens are then stored, and walked).
+    pub(in crate::code_rule_dsl) fn implied_count<D: Doc>(&self, node: &Node<'_, D>) -> Option<usize> {
+        let grammar = self.grammar()?;
+        let parent = node.parent()?;
+        let parent_gaps = gaps_of(self.dialect, grammar, &parent)?;
+        let at = parent_gaps.ids.binary_search(&node.node_id()).ok()?;
+        let gaps = &parent_gaps.gaps;
+        let count = |word: &[(&str, &str)]| word.iter().filter(|token| self.regex.is_match(token.0)).count();
+        match self.place {
+            Place::Earlier => Some(gaps.before[..=at].iter().map(|word| count(word)).sum()),
+            Place::Later => Some(gaps.before[at + 1..].iter().map(|word| count(word)).sum::<usize>() + count(&gaps.end)),
+            _ => None,
+        }
+    }
+
     /// The token regexes `rule` passes, where it is made of kinds (which no implied token has)
     /// and tokens (by a bare regex); `None` where it says more.
     fn passes(&self, rule: &AstMatcher, depth: usize) -> Option<Vec<Regex>> {

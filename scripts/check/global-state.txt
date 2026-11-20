@@ -26,10 +26,13 @@ native/crates/c_directives/src/expand.rs::PROGRAM	stays	computed once from the e
 native/crates/c_directives/src/expand.rs::SAME	stays	computed once from the engine's own constants (the ahead-of-time build against its source)
 native/crates/c_directives/src/lib.rs::LOWERED	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/lib.rs::PARSER	stays	computed once from the engine's own grammar
+native/crates/c_directives/src/pp.rs::C	stays	computed once from the engine's own grammar
+native/crates/c_directives/src/pp.rs::CPP	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/tokens.rs::C	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/tokens.rs::CPP	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/tokens.rs::CPP_WORDS	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/tokens.rs::C_WORDS	stays	computed once from the engine's own grammar
+native/crates/c_pp/src/tape.rs::LANG	stays	computed once from the engine's own constants (the preprocessor tape's kinds and fields)
 native/crates/context/src/lib.rs::SAID	stays	the strict check's report (RERAIL_STRICT_RUN=1): the types said, never read by the engine
 native/crates/context/src/lib.rs::TESTS	stays	test builds only (`test-hooks`): the tests' shared object, for a test that models no caller
 native/crates/device_metal/src/lib.rs::ONCE	stays	registers the engine's languages once (code registered at load)
@@ -41,6 +44,7 @@ native/crates/kotlin_parser/src/lib.rs::PARSER	stays	computed once from the engi
 native/crates/metal/src/block_program.rs::INTERPRETER	stays	computed once from the engine's own source
 native/crates/metal/src/launch.rs::RATIO	stays	the OS's timebase ratio: a constant of the machine read once
 native/crates/metal/src/lib.rs::METAL_DEVICE	stays	the device (code registered at load)
+native/crates/metal/src/pp_blocks.rs::SOURCE	stays	the engine's own MSL, preprocessed once
 native/crates/metal/src/slabs.rs::ONE	stays	a test lock
 native/crates/prof/src/lib.rs::DROPPED	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::KEYS	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
@@ -165,6 +169,7 @@ native/src/code_rule_dsl/matcher/d_anchors/sql/lower/lifetime.rs::WRITE	stays	a 
 native/src/code_rule_dsl/matcher/d_anchors/sql/lower/render.rs::IDENTIFIER	stays	a regex of a literal
 native/src/code_rule_dsl/matcher/d_anchors/sql/lower/waves.rs::IDENTIFIER	stays	a regex of a literal
 native/src/code_rule_dsl/matcher/format_args.rs::PREPARERS	stays	code registered at load
+native/src/code_rule_dsl/matcher/gap.rs::GAPS_MADE	stays	test builds only (`test-hooks`): a count a test bounds from above (a workspace call is its own run, so no run's count reaches the test)
 native/src/code_rule_dsl/matcher/p_anchors/sql/capture.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/matcher/p_anchors/sql/graph.rs::TOKENS	stays	a regex of a literal
 native/src/code_rule_dsl/matcher/p_anchors/sql/lower/lifetime.rs::IDENTIFIER	stays	a regex of a literal

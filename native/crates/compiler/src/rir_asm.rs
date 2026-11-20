@@ -492,36 +492,84 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
         }
         "tokenmark" => {
             let order: u8 = line.number("")?;
-            if parts.token_marks.last().is_some_and(|m| m.order >= order) {
+            // A mark's entries share its order (`program::patterns_hold`).
+            if parts.token_marks.last().is_some_and(|m| m.order > order) {
                 return Err(format!("tokenmark {order} out of order"));
             }
             let mut elems: Vec<crate::program::TokenElem> = Vec::new();
+            // Whose words and keywords follow: the element's (0), a run's depth's side's
+            // (`program::Nest`, 1), a run's `ending`'s (2).
+            let mut part = 0u8;
             let refuses = line.peek_word().as_deref() == Some("refuses");
             if refuses {
                 line.word()?;
             }
+            let unless = line.peek_word().as_deref() == Some("unless");
+            if unless {
+                line.word()?;
+            }
             while let Some(w) = line.peek_word() {
                 line.word()?;
-                if let Some(o) = w.strip_prefix('o') {
+                // `o` and an offset; `open…` is a depth's side.
+                if let Some(o) = w.strip_prefix('o').filter(|_| !w.starts_with("open")) {
                     let offset = o.parse().map_err(|_| format!("a bad offset `{w}`"))?;
                     let k = line.word()?;
                     let kinds = k.strip_prefix('k').and_then(|h| u64::from_str_radix(h, 16).ok()).ok_or_else(|| format!("a bad kind set `{k}`"))?;
-                    elems.push(crate::program::TokenElem { offset, kinds, words: Vec::new(), except: Vec::new(), not: false, end: false });
+                    elems.push(crate::program::TokenElem { offset, kinds, ..Default::default() });
+                    part = 0;
+                } else if w == "ending" {
+                    let k = line.word()?;
+                    let kinds = k.strip_prefix('k').and_then(|h| u64::from_str_radix(h, 16).ok()).ok_or_else(|| format!("a bad kind set `{k}`"))?;
+                    let el = elems.last_mut().ok_or("an `ending` before its run")?;
+                    el.ending = Some(Box::new(crate::program::TokenElem { offset: el.offset, kinds, ..Default::default() }));
+                    part = 2;
+                } else if let Some((open, c)) = w.strip_prefix("open").map(|c| (true, c)).or_else(|| w.strip_prefix("close").map(|c| (false, c))) {
+                    let counter: u8 = c.parse().map_err(|_| format!("a bad depth `{w}`"))?;
+                    let k = line.word()?;
+                    let kinds = k.strip_prefix('k').and_then(|h| u64::from_str_radix(h, 16).ok()).ok_or_else(|| format!("a bad kind set `{k}`"))?;
+                    let el = elems.last_mut().ok_or("a depth before its run")?;
+                    let test = crate::program::TokenElem { offset: el.offset, kinds, ..Default::default() };
+                    el.nests.push(crate::program::Nest { counter, open, test });
+                    part = 1;
                 } else if w == "not" {
                     elems.last_mut().ok_or("a `not` before its element")?.not = true;
                 } else if w == "end" {
                     elems.last_mut().ok_or("an `end` before its element")?.end = true;
+                } else if w == "run" {
+                    elems.last_mut().ok_or("a `run` before its element")?.run = true;
+                } else if let Some(h) = w.strip_prefix('r') {
+                    // A kind of a shared first byte: its rows' start's mark bits (`TokenElem::rows`).
+                    let bits = u32::from_str_radix(h, 16).map_err(|_| format!("a bad row mark set `{w}`"))?;
+                    let el = elems.last_mut().ok_or("a row mark set before its element")?;
+                    match part {
+                        1 => el.nests.last_mut().ok_or("a depth's row marks")?.test.rows = bits,
+                        2 => el.ending.as_mut().ok_or("an ending's row marks")?.rows = bits,
+                        _ => el.rows = bits,
+                    }
+                } else if let Some(h) = w.strip_prefix('w') {
+                    let bits = u32::from_str_radix(h, 16).map_err(|_| format!("a bad `without` `{w}`"))?;
+                    elems.last_mut().ok_or("a `without` before its element")?.without = bits;
                 } else if let Some(s) = w.strip_prefix('s') {
                     let s: u16 = s.parse().map_err(|_| format!("a bad word `{w}`"))?;
-                    elems.last_mut().ok_or("a word before its element")?.words.push(s);
+                    let el = elems.last_mut().ok_or("a word before its element")?;
+                    match part {
+                        1 => el.nests.last_mut().ok_or("a depth's word")?.test.words.push(s),
+                        2 => el.ending.as_mut().ok_or("an ending's word")?.words.push(s),
+                        _ => el.words.push(s),
+                    }
                 } else if let Some(s) = w.strip_prefix('x') {
                     let s: u16 = s.parse().map_err(|_| format!("a bad keyword `{w}`"))?;
-                    elems.last_mut().ok_or("a keyword before its element")?.except.push(s);
+                    let el = elems.last_mut().ok_or("a keyword before its element")?;
+                    match part {
+                        1 => el.nests.last_mut().ok_or("a depth's keyword")?.test.except.push(s),
+                        2 => el.ending.as_mut().ok_or("an ending's keyword")?.except.push(s),
+                        _ => el.except.push(s),
+                    }
                 } else {
                     return Err(format!("a bad token mark's part `{w}`"));
                 }
             }
-            parts.token_marks.push(crate::program::TokenMark { order, elems, refuses });
+            parts.token_marks.push(crate::program::TokenMark { order, elems, refuses, unless });
         }
         "tokenextra" => {
             let b: u8 = line.number("b")?;
@@ -646,7 +694,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let kinds = line.word()?;
                 let hex = kinds.strip_prefix("kinds=").ok_or("`records S L kinds=…`")?;
                 let kinds: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad kind")?;
-                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, check_masks: Vec::new(), prefix: Vec::new(), gap: None });
+                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, kind_rows: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, alone: 0, read: 0, blanks: Vec::new(), check_masks: Vec::new(), prefix: Vec::new(), gap: None });
             } else if first == "word" {
                 let r = program.records.as_mut().ok_or(format!("block {at} word before its records"))?;
                 r.words.push(line.quoted()?);
@@ -767,6 +815,17 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             } else if first == "rectested" {
                 let r = program.records.as_mut().ok_or(format!("block {at} rectested before its records"))?;
                 r.tested_only = line.number("")?;
+            } else if first == "recalone" {
+                let r = program.records.as_mut().ok_or(format!("block {at} recalone before its records"))?;
+                r.alone = line.number("")?;
+            } else if first == "recread" {
+                let r = program.records.as_mut().ok_or(format!("block {at} recread before its records"))?;
+                r.read = line.number("")?;
+            } else if first == "recblank" {
+                let r = program.records.as_mut().ok_or(format!("block {at} recblank before its records"))?;
+                let k: u8 = line.number("")?;
+                let o: u16 = line.number("")?;
+                r.blanks.push((k, o));
             } else if first == "recunplaced" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recunplaced before its records"))?;
                 r.unplaced = line.number("")?;
@@ -780,6 +839,9 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             } else if first == "recextra" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recextra before its records"))?;
                 r.extra = Some(line.number("")?);
+            } else if first == "reckindrows" {
+                let r = program.records.as_mut().ok_or(format!("block {at} reckindrows before its records"))?;
+                r.kind_rows = Some(line.number("")?);
             } else if first == "recskip" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recskip before its records"))?;
                 r.skip = Some(line.number("")?);

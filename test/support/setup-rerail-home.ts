@@ -1,6 +1,6 @@
 import { afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -14,6 +14,12 @@ process.env.RERAIL_HOME = rerailHome;
 // A test run is a dev build, whose store would otherwise be this checkout's `.rerail/content-v9.sqlite`, shared by
 // every test file; each file gets its own (`contentStorePath` honours the override).
 process.env.RERAIL_CONTENT_STORE_PATH = join(contentStoreDirectory, "content.sqlite");
+// Git with none of the person's or the machine's config, in this process and every one it spawns: a global
+// `commit.gpgsign` would have each test's commit signed (with a gpg the machine may lack), and a global hook or
+// default branch would change what a test's repository is. An empty file, not /dev/null, which Windows lacks.
+process.env.GIT_CONFIG_GLOBAL = join(rerailHome, "gitconfig");
+writeFileSync(process.env.GIT_CONFIG_GLOBAL, "");
+process.env.GIT_CONFIG_NOSYSTEM = "1";
 
 /**
  * Daemons this test file spawned that are still running. A spawned daemon is detached but keeps this worker as its

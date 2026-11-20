@@ -32,6 +32,15 @@ pub struct StateRow {
     /// The hidden marks its level refuses (`refuse M in L`): before a token it takes, each
     /// refuses the file.
     pub refuses: Vec<u16>,
+    /// The hidden marks that follow its level where it is a call of a rule not `nested`
+    /// (`follow_contexts`): where it may end, each ends it, its caller's to take, as the rule's
+    /// body inlined would end there (Bitlex's reference, doc 24 §2.3).
+    pub follows: Vec<u16>,
+    /// The hidden marks that follow some of its level's uses, not all (a call of a rule not
+    /// `nested`): one call can not end at them after some uses and read past them after others,
+    /// so where it may end, none may hold at a token it takes (`bitlex_tier2`'s check); there,
+    /// ending at it and skipping it are the same.
+    pub split: Vec<u16>,
     /// Its rule: its level's index (`build_shaped`). In one state machine, levels that share a
     /// state are one rule; a function a rule, no state is shared, so each level is one.
     pub rule: u16,
@@ -113,7 +122,7 @@ pub struct ArmRow {
 }
 
 /// The state machine as text, a line per state and per arm, for tests and dumps:
-/// `state S level K [hidden] [end C] [returned f F]`; `arm S token K to T [push P] do ACT…`, an
+/// `state S level K [hidden] [end C] [returned f F] [follows M…]`; `arm S token K to T [push P] do ACT…`, an
 /// act `close`, `open K [f F] [s K]…` or `leaf [f F] [s K]…`.
 pub fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
     use std::fmt::Write as _;
@@ -122,7 +131,9 @@ pub fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
         let end = state.end.map_or(String::new(), |c| format!(" end {c}"));
         let hidden = if state.own { "" } else { " hidden" };
         let returned = if state.returned_field != 0 { format!(" returned f {}", state.returned_field) } else { String::new() };
-        let _ = writeln!(out, "state {s} level {}{hidden}{end}{returned}", state.level);
+        let follows: String = state.follows.iter().map(|k| format!(" {k}")).collect();
+        let follows = if follows.is_empty() { follows } else { format!(" follows{follows}") };
+        let _ = writeln!(out, "state {s} level {}{hidden}{end}{returned}{follows}", state.level);
     }
     let marks = |field: u16, supers: &[u16]| {
         let mut m = String::new();
@@ -327,6 +338,10 @@ struct Level {
     edges: Vec<Edge>,
     /// The marks it refuses (`refuse M in L`).
     refuses: Vec<u16>,
+    /// The hidden marks after its every use, where it is a call of a rule not `nested`.
+    follows: Vec<u16>,
+    /// The hidden marks after some of its uses but not all.
+    split: Vec<u16>,
 }
 
 struct Builder<'a> {
@@ -809,6 +824,122 @@ pub fn saved_states(uses: usize, inner: usize) -> usize {
 /// A function a rule (`by_rules`): every rule or choice with `RULE_INNER` inner positions or
 /// more is called, however often it is used, as a recursive-descent parser has a function a
 /// rule; one smaller is a switch's arms, inlined.
+/// Each rule's and choice's uses' follows, as Bitlex's reference passes them (`tree.rs`'s
+/// `follow`, doc 24 §2.3): the hidden marks that may come after a use, the enclosing rule's own
+/// follows included where the rest of its body may match nothing. A `nested` rule's body and the
+/// root's start from none: a level of its own takes only the marks it names. By name, the
+/// distinct sets (sorted names); a rule used where different marks follow has several.
+fn follow_contexts(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[Rule], stmts: &[Stmt]) -> HashMap<String, std::collections::BTreeSet<Vec<String>>> {
+    use std::collections::BTreeSet;
+    let hidden: BTreeSet<String> = stmts.iter().filter_map(|s| if let Stmt::Hidden(k) = s { Some(k.iter().cloned()) } else { None }).flatten().collect();
+    let mut out: HashMap<String, BTreeSet<Vec<String>>> = HashMap::default();
+    if hidden.is_empty() {
+        return out;
+    }
+    let bodies: Vec<(&str, &Gram, bool)> = rules
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (r.kind.as_str(), &r.body, i == 0 || r.nested))
+        .chain(levels.iter().map(|r| (r.kind.as_str(), &r.body, true)))
+        .chain(choices.iter().map(|c| (c.0.as_str(), &c.2, false)))
+        .collect();
+    let body = |n: &str| bodies.iter().find(|b| b.0 == n).map(|b| b.1);
+    // Each name's first hidden marks and whether it may match nothing: a fixpoint.
+    type First = (BTreeSet<String>, bool);
+    fn first(g: &Gram, named: &HashMap<String, First>, hidden: &BTreeSet<String>) -> First {
+        match g {
+            Gram::Sym(n) => match named.get(n) {
+                Some(f) => f.clone(),
+                None => (if hidden.contains(n) { [n.clone()].into() } else { BTreeSet::new() }, false),
+            },
+            Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } => (BTreeSet::new(), false),
+            Gram::Seq(gs) => {
+                let mut acc = BTreeSet::new();
+                for g in gs {
+                    let (f, e) = first(g, named, hidden);
+                    acc.extend(f);
+                    if !e {
+                        return (acc, false);
+                    }
+                }
+                (acc, true)
+            }
+            Gram::Alt(gs) => gs.iter().map(|g| first(g, named, hidden)).fold((BTreeSet::new(), false), |(mut a, e), (f, x)| {
+                a.extend(f);
+                (a, e || x)
+            }),
+            Gram::Opt(a) | Gram::Star(a) => (first(a, named, hidden).0, true),
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => first(a, named, hidden),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => first(body, named, hidden),
+        }
+    }
+    let mut named: HashMap<String, First> = bodies.iter().map(|b| (b.0.to_owned(), (BTreeSet::new(), false))).collect();
+    loop {
+        let mut changed = false;
+        for (n, g, _) in &bodies {
+            let f = first(g, &named, &hidden);
+            if named[*n] != f {
+                named.insert((*n).to_owned(), f);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    // Each use of a name with a body: what may follow it there.
+    fn walk(g: &Gram, after: &BTreeSet<String>, named: &HashMap<String, First>, hidden: &BTreeSet<String>, uses: &mut Vec<(String, BTreeSet<String>)>) {
+        match g {
+            Gram::Sym(n) => {
+                if named.contains_key(n) {
+                    uses.push((n.clone(), after.clone()));
+                }
+            }
+            Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } => {}
+            Gram::Seq(gs) => {
+                let mut follow = after.clone();
+                for g in gs.iter().rev() {
+                    walk(g, &follow, named, hidden, uses);
+                    let (f, e) = first(g, named, hidden);
+                    if !e {
+                        follow.clear();
+                    }
+                    follow.extend(f);
+                }
+            }
+            Gram::Alt(gs) => gs.iter().for_each(|g| walk(g, after, named, hidden, uses)),
+            Gram::Opt(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => walk(a, after, named, hidden, uses),
+            Gram::Star(a) | Gram::Plus(a) => {
+                let mut again = first(a, named, hidden).0;
+                again.extend(after.iter().cloned());
+                walk(a, &again, named, hidden, uses);
+            }
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => walk(body, after, named, hidden, uses),
+        }
+    }
+    // The names' follows, from the levels' bodies (none after them) to the rules they use.
+    let mut todo: Vec<(String, BTreeSet<String>)> = bodies.iter().filter(|b| b.2).map(|b| (b.0.to_owned(), BTreeSet::new())).collect();
+    let mut seen: BTreeSet<(String, Vec<String>)> = BTreeSet::new();
+    while let Some((n, after)) = todo.pop() {
+        let key = (n.clone(), after.iter().cloned().collect::<Vec<_>>());
+        if !seen.insert(key) {
+            continue;
+        }
+        let Some(g) = body(&n) else { continue };
+        let mut uses = Vec::new();
+        walk(g, &after, &named, &hidden, &mut uses);
+        for (m, f) in uses {
+            // A `nested` rule's and the root's bodies start from none, whatever their uses.
+            if bodies.iter().any(|b| b.0 == m && b.2) {
+                continue;
+            }
+            out.entry(m.clone()).or_default().insert(f.iter().cloned().collect());
+            todo.push((m, f));
+        }
+    }
+    out
+}
+
 fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[Rule], stmts: &[Stmt], by_rules: bool) -> Vec<String> {
     #[derive(Default)]
     struct Facts {
@@ -1015,6 +1146,12 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
     let (mut rules, mut choices, mut nested_choices, balanced) = gather(stmts, ids.tokens);
     // The rules shared by calls (`shared`): levels of their own, as if marked `nested`.
     let calls = shared(&rules, &choices, &nested_choices, stmts, by_rules);
+    // A call keeps the rule's meaning: a rule not `nested` takes its caller's follow (Bitlex's
+    // reference), so its level ends at the hidden marks every use has after it
+    // (`Level::follows`). A mark only some uses have after it (`Level::split`) is the same ended
+    // at or skipped where the level may end and takes no token the mark may hold at; where it
+    // may hold at one the level takes, one call can not be both, and tier 2 refuses the grammar.
+    let contexts = follow_contexts(&rules, &choices, &nested_choices, stmts);
     for r in rules.iter_mut().skip(1) {
         r.nested |= calls.contains(&r.kind);
     }
@@ -1090,7 +1227,24 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
         // A shared choice's level (`shared`) makes no node: where its name is no kind of the
         // grammar's, an id of its own from the top, apart from every kind, names the level.
         let id = if !b.rules[r].own && calls.contains(&b.rules[r].kind) { (ids.kind)(kind).unwrap_or(u16::MAX - l as u16) } else { (ids.kind)(kind)? };
-        levels.push(Level { kind: id, own: b.rules[r].own, supertype, edges, refuses });
+        let (mut follows, mut split) = (Vec::new(), Vec::new());
+        if calls.contains(&b.rules[r].kind)
+            && let Some(c) = contexts.get(&b.rules[r].kind)
+        {
+            let every: Vec<&String> = c.iter().next().map_or(Vec::new(), |f| f.iter().filter(|m| c.iter().all(|g| g.contains(m))).collect());
+            for m in c.iter().flatten() {
+                if every.contains(&m) {
+                    follows.push((ids.kind)(m)?);
+                } else {
+                    split.push((ids.kind)(m)?);
+                }
+            }
+            follows.sort_unstable();
+            follows.dedup();
+            split.sort_unstable();
+            split.dedup();
+        }
+        levels.push(Level { kind: id, own: b.rules[r].own, supertype, edges, refuses, follows, split });
     }
     // Each level a `refuse` names: a nested one.
     for s in stmts {
@@ -1293,9 +1447,9 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
     {
         // A function a rule: the root's start apart too, as the extras enter it once
         // (`with_extras`), where a call's return could otherwise land on it.
-        let mut keys: Vec<(bool, bool, Option<u8>, &[u16], Option<usize>, bool, u16)> = Vec::new();
+        let mut keys: Vec<(bool, bool, Option<u8>, &[u16], &[u16], &[u16], Option<usize>, bool, u16)> = Vec::new();
         for (i, r) in raw.iter().enumerate() {
-            let k = (r.level == 0, levels[r.level].own, r.end, levels[r.level].refuses.as_slice(), by_rules.then_some(r.level), by_rules && i == 0, r.returned_field);
+            let k = (r.level == 0, levels[r.level].own, r.end, levels[r.level].refuses.as_slice(), levels[r.level].follows.as_slice(), levels[r.level].split.as_slice(), by_rules.then_some(r.level), by_rules && i == 0, r.returned_field);
             let c = keys.iter().position(|x| *x == k).unwrap_or_else(|| {
                 keys.push(k);
                 keys.len() - 1
@@ -1361,7 +1515,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
     for (s, &i) in order.iter().enumerate() {
         let r = &raw[i];
         let level = find(&mut joined, r.level);
-        states.push(StateRow { level: levels[level].kind, own: levels[r.level].own, end: r.end, refuses: levels[r.level].refuses.clone(), rule: level as u16, returned_field: r.returned_field });
+        states.push(StateRow { level: levels[level].kind, own: levels[r.level].own, end: r.end, refuses: levels[r.level].refuses.clone(), follows: levels[r.level].follows.clone(), split: levels[r.level].split.clone(), rule: level as u16, returned_field: r.returned_field });
         for (token, acts, q, p, call) in &r.arms {
             arms.push(ArmRow { from: s as u16, token: *token, acts: acts.clone(), to: number[&class[*q]], push: p.iter().map(|&p| number[&class[p]]).collect(), call: *call });
         }
@@ -1548,7 +1702,7 @@ pub fn with_extras(
                 *copies.entry((s, m)).or_insert_with(|| {
                     let c = states.len() as u16;
                     let st = &states[usize::from(s)];
-                    states.push(StateRow { level: st.level, own: st.own, end: end.map(|e| e - m as u8), refuses: st.refuses.clone(), rule: st.rule, returned_field: 0 });
+                    states.push(StateRow { level: st.level, own: st.own, end: end.map(|e| e - m as u8), refuses: st.refuses.clone(), follows: st.follows.clone(), split: st.split.clone(), rule: st.rule, returned_field: 0 });
                     for a in &mine {
                         arms.push(ArmRow { from: c, acts: a.acts[m..].to_vec(), ..a.clone() });
                     }

@@ -242,13 +242,6 @@ impl Sealed {
 #[cfg(target_os = "macos")]
 const LET_GO: Duration = Duration::from_secs(10);
 
-/// `msync`s the range with `MS_SYNC`: elsewhere than macOS no page is wired for a GPU, and one `msync` writes the
-/// range back (Linux's `mincore` reports no dirty pages to wait on).
-#[cfg(not(target_os = "macos"))]
-fn written_back(base: *mut u8, len: usize) -> io::Result<()> {
-    msync(base, len, libc::MS_SYNC)
-}
-
 /// `msync`s the range with `MS_SYNC` until no page of it is dirty (`mincore`): a page still wired for the GPU is
 /// skipped by each `msync` until the driver lets go of it.
 #[cfg(target_os = "macos")]

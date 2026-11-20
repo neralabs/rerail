@@ -3323,8 +3323,31 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
 - **Measured** (M5 Max, not quiet): a run takes 3,798 µs on one GPU thread against 6.4 µs on
   one core with Cranelift. A batch takes about 3.7 ms whatever its thread count, so 128 copies
   come to 25 µs a run. 1.4–3.2 MB of arena a run caps a 512 MB batch at about 128–170 runs.
-- **Waits on the user:** 5b–5e (a complete `clif_msl`, rounds as batches) build out a shape the
-  numbers say loses to one core. Question 3 below.
+- **Answered** (2026-11-18): (c), "lockstep at scale first, then the pass-through mask"
+  (decision 0408). L1–L4 are built:
+  - rooms by use on rungs (the median TU 17 MB down to 230 KB);
+  - contexts across the batch (the three context addresses in the IR are now fields);
+  - rounds as batches (`expand_tus_with`), with no host evaluation (`host_runs`).
+
+  The corpus on Metal: 3,073 the same as the interpreter, 0 differ.
+- **The gate missed:** 18.7 s of GPU against about 0.15 s for rustc's build on one core. A GPU
+  thread runs about 9 µs a token, and a dispatch lasts as long as its longest TU (the largest
+  alone: 0.8 s).
+- **Waits on the user:** stage M (the pass-through mask, which would also shorten the CPU's
+  path), and whether the device keeps expansion at all. Question 3 below.
+
+### Q328. (Q289 on Go-C-and-C-support; Q42 there until 2026-11-19: Q42 is the store test's) The preprocessor as parallel passes (0466): a spike of the shape
+
+- **Done** (2026-11-18): `rerail_c_pp::stream::parallel`, P0–P4 as passes over arrays, the serial
+  pass's own expansion for each invocation alone. Both corpora under clang's profile: 3,132 of
+  3,135 units read as the serial pass reads them, 0 differ, 3 refused (two `#line`, one call
+  across a directive).
+- **The shape:** rounds = include depth + 0–8 (at most 28); no invocation ever asked past its
+  end; invocations are 4% of the active tokens, 6–23% of them distinct; the longest invocation
+  is at most 8,000 tokens out.
+- **Open:** the example `pp_oracle` (now including `src/oracle_profile.rs`) is compiled by no
+  Relax run; a cargo check on the farm when a host is free.
+- **Waits on the user:** the placement (question 4).
 
 ### Q249. A rerun over an edit that adds a request rule states one more about part than a run from scratch
 
@@ -3390,6 +3413,18 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
    stage 1's masks; (b) build 5b–5e as planned anyway, for a Metal-only path; (c) a different
    device design: many TUs' steps in lockstep, or only the data-parallel parts (directive lines,
    `#if` values) on the device. Recommended: (a).
+   **Answered (2026-11-18): (c), lockstep first** (0408). The corpus on Metal is correct but more
+   than 100× slower than one core: a thread's chain of dependent loads, about 9 µs a token.
+   Open: (a) stop the device path for expansion here, keeping 0408's code as the measured basis;
+   (b) build stage M (the pass-through mask) for the CPU's path only; (c) both.
+4. **Q328: where the parallel preprocessor's passes live.** The spike (0466) shows the shape holds
+   on both corpora. Options: (a) the passes as a transducer side program (column operations:
+   scans, sorts by key, searches, gathers, scatters), the directives' fixpoint in the same ops;
+   (b) the directives' level (definitions by position, tests, activity, the include tree) as
+   `.rr` rules on the engine's device joins and sorts, and the text's passes as side programs;
+   (c) build the device passes first as hand-written Metal kernels over the spike's arrays, and
+   place them after measuring. Recommended: (a), one format with the transducer's executors,
+   as page 12 of `docs/parser-generators` asks.
 
 ### Q55. (Q66 at Native-and-GPU-strata e0a0362b9) Relations are blocks the CPU and GPU read in place (0325): steps 4–7
 
@@ -5959,7 +5994,17 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   in the interpreter and Cranelift. Kotlin's grammar is checked against the lean parser's tapes,
   which agree with the compiled side, so nothing caught it.
 - **Done when**: the reference places a settling mark's extras as tier 2 does, and the test's
-  grammar says `settles` again.
+  grammar says `settles` again. `, drops W` (0406) is the same: the reference keeps the extra the
+  compiled side drops; it drops it too.
+- **Done** (2026-11-18): each settling mark token carries its least bit and whether its `drops`
+  holds at its token (`eval::Token::settle`). Where the grammar takes it (`tree::Parser::settled`,
+  undone with the nodes where a way is given up), the nodes open there end past the extras before
+  the bit, and those extras are placed by span inside them. A dropped extra makes no node; where
+  no other extra is left before it, the nodes end past it, as the machine's (a node closed with
+  none pending ends at the last node made). `a_gap_mark_is_decided_by_the_token_after` says
+  `settles` again (it fails on the old reference), and `a_settling_mark_drops_in_the_reference`
+  checks `drops`, both against every executor. Kotlin's grammar is still compared with the lean
+  parser's tapes only, not with the reference. Reviewer not yet run.
 
 ### Q236. (Q221 on Swift-Kotlin-Scala-support) The C directives' Metal reads refuse with `UnsupportedBackend` in this worktree
 
@@ -6097,16 +6142,26 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 
 ### Q248. (PR #508, t47) Tests that wait on code or data
 
-- 7529228ce (`budget::matcher_calls`), 53361e039 (`clif_text::reachable_calls`) and 65ff68df5's vendored half need
-  functions the hub lacks: their tests go in with the ports.
-- `slice::tests::the_backends_find_the_same_keys_on_real_files` needs the Python pack's upstream fixtures, which are
-  not in Git; the farm's checkout has 1 file of the 4 it samples. Send them with the job (`--tree`) or restore them
-  (`pack-data` from 236fc98d2~1).
+Done (2026-11-19):
+- 7529228ce: ported (c6815a3af), its sibling-walk charge then made a parent's gaps once a walk outside a tape's
+  scope, n² on every path but label facts; the file's index keeps them (4c5e85057).
+- 53361e039: the hub fixed its four parser tests its own way; `reached_calls` reads a branch behind a source
+  location, with Tim's test (2c9ab87b9).
+- Tim's TypeScript CLI tests (9036be38c, 9cc6eb22f, ed1872a09): ported with their fixes, `--delete-data` written for
+  the v6 store (5b19487fb).
+- Found on the way, fixed: the rule schema refused RER-131's `stored` note, skipping the JavaScript, Python and
+  TypeScript packs whole (f2cf3dc2a); five shipped rules' caught examples found nothing, gap tests not answering a
+  condition on an implied comma or a count of them (a3db5929d); vitest ran git with the person's config, so a
+  machine signing commits failed about 120 tests (4c5e85057). audit-cli's four failures are a debug addon's speed
+  (each scan's wait is 10 s): with an optimised addon all 13 pass.
+
+Open:
+- Pack test data. `slice::tests::the_backends_find_the_same_keys_on_real_files`,
+  `compile_matcher_tests::a_clause_over_its_budget_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not`,
+  and 965 TypeScript tests (`packs.test.ts` checks 4 and 6 and its fixtures, `react-practice-rules`) read the packs'
+  upstream fixtures, which are not in Git and no checkout holds whole: `npm run fixtures:pull` (AWS CLI, signed in)
+  fetches them, then send them with the job (`--tree`).
 - Windows, Linux and x86-64 (12 commits, t47's portability class) come last, with the Windows work.
-- Tim's TypeScript CLI tests (9036be38c, 9cc6eb22f: `rules test` on a `.rr` file; ed1872a09: `--delete-data`)
-  are ported into `test/cli/` with their fixes.
-- `compile_matcher_tests::ast_pattern_captures_are_pinned` and `ast_pattern_verdicts_reuse_their_bindings` read six
-  Ruff fixtures the farm's checkout lacks: restored from 236fc98d2~1 and sent with the job (`--tree`), both pass.
 
 ### Q249. The typing oracles' node products are unbounded at the hub tip
 
@@ -6121,6 +6176,18 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   `imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order`. The planner refuses the typing
   program (`typing/programs/calls.rr`'s `base`, which reads no guest relation) before any batch is built, so it is
   not decision 0431's.
+- **Done** (2026-11-19). The products the pass refused are bounded by declared fan-outs:
+  - `pv(o, "cls", c) :- attr_of(_, o, _), builtin_ref(o, "object"), qv("builtins.object", "cls", c)` (calls.rr) pairs
+    each reference to `object` with the few class nodes of one qualified name.
+  - `res(p, "mod", r) :- kind(p, "crate"), modn(r, "crate")` (calls_rust.rr) pairs each `crate` path with the
+    crate's root.
+  `product_demand::fixed_vars` counts a variable as fixed when it is reached from constants (and fixed variables)
+  through a relation's declared key or a fan-out of one, few or at most 16 rows (`.layout`, 0361), as a variable
+  set to a constant already was. (At roll-up 12 this sits beside rr-align's own fix, a variable bound only by lookups
+  on constants, Q329.) calls.rr declares `.layout qv fanout(q, k -> v, few)`, and calls_rust.rr
+  declares `.layout modn fanout(q -> m, few)` (the program models one crate: a qualified name is one module).
+  A refusal now names its product rules and the read it could not key. The 30 oracle tests pass on the M1 Max, with
+  the pass's 11 tests (one new), the RIR dumps, the production contracts and the file-local typing tests.
 
 ### Q250. Four observer tests fail at the hub's tip
 
@@ -6143,6 +6210,16 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   (`a_watched_root_is_not_statted_where_the_journal_says_nothing_changed` and three like it) depend on a new stream's
   first events arriving within the observer's 5 s budget. Run alone, they came in 0.4–3.3 s in two runs, and none
   came in 5 s in three; the wait was the same 5 s with and without the bound.
+- **Done** (2026-11-19): two causes, neither the hosts'.
+  - Q189's settle window (6c7467af5) was applied to every trusted root, also to one its listings checked (decision
+    0400). There each answer is compared with the listing's stat, so the journal's silence is not what trusts it. A
+    small root's second run stated every file it had recorded in the last two minutes. The window now applies only
+    to paths under no listed root (`Observer::listed_over`), which fixes the three listing tests.
+  - The Q189 test means the journal's path, but its root is small enough to be checked by listings, which name the
+    edit. It sets `list_max = 0` now. It also hid the edit with `current_id()` after a 500 ms sleep, in an epoch
+    already synced; it now asks `journal::since` from the stored cursor in a new epoch, whose cookie follows the
+    edit's events.
+  All 31 observer tests pass on the M1 Max, twice, with the engine's warm-run tests (4 of 4).
 
 - **Fixed** (2026-11-19, Typing-support): Q189's settle window (`JOURNAL_SETTLE_NS`, 120 s) was applied to every
   root, also one checked by its listings, whose answers the listing check compared by `stat` that run and which
@@ -6751,3 +6828,214 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
      under load (Q295's family).
   5. `RERAIL_FORMULA_FUSED=2` on the 491-clause wave ran past 120 s. The fused switch runs each group's formulas
      one after another; measure it before Q288 relies on it.
+
+### Q326. (Q287 on Go-C-and-C-support; Q222 on Swift-Kotlin-Scala-support, Q271 until its merge of final-rerail-shape) A run of tokens that counts a depth, as `type_args_end` does
+
+- **What**: a token run (`(A | B)*`, 0416) ends at the first place its rest holds. The lean
+  parser's `type_args_end` counts `<` and `>` (and `(`, `)`), and ends where the depth closes.
+  `lambda_params_end` stops at an unmatched closer. Kotlin's `generic` holds at `a<b>c>(d)` where
+  the lean parser's does not (no corpus file has one).
+- **Done when**: a run can count a pair of tokens (as tier 1's `count(up, down)` does), Kotlin's
+  type arguments and lambda parameters use it, and a test has the nested case.
+- **Done** (2026-11-18): a run's `nest (O to C) …` (0416, "A run's depths"), in Bitlex's reference,
+  the interpreter, Cranelift and the generated Rust; Kotlin's `generic` and `lam_params` count as
+  `type_args_end` and `lambda_params_end` do. Tests: `a_run_counts_its_depths` (eval, ladder),
+  `depths_are_the_lean_parsers`. Corpus unchanged; AOT tapes the JIT's. Reviewer not yet run.
+
+### Q272. (Q223 on Swift-Kotlin-Scala-support) A token run cannot stop at a line break
+
+- **What**: line breaks are no tokens, so a run passes them. Kotlin's annotation before `if` /
+  `when` ran to a line break before (`@A(x)` then `if` on the next line was no annotated `if`).
+  The lean parser reads an annotation and then any expression, without asking.
+- **Done when**: the annotated expression is the lean parser's (an annotation, then an
+  expression, with no peek), or a run can name a gap mark as a stop. A test has the line break.
+- **Done** (2026-11-18): no difference is left. `@A(x)` and `if` on the next line, and a declaration
+  on the line after, give the lean parser's tape (the run passes line breaks as the lean parser
+  passes them: it reads tokens): `annotated_expressions_are_the_lean_parsers`. What the run cannot
+  say is refused, to the lean parser: Q274.
+
+### Q274. (Q225 on Swift-Kotlin-Scala-support) Kotlin: an annotated expression where the lean parser's `declaration_ahead` decides
+
+- **What**: in a statement, the lean parser skips annotations (`skip_annotation`) and modifiers
+  and asks for a declaration's keyword (`declaration_ahead`); where there is none, the `@` is an
+  annotation over any expression. The grammar marks only `@A(…)` before `if` or `when` (a run to
+  the `)`), so `@A if …`, `@A(x) foo()` and `@A foo()` are refused (no wrong tape;
+  `annotated_expressions_are_the_lean_parsers` lists them). A run can not say "annotations, then
+  modifiers": an annotation's name and a modifier are both names.
+- **Done when**: the statement's `@` is decided as `declaration_ahead` decides (a token mark with
+  the annotation's structure, or the tree reading the annotations and then choosing, as the lean
+  parser does), and the refused cases are the lean parser's.
+- **Done** (2026-11-18): a run's `ending (C)` (0416): `ann_expr` runs over the annotations to one's
+  last token and asks that no declaration follows. The three cases and more give the lean
+  parser's tapes (`annotated_expressions_are_the_lean_parsers`); corpus 431 / 60 / 0 (was 429 /
+  62); `a_run_ends_on_a_token` on every executor; `aot_tapes_are_the_jits`. Reviewer not yet run.
+
+### Q275. (Q226 on Swift-Kotlin-Scala-support) Metal's step 13 differs from the interpreter (`every_step_on_metal_equals_the_interpreter`)
+
+- **What**: `parser_tests`' `every_step_on_metal_equals_the_interpreter` fails: 48 files of the
+  compiler ladder's step 13 (block comments) differ on Metal. Seen 2026-11-18 at 9e3876507 and
+  without the overlap change after it, so it predates both; since 0422 step 13 is the compiler
+  ladder's first step, which every test reads.
+- **Done when**: the cause is named and Metal's records equal the interpreter's on step 13.
+
+### Q273. (Q224 on Swift-Kotlin-Scala-support) `deprecated back_fill` leaves the language
+
+- **What**: Kotlin's step 36 has no back fill (0416). Kotlin's step 35, the `.rr` ladder's steps 15
+  to 21, and the tests of the IR's backward pass still say `deprecated back_fill`.
+- **Done when**: the `.rr` steps are moved as Kotlin's was, or they stop being compiled. Step 35 is
+  history, kept or dropped from the tests. The IR's tests write the `BackFill` op directly, and
+  the parse refuses `back_fill` with no way back.
+- **Done** (2026-11-18): the `.rr` steps 15–21 are moved (token marks, step 22's regions); Kotlin's
+  steps 1–35 are an uncompiled record (0416); `deprecated back_fill` is refused; the IR's tests
+  make their back fill with `syntax::backward`. Reviewer not yet run.
+
+### Q276. (Q227 on Swift-Kotlin-Scala-support) Kotlin: context over tokens in the token loop (0429)
+
+- **What**: tier 1's CPU body is 1,500 operations a block (144 machine instructions a byte); about
+  420 are keyword tests, and the fills and marks over them add more. 0429 answers them once a
+  token in the token loop, in four steps: the analysis, the word tests, the fills over tokens as
+  state, and the gap marks read through the state.
+- **Done when**: the CPU body holds no token-level mask (`tier1_cones` lists none left), with the
+  tapes unchanged.
+
+### Q277. (Q228 on Swift-Kotlin-Scala-support) A hidden mark taken before another live hidden mark: the compiled tier 2 refuses where the reference parses
+
+- **What**: tried for 0429's class header. Kotlin's grammar had one `semi` (no `class_head`
+  split) and a hidden `mark head_ctor = lf_end, before "constructor"`, declared before `semi`
+  and taken by `class_rest` before `[primary_constructor]`. With it, `class A⏎constructor(x: Int)⏎`
+  parses in Bitlex's reference, but the compiled tier 2 (interpreter and Cranelift alike)
+  refuses it at the `:` (byte 21, "no state takes the token"). Without the line break, and in
+  `fun f(x: Int)`, it parses. `semi` is still live, hidden, at the `constructor` token after
+  `head_ctor` is taken.
+- **Done when**: the compiled tier 2 equals the reference on that grammar and text (a ladder
+  test of two hidden gap marks at one token, the first taken), and 0429's class header step can
+  use it.
+- **Done** (2026-11-18, 0430 step 1b): in a state the level enters only by taking a mark, a
+  hidden mark that ends levels does not end it (the line break's one decision is made). With it,
+  `class A⏎constructor(x: Int)` is the lean parser's tape on every executor, and Kotlin's class
+  header is the class rule's (`head_ctor`). `ladder_tests::a_taken_mark_is_the_line_breaks_decision` checks the
+  rule on the interpreter and Cranelift (it fails without it), and Kotlin's
+  `constructor_lines_are_the_lean_parsers` the class header.
+
+### Q278. (Q229 on Swift-Kotlin-Scala-support) Bitlex's reference does not implement a mark's `, ends`
+
+- **What**: `, ends` (a hidden mark where a nested level that may end and does not take it
+  ends) is parsed but read nowhere in `tools/bitlex/src/tree.rs`. The reference's nested levels
+  skip every hidden mark they cannot take (`past_marks`, follow none). So the reference accepts
+  `class A⏎private⏎constructor(x: Int)`, which the compiled side and the lean parser refuse: its
+  `primary_constructor` reads over the line break.
+- **Done when**: the reference ends a nested level at an `ends` mark as the compiled side does
+  (0430 step 1b's rule included), and Kotlin's refused texts are refused by the reference too.
+
+### Q279. (Q230 on Swift-Kotlin-Scala-support) Gap marks set in the token loop while the extra's mark is set after it
+
+- **What**: the token loop's merge (`record_tokens`) tells an extra by its mark's bit in the
+  code. A gap mark the loop sets itself (`loop_marks`' lifted marks, from bytewise masks) is
+  given to the token unless that bit is set. Where the extra's mark is set after the tokens
+  (`late_marks`: not a reader's and not bytewise at its first byte), the loop takes an extra
+  for a grammar token and puts the gap mark's bit on the comment. 0430 step 2 found this for
+  the blank marks: `blank_marks` now asks for the extra's mark to be the loop's. `loop_marks`
+  does not ask it yet.
+- **Done when**: `loop_marks` applies the same condition, or the loop tells an extra by its
+  kind, with a ladder test of a bytewise gap mark and an extra whose mark is late.
+- **Done** (2026-11-18): `loop_marks` lifts a gap mark only where the extra's mark is the
+  loop's (`extra_known`, shared with `blank_marks`); else the mark is set after the tokens.
+  Only a lifted mark the loop keeps in the code shows the fault (tier 2 tests the lazy ones
+  itself): `ladder_tests::a_loop_gap_mark_waits_for_a_late_extra` has one a `without` reads,
+  and fails without the condition (`"// a, [1] é\r\n/*\n\n*/"`, the comment took the bit).
+
+### Q280. Metal runs no prefix (0335, 0389), so JSON's ladder steps are refused there
+
+- **What**: `metal::block_program::missing_form` refuses a program with a prefix: its
+  `Prefix` value and its records' `prefix` (the token loop's first state past it). Since 0422
+  kept each ladder's last step only, `parser_tests::metal_tests::every_step_on_metal_equals_the_interpreter`
+  has three steps, and 14-json and 15-jsonc (prefix `0xef 0xbb 0xbf`) are both refused. So its
+  "most steps run on Metal" assertion fails (2 of 3 refused). This was so before 0330's `early`
+  was generated on Metal (2026-11-19): `early` was refused too. On the CPU the host strips the prefix (0389,
+  `native_cpu_block::host_stripped`). Metal needs the same without host evaluation: the file's
+  row started past the prefix in place (its `FileRow`, no copy), and the outputs and records
+  back at the file's positions on the device.
+- **Done when**: the two JSON steps run on Metal and equal the interpreter, including files that
+  start with the mark, and the test passes.
+- **Done here** (roll-up 12, 2026-11-20): rr-align generates the prefix on Metal (5670277876, Q215: opcode 18,
+  `block_program`'s `Prefix`), so `missing_form` no longer names it. The serial path (`block_serial::run_kept`) does
+  not yet and refuses it (`starts_late`). At the roll-up `every_step_on_metal_equals_the_interpreter` refuses no step
+  (580 files over 3 steps), and is red for Q275 alone: 48 files of step 13 and 39 of 15-jsonc differ, as at
+  2c696e3b74 before the merge (221 of 2,584 over its 15 steps).
+
+### Q327. (Q288 on Go-C-and-C-support, Q281 until its merge of final-rerail-shape) The journal's wait bound (Q184) was dropped by a merge: `since_within` ignores `wait`
+
+- **What**: 89f4abfec (Q184) made `journal::fsevents::since_within` answer `Lost` once the
+  journal took longer than the caller's `wait` (the observer's bound, at least 2 ms a root),
+  keeping the stream. A later merge added `settle` and its retry loop, and the body no longer
+  reads `wait` (an unused-variable warning in `rerail-store`, found on 2026-11-19 while
+  checking the engine). So a warm run again waits for the journal's cookie as long as `settle`
+  allows (0.2–2 s a root on the M3, Q184's measurement).
+- **Keep**: Q184's bound (a slower journal answers `Lost` with the latest id the stream was
+  told, and the stream is kept); the merge's `settle` (a replay whose history lacks its marker
+  is started again while `settle` allows).
+- **Done when**: both hold in `since_within`, the warning is gone, and the store's journal and
+  observer tests pass, with Q184's warm-run measurement repeated.
+- **Done here** (roll-up 12, 2026-11-20): rr-align's `fsevents::since_within` takes the caller's bound as the sync's
+  wait (`wait.min(WAIT.max(settle))`, Q221, Q293), beside `settle`'s retry; no warning. Closed with Q320's observer record.
+
+### Q329. Roll-up 12 (Go-C-and-C-support onto rr-align): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): Go-C-and-C-support at ce2c4019c83, base 7d8d2afa85. Only theirs' added lines were
+  renumbered, past every number here:
+  - decisions 0421 → 0466, 0431 → 0467, 0460 → 0468 (each file notes its old number), and theirs' citations of
+    final-rerail-shape's 0459 → 0464, as at roll-up 11;
+  - work queue Q287 → Q326 (the same item as theirs' Q271, roll-up 11's Q288 here), Q288 → Q327, Q289 → Q328.
+    Theirs' Q272–Q280 keep their numbers: none is used here.
+
+  README rows added: 0422, 0429, 0430, 0436, 0445, 0448, 0466, 0467, 0468.
+- **Taken from theirs**: the C preprocessor and directives crates (0436, 0448, 0468), the parallel passes' spike
+  (0466), Bitlex's `nest` runs (Q326) and `ending`, Kotlin's grammar steps, the ladders kept to their last step (0422),
+  0429 and 0430, UKL's `grid.h`, and `c_pp::stream`'s `define` / `parse_define` split.
+- **Kept from ours**, theirs' change adapted to it:
+  - Metal's prefix (0335): ours generates it in `run_batch` (opcode 18; `early` is 17). Theirs' refusal in
+    `missing_form` is dropped. Its `starts_late` stays where ours does not generate a prefix yet, the serial path
+    (`block_serial::run_kept`). Q280 is done here.
+  - `RepeatedLaunches` is the run's count (0442), not theirs' static.
+  - The product bound (Q249) on ours' version API (0276). Theirs' `fixed_vars`, a variable reached through a declared
+    key or few-row fan-out, sits beside ours' rule for a variable bound only by lookups on constants (356f1b516). So a
+    program either side accepted is accepted. Theirs' refusals name their product rules (`Version::show_rule`).
+    Theirs' test is now a lookup on a fixed variable, which ours' rule alone does not fix.
+  - The observer: ours' Q250 / Q223 fix (afaaadd548) stays; theirs' `listed_over` and its test are dropped. Q327 is
+    done here.
+  - `phases.rs`: ours' check that `sources.rr` is a builtin stays.
+  - The lexer's `next_token` (ours' rename of `PpLexer::next` and `Pp::next`): theirs' calls renamed.
+  - `metal_images` returns the device's error (ours); theirs' tests fail on it now, not skip.
+- **State (0442)**: theirs' `GAPS_MADE` is in test builds only (`test-hooks`) and listed as `stays`: a run's count
+  does not reach its test, since each workspace call is its own run (`profile::within`), and the parent's gaps are
+  made in that run (checked: on the test's thread, in the call's run). Its test bounds it from above, other tests'
+  counts included. The compiled C and C++ grammars (`c_directives::pp`), the
+  preprocessor tape's language and the evaluator's MSL are listed as `stays`: each is made once from the engine's own
+  constants.
+- **Fixed**: `pp_blocks::Enc::run` labels its encoder. The launch ledger reads the label, and the metal crate's read
+  of a nil label is undefined behaviour: every evaluator test aborted on it, at theirs' tip too.
+- **Checked** on the m1max (the M3 was off the network):
+  - the workspace's tests and bins check with no warnings;
+  - `rerail-c-pp` (46), `rerail-metal` (25), `rerail-c-directives` (26, 9 ignored below);
+  - `bitlex` (11), the compiler's depths test, Kotlin's lean-parser tests (39);
+  - `rerail-logic`'s product bound and `plan::corpus::` (149);
+  - the typing oracles and file-local typing (31).
+- **Open**: Q330; Q275 (above: `every_step_on_metal_equals_the_interpreter`, red before the merge).
+
+### Q330. Go-C-and-C-support's device passes are red on the M1 Max at its own commits
+
+Seen 2026-11-20, roll-up 12, on the m1max (Apple G13). Each test also fails at Go-C-and-C-support's own commits there,
+with the encoder's label set (Q329's fix). They are ignored with this item as the reason, to be run with `--ignored`
+on an M3 or M5:
+- **The device's expansion (0448)** differs from the serial passes, at 0cc2adf6d2 (before that branch's merges) and
+  at ce2c4019c83: `calls_past_an_end_`, `calls_with_arguments_`, `line_and_file_`, `object_like_expansion_`,
+  `pasting_`, `stringizing_` and `va_opt_is_the_serial_passes`. Its output loses tokens: `"1 \"main.c\" 3  "` for
+  `"1 \"main.c\" 3 5 \"main.c\""`, and `"B "` for `"A B"`. At ce2c4019c83, and once on the roll-up, `pasting_` did
+  not end: sampled, the host waited in `waitUntilCompleted` for `expand_from`'s command buffer.
+  `a_unit_past_its_room_runs_again_larger` fails beside them at 4 threads, and passes alone.
+- **The persistent grid (0468 R5, R6)**: `grid_barriers_see_every_groups_writes` and the grid's scan, segmented scan
+  and sort fail at 8 groups: "a barrier failed" (bounded, never hangs). They fail at 1 test thread too.
+- **The AOT words**: `the_aot_words_are_the_interpreters` and `the_words_translate_to_rust` overflow the test
+  thread's 2 MB stack in `rust_source`.
+- **Done when**: each passes on the M1 Max, or a test states what the M1 Max cannot do (a grid's residency), and
+  none is ignored.

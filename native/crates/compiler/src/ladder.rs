@@ -1,7 +1,8 @@
-//! The Bitlex ladder's checks (the engine's tests and this crate's use them): thirteen languages, from one keyword to a data language with nested
-//! records, lists, texts, escapes, numbers and two kinds of comment, a step at a time. Each is
-//! parsed by its Bitlex file alone (`bitlex_ladder/`), with no Rust between the bytes and the
-//! nodes.
+//! The Bitlex ladder's checks (the engine's tests and this crate's use them). The ladder was built
+//! a step at a time, from one keyword to a data language with nested records, lists, texts,
+//! escapes, numbers and two kinds of comment; the tree keeps its last step (13), and JSON and
+//! JSONC (14, 15), and git's history the rest (decision 0422). Each is parsed by its Bitlex file
+//! alone (`bitlex_ladder/`), with no Rust between the bytes and the nodes.
 //!
 //! The languages are made up, so that no step is a known format: records are `< >`, lists
 //! `( )`, items are separated by `;`, an entry is `#key# = value`, texts are between `#`, a caret
@@ -464,16 +465,25 @@ pub struct Compiled {
     pub program: Words,
     pub native: Structure,
     pub parser: crate::native_cpu_stream::Parser,
+    /// The program's text, as the assembler read it.
+    pub text: String,
+    /// Tier 2's state machine as text (`grammar::text`).
+    pub machine: String,
 }
 
 pub fn compile_step(name: &str, source: &str) -> Compiled {
+    compile_step_shaped(name, source, crate::bitlex_masks::Shape::Auto)
+}
+
+/// `compile_step` with tier 2's shape: `Shape::Rules` makes the rules calls.
+pub fn compile_step_shaped(name: &str, source: &str, shape: crate::bitlex_masks::Shape) -> Compiled {
     let stmts = parse(source).unwrap_or_else(|e| panic!("{name}: parses: {e}"));
     let ids = Ids::default();
     let compiled = {
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
         let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
-        crate::bitlex_masks::compile(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
+        crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
     };
     let text = compiled.text();
     // `RERAIL_LADDER_DUMP`: the program as text, for a step whose name holds it.
@@ -483,7 +493,18 @@ pub fn compile_step(name: &str, source: &str) -> Compiled {
     let program = crate::rir_asm::assemble(&text).unwrap_or_else(|e| panic!("{name}: assembles: {e}\n{text}"));
     let native = crate::native_ir::lower(&program, 0, 0).unwrap_or_else(|e| panic!("{name}: lowers: {e:?}"));
     let parser = crate::native_cpu_stream::Parser::new(&native).unwrap_or_else(|e| panic!("{name}: Cranelift refuses: {e:?}"));
-    Compiled { stmts, ids, program, native, parser }
+    let machine = compiled.machine.clone();
+    Compiled { stmts, ids, program, native, parser, text, machine }
+}
+
+/// Why the compiler refuses `source` in tier 2's `shape`; `None` where it compiles.
+pub fn compile_error_shaped(source: &str, shape: crate::bitlex_masks::Shape) -> Option<String> {
+    let stmts = parse(source).unwrap_or_else(|e| panic!("parses: {e}"));
+    let ids = Ids::default();
+    let kind = |n: &str| Some(ids.of(n));
+    let field = |n: &str| Some(ids.of(&format!("field {n}")));
+    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
+    crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).err()
 }
 
 /// Why the compiler refuses `source`; `None` where it compiles.

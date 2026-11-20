@@ -3191,6 +3191,7 @@ dependencies = [
  "rerail-pp-aot",
  "rerail-simd8",
  "rerail-tape-format",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -3208,6 +3209,7 @@ version = "0.1.0"
 dependencies = [
  "rerail-c-lean",
  "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -4244,6 +4246,8 @@ dependencies = [
  "rerail-device",
  "rerail-metal",
  "rerail-prof",
+ "rerail-tape-format",
+ "rerail-ukl",
  "serde",
  "sha2 0.10.9",
 ]

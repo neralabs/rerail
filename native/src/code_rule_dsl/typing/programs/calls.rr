@@ -653,6 +653,9 @@ qn(n, q) :- look(n, x, s), ibind(s, x, q).
 qn(n, @dot(q, a)) :- attr_of(n, o, a), qn(o, q).
 // What a workspace qualified name denotes: a module, or a module-level binding of one.
 .decl qv(q: symbol, k: symbol, v: node)
+// A qualified name's attribute is bound a few times at most: `qv("builtins.object", "cls", c)` gives the few class
+// nodes of one name, so a rule pairing them with every reference is no node product (Q249).
+.layout qv fanout(q, k -> v, few)
 qv(q, "mod", m) :- modname(m, q).
 qv(@dot(q, x), k, v) :- modname(m, q), bv(m, x, k, v).
 .decl isqmod(q: symbol)

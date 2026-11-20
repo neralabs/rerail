@@ -139,6 +139,16 @@ enum Pre {
 }
 
 /// Tier 2 as words: their `rir` text (strings, switches, words).
+/// One element of a token mark's run, as `Lowered::token_marks` holds it: its offset, its kinds'
+/// names, its words (strings), whether it is a `~`, whether the file's end takes it, and
+/// whether it is a run of its choices (`program::TokenElem`), a run's depths' sides: each its
+/// counter, whether it opens, its kinds' names and its words (`program::Nest`), and a run's
+/// `ending`'s kinds and words, and the marks it holds without (`without M`: their names).
+pub type TokenElemRow = (i8, Vec<String>, Vec<u16>, bool, bool, bool, Vec<NestRow>, Option<(Vec<String>, Vec<u16>)>, Vec<String>);
+
+/// One side of a run's depth, as `TokenElemRow` holds it: counter, opens, kinds, words.
+pub type NestRow = (u8, bool, Vec<String>, Vec<u16>);
+
 pub struct Lowered {
     pub text: String,
     /// The switches and strings, as in `text`: tier 1's records are made from them (a byte's
@@ -156,7 +166,7 @@ pub struct Lowered {
     /// names and its words (strings). The kinds become the records' (`Words::token_marks`).
     /// Each element: its offset, kinds, words, whether it is a `~` of them, whether the file's
     /// end takes it (`::bitlex::syntax::TokenElem`). The flag: the mark refuses (`refusing`).
-    pub token_marks: Vec<(u8, bool, Vec<(i8, Vec<String>, Vec<u16>, bool, bool)>)>,
+    pub token_marks: Vec<(u8, bool, bool, Vec<TokenElemRow>)>,
 }
 
 /// A mark (a token of no width) as tier 2 tests it: its kind, the mask of its bits at token
@@ -176,12 +186,18 @@ pub struct Mark {
     pub first: ByteSet,
     /// A token mark (decision 0129): the token before (none: any), then the run from the mark's.
     pub tokens: Option<(Vec<::bitlex::syntax::TokenElem>, Vec<Vec<::bitlex::syntax::TokenElem>>)>,
+    /// `before`, `unless before` (decision 0416): the tokens from the one a gap mark is before,
+    /// each with whether it is an `unless`, tested by tier 2 as a token mark's run is.
+    pub nexts: Vec<(bool, Vec<Vec<::bitlex::syntax::TokenElem>>)>,
     /// `unless after`: the words of the grammar token before that make it none
     /// (`records::Records::unless`); the records' words name them.
     pub unless: Vec<Vec<u8>>,
     /// `, settles`: its mask from each bit to the next grammar token's start, which its arms
     /// settle the pending extras before (`SETTLE`).
     pub settle: Option<u16>,
+    /// `, drops W`: `W`'s mask, at whose tokens its arms drop the extra pending last
+    /// (`SETTLE m=1`).
+    pub drop: Option<u16>,
     /// `, ends`: hidden, and a level that may end where it holds and does not take it ends
     /// there, its caller to take it.
     pub ends: bool,
@@ -475,6 +491,10 @@ impl Emit<'_> {
                 Act::SettleMark => {
                     let m = self.marks.iter().find(|m| m.kind == token).and_then(|m| m.settle).expect("a settling mark's mask");
                     self.push("SETTLE", 0, Arg::Num(m));
+                    // `drops`: the extra pending last, where its mask holds at the token.
+                    if let Some(d) = self.marks.iter().filter(|m| m.kind == token).find_map(|m| m.drop) {
+                        self.push("SETTLE", 1, Arg::Num(d));
+                    }
                     continue;
                 }
                 Act::ExtraNow => {
@@ -876,6 +896,35 @@ impl Emit<'_> {
         // hidden that it does not take, and each its level refuses, a test that refuses. A mark
         // that ends levels (`Mark::ends`), or one not hidden, where this nested level may end
         // and takes none: a test that ends it.
+        // Entered only by taking a mark, at the token it was taken at: the level has made the
+        // gap's decision there, so a hidden mark that ends levels does not end it, as the lean
+        // parser asks `asi` once at a line break.
+        let mark_kinds: Vec<u16> = self.marks.iter().map(|m| m.kind).collect();
+        // A hidden mark only some of the level's uses have after them (`StateRow::split`):
+        // where the level may end, it may hold at no token the state takes. There ending at it
+        // and skipping it are the same (the token is no arm's: the level ends, and its caller
+        // takes the mark or skips it); at a token the state takes, one call can not end after
+        // some uses and read on after others.
+        if nested && st.end.is_some() && !st.split.is_empty() {
+            for m in self.marks.iter().filter(|m| st.split.contains(&m.kind) && !mine.iter().any(|&a| self.arms[a].token == m.kind)) {
+                let taken = (0..=255u8).find(|&b| {
+                    has(&m.first, b)
+                        && mine.iter().any(|&a| {
+                            let kind = self.arms[a].token;
+                            self.rows.iter().any(|row| (row.kind == kind && row.kind != 0 && has(&row.first, b)) || row.keywords.iter().chain(&row.soft).any(|(w, k)| *k == kind && w[0] == b))
+                        })
+                });
+                if let Some(b) = taken {
+                    return Err(format!(
+                        "state {s}: a call whose uses differ in the hidden mark of kind {} after them may end here and take a token it may hold at (byte {b:#04x}): one call can not end at it after some uses and read on after others; make the rule `nested`, or give its uses one follow",
+                        m.kind
+                    ));
+                }
+            }
+        }
+        let into: Vec<&ArmRow> = self.arms.iter().filter(|a| usize::from(a.to) == s).collect();
+        let returned_to = self.arms.iter().any(|a| a.push.iter().any(|&p| usize::from(p) == s));
+        let after_mark_only = !into.is_empty() && !returned_to && into.iter().all(|a| !a.call && mark_kinds.contains(&a.token));
         let tests: Vec<(usize, AtMark)> = (0..self.marks.len())
             .filter_map(|k| {
                 let m = &self.marks[k];
@@ -889,7 +938,7 @@ impl Emit<'_> {
                 match arm {
                     Some(a) => Some((k, AtMark::Arm(a))),
                     None if st.refuses.contains(&m.kind) => Some((k, AtMark::Refuse)),
-                    None if (m.ends || !m.hidden) && nested && st.end.is_some() => Some((k, AtMark::End)),
+                    None if (m.ends && !after_mark_only || !m.hidden || st.follows.contains(&m.kind)) && nested && st.end.is_some() => Some((k, AtMark::End)),
                     None if !m.hidden => Some((k, AtMark::Refuse)),
                     None => None,
                 }
@@ -897,10 +946,13 @@ impl Emit<'_> {
             .collect();
         // A refusal tested on its token's bytes only (`Mark::first`), in the switch's arms for
         // them, as the lean parser looks for a mark where it reads its token: where every test
-        // after it refuses too (refusals commute; a jump to a mark's arm must stay after it), and
-        // not a mark the end has (the switch's end is not a byte's).
+        // after it refuses too, or is of a mark that never holds at a token it holds at (their
+        // first bytes apart): refusals commute, and so do two tests never both met at a token;
+        // a jump to a mark's arm, or a level's end, must stay after one that may hold with it.
+        // Not a mark the end has (the switch's end is not a byte's).
+        let apart = |a: usize, b: usize| (0..4).all(|i| self.marks[a].first[i] & self.marks[b].first[i] == 0);
         let moved: Vec<usize> = (0..tests.len())
-            .filter(|&i| tests[i..].iter().all(|&(_, a)| a == AtMark::Refuse) && !self.marks[tests[i].0].end)
+            .filter(|&i| tests[i].1 == AtMark::Refuse && !self.marks[tests[i].0].end && tests[i + 1..].iter().all(|&(j, a)| a == AtMark::Refuse || apart(tests[i].0, j)))
             .map(|i| tests[i].0)
             .collect();
         let tests: Vec<(usize, AtMark)> = tests.into_iter().filter(|(k, _)| !moved.contains(k)).collect();
@@ -970,6 +1022,11 @@ impl Emit<'_> {
                 for &r in &taken {
                     let these: Vec<Cand> = cs.iter().filter(|c| c.row == r).cloned().collect();
                     tos.push(self.target(b, 0, these)?);
+                }
+                // Every row it can meet there it takes, to one place: no test tells them apart.
+                if all && tos.iter().all(|&t| t == tos[0]) {
+                    self.switches[t].targets[usize::from(b)] = tos[0];
+                    continue;
                 }
                 let key = (self.rule, taken.clone(), all, default, tos.clone());
                 if let Some(&at) = self.row_chains.get(&key) {
@@ -1064,7 +1121,7 @@ pub const LASTS: u16 = 0;
 /// at every level. `TOKEN` tests it, once a token (`program::TokenMark::refuses`), and no
 /// state does: a test of it in each state would be two words a state.
 fn refusing(m: &Mark, arms: &[ArmRow]) -> bool {
-    m.tokens.is_some() && !m.hidden && !m.end && arms.iter().all(|a| a.token != m.kind)
+    (m.tokens.is_some() || matches!(m.nexts.as_slice(), [(false, _)])) && !m.hidden && !m.end && arms.iter().all(|a| a.token != m.kind)
 }
 
 /// The marks each state tests after its `TOKEN`, in order: each it takes, and each not hidden
@@ -1077,7 +1134,7 @@ fn tests_of(states: &[StateRow], arms: &[ArmRow], marks: &[Mark]) -> Vec<Vec<usi
     states
         .iter()
         .enumerate()
-        .map(|(s, st)| (0..marks.len()).filter(|&k| !refusing(&marks[k], arms) && (takes[s].contains(&marks[k].kind) || !marks[k].hidden || st.refuses.contains(&marks[k].kind) || marks[k].ends && st.end.is_some())).collect())
+        .map(|(s, st)| (0..marks.len()).filter(|&k| !refusing(&marks[k], arms) && (takes[s].contains(&marks[k].kind) || !marks[k].hidden || st.refuses.contains(&marks[k].kind) || (marks[k].ends || st.follows.contains(&marks[k].kind)) && st.end.is_some())).collect())
         .collect()
 }
 
@@ -1135,34 +1192,79 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     // The token marks' words, and their elements by offset.
     let mut token_marks = Vec::new();
     for (k, m) in marks.iter().enumerate() {
-        let Some((before, seq)) = &m.tokens else { continue };
-        let mut elems = Vec::new();
-        let at = std::iter::once((-1i8, before)).filter(|(_, b)| !b.is_empty()).chain(seq.iter().enumerate().map(|(i, x)| (i as i8, x)));
-        for (offset, choices) in at {
-            let (mut kinds, mut words, mut end) = (Vec::new(), Vec::new(), false);
-            let (not, choices) = match choices.as_slice() {
-                [::bitlex::syntax::TokenElem::Not(inner)] => (true, inner.as_slice()),
-                c => (false, c),
-            };
-            for c in choices {
-                match c {
-                    ::bitlex::syntax::TokenElem::Kind(name) => kinds.push(name.clone()),
-                    ::bitlex::syntax::TokenElem::Word(w) => words.push(e.string(w)),
-                    ::bitlex::syntax::TokenElem::End => end = true,
-                    ::bitlex::syntax::TokenElem::Not(_) => return Err("a `~` inside a `~`".into()),
+        // A token mark's run; a gap mark's `before`s and `unless before`s (decision 0416), each
+        // an entry of the mark's order.
+        let none = Vec::new();
+        let patterns: Vec<(bool, &Vec<::bitlex::syntax::TokenElem>, &Vec<Vec<::bitlex::syntax::TokenElem>>)> = match &m.tokens {
+            Some((before, seq)) => vec![(false, before, seq)],
+            None => m.nexts.iter().map(|(unless, seq)| (*unless, &none, seq)).collect(),
+        };
+        for (unless, before, seq) in patterns {
+            let mut elems = Vec::new();
+            let at = std::iter::once((-1i8, before)).filter(|(_, b)| !b.is_empty()).chain(seq.iter().enumerate().map(|(i, x)| (i as i8, x)));
+            for (offset, choices) in at {
+                let (mut kinds, mut words, mut end, mut without) = (Vec::new(), Vec::new(), false, Vec::new());
+                let none_nest = Vec::new();
+                let none_ending = Vec::new();
+                let (not, run, choices, nests, ending) = match choices.as_slice() {
+                    [::bitlex::syntax::TokenElem::Not(inner)] => (true, false, inner.as_slice(), &none_nest, &none_ending),
+                    // A run of tokens none of the choices.
+                    [::bitlex::syntax::TokenElem::Many(inner, nests, ending)] => match inner.as_slice() {
+                        [::bitlex::syntax::TokenElem::Not(none)] => (true, true, none.as_slice(), nests, ending),
+                        _ => (false, true, inner.as_slice(), nests, ending),
+                    },
+                    c => (false, false, c, &none_nest, &none_ending),
+                };
+                // The run's `ending` (Q274).
+                let ending_row = if ending.is_empty() {
+                    None
+                } else {
+                    let (mut ks, mut ws) = (Vec::new(), Vec::new());
+                    for c in ending {
+                        match c {
+                            ::bitlex::syntax::TokenElem::Kind(name) => ks.push(name.clone()),
+                            ::bitlex::syntax::TokenElem::Word(w) => ws.push(e.string(w)),
+                            _ => return Err("a run's `ending` of kinds and words".into()),
+                        }
+                    }
+                    Some((ks, ws))
+                };
+                // The run's depths (Q326): each side its counter's.
+                let mut nest_rows = Vec::new();
+                for (k, n) in nests.iter().enumerate() {
+                    for (open, side) in [(true, &n.open), (false, &n.close)] {
+                        let (mut ks, mut ws) = (Vec::new(), Vec::new());
+                        for c in side {
+                            match c {
+                                ::bitlex::syntax::TokenElem::Kind(name) => ks.push(name.clone()),
+                                ::bitlex::syntax::TokenElem::Word(w) => ws.push(e.string(w)),
+                                _ => return Err("a depth's side of kinds and words".into()),
+                            }
+                        }
+                        nest_rows.push((k as u8, open, ks, ws));
+                    }
                 }
+                for c in choices {
+                    match c {
+                        ::bitlex::syntax::TokenElem::Kind(name) => kinds.push(name.clone()),
+                        ::bitlex::syntax::TokenElem::Word(w) => words.push(e.string(w)),
+                        ::bitlex::syntax::TokenElem::End => end = true,
+                        ::bitlex::syntax::TokenElem::Without(m) => without.push(m.clone()),
+                        ::bitlex::syntax::TokenElem::Not(_) | ::bitlex::syntax::TokenElem::Many(..) => return Err("a `~` or a run inside a `~` or a run".into()),
+                    }
+                }
+                // The token before, `~`: it holds with no token before too (`end` there).
+                let end = end || (offset == -1 && not);
+                elems.push((offset, kinds, words, not, end, run, nest_rows, ending_row, without));
             }
-            // The token before, `~`: it holds with no token before too (`end` there).
-            let end = end || (offset == -1 && not);
-            elems.push((offset, kinds, words, not, end));
+            // A refusing one's word: its bit in the record is the word's alone (no state tests
+            // it, so no `MARK` names the word).
+            if let (true, Some(w)) = (refusing(m, arms), &m.word) {
+                let s = e.string(w);
+                e.mark_words.insert(k as u8, s);
+            }
+            token_marks.push((k as u8, refusing(m, arms), unless, elems));
         }
-        // A refusing one's word: its bit in the record is the word's alone (no state tests it,
-        // so no `MARK` names the word).
-        if let (true, Some(w)) = (refusing(m, arms), &m.word) {
-            let s = e.string(w);
-            e.mark_words.insert(k as u8, s);
-        }
-        token_marks.push((k as u8, refusing(m, arms), elems));
     }
     for w in marks.iter().flat_map(|m| m.unless.iter()) {
         e.string(w);
