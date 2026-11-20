@@ -5664,3 +5664,18 @@ fn an_html_fragment_is_one_element() {
     assert_eq!(t.subtree_end(0), t.len(), "one root");
     assert_eq!((html.kind_name(t.table().entry(t.code(0)).kind), t.start(0), t.end(0)), (Some("element"), 1, 20));
 }
+
+/// A file of a dialect that embeds others is read by its lean parser, and its programs are built over that tape
+/// (`parse_own`): an HTML file's scripts and styles. Before, every lean parser left such a file to tree-sitter, so
+/// declaring HTML's embeds (decision 0431 step 3a) sent every HTML file there.
+#[test]
+fn a_file_that_embeds_code_is_read_by_its_lean_parser() {
+    let html = Grammar::new(GrammarDialect::Html).unwrap();
+    let parser = tree_parser(GrammarDialect::Html).expect("HTML's parser");
+    let source = "<p>a</p>\n<script>let x = 1;</script>\n<style>p { color: red }</style>\n";
+    let image = parse_own(parser, &html, source, &|| false).expect("the lean parser reads it").unwrap();
+    assert_eq!(image.derived.len(), 2, "a program per script and style");
+    let routed = TapeImage::parse(&html, source, &|| false).unwrap().unwrap();
+    assert_eq!(routed.derived.len(), 2);
+    assert!(routed.primary.to_bytes().unwrap() == image.primary.to_bytes().unwrap(), "the router reads it the same way");
+}

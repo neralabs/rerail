@@ -57,9 +57,6 @@ pub struct Lean;
 
 impl TreeParser for Lean {
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
-        if !grammar.lang.embeds().is_empty() {
-            return None;
-        }
         let span = crate::code_rule_dsl::logic::profile::span(|| "lean Markdown parse and tape".into());
         match encode(grammar, source, &budget) {
             Ok(image) => {

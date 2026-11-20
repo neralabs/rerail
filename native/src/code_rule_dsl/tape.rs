@@ -276,6 +276,12 @@ pub trait TreeParser: Send + Sync {
     /// it stopped at a limit before it read the file.
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>>;
 
+    /// Whether `parse` builds the file's programs itself (Blade's compiled view). Otherwise the router builds them over
+    /// its tape, for a dialect that embeds others (`TapeImage::parse`).
+    fn embeds_itself(&self) -> bool {
+        false
+    }
+
     /// The node kinds it parses a text from besides a whole file (decision 0466): a fragment's start.
     fn starts(&self) -> &'static [&'static str] {
         &[]
@@ -346,6 +352,17 @@ pub fn install_parsers(registered: Vec<ParserImpl>) {
         }
     }
     let _ = ROUTER.set(Router { registered, chosen });
+}
+
+/// `parser`'s documents of `source` (`TreeParser::parse`), with the programs a dialect that embeds others holds, built
+/// over the parser's tape (`embed::host` reads it in place), unless the parser builds them itself: a file that embeds
+/// code is read by its lean parser too. Every caller of a dialect's own parser reads a file through it.
+pub fn parse_own(parser: &dyn TreeParser, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
+    let parsed = parser.parse(grammar, source, budget)?;
+    if parser.embeds_itself() || grammar.lang.embeds().is_empty() {
+        return Some(parsed);
+    }
+    Some(parsed.and_then(|image| FileImage::embedding(image.primary, grammar, source, budget).map_err(TemplateError::Encode)))
 }
 
 /// `dialect`'s own parser, where its language registered one this host runs: the router's choice.
@@ -1513,7 +1530,7 @@ impl TapeImage {
         // tree-sitter's (JSON's Bitlex parser, which may leave the file to tree-sitter-json below).
         if let Some(parser) = tree_parser(grammar.lang)
             && !(ALL_TOKENS.get() && grammar.kinds.grammar().is_some())
-            && let Some(parsed) = parser.parse(grammar, source, &budget)
+            && let Some(parsed) = parse_own(parser, grammar, source, &budget)
         {
             return match parsed {
                 Ok(image) => Some(Ok(image)),
