@@ -3494,7 +3494,6 @@ fn a_version_with_no_prepared_plan_is_read_back() {
 /// reads the executors' counts, finds the fact broken, plans the relation from statistics from then on, and goes on:
 /// its findings are what the rules say.
 #[test]
-#[ignore = "Q376: the hub's step-6 check reads a line's counts only where they are kept (`keys`/`counted`); this run makes none, so no probe is checked against the fan-out"]
 fn a_run_finds_a_fanout_its_rows_break_and_finds_the_same() {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("broken-fanout");
     std::fs::create_dir_all(&root).unwrap();

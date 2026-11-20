@@ -8030,7 +8030,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
 - **Open**: nothing new.
 
 
-### Q376. A broken fan-out is found only where a line's counts are kept (0361 step 6)
+### Q376. (done) A broken fan-out is found only where a line's counts are kept (0361 step 6)
 
 - **Found** (2026-11-20, at the merge of final-rerail-shape-rr-align 972dc90902): both sides built step 6. The
   hub's check (`Model::layout_broken`, `Shapes::broken_at`: 64 probes at least, 8 times the fact's bound) reads a
@@ -8043,6 +8043,12 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   every run counts its probes, as `observe` did, or count them for the step-6 check alone.
 - **Done when**: the test passes un-ignored, and the hub's unit test
   `a_fan_out_the_rows_break_leaves_its_relation_to_the_statistics` still does.
+- **Done** (2026-11-20): the check ran only inside the replanning paths: a probe line with a plan key while the
+  joins are on (`joins::on`, `keys`), or a led seed at its cut. An ordinary run's lines reach neither. Every line's
+  counts are now checked as they are added each chunk (`layout_broke`, plan.rs), a seed's against `orders`, a
+  probe's against `probes` (a line's counts are taken from it when its order is replaced, so they are always its
+  running order's), and the replanning paths read what broke there. The test passes un-ignored, with the hub's unit
+  test and the key test; the plan, joins and shapes tests are as before (three were red before: Q378).
 
 ### Q377. A test's store keeps one object segment open after its test
 

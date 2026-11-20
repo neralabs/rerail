@@ -9401,6 +9401,20 @@ impl<'a> Run<'a, '_> {
                     counted[k][i].1 += b as u64;
                 }
             }
+            // Decision 0361 step 6: every line's rows so far against the facts its order was priced by, in every run
+            // (not only the lines the joins check below): a probe past its fact's bound breaks the fact, and its
+            // relation is planned from statistics from then on. A line's counts are its running order's (they are
+            // taken from it when the order is replaced): a seed's `orders`, a probe's `probes` (a whole plan's rows
+            // are not counted). The checks below replan by what broke here.
+            let mut layout_broke = vec![false; counted.len()];
+            for (line, c) in counted.iter().enumerate() {
+                let order = if line < nseeds { orders.get(line).map(|o| &o.1) } else { probes.get(line - nseeds).map(|p| &p.2) };
+                if let Some(order) = order
+                    && !c.is_empty()
+                {
+                    layout_broke[line] = self.model.layout_broken(&line_bodies[line], order, c);
+                }
+            }
             let text_symbols = |i: usize, c: usize| self.model.inputs.atoms.is_none() && fields.types(rels[i]).get(c) == Some(&"sym");
             // Only the relations whose rows moved since the last chunk: the others' statistics are as recorded.
             let live = self.fx().stats_changed(&name, &mut live_seen, &text_symbols)?;
@@ -9430,9 +9444,9 @@ impl<'a> Run<'a, '_> {
                     let checked = joins::check(key, work, &probes[k].2);
                     // Its rows against its order's step by step: the widest blown up, or a step far under its price.
                     let miss = self.model.line_miss(pf, &vs.at(r), Some(ai), &probes[k].2, key, c, &mut expected[line]);
-                    // Its probes' rows against the facts they were priced by (decision 0361 step 6): a fact broken
-                    // leaves its relation to the statistics, and a prepared order priced by it is searched.
-                    let broken = self.model.layout_broken(&vs.at(r), &probes[k].2, c);
+                    // Its probes' rows broke a fact they were priced by (decision 0361 step 6, `layout_broke` above):
+                    // its relation is left to the statistics, and a prepared order priced by it is searched.
+                    let broken = layout_broke[line];
                     if (checked || miss.is_some() || broken || self.model.prepared_horribly_slow(&vs.at(r), &[Some(ai)], &probes[k].2, work))
                         && self.model.prepared_heavy(&vs.at(r), &[Some(ai)], &probes[k].2).is_some()
                     {
@@ -9700,10 +9714,8 @@ impl<'a> Run<'a, '_> {
                 // A seed or whole plan is checked here, at its cut (a probe was, above).
                 if led && let Some(key) = keys.get(line).copied().flatten() {
                     let running = order_now(&orders, &probes, &wholes);
-                    // Its rows against the facts its order was priced by (decision 0361 step 6).
-                    if let Some(steps) = counted.get(line) {
-                        self.model.layout_broken(&b, &running, steps);
-                    }
+                    // Its rows were checked against the facts its order was priced by as they were counted (decision 0361
+                    // step 6, `layout_broke`): a fact broken there prices this search from statistics.
                     // Its prepared order, heavy: searched now with the run's statistics, and a better order goes on
                     // under the handoff (decision 0206), which goes back to this one where it runs slower a row.
                     if self.model.prepared_heavy(&b, &[first, None], &running).is_some() {
