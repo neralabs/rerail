@@ -256,7 +256,8 @@ fn positive_atoms(b: &Body<'_>) -> usize {
 }
 
 /// Bindings a step must have seen before its observed fanout replaces the estimate.
-const OBS_MIN: i64 = 32;
+#[doc(hidden)]
+pub const OBS_MIN: i64 = 32;
 
 /// The corpus statistics the planner prices plans with, read from the tables `stats.py` builds at ingestion
 /// A kept relation's statistics, made the first time a run plans with them (decision 0101 §4): its columns'
@@ -419,6 +420,28 @@ impl Fielded {
     }
 }
 
+impl Stats {
+    /// Plans `rels` from statistics (decision 0361 step 6): their facts left out of `shapes`, and no prepared plan of a
+    /// line that reads one taken (`reads_broken`).
+    pub fn set_broken(&mut self, rels: impl IntoIterator<Item = String>) {
+        let rels: Vec<String> = rels.into_iter().filter(|r| !self.broken.contains(r)).collect();
+        if rels.is_empty() {
+            return;
+        }
+        if rels.iter().any(|r| self.shapes.0.contains_key(r)) {
+            let shapes = std::sync::Arc::make_mut(&mut self.shapes);
+            for r in &rels {
+                shapes.0.remove(r);
+            }
+        }
+        std::sync::Arc::make_mut(&mut self.broken).extend(rels);
+    }
+    /// Whether a literal of `b` reads a relation whose layout broke (`broken`).
+    pub fn reads_broken(&self, b: &Body<'_>) -> bool {
+        !self.broken.is_empty() && (0..b.len()).filter_map(|i| b.atom(i)).any(|a| self.broken.contains(b.rel(a)))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Stats {
     /// (table, column) → (rows, ndv, sum of squared postings, the same within documents).
@@ -478,6 +501,10 @@ pub struct Stats {
     /// The version's plans made from its layouts (decision 0361 step 5), by line, shared by a component's model: a
     /// line they hold is taken as kept, not searched or priced.
     pub prepared: std::sync::Arc<prepared::Prepared>,
+    /// Relations whose rows broke a fact of their layout (decision 0361 step 6, `break_fact`): planned from
+    /// statistics for the rest of the run, their facts dropped from `shapes` and no prepared plan of a line that
+    /// reads one taken.
+    pub broken: std::sync::Arc<rustc_hash::FxHashSet<String>>,
     /// Relations whose statistics are made when first planned with (`lazy`, `Model::resolve`).
     lazy: LazyMap,
     /// Quiet strata's relations, whose columns take their `__old`'s statistics when first planned with
@@ -590,6 +617,7 @@ impl Stats {
             fields: Default::default(),
             shapes: Default::default(),
             prepared: Default::default(),
+            broken: Default::default(),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
         }
@@ -808,6 +836,7 @@ impl Stats {
             fields: Arc::new(Fielded::of(of("edge").filter(|r| !matches!(r[3], SqlValue::Null)).map(|r| (text(&r[0]), text(&r[1]), text(&r[3]), int(&r[2]) as f64)))),
             shapes: Default::default(),
             prepared: Default::default(),
+            broken: Default::default(),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
         })
@@ -994,6 +1023,7 @@ impl Model {
             fields: st.fields.clone(),
             shapes: st.shapes.clone(),
             prepared: st.prepared.clone(),
+            broken: st.broken.clone(),
             lazy: LazyMap(rels.iter().filter_map(|r| Some((r.clone(), st.lazy.0.get(r)?.clone()))).collect()),
             prior_later: rels.iter().filter(|r| st.prior_later.contains(*r)).cloned().collect(),
         };
@@ -1672,6 +1702,9 @@ pub struct RunPlans {
     /// plans, and those this run made, by the version's identity; and whether it made any.
     prepared: arc_swap::ArcSwap<prepared::ByVersion>,
     prepared_new: std::sync::atomic::AtomicBool,
+    /// The relations whose rows broke a fact of their layout in this run (decision 0361 step 6), each with the fact
+    /// as written: every plan made after it plans them from statistics (`make_plan`).
+    broken: arc_swap::ArcSwap<rustc_hash::FxHashMap<String, String>>,
 }
 
 impl Default for RunPlans {
@@ -1755,6 +1788,7 @@ impl RunPlans {
             orders: arc_swap::ArcSwap::from_pointee(orders),
             prepared: Default::default(),
             prepared_new: Default::default(),
+            broken: Default::default(),
         }
     }
 
@@ -2038,6 +2072,52 @@ fn lines_push(runs: Vec<joins::LineRun>) {
 }
 
 /// The lines run since the last call.
+/// The relations this thread's run found breaking a fact of their layout (decision 0361 step 6), each with the fact
+/// as written; empty outside a corpus run's plans.
+pub fn broken_facts() -> Arc<rustc_hash::FxHashMap<String, String>> {
+    PLANS.with(|p| p.borrow().as_ref().map(|p| p.broken.load_full()).unwrap_or_default())
+}
+
+/// Records that `rel`'s rows broke `fact` (decision 0361 step 6): the run's later plans plan it from statistics. Whether
+/// the run had not found it broken before.
+fn broken_put(rel: &str, fact: &str) -> bool {
+    PLANS.with(|p| {
+        let Some(p) = p.borrow().as_ref().cloned() else { return true };
+        let mut new = false;
+        p.broken.rcu(|m| {
+            new = !m.contains_key(rel);
+            let mut m = rustc_hash::FxHashMap::clone(m);
+            m.entry(rel.to_owned()).or_insert_with(|| fact.to_owned());
+            m
+        });
+        new
+    })
+}
+
+/// Breaks `rel`'s layout fact `fact` (decision 0361 step 6): `stats` plans it from statistics from now on, the run's
+/// later plans too, and the profile names the relation and the fact (a strict run's report too, on stderr). The run
+/// goes on.
+pub fn break_fact(stats: &mut Stats, rel: &str, fact: &str, why: &str) {
+    if stats.broken.contains(rel) {
+        return;
+    }
+    stats.set_broken([rel.to_owned()]);
+    if broken_put(rel, fact) {
+        BROKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        super::profile::decision("broken layout facts (decision 0361 step 6)", || format!("{rel}: {fact} broken ({why}): planned from statistics for the rest of the run"));
+        if super::profile::strict() {
+            eprintln!("rerail: {rel} breaks its layout fact {fact} ({why}): planned from statistics for the rest of the run (decision 0361 step 6)");
+        }
+    }
+}
+
+/// Layout facts broken in this process's runs (`RERAIL_PLAN_CACHE_COUNTS`).
+pub static BROKEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A probe's rows past its fan-out class's bound by this factor, over at least `OBS_MIN` probes, break the fact
+/// (decision 0361: "a fan-out class broken by large factors"): an estimate's spread is not a broken fact.
+pub const BREAK_FACTOR: f64 = 4.0;
+
 fn lines_take() -> Vec<joins::LineRun> {
     PLANS.with(|p| p.borrow().as_ref().map(|p| p.lines.1.lock().try_iter().flatten().collect()).unwrap_or_default())
 }
@@ -2162,7 +2242,7 @@ impl Drop for KeepPlans {
             let st: Vec<u64> = STATISTICS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let searches: Vec<u64> = SEARCHES.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let lazy = lazy_probes_counted();
-            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late, {} answered by layouts; {} lines prepared ({} versions' plans read, {} made); orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], SHAPED.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::TAKEN.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[0].swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[1].swap(0, std::sync::atomic::Ordering::Relaxed), searches[0], searches[1], lazy.0, lazy.1);
+            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late, {} answered by layouts; {} lines prepared ({} versions' plans read, {} made); orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later; {} layout facts broken", counts.join(", "), miss.join(", "), st[0], st[1], st[2], SHAPED.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::TAKEN.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[0].swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[1].swap(0, std::sync::atomic::Ordering::Relaxed), searches[0], searches[1], lazy.0, lazy.1, BROKEN.swap(0, std::sync::atomic::Ordering::Relaxed));
         }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
@@ -3086,7 +3166,9 @@ impl Model {
             return self.plan_inner(pf, b, first, None, true);
         }
         // A line planned with the program (decision 0361 step 5): no key, no cache, no price.
-        if let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes) {
+        if !self.stats.reads_broken(b)
+            && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes)
+        {
             super::profile::decision("prepared plans (decision 0361 step 5)", || "a live plan taken as prepared: not searched or priced".to_owned());
             return Ok((plan, None));
         }
@@ -3437,6 +3519,7 @@ impl Model {
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
         // A line planned with the program from its layouts (decision 0361 step 5): taken as kept, not searched.
         if fixed.is_none()
+            && !self.stats.reads_broken(b)
             && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes)
         {
             super::profile::decision("prepared plans (decision 0361 step 5)", || "a line's plan taken as prepared: not searched".to_owned());
@@ -5060,6 +5143,11 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
     let mut stats = Stats::new(db, p, &mut inputs)?;
     stats.shapes = shapes::Shapes::of_version(&p.v);
     stats.prepared = prepared::Prepared::of_version(&p.v);
+    // The relations the run found breaking a fact of their layout plan from statistics (decision 0361 step 6).
+    let broken = broken_facts();
+    if !broken.is_empty() {
+        stats.set_broken(broken.keys().cloned());
+    }
     let mut ndv = ColMap::default();
     for (rel, (_, rows)) in &inputs.batch {
         let rows = rows.max(1.0);
@@ -6713,13 +6801,46 @@ fn observe(stats: &mut Stats, rule: u64, order: Order<'_, '_>, counts: &[(i64, i
     for (i, (s, &(n_in, n_out))) in order.steps.iter().zip(counts).enumerate() {
         let neg = b.plain_atom(s.at).is_some_and(|a| a.neg());
         if i > 0 && b.plain_atom(s.at).is_some() && !neg && n_in != 0 {
-            let o = stats.obs.entry(rule).or_default().entry(b.sig(s.at, &bound)).or_insert([0, 0]);
+            let sig = b.sig(s.at, &bound);
+            let o = stats.obs.entry(rule).or_default().entry(sig.clone()).or_insert([0, 0]);
             o[0] += n_in;
             o[1] += n_out;
+            let seen = *o;
+            check_fanout(stats, &sig, seen);
         }
         if !neg {
             bound.extend(b.vars(s.at));
         }
+    }
+}
+
+/// Decision 0361 step 6, a fan-out from the executors' counts: a step that read `sig`'s relation with columns bound
+/// that a key or a fan-out of its layout covers, and returned past the fact's bound by `BREAK_FACTOR` a probe over
+/// at least `OBS_MIN` probes so far (`seen`: bindings in, out), breaks the fact.
+#[doc(hidden)]
+pub fn check_fanout(stats: &mut Stats, sig: &Sig, seen: [i64; 2]) {
+    let (rel, cols) = sig;
+    if seen[0] < OBS_MIN || stats.broken.contains(rel.as_str()) {
+        return;
+    }
+    let Some((names, facts)) = stats.shapes.0.get(rel.as_str()) else { return };
+    let covered = |key: &[usize]| !key.is_empty() && key.iter().all(|k| cols.iter().any(|(c, _)| c == k));
+    let per = seen[1] as f64 / seen[0] as f64;
+    let broken = facts.iter().find_map(|f| {
+        let most = match f {
+            crate::code_rule_dsl::logic::front::LayoutFact::Key(k) if covered(k) => 1.0,
+            crate::code_rule_dsl::logic::front::LayoutFact::Fanout { from, fan, .. } if covered(from) => match fan.class() {
+                crate::code_rule_dsl::logic::front::Fan::One => 1.0,
+                crate::code_rule_dsl::logic::front::Fan::Few => f64::from(crate::code_rule_dsl::logic::front::FEW),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        (per > most * BREAK_FACTOR).then(|| (f.show(&|c| names.get(c).cloned().unwrap_or_else(|| format!("${c}"))), most))
+    });
+    if let Some((fact, most)) = broken {
+        let why = format!("{per:.1} rows a probe over {} probes, its bound {most}", seen[0]);
+        break_fact(stats, rel, &fact, &why);
     }
 }
 

@@ -3265,6 +3265,67 @@ fn a_run_takes_a_prepared_plan_without_searching() {
     assert!(model.plan_rule(f, &b, Some(0)).is_ok());
 }
 
+/// Decision 0361 step 6, a fan-out from the executors' counts: a step that probes `child2` on `p` (`fanout(p -> c,
+/// few)`) and returns past `few`'s bound (16) by `BREAK_FACTOR` a probe, over at least `OBS_MIN` probes, breaks the
+/// fact. Short of either it is kept. Broken, the relation plans from statistics for the rest of the run: its facts
+/// leave the model's shapes, a prepared line that reads it is searched, not taken, and a plan the run makes after
+/// knows it too (`broken_facts`). The profile names the relation and the fact.
+#[test]
+fn a_fanout_broken_by_the_rows_plans_its_relation_from_statistics() {
+    use crate::code_rule_dsl::logic::front::{Fan, LayoutFact};
+    let _plans = KeepPlans::start(None);
+    let p = prepared_program();
+    let placed = body::Placed::whole(p.clone());
+    let f = placed.fields().unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let inputs = || {
+        let mut inputs = Inputs::file();
+        inputs.facts.clear();
+        let mut given = Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap());
+        for (rel, width) in [("child2", 3), ("kind2", 2), ("part", 2)] {
+            given.measured(rel, (0..width).map(|c| (format!("c{c}"), [1_000, 300, 4_000, 4_000])), []);
+            given.card.insert(rel.to_owned(), 1_000.0);
+        }
+        inputs.given = Some(given);
+        inputs.atoms = Some([0; 3]);
+        inputs
+    };
+    let mut model = make_plan(&placed, &db, inputs()).unwrap();
+    let k = bodies_by_head(&placed).into_iter().find(|(h, _)| h == "o").unwrap().1;
+    let b = placed.body(k);
+    let planned = model.plan_rule(f, &b, None).unwrap();
+    let odd: Vec<Step> = planned.0.iter().rev().copied().collect();
+    model.stats.prepared = std::sync::Arc::new(prepared::Prepared(
+        [(crate::code_rule_dsl::logic::plan::line_key(&b, None), prepared::PreparedPlan { order: odd.clone(), work_per_node: 3.0, rows_per_node: 0.5 })].into_iter().collect(),
+    ));
+    assert_eq!(model.plan_rule(f, &b, None).unwrap().0, odd, "taken as prepared while the facts hold");
+    let (_, facts) = model.stats.shapes.0.get("child2").cloned().expect("child2's layout");
+    let from = facts.iter().find_map(|x| match x {
+        LayoutFact::Fanout { from, fan, .. } if fan.class() == Fan::Few => Some(from.clone()),
+        _ => None,
+    });
+    assert_eq!(from, Some(vec![0]), "`p -> c, few`");
+    let sig: Sig = ("child2".to_owned(), vec![(0, None)]);
+    let few = i64::from(crate::code_rule_dsl::logic::front::FEW);
+    // Past the bound, within the factor: an estimate's spread, kept.
+    check_fanout(&mut model.stats, &sig, [OBS_MIN, OBS_MIN * few * 3]);
+    // Far past it, over too few probes: kept.
+    check_fanout(&mut model.stats, &sig, [OBS_MIN - 1, (OBS_MIN - 1) * few * 100]);
+    assert!(model.stats.broken.is_empty() && broken_facts().is_empty());
+    assert_eq!(model.plan_rule(f, &b, None).unwrap().0, odd);
+    // Far past it, over enough probes: broken.
+    check_fanout(&mut model.stats, &sig, [OBS_MIN, OBS_MIN * few * 5]);
+    assert!(model.stats.broken.contains("child2"));
+    assert!(!model.stats.shapes.0.contains_key("child2"), "its facts no longer price it");
+    assert!(model.stats.shapes.0.contains_key("kind2"), "another relation's facts still do");
+    assert_ne!(model.plan_rule(f, &b, None).unwrap().0, odd, "a prepared line reading it is searched, not taken");
+    assert_eq!(broken_facts().get("child2").map(String::as_str), Some("fanout(p -> c, few)"));
+    // A plan the run makes after plans it from statistics too.
+    let later = make_plan(&placed, &db, inputs()).unwrap();
+    assert!(later.stats.broken.contains("child2") && !later.stats.shapes.0.contains_key("child2"));
+    assert!(later.stats.reads_broken(&b));
+}
+
 /// The prepared plans as an image stores them (decision 0333 §4): read back the same.
 #[test]
 fn prepared_plans_are_stored_with_the_image_and_read_back() {
@@ -3308,6 +3369,45 @@ fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
     hits.sort();
     assert_eq!(hits, [("a.py".to_owned(), 1), ("c.py".to_owned(), 1), ("c.py".to_owned(), 2)], "{report:#}");
     assert!(taken > 0, "no line was taken from the prepared plans");
+}
+
+/// Decision 0361 step 6, end to end: a policy's derived relation declares `fanout(a -> b, one)`, and its rows break it
+/// (a module's statements, 40 of them, under each module; recursive, so it is not inlined into its reader). The run reads the executors' counts, finds the fact broken,
+/// plans the relation from statistics from then on, and goes on: its findings are what the rules say.
+#[test]
+fn a_run_finds_a_fanout_its_rows_break_and_finds_the_same() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("broken-fanout");
+    std::fs::create_dir_all(&root).unwrap();
+    let statements: String = (0..40).map(|k| format!("f{k}()\n")).collect();
+    std::fs::write(root.join("a.py"), &statements).unwrap();
+    std::fs::write(root.join("b.py"), &statements).unwrap();
+    std::fs::write(root.join("c.py"), "x = 1\n").unwrap();
+    let policy = root.with_extension("policy.rr");
+    std::fs::write(
+        &policy,
+        ".language python\n\
+         .decl under(a: node, b: node)\n.layout under fanout(a -> b, one)\n\
+         under(m, n) :- kind(m, \"module\"), child(m, n, _).\n\
+         under(m, n) :- under(m, b), kind(b, \"block\"), child(b, n, _).\n\
+         .violation hit(at: node) code \"X1\" \"a call statement beside another\"\n\
+         hit(n) :- kind(x, \"expression_statement\"), child(m, x, _), under(m, n), kind(n, \"expression_statement\"), n != x.\n",
+    )
+    .unwrap();
+    let before = BROKEN.load(std::sync::atomic::Ordering::Relaxed);
+    let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let broken = BROKEN.load(std::sync::atomic::Ordering::Relaxed) - before;
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_file(&policy);
+    let mut hits: Vec<(String, i64)> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| (d["file"].as_str().or(d["path"].as_str()).unwrap_or("").rsplit('/').next().unwrap_or("").to_owned(), d["line"].as_i64().or(d["start_line"].as_i64()).unwrap_or(-1)))
+        .collect();
+    hits.sort();
+    let want: Vec<(String, i64)> = ["a.py", "b.py"].iter().flat_map(|f| (1..=40).map(move |l| (f.to_string(), l))).collect();
+    assert_eq!(hits, want, "{report:#}");
+    assert_eq!(broken, 1, "the run found `under`'s fan-out broken");
 }
 
 /// Q228: the prepared plans a run made of a version are kept for the store by its identity, and a later process's run
