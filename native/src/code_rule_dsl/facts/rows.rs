@@ -169,19 +169,24 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
     Ok(f)
 }
 
-/// The open block of `life`'s relations (the chunk's, if a chunk's evaluation runs) with room for `need` bytes past
-/// its others' margin, a new one made when it has none.
-fn open_with_room(life: Life, need: usize) -> Result<Arc<Facts>, String> {
+/// A chunk of `need` bytes at `align` in the open block of `life`'s relations (the chunk's, if a chunk's evaluation
+/// runs), with room past its others' margin; in a new open block when it has none. The room is not enough: a block
+/// with a free list hands out the size class (the next power of two), so a block whose room passes the check may
+/// still hold no such chunk. And the chunk is taken under the open block's lock, so another thread's cannot take
+/// the room between the check and the chunk (an index's runs are built on the pool).
+fn chunk_in_open(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usize, usize)), String> {
     let chunk = CHUNK.with(|c| c.borrow().clone());
     let mut open = chunk.as_ref().map_or(&OPEN[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
-    match &*open {
-        Some(f) if f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => Ok(f.clone()),
-        _ => {
-            let f = new_open(&chunk, life, need)?;
-            *open = Some(f.clone());
-            Ok(f)
-        }
+    if let Some(f) = &*open
+        && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN
+        && let Some(c) = f.block.try_alloc_chunk_fit(need, align)
+    {
+        return Ok((f.clone(), c));
     }
+    let f = new_open(&chunk, life, need)?;
+    let c = f.block.try_alloc_chunk_fit(need, align).ok_or_else(|| format!("a new open block holds no {need} bytes"))?;
+    *open = Some(f.clone());
+    Ok((f, c))
 }
 
 /// Where the structures derived from a relation's rows go (its indexes' arrays, `BlockVec`, decision 0384 step 4):
@@ -268,8 +273,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
             Some((f, c)) => (f, c, 0),
             None => {
                 let life = if self.life == Life::Device { Life::Run } else { self.life };
-                let f = open_with_room(life, bytes).unwrap_or_else(|e| panic!("a block for {bytes} bytes of an index: {e}"));
-                let c = f.block.try_alloc_chunk_fit(bytes, align).unwrap_or_else(|| panic!("an open block with room holds {bytes} bytes"));
+                let (f, c) = chunk_in_open(life, bytes, align).unwrap_or_else(|e| panic!("a block for {bytes} bytes of an index: {e}"));
                 (f, c, 1)
             }
         };
@@ -1616,6 +1620,32 @@ mod tests {
         let lone = BlockVec::from_iter_in(None, [7i64, 8]);
         assert_eq!(*lone, [7, 8]);
         assert!(BlockVec::<u8>::new().facts().is_none(), "empty holds no chunk");
+    }
+
+    /// A chunk takes its size class, the next power of two, from a block with a free list: an open block whose room
+    /// passes the check (`bytes` and the margin) can still hold no chunk of the class. "an open block with room holds
+    /// 2144940 bytes" (`python/references.rr` on all): its room was 3 to 4 MiB. Such a chunk goes to a new open block.
+    #[test]
+    fn a_chunk_the_open_blocks_room_cannot_take_goes_to_a_new_block() {
+        let room = |f: &Arc<Facts>| f.block.reserved().saturating_sub(f.block.used());
+        let probe = BlockVec::<u8>::from_iter_in(None, [0u8]);
+        let open = probe.facts().expect("a chunk").clone();
+        // Fillers of whole classes bring the room to 3.5 MiB: past 2 MiB and the margin, short of 4 MiB.
+        let target = 7usize << 19;
+        let mut fillers = Vec::new();
+        for bit in (6..40).rev() {
+            while room(&open) >= target + (1 << bit) {
+                let v = BlockVec::<u8>::with_capacity_in(None, 1 << bit);
+                assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &open), "a filler in the open block");
+                fillers.push(v);
+            }
+        }
+        let need = (1usize << 21) + 4;
+        let left = room(&open);
+        assert!(left >= need + MARGIN && left < need.next_power_of_two(), "room {left} for {need} bytes");
+        let v = BlockVec::<u32>::from_iter_in(None, 0..(need / 4) as u32);
+        assert!(!Arc::ptr_eq(v.facts().expect("a chunk"), &open), "in a new open block");
+        assert!(v.iter().copied().eq(0..(need / 4) as u32));
     }
 
     /// Decision 0384: a tail whose block has no room for the device's rows is moved into a relation with room
