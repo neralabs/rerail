@@ -60,6 +60,7 @@ fn original_cpython_programs_use_private_projections_and_bounded_join_work() {
                         tape: None,
                         guest: None,
                         module: None,
+                        unpackaged: false,
                     }
                 })
                 .collect();

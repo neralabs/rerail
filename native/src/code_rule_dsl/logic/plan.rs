@@ -5302,7 +5302,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         // Containment, made per node looked up either way (`facts::vtab::syntax::within`, decision 0050).
         "within" => &[&["n"], &["a"]],
         "span_within" => &[&["inner"], &["outer"]],
-        "doc" | "pkg" | "syntax_error" | "source" | "line_count" => &[&["d"]],
+        "doc" | "pkg" | "unpackaged" | "syntax_error" | "source" | "line_count" => &[&["d"]],
         "src_line" | "src_line_lf" | "tape_line" => &[&["d", "l"], &["sp"]],
         "op_at" | "prev_token" => &[&["n"], &["s", "n"]],
         "token" | "rr_token_anon" => &[&["p", "i"], &["start"]],

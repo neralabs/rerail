@@ -37,19 +37,10 @@ rf_def(f, x) :- kind(f, k), rf_dc(k), field(f, "name", n), text(n, x).
 // rf_module(d, m): the module W names document d by: its package module, from the corpus's `__init__.py` files; for a
 // file outside every package, its stem (Ruff's, dots and all), which no relative import resolves from.
 .decl rf_module(d: number, m: symbol)
-rf_module(d, m) :- rf_pydoc(d, p), doc(d, p, m).
+rf_module(d, m) :- rf_pydoc(d, p), !unpackaged(d), doc(d, p, m).
+rf_module(d, m) :- rf_pydoc(d, p), unpackaged(d), m = @rx_replace(@rx_replace(p, "^.*/", ""), "[.][^.]*$", ""), m != "".
 .decl rf_pydoc(d: number, p: symbol)
 rf_pydoc(d, p) :- doc(d, p, _), @rx_matches(p, "[.]pyi?$") = 1.
-// rf_packaged(p): file p's directory is a package.
-.decl rf_packaged(p: symbol)
-rf_packaged(p) :- rf_pydoc(_, p), @instr(p, "/") > 0, rf_package_dir(@rx_replace(p, "/[^/]*$", "")).
-rf_packaged(p) :- rf_pydoc(_, p), @instr(p, "/") = 0, rf_package_dir("").
-.decl rf_package_dir(dir: symbol)
-rf_package_dir(@rx_replace(p, "/__init__[.]py$", "")) :- doc(_, p, _), @rx_matches(p, "/__init__[.]py$") = 1.
-rf_package_dir("") :- doc(_, "__init__.py", _).
-// rf_unpackaged(d): document d is outside every package.
-.decl rf_unpackaged(d: number)
-rf_unpackaged(d) :- rf_pydoc(d, p), !rf_packaged(p).
 // rf_doc_name(d, n): a name of document d's module in the name tables: its module, and its path's.
 .decl rf_doc_name(d: number, n: symbol)
 rf_doc_name(d, m) :- rf_module(d, m).
@@ -263,7 +254,7 @@ rf_in_loop(i) :- rf_fn_read(i, _, _, _), nearest(i, a, rf_loopstop), (kind(a, "f
 // rf_dead_import(i): relative import i is in a file outside every package: it names nothing (W's `relative`).
 .decl rf_dead_import(i: node)
 rf_dead_import(i) :- kind(i, "import_from_statement"), field(i, "module_name", r), kind(r, "relative_import"), docof(i, d),
-    rf_unpackaged(d).
+    unpackaged(d).
 // rf_import_target(site, q): import site binds its name to q (`from m import y` gives m.y; `import a.b` gives a).
 .decl rf_import_target(site: node, q: symbol)
 rf_import_target(a, q) :- import_alias(i, a, m, y, _), kind(i, "import_from_statement"), !rf_dead_import(i), q = @dot(m, y).
@@ -356,7 +347,7 @@ rf_from_at(d, x, s, q) :- import_alias(i, a, m, y, x), kind(i, "import_from_stat
     q = @dot(m, y).
 .decl rf_imported(m: symbol, x: symbol, q: symbol)
 rf_imported(m, x, q) :- rf_from_at(d, x, _, _), s = max u : { rf_from_at(d, x, u, _) }, rf_from_at(d, x, s, q),
-    rf_module(d, m), m != "".
+    rf_doc_name(d, m), m != "".
 // The module's and its classes' imports: member `k.x` for the name x a module or class scope binds by import.
 .decl rf_member_import(k: symbol, q: symbol)
 rf_member_import(k, q) :- rf_mlast(m, x, site), rf_mbind(m, x, site, "import"), rf_import_target(site, q),
@@ -419,10 +410,14 @@ rf_by_import(m, x, b) :- rf_imported(m, x, b), rf_class_name(b), !rf_nonclass_na
 rf_by_class(m, x, b) :- rf_class_named(m, x, b), rf_class_name(b), !rf_nonclass_name(b).
 .decl rf_global_class(x: symbol, b: symbol)
 rf_global_class(x, b) :- rf_def(f, x), rf_is_class(f), rf_qn(f, b), k = count : { rf_def(g, x), rf_is_class(g) }, k = 1.
+// The base is named as written (an import may spell it by the file's path); W keys a class by its definition's own
+// name, so rf_base_class holds that one.
+.decl rf_base_spelled(c: symbol, i: number, b: symbol)
+rf_base_spelled(c, i, b) :- rf_base(c, i, x, m), rf_by_import(m, x, b).
+rf_base_spelled(c, i, b) :- rf_base(c, i, x, m), !rf_by_import(m, x, _), rf_by_class(m, x, b).
+rf_base_spelled(c, i, b) :- rf_base(c, i, x, m), !rf_by_import(m, x, _), !rf_by_class(m, x, _), rf_global_class(x, b).
 .decl rf_base_class(c: symbol, i: number, b: symbol)
-rf_base_class(c, i, b) :- rf_base(c, i, x, m), rf_by_import(m, x, b).
-rf_base_class(c, i, b) :- rf_base(c, i, x, m), !rf_by_import(m, x, _), rf_by_class(m, x, b).
-rf_base_class(c, i, b) :- rf_base(c, i, x, m), !rf_by_import(m, x, _), !rf_by_class(m, x, _), rf_global_class(x, b).
+rf_base_class(c, i, q) :- rf_base_spelled(c, i, b), rf_named_def(b, f), rf_is_class(f), rf_qn(f, q).
 // rf_order(c, b, route): b is in c's breadth-first order of bases, at the least route (the bases' slots, a level at a
 // time): breadth first, a class visited once, is the shortlex least route.
 .lattice rf_shortlex<symbol> { Lub -> @shortlex_min }
@@ -434,16 +429,26 @@ rf_order(c, b, r) :- rf_order(c, x, r0), rf_base_class(x, i, b), r = @concat(r0,
 rf_method_at(c, f, r) :- rf_order(c, b, r), rf_member_fn(b, f).
 .decl rf_member_fn(b: symbol, f: symbol)
 rf_member_fn(b, f) :- rf_named_def(q, d), rf_is_function(d), split_dot(q, b, f), rf_class_name(b).
+// The least route is the shortlex least (a `min` over symbols would order them by their ids, not their text).
 .decl rf_method_first(c: symbol, f: symbol, route: symbol)
-rf_method_first(c, f, r) :- rf_method_at(c, f, _), r = min s : { rf_method_at(c, f, s) }.
+rf_method_first(c, f, r) :- rf_method_at(c, f, r), !rf_method_later(c, f, r).
+.decl rf_method_later(c: symbol, f: symbol, route: symbol)
+// A later route: longer than another, or as long and greater.
+rf_method_later(c, f, r) :- rf_method_at(c, f, r), rf_method_at(c, f, s), @strlen(s) < @strlen(r).
+rf_method_later(c, f, r) :- rf_method_at(c, f, r), rf_method_at(c, f, s), @strlen(s) = @strlen(r), s < r.
 // rf_method(c, f, d): c's f, as its order gives it, is definition d.
 .decl rf_method(c: symbol, f: symbol, d: node)
 rf_method(c, f, d) :- rf_method_first(c, f, r), rf_order(c, b, r), rf_named_def(q, d), rf_is_function(d), q = @concat(b, ".", f).
 // rf_super_method(c, f, d): the same past c itself.
 .decl rf_super_at(c: symbol, f: symbol, route: symbol)
 rf_super_at(c, f, r) :- rf_method_at(c, f, r), r != "".
+.decl rf_super_first(c: symbol, f: symbol, route: symbol)
+rf_super_first(c, f, r) :- rf_super_at(c, f, r), !rf_super_later(c, f, r).
+.decl rf_super_later(c: symbol, f: symbol, route: symbol)
+rf_super_later(c, f, r) :- rf_super_at(c, f, r), rf_super_at(c, f, s), @strlen(s) < @strlen(r).
+rf_super_later(c, f, r) :- rf_super_at(c, f, r), rf_super_at(c, f, s), @strlen(s) = @strlen(r), s < r.
 .decl rf_super_method(c: symbol, f: symbol, d: node)
-rf_super_method(c, f, d) :- rf_super_at(c, f, _), r = min s : { rf_super_at(c, f, s) }, rf_order(c, b, r), rf_named_def(q, d),
+rf_super_method(c, f, d) :- rf_super_first(c, f, r), rf_order(c, b, r), rf_named_def(q, d),
     rf_is_function(d), q = @concat(b, ".", f).
 
 // ---- names to definitions ------------------------------------------------------------------------------------------
@@ -552,7 +557,10 @@ rf_has_method(c, f) :- rf_method(c, f, _).
 rf_compose_at(c, f, key, b) :- rf_ref(_, "self", c, f, _), !rf_has_method(c, f), rf_base_class(k, _, c), rf_base_class(k, i, b),
     b != c, rf_has_method(b, f), key = @concat(k, "\t", @printf("%06d", i)).
 .decl rf_compose(c: symbol, f: symbol, key: symbol)
-rf_compose(c, f, key) :- rf_compose_at(c, f, _, _), key = min s : { rf_compose_at(c, f, s, _) }.
+// W tries the subclasses by their names' text, then each one's bases in order: the least key by its text.
+rf_compose(c, f, key) :- rf_compose_at(c, f, key, _), !rf_compose_later(c, f, key).
+.decl rf_compose_later(c: symbol, f: symbol, key: symbol)
+rf_compose_later(c, f, key) :- rf_compose_at(c, f, key, _), rf_compose_at(c, f, s, _), s < key.
 rf_target(t, d, "self") :- rf_ref(t, "self", c, f, _), rf_compose(c, f, key), rf_compose_at(c, f, key, b), rf_method(b, f, d).
 rf_target(t, d, "super") :- rf_ref(t, "super", c, f, _), rf_super_method(c, f, d).
 // field: the field's declared type in the class's order, then the member in it.
@@ -560,7 +568,12 @@ rf_target(t, d, "super") :- rf_ref(t, "super", c, f, _), rf_super_method(c, f, d
 .decl rf_field_at(c: symbol, x: symbol, r: symbol)
 rf_field_at(c, x, r) :- rf_order(c, b, r), rf_field_decl(b, x, _).
 .decl rf_field_type(c: symbol, x: symbol, ty: symbol, m: symbol)
-rf_field_type(c, x, ty, m) :- rf_field_at(c, x, _), r = min s : { rf_field_at(c, x, s) }, rf_order(c, b, r), rf_field_decl(b, x, ty),
+.decl rf_field_first(c: symbol, x: symbol, r: symbol)
+rf_field_first(c, x, r) :- rf_field_at(c, x, r), !rf_field_later(c, x, r).
+.decl rf_field_later(c: symbol, x: symbol, r: symbol)
+rf_field_later(c, x, r) :- rf_field_at(c, x, r), rf_field_at(c, x, s), @strlen(s) < @strlen(r).
+rf_field_later(c, x, r) :- rf_field_at(c, x, r), rf_field_at(c, x, s), @strlen(s) = @strlen(r), s < r.
+rf_field_type(c, x, ty, m) :- rf_field_first(c, x, r), rf_order(c, b, r), rf_field_decl(b, x, ty),
     m = @rx_replace(c, "\\.?[^.]*$", ""), @instr(ty, ".") = 0.
 rf_target(t, d, "field") :- rf_ref(t, "field", c, x, f), rf_field_type(c, x, ty, m), rf_type_class(m, ty, k), rf_method(k, f, d).
 // param_type: the type's class, then the member in it.
@@ -583,7 +596,8 @@ rf_fq_want(q) :- rf_type_want(m, ty), rf_imported(m, ty, q).
 rf_fq_want(q) :- rf_type_want(m, ty), rf_class_named(m, ty, q).
 rf_fq_want(t) :- rf_fq_want(q), !rf_any_named(q), split_dot(q, m, x), rf_imported(m, x, t).
 .decl rf_fq_class(q: symbol, k: symbol)
-rf_fq_class(q, q) :- rf_fq_want(q), rf_only_classes(q).
+// k is the class's own name, as W keys a class (q may spell it by the file's path).
+rf_fq_class(q, k) :- rf_fq_want(q), rf_only_classes(q), rf_named_def(q, f), rf_is_class(f), rf_qn(f, k).
 rf_fq_class(q, k) :- rf_fq_want(q), !rf_any_named(q), split_dot(q, m, x), rf_imported(m, x, t), rf_fq_class(t, k).
 
 // ==== the graph =====================================================================================================

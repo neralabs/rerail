@@ -34,7 +34,7 @@ pub(in crate::code_rule_dsl) fn documents() -> Vec<Document> {
         .enumerate()
         .map(|(d, (path, source))| {
             let facts = facts(&path, &source);
-            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }
+            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
         })
         .collect()
 }
@@ -363,7 +363,7 @@ fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
     let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
     let (core::Built::Facts(facts), Some(tape)) = core::build_with_tape(&file, true).unwrap() else { panic!("{path} did not parse") };
     let facts = Arc::new(facts);
-    Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, tape: Some((tape, Arc::new(file))), guest: None, module: None }
+    Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, tape: Some((tape, Arc::new(file))), guest: None, module: None, unpackaged: false }
 }
 
 /// `core.rr`'s relations of `docs` for a program that includes `core.rr` and reads them (`Projection::of`'s shape
@@ -558,7 +558,7 @@ fn within_holds_exactly_the_contained_pairs() {
     for (at, source) in ["x = (1,\nif y:\n", "def f(a, b:\n    return [a for\n", "", "class C:\n"].into_iter().enumerate() {
         let path = format!("broken{at}.py");
         let facts = facts(&path, source);
-        docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None });
+        docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false });
     }
     let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
     let nodes = *batch.nodes.last().unwrap();
@@ -657,7 +657,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     let source = "def f(:\n    return [1, 2\nclass C:\n    x = (\ny = f(1) + g(2)\n";
     let broken = facts("broken.py", source);
     assert!(broken.errors().iter().any(|&id| broken.flags(id) & 8 != 0), "broken.py has ERROR nodes");
-    docs.push(Document { key: 4, core: "/w#core:broken.py".into(), digest: core::digest(&broken), path: "broken.py".into(), facts: broken, tape: None, guest: None, module: None });
+    docs.push(Document { key: 4, core: "/w#core:broken.py".into(), digest: core::digest(&broken), path: "broken.py".into(), facts: broken, tape: None, guest: None, module: None, unpackaged: false });
     let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
     let nodes = *batch.nodes.last().unwrap();
     let id = |r: usize| batch.id(r);
