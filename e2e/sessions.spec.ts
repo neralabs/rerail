@@ -205,7 +205,7 @@ test.describe("History by session", () => {
       url.searchParams.set("sessionId", id);
       url.searchParams.set("host", id.split("-").slice(2).join("-"));
       await page.goto(url.href);
-      await expect(headerId(page)).toHaveAttribute("title", id);
+      await expect(headerId(page)).toHaveAttribute("data-session", id);
     };
     const places = page.locator("#content .tl .places");
     const end = page.locator("#content .tl > .bound").last();
