@@ -1655,7 +1655,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       await this.#publishReady();
     } catch (publishError) {
       // Recorded as `#check` records a publish that throws after a check or a read failure, so the evaluator goes on to
-      // the next queued edit. The publish it makes again asks only for revisions that became ready since.
+      // the next queued edit. The publish it makes again sends the revisions the throw left untried and those ready since.
       await this.#recordPendingEvaluationError(path, stored, publishError);
     }
   }
