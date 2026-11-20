@@ -188,6 +188,16 @@ const NO_INNER_HTML = regexRule(
   "Render the text through React instead of assigning innerHTML.",
 );
 
+/** A rule created by you and approved, which a coding agent edited: its copy waits for approval. */
+const NO_ALERT = regexRule(
+  "storefront-no-alert",
+  "steer",
+  "Storefront shows messages in its toast, never with window.alert.",
+  "\\balert\\(",
+  "STOREFRONT-ALERT",
+  "Show the message in the toast instead of alert().",
+);
+
 const NO_DEFAULT_EXPORT = regexRule(
   "storefront-no-default-export",
   "log",
@@ -611,9 +621,17 @@ function addLibraryRule(rule: CodeRule, catalog: () => RuleCatalog, approved = t
 
 /** An edited copy of By Rerail rule `sourceId`, stored as editing one stores it: `<id>-copy`, added where the original is, unapproved. */
 function addRerailRuleCopy(sourceId: string, catalog: () => RuleCatalog): Change["apply"] {
+  return addRuleCopy(() => catalog().documents.get(sourceId)!.rule as CodeRule, catalog);
+}
+
+/**
+ * An edited copy of rule `original()`, stored as `rules add` stores one (of a By Rerail rule, or of your approved rule a
+ * coding agent edited): `<id>-copy`, added to the whole repository, where the original is, unapproved.
+ */
+function addRuleCopy(original: () => CodeRule, catalog: () => RuleCatalog): Change["apply"] {
   return (db, repositoryKey, at) => {
-    const original = catalog().documents.get(sourceId)!.rule as CodeRule;
-    const copy = { ...original, id: `${sourceId}-copy`, revision: original.revision + 1 };
+    const source = original(), sourceId = source.id;
+    const copy = { ...source, id: `${sourceId}-copy`, revision: source.revision + 1 };
     upsertLibraryRule(db, catalog(), copy, "code", { copiedFromRuleId: sourceId, now: at, createdAt: at });
     addAttachment(db, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: copy.id }, at);
   };
@@ -637,7 +655,8 @@ function plansFor(scenario: ScenarioName, catalog: () => RuleCatalog, now: numbe
       }];
     case "awaiting-approval":
       // Three rules a coding agent wrote into the library (as /rerail-create adds the rules it finds), an edited copy of
-      // a By Rerail rule, and one in the checkout's own .rerail/rules: none approved.
+      // a By Rerail rule, a coding agent's edited copy of your approved rule, and one in the checkout's own .rerail/rules:
+      // none approved but your rule.
       return [{
         checkout: { ...STOREFRONT, files: { ...STOREFRONT_FILES, ".rerail/rules/no-legacy-client.json": JSON.stringify(NO_LEGACY_CLIENT) } },
         recordedAt: now - HOUR,
@@ -647,6 +666,8 @@ function plansFor(scenario: ScenarioName, catalog: () => RuleCatalog, now: numbe
           { at: now - 29 * MINUTE, apply: addLibraryRule(NO_INNER_HTML, catalog, false) },
           { at: now - 28 * MINUTE, apply: addLibraryRule(NO_DEFAULT_EXPORT, catalog, false) },
           { at: now - 27 * MINUTE, apply: addRerailRuleCopy("typescript-eslint-no-explicit-any", catalog) },
+          { at: now - 26 * MINUTE, apply: addLibraryRule(NO_ALERT, catalog) },
+          { at: now - 25 * MINUTE, apply: addRuleCopy(() => NO_ALERT, catalog) },
         ],
         ...noSessions,
       }];

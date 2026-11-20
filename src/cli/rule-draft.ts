@@ -42,6 +42,7 @@ import { blockModeEnabled, conversationRulesEnabled, experimentOffMessage } from
 import { checkoutStatus, followsGitignore, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { addAttachment, listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import {
+  copyLibraryRuleToLibrary,
   copyRerailRuleToLibrary,
   getLibraryRule,
   libraryHoldsId,
@@ -50,13 +51,15 @@ import {
   rerailRuleCopiesIn,
   rerailRuleFolders,
   upsertLibraryRule,
+  validateLibraryDocument,
   type CopiedRule,
 } from "../engine/catalog/rule-library.js";
 import { isApproved, ruleSubject } from "../engine/catalog/rule-approval.js";
 import { parseConversationRule, ruleTitleSchema, sampleSourceSchema, SAMPLE_BOUNDARIES, untitledRuleRefusal, type ConversationRule } from "../engine/catalog/rule-schema.js";
 import { readRulesDashboard } from "../presentation/session-presentation.js";
 import { deniedByPathBoundary } from "../engine/path-boundary.js";
-import { stableJsonText } from "../engine/stable-json.js";
+import { ruleDocumentDigest, stableJsonText } from "../engine/stable-json.js";
+import { agentSession, type AgentSession } from "../engine/agent-session.js";
 import type { CodeRuleSourceLanguage } from "../engine/code-rule/code-rule.js";
 import { UNLISTED_TEXT_LANGUAGE } from "../engine/code-rule/code-rule-languages.js";
 
@@ -471,11 +474,12 @@ interface DraftPlacement {
 /**
  * Where `rules add` would have the draft's rule run in `root`'s repository, and why it would refuse the draft, read
  * without recording anything. A draft that keeps a By Rerail rule's id is stored as your copy, added where the
- * original is, and takes no folder ({@link addRerailRuleCopy}); a rule of your own stays where it is added, with the
- * draft's folder as one more ({@link attachLibraryRule}). The packs are read only for an id a pack rule can have that
+ * original is, and takes no folder ({@link addRerailRuleCopy}), as does a coding agent's edit of your approved rule
+ * ({@link addOwnRuleCopy}); a rule of your own stays where it is added, with the draft's folder as one more
+ * ({@link attachLibraryRule}). The packs are read only for an id a pack rule can have that
  * your library does not hold, and for your copy of a pack rule that is not added here.
  */
-function draftPlacement(draft: RuleDraft, root: string): DraftPlacement {
+function draftPlacement(draft: RuleDraft, root: string, session: AgentSession | undefined): DraftPlacement {
   const named = draft.folder === undefined ? [] : [draft.folder];
   return readRecorded<DraftPlacement>(database => {
     const checkout = lookupCheckout(database, root);
@@ -488,8 +492,14 @@ function draftPlacement(draft: RuleDraft, root: string): DraftPlacement {
         return { folders, refusal: copyRefusal(database, ruleCatalog, checkout, draft), unread: undefined };
       }
     }
+    // In the order `rules add` refuses: a copy made for another repository first, then an agent's edit of an approved rule.
+    const elsewhere = copyFromElsewhereRefusal(database, checkout, id, listedRuleCatalog);
+    if (editsApprovedRule(database, draft, session)) {
+      const refusal = elsewhere ?? ownCopyRefusal(database, checkout, id, draft.folder);
+      return { folders: libraryRuleFolders(database, checkout.repositoryKey, id), refusal, unread: undefined };
+    }
     const folders = [...libraryRuleFolders(database, checkout.repositoryKey, id), ...named];
-    return { folders, refusal: copyFromElsewhereRefusal(database, checkout, id, listedRuleCatalog), unread: undefined };
+    return { folders, refusal: elsewhere, unread: undefined };
   }, error => ({ folders: named, refusal: undefined, unread: error === undefined ? undefined : errorMessage(error) }));
 }
 
@@ -676,7 +686,7 @@ export async function testRuleDraftCases(draft: RuleDraft, root: string): Promis
  * matches in `repo`'s files, in the folders `rules add` would have it run at, saying where `rules add` would refuse
  * it ({@link draftPlacement}). Nothing is written to the catalog or the content store.
  */
-export async function testRuleDraft(draft: RuleDraft, repo: string): Promise<RuleDraftReport> {
+export async function testRuleDraft(draft: RuleDraft, repo: string, session: AgentSession | undefined = agentSession()): Promise<RuleDraftReport> {
   const untitled = draft.bare === true ? undefined : untitledRuleRefusal(draft.rule);
   if (draft.kind === "conversation") {
     const cases = conversationCaseResults(draft.rule, draft.cases);
@@ -685,7 +695,7 @@ export async function testRuleDraft(draft: RuleDraft, repo: string): Promise<Rul
   const { binding, compiled } = compileCodeRule(draft.rule);
   const root = repositoryIdentityLocation(repo).workspaceRoot;
   const cases = await policyCaseResults(binding, compiled, root, draft.cases);
-  const placement = draftPlacement(draft, root);
+  const placement = draftPlacement(draft, root, session);
   const { folders, unread } = placement;
   const refusal = untitled ?? placement.refusal;
   const pass = await repositoryPass(binding, compiled, root, passFolders(folders));
@@ -711,8 +721,13 @@ export interface AddedRule {
   repositoryName: string;
   /** The repository folders the rule was added at; `""` is the whole repository. */
   folders: readonly string[];
-  /** The By Rerail rule the draft edited, stored as `ruleId`, your copy of it; null for a rule of your own. */
+  /**
+   * The rule the draft edited, stored as `ruleId`, a copy of it: a By Rerail rule, or your approved rule a coding agent
+   * edited ({@link addOwnRuleCopy}); null for a rule changed or added as it is.
+   */
   copiedFromRuleId: string | null;
+  /** Whether `copiedFromRuleId` is your own approved rule, kept running unchanged until a person approves the copy. */
+  copyOfYours: boolean;
   /** Whether adding the rule set the repository up, with this rule as its only one. */
   setUp: boolean;
   /** The mode the rule's content sets; `block` steers until block enforcement lands. */
@@ -774,18 +789,74 @@ function addRerailRuleCopy(database: RerailDatabase, ruleCatalog: RuleCatalog, c
   // A copy that was approved, removed and made again with the same content is approved already.
   const approved = isApproved(database, ruleSubject(ruleId, copied.rule.payloadHash));
   const name = repositoryName(checkout.checkoutPath);
-  return { ruleId, repositoryName: name, folders: copied.folders, copiedFromRuleId: sourceId, setUp: false, mode: draft.rule.mode, approved };
+  return { ruleId, repositoryName: name, folders: copied.folders, copiedFromRuleId: sourceId, copyOfYours: false, setUp: false, mode: draft.rule.mode, approved };
 }
 
 /**
- * Why `rules add` refuses your copy of a By Rerail rule, made for another repository, where the original runs and the
- * copy is not added: both would steer, and approving the copy, approved already, would not turn the original off.
- * `rules test` reports the same. `ruleCatalog` is read only for such a copy.
+ * Whether `rules add` stores the draft as a copy of your rule rather than changing it: in a coding agent's session
+ * (`session`), for a rule that is approved and that the draft changes. Changed in place, the rule would run in Log
+ * until a person approved it again, in every repository it is added to; the copy leaves it steering until a person
+ * approves the copy. A rule that waits for approval, and a draft that says the same, are changed in place as before.
+ */
+function editsApprovedRule(database: RerailDatabase, draft: RuleDraft, session: AgentSession | undefined): boolean {
+  if (session === undefined) return false;
+  const stored = getLibraryRule(database, draft.rule.id);
+  if (stored === undefined || !isApproved(database, ruleSubject(draft.rule.id, stored.payloadHash))) return false;
+  let document: RuleDocument;
+  try {
+    document = validateLibraryDocument(draft.rule, draft.kind);
+  } catch (error) {
+    throw libraryWriteError(error, draft.rule.id);
+  }
+  return ruleDocumentDigest(document) !== stored.payloadHash;
+}
+
+/**
+ * Why `rules add` refuses a coding agent's edit of your approved rule `id`, where it does: the draft names a `folder`
+ * (the copy is added where the rule is), the repository already has a copy of it (that copy is the one to change), or
+ * the rule is not added there, so a copy would have nowhere to run. `rules test` reports the same.
+ */
+function ownCopyRefusal(database: RerailDatabase, checkout: CheckoutContext, id: string, folder: string | undefined): string | undefined {
+  const name = repositoryName(checkout.checkoutPath);
+  if (folder !== undefined) return `folder: ${id} is approved, so this edit is saved as a copy added where ${id} is, and the draft cannot name a folder`;
+  const copies = rerailRuleCopiesIn(database, checkout.repositoryKey, id);
+  if (copies.length > 0) return copyAddedText(id, name, copies);
+  if (libraryRuleFolders(database, checkout.repositoryKey, id).length > 0) return undefined;
+  return `${id} is approved and not added to ${name}, so a copy of this edit would have nowhere to run here. Add ${id} here unchanged first, or a person changes it from a terminal of their own`;
+}
+
+/**
+ * Store a coding agent's edit of your approved rule as a copy ({@link editsApprovedRule}), added where the rule is in
+ * the checkout's repository: it runs in Log, and the rule keeps running unchanged, until a person approves the copy,
+ * which turns the rule off there. Refused as {@link ownCopyRefusal} says.
+ */
+function addOwnRuleCopy(database: RerailDatabase, ruleCatalog: RuleCatalog, checkout: CheckoutContext, draft: RuleDraft): AddedRule {
+  const sourceId = draft.rule.id;
+  const refusal = ownCopyRefusal(database, checkout, sourceId, draft.folder);
+  if (refusal !== undefined) throw new RuleDraftError(refusal);
+  let copied: CopiedRule;
+  try {
+    copied = copyLibraryRuleToLibrary(database, ruleCatalog, checkout.repositoryKey, sourceId, draft.rule);
+  } catch (error) {
+    throw libraryWriteError(error, sourceId);
+  }
+  const ruleId = copied.rule.document.rule.id;
+  const approved = isApproved(database, ruleSubject(ruleId, copied.rule.payloadHash));
+  const name = repositoryName(checkout.checkoutPath);
+  return { ruleId, repositoryName: name, folders: copied.folders, copiedFromRuleId: sourceId, copyOfYours: true, setUp: false, mode: draft.rule.mode, approved };
+}
+
+/**
+ * Why `rules add` refuses your copy of a rule, By Rerail or yours, made for another repository, where the original runs
+ * and the copy is not added: both would steer, and approving the copy, approved already, would not turn the original
+ * off. `rules test` reports the same. `ruleCatalog` is read only for a copy whose original is not added as your rule.
  */
 function copyFromElsewhereRefusal(database: RerailDatabase, checkout: CheckoutContext, id: string, ruleCatalog: () => RuleCatalog): string | undefined {
   const copiedFrom = getLibraryRule(database, id)?.copiedFromRuleId ?? null;
   if (copiedFrom === null || libraryRuleFolders(database, checkout.repositoryKey, id).length > 0) return undefined;
-  if (rerailRuleFolders(database, ruleCatalog(), checkout.repositoryKey, copiedFrom).length === 0) return undefined;
+  const originalRuns = libraryRuleFolders(database, checkout.repositoryKey, copiedFrom).length > 0
+    || rerailRuleFolders(database, ruleCatalog(), checkout.repositoryKey, copiedFrom).length > 0;
+  if (!originalRuns) return undefined;
   const name = repositoryName(checkout.checkoutPath);
   return `${id} is your copy of ${copiedFrom} for another repository, and ${copiedFrom} runs in ${name}, so both would steer here. To change ${copiedFrom} here: rerail rules show ${copiedFrom}`;
 }
@@ -810,9 +881,15 @@ function attachLibraryRule(database: RerailDatabase, checkout: CheckoutContext, 
 /**
  * Store the draft's rule in your library, through the same validation as `library_rules_upsert`, and add it to
  * `repo`'s repository ({@link attachLibraryRule}). A By Rerail rule is never replaced: a draft with its id is stored
- * as your copy ({@link addRerailRuleCopy}).
+ * as your copy ({@link addRerailRuleCopy}). Nor, in a coding agent's session, is your approved rule: an edit of it is
+ * stored as a copy that waits for a person's approval ({@link addOwnRuleCopy}).
  */
-export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defaultRerailDatabasePath()): AddedRule {
+export function addRuleDraft(
+  draft: RuleDraft,
+  repo: string,
+  databasePath = defaultRerailDatabasePath(),
+  session: AgentSession | undefined = agentSession(),
+): AddedRule {
   const untitled = untitledRuleRefusal(draft.rule);
   if (untitled !== undefined) throw new RuleDraftError(untitled);
   const database = openRerailDatabase(databasePath);
@@ -825,6 +902,7 @@ export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defa
     }
     const refusal = copyFromElsewhereRefusal(database, checkout, draft.rule.id, () => ruleCatalog);
     if (refusal !== undefined) throw new RuleDraftError(refusal);
+    if (editsApprovedRule(database, draft, session)) return addOwnRuleCopy(database, ruleCatalog, checkout, draft);
     try {
       upsertLibraryRule(database, ruleCatalog, draft.rule, draft.kind);
     } catch (error) {
@@ -833,7 +911,7 @@ export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defa
     const { folders, setUp } = attachLibraryRule(database, checkout, draft);
     const stored = getLibraryRule(database, draft.rule.id);
     const approved = stored !== undefined && isApproved(database, ruleSubject(draft.rule.id, stored.payloadHash));
-    return { ruleId: draft.rule.id, repositoryName: repositoryName(checkout.checkoutPath), folders, copiedFromRuleId: null, setUp, mode: draft.rule.mode, approved };
+    return { ruleId: draft.rule.id, repositoryName: repositoryName(checkout.checkoutPath), folders, copiedFromRuleId: null, copyOfYours: false, setUp, mode: draft.rule.mode, approved };
   } finally {
     database.$client.close();
   }
@@ -851,8 +929,11 @@ interface ShownDraft {
   readonly notes: readonly string[];
 }
 
-/** Where saving your rule `own` changes it, seen from the repository `name` (`key`, undefined when not recorded). */
-function ownRuleNote(database: RerailDatabase, own: LibraryRule, name: string, key: string | undefined): string {
+/**
+ * Where saving your rule `own` changes it, seen from the repository `name` (`key`, undefined when not recorded). Where
+ * an edit is saved as a copy (`copied`, which {@link keptNote} says), only where it is added.
+ */
+function ownRuleNote(database: RerailDatabase, own: LibraryRule, name: string, key: string | undefined, copied: boolean): string {
   const id = own.document.rule.id;
   const using = libraryRuleRepositories(database, id);
   const elsewhere = using.filter(repository => repository.repositoryKey !== key).map(repository => repository.name);
@@ -862,6 +943,7 @@ function ownRuleNote(database: RerailDatabase, own: LibraryRule, name: string, k
       ? `${id} is yours and not added to ${name}: rules add adds it to the whole repository, or to the draft's folder.`
       : `${id} is your copy of ${original} for another repository, and is not added to ${name}. To change ${original} here: rerail rules show ${original}`;
   }
+  if (copied) return `${id} is yours, added to ${[name, ...elsewhere].join(", ")}.`;
   const also = elsewhere.length === 0 ? "" : ` It is also added to ${elsewhere.join(", ")}, where saving changes it too.`;
   return `${id} is yours, added to ${name}; saving changes it where it is.${also}`;
 }
@@ -931,17 +1013,33 @@ function untitledNotes(document: JsonRuleDocument): string[] {
 }
 
 /**
+ * What `rules add` does in a coding agent's session with an edit of your approved rule `own`: saves it as a copy, or,
+ * where it would refuse one ({@link ownCopyRefusal}: a copy is already added here, or the rule is not), why. Nothing
+ * for your copy made for another repository, which `rules add` refuses first ({@link copyFromElsewhereRefusal}) and
+ * {@link ownRuleNote} names already.
+ */
+function keptNote(database: RerailDatabase, checkout: CheckoutContext | undefined, own: LibraryRule, session: AgentSession): string | undefined {
+  const id = own.document.rule.id;
+  if (checkout !== undefined && copyFromElsewhereRefusal(database, checkout, id, listedRuleCatalog) !== undefined) return undefined;
+  const refusal = checkout === undefined ? undefined : ownCopyRefusal(database, checkout, id, undefined);
+  return refusal ?? `${id} is approved, so in ${session.agent}'s session rules add saves an edit of it as a copy, which runs in Log beside ${id} until a person approves it on its page in the dashboard.`;
+}
+
+/**
  * The rule `id` as a draft for `rules test` and `rules add`: one of yours, or a By Rerail rule as it runs in `repo`'s
  * repository, which `rules add` stores as your copy. Reading records nothing.
  */
-export function showRule(id: string, repo: string, databasePath = defaultRerailDatabasePath()): ShownRule {
+export function showRule(id: string, repo: string, databasePath = defaultRerailDatabasePath(), session: AgentSession | undefined = agentSession()): ShownRule {
   const database = openRerailDatabase(databasePath);
   try {
     const own = getLibraryRule(database, id);
     if (own !== undefined) {
       const checkout = lookupCheckout(database, repo);
-      const note = ownRuleNote(database, own, repositoryName(checkout?.checkoutPath ?? repo), checkout?.repositoryKey);
-      return { draft: own.document, notes: [note, ...untitledNotes(own.document)] };
+      const kept = session !== undefined && isApproved(database, ruleSubject(id, own.payloadHash))
+        ? [keptNote(database, checkout, own, session)].filter(line => line !== undefined)
+        : [];
+      const note = ownRuleNote(database, own, repositoryName(checkout?.checkoutPath ?? repo), checkout?.repositoryKey, kept.length > 0);
+      return { draft: own.document, notes: [note, ...kept, ...untitledNotes(own.document)] };
     }
     if (libraryHoldsId(database, id)) throw new RuleDraftError(`your rule ${id} could not be read; the dashboard shows why`);
     const ruleCatalog = loadRuleCatalog();
@@ -1147,36 +1245,56 @@ function runShow(id: string, repo: string, stdout: CommandOutput, stderr: Comman
   return 0;
 }
 
-function addedLines(added: AddedRule): string[] {
+/** The first line `rules add` prints: what it added, or the copy it saved and why. */
+function addedLine(added: AddedRule): string {
   const source = added.copiedFromRuleId;
-  const lines = [source === null
-    ? `● Added ${added.ruleId} to ${placesText(added)}.`
-    : `● Saved your copy of ${source} as ${added.ruleId}, added to ${placesText(added)} where ${source} is.`];
+  if (source === null) return `● Added ${added.ruleId} to ${placesText(added)}.`;
+  return added.copyOfYours
+    ? `● ${source} is approved, so this edit is saved as ${added.ruleId}, added to ${placesText(added)} where ${source} is.`
+    : `● Saved your copy of ${source} as ${added.ruleId}, added to ${placesText(added)} where ${source} is.`;
+}
+
+/**
+ * What `rules add` prints. Where it waits for approval, the line says how a person approves it: in a coding agent's
+ * session on its page in the dashboard, since `rules approve` is refused there, else with `rules approve`.
+ */
+function addedLines(added: AddedRule, session: AgentSession | undefined): string[] {
+  const source = added.copiedFromRuleId;
+  const lines = [addedLine(added)];
   if (added.setUp) lines.push(`  ${added.repositoryName} was not set up, so it is now set up with this rule.`);
   if (added.mode === "block") lines.push(`  ${added.ruleId} is on Block. ${BLOCK_STEERS_NOTE}`);
   if (added.approved) return lines;
-  lines.push(source === null
-    ? `  It runs in Log until a person approves it: rerail rules approve ${added.ruleId}`
-    : `  It runs in Log beside ${source} until a person approves it, which turns ${source} off there: rerail rules approve ${added.ruleId}`);
+  if (session !== undefined) {
+    lines.push(source === null
+      ? "  It runs in Log until a person approves it on its page in the dashboard."
+      : `  It runs in Log beside ${source} until a person approves it on its page in the dashboard, which turns ${source} off there.`);
+  } else {
+    lines.push(source === null
+      ? `  It runs in Log until a person approves it: rerail rules approve ${added.ruleId}`
+      : `  It runs in Log beside ${source} until a person approves it, which turns ${source} off there: rerail rules approve ${added.ruleId}`);
+  }
   return lines;
 }
 
 async function runAdd(file: string, repo: string, stdout: CommandOutput, stderr: CommandOutput): Promise<number> {
   let added: AddedRule;
+  const session = agentSession();
   try {
-    added = addRuleDraft(refuseExperimentsOff(readRuleDraft(file)), repo);
+    added = addRuleDraft(refuseExperimentsOff(readRuleDraft(file)), repo, defaultRerailDatabasePath(), session);
   } catch (error) {
     if (!(error instanceof RuleDraftError)) throw error;
     stderr.write(`● The rule was not added: ${error.message}\n`);
     return 1;
   }
-  for (const line of addedLines(added)) stdout.write(`${line}\n`);
+  for (const line of addedLines(added, session)) stdout.write(`${line}\n`);
   // The same dashboard the footer and steers link to, scoped to this checkout's repository when the daemon knows it.
   const dashboard = await readRulesDashboard({ cwd: repo });
   if (dashboard.url !== null) {
     const link = new URL(dashboard.url);
     link.hash = `rule/${encodeURIComponent(added.ruleId)}`;
     stdout.write(`  ${link.href}\n`);
+  } else if (session !== undefined && !added.approved) {
+    stdout.write("  rerail manage opens the dashboard.\n");
   }
   return 0;
 }

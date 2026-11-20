@@ -153,7 +153,7 @@ const effectiveRuleBase = {
     .describe("Epoch milliseconds the attachment that brings the rule in (its pack, or the rule itself) was added at this folder."),
   updatedAt: z.number().int().nullable().describe("Epoch milliseconds a rule created by you was last edited; null for rules by Rerail."),
   copiedFromRuleId: z.string().nullable()
-    .describe("The By Rerail rule a rule created by you is an edited copy of; approving the copy turns that rule off where the copy is added. Null for any other rule."),
+    .describe("The rule a rule created by you is an edited copy of (a By Rerail rule, or your approved rule a coding agent edited); approving the copy turns that rule off where the copy is added. Null for any other rule."),
   approval: z.object({ subject: approvalSubjectSchema, approved: z.boolean() }).strict().optional()
     .describe("Present for a rule Rerail did not publish (created by you, in a worktree's .rerail/rules, or in a third party's or a folder's pack): until a person approves its content it runs in Log."),
 };
@@ -233,7 +233,7 @@ export const attachmentRecordSchema = z.object({
 const libraryRuleBase = {
   revision: z.number().int().positive(),
   payloadHash: z.string(),
-  copiedFromRuleId: z.string().nullable().describe("The By Rerail rule this rule is an edited copy of."),
+  copiedFromRuleId: z.string().nullable().describe("The rule this rule is an edited copy of: a By Rerail rule, or your approved rule a coding agent edited."),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 };
