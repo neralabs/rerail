@@ -537,19 +537,25 @@ pub fn compile_step(name: &str, source: &str) -> Compiled {
 
 /// `compile_step` with tier 2's shape: `Shape::Rules` makes the rules calls.
 pub fn compile_step_shaped(name: &str, source: &str, shape: crate::bitlex_masks::Shape) -> Compiled {
-    compile_step_with(name, source, shape, false)
+    compile_step_with(name, source, shape, false, Default::default())
 }
 
 /// A step compiled as a rules grammar's parser is (`kotlin_parser::compile_text`'s way, `rules`): tier 2 shaped by its
 /// rules (`Shape::Rules`), tier 1's blocks padded for the bytes before (`native_cpu_block::BACK`), the clusters by rule;
 /// else as `compile_step`.
 pub fn compile_step_as(name: &str, source: &str, rules: bool) -> Compiled {
+    compile_step_known(name, source, rules, Default::default())
+}
+
+/// `compile_step_as`, with the provers' answers known (decision 0414: a grammar's shipped answers, as
+/// `kotlin_parser::shipped_answers`): it proves only what they do not answer.
+pub fn compile_step_known(name: &str, source: &str, rules: bool, known: crate::bitlex_prove::Known) -> Compiled {
     let shape = if rules { crate::bitlex_masks::Shape::Rules } else { crate::bitlex_masks::Shape::Auto };
-    compile_step_with(name, source, shape, rules)
+    compile_step_with(name, source, shape, rules, known)
 }
 
 /// A step in tier 2's `shape`; `by_rules`: tier 1 padded for the bytes before and the clusters by rule.
-fn compile_step_with(name: &str, source: &str, shape: crate::bitlex_masks::Shape, by_rules: bool) -> Compiled {
+fn compile_step_with(name: &str, source: &str, shape: crate::bitlex_masks::Shape, by_rules: bool, known: crate::bitlex_prove::Known) -> Compiled {
     // `RERAIL_STEP_TIMES`: each phase's time.
     let times = std::env::var_os("RERAIL_STEP_TIMES").is_some();
     let (mut t0, mut c0) = (std::time::Instant::now(), crate::native_cpu_block::thread_cpu());
@@ -566,7 +572,7 @@ fn compile_step_with(name: &str, source: &str, shape: crate::bitlex_masks::Shape
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
         let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
-        crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
+        crate::bitlex_masks::compile_proved(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape, known).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
     };
     phase("bitlex compile");
     let text = compiled.text();

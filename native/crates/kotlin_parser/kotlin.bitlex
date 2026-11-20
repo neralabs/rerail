@@ -1,13 +1,21 @@
-# Kotlin, step 36: no back fills (decision 0416).
+# Kotlin.
+#
+# Reads headers, comments, declarations, types, statements, expressions, strings with
+# templates, raw strings with templates, characters, backtick names, callable references,
+# trailing commas, lambdas with destructured parameters, annotations, numbers, a class's
+# members, `when`, `;`, `try`, `as`, receivers, generic functions, delegation, object literals,
+# secondary constructors, destructuring, type arguments, enum classes, jumps to labels, `as?`,
+# reified type parameters, spread arguments, named function type parameters, parenthesized
+# types, type aliases, collection literals, strings in templates' code, a class's delegate
+# before its body, variance, `get` and `set` as names and a local delegate with dots, function
+# types with a receiver or `suspend`, annotated `if` and `when`, a `when` entry's trailing comma,
+# swallowed block comments, soft keywords after a template's `$`, `constructor` after modifiers
+# at a line's start, modifier words after a `.`, and `constructor` and `by` as names.
 #
 # The grammar asks what comes next where the lean parser does: at the token. A mark that the
 # token after its gap decides says so (`before`, `unless before`), as the scanner's semicolon
 # asks of the next token (`Lexer::asi`); the next tokens are a token mark's run, as the parser
-# peeks. No mask reads the bytes after it.
-#
-# Step 35: templates in raw strings.
-#
-#   val x = """a ${b} "c" $d"""
+# peeks. No mask reads the bytes after it (no back fills, decision 0416).
 #
 # A raw string closes at its `"""` or at a template's `$` (`or t_dollar`: its closer is three
 # bytes, the `$` one). After the template's `}`, the string goes on as the kind of string the
@@ -16,31 +24,15 @@
 # kinds with no `after`, is one it names. A raw tail is read as the raw string's bytes are:
 # a run of them that reaches a quote first is a part of its own.
 #
-# Refused: a string, a character or a backtick name in a raw string's template's code (its `}`
-# would open a tail), and a raw string in a template's code.
-#
-# Steps 1 to 34 read headers, comments, declarations, types, statements, expressions, strings
-# with templates, raw strings, characters, backtick names, callable references, trailing
-# commas, lambdas with destructured parameters, annotations, numbers, a class's members, `when`,
-# `;`, `try`, `as`, receivers, generic functions, delegation, object literals, secondary
-# constructors, destructuring, type arguments, enum classes, jumps to labels, `as?`, reified
-# type parameters, spread arguments, named function type parameters, parenthesized types, type
-# aliases, collection literals, strings in templates' code, a class's delegate before its body,
-# variance, `get` and `set` as names and a local delegate with dots, function types with a receiver
-# or `suspend`, annotated `if` and `when`, a `when` entry's trailing comma, swallowed block comments,
-# soft keywords after a template's `$`, `constructor` after
-# modifiers at a line's start, modifier words after a `.`, and
-# `constructor` and `by` as names (`01-headers.bitlex` to `34-soft-names.bitlex`).
-#
 # A template's code ends at the first `}` on its line, found from the bytes before the
 # regions. A string or a character in the code is a region of its own, as anywhere in code.
 # Where that `}` is inside one (`"${f("}")}"`), it opens no tail: refused.
 #
 # The reference is the lean parser (`rerail_kotlin_lean`), whose tapes are tree-sitter-kotlin's
-# (decision 0305). What this step does not read is refused, and goes to the lean parser: a
-# template's code holding a brace, a template or a line break; `fun interface`, `suspend`
-# function types, an annotated expression, a function type's receiver, labels' definitions,
-# and more.
+# (decision 0305). What the grammar does not read is refused, and goes to the lean parser: a
+# template's code holding a brace, a template or a line break; a string, a character or a
+# backtick name in a raw string's template's code, a raw string in a template's code;
+# `fun interface`, labels' definitions, and more.
 
 lexer kotlin
 

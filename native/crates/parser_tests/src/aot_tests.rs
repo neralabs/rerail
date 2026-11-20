@@ -1,11 +1,11 @@
 //! Tier 2's Rust (`rerail_compiler::rust_stream`, the ahead-of-time backend) against the JIT on every step of two
-//! Bitlex ladders, JSON's (`compiler/bitlex_ladder`) and `.rerail`'s (`rr_syntax/bitlex_ladder`), and a probe whose words
-//! edit a node the writer's ops already have (`RETAGGED_ROOT`), and Kotlin's (`kotlin_parser/bitlex_ladder`). Each
-//! step's Rust, in
-//! format 15 and in format 16 (decision 0434), is built by rustc with the rest of its ladder into one library, each
+//! Bitlex ladders, JSON's (`compiler/bitlex_ladder`) and `.rr`'s (`rr_syntax/bitlex_ladder`), on a probe whose words
+//! edit a node the writer's ops already have (`RETAGGED_ROOT`), and on Kotlin's grammar (`kotlin_parser/kotlin.bitlex`).
+//! Each step's Rust, in format 15 and in format 16 (decision 0434), is built by rustc with the rest of its ladder into one library, each
 //! step a module, run on the JIT's harness, and its tape compared with the JIT's byte for byte.
 
-use rerail_compiler::ladder::{Compiled, Lang, compile_step_as, documents_with, seed};
+use rerail_compiler::bitlex_prove::Known;
+use rerail_compiler::ladder::{Compiled, Lang, compile_step_known, documents_with, seed};
 use rerail_compiler::native_cpu_stream::Entry;
 use rerail_compiler::rust_stream;
 
@@ -19,19 +19,21 @@ struct Ladder {
     samples: &'static [(&'static str, &'static [&'static str])],
     /// Its steps compiled as a rules grammar's parser is (`ladder::compile_step_as`): Kotlin's, as `kotlin_parser`'s.
     rules: bool,
+    /// The provers' answers its steps are given (decision 0414): Kotlin's shipped ones (`kotlin.proofs.zst`).
+    known: fn() -> Known,
 }
 
-/// Kotlin's comments (`kotlin_parser/bitlex_ladder`), with the edge cases of each.
+/// Kotlin's comments (`kotlin_parser/kotlin.bitlex`), with the edge cases of each.
 const KOTLIN_SAMPLES: &[(&str, &[&str])] = &[
     ("line_comment", &["// c", "//", "// a, (1) é\r", "// /* x", "// \"x"]),
     ("multiline_comment", &["/* c */", "/**/", "/* a\n b */", "/** x */", "/* // \" */"]),
 ];
 
 const LADDERS: [Ladder; 4] = [
-    Ladder { name: "json", steps: || steps(concat!(env!("CARGO_MANIFEST_DIR"), "/../compiler/bitlex_ladder")), alphabet: b"<>();=#^ \nav9~,eE-{}[]\":/*", fixed: json_fixed, samples: &[], rules: false },
-    Ladder { name: "rr", steps: || steps(concat!(env!("CARGO_MANIFEST_DIR"), "/../rr_syntax/bitlex_ladder")), alphabet: b"().,:-=<>!\"`/*#_ \naZ9~;@{}\\", fixed: Vec::new, samples: &[], rules: false },
-    Ladder { name: "kotlin", steps: || steps(concat!(env!("CARGO_MANIFEST_DIR"), "/../kotlin_parser/bitlex_ladder")), alphabet: b"(){}[].,:;=<>!?+-*/\"'`$@ \naxZ09_", fixed: Vec::new, samples: KOTLIN_SAMPLES, rules: true },
-    Ladder { name: "probe", steps: || vec![("retagged-root".to_owned(), RETAGGED_ROOT.to_owned()), ("wrapped-twice".to_owned(), WRAPPED_TWICE.to_owned()), ("folded-chain".to_owned(), FOLDED_CHAIN.to_owned())], alphabet: b"();!? \nvraifus", fixed: probe_fixed, samples: &[], rules: false },
+    Ladder { name: "json", steps: || steps(concat!(env!("CARGO_MANIFEST_DIR"), "/../compiler/bitlex_ladder")), alphabet: b"<>();=#^ \nav9~,eE-{}[]\":/*", fixed: json_fixed, samples: &[], rules: false, known: Known::default },
+    Ladder { name: "rr", steps: || steps(concat!(env!("CARGO_MANIFEST_DIR"), "/../rr_syntax/bitlex_ladder")), alphabet: b"().,:-=<>!\"`/*#_ \naZ9~;@{}\\", fixed: Vec::new, samples: &[], rules: false, known: Known::default },
+    Ladder { name: "kotlin", steps: || vec![("kotlin.bitlex".to_owned(), include_str!("../../kotlin_parser/kotlin.bitlex").to_owned())], alphabet: b"(){}[].,:;=<>!?+-*/\"'`$@ \naxZ09_", fixed: Vec::new, samples: KOTLIN_SAMPLES, rules: true, known: rerail_kotlin_parser::shipped_answers },
+    Ladder { name: "probe", steps: || vec![("retagged-root".to_owned(), RETAGGED_ROOT.to_owned()), ("wrapped-twice".to_owned(), WRAPPED_TWICE.to_owned()), ("folded-chain".to_owned(), FOLDED_CHAIN.to_owned())], alphabet: b"();!? \nvraifus", fixed: probe_fixed, samples: &[], rules: false, known: Known::default },
 ];
 
 /// A grammar whose words edit nodes the writer's ops already have: a `!` after the top level's lists retags the
@@ -262,7 +264,7 @@ fn ladder_steps_rust_tapes_are_the_jits() {
         for (name, source) in (ladder.steps)().into_iter().filter(|(n, _)| pick.as_deref().is_none_or(|p| p.split(',').filter(|w| !w.is_empty()).any(|w| n.contains(w)))) {
             steps += 1;
             let t0 = std::time::Instant::now();
-            let c = compile_step_as(&name, &source, ladder.rules);
+            let c = compile_step_known(&name, &source, ladder.rules, (ladder.known)());
             eprintln!("{} {name}: compiled in {:?}", ladder.name, t0.elapsed());
             let (widths, tag) = c.parser.tier2.widths_tag();
             let (w16, t16) = c.parser.sixteen().expect("a format 16 tier 2").widths_tag();

@@ -3158,8 +3158,8 @@ dependencies = [
  "parking_lot",
  "rayon",
  "rerail-blocks",
- "rerail-device",
  "rerail-context",
+ "rerail-device",
  "rerail-forest",
  "rerail-gpu",
  "rerail-ukl",
@@ -3175,11 +3175,11 @@ dependencies = [
  "libc",
  "metal",
  "rayon",
- "windows-sys 0.61.2",
- "rerail-device",
- "rerail-gpu",
  "rerail-blocks",
  "rerail-context",
+ "rerail-device",
+ "rerail-gpu",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3566,13 +3566,14 @@ name = "rerail-forest"
 version = "0.1.0"
 dependencies = [
  "block",
+ "cc",
  "libc",
  "metal",
  "objc",
  "rayon",
+ "rerail-context",
  "rerail-gpu",
  "rerail-ukl",
- "rerail-context",
  "sha2 0.10.9",
 ]
 
@@ -3659,6 +3660,7 @@ dependencies = [
  "rerail-kotlin-lean",
  "rerail-kotlin-parser",
  "rerail-tape-format",
+ "zstd",
 ]
 
 [[package]]
@@ -4279,8 +4281,8 @@ dependencies = [
  "rerail-blocks",
  "rerail-clif",
  "rerail-compiler",
- "rerail-device",
  "rerail-context",
+ "rerail-device",
  "rerail-metal",
  "rerail-prof",
  "rerail-tape-format",
@@ -4297,6 +4299,7 @@ dependencies = [
  "libc",
  "rerail-compiler",
  "rerail-context",
+ "rerail-kotlin-parser",
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-rr-syntax",
@@ -4733,12 +4736,11 @@ version = "0.1.0"
 dependencies = [
  "lz4-sys",
  "memchr",
- "metal",
  "rerail-clif",
  "rerail-gpu",
  "rerail-simd8",
- "sha2 0.11.1",
  "rerail-tape-format",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -4820,6 +4822,7 @@ version = "0.1.0"
 dependencies = [
  "rerail-c-lean",
  "rerail-c-pp",
+ "rerail-ukl",
 ]
 
 [[package]]

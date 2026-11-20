@@ -7859,6 +7859,19 @@ on an M3 or M5:
   - 2026-11-20: it passes on Linux (131 s on spark2), so it was slow, never red. It is no longer ignored. It is in
     nextest's slow tier (`.config/nextest.toml`): the gate runs it, with 8 minutes allowed, and the quick tier leaves
     it out. Still open: the compile's time, three compiles of 44 s on spark2.
+  - 2026-11-20, roll-up 20 (the user: "kotlin tests should have a few second budget"): the crate's quick tier took
+    378 s on a Linux DGX Spark, for tests whose own parses take microseconds. Each test's process compiled the grammar
+    cold: 41.3 s, 40.5 s of it the provers (3,452 answers). With those answers known, the compile is 1.5 s and makes
+    the same program (`compile_time`). The answers are now shipped beside the grammar, as 0414 and Q234 ask for a
+    seed: `kotlin_parser/kotlin.proofs.zst` (14 MB of keys, 177 KB at zstd 19), given to `compiled()`, to
+    `kotlin_aot`'s build script and test, and to the AOT test's Kotlin step (`ladder::compile_step_known`).
+    - The quick tier: 44 tests in 14.1 s. The AOT test's Kotlin step: 1.6 s, not about 80 s.
+    - `the_shipped_answers_answer_the_grammar` (1.6 s) fails when an edit asks a question they lack;
+      `RERAIL_BLESS_KOTLIN_ANSWERS=1` writes them again.
+    - The cold compiles (`a_cold_compile_makes_the_shipped_answers_program`, 45 s, and `walk_lemmas_keep_the_tapes`,
+      53 s) are the slow tier's.
+    - Still open: about 1.5 s of warm compile in each test's process (0.8 s the Bitlex compiler, the rest Cranelift),
+      and the cold compile's 40 s of proofs for an edited grammar's new questions.
 
 ### Q349. Cranelift refuses corpus program `0565-mix-seed_205` by 0423's check
 
@@ -8202,3 +8215,35 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   - `rule_files_pass_their_own_tests` passes in 161 s. Its 44 tests take 3.6 s each, up to 8.4 s for a Django
     pack case, and each test is a few lines. The cost is each program's translation with the calls library, not
     its run.
+
+### Q381. Roll-up 20 (Parser-generators onto Pulling-it-all-together): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): Parser-generators at 916eee80e5, one commit past roll-up 13's 91405fc095: Kotlin's
+  ladder removed (the user: "stop keeping them at all"). Its decision 0479 is 0484 here.
+- **Taken from theirs**:
+  - The grammar is `kotlin_parser/kotlin.bitlex`, with theirs' header: what it reads, and what it refuses.
+  - The nine per-step refusal tests are one, `what_the_grammar_does_not_read_is_refused`.
+  - The step test split in two: one compile against another, and the walk lemmas'.
+  - The AOT test takes the grammar as Kotlin's one step.
+  - 0484's section on the removal, and its README row.
+- **Kept from ours**:
+  - The grammar's body is ours' step 36 (no back fills, 0416); theirs changed only comments. Its paragraph is in
+    the header.
+  - The refusal cases: the six that ours reads now (0429's asked comments, 0451's lost comments, the nested type
+    arguments of `receiver_end`) are dropped from theirs' test; ours' `try`/`catch` case and constructor test stay.
+  - Ours' probes and tools (`tier1_cones`, `token_level_probe`, `reference_probe`, `lazy_probe`) and
+    `asked_comments_are_the_lean_parsers`.
+  - The walk lemmas' test in nextest's slow tier, as Q371 put the step test; theirs ignored it.
+- **Made to fit**: `kotlin_aot`'s build script reruns on the grammar file; 0422 notes that Kotlin keeps no ladder.
+- **Found and fixed on the way**:
+  - Kotlin's tests took 378 s, each process compiling the grammar cold; with shipped prover answers they take
+    14.1 s (Q371).
+  - `Cargo.lock` was behind the manifests already merged (`cc`, `rerail-context`, `rerail-ukl`, `metal`): it is
+    cargo's own now.
+  - Five clippy findings in `kotlin_parser`.
+- **Checked** (a Linux DGX Spark; clippy on an M1 Max):
+  - `rerail-kotlin-parser`: 44 in 14.1 s, and its two cold tests.
+  - `rerail-parser-tests`: 85, and the AOT test's Kotlin step.
+  - `rerail-compiler`: 143.
+  - `rerail-kotlin-aot`: builds with `generated`, in 12.7 s.
+  - Clippy is clean on all four, and the lock is unchanged by cargo.
