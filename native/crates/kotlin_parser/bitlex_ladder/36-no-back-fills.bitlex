@@ -451,10 +451,6 @@ mark apart      = ws & code | o_line | o_block
 # where the declaration's name may come: the rule takes it there, and no level ends on it.
 mark recv       = rstart & decl_run, before simple_identifier | backtick_name (simple_identifier | backtick_name | "in" | "." | "<" | ">" | "," | "?" | "*")* "." simple_identifier | backtick_name ~("." | "<" | ">" | "?." | ","), unless before simple_identifier | backtick_name "by"
 mark dotted     = code & dot & decl_run | del_brace, before "." simple_identifier | backtick_name ~("." | "<" | ">" | "?." | ","), before "{"
-# A `!` that starts a line before `in` or `is`: a `when` entry's negated test. `named`'s token
-# marks (below) are its other cases.
-mask bang_test  = code & text("!") & prev(fill(lf & code, solid)) & next(text("in") & ~next(w, 2) | text("is") & ~next(w, 2))
-mark named      = bang_test
 # A `<` that opens type arguments in an expression (the lean parser's `type_args_end`): the tokens
 # from it are a type's (names, `, . ? * @ : -> ( ) [ ] < >`) up to a `>` that `(`, `{`, `.`, `?.`
 # or `::` follows. It touches the name before it, as a comparison's `<` seldom does (the lean
@@ -529,6 +525,8 @@ mark cref       = tokens simple_identifier "::"
 # name and `:`, a function type's named parameter (`(url: String) -> Unit`).
 mark named      = tokens simple_identifier "=" | "+=" | "-=" | "*=" | "/=" | "%="
 mark named      = tokens simple_identifier ":"
+# A `!` after a line break before `in` or `is`: a `when` entry's negated test.
+mark named      = tokens "!" with semi "in" | "is"
 # An enum class's `enum`, a soft word elsewhere.
 mark enum_class = tokens "enum" "class"
 # A property's accessor: its `get` or `set` after a line break, or on the line of a visibility

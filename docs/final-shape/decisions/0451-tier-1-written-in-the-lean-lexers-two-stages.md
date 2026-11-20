@@ -345,3 +345,10 @@ Cranelift.
 unchanged: 448 the same, 43 refused, 0 differ. The block program went from 1,559 operations to
 1,507, and the marks' cone in stage 1 from 512 values to 398. `line_mod`, `acc_vis` and
 `acc_word` are gone.
+
+## Item 3, `named`'s `!`: a token mark (2026-11-19)
+
+`bang_test` was a mask at every byte: a `!` first on its line before the word `in` or `is`, a
+`when` entry's negated test. It is now `named`'s third token mark, `tokens "!" with semi "in" |
+"is"`, beside its two others. The corpus is unchanged (448 the same, 0 differ). The Kotlin (52)
+and `kotlin_aot` (4) tests pass. The block program went from 1,507 operations to 1,495.
