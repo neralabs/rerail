@@ -4219,7 +4219,7 @@ fn a_warm_index_restores_a_file_whose_data_is_offline_with_no_read() {
     warm_index(0, "nor on the next index");
 
     git_workspace::set_attributes(&offline, FILE_ATTRIBUTE_NORMAL);
-    // The change time the clearing gave, as a later index sees it: more than a second old.
+    // The change time the clearing gave, as a later index sees it: one the clock has left.
     let hour = std::time::Duration::from_secs(3_600);
     git_workspace::set_change_time(&offline, written_long_ago() + hour);
     warm_index(1, "the file back on disk is read once");
