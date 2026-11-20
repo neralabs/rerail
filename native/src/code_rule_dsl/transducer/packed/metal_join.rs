@@ -233,9 +233,15 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) r_view: u32,
     /// 1 when the probed view is `child` probed by its parent, off the tape (`DevIndex::by_parent`).
     pub(in crate::code_rule_dsl) v_parent: u32,
+    /// A `has` axis probed off the tape (decision 0353 step 5, `DevRel::has`): its set's kind atoms, ascending (their
+    /// GPU address), how it is probed (`DevIndex::has`: 1 by its node, a climb; 2 by its ancestor, the subtree; 0:
+    /// not), and the atoms' count.
+    pub(in crate::code_rule_dsl) v_set: u64,
+    pub(in crate::code_rule_dsl) v_has: u32,
+    pub(in crate::code_rule_dsl) v_nset: u32,
 }
 
-const _: () = assert!(std::mem::size_of::<Stage>() == 2320 && std::mem::size_of::<Stage>() % 16 == 0);
+const _: () = assert!(std::mem::size_of::<Stage>() == 2336 && std::mem::size_of::<Stage>() % 16 == 0);
 
 impl Default for Stage {
     fn default() -> Self {
@@ -552,6 +558,7 @@ struct Stage {
     uint noutputs; uint ncols; uint agg[2];
     uint4 arith[8];
     device const ViewDir* v_dir; uint r_view; uint v_parent;
+    device const long* v_set; uint v_has; uint v_nset;
 };
 
 constant uint NONE = 0xffffffffu;
@@ -576,6 +583,8 @@ static inline long lane_of(long v, uint w) {
 // A value of the probed relation: row `r`'s in column `col`, read in its block through the generated reads (`r_at`,
 // decision 0325). Every relation the device reads lies in a block (step 5).
 static inline long rget(constant Stage& s, device const long* R, uint r, uint col) {
+    // A `has` walk's candidate is the node of the column not probed (`by_has`): either column reads its id.
+    if (s.v_has != 0u) return vread(1u, s.v_dir, r, 1u);
     if (s.r_view != 0u) return vread(s.r_view, s.v_dir, r, col);
     return long(clif_rel_get((device const uchar*)R, s.r_at, r, col));
 }
@@ -685,7 +694,8 @@ static inline void group_of(device const long* R, ulong at, uint index, thread c
 // The `child` view probed by its parent (decision 0353 step 4c, `Stage::v_parent`): the parent's children read off
 // the tape, its first child and each next sibling (`clif_view_child_first`, `clif_view_child_next`), with no index of
 // the view. A walk of a binding's candidates (`how`): 0 the rows [lo, hi), 1 an index group's entries [lo, hi), 2 a
-// parent's children from row lo, each step the next sibling's row (`NONE` ends it).
+// parent's children from row lo, each step the next sibling's row (`NONE` ends it), 3 a node's numbered ancestors
+// from row lo, each step the next one up (`has_up`; `NONE` ends it).
 static inline device const ViewDoc* vdoc(device const ViewDir* d, uint m) {
     return (device const ViewDoc*)(d->chunk + d->rows[m].entry);
 }
@@ -728,17 +738,76 @@ static inline uint child_next(constant Stage& s, uint r) {
     return n == NONE ? NONE : e.rows[1] + n;
 }
 
+// `has` probed off the tape (decision 0353 step 5, `Stage::v_has`), with no rows or index of its own: a candidate is
+// a node's row in the `node` view (its document's first row there and its number). Probed by its node (1), its
+// rows are the node's numbered ancestors, by a climb (`clif_view_up`), where the node is in the set; by its ancestor
+// (2), the numbered nodes of its subtree (`clif_view_end`), those in the set (`matches`). As the host's
+// `Within::containers_on` and `contained_on`.
+
+// Whether node row `q`'s kind atom is in the set (the stage's, ascending), by bisection.
+static inline bool has_member(constant Stage& s, uint q) {
+    long k = vread(1u, s.v_dir, q, 2u);
+    uint lo = 0u, hi = s.v_nset;
+    while (lo < hi) {
+        uint m = (lo + hi) / 2u;
+        if (s.v_set[m] < k) lo = m + 1u; else hi = m;
+    }
+    return lo < s.v_nset && s.v_set[lo] == k;
+}
+
+// The candidates of node `key`: its document by bisection of the directory on its key, its number, then its walk.
+static inline void by_has(constant Stage& s, long key, thread uint& lo, thread uint& hi, thread uint& how) {
+    device const ViewDir* d = s.v_dir;
+    lo = 0u; hi = 0u; how = 0u;
+    if (key < 0 || d->ndocs == 0u) return;
+    uint k = uint(ulong(key) >> 32);
+    uint a = 0u, b = d->ndocs;
+    while (b - a > 1u) {
+        uint m = (a + b) / 2u;
+        if (vdoc(d, m)->key <= k) a = m; else b = m;
+    }
+    if (vdoc(d, a)->key != k) return;
+    device const ViewRow& e = d->rows[a];
+    uint l = clif_view_number(d->chunk, e.entry, e.tape, e.view, e.lines, uint(ulong(key) & 0xfffffffful));
+    if (l == NONE) return;
+    uint first = e.rows[0];
+    if (s.v_has == 1u) {
+        if (!has_member(s, first + l)) return;
+        uint u = clif_view_up(d->chunk, e.entry, e.tape, e.view, e.lines, l);
+        if (u == NONE) return;
+        lo = first + u; hi = NONE; how = 3u;
+        return;
+    }
+    lo = first + l + 1u;
+    hi = first + clif_view_end(d->chunk, e.entry, e.tape, e.view, e.lines, l);
+}
+
+// The next numbered ancestor's row of node row `q`, or `NONE`: its document as `vread` finds it, then the climb.
+static inline uint has_up(constant Stage& s, uint q) {
+    device const ViewDir* d = s.v_dir;
+    device const ViewRow* rows = d->rows;
+    uint lo = 0u, hi = d->ndocs;
+    while (hi - lo > 1u) {
+        uint m = (lo + hi) / 2u;
+        if (rows[m].rows[0] <= q) lo = m; else hi = m;
+    }
+    device const ViewRow& e = rows[lo];
+    uint u = clif_view_up(d->chunk, e.entry, e.tape, e.view, e.lines, q - e.rows[0]);
+    return u == NONE ? NONE : e.rows[0] + u;
+}
+
 // A walk's candidate `q`: its row, and the next candidate.
 static inline uint cand_row(constant Stage& s, device const long* R, uint how, uint q) {
     return how == 1u ? group_row(s, R, q) : q;
 }
 static inline uint cand_next(constant Stage& s, uint how, uint q) {
-    return how == 2u ? child_next(s, q) : q + 1u;
+    return how == 2u ? child_next(s, q) : (how == 3u ? has_up(s, q) : q + 1u);
 }
 
 // The candidates of keys `kv` in relation R (`s`'s): its index group, a parent's children, or every row.
 static inline void probe(constant Stage& s, device const long* R, thread const long* kv, thread uint& lo, thread uint& hi, thread uint& how) {
     if (s.nkeys == 0) { lo = 0; hi = s.nr; how = 0u; return; }
+    if (s.v_has != 0u) { by_has(s, kv[0], lo, hi, how); return; }
     if (s.v_parent != 0u) { by_parent(s, kv[0], lo, hi, how); return; }
     how = 1u;
     group_of(R, s.r_at, s.r_index, kv, s.nkeys, lo, hi);
@@ -759,7 +828,12 @@ static inline bool row_live(constant Stage& s, device const long* R, uint r) {
     return s.r_dead == 0ul || clif_rel_dead((device const uchar*)R, s.r_dead, r) == 0u;
 }
 
+static inline bool has_member(constant Stage& s, uint q);
+
 static inline bool matches(constant Stage& s, device const long* R, uint r, thread const long* kv) {
+    // A `has` walk's candidates hold its key by their making (`by_has`); a descendant is a row where it is in the set.
+    // Its two columns are never one node (an ancestor is strict), so a test of them holds for no row.
+    if (s.v_has != 0u) return s.ntests == 0u && (s.v_has == 1u || has_member(s, r));
     if (!row_live(s, R, r)) return false;
     for (uint i = 0; i < s.nkeys && i < 8; i++) if (rget(s, R, r, s.key_rcol[i]) != kv[i]) return false;
     for (uint i = 0; i < s.ntests && i < 8; i++) if (rget(s, R, r, s.test_a[i]) != rget(s, R, r, s.test_b[i])) return false;
@@ -2094,6 +2168,8 @@ pub(in crate::code_rule_dsl) struct DevRel {
     /// The relation's holder, for one read where it lies in its block (`in_block`): what an index built into it keeps
     /// until its batch is done (`Building`, Q268).
     kept: Option<crate::code_rule_dsl::facts::rows::Part>,
+    /// A `has` axis read off the tape (`DevRel::has`): its set's kind atoms, ascending, two words each.
+    has: Option<Words>,
 }
 
 impl DevRel {
@@ -2114,7 +2190,7 @@ impl DevRel {
         let buffer = Held::kept(part.facts().block.gpu_buffer(device), Box::new(part.facts().clone()));
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
         let home = Some(part.facts().clone());
-        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), kept: None }.noted())
+        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), kept: None, has: None }.noted())
     }
 
     /// A view of `cols` columns and `rows` rows read in place (decision 0353 step 4d): a relation of no columns of
@@ -2126,6 +2202,25 @@ impl DevRel {
         Ok(dev)
     }
 
+    /// A `has` axis read off the tape (decision 0353 step 5): the batch's `node` view in place (`view`, of `nodes`
+    /// rows) and its set's kind atoms `kinds`, ascending. It has no rows of its own: a stage probes it by one of its
+    /// columns only (`Batch::by_has`), each binding's rows walked on the tape.
+    pub(in crate::code_rule_dsl) fn has(nodes: usize, view: crate::code_rule_dsl::facts::vtab::ViewInPlace, kinds: &[i64]) -> Result<DevRel, Error> {
+        let mut dev = DevRel::view(2, nodes, view)?;
+        let set = Words::zeroed(2 * kinds.len())?;
+        for (i, &k) in kinds.iter().enumerate() {
+            set.set(2 * i, k as u32);
+            set.set(2 * i + 1, (k >> 32) as u32);
+        }
+        dev.has = Some(set);
+        Ok(dev)
+    }
+
+    /// Whether it is a `has` axis read off the tape (`has`).
+    pub(in crate::code_rule_dsl) fn is_has(&self) -> bool {
+        self.has.is_some()
+    }
+
     /// Makes the buffers a view's reads reach by address resident in `pass` (none for a relation).
     pub(in crate::code_rule_dsl) fn resident_in(&self, pass: &Pass<'_>) {
         if let Some(v) = &self.view {
@@ -2134,6 +2229,9 @@ impl DevRel {
             if let Some(cache) = &v.cache {
                 pass.use_read_write(cache);
             }
+        }
+        if let Some(set) = &self.has {
+            pass.use_read(&[&set.buffer.buffer]);
         }
     }
 
@@ -2170,7 +2268,7 @@ impl DevRel {
 
     /// The words of `buffer`, `words` of them (not a relation).
     fn raw(buffer: Held, words: usize) -> DevRel {
-        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), kept: None }
+        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), kept: None, has: None }
     }
 
     /// A relation the device reads where it lies (decision 0325): `b`'s, of `cols` columns, bound by its block's own
@@ -2180,7 +2278,7 @@ impl DevRel {
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
         let buffer = Held::kept(b.facts.block.gpu_buffer(device), Box::new(b.clone()));
-        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), kept: b.part.clone() }.noted())
+        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), kept: b.part.clone(), has: None }.noted())
     }
 
     /// What holds its relation: its own, or the one read in its block (none for words, or a test's relation no
@@ -2373,8 +2471,9 @@ pub(in crate::code_rule_dsl) struct DevIndex {
     moved: Option<std::rc::Rc<DevRel>>,
     /// Whether this call built it (a sort made), or found it the relation's already.
     pub(in crate::code_rule_dsl) built: bool,
-    /// No index: the `child` view probed by its parent reads the parent's children off the tape (`by_parent`).
-    by_parent: bool,
+    /// No index, a walk on the tape: 1 the `child` view probed by its parent, the parent's children (`by_parent`); 2 a
+    /// `has` axis probed by its node, 3 by its ancestor (`by_has`); 0 an index.
+    walk: u32,
     /// Its block's buffer, taken once the index has its room: what its builder and its probes bind. A block with no
     /// slab of its own is bound by a wrap of its used extent (`Block::gpu_buffer`), which a buffer taken before the
     /// index was added (its relation's) does not reach.
@@ -2412,9 +2511,11 @@ fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
     // A relation reads none: a stage bound before to a view reads its new relation, not the view.
     (stage.v_dir, stage.r_view) = rel.view.as_ref().map_or((0, 0), |v| (v.dir, v.kind));
     stage.v_parent = 0;
+    (stage.v_set, stage.v_nset, stage.v_has) = rel.has.as_ref().map_or((0, 0, 0), |set| (set.buffer.buffer.gpu_address(), (set.len / 2) as u32, 0));
     if let Some(ix) = index {
         stage.r_index = ix.index;
-        stage.v_parent = u32::from(ix.by_parent);
+        stage.v_parent = u32::from(ix.walk == 1);
+        stage.v_has = ix.walk.saturating_sub(1);
     }
 }
 
@@ -2839,7 +2940,23 @@ impl Batch {
             return Ok(None);
         }
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, by_parent: true, buffer: bound(&home)? }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk: 1, buffer: bound(&home)? }))
+    }
+
+    /// A `has` axis probed by one of its columns (decision 0353 step 5): no index, each binding's rows walked on the
+    /// tape (the kernels' `by_has`), by its node `[0]` a climb, by its ancestor `[1]` the subtree. `None` for any
+    /// other relation; an error for any other probe of one, which reads it off the tape or not at all.
+    pub(in crate::code_rule_dsl) fn by_has(&self, rel: &DevRel, cols: &[usize]) -> Result<Option<DevIndex>, Error> {
+        if !rel.is_has() {
+            return Ok(None);
+        }
+        let walk = match cols {
+            [0] => 2,
+            [1] => 3,
+            _ => return Err(Error::UnsupportedFeature("a has axis probed by both its columns, or none")),
+        };
+        let home = rel.home.clone().expect("a view's relation of no columns");
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk, buffer: bound(&home)? }))
     }
 
     /// `rel`'s index on its columns `cols`, the relation's own (decision 0325 step 5): found where it was built
@@ -2864,10 +2981,10 @@ impl Batch {
         let room = {
             let _g = home.ix.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(i) = r.find_index(&key, rel.rows as u32) {
-                return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, by_parent: false, buffer: bound(&home)? });
+                return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)? });
             }
             if let Some(b) = self.building.iter().find(|b| std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.rows_n as usize == rel.rows) {
-                return Ok(DevIndex { index: b.room.index as u32, rows: rel.rows, moved: None, built: false, by_parent: false, buffer: bound(&home)? });
+                return Ok(DevIndex { index: b.room.index as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)? });
             }
             // SAFETY: under the block's index lock; the relation's rows are written (or are by this batch's work
             // before the build, which its passes order).
@@ -2927,7 +3044,7 @@ impl Batch {
         let index = room.index as u32;
         let before = Building::descriptor(std::ptr::from_ref(r));
         self.building.push(Building { home, rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before });
-        Ok(DevIndex { index, rows: n, moved: None, built: true, by_parent: false, buffer })
+        Ok(DevIndex { index, rows: n, moved: None, built: true, walk: 0, buffer })
     }
 
     /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into

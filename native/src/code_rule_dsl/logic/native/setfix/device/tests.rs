@@ -1228,6 +1228,93 @@
     /// doubled: rr_token_req's tables were 730,304 rows for 7,453 made, and refused past the device's budget. The
     /// growth a stage was seen to have still sizes it first, a scan holds its relation's rows at most, and a rule the
     /// planner did not price keeps doubling.
+    /// Decision 0353 step 5: a `has` axis is read off the tape by the device, not uploaded. Probed by its node, a
+    /// stage climbs the node's numbered ancestors where the node is in the set; by its ancestor, it reads the
+    /// ancestor's subtree, the nodes in the set. The rows are the CPU's, and nothing of the axis is uploaded; read by
+    /// neither column alone (whole), its rows are uploaded as before.
+    #[test]
+    fn a_has_axis_on_the_device_is_walked_on_the_tape() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::nearest::Binding;
+        use crate::code_rule_dsl::facts::vtab::Source as _;
+        use crate::code_rule_dsl::facts::vtab::syntax::within::{Axis, Within};
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
+        use crate::code_rule_dsl::model::FileInput;
+        use std::sync::Arc;
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        crate::test_languages();
+        let texts = ["import os\nx = f(1, y=[2, g(3)])\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "", "@d\ndef g():\n    try:\n        h(1)\n    except E as e:\n        raise\n"];
+        let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
+            let path = format!("d{at}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key: (7 + 3 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }
+        }).collect();
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let content = crate::content_store::ContentStore::open(&std::env::temp_dir().join(format!("rerail-has-walk-{}-{nonce}.sqlite", std::process::id()))).unwrap();
+        let all = sources(&content, docs).unwrap();
+        let node = &all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).unwrap().1;
+        let batch = node.python_batch().expect("the batch");
+        let mut kinds: Vec<i64> = (0..node.len()).map(|r| node.value(r, 2)).collect();
+        kinds.sort_unstable();
+        kinds.dedup();
+        let kinds: Vec<i64> = kinds.into_iter().step_by(2).collect();
+        let has: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(Within::axis(Arc::clone(&batch), Axis::Has, &kinds, Binding::Cpu));
+        assert!(has.has_walk().is_some(), "the batch's views are read in place");
+        let ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).collect();
+        // The host's rows, from its lookups: by the node (column 0) and by the ancestor (column 1).
+        let expect = |col: usize| -> Vec<(i64, i64)> {
+            let mut rows: Vec<(i64, i64)> = ids.iter().flat_map(|&id| has.lookup(col, &[id]).unwrap_or_default()).map(|r| (has.value(r, 0), has.value(r, 1))).collect();
+            rows.sort_unstable();
+            rows.dedup();
+            rows
+        };
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE q (c0);").unwrap();
+        for &id in &ids {
+            db.execute("INSERT INTO q VALUES (?1)", [id]).unwrap();
+        }
+        super::super::hold_source(&db, "has_t", Arc::clone(&has), b"ii".to_vec());
+        let q = format!("t:x:{}:{}:i", hex("temp.q"), hex("c0"));
+        let h = format!("r:{}", hex("has_t"));
+        // h0(n, a) :- q(n), has(n, a): by the node. h0(n, a) :- q(a), has(n, a): by the ancestor.
+        // h0(n, a) :- has(n, a): whole, its rows uploaded (`None`).
+        for (col, rule) in [(Some(0), format!("pos {q} v0\npos {h} v0 v1\nhead v0 v1")), (Some(1), format!("pos {q} v1\npos {h} v0 v1\nhead v0 v1")), (None, format!("pos {h} v0 v1\nhead v0 v1"))] {
+            let want = expect(col.unwrap_or(0));
+            assert!(want.len() > 20, "by column {col:?}: {} rows", want.len());
+            let mut got = Vec::new();
+            for device in [false, true] {
+                db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+                let mut spec = vec!["name has_test".to_owned()];
+                if device {
+                    spec.push("device".into());
+                }
+                spec.push("rel h0 ii empty".into());
+                spec.push(format!("seed 0 {}", hex(&rule)));
+                super::super::open(&db, &spec.join("\n")).unwrap();
+                super::super::run(&db, "has_test", 0).unwrap();
+                let report = super::take_report();
+                super::super::close(&db, "has_test").unwrap();
+                if device {
+                    let r = report.as_ref().expect("a device run");
+                    assert!(r.refused.is_none(), "by column {col:?}: {r:?}");
+                    assert_eq!(r.uploads == 0, col.is_some(), "by column {col:?}: uploaded only whole: {r:?}");
+                }
+                let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+                rows.sort_unstable();
+                got.push(rows);
+            }
+            assert_eq!(got[0], want, "by column {col:?}: the CPU's rows are the host's lookups");
+            assert_eq!(got[1], want, "by column {col:?}: the device's rows are the CPU's");
+        }
+    }
+
     #[test]
     fn a_stages_table_is_sized_by_the_plans_estimate_before_it_runs() {
         use super::{EST_MARGIN, table_rows};

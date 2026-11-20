@@ -618,6 +618,52 @@ pub fn child_next(b: &mut B<'_, '_>) -> Value {
     })
 }
 
+/// `view_up(l)`: numbered node `l`'s nearest numbered strict tape ancestor, or `NO_ROW` (decision 0353 step 5: `has`
+/// probed by its node, a climb of the tape's parents, kept where the projection numbers them, as the host's
+/// `Within::containers_on`). The loop ends: each parent is above the last, and the root's is `NO_ROW`.
+pub fn up(b: &mut B<'_, '_>) -> Value {
+    let l = b.arg(0);
+    let x = b.tape_node(l);
+    let first = b.call_tape("tape_parent", &[x]);
+    let (head, test, step, found, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(done, I32);
+    b.f.ins().jump(head, &[first.into()]);
+    b.f.switch_to_block(head);
+    let p = b.f.block_params(head)[0];
+    let none = b.f.ins().icmp_imm(IntCC::Equal, p, i64::from(NO_ROW));
+    let no = b.c32(i64::from(NO_ROW));
+    b.f.ins().brif(none, done, &[no.into()], test, &[]);
+    b.f.switch_to_block(test);
+    let numbering = b.follow(b.tape, at::NUMBERING);
+    let node = b.c32(0);
+    let is = b.call_at("num_is", numbering, &[node, p]);
+    let numbered = b.f.ins().icmp_imm(IntCC::NotEqual, is, 0);
+    b.f.ins().brif(numbered, found, &[], step, &[]);
+    b.f.switch_to_block(found);
+    let numbering = b.follow(b.tape, at::NUMBERING);
+    let node = b.c32(0);
+    let u = b.call_at("num_rank", numbering, &[node, p]);
+    b.f.ins().jump(done, &[u.into()]);
+    b.f.switch_to_block(step);
+    let next = b.call_tape("tape_parent", &[p]);
+    b.f.ins().jump(head, &[next.into()]);
+    b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
+}
+
+/// `view_end(l)`: the number past numbered node `l`'s numbered descendants, which are `l + 1 .. view_end(l)` (the
+/// numbered nodes before its subtree's end on the tape; decision 0353 step 5: `has` probed by its ancestor, as the
+/// host's `Within::contained_on`).
+pub fn end(b: &mut B<'_, '_>) -> Value {
+    let l = b.arg(0);
+    let x = b.tape_node(l);
+    let end = b.call_tape("tape_end_of", &[x]);
+    let numbering = b.follow(b.tape, at::NUMBERING);
+    let node = b.c32(0);
+    b.call_at("num_rank", numbering, &[node, end])
+}
+
 /// `view_number(low)`: the numbered node whose id's low 32 bits are `low` (its document's: the key is the caller's
 /// to match), or `NO_ROW`: `low` itself where ids are local ids, else the numbering's inverse (`num_number_of`,
 /// a node's, not a token's).

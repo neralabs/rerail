@@ -95,6 +95,8 @@ pub struct Within {
     len: AtomicUsize,
     /// An axis's set: per dialect tag, whether each kind code is in it.
     members: FxHashMap<u8, Box<[bool]>>,
+    /// The set's kind atoms, ascending: what the device tests a node's kind against (`has_walk`).
+    kinds: Arc<[i64]>,
     /// Where the batch's solve runs.
     binding: crate::code_rule_dsl::facts::nearest::Binding,
     /// The `n` lookups the planner expects, summed over its plans (`expect_lookups`).
@@ -150,6 +152,7 @@ impl Within {
             shape: OnceLock::new(),
             len: AtomicUsize::new(0),
             members: FxHashMap::default(),
+            kinds: Arc::from(Vec::new()),
             binding: crate::code_rule_dsl::facts::nearest::Binding::Cpu,
             expected: Mutex::new(0.0),
             chosen: std::sync::atomic::AtomicBool::new(false),
@@ -303,7 +306,9 @@ impl Within {
                 (tag, table)
             })
             .collect();
-        Within { members, binding, ..Within::new(batch, Mode::Axis(axis)) }
+        let mut sorted: Vec<i64> = kinds.into_iter().collect();
+        sorted.sort_unstable();
+        Within { members, kinds: Arc::from(sorted), binding, ..Within::new(batch, Mode::Axis(axis)) }
     }
 
     /// Whether the batch's solve answers the `n` side: an axis of ancestors in the set (`has` reads every ancestor),
@@ -816,6 +821,20 @@ impl Source for Within {
     }
     fn made_on_lookup(&self) -> bool {
         true
+    }
+    /// `has`, read by the device off the tape (decision 0353 step 5): where the batch's views are read in place, its
+    /// `node` view, which a stage's walk reads a node's kind, ancestors and subtree through, and the set's atoms.
+    #[cfg(target_os = "macos")]
+    fn has_walk(&self) -> Option<crate::code_rule_dsl::facts::vtab::HasWalk> {
+        use super::device_chunk::{VIEW_NODE, read_kind, views_in_place};
+        if self.mode != Mode::Axis(Axis::Has) {
+            return None;
+        }
+        let chunk = self.batch.chunk();
+        let v = views_in_place(&self.batch, chunk)?;
+        let mut view = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir, kind: read_kind(VIEW_NODE), buffers: v.buffers.clone(), cache: v.cache.clone(), failed: 0, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
+        view.failed = view.cache_failed();
+        Some(crate::code_rule_dsl::facts::vtab::HasWalk { nodes: self.batch.nodes.last().copied().unwrap_or(0), view, kinds: Arc::clone(&self.kinds) })
     }
     /// A kind-set axis or containment read whole (the device's keyed read, decision 0277): the batch's solve
     /// (decision 0143), one pass over the nodes, chosen from here on, so its `n` lookups read the same rows. Spans

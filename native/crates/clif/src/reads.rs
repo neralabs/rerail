@@ -132,6 +132,10 @@ pub const READS: &[Read] = &[
     // LZ4's block decoder alone (`z_lz4`, which `tape_z_block` decodes with): the tape crate's `Tape16Z` decodes with
     // it, so every reader of a 16z tape has the one decoder (decision 0353 step 4b).
     Read { family: Family::Tape, name: "tape_lz4", params: &[I32, I32, I64, I64], ret: I64, hot: false, body: lz4_block },
+    // `has` probed off the tape (decision 0353 step 5): a node's numbered ancestors by a climb, its numbered
+    // descendants as a range of numbers. Last, so no other read's number moves.
+    Read { family: Family::View, name: "view_up", params: &[I32], ret: I32, hot: false, body: crate::view_reads::up },
+    Read { family: Family::View, name: "view_end", params: &[I32], ret: I32, hot: false, body: crate::view_reads::end },
 ];
 
 /// The reads the kernels' UKL leaves out: `tape_lz4` takes its destination's address, a host's (the tape crate's

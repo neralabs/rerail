@@ -368,11 +368,12 @@ fn binds(d: &mut mj::Stage, f: &rowcode::Fused, filter: bool) {
 
 /// Whether the device can read `rel` whole for an atom with `keys` bound: a source that makes its rows on lookup (an
 /// axis, `within`) is read by the CPU a key at a time, and the device's upload would make every row of it. Read
-/// whole (no keys), the CPU makes them all too, and the device takes it.
+/// whole (no keys), the CPU makes them all too, and the device takes it. A `has` axis probed by one key is read off
+/// the tape (decision 0353 step 5, `resident`): nothing is made.
 fn readable(rel: &InRel, keys: usize) -> Result<(), String> {
     match &rel.view {
         // A kind-set axis or containment is made whole by the batch's solve, and read so (decision 0277).
-        Some(v) if keys > 0 && v.src.made_on_lookup() && !v.src.complete_rows() => Err("an atom read by keys over a relation made on lookup".into()),
+        Some(v) if keys > 0 && v.src.made_on_lookup() && !v.src.complete_rows() && !(keys == 1 && rel.ndead == 0 && v.src.has_walk().is_some()) => Err("an atom read by keys over a relation made on lookup".into()),
         _ => Ok(()),
     }
 }
@@ -1331,10 +1332,13 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
         want.sort_unstable();
         want.dedup();
         let found = res.entries.iter().position(|e| e.owner.same(&owner));
+        // A `has` axis probed by one of its columns is read off the tape (decision 0353 step 5); read otherwise, its
+        // rows are uploaded, and an entry read off the tape serves no such read.
+        let walked = rel.ndead == 0 && matches!(cols.iter().map(|&c| owner_col(rel, c)).collect::<Vec<_>>()[..], [0] | [1]);
         let at = match found {
             // A source's rows can grow under it (a chunk's tape values, admitted inside its fixpoint, decision 0431 §8):
             // its entry is of the rows it had then.
-            Some(at) if want.iter().all(|c| res.entries[at].cols.contains(c)) && (matches!(owner, Owner::Rel(_)) || res.entries[at].dev.rows == rel.len() || rel.view.as_ref().is_some_and(|v| v.src.made_on_lookup())) => {
+            Some(at) if want.iter().all(|c| res.entries[at].cols.contains(c)) && (walked || !res.entries[at].dev.is_has()) && (matches!(owner, Owner::Rel(_)) || res.entries[at].dev.rows == rel.len() || rel.view.as_ref().is_some_and(|v| v.src.made_on_lookup())) => {
                 rep.resident_hits += 1;
                 at
             }
@@ -1362,7 +1366,22 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     // kernels skip.
                     (Owner::Rel(_), _) => rel.in_block().map(|b| (b, rel.k)),
                 };
-                if let Some((b, ncols)) = placed {
+                let walk = match (&owner, &rel.view) {
+                    (Owner::Src(_), Some(view)) if walked && placed.is_none() => view.src.has_walk(),
+                    _ => None,
+                };
+                if let Some(w) = walk {
+                    // Nothing made or uploaded: a stage walks each binding's rows on the tape (`mj::Batch::by_has`).
+                    res.trim(0);
+                    let dev = mj::DevRel::has(w.nodes, w.view, &w.kinds).map_err(|e| format!("{e:?}: a has axis read off the tape"))?;
+                    rep.in_place += 1;
+                    crate::code_rule_dsl::prof::count("device.view_read.has", 1);
+                    let bytes = old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
+                    let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
+                    res.entries.push(Entry { owner, cols: vec![0, 1], dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
+                    res.bytes = res.bytes();
+                    res.entries.len() - 1
+                } else if let Some((b, ncols)) = placed {
                     // Entries of relations the engine dropped go now: an entry in place holds its block (`Held::kept`).
                     res.trim(0);
                     let dev = mj::DevRel::in_block(&b, ncols).map_err(|e| format!("{e:?}: a relation in its block"))?;
@@ -1483,6 +1502,12 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
             return Ok((dev, Some(ix.clone()), place));
         }
         let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
+        // `has` probed by its node or its ancestor: each binding's rows walked on the tape (decision 0353 step 5).
+        if let Some(ix) = batch.by_has(&dev, &by).map_err(|e| format!("{e:?}: a has probe"))? {
+            let ix = Rc::new(ix);
+            e.indexes.push((key, ix.clone()));
+            return Ok((dev, Some(ix), place));
+        }
         // `child` probed by its parent: its children off the tape, no index of the view (decision 0353 step 4c).
         if let Some(ix) = batch.by_parent(&dev, &by).map_err(|e| format!("{e:?}: a parent probe"))? {
             let ix = Rc::new(ix);
