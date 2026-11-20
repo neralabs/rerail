@@ -668,23 +668,23 @@ fn narrow_name(orig: &str) -> String {
 fn keep_narrow(prog: &mut Program, widened: &BTreeSet<&str>) {
     let narrowing = Narrowing { widened, asking: asking(prog) };
     let read = narrowing.reads(prog);
-    let reads = |r: &crate::code_rule_dsl::logic::front::Rule| r.body.iter().filter_map(Literal::atom).any(|a| read.contains(a.rel.as_str()));
     let narrow: Vec<_> = prog.rules.iter().filter(|r| read.contains(r.head.rel.as_str())).cloned().collect();
     prog.rules.extend(narrow.into_iter().map(|mut r| {
         r.head.rel = narrow_name(&r.head.rel).into();
         r
     }));
-    for rule in prog.rules.iter_mut().filter(|r| narrowing.sees(r.head.rel.as_str()) && reads(r)) {
-        for l in &mut rule.body {
-            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
-                && read.contains(a.rel.as_str())
-            {
-                a.rel = narrow_name(&a.rel).into();
-            }
-        }
-    }
     for orig in &read {
         declare_narrow(prog, orig);
+    }
+    narrowing.redirect(prog, &read);
+}
+
+/// A literal that reads an original kept narrow (`read`) reads its narrow copy.
+fn read_narrow(l: &mut Literal, read: &BTreeSet<String>) {
+    if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
+        && read.contains(a.rel.as_str())
+    {
+        a.rel = narrow_name(&a.rel).into();
     }
 }
 
@@ -732,6 +732,22 @@ impl Narrowing<'_> {
             }
         }
         read
+    }
+
+    /// Points the rules that read narrow, the narrow copies' among them, at the narrow copies of the originals they
+    /// read (`read`), and their native operators too: a native's rows are made from the relations its fields name,
+    /// its rule only orders it after them.
+    fn redirect(&self, prog: &mut Program, read: &BTreeSet<String>) {
+        let reads = |r: &crate::code_rule_dsl::logic::front::Rule| r.body.iter().filter_map(Literal::atom).any(|a| read.contains(a.rel.as_str()));
+        for rule in prog.rules.iter_mut().filter(|r| self.sees(r.head.rel.as_str()) && reads(r)) {
+            for l in &mut rule.body {
+                read_narrow(l, read);
+            }
+        }
+        let rename = |r: &str| if read.contains(r) { narrow_name(r) } else { r.to_owned() };
+        for (_, native) in prog.natives.iter_mut().filter(|(head, _)| self.sees(head)) {
+            native.rename_reads(rename);
+        }
     }
 }
 
@@ -1332,5 +1348,27 @@ pub mod tests {
         }
         let outs: Vec<String> = p.rules.iter().filter(|r| r.head.rel == "out").map(|r| r.to_string()).collect();
         assert!(!outs.is_empty() && outs.iter().all(|r| r.contains("!rr_inside_rr_kind_function_definition(") && !r.contains("rr_in_")), "{outs:#?}");
+    }
+
+    /// A native operator over an original folding widens reads it narrow when its relation reads narrow: its rows are
+    /// made from the relation its fields name, not from its rule, so its fields name the narrow copy too.
+    #[test]
+    fn a_native_over_a_widened_original_reads_its_narrow_copy() {
+        use crate::code_rule_dsl::logic::front::Native;
+        let mut p = crate::code_rule_dsl::logic::rr::parse(concat!(
+            ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
+            ".decl asg(n: node)\nasg(n) :- e(n), kind(n, \"identifier\").\n",
+            ".decl only(n: node)\nonly(r) :- parsed(_, \"annotation\", r).\n",
+            ".decl named(n: node)\nnamed(n) :- asg(n).\n",
+            ".decl out(n: node)\n.output out\nout(n) :- only(n), asg(n).\nout(n) :- named(n).\n",
+        ))
+        .unwrap();
+        let shown = crate::code_rule_dsl::facts::vtab::syntax::ANNOTATION_KEYS;
+        hide(&mut p, shown);
+        p.natives.insert("named".into(), Native::TextTest { input: "asg".into(), column: 0, op: "match".into(), patterns: Vec::new() });
+        assert!(fold_own(&mut p, "python", shown) > 0);
+        assert_eq!(p.natives["named"].reads(), ["rr_narrow_asg"]);
+        let named: Vec<String> = p.rules.iter().filter(|r| r.head.rel == "named").map(|r| r.to_string()).collect();
+        assert!(named.iter().all(|r| r.contains("rr_narrow_asg(")), "{named:#?}");
     }
 }

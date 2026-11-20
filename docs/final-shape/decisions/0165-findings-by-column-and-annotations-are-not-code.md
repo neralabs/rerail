@@ -66,7 +66,8 @@ same way: C408 found seven calls inside string type definitions, alone and in a 
 
 - Only the original of a copy made for an annotation is widened: a code guest's documents are under the narrow bound.
 - A rule that reads such an original and is not its own reads `rr_narrow_<orig>`: the original's rules before they
-  are widened, each reading the others' narrow copies, declared as the original is (`hiding::keep_narrow`).
+  are widened, each reading the others' narrow copies, declared as the original is (`hiding::keep_narrow`). A native
+  operator's fields name the narrow copies too where its relation reads narrow.
 - A rule that asks for what every reader is answered from reads the widened original: the guest demand and its
   contexts (4), and the on-request rewrite's attributes, requests and widened copies (decision 0174). Read narrow, a
   request asks too little for the widened original's readers (UP031 lost 61 of 67 findings beside PYI009).
